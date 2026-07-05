@@ -98,3 +98,16 @@ an honest note that keys are computed against the current captions.ass.
 Degrades cleanly on empty projects. 226 tests green.
 
 **Next:** property-based tests (hypothesis) over the pure cores.
+
+---
+
+## 2026-07-05 — round D: property-based tests
+
+**Done:** hypothesis invariants over the pure cores: canonical hashing is
+key-order blind and JSON round-trips; jsonpath list indexing; frame snapping
+is idempotent, monotone, lands on whole frames, and honors the one-frame
+floor (hypothesis found the ms=1 → 42ms floor case on its first run — the
+naive half-frame bound was wrong, the floor is the point); the caption
+splitter loses no characters and respects the line budget; SRT emit→parse is
+the identity on valid segments. hypothesis added to the dev extra.
+236 tests green.
