@@ -173,7 +173,13 @@ def _render_take(project: "Project", shot_id: str, take: Any, selected: bool) ->
     cls = "take selected" if selected else "take"
     if take.media_path is not None:
         rel = _esc(project.relpath(take.media_path))
-        media = f'<video controls preload="metadata" width="180" src="{rel}"></video>'
+        # the QC content layer keeps a mid-point frame per shot (§9) — use it
+        # as the poster so the card wall reads at a glance without playback
+        poster_path = project.reports_dir / "frames" / f"{shot_id}.jpg"
+        poster = (f' poster="{_esc(project.relpath(poster_path))}"'
+                  if (selected and poster_path.exists()) else "")
+        media = (f'<video controls preload="metadata" width="180"{poster} '
+                 f'src="{rel}"></video>')
     else:
         media = '<div class="nomedia">no media on disk</div>'
     star = ' <span class="star">★</span>' if selected else ""
@@ -205,10 +211,26 @@ def _render_shot(project: "Project", shot_id: str, status: Any) -> str:
     note = status.note if (status and status.note) else ""
     selected = status.selected_take if status else None
 
+    voice_html = ""
+    try:  # voice chip (M3): mirror of the picture badge, advisory only
+        from ..build.voice import VoiceState, evaluate_voice
+
+        voice = evaluate_voice(project, project.load_shot(shot_id))
+        if voice.state != VoiceState.NOT_NEEDED:
+            voice_cls = {
+                VoiceState.FRESH: "st-fresh", VoiceState.MANUAL: "st-manual",
+                VoiceState.STALE: "st-stale", VoiceState.MISSING: "st-missing",
+            }.get(voice.state, "st-missing")
+            voice_html = (f'<span class="badge {voice_cls}">'
+                          f"配音 {_esc(voice.state.value)}</span>")
+    except Exception:
+        voice_html = ""
+
     head = (
         '<div class="shot-head">'
         f'<span class="sid">{_esc(shot_id)}</span>'
         f'<span class="badge {badge_cls}">{_esc(state_val)}</span>'
+        f"{voice_html}"
         f'<span class="action">{_esc(action)}</span>'
         "</div>"
     )
@@ -316,6 +338,24 @@ def _render_header(project: "Project") -> str:
     timeline = project.load_timeline()
     dur = _fmt_duration(timeline.duration_ms) if timeline else "—"
 
+    # render verdicts from the explainer (read-only): the director sees at a
+    # glance whether the next build would re-render or skip
+    verdicts = ""
+    try:
+        from ..build.explain import explain
+
+        renders = explain(project).get("renders", {})
+        chips = []
+        for target in ("final", "proxy"):
+            if isinstance(renders.get(target), dict):
+                verdict = renders[target]["verdict"]
+                cls = "st-fresh" if verdict.startswith("skip") else "st-stale"
+                chips.append(f'<span class="badge {cls}">{_esc(target)}: '
+                             f"{_esc(verdict)}</span>")
+        verdicts = "".join(chips)
+    except Exception:
+        verdicts = ""
+
     return (
         '<header class="board">'
         f"<h1>{_esc(name)}</h1>"
@@ -325,6 +365,7 @@ def _render_header(project: "Project") -> str:
         f"<span>mode: {_esc(mode)}</span>"
         f"<span>shots: {shot_count}</span>"
         f"<span>duration: {_esc(dur)}</span>"
+        f"{verdicts}"
         "</div></header>"
     )
 

@@ -111,3 +111,13 @@ naive half-frame bound was wrong, the floor is the point); the caption
 splitter loses no characters and respects the line budget; SRT emit→parse is
 the identity on valid segments. hypothesis added to the dev extra.
 236 tests green.
+
+---
+
+## 2026-07-05 — round E: board catches up with the engine
+
+**Done:** review board upgrades — per-shot voice chip (M3 states), render
+verdicts from the explainer in the header (final/proxy skip-or-re-render at
+a glance), QC mid-point frames as posters on selected takes; QC now surfaces
+voice staleness as info items with the `manju voice` suggestion (§4.3:
+advisory, never auto-redone). 240 tests green.

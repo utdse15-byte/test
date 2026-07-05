@@ -161,6 +161,7 @@ def run_qc(
 
     _existence_shots(project, report, statuses, probe, selected)
     _staleness_info(report, statuses)
+    _voice_info(project, report)
     if timeline is not None:
         _existence_timeline(project, report, timeline, probe)
         _technical_clips(project, report, timeline, probe)
@@ -230,6 +231,29 @@ def _staleness_info(report, statuses: list[ShotBuildStatus]) -> None:
         msg = notes.get(st.state)
         if msg:
             report.add("info", "existence", st.shot_id, msg)
+
+
+def _voice_info(project, report) -> None:
+    """Voice staleness as QC info (M3): the film still builds with a stale
+    voice — the selected line simply predates the current text (§4.3)."""
+    try:
+        from ..build.voice import VoiceState, evaluate_all_voices
+
+        for vs in evaluate_all_voices(project):
+            if vs.state == VoiceState.STALE:
+                report.add(
+                    "info", "existence", vs.shot_id,
+                    "voice take predates the current dialogue/voice reference (stale)",
+                    suggestion=f"manju voice {vs.shot_id} 重配音(§4.3:默认不自动重做)",
+                )
+            elif vs.state == VoiceState.MISSING:
+                report.add(
+                    "info", "existence", vs.shot_id,
+                    "dialogue has no voice take yet",
+                    suggestion="配置 tts manifest 后 build 自动补齐,或手放 voice_take_NN.wav",
+                )
+    except Exception:
+        pass  # advisory only
 
 
 def _existence_timeline(project, report, timeline: Timeline, probe) -> None:
