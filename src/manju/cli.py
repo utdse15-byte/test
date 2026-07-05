@@ -431,18 +431,25 @@ def repair(auto: bool = typer.Option(False, "--auto"),
 @app.command()
 def export(
     jianying: bool = typer.Option(False, "--jianying"),
+    capcut: bool = typer.Option(False, "--capcut", help="international CapCut draft (pycapcut)"),
     srt: bool = typer.Option(False, "--srt"),
     otio: bool = typer.Option(False, "--otio"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """Export drafts/captions from the compiled timeline (§11)."""
+    """Export drafts/captions from the compiled timeline (§11).
+
+    JianYing is dual-path (decision 8): pyJianYingDraft native draft as the
+    primary, the diff-stable skeleton + lint as the secondary; capcut-cli
+    lints the result when installed. final.mp4/SRT/OTIO always remain the
+    fallback exits (§14)."""
     project = _project()
     timeline = project.load_timeline()
     if timeline is None:
         _fail("no timeline.json — run `manju build` first")
-    if not (jianying or srt or otio):
+    if not (jianying or capcut or srt or otio):
         srt = otio = True
     outputs: dict[str, Path] = {}
+    notes: list[str] = []
     if srt:
         from .exporters.srt_ass import export_captions
 
@@ -453,15 +460,38 @@ def export(
         outputs["otio"] = export_otio(project, timeline)
     if jianying:
         from .exporters.jianying import export_jianying
+        from .exporters.native_draft import (
+            ExporterUnavailable,
+            capcut_cli_lint,
+            export_jianying_native,
+        )
 
-        outputs["jianying"] = export_jianying(project, timeline)
+        outputs["jianying"] = export_jianying(project, timeline)  # skeleton + lint
+        try:
+            outputs["jianying_native"] = export_jianying_native(project, timeline)
+        except ExporterUnavailable as exc:
+            notes.append(f"jianying_native skipped: {exc}")
+        lint = capcut_cli_lint(outputs["jianying"].parent)
+        if lint is None:
+            notes.append("capcut-cli not installed — secondary lint skipped (own lint ran)")
+        elif lint:
+            notes.extend(f"capcut-cli lint: {p}" for p in lint[:10])
+    if capcut:
+        from .exporters.native_draft import ExporterUnavailable, export_capcut_native
+
+        try:
+            outputs["capcut"] = export_capcut_native(project, timeline)
+        except ExporterUnavailable as exc:
+            _fail(str(exc))
     rel_outputs = {k: project.relpath(v) for k, v in outputs.items()}
     append_event(project.root, ACTOR, "export", rel_outputs)
     if as_json:
-        _emit({"outputs": rel_outputs}, True)
+        _emit({"outputs": rel_outputs, "notes": notes}, True)
     else:
         for k, v in rel_outputs.items():
             typer.secho(f"{k}: {v}", fg=typer.colors.GREEN)
+        for note in notes:
+            typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
 
 
 # ------------------------------------------------------------------- board
@@ -552,6 +582,45 @@ def doctor(as_json: bool = typer.Option(False, "--json")):
             f"{'✓' if font else '⚠'} CJK font: {font or 'none found (cards will render boxes)'}")
     except ImportError:
         add("cjk_font", False, "media module unavailable", "⚠ media module unavailable")
+
+    # ---- toolbelt probes (§2.5 adapter wall: absence is a fact, not a failure)
+    import importlib.util as _ilu
+
+    for lib, purpose in (("pyJianYingDraft", "剪映草稿主路"),
+                         ("pycapcut", "国际 CapCut 草稿"),
+                         ("mcp_video", "QC 质量门/媒体分析")):
+        present = _ilu.find_spec(lib) is not None
+        add(lib, True, "installed" if present else f"not installed ({purpose})",
+            f"{'✓' if present else '•'} {lib}: "
+            f"{'installed' if present else f'not installed — {purpose} 走替代路径'}")
+    for binary, purpose in (("capcut-cli", "剪映草稿副路 lint"),
+                            ("tesseract", "must_show OCR 机检")):
+        found = shutil.which(binary)
+        add(binary, True, found or f"not installed ({purpose})",
+            f"{'✓' if found else '•'} {binary}: {found or f'not installed — {purpose} 降级'}")
+
+    # ---- provider manifests (§8.6): a bad fill fails HERE, not at first spend
+    try:
+        from .providers.manifest import load_manifests
+        from .providers.registry import manifest_errors
+
+        manifests, load_errors = load_manifests()
+        for pid, manifest in sorted(manifests.items()):
+            problems = manifest.validate_for_generic()
+            probe_ok = not problems
+            detail = "ok" if probe_ok else "; ".join(problems)
+            add(f"provider:{pid}", probe_ok, detail,
+                f"{'✓' if probe_ok else '✗'} provider {pid} ({manifest.type}): {detail}")
+            ok = ok and probe_ok
+        for err in load_errors + [e for e in manifest_errors() if e not in load_errors]:
+            add("provider_manifest", False, err, f"✗ provider manifest: {err}")
+            ok = False
+        if not manifests:
+            add("providers", True, "no cloud provider manifests configured",
+                "• no cloud provider manifests configured (~/.manju/providers, §8.6)")
+    except Exception as exc:
+        add("providers", False, str(exc), f"⚠ provider probe errored: {exc}")
+
     try:
         project = Project.find(Path.cwd())
         free_gb = shutil.disk_usage(project.root).free / 1e9
