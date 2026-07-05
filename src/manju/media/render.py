@@ -7,13 +7,22 @@ whole timeline): each selected take becomes a content-addressed segment in
 (and its transition neighbours) — incremental rendering is a free by-product of
 the cache key (§7, §14).
 
-Transition model for M0: a "fade" ``transition_out`` becomes a dip-to-black —
-fade-out on the tail of the segment and fade-in on the head of the next. This is
-baked into the (cached) per-segment render, with the fade durations folded into
-the cache key. A true xfade/acrossfade seam pipeline (§7 step ②) is deferred.
+Transition model: a "fade" ``transition_out`` becomes a dip-to-black —
+fade-out on the tail of the segment and fade-in on the head of the next. This
+is baked into the (cached) per-segment render, with the fade durations folded
+into the cache key, so §7 ②'s structural intent (transitions rendered as
+cached units, incremental by construction) holds.
 
-    TODO(M1+): render dedicated xfade/acrossfade seam segments between clips for
-    a real cross-dissolve instead of the deterministic dip-to-black used here.
+Design note — why not xfade/acrossfade seams (§7 ② names them): a true
+cross-dissolve needs media HANDLES — extra frames beyond the cut point on
+both sides. Manju's takes are generated/normalized to exactly their timeline
+duration, so there are no handles: crossfading would either shorten the film
+by the overlap (desyncing the audio-driven caption/voice timings, §6) or
+replay frames around the cut (visible stutter). Dip-to-black is the honest
+deterministic transition under exact-duration takes. If cross-dissolves are
+ever wanted, the change belongs in the compiler/providers first (allocate
++transition_ms handles at generation and carry source in-points on clips),
+not here.
 """
 
 from __future__ import annotations
