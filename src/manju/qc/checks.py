@@ -169,8 +169,27 @@ def run_qc(
     _final_render(project, report, config, timeline, deep)
     if extract_frames:
         _content_frames(project, report, selected)
+    _content_checkers(project, report, statuses, deep)
 
     return report
+
+
+def _content_checkers(project, report, statuses, deep: bool) -> None:
+    """§9 third-round stance: the content tier is a machine checker chain the
+    engine runs itself — no agent required. must_show assertions always run
+    for shots that declare them; black/freeze/mcp-video probes join on deep."""
+    from .content import content_checks
+
+    for st in statuses:
+        if st.take is None or st.take.media_path is None:
+            continue
+        try:
+            shot = project.load_shot(st.shot_id)
+            report.items.extend(content_checks(project, shot, st.take, deep=deep))
+        except Exception as exc:  # a broken checker never breaks QC itself
+            report.add("warn", "content", st.shot_id,
+                       f"content checker chain errored: {exc}",
+                       suggestion="agent 终审;或查看 manju doctor")
 
 
 # --------------------------------------------------------- existence layer
