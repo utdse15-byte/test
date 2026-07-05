@@ -53,6 +53,9 @@ class ShotInput:
     take_duration_ms: int | None
     voice_source: str | None = None  # project-relative
     voice_duration_ms: int | None = None
+    # word boundaries from the TTS engine ([{start_ms,end_ms,text}, …], voice-
+    # relative): captions snap to real speech instead of the weighted split
+    voice_timing: list[dict] | None = None
 
 
 @dataclass
@@ -78,6 +81,7 @@ class CompileInput:
                     "take_duration_ms": s.take_duration_ms,
                     "voice_source": s.voice_source,
                     "voice_duration_ms": s.voice_duration_ms,
+                    "voice_timing": s.voice_timing,
                 }
                 for s in self.shots
             ],
@@ -141,6 +145,69 @@ def _split_caption(text: str, max_chars: int, max_lines: int) -> list[str]:
     return [c for c in chunks if c]
 
 
+def _align_words_to_text(words: list[dict], text: str) -> list[dict]:
+    """Reattach the punctuation the TTS word stream drops (Edge zh boundaries
+    carry no ",。?"): walk the original dialogue text, match each word token
+    in order, and glue the characters between this token's end and the next
+    token's start (punctuation/space) onto the word. Any mismatch falls back
+    to the raw words — alignment is an enhancement, never a gate."""
+    enriched: list[dict] = []
+    cursor = 0
+    for i, word in enumerate(words):
+        token = str(word["text"])
+        found = text.find(token, cursor)
+        if found < 0:
+            return words  # stream and text disagree -> keep the honest raw form
+        end = found + len(token)
+        next_start = len(text)
+        if i + 1 < len(words):
+            nxt = text.find(str(words[i + 1]["text"]), end)
+            next_start = nxt if nxt >= 0 else end
+        tail = text[end:next_start].strip()
+        enriched.append({**word, "text": token + tail})
+        cursor = end
+    return enriched
+
+
+def _timed_captions(words: list[dict], offset_ms: int, max_chars: int,
+                    max_lines: int, *, speaker: str,
+                    original_text: str = "") -> list[CaptionLine]:
+    """Group TTS word boundaries into caption cues (round M).
+
+    Greedy fill up to the line budget, breaking eagerly after CJK sentence
+    enders; each cue's start/end come from the FIRST/LAST word's real times
+    (voice-relative), shifted by the voice clip's timeline offset."""
+    if original_text:
+        words = _align_words_to_text(words, original_text)
+    budget = max(1, max_chars * max_lines)
+    cues: list[CaptionLine] = []
+    group: list[dict] = []
+    length = 0
+
+    def flush() -> None:
+        nonlocal group, length
+        if group:
+            cues.append(CaptionLine(
+                start_ms=offset_ms + group[0]["start_ms"],
+                end_ms=max(offset_ms + group[-1]["end_ms"],
+                           offset_ms + group[0]["start_ms"] + 1),
+                text="".join(w["text"] for w in group).strip(),
+                speaker=speaker,
+            ))
+        group, length = [], 0
+
+    for word in words:
+        token = str(word["text"])
+        if length + len(token) > budget:
+            flush()
+        group.append(word)
+        length += len(token)
+        if token and token[-1] in "。!?!?…":
+            flush()
+    flush()
+    return [c for c in cues if c.text]
+
+
 def compile_timeline(inp: CompileInput) -> Timeline:
     if not inp.shots:
         raise CompileError("nothing to compile: no shots with a usable selected take")
@@ -181,25 +248,37 @@ def compile_timeline(inp: CompileInput) -> Timeline:
             else:
                 cap_start = cursor
                 cap_total = duration_ms
-            pieces = _split_caption(
-                text, rules.captions.max_chars_per_line, rules.captions.max_lines
-            )
-            if pieces:
-                weights = [len(p) for p in pieces]
-                total_w = sum(weights)
-                t = cap_start
-                for piece, w in zip(pieces, weights):
-                    span = max(300, int(round(cap_total * w / total_w)))
-                    end = min(t + span, cap_start + cap_total)
-                    tracks.captions.append(
-                        CaptionLine(
-                            start_ms=t,
-                            end_ms=max(end, t + 1),
-                            text=piece,
-                            speaker=s.shot.dialogue.speaker,
-                        )
+            if s.voice_timing and s.voice_duration_ms:
+                # word-timed captions (round M): cue boundaries come from the
+                # TTS engine's word boundaries — captions snap to real speech
+                tracks.captions.extend(
+                    _timed_captions(
+                        s.voice_timing, cap_start,
+                        rules.captions.max_chars_per_line, rules.captions.max_lines,
+                        speaker=s.shot.dialogue.speaker,
+                        original_text=text,
                     )
-                    t = end
+                )
+            else:
+                pieces = _split_caption(
+                    text, rules.captions.max_chars_per_line, rules.captions.max_lines
+                )
+                if pieces:
+                    weights = [len(p) for p in pieces]
+                    total_w = sum(weights)
+                    t = cap_start
+                    for piece, w in zip(pieces, weights):
+                        span = max(300, int(round(cap_total * w / total_w)))
+                        end = min(t + span, cap_start + cap_total)
+                        tracks.captions.append(
+                            CaptionLine(
+                                start_ms=t,
+                                end_ms=max(end, t + 1),
+                                text=piece,
+                                speaker=s.shot.dialogue.speaker,
+                            )
+                        )
+                        t = end
 
         cursor += duration_ms
 
@@ -250,6 +329,22 @@ def _find_voice(project: Project, shot_id: str) -> Path | None:
     return voices[-1][0] if voices else None
 
 
+def _load_voice_timing(voice: Path) -> list[dict] | None:
+    """Word boundaries recorded by the TTS engine (<take>.timing.json).
+    Purity holds: the file content participates in the fingerprint, so a
+    timing change re-fingerprints the compile like any other input."""
+    import json
+
+    timing_path = voice.with_suffix(".timing.json")
+    if not timing_path.exists():
+        return None
+    try:
+        words = json.loads(timing_path.read_text(encoding="utf-8"))
+        return words if isinstance(words, list) and words else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
     """Assemble the compiler's input from the project. Raises CompileError
     listing every shot that cannot go on the timeline (missing/unselected)."""
@@ -279,6 +374,7 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
                 take_duration_ms=take_dur,
                 voice_source=project.relpath(voice) if voice else None,
                 voice_duration_ms=probe_fn(voice) if voice else None,
+                voice_timing=_load_voice_timing(voice) if voice else None,
             )
         )
 

@@ -205,3 +205,16 @@ qualifiers (paid text-to-video unexercised without a vendor account;
 desktop draft opening needs the apps). `manju new` now scaffolds
 story/brief.md, outline.md, script.md so every takeover finds the same
 idea-stage shape. 252 tests green.
+
+---
+
+## 2026-07-05 — round M: word-timed captions
+
+**Done:** Edge TTS now streams word boundaries (edge-tts 7.x needs explicit
+boundary="WordBoundary" — found live) into <voice_take>.timing.json; the
+compiler prefers real speech timing over the weighted split when a timing
+sidecar exists (fingerprint includes it — purity holds), grouping words into
+cues by line budget + sentence enders. Edge's zh boundaries drop punctuation,
+so an alignment pass glues it back from the original dialogue (mismatch falls
+back to raw). Live-verified in the showcase: cues start at word onset (300ms)
+and end when speech ends; definitive cut delivered. 259 tests green.

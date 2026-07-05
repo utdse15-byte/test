@@ -67,17 +67,33 @@ class EdgeTtsProvider:
         voice = self._voice_for(shot, bible)
         fmt = (self.manifest.tts.audio_format or "mp3").lstrip(".")
 
-        async def _run(dest: Path) -> None:
+        async def _run(dest: Path) -> list[dict]:
+            """Stream audio AND capture word boundaries (100ns ticks → ms):
+            real speech timing, the raw material for word-timed captions."""
             communicate = edge_tts.Communicate(
                 shot.dialogue.text, voice,
+                # edge-tts 7.x defaults to SentenceBoundary; word-level cues
+                # need explicit opt-in (round M finding)
+                boundary="WordBoundary",
                 proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"),
             )
-            await communicate.save(str(dest))
+            words: list[dict] = []
+            with open(dest, "wb") as audio:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        audio.write(chunk["data"])
+                    elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
+                        words.append({
+                            "start_ms": int(chunk["offset"] / 10_000),
+                            "end_ms": int((chunk["offset"] + chunk["duration"]) / 10_000),
+                            "text": str(chunk["text"]),
+                        })
+            return words
 
         with tempfile.TemporaryDirectory(prefix=f"edge_{shot.id}_") as tmp:
             dest = Path(tmp) / f"voice.{fmt}"
             try:
-                asyncio.run(_run(dest))
+                words = asyncio.run(_run(dest))
             except Exception as exc:  # network/TLS/service — classify, keep reason
                 raise ProviderFailure(
                     FailureKind.provider_error,
@@ -91,8 +107,18 @@ class EdgeTtsProvider:
                 provider=self.id,
                 voice_hash=compute_voice_hash(shot, bible),
                 params={"text": shot.dialogue.text, "speaker": shot.dialogue.speaker,
-                        "voice": voice},
+                        "voice": voice, "words": len(words)},
                 remote=RemoteJobInfo(job_id=None, cost=None,
                                      currency=self.manifest.cost.currency),
             )
-            return project.register_voice_take(shot.id, dest, sidecar)
+            registered = project.register_voice_take(shot.id, dest, sidecar)
+            if words:
+                # word-timed caption material: <voice_take_NN>.timing.json —
+                # the compiler prefers real speech timing over the weighted
+                # split when this file exists (round M)
+                import json
+
+                registered.with_suffix(".timing.json").write_text(
+                    json.dumps(words, ensure_ascii=False), encoding="utf-8"
+                )
+            return registered
