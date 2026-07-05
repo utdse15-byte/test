@@ -22,7 +22,7 @@ class KenburnsProvider(Provider):
     kind = "local"
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
-        image = self._resolve_image(req)
+        image, image_source = self._resolve_image(req)
         if image is None:
             raise ProviderFailure(
                 FailureKind.invalid,
@@ -58,6 +58,10 @@ class KenburnsProvider(Provider):
                         Path(out),
                         params={
                             "image": image_ref,
+                            # lineage of the reference choice (§4.2): the
+                            # build graph advises when a shot fell back to a
+                            # generic refs_dir image (showcase finding)
+                            "image_source": image_source,
                             "zoom_from": 1.0,
                             "zoom_to": zoom_to,
                             "duration_ms": req.duration_ms,
@@ -70,7 +74,10 @@ class KenburnsProvider(Provider):
 
     # -- reference image resolution order (a) -> (b) -> (c) -----------------
 
-    def _resolve_image(self, req: GenerationRequest) -> Path | None:
+    def _resolve_image(self, req: GenerationRequest) -> tuple[Path | None, str]:
+        """Returns (image, source) where source names the resolution tier:
+        'params' | 'bible' | 'refs_dir_fallback' — the last one means a
+        generic project image was used, worth an advisory downstream."""
         project = req.project
 
         # (a) explicit param
@@ -78,7 +85,7 @@ class KenburnsProvider(Provider):
         if explicit:
             cand = _as_path(project, explicit)
             if cand and cand.exists():
-                return cand
+                return cand, "params"
 
         # (b) bible ref_image: first character(s), then scene
         bible = req.bible or {}
@@ -90,7 +97,7 @@ class KenburnsProvider(Provider):
             if isinstance(entry, dict) and entry.get("ref_image"):
                 cand = _as_path(project, entry["ref_image"])
                 if cand and cand.exists():
-                    return cand
+                    return cand, "bible"
 
         # (c) first image under media/refs, sorted by name
         if project.refs_dir.exists():
@@ -103,9 +110,9 @@ class KenburnsProvider(Provider):
                 key=lambda p: p.name,
             )
             if imgs:
-                return imgs[0]
+                return imgs[0], "refs_dir_fallback"
 
-        return None
+        return None, "none"
 
 
 def _as_path(project, value) -> Path | None:

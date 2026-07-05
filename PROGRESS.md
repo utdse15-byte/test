@@ -161,3 +161,13 @@ same generic image (still_frame_motion precedes caption_card by design).
 Correct per spec but a UX footgun for dialogue-only shots — candidate
 improvement: advisory when kenburns used the generic refs_dir fallback
 rather than a shot-specific reference. Open issue for the next review.
+
+---
+
+## 2026-07-05 — round I: generic-reference advisory (showcase finding closed)
+
+**Done:** the kenburns provider records which resolution tier chose the
+reference image (params / bible / refs_dir_fallback) in the take's lineage
+(§4.2), and the build now advises when a shot fell back to a generic
+media/refs image — with the three shot-specific alternatives named.
+Explicit params.image stays silent. 243 tests green.

@@ -151,3 +151,41 @@ def test_captions_manual_mode_build_stays_idempotent(two_shot_project):
                    encoding="utf-8")
     assert run_build(p, target="final").ok
     assert len(sorted(p.final_dir.glob("final_v*.mp4"))) == len(finals_after_first) + 1
+
+
+# ------------------------------------------- round I: generic-ref advisory
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_kenburns_generic_ref_advisory(tmp_project, add_shot):
+    """Showcase finding: a generic media/refs image silently feeds EVERY
+    missing shot via the §8.4 chain — the build now advises about it, while
+    an explicit params.image stays silent."""
+    from manju.build.graph import run_build
+    from manju.media.html_card import html_available
+
+    # a real reference image (rendered if chromium is present, else ffmpeg)
+    ref = tmp_project.refs_dir / "generic.png"
+    if html_available():
+        from manju.media.html_card import render_card_png
+
+        render_card_png("ref", ref, width=270, height=480)
+    else:
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=c=gray:s=270x480:d=1",
+             "-frames:v", "1", str(ref)], check=True)
+
+    add_shot(tmp_project, "S001", duration=1.5,
+             dialogue={"speaker": "linxia", "text": "台词"})
+    result = run_build(tmp_project, target="qc")
+    assert result.ok, result.errors
+    assert any("通用参考图" in w for w in result.warnings), result.warnings
+
+    # explicit params.image -> no advisory
+    add_shot(tmp_project, "S002", duration=1.5,
+             generation={"provider": "ffmpeg_kenburns",
+                         "params": {"image": "media/refs/generic.png"}})
+    result = run_build(tmp_project, target="qc")
+    assert result.ok, result.errors
+    assert not any("S002" in w and "通用参考图" in w for w in result.warnings)

@@ -243,6 +243,19 @@ def run_build(
                 result.warnings.append(f"{shot.id}: generation failed — {exc}")
                 continue
             result.generated.extend(f"{shot.id}/{t.name}" for t in takes)
+            # showcase finding: with ANY image under media/refs, the §8.4
+            # chain sends every missing shot to kenburns with that same
+            # generic image — correct per spec, surprising in practice.
+            # Advise, don't block.
+            for t in takes:
+                if t.sidecar.params.get("image_source") == "refs_dir_fallback":
+                    result.warnings.append(
+                        f"{shot.id}: kenburns 使用了通用参考图 "
+                        f"{t.sidecar.params.get('image')}(media/refs 兜底)— "
+                        "如需镜头专属画面,设 bible ref_image 或 "
+                        "generation.params.image,或 generation.provider: caption_card"
+                    )
+                    break
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
             _record_local_runs(project, takes, {"reason": item["reason"]})
