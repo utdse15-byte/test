@@ -12,7 +12,7 @@ from typing import Any
 
 from ..core.container import Project
 from ..core.events import tail_events
-from .stale import ShotState, evaluate_all
+from .stale import evaluate_all
 
 
 def _latest_final(project: Project):
@@ -50,6 +50,9 @@ def project_status(project: Project) -> dict[str, Any]:
                 "runs": len(state.run_log(100000)),  # no COUNT API; count the log
                 "total_cost": float(total),
                 "currency": cur,
+                # in-flight cloud jobs: the resume-polling queue (§8.1) — the
+                # one runtime-only state, so surface it at the takeover entry
+                "pending_jobs": len(state.pending_jobs()),
             }
     except Exception:
         pass  # keep the "unavailable" marker above

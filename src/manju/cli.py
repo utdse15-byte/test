@@ -47,6 +47,12 @@ def _fail(message: str) -> None:
     raise typer.Exit(1)
 
 
+def _interactive() -> bool:
+    """Single choke point for the interactive-terminal-only gate (§5):
+    unlock and gc --hard refuse to run without a human at a tty."""
+    return sys.stdin.isatty()
+
+
 # --------------------------------------------------------------------- new
 
 
@@ -126,12 +132,26 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
             n += 1
         shutil.copy2(f, dest)
         registered.append(project.relpath(dest))
-    append_event(project.root, ACTOR, "import", {"files": registered})
+    # §11: derived previews (thumbnail/waveform) into the disposable runtime
+    # dir; the segment cache is the lazy proxy (§7 ①). Best-effort only.
+    previews: dict[str, str] = {}
+    try:
+        from .media.preview import make_preview
+
+        for rel in registered:
+            preview = make_preview(project.resolve(rel), project.runtime_dir / "thumbs")
+            if preview is not None:
+                previews[rel] = project.relpath(preview)
+    except ImportError:
+        pass
+    append_event(project.root, ACTOR, "import", {"files": registered, "previews": previews})
     if as_json:
-        _emit({"imported": registered}, True)
+        _emit({"imported": registered, "previews": previews}, True)
     else:
         for r in registered:
             typer.secho(f"imported {r}", fg=typer.colors.GREEN)
+        for src_rel, thumb in previews.items():
+            typer.echo(f"  preview: {thumb}")
 
 
 # ------------------------------------------------------------------- build
@@ -268,7 +288,7 @@ def lock(shot_id: str, field: str, as_json: bool = typer.Option(False, "--json")
 @app.command()
 def unlock(shot_id: str, field: str):
     """Interactive terminal only + confirmation; never exposed over MCP (§5)."""
-    if not sys.stdin.isatty():
+    if not _interactive():
         _fail("unlock is interactive-only: run it yourself in a terminal (§5). "
               "AI agents: write a proposal to proposals/ instead.")
     if not typer.confirm(f"确认解锁 {shot_id}.{field}?"):
@@ -277,8 +297,9 @@ def unlock(shot_id: str, field: str):
 
     def mutate(d):
         locked = d.get("locked") or {}
-        if isinstance(locked, dict) and field in locked:
-            del locked[field]
+        if isinstance(locked, list):  # hand-written unsealed form -> normalize
+            locked = {str(p): "" for p in locked}
+        locked.pop(field, None)
         d["locked"] = locked
 
     project.update_shot_raw(shot_id, mutate)
@@ -385,8 +406,7 @@ def qc(deep: bool = typer.Option(False), as_json: bool = typer.Option(False, "--
     else:
         errors = sum(1 for i in report.items if i.level == "error")
         warns = sum(1 for i in report.items if i.level == "warn")
-        typer.echo(f"QC: {errors} errors, {warns} warnings → {project.relpath(paths['md'])}"
-                   if "md" in {k: k for k in paths} else f"QC: {errors} errors, {warns} warnings")
+        typer.echo(f"QC: {errors} errors, {warns} warnings → {project.relpath(paths['qc_md'])}")
         typer.secho("qc ok" if report.ok else "qc found errors",
                     fg=typer.colors.GREEN if report.ok else typer.colors.RED)
     if not report.ok:
@@ -669,6 +689,16 @@ def doctor(as_json: bool = typer.Option(False, "--json")):
         found = shutil.which(binary)
         add(binary, True, found or f"not installed ({purpose})",
             f"{'✓' if found else '•'} {binary}: {found or f'not installed — {purpose} 降级'}")
+    try:
+        from .media.html_card import find_chromium
+
+        chromium = find_chromium()
+        add("chromium", True,
+            str(chromium) if chromium else "not found (html_render → drawtext 兜底)",
+            f"{'✓' if chromium else '•'} chromium (html_render): "
+            f"{chromium or 'not found — 文字卡走 drawtext 兜底'}")
+    except ImportError:
+        pass
 
     # ---- provider manifests (§8.6): a bad fill fails HERE, not at first spend
     try:
@@ -728,7 +758,7 @@ def gc(hard: bool = typer.Option(False, "--hard"),
                 freed += f.stat().st_size
                 f.unlink()
     if hard:
-        if not sys.stdin.isatty():
+        if not _interactive():
             _fail("gc --hard is interactive-only")
         if typer.confirm("删除所有未选中的 take 媒体本体?(选中、imports、final 不受影响)"):
             for sid in project.shot_ids():
@@ -772,6 +802,23 @@ def rebuild_index(as_json: bool = typer.Option(False, "--json")):
         typer.echo(f"runtime rebuilt; {len(statuses)} shots scanned: "
                    + json.dumps(statuses, ensure_ascii=False))
         typer.echo(f"ledger: {ledger['runs']} runs, {ledger['pending_jobs']} pending jobs")
+
+
+@app.command()
+def schema(out: Optional[Path] = typer.Option(None, help="write one .schema.json per model into this directory")):
+    """Export the JSON Schemas of every truth-file model (§4, §12)."""
+    from .core.models import export_json_schemas
+
+    schemas = export_json_schemas()
+    if out is None:
+        typer.echo(json.dumps(schemas, ensure_ascii=False, indent=2))
+        return
+    from .core.yamlio import write_json
+
+    out.mkdir(parents=True, exist_ok=True)
+    for name, schema_dict in schemas.items():
+        write_json(out / f"{name}.schema.json", schema_dict)
+    typer.secho(f"wrote {len(schemas)} schemas → {out}", fg=typer.colors.GREEN)
 
 
 @app.command("serve-mcp")

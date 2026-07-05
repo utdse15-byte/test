@@ -199,3 +199,14 @@ Every tool sits behind an adapter wall — `manju doctor` probes each one, and
 absence degrades to an alternative path instead of breaking a milestone.
 Toolbelt products must be written back via `manju select <shot> --file` —
 `manju check` flags unregistered media under `media/gen/` (write-back rule).
+
+The P1 `html_render` slot (HyperFrames idea: HTML+CSS → deterministic MP4) is
+implemented against headless Chromium (`CHROME_BIN` / PATH / Playwright
+browsers dir): the caption-card provider prefers the styled HTML renderer and
+falls back to zero-dependency drawtext; the renderer that ran is recorded in
+the take's lineage. `manju import` generates thumbnails/waveforms into the
+disposable `.manju/thumbs/` (§11); the normalized segment cache is the lazy
+proxy. Captions support manual takeover like the timeline: set
+`rules.captions.mode: manual` and `captions.srt` becomes human truth — the
+burned ASS is recompiled from your cues and the compiler's version lands in
+`captions.generated.srt` (§3).

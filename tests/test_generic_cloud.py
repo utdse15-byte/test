@@ -4,7 +4,6 @@ config. Every network behavior is exercised offline via a scripted transport."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -76,7 +75,7 @@ def test_manifest_generic_validation(monkeypatch):
     monkeypatch.delenv("VIDEO_X_KEY", raising=False)
     m = ProviderManifest.model_validate(_manifest_dict())
     problems = m.validate_for_generic()
-    assert problems == [f"auth.key_env VIDEO_X_KEY is not set in the environment"]
+    assert problems == ["auth.key_env VIDEO_X_KEY is not set in the environment"]
     bad = ProviderManifest.model_validate(
         _manifest_dict(poll={"url": "https://x/{job_id}", "status_path": "$.s",
                              "status_map": {"OK": "done"}})

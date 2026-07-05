@@ -215,6 +215,10 @@ class CaptionRules(ManjuModel):
     max_chars_per_line: int = 18
     max_lines: int = 2
     style: str = "default"
+    # §3: captions.srt 可手改并标记 manual — in manual mode the SRT is human
+    # truth: the compiler's output goes to captions.generated.srt and the
+    # burned ASS is recompiled FROM the human SRT (same takeover shape as §6)
+    mode: Literal["compiled", "manual"] = "compiled"
 
 
 class TitleCardRules(ManjuModel):

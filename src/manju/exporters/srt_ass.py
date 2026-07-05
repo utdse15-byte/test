@@ -175,11 +175,42 @@ def _caption_style(project: "Project") -> dict[str, Any]:
 def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
     """Write ``captions/captions.srt`` and ``captions/captions.ass`` atomically.
 
-    Returns ``{"srt": <path>, "ass": <path>}``.
+    Manual takeover (§3, mirroring §6): when ``rules.captions.mode ==
+    "manual"`` and a human-edited ``captions.srt`` exists, that SRT is truth —
+    the compiler's version goes to ``captions.generated.srt`` for comparison,
+    and the burned ASS is recompiled FROM the human cues so the film shows
+    exactly what they wrote.
+
+    Returns ``{"srt": <path>, "ass": <path>}`` — the files downstream must use.
     """
     style = _caption_style(project)
     srt_path = project.captions_dir / "captions.srt"
     ass_path = project.captions_dir / "captions.ass"
+
+    if project.load_rules().captions.mode == "manual" and srt_path.exists():
+        from ..core.models import CaptionLine, TimelineTracks
+        from ..core.models import Timeline as _Timeline
+        from ..providers.asr import parse_srt
+
+        atomic_write_text(
+            project.captions_dir / "captions.generated.srt", compile_srt(timeline)
+        )
+        human = parse_srt(srt_path.read_text(encoding="utf-8"))
+        human_timeline = _Timeline(
+            fps=timeline.fps, width=timeline.width, height=timeline.height,
+            duration_ms=timeline.duration_ms,
+            tracks=TimelineTracks(captions=[
+                CaptionLine(start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
+                for s in human
+            ]),
+        )
+        atomic_write_text(
+            ass_path,
+            compile_ass(human_timeline, width=timeline.width, height=timeline.height,
+                        style=style),
+        )
+        return {"srt": srt_path, "ass": ass_path}
+
     atomic_write_text(srt_path, compile_srt(timeline))
     atomic_write_text(
         ass_path,

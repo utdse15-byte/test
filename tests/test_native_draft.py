@@ -36,7 +36,7 @@ def draft_project(tmp_project, add_shot):
         clip = tmp_project.runtime_dir / f"c{i}.mp4"
         subprocess.run(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-f", "lavfi", "-i", f"testsrc2=size=540x960:rate=24:duration=1",
+             "-f", "lavfi", "-i", "testsrc2=size=540x960:rate=24:duration=1",
              "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
              "-shortest", "-pix_fmt", "yuv420p", str(clip)],
             check=True,

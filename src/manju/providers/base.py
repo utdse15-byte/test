@@ -29,7 +29,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from ..core.container import Project, TakeInfo
 from ..core.models import ProbeInfo, RemoteJobInfo, ShotSpec, TakeSidecar

@@ -46,6 +46,11 @@ description: Manju One 视频构建系统的 AI 协作协议——在 Claude Cod
 
 构建系统的哈希一致性由此不被旁路破坏。
 
+工具带挂载(§13 M2):mcp-video 的 MCP server 可直接进 Claude Code 配置——
+`claude mcp add mcp-video -- python -m mcp_video`(它同时以 Python 库身份被
+引擎的 QC 检查器直接 import,两个身份互不依赖);Manju 自己的 MCP server 用
+`manju serve-mcp` 挂载。两者都遵守同一条回写规则。
+
 ## 4. 想改锁定内容 → 写提案,等人批
 
 锁(值哈希锁,§5)是人钉死的决策(如 `dialogue.text`、`duration`、角色外观)。你**不能**自己改锁定字段,也不能 unlock。正规通道:

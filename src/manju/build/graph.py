@@ -17,7 +17,6 @@ from typing import Any
 from ..core.check import run_check
 from ..core.container import Project
 from ..core.events import append_event
-from ..core.hashing import MANUAL_HASH
 from ..timeline.compiler import CompileError, build_timeline
 from .stale import ShotBuildStatus, ShotState, evaluate_all
 
