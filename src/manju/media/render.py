@@ -27,6 +27,7 @@ not here.
 
 from __future__ import annotations
 
+import json
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -133,6 +134,25 @@ def _apply_fades(
     )
 
 
+def _segment_cache_key(
+    project: Project,
+    clip: VideoClip,
+    *,
+    width: int,
+    height: int,
+    fps: int,
+    target: str,
+    fade_in_ms: int,
+    fade_out_ms: int,
+) -> str:
+    """The one segment-key formula, shared by the segment cache and the
+    final content key (FIX-A) so they can never drift apart."""
+    src = project.resolve(clip.source)
+    return cache_key(
+        hash_file(src), width, height, fps, clip.duration_ms, target, fade_in_ms, fade_out_ms
+    )
+
+
 def _build_segment(
     project: Project,
     clip: VideoClip,
@@ -154,8 +174,9 @@ def _build_segment(
     src = project.resolve(clip.source)
     if not src.exists():
         raise MediaError(f"take source not found for {clip.shot}/{clip.take}: {clip.source}")
-    key = cache_key(
-        hash_file(src), width, height, fps, clip.duration_ms, target, fade_in_ms, fade_out_ms
+    key = _segment_cache_key(
+        project, clip, width=width, height=height, fps=fps, target=target,
+        fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms,
     )
     seg_path = project.segments_dir / f"{short_hash(key)}.mp4"
     if seg_path.exists():
@@ -291,6 +312,76 @@ def _build_audio_graph(
     return inputs, stmts, aout
 
 
+def _enc_params(target: str) -> list[str]:
+    if target == "final":
+        return ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart"]
+    return ["-c:v", "libx264", "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "96k", "-ar", "48000"]
+
+
+def _audio_input_hashes(project: Project, timeline: Timeline) -> list[str]:
+    """Content hashes of every audio input, in track order. A missing file
+    hashes as a marker instead of raising — the render itself will surface
+    the real error; key computation must never be the thing that crashes."""
+    hashes: list[str] = []
+    for clip in [*timeline.tracks.voice, *timeline.tracks.music]:
+        src = project.resolve(clip.source)
+        hashes.append(hash_file(src) if src.exists() else f"missing:{clip.source}")
+    return hashes
+
+
+def final_content_key(
+    project: Project,
+    timeline: Timeline,
+    *,
+    ass_file: Path | None,
+    target: str,
+) -> str:
+    """FIX-A: the content identity of a would-be final —
+
+        hash(normalized timeline JSON + ordered segment cache keys
+             + ASS file hash + audio input hashes + encoding params + target)
+
+    Two builds over identical inputs produce identical keys, so `manju build`
+    can skip the render instead of minting final_vN+1 forever."""
+    width, height, fps = timeline.width, timeline.height, timeline.fps
+    clips = list(timeline.tracks.video)
+    seg_keys = [
+        _segment_cache_key(
+            project, clip, width=width, height=height, fps=fps, target=target,
+            fade_in_ms=_fade_params(clips, i)[0], fade_out_ms=_fade_params(clips, i)[1],
+        )
+        if project.resolve(clip.source).exists()
+        else f"missing:{clip.source}"
+        for i, clip in enumerate(clips)
+    ]
+    payload = {
+        "timeline": timeline.model_dump(exclude={"meta"}),  # meta is provenance, not content
+        "segments": seg_keys,
+        "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
+        "audio": _audio_input_hashes(project, timeline),
+        "encoding": _enc_params(target),
+        "target": target,
+    }
+    return cache_key(payload)
+
+
+def _latest_final_with_key(project: Project) -> tuple[Path, str] | None:
+    finals = sorted(project.final_dir.glob("final_v*.mp4"))
+    if not finals:
+        return None
+    latest = finals[-1]
+    sidecar = latest.with_suffix(".key.json")
+    if not sidecar.exists():
+        return None
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        return latest, str(data.get("final_key", ""))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def render_timeline(
     project: Project,
     timeline: Timeline,
@@ -298,6 +389,7 @@ def render_timeline(
     target: str = "final",
     out_path: Path | None = None,
     ass_file: Path | None = None,
+    force: bool = False,
     log: Callable[[str], None] | None = None,
 ) -> Path:
     if target not in ("final", "proxy"):
@@ -314,6 +406,17 @@ def render_timeline(
         out_w, out_h = width, height
     else:
         out_w, out_h = _even(width // 2), _even(height // 2)
+
+    # FIX-A: idempotent finals. Identical content key as the latest final ->
+    # reuse it instead of minting final_vN+1; --force overrides.
+    content_key: str | None = None
+    if target == "final":
+        content_key = final_content_key(project, timeline, ass_file=ass_file, target=target)
+        if not force and out_path is None:
+            latest = _latest_final_with_key(project)
+            if latest is not None and latest[1] == content_key:
+                log(f"final up-to-date (content key match): reusing {latest[0].name}")
+                return latest[0]
 
     total_ms = timeline.duration_ms or sum(c.duration_ms for c in video_clips)
     total_s = total_ms / 1000.0
@@ -363,15 +466,13 @@ def render_timeline(
                 title_cards, out_w=out_w, tmp_dir=tmp_dir, font=font
             ):
                 vchain += "," + filt
-        vchain += ",format=yuv420p[vout]"
+        # FIX-B: force the output onto the project frame grid — without an
+        # explicit fps the concat of segments can drift the deduced rate
+        # (observed pre-fix: r_frame_rate=143/6 instead of 24/1).
+        vchain += f",fps={fps},format=yuv420p[vout]"
         filter_complex = ";".join([vchain, *audio_stmts])
 
-        if target == "final":
-            enc = ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
-                   "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart"]
-        else:
-            enc = ["-c:v", "libx264", "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                   "-c:a", "aac", "-b:a", "96k", "-ar", "48000"]
+        enc = _enc_params(target)
 
         run_ffmpeg(
             ["-i", str(concat_mp4), *extra_inputs,
@@ -383,6 +484,20 @@ def render_timeline(
              "-t", f"{total_s:.3f}",
              *enc, str(out_path)],
             log=log,
+        )
+
+    if target == "final" and content_key is not None:
+        # FIX-A: every final_vN carries its content key so the next build can
+        # prove it is already up to date.
+        from datetime import datetime, timezone
+
+        out_path.with_suffix(".key.json").write_text(
+            json.dumps(
+                {"final_key": content_key, "target": target,
+                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
+                ensure_ascii=False, indent=2,
+            ) + "\n",
+            encoding="utf-8",
         )
 
     return out_path

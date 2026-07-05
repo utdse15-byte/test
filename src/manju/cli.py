@@ -163,6 +163,8 @@ def build(
     gen: str = typer.Option("missing", help="missing | auto | off"),
     regen_stale: bool = typer.Option(False, "--regen-stale"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    force: bool = typer.Option(False, "--force",
+                               help="re-render even if the final content key matches (FIX-A)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """One-command build: fill gaps → timeline → render → QC → exports (§11)."""
@@ -171,7 +173,7 @@ def build(
     if target not in ("proxy", "final", "exports", "qc"):
         _fail(f"unknown target: {target}")
     result = run_build(_project(), target=target, gen=gen,
-                       regen_stale=regen_stale, dry_run=dry_run, actor=ACTOR)
+                       regen_stale=regen_stale, dry_run=dry_run, force=force, actor=ACTOR)
     if as_json:
         _emit(result.to_dict(), True)
     else:

@@ -144,6 +144,7 @@ def run_build(
     gen: str = "missing",  # missing | auto | off
     regen_stale: bool = False,
     dry_run: bool = False,
+    force: bool = False,  # FIX-A: re-render even when the content key matches
     actor: str = "engine",
 ) -> BuildResult:
     result = BuildResult()
@@ -259,8 +260,14 @@ def run_build(
     if target in ("proxy", "final"):
         from ..media.render import render_timeline
 
-        out = render_timeline(project, timeline, target=target, ass_file=ass_path)
+        finals_before = set(project.final_dir.glob("final_v*.mp4"))
+        out = render_timeline(project, timeline, target=target, ass_file=ass_path, force=force)
         result.render_path = project.relpath(out)
+        if target == "final" and out in finals_before:
+            result.warnings.append(
+                f"final up-to-date (content key match) — reused {out.name}; "
+                "use --force to re-render (FIX-A)"
+            )
         append_event(project.root, actor, "render", {"target": target, "output": result.render_path})
 
     # ---- 6. QC (§9)

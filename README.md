@@ -190,6 +190,23 @@ git *is* the patch engine, why the AI is fully external, the provider protocol,
 cost guardrails, and the FFmpeg pipeline — is in
 [docs/DESIGN_v2.2.md](docs/DESIGN_v2.2.md) (current; v2.1 kept for history).
 
+## Frame-grid rule and idempotent finals
+
+Every clip duration is snapped to the frame grid by the timeline compiler
+(FIX-B): `frames = max(1, round(duration_ms * fps / 1000))`, then
+`snapped_ms = max(1, round(frames * 1000 / fps))` — e.g. 1200ms @ 24fps is
+28.8 frames → 29 frames → 1208ms. Non-frame-aligned durations cannot render
+faithfully: encoders round each segment independently and the drift
+accumulates across the concat. The final compositing chain also forces
+`fps=<project fps>`, and QC asserts both `r_frame_rate == fps` and
+`|final − timeline| ≤ 1 frame`.
+
+Finals are idempotent (FIX-A): each `final_vN.mp4` carries a
+`final_vN.key.json` sidecar recording its content key —
+`hash(timeline JSON + ordered segment keys + ASS hash + audio input hashes +
+encoding params + target)`. `manju build` skips the render when the key
+matches the latest final; `manju build --force` re-renders regardless.
+
 ## Toolbelt (§2.5)
 
 P0 tools are pinned via the `tools` extra (`pip install -e ".[tools]"`):
