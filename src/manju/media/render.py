@@ -367,19 +367,37 @@ def final_content_key(
     return cache_key(payload)
 
 
+def _read_key_sidecar(media_path: Path) -> str | None:
+    sidecar = media_path.with_suffix(".key.json")
+    if not sidecar.exists():
+        return None
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        return str(data.get("final_key", "")) or None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _write_key_sidecar(media_path: Path, content_key: str, target: str) -> None:
+    from datetime import datetime, timezone
+
+    media_path.with_suffix(".key.json").write_text(
+        json.dumps(
+            {"final_key": content_key, "target": target,
+             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
+            ensure_ascii=False, indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _latest_final_with_key(project: Project) -> tuple[Path, str] | None:
     finals = sorted(project.final_dir.glob("final_v*.mp4"))
     if not finals:
         return None
     latest = finals[-1]
-    sidecar = latest.with_suffix(".key.json")
-    if not sidecar.exists():
-        return None
-    try:
-        data = json.loads(sidecar.read_text(encoding="utf-8"))
-        return latest, str(data.get("final_key", ""))
-    except (json.JSONDecodeError, OSError):
-        return None
+    key = _read_key_sidecar(latest)
+    return (latest, key) if key is not None else None
 
 
 def render_timeline(
@@ -407,16 +425,22 @@ def render_timeline(
     else:
         out_w, out_h = _even(width // 2), _even(height // 2)
 
-    # FIX-A: idempotent finals. Identical content key as the latest final ->
-    # reuse it instead of minting final_vN+1; --force overrides.
-    content_key: str | None = None
-    if target == "final":
-        content_key = final_content_key(project, timeline, ass_file=ass_file, target=target)
-        if not force and out_path is None:
+    # FIX-A: idempotent renders. Identical content key -> reuse instead of
+    # re-encoding; --force overrides. Finals compare against the latest
+    # final_vN's sidecar; the (overwritable) proxy compares against its own.
+    content_key = final_content_key(project, timeline, ass_file=ass_file, target=target)
+    if not force and out_path is None:
+        if target == "final":
             latest = _latest_final_with_key(project)
             if latest is not None and latest[1] == content_key:
                 log(f"final up-to-date (content key match): reusing {latest[0].name}")
                 return latest[0]
+        else:
+            proxy_path = project.proxy_dir / "proxy.mp4"
+            existing = _read_key_sidecar(proxy_path)
+            if proxy_path.exists() and existing == content_key:
+                log("proxy up-to-date (content key match): reusing proxy.mp4")
+                return proxy_path
 
     total_ms = timeline.duration_ms or sum(c.duration_ms for c in video_clips)
     total_s = total_ms / 1000.0
@@ -486,18 +510,8 @@ def render_timeline(
             log=log,
         )
 
-    if target == "final" and content_key is not None:
-        # FIX-A: every final_vN carries its content key so the next build can
-        # prove it is already up to date.
-        from datetime import datetime, timezone
-
-        out_path.with_suffix(".key.json").write_text(
-            json.dumps(
-                {"final_key": content_key, "target": target,
-                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
-                ensure_ascii=False, indent=2,
-            ) + "\n",
-            encoding="utf-8",
-        )
+    # FIX-A: every render carries its content key so the next build can prove
+    # it is already up to date (finals: append-only sidecars; proxy: its own).
+    _write_key_sidecar(out_path, content_key, target)
 
     return out_path

@@ -260,6 +260,25 @@ def _existence_timeline(project, report, timeline: Timeline, probe) -> None:
 
 
 def _technical_clips(project, report, timeline: Timeline, probe) -> None:
+    # Frame-grid hint (review open issue #2): the compiler always emits
+    # frame-aligned durations (FIX-B), so an off-grid clip means a
+    # hand-authored/edited timeline — name the cause instead of letting the
+    # final fps/duration checks fail mysteriously later.
+    from ..timeline.compiler import snap_to_frame_grid
+
+    for clip in timeline.tracks.video:
+        snapped = snap_to_frame_grid(clip.duration_ms, timeline.fps)
+        if snapped != clip.duration_ms:
+            report.add(
+                "warn", "technical", clip.shot,
+                f"clip duration {clip.duration_ms}ms is not frame-aligned at "
+                f"{timeline.fps}fps ({clip.duration_ms * timeline.fps / 1000:.2f} frames) "
+                "— hand-authored timeline? nearest grid value is "
+                f"{snapped}ms",
+                suggestion="snap durations to the FIX-B rule: "
+                           "round(round(ms*fps/1000)*1000/fps); see README 'Frame-grid rule'",
+            )
+
     for clip in timeline.tracks.video:
         try:
             path = project.resolve(clip.source)

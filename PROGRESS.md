@@ -50,3 +50,19 @@ TTS manifest lands (M3); fill a real video-API manifest and run a paid
 end-to-end.
 
 **Open issues:** see REPORTS/REVIEW-01-RESPONSE.md "newly discovered issues".
+
+---
+
+## 2026-07-05 — round A: review open-issue closure
+
+**Done:** proxy renders now carry proxy.key.json and skip re-encodes on a
+content-key match (--force bypasses) — open issue #3; QC names the frame
+grid when a hand-authored timeline carries off-grid durations, with the
+FIX-B rule in the suggestion — open issue #2; captions-manual build
+idempotency pinned by test (deterministic ASS recompile keeps the key
+stable; edits to the human SRT change it by exactly one new final) — open
+issue #1 audit closed. 213 tests green.
+
+**Next:** M3 voice/TTS pipeline wiring compute_voice_hash; build explainer.
+
+**Open issues:** baseline count reconciliation (#4) still with the reviewer.
