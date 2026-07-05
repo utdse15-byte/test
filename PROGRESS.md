@@ -143,3 +143,21 @@ WenQuanYi; Chromium deliberately absent — html tests skip and the drawtext
 fallback is itself the tested path), plus the M0 acceptance smoke (build
 twice → one final, r_frame_rate=24/1). Human `manju status` now prints the
 voice-state line. Fresh-clone verification of the full tree: 242/242.
+
+---
+
+## 2026-07-05 — round H: showcase film《深夜信号》
+
+**Done:** a real 10s vertical short built purely through the CLI:
+HTML-rendered caption cards (Chromium html_render), Ken Burns from a
+rendered still, title card overlay, burned CJK captions, ambient BGM,
+1080×1920@24/1, QC passed; second build reused the final via content key;
+`manju redo --provider` + `manju select` + incremental re-render exercised
+live, with `manju explain` correctly predicting the re-render beforehand.
+
+**Finding (recorded, not churned):** with any image in media/refs/, the
+§8.4 fallback chain routes EVERY missing shot to ffmpeg_kenburns with that
+same generic image (still_frame_motion precedes caption_card by design).
+Correct per spec but a UX footgun for dialogue-only shots — candidate
+improvement: advisory when kenburns used the generic refs_dir fallback
+rather than a shot-specific reference. Open issue for the next review.
