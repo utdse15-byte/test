@@ -192,3 +192,16 @@ extra pinned. PexelsStockProvider scaffolded with offline scripted-transport
 verification (search→orientation-matched rendition→download→lineage);
 live verification honestly pending a free PEXELS_API_KEY. Query resolution:
 params.query > scene stock_query > action line > scene name. 251 tests green.
+
+---
+
+## 2026-07-05 — round L: system assessment + idea-stage scaffolds
+
+**Done:** REPORTS/SYSTEM-ASSESSMENT.md answers the goal question claim by
+claim with executable evidence — the idea→film chain per stage, the three
+modes (AI-auto via MCP wire e2e + live showcase; human-manual via the M0
+acceptance; handoff via locks/manual-truth states), and two honest
+qualifiers (paid text-to-video unexercised without a vendor account;
+desktop draft opening needs the apps). `manju new` now scaffolds
+story/brief.md, outline.md, script.md so every takeover finds the same
+idea-stage shape. 252 tests green.

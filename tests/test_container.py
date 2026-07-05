@@ -109,3 +109,15 @@ def test_register_take_from_imports_copies_even_with_move_true(tmp_project):
     assert src.exists(), "imports file must survive registration"
     assert take.media_path is not None and take.media_path.exists()
     assert take.media_path != src
+
+
+def test_new_scaffolds_story_templates(tmp_path):
+    """The idea stage gets its three files on day one (§2: creation belongs
+    to the director; the engine hands over a consistent starting shape)."""
+    from manju.core.container import Project
+
+    project = Project.create(tmp_path / "示例", git_init=False)
+    for fname, marker in (("brief.md", "一句话创意"), ("outline.md", "大纲"),
+                          ("script.md", "剧本")):
+        content = (project.root / "story" / fname).read_text(encoding="utf-8")
+        assert marker in content

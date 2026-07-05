@@ -106,6 +106,17 @@ class Project:
             bpath = root / "bible" / f"{bible_file}.yaml"
             if not bpath.exists():
                 write_yaml(bpath, {})
+        # the idea stage (§2: creation belongs to the director) gets scaffolds
+        # so a takeover always finds the same three files in the same order
+        story_templates = {
+            "brief.md": "# 一句话创意\n\n<!-- 一句话说清:谁、在哪、发生什么、为什么抓人 -->\n",
+            "outline.md": "# 大纲\n\n<!-- 三幕/起承转合;每行一个节拍,后续一节拍≈一镜头 -->\n",
+            "script.md": "# 剧本\n\n<!-- 分场与对白;对白会成为 shots/*.yaml 的 dialogue.text -->\n",
+        }
+        for fname, template in story_templates.items():
+            spath = root / "story" / fname
+            if not spath.exists():
+                spath.write_text(template, encoding="utf-8")
         (root / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
         (root / "events.jsonl").touch()
 
