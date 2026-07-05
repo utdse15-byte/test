@@ -171,3 +171,24 @@ reference image (params / bible / refs_dir_fallback) in the take's lineage
 (§4.2), and the build now advises when a shot fell back to a generic
 media/refs image — with the three shot-specific alternatives named.
 Explicit params.image stays silent. 243 tests green.
+
+---
+
+## 2026-07-05 — rounds J+K: competitive study + Edge TTS + stock footage
+
+**Done (J):** studied MoneyPrinterTurbo, ShortGPT, NarratoAI, edge-tts live;
+REPORTS/COMPETITIVE-STUDY.md maps their features against ours: adopted the
+free keyless Edge TTS default and the stock-footage provider pattern;
+deliberately rejected in-tool LLM scripting (against §0), auto-publishing,
+batch mode, web UI (§1-⑦); identified our differentiators (deterministic
+rebuilds, locks/takeover, editor drafts, ledger) that none of them have.
+
+**Done (K):** EdgeTtsProvider — a REAL keyless neural cloud TTS through the
+§8.6 module:Class escape hatch (Edge speaks WebSocket, precisely not the
+generic REST shape), live-verified: `manju build` synthesized 4 zh-CN
+neural voice lines for《深夜信号》, the timeline recompiled with
+voice-driven durations (§6), voiced final delivered. `manju[edgetts]`
+extra pinned. PexelsStockProvider scaffolded with offline scripted-transport
+verification (search→orientation-matched rendition→download→lineage);
+live verification honestly pending a free PEXELS_API_KEY. Query resolution:
+params.query > scene stock_query > action line > scene name. 251 tests green.

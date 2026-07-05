@@ -197,16 +197,35 @@ def tts_providers() -> dict[str, ProviderManifest]:
     return {pid: m for pid, m in manifests.items() if m.type == "tts"}
 
 
-def get_tts_provider(name: str | None = None, **kwargs) -> GenericTtsProvider:
+def get_tts_provider(name: str | None = None, **kwargs):
+    """Resolve a TTS provider by manifest id. ``adapter: generic_tts`` gets
+    the config-driven provider; anything else is the §8.6 ``module:Class``
+    escape hatch (e.g. ``manju.providers.edge_tts:EdgeTtsProvider`` — Edge TTS
+    speaks WebSocket, which the generic REST adapter deliberately does not)."""
     providers = tts_providers()
     if name is None:
         if not providers:
             raise TtsUnavailable(
                 "no TTS provider configured — fill a tts manifest (§8.6, type: tts, "
-                "adapter: generic_tts) under ~/.manju/providers/, or drop a "
-                "voice_take_NN.wav into media/gen/<shot>/ yourself (manual voice)"
+                "adapter: generic_tts, or the free keyless "
+                "manju.providers.edge_tts:EdgeTtsProvider) under ~/.manju/providers/, "
+                "or drop a voice_take_NN.wav into media/gen/<shot>/ yourself"
             )
         name = sorted(providers)[0]
     if name not in providers:
         raise TtsUnavailable(f"unknown TTS provider {name!r}; configured: {sorted(providers)}")
-    return GenericTtsProvider(providers[name], **kwargs)
+    manifest = providers[name]
+    if manifest.adapter == GENERIC_TTS_ADAPTER:
+        return GenericTtsProvider(manifest, **kwargs)
+    module_name, _, class_name = manifest.adapter.partition(":")
+    if not class_name:
+        raise TtsUnavailable(
+            f"{name}: adapter {manifest.adapter!r} is neither generic_tts nor 'module:Class'"
+        )
+    try:
+        import importlib
+
+        cls = getattr(importlib.import_module(module_name), class_name)
+    except (ImportError, AttributeError) as exc:
+        raise TtsUnavailable(f"{name}: cannot load adapter {manifest.adapter!r}: {exc}") from exc
+    return cls(manifest, **kwargs)

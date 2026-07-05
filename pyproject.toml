@@ -21,6 +21,7 @@ dev = ["pytest>=7.4", "hypothesis>=6.100"]
 jianying = ["pyJianYingDraft==0.2.7"]  # 剪映草稿主路 (M1)
 capcut = ["pycapcut==0.0.3"]           # 国际 CapCut 草稿 (M1)
 mcpvideo = ["mcp-video==1.5.1"]        # QC 质量门 / 媒体分析 / Agent 工具带 (M2/M3)
+edgetts = ["edge-tts==7.2.8"]          # 免费无 key 的云 TTS(竞品研究 round J)
 
 [project.scripts]
 manju = "manju.cli:app"
