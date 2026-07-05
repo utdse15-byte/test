@@ -132,3 +132,14 @@ build --target qc (offline self-fill via caption_card) → explain →
 select_take → propose → events all recorded as actor=ai; dangerous surface
 (unlock/gc/pack/import) re-asserted absent. Fresh-clone suite verification
 follows the push. 242 tests green.
+
+---
+
+## 2026-07-05 — round G: CI gate + status voice line
+
+**Done:** GitHub Actions workflow (.github/workflows/ci.yml): full suite on
+push/PR with the same system deps as local (ffmpeg, tesseract+chi_sim,
+WenQuanYi; Chromium deliberately absent — html tests skip and the drawtext
+fallback is itself the tested path), plus the M0 acceptance smoke (build
+twice → one final, r_frame_rate=24/1). Human `manju status` now prints the
+voice-state line. Fresh-clone verification of the full tree: 242/242.

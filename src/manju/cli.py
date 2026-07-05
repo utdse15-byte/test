@@ -84,6 +84,9 @@ def status(as_json: bool = typer.Option(False, "--json")):
     typer.echo(f"项目  {info['project']}  {info['resolution']}  mode={info['mode']}")
     typer.echo(f"镜头  共 {info['shots_total']}: " + ", ".join(
         f"{k}={len(v)}" for k, v in info["shots_by_state"].items()) if info["shots_by_state"] else "镜头  0")
+    if info.get("voice_by_state"):
+        typer.echo("配音  " + ", ".join(
+            f"{k}={len(v)}" for k, v in info["voice_by_state"].items()))
     tl = info["timeline"]
     typer.echo(f"时间线  {'✓ ' + str(tl['duration_ms']) + 'ms (' + str(tl['mode']) + ')' if tl['exists'] else '—'}")
     typer.echo(f"成片  {info['latest_final'] or '—'}")

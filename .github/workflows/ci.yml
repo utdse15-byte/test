@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The same system deps the suite exercises locally: ffmpeg for the
+      # render pipeline, tesseract (+chi_sim) for must_show OCR machine
+      # checks, WenQuanYi for CJK caption burns. Chromium is NOT installed —
+      # the html_render tests skip cleanly and caption cards fall back to
+      # drawtext (§8.4), which is itself under test.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg tesseract-ocr tesseract-ocr-chi-sim fonts-wqy-zenhei
+
+      - name: Install package with all extras
+        run: pip install -e ".[dev,jianying,capcut,mcpvideo]"
+
+      - name: Run the full test suite
+        run: pytest -q
+
+      - name: M0 acceptance smoke (build twice = one final, 24/1 fps)
+        run: |
+          python tests/fixtures/make_sample.py /tmp/e2e --shots 6
+          cd /tmp/e2e/雨夜便利店.manju
+          manju build
+          manju build
+          test "$(ls renders/final/*.mp4 | wc -l)" = "1"
+          ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate \
+            -of default=nw=1 renders/final/final_v1.mp4 | grep -qx 'r_frame_rate=24/1'
