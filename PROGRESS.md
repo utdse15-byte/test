@@ -121,3 +121,14 @@ verdicts from the explainer in the header (final/proxy skip-or-re-render at
 a glance), QC mid-point frames as posters on selected takes; QC now surfaces
 voice staleness as info items with the `manju voice` suggestion (§4.3:
 advisory, never auto-redone). 240 tests green.
+
+---
+
+## 2026-07-05 — round F: MCP copilot e2e + fresh-clone verification
+
+**Done:** the M2 copilot acceptance shape driven over the real MCP wire in
+one server session: status → update_shot (the only MCP write path) → check →
+build --target qc (offline self-fill via caption_card) → explain →
+select_take → propose → events all recorded as actor=ai; dangerous surface
+(unlock/gc/pack/import) re-asserted absent. Fresh-clone suite verification
+follows the push. 242 tests green.
