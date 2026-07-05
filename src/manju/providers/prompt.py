@@ -1,0 +1,198 @@
+"""Prompt compilation (§8.5).
+
+The template layer fills a shot's picture-bearing fields — plus excerpts of the
+Bible entries it references — into a prompt. Where an agent has hand-written a
+prompt for a specific model, it is the best prompt compiler there is, so
+``generation.prompt_override`` is passed through **verbatim** and this module
+does nothing to it (§8.5).
+
+Everything else is deterministic: the same shot + Bible always compile to the
+same prompt regardless of dict key order (excerpt keys are sorted; the
+``characters`` list keeps its authored order because order is meaningful).
+Compiled prompts are archived on each take sidecar / run log so every yuan spent
+is reproducible (§8.5).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..core.models import Camera, ShotSpec
+
+# -- camera enum -> natural phrase (small fixed mapping; unknowns degrade to the
+#    raw value with underscores turned to spaces) --------------------------------
+_SHOT_SIZE = {
+    "extreme_wide": "extreme wide shot",
+    "wide": "wide shot",
+    "medium": "medium shot",
+    "close_up": "close-up shot",
+    "extreme_close_up": "extreme close-up shot",
+}
+_MOVEMENT = {
+    "static": "static camera",
+    "slow_push_in": "slow push-in",
+    "push_in": "push in",
+    "pull_out": "pull out",
+    "pan_left": "pan left",
+    "pan_right": "pan right",
+    "tilt_up": "tilt up",
+    "tilt_down": "tilt down",
+    "handheld": "handheld camera",
+    "tracking": "tracking shot",
+    "orbit": "orbiting camera",
+    "zoom_in": "zoom in",
+    "zoom_out": "zoom out",
+}
+_ANGLE = {
+    "eye_level": "eye-level angle",
+    "low_angle": "low angle",
+    "high_angle": "high angle",
+    "birds_eye": "bird's-eye view",
+    "worms_eye": "worm's-eye view",
+    "dutch": "dutch angle",
+    "over_shoulder": "over-the-shoulder angle",
+}
+
+# placeholder names available to a custom template (§8.5)
+PLACEHOLDERS = (
+    "scene",
+    "characters",
+    "camera",
+    "action",
+    "emotion",
+    "must_show",
+    "avoid",
+    "dialogue",
+)
+
+
+class _Blank(dict):
+    """Mapping for ``str.format_map`` where any missing placeholder renders as
+    an empty string instead of raising ``KeyError`` (§8.5)."""
+
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def _fmt(value: Any) -> str:
+    """Render a Bible value to a flat, deterministic string."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(s for s in (_fmt(v) for v in value) if s)
+    if isinstance(value, dict):
+        return ", ".join(
+            f"{k}: {_fmt(value[k])}" for k in sorted(value) if _fmt(value[k])
+        )
+    return str(value).strip()
+
+
+def _excerpt(entry: Any, *, skip: tuple[str, ...] = ("locked",)) -> str:
+    """Join an entry's ``k: v`` pairs in sorted key order, skipping ``skip``
+    keys (``locked`` is lock bookkeeping, not part of the picture, §4.3)."""
+    if not isinstance(entry, dict):
+        return ""
+    parts = []
+    for key in sorted(entry):
+        if key in skip:
+            continue
+        rendered = _fmt(entry[key])
+        if rendered:
+            parts.append(f"{key}: {rendered}")
+    return ", ".join(parts)
+
+
+def _scene_field(shot: ShotSpec, bible: dict[str, dict]) -> str:
+    if not shot.scene:
+        return ""
+    return _excerpt(bible.get(shot.scene) or {})
+
+
+def _characters_field(shot: ShotSpec, bible: dict[str, dict]) -> str:
+    parts = []
+    for cid in shot.characters:  # authored order preserved (meaningful)
+        entry = bible.get(cid) or {}
+        entry = entry if isinstance(entry, dict) else {}
+        name = str(entry.get("name") or cid).strip()
+        rest = _excerpt(entry, skip=("locked", "name"))
+        parts.append(f"{name} ({rest})" if rest else name)
+    return "; ".join(parts)
+
+
+def _camera_field(camera: Camera) -> str:
+    def phrase(mapping: dict[str, str], value: str | None) -> str:
+        value = (value or "").strip()
+        if not value:
+            return ""
+        return mapping.get(value, value.replace("_", " "))
+
+    parts = [
+        phrase(_SHOT_SIZE, camera.shot_size),
+        phrase(_MOVEMENT, camera.movement),
+        phrase(_ANGLE, camera.angle),
+    ]
+    return ", ".join(p for p in parts if p)
+
+
+def _prefixed(label: str, items: list[Any] | None) -> str:
+    vals = [s for s in (_fmt(i) for i in (items or [])) if s]
+    return f"{label}: {', '.join(vals)}" if vals else ""
+
+
+def _fields(shot: ShotSpec, bible: dict[str, dict]) -> dict[str, str]:
+    return {
+        "scene": _scene_field(shot, bible),
+        "characters": _characters_field(shot, bible),
+        "camera": _camera_field(shot.camera),
+        "action": (shot.action.main or "").strip(),
+        "emotion": (shot.action.emotion or "").strip(),
+        "must_show": _prefixed("must clearly show", shot.quality.must_show),
+        "avoid": _prefixed("avoid", shot.quality.avoid),
+        "dialogue": (shot.dialogue.text or "").strip(),
+    }
+
+
+def _default_layout(fields: dict[str, str]) -> str:
+    """Clean multi-line layout of the fields, skipping empty sections."""
+    lines: list[str] = []
+    if fields["scene"]:
+        lines.append(f"Scene: {fields['scene']}")
+    if fields["characters"]:
+        lines.append(f"Characters: {fields['characters']}")
+    if fields["camera"]:
+        lines.append(f"Camera: {fields['camera']}")
+    if fields["action"]:
+        lines.append(f"Action: {fields['action']}")
+    if fields["emotion"]:
+        lines.append(f"Emotion: {fields['emotion']}")
+    if fields["must_show"]:
+        lines.append(fields["must_show"])
+    if fields["avoid"]:
+        lines.append(fields["avoid"])
+    if fields["dialogue"]:
+        lines.append(f'Dialogue: "{fields["dialogue"]}"')
+    return "\n".join(lines)
+
+
+def compile_prompt(
+    shot: ShotSpec, bible: dict[str, dict], template: str | None = None
+) -> str:
+    """Compile a shot into a generation prompt (§8.5).
+
+    - ``generation.prompt_override`` non-empty → returned VERBATIM (the agent is
+      the best prompt compiler; the engine passes it through untouched).
+    - ``template`` given → filled via ``str.format_map`` with the placeholders in
+      :data:`PLACEHOLDERS`; any missing placeholder renders as an empty string.
+    - otherwise → a deterministic multi-line default layout, empty sections
+      skipped.
+    """
+    override = shot.generation.prompt_override
+    if isinstance(override, str) and override.strip():
+        return override  # verbatim — do not normalize or strip
+
+    fields = _fields(shot, bible)
+    if template is not None:
+        return template.format_map(_Blank(fields))
+    return _default_layout(fields)
