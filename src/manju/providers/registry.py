@@ -50,18 +50,83 @@ def register_provider(provider: Provider) -> None:
     _REGISTRY[provider.id] = provider
 
 
+# --------------------------------------------------------------- manifests
+# Config-declared providers (§8.2/§8.6): each provider.yaml becomes an
+# instance — generic_cloud manifests get the built-in GenericCloudProvider,
+# anything else resolves the "module:Class" escape hatch. Instances are
+# cached per manifest-file mtime so edits (and test overrides via
+# MANJU_PROVIDERS_DIR) are picked up without a process restart.
+
+_manifest_cache: tuple[tuple, dict[str, Provider], list[str]] | None = None
+
+
+def _manifest_state() -> tuple[dict[str, Provider], list[str]]:
+    global _manifest_cache
+    from .manifest import GENERIC_ADAPTER, load_manifests, providers_dir
+
+    root = providers_dir()
+    key_parts = [str(root)]
+    if root.is_dir():
+        for p in sorted(root.glob("*/provider.yaml")):
+            key_parts.append(f"{p}:{p.stat().st_mtime_ns}")
+    key = tuple(key_parts)
+    if _manifest_cache is not None and _manifest_cache[0] == key:
+        return _manifest_cache[1], _manifest_cache[2]
+
+    manifests, errors = load_manifests()
+    providers: dict[str, Provider] = {}
+    for pid, manifest in manifests.items():
+        if pid in _FALLBACK_MAP.values() or pid == "manual_import":
+            errors.append(f"{pid}: manifest id shadows a built-in provider — skipped")
+            continue
+        try:
+            if manifest.adapter == GENERIC_ADAPTER:
+                from .generic_cloud import GenericCloudProvider
+
+                providers[pid] = GenericCloudProvider(manifest)
+            else:  # escape hatch: "package.module:ClassName"
+                module_name, _, class_name = manifest.adapter.partition(":")
+                if not class_name:
+                    raise ValueError(f"adapter {manifest.adapter!r} is not 'module:Class'")
+                import importlib
+
+                cls = getattr(importlib.import_module(module_name), class_name)
+                providers[pid] = cls(manifest)
+        except Exception as exc:  # a broken adapter never breaks the registry
+            errors.append(f"{pid}: {exc}")
+    _manifest_cache = (key, providers, errors)
+    return providers, errors
+
+
+def get_manifest(name: str):
+    """The ProviderManifest for a config-declared provider, or None."""
+    from .manifest import load_manifests
+
+    return load_manifests()[0].get(name)
+
+
+def manifest_errors() -> list[str]:
+    """Config problems collected while building the registry (for doctor)."""
+    _, errors = _manifest_state()
+    return errors
+
+
 def available_providers() -> dict[str, Provider]:
     _ensure_builtins()
-    return dict(_REGISTRY)
+    merged = dict(_REGISTRY)
+    manifest_providers, _ = _manifest_state()
+    for pid, provider in manifest_providers.items():
+        merged.setdefault(pid, provider)
+    return merged
 
 
 def get_provider(name: str) -> Provider:
-    _ensure_builtins()
+    providers = available_providers()
     try:
-        return _REGISTRY[name]
+        return providers[name]
     except KeyError:
         raise KeyError(
-            f"unknown provider {name!r}; available: {sorted(_REGISTRY)}"
+            f"unknown provider {name!r}; available: {sorted(providers)}"
         ) from None
 
 
@@ -69,10 +134,21 @@ def fallback_chain(shot: ShotSpec) -> list[str]:
     """Map ``shot.generation.fallback`` to providers available today (§8.4).
 
     Unknown/unavailable steps are skipped; the chain is guaranteed to end at the
-    network-independent ``caption_card`` provider so it can never dead-end."""
+    network-independent ``caption_card`` provider so it can never dead-end.
+
+    A step with no local mapping (e.g. ``image_to_video``) resolves to the
+    first config-declared provider advertising that capability (§8.6), so a
+    filled-in manifest slots straight into existing shots' fallback chains."""
+    manifest_providers, _ = _manifest_state()
     chain: list[str] = []
     for step in shot.generation.fallback:
         name = _FALLBACK_MAP.get(step)
+        if name is None:
+            name = next(
+                (pid for pid, p in sorted(manifest_providers.items())
+                 if step in getattr(getattr(p, "manifest", None), "capabilities", [])),
+                None,
+            )
         if name and name not in chain:
             chain.append(name)
     # ensure caption_card is the final element

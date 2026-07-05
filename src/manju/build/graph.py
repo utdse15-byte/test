@@ -88,6 +88,29 @@ def _target_duration_ms(project: Project, shot, rules) -> int:
     return rules.timing.default_shot_ms
 
 
+def _estimate_shot_cost(shot, duration_ms: int) -> tuple[float, str | None]:
+    """§8.3 dry-run pricing from provider manifests (§8.6). The price is taken
+    from the provider that would actually run first: the shot's explicit
+    provider, else the first cloud provider on its fallback chain. Local
+    providers are free; a missing/broken manifest prices as 0 (doctor flags it)."""
+    try:
+        from ..providers.manifest import estimate_cost
+        from ..providers.registry import fallback_chain, get_manifest
+
+        names = ([shot.generation.provider] if shot.generation.provider else []) \
+            + fallback_chain(shot)
+        for name in names:
+            manifest = get_manifest(name)
+            if manifest is not None:
+                return (
+                    estimate_cost(manifest, duration_ms, shot.generation.candidates),
+                    manifest.cost.currency,
+                )
+    except Exception:  # pricing is advisory; never blocks planning
+        pass
+    return 0.0, None
+
+
 def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
                      gen: str, regen_stale: bool) -> list[dict[str, Any]]:
     rules = project.load_rules()
@@ -99,14 +122,17 @@ def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
         shot = project.load_shot(st.shot_id)
         if shot.generation.strategy == "manual":
             continue  # this shot is explicitly waiting for a human import
+        duration_ms = _target_duration_ms(project, shot, rules)
+        cost, currency = _estimate_shot_cost(shot, duration_ms)
         plan.append(
             {
                 "shot": st.shot_id,
                 "reason": st.state.value,
                 "candidates": shot.generation.candidates,
-                "duration_ms": _target_duration_ms(project, shot, rules),
+                "duration_ms": duration_ms,
                 "provider": shot.generation.provider or "auto(fallback chain)",
-                "estimated_cost": 0.0,  # local providers are free; cloud adapters (M3) price here
+                "estimated_cost": cost,
+                "currency": currency,
             }
         )
     return plan
@@ -258,6 +284,25 @@ def run_build(
             from ..exporters.jianying import export_jianying
 
             result.exports["jianying"] = project.relpath(export_jianying(project, timeline))
+            # dual-path (decision 8): native pyJianYingDraft draft is primary;
+            # its absence is a note, never a build failure (§14 fallback exits)
+            try:
+                from ..exporters.native_draft import export_jianying_native
+
+                result.exports["jianying_native"] = project.relpath(
+                    export_jianying_native(project, timeline)
+                )
+            except Exception as exc:
+                result.warnings.append(f"jianying native draft skipped: {exc}")
+        if "capcut" in profiles:
+            try:
+                from ..exporters.native_draft import export_capcut_native
+
+                result.exports["capcut"] = project.relpath(
+                    export_capcut_native(project, timeline)
+                )
+            except Exception as exc:
+                result.warnings.append(f"capcut draft skipped: {exc}")
 
     append_event(project.root, actor, "build",
                  {"target": target, "ok": result.ok, "render": result.render_path})
