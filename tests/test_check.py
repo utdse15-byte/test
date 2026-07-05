@@ -83,3 +83,28 @@ def test_secret_pattern_in_story_markdown(tmp_project):
     brief.write_text("# 创意\n\n临时把密钥贴这里:sk-" + "a" * 30 + "\n", encoding="utf-8")
     text = _errors_text(tmp_project)
     assert "API key" in text
+
+
+def test_unregistered_gen_media_flagged(tmp_project, add_shot, make_take):
+    """Toolbelt write-back rule (§2.5): media dropped into media/gen without a
+    sidecar is flagged; registered takes and voice files are not."""
+    from manju.core.check import run_check
+    from manju.core.spec import compute_spec_hash
+
+    shot = add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", compute_spec_hash(shot, tmp_project.load_bible()))
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name)
+    )
+    assert run_check(tmp_project).ok
+
+    gen_dir = tmp_project.takes_dir("S001")
+    (gen_dir / "voice_take_01.wav").write_bytes(b"fake")  # voice: exempt by name
+    report = run_check(tmp_project)
+    assert not any("unregistered" in w for w in report.warnings)
+
+    (gen_dir / "sneaky_edit.mp4").write_bytes(b"fake")  # bypassed write-back
+    report = run_check(tmp_project)
+    hits = [w for w in report.warnings if "unregistered" in w and "sneaky_edit" in w]
+    assert hits and "manju select" in hits[0]
+    assert report.ok  # a warning, not a build-blocking error

@@ -152,23 +152,45 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.1.md](docs/DESIGN_v2.1.md
   staleness, the pure-function timeline compiler, `check`, events, and the
   12-shot regression fixture (`tests/fixtures/make_sample.py`) all implemented
   and unit-tested.
-- **M1 — JianYing export.** 🚧 Partial: SRT/ASS style engine, OTIO, and a
-  pyJianYingDraft exporter skeleton.
+- **M1 — draft exports (JianYing dual-path + international).** ✅ Structural:
+  SRT/ASS style engine, OTIO, and the dual-path JianYing export (decision 8) —
+  a native pyJianYingDraft draft as the primary, the diff-stable skeleton +
+  lint as the secondary, capcut-cli lint behind an adapter wall, pycapcut for
+  international CapCut. Opening in the pinned desktop apps is the remaining
+  human verification step (§14).
 - **M2 — AI collaboration layer.** ✅ Done: `skills/manju/SKILL.md` playbook,
   `events.jsonl`, full `--json` coverage, the stdio MCP server (`manju
   serve-mcp`, with `unlock`/`gc` absent by design and lock-violating edits
   rejected with rollback), `manju propose`, and the `manju auto` shell.
-- **M3 — cloud generation providers.** 🚧 Groundwork: the async provider base
-  (submit/poll/download) with SQLite-ledger resume-polling (a restart re-polls,
-  never resubmits), per-call cost accounting, prompt compilation (§8.5), and
-  the local fallback providers (kenburns/caption_card). Next: the first real
-  cloud video adapter and cloud TTS, written against a concrete API doc.
+- **M3 — cloud generation + content QC.** ✅ Engine-side done: the
+  config-driven **generic cloud adapter** (§8.6 — onboarding a REST API =
+  filling the ★ fields of a `provider.yaml`, no code; dedicated adapter
+  classes remain the escape hatch), provider manifests with engine-side
+  throttling and dry-run pricing, resume-polling via the SQLite ledger (a
+  restart re-polls, never resubmits), content-review rejection as a
+  first-class failure, and the **machine-checked content QC chain** (§9):
+  must_show assertion-ization via frame-sampled OCR, provenance-aware
+  black/freeze probes, the mcp-video quality gate, and a `qc_vision`
+  manifest slot — all engine-driven, no agent required. What remains is
+  literally a config file: fill `~/.manju/providers/<id>/provider.yaml`
+  for a real vendor and set its key env var.
 - **M4 — experience & cruise.** 🚧 Partial: review board, `repair --auto`,
-  title cards, `gc`, and `doctor` are done; cloud ASR (on demand) remains.
+  title cards, `gc`, and `doctor` (incl. provider-manifest and toolbelt
+  probes) are done; cloud ASR (on demand) remains.
 
 ## Design
 
 The full design rationale — why directory-as-project beats a ZIP container, why
 git *is* the patch engine, why the AI is fully external, the provider protocol,
 cost guardrails, and the FFmpeg pipeline — is in
-[docs/DESIGN_v2.1.md](docs/DESIGN_v2.1.md).
+[docs/DESIGN_v2.2.md](docs/DESIGN_v2.2.md) (current; v2.1 kept for history).
+
+## Toolbelt (§2.5)
+
+P0 tools are pinned via the `tools` extra (`pip install -e ".[tools]"`):
+pyJianYingDraft (JianYing draft primary path), pycapcut (international
+CapCut), mcp-video (QC gate / media analysis / agent toolbelt MCP server).
+Every tool sits behind an adapter wall — `manju doctor` probes each one, and
+absence degrades to an alternative path instead of breaking a milestone.
+Toolbelt products must be written back via `manju select <shot> --file` —
+`manju check` flags unregistered media under `media/gen/` (write-back rule).

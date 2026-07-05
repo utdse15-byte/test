@@ -36,6 +36,16 @@ description: Manju One 视频构建系统的 AI 协作协议——在 Claude Cod
 - **不覆盖 `renders/final/` 与 `media/gen/`**。成片只增版本(`final_v1` → `final_v2`),生成产物只增 take(`take_01` → `take_02`),永不覆盖已有文件。
 - **不把 API key 写进项目**。key 只走环境变量 / 全局配置(`~/.manju/`),永远不进项目目录。`manju check` 会扫描常见 key 模式(`sk-…`、`AKIA…` 等),发现即报错。
 
+## 3.5 工具带产物必须回写登记(§2.5 回写规则)
+
+你可以用 Agent 工具带(mcp-video 等 MCP 工具)绕过构建系统直接处理媒体——这是特性,不是漏洞。但产物必须**回写登记**才算进入项目:
+
+1. 处理结果写到项目外的临时路径,或 `media/imports/` 新文件(新名字,不覆盖任何已有文件)。
+2. `manju select <shot> --file <path>` 登记为 manual take(内部 spec_hash=manual,永不被自动作废)。
+3. **禁止原地覆盖任何已登记文件**(gen 下的 take、imports 下的素材、final)。直接把文件丢进 `media/gen/<shot>/` 而不登记也不行——`manju check` 会把无 sidecar 的媒体标为 unregistered 警告。
+
+构建系统的哈希一致性由此不被旁路破坏。
+
 ## 4. 想改锁定内容 → 写提案,等人批
 
 锁(值哈希锁,§5)是人钉死的决策(如 `dialogue.text`、`duration`、角色外观)。你**不能**自己改锁定字段,也不能 unlock。正规通道:

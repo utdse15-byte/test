@@ -125,6 +125,25 @@ def run_check(project: Project) -> CheckReport:
                 for violation in verify_locks(entry, locked, f"bible/{fname}.yaml:{key}"):
                     report.errors.append(str(violation))
 
+    # ---- toolbelt write-back rule (§2.5): media under media/gen must be
+    # registered takes (sidecar present). An agent that processed media with
+    # toolbelt tools and dropped the result in place bypasses the hash
+    # discipline — flag it and point at the correct on-ramp.
+    from .container import MEDIA_EXTS
+
+    for take_dir in sorted(p for p in project.gen_dir.glob("*") if p.is_dir()):
+        for media in sorted(take_dir.iterdir()):
+            if not media.is_file() or media.suffix.lower() not in MEDIA_EXTS:
+                continue
+            if media.stem.startswith("voice"):
+                continue  # voice takes are discovered by name, not sidecar (§6)
+            if not (take_dir / f"{media.stem}.yaml").exists():
+                report.warnings.append(
+                    f"media/gen/{take_dir.name}/{media.name}: unregistered product — "
+                    f"register it via `manju select {take_dir.name} --file <path>` "
+                    "(toolbelt write-back rule, §2.5)"
+                )
+
     # ---- secret scan (keys never enter the project directory)
     for path in project.root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in SCAN_SUFFIXES:
