@@ -112,7 +112,7 @@ def check(as_json: bool = typer.Option(False, "--json")):
 
 
 @app.command("import")
-def import_(files: list[Path]):
+def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
     """Register media into media/imports (sacred: never deleted, §3)."""
     project = _project()
     registered = []
@@ -127,8 +127,11 @@ def import_(files: list[Path]):
         shutil.copy2(f, dest)
         registered.append(project.relpath(dest))
     append_event(project.root, ACTOR, "import", {"files": registered})
-    for r in registered:
-        typer.secho(f"imported {r}", fg=typer.colors.GREEN)
+    if as_json:
+        _emit({"imported": registered}, True)
+    else:
+        for r in registered:
+            typer.secho(f"imported {r}", fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------------- build
@@ -190,13 +193,17 @@ def redo(
     candidates: Optional[int] = typer.Option(None),
     provider: Optional[str] = typer.Option(None),
     seed: Optional[int] = typer.Option(None),
+    as_json: bool = typer.Option(False, "--json"),
 ):
     """Force new takes for one shot (append-only; existing selection stands)."""
     from .build.graph import redo_shot
 
     takes = redo_shot(_project(), shot_id, candidates=candidates,
                       provider=provider, seed=seed, actor=ACTOR)
-    typer.secho(f"{shot_id}: new takes {', '.join(takes)}", fg=typer.colors.GREEN)
+    if as_json:
+        _emit({"shot": shot_id, "takes": takes}, True)
+    else:
+        typer.secho(f"{shot_id}: new takes {', '.join(takes)}", fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------------ select
@@ -207,6 +214,7 @@ def select(
     shot_id: str,
     take: Optional[str] = typer.Argument(None),
     file: Optional[Path] = typer.Option(None, "--file", help="register a human file as a manual take and select it"),
+    as_json: bool = typer.Option(False, "--json"),
 ):
     """Pick a take (the decision is one line of text — §3)."""
     project = _project()
@@ -223,14 +231,17 @@ def select(
         shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", take)
     )
     append_event(project.root, ACTOR, "select", {"shot": shot_id, "take": take})
-    typer.secho(f"{shot_id}: selected {take}", fg=typer.colors.GREEN)
+    if as_json:
+        _emit({"shot": shot_id, "take": take, "ok": True}, True)
+    else:
+        typer.secho(f"{shot_id}: selected {take}", fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------- lock/unlock
 
 
 @app.command()
-def lock(shot_id: str, field: str):
+def lock(shot_id: str, field: str, as_json: bool = typer.Option(False, "--json")):
     """Seal a field's current value with a hash (§5). Build enforces it."""
     project = _project()
     raw = project.load_shot_raw(shot_id)
@@ -248,7 +259,10 @@ def lock(shot_id: str, field: str):
 
     project.update_shot_raw(shot_id, mutate)
     append_event(project.root, ACTOR, "lock", {"shot": shot_id, "field": field})
-    typer.secho(f"{shot_id}: locked {field}", fg=typer.colors.GREEN)
+    if as_json:
+        _emit({"shot": shot_id, "field": field, "hash": digest}, True)
+    else:
+        typer.secho(f"{shot_id}: locked {field}", fg=typer.colors.GREEN)
 
 
 @app.command()
@@ -270,6 +284,88 @@ def unlock(shot_id: str, field: str):
     project.update_shot_raw(shot_id, mutate)
     append_event(project.root, ACTOR, "unlock", {"shot": shot_id, "field": field})
     typer.secho(f"{shot_id}: unlocked {field}", fg=typer.colors.YELLOW)
+
+
+# ----------------------------------------------------------------- propose
+
+
+@app.command()
+def propose(
+    title: str,
+    body: Optional[str] = typer.Option(None, "--body", help="proposal body text"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Write proposals/NNNN_<slug>.md — the legitimate channel to request a
+    locked-content change (§5). Twin of the MCP `propose` tool; the numbering
+    and slug scheme are REUSED from manju.mcp.tools so the two share one counter.
+    With no --body on a pipe, the body is read from stdin; otherwise it may be
+    empty."""
+    from .core.yamlio import atomic_write_text
+    from .mcp.tools import _next_proposal_number, _slugify  # shared numbering/slug
+
+    project = _project()
+    if body is None:
+        body = "" if sys.stdin.isatty() else sys.stdin.read()
+    project.proposals_dir.mkdir(parents=True, exist_ok=True)
+    number = _next_proposal_number(project.proposals_dir)
+    path = project.proposals_dir / f"{number:04d}_{_slugify(title)}.md"
+    atomic_write_text(path, f"# {title}\n\n{body}\n")
+    rel = project.relpath(path)
+    append_event(project.root, ACTOR, "propose", {"title": title, "path": rel})
+    if as_json:
+        _emit({"path": rel}, True)
+    else:
+        typer.secho(f"proposal → {rel}", fg=typer.colors.GREEN)
+
+
+# -------------------------------------------------------------------- auto
+
+
+# A tiny embedded playbook for when the bundled SKILL.md cannot be found (§10).
+_MINI_PLAYBOOK = (
+    "按照 Manju 操作手册工作(内置精简版):\n"
+    "1. 开工先跑 manju status --json,读 events.jsonl 尾部与 project.yaml 的 mode/ask_before。\n"
+    "2. 每次编辑后必跑 manju check;check 不过不许 build。\n"
+    "3. 一键构建:manju build(补缺→时间线→渲染→QC),再按需 manju export。\n"
+    "4. 花钱/长耗时(视频生成、final render)按 ask_before 先询问,问前先 manju build --dry-run。\n"
+    "5. 禁区:不调 unlock、不动 media/imports、不覆盖 final;想改锁定内容写 proposals/。"
+)
+
+
+@app.command()
+def auto(prompt_text: str):
+    """Autopilot v1 (§10): a thin shell over `claude -p`. Claude Code runs the
+    Manju playbook (SKILL.md) end to end. No LLM SDK — strictly a subprocess."""
+    import subprocess
+
+    import manju
+
+    if shutil.which("claude") is None:
+        _fail("claude CLI not found — autopilot drives Claude Code (§10); "
+              "install it or run the playbook manually")
+    project = _project()
+
+    # Prefer a project-local skill, then the repo-bundled skills/manju/SKILL.md.
+    skill_text: Optional[str] = None
+    for cand in (
+        project.root / "skills" / "manju" / "SKILL.md",
+        Path(manju.__file__).resolve().parents[2] / "skills" / "manju" / "SKILL.md",
+    ):
+        if cand.exists():
+            skill_text = cand.read_text(encoding="utf-8")
+            break
+
+    if skill_text:
+        composed = ("按照以下 Manju 操作手册工作:\n\n" + skill_text
+                    + "\n\n---\n\n任务:" + prompt_text)
+    else:
+        composed = _MINI_PLAYBOOK + "\n\n任务:" + prompt_text
+
+    append_event(project.root, ACTOR, "auto", {"prompt": prompt_text})
+    env = dict(os.environ)
+    env["MANJU_ACTOR"] = "ai"  # every action the driven agent takes is logged as ai
+    proc = subprocess.run(["claude", "-p", composed], cwd=project.root, env=env)
+    raise typer.Exit(proc.returncode)
 
 
 # ---------------------------------------------------------------- qc/repair
@@ -298,7 +394,8 @@ def qc(deep: bool = typer.Option(False), as_json: bool = typer.Option(False, "--
 
 
 @app.command()
-def repair(auto: bool = typer.Option(False, "--auto")):
+def repair(auto: bool = typer.Option(False, "--auto"),
+           as_json: bool = typer.Option(False, "--json")):
     """Execute auto-safe items from repair_plan.yaml (redo/degrade); the rest
     stay for humans (§9). Repair is just 'edit generation params and rebuild'."""
     from .build.graph import redo_shot
@@ -322,7 +419,10 @@ def repair(auto: bool = typer.Option(False, "--auto")):
                 left += 1
         else:
             left += 1
-    typer.echo(f"repaired {done}, remaining for human review: {left}")
+    if as_json:
+        _emit({"repaired": done, "remaining": left}, True)
+    else:
+        typer.echo(f"repaired {done}, remaining for human review: {left}")
 
 
 # ------------------------------------------------------------------ export
@@ -333,6 +433,7 @@ def export(
     jianying: bool = typer.Option(False, "--jianying"),
     srt: bool = typer.Option(False, "--srt"),
     otio: bool = typer.Option(False, "--otio"),
+    as_json: bool = typer.Option(False, "--json"),
 ):
     """Export drafts/captions from the compiled timeline (§11)."""
     project = _project()
@@ -354,9 +455,13 @@ def export(
         from .exporters.jianying import export_jianying
 
         outputs["jianying"] = export_jianying(project, timeline)
-    append_event(project.root, ACTOR, "export", {k: project.relpath(v) for k, v in outputs.items()})
-    for k, v in outputs.items():
-        typer.secho(f"{k}: {project.relpath(v)}", fg=typer.colors.GREEN)
+    rel_outputs = {k: project.relpath(v) for k, v in outputs.items()}
+    append_event(project.root, ACTOR, "export", rel_outputs)
+    if as_json:
+        _emit({"outputs": rel_outputs}, True)
+    else:
+        for k, v in rel_outputs.items():
+            typer.secho(f"{k}: {v}", fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------------- board
@@ -423,35 +528,56 @@ def events(n: int = typer.Option(20, "-n"), as_json: bool = typer.Option(False, 
 
 
 @app.command()
-def doctor():
+def doctor(as_json: bool = typer.Option(False, "--json")):
     """Environment health: ffmpeg, fonts, disk, project integrity (§14)."""
+    # Build a structured checks list first, then render human or JSON from it —
+    # exit code stays: env tools (git optional) + project check gate `ok`.
+    checks: list[dict] = []
     ok = True
+
+    def add(name: str, chk_ok: bool, detail: str, line: str) -> None:
+        checks.append({"name": name, "ok": chk_ok, "detail": detail, "line": line})
+
     for tool in ("ffmpeg", "ffprobe", "git"):
         found = shutil.which(tool)
-        typer.echo(f"{'✓' if found else '✗'} {tool}: {found or 'NOT FOUND'}")
-        ok = ok and (found is not None or tool == "git")
+        add(tool, found is not None, found or "NOT FOUND",
+            f"{'✓' if found else '✗'} {tool}: {found or 'NOT FOUND'}")
+        ok = ok and (found is not None or tool == "git")  # git is optional
     try:
         from .media.card import find_font
 
         font = find_font()
-        typer.echo(f"{'✓' if font else '⚠'} CJK font: {font or 'none found (cards will render boxes)'}")
+        add("cjk_font", font is not None,
+            str(font) if font else "none found (cards will render boxes)",
+            f"{'✓' if font else '⚠'} CJK font: {font or 'none found (cards will render boxes)'}")
     except ImportError:
-        typer.echo("⚠ media module unavailable")
+        add("cjk_font", False, "media module unavailable", "⚠ media module unavailable")
     try:
         project = Project.find(Path.cwd())
         free_gb = shutil.disk_usage(project.root).free / 1e9
-        typer.echo(f"{'✓' if free_gb > 2 else '⚠'} disk free: {free_gb:.1f} GB")
+        add("disk_free", free_gb > 2, f"{free_gb:.1f} GB",
+            f"{'✓' if free_gb > 2 else '⚠'} disk free: {free_gb:.1f} GB")
         report = run_check(project)
-        typer.echo(f"{'✓' if report.ok else '✗'} project check: "
-                   f"{'ok' if report.ok else f'{len(report.errors)} errors'}")
+        add("project_check", report.ok,
+            "ok" if report.ok else f"{len(report.errors)} errors",
+            f"{'✓' if report.ok else '✗'} project check: "
+            f"{'ok' if report.ok else f'{len(report.errors)} errors'}")
         ok = ok and report.ok
     except ProjectError:
-        typer.echo("• no project in cwd (environment checks only)")
+        add("project", True, "no project in cwd (environment checks only)",
+            "• no project in cwd (environment checks only)")
+    if as_json:
+        _emit({"checks": [{"name": c["name"], "ok": c["ok"], "detail": c["detail"]}
+                          for c in checks], "ok": ok}, True)
+    else:
+        for c in checks:
+            typer.echo(c["line"])
     raise typer.Exit(0 if ok else 1)
 
 
 @app.command()
-def gc(hard: bool = typer.Option(False, "--hard")):
+def gc(hard: bool = typer.Option(False, "--hard"),
+       as_json: bool = typer.Option(False, "--json")):
     """Reclaim space: segment cache and proxies. --hard (interactive) also
     removes unselected takes. imports/ and final/ are NEVER touched (§14)."""
     project = _project()
@@ -472,28 +598,51 @@ def gc(hard: bool = typer.Option(False, "--hard")):
                         freed += take.media_path.stat().st_size
                         take.media_path.unlink()
     append_event(project.root, ACTOR, "gc", {"freed_bytes": freed, "hard": hard})
-    typer.secho(f"freed {freed / 1e6:.1f} MB", fg=typer.colors.GREEN)
+    if as_json:
+        _emit({"freed_bytes": freed, "hard": hard}, True)
+    else:
+        typer.secho(f"freed {freed / 1e6:.1f} MB", fg=typer.colors.GREEN)
 
 
 @app.command("rebuild-index")
-def rebuild_index():
+def rebuild_index(as_json: bool = typer.Option(False, "--json")):
     """Recreate the disposable runtime dir from text + media (§3: SQLite may
-    explode at any time). M0 keeps no SQLite yet — this recreates the layout
-    and reports what was reconstructed."""
+    explode at any time). Rescans shot states and re-derives the run ledger
+    from take sidecars on disk (§3: sidecars are the authoritative source)."""
+    from .build.stale import evaluate_all
+
     project = _project()
     project.runtime_dir.mkdir(exist_ok=True)
     (project.runtime_dir / "logs").mkdir(exist_ok=True)
-    statuses = {s.shot_id: s.state.value for s in __import__(
-        "manju.build.stale", fromlist=["evaluate_all"]).evaluate_all(project)}
-    typer.echo(f"runtime rebuilt; {len(statuses)} shots scanned: "
-               + json.dumps(statuses, ensure_ascii=False))
+    statuses = {s.shot_id: s.state.value for s in evaluate_all(project)}
+    # Re-derive the run ledger from sidecars; best-effort — the DB is disposable
+    # and a rebuild hiccup must never sink `rebuild-index` (§3).
+    ledger = {"runs": 0, "pending_jobs": 0}
+    try:
+        from .runtime.state import RuntimeState
+
+        with RuntimeState(project.root) as state:
+            ledger = state.rebuild(project)
+    except Exception as exc:  # disposable state: warn (to stderr) and carry on
+        typer.secho(f"⚠ ledger rebuild skipped: {exc}", fg=typer.colors.YELLOW, err=True)
+    if as_json:
+        _emit({"shots": statuses, "runs": ledger["runs"],
+               "pending_jobs": ledger["pending_jobs"]}, True)
+    else:
+        typer.echo(f"runtime rebuilt; {len(statuses)} shots scanned: "
+                   + json.dumps(statuses, ensure_ascii=False))
+        typer.echo(f"ledger: {ledger['runs']} runs, {ledger['pending_jobs']} pending jobs")
 
 
 @app.command("serve-mcp")
 def serve_mcp():
-    """MCP server (M2, §11) — thin wrapper over the same core. Not yet wired."""
-    _fail("serve-mcp lands in M2 — Claude Code can already drive everything "
-          "via files + this CLI (--json), which is the equivalent surface (§11)")
+    """MCP server over stdio (§11) — a thin wrapper over the same core. Dangerous
+    commands (unlock, gc --hard) are never on this surface; Claude Code drives
+    everything else here or via files + this CLI, two equivalent paths (§11)."""
+    project = _project()
+    from .mcp.server import main as mcp_main
+
+    raise typer.Exit(mcp_main(["--project", str(project.root)]))
 
 
 if __name__ == "__main__":

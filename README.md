@@ -134,11 +134,12 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju board` | M0 | static HTML review board |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
-| `manju auto "一句话"` | planned | thin wrapper over `claude -p` (autopilot) |
-| `manju serve-mcp` | planned | MCP server for structured IO |
-| `manju doctor` | planned | environment probes (ffmpeg/fonts/disk/providers) |
-| `manju gc` | planned | tiered cleanup (never touches imports/final) |
-| `manju rebuild-index` | planned | rebuild `.manju/` runtime from text + media |
+| `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
+| `manju gc [--hard]` | M0 | tiered cleanup (never touches imports/final; `--hard` is interactive-only) |
+| `manju rebuild-index` | M0/M2 | rebuild `.manju/` runtime (incl. the run ledger) from text + media |
+| `manju propose <title> --body …` | M2 | file a proposal — the agent's channel for locked-content changes |
+| `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
+| `manju auto "一句话"` | M2 | thin wrapper over `claude -p` (autopilot shell) |
 
 Dangerous commands (`unlock`, `gc --hard`) are **not** exposed over MCP.
 
@@ -153,15 +154,17 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.1.md](docs/DESIGN_v2.1.md
   and unit-tested.
 - **M1 — JianYing export.** 🚧 Partial: SRT/ASS style engine, OTIO, and a
   pyJianYingDraft exporter skeleton.
-- **M2 — AI collaboration layer.** 🚧 Partial: `skills/manju/SKILL.md` playbook
-  and `events.jsonl` are in place; full `--json` coverage and the MCP server
-  follow.
-- **M3 — cloud generation providers.** 🧱 Skeleton: the async provider base
-  (submit/poll/download, resume-polling) is stubbed; cost guardrails, cloud TTS,
-  the first cloud video adapter, and the local fallback providers
-  (kenburns/caption_card) come next.
-- **M4 — experience & cruise.** 📋 Planned: review board, `repair --auto`, title
-  cards, `gc`, cloud ASR (on demand), full `doctor`.
+- **M2 — AI collaboration layer.** ✅ Done: `skills/manju/SKILL.md` playbook,
+  `events.jsonl`, full `--json` coverage, the stdio MCP server (`manju
+  serve-mcp`, with `unlock`/`gc` absent by design and lock-violating edits
+  rejected with rollback), `manju propose`, and the `manju auto` shell.
+- **M3 — cloud generation providers.** 🚧 Groundwork: the async provider base
+  (submit/poll/download) with SQLite-ledger resume-polling (a restart re-polls,
+  never resubmits), per-call cost accounting, prompt compilation (§8.5), and
+  the local fallback providers (kenburns/caption_card). Next: the first real
+  cloud video adapter and cloud TTS, written against a concrete API doc.
+- **M4 — experience & cruise.** 🚧 Partial: review board, `repair --auto`,
+  title cards, `gc`, and `doctor` are done; cloud ASR (on demand) remains.
 
 ## Design
 

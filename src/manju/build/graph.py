@@ -10,6 +10,7 @@ always abort.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,39 @@ from .stale import ShotBuildStatus, ShotState, evaluate_all
 
 class BuildError(RuntimeError):
     pass
+
+
+def _record_local_runs(project: Project, takes: list, params: dict) -> None:
+    """Record generated takes in the run ledger (§8.3).
+
+    The cost/run split: cloud providers self-record at poll time
+    (providers/base.py ``CloudProvider._on_success``), so to avoid double
+    counting we record here ONLY for LOCAL providers; a provider we cannot
+    classify is skipped. All of this is best-effort — the ledger is disposable
+    (§3), so bookkeeping must never fail a build.
+    """
+    try:
+        from ..providers.registry import available_providers
+        from ..runtime.state import RuntimeState
+
+        providers = available_providers()
+        with RuntimeState(project.root) as state:
+            for take in takes:
+                provider = providers.get(take.sidecar.provider)
+                if provider is None or getattr(provider, "kind", None) != "local":
+                    continue  # cloud self-records; unknown provider -> skip
+                remote = take.sidecar.remote
+                state.record_run(
+                    shot=take.shot_id,
+                    provider=take.sidecar.provider,
+                    status="succeeded",
+                    take=take.name,
+                    cost=remote.cost if remote and remote.cost else 0.0,
+                    currency=remote.currency if remote else None,
+                    params=params,
+                )
+    except (OSError, sqlite3.Error, Exception):  # disposable state, never fatal
+        pass
 
 
 @dataclass
@@ -150,6 +184,7 @@ def run_build(
             result.generated.extend(f"{shot.id}/{t.name}" for t in takes)
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
+            _record_local_runs(project, takes, {"reason": item["reason"]})
 
     # ---- 2b. auto-select where no human decision exists yet (filling a gap
     # is allowed; overturning a selection never is)
@@ -262,5 +297,6 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
         project.update_shot_raw(
             shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
         )
+    _record_local_runs(project, takes, {"redo": True})
     append_event(project.root, actor, "redo", {"shot": shot_id, "takes": [t.name for t in takes]})
     return [t.name for t in takes]

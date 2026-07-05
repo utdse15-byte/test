@@ -35,6 +35,32 @@ def project_status(project: Project) -> dict[str, Any]:
                 total_cost += take.sidecar.remote.cost
                 currency = take.sidecar.remote.currency
 
+    # Run ledger snapshot (§8.3), best-effort — the SQLite state is disposable
+    # (§3), so any failure degrades to an "unavailable" marker, never an error.
+    run_log_info: dict[str, Any] = {
+        "runs": 0, "total_cost": 0.0, "currency": None,
+        "note": "state.sqlite unavailable",
+    }
+    try:
+        from ..runtime.state import RuntimeState
+
+        with RuntimeState(project.root) as state:
+            total, cur = state.total_cost()
+            run_log_info = {
+                "runs": len(state.run_log(100000)),  # no COUNT API; count the log
+                "total_cost": float(total),
+                "currency": cur,
+            }
+    except Exception:
+        pass  # keep the "unavailable" marker above
+
+    # The ledger is authoritative once populated; the sidecar-derived sum is the
+    # §3 rebuild source and the fallback when the ledger has no runs yet.
+    if run_log_info.get("runs"):
+        total_cost = run_log_info["total_cost"]
+        if run_log_info.get("currency"):
+            currency = run_log_info["currency"]
+
     timeline = project.load_timeline()
     final = _latest_final(project)
 
@@ -87,6 +113,7 @@ def project_status(project: Project) -> dict[str, Any]:
         "qc": qc_summary,
         "total_cost": total_cost,
         "currency": currency,
+        "run_log": run_log_info,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
         "next_step": next_step,
