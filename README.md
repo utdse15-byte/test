@@ -209,9 +209,14 @@ matches the latest final; `manju build --force` re-renders regardless.
 
 ## Toolbelt (§2.5)
 
-P0 tools are pinned via the `tools` extra (`pip install -e ".[tools]"`):
-pyJianYingDraft (JianYing draft primary path), pycapcut (international
-CapCut), mcp-video (QC gate / media analysis / agent toolbelt MCP server).
+P0 tools are pinned via three independent extras — install only what you use:
+
+```bash
+pip install -e ".[jianying]"   # pyJianYingDraft — JianYing draft primary path
+pip install -e ".[capcut]"    # pycapcut — international CapCut drafts
+pip install -e ".[mcpvideo]"  # mcp-video — QC gate / media analysis / agent toolbelt
+pip install -e ".[jianying,capcut,mcpvideo]"  # everything
+```
 Every tool sits behind an adapter wall — `manju doctor` probes each one, and
 absence degrades to an alternative path instead of breaking a milestone.
 Toolbelt products must be written back via `manju select <shot> --file` —

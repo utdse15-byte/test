@@ -17,11 +17,10 @@ dependencies = [
 dev = ["pytest>=7.4"]
 # §2.5 P0 toolbelt — versions pinned (§14: 小众开源工具存续风险,版本全部锁定).
 # Every tool sits behind an adapter wall: absence degrades, never breaks.
-tools = [
-    "pyJianYingDraft==0.2.7",  # 剪映草稿主路 (M1)
-    "pycapcut==0.0.3",         # 国际 CapCut 草稿 (M1)
-    "mcp-video==1.5.1",        # QC 质量门 / 媒体分析 / Agent 工具带 (M2/M3)
-]
+# FIX-F: three INDEPENDENT extras so each tool can be installed alone.
+jianying = ["pyJianYingDraft==0.2.7"]  # 剪映草稿主路 (M1)
+capcut = ["pycapcut==0.0.3"]           # 国际 CapCut 草稿 (M1)
+mcpvideo = ["mcp-video==1.5.1"]        # QC 质量门 / 媒体分析 / Agent 工具带 (M2/M3)
 
 [project.scripts]
 manju = "manju.cli:app"
