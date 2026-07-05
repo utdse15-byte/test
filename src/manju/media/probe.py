@@ -1,0 +1,95 @@
+"""ffprobe wrapper → :class:`ProbeInfo` (§7, §9 existence/technical layer).
+
+Uses ``ffprobe -print_format json -show_format -show_streams``. fps comes from
+``r_frame_rate`` parsed as a fraction; duration from ``format.duration`` with a
+fall back to the first video stream's duration.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+from ..core.models import ProbeInfo
+from .ffmpeg import MediaError
+
+FFPROBE = "ffprobe"
+
+
+def _to_int_ms(seconds: str | float | None) -> int | None:
+    if seconds is None:
+        return None
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value < 0:  # NaN guard
+        return None
+    return int(round(value * 1000))
+
+
+def _parse_fps(rate: str | None) -> float | None:
+    if not rate or rate in ("0/0", "N/A"):
+        return None
+    try:
+        if "/" in rate:
+            num, den = rate.split("/", 1)
+            den_f = float(den)
+            if den_f == 0:
+                return None
+            return float(num) / den_f
+        return float(rate)
+    except (TypeError, ValueError):
+        return None
+
+
+def probe(path: Path) -> ProbeInfo:
+    """Full technical probe. Raises :class:`MediaError` if the file is
+    unreadable or ffprobe emits no parseable JSON."""
+    path = Path(path)
+    cmd = [
+        FFPROBE, "-v", "error", "-print_format", "json",
+        "-show_format", "-show_streams", str(path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stderr or "").strip().splitlines()[-15:])
+        raise MediaError(f"ffprobe failed for {path}:\n{tail}")
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise MediaError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+
+    streams = data.get("streams", []) or []
+    fmt = data.get("format", {}) or {}
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+
+    duration_ms = _to_int_ms(fmt.get("duration"))
+    if duration_ms is None and video is not None:
+        duration_ms = _to_int_ms(video.get("duration"))
+    if duration_ms is None and audio is not None:
+        duration_ms = _to_int_ms(audio.get("duration"))
+
+    width = int(video["width"]) if video and video.get("width") is not None else None
+    height = int(video["height"]) if video and video.get("height") is not None else None
+    fps = _parse_fps(video.get("r_frame_rate") or video.get("avg_frame_rate")) if video else None
+
+    return ProbeInfo(
+        duration_ms=duration_ms,
+        width=width,
+        height=height,
+        fps=fps,
+        has_audio=audio is not None,
+    )
+
+
+def probe_duration_ms(path: Path) -> int | None:
+    """Duration in ms, or ``None`` when the file is unreadable (never raises)."""
+    try:
+        return probe(Path(path)).duration_ms
+    except MediaError:
+        return None
+    except Exception:  # ffprobe missing, permission error, etc. — stay total
+        return None
