@@ -338,6 +338,63 @@ class Project:
         write_yaml(sidecar_path, sidecar.model_dump(exclude_none=True))
         return TakeInfo(shot_id, name, dest, sidecar_path, sidecar)
 
+    # ----------------------------------------------------------- voice takes
+
+    def voice_takes(self, shot_id: str) -> list[tuple[Path, "VoiceTakeSidecar | None"]]:
+        """Voice takes for a shot, OLDEST FIRST (append-only numbering); the
+        newest one is what the compiler uses. A media file without a sidecar
+        (hand-dropped) pairs with None — manual voice, never auto-invalidated."""
+        from .models import VoiceTakeSidecar
+
+        tdir = self.takes_dir(shot_id)
+        if not tdir.exists():
+            return []
+        results: list[tuple[Path, VoiceTakeSidecar | None]] = []
+        audio_exts = (".wav", ".mp3", ".m4a", ".flac")
+        for media in sorted(tdir.glob("voice_take_*.*")) + sorted(tdir.glob("voice.*")):
+            if media.suffix.lower() not in audio_exts:
+                continue
+            sidecar_path = tdir / f"{media.stem}.sidecar.yaml"
+            sidecar = None
+            if sidecar_path.exists():
+                try:
+                    sidecar = VoiceTakeSidecar.model_validate(read_yaml(sidecar_path) or {})
+                except Exception:
+                    sidecar = None
+            results.append((media, sidecar))
+        return results
+
+    def next_voice_take_name(self, shot_id: str) -> str:
+        nums = [
+            int(m.group(1))
+            for media, _ in self.voice_takes(shot_id)
+            if (m := re.match(r"voice_take_(\d+)$", media.stem))
+        ]
+        return f"voice_take_{(max(nums, default=0) + 1):02d}"
+
+    def register_voice_take(self, shot_id: str, media_file: Path,
+                            sidecar: "VoiceTakeSidecar") -> Path:
+        """Append-only registration of a generated voice take. The sidecar
+        file is <name>.sidecar.yaml (NOT <name>.yaml, which would collide with
+        the video-take sidecar namespace scanned by takes())."""
+        from datetime import datetime, timezone
+
+        media_file = Path(media_file)
+        if not media_file.exists():
+            raise ProjectError(f"voice media not found: {media_file}")
+        tdir = self.takes_dir(shot_id)
+        tdir.mkdir(parents=True, exist_ok=True)
+        name = self.next_voice_take_name(shot_id)
+        dest = tdir / (name + media_file.suffix.lower())
+        if dest.exists():
+            raise ProjectError(f"refusing to overwrite existing voice take: {dest}")
+        shutil.copy2(media_file, dest)
+        sidecar.created_at = sidecar.created_at or datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        write_yaml(tdir / f"{name}.sidecar.yaml", sidecar.model_dump(exclude_none=True))
+        return dest
+
     # ---------------------------------------------------------------- final
 
     def next_final_path(self, prefix: str = "final", ext: str = ".mp4") -> Path:

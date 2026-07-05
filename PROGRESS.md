@@ -66,3 +66,22 @@ issue #1 audit closed. 213 tests green.
 **Next:** M3 voice/TTS pipeline wiring compute_voice_hash; build explainer.
 
 **Open issues:** baseline count reconciliation (#4) still with the reviewer.
+
+---
+
+## 2026-07-05 — round B: M3 voice/TTS pipeline
+
+**Done:** generic_tts manifest adapter (sync URL/base64 §8.4 degenerate form
++ async poll), VoiceTakeSidecar carrying voice_hash (FIX-F anchor now WIRED),
+§4.3-conservative voice staleness (missing→synthesize, stale→flag only,
+hand-dropped→manual/never invalidated), build-graph voice phase before the
+timeline compile (fresh voices drive durations §6 in the same build),
+dry-run per_call pricing feeding the budget breaker, `manju voice` command,
+status voice_by_state summary. Fixed: compiler picked the OLDEST voice take
+(sorted-first) — now newest-wins per append-only semantics. 220 tests green.
+
+**Next:** build explainer (`manju explain`), property-based tests.
+
+**Open issues:** voice cost estimate is per_call only — speech duration is
+unknown pre-synthesis so per_second pricing cannot be estimated honestly;
+the ledger records the real figure afterwards.

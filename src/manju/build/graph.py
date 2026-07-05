@@ -110,6 +110,38 @@ def _estimate_shot_cost(shot, duration_ms: int) -> tuple[float, str | None]:
     return 0.0, None
 
 
+def _plan_voice(project: Project, *, gen: str) -> list[dict[str, Any]]:
+    """Voice synthesis plan (M3): shots whose dialogue has no voice take yet,
+    when a TTS manifest is configured. Pricing is per_call from the manifest
+    (speech duration is unknown before synthesis, so per_second cannot be
+    estimated honestly — the ledger records the real figure afterwards)."""
+    if gen == "off":
+        return []
+    try:
+        from ..providers.tts import tts_providers
+        from .voice import VoiceState, evaluate_all_voices
+
+        providers = tts_providers()
+        if not providers:
+            return []
+        provider_id = sorted(providers)[0]
+        manifest = providers[provider_id]
+        return [
+            {
+                "shot": vs.shot_id,
+                "kind": "voice",
+                "reason": vs.state.value,
+                "provider": provider_id,
+                "estimated_cost": manifest.cost.per_call,
+                "currency": manifest.cost.currency,
+            }
+            for vs in evaluate_all_voices(project)
+            if vs.state == VoiceState.MISSING
+        ]
+    except Exception:  # planning must never break the build
+        return []
+
+
 def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
                      gen: str, regen_stale: bool) -> list[dict[str, Any]]:
     rules = project.load_rules()
@@ -167,8 +199,9 @@ def run_build(
         )
         return result
 
-    # ---- 1. generation plan
+    # ---- 1. generation plan (video takes + voice takes, both priced §8.3)
     result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale)
+    result.plan += _plan_voice(project, gen=gen)
     result.estimated_cost = sum(p["estimated_cost"] for p in result.plan)
 
     config = project.load_config()
@@ -185,12 +218,14 @@ def run_build(
         return result
 
     # ---- 2. generate (fill gaps only; stale/manual are respected, §4.3)
-    if result.plan:
+    video_plan = [p for p in result.plan if p.get("kind") != "voice"]
+    voice_plan = [p for p in result.plan if p.get("kind") == "voice"]
+    if video_plan:
         from ..providers.base import GenerationRequest, NeedsHumanInput, ProviderFailure
         from ..providers.registry import fallback_chain, generate_with_fallback
 
         bible = project.load_bible()
-        for item in result.plan:
+        for item in video_plan:
             shot = project.load_shot(item["shot"])
             st = next(s for s in statuses if s.shot_id == shot.id)
             req = GenerationRequest(
@@ -211,6 +246,39 @@ def run_build(
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
             _record_local_runs(project, takes, {"reason": item["reason"]})
+
+    # ---- 2v. voice synthesis (M3): fill MISSING voices via the configured
+    # TTS manifest; stale voices are flagged, never redone (§4.3). Synthesis
+    # happens BEFORE the timeline compile so fresh voices drive durations (§6)
+    # within the same build.
+    if voice_plan:
+        from ..providers.base import ProviderFailure as _PF
+        from ..providers.tts import get_tts_provider
+
+        bible = project.load_bible()
+        for item in voice_plan:
+            shot = project.load_shot(item["shot"])
+            try:
+                tts = get_tts_provider(item["provider"])
+                media = tts.synthesize(project, shot, bible)
+            except (_PF, Exception) as exc:
+                result.warnings.append(f"{shot.id}: voice synthesis failed — {exc}")
+                continue
+            result.generated.append(f"{shot.id}/{media.stem}")
+            append_event(project.root, actor, "voice",
+                         {"shot": shot.id, "take": media.stem, "provider": item["provider"]})
+    try:
+        from .voice import VoiceState, evaluate_all_voices
+
+        stale_voices = [v.shot_id for v in evaluate_all_voices(project)
+                        if v.state == VoiceState.STALE]
+        if stale_voices:
+            result.warnings.append(
+                "voice stale(台词/音色已变,默认不重做,§4.3): "
+                + ", ".join(stale_voices) + " — 用 manju voice <shot> 重配音"
+            )
+    except Exception:
+        pass  # voice bookkeeping never blocks a build
 
     # ---- 2b. auto-select where no human decision exists yet (filling a gap
     # is allowed; overturning a selection never is)

@@ -27,6 +27,18 @@ def project_status(project: Project) -> dict[str, Any]:
     for st in statuses:
         by_state.setdefault(st.state.value, []).append(st.shot_id)
 
+    # voice states (M3): mirror of the picture-side summary, keyed by the
+    # voice_hash staleness anchor; not_needed shots are omitted for signal.
+    voice_by_state: dict[str, list[str]] = {}
+    try:
+        from .voice import VoiceState, evaluate_all_voices
+
+        for vs in evaluate_all_voices(project):
+            if vs.state != VoiceState.NOT_NEEDED:
+                voice_by_state.setdefault(vs.state.value, []).append(vs.shot_id)
+    except Exception:
+        pass  # voice summary is advisory
+
     total_cost = 0.0
     currency = config.budget.currency
     for st in statuses:
@@ -107,6 +119,7 @@ def project_status(project: Project) -> dict[str, Any]:
         "resolution": f"{config.width}x{config.height}@{config.fps}",
         "shots_total": len(statuses),
         "shots_by_state": by_state,
+        "voice_by_state": voice_by_state,
         "timeline": {
             "exists": timeline is not None,
             "duration_ms": timeline.duration_ms if timeline else None,

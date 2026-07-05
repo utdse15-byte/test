@@ -131,6 +131,7 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju export --jianying --srt --otio` | 导出剪映草稿 / 字幕 / OTIO |
 | `manju board` | 生成静态 HTML 评审板 |
 | `manju transcribe <media> [--from-srt/--text]` | 导入真人素材转录:云 ASR manifest 或人工输入 → SRT(M4 插件位) |
+| `manju voice <shot>` | 为镜头重新配音(只增;最新的 voice_take 生效;stale 配音 build 只提示不重做) |
 | `manju pack / unpack` | 单文件归档往返(`.manjupkg`) |
 | `manju events` | 看协作日志 |
 

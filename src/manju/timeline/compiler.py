@@ -243,11 +243,11 @@ def compile_timeline(inp: CompileInput) -> Timeline:
 
 
 def _find_voice(project: Project, shot_id: str) -> Path | None:
-    tdir = project.takes_dir(shot_id)
-    if not tdir.exists():
-        return None
-    candidates = sorted(tdir.glob("voice_take_*.*")) + sorted(tdir.glob("voice.*"))
-    return next((c for c in candidates if c.suffix.lower() in (".wav", ".mp3", ".m4a", ".flac")), None)
+    """The NEWEST voice take wins: media is append-only (§3), so the highest
+    voice_take_NN is the latest decision. (Pre-round-B this picked the oldest
+    — sorted-first — which contradicted the append-only semantics.)"""
+    voices = project.voice_takes(shot_id)
+    return voices[-1][0] if voices else None
 
 
 def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:

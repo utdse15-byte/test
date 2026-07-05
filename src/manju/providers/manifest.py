@@ -22,6 +22,7 @@ from ..core.yamlio import read_yaml
 
 GENERIC_ADAPTER = "generic_cloud"
 GENERIC_ASR_ADAPTER = "generic_asr"
+GENERIC_TTS_ADAPTER = "generic_tts"
 JOB_STATES = ("queued", "running", "succeeded", "failed")
 
 
@@ -67,6 +68,17 @@ class CostConfig(ManjuModel):
     currency: str = "CNY"
 
 
+class TtsConfig(ManjuModel):
+    """How to read synthesized audio out of a TTS response (M3, §8.4: most
+    TTS APIs are synchronous — submit IS the result, the degenerate form).
+    Exactly one of audio_url_path / audio_b64_path should be filled."""
+
+    audio_url_path: str | None = None  # ★ mini-JSONPath to a downloadable URL
+    audio_b64_path: str | None = None  # ★ or: base64 audio inline in the response
+    audio_format: str = "wav"  # extension for the registered voice take
+    language: str = "zh"
+
+
 class AsrConfig(ManjuModel):
     """How to read transcript segments out of an ASR response (M4 plugin slot,
     Niren-CASR-style: 导入真人素材 → 转录字幕). The audio goes into the
@@ -93,11 +105,21 @@ class ProviderManifest(ManjuModel):
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     asr: AsrConfig = Field(default_factory=AsrConfig)
+    tts: TtsConfig = Field(default_factory=TtsConfig)
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —
         `manju doctor` calls this so a bad fill fails before the first spend."""
         problems: list[str] = []
+        if self.adapter == GENERIC_TTS_ADAPTER:
+            if self.submit is None:
+                problems.append("submit section is required for generic_tts")
+            if not (self.tts.audio_url_path or self.tts.audio_b64_path):
+                problems.append(
+                    "tts.audio_url_path or tts.audio_b64_path is required for generic_tts"
+                )
+            if self.poll is not None and "{job_id}" not in self.poll.url:
+                problems.append("poll.url must contain {job_id}")
         if self.adapter == GENERIC_ASR_ADAPTER:
             if self.submit is None:
                 problems.append("submit section is required for generic_asr")

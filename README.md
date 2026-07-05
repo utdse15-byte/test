@@ -139,6 +139,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju rebuild-index` | M0/M2 | rebuild `.manju/` runtime (incl. the run ledger) from text + media |
 | `manju propose <title> --body …` | M2 | file a proposal — the agent's channel for locked-content changes |
 | `manju transcribe <media> [--from-srt / --text]` | M4 | ASR slot: cloud manifest or manual input → SRT |
+| `manju voice <shot>` | M3 | synthesize a new voice take (append-only; newest wins) |
 | `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
 | `manju auto "一句话"` | M2 | thin wrapper over `claude -p` (autopilot shell) |
 

@@ -1,0 +1,212 @@
+"""Cloud TTS provider (M3, decision 5: cloud-only, zero local models).
+
+Voice generation for scripted drama: the shot's dialogue line + the speaker's
+voice reference (bible) become a ``voice_take_NN`` under ``media/gen/<shot>/``
+with a sidecar carrying the **voice_hash** (``core.spec.compute_voice_hash``)
+— the staleness anchor pinned in FIX-F, now wired.
+
+Config shape = the same §8.6 manifest family as video/ASR: type ``tts``,
+``adapter: generic_tts``. Most TTS APIs are synchronous (§8.4 degenerate
+form): the submit response carries the audio (URL or inline base64); async
+APIs fill ``poll`` as usual. Anything more exotic writes a dedicated adapter
+class via the ``module:Class`` escape hatch.
+
+Staleness semantics mirror §4.3 exactly:
+
+    shot has no dialogue          -> voice not needed
+    no voice take                 -> MISSING (build synthesizes when a tts
+                                     manifest is configured)
+    newest sidecar voice_hash ==  -> FRESH (skip)
+    voice_hash differs            -> STALE (flag only; `manju voice` redoes)
+    newest take has NO sidecar    -> MANUAL (hand-dropped, never invalidated)
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+from typing import Callable
+
+from ..core.container import Project
+from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
+from ..core.spec import compute_voice_hash, voice_payload
+from .base import FailureKind, ProviderFailure
+from .jsonpath import JsonPathError, extract
+from .manifest import GENERIC_TTS_ADAPTER, ProviderManifest, load_manifests
+
+
+class TtsUnavailable(RuntimeError):
+    pass
+
+
+class GenericTtsProvider:
+    """TTS over the §8.6 manifest shape. Body placeholders: {text} {speaker}
+    {language} plus every voice-shaping bible field of the speaker
+    ({voice} {voice_ref} {voice_sample} {voice_id} {tone}, empty when absent)."""
+
+    def __init__(self, manifest: ProviderManifest, *,
+                 transport=None, sleep_fn: Callable[[float], None] = time.sleep):
+        if manifest.adapter != GENERIC_TTS_ADAPTER:
+            raise ValueError(f"manifest {manifest.id} is not a generic_tts manifest")
+        hard = [p for p in manifest.validate_for_generic() if "key_env" not in p]
+        if hard:
+            raise ValueError(f"manifest {manifest.id} invalid: {'; '.join(hard)}")
+        from .generic_cloud import default_transport
+
+        self.manifest = manifest
+        self.id = manifest.id
+        self._transport = transport or default_transport
+        self._sleep = sleep_fn
+
+    def _headers(self) -> dict[str, str]:
+        from .generic_cloud import GenericCloudProvider
+
+        return GenericCloudProvider._headers(self)  # same auth semantics (§8.2)
+
+    # ------------------------------------------------------------ synthesis
+
+    def _placeholders(self, shot: ShotSpec, bible: dict) -> dict[str, object]:
+        payload = voice_payload(shot, bible)
+        values: dict[str, object] = {
+            "text": payload["text"],
+            "speaker": payload["speaker"],
+            "language": self.manifest.tts.language,
+        }
+        for key in ("voice", "voice_ref", "voice_sample", "voice_id", "tone"):
+            values[key] = payload["voice_ref"].get(key, "")
+        return values
+
+    def _audio_from(self, data, *, dest_dir: Path) -> Path:
+        cfg = self.manifest.tts
+        dest = dest_dir / f"voice.{cfg.audio_format.lstrip('.')}"
+        if cfg.audio_b64_path:
+            try:
+                blob = base64.b64decode(str(extract(data, cfg.audio_b64_path)))
+            except (JsonPathError, binascii.Error, ValueError) as exc:
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: cannot read inline audio ({exc}) — check tts.audio_b64_path",
+                ) from exc
+            dest.write_bytes(blob)
+            return dest
+        try:
+            url = str(extract(data, cfg.audio_url_path))
+        except JsonPathError as exc:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: cannot read audio URL ({exc}) — check tts.audio_url_path",
+            ) from exc
+        resp = self._transport("GET", url, {}, None)
+        if resp.status >= 400 or not resp.body:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: audio download failed with HTTP {resp.status}",
+                detail={"url": url},
+            )
+        dest.write_bytes(resp.body)
+        return dest
+
+    def synthesize(self, project: Project, shot: ShotSpec, bible: dict) -> Path:
+        """Synthesize the shot's line and register it as the next voice take.
+        Returns the registered media path."""
+        from .generic_cloud import render_body
+
+        if not shot.dialogue.text:
+            raise ProviderFailure(
+                FailureKind.invalid, f"{self.id}: shot {shot.id} has no dialogue to voice"
+            )
+        cfg = self.manifest.submit
+        assert cfg is not None  # validated at construction
+        body = json.dumps(
+            render_body(cfg.body_template, self._placeholders(shot, bible)),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        resp = self._transport(cfg.method, cfg.url, self._headers(), body)
+        if resp.status >= 400:
+            kind = FailureKind.rate_limited if resp.status == 429 else FailureKind.provider_error
+            raise ProviderFailure(
+                kind, f"{self.id}: synthesis failed with HTTP {resp.status}",
+                detail={"body": resp.text()[:2000]},
+            )
+        data = resp.json()
+
+        job_id: str | None = None
+        if self.manifest.poll is not None:  # async form
+            job_id = str(extract(data, cfg.job_id_path))
+            data = self._poll(job_id)
+
+        with tempfile.TemporaryDirectory(prefix=f"tts_{shot.id}_") as tmp:
+            audio = self._audio_from(data, dest_dir=Path(tmp))
+            sidecar = VoiceTakeSidecar(
+                provider=self.id,
+                voice_hash=compute_voice_hash(shot, bible),
+                params={"text": shot.dialogue.text, "speaker": shot.dialogue.speaker},
+                remote=RemoteJobInfo(
+                    job_id=job_id,
+                    cost=self.manifest.cost.per_call or None,
+                    currency=self.manifest.cost.currency,
+                ),
+            )
+            return project.register_voice_take(shot.id, audio, sidecar)
+
+    def _poll(self, job_id: str) -> dict:
+        poll_cfg = self.manifest.poll
+        assert poll_cfg is not None
+        elapsed, i = 0.0, 0
+        while True:
+            resp = self._transport(
+                "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
+            )
+            if resp.status >= 400:
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: poll failed with HTTP {resp.status}",
+                    detail={"job_id": job_id},
+                )
+            data = resp.json()
+            raw_status = str(extract(data, poll_cfg.status_path))
+            status = poll_cfg.status_map.get(raw_status, raw_status.lower())
+            if status == "succeeded":
+                return data
+            if status == "failed" or status not in ("queued", "running"):
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: job {job_id} ended with status {raw_status!r}",
+                    detail={"job_id": job_id, "body": resp.text()[:2000]},
+                )
+            delay = min(0.5 * (2 ** i), 8.0)
+            if elapsed + delay > 600.0:
+                raise ProviderFailure(
+                    FailureKind.timeout,
+                    f"{self.id}: job {job_id} did not finish within 600s",
+                )
+            self._sleep(delay)
+            elapsed += delay
+            i += 1
+
+
+def tts_providers() -> dict[str, ProviderManifest]:
+    """TTS manifests live on the voice surface, not in the shot-generation
+    registry — a voice engine is never a fallback for a missing picture."""
+    manifests, _ = load_manifests()
+    return {pid: m for pid, m in manifests.items() if m.type == "tts"}
+
+
+def get_tts_provider(name: str | None = None, **kwargs) -> GenericTtsProvider:
+    providers = tts_providers()
+    if name is None:
+        if not providers:
+            raise TtsUnavailable(
+                "no TTS provider configured — fill a tts manifest (§8.6, type: tts, "
+                "adapter: generic_tts) under ~/.manju/providers/, or drop a "
+                "voice_take_NN.wav into media/gen/<shot>/ yourself (manual voice)"
+            )
+        name = sorted(providers)[0]
+    if name not in providers:
+        raise TtsUnavailable(f"unknown TTS provider {name!r}; configured: {sorted(providers)}")
+    return GenericTtsProvider(providers[name], **kwargs)

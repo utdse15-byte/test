@@ -180,8 +180,12 @@ def build(
         if dry_run:
             typer.echo(f"计划任务 {len(result.plan)} 项,预估成本 {result.estimated_cost}")
             for p in result.plan:
-                typer.echo(f"  {p['shot']}: {p['reason']} → {p['provider']} "
-                           f"×{p['candidates']} ({p['duration_ms']}ms) ≈{p['estimated_cost']}")
+                if p.get("kind") == "voice":
+                    typer.echo(f"  {p['shot']}: 配音 {p['reason']} → {p['provider']} "
+                               f"≈{p['estimated_cost']}")
+                else:
+                    typer.echo(f"  {p['shot']}: {p['reason']} → {p['provider']} "
+                               f"×{p['candidates']} ({p['duration_ms']}ms) ≈{p['estimated_cost']}")
         for w in result.warnings:
             typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
         for e in result.errors:
@@ -514,6 +518,38 @@ def export(
             typer.secho(f"{k}: {v}", fg=typer.colors.GREEN)
         for note in notes:
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
+
+
+# ------------------------------------------------------------------- voice
+
+
+@app.command()
+def voice(
+    shot_id: str,
+    provider: Optional[str] = typer.Option(None, help="tts manifest id (default: first configured)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Synthesize a NEW voice take for one shot (M3, append-only — the newest
+    take wins on the next build). Use this to redo a stale voice (§4.3:
+    builds flag stale voices but never redo them on their own)."""
+    from .providers.tts import TtsUnavailable, get_tts_provider
+
+    project = _project()
+    shot = project.load_shot(shot_id)
+    if not shot.dialogue.text:
+        _fail(f"{shot_id} has no dialogue.text to voice")
+    try:
+        tts = get_tts_provider(provider)
+        media = tts.synthesize(project, shot, project.load_bible())
+    except TtsUnavailable as exc:
+        _fail(str(exc))
+    append_event(project.root, ACTOR, "voice",
+                 {"shot": shot_id, "take": media.stem, "provider": tts.id})
+    if as_json:
+        _emit({"shot": shot_id, "take": media.stem,
+               "media": project.relpath(media)}, True)
+    else:
+        typer.secho(f"{shot_id}: 新配音 {media.stem} ({tts.id})", fg=typer.colors.GREEN)
 
 
 # -------------------------------------------------------------- transcribe

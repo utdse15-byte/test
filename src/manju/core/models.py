@@ -168,6 +168,21 @@ class TakeSidecar(ManjuModel):
     created_at: str | None = None
 
 
+class VoiceTakeSidecar(ManjuModel):
+    """Lineage of a generated VOICE take (M3 TTS). voice_hash is the
+    staleness anchor (core.spec.compute_voice_hash): text + speaker + the
+    speaker's voice-shaping bible fields — mirroring spec_hash for video.
+    A hand-dropped voice file without a sidecar is treated like a manual
+    take: used as-is and never auto-invalidated (§4.3)."""
+
+    provider: str
+    voice_hash: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    remote: RemoteJobInfo | None = None
+    probe: ProbeInfo | None = None
+    created_at: str | None = None
+
+
 # ---------------------------------------------------------------------- Bible
 
 
