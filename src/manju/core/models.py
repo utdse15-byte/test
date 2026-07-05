@@ -217,12 +217,20 @@ class CaptionRules(ManjuModel):
     style: str = "default"
 
 
+class TitleCardRules(ManjuModel):
+    enabled: bool = False
+    text: str = ""
+    duration_ms: int = 1500
+    template: str = "chapter"
+
+
 class TimelineRules(ManjuModel):
     mode: Literal["compiled", "manual"] = "compiled"
     timing: TimingRules = Field(default_factory=TimingRules)
     transition_default: TransitionSpec | None = Field(default_factory=TransitionSpec)
     music: MusicRules = Field(default_factory=MusicRules)
     captions: CaptionRules = Field(default_factory=CaptionRules)
+    title_card: TitleCardRules = Field(default_factory=TitleCardRules)
 
 
 # ------------------------------------------------------------- TimelineSpec

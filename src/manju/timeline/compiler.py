@@ -23,6 +23,7 @@ from ..core.hashing import hash_value
 from ..core.models import (
     AudioClip,
     CaptionLine,
+    OverlayClip,
     ProjectConfig,
     ShotSpec,
     Timeline,
@@ -181,6 +182,19 @@ def compile_timeline(inp: CompileInput) -> Timeline:
         cursor += duration_ms
 
     total_ms = cursor
+    # Title card is an overlay layer (§7 step ④): emitted after the video track
+    # is assembled so its duration can be clamped to the film's length.
+    if rules.title_card.enabled and rules.title_card.text:
+        tracks.overlay.append(
+            OverlayClip(
+                kind="title_card",
+                template=rules.title_card.template,
+                text=rules.title_card.text,
+                start_ms=0,
+                duration_ms=min(rules.title_card.duration_ms, total_ms),
+            )
+        )
+
     if rules.music.source:
         tracks.music.append(
             AudioClip(
