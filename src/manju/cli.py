@@ -494,6 +494,77 @@ def export(
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
 
 
+# -------------------------------------------------------------- transcribe
+
+
+@app.command()
+def transcribe(
+    media: Path,
+    provider: Optional[str] = typer.Option(None, help="asr manifest id (default: first configured)"),
+    from_srt: Optional[Path] = typer.Option(None, "--from-srt", help="manual input: normalize your own SRT"),
+    text: Optional[str] = typer.Option(None, "--text", help="manual input: plain transcript, auto-timed over the media"),
+    out: Optional[Path] = typer.Option(None, help="output SRT (default captions/transcripts/<name>.srt)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Transcribe imported real footage into an SRT (M4 ASR slot, on demand).
+
+    Three equal on-ramps: a configured cloud ASR manifest (§8.6, type: asr),
+    --from-srt with human-made subtitles, or --text with the raw transcript
+    (distributed over the media duration). The scripted-drama main line never
+    needs this — its captions come from dialogue + TTS alignment."""
+    from .providers.asr import (
+        AsrUnavailable,
+        distribute_text,
+        get_asr_provider,
+        parse_srt,
+        segments_to_srt,
+    )
+
+    project = _project()
+    media_abs = media if media.is_absolute() else project.root / media
+    if not media_abs.exists():
+        _fail(f"media not found: {media}")
+    if from_srt and text:
+        _fail("pick one input: --from-srt or --text (or neither, for cloud ASR)")
+
+    if from_srt:
+        if not from_srt.exists():
+            _fail(f"not found: {from_srt}")
+        segments = parse_srt(from_srt.read_text(encoding="utf-8"))
+        source = "manual_srt"
+    elif text is not None:
+        from .media.probe import probe_duration_ms
+
+        duration = probe_duration_ms(media_abs)
+        if not duration:
+            _fail(f"cannot probe media duration for --text timing: {media}")
+        segments = distribute_text(text, duration)
+        source = "manual_text"
+    else:
+        try:
+            asr = get_asr_provider(provider)
+        except AsrUnavailable as exc:
+            _fail(str(exc))
+        segments = asr.transcribe(media_abs)
+        source = asr.id
+
+    if not segments:
+        _fail("no transcript segments produced")
+    out = out or project.captions_dir / "transcripts" / (media_abs.stem + ".srt")
+    from .core.yamlio import atomic_write_text
+
+    atomic_write_text(out, segments_to_srt(segments))
+    rel = project.relpath(out) if out.is_relative_to(project.root) else str(out)
+    append_event(project.root, ACTOR, "transcribe",
+                 {"media": str(media), "source": source, "segments": len(segments),
+                  "out": rel})
+    if as_json:
+        _emit({"out": rel, "source": source, "segments": len(segments)}, True)
+    else:
+        typer.secho(f"{rel}: {len(segments)} segments (source: {source})",
+                    fg=typer.colors.GREEN)
+
+
 # ------------------------------------------------------------------- board
 
 

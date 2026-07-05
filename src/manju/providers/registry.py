@@ -76,6 +76,8 @@ def _manifest_state() -> tuple[dict[str, Provider], list[str]]:
     manifests, errors = load_manifests()
     providers: dict[str, Provider] = {}
     for pid, manifest in manifests.items():
+        if manifest.type == "asr":
+            continue  # ASR lives on the transcribe surface, never a shot fallback
         if pid in _FALLBACK_MAP.values() or pid == "manual_import":
             errors.append(f"{pid}: manifest id shadows a built-in provider — skipped")
             continue

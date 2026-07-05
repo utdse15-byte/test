@@ -138,6 +138,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju gc [--hard]` | M0 | tiered cleanup (never touches imports/final; `--hard` is interactive-only) |
 | `manju rebuild-index` | M0/M2 | rebuild `.manju/` runtime (incl. the run ledger) from text + media |
 | `manju propose <title> --body …` | M2 | file a proposal — the agent's channel for locked-content changes |
+| `manju transcribe <media> [--from-srt / --text]` | M4 | ASR slot: cloud manifest or manual input → SRT |
 | `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
 | `manju auto "一句话"` | M2 | thin wrapper over `claude -p` (autopilot shell) |
 
@@ -174,9 +175,13 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.1.md](docs/DESIGN_v2.1.md
   manifest slot — all engine-driven, no agent required. What remains is
   literally a config file: fill `~/.manju/providers/<id>/provider.yaml`
   for a real vendor and set its key env var.
-- **M4 — experience & cruise.** 🚧 Partial: review board, `repair --auto`,
-  title cards, `gc`, and `doctor` (incl. provider-manifest and toolbelt
-  probes) are done; cloud ASR (on demand) remains.
+- **M4 — experience & cruise.** ✅ Engine-side done: review board,
+  `repair --auto`, title cards, `gc`, `doctor` (incl. provider-manifest and
+  toolbelt probes), and the cloud ASR plugin slot (`manju transcribe`):
+  an `asr`-type manifest on the same §8.6 config shape (`adapter:
+  generic_asr`, sync and async forms) plus two manual on-ramps usable today
+  — `--from-srt` (normalize your own subtitles) and `--text` (auto-timed
+  transcript). A real ASR vendor is one manifest + one key env var away.
 
 ## Design
 

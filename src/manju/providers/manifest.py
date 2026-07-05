@@ -21,6 +21,7 @@ from ..core.models import ManjuModel
 from ..core.yamlio import read_yaml
 
 GENERIC_ADAPTER = "generic_cloud"
+GENERIC_ASR_ADAPTER = "generic_asr"
 JOB_STATES = ("queued", "running", "succeeded", "failed")
 
 
@@ -66,6 +67,20 @@ class CostConfig(ManjuModel):
     currency: str = "CNY"
 
 
+class AsrConfig(ManjuModel):
+    """How to read transcript segments out of an ASR response (M4 plugin slot,
+    Niren-CASR-style: 导入真人素材 → 转录字幕). The audio goes into the
+    body_template via the ``{audio_b64}`` placeholder; APIs needing multipart
+    or presigned uploads take the dedicated-adapter escape hatch."""
+
+    segments_path: str = "$.data.segments"  # ★ mini-JSONPath to the segment list
+    text_key: str = "text"  # ★ keys within one segment object
+    start_key: str = "start"
+    end_key: str = "end"
+    time_unit: str = "ms"  # "ms" | "s" — remote timestamps are converted to ms
+    language: str = "zh"
+
+
 class ProviderManifest(ManjuModel):
     id: str
     type: str = "video"  # video | image | tts | vision
@@ -77,11 +92,19 @@ class ProviderManifest(ManjuModel):
     failure: FailureConfig = Field(default_factory=FailureConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
+    asr: AsrConfig = Field(default_factory=AsrConfig)
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —
         `manju doctor` calls this so a bad fill fails before the first spend."""
         problems: list[str] = []
+        if self.adapter == GENERIC_ASR_ADAPTER:
+            if self.submit is None:
+                problems.append("submit section is required for generic_asr")
+            # poll is optional: most ASR APIs are synchronous — submit IS the
+            # result (§8.4 degenerate form); async ones fill poll as usual
+            if self.poll is not None and "{job_id}" not in self.poll.url:
+                problems.append("poll.url must contain {job_id}")
         if self.adapter == GENERIC_ADAPTER:
             if self.submit is None:
                 problems.append("submit section is required for generic_cloud")

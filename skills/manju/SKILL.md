@@ -125,6 +125,7 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju qc / repair [--auto]` | 质检 / 修复(`--auto` 只做 auto-safe 项) |
 | `manju export --jianying --srt --otio` | 导出剪映草稿 / 字幕 / OTIO |
 | `manju board` | 生成静态 HTML 评审板 |
+| `manju transcribe <media> [--from-srt/--text]` | 导入真人素材转录:云 ASR manifest 或人工输入 → SRT(M4 插件位) |
 | `manju pack / unpack` | 单文件归档往返(`.manjupkg`) |
 | `manju events` | 看协作日志 |
 
