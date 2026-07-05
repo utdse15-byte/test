@@ -3,9 +3,13 @@
 input  = shot order + each shot's selected take + voice durations + rules
 output = timeline.json (same input, same output, always)
 
-Times are integer milliseconds throughout; fps only exists at render time.
+Times are integer milliseconds throughout; fps only exists at render time —
+EXCEPT for the frame-grid snap (FIX-B): every clip duration is rounded to a
+whole number of frames so segment boundaries land exactly on the encoder's
+frame grid (rule: ms → nearest whole frame count, minimum 1 frame → back to
+nearest integer ms; e.g. 1200ms @ 24fps = 28.8 frames → 29 frames → 1208ms).
 Audio drives picture duration: for `duration: auto` shots the voice take's
-length plus padding decides the clip length, clamped by rules.
+length plus padding decides the clip length, clamped by rules, then snapped.
 
 Manual takeover (§6): when rules.mode == "manual", timeline.json is human
 truth — the compiler refuses to overwrite it and writes
@@ -81,18 +85,36 @@ class CompileInput:
         return hash_value(payload)
 
 
-def _resolve_duration_ms(inp: ShotInput, rules: TimelineRules) -> int:
-    """Audio drives picture (§6). Explicit numeric duration always wins."""
+def snap_to_frame_grid(duration_ms: int, fps: int) -> int:
+    """FIX-B frame-grid rounding rule (also documented in the README):
+
+        frames = max(1, round(duration_ms * fps / 1000))
+        snapped = max(1, round(frames * 1000 / fps))
+
+    A duration that is not a whole number of frames cannot be rendered
+    faithfully — the encoder rounds every segment up/down independently and
+    the drift accumulates across the concat (pre-fix: 1200ms @ 24fps became
+    29-frame/1216ms segments and a 143/6 final frame rate). Snapping to the
+    nearest whole frame count (never below one frame) keeps timeline math,
+    captions, audio offsets and the encoder all on the same grid.
+    """
+    frames = max(1, round(duration_ms * fps / 1000))
+    return max(1, round(frames * 1000 / fps))
+
+
+def _resolve_duration_ms(inp: ShotInput, rules: TimelineRules, fps: int) -> int:
+    """Audio drives picture (§6). Explicit numeric duration always wins; the
+    result is snapped to the frame grid (FIX-B) as the final step."""
     timing = rules.timing
     if inp.shot.duration != "auto":
-        return max(1, int(round(float(inp.shot.duration) * 1000)))
+        return snap_to_frame_grid(max(1, int(round(float(inp.shot.duration) * 1000))), fps)
     if inp.voice_duration_ms:
         raw = inp.voice_duration_ms + timing.padding_before_ms + timing.padding_after_ms
     elif inp.take_duration_ms:
         raw = inp.take_duration_ms
     else:
         raw = timing.default_shot_ms
-    return max(timing.min_shot_ms, min(timing.max_shot_ms, raw))
+    return snap_to_frame_grid(max(timing.min_shot_ms, min(timing.max_shot_ms, raw)), fps)
 
 
 def _split_caption(text: str, max_chars: int, max_lines: int) -> list[str]:
@@ -128,7 +150,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
     cursor = 0
 
     for i, s in enumerate(inp.shots):
-        duration_ms = _resolve_duration_ms(s, rules)
+        duration_ms = _resolve_duration_ms(s, rules, config.fps)
         is_last = i == len(inp.shots) - 1
         tracks.video.append(
             VideoClip(

@@ -345,13 +345,26 @@ def _final_render(project, report, config: ProjectConfig, timeline, deep: bool) 
                 suggestion="re-render at the project resolution",
             )
 
-    if timeline is not None and info.duration_ms is not None:
+    # Frame-rate contract (FIX-B): the final's r_frame_rate must equal the
+    # project fps exactly — a drifted rate (e.g. 143/6 from concat of
+    # non-frame-aligned segments) desyncs everything downstream.
+    if info.fps is not None and config.fps and abs(info.fps - config.fps) > 1e-6:
+        report.add(
+            "error", "technical", "final",
+            f"final r_frame_rate {info.fps} != project fps {config.fps}",
+            suggestion="re-render (the pipeline forces fps=<project fps> in the "
+                       "final chain; a mismatch means an old or foreign final)",
+        )
+
+    # Duration contract (FIX-B): |final - timeline| ≤ 1 frame.
+    if timeline is not None and info.duration_ms is not None and config.fps:
+        frame_ms = 1000.0 / config.fps
         drift = abs(info.duration_ms - timeline.duration_ms)
-        if drift > _FINAL_DURATION_TOL_MS:
+        if drift > frame_ms + 0.5:  # +0.5ms for probe rounding
             report.add(
-                "warn", "technical", "final",
+                "error", "technical", "final",
                 f"final duration {info.duration_ms}ms differs from timeline "
-                f"{timeline.duration_ms}ms by {drift}ms (>{_FINAL_DURATION_TOL_MS}ms)",
+                f"{timeline.duration_ms}ms by {drift:.1f}ms (> 1 frame = {frame_ms:.1f}ms)",
                 suggestion="re-render; the timeline and final are out of sync",
             )
 

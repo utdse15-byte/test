@@ -72,30 +72,51 @@ def test_empty_shots_raises_compile_error():
 # --------------------------------------------------------- duration resolution
 
 
+FPS = 24  # duration resolution snaps to the frame grid (FIX-B)
+
+
 def test_numeric_duration_wins_exactly_without_clamping():
     rules = TimelineRules()
-    assert _resolve_duration_ms(_shot_input(duration=2.5), rules) == 2500
-    # even below min_shot_ms (1200) an explicit number is honoured verbatim.
-    assert _resolve_duration_ms(_shot_input(duration=0.5), rules) == 500
+    # 2.5s @ 24fps = 60 whole frames: honoured verbatim
+    assert _resolve_duration_ms(_shot_input(duration=2.5), rules, FPS) == 2500
+    # even below min_shot_ms (1200) an explicit number is honoured (0.5s = 12 frames)
+    assert _resolve_duration_ms(_shot_input(duration=0.5), rules, FPS) == 500
 
 
 def test_auto_with_voice_uses_voice_plus_padding_clamped():
     rules = TimelineRules()  # padding 200 + 300 = 500, min 1200, max 10000
-    assert _resolve_duration_ms(_shot_input(voice_duration_ms=2000), rules) == 2500
-    assert _resolve_duration_ms(_shot_input(voice_duration_ms=100), rules) == 1200   # min clamp
-    assert _resolve_duration_ms(_shot_input(voice_duration_ms=20000), rules) == 10000  # max clamp
+    assert _resolve_duration_ms(_shot_input(voice_duration_ms=2000), rules, FPS) == 2500
+    # min clamp 1200ms = 28.8 frames -> snapped to 29 frames = 1208ms (FIX-B)
+    assert _resolve_duration_ms(_shot_input(voice_duration_ms=100), rules, FPS) == 1208
+    assert _resolve_duration_ms(_shot_input(voice_duration_ms=20000), rules, FPS) == 10000  # max clamp (240 frames)
 
 
 def test_auto_without_voice_uses_take_duration_clamped():
     rules = TimelineRules()
-    assert _resolve_duration_ms(_shot_input(voice_duration_ms=None, take_duration_ms=4000), rules) == 4000
-    assert _resolve_duration_ms(_shot_input(voice_duration_ms=None, take_duration_ms=500), rules) == 1200
+    assert _resolve_duration_ms(_shot_input(voice_duration_ms=None, take_duration_ms=4000), rules, FPS) == 4000
+    assert _resolve_duration_ms(_shot_input(voice_duration_ms=None, take_duration_ms=500), rules, FPS) == 1208
 
 
 def test_auto_with_nothing_uses_default_shot_ms():
     rules = TimelineRules()
-    got = _resolve_duration_ms(_shot_input(voice_duration_ms=None, take_duration_ms=None), rules)
-    assert got == rules.timing.default_shot_ms == 3000
+    got = _resolve_duration_ms(_shot_input(voice_duration_ms=None, take_duration_ms=None), rules, FPS)
+    assert got == rules.timing.default_shot_ms == 3000  # 72 whole frames
+
+
+def test_frame_grid_snap_rule():
+    """FIX-B rounding rule pinned: ms -> nearest whole frame count (min 1) ->
+    nearest integer ms."""
+    from manju.timeline.compiler import snap_to_frame_grid
+
+    assert snap_to_frame_grid(1200, 24) == 1208   # 28.8 -> 29 frames
+    assert snap_to_frame_grid(2500, 24) == 2500   # already 60 frames
+    assert snap_to_frame_grid(1, 24) == 42        # never below one frame
+    assert snap_to_frame_grid(1000, 30) == 1000   # 30 frames exact
+    assert snap_to_frame_grid(1015, 30) == 1000   # 30.45 -> 30 frames
+    # idempotent: snapping a snapped value changes nothing
+    for ms in (1200, 999, 3001, 41):
+        once = snap_to_frame_grid(ms, 24)
+        assert snap_to_frame_grid(once, 24) == once
 
 
 # --------------------------------------------------------------- transitions
