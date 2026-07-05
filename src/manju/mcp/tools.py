@@ -89,6 +89,12 @@ def _h_status(project: Project, args: dict) -> dict:
     return project_status(project)
 
 
+def _h_explain(project: Project, args: dict) -> dict:
+    from ..build.explain import explain
+
+    return explain(project)
+
+
 def _h_check(project: Project, args: dict) -> dict:
     return run_check(project).to_dict()
 
@@ -301,6 +307,14 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "timeline, latest final, QC summary, spend, and a suggested next step (§10).",
         "inputSchema": _EMPTY_SCHEMA,
         "handler": _h_status,
+    },
+    {
+        "name": "explain",
+        "description": "Why will the next build do what it will do? Read-only: "
+        "per-shot picture/voice states with hash evidence, timeline fingerprint "
+        "diff, final/proxy content-key verdicts. Never mutates, never spends.",
+        "inputSchema": _EMPTY_SCHEMA,
+        "handler": _h_explain,
     },
     {
         "name": "check",

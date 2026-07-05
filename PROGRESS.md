@@ -85,3 +85,16 @@ status voice_by_state summary. Fixed: compiler picked the OLDEST voice take
 **Open issues:** voice cost estimate is per_call only — speech duration is
 unknown pre-synthesis so per_second pricing cannot be estimated honestly;
 the ledger records the real figure afterwards.
+
+---
+
+## 2026-07-05 — round C: manju explain
+
+**Done:** `manju explain [--json]` + MCP `explain` tool — the build system
+justifies itself, read-only: per-shot picture/voice states with short hash
+evidence, timeline fingerprint comparison (unchanged / recompile / manual-
+truth), final & proxy content-key verdicts (skip / render / re-render), with
+an honest note that keys are computed against the current captions.ass.
+Degrades cleanly on empty projects. 226 tests green.
+
+**Next:** property-based tests (hypothesis) over the pure cores.

@@ -520,6 +520,41 @@ def export(
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
 
 
+# ----------------------------------------------------------------- explain
+
+
+@app.command()
+def explain(as_json: bool = typer.Option(False, "--json")):
+    """Why will the next build do what it will do? Read-only: per-shot
+    picture/voice states with hash evidence, timeline fingerprint diff, and
+    final/proxy content-key verdicts. Never mutates, never spends."""
+    from .build.explain import explain as _explain
+
+    info = _explain(_project())
+    if as_json:
+        _emit(info, True)
+        return
+    for entry in info["shots"]:
+        video = entry["video"]
+        line = f"{entry['shot']}  画面={video['state']}"
+        if video.get("selected_take"):
+            line += f"({video['selected_take']})"
+        if video.get("why"):
+            line += f" — {video['why']}"
+        if "voice" in entry:
+            line += f"  配音={entry['voice']['state']}"
+            if entry["voice"].get("why"):
+                line += f" — {entry['voice']['why']}"
+        typer.echo(line)
+    tl = info["timeline"]
+    typer.echo(f"时间线  mode={tl['mode']} captions={tl['captions_mode']} → {tl['verdict']}")
+    renders = info["renders"]
+    for target in ("final", "proxy"):
+        if target in renders:
+            r = renders[target]
+            typer.echo(f"{target:5}  {r.get('latest') or '—'} → {r['verdict']}")
+
+
 # ------------------------------------------------------------------- voice
 
 

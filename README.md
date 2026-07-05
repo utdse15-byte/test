@@ -140,6 +140,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju propose <title> --body …` | M2 | file a proposal — the agent's channel for locked-content changes |
 | `manju transcribe <media> [--from-srt / --text]` | M4 | ASR slot: cloud manifest or manual input → SRT |
 | `manju voice <shot>` | M3 | synthesize a new voice take (append-only; newest wins) |
+| `manju explain [--json]` | M4 | why will the next build do what it will do (read-only) |
 | `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
 | `manju auto "一句话"` | M2 | thin wrapper over `claude -p` (autopilot shell) |
 

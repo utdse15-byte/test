@@ -133,6 +133,7 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju transcribe <media> [--from-srt/--text]` | 导入真人素材转录:云 ASR manifest 或人工输入 → SRT(M4 插件位) |
 | `manju voice <shot>` | 为镜头重新配音(只增;最新的 voice_take 生效;stale 配音 build 只提示不重做) |
 | `manju pack / unpack` | 单文件归档往返(`.manjupkg`) |
+| `manju explain [--json]` | 只读解释:下次 build 会做什么、为什么(哈希证据) |
 | `manju events` | 看协作日志 |
 
 一句话记牢:**开工三步 → 改文件 → check → (命中 ask_before 就 dry-run + 问)→ build → 阶段 commit**。锁与哈希保证人机互不践踏,你只管把创作做好,把决策交给人。
