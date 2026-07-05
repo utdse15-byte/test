@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manju"
+version = "0.1.0"
+description = "Manju One — a deterministic build system for video (text is truth, media is append-only)"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5",
+    "typer>=0.9",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+manju = "manju.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
