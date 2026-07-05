@@ -244,7 +244,18 @@ def run_build(
         result.warnings.append(
             "rules.mode=manual: timeline.json is human truth; wrote timeline.generated.json (§6)"
         )
-        timeline = project.load_timeline() or timeline  # render what the human made
+        # FIX-D: a hand-edited timeline.json that fails to parse is a clean,
+        # actionable build error — never a JSONDecodeError traceback.
+        try:
+            timeline = project.load_timeline() or timeline  # render what the human made
+        except Exception as exc:
+            result.ok = False
+            result.errors.append(
+                f"timeline/timeline.json: 手工时间线无法解析 — {' '.join(str(exc).split())} "
+                "(建议:修复该 JSON,或把 rules.yaml 的 mode 改回 compiled;"
+                "对照 timeline.generated.json 排查)"
+            )
+            return result
 
     # ---- 4. captions
     rules = project.load_rules()
@@ -261,7 +272,20 @@ def run_build(
         from ..media.render import render_timeline
 
         finals_before = set(project.final_dir.glob("final_v*.mp4"))
-        out = render_timeline(project, timeline, target=target, ass_file=ass_path, force=force)
+        try:
+            out = render_timeline(project, timeline, target=target, ass_file=ass_path,
+                                  force=force)
+        except Exception as exc:  # FIX-D: MediaError etc. -> one-line diagnostic
+            from ..media.ffmpeg import MediaError
+
+            if not isinstance(exc, MediaError):
+                raise  # unknown exceptions keep their traceback
+            result.ok = False
+            result.errors.append(
+                f"render: {' '.join(str(exc).split())} "
+                "(建议:查看 .manju/logs/render.log 复现单条 ffmpeg 命令)"
+            )
+            return result
         result.render_path = project.relpath(out)
         if target == "final" and out in finals_before:
             result.warnings.append(

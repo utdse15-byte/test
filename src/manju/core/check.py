@@ -10,17 +10,32 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+import yaml
 from pydantic import ValidationError
 
 from .container import Project
 from .locks import verify_locks
+from .models import ShotIndex
 
-# Common cloud-key shapes (§8.2: keys must never enter the project directory)
+
+def _one_line(exc: BaseException) -> str:
+    """Collapse a multi-line parser error into one diagnostic line (FIX-D)."""
+    return " ".join(str(exc).split())
+
+# Common cloud-key shapes (§8.2: keys must never enter the project directory).
+# FIX-C red-team coverage: hyphenated sk-proj-…, GitHub gh?_ tokens, Slack
+# xox?-, long Bearer tokens, and UNQUOTED assignment forms (the review's
+# concrete miss was `api_key=sk-proj-…` without quotes).
 SECRET_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
-    re.compile(r"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9/+_\-]{16,}['\"]"),
+    re.compile(r"sk-[A-Za-z0-9_\-]{20,}"),                 # OpenAI-style, incl. sk-proj-
+    re.compile(r"AKIA[0-9A-Z]{16}"),                       # AWS access key id
+    re.compile(r"AIza[0-9A-Za-z\-_]{35}"),                 # Google API key
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),             # GitHub ghp_/gho_/ghu_/ghs_/ghr_
+    re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"),          # Slack tokens
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{25,}"),      # long bearer tokens
+    # assignment forms, quoted OR unquoted; the value must look token-like
+    re.compile(r"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)"
+               r"\s*[:=]\s*['\"]?[A-Za-z0-9/+_.\-]{16,}"),
 ]
 
 SCAN_SUFFIXES = {".yaml", ".yml", ".json", ".md", ".txt", ".srt", ".ass"}
@@ -57,9 +72,25 @@ def run_check(project: Project) -> CheckReport:
     except Exception as exc:  # unreadable file etc.
         report.errors.append(f"project.yaml: {exc}")
 
-    bible = project.load_bible()
-    index = project.load_index()
-    shot_ids = project.shot_ids()
+    # FIX-D: a broken truth file is a CHECK FINDING, never a traceback — the
+    # diagnostic names the file (yaml embeds it via the stream name) and says
+    # what to do next.
+    try:
+        bible = project.load_bible()
+    except yaml.YAMLError as exc:
+        report.errors.append(
+            f"bible: YAML 解析失败 — {_one_line(exc)}(建议:检查缩进/冒号/引号)"
+        )
+        bible = {}
+    try:
+        index = project.load_index()
+        shot_ids = project.shot_ids()
+    except (yaml.YAMLError, ValidationError) as exc:
+        report.errors.append(
+            f"shots/index.yaml: 解析失败 — {_one_line(exc)}(建议:检查 order 列表格式)"
+        )
+        index = ShotIndex()
+        shot_ids = []
 
     # ---- index integrity
     for sid in index.order:
@@ -113,7 +144,14 @@ def run_check(project: Project) -> CheckReport:
             continue
         from .yamlio import read_yaml
 
-        data = read_yaml(path) or {}
+        try:
+            data = read_yaml(path) or {}
+        except yaml.YAMLError as exc:  # FIX-D: finding, not traceback
+            report.errors.append(
+                f"bible/{fname}.yaml: YAML 解析失败 — {_one_line(exc)}"
+                "(建议:检查缩进/冒号/引号)"
+            )
+            continue
         if not isinstance(data, dict):
             report.errors.append(f"bible/{fname}.yaml: must be a mapping")
             continue

@@ -203,11 +203,27 @@ def make_sample_project(dest: Path, shots: int = 12, *, clip_seconds: float = 1.
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv:
-        print("usage: python -m tests.fixtures.make_sample <output_dir>", file=sys.stderr)
-        return 2
-    root = make_sample_project(Path(argv[0]))
+    """CLI entry (argparse — `--help` prints usage and creates NOTHING)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Generate the 12-shot vertical regression sample project "
+                    "(§13 M0 acceptance asset).",
+    )
+    parser.add_argument("output_dir", type=Path,
+                        help="directory to create the sample project in")
+    parser.add_argument("--shots", type=int, default=12,
+                        help="number of shots (default: 12)")
+    parser.add_argument("--clip-seconds", type=float, default=1.0,
+                        help="duration of each generated clip (default: 1.0)")
+    parser.add_argument("--no-bgm", action="store_true",
+                        help="skip the background-music track")
+    args = parser.parse_args(argv)
+
+    root = make_sample_project(
+        args.output_dir, shots=args.shots,
+        clip_seconds=args.clip_seconds, with_bgm=not args.no_bgm,
+    )
     print(root)
     return 0
 

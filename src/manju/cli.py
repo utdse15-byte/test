@@ -607,10 +607,16 @@ PACK_EXCLUDE = (".manju/", ".git/")
 
 @app.command()
 def pack(out: Optional[Path] = typer.Option(None)):
-    """Archive the project into a single .manjupkg (zip) for backup/migration."""
+    """Archive the project into a single .manjupkg (zip) for backup/migration.
+
+    FIX-E: the original project directory name rides in the zip comment, so
+    the archive file can be renamed freely without losing the identity."""
     project = _project()
     out = out or project.root.parent / (project.root.stem + ".manjupkg")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.comment = json.dumps(
+            {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
+        ).encode("utf-8")
         for path in sorted(project.root.rglob("*")):
             if not path.is_file():
                 continue
@@ -622,14 +628,24 @@ def pack(out: Optional[Path] = typer.Option(None)):
 
 
 @app.command()
-def unpack(archive: Path, dest: Optional[Path] = typer.Option(None)):
-    """Restore a .manjupkg into a project directory."""
+def unpack(archive: Path, dest: Optional[Path] = typer.Option(
+        None, "--dest", help="override the restored directory (default: the original name)")):
+    """Restore a .manjupkg. FIX-E: the ORIGINAL project name is restored by
+    default (embedded at pack time); --dest overrides it."""
     if not archive.exists():
         _fail(f"not found: {archive}")
-    dest = dest or archive.parent / (archive.stem + ".manju")
-    if dest.exists():
-        _fail(f"destination exists, refusing to overwrite: {dest}")
+    original_name: str | None = None
     with zipfile.ZipFile(archive) as zf:
+        try:
+            meta = json.loads(zf.comment.decode("utf-8")) if zf.comment else {}
+            if isinstance(meta, dict) and meta.get("manjupkg"):
+                original_name = str(meta.get("name") or "") or None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            original_name = None  # pre-FIX-E archive: fall back to the stem
+        if dest is None:
+            dest = Path.cwd() / (original_name or (archive.stem + ".manju"))
+        if dest.exists():
+            _fail(f"destination exists, refusing to overwrite: {dest}")
         zf.extractall(dest)
     (dest / ".manju").mkdir(exist_ok=True)
     typer.secho(f"unpacked → {dest}", fg=typer.colors.GREEN)
