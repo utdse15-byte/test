@@ -224,6 +224,19 @@ absence degrades to an alternative path instead of breaking a milestone.
 Toolbelt products must be written back via `manju select <shot> --file` —
 `manju check` flags unregistered media under `media/gen/` (write-back rule).
 
+### Providers that work today, no vendor account
+
+- **Edge TTS** (`pip install -e ".[edgetts]"`) — free keyless neural voices
+  (dozens of zh-CN speakers). Manifest: `adapter:
+  manju.providers.edge_tts:EdgeTtsProvider`, voice per character via bible
+  `voice_id`. Streams word boundaries into `<take>.timing.json`, which the
+  compiler uses for **word-timed captions** (punctuation re-aligned from the
+  original dialogue).
+- **Stock footage** — `manju.providers.stock:PexelsStockProvider` searches
+  royalty-free footage per shot (query: params > scene `stock_query` > action
+  line), orientation-matched to the project; needs a free `PEXELS_API_KEY`.
+  Add capability `stock_footage` to a shot's fallback list to route it.
+
 The P1 `html_render` slot (HyperFrames idea: HTML+CSS → deterministic MP4) is
 implemented against headless Chromium (`CHROME_BIN` / PATH / Playwright
 browsers dir): the caption-card provider prefers the styled HTML renderer and
