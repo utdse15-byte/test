@@ -417,17 +417,32 @@ _MINI_PLAYBOOK = (
 
 
 @app.command()
-def auto(prompt_text: str):
-    """Autopilot v1 (§10): a thin shell over `claude -p`. Claude Code runs the
-    Manju playbook (SKILL.md) end to end. No LLM SDK — strictly a subprocess."""
+def auto(
+    prompt_text: str,
+    agent: Optional[str] = typer.Option(
+        None, "--agent",
+        help='agent CLI: a known name (claude/codex/gemini/qwen/aider) or a '
+             'template like "claude -p {prompt}"; also MANJU_AGENT / '
+             'project.yaml:agent',
+    ),
+):
+    """Autopilot (§10): a thin shell over ANY one-shot agent CLI. The agent
+    gets the Manju playbook (SKILL.md) plus your task and works through the
+    ordinary CLI surface; its actions are logged as actor=ai. No LLM SDK —
+    strictly a subprocess. Structured integrations: `manju serve-mcp`."""
     import subprocess
 
     import manju
 
-    if shutil.which("claude") is None:
-        _fail("claude CLI not found — autopilot drives Claude Code (§10); "
-              "install it or run the playbook manually")
+    from .agents import AgentResolutionError, build_command, resolve_agent
+
     project = _project()
+    try:
+        template = resolve_agent(
+            getattr(project.load_config(), "agent", None), agent
+        )
+    except AgentResolutionError as exc:
+        _fail(str(exc))
 
     # Prefer a project-local skill, then the repo-bundled skills/manju/SKILL.md.
     skill_text: Optional[str] = None
@@ -445,10 +460,15 @@ def auto(prompt_text: str):
     else:
         composed = _MINI_PLAYBOOK + "\n\n任务:" + prompt_text
 
-    append_event(project.root, ACTOR, "auto", {"prompt": prompt_text})
+    argv = build_command(template, composed)
+    if shutil.which(argv[0]) is None:
+        _fail(f"agent CLI '{argv[0]}' not found on PATH — install it or pick "
+              "another via --agent/MANJU_AGENT/project.yaml:agent")
+    append_event(project.root, ACTOR, "auto",
+                 {"prompt": prompt_text, "agent": argv[0]})
     env = dict(os.environ)
     env["MANJU_ACTOR"] = "ai"  # every action the driven agent takes is logged as ai
-    proc = subprocess.run(["claude", "-p", composed], cwd=project.root, env=env)
+    proc = subprocess.run(argv, cwd=project.root, env=env)
     raise typer.Exit(proc.returncode)
 
 

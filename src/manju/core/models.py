@@ -55,6 +55,10 @@ class ProjectConfig(ManjuModel):
     # Purely a record: presets pre-fill files at creation time and never bind
     # the project afterwards — everything they wrote stays hand-editable.
     preset: str = "generic"
+    # Agent CLI for `manju auto`: a known name (claude/codex/gemini/qwen/aider)
+    # or a template like "claude -p {prompt}". None → MANJU_AGENT env, then a
+    # PATH probe over the known agents (src/manju/agents.py).
+    agent: str | None = None
 
 
 # ------------------------------------------------------------------- ShotSpec

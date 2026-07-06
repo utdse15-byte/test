@@ -164,13 +164,17 @@ def test_propose_shares_counter_with_mcp_tool(in_project):
 # ------------------------------------------------------------------------ auto
 
 
-def test_auto_without_claude_cli_errors(in_project, monkeypatch):
-    # §10: autopilot is a thin shell over `claude -p`; with no claude on PATH it
-    # must fail loudly and never spawn a subprocess.
-    monkeypatch.setattr("manju.cli.shutil.which", lambda name: None)
+def test_auto_without_any_agent_cli_errors(in_project, monkeypatch):
+    # §10: autopilot is a thin shell over ANY one-shot agent CLI; with no
+    # agent resolvable it must fail loudly, list the options, and never spawn
+    # a subprocess.
+    monkeypatch.delenv("MANJU_AGENT", raising=False)
+    monkeypatch.setattr("manju.agents.shutil.which", lambda name: None)
     result = runner.invoke(app, ["auto", "把片子做出来"])
     assert result.exit_code == 1
-    assert "claude CLI not found" in (result.stdout + result.stderr)
+    combined = result.stdout + result.stderr
+    assert "no agent CLI found" in combined
+    assert "claude" in combined and "codex" in combined  # options listed
 
 
 # ------------------------------------------------------------ redo (ffmpeg e2e)
