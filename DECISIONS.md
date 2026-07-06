@@ -47,3 +47,27 @@ review surface every other milestone's acceptance leaned on; `auto` because
 the M2 CLI pass made the thin `claude -p` shell (with `MANJU_ACTOR=ai` and
 the SKILL.md playbook prepended) a few dozen lines. No architectural debt:
 both sit strictly on the public CLI/core surface.
+
+## 5. `board --serve`: an actionable localhost board (owner-directed, 2026-07-06)
+
+Design §1-⑦ deliberately rejected a web UI ("static board covers ~80% of a
+GUI's value at ~1/20th the cost"). The project owner explicitly requested an
+actionable GUI / visual workspace for personal use. As built, the deviation
+is bounded: the static board stays the default and byte-identical; `--serve`
+starts a stdlib-only localhost server whose seven actions are a THIN veneer
+over the exact core functions the CLI calls (select/redo/build/qc/package/
+snapshot/rollback_shot), every mutation records the same event, and the
+dangerous surface (unlock/gc/pack) is unreachable from the browser — the
+same containment rule as the MCP server. No new dependencies, no auth
+(127.0.0.1 binding; personal use per the owner), Range-guarded media
+streaming with path-traversal rejection.
+
+## 6. `manju auto` drives any one-shot agent CLI (2026-07-06)
+
+v2.2 §10 described `auto` as a thin shell over `claude -p`. The owner asked
+for the productization flow to be agent-neutral. As built: an agent-command
+resolver (flag → MANJU_AGENT → project.yaml:agent → PATH probe over
+claude/codex/gemini/qwen/aider) with a `{prompt}` template grammar; the
+playbook prepend, actor=ai logging and exit-code propagation are unchanged.
+Claude Code remains merely the first PATH-probe default. MCP stays the
+recommended structured integration.

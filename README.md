@@ -132,7 +132,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju lock / unlock <shot> <field>` | M0 | value-hash locks (unlock is interactive-only) |
 | `manju qc / repair [--auto]` | M0 | quality checks / repair (`--auto` = auto-safe only) |
 | `manju export --jianying --srt --otio` | M0/M1 | JianYing draft / captions / OTIO |
-| `manju board` | M0 | static HTML review board |
+| `manju board [--serve] [--port]` | M0/P2 | review board: static HTML, or a live actionable workspace with --serve |
 | `manju package [--json] [--force]` | M4 | cover + teaser cut from the current final (`exports/packaging/`) |
 | `manju history [-n] [--json]` | P2 | merged change feed: events + git log, actor-attributed |
 | `manju snapshot [label]` | P2 | labeled git checkpoint of the truth text |
@@ -147,7 +147,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju voice <shot>` | M3 | synthesize a new voice take (append-only; newest wins) |
 | `manju explain [--json]` | M4 | why will the next build do what it will do (read-only) |
 | `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
-| `manju auto "一句话"` | M2 | thin wrapper over `claude -p` (autopilot shell) |
+| `manju auto "一句话" [--agent …]` | M2 | autopilot shell over ANY one-shot agent CLI (claude/codex/gemini/qwen/aider or a custom template) |
 
 Dangerous commands (`unlock`, `gc --hard`) are **not** exposed over MCP.
 
@@ -279,6 +279,40 @@ Thirteen kits ship: `comic` 漫剧 / `short_drama` 短剧 / `explainer` 知识�
 style, music/audio policy, export profiles and records its `qc_focus`
 advisories into project.yaml (`manju status` shows one line). `manju presets
 [--json]` lists them. A landscape preset overrides the `--vertical` flag.
+
+## The actionable board (`manju board --serve`)
+
+The static `board.html` stays the zero-dependency default. `manju board
+--serve` turns the same board into a live, clickable workspace on
+localhost — a thin veneer over the same core functions the CLI calls:
+
+- the page regenerates on every load (always-current state); takes play
+  inline with real HTTP Range support (seekable video);
+- click 选用 on any take (= `manju select`), 重做 a shot (= `manju redo`),
+  回滚 a shot's selection (= `manju rollback shot`), and run 构建 / 质检 /
+  打包 / 快照 from the header, with a busy overlay while a build runs;
+- every click records the same event the CLI would (actor from
+  `MANJU_ACTOR`, default human);
+- the dangerous surface (`unlock`, `gc`, `pack`) is NOT reachable from the
+  browser, exactly like the MCP server; media paths are traversal-guarded;
+  binds 127.0.0.1 by default — a personal workspace, not a hosted product.
+
+```bash
+manju board --serve            # http://127.0.0.1:8787, opens your browser
+manju board --serve --port 9000 --no-open
+```
+
+## Autopilot for any agent (`manju auto`)
+
+`manju auto "把这支片子做完"` hands the Manju playbook (SKILL.md) plus your
+task to a one-shot agent CLI and logs everything it does as `actor=ai`.
+The agent is resolved as: `--agent` flag → `MANJU_AGENT` env →
+`project.yaml: agent:` → first of claude / codex / gemini / qwen / aider
+found on PATH. A bare name uses that tool's documented one-shot form; a
+template like `"myagent --task {prompt}"` runs anything else — the prompt
+is substituted as a single argument, never word-split. Agents that speak
+MCP should use `manju serve-mcp` instead; `auto` exists for pure
+prompt-in/work-out CLIs.
 
 ## History, snapshots and rollback (P2)
 

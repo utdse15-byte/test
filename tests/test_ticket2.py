@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -135,12 +136,18 @@ def test_unpack_dest_overrides_name(tmp_project, monkeypatch, tmp_path):
 # ------------------------------------------------------- make_sample CLI ----
 
 
+# The repo root derived from THIS file — never hardcode the checkout path
+# (a baked-in dev path made these two tests CI-only failures).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_MAKE_SAMPLE = _REPO_ROOT / "tests" / "fixtures" / "make_sample.py"
+
+
 def test_make_sample_help_has_no_side_effects(tmp_path, monkeypatch):
     """--help must print usage and create nothing (argparse conversion)."""
     monkeypatch.chdir(tmp_path)
     proc = subprocess.run(
-        [sys.executable, "tests/fixtures/make_sample.py", "--help"],
-        capture_output=True, text=True, cwd="/home/user/test",
+        [sys.executable, str(_MAKE_SAMPLE), "--help"],
+        capture_output=True, text=True, cwd=str(_REPO_ROOT),
     )
     assert proc.returncode == 0
     assert "usage" in proc.stdout.lower()
@@ -149,9 +156,9 @@ def test_make_sample_help_has_no_side_effects(tmp_path, monkeypatch):
 
 def test_make_sample_argparse_options(tmp_path):
     proc = subprocess.run(
-        [sys.executable, "tests/fixtures/make_sample.py", str(tmp_path / "mini"),
+        [sys.executable, str(_MAKE_SAMPLE), str(tmp_path / "mini"),
          "--shots", "2", "--clip-seconds", "0.5", "--no-bgm"],
-        capture_output=True, text=True, cwd="/home/user/test",
+        capture_output=True, text=True, cwd=str(_REPO_ROOT),
     )
     assert proc.returncode == 0, proc.stderr
     from manju.core.container import Project

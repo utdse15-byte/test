@@ -338,3 +338,31 @@ gated on a real qc_vision vendor manifest for the same reason.
 
 **Open (small):** voice cost estimates per_call only; crossfade seams remain a
 recorded design decision (dip-to-black instead).
+
+---
+
+## 2026-07-06 — round P: CI green push + actionable board + agent-neutral auto
+
+**CI (the blocker):** two CI-only failures fixed — (1) bare `pytest` could
+not collect `from tests.…` imports (local `python -m pytest` masked it);
+tests/__init__.py makes tests a real package, verified with the bare-pytest
+invocation CI uses. (2) tests/test_ticket2.py had the dev container's
+absolute repo path baked into two subprocess cwd args — now derived from
+__file__, verified from a foreign checkout path. Awaiting the green run
+before this entry may claim CI fixed.
+
+**board --serve (owner-directed GUI, DECISIONS #5):** the static board
+becomes a live localhost workspace: per-request regeneration, seekable
+media (single-range 206), per-take 选用 / per-shot 重做+回滚 / header
+构建·质检·打包·快照 buttons with busy overlay + error banner, one mutation
+lock (concurrent click → 409), events per mutation, unlock/gc/pack
+unreachable, traversal-guarded /media, stdlib-only. Static output pinned
+byte-identical. Live-verified over real HTTP on the sample project.
+
+**auto for any agent (DECISIONS #6):** resolver flag → MANJU_AGENT →
+project.yaml:agent → PATH probe (claude/codex/gemini/qwen/aider);
+{prompt} template grammar substitutes the prompt as ONE argument; playbook
+prepend + actor=ai + exit-code propagation pinned by a fake-agent e2e that
+needs no real agent installed.
+
+**Tests:** 418 green locally under the CI-faithful bare-pytest invocation.
