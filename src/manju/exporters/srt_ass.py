@@ -64,11 +64,48 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def compile_srt(timeline: Timeline) -> str:
-    """Numbered, blank-line-separated SRT cues (LF newlines, UTF-8 text)."""
+# Break preferentially after these (CJK + ASCII clause enders and space).
+_BREAK_AFTER = ",。!?、;:…,.!?;: "
+
+
+def break_lines(text: str, max_chars: int | None) -> str:
+    """Insert hard line breaks so no line exceeds ``max_chars`` — the same
+    per-line budget the compiler split cues by, now made real on screen
+    (round-N review: the budget used to rely on the renderer's auto-wrap).
+
+    Pure and lossless: no character is dropped. Text that already contains a
+    newline is the author's own breaking — respected verbatim, never re-broken
+    (the manual-captions path counts on this). Breaks prefer to land after
+    punctuation or a space in the tail 40% of the window; otherwise the cut is
+    hard at the budget."""
+    if not max_chars or int(max_chars) <= 0 or "\n" in text:
+        return text
+    budget = int(max_chars)
+    lines: list[str] = []
+    rest = text
+    while len(rest) > budget:
+        window = rest[:budget]
+        floor = max(1, int(budget * 0.6))
+        cut = budget  # default: hard cut at the budget
+        for i in range(budget - 1, floor - 1, -1):
+            if window[i] in _BREAK_AFTER:
+                cut = i + 1  # break AFTER the punctuation/space
+                break
+        lines.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip(" ")
+    if rest:
+        lines.append(rest)
+    return "\n".join(lines)
+
+
+def compile_srt(timeline: Timeline, *, max_chars_per_line: int | None = None) -> str:
+    """Numbered, blank-line-separated SRT cues (LF newlines, UTF-8 text).
+    ``max_chars_per_line`` breaks long cues at the declared budget (compiled
+    mode only — callers re-emitting human cues pass None)."""
     parts: list[str] = []
     for i, cap in enumerate(timeline.tracks.captions, start=1):
         text = _normalize_newlines(cap.text).strip("\n")
+        text = break_lines(text, max_chars_per_line)
         parts.append(str(i))
         parts.append(f"{ms_to_srt(cap.start_ms)} --> {ms_to_srt(cap.end_ms)}")
         parts.append(text)
@@ -109,8 +146,11 @@ def compile_ass(
     width: int,
     height: int,
     style: dict[str, Any] | None = None,
+    apply_line_breaks: bool = True,
 ) -> str:
-    """Full ASS document: [Script Info] + one Default [V4+ Styles] + [Events]."""
+    """Full ASS document: [Script Info] + one Default [V4+ Styles] + [Events].
+    ``apply_line_breaks=False`` re-emits cues verbatim — the manual-takeover
+    path uses it so human cues are never re-broken (§3)."""
     st = _resolve_style(style, width, height)
     h_margin = max(20, width // 20)
 
@@ -146,10 +186,12 @@ def compile_ass(
         "Effect, Text"
     )
     event_lines = ["[Events]", event_format]
+    max_chars = (style or {}).get("max_chars_per_line") if apply_line_breaks else None
     for cap in timeline.tracks.captions:
         # Newlines -> hard \\N break; commas in the text are safe here because
         # Text is the final field and never gets split on commas.
-        text = _normalize_newlines(cap.text).strip("\n").replace("\n", "\\N")
+        text = _normalize_newlines(cap.text).strip("\n")
+        text = break_lines(text, max_chars).replace("\n", "\\N")
         prefix = (
             f"Dialogue: 0,{ms_to_ass(cap.start_ms)},{ms_to_ass(cap.end_ms)},"
             "Default,,0,0,0,,"
@@ -201,13 +243,16 @@ def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
     srt_path = project.captions_dir / "captions.srt"
     ass_path = project.captions_dir / "captions.ass"
 
+    max_chars = style.get("max_chars_per_line")
+
     if project.load_rules().captions.mode == "manual" and srt_path.exists():
         from ..core.models import CaptionLine, TimelineTracks
         from ..core.models import Timeline as _Timeline
         from ..providers.asr import parse_srt
 
         atomic_write_text(
-            project.captions_dir / "captions.generated.srt", compile_srt(timeline)
+            project.captions_dir / "captions.generated.srt",
+            compile_srt(timeline, max_chars_per_line=max_chars),
         )
         human = parse_srt(srt_path.read_text(encoding="utf-8"))
         human_timeline = _Timeline(
@@ -220,12 +265,13 @@ def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
         )
         atomic_write_text(
             ass_path,
+            # human cues are truth — never re-broken (§3)
             compile_ass(human_timeline, width=timeline.width, height=timeline.height,
-                        style=style),
+                        style=style, apply_line_breaks=False),
         )
         return {"srt": srt_path, "ass": ass_path}
 
-    atomic_write_text(srt_path, compile_srt(timeline))
+    atomic_write_text(srt_path, compile_srt(timeline, max_chars_per_line=max_chars))
     atomic_write_text(
         ass_path,
         compile_ass(timeline, width=timeline.width, height=timeline.height, style=style),

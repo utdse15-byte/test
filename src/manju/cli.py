@@ -836,6 +836,81 @@ def events(n: int = typer.Option(20, "-n"), as_json: bool = typer.Option(False, 
                        f"{json.dumps(e.get('detail', {}), ensure_ascii=False)}")
 
 
+# ------------------------------------------------- history/snapshot/rollback
+
+
+@app.command()
+def history(n: int = typer.Option(30, "-n"), as_json: bool = typer.Option(False, "--json")):
+    """The merged change feed (P2 §10): events.jsonl (who did what) interleaved
+    with the project's git log (committed disk state), oldest→newest. Read-only
+    — the compare/rollback entry point."""
+    from .core.history import history as _history
+
+    rows = _history(_project(), n=n)
+    if as_json:
+        _emit(rows, True)
+    else:
+        for r in rows:
+            tag = r["actor"] if r["source"] == "event" else f"git {r['detail'].get('sha', '')}"
+            typer.echo(f"{r['ts']}  [{tag}]  {r['text']}")
+
+
+@app.command()
+def snapshot(label: str = typer.Argument("", help="checkpoint label")):
+    """Labeled git checkpoint of the truth text (git is the patch engine, §3).
+    `manju rollback file --to <sha>` returns to it. A clean tree is a no-op."""
+    from .core.history import HistoryError, snapshot as _snapshot
+
+    try:
+        result = _snapshot(_project(), label)
+    except HistoryError as exc:
+        _fail(str(exc))
+    if result["clean"]:
+        typer.secho(f"nothing to snapshot — tree already checkpointed at {result['sha']}",
+                    fg=typer.colors.YELLOW)
+    else:
+        typer.secho(f"snapshot {result['sha']}"
+                    + (f"  ({result['label']})" if result["label"] else ""),
+                    fg=typer.colors.GREEN)
+
+
+@app.command()
+def rollback(
+    what: str = typer.Argument(..., help="'shot' or 'file'"),
+    target: str = typer.Argument(..., help="shot id, or a project-relative truth-text path"),
+    to: str = typer.Option("HEAD", "--to", help="git ref for file rollback (default HEAD)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Roll back one scoped thing; history only ever grows (P2).
+
+    `rollback shot S002` re-selects the previously selected take (the newer
+    take stays on disk for compare). `rollback file timeline/rules.yaml
+    [--to <sha>]` restores ONE truth-text file from git — media, renders and
+    exports are never touched. Every rollback is itself an event."""
+    from .core.history import HistoryError, rollback_file, rollback_shot
+
+    project = _project()
+    try:
+        if what == "shot":
+            result = rollback_shot(project, target)
+            human = f"{result['shot']}: back to {result['take']} (was {result['was'] or '—'})"
+        elif what == "file":
+            result = rollback_file(project, target, ref=to)
+            findings = run_check(project)
+            result["check_errors"] = len(findings.errors)
+            human = f"restored {result['path']} from {result['ref']}"
+            if findings.errors:
+                human += f"  (⚠ check now reports {len(findings.errors)} error(s))"
+        else:
+            _fail("rollback what? use: rollback shot <id> | rollback file <path> [--to <ref>]")
+    except HistoryError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho(human, fg=typer.colors.GREEN)
+
+
 @app.command()
 def doctor(as_json: bool = typer.Option(False, "--json")):
     """Environment health: ffmpeg, fonts, disk, project integrity (§14)."""
