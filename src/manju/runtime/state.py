@@ -182,6 +182,29 @@ class RuntimeState:
         currency = codes[0] if len(codes) == 1 else None
         return (float(total or 0.0), currency)
 
+    def cost_by_provider(self) -> list[dict]:
+        """Per-provider spend, highest first — the breakdown behind
+        :meth:`total_cost` (their costs sum to ``total_cost()[0]``). Each row is
+        ``{provider, cost, currency, runs}``; ``currency`` is ``None`` when that
+        provider recorded more than one currency (§8.3), mirroring total_cost."""
+        rows = self._conn.execute(
+            "SELECT provider, "
+            "       COALESCE(SUM(cost), 0.0) AS cost, "
+            "       COUNT(*) AS runs, "
+            "       COUNT(DISTINCT currency) AS ccount, "
+            "       MAX(currency) AS currency "
+            "FROM runs GROUP BY provider ORDER BY cost DESC, provider"
+        ).fetchall()
+        return [
+            {
+                "provider": r["provider"],
+                "cost": float(r["cost"] or 0.0),
+                "runs": int(r["runs"]),
+                "currency": r["currency"] if r["ccount"] == 1 else None,
+            }
+            for r in rows
+        ]
+
     # --------------------------------------------------------------- jobs
 
     def open_job(

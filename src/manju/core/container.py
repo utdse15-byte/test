@@ -34,6 +34,12 @@ from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml
 PROJECT_FILE = "project.yaml"
 MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".png", ".jpg", ".jpeg", ".wav", ".mp3", ".m4a", ".flac"}
 
+# The bible is a generic dict-of-files keyed by id (§4). This is the ONE list
+# of first-class bible files — scaffolded at `manju new`, merged by load_bible,
+# and lock-verified by `manju check`. Adding a file here makes it first-class
+# everywhere at once (goal item 11: props.yaml and voices.yaml).
+BIBLE_FILES = ("characters", "scenes", "props", "style", "voices")
+
 GITIGNORE = """\
 # Derived and heavy artifacts stay out of git; truth text goes in (§3)
 media/gen/**/*.mp4
@@ -125,7 +131,7 @@ class Project:
             PACKAGING_SCAFFOLD_HEADER + dump_yaml(PackagingSpec().model_dump()),
             encoding="utf-8",
         )
-        for bible_file in ("characters", "scenes", "props", "style"):
+        for bible_file in BIBLE_FILES:
             bpath = root / "bible" / f"{bible_file}.yaml"
             if not bpath.exists():
                 write_yaml(bpath, {})
@@ -157,6 +163,12 @@ class Project:
     @property
     def imports_dir(self) -> Path:
         return self.root / "media" / "imports"
+
+    @property
+    def story_imports_dir(self) -> Path:
+        # Text drops (novels, treatments) land here via `manju import` so the
+        # agent can adapt them into story/*.md — tracked truth text, not media.
+        return self.root / "story" / "imports"
 
     @property
     def gen_dir(self) -> Path:
@@ -289,10 +301,11 @@ class Project:
     # ----------------------------------------------------------------- bible
 
     def load_bible(self) -> dict[str, dict[str, Any]]:
-        """Flat id -> entry map merged across characters/scenes/props/style.
-        Duplicate ids across files are a check error, handled in checks."""
+        """Flat id -> entry map merged across the first-class bible files
+        (BIBLE_FILES: characters/scenes/props/style/voices). Duplicate ids
+        across files are a check error, handled in checks."""
         merged: dict[str, dict[str, Any]] = {}
-        for fname in ("characters", "scenes", "props", "style"):
+        for fname in BIBLE_FILES:
             path = self.root / "bible" / f"{fname}.yaml"
             if not path.exists():
                 continue

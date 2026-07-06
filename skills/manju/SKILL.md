@@ -115,6 +115,100 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 
 看到 `mode: manual` 就知道:人在手工精剪时间线,你不能碰 `timeline.json`。更常见的上游接管是:人把素材丢进 `imports/` 并 `manju select S002 --file …`(登记为 manual take),下次 build 自动采用——尊重它,别覆盖。
 
+## 创作工作流(逐步操作手册,§2 创作在系统之外)
+
+下面每个工作流都只用**已有的 CLI/MCP 命令与文本文件**——引擎里没有任何 LLM,扩写/编剧/规划/打磨/修复全是你(AI 导演)在文本上做的活。每个工作流:编号步骤 + 确切命令与文件路径 + 做完查什么 + 硬规矩。所有工作流都以"开工三步"(§1)起手,以 `manju check` + 阶段 `git commit`(§2/§6)收尾。全程 `actor=ai`。
+
+### 工作流 A:一句话创意 → 扩写 → 大纲 → 剧本
+
+写文件的顺序固定:`story/brief.md` → `story/outline.md` → `story/script.md`(`manju new` 已铺好这三个骨架)。
+
+1. 开工三步(§1)。读 `story/brief.md`——若空,先与人确认一句话创意再写:谁、在哪、发生什么、为什么抓人。
+2. **扩写**:在 brief 基础上扩成 3~5 句 premise——核心冲突、一个转折、一个结局钩子。写回 `story/brief.md` 末尾或直接充实它。
+3. **大纲**:写 `story/outline.md`——三幕 / 起承转合,**每行一个节拍(beat)**,一节拍≈一镜头,保留节拍编号,方便下一步一一映射成镜头。
+4. **剧本**:写 `story/script.md`——分场 + 对白。对白逐字写清:它将原样成为 `shots/*.yaml` 的 `dialogue.text`,并决定 TTS 配音时长。
+5. 顺手把人物/场景/关键道具落进 `bible/`(characters/scenes/props/voices),给后续镜头引用备好 id。
+6. 每写完一个文件 → `manju check`(story/*.md 不入 schema,但 check 会扫 API key)→ `git commit`(如 `[ai] 写 story/outline.md:12 个节拍`)。
+- 硬规矩:引擎不编故事,但**若人已在 brief/outline 里写了方向,尊重它,不推翻**;story/ 是真相文本,入 git。
+
+### 工作流 B:小说改编成剧本(从 `story/imports/`)
+
+人把小说 / 梗概 drop 进来时(`manju import novel.txt` 会把文本改道成 `story/imports/novel.md`),你负责把它改编成竖屏短剧。
+
+1. `manju events` 看是否有带 `story_imports` 的 import 事件,或直接看 `story/imports/` 里有什么。
+2. **通读** `story/imports/<名>.md` 全文。抽主线:人物、场景、关键道具、核心冲突、结局——逐一落到 `bible/`(characters.yaml / scenes.yaml / props.yaml / voices.yaml),定好 id。
+3. **压缩重构**成竖屏短剧节奏:写 `story/outline.md`(砍支线、每节拍一镜头、开头留钩子、结尾留悬念)。
+4. 写 `story/script.md`(分场 + 对白),再进入工作流 C 拆镜头。
+5. `manju check` → `manju appearances`(确认 bible id 齐)→ commit。
+- 硬规矩:**绝不改动 `story/imports/` 里的原稿**——它与 `media/imports/` 同级,是人工来源、只读语义。你的产物只写到 `story/outline.md`、`story/script.md`、`bible/`、`shots/`,永不覆盖原稿。
+
+### 工作流 C:剧本 → 镜头(shots/*.yaml 写作规范)
+
+1. 读 `story/script.md` + `bible/`,确认要引用的 scene / character / prop 的 id 都已存在。
+2. 每个节拍写一个 `shots/SNNN.yaml`,常用字段:
+   - `id`(与文件名一致)、`scene`(引用 `bible/scenes`)、`characters: [引用 bible/characters]`。
+   - `camera`:`shot_size`(枚举 `extreme_wide/wide/medium/close_up/extreme_close_up`)、`movement`、`angle`。
+   - `action.main` / `action.emotion`。
+   - `dialogue.speaker` / `dialogue.text`(逐字;决定 TTS 时长)。
+   - `duration`:`auto`(默认,对白时长 + padding 推导)或写死秒数。
+   - `quality.must_show: [可机检的硬信息]`,如 `硬币年份 2036 清晰可读`——会被断言化(抽帧 OCR 机检,引号/数字最好机检)。
+   - `quality.avoid: [画面禁忌]`,如 `多余手指, 人脸漂移, 黑屏`。
+   - `continuity.prev`(上一镜 id);`continuity.locks: [character:linxia, scene, prop:future_coin]`——**道具引用就写在这里**,用 `prop:<id>` 指向 `bible/props`。
+   - `generation`:`candidates` / `fallback` / `provider`(可选)。
+3. 更新 `shots/index.yaml` 的 `order`(镜头顺序)。
+4. 做完查:`manju check`(引用完整性 + 锁 + key)→ `manju appearances`(看角色/场景/道具引用是否都命中 bible,`missing.props` 会抓到 `prop:` 指向 bible 里不存在的道具——这是 check 不管的,只有 appearances 管)。
+5. commit(如 `[ai] 拆 S001-S012 镜头`)。
+- 硬规矩:`must_show` 写可机检硬信息;`avoid` 写画面禁忌;`continuity.locks` 里 `prop:` 引用必须在 `bible/props.yaml` 有对应条目。
+
+### 工作流 D:分镜规划 + 镜头顺序优化
+
+1. `manju appearances` + `manju status` 摸清当前镜头与出场分布。
+2. 规划分镜:景别节奏(远景 → 推近)、视线方向 / 180° 轴线、跨镜的道具位置连续性。
+3. 要调顺序 → 改 `shots/index.yaml` 的 `order` 列表(纯文本一行 diff)。
+4. **把理由写进 `proposals/`**:`manju propose "重排 S003–S006" --body "为什么这样排、改善了什么钩子/连续性、影响哪些镜头"`——顺序是创作决策,留下 rationale 让人可审可回滚。
+5. 做完查:`manju check`(`order` 不得引用不存在的镜头)→ commit。
+- 硬规矩:改 `order` 前先在 `proposals/` 记录 rationale;不碰任何已锁字段。
+
+### 工作流 E:开头钩子 / 结尾悬念强化(首末镜复查仪式)
+
+1. 定位首末镜:`shots/index.yaml` 的 `order` 第一个和最后一个(或看 `manju appearances`)。
+2. **首镜(hook)**:前 3 秒有没有钩子?查 `action.main`、`dialogue.text`、`camera`(冲击力够不够)。
+3. **末镜(cliffhanger)**:有没有留悬念 / 反转 / 下一集(或循环)的钩子?
+4. 要改:首末镜的 `dialogue`/`duration` **未锁**就直接改 `shots/*.yaml`;**已锁**就走工作流 F(提案)。
+5. `manju check` → commit。
+- 仪式:**每轮 `manju build` 前后各做一次首末镜复查**——短剧的留存全靠头尾。
+
+### 工作流 F:对白打磨(锁意识)
+
+1. 逐镜读 `dialogue.text`,打磨口语化 / 节奏 / 字数(竖屏字幕:每行 ≤ `rules.yaml` 的 `max_chars_per_line`,最多 `max_lines` 行)。
+2. 改之前先看该 shot 的 `locked`:`dialogue.text` 在不在里面?
+   - **未锁**:直接改 `shots/SNNN.yaml` 的 `dialogue.text`。
+   - **已锁**:你不能自己改,也**不能 `unlock`**。写提案 `manju propose "S002 改台词" --body "把 X 改成 Y,理由…"`,并在对话里告诉人"我提了 proposals/NNNN,等你决定"。
+3. 改了台词 → 配音会 stale(`voice_hash` 变),`manju status` 会提示;要更新配音用 `manju voice S002`(只增新 voice_take,最新生效,build 不擅自重做)。
+4. `manju check` → commit。
+- 硬规矩:锁定的对白 → `proposals/`,永不 `unlock`。
+
+### 工作流 G:节奏 pass(时长 / 时序规则)
+
+1. `manju build --dry-run` / `manju status` 看每镜时长与总时长。
+2. 调整:
+   - 单镜时长:`shots/SNNN.yaml` 的 `duration`(`auto` = 对白时长 + padding;或写死秒数)。
+   - 全局时序:`timeline/rules.yaml` 的 `timing`(`padding_before_ms` / `padding_after_ms` / `min_shot_ms` / `max_shot_ms` / `default_shot_ms`)。
+   - 转场:`rules.yaml` 的 `transition_default`。
+3. 竖屏快剪原则:短镜、快切、留白(参 `bible/style.yaml` 的 `pacing`),`min_shot_ms` 别设太长。
+4. 做完查:`manju check` → `manju build`(compiled 模式重编时间线,纯函数同入同出)→ commit。
+- 硬规矩:若 `rules.yaml` 是 `mode: manual`,`timeline.json` 是人工真相,**别覆盖**(规矩 9);只改 `rules`/`shots`,让 build 输出 `timeline.generated.json` 供对比。
+
+### 工作流 H:修复环(qc → 修复计划 → 定点重做)
+
+1. `manju build --target qc` 或 `manju qc [--deep]` → 生成 `reports/qc.json`、`reports/qc.md`、`reports/repair_plan.yaml`。
+2. 读 `reports/qc.md`:分层看 存在层 / 技术层 / 内容层(`must_show` 违背等)的 error / warn。
+3. `manju repair --auto`:只执行 auto-safe 项(`redo_new_seed` / `degrade_fallback`),其余留给人 / 你判断。
+4. 定点重做坏镜头:`manju redo SNNN [--seed N] [--provider X]`(只增 take,原选择仍生效,直到你 `manju select SNNN take_NN` 选新的)。
+5. `content_rejected`(审核拒绝)**别无脑重试**:`manju tasks` 看拒绝原因 tail,改写 prompt 或走降级链(§8)。
+6. 重做 → `manju select` 选新 take → `manju check` → `manju build` → 再 `manju qc` 复核闭环。
+- 硬规矩:花钱 / 长耗时的 redo 命中 `ask_before` 就先 `--dry-run` + 问人;不覆盖 `renders/final/`(只增 `final_vN`)。
+
 ## 命令速查表(§11)
 
 | 命令 | 作用 |
@@ -122,7 +216,9 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju new 名字 --vertical` | 新建竖屏项目(自动 git init) |
 | `manju status [--json]` | 接管入口:阶段、缺口、下一步、累计花费 |
 | `manju check` | schema + 引用 + 锁 校验(编辑后必跑) |
-| `manju import <files…>` | 登记进 imports,转码代理 / 缩略图 / 波形 |
+| `manju import <files…>` | 登记素材:真实影音进 `media/imports/`(转码代理/缩略图/波形);文本 `.txt/.md` 改道进 `story/imports/<名>.md`(可改编的原稿),两者同样只增不覆盖 |
+| `manju appearances [--json]` | 出场表(只读):每个角色/场景/道具被哪些镜头引用(按序)+ 未引用的孤儿 + 镜头引用但 bible 缺失的条目 |
+| `manju tasks [--json] [-n 20]` | 运行账本(只读):最近生成任务的 provider/镜头/状态(succeeded/failed/moderation-rejected)/花费/失败原因 + 在飞任务 + 按 provider 与项目合计的花费 |
 | `manju build [--target proxy\|final\|exports\|qc] [--gen missing\|auto\|off] [--regen-stale] [--dry-run]` | 一键出片;`--dry-run` 先看清单和成本 |
 | `manju redo S002 [--candidates N] [--provider X] [--seed N]` | 显式重做某镜头 |
 | `manju select S002 take_03` | 选中某 take(或 `--file` 指人工素材) |

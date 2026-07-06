@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import yaml
 from pydantic import ValidationError
 
-from .container import Project
+from .container import BIBLE_FILES, Project
 from .locks import verify_locks
 from .models import ShotIndex
 
@@ -162,7 +162,7 @@ def run_check(project: Project) -> CheckReport:
             report.errors.append(str(violation))
 
     # ---- bible locks
-    for fname in ("characters", "scenes", "props", "style"):
+    for fname in BIBLE_FILES:
         path = project.root / "bible" / f"{fname}.yaml"
         if not path.exists():
             continue

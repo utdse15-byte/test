@@ -174,14 +174,37 @@ def check(as_json: bool = typer.Option(False, "--json")):
 # ------------------------------------------------------------------ import
 
 
+# Text drops route to story/imports/ (adaptable source), everything else to
+# media/imports/ (real footage/audio). Detected by SUFFIX only — no content
+# sniffing (a .md is a script, a .txt is a novel; a .mp4 is media).
+TEXT_IMPORT_SUFFIXES = {".txt", ".md"}
+
+
 @app.command("import")
 def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
-    """Register media into media/imports (sacred: never deleted, §3)."""
+    """Register a file into the project. Real footage/audio → media/imports
+    (sacred: never deleted, §3). Text (.txt/.md) → story/imports/<name>.md
+    instead, as adaptable source text the AI director can turn into a script
+    (novel→script). Both honour the same no-overwrite _2 suffixing."""
     project = _project()
-    registered = []
+    registered: list[str] = []
+    story_imports: list[str] = []  # the text drops, for the adapt-me hint
     for f in files:
         if not f.exists():
             _fail(f"not found: {f}")
+        if f.suffix.lower() in TEXT_IMPORT_SUFFIXES:
+            # story/imports/<stem>.md — a text drop the agent adapts, not media.
+            project.story_imports_dir.mkdir(parents=True, exist_ok=True)
+            dest = project.story_imports_dir / f"{f.stem}.md"
+            n = 2
+            while dest.exists():  # never overwritten, same as media imports
+                dest = project.story_imports_dir / f"{f.stem}_{n}.md"
+                n += 1
+            shutil.copy2(f, dest)
+            rel = project.relpath(dest)
+            registered.append(rel)
+            story_imports.append(rel)
+            continue
         dest = project.imports_dir / f.name
         n = 2
         while dest.exists():  # imports are never overwritten either
@@ -190,25 +213,34 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
         shutil.copy2(f, dest)
         registered.append(project.relpath(dest))
     # §11: derived previews (thumbnail/waveform) into the disposable runtime
-    # dir; the segment cache is the lazy proxy (§7 ①). Best-effort only.
+    # dir; the segment cache is the lazy proxy (§7 ①). Best-effort only. Text
+    # drops have no preview — only the media imports get one.
     previews: dict[str, str] = {}
     try:
         from .media.preview import make_preview
 
         for rel in registered:
+            if rel in story_imports:
+                continue
             preview = make_preview(project.resolve(rel), project.runtime_dir / "thumbs")
             if preview is not None:
                 previews[rel] = project.relpath(preview)
     except ImportError:
         pass
-    append_event(project.root, ACTOR, "import", {"files": registered, "previews": previews})
+    append_event(project.root, ACTOR, "import",
+                 {"files": registered, "story_imports": story_imports, "previews": previews})
     if as_json:
-        _emit({"imported": registered, "previews": previews}, True)
+        _emit({"imported": registered, "story_imports": story_imports,
+               "previews": previews}, True)
     else:
         for r in registered:
             typer.secho(f"imported {r}", fg=typer.colors.GREEN)
         for src_rel, thumb in previews.items():
             typer.echo(f"  preview: {thumb}")
+        for r in story_imports:
+            typer.secho(f"  提示 hint: {r} 是文本稿,可改编成剧本(novel→script):"
+                        "读它 → 写 story/outline.md、story/script.md → 再拆 shots/",
+                        fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------- build
@@ -956,6 +988,176 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         zf.extractall(dest)
     (dest / ".manju").mkdir(exist_ok=True)
     typer.secho(f"unpacked → {dest}", fg=typer.colors.GREEN)
+
+
+# ------------------------------------------------------------- appearances
+
+
+@app.command()
+def appearances(as_json: bool = typer.Option(False, "--json")):
+    """Cross-reference bible ids against the shots that use them (goal 11).
+
+    Read-only: for every character/scene/prop referenced by a shot, list the
+    shots it appears in (index order); plus orphans (bible entries no shot
+    uses) and missing refs (used in a shot, absent from the bible). Does not
+    duplicate `manju check` — a missing scene/character is already a check
+    error and is only echoed here for context."""
+    from .core.appearances import appearances as _appearances
+
+    info = _appearances(_project())
+    if as_json:
+        _emit(info, True)
+        return
+
+    def _line(rid: str, entry: dict) -> str:
+        label = f"{rid}"
+        if entry.get("name"):
+            label += f"  {entry['name']}"
+        shots = entry["shots"]
+        return f"  {label}  → {', '.join(shots)}  ({len(shots)})"
+
+    typer.secho(f"出场表 / appearances  (共 {info['shots_total']} 镜)", fg=typer.colors.CYAN)
+    for kind, title in (("characters", "角色 / characters"),
+                        ("scenes", "场景 / scenes"),
+                        ("props", "道具 / props")):
+        entries = info.get(kind) or {}
+        typer.secho(title, fg=typer.colors.BRIGHT_BLACK)
+        if not entries:
+            typer.echo("  —")
+        for rid, entry in entries.items():
+            typer.echo(_line(rid, entry))
+    orphans = info.get("orphans") or {}
+    orphan_bits = [f"{k}: {', '.join(v)}" for k, v in orphans.items() if v]
+    if orphan_bits:
+        typer.secho("未被引用 / orphans:  " + " · ".join(orphan_bits), fg=typer.colors.YELLOW)
+    missing = info.get("missing") or {}
+    missing_flat = [(k, m) for k, ms in missing.items() for m in ms]
+    if missing_flat:
+        typer.secho("缺失引用 / missing (镜头引用但 bible 无此条):", fg=typer.colors.RED)
+        for kind, m in missing_flat:
+            hint = "  (manju check 也会报)" if kind in ("characters", "scenes") else ""
+            typer.echo(f"  {kind[:-1] if kind.endswith('s') else kind} {m['id']} ← "
+                       f"{', '.join(m['shots'])}{hint}")
+
+
+# ------------------------------------------------------------------ tasks
+
+
+def _task_status(run: dict) -> str:
+    """Ledger status → display status. content_rejected surfaces as its own
+    'moderation-rejected' bucket (§8.4); everything else passes through."""
+    if run.get("status") == "failed" and run.get("failure_kind") == "content_rejected":
+        return "moderation-rejected"
+    return str(run.get("status") or "")
+
+
+def _reason_tail(text: str | None, limit: int = 90) -> str:
+    """The tail of an error / rejection reason, collapsed to one line."""
+    if not text:
+        return ""
+    one = " ".join(str(text).split())
+    return one if len(one) <= limit else "…" + one[-limit:]
+
+
+@app.command()
+def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to show"),
+          as_json: bool = typer.Option(False, "--json")):
+    """Recent generation jobs from the run ledger (§8.3, goal 19).
+
+    Read-only view of the disposable SQLite ledger: recent runs with provider,
+    shot, status (succeeded/failed/moderation-rejected), cost and error tail,
+    plus still-in-flight cloud jobs (submitted/polling). Footer aggregates spend
+    by provider and the project total (the same numbers `manju status` shows)."""
+    project = _project()
+    from .runtime.state import RuntimeState
+
+    tasks_out: list[dict] = []
+    pending_out: list[dict] = []
+    by_provider: list[dict] = []
+    total = 0.0
+    currency: Optional[str] = None
+    available = True
+    note = ""
+    runs: list[dict] = []
+    pending: list[dict] = []
+    try:
+        with RuntimeState(project.root) as state:
+            runs = state.run_log(n)
+            pending = state.pending_jobs()
+            total, currency = state.total_cost()
+            by_provider = state.cost_by_provider()
+    except Exception as exc:  # §3: the ledger is disposable — degrade, never crash
+        available = False
+        note = f"run ledger unavailable ({exc}); try `manju rebuild-index`"
+
+    if available:
+        for r in runs:
+            tasks_out.append({
+                "id": r.get("id"),
+                "shot": r.get("shot"),
+                "provider": r.get("provider"),
+                "status": _task_status(r),
+                "cost": float(r.get("cost") or 0.0),
+                "currency": r.get("currency"),
+                "created": r.get("ts"),
+                "updated": r.get("ts"),
+                "take": r.get("take"),
+                "remote_job_id": r.get("remote_job_id"),
+                "reason": _reason_tail(r.get("error")),
+            })
+        for j in pending:
+            pending_out.append({
+                "shot": j.get("shot"),
+                "provider": j.get("provider"),
+                "status": "polling",
+                "remote_job_id": j.get("remote_job_id"),
+                "created": j.get("submitted_at"),
+                "updated": j.get("updated_at"),
+            })
+
+    payload = {
+        "tasks": tasks_out,
+        "pending": pending_out,
+        "spend": {"by_provider": by_provider, "total": float(total), "currency": currency},
+        "shown": len(tasks_out),
+    }
+    if as_json:
+        if not available:
+            payload["note"] = note
+        _emit(payload, True)
+        return
+
+    if not available:
+        typer.secho(note, fg=typer.colors.YELLOW)
+        return
+    typer.secho(f"任务 / tasks  (最近 {len(tasks_out)})", fg=typer.colors.CYAN)
+    if not tasks_out:
+        typer.echo("  —(登记账本为空;云生成/redo 后才有记录)")
+    _status_color = {
+        "succeeded": typer.colors.GREEN,
+        "failed": typer.colors.RED,
+        "moderation-rejected": typer.colors.MAGENTA,
+    }
+    for t in tasks_out:
+        cost = f"{t['cost']:g} {t['currency']}" if t["cost"] else "—"
+        head = (f"  #{t['id']}  {t['shot'] or '—':<6}  {t['provider'] or '—':<14}  ")
+        typer.echo(head, nl=False)
+        typer.secho(f"{t['status']:<20}", fg=_status_color.get(t["status"], typer.colors.WHITE), nl=False)
+        typer.echo(f"  {cost}  {t['created'] or ''}"
+                   + (f"  {t['take']}" if t["take"] else ""))
+        if t["reason"]:
+            typer.secho(f"        ↳ {t['reason']}", fg=typer.colors.BRIGHT_BLACK)
+    if pending_out:
+        typer.secho("进行中 / in-flight (submit 后仍在续轮询):", fg=typer.colors.BRIGHT_BLACK)
+        for p in pending_out:
+            typer.echo(f"  {p['remote_job_id']}  {p['shot'] or '—'}  {p['provider'] or '—'}  "
+                       f"polling  {p['created'] or ''}")
+    typer.secho("花费 / spend by provider:", fg=typer.colors.BRIGHT_BLACK)
+    for row in by_provider:
+        cur = row["currency"] or "?"
+        typer.echo(f"  {row['provider'] or '—':<14}  {row['cost']:g} {cur}  ({row['runs']} runs)")
+    total_cur = currency or "(混合/mixed)"
+    typer.secho(f"  合计 / total  {float(total):g} {total_cur}", fg=typer.colors.CYAN)
 
 
 # ------------------------------------------------------------------- misc
