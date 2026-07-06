@@ -353,12 +353,107 @@ class InfoCardSpec(ManjuModel):
     template: str = "chapter"
 
 
+# ---------------------------------------------- branding overlays (round-Q)
+# All additive to PackagingSpec, all default-off: an untouched packaging.yaml
+# stays a no-op (byte-identical timeline). These ride the existing overlay
+# track and burn in the FINAL pass only (never a per-segment cache), so a
+# human's shot media is never touched. Corner inset / watermark opacity follow
+# CapCut/JianYing 角标 & watermark conventions (inset ~2-3% of frame width;
+# watermark semi-transparent).
+
+
+def _pct_0_100(v: float) -> float:
+    """size_pct sanity: a scale that isn't a positive fraction of the frame is
+    a config error (validated at the model, not QC — cleaner than a runtime
+    check). 0 < v <= 100."""
+    if not (0 < float(v) <= 100):
+        raise ValueError(f"size_pct must be in (0, 100], got {v!r}")
+    return float(v)
+
+
+def _opacity_0_1(v: float) -> float:
+    """opacity sanity: 0..1 inclusive (fully transparent .. fully opaque)."""
+    if not (0.0 <= float(v) <= 1.0):
+        raise ValueError(f"opacity must be in [0, 1], got {v!r}")
+    return float(v)
+
+
+class LogoSpec(ManjuModel):
+    """A brand logo/角标 burned into a frame corner. ``image`` is a HUMAN asset
+    (project-relative) — never generated, never rewritten by the engine."""
+
+    enabled: bool = False
+    image: str = ""  # project-relative human asset path
+    corner: Literal["tl", "tr", "bl", "br"] = "tr"
+    size_pct: float = 12.0   # of frame width
+    margin_pct: float = 2.5  # corner inset, of frame width
+    opacity: float = 1.0
+    from_ms: int = 0
+    duration_ms: int | None = None  # None = full film
+
+    @field_validator("size_pct")
+    @classmethod
+    def _check_size(cls, v: float) -> float:
+        return _pct_0_100(v)
+
+    @field_validator("opacity")
+    @classmethod
+    def _check_opacity(cls, v: float) -> float:
+        return _opacity_0_1(v)
+
+
+class WatermarkSpec(ManjuModel):
+    """A semi-transparent watermark over the whole film — ``text`` OR ``image``.
+    ``image`` (when set) is a HUMAN asset, never generated."""
+
+    enabled: bool = False
+    text: str = ""
+    image: str = ""  # project-relative human asset path (overrides text if set)
+    opacity: float = 0.35
+    position: Literal["center", "diagonal_tile"] = "center"
+    size_pct: float = 30.0  # of frame width
+
+    @field_validator("size_pct")
+    @classmethod
+    def _check_size(cls, v: float) -> float:
+        return _pct_0_100(v)
+
+    @field_validator("opacity")
+    @classmethod
+    def _check_opacity(cls, v: float) -> float:
+        return _opacity_0_1(v)
+
+
+class BadgeSpec(ManjuModel):
+    """A small rounded text chip (角标) in a corner — drawtext-based."""
+
+    enabled: bool = False
+    text: str = ""
+    corner: Literal["tl", "tr", "bl", "br"] = "tl"
+    from_ms: int = 0
+    duration_ms: int | None = None  # None = full film
+
+
+class CtaSpec(ManjuModel):
+    """A call-to-action chip shown in the film's closing window."""
+
+    enabled: bool = False
+    text: str = "关注 / FOLLOW"
+    at_end_ms: int = 3000  # window before the film ends
+    position: Literal["bottom", "center"] = "bottom"
+
+
 class PackagingSpec(ManjuModel):
     intro: PackagingCard = Field(default_factory=PackagingCard)
     outro: PackagingCard = Field(default_factory=PackagingCard)
     cover: CoverSpec = Field(default_factory=CoverSpec)
     teaser: TeaserSpec = Field(default_factory=TeaserSpec)
     info_cards: list[InfoCardSpec] = Field(default_factory=list)
+    # Branding overlays (round-Q) — all additive, all default-off.
+    logo: LogoSpec = Field(default_factory=LogoSpec)
+    watermark: WatermarkSpec = Field(default_factory=WatermarkSpec)
+    badge: BadgeSpec = Field(default_factory=BadgeSpec)
+    cta: CtaSpec = Field(default_factory=CtaSpec)
 
 
 # ------------------------------------------------------------- TimelineSpec
@@ -380,6 +475,15 @@ class OverlayClip(ManjuModel):
     text: str = ""
     start_ms: int = 0
     duration_ms: int = 1500
+    # Branding overlays (round-Q): logo/watermark/badge/cta ride this same
+    # track. These fields carry the burn geometry the render needs; they stay at
+    # their defaults for the pre-existing title_card/info_card kinds.
+    source: str = ""       # image path for image overlays (logo, image watermark)
+    corner: str = ""       # tl|tr|bl|br for logo/badge
+    size_pct: float = 0.0  # branding scale, % of frame width
+    margin_pct: float = 0.0  # branding corner inset, % of frame width
+    opacity: float = 1.0   # branding opacity (0..1)
+    position: str = ""     # watermark (center|diagonal_tile) / cta (bottom|center)
 
 
 class AudioClip(ManjuModel):

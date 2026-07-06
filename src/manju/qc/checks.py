@@ -505,6 +505,33 @@ def _packaging_checks(project, report, timeline) -> None:
                 suggestion="run `manju build` to render the packaging card (§13-14)",
             )
 
+    # Round-Q branding: a logo / image watermark references a HUMAN asset. When
+    # the section is enabled and names an image, that file must exist on disk —
+    # a missing one is an error (opacity/size ranges are validated at the model,
+    # not here). A text-only watermark (no image) has nothing to check.
+    def _branding_image(enabled: bool, image: str, label: str) -> None:
+        if not (enabled and image):
+            return
+        try:
+            exists = project.resolve(image).exists()
+        except Exception:
+            report.add(
+                "error", "existence", "packaging",
+                f"{label} image path is invalid: {image}",
+                suggestion="use a project-relative path under the project root",
+            )
+            return
+        if not exists:
+            report.add(
+                "error", "existence", "packaging",
+                f"{label} image is missing on disk: {image}",
+                suggestion="drop the image under media/imports/ and point "
+                           "packaging.yaml at it (packaging.yaml → logo/watermark.image)",
+            )
+
+    _branding_image(packaging.logo.enabled, packaging.logo.image, "logo")
+    _branding_image(packaging.watermark.enabled, packaging.watermark.image, "watermark")
+
     if timeline is not None and packaging.info_cards:
         from ..timeline.anchors import resolve_anchor
 

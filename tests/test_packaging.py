@@ -19,9 +19,12 @@ from pathlib import Path
 import pytest
 
 from manju.core.models import (
+    BadgeSpec,
     CoverSpec,
+    CtaSpec,
     Dialogue,
     InfoCardSpec,
+    LogoSpec,
     PackagingCard,
     PackagingSpec,
     ProjectConfig,
@@ -30,6 +33,7 @@ from manju.core.models import (
     TimelineRules,
     TimelineTracks,
     VideoClip,
+    WatermarkSpec,
 )
 from manju.timeline.compiler import CompileInput, ShotInput, compile_timeline
 from manju.timeline.packaging import packaging_card_relpath
@@ -107,7 +111,16 @@ def test_packaging_none_or_disabled_is_byte_identical():
     a = compile_timeline(_input(_shot("S001"), _shot("S002")))
     b = compile_timeline(_input(_shot("S001"), _shot("S002"), packaging=None))
     c = compile_timeline(_input(_shot("S001"), _shot("S002"), packaging=PackagingSpec()))
-    assert a.model_dump_json() == b.model_dump_json() == c.model_dump_json()
+    # round-Q: a packaging.yaml that carries branding fields but leaves them all
+    # OFF must still yield the byte-identical timeline (nothing folded/emitted).
+    d = compile_timeline(_input(_shot("S001"), _shot("S002"), packaging=PackagingSpec(
+        logo=LogoSpec(enabled=False, image="media/imports/logo.png"),
+        watermark=WatermarkSpec(enabled=False, text="WM"),
+        badge=BadgeSpec(enabled=False, text="NEW"),
+        cta=CtaSpec(enabled=False, text="FOLLOW"),
+    )))
+    assert (a.model_dump_json() == b.model_dump_json()
+            == c.model_dump_json() == d.model_dump_json())
 
 
 def test_intro_outro_are_real_segments_that_shift_downstream():

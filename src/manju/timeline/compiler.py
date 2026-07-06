@@ -88,6 +88,18 @@ class CompileInput:
             active["outro"] = p.outro.model_dump()
         if p.info_cards:
             active["info_cards"] = [c.model_dump() for c in p.info_cards]
+        # Branding overlays (round-Q): fold ONLY enabled, effective branding —
+        # an enabled-but-empty logo/watermark/badge emits nothing, so it must
+        # not perturb the fingerprint either. All-off → nothing added here →
+        # the packaging key is omitted → today's byte-identical hash.
+        if p.logo.enabled and p.logo.image:
+            active["logo"] = p.logo.model_dump()
+        if p.watermark.enabled and (p.watermark.image or p.watermark.text):
+            active["watermark"] = p.watermark.model_dump()
+        if p.badge.enabled and p.badge.text:
+            active["badge"] = p.badge.model_dump()
+        if p.cta.enabled and p.cta.text:
+            active["cta"] = p.cta.model_dump()
         return active or None
 
     def fingerprint(self) -> str:
@@ -235,6 +247,64 @@ def _timed_captions(words: list[dict], offset_ms: int, max_chars: int,
             flush()
     flush()
     return [c for c in cues if c.text]
+
+
+def _branding_overlays(packaging: PackagingSpec, total_ms: int) -> list[OverlayClip]:
+    """Branding overlays (round-Q): logo / watermark / badge / cta as overlay-
+    track entries with resolved windows. PURE — windows come from ``total_ms``
+    only and the logo/image-watermark ``source`` is a HUMAN asset path recorded
+    verbatim (never read, never generated here). All default-off, so an
+    untouched packaging spec adds nothing (the compiled timeline stays
+    byte-identical). Cta's window is the closing ``[total - at_end_ms, total]``.
+    """
+    out: list[OverlayClip] = []
+    if total_ms <= 0:
+        return out
+
+    def _window(from_ms: int, duration_ms: int | None) -> tuple[int, int] | None:
+        start = max(0, from_ms)
+        if start >= total_ms:  # a window past the end could never be seen
+            return None
+        span = total_ms - start if duration_ms is None else min(duration_ms, total_ms - start)
+        return (start, span) if span > 0 else None
+
+    logo = packaging.logo
+    if logo.enabled and logo.image:
+        win = _window(logo.from_ms, logo.duration_ms)
+        if win is not None:
+            out.append(OverlayClip(
+                kind="logo", source=logo.image, corner=logo.corner,
+                size_pct=logo.size_pct, margin_pct=logo.margin_pct,
+                opacity=logo.opacity, start_ms=win[0], duration_ms=win[1],
+            ))
+
+    wm = packaging.watermark
+    if wm.enabled and (wm.image or wm.text):  # watermark spans the whole film
+        out.append(OverlayClip(
+            kind="watermark", text=wm.text, source=wm.image,
+            size_pct=wm.size_pct, opacity=wm.opacity, position=wm.position,
+            start_ms=0, duration_ms=total_ms,
+        ))
+
+    badge = packaging.badge
+    if badge.enabled and badge.text:
+        win = _window(badge.from_ms, badge.duration_ms)
+        if win is not None:
+            out.append(OverlayClip(
+                kind="badge", text=badge.text, corner=badge.corner,
+                start_ms=win[0], duration_ms=win[1],
+            ))
+
+    cta = packaging.cta
+    if cta.enabled and cta.text:
+        start = max(0, total_ms - cta.at_end_ms)
+        span = total_ms - start
+        if span > 0:
+            out.append(OverlayClip(
+                kind="cta", text=cta.text, position=cta.position,
+                start_ms=start, duration_ms=span,
+            ))
+    return out
 
 
 def compile_timeline(inp: CompileInput) -> Timeline:
@@ -403,6 +473,11 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                     duration_ms=span,
                 )
             )
+
+        # Branding overlays (round-Q): logo/watermark/badge/cta ride the same
+        # overlay track, appended after the info cards. Their windows are a pure
+        # function of total_ms; all-off adds nothing (byte-identical timeline).
+        tracks.overlay.extend(_branding_overlays(packaging, total_ms))
 
     if rules.music.source:
         tracks.music.append(

@@ -54,48 +54,160 @@ def _escape_filter_path(path: Path | str) -> str:
     return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
 
+def _text_overlay_style(ov: OverlayClip, *, out_w: int) -> list[str]:
+    """The middle drawtext options (colour/size/position/box) for one TEXT
+    overlay, keyed on ``kind``. The title_card/info_card branches reproduce the
+    historical options byte-for-byte; branding kinds (badge/cta/text-watermark)
+    add their own placement (§7 ④ / round-Q)."""
+    kind = ov.kind
+    if kind == "info_card":
+        # info cards ride away from the upper-third title card (§13-14); the
+        # semantic subkind picks the band: chapter high, info centre, role as
+        # a lower third. All share this one burn path.
+        y_by_subkind = {"chapter": "h*0.16", "info": "h*0.45", "role": "h*0.72"}
+        y_expr = y_by_subkind.get(ov.subkind, "h*0.72")
+        return [
+            "fontcolor=white", f"fontsize={max(12, out_w // 16)}",
+            "x=(w-text_w)/2", f"y={y_expr}",
+            "box=1", "boxcolor=black@0.45", "boxborderw=24",
+        ]
+    if kind == "badge":
+        # a small rounded 角标 chip in a corner (inset ~3% of frame width)
+        inset = max(8, round(out_w * 0.03))
+        xy = {
+            "tl": (f"{inset}", f"{inset}"),
+            "tr": (f"w-text_w-{inset}", f"{inset}"),
+            "bl": (f"{inset}", f"h-text_h-{inset}"),
+            "br": (f"w-text_w-{inset}", f"h-text_h-{inset}"),
+        }
+        x_expr, y_expr = xy.get(ov.corner or "tl", xy["tl"])
+        return [
+            "fontcolor=white", f"fontsize={max(12, out_w // 24)}",
+            f"x={x_expr}", f"y={y_expr}",
+            "box=1", "boxcolor=black@0.55", "boxborderw=12",
+        ]
+    if kind == "cta":
+        # closing-window call-to-action chip, centred horizontally
+        y_expr = "(h-text_h)/2" if ov.position == "center" else "h*0.86"
+        return [
+            "fontcolor=white", f"fontsize={max(12, out_w // 14)}",
+            "x=(w-text_w)/2", f"y={y_expr}",
+            "box=1", "boxcolor=black@0.55", "boxborderw=18",
+        ]
+    if kind == "watermark":
+        # large, centred, translucent text watermark. diagonal_tile degrades to
+        # centre (round-Q: tiling is deliberately not over-engineered).
+        op = _fmt_num(ov.opacity if ov.opacity else 0.35)
+        size = ov.size_pct if ov.size_pct else 30.0
+        return [
+            f"fontcolor=white@{op}", f"fontsize={max(12, round(out_w * size / 100.0))}",
+            "x=(w-text_w)/2", "y=(h-text_h)/2",
+        ]
+    # title_card (and any unknown text kind) → the historical chapter style
+    return [
+        "fontcolor=white", f"fontsize={max(12, out_w // 10)}",
+        "x=(w-text_w)/2", "y=h*0.28",
+        "box=1", "boxcolor=black@0.45", "boxborderw=24",
+    ]
+
+
 def _title_card_filters(
     overlays: list[OverlayClip], *, out_w: int, tmp_dir: Path, font: Path | None
 ) -> list[str]:
-    """Chained ``drawtext`` filter(s) for the title-card overlay layer (§7 ④).
+    """Chained ``drawtext`` filter(s) for the TEXT overlay layer (§7 ④ / round-Q).
 
-    One drawtext per ``title_card`` overlay, burned in the final pass exactly
-    like the subtitles (never in the per-segment cache). The text is written to
-    a UTF-8 textfile and passed via ``textfile=`` — the escaping-free approach
-    from card.py — and shown only within its window via the timeline ``enable``
-    expression. The "chapter" template is large centred white text over a
-    semi-transparent black box at the upper third; any other (unknown) template
-    falls back to that same style. ``fontsize`` tracks the frame the text is
-    drawn on (``out_w``) so proxy and final look proportionally identical."""
-    fontsize = max(12, out_w // 10)
+    One drawtext per text overlay — title_card, info_card, badge, cta and the
+    text watermark — burned in the final pass exactly like the subtitles (never
+    in the per-segment cache). The text is written to a UTF-8 textfile and
+    passed via ``textfile=`` — the escaping-free approach from card.py — and
+    shown only within its window via the timeline ``enable`` expression. Each
+    kind supplies its own placement/box via :func:`_text_overlay_style`;
+    ``fontsize`` tracks the frame the text is drawn on (``out_w``) so proxy and
+    final look proportionally identical."""
     filters: list[str] = []
     for k, ov in enumerate(overlays):
         txt = tmp_dir / f"title_{k}.txt"
         txt.write_text(ov.text, encoding="utf-8")
         start_s = ov.start_ms / 1000.0
         end_s = (ov.start_ms + ov.duration_ms) / 1000.0
-        # info cards ride away from the upper-third title card (§13-14); the
-        # semantic subkind picks the band: chapter high, info centre, role as
-        # a lower third. All share this one burn path.
-        is_info = ov.kind == "info_card"
-        y_by_subkind = {"chapter": "h*0.16", "info": "h*0.45", "role": "h*0.72"}
-        y_expr = y_by_subkind.get(ov.subkind, "h*0.72") if is_info else "h*0.28"
-        info_fontsize = max(12, out_w // 16)
         opts = [
             f"textfile={_escape_filter_path(txt)}",
-            "fontcolor=white",
-            f"fontsize={info_fontsize if is_info else fontsize}",
-            "x=(w-text_w)/2",
-            f"y={y_expr}",
-            "box=1",
-            "boxcolor=black@0.45",
-            "boxborderw=24",
+            *_text_overlay_style(ov, out_w=out_w),
             f"enable='between(t,{start_s:.3f},{end_s:.3f})'",
         ]
         if font is not None:
             opts.append(f"fontfile={_escape_filter_path(font)}")
         filters.append("drawtext=" + ":".join(opts))
     return filters
+
+
+_TEXT_OVERLAY_KINDS = ("title_card", "info_card", "badge", "cta")
+
+
+def _is_image_overlay(ov: OverlayClip) -> bool:
+    """logo, or a watermark that carries an IMAGE (a human asset), burns via an
+    ffmpeg overlay chain with a scaled extra input."""
+    return ov.kind == "logo" or (ov.kind == "watermark" and bool(ov.source))
+
+
+def _is_text_overlay(ov: OverlayClip) -> bool:
+    """title_card/info_card/badge/cta, or a TEXT-only watermark, burns via
+    drawtext (:func:`_title_card_filters`)."""
+    if ov.kind in _TEXT_OVERLAY_KINDS:
+        return True
+    return ov.kind == "watermark" and not ov.source and bool(ov.text)
+
+
+def _overlay_image_xy(ov: OverlayClip, margin: int) -> tuple[str, str]:
+    """(x, y) overlay-filter expressions for one image overlay. In ``overlay``,
+    ``W``/``H`` are the main frame dims and ``w``/``h`` the scaled overlay dims.
+    A watermark is centred; a logo sits in its corner with the given inset."""
+    if ov.kind == "watermark":  # image watermark (diagonal_tile degrades to centre)
+        return "(W-w)/2", "(H-h)/2"
+    corner = ov.corner or "tr"
+    x = {"tl": f"{margin}", "bl": f"{margin}",
+         "tr": f"W-w-{margin}", "br": f"W-w-{margin}"}.get(corner, f"W-w-{margin}")
+    y = {"tl": f"{margin}", "tr": f"{margin}",
+         "bl": f"H-h-{margin}", "br": f"H-h-{margin}"}.get(corner, f"{margin}")
+    return x, y
+
+
+def _image_overlay_graph(
+    overlays: list[OverlayClip], *, project: Project, in_label: str,
+    out_w: int, base_idx: int,
+) -> tuple[list[str], list[str], str]:
+    """Return (extra_image_inputs, filter_statements, final_video_label) that
+    overlay each image (logo / image watermark) onto ``in_label`` (round-Q).
+
+    Each image is a NEW ffmpeg ``-i`` input; the caller appends these AFTER the
+    audio inputs, and ``base_idx`` is the first image input's index — so the
+    audio graph's ``[n:a]`` indexing never shifts. Each input is scaled to
+    ``size_pct`` of the frame width (aspect preserved), alpha-scaled by
+    ``opacity`` (``format=rgba`` + ``colorchannelmixer``), then overlaid within
+    its ``enable`` window at the corner/centre position."""
+    inputs: list[str] = []
+    stmts: list[str] = []
+    cur = in_label
+    for k, ov in enumerate(overlays):
+        idx = base_idx + k
+        inputs += ["-i", str(project.resolve(ov.source))]
+        sw = max(2, round(out_w * (ov.size_pct or 12.0) / 100.0))
+        scaled = f"[br_img{k}]"
+        stmts.append(
+            f"[{idx}:v]scale={sw}:-1,format=rgba,"
+            f"colorchannelmixer=aa={_fmt_num(ov.opacity)}{scaled}"
+        )
+        margin = max(0, round(out_w * (ov.margin_pct or 0.0) / 100.0))
+        x_expr, y_expr = _overlay_image_xy(ov, margin)
+        start_s = ov.start_ms / 1000.0
+        end_s = (ov.start_ms + ov.duration_ms) / 1000.0
+        out_label = f"[br_ov{k}]"
+        stmts.append(
+            f"{cur}{scaled}overlay=x={x_expr}:y={y_expr}:"
+            f"enable='between(t,{start_s:.3f},{end_s:.3f})'{out_label}"
+        )
+        cur = out_label
+    return inputs, stmts, cur
 
 
 def _fade_params(clips: list[VideoClip], i: int) -> tuple[int, int]:
@@ -424,6 +536,19 @@ def _audio_input_hashes(project: Project, timeline: Timeline) -> list[str]:
     return hashes
 
 
+def _overlay_image_hashes(project: Project, timeline: Timeline) -> list[str]:
+    """Content hashes of every burned image overlay (logo / image watermark),
+    in overlay-track order — round-Q's visual analogue of _audio_input_hashes,
+    so editing a logo/watermark PNG's bytes re-keys the final. A missing file
+    hashes as a marker (never raises: key computation must not crash)."""
+    hashes: list[str] = []
+    for ov in timeline.tracks.overlay:
+        if _is_image_overlay(ov):
+            src = project.resolve(ov.source)
+            hashes.append(hash_file(src) if src.exists() else f"missing:{ov.source}")
+    return hashes
+
+
 def final_content_key(
     project: Project,
     timeline: Timeline,
@@ -457,6 +582,11 @@ def final_content_key(
         "encoding": _enc_params(target),
         "target": target,
     }
+    # Round-Q: only add the branding-image key when there ARE image overlays, so
+    # a project with no branding keeps a byte-identical content key to today.
+    img_hashes = _overlay_image_hashes(project, timeline)
+    if img_hashes:
+        payload["overlay_images"] = img_hashes
     return cache_key(payload)
 
 
@@ -548,13 +678,14 @@ def render_timeline(
             )
         )
 
-    # timeline.tracks.overlay (title cards + packaging info cards) is burned in
-    # the final composition pass below (§7 step ④ / §13-14), alongside the
-    # subtitles — never in the per-segment cache, so segment cache keys stay
-    # untouched. The burn keys on kind: title_card and info_card share the path.
-    burn_overlays = [
-        o for o in timeline.tracks.overlay if o.kind in ("title_card", "info_card")
-    ]
+    # timeline.tracks.overlay (title cards + packaging info cards + round-Q
+    # branding) is burned in the final composition pass below (§7 step ④ /
+    # §13-14), alongside the subtitles — never in the per-segment cache, so
+    # segment cache keys stay untouched. Text overlays (title_card/info_card/
+    # badge/cta/text-watermark) burn via drawtext; image overlays (logo / image
+    # watermark) burn via an ffmpeg overlay chain with extra scaled inputs.
+    text_overlays = [o for o in timeline.tracks.overlay if _is_text_overlay(o)]
+    image_overlays = [o for o in timeline.tracks.overlay if _is_image_overlay(o)]
 
     if out_path is None:
         out_path = project.next_final_path() if target == "final" else project.proxy_dir / "proxy.mp4"
@@ -579,22 +710,39 @@ def render_timeline(
         vchain = f"[0:v]scale={out_w}:{out_h}:flags=bicubic,setsar=1"
         if ass_file is not None:
             vchain += f",ass={_escape_filter_path(ass_file)}"
-        if burn_overlays:
+        if text_overlays:
             font = find_font()
             for filt in _title_card_filters(
-                burn_overlays, out_w=out_w, tmp_dir=tmp_dir, font=font
+                text_overlays, out_w=out_w, tmp_dir=tmp_dir, font=font
             ):
                 vchain += "," + filt
-        # FIX-B: force the output onto the project frame grid — without an
-        # explicit fps the concat of segments can drift the deduced rate
-        # (observed pre-fix: r_frame_rate=143/6 instead of 24/1).
-        vchain += f",fps={fps},format=yuv420p[vout]"
-        filter_complex = ";".join([vchain, *audio_stmts])
+
+        img_inputs: list[str] = []
+        if image_overlays:
+            # Image overlays need named pads (overlay is a 2-input node), so the
+            # linear drawtext chain terminates at [vbase] and each scaled image
+            # is overlaid onto it. The image inputs are appended AFTER the audio
+            # inputs (base_idx = 1 + audio input count) so NOTHING in the audio
+            # graph's [n:a] indexing shifts. FIX-B fps/format snap is the final
+            # node onto the last overlay output → [vout].
+            vchain += "[vbase]"
+            img_inputs, img_stmts, last_label = _image_overlay_graph(
+                image_overlays, project=project, in_label="[vbase]",
+                out_w=out_w, base_idx=1 + extra_inputs.count("-i"),
+            )
+            img_stmts.append(f"{last_label}fps={fps},format=yuv420p[vout]")
+            filter_complex = ";".join([vchain, *img_stmts, *audio_stmts])
+        else:
+            # FIX-B: force the output onto the project frame grid — without an
+            # explicit fps the concat of segments can drift the deduced rate
+            # (observed pre-fix: r_frame_rate=143/6 instead of 24/1).
+            vchain += f",fps={fps},format=yuv420p[vout]"
+            filter_complex = ";".join([vchain, *audio_stmts])
 
         enc = _enc_params(target)
 
         run_ffmpeg(
-            ["-i", str(concat_mp4), *extra_inputs,
+            ["-i", str(concat_mp4), *extra_inputs, *img_inputs,
              "-filter_complex", filter_complex,
              "-map", "[vout]", "-map", aout,
              # Clamp to the timeline length: the picture track (exact-duration
