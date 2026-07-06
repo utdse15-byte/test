@@ -134,6 +134,9 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju export --jianying --srt --otio` | M0/M1 | JianYing draft / captions / OTIO |
 | `manju board` | M0 | static HTML review board |
 | `manju package [--json] [--force]` | M4 | cover + teaser cut from the current final (`exports/packaging/`) |
+| `manju history [-n] [--json]` | P2 | merged change feed: events + git log, actor-attributed |
+| `manju snapshot [label]` | P2 | labeled git checkpoint of the truth text |
+| `manju rollback shot <id> \| file <path> [--to <ref>]` | P2 | scoped rollback; history only grows |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
@@ -228,8 +231,13 @@ The project's default audio mix, compiled deterministically onto the timeline:
   `fade_out_ms`, and `ducking` to sit under speech like BGM).
 
 SFX play flat; music and ambient duck under the voice bus when
-`ducking: true`. Every audio file's bytes are part of the final content key —
-editing one re-renders, unchanged ones skip.
+`ducking: true` — the sidechain is tunable per bed (`duck_threshold`,
+`duck_ratio`, `duck_attack_ms`, `duck_release_ms`; defaults match the
+long-standing constants). Every audio file's bytes are part of the final
+content key — editing one re-renders, unchanged ones skip. `manju qc` adds
+rule-based audio advisories (no BGM configured, ducking off under speech,
+ambient bed suggestion for multi-shot films) as info items — suggestions,
+never gates.
 
 ## Packaging kit (`timeline/packaging.yaml` + `manju package`)
 
@@ -249,7 +257,11 @@ editing one re-renders, unchanged ones skip.
   `exports/packaging/`: `cover.png` (a frame at `frame_ms`, or a rendered
   card) at project resolution, and `teaser.mp4` sliced
   `[from_ms, +duration_ms]`. Both idempotent via `.key.json` sidecars;
-  `--force` recuts. Needs a final — run `manju build` first.
+  `--force` recuts. Needs a final — run `manju build` first. The window is
+  validated against the final's real length (a past-the-end `from_ms` is a
+  clean failure, an overrun is clamped with a warning), and `package` warns
+  when the newest final is stale relative to the current specs, or when a
+  frame-mode cover / teaser start lands inside an enabled intro card.
 
 ## Preset kits (`manju new --preset`)
 
@@ -259,12 +271,31 @@ packaging.yaml / story scaffolds at creation time and never binds the project
 afterwards — everything it writes is plain, hand-editable YAML/markdown. No
 `--preset` ⇒ the generic scaffold, unchanged.
 
-Eight kits ship: `comic` 漫剧 / `short_drama` 短剧 / `explainer` 知识口播 /
-`novel` 小说推文 (vertical 1080×1920); `trailer` 预告片 / `mv` 音乐MV (16:9);
-`ad` 带货广告 / `talking_head` 虚拟人口播. Each sets aspect, pacing, caption
+Thirteen kits ship: `comic` 漫剧 / `short_drama` 短剧 / `explainer` 知识口播 /
+`novel` 小说推文 / `ad` 带货广告 / `talking_head` 虚拟人口播 / `animation`
+动画短片 / `virtual_human` 虚拟人出镜 / `product` 产品种草 / `knowledge`
+硬核知识长条 (vertical 1080×1920); `trailer` 预告片 / `mv` 音乐MV /
+`film_storyboard` 影视分镜预演 (16:9). Each sets aspect, pacing, caption
 style, music/audio policy, export profiles and records its `qc_focus`
 advisories into project.yaml (`manju status` shows one line). `manju presets
 [--json]` lists them. A landscape preset overrides the `--vertical` flag.
+
+## History, snapshots and rollback (P2)
+
+Git is the patch engine (§3) — these commands give the records that already
+exist a user-facing surface, and never invent a second version store:
+
+- **`manju history`** — one merged feed: every `events.jsonl` action (who did
+  what: human/ai/engine) interleaved with the project's git log (what changed
+  on disk), oldest→newest.
+- **`manju snapshot [label]`** — a labeled git checkpoint of the truth text; a
+  clean tree is a no-op, not an error.
+- **`manju rollback shot S002`** — re-select the previously selected take from
+  the event record. Append-only: the newer take stays on disk for compare.
+- **`manju rollback file timeline/rules.yaml [--to <sha>]`** — restore ONE
+  truth-text file from git, guarded: media, renders and exports are refused
+  outright; `check` runs afterwards; the rollback is itself an event, so
+  history only ever grows.
 
 ## Toolbelt (§2.5)
 

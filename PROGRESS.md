@@ -296,3 +296,45 @@ current specs (advisory wanted — needs explain plumbing); compiler still
 relies on libass wrapping instead of inserting \N at line-budget boundaries
 (manual break control); draft ambient beds are trim-to-source, not looped
 (drafts have no loop primitive — final.mp4 keeps the real mix).
+
+---
+
+## 2026-07-06 — round O: the remainder — P2 rollback UX, caption breaks, 13 kits, audio polish
+
+**Done (two parallel agent builds + two architect-built cores, merged):**
+- **history/snapshot/rollback (P2 headline, closes "compare/rollback/restore"):**
+  `manju history` merges events.jsonl with the project git log into one
+  actor-attributed feed; `manju snapshot` = labeled git checkpoint (git IS the
+  patch engine §3 — no second store); `manju rollback shot` re-selects the
+  prior take from the event record (append-only, newer take kept for compare);
+  `manju rollback file` = guarded single-file git restore (media/renders/
+  exports refused, check runs after, rollback itself an event). Snapshot event
+  written BEFORE the commit so back-to-back snapshots converge.
+- **Caption line breaks:** break_lines() makes max_chars_per_line real on
+  screen (lossless, punctuation-preferring cuts); human cues never re-broken
+  (manual ASS re-emit passes verbatim). Closes the round-N review finding.
+- **13 preset kits:** +animation 动画短片, film_storyboard 影视分镜预演 (16:9,
+  captions off, previz), virtual_human 虚拟人出镜 (persona sheet scaffold),
+  product 产品种草 (CTA outro + info-card slots), knowledge 硬核知识长条
+  (long-form, chaptered outline). CJK-width table padding (east_asian_width).
+- **Audio polish:** ducking knobs (duck_threshold/ratio/attack/release on
+  MusicRules+AmbientRules+AudioClip, defaults = the old constants, pinned
+  byte-identical filtergraph); `manju package` staleness advisory (recompiles
+  current specs like explain, compares the final's key sidecar; degrades
+  silently); three rule-based QC audio advisories as info items (no BGM /
+  ducking off under speech / ambient suggestion ≥4 content shots).
+
+**Verified:** 390 tests green (342 + 19 + 12 + 17).
+
+**Note for existing projects:** the new AudioClip/rules fields change timeline
+fingerprints once on first recompile; projects WITH a BGM/ambient clip also
+get one content-key re-render (§4.3-conservative, output identical in intent).
+
+**Still requires the user (cannot be closed from this environment):** one live
+paid text-to-video vendor run (needs an API key: fill a provider.yaml + env
+var); opening exported drafts in desktop JianYing/CapCut (needs the apps).
+Perceptual consistency QC (character drift/scene mismatch detection) remains
+gated on a real qc_vision vendor manifest for the same reason.
+
+**Open (small):** voice cost estimates per_call only; crossfade seams remain a
+recorded design decision (dip-to-black instead).
