@@ -51,6 +51,10 @@ class ProjectConfig(ManjuModel):
     )
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     export_profiles: list[str] = Field(default_factory=lambda: ["srt"])
+    # Which preset kit scaffolded this project ("generic" = plain `manju new`).
+    # Purely a record: presets pre-fill files at creation time and never bind
+    # the project afterwards — everything they wrote stays hand-editable.
+    preset: str = "generic"
 
 
 # ------------------------------------------------------------------- ShotSpec
@@ -225,6 +229,40 @@ class MusicRules(ManjuModel):
     fade_out_ms: int = 1500
 
 
+class SfxClipSpec(ManjuModel):
+    """One sound effect placed on the timeline by the audio policy.
+
+    `at` anchors the clip: "" means an absolute offset from t=0;
+    "shot:<id>" the start of that shot's clip; "shot:<id>:end" its end.
+    `offset_ms` is added to the anchor either way.
+    """
+
+    source: str  # project-relative audio path (a human asset — never AI-touched)
+    at: str = ""
+    offset_ms: int = 0
+    gain_db: float = -6.0
+
+
+class AmbientRules(ManjuModel):
+    """A looped bed (room tone / atmosphere) under the whole film."""
+
+    source: str | None = None
+    gain_db: float = -24.0
+    ducking: bool = False
+    fade_out_ms: int = 1000
+
+
+class AudioMixRules(ManjuModel):
+    """The project's default audio policy: how voice, SFX, ambient and
+    transition sounds sit in the mix. BGM keeps its own MusicRules."""
+
+    voice_gain_db: float = 0.0
+    sfx: list[SfxClipSpec] = Field(default_factory=list)
+    ambient: AmbientRules = Field(default_factory=AmbientRules)
+    transition_sound: str | None = None  # played at every hard cut when set
+    transition_gain_db: float = -12.0
+
+
 class CaptionRules(ManjuModel):
     enabled: bool = True
     max_chars_per_line: int = 18
@@ -248,8 +286,61 @@ class TimelineRules(ManjuModel):
     timing: TimingRules = Field(default_factory=TimingRules)
     transition_default: TransitionSpec | None = Field(default_factory=TransitionSpec)
     music: MusicRules = Field(default_factory=MusicRules)
+    audio: AudioMixRules = Field(default_factory=AudioMixRules)
     captions: CaptionRules = Field(default_factory=CaptionRules)
     title_card: TitleCardRules = Field(default_factory=TitleCardRules)
+
+
+# ----------------------------------------------------------- packaging.yaml
+
+
+class PackagingCard(ManjuModel):
+    """An intro/outro card that becomes a real segment in the timeline."""
+
+    enabled: bool = False
+    template: str = "chapter"  # card template; html_card preferred, drawtext floor (§8.4)
+    text: str = ""
+    subtext: str = ""
+    duration_ms: int = 2000
+
+
+class CoverSpec(ManjuModel):
+    """The film's cover image: a frame pulled from the final, or a card."""
+
+    mode: Literal["frame", "card"] = "frame"
+    frame_ms: int = 0  # frame mode: which timestamp of the final to grab
+    text: str = ""  # card mode: cover title text
+    template: str = "chapter"
+
+
+class TeaserSpec(ManjuModel):
+    """A short social-display cut sliced out of the current final."""
+
+    enabled: bool = False
+    from_ms: int = 0
+    duration_ms: int = 5000
+
+
+class InfoCardSpec(ManjuModel):
+    """Chapter/role/info cards riding the existing overlay track.
+
+    `at`/`offset_ms` use the same anchor grammar as SfxClipSpec.
+    """
+
+    kind: str = "chapter"  # chapter | role | info
+    text: str = ""
+    at: str = ""
+    offset_ms: int = 0
+    duration_ms: int = 1500
+    template: str = "chapter"
+
+
+class PackagingSpec(ManjuModel):
+    intro: PackagingCard = Field(default_factory=PackagingCard)
+    outro: PackagingCard = Field(default_factory=PackagingCard)
+    cover: CoverSpec = Field(default_factory=CoverSpec)
+    teaser: TeaserSpec = Field(default_factory=TeaserSpec)
+    info_cards: list[InfoCardSpec] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------- TimelineSpec
@@ -279,6 +370,7 @@ class AudioClip(ManjuModel):
     gain_db: float = 0.0
     ducking: bool = False
     fade_out_ms: int = 0
+    loop: bool = False  # loop the source to fill duration_ms (ambient beds)
 
 
 class CaptionLine(ManjuModel):
@@ -293,6 +385,8 @@ class TimelineTracks(ManjuModel):
     overlay: list[OverlayClip] = Field(default_factory=list)
     voice: list[AudioClip] = Field(default_factory=list)
     music: list[AudioClip] = Field(default_factory=list)
+    sfx: list[AudioClip] = Field(default_factory=list)
+    ambient: list[AudioClip] = Field(default_factory=list)
     captions: list[CaptionLine] = Field(default_factory=list)
 
 
@@ -319,4 +413,5 @@ def export_json_schemas() -> dict[str, dict[str, Any]]:
         "take_sidecar": TakeSidecar.model_json_schema(),
         "timeline_rules": TimelineRules.model_json_schema(),
         "timeline": Timeline.model_json_schema(),
+        "packaging": PackagingSpec.model_json_schema(),
     }
