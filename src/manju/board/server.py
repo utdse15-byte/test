@@ -19,7 +19,7 @@ Routes:
                                    error: "one line"}`` out. Only the seven safe
                                    actions below exist; anything else is 404.
 
-Actions: select · rollback_shot · snapshot · build · qc · package · redo.
+Actions: select · rollback_shot · snapshot · build · qc · package · redo · export.
 
 Concurrency: one global ``threading.Lock`` guards every mutating action so two
 clicks can't interleave. A click that arrives while another action runs gets an
@@ -180,6 +180,60 @@ def _api_redo(project: Project, body: dict) -> dict:
     return {"shot": shot, "takes": takes}
 
 
+# Export profiles → the SAME core `manju export` (cli.export) calls. srt/otio
+# always land; the native drafts (jianying/capcut) degrade to a note when the
+# optional lib isn't installed, exactly like the CLI, so one missing draft never
+# fails the whole export.
+_EXPORT_PROFILES = ("srt", "otio", "jianying", "capcut")
+
+
+def _api_export(project: Project, body: dict) -> dict:
+    from ..exporters.otio import export_otio
+    from ..exporters.srt_ass import export_captions
+
+    # Validate the request (input) before checking state, so a malformed
+    # profiles list is rejected the same whether or not a timeline exists.
+    profiles = body.get("profiles") or ["srt", "otio"]
+    if not isinstance(profiles, list) or not profiles:
+        raise _ApiError("profiles must be a non-empty array of srt|otio|jianying|capcut")
+    unknown = [p for p in profiles if p not in _EXPORT_PROFILES]
+    if unknown:
+        raise _ApiError(f"unknown export profile(s): {', '.join(map(str, unknown))} "
+                        "(use srt|otio|jianying|capcut)")
+    timeline = project.load_timeline()
+    if timeline is None:
+        raise _ApiError("no timeline.json — run build first")
+
+    outputs: dict[str, str] = {}
+    notes: list[str] = []
+    if "srt" in profiles:
+        paths = export_captions(project, timeline)
+        outputs["srt"] = project.relpath(paths["srt"])
+        outputs["ass"] = project.relpath(paths["ass"])
+    if "otio" in profiles:
+        outputs["otio"] = project.relpath(export_otio(project, timeline))
+    if "jianying" in profiles:
+        from ..exporters.jianying import export_jianying
+        from ..exporters.native_draft import ExporterUnavailable, export_jianying_native
+
+        outputs["jianying"] = project.relpath(export_jianying(project, timeline))
+        try:
+            outputs["jianying_native"] = project.relpath(
+                export_jianying_native(project, timeline))
+        except ExporterUnavailable as exc:
+            notes.append(f"jianying_native skipped: {_one_line(str(exc))}")
+    if "capcut" in profiles:
+        from ..exporters.native_draft import ExporterUnavailable, export_capcut_native
+
+        try:
+            outputs["capcut"] = project.relpath(export_capcut_native(project, timeline))
+        except ExporterUnavailable as exc:
+            notes.append(f"capcut skipped: {_one_line(str(exc))}")
+
+    append_event(project.root, _actor(), "export", outputs)  # mirrors cli.export
+    return {"outputs": outputs, "notes": notes}
+
+
 API_ACTIONS: dict[str, Callable[[Project, dict], dict]] = {
     "select": _api_select,
     "rollback_shot": _api_rollback_shot,
@@ -188,6 +242,7 @@ API_ACTIONS: dict[str, Callable[[Project, dict], dict]] = {
     "qc": _api_qc,
     "package": _api_package,
     "redo": _api_redo,
+    "export": _api_export,
 }
 
 

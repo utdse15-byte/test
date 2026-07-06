@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..build.stale import ShotState, evaluate_all
 from ..core.hashing import HASH_PREFIX
-from ..core.yamlio import atomic_write_text, read_json
+from ..core.yamlio import atomic_write_text, read_json, read_yaml
 
 if TYPE_CHECKING:
     from ..core.container import Project
@@ -182,6 +182,71 @@ _SERVE_CSS = """
 }
 @keyframes mjspin { to { transform: rotate(360deg); } }
 .mj-ovtext { font-size: 1rem; }
+.mj-banner.ok { background: #17402a; color: #7ee2a8; border-bottom-color: #245c3a; }
+
+/* --- panels (tabbed workspace sections) --- */
+.mj-panels {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  margin-bottom: 1.1rem; overflow: hidden;
+}
+.mj-tabs {
+  display: flex; flex-wrap: wrap; gap: .2rem; padding: .5rem .6rem 0;
+  border-bottom: 1px solid var(--line); background: var(--panel2);
+}
+.mj-tab {
+  background: transparent; color: var(--muted); border: 0;
+  border-bottom: 2px solid transparent; padding: .5rem .8rem; font-size: .85rem;
+  font-weight: 700; cursor: pointer;
+}
+.mj-tab:hover { color: var(--fg); }
+.mj-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.mj-panel { display: none; padding: 1rem 1.1rem; }
+.mj-panel.active { display: block; }
+.mj-panel h3 { margin: 0 0 .6rem; font-size: 1.02rem; }
+.mj-note { color: var(--muted); font-size: .82rem; margin: .2rem 0 .7rem; }
+.mj-manual {
+  background: #23324d; color: #8fb8ff; font-weight: 700; padding: .35rem .6rem;
+  border-radius: 6px; display: inline-block; margin-bottom: .6rem;
+}
+.mj-dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .88rem; }
+.mj-dl dt { color: var(--muted); }
+.mj-dl dd { margin: 0; word-break: break-word; }
+.mj-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.mj-table th, .mj-table td { text-align: left; padding: .28rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.mj-table th { color: var(--muted); font-weight: 700; }
+.mj-table td.num { color: var(--muted); white-space: nowrap; width: 1%; }
+.mj-cue-time { color: var(--accent); font-family: ui-monospace, monospace; white-space: nowrap; font-size: .78rem; }
+.mj-bible-entry {
+  border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem;
+  margin-bottom: .7rem; background: var(--panel2);
+}
+.mj-bible-entry h4 { margin: 0 0 .4rem; font-size: .92rem; }
+.mj-lock { color: var(--star); margin-left: .3rem; }
+.mj-asset {
+  display: flex; align-items: center; gap: .7rem; padding: .35rem 0;
+  border-bottom: 1px solid var(--line); font-size: .85rem;
+}
+.mj-asset img { width: 64px; height: auto; border-radius: 4px; background: #000; }
+.mj-asset .sz { color: var(--muted); margin-left: auto; white-space: nowrap; }
+.mj-sacred { color: var(--star); font-size: .82rem; margin-top: .6rem; }
+.qc-sugg { color: var(--muted); font-size: .8rem; display: block; margin-left: 1.6rem; }
+
+/* --- compare (side-by-side takes, synced playback) --- */
+.btn-cmp { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.btn-cmp.active { background: var(--accent); color: #0b1220; border-color: var(--accent); }
+.btn-playall { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.compare-wrap {
+  display: none; margin-top: .9rem; border-top: 1px dashed var(--line); padding-top: .8rem;
+}
+.compare-wrap.open { display: block; }
+.compare-head { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-bottom: .7rem; }
+.compare-hint { color: var(--muted); font-size: .78rem; }
+.compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .8rem; }
+.cmp-cell { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: .6rem; }
+.cmp-cell video { width: 100%; height: auto; border-radius: 5px; background: #000; display: block; }
+.cmp-name { font-weight: 700; margin-bottom: .35rem; font-size: .92rem; }
+.cmp-name .star { color: var(--star); }
+.cmp-meta { color: var(--muted); font-size: .76rem; margin: .4rem 0; word-break: break-all; }
 """.strip()
 
 _SERVE_JS = """
@@ -193,7 +258,8 @@ _SERVE_JS = """
     snapshot: "正在保存快照…",
     redo: "正在重做该镜头…",
     select: "正在切换选用…",
-    rollback_shot: "正在回滚该镜头…"
+    rollback_shot: "正在回滚该镜头…",
+    export: "正在导出草稿/字幕…"
   };
   function el(id){ return document.getElementById(id); }
   function overlay(show, msg){
@@ -201,9 +267,18 @@ _SERVE_JS = """
     o.querySelector(".mj-ovtext").textContent = msg || "处理中…";
     o.style.display = show ? "flex" : "none";
   }
-  function banner(msg){
+  function banner(msg, ok){
     var b = el("mj-banner"); if(!b) return;
-    b.textContent = msg || ""; b.style.display = msg ? "block" : "none";
+    b.textContent = msg || "";
+    b.className = "mj-banner" + (ok ? " ok" : "");
+    b.style.display = msg ? "block" : "none";
+  }
+  function showExport(d){
+    overlay(false);
+    var parts = [], o = d.outputs || {}, k;
+    for (k in o){ if (o.hasOwnProperty(k)) parts.push(k + "=" + o[k]); }
+    var notes = (d.notes && d.notes.length) ? " · " + d.notes.join(" · ") : "";
+    banner("✓ 导出完成 export: " + (parts.join(" · ") || "无") + notes, true);
   }
   function post(action, body){
     banner("");
@@ -217,7 +292,10 @@ _SERVE_JS = """
         return {ok:false, error:"服务器返回了无法解析的响应 (HTTP " + r.status + ")"};
       });
     }).then(function(d){
-      if (d && d.ok) { location.reload(); return; }
+      if (d && d.ok) {
+        if (d.outputs) { showExport(d); return; }  // export: show paths, don't reload
+        location.reload(); return;
+      }
       overlay(false);
       banner("✗ " + ((d && d.error) || "操作失败"));
     }).catch(function(err){
@@ -225,14 +303,70 @@ _SERVE_JS = """
       banner("✗ 请求失败:" + err);
     });
   }
+  function switchTab(key){
+    var tabs = document.querySelectorAll(".mj-tab"), i;
+    for (i = 0; i < tabs.length; i++){
+      tabs[i].classList.toggle("active", tabs[i].getAttribute("data-tab") === key);
+    }
+    var panels = document.querySelectorAll(".mj-panel"), j;
+    for (j = 0; j < panels.length; j++){
+      panels[j].classList.toggle("active", panels[j].getAttribute("data-panel") === key);
+    }
+  }
+  function toggleCompare(btn){
+    var section = btn.closest("section.shot"); if(!section) return;
+    var wrap = section.querySelector(".compare-wrap"); if(!wrap) return;
+    var open = wrap.classList.toggle("open");
+    btn.classList.toggle("active", open);
+    if(!open){ pauseAll(wrap.querySelectorAll("video")); }
+  }
+  function pauseAll(vids){ for (var i = 0; i < vids.length; i++){ vids[i].pause(); } }
+  function anyPlaying(vids){
+    for (var i = 0; i < vids.length; i++){ if(!vids[i].paused && !vids[i].ended){ return true; } }
+    return false;
+  }
+  function syncPlay(btn){
+    var wrap = btn.closest(".compare-wrap"); if(!wrap) return;
+    var vids = wrap.querySelectorAll("video");
+    if (anyPlaying(vids)){
+      pauseAll(vids);
+      btn.textContent = "▶ 同步播放 sync play";
+    } else {
+      for (var i = 0; i < vids.length; i++){
+        try { vids[i].currentTime = 0; } catch(e) {}   // align starts for a fair compare
+        vids[i].play().catch(function(){});
+      }
+      btn.textContent = "⏸ 同步暂停 pause all";
+    }
+  }
+  function playAll(btn){
+    var section = btn.closest("section.shot"); if(!section) return;
+    var vids = section.querySelectorAll(".takes video");
+    if (anyPlaying(vids)){ pauseAll(vids); }
+    else { for (var i = 0; i < vids.length; i++){ vids[i].play().catch(function(){}); } }
+  }
   document.addEventListener("click", function(e){
-    var btn = e.target.closest ? e.target.closest("button[data-act]") : null;
+    var t = e.target, hit;
+    if ((hit = t.closest && t.closest("[data-tab]"))){ switchTab(hit.getAttribute("data-tab")); return; }
+    if ((hit = t.closest && t.closest("[data-compare]"))){ toggleCompare(hit); return; }
+    if ((hit = t.closest && t.closest("[data-syncplay]"))){ syncPlay(hit); return; }
+    if ((hit = t.closest && t.closest("[data-playall]"))){ playAll(hit); return; }
+    var btn = t.closest ? t.closest("button[data-act]") : null;
     if (!btn || btn.disabled) return;
     var body = {};
     if (btn.dataset.shot) body.shot = btn.dataset.shot;
     if (btn.dataset.take) body.take = btn.dataset.take;
     if (btn.dataset.target) body.target = btn.dataset.target;
     post(btn.getAttribute("data-act"), body);
+  });
+  // Keyboard: space toggles the focused <video> (frame.io/PlayPause convention).
+  document.addEventListener("keydown", function(e){
+    if (e.code !== "Space" && e.key !== " ") return;
+    var a = document.activeElement;
+    if (a && a.tagName === "VIDEO"){
+      e.preventDefault();
+      if (a.paused) { a.play().catch(function(){}); } else { a.pause(); }
+    }
   });
 })();
 """.strip()
@@ -273,6 +407,21 @@ def _take_meta(project: "Project", take: Any) -> str:
         f"spec: {_esc(_short_hash(sc.spec_hash))}",
         f"dur: {_esc(_fmt_duration(dur))}" if dur else "dur: —",
     ]
+    return " · ".join(bits)
+
+
+def _take_meta_full(take: Any) -> str:
+    """Richer sidecar line for the compare grid: provider · cost · created ·
+    spec · dur — everything the board already knows about a take (§4.3)."""
+    sc = take.sidecar
+    bits = [f"provider: {_esc(sc.provider)}", f"spec: {_esc(_short_hash(sc.spec_hash))}"]
+    if sc.remote and sc.remote.cost:
+        bits.append(f"cost: {_esc(sc.remote.cost)} {_esc(sc.remote.currency)}")
+    if sc.created_at:
+        bits.append(f"created: {_esc(sc.created_at)}")
+    dur = sc.probe.duration_ms if (sc.probe and sc.probe.duration_ms) else None
+    if dur:
+        bits.append(f"dur: {_esc(_fmt_duration(dur))}")
     return " · ".join(bits)
 
 
@@ -380,6 +529,7 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
         takes_html = '<div class="dialogue">no takes yet</div>'
 
     actions_html = ""
+    compare_html = ""
     if serve:
         btns = [
             '<button type="button" class="btn btn-redo" data-act="redo" '
@@ -390,10 +540,58 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
                 '<button type="button" class="btn btn-roll" data-act="rollback_shot" '
                 f'data-shot="{_esc(shot_id)}">回滚 rollback</button>'
             )
+        playable = [t for t in takes if t.media_path is not None]
+        if playable:
+            btns.append(
+                '<button type="button" class="btn btn-playall" data-playall="1">'
+                "▶ 播放全部 play all</button>"
+            )
+        if len(takes) >= 2:
+            btns.append(
+                '<button type="button" class="btn btn-cmp" data-compare="1">'
+                "⧉ 对比 compare</button>"
+            )
+            compare_html = _render_compare(project, shot_id, takes, selected)
         actions_html = f'<div class="shot-actions">{"".join(btns)}</div>'
 
     return (f'<section class="shot">{head}{dialogue}{note_html}'
-            f"{takes_html}{actions_html}</section>")
+            f"{takes_html}{actions_html}{compare_html}</section>")
+
+
+def _render_compare(project: "Project", shot_id: str, takes: list[Any],
+                    selected: str | None) -> str:
+    """Serve-mode side-by-side take comparison (frame.io-style compare view):
+    a responsive 2-up/3-up grid of the shot's takes, each large with its
+    sidecar metadata + select button, driven by one synchronized play/pause."""
+    poster_path = project.reports_dir / "frames" / f"{shot_id}.jpg"
+    poster_rel = _esc(project.relpath(poster_path)) if poster_path.exists() else ""
+    cells = []
+    for take in takes:
+        is_sel = (take.name == selected)
+        if take.media_path is not None:
+            rel = _esc(project.relpath(take.media_path))
+            poster = f' poster="/media/{poster_rel}"' if poster_rel else ""
+            video = (f'<video class="cmp-video" controls preload="metadata"{poster} '
+                     f'src="/media/{rel}"></video>')
+        else:
+            video = '<div class="nomedia">no media on disk</div>'
+        star = ' <span class="star">★</span>' if is_sel else ""
+        cells.append(
+            '<div class="cmp-cell">'
+            f'<div class="cmp-name">{_esc(take.name)}{star}</div>'
+            f"{video}"
+            f'<div class="cmp-meta">{_take_meta_full(take)}</div>'
+            f"{_take_action(shot_id, take.name, is_sel)}"
+            "</div>"
+        )
+    head = (
+        '<div class="compare-head">'
+        '<button type="button" class="btn" data-syncplay="1">▶ 同步播放 sync play</button>'
+        '<span class="compare-hint">同步播放本镜头所有备选 · 空格键播放/暂停聚焦的视频</span>'
+        "</div>"
+    )
+    return (f'<div class="compare-wrap">{head}'
+            f'<div class="compare-grid">{"".join(cells)}</div></div>')
 
 
 def _rollbackable_shots(project: "Project", statuses: dict[str, Any]) -> set[str]:
@@ -530,6 +728,7 @@ def _render_header(project: "Project", serve: bool = False) -> str:
             "构建 build</button>"
             '<button type="button" class="btn" data-act="qc">质检 qc</button>'
             '<button type="button" class="btn" data-act="package">打包 package</button>'
+            '<button type="button" class="btn" data-act="export">导出 export</button>'
             '<button type="button" class="btn" data-act="snapshot">快照 snapshot</button>'
             "</div>"
         )
@@ -548,14 +747,281 @@ def _render_header(project: "Project", serve: bool = False) -> str:
     )
 
 
+# ------------------------------------------------------------- serve panels
+# Tabbed, server-rendered inspector sections (§10 handover surfaces). Each is
+# regenerated per request like the board — no client-side data fetching. A
+# broken/empty section degrades to a friendly note, never taking the board down.
+
+_PANEL_TABS = [
+    ("project", "项目 Project"),
+    ("subs", "字幕 Subtitles"),
+    ("bible", "圣经 Bible"),
+    ("log", "日志 Log"),
+    ("assets", "资产 Assets"),
+    ("qc", "QC"),
+]
+
+
+def _human_size(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def _srt_timecode(ms: int) -> str:
+    ms = max(0, int(ms))
+    h, ms = divmod(ms, 3_600_000)
+    m, ms = divmod(ms, 60_000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _safe_panel(fn) -> str:
+    try:
+        return fn()
+    except Exception as exc:  # a single broken panel must not 500 the board
+        return f'<p class="mj-note">面板暂不可用 (panel unavailable): {_esc(exc)}</p>'
+
+
+def _render_project_panel(project: "Project") -> str:
+    from ..build.status import project_status
+
+    st = project_status(project)
+    budget = st.get("budget_limit")
+    spend = f'{st.get("total_cost", 0)} {st.get("currency", "")}'
+    if budget:
+        spend += f' / 预算 budget {budget}'
+    by_state = st.get("shots_by_state") or {}
+    by_state_txt = ", ".join(f"{k}: {len(v)}" for k, v in by_state.items()) or "—"
+    voice = st.get("voice_by_state") or {}
+    voice_txt = ", ".join(f"{k}: {len(v)}" for k, v in voice.items()) or "—"
+    qc = st.get("qc")
+    if qc:
+        qc_txt = f'ok={qc.get("ok")} · errors={qc.get("errors", "?")} · warns={qc.get("warnings", "?")}'
+    else:
+        qc_txt = "尚未质检 (no qc.json)"
+    tl = st.get("timeline") or {}
+    tl_txt = "有 present" if tl.get("exists") else "无 (先 build)"
+    rows = [
+        ("下一步 next step", st.get("next_step", "—")),
+        ("模式 mode", st.get("mode", "—")),
+        ("分辨率 resolution", st.get("resolution", "—")),
+        ("预设 preset", st.get("preset", "—")),
+        ("镜头 shots", st.get("shots_total", 0)),
+        ("按状态 by state", by_state_txt),
+        ("配音 voice", voice_txt),
+        ("花费 spend", spend),
+        ("时间线 timeline", tl_txt),
+        ("成片 latest final", st.get("latest_final") or "—"),
+        ("QC", qc_txt),
+    ]
+    dl = "".join(f"<dt>{_esc(k)}</dt><dd>{_esc(v)}</dd>" for k, v in rows)
+    return f'<h3>项目状态 Project status</h3><dl class="mj-dl">{dl}</dl>'
+
+
+def _srt_table(cues: list[Any]) -> str:
+    if not cues:
+        return '<p class="mj-note">无字幕行 (no cues).</p>'
+    body = "".join(
+        f'<tr><td class="num">{i}</td>'
+        f'<td class="mj-cue-time">{_srt_timecode(c.start_ms)} → {_srt_timecode(c.end_ms)}</td>'
+        f"<td>{_esc(c.text)}</td></tr>"
+        for i, c in enumerate(cues, 1)
+    )
+    return ('<table class="mj-table"><thead><tr><th>#</th><th>时间 timing</th>'
+            f"<th>字幕 text</th></tr></thead><tbody>{body}</tbody></table>")
+
+
+def _render_subs_panel(project: "Project") -> str:
+    from ..providers.asr import parse_srt
+
+    srt_path = project.captions_dir / "captions.srt"
+    if not srt_path.exists():
+        return ('<h3>字幕 Subtitles</h3>'
+                '<p class="mj-note">还没有 captions.srt — 先 <code>manju build</code>。</p>')
+    manual = False
+    try:
+        manual = project.load_rules().captions.mode == "manual"
+    except Exception:
+        manual = False
+    out = ["<h3>字幕 Subtitles</h3>"]
+    if manual:
+        out.append('<div class="mj-manual">⚠ MANUAL 模式:captions.srt 为人工真相,'
+                    "编译版仅供对比,不覆盖手改内容 (§3)。</div>")
+    cues = parse_srt(srt_path.read_text(encoding="utf-8"))
+    out.append('<p class="mj-note">captions.srt (只读 read-only)</p>')
+    out.append(_srt_table(cues))
+    gen_path = project.captions_dir / "captions.generated.srt"
+    if manual and gen_path.exists():
+        gen_cues = parse_srt(gen_path.read_text(encoding="utf-8"))
+        out.append('<p class="mj-note">captions.generated.srt (编译版对比 compiled, read-only)</p>')
+        out.append(_srt_table(gen_cues))
+    return "".join(out)
+
+
+def _render_bible_panel(project: "Project") -> str:
+    out = ["<h3>圣经 Bible</h3>",
+           '<p class="mj-note">characters / scenes / style (只读 read-only · 🔒 = locked)</p>']
+    any_entry = False
+    for fname, label in (("characters", "角色 characters"),
+                         ("scenes", "场景 scenes"),
+                         ("style", "风格 style")):
+        path = project.root / "bible" / f"{fname}.yaml"
+        if not path.exists():
+            continue
+        data = read_yaml(path) or {}
+        if not isinstance(data, dict) or not data:
+            continue
+        out.append(f'<h4 style="color:var(--muted);margin:.9rem 0 .4rem">{_esc(label)}</h4>')
+        for entry_id, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            any_entry = True
+            locked = entry.get("locked") or {}
+            locked_keys = set(locked.keys()) if isinstance(locked, dict) else set(locked)
+            name = entry.get("name")
+            title = f"{_esc(entry_id)}" + (f" · {_esc(name)}" if name else "")
+            lines = []
+            for key, value in entry.items():
+                if key in ("locked", "name"):
+                    continue
+                lock = ' <span class="mj-lock" title="locked">🔒</span>' if key in locked_keys else ""
+                lines.append(f"<dt>{_esc(key)}{lock}</dt><dd>{_esc(value)}</dd>")
+            body = f'<dl class="mj-dl">{"".join(lines)}</dl>' if lines else ""
+            out.append(f'<div class="mj-bible-entry"><h4>{title}</h4>{body}</div>')
+    if not any_entry:
+        out.append('<p class="mj-note">Bible 为空 (no entries yet).</p>')
+    return "".join(out)
+
+
+def _render_log_panel(project: "Project") -> str:
+    from ..core.events import tail_events
+
+    events = tail_events(project.root, 50)
+    out = ["<h3>日志 Log</h3>",
+           '<p class="mj-note">events.jsonl 最近 50 条 · 每次打开页面自动刷新 '
+           "(auto-refresh on load)</p>"]
+    if not events:
+        out.append('<p class="mj-note">暂无事件 (no events yet).</p>')
+        return "".join(out)
+    rows = []
+    for ev in reversed(events):  # newest first
+        detail = ev.get("detail") or {}
+        dtxt = ", ".join(f"{k}={v}" for k, v in detail.items()) if isinstance(detail, dict) else str(detail)
+        rows.append(
+            f'<tr><td class="mj-cue-time">{_esc(ev.get("ts", ""))}</td>'
+            f'<td>{_esc(ev.get("actor", ""))}</td>'
+            f'<td><b>{_esc(ev.get("action", ""))}</b></td>'
+            f"<td>{_esc(dtxt)}</td></tr>"
+        )
+    out.append('<table class="mj-table"><thead><tr><th>ts</th><th>actor</th>'
+               f'<th>action</th><th>detail</th></tr></thead><tbody>{"".join(rows)}</tbody></table>')
+    return "".join(out)
+
+
+def _render_assets_panel(project: "Project") -> str:
+    out = ["<h3>资产 Assets · media/imports</h3>"]
+    imports_dir = project.imports_dir
+    thumbs_dir = project.runtime_dir / "thumbs"
+    files = sorted(p for p in imports_dir.glob("*") if p.is_file()) if imports_dir.exists() else []
+    if not files:
+        out.append('<p class="mj-note">media/imports 为空 (no imports yet).</p>')
+    else:
+        for f in files:
+            preview = ""
+            for cand in (thumbs_dir / f"{f.stem}.jpg", thumbs_dir / f"{f.stem}_wave.png"):
+                if cand.exists():
+                    preview = f'<img src="/media/{_esc(project.relpath(cand))}" alt="preview">'
+                    break
+            try:
+                size = _human_size(f.stat().st_size)
+            except OSError:
+                size = "—"
+            out.append(f'<div class="mj-asset">{preview}<span>{_esc(f.name)}</span>'
+                       f'<span class="sz">{_esc(size)}</span></div>')
+    out.append('<p class="mj-sacred">🔒 media/imports 是神圣的:引擎从不修改或删除导入文件 '
+               "(imports are sacred — never modified or deleted, §3)。</p>")
+    return "".join(out)
+
+
+def _qc_suggestion(item: dict[str, Any]) -> str:
+    for key in ("suggestion", "fix", "hint"):
+        v = item.get(key)
+        if v:
+            return str(v)
+    return ""
+
+
+def _render_qc_panel(project: "Project") -> str:
+    qc_path = project.reports_dir / "qc.json"
+    if not qc_path.exists():
+        return ('<h3>QC</h3><p class="mj-note">尚未质检 — 点击顶部 “质检 qc” '
+                "或运行 <code>manju build --target qc</code>。</p>")
+    try:
+        data = read_json(qc_path)
+    except Exception:
+        return '<h3>QC</h3><p class="mj-note">qc.json 无法读取 (unreadable).</p>'
+    items = _normalize_qc_items(data)
+    counts: dict[str, int] = {}
+    for it in items:
+        lvl = _qc_level(it)
+        counts[lvl] = counts.get(lvl, 0) + 1
+    counts_html = "".join(
+        f"<span>{_esc(lvl)}: {n}</span>" for lvl, n in sorted(counts.items())
+    ) or "<span>no items</span>"
+    lis = []
+    for it in items:
+        lvl = _qc_level(it)
+        subj = it.get("subject") or it.get("shot") or ""
+        subj_html = (f' <span style="color:var(--muted)">[{_esc(subj)}]</span>'
+                     if subj else "")
+        sugg = _qc_suggestion(it)
+        sugg_html = (f'<span class="qc-sugg">↳ 建议 suggestion: {_esc(sugg)}</span>'
+                     if sugg else "")
+        lis.append(
+            f'<li><span class="lvl lvl-{_esc(lvl)}">{_esc(lvl)}</span>'
+            f"{_esc(_qc_message(it))}{subj_html}{sugg_html}</li>"
+        )
+    list_html = f"<ul>{''.join(lis)}</ul>" if lis else '<p class="mj-note">No QC items.</p>'
+    # wrap in .qc so the existing count-pill / list styling (static _CSS) applies
+    return (f'<div class="qc"><h3>QC report</h3>'
+            f'<div class="counts">{counts_html}</div>{list_html}</div>')
+
+
+def _render_panels(project: "Project") -> str:
+    renderers = {
+        "project": lambda: _render_project_panel(project),
+        "subs": lambda: _render_subs_panel(project),
+        "bible": lambda: _render_bible_panel(project),
+        "log": lambda: _render_log_panel(project),
+        "assets": lambda: _render_assets_panel(project),
+        "qc": lambda: _render_qc_panel(project),
+    }
+    tabbar = "".join(
+        f'<button type="button" class="mj-tab{" active" if i == 0 else ""}" '
+        f'data-tab="{key}">{label}</button>'
+        for i, (key, label) in enumerate(_PANEL_TABS)
+    )
+    panels = "".join(
+        f'<div class="mj-panel{" active" if i == 0 else ""}" data-panel="{key}">'
+        f"{_safe_panel(renderers[key])}</div>"
+        for i, (key, _label) in enumerate(_PANEL_TABS)
+    )
+    return f'<section class="mj-panels"><div class="mj-tabs">{tabbar}</div>{panels}</section>'
+
+
 def render_board(project: "Project", serve: bool = False) -> str:
     """Build the board HTML document.
 
     ``serve=False`` (default) is the static, self-contained board — byte-for-byte
     what ``manju board`` has always written (pinned by a test). ``serve=True`` is
     the live workspace served by :mod:`manju.board.server`: media/poster ``src``
-    point at ``/media/<relpath>``, per-take/-shot/header action buttons appear, and
-    an inline vanilla-JS layer POSTs to ``/api/<action>`` with a busy overlay.
+    point at ``/media/<relpath>``, per-take/-shot/header action buttons appear, an
+    inline vanilla-JS layer POSTs to ``/api/<action>`` with a busy overlay, and a
+    tabbed inspector (project/subtitles/bible/log/assets/QC) rides above the shots.
     """
     statuses = {s.shot_id: s for s in evaluate_all(project)}
     rollbackable = _rollbackable_shots(project, statuses) if serve else set()
@@ -576,6 +1042,14 @@ def render_board(project: "Project", serve: bool = False) -> str:
     script = (_JS + "\n" + _SERVE_JS) if serve else _JS
     body_extras = _SERVE_BODY if serve else ""
 
+    # In serve mode the QC section moves into the panel strip (above the shots);
+    # static mode keeps the standalone QC section appended after the shots so the
+    # pinned board stays byte-for-byte identical.
+    if serve:
+        main_inner = f"{_render_panels(project)}{shots_html}"
+    else:
+        main_inner = f"{shots_html}{_render_qc(project)}"
+
     return (
         "<!doctype html>\n"
         '<html lang="zh"><head>\n'
@@ -586,7 +1060,7 @@ def render_board(project: "Project", serve: bool = False) -> str:
         "</head><body>\n"
         f"{body_extras}"
         f"{_render_header(project, serve=serve)}\n"
-        f"<main>{shots_html}{_render_qc(project)}</main>\n"
+        f"<main>{main_inner}</main>\n"
         f"{footer}\n"
         f"<script>{script}</script>\n"
         "</body></html>\n"
