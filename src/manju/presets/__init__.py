@@ -26,21 +26,13 @@ from ..core.models import PackagingSpec, ProjectConfig, TimelineRules
 
 # Deterministic display/enumeration order. Every file in data/ must appear here;
 # list_presets() falls back to appending any stragglers sorted, but the invariant
-# (and a test) is that these thirteen are exactly the shipped kits.
+# (and a test) is that these three are exactly the shipped kits. The kits are
+# deliberately content-type-neutral (blank plus a vertical/horizontal frame) —
+# the agent infers the genre from the input at `manju new` time.
 PRESET_ORDER: tuple[str, ...] = (
-    "comic",
-    "short_drama",
-    "explainer",
-    "novel",
-    "trailer",
-    "ad",
-    "mv",
-    "talking_head",
-    "animation",
-    "film_storyboard",
-    "virtual_human",
-    "product",
-    "knowledge",
+    "blank",
+    "vertical_ai_video",
+    "horizontal_ai_video",
 )
 
 

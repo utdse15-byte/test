@@ -1,0 +1,31 @@
+name: horizontal_ai_video
+title: 横屏AI成片 / Horizontal AI video
+description: 横屏 16:9 AI 成片:字幕默认开启,其余通用 —— 竖屏档的 16:9 对应。
+project:
+  width: 1920
+  height: 1080
+  fps: 24
+  export_profiles: [srt]
+# The 16:9 counterpart to vertical_ai_video: same content-type-neutral stance,
+# captions on, everything else the plain engine defaults.
+rules:
+  captions:
+    enabled: true
+    max_chars_per_line: 18
+    max_lines: 2
+    style: default
+qc_focus:
+  - 字幕安全区
+  - 素材完整
+scaffold:
+  story/brief.md: |
+    # 一句话创意 / Logline
+
+    <!--
+    一句话说清:谁、在哪、发生什么、为什么让人停下来。
+    One line: who, where, what happens, and why a viewer stays.
+    横屏成片 / horizontal notes:
+      - 16:9 横屏,字幕居中、底部安全区
+        16:9 landscape, captions centered in the bottom safe area
+      - 题材由内容决定,这里不做设定 / genre follows the content, not this kit
+    -->

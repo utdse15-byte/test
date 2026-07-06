@@ -1,0 +1,34 @@
+name: vertical_ai_video
+title: 竖屏AI成片 / Vertical AI video
+description: 竖屏 9:16 AI 成片默认档:手机优先,通用短视频参数(字幕安全区、音乐闪避)。
+project:
+  width: 1080
+  height: 1920
+  fps: 30
+  export_profiles: [srt]
+# Deliberately content-type-neutral: standard pacing, captions on inside the
+# safe area, music ducks under voice. The agent infers the actual genre from
+# the input at creation time — the kit only fixes the phone-first frame.
+rules:
+  music:
+    ducking: true
+  captions:
+    enabled: true
+    max_chars_per_line: 18
+    max_lines: 2
+    style: default
+qc_focus:
+  - 字幕安全区
+  - 素材完整
+scaffold:
+  story/brief.md: |
+    # 一句话创意 / Logline
+
+    <!--
+    一句话说清:谁、在哪、发生什么、为什么让人停下来。
+    One line: who, where, what happens, and why a scroller stops.
+    竖屏成片 / vertical notes:
+      - 9:16 手机优先,字幕留在底部安全区
+        9:16 phone-first, keep captions in the bottom safe area
+      - 题材由内容决定,这里不做设定 / genre follows the content, not this kit
+    -->

@@ -1,0 +1,7 @@
+name: blank
+title: 空白 / Blank
+description: 空白项目:仅通用脚手架,不做任何预设改动 —— 类型由 AI 从输入推断。
+# No project/rules/packaging/qc_focus/scaffold overrides: `manju new --preset
+# blank` is byte-for-byte today's generic scaffold, only recording preset:
+# blank. It exists so `manju presets` shows "start from nothing" as an explicit,
+# named choice.
