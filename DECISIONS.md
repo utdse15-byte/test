@@ -71,3 +71,16 @@ claude/codex/gemini/qwen/aider) with a `{prompt}` template grammar; the
 playbook prepend, actor=ai logging and exit-code propagation are unchanged.
 Claude Code remains merely the first PATH-probe default. MCP stays the
 recommended structured integration.
+
+## 7. Preset kits reversed to three neutral frames (owner-directed, 2026-07-06)
+
+Round O shipped 13 content-type kits (comic/short_drama/…) under the P3
+"presets" goal. The owner reversed this: content-type inference belongs to
+the agent reading the input, not to a preset — kits now are exactly `blank`,
+`vertical_ai_video` (1080×1920@30) and `horizontal_ai_video` (1920×1080@24),
+fixing only the frame and generic technical defaults (safe-area captions,
+ducking, srt). The preset MACHINERY is unchanged; a neutrality guard test
+bans genre tokens from kit data so flavor cannot creep back; `--preset
+blank` is pinned byte-for-byte to the generic scaffold. This supersedes the
+round-O kit list; the playbook (SKILL.md) carries the genre workflows
+instead.
