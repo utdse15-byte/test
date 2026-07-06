@@ -496,15 +496,94 @@ def qc(deep: bool = typer.Option(False), as_json: bool = typer.Option(False, "--
         raise typer.Exit(1)
 
 
+def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[str],
+               factor: float, ms: int, mode: Optional[str], as_json: bool) -> None:
+    """Explicit repair op (round-Q, §9): builds a NEW take from a source take —
+    append-only, the source is never touched."""
+    from .media.ffmpeg import MediaError
+    from .media.repair_ops import (
+        crop_pad_take,
+        extend_take,
+        retime_take,
+        trim_take,
+    )
+
+    if not shot:
+        _fail(f"--op {op} requires --shot <id>")
+    src_take = take
+    if src_take is None:
+        try:
+            src_take = project.load_shot(shot).status.selected_take
+        except ProjectError as exc:
+            _fail(str(exc))
+    if not src_take:
+        _fail(f"{shot} has no selected take — pass --take <name> explicitly")
+
+    try:
+        if op == "retime":
+            new = retime_take(project, shot, src_take, factor)
+        elif op == "extend":
+            if ms <= 0:
+                _fail("--op extend requires --ms > 0")
+            new = extend_take(project, shot, src_take, ms, mode=mode or "freeze")
+        elif op == "trim":
+            if ms <= 0:
+                _fail("--op trim requires --ms > 0")
+            new = trim_take(project, shot, src_take, ms)
+        elif op == "croppad":
+            new = crop_pad_take(project, shot, src_take, mode=mode or "center_crop")
+        else:
+            _fail(f"unknown --op {op!r} (choose retime|extend|trim|croppad)")
+    except (MediaError, ProjectError) as exc:
+        _fail(f"repair failed: {exc}")
+
+    append_event(project.root, ACTOR, "repair",
+                 {"shot": shot, "op": op, "source_take": src_take, "new_take": new.name})
+    if as_json:
+        _emit({"shot": shot, "op": op, "source_take": src_take,
+               "new_take": new.name, "params": new.sidecar.params}, True)
+    else:
+        typer.secho(
+            f"repaired {shot}: {op} → new take {new.name} (source {src_take} untouched)",
+            fg=typer.colors.GREEN,
+        )
+        typer.echo(f"select it with: manju select {shot} {new.name}")
+
+
 @app.command()
-def repair(auto: bool = typer.Option(False, "--auto"),
-           as_json: bool = typer.Option(False, "--json")):
-    """Execute auto-safe items from repair_plan.yaml (redo/degrade); the rest
-    stay for humans (§9). Repair is just 'edit generation params and rebuild'."""
+def repair(
+    auto: bool = typer.Option(False, "--auto"),
+    op: Optional[str] = typer.Option(
+        None, "--op", help="explicit repair op: retime|extend|trim|croppad "
+                           "(builds a new take; source is never overwritten)"),
+    shot: Optional[str] = typer.Option(None, "--shot", help="shot id for --op"),
+    take: Optional[str] = typer.Option(
+        None, "--take", help="source take for --op (default: the shot's selected take)"),
+    factor: float = typer.Option(
+        1.0, "--factor", help="retime duration multiplier (0.9 = 10% faster/shorter)"),
+    ms: int = typer.Option(0, "--ms", help="extend/trim amount in milliseconds"),
+    mode: Optional[str] = typer.Option(
+        None, "--mode", help="extend: freeze|pad_black · croppad: center_crop|pad_blur"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Repair the film (§9). Two modes:
+
+    - `--op <retime|extend|trim|croppad>` runs an explicit ffmpeg repair on a
+      shot's take, registering the result as a NEW take (append-only lineage):
+        manju repair --op retime  --shot S001 --factor 0.9
+        manju repair --op extend  --shot S001 --ms 500 --mode freeze
+        manju repair --op trim    --shot S001 --ms 300
+        manju repair --op croppad --shot S001 --mode pad_blur
+    - `--auto` executes auto-safe items from repair_plan.yaml (redo/degrade);
+      the rest stay for humans. Repair-plan action is 'edit params and rebuild'.
+    """
     from .build.graph import redo_shot
     from .core.yamlio import read_yaml
 
     project = _project()
+    if op is not None:
+        _repair_op(project, op, shot, take, factor, ms, mode, as_json)
+        return
     plan_path = project.reports_dir / "repair_plan.yaml"
     if not plan_path.exists():
         _fail("no repair_plan.yaml — run `manju qc` first")

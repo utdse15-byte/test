@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,7 +28,18 @@ from ..core.models import ProbeInfo, ProjectConfig, Timeline
 _DURATION_TOL_MS = 150      # per-clip source vs timeline duration
 _FINAL_DURATION_TOL_MS = 500  # final render vs timeline total
 _BLACKDETECT_D = 0.5        # minimum black-span seconds
-_SILENCE_DB = -60.0         # mean_volume below this = near silent
+_SILENCE_DB = -60.0         # mean_volume below this = near silent (final render)
+
+# round-Q QC additions (§9)
+_SILENCE_RMS_DB = -50.0     # a voice clip whose whole-clip RMS is at/under this
+                            # is effectively silent (TTS produced silence / wrong file)
+_CLIP_PEAK_DB = -0.1        # voice sample peak at/above this ≈ digital clipping
+_CAPTION_OVERLAP_TOL_MS = 120  # caption bleed up to this is a warn; beyond it two
+                               # captions truly share the screen → error
+_GARBLED_CTRL_RATIO = 0.30  # >30% control/unprintable chars in a cue → garbled
+# a run of ≥3 Latin-1-supplement bytes is the fingerprint of UTF-8 text that was
+# decoded as latin-1 (每个 CJK 字 → 形如 "ä½ "/"å¥½" 的三字节乱码序列)
+_MOJIBAKE_RE = re.compile("[\u00c0-\u00ff][\u0080-\u00ff]{2,}")
 
 
 @dataclass
@@ -134,6 +146,81 @@ def _ffprobe(path: Path) -> ProbeInfo | None:
     )
 
 
+# ----------------------------------------------------------- audio detectors
+
+
+@dataclass
+class AudioStats:
+    """Whole-clip audio measurements from a single ``astats`` pass. ``-inf`` (a
+    digitally-silent clip) is preserved as ``float("-inf")``."""
+
+    peak_db: float | None  # sample peak, dBFS
+    rms_db: float | None   # overall RMS level, dB
+
+
+def _parse_astats_db(stderr: str, label: str) -> float | None:
+    m = re.search(rf"{re.escape(label)}:\s*(-?inf|-?\d+(?:\.\d+)?)", stderr)
+    if not m:
+        return None
+    value = m.group(1)
+    return float("-inf") if "inf" in value else float(value)
+
+
+def _probe_audio_stats(path: Path) -> AudioStats | None:
+    """One ffmpeg ``astats`` pass → peak + RMS (dB). Returns ``None`` when the
+    file has no audio or the detector fails — QC degrades to 'no finding',
+    never to a crash (module docstring contract)."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
+             "-af", "astats=measure_perchannel=none", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    stderr = proc.stderr or ""
+    peak = _parse_astats_db(stderr, "Peak level dB")
+    rms = _parse_astats_db(stderr, "RMS level dB")
+    if peak is None and rms is None:
+        return None
+    return AudioStats(peak_db=peak, rms_db=rms)
+
+
+def _fmt_db(value: float | None) -> str:
+    if value is None or value == float("-inf"):
+        return "-inf"
+    return f"{value:.1f}"
+
+
+# ----------------------------------------------------------- garbled text
+
+
+def _is_control_char(ch: str) -> bool:
+    """True for control/format/surrogate/unassigned chars, except the ordinary
+    whitespace a caption legitimately carries."""
+    return unicodedata.category(ch)[0] == "C" and ch not in "\n\r\t"
+
+
+def _garbled_reason(text: str) -> str | None:
+    """Return a short reason string if ``text`` looks like 乱码 (garbled), else
+    ``None``. Pure text heuristics — no false positives on valid CJK / accented
+    Latin / emoji (each isolated accent stays under the run + ratio thresholds)."""
+    if not text:
+        return None
+    if "�" in text:  # U+FFFD replacement char = bytes lost on decode
+        return "包含 U+FFFD 替换符(解码丢字/编码不符)"
+    if _MOJIBAKE_RE.search(text):
+        return "疑似 UTF-8 被按 latin-1 解码的乱码序列(如 Ã/å 连片)"
+    total = len(text)
+    bad = sum(1 for ch in text if _is_control_char(ch))
+    if total and bad / total > _GARBLED_CTRL_RATIO:
+        return f"不可打印/控制字符占比 {bad / total:.0%} 超过 30%"
+    return None
+
+
 # ----------------------------------------------------------------- run_qc
 
 
@@ -151,11 +238,18 @@ def run_qc(
 
     statuses = evaluate_all(project)
     probe_cache: dict[Path, ProbeInfo | None] = {}
+    astats_cache: dict[Path, AudioStats | None] = {}
 
     def probe(path: Path) -> ProbeInfo | None:
         if path not in probe_cache:
             probe_cache[path] = _probe_info(path)
         return probe_cache[path]
+
+    def astats(path: Path) -> AudioStats | None:
+        # same per-run cache pattern as ``probe`` — one astats pass per file
+        if path not in astats_cache:
+            astats_cache[path] = _probe_audio_stats(path)
+        return astats_cache[path]
 
     selected: dict[str, tuple[Path, ProbeInfo | None]] = {}
 
@@ -168,6 +262,9 @@ def run_qc(
         _audio_advisories(project, report, timeline)
         _technical_clips(project, report, timeline, probe)
         _technical_captions(project, report, timeline)
+        _technical_timeline_conflicts(project, report, timeline)
+        _technical_garbled_captions(project, report, timeline)
+        _technical_voice_audio(project, report, timeline, astats)
     _packaging_checks(project, report, timeline)
     _technical_take_resolution(project, report, config, selected)
     _final_render(project, report, config, timeline, deep)
@@ -465,12 +562,17 @@ def _technical_clips(project, report, timeline: Timeline, probe) -> None:
             continue
         # A source shorter than its clip is only a warn: normalize pads it (§9).
         if info.duration_ms + _DURATION_TOL_MS < clip.duration_ms:
+            deficit = clip.duration_ms - info.duration_ms
             report.add(
                 "warn", "technical", clip.shot,
                 f"source is shorter than the clip: source "
                 f"{info.duration_ms}ms vs clip {clip.duration_ms}ms "
                 f"(normalize will pad, but check the intent)",
-                suggestion="regenerate at the clip duration if padding is undesirable",
+                suggestion=(
+                    f"lengthen the take to fit: `manju repair --op extend --shot "
+                    f"{clip.shot} --ms {deficit} --mode freeze` (or --mode pad_black); "
+                    "or regenerate at the clip duration"
+                ),
             )
 
 
@@ -497,12 +599,14 @@ def _technical_captions(project, report, timeline: Timeline) -> None:
                        f"×{rules.max_lines})",
                        suggestion="shorten the line or split the caption")
 
-    # overlapping intervals (compare in chronological order)
+    # Minor caption bleed (≤ tol) is a warn; a substantial overlap is a hard
+    # timeline conflict raised as an error in _technical_timeline_conflicts.
     ordered = sorted(enumerate(lines), key=lambda t: (t[1].start_ms, t[1].end_ms))
     for (pi, prev), (ci, cur) in zip(ordered, ordered[1:]):
-        if cur.start_ms < prev.end_ms:
+        overlap = prev.end_ms - cur.start_ms
+        if 0 < overlap <= _CAPTION_OVERLAP_TOL_MS:
             report.add("warn", "technical", "timeline",
-                       f"captions #{pi} and #{ci} overlap "
+                       f"captions #{pi} and #{ci} overlap by {overlap}ms "
                        f"(#{pi} ends {prev.end_ms}ms, #{ci} starts {cur.start_ms}ms)",
                        suggestion="adjust caption timings so they do not overlap")
 
@@ -516,6 +620,137 @@ def _technical_take_resolution(project, report, config: ProjectConfig, selected)
                 "info", "technical", shot_id,
                 f"take resolution {info.width}x{info.height} differs from project "
                 f"{config.width}x{config.height} (normalize handles scaling/padding)",
+                suggestion=(
+                    f"bake the aspect fix into a new take: `manju repair --op croppad "
+                    f"--shot {shot_id} --mode center_crop` (or --mode pad_blur for the "
+                    "blurred-background vertical treatment)"
+                ),
+            )
+
+
+def _technical_timeline_conflicts(project, report, timeline: Timeline) -> None:
+    """Pure timeline math (§9): things that make the film play wrong regardless
+    of the media — zero/negative-duration clips, video clips that overlap on the
+    single video track beyond their transition, and captions that truly share
+    the screen. All errors: a conflicting timeline is definitely broken."""
+    fps = timeline.fps or 24
+    frame_ms = 1000.0 / fps if fps else 0.0
+    clips = list(timeline.tracks.video)
+
+    for clip in clips:
+        if clip.duration_ms <= 0:
+            report.add(
+                "error", "technical", clip.shot,
+                f"video clip has non-positive duration ({clip.duration_ms}ms)",
+                suggestion="remove the clip or give it a positive, frame-aligned duration",
+            )
+
+    # Overlap on the single video track. The compiler lays clips end-to-end
+    # (overlap 0); a crossfade legitimately overlaps by its transition length,
+    # so anything beyond prev.transition_out (+1 frame slack) is a real clash.
+    ordered = sorted(clips, key=lambda c: c.start_ms)
+    for prev, cur in zip(ordered, ordered[1:]):
+        if prev.duration_ms <= 0 or cur.duration_ms <= 0:
+            continue
+        overlap = (prev.start_ms + prev.duration_ms) - cur.start_ms
+        allowed = prev.transition_out.duration_ms if prev.transition_out else 0
+        if overlap > allowed + frame_ms + 0.5:
+            report.add(
+                "error", "technical", cur.shot,
+                f"video clips {prev.shot!r} and {cur.shot!r} overlap by {overlap}ms "
+                f"(transition allows {allowed}ms) — two clips play at once",
+                suggestion=(
+                    f"push {cur.shot} to start at {prev.start_ms + prev.duration_ms}ms, "
+                    "or give the earlier clip a transition_out of matching duration"
+                ),
+            )
+
+    # Captions collide on one line region: a bleed over the tolerance means two
+    # cues are on screen together (the compiler never produces this).
+    caps = list(timeline.tracks.captions)
+    ordered_caps = sorted(enumerate(caps), key=lambda t: (t[1].start_ms, t[1].end_ms))
+    for (pi, prev), (ci, cur) in zip(ordered_caps, ordered_caps[1:]):
+        overlap = prev.end_ms - cur.start_ms
+        if overlap > _CAPTION_OVERLAP_TOL_MS:
+            report.add(
+                "error", "technical", "timeline",
+                f"captions #{pi} and #{ci} overlap by {overlap}ms on the same line "
+                "region — they render on top of each other",
+                suggestion="retime or split the captions so their windows do not overlap",
+            )
+
+
+def _technical_garbled_captions(project, report, timeline: Timeline) -> None:
+    """Garbled-subtitle (乱码) detection (§9): U+FFFD, UTF-8-as-latin-1 mojibake,
+    or a control-char-heavy cue → error naming the cue. Runs on the compiled
+    captions and, when captions are human-owned (rules.captions.mode == manual),
+    on captions.srt too."""
+    for i, cap in enumerate(timeline.tracks.captions):
+        why = _garbled_reason(cap.text or "")
+        if why:
+            report.add(
+                "error", "technical", "timeline",
+                f"caption #{i} looks garbled (乱码): {why}",
+                suggestion="以 UTF-8 重新导出/重编码字幕源(检查 TTS/ASR 或字幕文件编码)",
+            )
+
+    try:
+        manual = project.load_rules().captions.mode == "manual"
+    except Exception:
+        manual = False
+    srt_path = project.captions_dir / "captions.srt"
+    if manual and srt_path.exists():
+        try:
+            from ..providers.asr import parse_srt
+
+            # errors="replace" turns undecodable bytes into U+FFFD, which the
+            # detector then flags — exactly the mis-encoded-file case (§9).
+            segs = parse_srt(srt_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            segs = []
+        for i, seg in enumerate(segs):
+            why = _garbled_reason(seg.text or "")
+            if why:
+                report.add(
+                    "error", "technical", "timeline",
+                    f"captions.srt cue #{i} looks garbled (乱码): {why}",
+                    suggestion="以 UTF-8 重新保存 captions.srt(该字幕已标记 manual,为人工真相)",
+                )
+
+
+def _technical_voice_audio(project, report, timeline: Timeline, astats) -> None:
+    """Per-voice-clip audio QC (§9), one astats pass per file (cached):
+      - whole-clip RMS at/under −50dB → error (TTS produced silence / wrong file);
+      - sample peak at/above −0.1dBFS → warn (digital clipping).
+    Gated on a voice track being present; missing files are the existence
+    layer's job, an unreadable detector degrades to no finding."""
+    for k, clip in enumerate(timeline.tracks.voice):
+        try:
+            path = project.resolve(clip.source)
+        except Exception:
+            continue
+        if not path.exists():
+            continue  # _existence_timeline already reports missing voice sources
+        stats = astats(path)
+        if stats is None:
+            continue  # no audio / detector failed → no finding
+        label = f"voice clip #{k} ({project.relpath(path)})"
+        if stats.rms_db is None or stats.rms_db <= _SILENCE_RMS_DB:
+            report.add(
+                "error", "technical", "timeline",
+                f"{label} is entirely silent (RMS {_fmt_db(stats.rms_db)}dB ≤ "
+                f"{_SILENCE_RMS_DB}dB) — TTS produced silence, or the voice track "
+                "points at the wrong file",
+                suggestion="重配音该镜头(manju voice <shot>),或修正 voice 轨指向的文件",
+            )
+        elif stats.peak_db is not None and stats.peak_db != float("-inf") \
+                and stats.peak_db >= _CLIP_PEAK_DB:
+            report.add(
+                "warn", "technical", "timeline",
+                f"{label} peaks at {stats.peak_db:.2f}dBFS (≥ {_CLIP_PEAK_DB}dBFS) — "
+                "audio is clipping",
+                suggestion="降低该 voice 的 gain_db 或重生成;final 混音会 loudnorm,"
+                           "但源已削波无法还原",
             )
 
 
