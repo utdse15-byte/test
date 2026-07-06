@@ -68,6 +68,82 @@ def draft_project(tmp_project, add_shot):
     return tmp_project, timeline
 
 
+@pytest.fixture
+def draft_project_sfx_ambient(draft_project):
+    """draft_project + a real SFX hit, a per-cut transition whoosh and an ambient
+    bed, wired through rules.audio and recompiled so the compiler populates
+    ``tracks.sfx`` (hit + transition) and ``tracks.ambient`` (looped bed). The
+    room-tone bed is deliberately SHORTER than the film to exercise the
+    trim-to-source draft handoff."""
+    project, _ = draft_project
+
+    def _sine(dest: Path, freq: int, seconds: float) -> None:
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration={seconds}", str(dest)],
+            check=True,
+        )
+
+    _sine(project.imports_dir / "hit.wav", 880, 0.3)
+    _sine(project.imports_dir / "room.wav", 90, 0.5)   # shorter than the film
+    _sine(project.imports_dir / "whoosh.wav", 1200, 0.2)
+
+    from manju.core.models import AmbientRules, AudioMixRules, SfxClipSpec
+
+    rules = project.load_rules()
+    rules.audio = AudioMixRules(
+        sfx=[SfxClipSpec(source="media/imports/hit.wav", at="shot:S001:end", gain_db=-6.0)],
+        ambient=AmbientRules(source="media/imports/room.wav", gain_db=-24.0),
+        transition_sound="media/imports/whoosh.wav",
+        transition_gain_db=-12.0,
+    )
+    project.save_rules(rules)
+
+    from manju.media.probe import probe_duration_ms
+    from manju.timeline.compiler import build_timeline
+
+    timeline, _, _ = build_timeline(project, probe_duration_ms)
+    return project, timeline
+
+
+@pytest.mark.skipif(not has_pyjyd, reason="pyJianYingDraft not installed")
+def test_jianying_native_carries_sfx_and_ambient(draft_project_sfx_ambient):
+    """Round-N finding: the native pyJianYingDraft path must carry the SFX and
+    ambient layers that are audible in final.mp4, not just voice/music."""
+    project, timeline = draft_project_sfx_ambient
+    # the compiler put both layers on the timeline (hit + transition on sfx)
+    assert len(timeline.tracks.sfx) == 2
+    assert timeline.tracks.ambient and timeline.tracks.ambient[0].loop is True
+
+    draft = export_jianying_native(project, timeline)
+    text = draft.read_text(encoding="utf-8")
+    data = json.loads(text)
+
+    audio_tracks = [t for t in data["tracks"] if t.get("type") == "audio"]
+    seg_count = sum(len(t.get("segments", [])) for t in audio_tracks)
+    # music(1) + sfx(2) + ambient(1); no voice take exists in this fixture
+    assert seg_count == 4
+    # every new source is referenced in the draft materials (paths carried)
+    assert "hit.wav" in text and "whoosh.wav" in text and "room.wav" in text
+    # FIDELITY CAVEAT: a draft has no loop primitive, so the looped bed is
+    # referenced over the film span and trimmed to the (shorter) source file —
+    # the same trim-to-source handoff BGM already gets. final.mp4 keeps the real
+    # looped/ducked mix; the draft is a best-effort editing starting point.
+
+
+@pytest.mark.skipif(not has_pycapcut, reason="pycapcut not installed")
+def test_capcut_native_carries_sfx_and_ambient(draft_project_sfx_ambient):
+    """CapCut shares the same builder (§2.5): the SFX/ambient fix carries there
+    too, so an international-CapCut handoff keeps the whole audible mix."""
+    project, timeline = draft_project_sfx_ambient
+    draft = export_capcut_native(project, timeline)
+    text = draft.read_text(encoding="utf-8")
+    data = json.loads(text)
+    audio_tracks = [t for t in data["tracks"] if t.get("type") == "audio"]
+    assert sum(len(t.get("segments", [])) for t in audio_tracks) == 4
+    assert "hit.wav" in text and "whoosh.wav" in text and "room.wav" in text
+
+
 @pytest.mark.skipif(not has_pyjyd, reason="pyJianYingDraft not installed")
 def test_jianying_native_draft(draft_project):
     project, timeline = draft_project

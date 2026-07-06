@@ -11,7 +11,7 @@ Structure produced (§3, exports/otio):
       global_start_time : RationalTime.1 (rate = fps)
       tracks            : Stack.1
         children[0]     : Track.1 kind="Video"  -> Clip.1 per video shot
-        children[1]     : Track.1 kind="Audio"  -> Clip.1 per voice/music clip
+        children[1]     : Track.1 kind="Audio"  -> Clip.1 per voice/music/sfx/ambient clip
 
 Every RationalTime is expressed in frames at the timeline fps; millisecond
 values are converted with ``value = ms * fps / 1000``. TimeRange/RationalTime
@@ -77,12 +77,18 @@ def _video_clip(clip: VideoClip, fps: float) -> dict[str, Any]:
 
 def _audio_clip(clip: AudioClip, fps: float, kind: str) -> dict[str, Any]:
     name = Path(clip.source).stem or kind
+    # OTIO has no loop semantics: an ambient bed is represented at its timeline
+    # start/duration with the source referenced as-is; the loop intent is only
+    # recorded in metadata (and only when set, so voice/music stay byte-stable).
+    meta: dict[str, Any] = {"track": kind, "start_ms": clip.start_ms}
+    if clip.loop:
+        meta["loop"] = True
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": name,
         "source_range": _time_range(0, clip.duration_ms, fps),
         "media_reference": _external_reference(clip.source, clip.duration_ms, fps),
-        "metadata": {"manju": {"track": kind, "start_ms": clip.start_ms}},
+        "metadata": {"manju": meta},
     }
 
 
@@ -104,6 +110,8 @@ def export_otio(project: "Project", timeline: Timeline) -> Path:
     video_children = [_video_clip(c, fps) for c in timeline.tracks.video]
     audio_children = [_audio_clip(c, fps, "voice") for c in timeline.tracks.voice]
     audio_children += [_audio_clip(c, fps, "music") for c in timeline.tracks.music]
+    audio_children += [_audio_clip(c, fps, "sfx") for c in timeline.tracks.sfx]
+    audio_children += [_audio_clip(c, fps, "ambient") for c in timeline.tracks.ambient]
 
     stack = {
         "OTIO_SCHEMA": "Stack.1",

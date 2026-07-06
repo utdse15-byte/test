@@ -58,25 +58,62 @@ def _build_script(lib, project: "Project", timeline: Timeline):
         )
         script.add_segment(segment, "main")
 
+    def _audio_segment(a):
+        """Build one AudioSegment: gain -> volume, trimmed to the material length
+        so audio is never time-stretched. A looped ambient bed carries no loop
+        primitive in a draft — like BGM it is referenced over its span and
+        trimmed to the (possibly shorter) source file. Returns (segment,
+        start_us, end_us), or None when the clip trims to nothing."""
+        material = lib.AudioMaterial(str(project.resolve(a.source)))
+        target_us = (a.duration_ms or timeline.duration_ms) * ms
+        target_us = min(target_us, material.duration)
+        if target_us <= 0:
+            return None
+        start_us = a.start_ms * ms
+        segment = lib.AudioSegment(material, trange(start_us, target_us),
+                                   volume=_volume_from_db(a.gain_db))
+        return segment, start_us, start_us + target_us
+
     def _add_audio(track_name: str, clips) -> None:
+        """Voice/music/ambient: one lane each — they never self-overlap (voice is
+        sequential; music and the ambient bed are single spanning clips)."""
         script.add_track(lib.TrackType.audio, track_name)
         for a in clips:
-            material = lib.AudioMaterial(str(project.resolve(a.source)))
-            target_us = (a.duration_ms or timeline.duration_ms) * ms
-            # audio must never be time-stretched: trim to material length
-            target_us = min(target_us, material.duration)
-            if target_us <= 0:
+            built = _audio_segment(a)
+            if built is not None:
+                script.add_segment(built[0], track_name)
+
+    def _add_sfx(clips) -> None:
+        """SFX are transient hits + per-cut transition sounds and CAN overlap (a
+        hit and a whoosh may land on the same cut). pyJianYingDraft/pycapcut
+        forbid overlapping segments within a track, so spread them across as many
+        lanes as needed — greedy first-fit by start time, the same way a human
+        stacks SFX on extra audio lanes; render.py mixes every lane regardless."""
+        lane_names: list[str] = []
+        lane_ends: list[int] = []  # last segment end (µs) per lane
+        for a in sorted(clips, key=lambda c: c.start_ms):
+            built = _audio_segment(a)
+            if built is None:
                 continue
-            script.add_segment(
-                lib.AudioSegment(material, trange(a.start_ms * ms, target_us),
-                                 volume=_volume_from_db(a.gain_db)),
-                track_name,
-            )
+            segment, start_us, end_us = built
+            lane = next((i for i, e in enumerate(lane_ends) if e <= start_us), None)
+            if lane is None:  # no free lane at this time → open another
+                lane = len(lane_names)
+                name = "sfx" if lane == 0 else f"sfx_{lane + 1}"
+                script.add_track(lib.TrackType.audio, name)
+                lane_names.append(name)
+                lane_ends.append(0)
+            script.add_segment(segment, lane_names[lane])
+            lane_ends[lane] = end_us
 
     if timeline.tracks.voice:
         _add_audio("voice", timeline.tracks.voice)
     if timeline.tracks.music:
         _add_audio("music", timeline.tracks.music)
+    if timeline.tracks.sfx:
+        _add_sfx(timeline.tracks.sfx)
+    if timeline.tracks.ambient:
+        _add_audio("ambient", timeline.tracks.ambient)
 
     if timeline.tracks.captions:
         script.add_track(lib.TrackType.text, "captions")

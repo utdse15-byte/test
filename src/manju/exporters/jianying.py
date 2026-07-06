@@ -116,12 +116,17 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
         )
 
     # --- audio tracks ------------------------------------------------------
-    # Voice and music go on SEPARATE audio tracks: BGM spans the whole picture
-    # and would otherwise permanently overlap every voice clip within a single
-    # track (JianYing supports multiple audio tracks, so this is faithful and
-    # keeps the overlap lint meaningful).
+    # Voice, music, sfx and the ambient bed each go on their OWN audio track:
+    # BGM/ambient span the whole picture and would otherwise permanently overlap
+    # every voice/sfx clip within a single track (JianYing supports multiple
+    # audio tracks, so this is faithful and keeps the overlap lint meaningful).
+    # The sfx track carries both explicit SFX and per-cut transition sounds; the
+    # ambient bed references its source over the film's span (no loop semantics
+    # in a draft — same trim-to-source handoff as BGM).
     voice_segments: list[dict[str, Any]] = []
     music_segments: list[dict[str, Any]] = []
+    sfx_segments: list[dict[str, Any]] = []
+    ambient_segments: list[dict[str, Any]] = []
 
     def _add_audio(clip: AudioClip, kind: str, idx: int,
                    segments: list[dict[str, Any]]) -> None:
@@ -150,6 +155,10 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
         _add_audio(clip, "voice", idx, voice_segments)
     for idx, clip in enumerate(timeline.tracks.music):
         _add_audio(clip, "music", idx, music_segments)
+    for idx, clip in enumerate(timeline.tracks.sfx):
+        _add_audio(clip, "sfx", idx, sfx_segments)
+    for idx, clip in enumerate(timeline.tracks.ambient):
+        _add_audio(clip, "ambient", idx, ambient_segments)
 
     # --- text track (captions) --------------------------------------------
     for idx, cap in enumerate(timeline.tracks.captions):
@@ -177,8 +186,19 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
         {"id": _uid("track", "video"), "type": "video", "segments": video_segments},
         {"id": _uid("track", "audio", "voice"), "type": "audio", "segments": voice_segments},
         {"id": _uid("track", "audio", "music"), "type": "audio", "segments": music_segments},
-        {"id": _uid("track", "text"), "type": "text", "segments": text_segments},
     ]
+    # sfx/ambient tracks are emitted ONLY when the audio policy populated them,
+    # so a project that uses neither exports a byte-identical draft to before
+    # (voice/music/text stay exactly where they were).
+    if sfx_segments:
+        tracks.append(
+            {"id": _uid("track", "audio", "sfx"), "type": "audio", "segments": sfx_segments}
+        )
+    if ambient_segments:
+        tracks.append(
+            {"id": _uid("track", "audio", "ambient"), "type": "audio", "segments": ambient_segments}
+        )
+    tracks.append({"id": _uid("track", "text"), "type": "text", "segments": text_segments})
 
     return {
         "id": _uid("draft", name),
