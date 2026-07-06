@@ -783,13 +783,46 @@ def transcribe(
 
 
 @app.command()
-def board():
-    """Static HTML review board — the director's workbench (§1-⑦)."""
-    from .board.board import generate_board
+def board(
+    serve: bool = typer.Option(False, "--serve/--no-serve",
+                               help="serve an actionable local workspace instead of writing board.html"),
+    port: int = typer.Option(8787, "--port", help="serve port (--serve)"),
+    host: str = typer.Option("127.0.0.1", "--host", help="serve host (--serve; localhost only)"),
+    open_browser: bool = typer.Option(True, "--open/--no-open",
+                                      help="open the board in a browser after binding (--serve)"),
+):
+    """Review board — the director's workbench (§1-⑦).
 
+    Default: write a static, self-contained ``board.html``. With ``--serve`` it
+    becomes a live, ACTIONABLE workspace on localhost: click to select takes,
+    redo/rollback shots, build/qc/package/snapshot — a thin veneer over the same
+    core the CLI calls (unlock/gc/pack stay off this surface, like MCP §11)."""
     project = _project()
-    path = generate_board(project)
-    typer.secho(f"board: {project.relpath(path)}", fg=typer.colors.GREEN)
+    if not serve:
+        from .board.board import generate_board
+
+        path = generate_board(project)
+        typer.secho(f"board: {project.relpath(path)}", fg=typer.colors.GREEN)
+        return
+
+    import webbrowser
+
+    from .board.server import make_server
+
+    server = make_server(project, host=host, port=port)
+    url = f"http://{host}:{server.server_address[1]}/"
+    typer.secho(f"manju board 工作台: {url}  (Ctrl-C 退出)", fg=typer.colors.GREEN)
+    if open_browser:
+        try:  # best-effort; headless / no-browser must never crash the server
+            webbrowser.open(url)
+        except Exception:
+            pass
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("stopping…")
+    finally:
+        server.server_close()
 
 
 # -------------------------------------------------------------- pack/unpack

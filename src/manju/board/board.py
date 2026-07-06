@@ -31,7 +31,7 @@ from ..core.yamlio import atomic_write_text, read_json
 if TYPE_CHECKING:
     from ..core.container import Project
 
-__all__ = ["generate_board"]
+__all__ = ["generate_board", "render_board"]
 
 def _project_aspect(project) -> str:
     """CSS aspect-ratio for media placeholders — the project's real frame
@@ -148,6 +148,102 @@ function mjCopy(btn){
 }
 """.strip()
 
+# --- serve mode only: an ACTIONABLE veneer over the same core the CLI calls ---
+# These are appended after the static CSS/JS so the static board stays
+# byte-for-byte identical (see the pin test). Buttons carry data-* attributes;
+# one delegated click handler POSTs to /api/<action> and reloads on success.
+_SERVE_CSS = """
+.btn {
+  background: var(--accent); color: #0b1220; border: 0; border-radius: 6px;
+  padding: .35rem .7rem; font-size: .8rem; font-weight: 700; cursor: pointer;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:disabled { background: var(--panel2); color: var(--muted); cursor: default; filter: none; }
+.btn-redo { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.btn-roll { background: #4a3a12; color: var(--star); }
+.btn-sel  { background: #17402a; color: #7ee2a8; }
+.board-actions { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+.shot-actions { display: flex; gap: .5rem; margin-top: .75rem; flex-wrap: wrap; }
+.tact { margin-top: .45rem; }
+.tact .btn { width: 100%; }
+.mj-banner {
+  display: none; background: #4d1f22; color: #ff8a90; padding: .7rem 1.6rem;
+  font-weight: 700; border-bottom: 1px solid #6b2a2e;
+}
+.mj-overlay {
+  position: fixed; inset: 0; z-index: 50; background: rgba(10,12,16,.82);
+  display: none; align-items: center; justify-content: center;
+}
+.mj-ovbox { text-align: center; color: var(--fg); max-width: 80%; }
+.mj-spinner {
+  width: 42px; height: 42px; margin: 0 auto .8rem; border-radius: 50%;
+  border: 4px solid var(--line); border-top-color: var(--accent);
+  animation: mjspin 1s linear infinite;
+}
+@keyframes mjspin { to { transform: rotate(360deg); } }
+.mj-ovtext { font-size: 1rem; }
+""".strip()
+
+_SERVE_JS = """
+(function(){
+  var MSG = {
+    build: "正在构建成片,可能需要几分钟,请勿关闭页面…",
+    qc: "正在质检…",
+    package: "正在生成封面/预告…",
+    snapshot: "正在保存快照…",
+    redo: "正在重做该镜头…",
+    select: "正在切换选用…",
+    rollback_shot: "正在回滚该镜头…"
+  };
+  function el(id){ return document.getElementById(id); }
+  function overlay(show, msg){
+    var o = el("mj-overlay"); if(!o) return;
+    o.querySelector(".mj-ovtext").textContent = msg || "处理中…";
+    o.style.display = show ? "flex" : "none";
+  }
+  function banner(msg){
+    var b = el("mj-banner"); if(!b) return;
+    b.textContent = msg || ""; b.style.display = msg ? "block" : "none";
+  }
+  function post(action, body){
+    banner("");
+    overlay(true, MSG[action] || "处理中…");
+    fetch("/api/" + action, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body || {})
+    }).then(function(r){
+      return r.json().catch(function(){
+        return {ok:false, error:"服务器返回了无法解析的响应 (HTTP " + r.status + ")"};
+      });
+    }).then(function(d){
+      if (d && d.ok) { location.reload(); return; }
+      overlay(false);
+      banner("✗ " + ((d && d.error) || "操作失败"));
+    }).catch(function(err){
+      overlay(false);
+      banner("✗ 请求失败:" + err);
+    });
+  }
+  document.addEventListener("click", function(e){
+    var btn = e.target.closest ? e.target.closest("button[data-act]") : null;
+    if (!btn || btn.disabled) return;
+    var body = {};
+    if (btn.dataset.shot) body.shot = btn.dataset.shot;
+    if (btn.dataset.take) body.take = btn.dataset.take;
+    if (btn.dataset.target) body.target = btn.dataset.target;
+    post(btn.getAttribute("data-act"), body);
+  });
+})();
+""".strip()
+
+_SERVE_BODY = (
+    '<div id="mj-banner" class="mj-banner"></div>\n'
+    '<div id="mj-overlay" class="mj-overlay"><div class="mj-ovbox">'
+    '<div class="mj-spinner"></div><div class="mj-ovtext">处理中…</div>'
+    "</div></div>\n"
+)
+
 
 def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
@@ -180,35 +276,57 @@ def _take_meta(project: "Project", take: Any) -> str:
     return " · ".join(bits)
 
 
-def _render_take(project: "Project", shot_id: str, take: Any, selected: bool) -> str:
+def _render_take(project: "Project", shot_id: str, take: Any, selected: bool,
+                 serve: bool = False) -> str:
     cls = "take selected" if selected else "take"
     if take.media_path is not None:
         rel = _esc(project.relpath(take.media_path))
+        src = f"/media/{rel}" if serve else rel
         # the QC content layer keeps a mid-point frame per shot (§9) — use it
         # as the poster so the card wall reads at a glance without playback
         poster_path = project.reports_dir / "frames" / f"{shot_id}.jpg"
-        poster = (f' poster="{_esc(project.relpath(poster_path))}"'
-                  if (selected and poster_path.exists()) else "")
+        if selected and poster_path.exists():
+            prel = _esc(project.relpath(poster_path))
+            poster = f' poster="{("/media/" + prel) if serve else prel}"'
+        else:
+            poster = ""
         media = (f'<video controls preload="metadata" width="180"{poster} '
-                 f'src="{rel}"></video>')
+                 f'src="{src}"></video>')
     else:
         media = '<div class="nomedia">no media on disk</div>'
     star = ' <span class="star">★</span>' if selected else ""
     name = f'<div class="tname">{_esc(take.name)}{star}</div>'
     meta = f'<div class="tmeta">{_take_meta(project, take)}</div>'
-    cmd = ""
-    if not selected:
-        line = f"manju select {shot_id} {take.name}"
-        cmd = (
-            '<div class="selcmd">'
-            f"<code>{_esc(line)}</code>"
-            '<button type="button" onclick="mjCopy(this)">copy</button>'
-            "</div>"
-        )
+    if serve:
+        cmd = _take_action(shot_id, take.name, selected)
+    else:
+        cmd = ""
+        if not selected:
+            line = f"manju select {shot_id} {take.name}"
+            cmd = (
+                '<div class="selcmd">'
+                f"<code>{_esc(line)}</code>"
+                '<button type="button" onclick="mjCopy(this)">copy</button>'
+                "</div>"
+            )
     return f'<div class="{cls}">{media}{name}{meta}{cmd}</div>'
 
 
-def _render_shot(project: "Project", shot_id: str, status: Any) -> str:
+def _take_action(shot_id: str, take_name: str, selected: bool) -> str:
+    """Serve-mode per-take button: '选用 select' (disabled + ★ on the current
+    selection). Data-* attributes drive the delegated click handler in _SERVE_JS."""
+    if selected:
+        return ('<div class="tact">'
+                '<button type="button" class="btn btn-sel" disabled>★ 已选用</button>'
+                "</div>")
+    return ('<div class="tact">'
+            '<button type="button" class="btn" data-act="select" '
+            f'data-shot="{_esc(shot_id)}" data-take="{_esc(take_name)}">选用 select</button>'
+            "</div>")
+
+
+def _render_shot(project: "Project", shot_id: str, status: Any,
+                 serve: bool = False, rollbackable: bool = False) -> str:
     try:
         shot = project.load_shot(shot_id)
         action = shot.action.main
@@ -254,13 +372,50 @@ def _render_shot(project: "Project", shot_id: str, status: Any) -> str:
     takes = project.takes(shot_id)
     if takes:
         cards = "".join(
-            _render_take(project, shot_id, t, selected=(t.name == selected)) for t in takes
+            _render_take(project, shot_id, t, selected=(t.name == selected), serve=serve)
+            for t in takes
         )
         takes_html = f'<div class="takes">{cards}</div>'
     else:
         takes_html = '<div class="dialogue">no takes yet</div>'
 
-    return f'<section class="shot">{head}{dialogue}{note_html}{takes_html}</section>'
+    actions_html = ""
+    if serve:
+        btns = [
+            '<button type="button" class="btn btn-redo" data-act="redo" '
+            f'data-shot="{_esc(shot_id)}">重做 redo</button>'
+        ]
+        if rollbackable:
+            btns.append(
+                '<button type="button" class="btn btn-roll" data-act="rollback_shot" '
+                f'data-shot="{_esc(shot_id)}">回滚 rollback</button>'
+            )
+        actions_html = f'<div class="shot-actions">{"".join(btns)}</div>'
+
+    return (f'<section class="shot">{head}{dialogue}{note_html}'
+            f"{takes_html}{actions_html}</section>")
+
+
+def _rollbackable_shots(project: "Project", statuses: dict[str, Any]) -> set[str]:
+    """Shots that `rollback_shot` could act on right now: they have an earlier
+    recorded selection (select/rollback_shot event) different from the current
+    one — the exact condition manju.core.history.rollback_shot checks (§10)."""
+    from ..core.events import tail_events
+
+    picks: dict[str, list[str]] = {}
+    for ev in tail_events(project.root, n=10_000):
+        if ev.get("action") in ("select", "rollback_shot"):
+            detail = ev.get("detail") or {}
+            shot, take = detail.get("shot"), detail.get("take")
+            if shot and take:
+                picks.setdefault(str(shot), []).append(str(take))
+    out: set[str] = set()
+    for shot, plist in picks.items():
+        st = statuses.get(shot)
+        current = (getattr(st, "selected_take", None) or "") if st else ""
+        if any(t != current for t in plist):
+            out.add(shot)
+    return out
 
 
 def _normalize_qc_items(data: Any) -> list[dict[str, Any]]:
@@ -337,7 +492,7 @@ def _render_qc(project: "Project") -> str:
     )
 
 
-def _render_header(project: "Project") -> str:
+def _render_header(project: "Project", serve: bool = False) -> str:
     try:
         config = project.load_config()
         name, width, height = config.name, config.width, config.height
@@ -367,6 +522,18 @@ def _render_header(project: "Project") -> str:
     except Exception:
         verdicts = ""
 
+    toolbar = ""
+    if serve:
+        toolbar = (
+            '<div class="board-actions">'
+            '<button type="button" class="btn" data-act="build" data-target="final">'
+            "构建 build</button>"
+            '<button type="button" class="btn" data-act="qc">质检 qc</button>'
+            '<button type="button" class="btn" data-act="package">打包 package</button>'
+            '<button type="button" class="btn" data-act="snapshot">快照 snapshot</button>'
+            "</div>"
+        )
+
     return (
         '<header class="board">'
         f"<h1>{_esc(name)}</h1>"
@@ -377,16 +544,26 @@ def _render_header(project: "Project") -> str:
         f"<span>shots: {shot_count}</span>"
         f"<span>duration: {_esc(dur)}</span>"
         f"{verdicts}"
-        "</div></header>"
+        f"</div>{toolbar}</header>"
     )
 
 
-def generate_board(project: "Project") -> Path:
-    """Render ``<project root>/board.html`` and return its path."""
+def render_board(project: "Project", serve: bool = False) -> str:
+    """Build the board HTML document.
+
+    ``serve=False`` (default) is the static, self-contained board — byte-for-byte
+    what ``manju board`` has always written (pinned by a test). ``serve=True`` is
+    the live workspace served by :mod:`manju.board.server`: media/poster ``src``
+    point at ``/media/<relpath>``, per-take/-shot/header action buttons appear, and
+    an inline vanilla-JS layer POSTs to ``/api/<action>`` with a busy overlay.
+    """
     statuses = {s.shot_id: s for s in evaluate_all(project)}
+    rollbackable = _rollbackable_shots(project, statuses) if serve else set()
 
     shots_html = "".join(
-        _render_shot(project, sid, statuses.get(sid)) for sid in project.shot_ids()
+        _render_shot(project, sid, statuses.get(sid), serve=serve,
+                     rollbackable=(sid in rollbackable))
+        for sid in project.shot_ids()
     )
     if not shots_html:
         shots_html = '<p style="color:#9aa0aa">No shots yet.</p>'
@@ -394,21 +571,30 @@ def generate_board(project: "Project") -> Path:
     generated = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     footer = f'<footer class="board">Generated by manju board · {_esc(generated)}</footer>'
 
-    doc = (
+    css = (_CSS + "\n" + _SERVE_CSS) if serve else _CSS
+    css = css.replace("MANJU_ASPECT", _project_aspect(project))
+    script = (_JS + "\n" + _SERVE_JS) if serve else _JS
+    body_extras = _SERVE_BODY if serve else ""
+
+    return (
         "<!doctype html>\n"
         '<html lang="zh"><head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_esc(project.load_config().name if (project.root / 'project.yaml').exists() else project.root.name)} · manju board</title>\n"
-        f"<style>{_CSS.replace('MANJU_ASPECT', _project_aspect(project))}</style>\n"
+        f"<style>{css}</style>\n"
         "</head><body>\n"
-        f"{_render_header(project)}\n"
+        f"{body_extras}"
+        f"{_render_header(project, serve=serve)}\n"
         f"<main>{shots_html}{_render_qc(project)}</main>\n"
         f"{footer}\n"
-        f"<script>{_JS}</script>\n"
+        f"<script>{script}</script>\n"
         "</body></html>\n"
     )
 
+
+def generate_board(project: "Project") -> Path:
+    """Render ``<project root>/board.html`` (static mode) and return its path."""
     out = project.root / "board.html"
-    atomic_write_text(out, doc)
+    atomic_write_text(out, render_board(project, serve=False))
     return out
