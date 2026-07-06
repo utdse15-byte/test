@@ -378,3 +378,31 @@ def test_cli_repair_auto_path_unchanged(repair_project, monkeypatch):
     res = runner.invoke(app, ["repair", "--auto"])
     assert res.exit_code == 1
     assert "repair_plan.yaml" in res.output
+
+
+def test_repair_auto_consumes_real_plan_actions(tmp_project, add_shot, monkeypatch):
+    """The plan writer emits "actions" but --auto used to read "issues" — a
+    silent no-op against every real plan (round-Q integration finding). Pin:
+    an auto_safe redo action in a written plan is actually executed."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from manju.cli import app
+    from manju.core.yamlio import write_yaml
+
+    add_shot(tmp_project, "S001")  # dialogue-carrying → caption_card fallback works
+    write_yaml(
+        tmp_project.reports_dir / "repair_plan.yaml",
+        {"generated_at": "t", "ok": False, "actions": [
+            {"shot": "S001", "problem": "no media",
+             "action": "redo_new_seed", "auto_safe": True},
+        ]},
+    )
+    monkeypatch.chdir(tmp_project.root)
+    runner = CliRunner()
+    res = runner.invoke(app, ["repair", "--auto", "--json"])
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["repaired"] == 1, payload  # the action RAN (not a no-op)
+    assert tmp_project.takes("S001")  # and produced a take via the fallback chain

@@ -588,7 +588,10 @@ def repair(
     if not plan_path.exists():
         _fail("no repair_plan.yaml — run `manju qc` first")
     plan = read_yaml(plan_path) or {}
-    issues = plan.get("issues", [])
+    # The plan writer emits "actions" (qc/report.py); "issues" is accepted for
+    # hand-written plans from before the key was pinned. Reading the wrong key
+    # made --auto a silent no-op against real plans (round-Q agent finding).
+    issues = plan.get("actions") or plan.get("issues") or []
     done, left = 0, 0
     for issue in issues:
         if auto and issue.get("auto_safe") and issue.get("shot") and \
