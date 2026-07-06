@@ -74,10 +74,12 @@ def _title_card_filters(
         txt.write_text(ov.text, encoding="utf-8")
         start_s = ov.start_ms / 1000.0
         end_s = (ov.start_ms + ov.duration_ms) / 1000.0
-        # info cards ride lower (§13-14) so they never collide with a title card
-        # pinned to the upper third; both share this one burn path.
+        # info cards ride away from the upper-third title card (§13-14); the
+        # semantic subkind picks the band: chapter high, info centre, role as
+        # a lower third. All share this one burn path.
         is_info = ov.kind == "info_card"
-        y_expr = "h*0.72" if is_info else "h*0.28"
+        y_by_subkind = {"chapter": "h*0.16", "info": "h*0.45", "role": "h*0.72"}
+        y_expr = y_by_subkind.get(ov.subkind, "h*0.72") if is_info else "h*0.28"
         info_fontsize = max(12, out_w // 16)
         opts = [
             f"textfile={_escape_filter_path(txt)}",
@@ -467,10 +469,9 @@ def _write_key_sidecar(media_path: Path, content_key: str, target: str) -> None:
 
 
 def _latest_final_with_key(project: Project) -> tuple[Path, str] | None:
-    finals = sorted(project.final_dir.glob("final_v*.mp4"))
-    if not finals:
+    latest = project.newest_final_path()  # numeric: v10 beats v9
+    if latest is None:
         return None
-    latest = finals[-1]
     key = _read_key_sidecar(latest)
     return (latest, key) if key is not None else None
 

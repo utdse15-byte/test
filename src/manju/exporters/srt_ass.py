@@ -79,11 +79,24 @@ def compile_srt(timeline: Timeline) -> str:
 # ------------------------------------------------------------------- ASS
 
 
-def _resolve_style(style: dict[str, Any] | None, height: int) -> dict[str, Any]:
+def _resolve_style(
+    style: dict[str, Any] | None, width: int, height: int
+) -> dict[str, Any]:
     style = dict(style or {})
     font = str(style.get("font") or DEFAULT_FONT)
     size = style.get("size")
-    size = int(size) if size else max(36, height // 22)
+    if size:
+        size = int(size)  # an explicit size is user truth — never overridden
+    else:
+        size = max(36, height // 22)
+        # The declared chars-per-line must actually FIT one rendered line —
+        # before round N the height-only size made rules.captions
+        # max_chars_per_line inert (a full-budget CJK cue wrapped to twice
+        # the promised lines). Fit against the horizontally-usable width.
+        max_chars = style.get("max_chars_per_line")
+        if max_chars:
+            usable = width - 2 * max(20, width // 20)
+            size = min(size, max(24, usable // int(max_chars)))
     margin_v = style.get("margin_v")
     margin_v = int(margin_v) if margin_v else max(1, height // 12)  # safe area §7④
     primary = str(style.get("primary_colour") or WHITE)
@@ -98,7 +111,7 @@ def compile_ass(
     style: dict[str, Any] | None = None,
 ) -> str:
     """Full ASS document: [Script Info] + one Default [V4+ Styles] + [Events]."""
-    st = _resolve_style(style, height)
+    st = _resolve_style(style, width, height)
     h_margin = max(20, width // 20)
 
     script_info = "\n".join(
@@ -164,7 +177,8 @@ def _caption_style(project: "Project") -> dict[str, Any]:
         pass
     try:
         extra = project.load_rules().captions.model_dump()
-        for key in ("font", "size", "margin_v", "primary_colour"):
+        for key in ("font", "size", "margin_v", "primary_colour",
+                    "max_chars_per_line"):
             if extra.get(key) is not None:
                 style[key] = extra[key]
     except Exception:

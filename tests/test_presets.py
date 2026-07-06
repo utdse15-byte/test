@@ -153,10 +153,13 @@ def test_apply_preset_writes_overrides_and_records_kit(tmp_path):
         == spec.scaffold["story/brief.md"]
 
 
-def test_apply_preset_without_packaging_writes_no_packaging_file(tmp_path):
+def test_apply_preset_without_packaging_keeps_scaffold_default(tmp_path):
     project = Project.create(tmp_path / "t", name="t", git_init=False)
     apply_preset(project, load_preset("comic"))
-    assert not project.packaging_path.exists()  # comic ships no packaging
+    # comic ships no packaging: the all-disabled scaffold `manju new` wrote
+    # stays untouched (round-N: packaging.yaml is always scaffolded)
+    assert project.packaging_path.exists()
+    assert project.load_packaging() == PackagingSpec()
 
 
 # --------------------------------------------------------------- `manju new`
@@ -206,7 +209,8 @@ def test_new_without_preset_is_todays_generic_scaffold(tmp_path, monkeypatch):
     cfg = project.load_config()
     assert cfg.preset == "generic"
     assert cfg.model_dump().get("qc_focus") is None  # no advisory recorded
-    assert not project.packaging_path.exists()
+    # the generic scaffold ships packaging.yaml all-disabled (round-N)
+    assert project.load_packaging() == PackagingSpec()
     # rules are the untouched defaults
     assert project.load_rules() == TimelineRules()
     # story scaffolds are exactly the frozen defaults

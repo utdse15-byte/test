@@ -135,7 +135,9 @@ def caption_card(
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     dur_s = duration_ms / 1000.0
-    fontsize = max(12, width // 12)
+    # Base the size on the SHORT edge so landscape cards don't blow the text
+    # up relative to frame height (identical to before on portrait frames).
+    fontsize = max(12, min(width, height) // 12)
     chars_per_line = max(1, width // fontsize - 1)
     wrapped = "\n".join(_wrap(text, chars_per_line))
 

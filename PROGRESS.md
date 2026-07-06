@@ -218,3 +218,81 @@ cues by line budget + sentence enders. Edge's zh boundaries drop punctuation,
 so an alignment pass glues it back from the original dialogue (mismatch falls
 back to raw). Live-verified in the showcase: cues start at word onset (300ms)
 and end when speech ends; definitive cut delivered. 259 tests green.
+
+---
+
+## 2026-07-06 — round N: audio policy + packaging kit + preset kits
+
+**Done (three parallel builds off one schema contract, merged in order):**
+- **Contract first:** AudioMixRules / PackagingSpec / ProjectConfig.preset and
+  the shared `resolve_anchor()` ("shot:<id>[:start|:end]") committed as
+  models-only so all three features built to one shape.
+- **Audio policy (P2):** `rules.audio` compiles deterministically onto new
+  sfx/ambient timeline tracks — per-voice gain, anchored one-shot SFX,
+  transition sound at every interior cut, looped ambient bed
+  (`-stream_loop -1` + atrim) with optional voice-keyed sidechain ducking
+  (ducking generalized: one key per ducked clip across music AND ambient);
+  `_audio_input_hashes` covers the new tracks so edited audio re-renders and
+  unchanged skips; QC reports missing sources and unresolvable anchors.
+- **Packaging kit (P2, closes M4 片头尾/包装):** `timeline/packaging.yaml`
+  (scaffolded disabled) — intro/outro rendered as content-addressed card MP4s
+  (`_packaging/{intro|outro}_<hash10>.mp4`, html_card ∥ drawtext) inserted as
+  REAL leading/trailing segments inside the clip accumulation, so every
+  downstream timing shifts naturally; info cards ride the overlay track via
+  the shared anchor grammar; `manju package` cuts cover.png + teaser.mp4 from
+  the current final with .key.json idempotency; an all-disabled spec folds to
+  None in the fingerprint (existing projects byte-identical).
+- **Preset kits (P3, decision 6 returns):** 8 editable kits (comic/short_drama/
+  explainer/novel vertical; trailer/mv 16:9; ad/talking_head) as pure data —
+  `manju new --preset` pre-fills project/rules/packaging/story scaffolds and
+  never binds; `manju presets [--json]`; qc_focus advisories recorded in
+  project.yaml and surfaced by status.
+
+**Verified live:** M0 smoke (build twice → one final, 24/1) + a combined
+exercise on the 6-shot sample: intro shifted all shots by exactly its
+duration, 7 transition dings on 7 boundaries, ambient spans the full film,
+bad SFX anchor skipped + QC-warned with the grammar hint, fixing it minted
+final_v3 append-only with the ding at shot start + offset; `manju package`
+delivered 1080×1920 cover + 3.0s teaser and skipped both on rerun.
+323 tests green (259 + 17 audio + 18 packaging + 29 presets).
+
+**Review (same round): 5-lens adversarial workflow, 65 agents — 18 confirmed
+findings, 2 refuted; all engine-material ones fixed:**
+- newest-final resolution unified on one NUMERIC resolver
+  (Project.newest_final_path) — the render skip and `manju explain` used a
+  lexicographic sorted()[-1] that picks final_v9 over final_v10;
+- timeline/rules.yaml + timeline/packaging.yaml joined the `manju check`
+  safety net (malformed → one-line finding, never a build traceback, FIX-D);
+- teaser window validated against the final's real length (past-the-end →
+  clean failure, never key-cached; overrun → clamped + warning), cover frame
+  clamp made frame-accurate + output verified before key write;
+- title_card now starts at the first CONTENT frame past an enabled intro
+  (was: burned over the intro card at 0ms);
+- SFX/info-card anchors resolving at/past the film's end are skipped
+  deterministically + QC warns (was: inaudible/1ms-invisible, silent);
+- `manju package` warns when a frame-mode cover or teaser start lands inside
+  the enabled intro span; trailer kit's cover.frame_ms moved past its intro;
+- auto ASS font size now fits rules.captions.max_chars_per_line into the
+  usable width (the declared budget was inert — every vertical kit rendered
+  ~11 CJK chars/line regardless); explicit size stays user truth;
+- info cards carry their semantic kind to the burn (chapter high / info
+  centre / role lower-third); board placeholder + card fonts use the
+  project's real aspect (were hardcoded 9:16 / width-based);
+- `manju package` catches MediaError/ValidationError as one-line failures;
+- OTIO + JianYing skeleton + native drafts now export sfx/ambient tracks
+  (were silently dropped); overlapping SFX spread across draft lanes via a
+  first-fit allocator (pyJianYingDraft hard-rejects same-track overlap).
+336 tests green after the response (323 + 13 review regression pins), +6
+exporter tests on the pick.
+
+**Next:** P2 versioning/rollback audit.
+
+**Open issues:** sidechain params (threshold/ratio/attack/release) are fixed,
+not yet knobs on MusicRules/AmbientRules; `manju presets` human table uses
+str.ljust which under-pads CJK titles (cosmetic; --json exact); voice gain
+exercised by unit tests only in the sample (no dialogue in make_sample);
+`manju package` cuts from the newest final without a staleness signal vs
+current specs (advisory wanted — needs explain plumbing); compiler still
+relies on libass wrapping instead of inserting \N at line-budget boundaries
+(manual break control); draft ambient beds are trim-to-source, not looped
+(drafts have no loop primitive — final.mp4 keeps the real mix).

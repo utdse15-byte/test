@@ -259,7 +259,7 @@ class AudioMixRules(ManjuModel):
     voice_gain_db: float = 0.0
     sfx: list[SfxClipSpec] = Field(default_factory=list)
     ambient: AmbientRules = Field(default_factory=AmbientRules)
-    transition_sound: str | None = None  # played at every hard cut when set
+    transition_sound: str | None = None  # one hit at every interior clip boundary
     transition_gain_db: float = -12.0
 
 
@@ -357,6 +357,7 @@ class VideoClip(ManjuModel):
 
 class OverlayClip(ManjuModel):
     kind: str = "title_card"
+    subkind: str = ""  # info_card semantic kind (chapter|role|info) → burn position
     template: str = "chapter"
     text: str = ""
     start_ms: int = 0

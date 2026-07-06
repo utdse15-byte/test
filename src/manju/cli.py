@@ -592,13 +592,18 @@ def package(
     re-encoded with the final params → exports/packaging/teaser.mp4. Both are
     idempotent via .key.json sidecars; --force bypasses. Needs a final —
     without one it points you at `manju build`."""
+    from pydantic import ValidationError
+
+    from .media.ffmpeg import MediaError
     from .media.packaging import PackagingError, make_package
 
     project = _project()
     try:
         result = make_package(project, force=force)
-    except PackagingError as exc:
+    except (PackagingError, MediaError) as exc:  # one-line envelope (FIX-D)
         _fail(str(exc))
+    except ValidationError as exc:  # a malformed packaging.yaml, same envelope
+        _fail(f"packaging.yaml is invalid: {exc.errors()[0].get('msg', exc)}")
     append_event(project.root, ACTOR, "package",
                  {k: result[k] for k in ("cover", "teaser", "skipped")})
     if as_json:
@@ -610,6 +615,8 @@ def package(
         if result["skipped"]:
             typer.secho(f"⚠ 已跳过(内容键未变): {', '.join(result['skipped'])} "
                         "— 用 --force 强制重切", fg=typer.colors.YELLOW)
+        for warning in result.get("warnings", []):
+            typer.secho(f"⚠ {warning}", fg=typer.colors.YELLOW)
 
 
 # ----------------------------------------------------------------- explain

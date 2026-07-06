@@ -33,6 +33,16 @@ if TYPE_CHECKING:
 
 __all__ = ["generate_board"]
 
+def _project_aspect(project) -> str:
+    """CSS aspect-ratio for media placeholders — the project's real frame
+    (9/16 was hardcoded before round N and looked wrong on 16:9 kits)."""
+    try:
+        config = project.load_config()
+        return f"{config.width}/{config.height}"
+    except Exception:
+        return "9/16"
+
+
 # Build-state -> CSS class (colour-coded badge).
 _STATE_CLASS = {
     ShotState.FRESH: "st-fresh",
@@ -91,7 +101,8 @@ main { padding: 1.2rem 1.6rem; }
 .take.selected { border: 2px solid var(--star); }
 .take video { width: 100%; height: auto; border-radius: 5px; background: #000; display: block; }
 .take .nomedia {
-  width: 100%; aspect-ratio: 9/16; display: flex; align-items: center; justify-content: center;
+  /* MANJU_ASPECT is substituted with the project's real w/h at render time */
+  width: 100%; aspect-ratio: MANJU_ASPECT; display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: .8rem; background: #000; border-radius: 5px; text-align: center;
 }
 .take .tname { font-weight: 700; margin: .4rem 0 .15rem; font-size: .9rem; }
@@ -389,7 +400,7 @@ def generate_board(project: "Project") -> Path:
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_esc(project.load_config().name if (project.root / 'project.yaml').exists() else project.root.name)} · manju board</title>\n"
-        f"<style>{_CSS}</style>\n"
+        f"<style>{_CSS.replace('MANJU_ASPECT', _project_aspect(project))}</style>\n"
         "</head><body>\n"
         f"{_render_header(project)}\n"
         f"<main>{shots_html}{_render_qc(project)}</main>\n"

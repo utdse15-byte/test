@@ -95,8 +95,10 @@ def render_card_png(text: str, dest_png: Path, *, width: int, height: int,
                          "PLAYWRIGHT_BROWSERS_PATH) — use the drawtext fallback")
     tpl = CARD_TEMPLATES.get(template, CARD_TEMPLATES["caption"])
     safe = html.escape(text).replace("\n", "<br>")
+    # Short-edge basis: identical on portrait, proportionate on landscape.
+    short = min(width, height)
     doc = tpl.format(width=width, height=height, text=safe,
-                     font_px=max(24, width // 11), kicker_px=max(14, width // 34))
+                     font_px=max(24, short // 11), kicker_px=max(14, short // 34))
     with tempfile.TemporaryDirectory(prefix="manju_html_") as tmp:
         page = Path(tmp) / "card.html"
         page.write_text(doc, encoding="utf-8")

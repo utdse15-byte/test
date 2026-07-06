@@ -456,3 +456,14 @@ class Project:
             if (m := re.match(rf"{prefix}_v(\d+)$", p.stem))
         ]
         return self.final_dir / f"{prefix}_v{max(nums, default=0) + 1}{ext}"
+
+    def newest_final_path(self, prefix: str = "final", ext: str = ".mp4") -> Path | None:
+        """The numerically-highest final_vN, or None. The one resolver every
+        reader must use: a lexicographic glob-sort picks final_v9 over
+        final_v10 (round-N review finding)."""
+        versions = [
+            (int(m.group(1)), p)
+            for p in self.final_dir.glob(f"{prefix}_v*{ext}")
+            if (m := re.match(rf"{prefix}_v(\d+)$", p.stem))
+        ]
+        return max(versions, key=lambda t: t[0])[1] if versions else None

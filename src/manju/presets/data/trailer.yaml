@@ -47,7 +47,9 @@ packaging:
     duration_ms: 2500
   cover:
     mode: frame
-    frame_ms: 1000
+    # past the 2500ms intro card — a frame_ms inside the intro would make the
+    # cover a shot of the placeholder title card, not content
+    frame_ms: 4000
     template: chapter
 qc_focus:
   - 片头片尾卡文案

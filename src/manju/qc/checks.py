@@ -314,13 +314,22 @@ def _existence_audio_policy(project, report, timeline: Timeline) -> None:
 
     for i, spec in enumerate(audio.sfx):
         check_file(spec.source, f"sfx #{i}")
-        if resolve_anchor(spec.at, spec.offset_ms, video_clips) is None:
+        resolved = resolve_anchor(spec.at, spec.offset_ms, video_clips)
+        if resolved is None:
             report.add(
                 "warn", "technical", "timeline",
                 f"sfx #{i} anchor {spec.at!r} does not resolve — no shot on the "
                 "timeline matches it, so this SFX is skipped",
                 suggestion='anchor grammar: "" (absolute), "shot:<id>", '
                            '"shot:<id>:start" or "shot:<id>:end"; check the shot id',
+            )
+        elif resolved >= timeline.duration_ms:
+            report.add(
+                "warn", "technical", "timeline",
+                f"sfx #{i} anchor {spec.at!r} resolves at/past the end of the "
+                f"film ({resolved}ms ≥ {timeline.duration_ms}ms) — it would be "
+                "inaudible, so it is skipped",
+                suggestion="reduce offset_ms or anchor to an earlier point",
             )
     if audio.ambient.source:
         check_file(audio.ambient.source, "ambient")
@@ -359,12 +368,21 @@ def _packaging_checks(project, report, timeline) -> None:
         from ..timeline.anchors import resolve_anchor
 
         for i, ic in enumerate(packaging.info_cards):
-            if resolve_anchor(ic.at, ic.offset_ms, timeline.tracks.video) is None:
+            resolved = resolve_anchor(ic.at, ic.offset_ms, timeline.tracks.video)
+            if resolved is None:
                 report.add(
                     "warn", "content", "packaging",
                     f"info_card #{i} anchor {ic.at!r} names a shot not on the "
                     "timeline — the card was skipped",
                     suggestion="fix the `at:` shot id in packaging.yaml, or remove the card",
+                )
+            elif resolved >= timeline.duration_ms:
+                report.add(
+                    "warn", "content", "packaging",
+                    f"info_card #{i} anchor {ic.at!r} resolves at/past the end "
+                    f"of the film ({resolved}ms ≥ {timeline.duration_ms}ms) — "
+                    "it could never be seen, so it is skipped",
+                    suggestion="reduce offset_ms or anchor to an earlier point",
                 )
 
 
@@ -541,16 +559,9 @@ def _deep_detectors(report, final: Path) -> None:
 
 
 def _newest_final(project: Project) -> Path | None:
-    finals: list[tuple[int, Path]] = []
     if not project.final_dir.exists():
         return None
-    for p in project.final_dir.glob("final_v*.mp4"):
-        m = re.match(r"final_v(\d+)$", p.stem)
-        if m:
-            finals.append((int(m.group(1)), p))
-    if not finals:
-        return None
-    return max(finals, key=lambda t: t[0])[1]
+    return project.newest_final_path()  # the one numeric resolver
 
 
 # ----------------------------------------------------------- content layer

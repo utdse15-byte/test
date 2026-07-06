@@ -259,9 +259,11 @@ def compile_timeline(inp: CompileInput) -> Timeline:
         return None if seg_idx == n_segments - 1 else rules.transition_default
 
     seg_i = 0
+    intro_ms = 0  # content starts here; absolute overlays shift past the intro
     if intro_on:
         card = packaging.intro
         dur = snap_to_frame_grid(card.duration_ms, config.fps)
+        intro_ms = dur
         tracks.video.append(
             VideoClip(
                 shot="__intro__",
@@ -364,31 +366,37 @@ def compile_timeline(inp: CompileInput) -> Timeline:
 
     total_ms = cursor
     # Title card is an overlay layer (§7 step ④): emitted after the video track
-    # is assembled so its duration can be clamped to the film's length.
+    # is assembled so its duration can be clamped to the film's length. It is
+    # the film's opening title, so with a packaging intro on it starts at the
+    # first CONTENT frame — burning it over the intro card would stack two
+    # title cards (round-N review finding).
     if rules.title_card.enabled and rules.title_card.text:
         tracks.overlay.append(
             OverlayClip(
                 kind="title_card",
                 template=rules.title_card.template,
                 text=rules.title_card.text,
-                start_ms=0,
-                duration_ms=min(rules.title_card.duration_ms, total_ms),
+                start_ms=intro_ms,
+                duration_ms=min(rules.title_card.duration_ms,
+                                max(1, total_ms - intro_ms)),
             )
         )
 
     # Info cards (§13-14 round-N): chapter/role/info overlays riding the same
     # overlay track, anchored on the just-assembled video track via the shared
     # anchor grammar. An anchor that names a shot not on the timeline resolves
-    # to None → deterministic skip (QC warns, naming the shot id).
+    # to None, and one that resolves at/past the film's end can never be seen —
+    # both are deterministic skips (QC warns, naming the anchor).
     if packaging is not None:
         for ic in packaging.info_cards:
             start = resolve_anchor(ic.at, ic.offset_ms, tracks.video)
-            if start is None:
+            if start is None or start >= total_ms:
                 continue
             span = min(ic.duration_ms, max(1, total_ms - start))
             tracks.overlay.append(
                 OverlayClip(
                     kind="info_card",
+                    subkind=ic.kind,  # chapter | role | info → burn position
                     template=ic.template,
                     text=ic.text,
                     start_ms=start,
@@ -416,8 +424,10 @@ def compile_timeline(inp: CompileInput) -> Timeline:
     audio = rules.audio
     for spec in audio.sfx:
         start = resolve_anchor(spec.at, spec.offset_ms, tracks.video)
-        if start is None:
-            continue  # unresolvable anchor: deterministically skipped (QC warns)
+        if start is None or start >= total_ms:
+            # Unresolvable anchor, or one at/past the end (the render trims the
+            # mix to the film): deterministically skipped, QC warns.
+            continue
         tracks.sfx.append(
             AudioClip(source=spec.source, start_ms=start, gain_db=spec.gain_db)
         )

@@ -90,9 +90,9 @@ def _render_explanation(project: Project, timeline) -> dict[str, Any]:
                 project, timeline, ass_file=ass if ass.exists() else None, target=target
             )
             if target == "final":
-                finals = sorted(project.final_dir.glob("final_v*.mp4"))
-                existing = _read_key_sidecar(finals[-1]) if finals else None
-                latest = finals[-1].name if finals else None
+                newest = project.newest_final_path()  # numeric: v10 beats v9
+                existing = _read_key_sidecar(newest) if newest else None
+                latest = newest.name if newest else None
             else:
                 proxy = project.proxy_dir / "proxy.mp4"
                 existing = _read_key_sidecar(proxy) if proxy.exists() else None

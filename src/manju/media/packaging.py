@@ -107,16 +107,9 @@ def ensure_packaging_cards(
 
 
 def newest_final(project: Project) -> Path | None:
-    import re
-
     if not project.final_dir.exists():
         return None
-    finals = [
-        (int(m.group(1)), p)
-        for p in project.final_dir.glob("final_v*.mp4")
-        if (m := re.match(r"final_v(\d+)$", p.stem))
-    ]
-    return max(finals, key=lambda t: t[0])[1] if finals else None
+    return project.newest_final_path()  # the one numeric resolver
 
 
 # ----------------------------------------------------------- key sidecars
@@ -147,19 +140,29 @@ def _write_key(media_path: Path, key: str, kind: str) -> None:
 
 
 def _extract_cover_frame(
-    final: Path, dest: Path, *, frame_ms: int, width: int, height: int, log: Log
+    final: Path, dest: Path, *, frame_ms: int, width: int, height: int,
+    fps: int, log: Log
 ) -> None:
     from .probe import probe_duration_ms
 
     at_ms = max(0, frame_ms)
     dur = probe_duration_ms(final)
-    if dur:  # clamp inside the film so a too-late frame_ms still yields a frame
-        at_ms = min(at_ms, max(0, dur - 1))
+    if dur:
+        # Clamp inside the film so a too-late frame_ms still yields a frame.
+        # dur-1ms can sit past the LAST frame's presentation time, so clamp to
+        # one whole frame before the end (review round N finding).
+        frame_len_ms = -(-1000 // max(1, fps))  # ceil(1000/fps)
+        at_ms = min(at_ms, max(0, dur - frame_len_ms))
     run_ffmpeg(
         ["-ss", f"{at_ms / 1000.0:.3f}", "-i", str(final), "-frames:v", "1",
          "-vf", f"scale={width}:{height}:flags=bicubic,setsar=1", str(dest)],
         log=log,
     )
+    if not dest.exists():  # a silent zero-frame extract must not be cached
+        raise PackagingError(
+            f"cover frame extraction produced no image at {frame_ms}ms — "
+            "check packaging.yaml cover.frame_ms against the final's length"
+        )
 
 
 def _render_cover_card(
@@ -199,7 +202,8 @@ def _make_cover(
                            fps=config.fps, log=log)
     else:
         _extract_cover_frame(final, dest, frame_ms=cover.frame_ms,
-                             width=config.width, height=config.height, log=log)
+                             width=config.width, height=config.height,
+                             fps=config.fps, log=log)
     _write_key(dest, key, "cover")
     return dest, False
 
@@ -207,25 +211,53 @@ def _make_cover(
 def _make_teaser(
     project: Project, final: Path, teaser: TeaserSpec, final_hash: str, *,
     force: bool, log: Log,
-) -> tuple[Path, bool]:
-    """Return (teaser_path, skipped). Idempotent via teaser.key.json. The cut is
-    re-encoded with the final encoder params; duration is frame-snapped so it
-    lands within one frame of the ask."""
+) -> tuple[Path, bool, str | None]:
+    """Return (teaser_path, skipped, warning). Idempotent via teaser.key.json.
+    The cut is re-encoded with the final encoder params; duration is
+    frame-snapped so it lands within one frame of the ask.
+
+    The window is validated against the final's real length: a from_ms at or
+    past the end is a clean failure (ffmpeg would exit 0 with a streamless
+    file, which must never be key-cached); a window overrunning the end is
+    clamped with a warning instead of silently truncating."""
+    from .probe import probe_duration_ms
+
     config = project.load_config()
     enc = _enc_params("final")
     dest = project.exports_dir / "packaging" / "teaser.mp4"
     dest.parent.mkdir(parents=True, exist_ok=True)
     key = cache_key(final_hash, "teaser", teaser.model_dump(), enc, config.fps)
     if not force and dest.exists() and _read_key(dest) == key:
-        return dest, True
+        return dest, True, None
+
+    from_ms = max(0, teaser.from_ms)
     dur_ms = snap_to_frame_grid(teaser.duration_ms, config.fps)
+    warning: str | None = None
+    final_ms = probe_duration_ms(final)
+    if final_ms:
+        if from_ms >= final_ms:
+            raise PackagingError(
+                f"teaser.from_ms ({from_ms}ms) is at/past the end of the final "
+                f"({final_ms}ms) — fix packaging.yaml or rebuild"
+            )
+        if from_ms + dur_ms > final_ms:
+            dur_ms = snap_to_frame_grid(final_ms - from_ms, config.fps)
+            warning = (
+                f"teaser window overran the final ({final_ms}ms); "
+                f"clamped to {dur_ms}ms from {from_ms}ms"
+            )
     run_ffmpeg(
-        ["-ss", f"{max(0, teaser.from_ms) / 1000.0:.3f}", "-i", str(final),
+        ["-ss", f"{from_ms / 1000.0:.3f}", "-i", str(final),
          "-t", f"{dur_ms / 1000.0:.3f}", *enc, str(dest)],
         log=log,
     )
+    if not dest.exists() or (probe_duration_ms(dest) or 0) <= 0:
+        raise PackagingError(
+            "teaser cut produced no playable output — check packaging.yaml "
+            "teaser.from_ms/duration_ms against the final's length"
+        )
     _write_key(dest, key, "teaser")
-    return dest, False
+    return dest, False, warning
 
 
 def make_package(project: Project, *, force: bool = False, log: Log = None) -> dict:
@@ -245,7 +277,24 @@ def make_package(project: Project, *, force: bool = False, log: Log = None) -> d
     final_hash = hash_file(final)
 
     result: dict = {"final": project.relpath(final), "cover": None,
-                    "teaser": None, "skipped": []}
+                    "teaser": None, "skipped": [], "warnings": []}
+
+    # With an enabled intro the final's opening span IS the intro card, so a
+    # frame-mode cover or a teaser window starting inside it captures the
+    # placeholder card, not content. Legal, but rarely intended — advise.
+    if packaging.intro.enabled:
+        intro_ms = packaging.intro.duration_ms
+        if packaging.cover.mode == "frame" and packaging.cover.frame_ms < intro_ms:
+            result["warnings"].append(
+                f"cover.frame_ms ({packaging.cover.frame_ms}ms) lands inside the "
+                f"intro card (0–{intro_ms}ms) — the cover will show the intro, "
+                "not content; raise frame_ms past the intro if unintended"
+            )
+        if packaging.teaser.enabled and packaging.teaser.from_ms < intro_ms:
+            result["warnings"].append(
+                f"teaser.from_ms ({packaging.teaser.from_ms}ms) starts inside the "
+                f"intro card (0–{intro_ms}ms); raise from_ms if unintended"
+            )
 
     cover_path, cover_skipped = _make_cover(
         project, final, packaging.cover, final_hash, force=force, log=log
@@ -255,11 +304,13 @@ def make_package(project: Project, *, force: bool = False, log: Log = None) -> d
         result["skipped"].append("cover")
 
     if packaging.teaser.enabled:
-        teaser_path, teaser_skipped = _make_teaser(
+        teaser_path, teaser_skipped, teaser_warning = _make_teaser(
             project, final, packaging.teaser, final_hash, force=force, log=log
         )
         result["teaser"] = project.relpath(teaser_path)
         if teaser_skipped:
             result["skipped"].append("teaser")
+        if teaser_warning:
+            result["warnings"].append(teaser_warning)
 
     return result

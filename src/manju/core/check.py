@@ -72,6 +72,30 @@ def run_check(project: Project) -> CheckReport:
     except Exception as exc:  # unreadable file etc.
         report.errors.append(f"project.yaml: {exc}")
 
+    # ---- timeline rules + packaging: truth files the build dereferences
+    # unguarded, so a malformed one must surface HERE as a finding (FIX-D),
+    # never later as a build/package traceback (round-N review finding).
+    try:
+        project.load_rules()
+    except ValidationError as exc:
+        report.errors.append(_fmt_validation_error("timeline/rules.yaml", exc))
+    except yaml.YAMLError as exc:
+        report.errors.append(
+            f"timeline/rules.yaml: YAML 解析失败 — {_one_line(exc)}(建议:检查缩进/冒号/引号)"
+        )
+    except Exception as exc:
+        report.errors.append(f"timeline/rules.yaml: {exc}")
+    try:
+        project.load_packaging()
+    except ValidationError as exc:
+        report.errors.append(_fmt_validation_error("timeline/packaging.yaml", exc))
+    except yaml.YAMLError as exc:
+        report.errors.append(
+            f"timeline/packaging.yaml: YAML 解析失败 — {_one_line(exc)}(建议:检查缩进/冒号/引号)"
+        )
+    except Exception as exc:
+        report.errors.append(f"timeline/packaging.yaml: {exc}")
+
     # FIX-D: a broken truth file is a CHECK FINDING, never a traceback — the
     # diagnostic names the file (yaml embeds it via the stream name) and says
     # what to do next.

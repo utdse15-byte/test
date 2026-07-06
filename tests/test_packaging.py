@@ -159,14 +159,19 @@ def test_fingerprint_changes_when_intro_text_changes():
 def test_info_cards_anchor_resolution_and_unknown_skip():
     cards = [
         InfoCardSpec(kind="chapter", text="第一章", at="shot:S001", duration_ms=1500),
-        InfoCardSpec(kind="role", text="偏移", at="shot:S001:end", offset_ms=200),
+        InfoCardSpec(kind="role", text="偏移", at="shot:S001:end", offset_ms=-200),
         InfoCardSpec(text="幽灵镜头", at="shot:GHOST", duration_ms=1500),
+        # resolves past the film's end (2000 + 200 ≥ 2000) — could never be
+        # seen, so it is skipped like the unknown shot (QC warns on both)
+        InfoCardSpec(text="片尾之后", at="shot:S001:end", offset_ms=200),
     ]
     tl = compile_timeline(_input(_shot("S001", dur=2.0), packaging=_pkg(info_cards=cards)))
     infos = [o for o in tl.tracks.overlay if o.kind == "info_card"]
-    assert [o.text for o in infos] == ["第一章", "偏移"]  # GHOST skipped
+    assert [o.text for o in infos] == ["第一章", "偏移"]  # GHOST + past-end skipped
     assert infos[0].start_ms == 0                       # S001 starts at 0 (no intro)
-    assert infos[1].start_ms == 2000 + 200              # shot end + offset
+    assert infos[1].start_ms == 2000 - 200              # shot end + negative offset
+    # the semantic kind rides along and picks the burn band (round-N review)
+    assert [o.subkind for o in infos] == ["chapter", "role"]
 
 
 def test_info_card_anchor_shifts_with_intro():
@@ -338,3 +343,54 @@ def test_package_cover_card_mode(built):
     result = make_package(built, force=True)
     cover = built.resolve(result["cover"])
     assert probe(cover).width == 1080 and probe(cover).height == 1920
+
+
+# ------------------------------------- round-N review: teaser window safety
+
+
+@pytestmark_ffmpeg
+def test_teaser_from_ms_past_end_is_a_clean_failure(built):
+    from manju.media.packaging import PackagingError, make_package
+
+    pkg = built.load_packaging()
+    pkg.teaser.enabled = True
+    pkg.teaser.from_ms = 10_000_000  # far past any final
+    built.save_packaging(pkg)
+    with pytest.raises(PackagingError, match="at/past the end"):
+        make_package(built, force=True)
+    # the broken window must NOT have been key-cached: rerunning with the same
+    # spec must fail again, not skip via a stale sidecar
+    with pytest.raises(PackagingError, match="at/past the end"):
+        make_package(built)
+
+
+@pytestmark_ffmpeg
+def test_teaser_overrun_is_clamped_with_warning(built):
+    from manju.media.packaging import make_package
+    from manju.media.probe import probe, probe_duration_ms
+
+    final_ms = probe_duration_ms(_finals(built)[-1])
+    pkg = built.load_packaging()
+    pkg.teaser.enabled = True
+    pkg.teaser.from_ms = max(0, final_ms - 500)
+    pkg.teaser.duration_ms = 2000  # overruns the end by ~1500ms
+    built.save_packaging(pkg)
+
+    result = make_package(built, force=True)
+    assert any("clamped" in w for w in result["warnings"]), result["warnings"]
+    teaser = built.resolve(result["teaser"])
+    assert probe(teaser).duration_ms <= 500 + FRAME_TOL_MS  # clamped, not silent
+
+
+@pytestmark_ffmpeg
+def test_package_warns_when_cover_frame_is_inside_intro(built):
+    from manju.media.packaging import make_package
+
+    pkg = built.load_packaging()
+    assert pkg.intro.enabled  # the module fixture built with an intro card
+    pkg.teaser.enabled = False
+    pkg.cover = CoverSpec(mode="frame", frame_ms=pkg.intro.duration_ms // 2)
+    built.save_packaging(pkg)
+    result = make_package(built, force=True)
+    assert any("inside the" in w and "intro" in w for w in result["warnings"]), (
+        result["warnings"])

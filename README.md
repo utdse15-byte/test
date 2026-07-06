@@ -121,7 +121,8 @@ frozen and unit-tested; the surface below lands per-milestone.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `manju new` | M0 | scaffold a project (auto `git init`) |
+| `manju new [--preset <kit>]` | M0/P3 | scaffold a project (auto `git init`; a preset pre-fills the skeleton) |
+| `manju presets [--json]` | P3 | list the 8 preset kits |
 | `manju status [--json]` | M0 | takeover entry: stage, gaps, next step, spend |
 | `manju check` | M0 | schema + referential + lock + secret validation |
 | `manju import <files…>` | M0 | register into `imports/` (proxy/thumb/waveform) |
@@ -132,6 +133,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju qc / repair [--auto]` | M0 | quality checks / repair (`--auto` = auto-safe only) |
 | `manju export --jianying --srt --otio` | M0/M1 | JianYing draft / captions / OTIO |
 | `manju board` | M0 | static HTML review board |
+| `manju package [--json] [--force]` | M4 | cover + teaser cut from the current final (`exports/packaging/`) |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
@@ -178,7 +180,8 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.1.md](docs/DESIGN_v2.1.md
   literally a config file: fill `~/.manju/providers/<id>/provider.yaml`
   for a real vendor and set its key env var.
 - **M4 — experience & cruise.** ✅ Engine-side done: review board,
-  `repair --auto`, title cards, `gc`, `doctor` (incl. provider-manifest and
+  `repair --auto`, title cards, the intro/outro packaging kit + cover/teaser
+  (`manju package`), `gc`, `doctor` (incl. provider-manifest and
   toolbelt probes), and the cloud ASR plugin slot (`manju transcribe`):
   an `asr`-type manifest on the same §8.6 config shape (`adapter:
   generic_asr`, sync and async forms) plus two manual on-ramps usable today
@@ -208,6 +211,60 @@ Finals are idempotent (FIX-A): each `final_vN.mp4` carries a
 `hash(timeline JSON + ordered segment keys + ASS hash + audio input hashes +
 encoding params + target)`. `manju build` skips the render when the key
 matches the latest final; `manju build --force` re-renders regardless.
+
+## Audio policy (`rules.yaml → audio`)
+
+The project's default audio mix, compiled deterministically onto the timeline:
+
+- **`voice_gain_db`** — level applied to every voice clip.
+- **`sfx`** — one-shot effects. Each has a `source` (a human asset under
+  `media/imports/`, never AI-touched), a `gain_db`, and an anchor
+  `at` + `offset_ms`: `""` (absolute from t=0), `"shot:<id>"` /
+  `"shot:<id>:start"`, or `"shot:<id>:end"`. An anchor naming an unknown
+  shot is skipped deterministically and flagged by `manju qc`.
+- **`transition_sound`** (+ `transition_gain_db`) — one hit at every interior
+  cut (N segments → N−1 hits, packaging cards included).
+- **`ambient`** — a looped room-tone bed under the whole film (`gain_db`,
+  `fade_out_ms`, and `ducking` to sit under speech like BGM).
+
+SFX play flat; music and ambient duck under the voice bus when
+`ducking: true`. Every audio file's bytes are part of the final content key —
+editing one re-renders, unchanged ones skip.
+
+## Packaging kit (`timeline/packaging.yaml` + `manju package`)
+
+`packaging.yaml` (scaffolded all-disabled by `manju new`) wraps the film:
+
+- **intro / outro** — set `enabled: true` + `text`; each becomes a real
+  leading/trailing timeline segment, so voice, captions, music and total
+  duration shift naturally. The card MP4 is content-addressed at
+  `media/generated/_packaging/{intro|outro}_<hash10>.mp4`: the same spec
+  reuses the file, edited text mints a new one (append-only, like takes).
+  `manju build` renders any missing card — HTML card when Chromium is
+  present, drawtext floor otherwise (§8.4).
+- **info_cards** — chapter/role/info overlays on the overlay track, placed
+  with the same `at:` anchor grammar as SFX; unknown shots are skipped and
+  QC warns.
+- **cover / teaser** — `manju package` cuts them from the current final into
+  `exports/packaging/`: `cover.png` (a frame at `frame_ms`, or a rendered
+  card) at project resolution, and `teaser.mp4` sliced
+  `[from_ms, +duration_ms]`. Both idempotent via `.key.json` sidecars;
+  `--force` recuts. Needs a final — run `manju build` first.
+
+## Preset kits (`manju new --preset`)
+
+A preset is *just a pre-filled project skeleton* (decision 6 returns as P3):
+`manju new 我的漫剧 --preset comic` pre-fills project.yaml / rules.yaml /
+packaging.yaml / story scaffolds at creation time and never binds the project
+afterwards — everything it writes is plain, hand-editable YAML/markdown. No
+`--preset` ⇒ the generic scaffold, unchanged.
+
+Eight kits ship: `comic` 漫剧 / `short_drama` 短剧 / `explainer` 知识口播 /
+`novel` 小说推文 (vertical 1080×1920); `trailer` 预告片 / `mv` 音乐MV (16:9);
+`ad` 带货广告 / `talking_head` 虚拟人口播. Each sets aspect, pacing, caption
+style, music/audio policy, export profiles and records its `qc_focus`
+advisories into project.yaml (`manju status` shows one line). `manju presets
+[--json]` lists them. A landscape preset overrides the `--vertical` flag.
 
 ## Toolbelt (§2.5)
 
