@@ -1,0 +1,58 @@
+name: short_drama
+title: 短剧 / Short drama
+description: 竖屏短剧,对白优先、镜头留白更足、开场三秒钩子。
+project:
+  width: 1080
+  height: 1920
+  fps: 30
+  export_profiles: [srt, jianying]
+rules:
+  timing:
+    padding_before_ms: 250
+    padding_after_ms: 400
+    min_shot_ms: 1400
+    max_shot_ms: 12000
+    default_shot_ms: 3200
+  transition_default:
+    type: fade
+    duration_ms: 220
+  music:
+    gain_db: -20.0
+    ducking: true
+    fade_out_ms: 1500
+  audio:
+    voice_gain_db: 1.5
+  captions:
+    enabled: true
+    max_chars_per_line: 16
+    max_lines: 2
+    style: drama
+qc_focus:
+  - 前3秒钩子
+  - 对白节奏
+  - 字幕安全区
+  - 人物一致性
+scaffold:
+  story/brief.md: |
+    # 短剧 · 一句话创意 / Short drama — logline
+
+    <!--
+    一句话说清冲突与钩子 / One line: the conflict and the hook.
+    短剧要点 / short-drama notes:
+      - 钩子前置:前 3 秒必须抛出悬念或反转
+        hook first: land the tension/twist inside the first 3 seconds
+      - 对白驱动时长,镜头前后留白稍长 / dialogue drives timing, keep padding generous
+      - 每集一个强反转结尾,勾住下一集 / end on a strong turn that pulls the next episode
+    -->
+  story/outline.md: |
+    # 短剧 · 大纲 / Short drama — outline
+
+    <!--
+    每行一个节拍,一个节拍≈一镜头。开场即钩子。
+    One beat per line, one beat ≈ one shot. Open on the hook.
+      1. 钩子 / hook —
+      2. 铺垫 / setup —
+      3. 升级 / escalation —
+      4. 反转 / twist —
+      5. 收尾 + 下集钩子 / button + next-episode hook —
+    -->

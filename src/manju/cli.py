@@ -61,12 +61,62 @@ def new(
     name: str,
     vertical: bool = typer.Option(True, "--vertical/--horizontal"),
     path: Optional[Path] = typer.Option(None, help="parent directory (default: cwd)"),
+    preset: Optional[str] = typer.Option(
+        None, "--preset", help="pre-fill from a preset kit (see `manju presets`)"
+    ),
 ):
-    """Create a <name>.manju project directory (§3)."""
+    """Create a <name>.manju project directory (§3).
+
+    With --preset, the kit pre-fills project.yaml / rules.yaml / packaging.yaml
+    and the story scaffolds, then stops touching the project — everything it
+    wrote is plain, hand-editable text (P3). No --preset ⇒ the generic scaffold.
+    """
     dest = (path or Path.cwd()) / name
+    spec = None
+    if preset is not None:
+        from .presets import PresetError, load_preset
+
+        try:
+            spec = load_preset(preset)
+        except PresetError as exc:
+            _fail(str(exc))
+
     project = Project.create(dest, name=name, vertical=vertical)
-    append_event(project.root, ACTOR, "new", {"name": name})
-    typer.secho(f"created {project.root}", fg=typer.colors.GREEN)
+    if spec is not None:
+        from .presets import apply_preset
+
+        apply_preset(project, spec)
+        append_event(project.root, ACTOR, "new", {"name": name, "preset": spec.name})
+        cfg = project.load_config()
+        typer.secho(
+            f"created {project.root}  [preset: {spec.name} · {cfg.width}x{cfg.height}]",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        append_event(project.root, ACTOR, "new", {"name": name})
+        typer.secho(f"created {project.root}", fg=typer.colors.GREEN)
+
+
+# ----------------------------------------------------------------- presets
+
+
+@app.command()
+def presets(as_json: bool = typer.Option(False, "--json")):
+    """List the preset kits available to `manju new --preset` (P3)."""
+    from .presets import list_presets
+
+    specs = list_presets()
+    if as_json:
+        _emit([s.to_public_dict() for s in specs], True)
+        return
+    name_w = max(len(s.name) for s in specs)
+    title_w = max(len(s.title) for s in specs)
+    typer.secho(f"{'NAME'.ljust(name_w)}  {'TITLE'.ljust(title_w)}  ASPECT  DESCRIPTION",
+                fg=typer.colors.CYAN)
+    for s in specs:
+        typer.echo(f"{s.name.ljust(name_w)}  {s.title.ljust(title_w)}  "
+                   f"{s.aspect().ljust(6)}  {s.description}")
+    typer.secho("用法 / usage: manju new <名字> --preset <name>", fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------ status
@@ -94,6 +144,8 @@ def status(as_json: bool = typer.Option(False, "--json")):
         typer.echo(f"QC   errors={info['qc'].get('errors')} warnings={info['qc'].get('warnings')}")
     typer.echo(f"花费  {info['total_cost']} {info['currency']}"
                + (f" / 预算 {info['budget_limit']}" if info["budget_limit"] else ""))
+    if info.get("qc_focus"):
+        typer.secho("质检重点  " + " · ".join(info["qc_focus"]), fg=typer.colors.MAGENTA)
     typer.secho(f"下一步  {info['next_step']}", fg=typer.colors.CYAN)
 
 

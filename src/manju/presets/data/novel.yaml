@@ -1,0 +1,56 @@
+name: novel
+title: 小说推文 / Novel promo
+description: 竖屏小说推文,密集字幕(三行)、旁白优先,建议铺一层氛围底噪。
+project:
+  width: 1080
+  height: 1920
+  fps: 30
+  export_profiles: [srt]
+rules:
+  timing:
+    padding_before_ms: 180
+    padding_after_ms: 280
+    min_shot_ms: 1200
+    max_shot_ms: 15000
+    default_shot_ms: 3500
+  transition_default:
+    type: fade
+    duration_ms: 300
+  music:
+    gain_db: -22.0
+    ducking: true
+    fade_out_ms: 1500
+  audio:
+    voice_gain_db: 1.5
+    # 氛围底噪:把一段环境音放进 media/imports/ 再填 source,铺在全片之下。
+    # ambient bed: drop an atmosphere loop into media/imports/ and set source
+    # here to lay a quiet room-tone / rain / wind under the whole promo.
+    ambient:
+      source: null
+      gain_db: -26.0
+      ducking: false
+      fade_out_ms: 1500
+  captions:
+    enabled: true
+    max_chars_per_line: 24
+    max_lines: 3
+    style: dense
+qc_focus:
+  - 字幕密度与停留时长
+  - 旁白与画面同步
+  - 氛围音铺底(见 rules.audio.ambient)
+  - 章节字卡
+scaffold:
+  story/brief.md: |
+    # 小说推文 · 一句话钩子 / Novel promo — hook in one line
+
+    <!--
+    一句话说清:这本书最抓人的一个悬念/爽点。
+    One line: the single most gripping hook of the book.
+    推文要点 / novel-promo notes:
+      - 旁白密集,字幕可到三行,停留时长跟住朗读
+        dense narration; captions up to 3 lines, held to match the read-aloud
+      - 建议铺一层氛围底噪(rules.audio.ambient),不抢旁白
+        lay a quiet ambient bed (rules.audio.ambient) that never fights the voice
+      - 关键转折用章节字卡分段 / mark turns with chapter cards
+    -->

@@ -180,6 +180,8 @@ class Project:
 
     @property
     def packaging_path(self) -> Path:
+        # Packaging spec (intro/outro/cover/teaser/info cards). `manju new`
+        # scaffolds it all-disabled; a preset carrying packaging overwrites it.
         return self.root / "timeline" / "packaging.yaml"
 
     @property

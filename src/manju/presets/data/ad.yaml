@@ -1,0 +1,58 @@
+name: ad
+title: 带货广告 / Product ad
+description: 竖屏带货广告,极短镜头、卖点前置,片尾行动号召卡(CTA 占位)。
+project:
+  width: 1080
+  height: 1920
+  fps: 30
+  export_profiles: [srt, jianying]
+rules:
+  timing:
+    padding_before_ms: 120
+    padding_after_ms: 180
+    min_shot_ms: 800
+    max_shot_ms: 5000
+    default_shot_ms: 1800
+  transition_default:
+    type: fade
+    duration_ms: 160
+  music:
+    gain_db: -18.0
+    ducking: true
+    fade_out_ms: 1000
+  audio:
+    voice_gain_db: 2.0
+  captions:
+    enabled: true
+    max_chars_per_line: 16
+    max_lines: 2
+    style: bold
+packaging:
+  outro:
+    enabled: true
+    template: chapter
+    text: 立即下单 / SHOP NOW
+    subtext: 点击下方链接 / tap the link below
+    duration_ms: 2500
+  cover:
+    mode: frame
+    frame_ms: 500
+    template: chapter
+qc_focus:
+  - 前3秒卖点
+  - 行动号召卡(outro CTA)
+  - 价格与卖点字幕
+  - 字幕安全区
+scaffold:
+  story/brief.md: |
+    # 带货广告 · 一句话卖点 / Product ad — the one selling point
+
+    <!--
+    一句话说清:一个最痛的痛点 + 一个最强的卖点。
+    One line: the sharpest pain point + the strongest selling point.
+    带货要点 / ad notes:
+      - 极短镜头,前 3 秒抛卖点 / very short shots, lead with the hook
+      - 片尾 CTA 卡已开启,替换 packaging.yaml 里的占位文案
+        the outro CTA card is on — replace the placeholder in packaging.yaml
+      - 价格/优惠用粗体字幕强调 / bold captions for price and offer
+    -->

@@ -1,0 +1,49 @@
+name: mv
+title: 音乐MV / Music video
+description: 横屏 16:9 音乐MV,字幕默认关闭,音乐响度更高、不做闪避。
+project:
+  width: 1920
+  height: 1080
+  fps: 30
+  export_profiles: [srt]
+rules:
+  timing:
+    padding_before_ms: 0
+    padding_after_ms: 0
+    min_shot_ms: 600
+    max_shot_ms: 12000
+    default_shot_ms: 3000
+  transition_default:
+    type: fade
+    duration_ms: 400
+  music:
+    gain_db: -6.0
+    ducking: false
+    fade_out_ms: 2500
+  audio:
+    voice_gain_db: 0.0
+  captions:
+    enabled: false
+    max_chars_per_line: 18
+    max_lines: 2
+    style: default
+qc_focus:
+  - 画面卡点(跟节拍)
+  - 音乐响度
+  - 色彩与风格一致
+  - 字幕默认关闭
+scaffold:
+  story/brief.md: |
+    # 音乐MV · 一句话概念 / Music video — concept in one line
+
+    <!--
+    一句话说清:这支 MV 的视觉概念/情绪基调。
+    One line: the visual concept and emotional tone of the video.
+    MV 要点 / MV notes:
+      - 横屏 16:9,画面跟着音乐节拍卡点 / 16:9, cut to the beat of the track
+      - 音乐是主角,响度更高、不做人声闪避 / music leads: louder, no ducking
+      - 字幕默认关闭,需要时再在 rules.captions 打开
+        captions are off by default — turn them on in rules.captions if needed
+      - 把歌曲放进 media/imports/ 并在 rules.music.source 指向它
+        drop the track into media/imports/ and point rules.music.source at it
+    -->

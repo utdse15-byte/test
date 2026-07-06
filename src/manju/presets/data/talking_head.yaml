@@ -1,0 +1,48 @@
+name: talking_head
+title: 虚拟人口播 / Talking head
+description: 竖屏虚拟人口播,人声优先混音:音乐更低并对人声闪避。
+project:
+  width: 1080
+  height: 1920
+  fps: 30
+  export_profiles: [srt]
+rules:
+  timing:
+    padding_before_ms: 150
+    padding_after_ms: 250
+    min_shot_ms: 1500
+    max_shot_ms: 18000
+    default_shot_ms: 4000
+  transition_default:
+    type: fade
+    duration_ms: 220
+  music:
+    gain_db: -28.0
+    ducking: true
+    fade_out_ms: 1500
+  audio:
+    voice_gain_db: 2.0
+  captions:
+    enabled: true
+    max_chars_per_line: 20
+    max_lines: 2
+    style: clean
+qc_focus:
+  - 口型与音频对齐
+  - 口播清晰度
+  - 音乐低于人声
+  - 字幕安全区
+  - 人物一致性
+scaffold:
+  story/brief.md: |
+    # 虚拟人口播 · 一句话选题 / Talking head — topic in one line
+
+    <!--
+    一句话说清:虚拟人要口播的内容和目标观众。
+    One line: what the avatar presents and who it's for.
+    口播要点 / talking-head notes:
+      - 口播稿驱动时长,一段话≈一镜头 / the script drives timing, one passage ≈ one shot
+      - 人声优先:音乐压到 -28dB 并对人声闪避
+        voice-forward mix: music at -28dB, ducking under the voice
+      - 口型必须对齐音频,字幕干净、居中 / lip-sync to the audio, clean centered captions
+    -->

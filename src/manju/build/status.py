@@ -113,8 +113,14 @@ def project_status(project: Project) -> dict[str, Any]:
     else:
         next_step = "已可出片;stale 镜头可用 manju redo 重做" if by_state.get("stale") else "完成 ✅"
 
+    # Preset label + advisory qc_focus (P3): purely a record the preset wrote
+    # at `manju new` time; surfaced here so a takeover sees what to watch for.
+    qc_focus = config.model_dump().get("qc_focus") or []
+
     return {
         "project": config.name,
+        "preset": config.preset,
+        "qc_focus": qc_focus,
         "mode": config.mode,
         "resolution": f"{config.width}x{config.height}@{config.fps}",
         "shots_total": len(statuses),
