@@ -13,6 +13,8 @@ overridable via ``MANJU_PROVIDERS_DIR`` (tests use this).
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 from pathlib import Path
 
 from pydantic import Field, ValidationError
@@ -23,6 +25,11 @@ from ..core.yamlio import read_yaml
 GENERIC_ADAPTER = "generic_cloud"
 GENERIC_ASR_ADAPTER = "generic_asr"
 GENERIC_TTS_ADAPTER = "generic_tts"
+# module:Class escape-hatch adapters that ship with Manju (non-REST local
+# generation). Their config lives in the dedicated sections below, and their
+# `manju doctor` probes are the validate_for_generic() branches keyed on these.
+COMFYUI_ADAPTER = "manju.providers.comfyui:ComfyUIProvider"
+LOCAL_CMD_ADAPTER = "manju.providers.local_cmd:LocalCommandProvider"
 JOB_STATES = ("queued", "running", "succeeded", "failed")
 
 
@@ -93,6 +100,44 @@ class AsrConfig(ManjuModel):
     language: str = "zh"
 
 
+class ComfyConfig(ManjuModel):
+    """ComfyUI adapter config (§8.6 module:Class escape hatch).
+
+    ``workflow_file`` is an API-format graph the user exported from ComfyUI
+    ("Save (API Format)") — nodes keyed by id with ``class_type``/``inputs``.
+    ``input_map`` writes the shot's values into specific node inputs:
+    ``"6.text": "{prompt}"`` sets node 6's ``text`` input. A bare
+    ``{placeholder}`` yields the TYPED value (so ``"3.seed": "{seed}"`` stays an
+    int); embedded placeholders format as text (``"5.size": "{width}x{height}"``).
+    Placeholders: prompt / width / height / fps / duration_s / duration_ms /
+    seed / image / shot_id, plus any shot ``generation.params`` verbatim.
+    """
+
+    base_url: str = "http://127.0.0.1:8188"
+    workflow_file: str | None = None  # ★ project-relative API-format workflow JSON
+    input_map: dict[str, str] = Field(default_factory=dict)  # "node_id.input" -> template
+    poll_interval_s: float = 1.0  # /history poll cadence (no websocket, §scope)
+    poll_timeout_s: float = 600.0
+    output_node: str | None = None  # restrict the output pick to one node id
+    # preference order across every node's outputs: first video wins, else an
+    # animated gif/sequence, else a still image (each entry has filename/subfolder/type)
+    output_prefer: list[str] = Field(default_factory=lambda: ["videos", "gifs", "images"])
+
+
+class LocalCmdConfig(ManjuModel):
+    """Local-command adapter config: drive any local generator CLI (§8.6).
+
+    ``command`` is shlex-split; ``{out}`` (required) is a temp path the tool must
+    write. Optional placeholders: prompt / width / height / fps / duration_s /
+    seed / image / refs_dir. Each templated word stays ONE argv element — a
+    ``{prompt}`` with spaces is never word-split (mirrors ``agents.build_command``).
+    """
+
+    command: str | None = None  # ★ e.g. "svd --prompt {prompt} --seconds {duration_s} -o {out}"
+    timeout_s: float = 300.0
+    output_ext: str = ".mp4"  # extension of the file the tool writes to {out}
+
+
 class ProviderManifest(ManjuModel):
     id: str
     type: str = "video"  # video | image | tts | vision
@@ -106,6 +151,8 @@ class ProviderManifest(ManjuModel):
     cost: CostConfig = Field(default_factory=CostConfig)
     asr: AsrConfig = Field(default_factory=AsrConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)
+    comfyui: ComfyConfig = Field(default_factory=ComfyConfig)
+    local_cmd: LocalCmdConfig = Field(default_factory=LocalCmdConfig)
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —
@@ -138,6 +185,35 @@ class ProviderManifest(ManjuModel):
                 bad = [v for v in self.poll.status_map.values() if v not in JOB_STATES]
                 if bad:
                     problems.append(f"status_map values must be one of {JOB_STATES}, got {bad}")
+        if self.adapter == COMFYUI_ADAPTER:
+            # doctor probe (§8.6): a bad ComfyUI fill fails HERE, not at first run.
+            if not self.comfyui.workflow_file:
+                problems.append(
+                    "comfyui.workflow_file is required "
+                    "(export a workflow with 'Save (API Format)')"
+                )
+            if not self.comfyui.base_url.startswith(("http://", "https://")):
+                problems.append(
+                    f"comfyui.base_url does not look like an HTTP(S) URL: "
+                    f"{self.comfyui.base_url}"
+                )
+            if self.comfyui.poll_interval_s <= 0:
+                problems.append("comfyui.poll_interval_s must be > 0")
+        if self.adapter == LOCAL_CMD_ADAPTER:
+            cmd = self.local_cmd.command
+            if not cmd:
+                problems.append("local_cmd.command is required")
+            else:
+                if "{out}" not in cmd:
+                    problems.append("local_cmd.command must contain the {out} placeholder")
+                try:
+                    words = shlex.split(cmd)
+                except ValueError as exc:
+                    words = []
+                    problems.append(f"local_cmd.command is not valid shell syntax: {exc}")
+                # doctor probe (§scope): the command head must exist on PATH
+                if words and not shutil.which(words[0]):
+                    problems.append(f"local_cmd.command binary {words[0]!r} not found on PATH")
         for section, url in (("submit", self.submit and self.submit.url),
                              ("poll", self.poll and self.poll.url)):
             if url and not url.startswith(("http://", "https://")):
