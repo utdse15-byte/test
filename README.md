@@ -130,7 +130,9 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju redo S002 [--candidates N] [--provider X] [--seed N]` | M0 | explicitly remake a shot |
 | `manju select S002 take_03 [--file …]` | M0 | pick a take (or a manual clip) |
 | `manju lock / unlock <shot> <field>` | M0 | value-hash locks (unlock is interactive-only) |
-| `manju qc / repair [--auto]` | M0 | quality checks / repair (`--auto` = auto-safe only) |
+| `manju qc / repair [--auto] [--op retime\|extend\|trim\|croppad]` | M0/Q | quality checks / repairs — auto-safe plan or a targeted clip op (new take, append-only) |
+| `manju appearances [--json]` | Q | who/where map: characters/scenes/props → shots, plus orphans |
+| `manju tasks [--json]` | Q | run-ledger view: jobs, statuses, failures/rejections, spend by provider |
 | `manju export --jianying --srt --otio` | M0/M1 | JianYing draft / captions / OTIO |
 | `manju board [--serve] [--port]` | M0/P2 | review board: static HTML, or a live actionable workspace with --serve |
 | `manju package [--json] [--force]` | M4 | cover + teaser cut from the current final (`exports/packaging/`) |
@@ -265,20 +267,16 @@ never gates.
 
 ## Preset kits (`manju new --preset`)
 
-A preset is *just a pre-filled project skeleton* (decision 6 returns as P3):
-`manju new 我的漫剧 --preset comic` pre-fills project.yaml / rules.yaml /
-packaging.yaml / story scaffolds at creation time and never binds the project
-afterwards — everything it writes is plain, hand-editable YAML/markdown. No
-`--preset` ⇒ the generic scaffold, unchanged.
-
-Thirteen kits ship: `comic` 漫剧 / `short_drama` 短剧 / `explainer` 知识口播 /
-`novel` 小说推文 / `ad` 带货广告 / `talking_head` 虚拟人口播 / `animation`
-动画短片 / `virtual_human` 虚拟人出镜 / `product` 产品种草 / `knowledge`
-硬核知识长条 (vertical 1080×1920); `trailer` 预告片 / `mv` 音乐MV /
-`film_storyboard` 影视分镜预演 (16:9). Each sets aspect, pacing, caption
-style, music/audio policy, export profiles and records its `qc_focus`
-advisories into project.yaml (`manju status` shows one line). `manju presets
-[--json]` lists them. A landscape preset overrides the `--vertical` flag.
+A preset is *just a pre-filled project skeleton* that never binds the
+project afterwards — everything it writes is plain, hand-editable
+YAML/markdown. Exactly three kits ship (DECISIONS #7): `blank` (an explicit
+"start from nothing"), `vertical_ai_video` 竖屏AI成片 (1080×1920@30) and
+`horizontal_ai_video` 横屏AI成片 (1920×1080@24). A kit fixes only the FRAME
+and generic technical defaults (safe-area captions, ducking, srt) — content
+type (漫剧/短剧/广告/…) is deliberately NOT a preset: the AI infers it from
+your input at creation time, following the playbook. A neutrality-guard test
+keeps genre flavor from creeping back into kit data. `manju presets
+[--json]` lists them; a landscape kit overrides the `--vertical` flag.
 
 ## The actionable board (`manju board --serve`)
 
@@ -296,6 +294,14 @@ localhost — a thin veneer over the same core functions the CLI calls:
 - the dangerous surface (`unlock`, `gc`, `pack`) is NOT reachable from the
   browser, exactly like the MCP server; media paths are traversal-guarded;
   binds 127.0.0.1 by default — a personal workspace, not a hosted product.
+
+Round Q grows it into a workspace: a **take-comparison view** (side-by-side
+takes with synced playback per shot), tabbed panels — 项目 project status,
+字幕 subtitles (with manual-mode banner), 圣经 bible (locked fields marked),
+日志 events log, 资产 imports, QC with suggestions — an **export button**
+(`/api/export`, same core as `manju export`), and keyboard playback (space
+toggles the focused video). Still stdlib-only, still localhost, still no
+`unlock`/`gc`/`pack` from the browser.
 
 ```bash
 manju board --serve            # http://127.0.0.1:8787, opens your browser
@@ -358,6 +364,17 @@ Toolbelt products must be written back via `manju select <shot> --file` —
   royalty-free footage per shot (query: params > scene `stock_query` > action
   line), orientation-matched to the project; needs a free `PEXELS_API_KEY`.
   Add capability `stock_footage` to a shot's fallback list to route it.
+- **ComfyUI** (round Q) — `manju.providers.comfyui:ComfyUIProvider` drives a
+  LOCAL ComfyUI: point `workflow_file` at your API-format workflow JSON, map
+  shot fields into node inputs via `input_map` ("node_id.input_name" →
+  `{prompt}/{width}/{seed}/…` templates), and manju submits `/prompt`, polls
+  `/history`, downloads the first video/gif/image output as a take. Cost 0,
+  full lineage, one-line "is ComfyUI running?" on connection failure.
+- **Local command** (round Q) —
+  `manju.providers.local_cmd:LocalCommandProvider` runs ANY binary/script as
+  a generator: a shlex template with `{out}` (+ optional `{prompt}/{width}/
+  {duration_s}/{seed}/{image}/…`), timeout-guarded, stderr surfaced on
+  failure, output registered as a take with the argv in its lineage.
 
 The P1 `html_render` slot (HyperFrames idea: HTML+CSS → deterministic MP4) is
 implemented against headless Chromium (`CHROME_BIN` / PATH / Playwright

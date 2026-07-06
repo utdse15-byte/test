@@ -366,3 +366,55 @@ prepend + actor=ai + exit-code propagation pinned by a fake-agent e2e that
 needs no real agent installed.
 
 **Tests:** 418 green locally under the CI-faithful bare-pytest invocation.
+
+---
+
+## 2026-07-06 — round Q: the 19-item goal — six parallel builds, integrated
+
+**Map first:** REPORTS/GOAL-COVERAGE.md grounds all 19 items in evidence —
+most stood from rounds 1–P; round Q closed the true deltas below. Six Opus
+agents built in parallel worktrees; integrated by cherry-pick in dependency
+order with two add/add resolutions; 493 tests green consolidated (was 418).
+
+- **Presets reversed (item 17, DECISIONS #7):** exactly blank /
+  vertical_ai_video (1080×1920@30) / horizontal_ai_video (1920×1080@24);
+  kits fix the FRAME only; a neutrality-guard test bans genre tokens;
+  `--preset blank` pinned byte-for-byte to the generic scaffold.
+- **Providers (item 5):** ComfyUI adapter (API-format workflow submit →
+  /history poll → /view download, node errors surfaced, offline scripted-
+  transport tests; API verified against live ComfyUI source) and
+  local-command adapter ({out} template, timeout, stderr surfacing);
+  doctor coverage via the offline manifest checks.
+- **QC + repair (items 8/9/15/16):** garbled-caption (乱码), silent-voice
+  (astats RMS ≤ −50dB), clipping (peak ≥ −0.1dBFS, one astats pass per
+  file), timeline-conflict checks; repair ops retime/extend(freeze|black)/
+  trim/croppad(center_crop|pad_blur) minting NEW takes with lineage, wired
+  as `manju repair --op …`; QC suggestions name the matching op.
+  **Integration fix:** `repair --auto` read "issues" while the plan writer
+  emits "actions" — auto-repair had been a silent no-op against every real
+  plan; now pinned by a test that executes a real plan action.
+- **Branding (item 18):** logo (corner/size/margin/opacity/window),
+  watermark (text/image, translucent), 角标 badge chip, closing CTA chip —
+  additive PackagingSpec fields, overlay-track kinds, final-pass burn;
+  image inputs indexed AFTER audio inputs so the audio graph is untouched;
+  all-off stays byte-identical; logo bytes join the content key only when
+  enabled.
+- **Board round 2 (item 13):** take-comparison (synced playback), tabbed
+  panels (project/subtitles/bible/log/assets/QC), /api/export (8th action,
+  same lock), keyboard playback; static board still byte-identical.
+- **Misc (items 1/11/12/19):** `.txt/.md` imports route to story/imports/
+  (novel→script source); voices.yaml joined the bible enumeration
+  (BIBLE_FILES centralized; props already worked — proven by test);
+  `manju appearances` (character/scene/prop → shots map + orphans);
+  `manju tasks` (ledger view with per-provider spend reconciling to
+  status); SKILL.md grew 8 concrete creation workflows (idea→script,
+  novel-to-script, script→shots, storyboard/order, hook/ending, dialogue
+  under locks, pacing, repair loop).
+
+**Verified live:** board panels + export API over real HTTP on the sample
+project; compare markup on multi-take shots.
+
+**Notes:** agents hit heavy CPU contention running six suites concurrently —
+several verified in chunks; the consolidated single run (493 passed) is the
+authoritative result. OMP_THREAD_LIMIT=1 tames tesseract in constrained
+environments.
