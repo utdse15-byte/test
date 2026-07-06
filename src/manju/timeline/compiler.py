@@ -36,6 +36,7 @@ from ..core.models import (
     TimelineTracks,
     VideoClip,
 )
+from .anchors import resolve_anchor
 
 # probe_fn: absolute media path -> duration in ms (None if unreadable)
 ProbeFn = Callable[[Path], int | None]
@@ -236,6 +237,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                     source=s.voice_source,
                     start_ms=cursor + rules.timing.padding_before_ms,
                     duration_ms=s.voice_duration_ms,
+                    gain_db=rules.audio.voice_gain_db,  # audio policy (§6): voice level
                 )
             )
 
@@ -305,6 +307,46 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 gain_db=rules.music.gain_db,
                 ducking=rules.music.ducking,
                 fade_out_ms=rules.music.fade_out_ms,
+            )
+        )
+
+    # ---- audio policy (§6): SFX, transition sounds and the ambient bed ----
+    # Purity holds: SFX anchors resolve against the already-compiled video
+    # track (anchors.resolve_anchor), so the audio tracks stay a deterministic
+    # function of the specs. A None resolution (unknown shot) is SKIPPED here
+    # and reported by QC — never a hard error.
+    audio = rules.audio
+    for spec in audio.sfx:
+        start = resolve_anchor(spec.at, spec.offset_ms, tracks.video)
+        if start is None:
+            continue  # unresolvable anchor: deterministically skipped (QC warns)
+        tracks.sfx.append(
+            AudioClip(source=spec.source, start_ms=start, gain_db=spec.gain_db)
+        )
+
+    # Transition sound: one hit at every INTERIOR cut (n clips → n−1 sounds),
+    # placed on the boundary (== the next clip's start). Not on the last clip.
+    if audio.transition_sound:
+        for clip in tracks.video[1:]:
+            tracks.sfx.append(
+                AudioClip(
+                    source=audio.transition_sound,
+                    start_ms=clip.start_ms,
+                    gain_db=audio.transition_gain_db,
+                )
+            )
+
+    # Ambient bed: one looped clip under the whole film (start 0, full length).
+    if audio.ambient.source:
+        tracks.ambient.append(
+            AudioClip(
+                source=audio.ambient.source,
+                start_ms=0,
+                duration_ms=total_ms,
+                gain_db=audio.ambient.gain_db,
+                ducking=audio.ambient.ducking,
+                fade_out_ms=audio.ambient.fade_out_ms,
+                loop=True,
             )
         )
 

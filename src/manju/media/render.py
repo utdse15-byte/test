@@ -215,16 +215,27 @@ def _build_audio_graph(
     """Return (extra_input_args, filter_statements, audio_output_label).
 
     Audio bus starts from the concatenated segment audio ([0:a]), mixes in each
-    voice clip (adelay to its start), then each music clip (gain, trim to the
+    voice clip (gain + adelay to its start), each SFX clip (gain + adelay, never
+    ducked), each music clip and each ambient bed (gain, trim/loop to the
     timeline length, tail fade, optional sidechain ducking keyed by the voice
-    bus). loudnorm is applied only for the "final" target (skipped for proxy).
+    bus). Ducking is generalized over music AND ambient: the voice bus is split
+    into one key per ducked clip (music + ambient), so an ambient room-tone bed
+    ducks under speech exactly like BGM (§7 ⑤). SFX are transient hits that
+    neither duck nor key ducking. loudnorm is applied only for the "final"
+    target (skipped for proxy).
     """
     voice_clips = list(timeline.tracks.voice)
+    sfx_clips = list(timeline.tracks.sfx)
     music_clips = list(timeline.tracks.music)
+    ambient_clips = list(timeline.tracks.ambient)
 
     inputs: list[str] = []
     stmts: list[str] = []
     mix_labels: list[str] = []
+    # One running input index: input 0 is the concatenated video's audio; every
+    # "-i" (or "-stream_loop … -i") we append below takes the next index. A
+    # single counter keeps sfx/ambient additions from drifting the indices.
+    next_idx = 1
 
     stmts.append("[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[base]")
     mix_labels.append("[base]")
@@ -232,7 +243,8 @@ def _build_audio_graph(
     # ---- voices ---------------------------------------------------------
     voice_labels: list[str] = []
     for k, clip in enumerate(voice_clips):
-        idx = 1 + k
+        idx = next_idx
+        next_idx += 1
         inputs += ["-i", str(project.resolve(clip.source))]
         delay = max(0, clip.start_ms)
         chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
@@ -240,13 +252,18 @@ def _build_audio_graph(
             # Bound the voice to its clip length so an over-long take cannot push
             # the film past timeline.duration_ms (picture is the master, §6).
             chain += ["apad", f"atrim=0:{clip.duration_ms / 1000.0:.3f}"]
+        if clip.gain_db:
+            chain.append(f"volume={clip.gain_db}dB")  # audio policy: voice level
         if delay > 0:
             chain.append(f"adelay={delay}:all=1")
         lbl = f"[voice{k}]"
         stmts.append(f"[{idx}:a]{','.join(chain)}{lbl}")
         voice_labels.append(lbl)
 
-    ducked = [c for c in music_clips if c.ducking and voice_labels]
+    # Ducking is keyed by the voice bus and generalized over music + ambient:
+    # one split key per ducked clip on EITHER track (§7 ⑤).
+    ducked_music = [c for c in music_clips if c.ducking] if voice_labels else []
+    ducked_ambient = [c for c in ambient_clips if c.ducking] if voice_labels else []
     voice_for_mix: str | None = None
     ducking_keys: list[str] = []
     if voice_labels:
@@ -255,7 +272,7 @@ def _build_audio_graph(
         else:
             voicebus = "[voicebus]"
             stmts.append("".join(voice_labels) + f"amix=inputs={len(voice_labels)}:normalize=0[voicebus]")
-        n_keys = len(ducked)
+        n_keys = len(ducked_music) + len(ducked_ambient)
         if n_keys == 0:
             voice_for_mix = voicebus
         else:
@@ -265,11 +282,26 @@ def _build_audio_graph(
             ducking_keys = outs[1:]
         mix_labels.append(voice_for_mix)
 
-    # ---- music ----------------------------------------------------------
     key_iter = iter(ducking_keys)
-    music_base = 1 + len(voice_clips)
+
+    # ---- sfx (transient hits: gain + delay, no ducking) -----------------
+    for k, clip in enumerate(sfx_clips):
+        idx = next_idx
+        next_idx += 1
+        inputs += ["-i", str(project.resolve(clip.source))]
+        chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
+        if clip.gain_db:
+            chain.append(f"volume={clip.gain_db}dB")
+        if clip.start_ms > 0:
+            chain.append(f"adelay={clip.start_ms}:all=1")
+        out = f"[sfx{k}]"
+        stmts.append(f"[{idx}:a]{','.join(chain)}{out}")
+        mix_labels.append(out)
+
+    # ---- music ----------------------------------------------------------
     for k, clip in enumerate(music_clips):
-        idx = music_base + k
+        idx = next_idx
+        next_idx += 1
         inputs += ["-i", str(project.resolve(clip.source))]
         chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
         if clip.start_ms > 0:
@@ -287,6 +319,39 @@ def _build_audio_graph(
         if clip.ducking and voice_for_mix is not None:
             key = next(key_iter)
             out = f"[mus{k}]"
+            stmts.append(
+                f"{pre}{key}sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250{out}"
+            )
+            mix_labels.append(out)
+        else:
+            mix_labels.append(pre)
+
+    # ---- ambient bed (looped room tone, ducks like music when asked) ----
+    for k, clip in enumerate(ambient_clips):
+        idx = next_idx
+        next_idx += 1
+        if clip.loop:
+            # -stream_loop -1 loops the file endlessly at the input; the atrim
+            # to total_s below terminates it, so the graph always finishes.
+            inputs += ["-stream_loop", "-1", "-i", str(project.resolve(clip.source))]
+        else:
+            inputs += ["-i", str(project.resolve(clip.source))]
+        chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
+        if clip.start_ms > 0:
+            chain.append(f"adelay={clip.start_ms}:all=1")
+        if clip.gain_db:
+            chain.append(f"volume={clip.gain_db}dB")
+        chain.append("apad")
+        chain.append(f"atrim=0:{total_s:.3f}")
+        if clip.fade_out_ms > 0:
+            fo = clip.fade_out_ms / 1000.0
+            st = max(0.0, total_s - fo)
+            chain.append(f"afade=t=out:st={st:.3f}:d={fo:.3f}")
+        pre = f"[amb{k}pre]"
+        stmts.append(f"[{idx}:a]{','.join(chain)}{pre}")
+        if clip.ducking and voice_for_mix is not None:
+            key = next(key_iter)
+            out = f"[amb{k}]"
             stmts.append(
                 f"{pre}{key}sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250{out}"
             )
@@ -325,7 +390,12 @@ def _audio_input_hashes(project: Project, timeline: Timeline) -> list[str]:
     hashes as a marker instead of raising — the render itself will surface
     the real error; key computation must never be the thing that crashes."""
     hashes: list[str] = []
-    for clip in [*timeline.tracks.voice, *timeline.tracks.music]:
+    for clip in [
+        *timeline.tracks.voice,
+        *timeline.tracks.music,
+        *timeline.tracks.sfx,
+        *timeline.tracks.ambient,
+    ]:
         src = project.resolve(clip.source)
         hashes.append(hash_file(src) if src.exists() else f"missing:{clip.source}")
     return hashes

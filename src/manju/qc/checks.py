@@ -164,6 +164,7 @@ def run_qc(
     _voice_info(project, report)
     if timeline is not None:
         _existence_timeline(project, report, timeline, probe)
+        _existence_audio_policy(project, report, timeline)
         _technical_clips(project, report, timeline, probe)
         _technical_captions(project, report, timeline)
     _technical_take_resolution(project, report, config, selected)
@@ -278,6 +279,50 @@ def _existence_timeline(project, report, timeline: Timeline, probe) -> None:
         check(clip.source, "voice", readable=False)
     for clip in timeline.tracks.music:
         check(clip.source, "music", readable=False)
+
+
+def _existence_audio_policy(project, report, timeline: Timeline) -> None:
+    """Audio policy checks (§9), read from rules against the compiled video
+    track so both halves of a skip are surfaced:
+
+      - a missing SFX / ambient / transition-sound source file → error;
+      - an SFX anchor that names a shot NOT on the timeline → warn (the
+        compiler deterministically drops that SFX, so without this the clip
+        would silently vanish).
+    """
+    from ..timeline.anchors import resolve_anchor
+
+    audio = project.load_rules().audio
+    video_clips = list(timeline.tracks.video)
+
+    def check_file(source: str, label: str) -> None:
+        try:
+            path = project.resolve(source)
+        except Exception:
+            report.add("error", "existence", "timeline",
+                       f"{label} source path is invalid: {source}",
+                       suggestion="use a project-relative path under the project root")
+            return
+        if not path.exists():
+            report.add("error", "existence", "timeline",
+                       f"{label} source missing: {source}",
+                       suggestion="drop the audio file in media/imports/ and point "
+                                  "the audio policy at it (rules.yaml → audio)")
+
+    for i, spec in enumerate(audio.sfx):
+        check_file(spec.source, f"sfx #{i}")
+        if resolve_anchor(spec.at, spec.offset_ms, video_clips) is None:
+            report.add(
+                "warn", "technical", "timeline",
+                f"sfx #{i} anchor {spec.at!r} does not resolve — no shot on the "
+                "timeline matches it, so this SFX is skipped",
+                suggestion='anchor grammar: "" (absolute), "shot:<id>", '
+                           '"shot:<id>:start" or "shot:<id>:end"; check the shot id',
+            )
+    if audio.ambient.source:
+        check_file(audio.ambient.source, "ambient")
+    if audio.transition_sound:
+        check_file(audio.transition_sound, "transition sound")
 
 
 # --------------------------------------------------------- technical layer
