@@ -28,8 +28,10 @@ from manju.presets import (
     PRESET_ORDER,
     PresetError,
     apply_preset,
+    display_width,
     list_presets,
     load_preset,
+    pad,
 )
 
 runner = CliRunner()
@@ -38,6 +40,7 @@ _HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is 
 
 EXPECTED_NAMES = [
     "comic", "short_drama", "explainer", "novel", "trailer", "ad", "mv", "talking_head",
+    "animation", "film_storyboard", "virtual_human", "product", "knowledge",
 ]
 
 # The generic story scaffold as it exists today (core.container.Project.create).
@@ -53,7 +56,7 @@ GENERIC_STORY = {
 # --------------------------------------------------------------------- loader
 
 
-def test_loader_lists_exactly_eight_in_order():
+def test_loader_lists_all_kits_in_order():
     specs = list_presets()
     assert [s.name for s in specs] == EXPECTED_NAMES
     assert list(PRESET_ORDER) == EXPECTED_NAMES  # order tuple is the source of truth
@@ -93,10 +96,11 @@ def test_each_preset_validates_against_real_models(name):
 
 def test_first_class_vertical_and_landscape_kits():
     # Chinese short-video is first-class: the vertical kits are 1080x1920.
-    for name in ("comic", "short_drama", "explainer", "novel", "ad", "talking_head"):
+    for name in ("comic", "short_drama", "explainer", "novel", "ad", "talking_head",
+                 "animation", "virtual_human", "product", "knowledge"):
         assert load_preset(name).resolution() == (1080, 1920)
-    # trailer and mv are the intentional 16:9 exceptions.
-    for name in ("trailer", "mv"):
+    # trailer, mv and the storyboard previz are the intentional 16:9 exceptions.
+    for name in ("trailer", "mv", "film_storyboard"):
         assert load_preset(name).resolution() == (1920, 1080)
 
 
@@ -238,6 +242,51 @@ def test_presets_human_table_lists_all_names():
     assert result.exit_code == 0, result.output
     for name in EXPECTED_NAMES:
         assert name in result.output
+
+
+def test_cjk_pad_helper_counts_double_width():
+    # '漫剧' is two East-Asian Wide chars → 4 display columns; padding to a
+    # visual width of 8 appends 4 spaces (str.ljust would wrongly add 6).
+    padded = pad("漫剧", 8)
+    assert padded == "漫剧" + " " * 4  # 4 display cols of glyph + 4 spaces = 8
+    assert display_width(padded) == 8
+    assert len(padded) == 6  # 2 code points + 4 spaces (naive ljust would give 8)
+    # ASCII behaves exactly like str.ljust.
+    assert pad("mv", 6) == "mv".ljust(6)
+    assert display_width("mv") == 2
+    # already at/over the target width → returned unchanged, never truncated.
+    assert pad("漫剧", 4) == "漫剧"
+    assert pad("漫剧", 2) == "漫剧"
+
+
+def test_new_kits_key_choices_distinguish_them_from_siblings():
+    # A few load-bearing choices for the round-o kits, so a careless data edit
+    # (or a kit collapsing into its nearest sibling) is caught.
+    animation = load_preset("animation")
+    assert animation.project.fps == 24  # animation tradition
+    assert animation.merged_rules().transition_default.duration_ms == 400  # soft fades
+
+    storyboard = load_preset("film_storyboard").merged_rules()
+    assert storyboard.captions.enabled is False  # dialogue lives in shot specs
+    assert storyboard.timing.max_shot_ms == 15000  # longer shots
+    assert storyboard.title_card.enabled is True  # scene slate noted
+
+    vh = load_preset("virtual_human")
+    vhr = vh.merged_rules()
+    assert vhr.audio.voice_gain_db > 0 and vhr.music.ducking is True  # voice-forward
+    assert "story/persona.md" in vh.scaffold  # seeds a reusable persona sheet
+
+    product = load_preset("product")
+    pr = product.merged_rules()
+    assert pr.timing.max_shot_ms == 6000 and pr.timing.default_shot_ms == 2500  # short
+    pkg = product.packaging_spec()
+    assert pkg.outro.enabled and "LEARN MORE" in pkg.outro.text  # soft CTA
+    assert pkg.info_cards and pkg.info_cards[0].kind == "info"  # spec/price slot
+
+    knowledge = load_preset("knowledge").merged_rules()
+    assert knowledge.timing.max_shot_ms == 25000  # long form
+    assert knowledge.audio.ambient is not None  # ambient bed slot present
+    assert load_preset("knowledge").project.export_profiles == ["srt", "otio"]
 
 
 def test_new_unknown_preset_fails_cleanly(tmp_path, monkeypatch):

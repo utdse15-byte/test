@@ -1,0 +1,52 @@
+name: animation
+title: 动画短片 / Animated short
+description: 竖屏动画短片,中速节奏、柔和 400ms 淡入淡出;重风格圣经与角色一致性(区别于快速分格的漫剧)。
+project:
+  width: 1080
+  height: 1920
+  fps: 24
+  export_profiles: [srt, jianying]
+rules:
+  timing:
+    padding_before_ms: 150
+    padding_after_ms: 250
+    min_shot_ms: 1000
+    max_shot_ms: 9000
+    default_shot_ms: 2800
+  transition_default:
+    type: fade
+    duration_ms: 400
+  music:
+    gain_db: -16.0
+    ducking: true
+    fade_out_ms: 1500
+  audio:
+    voice_gain_db: 1.0
+  captions:
+    enabled: true
+    max_chars_per_line: 16
+    max_lines: 2
+    style: clean
+qc_focus:
+  - 角色一致性
+  - 画面风格一致(风格圣经)
+  - 色彩与光影连续性
+  - 转场柔和度
+  - 字幕安全区
+scaffold:
+  story/brief.md: |
+    # 动画短片 · 一句话创意 / Animated short — logline
+
+    <!--
+    一句话说清:谁、在哪、发生什么、为什么打动人。
+    One line: who, where, what happens, and why it lands.
+    动画要点 / animation notes:
+      - 先立"风格圣经":线条/上色/材质/镜头语言写进 bible/style.yaml,全片照它执行
+        set a style bible first (bible/style.yaml) — line, color, texture, camera — and hold every shot to it
+      - 角色外观跨镜头必须一致(锁定 bible/characters.yaml)
+        keep character appearance consistent across shots (lock bible/characters.yaml)
+      - 中速节奏,转场用柔和 400ms 淡入淡出,别用硬切打断画面
+        medium pacing; soft 400ms fades, not hard cuts that break the frame
+      - 区别于漫剧:动画重风格与角色的连续性,漫剧重快速分格节奏
+        unlike comic: animation prizes style/character continuity over fast paneling
+    -->

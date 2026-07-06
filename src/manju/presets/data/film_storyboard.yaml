@@ -1,0 +1,61 @@
+name: film_storyboard
+title: 影视分镜预演 / Storyboard previz
+description: 横屏 16:9 分镜预演(动态分镜),长镜头、字幕关闭(对白写在分镜里)、默认不铺 BGM、带开场场次板;为真实拍摄做预演。
+project:
+  width: 1920
+  height: 1080
+  fps: 24
+  export_profiles: [otio, srt]
+rules:
+  timing:
+    padding_before_ms: 150
+    padding_after_ms: 250
+    min_shot_ms: 1500
+    max_shot_ms: 15000
+    default_shot_ms: 4000
+  transition_default:
+    type: cut
+    duration_ms: 0
+  music:
+    # 分镜预演默认不铺 BGM(source 留空即静音);需要参考配乐时再指向 media/imports/。
+    # no BGM in previz by default (empty source = silent); point source at a scratch
+    # track under media/imports/ only if you want a reference cue.
+    source: null
+    gain_db: -24.0
+    ducking: false
+    fade_out_ms: 1000
+  audio:
+    voice_gain_db: 0.0
+  captions:
+    enabled: false
+    max_chars_per_line: 18
+    max_lines: 2
+    style: default
+  title_card:
+    enabled: true
+    text: 场次 · 镜号 / SCENE · SHOT
+    duration_ms: 1500
+    template: chapter
+qc_focus:
+  - 景别覆盖(camera.shot_size)
+  - 运镜覆盖(camera.movement)
+  - 连续性(轴线/进出画方向/道具)
+  - 场次板与镜号信息
+scaffold:
+  story/brief.md: |
+    # 影视分镜预演 · 一句话概念 / Storyboard previz — concept in one line
+
+    <!--
+    这是给真实拍摄做的"动态分镜 / previz":用它把分镜脚本演一遍,先验证景别、
+    运镜与剪辑节奏,再进棚开机。This previews a storyboard for a real shoot — an
+    animatic/previz to test shot sizes, camera moves and cutting before the camera rolls.
+    分镜要点 / storyboard notes:
+      - 横屏 16:9、长镜头;对白写进各 shots/*.yaml 的 dialogue,不烧字幕
+        16:9, longer shots; dialogue lives in each shot's dialogue field, captions off
+      - 每个镜头标清景别(camera.shot_size)与运镜(camera.movement),覆盖要全
+        tag every shot's shot_size and movement — coverage must be complete
+      - 开场场次板已开启(title_card),按场次/镜号改文案;默认不铺 BGM
+        the opening scene slate (title_card) is on — edit it per scene/shot; no BGM by default
+      - 盯连续性:轴线、进出画方向、道具位置跨镜头别穿帮
+        watch continuity: the 180° line, screen direction and prop positions across shots
+    -->

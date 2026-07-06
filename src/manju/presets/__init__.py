@@ -14,6 +14,7 @@ that field to change behaviour. Presets are data (``data/*.yaml``), loaded via
 
 from __future__ import annotations
 
+import unicodedata
 from importlib import resources
 from math import gcd
 from typing import Any
@@ -25,7 +26,7 @@ from ..core.models import PackagingSpec, ProjectConfig, TimelineRules
 
 # Deterministic display/enumeration order. Every file in data/ must appear here;
 # list_presets() falls back to appending any stragglers sorted, but the invariant
-# (and a test) is that these eight are exactly the shipped kits.
+# (and a test) is that these thirteen are exactly the shipped kits.
 PRESET_ORDER: tuple[str, ...] = (
     "comic",
     "short_drama",
@@ -35,12 +36,40 @@ PRESET_ORDER: tuple[str, ...] = (
     "ad",
     "mv",
     "talking_head",
+    "animation",
+    "film_storyboard",
+    "virtual_human",
+    "product",
+    "knowledge",
 )
 
 
 class PresetError(ValueError):
     """Unknown preset name / malformed preset data — carries a clean message
     (the CLI relays it verbatim via `_fail`)."""
+
+
+# --------------------------------------------------------------- display helpers
+
+
+def display_width(text: str) -> int:
+    """Visual column width of ``text`` in a monospaced terminal: East-Asian
+    Wide (W) and Fullwidth (F) characters take two columns, everything else one.
+
+    ``str.ljust`` counts code points, so a CJK title (each char is one ``len``
+    unit but two display columns) drifts under a naive pad — the bilingual
+    ``manju presets`` table needs this to line up."""
+    return sum(
+        2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text
+    )
+
+
+def pad(text: str, width: int) -> str:
+    """Left-justify ``text`` to a visual ``width`` (the CJK-aware cousin of
+    ``str.ljust``). Pads with trailing spaces to reach ``width`` display
+    columns; never truncates when already at/over ``width``."""
+    gap = width - display_width(text)
+    return text + " " * gap if gap > 0 else text
 
 
 def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:

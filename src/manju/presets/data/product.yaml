@@ -1,0 +1,74 @@
+name: product
+title: 产品种草 / Product review
+description: 竖屏产品种草,短镜头、卖点信息卡、片尾"了解更多"软号召;偏测评/推荐口吻,区别于极短硬广带货(ad)。
+project:
+  width: 1080
+  height: 1920
+  fps: 30
+  export_profiles: [srt, jianying]
+rules:
+  timing:
+    padding_before_ms: 120
+    padding_after_ms: 200
+    min_shot_ms: 900
+    max_shot_ms: 6000
+    default_shot_ms: 2500
+  transition_default:
+    type: fade
+    duration_ms: 180
+  music:
+    gain_db: -20.0
+    ducking: true
+    fade_out_ms: 1200
+  audio:
+    voice_gain_db: 1.5
+  captions:
+    enabled: true
+    max_chars_per_line: 16
+    max_lines: 2
+    style: bold
+packaging:
+  outro:
+    enabled: true
+    template: chapter
+    text: 立即了解 / LEARN MORE
+    subtext: 主页/评论区看链接 / details in bio & comments
+    duration_ms: 2500
+  cover:
+    mode: frame
+    frame_ms: 500
+    template: chapter
+  info_cards:
+    # 卖点信息卡槽:规格/价格用信息卡呈现。复制这条即可加更多卡,offset_ms 决定出现时机。
+    # selling-point card slot: show spec/price on an info card. Copy this entry to add
+    # more; offset_ms sets when it appears.
+    - kind: info
+      text: 规格 · 价格 / SPEC · PRICE
+      at: ""
+      offset_ms: 3000
+      duration_ms: 2200
+      template: chapter
+qc_focus:
+  - 产品卖点信息卡
+  - 品牌信息一致性
+  - 前3秒抓人
+  - 行动号召卡(outro CTA)
+  - 字幕安全区
+scaffold:
+  story/brief.md: |
+    # 产品种草 · 一句话推荐 / Product review — the pick in one line
+
+    <!--
+    一句话说清:为谁、解决什么、这产品好在哪一点。
+    One line: for whom, what problem, and the one thing this product nails.
+    种草要点 / product-review notes:
+      - 种草偏"测评/推荐"口吻:真实体验 + 卖点,而不是硬广叫卖
+        review-style: honest hands-on + selling points, not a hard-sell shout
+      - 卖点/规格/价格用信息卡呈现(packaging.info_cards 已预留一张卡槽,复制即可)
+        show specs/price on info cards (one slot is pre-seeded in packaging.info_cards — copy it)
+      - 片尾软号召"立即了解 / LEARN MORE",替换 packaging.yaml 里的占位
+        soft outro CTA "LEARN MORE" — replace the placeholder in packaging.yaml
+      - 品牌名/logo/主色跨镜头保持一致 / keep brand name, logo and key color consistent
+      - 区别于带货广告(ad):ad 极短硬广、"立即下单";种草更从容、重信任与信息卡
+        unlike ad: ad is ultra-short hard-sell ("SHOP NOW"); review is calmer, trust- and info-card-led
+    -->

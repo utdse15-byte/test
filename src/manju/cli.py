@@ -103,19 +103,21 @@ def new(
 @app.command()
 def presets(as_json: bool = typer.Option(False, "--json")):
     """List the preset kits available to `manju new --preset` (P3)."""
-    from .presets import list_presets
+    from .presets import display_width, list_presets, pad
 
     specs = list_presets()
     if as_json:
         _emit([s.to_public_dict() for s in specs], True)
         return
-    name_w = max(len(s.name) for s in specs)
-    title_w = max(len(s.title) for s in specs)
-    typer.secho(f"{'NAME'.ljust(name_w)}  {'TITLE'.ljust(title_w)}  ASPECT  DESCRIPTION",
+    # Width-aware columns: CJK titles are double-width, so pad by display
+    # columns (pad/display_width), not code points, or the table drifts.
+    name_w = max(display_width(s.name) for s in specs)
+    title_w = max(display_width(s.title) for s in specs)
+    typer.secho(f"{pad('NAME', name_w)}  {pad('TITLE', title_w)}  ASPECT  DESCRIPTION",
                 fg=typer.colors.CYAN)
     for s in specs:
-        typer.echo(f"{s.name.ljust(name_w)}  {s.title.ljust(title_w)}  "
-                   f"{s.aspect().ljust(6)}  {s.description}")
+        typer.echo(f"{pad(s.name, name_w)}  {pad(s.title, title_w)}  "
+                   f"{pad(s.aspect(), 6)}  {s.description}")
     typer.secho("用法 / usage: manju new <名字> --preset <name>", fg=typer.colors.BRIGHT_BLACK)
 
 
