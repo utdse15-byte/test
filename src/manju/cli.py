@@ -523,6 +523,43 @@ def export(
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
 
 
+# ----------------------------------------------------------------- package
+
+
+@app.command()
+def package(
+    force: bool = typer.Option(False, "--force",
+                               help="re-cut even if the content key matches"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Cut the cover (+ teaser) out of the current final (§13-14).
+
+    Cover: a frame pulled from the final (frame mode) or a rendered card (card
+    mode) → exports/packaging/cover.png at project resolution. Teaser (when
+    enabled in packaging.yaml): the final sliced [from_ms, +duration_ms],
+    re-encoded with the final params → exports/packaging/teaser.mp4. Both are
+    idempotent via .key.json sidecars; --force bypasses. Needs a final —
+    without one it points you at `manju build`."""
+    from .media.packaging import PackagingError, make_package
+
+    project = _project()
+    try:
+        result = make_package(project, force=force)
+    except PackagingError as exc:
+        _fail(str(exc))
+    append_event(project.root, ACTOR, "package",
+                 {k: result[k] for k in ("cover", "teaser", "skipped")})
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho(f"封面: {result['cover']}", fg=typer.colors.GREEN)
+        if result["teaser"]:
+            typer.secho(f"预告: {result['teaser']}", fg=typer.colors.GREEN)
+        if result["skipped"]:
+            typer.secho(f"⚠ 已跳过(内容键未变): {', '.join(result['skipped'])} "
+                        "— 用 --force 强制重切", fg=typer.colors.YELLOW)
+
+
 # ----------------------------------------------------------------- explain
 
 

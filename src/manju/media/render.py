@@ -74,12 +74,17 @@ def _title_card_filters(
         txt.write_text(ov.text, encoding="utf-8")
         start_s = ov.start_ms / 1000.0
         end_s = (ov.start_ms + ov.duration_ms) / 1000.0
+        # info cards ride lower (§13-14) so they never collide with a title card
+        # pinned to the upper third; both share this one burn path.
+        is_info = ov.kind == "info_card"
+        y_expr = "h*0.72" if is_info else "h*0.28"
+        info_fontsize = max(12, out_w // 16)
         opts = [
             f"textfile={_escape_filter_path(txt)}",
             "fontcolor=white",
-            f"fontsize={fontsize}",
+            f"fontsize={info_fontsize if is_info else fontsize}",
             "x=(w-text_w)/2",
-            "y=h*0.28",
+            f"y={y_expr}",
             "box=1",
             "boxcolor=black@0.45",
             "boxborderw=24",
@@ -526,10 +531,13 @@ def render_timeline(
             )
         )
 
-    # timeline.tracks.overlay (title cards) is burned in the final composition
-    # pass below (§7 step ④), alongside the subtitles — never in the per-segment
-    # cache, so segment cache keys stay untouched.
-    title_cards = [o for o in timeline.tracks.overlay if o.kind == "title_card"]
+    # timeline.tracks.overlay (title cards + packaging info cards) is burned in
+    # the final composition pass below (§7 step ④ / §13-14), alongside the
+    # subtitles — never in the per-segment cache, so segment cache keys stay
+    # untouched. The burn keys on kind: title_card and info_card share the path.
+    burn_overlays = [
+        o for o in timeline.tracks.overlay if o.kind in ("title_card", "info_card")
+    ]
 
     if out_path is None:
         out_path = project.next_final_path() if target == "final" else project.proxy_dir / "proxy.mp4"
@@ -554,10 +562,10 @@ def render_timeline(
         vchain = f"[0:v]scale={out_w}:{out_h}:flags=bicubic,setsar=1"
         if ass_file is not None:
             vchain += f",ass={_escape_filter_path(ass_file)}"
-        if title_cards:
+        if burn_overlays:
             font = find_font()
             for filt in _title_card_filters(
-                title_cards, out_w=out_w, tmp_dir=tmp_dir, font=font
+                burn_overlays, out_w=out_w, tmp_dir=tmp_dir, font=font
             ):
                 vchain += "," + filt
         # FIX-B: force the output onto the project frame grid — without an

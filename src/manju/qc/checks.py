@@ -167,6 +167,7 @@ def run_qc(
         _existence_audio_policy(project, report, timeline)
         _technical_clips(project, report, timeline, probe)
         _technical_captions(project, report, timeline)
+    _packaging_checks(project, report, timeline)
     _technical_take_resolution(project, report, config, selected)
     _final_render(project, report, config, timeline, deep)
     if extract_frames:
@@ -274,6 +275,8 @@ def _existence_timeline(project, report, timeline: Timeline, probe) -> None:
                        f"{label} source not readable by ffprobe: {source}")
 
     for clip in timeline.tracks.video:
+        if clip.shot.startswith("__"):
+            continue  # packaging intro/outro cards → _packaging_checks owns them
         check(clip.source, f"video {clip.shot}/{clip.take}", readable=True)
     for clip in timeline.tracks.voice:
         check(clip.source, "voice", readable=False)
@@ -323,6 +326,46 @@ def _existence_audio_policy(project, report, timeline: Timeline) -> None:
         check_file(audio.ambient.source, "ambient")
     if audio.transition_sound:
         check_file(audio.transition_sound, "transition sound")
+
+
+# --------------------------------------------------------- packaging layer
+
+
+def _packaging_checks(project, report, timeline) -> None:
+    """Round-N packaging QC (§13-14): an enabled intro/outro whose content-
+    addressed card asset is missing on disk is an error pointing at `manju
+    build`; an info_card anchored on a shot not on the timeline is a warning
+    naming the anchor (the compiler already skipped it deterministically)."""
+    try:
+        packaging = project.load_packaging()
+    except Exception:
+        return  # a broken packaging.yaml is a `manju check` finding, not QC's job
+    config = project.load_config()
+
+    from ..timeline.packaging import packaging_card_relpath
+
+    for kind, card in (("intro", packaging.intro), ("outro", packaging.outro)):
+        if not card.enabled:
+            continue
+        rel = packaging_card_relpath(kind, card, config.width, config.height, config.fps)
+        if not project.resolve(rel).exists():
+            report.add(
+                "error", "existence", "packaging",
+                f"{kind} card asset is missing on disk: {rel}",
+                suggestion="run `manju build` to render the packaging card (§13-14)",
+            )
+
+    if timeline is not None and packaging.info_cards:
+        from ..timeline.anchors import resolve_anchor
+
+        for i, ic in enumerate(packaging.info_cards):
+            if resolve_anchor(ic.at, ic.offset_ms, timeline.tracks.video) is None:
+                report.add(
+                    "warn", "content", "packaging",
+                    f"info_card #{i} anchor {ic.at!r} names a shot not on the "
+                    "timeline — the card was skipped",
+                    suggestion="fix the `at:` shot id in packaging.yaml, or remove the card",
+                )
 
 
 # --------------------------------------------------------- technical layer

@@ -311,6 +311,22 @@ def run_build(
                 append_event(project.root, actor, "auto_select",
                              {"shot": st.shot_id, "take": choice})
 
+    # ---- 2p. packaging card assets (§13-14): render missing intro/outro cards
+    # BEFORE the compile/render so the content-addressed segments the compiler
+    # points at exist on disk. Content-addressed + append-only: an unchanged
+    # spec reuses its file, edited text mints a new one. Best-effort — a card
+    # render hiccup degrades to a warning (QC then flags the missing asset).
+    packaging = project.load_packaging()
+    if packaging.intro.enabled or packaging.outro.enabled:
+        try:
+            from ..media.packaging import ensure_packaging_cards
+
+            made = ensure_packaging_cards(project, packaging)
+            for rel in made:
+                append_event(project.root, actor, "package_card", {"asset": rel})
+        except Exception as exc:
+            result.warnings.append(f"packaging card render skipped: {exc}")
+
     # ---- 3. compile timeline (pure function, §6)
     from ..media.probe import probe_duration_ms
 

@@ -28,15 +28,18 @@ from ..core.models import (
     AudioClip,
     CaptionLine,
     OverlayClip,
+    PackagingSpec,
     ProjectConfig,
     ShotSpec,
     Timeline,
     TimelineMeta,
     TimelineRules,
     TimelineTracks,
+    TransitionSpec,
     VideoClip,
 )
 from .anchors import resolve_anchor
+from .packaging import packaging_card_relpath
 
 # probe_fn: absolute media path -> duration in ms (None if unreadable)
 ProbeFn = Callable[[Path], int | None]
@@ -64,6 +67,28 @@ class CompileInput:
     config: ProjectConfig
     rules: TimelineRules
     shots: list[ShotInput] = field(default_factory=list)
+    # Optional packaging kit (round-N). None == exactly today's behaviour; an
+    # all-disabled spec is treated as None for both compile and fingerprint, so
+    # a packaging.yaml that turns nothing on leaves the timeline byte-identical.
+    packaging: PackagingSpec | None = None
+
+    def _active_packaging(self) -> dict[str, Any] | None:
+        """The part of the packaging spec that actually shapes the timeline:
+        intro/outro cards (only when enabled) and info_cards. Cover and teaser
+        are export-time only and never enter the compiled timeline. Returns
+        None when nothing is active — the fingerprint then omits packaging
+        entirely (byte-identical to a compile with packaging=None)."""
+        p = self.packaging
+        if p is None:
+            return None
+        active: dict[str, Any] = {}
+        if p.intro.enabled:
+            active["intro"] = p.intro.model_dump()
+        if p.outro.enabled:
+            active["outro"] = p.outro.model_dump()
+        if p.info_cards:
+            active["info_cards"] = [c.model_dump() for c in p.info_cards]
+        return active or None
 
     def fingerprint(self) -> str:
         """Hash of everything that shaped this compile -> meta.compiled_from."""
@@ -87,6 +112,9 @@ class CompileInput:
                 for s in self.shots
             ],
         }
+        pkg = self._active_packaging()
+        if pkg is not None:  # absent when nothing is enabled → today's hash
+            payload["packaging"] = pkg
         return hash_value(payload)
 
 
@@ -214,12 +242,43 @@ def compile_timeline(inp: CompileInput) -> Timeline:
         raise CompileError("nothing to compile: no shots with a usable selected take")
 
     rules, config = inp.rules, inp.config
+    packaging = inp.packaging
     tracks = TimelineTracks()
     cursor = 0
 
-    for i, s in enumerate(inp.shots):
+    # Packaging intro/outro become REAL leading/trailing segments inside the
+    # clip accumulation (§13-14): the intro advances `cursor` before shots are
+    # placed, so voice starts, caption cues and the total length all shift
+    # naturally — no track is post-shifted. Transitions are computed over the
+    # combined segment list so the true last segment gets no transition_out.
+    intro_on = packaging is not None and packaging.intro.enabled
+    outro_on = packaging is not None and packaging.outro.enabled
+    n_segments = (1 if intro_on else 0) + len(inp.shots) + (1 if outro_on else 0)
+
+    def _transition(seg_idx: int) -> TransitionSpec | None:
+        return None if seg_idx == n_segments - 1 else rules.transition_default
+
+    seg_i = 0
+    if intro_on:
+        card = packaging.intro
+        dur = snap_to_frame_grid(card.duration_ms, config.fps)
+        tracks.video.append(
+            VideoClip(
+                shot="__intro__",
+                take="packaging",
+                source=packaging_card_relpath(
+                    "intro", card, config.width, config.height, config.fps
+                ),
+                start_ms=cursor,
+                duration_ms=dur,
+                transition_out=_transition(seg_i),
+            )
+        )
+        cursor += dur
+        seg_i += 1
+
+    for s in inp.shots:
         duration_ms = _resolve_duration_ms(s, rules, config.fps)
-        is_last = i == len(inp.shots) - 1
         tracks.video.append(
             VideoClip(
                 shot=s.shot.id,
@@ -227,9 +286,10 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 source=s.take_source,
                 start_ms=cursor,
                 duration_ms=duration_ms,
-                transition_out=None if is_last else rules.transition_default,
+                transition_out=_transition(seg_i),
             )
         )
+        seg_i += 1
 
         if s.voice_source and s.voice_duration_ms:
             tracks.voice.append(
@@ -284,6 +344,24 @@ def compile_timeline(inp: CompileInput) -> Timeline:
 
         cursor += duration_ms
 
+    if outro_on:
+        card = packaging.outro
+        dur = snap_to_frame_grid(card.duration_ms, config.fps)
+        tracks.video.append(
+            VideoClip(
+                shot="__outro__",
+                take="packaging",
+                source=packaging_card_relpath(
+                    "outro", card, config.width, config.height, config.fps
+                ),
+                start_ms=cursor,
+                duration_ms=dur,
+                transition_out=_transition(seg_i),  # last segment → None
+            )
+        )
+        cursor += dur
+        seg_i += 1
+
     total_ms = cursor
     # Title card is an overlay layer (§7 step ④): emitted after the video track
     # is assembled so its duration can be clamped to the film's length.
@@ -297,6 +375,26 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 duration_ms=min(rules.title_card.duration_ms, total_ms),
             )
         )
+
+    # Info cards (§13-14 round-N): chapter/role/info overlays riding the same
+    # overlay track, anchored on the just-assembled video track via the shared
+    # anchor grammar. An anchor that names a shot not on the timeline resolves
+    # to None → deterministic skip (QC warns, naming the shot id).
+    if packaging is not None:
+        for ic in packaging.info_cards:
+            start = resolve_anchor(ic.at, ic.offset_ms, tracks.video)
+            if start is None:
+                continue
+            span = min(ic.duration_ms, max(1, total_ms - start))
+            tracks.overlay.append(
+                OverlayClip(
+                    kind="info_card",
+                    template=ic.template,
+                    text=ic.text,
+                    start_ms=start,
+                    duration_ms=span,
+                )
+            )
 
     if rules.music.source:
         tracks.music.append(
@@ -424,7 +522,12 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
         raise CompileError(
             "cannot compile timeline, unresolved shots:\n  " + "\n  ".join(problems)
         )
-    return CompileInput(config=config, rules=rules, shots=shots)
+    # Packaging is loaded here (defaults to an all-disabled spec when absent),
+    # so every compile call site — build graph, cli, tests — gets it for free
+    # while the CompileInput field itself stays optional (§13-14).
+    return CompileInput(
+        config=config, rules=rules, shots=shots, packaging=project.load_packaging()
+    )
 
 
 def build_timeline(project: Project, probe_fn: ProbeFn) -> tuple[Timeline, Path, bool]:

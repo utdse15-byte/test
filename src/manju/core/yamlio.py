@@ -51,8 +51,9 @@ def read_yaml(path: Path) -> Any:
         return yaml.safe_load(f)
 
 
-def write_yaml(path: Path, data: Any) -> None:
-    text = yaml.dump(
+def dump_yaml(data: Any) -> str:
+    """Serialize to the project's canonical YAML string (no file IO)."""
+    return yaml.dump(
         data,
         Dumper=_ManjuDumper,
         allow_unicode=True,
@@ -60,7 +61,10 @@ def write_yaml(path: Path, data: Any) -> None:
         default_flow_style=False,
         width=100,
     )
-    atomic_write_text(Path(path), text)
+
+
+def write_yaml(path: Path, data: Any) -> None:
+    atomic_write_text(Path(path), dump_yaml(data))
 
 
 def read_json(path: Path) -> Any:

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import (
+    PackagingSpec,
     ProjectConfig,
     ShotIndex,
     ShotSpec,
@@ -28,7 +29,7 @@ from .models import (
     Timeline,
     TimelineRules,
 )
-from .yamlio import read_json, read_yaml, write_json, write_yaml
+from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml
 
 PROJECT_FILE = "project.yaml"
 MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".png", ".jpg", ".jpeg", ".wav", ".mp3", ".m4a", ".flac"}
@@ -41,10 +42,27 @@ media/gen/**/*.png
 media/gen/**/*.jpg
 media/gen/**/*.wav
 media/gen/**/*.mp3
+media/generated/
 media/imports/
 renders/
 exports/
 .manju/
+"""
+
+# packaging.yaml scaffold header — commented hints for a file that turns nothing
+# on by default (round-N). Enabling any section changes build/package output.
+PACKAGING_SCAFFOLD_HEADER = """\
+# packaging.yaml — 片头/片尾卡、封面、预告、信息卡(round-N packaging kit)。
+# 默认全部关闭:此文件存在不改变任何构建产物;启用某项后再 `manju build` / `manju package`。
+#
+#   intro / outro : 设 enabled: true 并填 text(可选 subtext),成为时间线首/尾真实段落,
+#                   下游配音/字幕/总时长随之自然平移。模板 template 首选 html 卡片,
+#                   无 Chromium 时降级 drawtext(§8.4)。
+#   info_cards    : 章节/角色/信息卡,骑在 overlay 轨;at 用 "shot:<id>[:start|:end]" 锚点,
+#                   offset_ms 为相对偏移;锚点镜头不存在则跳过并由 QC 提示。
+#   cover         : mode: frame 从成片抽帧(frame_ms),或 mode: card 渲染文字封面。
+#   teaser        : 设 enabled: true,从成片切 [from_ms, from_ms+duration_ms]。
+#   封面/预告由 `manju package` 从当前 final 产出到 exports/packaging/。
 """
 
 
@@ -102,6 +120,11 @@ class Project:
         write_yaml(root / PROJECT_FILE, config.model_dump(exclude_none=True))
         write_yaml(root / "shots" / "index.yaml", ShotIndex().model_dump())
         write_yaml(root / "timeline" / "rules.yaml", TimelineRules().model_dump())
+        # packaging.yaml sits next to rules.yaml, everything disabled + hints (§13-14)
+        (root / "timeline" / "packaging.yaml").write_text(
+            PACKAGING_SCAFFOLD_HEADER + dump_yaml(PackagingSpec().model_dump()),
+            encoding="utf-8",
+        )
         for bible_file in ("characters", "scenes", "props", "style"):
             bpath = root / "bible" / f"{bible_file}.yaml"
             if not bpath.exists():
@@ -154,6 +177,10 @@ class Project:
     @property
     def rules_path(self) -> Path:
         return self.root / "timeline" / "rules.yaml"
+
+    @property
+    def packaging_path(self) -> Path:
+        return self.root / "timeline" / "packaging.yaml"
 
     @property
     def captions_dir(self) -> Path:
@@ -284,6 +311,18 @@ class Project:
 
     def save_rules(self, rules: TimelineRules) -> None:
         write_yaml(self.rules_path, rules.model_dump())
+
+    # ------------------------------------------------------------ packaging
+
+    def load_packaging(self) -> PackagingSpec:
+        """Packaging kit spec (round-N). Defaults to an all-disabled spec when
+        packaging.yaml is absent — the compiler treats that as no-op (§13-14)."""
+        if not self.packaging_path.exists():
+            return PackagingSpec()
+        return PackagingSpec.model_validate(read_yaml(self.packaging_path) or {})
+
+    def save_packaging(self, packaging: PackagingSpec) -> None:
+        write_yaml(self.packaging_path, packaging.model_dump())
 
     # -------------------------------------------------------------- timeline
 
