@@ -34,7 +34,7 @@ from pathlib import Path
 
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file, short_hash
-from ..core.models import OverlayClip, Timeline, VideoClip
+from ..core.models import AudioClip, OverlayClip, Timeline, VideoClip
 from .card import find_font
 from .ffmpeg import MediaError, default_log, run_ffmpeg
 from .normalize import normalize_segment
@@ -216,6 +216,26 @@ def _concat_line(path: Path) -> str:
     return f"file '{escaped}'\n"
 
 
+def _fmt_num(x: float | int) -> str:
+    """Render a filter-graph number compactly: a whole-valued float loses its
+    trailing ``.0`` so a float-typed default (``duck_ratio=8.0``) matches the
+    historical hardcoded literal (``ratio=8``) byte-for-byte."""
+    if isinstance(x, float) and x.is_integer():
+        return str(int(x))
+    return str(x)
+
+
+def _duck_filter(clip: AudioClip) -> str:
+    """The sidechaincompress statement for one ducked clip, rendered from the
+    clip's own knobs. Defaults (0.05 / 8.0 / 5 / 250) reproduce exactly the
+    filtergraph the constants produced before these knobs existed."""
+    return (
+        f"sidechaincompress=threshold={_fmt_num(clip.duck_threshold)}"
+        f":ratio={_fmt_num(clip.duck_ratio)}"
+        f":attack={clip.duck_attack_ms}:release={clip.duck_release_ms}"
+    )
+
+
 def _build_audio_graph(
     timeline: Timeline, project: Project, *, target: str, total_s: float
 ) -> tuple[list[str], list[str], str]:
@@ -326,9 +346,7 @@ def _build_audio_graph(
         if clip.ducking and voice_for_mix is not None:
             key = next(key_iter)
             out = f"[mus{k}]"
-            stmts.append(
-                f"{pre}{key}sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250{out}"
-            )
+            stmts.append(f"{pre}{key}{_duck_filter(clip)}{out}")
             mix_labels.append(out)
         else:
             mix_labels.append(pre)
@@ -359,9 +377,7 @@ def _build_audio_graph(
         if clip.ducking and voice_for_mix is not None:
             key = next(key_iter)
             out = f"[amb{k}]"
-            stmts.append(
-                f"{pre}{key}sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250{out}"
-            )
+            stmts.append(f"{pre}{key}{_duck_filter(clip)}{out}")
             mix_labels.append(out)
         else:
             mix_labels.append(pre)

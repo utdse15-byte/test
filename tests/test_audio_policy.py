@@ -26,6 +26,7 @@ from manju.core.models import (
     AudioClip,
     AudioMixRules,
     Dialogue,
+    MusicRules,
     ProjectConfig,
     SfxClipSpec,
     ShotSpec,
@@ -252,6 +253,109 @@ def test_qc_unresolvable_sfx_anchor_warns(tmp_project, add_shot):
     assert not [i for i in report.items if i.level == "error" and "hit.wav" in i.message]
 
 
+# ------------------------------------------ (b) QC audio advisories (round-O)
+
+
+def _voice_timeline(n_shots: int = 2) -> Timeline:
+    """A timeline with n video shots AND a voice clip — the advisories are all
+    gated on voice actually being present on the timeline."""
+    vids = [
+        VideoClip(shot=f"S{i:03d}", take="take_01",
+                  source=f"media/gen/S{i:03d}/take_01.mp4",
+                  start_ms=(i - 1) * 2000, duration_ms=2000)
+        for i in range(1, n_shots + 1)
+    ]
+    return Timeline(
+        duration_ms=n_shots * 2000,
+        tracks=TimelineTracks(
+            video=vids,
+            voice=[AudioClip(source="media/gen/S001/v.wav", start_ms=200, duration_ms=1000)],
+        ),
+    )
+
+
+def _audio_infos(report):
+    """The rule-based audio advisories: info-level items subjected to timeline."""
+    return [i for i in report.items if i.level == "info" and i.subject == "timeline"]
+
+
+def test_qc_advises_bgm_when_voice_but_no_music(tmp_project):
+    from manju.qc.checks import run_qc
+
+    # default rules: music.source unset, voice present on the timeline
+    report = run_qc(tmp_project, _voice_timeline(2), extract_frames=False)
+    infos = _audio_infos(report)
+    assert any("no background music" in i.message for i in infos), [i.message for i in infos]
+    assert any("music.source" in i.suggestion for i in infos)
+    assert all(i.level == "info" for i in infos)  # advisory, never a gate
+    # the ducking advisory must NOT fire (music is unset, not set-without-ducking)
+    assert not any("ducking" in i.message for i in infos)
+
+
+def test_qc_advises_ducking_when_music_set_but_not_ducked(tmp_project):
+    from manju.qc.checks import run_qc
+
+    rules = tmp_project.load_rules()
+    rules.music = MusicRules(source="media/imports/bgm.wav", ducking=False)
+    tmp_project.save_rules(rules)
+    report = run_qc(tmp_project, _voice_timeline(2), extract_frames=False)
+    infos = _audio_infos(report)
+    assert any("ducking is" in i.message and "music.ducking" in i.suggestion for i in infos), \
+        [i.message for i in infos]
+    # BGM advisory must NOT fire (music IS configured)
+    assert not any("no background music" in i.message for i in infos)
+
+
+def test_qc_advises_ambient_for_long_film_with_voice(tmp_project):
+    from manju.qc.checks import run_qc
+
+    rules = tmp_project.load_rules()
+    rules.music = MusicRules(source="media/imports/bgm.wav", ducking=True)  # mute items 1 & 2
+    tmp_project.save_rules(rules)
+    report = run_qc(tmp_project, _voice_timeline(4), extract_frames=False)  # ≥ 4 shots
+    infos = _audio_infos(report)
+    assert any("ambient bed" in i.message and "ambient.source" in i.suggestion for i in infos), \
+        [i.message for i in infos]
+
+
+def test_qc_no_ambient_advice_for_short_film(tmp_project):
+    from manju.qc.checks import run_qc
+
+    rules = tmp_project.load_rules()
+    rules.music = MusicRules(source="media/imports/bgm.wav", ducking=True)
+    tmp_project.save_rules(rules)
+    report = run_qc(tmp_project, _voice_timeline(3), extract_frames=False)  # only 3 shots
+    assert not any("ambient bed" in i.message for i in _audio_infos(report))
+
+
+def test_qc_no_audio_advice_without_voice(tmp_project):
+    from manju.qc.checks import run_qc
+
+    tl = _voice_timeline(4)
+    tl.tracks.voice = []  # a silent film → nothing to advise on
+    report = run_qc(tmp_project, tl, extract_frames=False)
+    assert _audio_infos(report) == [], [i.message for i in _audio_infos(report)]
+
+
+def test_qc_no_audio_advice_when_policy_is_complete(tmp_project):
+    from manju.qc.checks import run_qc
+
+    rules = tmp_project.load_rules()
+    rules.music = MusicRules(source="media/imports/bgm.wav", ducking=True)
+    rules.audio = AudioMixRules(ambient=AmbientRules(source="media/imports/room.wav"))
+    tmp_project.save_rules(rules)
+    report = run_qc(tmp_project, _voice_timeline(6), extract_frames=False)
+    assert _audio_infos(report) == []
+
+
+def test_qc_no_audio_advice_without_a_timeline(tmp_project):
+    from manju.qc.checks import run_qc
+
+    # tmp_project has no timeline.json; run_qc loads None and skips the advisories
+    report = run_qc(tmp_project, None, extract_frames=False)
+    assert _audio_infos(report) == []
+
+
 # ------------------------------------------------- (b) filter-graph strings
 
 
@@ -285,6 +389,123 @@ def test_build_audio_graph_statements(tmp_project):
     assert "asplit=3" in joined               # voice bus → mix + 2 duck keys
     assert "[sfx0]" in joined                  # sfx joins the final mix
     assert aout  # a real output label
+
+
+# ----------------------------------------------- (b) ducking knobs (round-O)
+
+# the historical hardcoded ducking string — the byte-for-byte pin
+_LEGACY_DUCK = "sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250"
+
+
+def test_duck_knob_defaults_are_the_historical_constants():
+    """The additive knobs default to EXACTLY the old hardcoded constants, on
+    both rule sets and on the compiled AudioClip."""
+    for m in (MusicRules(), AmbientRules(), AudioClip(source="x", start_ms=0)):
+        assert (m.duck_threshold, m.duck_ratio, m.duck_attack_ms, m.duck_release_ms) \
+            == (0.05, 8.0, 5, 250)
+
+
+def _ducked_timeline(*, music_rules=None, ambient_rules=None) -> Timeline:
+    """Compile a voice+music+ambient timeline so the duck knobs travel rules →
+    clip → (later) filtergraph. Voice is required for ducking to render."""
+    music_rules = music_rules or MusicRules(source="media/imports/m.wav")
+    ambient_rules = ambient_rules or AmbientRules(source="media/imports/a.wav", ducking=True)
+    rules = TimelineRules(music=music_rules, audio=AudioMixRules(ambient=ambient_rules))
+    inp = CompileInput(
+        config=ProjectConfig(name="t"),
+        rules=rules,
+        shots=[_shot_input("S001", text="x", voice_source="gen/S001/v.wav",
+                           voice_duration_ms=1000)],
+    )
+    return compile_timeline(inp)
+
+
+def test_default_duck_params_render_byte_identical_filtergraph(tmp_project):
+    """PIN: with default knobs the ducking statement is byte-for-byte the old
+    constant string — for BOTH the ducked music clip and the ducked ambient
+    bed. If this ever changes, every existing project's mix changed silently."""
+    from manju.media.render import _build_audio_graph
+
+    tl = _ducked_timeline()
+    # sanity: the compiler carried the defaults onto the clips
+    assert tl.tracks.music[0].duck_ratio == 8.0
+    assert tl.tracks.ambient[0].duck_release_ms == 250
+    _inputs, stmts, _aout = _build_audio_graph(tl, tmp_project, target="proxy", total_s=1.0)
+    joined = ";".join(stmts)
+    assert joined.count(_LEGACY_DUCK) == 2  # music + ambient, both byte-identical
+
+
+def test_custom_duck_params_appear_in_the_filtergraph(tmp_project):
+    """Non-default knobs on the rules flow through the compiled clips into the
+    rendered sidechaincompress — each clip renders its OWN params."""
+    from manju.media.render import _build_audio_graph
+
+    tl = _ducked_timeline(
+        music_rules=MusicRules(source="media/imports/m.wav", duck_threshold=0.1,
+                               duck_ratio=4.0, duck_attack_ms=10, duck_release_ms=400),
+        ambient_rules=AmbientRules(source="media/imports/a.wav", ducking=True,
+                                   duck_threshold=0.02, duck_ratio=12.0,
+                                   duck_attack_ms=2, duck_release_ms=600),
+    )
+    _inputs, stmts, _aout = _build_audio_graph(tl, tmp_project, target="proxy", total_s=1.0)
+    joined = ";".join(stmts)
+    assert "sidechaincompress=threshold=0.1:ratio=4:attack=10:release=400" in joined
+    assert "sidechaincompress=threshold=0.02:ratio=12:attack=2:release=600" in joined
+    assert _LEGACY_DUCK not in joined  # the constants no longer leak through
+
+
+def test_music_and_ambient_rules_carry_duck_params_onto_the_clip():
+    """The compiler is the only place knobs move rules → clip (purity)."""
+    tl = _ducked_timeline(
+        music_rules=MusicRules(source="media/imports/m.wav", duck_ratio=3.0,
+                               duck_attack_ms=7),
+        ambient_rules=AmbientRules(source="media/imports/a.wav", ducking=True,
+                                   duck_threshold=0.2, duck_release_ms=333),
+    )
+    mus, amb = tl.tracks.music[0], tl.tracks.ambient[0]
+    assert mus.duck_ratio == 3.0 and mus.duck_attack_ms == 7
+    assert amb.duck_threshold == 0.2 and amb.duck_release_ms == 333
+
+
+def test_duck_knob_change_refingerprints_the_timeline():
+    """Ducking knobs live in the hashed rules, so changing one re-fingerprints
+    the compile (conservative staleness); an identical value is stable."""
+    shots = [_shot_input("S001", text="x", voice_source="gen/S001/v.wav",
+                         voice_duration_ms=1000)]
+    config = ProjectConfig(name="t")
+
+    def inp_with(ratio: float) -> CompileInput:
+        return CompileInput(
+            config=config,
+            rules=TimelineRules(music=MusicRules(source="media/imports/m.wav",
+                                                 duck_ratio=ratio)),
+            shots=list(shots),
+        )
+
+    base, changed = inp_with(8.0), inp_with(4.0)
+    assert base.fingerprint() != changed.fingerprint()
+    assert (compile_timeline(base).meta.compiled_from
+            != compile_timeline(changed).meta.compiled_from)
+    assert base.fingerprint() == inp_with(8.0).fingerprint()  # deterministic
+
+
+def test_ambient_duck_knob_change_refingerprints_the_timeline():
+    """Same for the ambient bed's knobs (rules.audio.ambient is hashed too)."""
+    shots = [_shot_input("S001", text="x", voice_source="gen/S001/v.wav",
+                         voice_duration_ms=1000)]
+    config = ProjectConfig(name="t")
+
+    def inp_with(rel_ms: int) -> CompileInput:
+        return CompileInput(
+            config=config,
+            rules=TimelineRules(audio=AudioMixRules(
+                ambient=AmbientRules(source="media/imports/a.wav", ducking=True,
+                                     duck_release_ms=rel_ms))),
+            shots=list(shots),
+        )
+
+    assert inp_with(250).fingerprint() != inp_with(500).fingerprint()
+    assert inp_with(250).fingerprint() == inp_with(250).fingerprint()
 
 
 def test_build_audio_graph_sfx_not_ducked_without_voice(tmp_project):

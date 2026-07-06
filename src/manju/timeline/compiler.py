@@ -413,6 +413,12 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 gain_db=rules.music.gain_db,
                 ducking=rules.music.ducking,
                 fade_out_ms=rules.music.fade_out_ms,
+                # ducking shape travels onto the clip so the render is purely a
+                # function of the compiled timeline (defaults = today's constants)
+                duck_threshold=rules.music.duck_threshold,
+                duck_ratio=rules.music.duck_ratio,
+                duck_attack_ms=rules.music.duck_attack_ms,
+                duck_release_ms=rules.music.duck_release_ms,
             )
         )
 
@@ -455,6 +461,10 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 ducking=audio.ambient.ducking,
                 fade_out_ms=audio.ambient.fade_out_ms,
                 loop=True,
+                duck_threshold=audio.ambient.duck_threshold,
+                duck_ratio=audio.ambient.duck_ratio,
+                duck_attack_ms=audio.ambient.duck_attack_ms,
+                duck_release_ms=audio.ambient.duck_release_ms,
             )
         )
 

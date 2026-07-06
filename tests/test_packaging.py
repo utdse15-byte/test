@@ -232,6 +232,34 @@ def test_package_requires_a_final(tmp_project):
         make_package(tmp_project)  # no final on disk → clean failure (no ffmpeg)
 
 
+# ---- staleness advisory (round-O): degrade-silently paths (no ffmpeg)
+
+
+def test_stale_advisory_silent_when_no_timeline(tmp_project):
+    """No compiled timeline on disk → the advisory says nothing (and never
+    crashes) even if handed a final path."""
+    from manju.media.packaging import _stale_final_warning
+
+    assert tmp_project.load_timeline() is None
+    fake_final = tmp_project.final_dir / "final_v1.mp4"
+    assert _stale_final_warning(tmp_project, fake_final) is None
+
+
+def test_stale_advisory_silent_when_final_has_no_sidecar(tmp_project):
+    """A timeline exists but the final carries no .key.json → cannot judge, so
+    the advisory degrades to silence (never a false positive, never a crash)."""
+    from manju.media.packaging import _stale_final_warning
+
+    tmp_project.save_timeline(Timeline(tracks=TimelineTracks(video=[
+        VideoClip(shot="S001", take="take_01", source="media/gen/S001/take_01.mp4",
+                  start_ms=0, duration_ms=2000),
+    ])))
+    final = tmp_project.final_dir / "final_v1.mp4"
+    final.parent.mkdir(parents=True, exist_ok=True)
+    final.write_bytes(b"not a real video, and no key sidecar next to it")
+    assert _stale_final_warning(tmp_project, final) is None
+
+
 # =========================================================== (b) end-to-end
 
 pytestmark_ffmpeg = pytest.mark.skipif(
@@ -393,4 +421,45 @@ def test_package_warns_when_cover_frame_is_inside_intro(built):
     built.save_packaging(pkg)
     result = make_package(built, force=True)
     assert any("inside the" in w and "intro" in w for w in result["warnings"]), (
+        result["warnings"])
+
+
+# ------------------------------ round-O: `manju package` staleness advisory
+
+# A dedicated freshly-built project so the caption-rule edit below can't leak
+# into the shared `built` module fixture (which other tests reuse).
+@pytest.fixture(scope="module")
+def stale_project(tmp_path_factory):
+    from manju.build.graph import run_build
+    from manju.core.container import Project
+    from tests.fixtures.make_sample import make_sample_project
+
+    root = make_sample_project(tmp_path_factory.mktemp("stale") / "样片", shots=2)
+    project = Project(root)
+    assert run_build(project, target="final").ok
+    return project
+
+
+@pytestmark_ffmpeg
+def test_package_no_stale_warning_right_after_build(stale_project):
+    """Nothing changed since the build → the final matches current specs, so no
+    staleness advisory (the recompiled key equals the final's sidecar)."""
+    from manju.media.packaging import make_package
+
+    result = make_package(stale_project, force=True)
+    assert not any("stale" in w for w in result["warnings"]), result["warnings"]
+
+
+@pytestmark_ffmpeg
+def test_package_warns_when_final_is_stale_after_rule_edit(stale_project):
+    """Bump a caption rule WITHOUT rebuilding: the newest final now predates the
+    current specs (its caption cues re-chunk), so package advises a rebuild."""
+    from manju.media.packaging import make_package
+
+    rules = stale_project.load_rules()
+    rules.captions.max_chars_per_line = 3  # re-chunks the caption track → new key
+    stale_project.save_rules(rules)
+    # deliberately NO run_build here — the final is intentionally left stale
+    result = make_package(stale_project, force=True)
+    assert any("stale" in w and "manju build" in w for w in result["warnings"]), (
         result["warnings"])

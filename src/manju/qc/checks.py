@@ -165,6 +165,7 @@ def run_qc(
     if timeline is not None:
         _existence_timeline(project, report, timeline, probe)
         _existence_audio_policy(project, report, timeline)
+        _audio_advisories(project, report, timeline)
         _technical_clips(project, report, timeline, probe)
         _technical_captions(project, report, timeline)
     _packaging_checks(project, report, timeline)
@@ -335,6 +336,49 @@ def _existence_audio_policy(project, report, timeline: Timeline) -> None:
         check_file(audio.ambient.source, "ambient")
     if audio.transition_sound:
         check_file(audio.transition_sound, "transition sound")
+
+
+def _audio_advisories(project, report, timeline: Timeline) -> None:
+    """Rule-based audio-policy suggestions (§0: deliberately rule-based, no LLM
+    in-tool). Info-level nudges toward a fuller default audio policy, each with
+    a concrete rules.yaml action. All are gated on a voice track actually being
+    on the timeline, so a silent film — or a project with no timeline at all
+    (this function is only called when one exists) — is never nagged."""
+    if not timeline.tracks.voice:
+        return  # no voice on the timeline → no audio-policy advice to give
+
+    rules = project.load_rules()
+    music = rules.music
+    ambient = rules.audio.ambient
+    # count real content shots (packaging intro/outro cards carry "__" shot ids)
+    n_shots = sum(1 for c in timeline.tracks.video if not c.shot.startswith("__"))
+
+    if not music.source:
+        report.add(
+            "info", "technical", "timeline",
+            "voice is on the timeline but no background music is configured — "
+            "a BGM bed lifts the film's overall feel",
+            suggestion="set rules.yaml → music.source to a project-relative "
+                       "audio file (e.g. media/imports/bgm.mp3)",
+        )
+    elif not music.ducking:
+        # music is set and voice is present, but the BGM will not dip under speech
+        report.add(
+            "info", "technical", "timeline",
+            "background music is configured over voice, but music ducking is "
+            "off — the BGM can fight the dialogue",
+            suggestion="set rules.yaml → music.ducking: true so the BGM dips "
+                       "under speech (tune rules.yaml → music.duck_* to taste)",
+        )
+
+    if not ambient.source and n_shots >= 4:
+        report.add(
+            "info", "technical", "timeline",
+            f"the film has {n_shots} shots and voice but no ambient bed — a low "
+            "room-tone/atmos bed under the whole film smooths the scene cuts",
+            suggestion="set rules.yaml → audio.ambient.source to a looped "
+                       "room-tone/atmosphere file",
+        )
 
 
 # --------------------------------------------------------- packaging layer

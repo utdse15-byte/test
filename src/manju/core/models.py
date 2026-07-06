@@ -227,6 +227,14 @@ class MusicRules(ManjuModel):
     gain_db: float = -18.0
     ducking: bool = True
     fade_out_ms: int = 1500
+    # Sidechain ducking shape (render.py _build_audio_graph). Defaults are the
+    # historical hardcoded constants — a project that never touches them renders
+    # a byte-identical filtergraph (pinned in tests). threshold/ratio are the
+    # compressor knee/amount; attack/release are in milliseconds.
+    duck_threshold: float = 0.05
+    duck_ratio: float = 8.0
+    duck_attack_ms: int = 5
+    duck_release_ms: int = 250
 
 
 class SfxClipSpec(ManjuModel):
@@ -250,6 +258,12 @@ class AmbientRules(ManjuModel):
     gain_db: float = -24.0
     ducking: bool = False
     fade_out_ms: int = 1000
+    # Sidechain ducking shape, same knobs (and same historical defaults) as
+    # MusicRules — an ambient bed ducks under speech exactly like BGM (§7 ⑤).
+    duck_threshold: float = 0.05
+    duck_ratio: float = 8.0
+    duck_attack_ms: int = 5
+    duck_release_ms: int = 250
 
 
 class AudioMixRules(ManjuModel):
@@ -372,6 +386,14 @@ class AudioClip(ManjuModel):
     ducking: bool = False
     fade_out_ms: int = 0
     loop: bool = False  # loop the source to fill duration_ms (ambient beds)
+    # Per-clip sidechain ducking shape, carried from Music/AmbientRules by the
+    # compiler so the render renders each clip's own knobs. Defaults are the
+    # historical constants: an unducked clip (or one compiled before these
+    # fields existed) renders exactly today's filtergraph.
+    duck_threshold: float = 0.05
+    duck_ratio: float = 8.0
+    duck_attack_ms: int = 5
+    duck_release_ms: int = 250
 
 
 class CaptionLine(ManjuModel):

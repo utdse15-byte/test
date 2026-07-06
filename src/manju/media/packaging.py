@@ -29,7 +29,7 @@ from ..core.models import CoverSpec, PackagingCard, PackagingSpec, TeaserSpec
 from ..timeline.compiler import snap_to_frame_grid
 from ..timeline.packaging import packaging_card_relpath
 from .ffmpeg import MediaError, default_log, run_ffmpeg
-from .render import _enc_params
+from .render import _enc_params, _read_key_sidecar, final_content_key
 
 Log = Callable[[str], None] | None
 
@@ -110,6 +110,58 @@ def newest_final(project: Project) -> Path | None:
     if not project.final_dir.exists():
         return None
     return project.newest_final_path()  # the one numeric resolver
+
+
+def _stale_final_warning(project: Project, final: Path) -> str | None:
+    """Advisory: is the newest final stale relative to the CURRENT specs?
+
+    `manju package` cuts the cover/teaser from whatever final is newest, even
+    when the specs have moved on since that render — so the exports would show
+    the OLD build. We recompute the current final content key exactly the way
+    the render skip does — recompile the timeline from today's specs (as
+    `manju explain` does), then media/render.final_content_key against the
+    current captions.ass — and compare it to the final's own .key.json sidecar.
+    A mismatch means the specs changed since the final was rendered.
+
+    Pure advisory: it degrades silently to None (no warning, never a crash)
+    when there is no compiled timeline, no sidecar on the final, the specs
+    cannot be compiled, or key computation fails for any reason — it must
+    never gate packaging."""
+    try:
+        # Guard: only advise for a project that HAS a committed compiled
+        # timeline (a real, built project); otherwise there is nothing to
+        # call stale against.
+        if project.load_timeline() is None:
+            return None
+        sidecar_key = _read_key_sidecar(final)
+        if sidecar_key is None:  # final predates the key discipline → cannot judge
+            return None
+
+        rules = project.load_rules()
+        if rules.mode == "manual":
+            # manual mode: timeline.json is human truth and IS what renders,
+            # so the on-disk timeline is the current spec (explain's stance).
+            effective = project.load_timeline()
+        else:
+            from ..media.probe import probe_duration_ms
+            from ..timeline.compiler import compile_timeline, gather_compile_input
+
+            effective = compile_timeline(gather_compile_input(project, probe_duration_ms))
+        if effective is None:
+            return None
+
+        ass = project.captions_dir / "captions.ass"
+        current_key = final_content_key(
+            project, effective, ass_file=ass if ass.exists() else None, target="final"
+        )
+        if current_key == sidecar_key:
+            return None
+        return (
+            "the newest final is stale relative to current specs — cover/teaser "
+            "reflect the OLD build; run `manju build` first"
+        )
+    except Exception:
+        return None  # advisory only: never let key computation break packaging
 
 
 # ----------------------------------------------------------- key sidecars
@@ -295,6 +347,12 @@ def make_package(project: Project, *, force: bool = False, log: Log = None) -> d
                 f"teaser.from_ms ({packaging.teaser.from_ms}ms) starts inside the "
                 f"intro card (0–{intro_ms}ms); raise from_ms if unintended"
             )
+
+    # Staleness advisory: the newest final may predate the current specs, in
+    # which case the cover/teaser we are about to cut reflect the OLD build.
+    stale_warning = _stale_final_warning(project, final)
+    if stale_warning:
+        result["warnings"].append(stale_warning)
 
     cover_path, cover_skipped = _make_cover(
         project, final, packaging.cover, final_hash, force=force, log=log
