@@ -1078,3 +1078,67 @@ person/outfit checks emit needs_vision advisories until then).
 override POST that landed in rules.yaml, a storyboard approval that persisted
 three-state review, and mode/glossary toggles; CI green at every integration
 push.
+
+## 2026-07-07 — round V: from tool to studio — 技能库/创作漏斗/多集/驾驶舱/剪辑v2/agent质检
+
+Two research agents (REPORTS/ROUND-V-REFERENCES-1.md: verified SKILL.md
+conventions, the amateur-vs-pro lesson corpus with hard numbers, LTX/即创
+funnels, 短剧 conventions incl. 卡一/卡二/卡三 + 红果三层次拆解法, Netflix-
+grounded QC criteria; -2.md: the 6-key universal editor keymap, honest-undo
+for git-backed truth, play-the-final playback, cockpit block layout, the
+HUMAN|AI|SYSTEM polish audit) then eight builders, integrated one cherry-pick
+at a time, CI green at every push.
+
+- **技能库 (items 1+6):** core/skills.py — three-tier resolution (project >
+  ~/.manju/skills > bundled), tolerant frontmatter, progressive disclosure:
+  `manju auto` injects the core protocol + an INDEX; agents pull full bodies
+  via `manju skills show` / MCP skill_show. Fourteen skills authored from the
+  research corpus (叙事节奏/分镜设计/提示词工艺/人设一致性/字幕规范/声音收尾/
+  封面标题/质检判读/分集拆解/剧集设定集/修复闭环/创作漏斗/技能编写 + the
+  evolved core manju orientation), each with decision tree + ≥3 before/after
+  examples + checklist + failure catalog + Manju 落地 mapping.
+- **Agent-eyes 视觉质检 (item 6):** qc/agent_review.py — `manju qc brief`
+  packages review frames + shot context + the visual-qc-review criteria
+  pointer; `manju qc verdict` folds hash-bound [AI判读] findings into run_qc
+  (regenerated take → verdicts honestly 过期); the vision-vendor slot
+  messaging retired — the driving agent's own image understanding is the
+  reviewer, the skill carries the A–J standards.
+- **创作漏斗 (item 2):** build/funnel.py — seven stages as data with honest
+  done-predicates (scaffold ≠ done; plan stage = the approve-before-spend
+  gate); `manju create` checklist + guided 中文 scaffolds; director
+  suggest_next leads with the funnel pre-storyboard; /create (创作) renders
+  the rail + current-stage workbench (textarea over story/*.md, template
+  parity with the CLI byte-verified, 让AI起草 vs 自己写 on every card).
+- **多集 (item 3):** core/series.py — series = umbrella over NORMAL episode
+  projects (zero engine edits, pinned); global bible seeds episodes at
+  creation; `sync-bible` conservative (missing→add on --apply, diverged→
+  report-only, --force still refuses hash-sealed locks); cross-episode
+  character view; deterministic `split-script` at explicit # E01 markers.
+- **驾驶舱 (item 4):** gui/cockpit.py + the SPA home hero — state → ONE next
+  action → activity → risk-by-exception (calm when healthy), eleven blocks
+  all read from existing engine calls, per-block degradation, never 500s.
+- **剪辑 v2 (item 5):** the 6-key layer (Space/←→/I/O/Z/N + ? keymap overlay,
+  input-focus guard, click-first WCAG 2.5.7), boundary/cue/second snapping
+  (persisted), honest git-backed 3-tier 撤销 (revert = a new logged event;
+  素材不回滚,只选择版本), Tier-1 playback of the newest final/proxy over the
+  Range-capable media endpoint with bidirectional playhead sync.
+- **体验清扫 (item 7):** docs/EXPERIENCE-AUDIT.md three-column ledger —
+  error triples (进不了项目/缺 ffmpeg/没选 take 等 8 个最高频报错改为
+  what/why/how-fix 中文), `_fail --json` now emits {"error","code"}
+  structured JSON across all 98 call sites, 3 stale MCP descriptions fixed,
+  export CLI failures now write structured failure records; the not-fixed
+  findings recorded honestly with pointers.
+
+**Honest boundaries:** skill efficacy is designed-for but unmeasured until a
+real agent drives real generations (the skill-authoring skill carries the
+baseline-vs-with-skill eval procedure); pooled per-clip playback (Tier 2)
+not shipped — Tier-1 plays the rendered final; series-layer surfaces are
+CLI-first this round (no series GUI page yet); the round-U user-side
+validations (paid vendor key, desktop draft opening, vision-free QC now
+covered by agent judgment) still stand where they stood.
+
+**Verified:** 1456 tests green consolidated (was 1263; +193); live smoke:
+skills index (14) + visual-qc-review resolution, series new/new-episode/
+status, funnel walk + /create rail + stage save landing on disk, cockpit
+/api blocks, /edit keymap + snap attr + synchints; CI green at every
+integration push.

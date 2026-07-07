@@ -158,6 +158,10 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju routing explain [<shot>] [--mode]` | U | per-shot: chosen provider, why (explicit/rule/tier/fallback), full order, est cost |
 | `manju exports [--json]` | U | 导出中心 status: 9 deliverables × 上新/待更新/缺失/有问题/待人工确认 + human verification log |
 | `manju director propose/confirm/run/suggest [--json]` | U | the six-step AI-director contract: propose → cost → confirm → execute → diff → next |
+| `manju skills [show <id>] [--json]` | V | the 14-skill expertise library: index cheap, full text on demand (project > user > bundled) |
+| `manju create [brief\|synopsis\|beats] [--force]` | V | the creation funnel: 立意→梗概→节拍→剧本→分镜→计划→生成 checklist + guided scaffolds |
+| `manju series new/new-episode/status/sync-bible/characters/split-script` | V | multi-episode umbrella: episodes are normal projects; global bible with conservative explicit sync |
+| `manju qc brief / qc verdict --from-file` | V | agent-eyes visual QC: frames+context out, hash-bound [AI判读] findings back into run_qc |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
