@@ -911,3 +911,54 @@ from_take; single gitops/doctor kept where three agents ported copies.
 **Verified:** 693 tests green consolidated (was 493); `manju gui` live-smoked
 (state/doctor/spend=sidecars/git panel/403s). Their R-line PROGRESS/DECISIONS
 /reports preserved verbatim under fork notes.
+
+---
+
+## 2026-07-07 — round S: the 11-item workbench goal — 7 agents, two waves
+
+**Item map (all 11 closed):**
+1. Provider management — `manju providers` group (scaffold templates per
+   adapter, offline probes + fix hints, enable/disable honored by the chain,
+   secret masking) + GUI providers page.
+2. First-run guidance — GUI onboarding checklist (6 steps, live
+   done-detection, per-user+project dismissal in ~/.manju/gui_state.json).
+3. Batch ops — redo_batch/voice_batch: ONE lock hold, ONE aggregated spend
+   gate, per-shot isolation, loud exclusions (manual/locked/off-state);
+   GUI multi-select + bulk bar. Batch select deliberately NOT built (a
+   selection is a per-take human judgment — recorded stance).
+4. Workbench completeness — docs/WORKBENCH.md capability matrix (the
+   deliberate CLI-only containment surface + CLI↔GUI map + six interaction
+   invariants); S8a filled the matrix rows: reorder, snapshot/rollback
+   buttons, tasks view, YAML editors w/ validate-on-save, new-project
+   dialog.
+5. Explanation before generation — GUI plan modal on EVERY generative job
+   (dry-run first: per-shot why/provider/est, routing-aware, 免费/本地 badge
+   on zero-cost; confirm passes assume_yes).
+6. Human visual QC — /review page: sequential queue, selected take large,
+   QC findings + frames, 好/弃/换用/重做/修(repair ops)/note, j/k/g/x/space
+   keyboard, progress meter; verdicts persist as take_notes (human truth).
+7. Reference reliability — providers/refs.py single resolver (tier lineage),
+   manifest refs: schema (base64/url/multipart; Runway data-URI vs Kling raw
+   base64 verified), real ComfyUI /upload/image, {video_ref}, pre-submit
+   validation (no paid call with a broken ref), ref_delivery in every
+   sidecar, tier-mismatch warnings.
+8. Asset library — core/library.py (~/.manju/library, content-addressed,
+   dedup, tags, thumbs) + `manju lib` + GUI library page (use-into-project
+   honors no-overwrite).
+9. Routing strategies — providers/routing.py: routing.yaml match rules +
+   4 built-in strategies + user strategies, explicit > rules > fallback
+   chain (absent file = byte-identical behavior, pinned), `route explain`,
+   GUI routing view + strategy picker.
+10. Failure clarity — core/failures.py structured records (step/subject/
+    cause/evidence/hint/log_path) wired through ffmpeg/providers/build/
+    voice/export + degradations as info; `manju failures` rustc-style,
+    status line, BuildResult.failures, ledger failure_id cross-ref; GUI
+    failure cards with retry.
+11. Version compare — build/compare.py per-shot diff (take/captions/audio/
+    packaging + why from events), final_vN.timeline.json persisted at
+    render (idempotency untouched), degraded pre-S path honest; `manju
+    compare` + GUI compare page w/ synced players.
+
+**Verified:** 867 tests green consolidated (was 693 pre-S; +174); all six
+GUI pages + plan/onboarding/failures live-smoked over real HTTP (POST guards
+verified working: token + DNS-rebinding 403s).

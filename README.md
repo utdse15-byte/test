@@ -139,6 +139,13 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju history [-n] [--json]` | P2 | merged change feed: events + git log, actor-attributed |
 | `manju snapshot [label]` | P2 | labeled git checkpoint of the truth text |
 | `manju rollback shot <id> \| file <path> [--to <ref>]` | P2 | scoped rollback; history only grows |
+| `manju providers list/add/check/enable/disable/show` | S | provider manifests: scaffold, offline probes, toggles; secrets never printed |
+| `manju route list/explain [--json]` | S | routing strategies (timeline/routing.yaml): which provider fires for a shot and why |
+| `manju redo --shots/--all-stale/--all-missing/--all [--yes]` | S | batch redo: one lock, one aggregated spend gate, per-shot isolation, loud skip reasons |
+| `manju voice --missing/--all/--shots` | S | batch voice for missing dialogue lines (stale voices stay advisory §4.3) |
+| `manju compare [a b] [--json]` | S | per-shot diff between finals: takes/captions/audio/packaging + why |
+| `manju lib add/list/show/use/rm` | S | private cross-project asset library (~/.manju/library, content-addressed, tags) |
+| `manju failures [-n] [--json]` | S | recent structured failures: step, cause, evidence, hint, log path |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
