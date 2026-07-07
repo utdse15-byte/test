@@ -89,7 +89,11 @@ class Project:
     def __init__(self, root: Path | str):
         self.root = Path(root).resolve()
         if not (self.root / PROJECT_FILE).exists():
-            raise ProjectError(f"not a manju project (no {PROJECT_FILE}): {self.root}")
+            raise ProjectError(
+                f"not a manju project (no {PROJECT_FILE}): {self.root} — 该目录缺少 "
+                f"{PROJECT_FILE}。确认路径指向 <名字>.manju 项目目录,或用 "
+                f"`manju new <名字>` 新建一个。"
+            )
 
     # ------------------------------------------------------------ discovery
 
@@ -99,7 +103,11 @@ class Project:
         for candidate in [p, *p.parents]:
             if (candidate / PROJECT_FILE).exists():
                 return cls(candidate)
-        raise ProjectError(f"no manju project found from {p} upward")
+        raise ProjectError(
+            f"no manju project found from {p} upward — 当前目录及其所有上级都没有 "
+            f"{PROJECT_FILE},所以这里不是 Manju 项目。请 cd 进某个 <名字>.manju "
+            f"目录再运行,或用 `manju new <名字>` 新建一个。"
+        )
 
     # ------------------------------------------------------------- creation
 

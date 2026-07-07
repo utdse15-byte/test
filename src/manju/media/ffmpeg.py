@@ -63,7 +63,28 @@ def run_ffmpeg(
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", *[str(a) for a in args]]
     if log is not None:
         log(_quote(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        # ffmpeg not on PATH — the #1 first-run blocker. Rewrite the raw
+        # OSError traceback into the what/why/how-to-fix triple (clig.dev:
+        # "catch errors and rewrite them for humans"), and record it too.
+        msg = (
+            "ffmpeg 没找到 (ffmpeg not on PATH) — Manju 靠 ffmpeg 合成与转码,"
+            "缺了它无法出片。安装后重试:macOS `brew install ffmpeg`;"
+            "Debian/Ubuntu `apt install ffmpeg`;Windows 从 ffmpeg.org 下载并加入 PATH。"
+            "装好用 `manju doctor` 复检。"
+        )
+        if project is not None:
+            try:
+                from ..core.failures import Failure, record_failure
+
+                record_failure(project, Failure(
+                    step=step, subject=subject or "ffmpeg", cause="ffmpeg 未安装或不在 PATH 上",
+                    evidence=_quote(cmd[:1]), hint="安装 ffmpeg 后 `manju doctor` 复检"))
+            except Exception:
+                pass
+        raise MediaError(msg)
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-_STDERR_TAIL:])
         if project is not None:

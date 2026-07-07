@@ -34,8 +34,10 @@ def _project(path: Optional[Path] = None) -> Project:
     try:
         return Project.find(path or Path.cwd())
     except ProjectError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
+        # Route through _fail so --json callers get the structured {"error": …}
+        # shape on this (the #1 first-run) error path too. code is stable.
+        _fail(str(exc), code="no_project")
+        raise  # unreachable (_fail raises), keeps the type checker happy
 
 
 def _emit(data, as_json: bool) -> None:
@@ -43,8 +45,38 @@ def _emit(data, as_json: bool) -> None:
         typer.echo(json.dumps(data, ensure_ascii=False, indent=2, default=str))
 
 
-def _fail(message: str) -> None:
-    typer.secho(message, fg=typer.colors.RED, err=True)
+def _fail(message: str, *, code: str = "error") -> None:
+    """Abort with a non-zero exit and a human error message.
+
+    When the running command was invoked with ``--json`` (every such command
+    binds it to a parameter named ``as_json``), emit the SAME error as a stable
+    ``{"error": …, "code": …}`` object on stdout instead of colored prose — so an
+    agent parsing ``--json`` output always gets structured JSON, whether the
+    command succeeded or failed (RFC 7807-style; §3e). ``code`` is a stable
+    machine token an agent can branch on; ``message`` stays the human line. The
+    caller frames are walked for the ``as_json`` local so no call site has to
+    thread it through.
+    """
+    # Discover whether the running command was invoked with --json. Every such
+    # command (and the helpers they delegate to) binds it to a local named
+    # ``as_json``; Typer does not push a Click context we can peek, so walk the
+    # caller frames and take the nearest ``as_json`` — robust and call-site-free.
+    as_json = False
+    try:
+        frame = sys._getframe(1)
+        depth = 0
+        while frame is not None and depth < 30:
+            if "as_json" in frame.f_locals:
+                as_json = bool(frame.f_locals["as_json"])
+                break
+            frame = frame.f_back
+            depth += 1
+    except Exception:
+        as_json = False
+    if as_json:
+        typer.echo(json.dumps({"error": message, "code": code}, ensure_ascii=False))
+    else:
+        typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(1)
 
 
@@ -300,7 +332,8 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
     dup_notes: list[str] = []      # duplicate-content advisories (media only)
     for f in files:
         if not f.exists():
-            _fail(f"not found: {f}")
+            _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"
+                  "(路径相对你运行命令的位置),再 `manju import <文件>` 重试。")
         if f.suffix.lower() in TEXT_IMPORT_SUFFIXES:
             # story/imports/<stem>.md — a text drop the agent adapts, not media.
             project.story_imports_dir.mkdir(parents=True, exist_ok=True)
@@ -509,8 +542,8 @@ def redo(
         return
 
     if shot_id is None:
-        _fail("redo: pass a shot id (`manju redo S002`) or a batch selector "
-              "(--all-stale / --all-missing / --all / --shots S001,S003)")
+        _fail("redo: 要重生成哪个镜头?给一个镜头 id(`manju redo S002`),"
+              "或用批量选择器 (--all-stale / --all-missing / --all / --shots S001,S003)。")
     try:
         takes = redo_shot(_project(), shot_id, candidates=candidates,
                           provider=provider, seed=seed, from_take=from_take,
@@ -558,9 +591,14 @@ def select(
         info = register_manual_take(project, shot_id, file)
         take = info.name
     if not take:
-        _fail("provide a take name or --file")
+        _fail(f"select: 没提供 take。{shot_id} 要选哪一条生成结果?"
+              f"传 take 名(`manju select {shot_id} <take>`),"
+              "或用 --file 把一个人工文件登记成 take 再选。")
     if project.get_take(shot_id, take) is None:
-        _fail(f"{shot_id} has no take '{take}'")
+        have = [t.name for t in project.takes(shot_id)]
+        avail = ("现有 takes:" + ", ".join(have)) if have else \
+            "该镜头还没有任何 take,先 `manju build` 或 `manju redo` 生成。"
+        _fail(f"{shot_id} has no take '{take}' — {avail}")
     project.update_shot_raw(
         shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", take)
     )
@@ -1149,32 +1187,47 @@ def export(
         srt = otio = True
     outputs: dict[str, Path] = {}
     notes: list[str] = []
-    if srt:
-        from .exporters.srt_ass import export_captions
+    # Which target we're building, so a mid-export failure names its subject in
+    # the structured record (goal 10) — the capcut path below records the same way.
+    _target = "timeline"
+    try:
+        if srt:
+            from .exporters.srt_ass import export_captions
 
-        outputs.update(export_captions(project, timeline))
-    if otio:
-        from .exporters.otio import export_otio
+            _target = "srt"
+            outputs.update(export_captions(project, timeline))
+        if otio:
+            from .exporters.otio import export_otio
 
-        outputs["otio"] = export_otio(project, timeline)
-    if jianying:
-        from .exporters.jianying import export_jianying
-        from .exporters.native_draft import (
-            ExporterUnavailable,
-            capcut_cli_lint,
-            export_jianying_native,
-        )
+            _target = "otio"
+            outputs["otio"] = export_otio(project, timeline)
+        if jianying:
+            from .exporters.jianying import export_jianying
+            from .exporters.native_draft import (
+                ExporterUnavailable,
+                capcut_cli_lint,
+                export_jianying_native,
+            )
 
-        outputs["jianying"] = export_jianying(project, timeline)  # skeleton + lint
-        try:
-            outputs["jianying_native"] = export_jianying_native(project, timeline)
-        except ExporterUnavailable as exc:
-            notes.append(f"jianying_native skipped: {exc}")
-        lint = capcut_cli_lint(outputs["jianying"].parent)
-        if lint is None:
-            notes.append("capcut-cli not installed — secondary lint skipped (own lint ran)")
-        elif lint:
-            notes.extend(f"capcut-cli lint: {p}" for p in lint[:10])
+            _target = "jianying"
+            outputs["jianying"] = export_jianying(project, timeline)  # skeleton + lint
+            try:
+                outputs["jianying_native"] = export_jianying_native(project, timeline)
+            except ExporterUnavailable as exc:
+                notes.append(f"jianying_native skipped: {exc}")
+            lint = capcut_cli_lint(outputs["jianying"].parent)
+            if lint is None:
+                notes.append("capcut-cli not installed — secondary lint skipped (own lint ran)")
+            elif lint:
+                notes.extend(f"capcut-cli lint: {p}" for p in lint[:10])
+    except (OSError, RuntimeError) as exc:
+        # MediaError and ProjectError both subclass RuntimeError, so this covers
+        # every exporter fault. Record it with cause/evidence/hint before aborting
+        # — matches the capcut path so every export exit is debuggable, not a trace.
+        _record_failure(project, "export", _target, f"{_target} 导出失败",
+                        evidence=" ".join(str(exc).split())[:400],
+                        hint="核对 timeline.json 是否完整;或换 --srt/--otio 兜底出口(§14)")
+        _fail(f"export failed ({_target}): {exc}")
     if capcut:
         from .exporters.native_draft import ExporterUnavailable, export_capcut_native
 
@@ -1397,7 +1450,8 @@ def prompt(
         return
 
     if shot_id is None:
-        _fail("prompt: pass a shot id (`manju prompt S001`) or --check")
+        _fail("prompt: 要看哪个镜头的提示词?给一个镜头 id(`manju prompt S001`),"
+              "或用 --check 一次性 lint 所有镜头。")
     from .build.promptlab import shot_prompt_bundle
 
     try:
@@ -1495,11 +1549,12 @@ def voice(
         return
 
     if shot_id is None:
-        _fail("voice: pass a shot id (`manju voice S002`) or a batch selector "
-              "(--missing / --all / --shots S001,S003)")
+        _fail("voice: 要给哪个镜头配音?给一个镜头 id(`manju voice S002`),"
+              "或用批量选择器 (--missing / --all / --shots S001,S003)。")
     shot = project.load_shot(shot_id)
     if not shot.dialogue.text:
-        _fail(f"{shot_id} has no dialogue.text to voice")
+        _fail(f"{shot_id} has no dialogue.text to voice — 该镜头没有台词,配音无从下手。"
+              f"在 shots/{shot_id}.yaml 里写 dialogue.text,再运行 `manju voice {shot_id}`。")
     try:
         tts = get_tts_provider(provider)
         manifest = getattr(tts, "manifest", None)

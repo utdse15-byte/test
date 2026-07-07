@@ -415,8 +415,8 @@ Handler = Callable[[Project, dict], dict]
 TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "status",
-        "description": "Project status snapshot — phase, per-state shot counts, "
-        "timeline, latest final, QC summary, spend, and a suggested next step (§10).",
+        "description": "Project status snapshot — project/preset/mode, per-state shot "
+        "counts, timeline, latest final, QC summary, spend, and a suggested next step (§10).",
         "inputSchema": _EMPTY_SCHEMA,
         "handler": _h_status,
     },
@@ -546,13 +546,20 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "{shot, take, criterion, level(blocker|issue|fyi), message(中文), "
         "evidence, frame_ms?}. Next `qc` pass surfaces matching verdicts as "
         "[AI判读] items (blocker→error/issue→warn/fyi→info); a regenerated take "
-        "makes its old verdicts stale. Unknown shot is rejected.",
+        "makes its old verdicts stale. Unknown shot is rejected. Instead of "
+        "`verdicts` inline, pass `from_file` (a project-relative path to a JSON "
+        "file holding the same payload).",
         "inputSchema": _schema(
             {
                 "verdicts": {
                     "type": "array",
                     "items": {"type": "object"},
                     "description": "verdict objects; each needs shot + level",
+                },
+                "from_file": {
+                    "type": "string",
+                    "description": "project-relative path to a JSON verdicts file "
+                    "(alternative to inline `verdicts`)",
                 },
             }
         ),
@@ -651,9 +658,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "director_suggest",
         "description": "SUGGEST NEXT (goal 17, step 6, standalone): deterministic "
-        "next-step nudges from the existing signals (stale→redo, QC→repair, "
-        "missing→generate, budget→remind). Each carries a ready-made action "
-        "payload you can pass straight to director_propose. Read-only.",
+        "next-step nudges from the existing signals (funnel-first→write, "
+        "missing→generate, stale→redo, needs_selection→select, QC→repair, "
+        "budget→remind). MOST carry a ready-made action payload you can pass "
+        "straight to director_propose; some (funnel/select/budget) are "
+        "advisory-only with `action: null`. Read-only.",
         "inputSchema": _EMPTY_SCHEMA,
         "handler": _h_director_suggest,
     },
