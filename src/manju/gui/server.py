@@ -487,6 +487,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-U 分镜工作台 storyboard table — see _storyboard_get
             elif self._lab_get(path, url):
                 pass  # round-U 镜头实验室 shot lab — see _lab_get
+            elif self._create_get(path, url):
+                pass  # round-V 创作 creation funnel workspace — see _create_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -564,6 +566,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._storyboard_post(path, body):  # round-U 分镜工作台 actions
                     return
                 if self._lab_post(path, body):  # round-U 镜头实验室 shot lab actions
+                    return
+                if self._create_post(path, body):  # round-V 创作 funnel actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -3930,3 +3934,108 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(" ".join(str(exc).split()), 409)
             return
         self._send_json({"ok": True, **proposal.model_dump()})
+
+    # =================================================================
+    # round-V 创作 CREATE (goal item 2 GUI half): the creation funnel as a
+    # product surface — the stage rail (build/funnel.funnel_status), the
+    # current stage's textarea workspace over story/*.md, the skill modal, and
+    # a read-only echo of the director's proposals (approve stays on /director).
+    # Isolated GET/POST region, same token/readonly/host gates as every other
+    # surface (checked in do_GET/do_POST before us). This page NEVER calls an
+    # LLM and adds no engine machinery — a strict client of build/funnel.py +
+    # the same story writes the CLI/agent make.
+    # =================================================================
+
+    def _create_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for /create + its static/read assets. Returns True when
+        handled (response already sent), False so do_GET falls through to 404."""
+        from . import create_page
+
+        if path == "/create.css":
+            self._send_text(create_page.render_create_css(),
+                            "text/css; charset=utf-8")
+            return True
+        if path == "/create.js":
+            self._send_text(create_page.render_create_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path in create_page.PAGE_PATHS_CREATE:
+            html_doc = create_page.render(path, self.server.project,
+                                          self.server.token, parse_qs(url.query))
+            self._send_text(html_doc, "text/html; charset=utf-8",
+                            extra=self._PAGES_CSP)
+            return True
+        if path == "/api/create/state":
+            self._send_json(create_page.create_payload(self.server.project))
+            return True
+        if path == "/api/create/skill":
+            sid = (parse_qs(url.query).get("id") or [""])[0]
+            try:
+                self._send_json(
+                    create_page.skill_payload(self.server.project, sid))
+            except KeyError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 404)
+            return True
+        return False
+
+    def _create_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 创作 funnel actions. Same token/readonly gates
+        as every other mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/create/save": self._act_create_save,
+            "/api/create/scaffold": self._act_create_scaffold,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_create_save(self, body: dict[str, Any]) -> None:
+        """Write a pre-storyboard story file VERBATIM (atomic) + record an event
+        — the same path-checked, allow-listed write captions_edit/bible editors
+        use. The stage id keys a FIXED story-relpath map (from the funnel), so a
+        path-escape attempt is simply an unknown stage; ``project.resolve`` is a
+        second containment guard."""
+        from ..core.yamlio import atomic_write_text
+        from .create_page import stage_files
+
+        stage = str(body.get("stage") or "")
+        text = body.get("text")
+        if not isinstance(text, str):
+            self._send_error_json("text must be a string", 400)
+            return
+        relpath = stage_files().get(stage)
+        if relpath is None:
+            self._send_error_json(
+                f"unknown stage {stage!r} — 只能编辑 {'/'.join(stage_files())}", 400)
+            return
+        project = self.server.project
+        try:
+            path = project.resolve(relpath)  # defense in depth: refuse escapes
+        except ProjectError:
+            self._send_error_json("path not served", 403)
+            return
+        with self.server.quick_mutex:
+            created = not path.exists()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(path, text if text.endswith("\n") else text + "\n")
+            append_event(project.root, self.server.actor, "funnel_edit",
+                         {"stage": stage, "path": relpath, "created": created,
+                          "via": "gui"})
+        self._send_json({"ok": True, "stage": stage, "path": relpath,
+                         "created": created})
+
+    def _act_create_scaffold(self, body: dict[str, Any]) -> None:
+        """Scaffold a stage template — the SAME :func:`funnel.scaffold_stage`
+        the CLI ``manju create <stage>`` calls (never a forked template)."""
+        from ..build.funnel import FunnelError, scaffold_stage
+
+        stage = str(body.get("stage") or "")
+        force = bool(body.get("force"))
+        try:
+            result = scaffold_stage(self.server.project, stage, force=force,
+                                    actor=self.server.actor)
+        except FunnelError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        self._send_json({"ok": True, **result})

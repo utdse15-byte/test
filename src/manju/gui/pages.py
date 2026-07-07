@@ -62,6 +62,7 @@ STRATEGY_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 
 _NAV = (
     ("/", "工作台"),
+    ("/create", "创作"),
     ("/storyboard", "分镜"),
     ("/director", "导演"),
     ("/lab", "镜头实验室"),
