@@ -64,6 +64,7 @@ _NAV = (
     ("/", "工作台"),
     ("/storyboard", "分镜"),
     ("/director", "导演"),
+    ("/lab", "镜头实验室"),
     ("/edit", "剪辑"),
     ("/review", "审片"),
     ("/subtitles", "字幕"),

@@ -481,6 +481,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-U 新手/专业 + glossary chrome assets — see _modes_get
             elif self._storyboard_get(path, url):
                 pass  # round-U 分镜工作台 storyboard table — see _storyboard_get
+            elif self._lab_get(path, url):
+                pass  # round-U 镜头实验室 shot lab — see _lab_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -556,6 +558,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._modes_post(path, body):  # round-U mode + glossary toggles
                     return
                 if self._storyboard_post(path, body):  # round-U 分镜工作台 actions
+                    return
+                if self._lab_post(path, body):  # round-U 镜头实验室 shot lab actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -2616,6 +2620,348 @@ class _Handler(BaseHTTPRequestHandler):
                 locked_ids.append(sid)
         self._send_json({"ok": True, "field": field, "locked": len(locked_ids),
                          "shots": locked_ids, "skipped": skipped})
+
+    # =================================================================
+    # round-U 镜头实验室 SHOT LAB (goal item 13): the single-shot experiment
+    # page. Own dispatch region — the /lab three-panel page (参考 / 提示词 /
+    # 候选), its read-only data + cost-delta endpoints, and the five mutating
+    # actions (refs / prompt_override / scaffold / generate / save-ref). Every
+    # priced action goes through the EXISTING redo/jobs path; every spec write
+    # respects locks (§5); the panels read the SAME code the CLI (prompt/refs)
+    # and the build use (src/manju/gui/lab_page.py).
+    # =================================================================
+
+    def _lab_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the 镜头实验室 page + its static/read endpoints.
+        Returns True when handled (response already sent)."""
+        from . import lab_page
+
+        if path == "/lab.css":
+            self._send_text(lab_page.render_lab_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/lab.js":
+            self._send_text(lab_page.render_lab_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path == lab_page.PAGE_PATH:
+            html_doc = lab_page.render(self.server.project, self.server.token,
+                                       parse_qs(url.query))
+            self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
+            return True
+        if path == "/api/lab/data":
+            shot_id = (parse_qs(url.query).get("shot") or [""])[0]
+            try:
+                self._send_json(lab_page.lab_data(self.server.project, shot_id))
+            except ProjectError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 404)
+            return True
+        if path == "/api/lab/generate-plan":
+            q = parse_qs(url.query)
+            shot_id = (q.get("shot") or [""])[0]
+            provider = (q.get("provider") or [None])[0]
+            try:
+                self._send_json(lab_page.generate_plan(
+                    self.server.project, shot_id, provider))
+            except ProjectError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 404)
+            except (ValueError, KeyError) as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+            return True
+        return False
+
+    def _lab_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 镜头实验室 mutating actions. Same token/readonly
+        gates as every other mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/lab/refs": self._act_lab_refs,
+            "/api/lab/prompt-override": self._act_lab_prompt_override,
+            "/api/lab/scaffold": self._act_lab_scaffold,
+            "/api/lab/generate": self._act_lab_generate,
+            "/api/lab/save-ref": self._act_lab_save_ref,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    @staticmethod
+    def _coerce_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
+        """Get-or-create ``parent[key]`` as a dict (defensive against a malformed
+        truth file where the field is a scalar/list — never crash a write)."""
+        val = parent.get(key)
+        if not isinstance(val, dict):
+            val = {}
+            parent[key] = val
+        return val
+
+    def _act_lab_refs(self, body: dict[str, Any]) -> None:
+        """Reorder / pick the shot's OWN refs — writes ``generation.params.refs``
+        through the normal spec path, lock-respecting (409 + 中文 on a sealed
+        field, §5). The panel shows the full resolved lineage read-only; this
+        action edits only the explicit param slot the director controls."""
+        from . import lab_page
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        refs = body.get("refs")
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs):
+            self._send_error_json("refs must be a list of strings", 400)
+            return
+        refs = [r.strip() for r in refs if r.strip()]
+        with self.server.quick_mutex:
+            raw = project.load_shot_raw(shot_id)
+            locker = lab_page.field_locked(raw, "generation.params.refs")
+            if locker:
+                self._send_error_json(
+                    f"generation.params.refs 已锁定(§5):字段 {locker} 已封存,"
+                    "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
+                return
+
+            def mutate(d: dict[str, Any]) -> None:
+                params = self._coerce_dict(self._coerce_dict(d, "generation"), "params")
+                if refs:
+                    params["refs"] = refs
+                else:
+                    params.pop("refs", None)
+
+            project.update_shot_raw(shot_id, mutate)
+            append_event(project.root, actor, "edit_shot",
+                         {"shot": shot_id, "field": "generation.params.refs",
+                          "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "refs": refs})
+
+    def _act_lab_prompt_override(self, body: dict[str, Any]) -> None:
+        """Edit ``generation.prompt_override`` inline — the exact string the model
+        receives. Lock-respecting (409 + 中文 on a sealed field, §5). Empty text
+        clears the override (falls back to the compiled prompt)."""
+        from . import lab_page
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        text = "" if body.get("text") is None else str(body.get("text"))
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        if len(text) > 5000:
+            self._send_error_json("prompt_override too long (max 5000 chars)", 400)
+            return
+        with self.server.quick_mutex:
+            raw = project.load_shot_raw(shot_id)
+            locker = lab_page.field_locked(raw, "generation.prompt_override")
+            if locker:
+                self._send_error_json(
+                    f"generation.prompt_override 已锁定(§5):字段 {locker} 已封存,"
+                    "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
+                return
+
+            def mutate(d: dict[str, Any]) -> None:
+                gen = self._coerce_dict(d, "generation")
+                if text.strip():
+                    gen["prompt_override"] = text
+                else:
+                    gen.pop("prompt_override", None)
+
+            project.update_shot_raw(shot_id, mutate)
+            append_event(project.root, actor, "edit_shot",
+                         {"shot": shot_id, "field": "generation.prompt_override",
+                          "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "chars": len(text.strip())})
+
+    def _act_lab_scaffold(self, body: dict[str, Any]) -> None:
+        """按关键帧拆分 — apply a deterministic action breakdown into the shot's
+        ``keyframes`` (the SAME scaffold path `manju board keyframes --scaffold`
+        uses). Only this explicit apply writes; the page's preview never does.
+        Refuses (409) when ``keyframes`` is sealed (§5)."""
+        from ..media.boards import (
+            KeyframeScaffoldError,
+            breakdown_action,
+            scaffold_keyframes,
+        )
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        try:
+            n = int(body.get("n", 4))
+        except (TypeError, ValueError):
+            self._send_error_json("n must be an integer (2..9)", 400)
+            return
+        if n < 2 or n > 9:
+            self._send_error_json("n must be between 2 and 9", 400)
+            return
+        try:
+            shot = project.load_shot(shot_id)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        action = (shot.action.main or "").strip() or (shot.generation.prompt_override or "")
+        beats = breakdown_action(action, n)
+        with self.server.quick_mutex:
+            try:
+                kfs = scaffold_keyframes(project, shot_id, beats)
+            except KeyframeScaffoldError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 409)
+                return
+            append_event(project.root, actor, "board_keyframes",
+                         {"shot": shot_id, "beats": n, "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "keyframes": kfs})
+
+    def _act_lab_generate(self, body: dict[str, Any]) -> None:
+        """生成候选 — run the EXISTING single-shot redo on the jobs runner with the
+        quality-resolved 生成来源 and the same §8.3 spend gate (assume_yes). The
+        草稿/成片 toggle resolves to a provider via the UE build-mode else-bias, so
+        the priced provider (generate-plan) and the run provider are identical.
+        A priced run without ``assume_yes`` fails the job as ``waiting_user`` —
+        never a silent spend."""
+        from . import lab_page
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        quality = str(body.get("quality") or "draft")
+        explicit = body.get("provider") or None
+        assume_yes = bool(body.get("assume_yes"))
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        if quality not in lab_page.QUALITY_MODES:
+            self._send_error_json("quality must be 'draft' or 'final'", 400)
+            return
+        try:
+            shot = project.load_shot(shot_id)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        provider = lab_page.resolve_quality_provider(
+            project, shot, quality, str(explicit) if explicit else None)
+        params = {"shot": shot_id, "quality": quality, "provider": provider,
+                  "assume_yes": assume_yes}
+
+        def fn(job) -> dict[str, Any]:
+            import inspect
+
+            from ..build.graph import redo_shot
+
+            kwargs: dict[str, Any] = dict(
+                provider=str(provider) if provider else None, actor=actor)
+            if "assume_yes" in inspect.signature(redo_shot).parameters:
+                kwargs["assume_yes"] = assume_yes
+            takes = redo_shot(project, shot_id, **kwargs)
+            return {"shot": shot_id, "quality": quality, "provider": provider,
+                    "takes": takes}
+
+        job = self.server.runner.submit("redo", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_lab_save_ref(self, body: dict[str, Any]) -> None:
+        """存为参考 — extract a frame of a chosen take (frames.extract_frame) and
+        save it either into the shot's refs (durable copy into media/refs +
+        ``generation.params.refs`` spec write, lock-respecting) or into the user
+        asset library (core.library). The user picks which via ``dest``."""
+        import shutil
+
+        from . import lab_page
+        from ..media.ffmpeg import MediaError
+        from ..media.frames import extract_frame
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        take = str(body.get("take") or "")
+        dest = str(body.get("dest") or "refs")
+        if not shot_id or not take:
+            self._send_error_json("shot and take are required", 400)
+            return
+        if dest not in ("refs", "library"):
+            self._send_error_json("dest must be 'refs' or 'library'", 400)
+            return
+        try:
+            at_ms = max(0, int(body.get("at_ms", 0)))
+        except (TypeError, ValueError):
+            self._send_error_json("at_ms must be an integer (ms)", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        t = project.get_take(shot_id, take)
+        if t is None or t.media_path is None:
+            self._send_error_json(f"{shot_id} has no take '{take}' with media", 404)
+            return
+        try:
+            frame = extract_frame(project, project.relpath(t.media_path), at_ms)
+        except MediaError as exc:
+            self._send_error_json(f"截帧失败: {' '.join(str(exc).split())}", 400)
+            return
+
+        if dest == "library":
+            from ..core.library import Library, LibraryError
+
+            try:
+                result = Library().add(
+                    frame, tags=[shot_id, take, "frame"],
+                    note=f"{shot_id}/{take} @ {at_ms}ms")
+            except LibraryError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+                return
+            entry = result["entry"]
+            append_event(project.root, actor, "lib_add",
+                         {"shot": shot_id, "take": take, "hash": entry["hash"],
+                          "via": "gui"})
+            self._send_json({"ok": True, "dest": "library",
+                             "hash": entry["hash"], "name": entry["name"],
+                             "deduped": result["deduped"]})
+            return
+
+        # dest == "refs": the frame cache is disposable (§3, `manju gc` wipes it),
+        # so copy it into media/refs (a durable project asset) before declaring it.
+        with self.server.quick_mutex:
+            raw = project.load_shot_raw(shot_id)
+            locker = lab_page.field_locked(raw, "generation.params.refs")
+            if locker:
+                self._send_error_json(
+                    f"generation.params.refs 已锁定(§5):字段 {locker} 已封存,"
+                    "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
+                return
+            refs_dir = project.refs_dir
+            refs_dir.mkdir(parents=True, exist_ok=True)
+            base = f"{shot_id}_{take}_{at_ms}ms"
+            dest_path = refs_dir / f"{base}.jpg"
+            k = 2
+            while dest_path.exists():  # never overwrite an existing ref (§3)
+                dest_path = refs_dir / f"{base}_{k}.jpg"
+                k += 1
+            shutil.copy2(frame, dest_path)
+            ref_rel = project.relpath(dest_path)
+
+            def mutate(d: dict[str, Any]) -> None:
+                params = self._coerce_dict(self._coerce_dict(d, "generation"), "params")
+                cur = params.get("refs")
+                lst = list(cur) if isinstance(cur, list) else (
+                    [cur] if isinstance(cur, str) and cur else [])
+                if ref_rel not in lst:
+                    lst.append(ref_rel)
+                params["refs"] = lst
+
+            project.update_shot_raw(shot_id, mutate)
+            append_event(project.root, actor, "save_ref",
+                         {"shot": shot_id, "take": take, "ref": ref_rel,
+                          "dest": "refs", "via": "gui"})
+        self._send_json({"ok": True, "dest": "refs", "ref": ref_rel})
 
     def _act_edit_trim(self, body: dict[str, Any]) -> None:
         """Trim a take's in/out — the `manju repair --op inout` engine op run as
