@@ -62,6 +62,7 @@ def project_fingerprint(project: "Project", runner: "JobRunner") -> str:
     feed_dir(project.root / "bible", "*.yaml")
     feed_dir(project.root / "timeline")
     feed_file(project.reports_dir / "qc.json")
+    feed_file(project.reports_dir / "failures.jsonl")  # new failures poll live
     feed_dir(project.final_dir, "final_v*.mp4")
     feed_dir(project.proxy_dir)
     feed_dir(project.proposals_dir, "*.md")
@@ -225,6 +226,19 @@ def _qc_summary(project: "Project") -> dict[str, Any] | None:
     }
 
 
+def _failures(project: "Project") -> list[dict[str, Any]]:
+    """Recent structured failures (goal 10), newest first, for the header-
+    adjacent 失败 cards. Full records — evidence/hint/log_path included — so
+    a card expands without a second fetch; rides the state poll (failures.jsonl
+    is in the fingerprint). Read-only and best-effort."""
+    try:
+        from ..core.failures import read_failures
+
+        return read_failures(project, n=30)
+    except Exception:
+        return []
+
+
 def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
     status = project_status(project)
     config = project.load_config()
@@ -272,6 +286,7 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
         "latest_final_note": status.get("latest_final_note"),
         "build_lock": status.get("build_lock"),
         "qc": _qc_summary(project),
+        "failures": _failures(project),
         "shots": _shot_cards(project),
         "events": tail_events(project.root, _EVENTS_TAIL),
         "jobs": [j.to_dict() for j in runner.list()],

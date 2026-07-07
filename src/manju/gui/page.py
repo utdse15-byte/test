@@ -589,6 +589,113 @@ button.fchip { cursor: pointer; }
 /* ---- R14: events 更多 (show more) ---- */
 .ev-more { margin-top: .6rem; }
 
+/* ---------------------------------------- S8a: onboarding checklist ---- */
+#onboarding { border-left: 3px solid var(--accent); }
+.ob-head { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+.ob-head h2 { margin: 0; border: 0; padding: 0; flex: 1; min-width: 12rem; }
+.ob-prog { color: var(--muted); font-size: .82rem; font-variant-numeric: tabular-nums; }
+.ob-intro { color: var(--muted); font-size: .86rem; margin: .3rem 0 .7rem; }
+.ob-step {
+  display: flex; align-items: baseline; gap: .6rem; padding: .45rem .2rem;
+  border-top: 1px solid var(--line);
+}
+.ob-mark { font-size: .95rem; width: 1.3rem; flex: none; }
+.ob-step.done .ob-mark { color: var(--ok); }
+.ob-step.todo .ob-mark { color: var(--muted); }
+.ob-main { flex: 1; min-width: 0; }
+.ob-title { font-weight: 700; font-size: .9rem; }
+.ob-step.done .ob-title { color: var(--muted); font-weight: 400; }
+.ob-hint { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
+.ob-cli {
+  font-family: var(--mono); font-size: .78rem; color: #cfe3ff; background: #202b40;
+  border-radius: 4px; padding: .05rem .4rem; margin-top: .25rem; display: inline-block;
+  word-break: break-all;
+}
+
+/* ---------------------------------------------- S8a: failure cards ----- */
+#failures { border-left: 3px solid var(--err); }
+.fail-head { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
+.fail-head h2 { margin: 0; border: 0; padding: 0; }
+.fail-card {
+  border: 1px solid var(--line); border-radius: 8px; margin-top: .5rem;
+  background: var(--panel2); overflow: hidden;
+}
+.fail-card.err { border-color: #5a2b2e; }
+.fail-sum {
+  display: flex; align-items: baseline; gap: .55rem; padding: .45rem .65rem;
+  cursor: pointer; flex-wrap: wrap;
+}
+.fail-sum:hover { background: #262a33; }
+.fail-arrow { color: var(--muted); width: 1rem; flex: none; }
+.fail-step {
+  font-family: var(--mono); font-size: .74rem; border-radius: 999px;
+  padding: .02rem .5rem; border: 1px solid var(--line);
+}
+.fail-card.err .fail-step { color: var(--err); border-color: #5a2b2e; }
+.fail-card.info .fail-step { color: var(--muted); }
+.fail-subj { font-weight: 700; font-size: .84rem; }
+.fail-cause { color: var(--muted); font-size: .84rem; }
+.fail-body { padding: 0 .65rem .6rem 1.65rem; }
+.fail-ev {
+  font-family: var(--mono); font-size: .76rem; white-space: pre-wrap;
+  background: #14161a; border: 1px solid var(--line); border-radius: 6px;
+  padding: .45rem .6rem; margin: .35rem 0; max-height: 15rem; overflow: auto;
+  word-break: break-word;
+}
+.fail-hint { color: #cfe3ff; font-size: .82rem; margin: .25rem 0; }
+.fail-meta { color: var(--muted); font-size: .76rem; margin: .15rem 0; word-break: break-all; }
+
+/* --------------------------------------------- S8a: plan modal (§4.4) -- */
+.planmodal { max-width: 720px; }
+.pm-head h3 { margin: 0 0 .3rem; }
+.pm-badge {
+  display: inline-block; font-size: .78rem; border-radius: 999px;
+  padding: .1rem .6rem; margin-bottom: .5rem; border: 1px solid var(--line);
+}
+.pm-badge.free { color: var(--ok); border-color: #2f5a43; background: #14261d; }
+.pm-badge.spendy { color: var(--star); border-color: #6b5518; background: #4a3a12; }
+.pm-total { margin-top: .6rem; font-size: .88rem; display: flex; gap: .8rem; flex-wrap: wrap; }
+.pm-saved { color: var(--ok); }
+.pm-skip { margin-top: .3rem; }
+.pm-skiprow { display: flex; gap: .5rem; align-items: baseline; padding: .15rem 0; font-size: .82rem; }
+.pm-err { color: var(--err); font-size: .86rem; }
+.planmodal h4 { margin: .7rem 0 .2rem; font-size: .84rem; color: var(--muted); }
+.btn.confirm { background: var(--star); color: #2a2000; }
+
+/* --------------------------------------------- S8a: batch select bar --- */
+.shot-check { accent-color: var(--accent); width: 1.05rem; height: 1.05rem; cursor: pointer; }
+.batchbar {
+  position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
+  z-index: 80; background: var(--panel2); border: 1px solid var(--accent);
+  border-radius: 999px; padding: .45rem .9rem; display: flex; gap: .6rem;
+  align-items: center; box-shadow: 0 10px 30px rgba(0, 0, 0, .6);
+}
+.batchbar.hidden { display: none; }
+.bb-count { font-weight: 700; font-size: .86rem; }
+.bb-res { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .3rem; }
+.bb-res .badge { font-size: .74rem; }
+
+/* -------------------------------------------------- S8a: tasks panel --- */
+.tk-row {
+  display: flex; gap: .6rem; align-items: baseline; padding: .3rem 0;
+  border-top: 1px solid var(--line); font-size: .82rem; flex-wrap: wrap;
+}
+.tk-id { font-family: var(--mono); color: var(--muted); }
+.tk-reason { color: var(--err); font-size: .78rem; width: 100%; padding-left: 1rem; }
+.badge.tk-succeeded { color: var(--ok); }
+.badge.tk-failed, .badge.tk-moderation-rejected { color: var(--err); }
+.badge.tk-polling { color: var(--star); }
+
+/* ------------------------------------------ S8a: git snapshot/rollback - */
+.snap-row { display: flex; gap: .5rem; align-items: center; margin: .5rem 0; flex-wrap: wrap; }
+.snap-input {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .3rem .5rem; font-family: inherit; font-size: .82rem;
+  flex: 1; min-width: 8rem;
+}
+.gs-rollback { margin-left: auto; }
+.btn.tiny.gs-rollback { padding: .04rem .45rem; }
+
 @media (max-width: 900px) {
   .cmp-videos { grid-template-columns: 1fr; }
 }
@@ -820,6 +927,7 @@ _JS = r"""
       gitStale = true;   /* … and touched the working tree */
       propStale = true;  /* … and an agent may have filed a proposal */
       if (gitOpen) fetchGitPanel();
+      if (tasksOpen) fetchTasks();   /* a done job likely wrote a ledger row */
     }
     lastDoneCount = doneCount;
     if (lastFp !== estSeenFp && !anyActive) {
@@ -833,8 +941,11 @@ _JS = r"""
       () => renderHeader(s));
     section("jobs", jobs, () => renderJobs(jobs));
     section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
+    section("failures", [s.failures, s.shots], () => renderFailures(s.failures || []));
     section("qc", s.qc, () => renderQC(s.qc));
     section("events", s.events, () => renderEvents(s.events || []));
+    renderBatchBar();   /* selection survives polls; bar follows current shots */
+    maybeOnboarding(s); /* auto-show once for an empty-ish, undismissed project */
     renderSpend(jobs);  /* §8.3 waiting_user banner in the build panel */
     updateReviewChip(); /* 未阅 N follows the fresh shots + localStorage mark */
     maybeTimeline(s);   /* async, self-contained: a 500 there never cascades */
@@ -883,6 +994,13 @@ _JS = r"""
     if (s.workspace && typeof s.workspace === "object") {
       chips.appendChild(workspaceChip(s.workspace));
     }
+    /* re-open the first-run checklist any time (Linear/Notion pattern: the
+     * onboarding guide is always one click away, never only at first run) */
+    const help = el("button", "chip", "帮助 · 新手引导 (guide)");
+    help.type = "button";
+    help.title = "打开新手引导清单 (open the onboarding checklist)";
+    help.addEventListener("click", () => openOnboarding());
+    chips.appendChild(help);
     top.appendChild(chips);
     root.appendChild(top);
 
@@ -1002,6 +1120,19 @@ _JS = r"""
           }
           menu.appendChild(item);
         });
+        /* new-project dialog lives in the switcher (S8a): create a sibling
+         * project via the same core `manju new` calls, then switch to it */
+        if (!readonly) {
+          const np = el("button", "ws-item ws-new");
+          np.type = "button";
+          np.appendChild(el("span", null, "＋ 新建项目 (New project)"));
+          np.addEventListener("click", (ev2) => {
+            ev2.stopPropagation();
+            menu.classList.add("hidden");
+            openNewProjectDialog();
+          });
+          menu.appendChild(np);
+        }
       } catch (err) {
         clear(menu);
         menu.appendChild(el("div", "muted ws-item",
@@ -1069,6 +1200,104 @@ _JS = r"""
     });
     spendSig = null;
     if (spendBox) clear(spendBox);
+    obShownFor = null;   /* re-evaluate onboarding auto-show for the new project */
+    obForce = false;
+    batchSel.clear();    /* selection is per-project */
+    renderBatchBar();
+    tasksLoaded = false;
+    if (tasksOpen && tasksBody) { clear(tasksBody); fetchTasks(); }
+  }
+
+  /* new-project dialog (S8a) — reuses the #editor <dialog> as a generic modal
+   * (its close handler resumes the poll loop). Name + preset (from `manju
+   * presets`) + orientation; the server creates a sibling and switches to it. */
+  async function openNewProjectDialog() {
+    const dlg = $("editor");
+    clear(dlg);
+    const head = el("div", "ed-head");
+    head.appendChild(el("h3", null, "新建项目 (new project)"));
+    dlg.appendChild(head);
+    dlg.appendChild(el("p", "muted ed-hint",
+      "在工作区里新建一个同级项目 (a sibling project);与 CLI `manju new` 同一套核心。"));
+
+    const nameL = el("label", "ctl", "名称 (name) ");
+    const name = document.createElement("input");
+    name.type = "text";
+    name.className = "snap-input";
+    name.placeholder = "my_film";
+    name.maxLength = 80;
+    nameL.appendChild(name);
+    dlg.appendChild(nameL);
+
+    const orientL = el("label", "ctl", "画幅 (orientation) ");
+    const orient = document.createElement("select");
+    [["vertical", "竖屏 9:16 (vertical)"], ["horizontal", "横屏 16:9 (horizontal)"]]
+      .forEach((pair) => {
+        const o = document.createElement("option");
+        o.value = pair[0];
+        o.textContent = pair[1];
+        orient.appendChild(o);
+      });
+    orientL.appendChild(orient);
+    dlg.appendChild(orientL);
+
+    const presetL = el("label", "ctl", "预设 (preset) ");
+    const preset = document.createElement("select");
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "无 / generic (none)";
+    preset.appendChild(none);
+    presetL.appendChild(preset);
+    dlg.appendChild(presetL);
+
+    const errBox = el("div", "ed-errors");
+    dlg.appendChild(errBox);
+    const row = el("div", "btnrow ed-btnrow");
+    const create = el("button", "btn", "创建 (Create)");
+    create.type = "button";
+    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => closeEditor());
+    create.addEventListener("click", async () => {
+      const nm = name.value.trim();
+      if (!nm) { toast("请输入名称 (name required)", "warn"); name.focus(); return; }
+      create.disabled = true;
+      cancel.disabled = true;
+      clear(errBox);
+      try {
+        const body = { name: nm, vertical: orient.value !== "horizontal" };
+        if (preset.value) body.preset = preset.value;
+        const d = await api("POST", "/api/new-project", body);
+        toast("已创建并切换到 (created) " + ((d && d.name) || nm), "ok");
+        closeEditor();          /* fires editorClosed → refresh */
+        resetAfterSwitch();     /* server already switched to the new project */
+        refresh();
+      } catch (err) {
+        errBox.appendChild(el("p", "ed-err-title", "创建失败 (create failed): " + errMsg(err)));
+        create.disabled = false;
+        cancel.disabled = false;
+      }
+    });
+    row.appendChild(create);
+    row.appendChild(cancel);
+    dlg.appendChild(row);
+
+    editorOpen = true;   /* pause the poll loop while the dialog is up */
+    pauseLive();
+    if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); }
+    else dlg.setAttribute("open", "");
+    name.focus();
+
+    /* fill presets after the dialog is up (a slow list must not block opening) */
+    try {
+      const data = await api("GET", "/api/presets");
+      (data && Array.isArray(data.presets) ? data.presets : []).forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.name;
+        o.textContent = p.name + " · " + (p.title || "") + " (" + (p.aspect || "") + ")";
+        preset.appendChild(o);
+      });
+    } catch (err) { /* presets are optional; generic still works */ }
   }
 
   /* ----------------------------------------------------- build panel --- */
@@ -1169,12 +1398,14 @@ _JS = r"""
   const TRUTH_LABELS = {
     characters: "bible/characters.yaml", scenes: "bible/scenes.yaml",
     props: "bible/props.yaml", style: "bible/style.yaml",
-    rules: "timeline/rules.yaml",
+    rules: "timeline/rules.yaml", packaging: "timeline/packaging.yaml",
   };
+  const TRUTH_URLS = { rules: "/api/rules", packaging: "/api/packaging" };
+  const TRUTH_VKINDS = { rules: "rules", packaging: "packaging" };
 
   async function openTruthEditor(name, btn) {
-    const url = name === "rules" ? "/api/rules" : "/api/bible/" + name;
-    const vkind = name === "rules" ? "rules" : "bible/" + name;  /* /api/validate kind */
+    const url = TRUTH_URLS[name] || "/api/bible/" + name;
+    const vkind = TRUTH_VKINDS[name] || "bible/" + name;  /* /api/validate kind */
     const label = TRUTH_LABELS[name] || name;
     if (btn) btn.disabled = true;
     try {
@@ -1280,15 +1511,26 @@ _JS = r"""
       const data = await post(btn, "/api/build", buildBody(true), "估算完成 (dry run)");
       if (data && data.result) renderPlan(out, data.result);
     });
-    buildBtn = mkBtn("构建 (Build)", "primary", async (btn) => {
+    buildBtn = mkBtn("构建 (Build)", "primary", (btn) => {
+      /* §4.4: the plan modal FIRST (dry-run explanation), then an explicit
+       * confirm that passes assume_yes — never a silent spend. The spend banner
+       * below stays as a belt-and-braces fallback for a synchronous gate. */
       const body = buildBody(false);
-      const data = await post(btn, "/api/build", body, "构建任务已入队 (build queued)");
-      const gate = spendGateOf(data);  /* future-proof: a SYNCHRONOUS response
-                                          carrying waiting_user gets the same banner */
-      if (gate) {
-        spendSig = "sync:" + Date.now();
-        showSpendBanner(spendText(gate), body, spendSig);
-      }
+      showPlanModal("build", {
+        target: body.target, gen: body.gen,
+        regen_stale: body.regen_stale, force: body.force,
+      }, {
+        title: "构建前计划 (plan before build)",
+        onConfirm: async () => {
+          const confirmed = Object.assign({}, body, { assume_yes: true });
+          const data = await post(btn, "/api/build", confirmed, "构建任务已入队 (build queued)");
+          const gate = spendGateOf(data);  /* SYNCHRONOUS waiting_user, if any */
+          if (gate) {
+            spendSig = "sync:" + Date.now();
+            showSpendBanner(spendText(gate), confirmed, spendSig);
+          }
+        },
+      });
     });
     qcBtn = mkBtn("QC", "ghost", (btn) =>
       post(btn, "/api/qc", {}, "QC 任务已入队 (qc queued)"));
@@ -1320,7 +1562,7 @@ _JS = r"""
     const tf = el("div", "tfrow");
     tf.appendChild(el("span", "lbl", "truth 文件 (files):"));
     tfBtns = [];
-    ["characters", "scenes", "props", "style", "rules"].forEach((name) => {
+    ["characters", "scenes", "props", "style", "rules", "packaging"].forEach((name) => {
       const b = el("button", "btn ghost mini", name);
       b.type = "button";
       b.title = TRUTH_LABELS[name] || name;
@@ -1488,6 +1730,34 @@ _JS = r"""
             const sk = el("span", "jsave", "跳过 " + hits.length + " (cache hits)");
             sk.title = hits.join(", ");
             row.appendChild(sk);
+          }
+        }
+        /* batch results (goal item 3): per-shot skipped/failed reasons, never
+         * a silent exclusion — the BatchResult carries {shot, reason} for each */
+        if (j.kind === "redo_batch" || j.kind === "voice_batch") {
+          const ran = Array.isArray(r.ran) ? r.ran : [];
+          const skipped = Array.isArray(r.skipped) ? r.skipped : [];
+          const failed = Array.isArray(r.failed) ? r.failed : [];
+          row.appendChild(el("span", "jsum",
+            "完成 " + ran.length + " · 跳过 " + skipped.length + " · 失败 " + failed.length));
+          if (skipped.length || failed.length) {
+            const det = document.createElement("details");
+            det.appendChild(el("summary", null, "跳过/失败原因 (skipped / failed)"));
+            const box = el("div", "bb-res");
+            skipped.forEach((s) => {
+              const b = el("div", "pm-skiprow");
+              b.appendChild(el("span", "badge st-manual", s.shot || "?"));
+              b.appendChild(el("span", "muted", "跳过 (skipped): " + (s.reason || "")));
+              box.appendChild(b);
+            });
+            failed.forEach((f) => {
+              const b = el("div", "pm-skiprow");
+              b.appendChild(el("span", "badge qc-err", f.shot || "?"));
+              b.appendChild(el("span", "muted", "失败 (failed): " + (f.reason || "")));
+              box.appendChild(b);
+            });
+            det.appendChild(box);
+            row.appendChild(det);
           }
         }
       }
@@ -1790,6 +2060,17 @@ _JS = r"""
     card.dataset.sid = shot.id;   /* timeline clips scroll to this card */
     if (shot.id === kbFocusId) card.classList.add("kb-focus");  /* survives re-renders */
     const head = el("div", "shot-head");
+    /* batch multi-select (goal item 3): the checkbox reflects the persistent
+     * selection Set and survives poll re-renders. Read-only hides mutation, so
+     * the box is disabled there (viewing stays fine). */
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "shot-check";
+    cb.checked = batchSel.has(shot.id);
+    cb.title = "多选做批量 (select for batch redo/voice)";
+    if (readonly) cb.disabled = true;
+    cb.addEventListener("change", () => toggleBatch(shot.id, cb.checked));
+    head.appendChild(cb);
     head.appendChild(el("span", "sid", shot.id));
     head.appendChild(el("span",
       "badge " + (STATE_CLASS[shot.state] || "st-missing"), shot.state));
@@ -1871,14 +2152,22 @@ _JS = r"""
     redo.type = "button";
     roGate(redo);
     redo.addEventListener("click", () =>
-      post(redo, "/api/redo", { shot: shot.id }, shot.id + " 重做已入队 (redo queued)"));
+      showPlanModal("redo", { shot: shot.id }, {
+        title: "重做前计划 (plan before redo) · " + shot.id,
+        onConfirm: () => post(redo, "/api/redo", { shot: shot.id, assume_yes: true },
+          shot.id + " 重做已入队 (redo queued)"),
+      }));
     acts.appendChild(redo);
     if (String(shot.dialogue || "").trim()) {
       const voice = el("button", "btn ghost", "配音 (Voice)");
       voice.type = "button";
       roGate(voice);
       voice.addEventListener("click", () =>
-        post(voice, "/api/voice", { shot: shot.id }, shot.id + " 配音已入队 (voice queued)"));
+        showPlanModal("voice", { shot: shot.id }, {
+          title: "配音前计划 (plan before voice) · " + shot.id,
+          onConfirm: () => post(voice, "/api/voice", { shot: shot.id },
+            shot.id + " 配音已入队 (voice queued)"),
+        }));
       acts.appendChild(voice);
     }
     card.appendChild(acts);
@@ -1974,10 +2263,14 @@ _JS = r"""
         + (t.seed !== null && t.seed !== undefined ? ", seed " + t.seed : "") + ")";
       roGate(rb);
       rb.addEventListener("click", () => {
-        const body = { shot: shot.id, provider: t.provider };
-        if (t.seed !== null && t.seed !== undefined) body.seed = t.seed;
-        post(rb, "/api/redo", body,
-          "已入队重做 " + shot.id + " (" + t.provider + ")");
+        const planParams = { shot: shot.id, provider: t.provider };
+        if (t.seed !== null && t.seed !== undefined) planParams.seed = t.seed;
+        showPlanModal("redo", planParams, {
+          title: "重做前计划 · " + shot.id + " (" + t.provider + ")",
+          onConfirm: () => post(rb, "/api/redo",
+            Object.assign({ assume_yes: true }, planParams),
+            "已入队重做 " + shot.id + " (" + t.provider + ")"),
+        });
       });
       acts.appendChild(rb);
     }
@@ -2605,6 +2898,20 @@ _JS = r"""
       try { markReviewed(); } catch (err) { toast(errMsg(err), "err"); }
     });
     root.appendChild(rvBtn);
+
+    /* batch selection helpers (goal item 3): always reachable, not just when
+     * the floating bar is up. Mutating, so both are readonly-gated. */
+    const staleBtn = el("button", "btn ghost", "全选过期 (Select all stale)");
+    staleBtn.type = "button";
+    staleBtn.title = "勾选所有 stale 分镜做批量重做 (select every stale shot)";
+    roGate(staleBtn);
+    staleBtn.addEventListener("click", () => selectAllStale());
+    root.appendChild(staleBtn);
+    const clrBtn = el("button", "btn ghost", "清除选择 (Clear)");
+    clrBtn.type = "button";
+    roGate(clrBtn);
+    clrBtn.addEventListener("click", () => clearBatch());
+    root.appendChild(clrBtn);
   }
 
   /* -------------------------------------------------- import dropzone --- */
@@ -2878,11 +3185,48 @@ _JS = r"""
     holder.appendChild(box);
   }
 
+  /* truth-text files core/history.rollback_file will restore (media/renders/
+   * exports are refused by the server; mirror that so the button only shows
+   * where it can succeed) */
+  const ROLLBACK_PREFIXES = ["story/", "shots/", "bible/", "timeline/", "captions/"];
+  function isRollbackable(path) {
+    if (!path) return false;
+    if (path === "project.yaml") return true;
+    return ROLLBACK_PREFIXES.some((p) => path.indexOf(p) === 0);
+  }
+
   function gitFileRow(f) {
     const wrap = el("div");
     const row = el("div", "gs-row");
     row.appendChild(el("span", "gs-chip", f.status || "??"));
     row.appendChild(el("span", "gs-path", f.path || ""));
+    if (!readonly && isRollbackable(f.path)) {
+      /* rollback-file (core/history): discard working changes to ONE truth
+       * file back to HEAD — guarded by a confirm since it drops local edits */
+      const rb = el("button", "btn tiny ghost gs-rollback", "回滚 (rollback)");
+      rb.type = "button";
+      rb.title = "把该文件恢复到 HEAD (git checkout HEAD -- <file>) — 丢弃工作区改动";
+      rb.addEventListener("click", async (ev) => {
+        ev.stopPropagation();   /* the row's click toggles the diff */
+        if (!window.confirm("回滚 " + f.path + " 到 HEAD?工作区改动将丢失 (discard local changes)")) return;
+        rb.disabled = true;
+        try {
+          const r = await apiRaw("POST", "/api/git/rollback-file", { path: f.path });
+          if (r.ok) {
+            toast("已回滚 (rolled back) " + f.path, "ok");
+            fetchGitPanel();
+            refresh();
+          } else {
+            toast("回滚失败 (rollback failed): " + ((r.data && r.data.error) || ("HTTP " + r.status)), "err");
+            rb.disabled = false;
+          }
+        } catch (err) {
+          toast("回滚失败 (rollback failed): " + errMsg(err), "err");
+          rb.disabled = false;
+        }
+      });
+      row.appendChild(rb);
+    }
     const holder = el("div", "hidden");
     let open = false;
     let busy = false;
@@ -3007,6 +3351,42 @@ _JS = r"""
       crow.appendChild(msg);
       crow.appendChild(cbtn);
       gitBody.appendChild(crow);
+
+      /* snapshot (core/history.snapshot): a labeled checkpoint of the truth
+       * text — the cheap point a rollback can return to. Always available
+       * (unlike commit, it no-ops cleanly when the tree is already clean). */
+      const srow = el("div", "snap-row");
+      const slabel = document.createElement("input");
+      slabel.type = "text";
+      slabel.className = "snap-input";
+      slabel.placeholder = "快照标签 (snapshot label, optional)";
+      const sbtn = el("button", "btn ghost", "快照 (Snapshot)");
+      sbtn.type = "button";
+      sbtn.title = "为当前真相文本打一个带标签的检查点 (labeled git checkpoint)";
+      const doSnap = async () => {
+        sbtn.disabled = true;
+        try {
+          const r = await apiRaw("POST", "/api/git/snapshot", { label: slabel.value.trim() });
+          if (r.ok) {
+            const d = r.data || {};
+            toast(d.clean ? "已是最新,无需快照 (already checkpointed)"
+              : "已快照 (snapshot) " + String(d.sha || "").slice(0, 7), "ok");
+            slabel.value = "";
+            fetchGitPanel();
+          } else {
+            toast("快照失败 (snapshot failed): " + ((r.data && r.data.error) || ("HTTP " + r.status)), "err");
+          }
+        } catch (err) {
+          toast("快照失败 (snapshot failed): " + errMsg(err), "err");
+        } finally {
+          sbtn.disabled = false;
+        }
+      };
+      slabel.addEventListener("keydown", (e) => { if (e.key === "Enter") doSnap(); });
+      sbtn.addEventListener("click", doSnap);
+      srow.appendChild(slabel);
+      srow.appendChild(sbtn);
+      gitBody.appendChild(srow);
     }
 
     gitBody.appendChild(el("h3", null, "最近提交 (recent commits)"));
@@ -3193,6 +3573,441 @@ _JS = r"""
     return true;   /* a focused card claims space even without a video */
   }
 
+  /* =====================================================================
+   * S8a — GUI CORE INTERACTIONS
+   * ===================================================================== */
+
+  /* ---------------------------------------- pre-generation plan modal --- */
+  /* Invariant §4.4 + goal item 5: before ANY priced or generative job we show
+   * the plan (shot / why / provider / est cost, totals, cache savings) and take
+   * an explicit confirm. Wired ON TOP of the existing dry-run + spend-confirm:
+   * /api/plan runs the same estimators read-only, and confirm submits the real
+   * action with assume_yes. Zero-cost plans still show — with a 免费/本地 badge
+   * (the goal asks for explanation BEFORE generation, not only before spend).
+   * The modal is its own <dialog>, separate from #shots, so the poll loop keeps
+   * running underneath without disturbing it. */
+  let planOpen = false;
+
+  function closePlanModal() {
+    const dlg = $("planmodal");
+    try { if (typeof dlg.close === "function" && dlg.open) dlg.close(); }
+    catch (e) { dlg.removeAttribute("open"); }
+    if (dlg.hasAttribute("open")) dlg.removeAttribute("open");
+    planOpen = false;
+    clear(dlg);
+  }
+
+  async function showPlanModal(action, params, opts) {
+    opts = opts || {};
+    const dlg = $("planmodal");
+    clear(dlg);
+    planOpen = true;
+    const head = el("div", "pm-head");
+    head.appendChild(el("h3", null, opts.title || "生成前计划 (plan before generation)"));
+    dlg.appendChild(head);
+    const box = el("div", "pm-body");
+    box.appendChild(el("p", "muted", "计算计划中… (computing plan)"));
+    dlg.appendChild(box);
+    if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); }
+    else dlg.setAttribute("open", "");
+    let data = null;
+    try {
+      data = await api("POST", "/api/plan", Object.assign({ action: action }, params));
+    } catch (err) {
+      data = { _error: errMsg(err) };
+    }
+    if (!planOpen) return;   /* cancelled while the plan was in flight */
+    renderPlanModalBody(box, data, opts);
+  }
+
+  function renderPlanModalBody(box, data, opts) {
+    clear(box);
+    const failed = !!(data && data._error);
+    const rows = (data && Array.isArray(data.rows)) ? data.rows : [];
+    const skipped = (data && Array.isArray(data.skipped)) ? data.skipped : [];
+    const nothing = !failed && rows.length === 0;
+    if (failed) {
+      box.appendChild(el("p", "pm-err", "无法计算计划 (plan unavailable): " + data._error));
+    } else {
+      const zero = !!data.zero_cost;
+      const cur = data.currency || "";
+      box.appendChild(el("div", "pm-badge " + (zero ? "free" : "spendy"),
+        zero ? "免费 / 本地 (free / local)" : "预估花费 (estimated spend)"));
+      if (nothing) {
+        box.appendChild(el("p", "muted", "无事可做 (nothing to generate)。"));
+      } else {
+        const wrap = el("div", "tablewrap");
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        ["shot", "why", "provider"].forEach((h) => hr.appendChild(el("th", null, h)));
+        hr.appendChild(el("th", "num", "≈cost"));
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        rows.forEach((it) => {
+          const tr = document.createElement("tr");
+          if (it.kind === "voice") tr.className = "voice-row";
+          const shotCell = el("td", null, it.shot || "");
+          if (it.kind === "voice") shotCell.appendChild(el("span", "badge st-manual vtag", "配音"));
+          tr.appendChild(shotCell);
+          tr.appendChild(el("td", null, it.reason || ""));
+          tr.appendChild(el("td", null, it.provider || ""));
+          tr.appendChild(el("td", "num", "≈" + fmtMoney(it.estimated_cost || 0)));
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        box.appendChild(wrap);
+        const tot = el("div", "pm-total");
+        tot.appendChild(el("span", null, "合计 (total) " + rows.length + " 项 · ≈"
+          + fmtMoney(data.estimated_cost) + (cur ? " " + cur : "")));
+        if (Number(data.saved_cost) > 0) {
+          tot.appendChild(el("span", "pm-saved",
+            "缓存节省 (cache saved) ≈" + fmtMoney(data.saved_cost)));
+        }
+        if (data.routing) {
+          const rc = el("span", "chip", "routing.yaml");
+          rc.title = "provider 由 routing.yaml 解析 (resolved via routing)";
+          tot.appendChild(rc);
+        }
+        box.appendChild(tot);
+      }
+    }
+    if (skipped.length) {
+      box.appendChild(el("h4", null, "将跳过 (will skip) · " + skipped.length));
+      const sl = el("div", "pm-skip");
+      skipped.forEach((s) => {
+        const r = el("div", "pm-skiprow");
+        r.appendChild(el("span", "badge st-manual", s.shot || "?"));
+        r.appendChild(el("span", "muted", s.reason || ""));
+        sl.appendChild(r);
+      });
+      box.appendChild(sl);
+    }
+    const row = el("div", "btnrow");
+    if (!nothing) {
+      const zero = !failed && !!data.zero_cost;
+      const ok = el("button", "btn " + (zero ? "primary" : "confirm"),
+        failed ? "仍要继续 (proceed anyway)" : "确认生成 (Confirm)");
+      ok.type = "button";
+      ok.addEventListener("click", () => {
+        closePlanModal();
+        try { opts.onConfirm(data); } catch (e) { toast(errMsg(e), "err"); }
+      });
+      row.appendChild(ok);
+    }
+    const no = el("button", "btn ghost", "取消 (Cancel)");
+    no.type = "button";
+    no.addEventListener("click", () => closePlanModal());
+    row.appendChild(no);
+    box.appendChild(row);
+  }
+
+  /* --------------------------------------------- first-run onboarding --- */
+  /* Goal item 2: a dismissable checklist with LIVE done-detection from project
+   * state (never a stored "done" flag). Auto-shows once for an empty-ish,
+   * undismissed project; dismissal persists per-user (~/.manju/gui_state.json,
+   * server-side). Re-openable from the header 帮助 chip at any time. */
+  let obShownFor = null;   /* project name we already auto-evaluated this session */
+  let obForce = false;     /* header 帮助: show even if dismissed/non-empty */
+
+  function maybeOnboarding(s) {
+    const name = (s.project && s.project.name) ? String(s.project.name) : "";
+    if (obShownFor === name) return;   /* one auto-check per project per load */
+    obShownFor = name;
+    fetchOnboarding(false);
+  }
+
+  function openOnboarding() {
+    obForce = true;
+    fetchOnboarding(true);
+  }
+
+  async function fetchOnboarding(force) {
+    let data = null;
+    try {
+      data = await api("GET", "/api/onboarding");
+    } catch (err) {
+      if (force) toast("引导不可用 (onboarding unavailable): " + errMsg(err), "err");
+      return;
+    }
+    const show = force || obForce || (data && data.should_show);
+    if (show) renderOnboarding(data);
+    else $("onboarding").classList.add("hidden");
+  }
+
+  function renderOnboarding(data) {
+    const root = $("onboarding");
+    clear(root);
+    root.classList.remove("hidden");
+    const head = el("div", "ob-head");
+    head.appendChild(el("h2", null, "新手引导 (getting started)"));
+    head.appendChild(el("span", "ob-prog",
+      (data.done_count || 0) + " / " + (data.total || 0) + " 完成"));
+    const x = el("button", "btn ghost mini", "知道了 · 收起 (Dismiss)");
+    x.type = "button";
+    x.title = "收起清单;此项目不再自动弹出 (dismiss — won't auto-show for this project)";
+    x.addEventListener("click", () => dismissOnboarding());
+    head.appendChild(x);
+    root.appendChild(head);
+    root.appendChild(el("p", "ob-intro",
+      "从创意到成片的六步。每步的完成状态实时来自项目本身 (live from project state)。"));
+    (Array.isArray(data.steps) ? data.steps : []).forEach((st, i) => {
+      const step = el("div", "ob-step " + (st.done ? "done" : "todo"));
+      step.appendChild(el("span", "ob-mark", st.done ? "✓" : (i + 1) + "."));
+      const main = el("div", "ob-main");
+      main.appendChild(el("div", "ob-title", st.title));
+      if (!st.done) {
+        if (st.hint) main.appendChild(el("div", "ob-hint", "怎么做: " + st.hint));
+        if (st.cli) main.appendChild(el("span", "ob-cli", st.cli));
+        if (st.view) {
+          const go = el("button", "btn ghost mini", "去这里 (go)");
+          go.type = "button";
+          go.addEventListener("click", () => scrollToView(st.view));
+          main.appendChild(document.createTextNode(" "));
+          main.appendChild(go);
+        }
+      }
+      step.appendChild(main);
+      root.appendChild(step);
+    });
+  }
+
+  function scrollToView(id) {
+    const node = $(id);
+    if (!node) return;
+    try { node.scrollIntoView({ behavior: "smooth", block: "start" }); }
+    catch (e) { node.scrollIntoView(); }
+  }
+
+  async function dismissOnboarding() {
+    obForce = false;
+    $("onboarding").classList.add("hidden");
+    try { await api("POST", "/api/onboarding/dismiss", { dismissed: true }); }
+    catch (err) { /* persistence is best-effort; the panel is already hidden */ }
+  }
+
+  /* ------------------------------------------------- failure cards ------ */
+  /* Goal item 10 (GUI): render reports/failures.jsonl (carried in /api/state,
+   * so it polls with everything else) as expandable cards. Collapsed shows
+   * step + subject + cause; expanded shows evidence (mono), hint, log path and
+   * the correlated job. Errors red, degradations (info) neutral. A retry lives
+   * on cards whose subject is a shot — it re-runs redo through the plan modal. */
+  const failOpen = {};   /* failure id -> expanded (survives re-render) */
+
+  function renderFailures(failures) {
+    const root = $("failures");
+    clear(root);
+    const list = Array.isArray(failures) ? failures : [];
+    if (!list.length) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    const errs = list.filter((f) => (f.level || "error") === "error").length;
+    const head = el("div", "fail-head");
+    head.appendChild(el("h2", null, "失败 (failures)"));
+    if (errs) head.appendChild(el("span", "badge qc-err", "错误 " + errs));
+    const infos = list.length - errs;
+    if (infos) head.appendChild(el("span", "badge qc-warn", "降级 " + infos));
+    root.appendChild(head);
+    const shotIds = {};
+    lastShots.forEach((s) => { shotIds[s.id] = true; });
+    list.forEach((f) => root.appendChild(failCard(f, shotIds)));
+  }
+
+  function failCard(f, shotIds) {
+    const level = (f.level === "info") ? "info" : "err";
+    const card = el("div", "fail-card " + level);
+    const id = f.id || "";
+    const sum = el("div", "fail-sum");
+    const open0 = !!failOpen[id];
+    const arrow = el("span", "fail-arrow", open0 ? "▾" : "▸");
+    sum.appendChild(arrow);
+    sum.appendChild(el("span", "fail-step", f.step || "?"));
+    sum.appendChild(el("span", "fail-subj", f.subject || ""));
+    sum.appendChild(el("span", "fail-cause", f.cause || ""));
+    const bodyBox = el("div", "fail-body" + (open0 ? "" : " hidden"));
+    const fillBody = () => {
+      clear(bodyBox);
+      if (f.evidence) bodyBox.appendChild(el("div", "fail-ev", f.evidence));
+      if (f.hint) bodyBox.appendChild(el("div", "fail-hint", "💡 " + f.hint));
+      if (f.log_path) bodyBox.appendChild(el("div", "fail-meta", "日志 (log): " + f.log_path));
+      const job = (f.detail && (f.detail.job_id || f.detail.node_id)) || null;
+      if (job) bodyBox.appendChild(el("div", "fail-meta", "关联任务 (job): " + job));
+      if (f.ts) bodyBox.appendChild(el("div", "fail-meta", f.ts + " · " + (f.actor || "engine")));
+      /* retry: only where the subject is a shot in THIS project, through the
+       * normal plan modal (a redo is a priced action) */
+      if (!readonly && f.subject && shotIds[f.subject]) {
+        const retry = el("button", "btn ghost mini", "重试 (Retry) " + f.subject);
+        retry.type = "button";
+        retry.addEventListener("click", () => showPlanModal("redo", { shot: f.subject }, {
+          title: "重试前计划 (plan before retry) · " + f.subject,
+          onConfirm: () => post(retry, "/api/redo", { shot: f.subject, assume_yes: true },
+            f.subject + " 重试已入队 (retry queued)"),
+        }));
+        const wrap = el("div", "btnrow");
+        wrap.appendChild(retry);
+        bodyBox.appendChild(wrap);
+      }
+    };
+    if (open0) fillBody();
+    sum.addEventListener("click", () => {
+      const open = !failOpen[id];
+      failOpen[id] = open;
+      arrow.textContent = open ? "▾" : "▸";
+      bodyBox.classList.toggle("hidden", !open);
+      if (open) fillBody();
+    });
+    card.appendChild(sum);
+    card.appendChild(bodyBox);
+    return card;
+  }
+
+  /* ------------------------------------------------- batch select bar --- */
+  /* Goal item 3 (GUI): checkbox multi-select on shot cards + a floating bulk
+   * bar (N selected → 重做/配音) calling the wave-1 redo_batch/voice_batch
+   * through a job. Selection survives poll re-renders (kept in a Set, pruned to
+   * the live shots on each render). Helpers: 全选过期 / 清除. */
+  const batchSel = new Set();
+
+  function toggleBatch(id, on) {
+    if (on) batchSel.add(id); else batchSel.delete(id);
+    renderBatchBar();
+  }
+
+  function selectAllStale() {
+    lastShots.forEach((s) => { if (s.state === "stale") batchSel.add(s.id); });
+    try { renderShots(lastShots); } catch (e) { /* checkboxes are advisory */ }
+    renderBatchBar();
+  }
+
+  function clearBatch() {
+    batchSel.clear();
+    try { renderShots(lastShots); } catch (e) { /* re-render to clear checks */ }
+    renderBatchBar();
+  }
+
+  function renderBatchBar() {
+    const bar = $("batchbar");
+    clear(bar);
+    const ids = {};
+    lastShots.forEach((s) => { ids[s.id] = true; });
+    Array.from(batchSel).forEach((id) => { if (!ids[id]) batchSel.delete(id); });
+    const n = batchSel.size;
+    if (n === 0 || readonly) { bar.classList.add("hidden"); return; }
+    bar.classList.remove("hidden");
+    bar.appendChild(el("span", "bb-count", n + " 选中 (selected)"));
+    const redo = el("button", "btn confirm", "重做 (Redo)");
+    redo.type = "button";
+    redo.addEventListener("click", () => {
+      const shots = Array.from(batchSel);
+      showPlanModal("batch-redo", { shots: shots }, {
+        title: "批量重做前计划 (plan before batch redo)",
+        onConfirm: () => post(redo, "/api/redo-batch", { shots: shots, assume_yes: true },
+          "批量重做已入队 (batch redo queued)"),
+      });
+    });
+    bar.appendChild(redo);
+    const voice = el("button", "btn", "配音 (Voice)");
+    voice.type = "button";
+    voice.addEventListener("click", () => {
+      const shots = Array.from(batchSel);
+      showPlanModal("batch-voice", { shots: shots }, {
+        title: "批量配音前计划 (plan before batch voice)",
+        onConfirm: () => post(voice, "/api/voice-batch", { shots: shots, assume_yes: true },
+          "批量配音已入队 (batch voice queued)"),
+      });
+    });
+    bar.appendChild(voice);
+    const clr = el("button", "btn ghost", "清除 (Clear)");
+    clr.type = "button";
+    clr.addEventListener("click", () => clearBatch());
+    bar.appendChild(clr);
+  }
+
+  /* --------------------------------------------------------- tasks view --- */
+  /* WORKBENCH row "Spend / tasks" (S8a): render `manju tasks` JSON — the
+   * JOB/QUEUE view over the disposable run ledger. Collapsible like the git
+   * panel; lazily fetched on expand and after a done job. */
+  let tasksOpen = false;
+  let tasksLoaded = false;
+  let tasksBusy = false;
+  let tasksBody = null;
+  let tasksChips = null;
+
+  function initTasksPanel() {
+    const root = $("tasks");
+    clear(root);
+    const head = el("div", "git-head");
+    const arrow = el("span", "git-arrow", "▸");
+    head.appendChild(arrow);
+    head.appendChild(el("h2", null, "任务 · 账本 (tasks)"));
+    tasksChips = el("div", "chips");
+    head.appendChild(tasksChips);
+    tasksBody = el("div", "hidden");
+    head.addEventListener("click", () => {
+      tasksOpen = !tasksOpen;
+      arrow.textContent = tasksOpen ? "▾" : "▸";
+      tasksBody.classList.toggle("hidden", !tasksOpen);
+      if (tasksOpen) fetchTasks();
+    });
+    root.appendChild(head);
+    root.appendChild(tasksBody);
+  }
+
+  async function fetchTasks() {
+    if (tasksBusy) return;
+    tasksBusy = true;
+    try {
+      const data = await api("GET", "/api/tasks");
+      tasksLoaded = true;
+      renderTasks(data);
+    } catch (err) {
+      if (tasksBody) {
+        clear(tasksBody);
+        tasksBody.appendChild(el("p", "muted", "账本不可用 (ledger unavailable): " + errMsg(err)));
+      }
+    } finally {
+      tasksBusy = false;
+    }
+  }
+
+  function renderTasks(data) {
+    if (!tasksBody || !tasksChips) return;
+    clear(tasksBody);
+    clear(tasksChips);
+    const spend = (data && data.spend) || {};
+    tasksChips.appendChild(el("span", "chip",
+      "总花费 (spend) " + fmtMoney(spend.total || 0) + " " + (spend.currency || "")));
+    const tasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
+    const pending = (data && Array.isArray(data.pending)) ? data.pending : [];
+    if (pending.length) tasksChips.appendChild(el("span", "chip", "在途 (pending) " + pending.length));
+    if (data && data.available === false) {
+      tasksBody.appendChild(el("p", "muted", data.note || "账本为空 (empty)"));
+      return;
+    }
+    pending.forEach((p) => {
+      const row = el("div", "tk-row");
+      row.appendChild(el("span", "badge tk-polling", "polling"));
+      row.appendChild(el("span", null, (p.shot || "—") + " · " + (p.provider || "—")));
+      if (p.remote_job_id) row.appendChild(el("span", "tk-id", String(p.remote_job_id)));
+      tasksBody.appendChild(row);
+    });
+    if (!tasks.length && !pending.length) {
+      tasksBody.appendChild(el("p", "muted", "登记账本为空 (no runs yet;云生成/redo 后才有记录)"));
+      return;
+    }
+    tasks.forEach((t) => {
+      const row = el("div", "tk-row");
+      if (t.id !== undefined && t.id !== null) row.appendChild(el("span", "tk-id", "#" + t.id));
+      row.appendChild(el("span", "badge tk-" + (t.status || "").replace(/\s+/g, "-"), t.status || "?"));
+      row.appendChild(el("span", null, (t.shot || "—") + " · " + (t.provider || "—")));
+      if (t.cost) row.appendChild(el("span", "muted", fmtMoney(t.cost) + " " + (t.currency || "")));
+      if (t.created) row.appendChild(el("span", "muted", fmtClock(t.created)));
+      if (t.reason) row.appendChild(el("span", "tk-reason", "↳ " + String(t.reason)));
+      tasksBody.appendChild(row);
+    });
+  }
+
   /* ------------------------------------------------------------ boot --- */
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
@@ -3207,6 +4022,10 @@ _JS = r"""
   document.addEventListener("keydown", (e) => {
     if (cmpOverlay) {   /* compare overlay up: Esc closes it, other keys inert */
       if (e.key === "Escape") { try { closeCompare(); } catch (err) { /* gone */ } }
+      return;
+    }
+    if (planOpen) {   /* plan modal up: native <dialog> Esc closes; keys inert */
+      if (e.key === "Escape" && typeof $("planmodal").showModal !== "function") closePlanModal();
       return;
     }
     if (editorOpen) {
@@ -3259,7 +4078,9 @@ _JS = r"""
   initDropzone();
   initGitPanel();
   initProposalsPanel();
+  initTasksPanel();
   $("editor").addEventListener("close", editorClosed);
+  $("planmodal").addEventListener("close", () => { planOpen = false; clear($("planmodal")); });
   refresh();
 })();
 """.strip() + "\n"
@@ -3306,6 +4127,8 @@ def render_page(project_name: str, token: str) -> str:
         '  <p class="loading">加载中 (loading)…</p>\n'
         "</div>\n"
         "<main>\n"
+        '  <div id="onboarding" class="panel hidden"></div>\n'
+        '  <div id="failures" class="panel hidden"></div>\n'
         '  <div id="dropzone" class="dropzone"></div>\n'
         '  <div id="buildpanel" class="panel"></div>\n'
         '  <div id="jobs" class="panel hidden"></div>\n'
@@ -3317,11 +4140,14 @@ def render_page(project_name: str, token: str) -> str:
         '    <div id="events" class="panel"></div>\n'
         "  </div>\n"
         '  <div id="proposals" class="panel"></div>\n'
+        '  <div id="tasks" class="panel"></div>\n'
         '  <div id="git" class="panel"></div>\n'
         "</main>\n"
         '<div id="toast"></div>\n'
+        '<div id="batchbar" class="batchbar hidden"></div>\n'
         '<div id="kbdhint" class="hidden"></div>\n'
         '<dialog id="editor" class="editor"></dialog>\n'
+        '<dialog id="planmodal" class="editor planmodal"></dialog>\n'
         "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
         "</body>\n"
         "</html>\n"

@@ -345,11 +345,23 @@ class _Handler(BaseHTTPRequestHandler):
                 self._watch(parse_qs(url.query))
             elif path == "/api/proposals":
                 self._proposals()
+            elif path == "/api/onboarding":
+                self._onboarding_get()
+            elif path == "/api/tasks":
+                self._tasks_get()
+            elif path == "/api/presets":
+                self._presets_get()
             elif path == "/api/rules":
                 rules_path = self.server.project.rules_path
                 self._send_json({
                     "exists": rules_path.exists(),
                     "yaml": rules_path.read_text(encoding="utf-8") if rules_path.exists() else "",
+                })
+            elif path == "/api/packaging":
+                pkg_path = self.server.project.packaging_path
+                self._send_json({
+                    "exists": pkg_path.exists(),
+                    "yaml": pkg_path.read_text(encoding="utf-8") if pkg_path.exists() else "",
                 })
             elif path.startswith("/api/bible/"):
                 self._bible_get(unquote(path[len("/api/bible/"):]))
@@ -446,12 +458,20 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/build": self._act_build,
                 "/api/redo": self._act_redo,
                 "/api/voice": self._act_voice,
+                "/api/redo-batch": self._act_redo_batch,
+                "/api/voice-batch": self._act_voice_batch,
+                "/api/plan": self._act_plan,
                 "/api/qc": self._act_qc,
                 "/api/lock": self._act_lock,
                 "/api/git/commit": self._act_git_commit,
+                "/api/git/snapshot": self._act_git_snapshot,
+                "/api/git/rollback-file": self._act_git_rollback_file,
                 "/api/index": self._act_index,
                 "/api/rules": self._act_rules_save,
+                "/api/packaging": self._act_packaging_save,
                 "/api/switch": self._act_switch,
+                "/api/new-project": self._act_new_project,
+                "/api/onboarding/dismiss": self._act_onboarding_dismiss,
                 "/api/take-note": self._act_take_note,
                 "/api/validate": self._act_validate,
             }.get(path)
@@ -662,6 +682,10 @@ class _Handler(BaseHTTPRequestHandler):
                 from ..core.models import TimelineRules
 
                 TimelineRules.model_validate(parsed)
+            elif kind == "packaging":
+                from ..core.models import PackagingSpec
+
+                PackagingSpec.model_validate(parsed)
             elif kind.startswith("bible/"):
                 if not all(isinstance(v, dict) for v in parsed.values()):
                     errors.append("bible entries must be mappings (id -> fields)")
@@ -855,6 +879,146 @@ class _Handler(BaseHTTPRequestHandler):
         job = self.server.runner.submit("voice", {"shot": shot_id, "provider": provider}, fn)
         self._send_json({"job": job.to_dict()}, 202)
 
+    # ----------------------------------------------------- plan (§8.3 / §4.4)
+
+    def _act_plan(self, body: dict[str, Any]) -> None:
+        """Read-only pre-generation plan (goal item 5): the same estimators the
+        CLI dry-run uses, extended to redo/voice/batch, so the page can render
+        the plan modal and take an explicit confirm before ANY priced run. Never
+        mutates; a bad action / unknown shot is a one-line 400, not a spend."""
+        from .plan import action_plan
+
+        action = str(body.get("action") or "")
+        try:
+            self._send_json(action_plan(self.server.project, action, body))
+        except (ValueError, ProjectError) as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+
+    # --------------------------------------------------------- batch (S-E GUI)
+
+    def _act_redo_batch(self, body: dict[str, Any]) -> None:
+        """Multi-select redo through the wave-1 ``redo_batch`` — ONE build lock,
+        ONE spend gate, per-shot skip/fail reasons in the BatchResult (never a
+        silent exclusion, §4.3/§6)."""
+        project, actor = self.server.project, self.server.actor
+        shots = body.get("shots")
+        if not isinstance(shots, list) or not shots or not all(isinstance(s, str) for s in shots):
+            self._send_error_json("shots must be a non-empty list of shot ids", 400)
+            return
+        provider = body.get("provider") or None
+        seed = body.get("seed")
+        candidates = body.get("candidates")
+        assume_yes = bool(body.get("assume_yes"))
+        params = {"shots": list(shots), "provider": provider, "seed": seed,
+                  "candidates": candidates, "assume_yes": assume_yes}
+
+        def fn(job) -> dict[str, Any]:
+            from ..build.graph import redo_batch
+
+            return redo_batch(
+                project, shots=list(shots),
+                candidates=int(candidates) if candidates else None,
+                provider=str(provider) if provider else None,
+                seed=int(seed) if seed is not None else None,
+                actor=actor, assume_yes=assume_yes).to_dict()
+
+        job = self.server.runner.submit("redo_batch", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_voice_batch(self, body: dict[str, Any]) -> None:
+        project, actor = self.server.project, self.server.actor
+        shots = body.get("shots")
+        if not isinstance(shots, list) or not shots or not all(isinstance(s, str) for s in shots):
+            self._send_error_json("shots must be a non-empty list of shot ids", 400)
+            return
+        provider = body.get("provider") or None
+        assume_yes = bool(body.get("assume_yes"))
+        params = {"shots": list(shots), "provider": provider, "assume_yes": assume_yes}
+
+        def fn(job) -> dict[str, Any]:
+            from ..build.graph import voice_batch
+
+            return voice_batch(
+                project, shots=list(shots),
+                provider=str(provider) if provider else None,
+                actor=actor, assume_yes=assume_yes).to_dict()
+
+        job = self.server.runner.submit("voice_batch", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    # ---------------------------------------------------- onboarding (item 2)
+
+    def _onboarding_get(self) -> None:
+        from .onboarding import build_onboarding
+        from .userstate import is_onboarding_dismissed
+
+        data = build_onboarding(self.server.project)
+        dismissed = is_onboarding_dismissed(self.server.project.root)
+        data["dismissed"] = dismissed
+        # auto-show for a new/empty-ish project the user hasn't dismissed
+        data["should_show"] = bool(data.get("empty_ish")) and not dismissed
+        self._send_json(data)
+
+    def _act_onboarding_dismiss(self, body: dict[str, Any]) -> None:
+        from .userstate import set_onboarding_dismissed
+
+        dismissed = bool(body.get("dismissed", True))
+        set_onboarding_dismissed(self.server.project.root, dismissed)
+        self._send_json({"ok": True, "dismissed": dismissed})
+
+    # -------------------------------------------------------- tasks (item 4b)
+
+    def _tasks_get(self) -> None:
+        """`manju tasks` JSON — the JOB/QUEUE view over the disposable run
+        ledger. Degrades to an empty-but-shaped payload when the ledger is
+        missing (§3: the ledger is rebuildable, never load-bearing)."""
+        project = self.server.project
+        try:
+            from ..runtime.state import RuntimeState
+
+            with RuntimeState(project.root) as state:
+                runs = state.run_log(50)
+                pending = state.pending_jobs()
+                total, currency = state.total_cost()
+                by_provider = state.cost_by_provider()
+        except Exception as exc:
+            self._send_json({"tasks": [], "pending": [],
+                             "spend": {"by_provider": [], "total": 0.0, "currency": None},
+                             "available": False,
+                             "note": f"run ledger unavailable ({exc})"})
+            return
+        tasks = [{
+            "id": r.get("id"), "shot": r.get("shot"), "provider": r.get("provider"),
+            "status": ("moderation-rejected"
+                       if (r.get("status") == "failed"
+                           and r.get("failure_kind") == "content_rejected")
+                       else str(r.get("status") or "")),
+            "cost": float(r.get("cost") or 0.0), "currency": r.get("currency"),
+            "created": r.get("ts"), "take": r.get("take"),
+            "reason": r.get("error"), "failure_id": r.get("failure_id"),
+        } for r in runs]
+        pending_out = [{
+            "shot": j.get("shot"), "provider": j.get("provider"), "status": "polling",
+            "remote_job_id": j.get("remote_job_id"),
+            "created": j.get("submitted_at"), "updated": j.get("updated_at"),
+        } for j in pending]
+        self._send_json({
+            "tasks": tasks, "pending": pending_out, "available": True,
+            "spend": {"by_provider": by_provider, "total": float(total), "currency": currency},
+        })
+
+    # ------------------------------------------------------- presets (item 4)
+
+    def _presets_get(self) -> None:
+        try:
+            from ..presets import list_presets
+
+            items = [s.to_public_dict() for s in list_presets()]
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 500)
+            return
+        self._send_json({"presets": items})
+
     # ------------------------------------------------------------ workspace
 
     def _projects_list(self) -> None:
@@ -886,6 +1050,55 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(f"unknown project: {slug}", 404)
             return
         self._send_json({"ok": True, "slug": slug, "root": str(project.root)})
+
+    _NAME_RE = re.compile(r"^[^/\\\x00]{1,80}$")
+
+    def _act_new_project(self, body: dict[str, Any]) -> None:
+        """New-project dialog in the workspace switcher (S8a): create a sibling
+        <name>.manju via the SAME core the CLI's ``manju new`` calls, optionally
+        pre-filled from a preset (`manju presets`), then register it in the
+        workspace and switch to it. Workspace-mode only — mirrors switch/§5:
+        there is no switcher to land a new project in otherwise."""
+        if not self.server.workspace:
+            self._send_error_json("not in workspace mode (start with --workspace)", 400)
+            return
+        name = str(body.get("name") or "").strip()
+        if not name or name.startswith(".") or not self._NAME_RE.fullmatch(name):
+            self._send_error_json("invalid project name", 400)
+            return
+        preset = body.get("preset") or None
+        vertical = bool(body.get("vertical", True))
+        parent = self.server.project.root.parent  # new projects land beside siblings
+        dest = parent / name
+        try:
+            spec = None
+            if preset:
+                from ..presets import load_preset
+
+                spec = load_preset(str(preset))
+            project = Project.create(dest, name=name, vertical=vertical, git_init=False)
+            if spec is not None:
+                from ..presets import apply_preset
+
+                apply_preset(project, spec)
+            append_event(project.root, self.server.actor, "new",
+                         {"name": name, "preset": (spec.name if spec else None),
+                          "via": "gui"})
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        base = project.root.stem or "project"
+        with self.server.quick_mutex:
+            slug = base
+            n = 2
+            while slug in self.server.workspace:
+                slug = f"{base}_{n}"
+                n += 1
+            self.server.workspace[slug] = project
+        self.server.switch_project(slug)
+        self._send_json({"ok": True, "slug": slug, "name": name,
+                         "root": str(project.root),
+                         "preset": (spec.name if spec else None)}, 201)
 
     # ---------------------------------------------------------- watch/lists
 
@@ -1031,6 +1244,31 @@ class _Handler(BaseHTTPRequestHandler):
                 project.rules_path, body["yaml"], label="timeline/rules.yaml")
             if ok:
                 append_event(project.root, self.server.actor, "edit_rules",
+                             {"via": "gui"})
+        self._send_json(payload, status)
+
+    def _act_packaging_save(self, body: dict[str, Any]) -> None:
+        """Raw-YAML packaging editor (S8a): parse, model-validate against the
+        real PackagingSpec (one-line error, never save invalid), then the same
+        check-gated verbatim write the other truth editors use."""
+        parsed, err = self._parse_yaml_mapping(body.get("yaml"))
+        if err:
+            self._send_error_json(err, 400)
+            return
+        try:
+            from ..core.models import PackagingSpec
+
+            PackagingSpec.model_validate(parsed)
+        except Exception as exc:  # pydantic ValidationError -> one-line finding
+            self._send_error_json(
+                "packaging 校验失败 (invalid): " + " ".join(str(exc).split())[:500], 400)
+            return
+        project = self.server.project
+        with self.server.quick_mutex:
+            ok, payload, status = self._gated_save(
+                project.packaging_path, body["yaml"], label="timeline/packaging.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_packaging",
                              {"via": "gui"})
         self._send_json(payload, status)
 
@@ -1222,6 +1460,47 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(result.get("error") or "commit failed", 409)
             return
         self._send_json(result)
+
+    def _act_git_snapshot(self, body: dict[str, Any]) -> None:
+        """Labeled git checkpoint over the truth text (core/history.snapshot).
+        ``clean=True`` means the tree was already checkpointed — a no-op, not an
+        error. Not a repo → 409 with the same clean message the CLI shows."""
+        from ..core.history import HistoryError, snapshot
+
+        label = str(body.get("label") or "").strip()
+        try:
+            result = snapshot(self.server.project, label)
+        except HistoryError as exc:
+            self._send_error_json(str(exc), 409)
+            return
+        self._send_json({"ok": True, **result})
+
+    def _act_git_rollback_file(self, body: dict[str, Any]) -> None:
+        """Restore ONE truth-text file from git (core/history.rollback_file):
+        story/shots/bible/timeline/captions/project.yaml only — media, renders
+        and exports are refused. Runs ``check`` afterwards and reports findings
+        (the CLI does the same); the rollback itself is already an event."""
+        from ..core.history import HistoryError, rollback_file
+
+        rel = str(body.get("path") or "").strip()
+        ref = str(body.get("ref") or "HEAD").strip() or "HEAD"
+        if not rel:
+            self._send_error_json("path is required", 400)
+            return
+        try:
+            result = rollback_file(self.server.project, rel, ref)
+        except HistoryError as exc:
+            self._send_error_json(str(exc), 400)
+            return
+        try:
+            from ..core.check import run_check
+
+            report = run_check(self.server.project)
+            result["errors"] = list(report.errors)
+            result["warnings"] = list(report.warnings)
+        except Exception:
+            pass  # findings are advisory; the restore already happened + logged
+        self._send_json({"ok": True, **result})
 
     def _act_qc(self, body: dict[str, Any]) -> None:
         project = self.server.project
