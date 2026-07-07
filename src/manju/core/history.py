@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import gitops
 from .container import Project
 from .events import append_event, tail_events
 
@@ -44,28 +45,29 @@ _REFUSED_PREFIXES = ("media/", "renders/", "exports/", ".manju/")
 
 
 def _git(project: Project, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args], cwd=project.root, capture_output=True, text=True
-    )
+    """The one git runner, shared with :mod:`manju.core.gitops` (no second
+    parallel wrapper): git is invoked as ``git -C <root> …`` through
+    ``gitops._run``. A missing git binary (``_run`` returns None) degrades to a
+    synthetic nonzero result so every ``.returncode`` check below treats it as
+    "unavailable" instead of raising."""
+    proc = gitops._run(project.root, *args)
+    if proc is None:
+        return subprocess.CompletedProcess(
+            ["git", *args], returncode=1, stdout="", stderr="git unavailable"
+        )
+    return proc
 
 
 def _require_repo(project: Project) -> None:
-    if not (project.root / ".git").exists():
+    # Same containment doctrine as gitops (§1-② / R8): a project must be the TOP
+    # of its OWN work tree — a directory nested under an outer repo, a missing
+    # git binary and a bare/unreadable repo all read as "no repo" here, so
+    # snapshot/rollback never reach up into an enclosing tree.
+    if not gitops.is_repo(project.root):
         raise HistoryError(
             "this project is not a git repository — git is the patch engine "
             "(§3); run `git init` in the project root to enable snapshots/rollback"
         )
-    if _git(project, "rev-parse", "--git-dir").returncode != 0:
-        raise HistoryError("git is unavailable or the repository is unreadable")
-
-
-def _identity_args(project: Project) -> list[str]:
-    """`git commit` needs an identity; supply a project-local default only
-    when the user has none configured (theirs always wins)."""
-    email = _git(project, "config", "user.email")
-    if email.returncode == 0 and email.stdout.strip():
-        return []
-    return ["-c", "user.name=manju", "-c", "user.email=manju@local"]
 
 
 # ------------------------------------------------------------------ snapshot
@@ -89,7 +91,8 @@ def snapshot(project: Project, label: str = "") -> dict[str, Any]:
     append_event(project.root, _actor(), "snapshot", {"label": label})
     _git(project, "add", "-A")
     message = f"manju snapshot: {label}" if label else "manju snapshot"
-    commit = _git(project, *_identity_args(project), "commit", "-q", "-m", message)
+    commit = _git(project, *gitops.identity_args(project.root, _actor()),
+                  "commit", "-q", "-m", message)
     if commit.returncode != 0:
         raise HistoryError(f"git commit failed — {commit.stderr.strip().splitlines()[-1]}")
     sha = _git(project, "rev-parse", "--short", "HEAD").stdout.strip()
@@ -126,7 +129,7 @@ def history(project: Project, n: int = 30) -> list[dict[str, Any]]:
             text=f"{ev.get('action', '?')}" + (f" ({summary})" if summary else ""),
             detail=detail,
         ))
-    if (project.root / ".git").exists():
+    if gitops.is_repo(project.root):
         log = _git(project, "log", "--pretty=%h\x1f%cI\x1f%s", "-n", "200")
         if log.returncode == 0:
             for line in log.stdout.splitlines():
@@ -187,8 +190,14 @@ def rollback_file(project: Project, relpath: str, ref: str = "HEAD") -> dict[str
     semantics afterwards via the caller (the CLI reports findings)."""
     _require_repo(project)
     rel = relpath.replace("\\", "/").lstrip("./")
-    if ".." in rel.split("/"):
-        raise HistoryError("path escapes the project — use a project-relative path")
+    # Containment is the shared gitops guard (one implementation): a pathspec
+    # that resolves outside the project root is rejected before any policy
+    # check below. The truth-text SURFACE policy (prefixes/suffixes) that
+    # follows is history-specific and layers on top.
+    try:
+        gitops._safe_rel(project.root, rel)
+    except ValueError:
+        raise HistoryError("path escapes the project — use a project-relative path") from None
     if any(rel.startswith(p) for p in _REFUSED_PREFIXES):
         raise HistoryError(
             f"'{rel}' is media/derived output — rollback only restores truth "

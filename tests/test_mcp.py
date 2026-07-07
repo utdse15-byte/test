@@ -354,3 +354,23 @@ def test_server_exits_cleanly_on_stdin_eof(project: Project):
     init = c.request("initialize", {"protocolVersion": "2024-11-05"})
     assert init["result"]["serverInfo"]["name"] == "manju"
     assert c.close() == 0
+
+
+def test_mcp_qc_respects_build_lock(tmp_project, add_shot):
+    """SKILL.md §5.5 promises the lock covers qc from EVERY surface — the MCP
+    path bypassed it (review finding P1-2)."""
+    import pytest as _pytest
+
+    from manju.mcp.tools import TOOL_DEFS
+    from manju.runtime.buildlock import BuildLock, BuildLocked
+
+    add_shot(tmp_project, "S001")
+    handler = next(t["handler"] for t in TOOL_DEFS if t["name"] == "qc")
+    lock = BuildLock(tmp_project.root, actor="human").acquire()
+    try:
+        with _pytest.raises(BuildLocked):
+            handler(tmp_project, {})
+    finally:
+        lock.release()
+    result = handler(tmp_project, {})  # released -> runs normally
+    assert "ok" in result and "reports" in result

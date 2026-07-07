@@ -229,6 +229,17 @@ def _h_redo(project: Project, args: dict) -> dict:
 
 
 def _h_qc(project: Project, args: dict) -> dict:
+    # qc writes qc.json/qc.md/repair_plan.yaml — a mutation. The process build
+    # lock (R2) must cover qc from EVERY surface (review finding P1-2); the MCP
+    # path held it nowhere before. Contention raises BuildLocked, rendered as
+    # the tool's own one-line error by the server envelope.
+    from ..runtime.buildlock import build_lock
+
+    with build_lock(project.root, actor="ai"):
+        return _h_qc_locked(project, args)
+
+
+def _h_qc_locked(project: Project, args: dict) -> dict:
     report = run_qc(project, project.load_timeline(), deep=bool(args.get("deep", False)))
     paths = write_reports(project, report)
     return {

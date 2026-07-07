@@ -23,6 +23,26 @@ deterministic transition under exact-duration takes. If cross-dissolves are
 ever wanted, the change belongs in the compiler/providers first (allocate
 +transition_ms handles at generation and carry source in-points on clips),
 not here.
+
+Design note — media write durability (R3, OPTIMIZATION-ASSESSMENT §3 #2/#3):
+media follows the same temp+replace discipline as text truth (core/yamlio.py).
+Every ffmpeg artifact bound for a durable location — a cached segment, the
+proxy, a final — is encoded to a same-directory temp and swapped in with
+``os.replace`` only on success (``ffmpeg.atomic_output``; the dot-prefixed temp
+keeps the real extension last so muxer inference works, and never matches the
+``final_v*.mp4`` / exact-path lookups). A crash mid-encode used to leave a
+truncated file *at* the destination: for segments that debris became a
+permanent ``seg_path.exists()`` cache hit embedded in every future final; for
+finals it burned a version name on garbage that status/board surface as the
+latest 成片; for the proxy it destroyed the previous good copy while the stale
+``.key.json`` kept vouching for the truncated bytes. Now the destination only
+ever receives complete files, and the key sidecar (FIX-A) is written strictly
+AFTER the mp4 is in place. Finals stay append-only: the swap refuses to
+overwrite an existing ``final_vN``. Legacy/corrupt cache entries (from before
+this discipline, or externally damaged) cannot be trusted just because they
+exist, so ``_build_segment`` gates every cache hit with a cheap ffprobe
+readability probe — a truncated MP4 has no moov atom, so it is evicted and
+rebuilt rather than poisoning every future final.
 """
 
 from __future__ import annotations
@@ -35,9 +55,11 @@ from pathlib import Path
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file, short_hash
 from ..core.models import AudioClip, OverlayClip, Timeline, VideoClip
+from ..core.yamlio import atomic_write_text
 from .card import find_font
-from .ffmpeg import MediaError, default_log, run_ffmpeg
+from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
 from .normalize import normalize_segment
+from .probe import probe_duration_ms
 
 Log = Callable[[str], None] | None
 
@@ -240,17 +262,18 @@ def _apply_fades(
         vfilters.append(f"fade=t=out:st={st:.3f}:d={d:.3f}")
         afilters.append(f"afade=t=out:st={st:.3f}:d={d:.3f}")
     vfilters.append("format=yuv420p")
-    run_ffmpeg(
-        [
-            "-i", str(src_seg),
-            "-vf", ",".join(vfilters),
-            "-af", ",".join(afilters) if afilters else "anull",
-            "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            str(dest),
-        ],
-        log=log,
-    )
+    with atomic_output(dest) as tmp_out:
+        run_ffmpeg(
+            [
+                "-i", str(src_seg),
+                "-vf", ",".join(vfilters),
+                "-af", ",".join(afilters) if afilters else "anull",
+                "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                str(tmp_out),
+            ],
+            log=log,
+        )
 
 
 def _segment_cache_key(
@@ -288,7 +311,10 @@ def _build_segment(
 
     Cache key = source content hash + normalization params + target + fade
     params, so a changed take (or a changed transition) rebuilds only what it
-    must, and a cache hit is left byte-for-byte untouched (mtime preserved).
+    must, and a (readable) cache hit is left byte-for-byte untouched (mtime
+    preserved). Writes into the cache are atomic (see module design note), so
+    an unreadable hit can only be legacy pre-durability debris or external
+    damage — it is evicted and rebuilt rather than poisoning every future final.
     """
     src = project.resolve(clip.source)
     if not src.exists():
@@ -299,7 +325,16 @@ def _build_segment(
     )
     seg_path = project.segments_dir / f"{short_hash(key)}.mp4"
     if seg_path.exists():
-        return seg_path
+        # Integrity gate before reuse: one cheap ffprobe (headers only). A
+        # truncated encode has no moov atom → no readable duration → evict.
+        if probe_duration_ms(seg_path) is not None:
+            return seg_path
+        if log is not None:
+            log(
+                f"segment cache: {seg_path.name} is unreadable "
+                f"(truncated by an earlier crash?) — evicting and rebuilding"
+            )
+        seg_path.unlink(missing_ok=True)
     seg_path.parent.mkdir(parents=True, exist_ok=True)
 
     if fade_in_ms == 0 and fade_out_ms == 0:
@@ -604,13 +639,15 @@ def _read_key_sidecar(media_path: Path) -> str | None:
 def _write_key_sidecar(media_path: Path, content_key: str, target: str) -> None:
     from datetime import datetime, timezone
 
-    media_path.with_suffix(".key.json").write_text(
+    # Atomic like every other truth-adjacent text file (a torn sidecar would
+    # only cause a harmless re-render, but the discipline is uniform: §3).
+    atomic_write_text(
+        media_path.with_suffix(".key.json"),
         json.dumps(
             {"final_key": content_key, "target": target,
              "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             ensure_ascii=False, indent=2,
         ) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -687,6 +724,10 @@ def render_timeline(
     text_overlays = [o for o in timeline.tracks.overlay if _is_text_overlay(o)]
     image_overlays = [o for o in timeline.tracks.overlay if _is_image_overlay(o)]
 
+    # An engine-minted final name is append-only (a fresh final_vN): the atomic
+    # swap below must refuse to land on an existing file. A caller-supplied
+    # out_path keeps its historical overwrite semantics (as does the proxy).
+    fresh_final = out_path is None and target == "final"
     if out_path is None:
         out_path = project.next_final_path() if target == "final" else project.proxy_dir / "proxy.mp4"
     out_path = Path(out_path)
@@ -741,20 +782,30 @@ def render_timeline(
 
         enc = _enc_params(target)
 
-        run_ffmpeg(
-            ["-i", str(concat_mp4), *extra_inputs, *img_inputs,
-             "-filter_complex", filter_complex,
-             "-map", "[vout]", "-map", aout,
-             # Clamp to the timeline length: the picture track (exact-duration
-             # segments) is the master; this trims any audio tail (mix priming,
-             # bounded voice/music) to a deterministic total.
-             "-t", f"{total_s:.3f}",
-             *enc, str(out_path)],
-            log=log,
-        )
+        with atomic_output(out_path, must_not_exist=fresh_final) as tmp_out:
+            run_ffmpeg(
+                ["-i", str(concat_mp4), *extra_inputs, *img_inputs,
+                 "-filter_complex", filter_complex,
+                 "-map", "[vout]", "-map", aout,
+                 # Clamp to the timeline length: the picture track (exact-duration
+                 # segments) is the master; this trims any audio tail (mix priming,
+                 # bounded voice/music) to a deterministic total.
+                 "-t", f"{total_s:.3f}",
+                 *enc, str(tmp_out)],
+                log=log,
+            )
+            # Encode complete, swap imminent. For the (overwritable) proxy, drop
+            # the OLD sidecar first: a crash inside the swap window can then only
+            # cost a re-render — a stale key must never vouch for bytes it does
+            # not describe. (A failed encode never reaches this line, so the
+            # previous good proxy + sidecar pair stays reusable.)
+            if target != "final":
+                out_path.with_suffix(".key.json").unlink(missing_ok=True)
 
     # FIX-A: every render carries its content key so the next build can prove
     # it is already up to date (finals: append-only sidecars; proxy: its own).
+    # Written strictly AFTER os.replace has the mp4 fully in place — a sidecar
+    # existing implies its mp4 is complete (see module design note).
     _write_key_sidecar(out_path, content_key, target)
 
     return out_path

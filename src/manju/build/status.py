@@ -76,6 +76,18 @@ def project_status(project: Project) -> dict[str, Any]:
         if run_log_info.get("currency"):
             currency = run_log_info["currency"]
 
+    # Process build lock (R2): the takeover entry point must say when the OTHER
+    # party (or a crashed run) holds the mutating build right now. Read-only
+    # peek at the holder JSON — never acquires.
+    build_lock_info: dict[str, Any] | None = None
+    lock_path = project.runtime_dir / "build.lock"
+    if lock_path.exists():
+        try:
+            holder = json.loads(lock_path.read_text(encoding="utf-8"))
+            build_lock_info = holder if isinstance(holder, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            build_lock_info = {"note": "lock file unreadable"}
+
     timeline = project.load_timeline()
     final = _latest_final(project)
 
@@ -147,4 +159,5 @@ def project_status(project: Project) -> dict[str, Any]:
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
         "next_step": next_step,
+        "build_lock": build_lock_info,
     }

@@ -224,6 +224,49 @@ def run_build(
     assume_yes: bool = False,  # explicit approval for ask_before-gated spend (§8.3)
     on_phase=None,  # Callable[[str], None] — coarse progress ("check"/"render"…)
 ) -> BuildResult:
+    """One mutating build per project at a time (§3, §5, R2). Value locks guard
+    *content*; this process lock guards the dual-actor scenario — a human
+    terminal, an AI session over MCP and the board's job runner can otherwise
+    race on timeline.json / renders/ / the ledger with nobody at fault. The
+    whole mutating build runs under ``.manju/build.lock``; contention is a
+    one-line, ``ok=False`` result (BuildLocked → errors), never a traceback.
+
+    Dry-run is READ-ONLY and deliberately runs WITHOUT the lock, so a cost
+    estimate stays available even while another actor is mid-build."""
+    from ..runtime.buildlock import BuildLocked, build_lock
+
+    if dry_run:
+        return _run_build_phases(
+            project, target=target, gen=gen, regen_stale=regen_stale,
+            dry_run=True, force=force, actor=actor,
+            assume_yes=assume_yes, on_phase=on_phase,
+        )
+    try:
+        with build_lock(project.root, actor=actor):
+            return _run_build_phases(
+                project, target=target, gen=gen, regen_stale=regen_stale,
+                dry_run=False, force=force, actor=actor,
+                assume_yes=assume_yes, on_phase=on_phase,
+            )
+    except BuildLocked as exc:
+        result = BuildResult()
+        result.ok = False
+        result.errors.append(str(exc))
+        return result
+
+
+def _run_build_phases(
+    project: Project,
+    *,
+    target: str = "final",  # proxy | final | exports | qc
+    gen: str = "missing",  # missing | auto | off
+    regen_stale: bool = False,
+    dry_run: bool = False,
+    force: bool = False,  # FIX-A: re-render even when the content key matches
+    actor: str = "engine",
+    assume_yes: bool = False,  # §8.3 ask_before gate (spend cluster)
+    on_phase=None,  # advisory coarse-progress callback (spend cluster)
+) -> BuildResult:
     result = BuildResult()
 
     def _phase(name: str) -> None:
@@ -550,7 +593,22 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
 
     A priced redo raises :class:`WaitingUser` unless ``assume_yes`` — the same
     §8.3 ask_before gate as ``build`` (the R7 spend-gate hole closure: a priced
-    redo used to spend without ever hitting the gate that ``build`` enforces)."""
+    redo used to spend without ever hitting the gate that ``build`` enforces).
+
+    Holds the process build lock like a full build (a redo mutates takes and
+    the ledger); contention raises
+    :class:`~manju.runtime.buildlock.BuildLocked`."""
+    from ..runtime.buildlock import build_lock
+
+    with build_lock(project.root, actor=actor):
+        return _redo_shot_locked(project, shot_id, candidates=candidates,
+                                 provider=provider, seed=seed, actor=actor,
+                                 assume_yes=assume_yes)
+
+
+def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None = None,
+                      provider: str | None = None, seed: int | None = None,
+                      actor: str = "engine", assume_yes: bool = False) -> list[str]:
     from ..providers.base import GenerationRequest
     from ..providers.registry import fallback_chain, generate_with_fallback
 

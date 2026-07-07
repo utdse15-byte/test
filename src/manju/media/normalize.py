@@ -5,6 +5,10 @@ demuxer can stitch them with a stream copy: WxH (letter/pillar-boxed on black),
 constant fps, yuv420p, and a single 48 kHz stereo audio stream (silence is
 synthesized when the source has none, so downstream mixing never has to special
 case a missing track).
+
+``dest`` is written atomically (encode to a sibling temp, ``os.replace`` on
+success — ``ffmpeg.atomic_output``): callers hand this module content-addressed
+cache paths, and a crashed encode must never leave a truncated file there.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from .ffmpeg import MediaError, run_ffmpeg
+from .ffmpeg import MediaError, atomic_output, run_ffmpeg
 from .probe import probe
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
@@ -72,7 +76,8 @@ def normalize_segment(
         vf = _video_filter(width, height, fps)
         args += ["-filter_complex", f"[0:v]{vf}[v]"]
         args += ["-map", "[v]", "-map", "1:a", "-t", f"{dur_s:.3f}"]
-        run_ffmpeg(args + _encode_args(dest), log=log)
+        with atomic_output(dest) as tmp_out:
+            run_ffmpeg(args + _encode_args(tmp_out), log=log)
         return dest
 
     info = probe(src)
@@ -104,5 +109,6 @@ def normalize_segment(
         # anullsrc is infinite and there is no explicit length: stop with video.
         args += ["-shortest"]
 
-    run_ffmpeg(args + _encode_args(dest), log=log)
+    with atomic_output(dest) as tmp_out:
+        run_ffmpeg(args + _encode_args(tmp_out), log=log)
     return dest
