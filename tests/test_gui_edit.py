@@ -144,7 +144,7 @@ def test_edit_page_renders_with_content(gui, tmp_project, add_shot, make_take):
     # inspector affordances baked in server-side
     assert "裁剪 Trim" in body and "素材声" in body and "时长 Duration" in body
     # honest per-boundary note (no per-boundary override data path today)
-    assert "逐切换点覆盖待后续" in body
+    assert "transition_overrides" in body  # round U: per-boundary override hint
     # one boundary marker between the two shots
     assert "ed-bound" in body
 
