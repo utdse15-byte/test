@@ -412,6 +412,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._preview(unquote(path[len("/preview/"):]))
             elif path.startswith("/thumb/"):
                 self._thumb(unquote(path[len("/thumb/"):]))
+            elif self._edit_get(path, url):
+                pass  # round-T 剪辑 EDIT page + its frame previews — see _edit_get
             elif self._pages_get(path, url):
                 pass  # round-S server-rendered pages (S8b) — see _pages_get
             else:
@@ -476,6 +478,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/validate": self._act_validate,
             }.get(path)
             if handler is None:
+                if self._edit_post(path, body):  # round-T 剪辑 EDIT actions
+                    return
                 if self._pages_post(path, body):  # round-S page actions (S8b)
                     return
                 self._send_error_json("not found", 404)
@@ -1937,3 +1941,324 @@ class _Handler(BaseHTTPRequestHandler):
                 holder.rmdir()
             except OSError:
                 pass
+
+    # =================================================================
+    # round-T 剪辑 EDIT page (edit.py): the clip-level finishing surface —
+    # timeline order, trim, footage audio, transitions, looks — every action a
+    # strict client of the same engine core the CLI calls (set_inout_take,
+    # apply_mixer, rules.transition_default, bible/style.yaml look). Isolated
+    # from the round-S pages region above; frame previews stream from the
+    # disposable .manju/frames cache (lazy — the page GET never runs ffmpeg).
+    # =================================================================
+
+    def _edit_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the 剪辑 page, its assets, and the lazy frame
+        previews. Returns True when handled, False so do_GET falls through."""
+        from . import edit
+
+        if path == "/edit.css":
+            self._send_text(edit.render_edit_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/edit.js":
+            self._send_text(edit.render_edit_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path in edit.EDIT_PATHS:
+            html_doc = edit.render_edit(self.server.project, self.server.token,
+                                        parse_qs(url.query))
+            self._send_text(html_doc, "text/html; charset=utf-8",
+                            extra=self._PAGES_CSP)
+            return True
+        if path == "/edit/frame":
+            self._edit_frame(parse_qs(url.query))
+            return True
+        if path == "/edit/strip":
+            self._edit_strip(parse_qs(url.query))
+            return True
+        if path == "/edit/look":
+            self._edit_look(parse_qs(url.query))
+            return True
+        return False
+
+    @staticmethod
+    def _q_int(query: dict[str, list[str]], key: str, default: int) -> int:
+        try:
+            return int(query.get(key, [str(default)])[0])
+        except (TypeError, ValueError):
+            return default
+
+    def _edit_source(self, query: dict[str, list[str]]) -> str | None:
+        """Validate the ?take= media relpath through the same allowlist +
+        containment gate /media uses; None (→ 404) when it isn't a served
+        media path (so a probing request can never read outside the tree)."""
+        rel = (query.get("take", [""])[0] or "").lstrip("/")
+        return rel if (rel and self._resolve_served(rel) is not None) else None
+
+    def _edit_frame(self, query: dict[str, list[str]]) -> None:
+        rel = self._edit_source(query)
+        if rel is None:
+            self._send_error_json("frame source not served", 404)
+            return
+        from ..media.frames import extract_frame
+
+        w = self._q_int(query, "w", 0) or None
+        try:
+            frame = extract_frame(self.server.project, rel,
+                                  self._q_int(query, "ms", 0), width=w)
+        except Exception as exc:  # no ffmpeg / bad source → broken img, not 500
+            self._send_error_json(" ".join(str(exc).split()), 404)
+            return
+        self._serve_file(frame)
+
+    def _edit_strip(self, query: dict[str, list[str]]) -> None:
+        rel = self._edit_source(query)
+        if rel is None:
+            self._send_error_json("frame source not served", 404)
+            return
+        from ..media.frames import frame_strip
+
+        from .edit import STRIP_COUNT
+
+        n = max(1, min(64, self._q_int(query, "n", STRIP_COUNT)))
+        i = max(0, min(n - 1, self._q_int(query, "i", 0)))
+        w = self._q_int(query, "w", 0) or None
+        try:
+            frames = frame_strip(self.server.project, rel, count=n,
+                                 width=w or 140)
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 404)
+            return
+        self._serve_file(frames[i])
+
+    def _edit_look(self, query: dict[str, list[str]]) -> None:
+        rel = self._edit_source(query)
+        if rel is None:
+            self._send_error_json("frame source not served", 404)
+            return
+        from .edit import look_preview_frame
+
+        w = self._q_int(query, "w", 0) or None
+        preset = query.get("preset", ["none"])[0] or "none"
+        try:
+            intensity = float(query.get("intensity", ["1"])[0])
+        except (TypeError, ValueError):
+            intensity = 1.0
+        try:
+            frame = look_preview_frame(self.server.project, rel,
+                                       self._q_int(query, "ms", 0),
+                                       preset, intensity, width=w)
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 404)
+            return
+        self._serve_file(frame)
+
+    def _edit_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 剪辑 EDIT actions. Same token/readonly gates as
+        every other mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/edit/trim": self._act_edit_trim,
+            "/api/edit/audio": self._act_edit_audio,
+            "/api/edit/duration": self._act_edit_duration,
+            "/api/edit/transition": self._act_edit_transition,
+            "/api/edit/look": self._act_edit_look,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_edit_trim(self, body: dict[str, Any]) -> None:
+        """Trim a take's in/out — the `manju repair --op inout` engine op run as
+        a job (append-only: a NEW take is minted, the source is never touched and
+        the new take is NOT auto-selected; the page offers select afterward, so
+        human selection judgment is preserved)."""
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        if not shot_id or not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        take = body.get("take") or None
+        if take is None:
+            try:
+                take = project.load_shot(shot_id).status.selected_take
+            except ProjectError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+        if not take:
+            self._send_error_json(
+                f"{shot_id} has no selected take — pass a take or select one first", 400)
+            return
+        take = str(take)
+        if project.get_take(shot_id, take) is None:
+            self._send_error_json(f"{shot_id} has no take '{take}'", 404)
+            return
+        in_ms, out_ms = body.get("in_ms"), body.get("out_ms")
+        if in_ms is None or out_ms is None:
+            self._send_error_json("in_ms and out_ms are required", 400)
+            return
+        try:
+            in_ms, out_ms = int(in_ms), int(out_ms)
+        except (TypeError, ValueError):
+            self._send_error_json("in_ms and out_ms must be integers (ms)", 400)
+            return
+        if in_ms < 0 or out_ms <= in_ms:
+            self._send_error_json("require 0 <= in_ms < out_ms", 400)
+            return
+
+        def fn(job) -> dict[str, Any]:
+            from ..media.repair_ops import set_inout_take
+
+            with _optional_build_lock(project.root, actor):
+                new = set_inout_take(project, shot_id, take, in_ms, out_ms)
+            append_event(project.root, actor, "repair",
+                         {"shot": shot_id, "op": "inout", "source_take": take,
+                          "new_take": new.name, "in_ms": in_ms, "out_ms": out_ms,
+                          "via": "gui"})
+            return {"shot": shot_id, "op": "inout", "source_take": take,
+                    "new_take": new.name, "params": new.sidecar.params}
+
+        job = self.server.runner.submit("repair", {"shot": shot_id, "op": "inout"}, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_edit_audio(self, body: dict[str, Any]) -> None:
+        """Footage-audio (per-shot source_audio) gain + mute → the SAME
+        apply_mixer shots[] path the CLI mixer uses (writes source_audio into the
+        shot file, lands one `mixer` event)."""
+        from ..build.mixer import MixerError, apply_mixer
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        change: dict[str, Any] = {"shot": shot_id}
+        if "gain_db" in body:
+            change["gain_db"] = body["gain_db"]
+        if "mute" in body:
+            change["mute"] = bool(body["mute"])
+        with self.server.quick_mutex:
+            try:
+                report = apply_mixer(project, {"shots": [change]}, actor=actor)
+            except MixerError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+                return
+            except ProjectError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+        self._send_json({"ok": True, "shot": shot_id, "report": report})
+
+    def _act_edit_duration(self, body: dict[str, Any]) -> None:
+        """Shot duration override (auto | seconds) via the existing check-gated
+        shot-edit path — a top-level `duration:` text edit (comments + locks left
+        verbatim), reverted if it introduces any new check error (lock included)."""
+        project = self.server.project
+        shot_id = str(body.get("shot") or "")
+        if not self._SHOT_ID_RE.fullmatch(shot_id):
+            self._send_error_json("invalid shot id", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        dur = body.get("duration")
+        if dur == "auto":
+            val = "auto"
+        else:
+            try:
+                f = float(dur)
+            except (TypeError, ValueError):
+                self._send_error_json("duration must be 'auto' or a positive number", 400)
+                return
+            if not (f > 0):
+                self._send_error_json("duration seconds must be > 0 (or 'auto')", 400)
+                return
+            val = f"{f:g}"
+        from .edit import set_duration_in_text
+
+        with self.server.quick_mutex:
+            text = project.shot_path(shot_id).read_text(encoding="utf-8")
+            ok, payload, status = self._gated_save(
+                project.shot_path(shot_id), set_duration_in_text(text, val),
+                label=f"shots/{shot_id}.yaml")
+            if ok:
+                payload["shot"] = shot_id
+                append_event(project.root, self.server.actor, "edit_shot",
+                             {"shot": shot_id, "field": "duration",
+                              "duration": val, "via": "gui"})
+        self._send_json(payload, status)
+
+    def _act_edit_transition(self, body: dict[str, Any]) -> None:
+        """Default transition picker → rules.transition_default, validate-on-save
+        (rejects an unknown type / out-of-range duration, then the same
+        check-gated write the rules editor uses so a bad save is reverted)."""
+        from ..core.models import TRANSITION_TYPES, TransitionSpec
+        from ..core.yamlio import dump_yaml
+
+        project = self.server.project
+        ttype = str(body.get("type") or "")
+        if ttype not in TRANSITION_TYPES:
+            self._send_error_json(
+                f"unknown transition type {ttype!r}; one of {list(TRANSITION_TYPES)}", 400)
+            return
+        dur = body.get("duration_ms", 300)
+        try:
+            dur = int(dur)
+        except (TypeError, ValueError):
+            self._send_error_json("duration_ms must be an integer (ms)", 400)
+            return
+        if not (0 <= dur <= 5000):
+            self._send_error_json("duration_ms must be in [0, 5000]", 400)
+            return
+        try:
+            spec = TransitionSpec(type=ttype, duration_ms=dur)
+        except Exception as exc:
+            self._send_error_json("invalid transition: " + " ".join(str(exc).split()), 400)
+            return
+        with self.server.quick_mutex:
+            rules = project.load_rules()
+            rules.transition_default = spec
+            ok, payload, status = self._gated_save(
+                project.rules_path, dump_yaml(rules.model_dump()),
+                label="timeline/rules.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_rules",
+                             {"transition_default": {"type": ttype, "duration_ms": dur},
+                              "via": "gui"})
+        self._send_json(payload, status)
+
+    def _act_edit_look(self, body: dict[str, Any]) -> None:
+        """Look preset + intensity → bible/style.yaml `look:`, validate-on-save
+        (LookSpec bounds reject an unknown preset / out-of-range intensity), other
+        style keys preserved, reverted if the check regresses."""
+        from ..core.models import LookSpec
+        from ..core.yamlio import dump_yaml, read_yaml
+
+        project = self.server.project
+        preset = str(body.get("preset") or "none")
+        intensity = body.get("intensity", 1.0)
+        try:
+            look = LookSpec(preset=preset, intensity=float(intensity))
+        except Exception as exc:
+            self._send_error_json("invalid look: " + " ".join(str(exc).split()), 400)
+            return
+        style_path = project.root / "bible" / "style.yaml"
+        with self.server.quick_mutex:
+            data: Any = {}
+            if style_path.exists():
+                try:
+                    data = read_yaml(style_path) or {}
+                except Exception:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data["look"] = {"preset": look.preset, "intensity": look.intensity}
+            ok, payload, status = self._gated_save(
+                style_path, dump_yaml(data), label="bible/style.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_bible",
+                             {"file": "style",
+                              "look": {"preset": look.preset, "intensity": look.intensity},
+                              "via": "gui"})
+        self._send_json(payload, status)

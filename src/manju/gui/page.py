@@ -4116,6 +4116,7 @@ def render_page(project_name: str, token: str) -> str:
         # capability in docs/WORKBENCH.md is reachable with one obvious click.
         '<nav class="pnav">'
         '<a class="active" href="/">工作台</a>'
+        '<a href="/edit">剪辑</a>'
         '<a href="/review">审片</a>'
         '<a href="/compare">对比</a>'
         '<a href="/library">素材库</a>'
