@@ -587,27 +587,33 @@ def _run_build_phases(
 
 def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
               provider: str | None = None, seed: int | None = None,
+              from_take: str | None = None,
               actor: str = "engine", assume_yes: bool = False) -> list[str]:
     """`manju redo S002` — force new takes (append-only), regardless of
     staleness. Selection is only touched when the shot had none.
 
-    A priced redo raises :class:`WaitingUser` unless ``assume_yes`` — the same
-    §8.3 ask_before gate as ``build`` (the R7 spend-gate hole closure: a priced
-    redo used to spend without ever hitting the gate that ``build`` enforces).
+    Recipe-reuse (R12, Runway pattern): ``from_take`` replays a prior take's
+    recorded recipe — its provider and generation params (seed included) travel
+    with the output, so the ⟳ "same recipe again" gesture is an append-only
+    redo, not a re-authoring. Explicit ``provider``/``seed`` still override the
+    reused recipe; the shot's own selection is left untouched.
 
-    Holds the process build lock like a full build (a redo mutates takes and
-    the ledger); contention raises
-    :class:`~manju.runtime.buildlock.BuildLocked`."""
+    A priced redo raises :class:`WaitingUser` unless ``assume_yes`` — the same
+    §8.3 ask_before gate as ``build`` (the R7 spend-gate hole closure). Holds
+    the process build lock like a full build (a redo mutates takes and the
+    ledger); contention raises :class:`~manju.runtime.buildlock.BuildLocked`."""
     from ..runtime.buildlock import build_lock
 
     with build_lock(project.root, actor=actor):
         return _redo_shot_locked(project, shot_id, candidates=candidates,
-                                 provider=provider, seed=seed, actor=actor,
+                                 provider=provider, seed=seed,
+                                 from_take=from_take, actor=actor,
                                  assume_yes=assume_yes)
 
 
 def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None = None,
                       provider: str | None = None, seed: int | None = None,
+                      from_take: str | None = None,
                       actor: str = "engine", assume_yes: bool = False) -> list[str]:
     from ..providers.base import GenerationRequest
     from ..providers.registry import fallback_chain, generate_with_fallback
@@ -618,6 +624,15 @@ def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None 
 
     rules = project.load_rules()
     params = dict(shot.generation.params)
+    if from_take is not None:
+        prior = project.get_take(shot_id, from_take)
+        if prior is None:
+            raise BuildError(f"{shot_id}: no such take to reuse: {from_take}")
+        # the recipe travels with the output: replay the take's recorded params
+        # (seed among them) and, unless overridden, its provider.
+        params.update(prior.sidecar.params)
+        if provider is None and prior.sidecar.provider not in ("", "manual_import"):
+            shot.generation.provider = prior.sidecar.provider
     if seed is not None:
         params["seed"] = seed
     if provider:

@@ -44,6 +44,24 @@ def compute_spec_hash(shot: ShotSpec, bible: dict[str, dict[str, Any]] | None = 
     return hash_value(spec_payload(shot, bible))
 
 
+def diff_spec_fields(old: dict[str, Any], new: dict[str, Any], prefix: str = "") -> list[str]:
+    """Dotted paths whose values differ between two spec payloads — the
+    evidence behind "why is this stale" (a hash can only say THAT the spec
+    moved; this says WHERE). Dict-vs-dict recurses; everything else compares
+    by equality. Sorted for stable output."""
+    fields: list[str] = []
+    for key in sorted(set(old) | set(new)):
+        a, b = old.get(key), new.get(key)
+        if a == b:
+            continue
+        path = f"{prefix}{key}"
+        if isinstance(a, dict) and isinstance(b, dict):
+            fields.extend(diff_spec_fields(a, b, path + "."))
+        else:
+            fields.append(path)
+    return fields
+
+
 # --------------------------------------------------------- voice input hash
 
 # FIX-F: dialogue drives the VOICE, not the picture — so it is deliberately

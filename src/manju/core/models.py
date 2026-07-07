@@ -167,6 +167,13 @@ class RemoteJobInfo(ManjuModel):
 class TakeSidecar(ManjuModel):
     provider: str
     spec_hash: str  # "sha256:..." or "manual" for human imports (§4.3)
+    # the CANONICAL spec dict (core/spec.spec_payload) captured at generation
+    # time — the evidence behind "why is this stale": diffing it against the
+    # current payload names the exact fields that moved (build/stale). Advisory
+    # and purely additive: absent (None, dropped by exclude_none on write) on
+    # takes made before this landed and on manual imports (never stale), so it
+    # never perturbs spec_hash or the content key of an existing take.
+    spec_snapshot: dict[str, Any] | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     remote: RemoteJobInfo | None = None
     compiled_prompt: str | None = None

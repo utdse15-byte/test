@@ -195,3 +195,57 @@ def test_redo_json_generates_local_take(in_project, add_shot):
     with RuntimeState(in_project.root) as state:
         log = state.run_log()
     assert any(r["shot"] == "S001" and r["status"] == "succeeded" for r in log)
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="redo runs real generation via the fallback chain")
+def test_redo_from_take_reuses_recipe(in_project, add_shot):
+    """R12 recipe-reuse: `manju redo --from-take` replays a prior take's
+    recorded recipe (provider + params) as a fresh append-only take, and a
+    bad take name is a clean one-line error, not a traceback."""
+    add_shot(in_project, "S001")
+    first = runner.invoke(app, ["redo", "S001", "--json"])
+    assert first.exit_code == 0, first.output
+    take0 = json.loads(first.output)["takes"][0]
+
+    again = runner.invoke(app, ["redo", "S001", "--from-take", take0, "--json"])
+    assert again.exit_code == 0, again.output
+    new_takes = json.loads(again.output)["takes"]
+    assert new_takes and new_takes[0] != take0  # append-only, a distinct take
+
+    # the reused recipe travels: same provider recorded on the new take
+    prior = in_project.get_take("S001", take0)
+    fresh = in_project.get_take("S001", new_takes[0])
+    assert fresh.sidecar.provider == prior.sidecar.provider
+
+    bad = runner.invoke(app, ["redo", "S001", "--from-take", "take_99"])
+    assert bad.exit_code == 1
+    assert "no such take" in (bad.stdout + bad.stderr)
+
+
+def test_pack_excludes_rebuildable_caches(tmp_project, add_shot, monkeypatch, tmp_path):
+    """§3: segment/proxy caches are rebuildable — pack omits them by default,
+    keeps them under --full; imports and finals always ride."""
+    import zipfile
+
+    add_shot(tmp_project, "S001")
+    (tmp_project.segments_dir).mkdir(parents=True, exist_ok=True)
+    (tmp_project.segments_dir / "seg.mp4").write_bytes(b"cache" * 100)
+    (tmp_project.proxy_dir / "proxy.mp4").write_bytes(b"proxy")
+    tmp_project.final_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.final_dir / "final_v1.mp4").write_bytes(b"final")
+    (tmp_project.imports_dir / "clip.mp4").write_bytes(b"import")
+
+    monkeypatch.chdir(tmp_project.root)
+
+    out = tmp_path / "a.manjupkg"
+    assert runner.invoke(app, ["pack", "--out", str(out)]).exit_code == 0
+    names = set(zipfile.ZipFile(out).namelist())
+    assert "renders/final/final_v1.mp4" in names
+    assert "media/imports/clip.mp4" in names
+    assert not any(n.startswith("renders/segments/") for n in names)
+    assert not any(n.startswith("renders/proxy/") for n in names)
+
+    out_full = tmp_path / "b.manjupkg"
+    assert runner.invoke(app, ["pack", "--out", str(out_full), "--full"]).exit_code == 0
+    full_names = set(zipfile.ZipFile(out_full).namelist())
+    assert "renders/segments/seg.mp4" in full_names

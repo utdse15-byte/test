@@ -480,3 +480,63 @@ class Project:
             if (m := re.match(rf"{prefix}_v(\d+)$", p.stem))
         ]
         return max(versions, key=lambda t: t[0])[1] if versions else None
+
+
+# --------------------------------------------------------------------- scaffold
+
+
+def scaffold_shots(project: Project, n: int, *, start: int = 1) -> list[str]:
+    """Scaffold ``n`` empty shot skeletons ``S{start:03d}…`` and index them.
+
+    The cargo-new / npm-init pattern: hand the human a correctly-shaped file to
+    fill in, not a blank page. Scaffolding is not authoring — the engine still
+    never writes CONTENT (§2: creation belongs to the director); every field
+    here is empty or a placeholder the human replaces.
+
+    Discipline:
+
+    - never overwrites: an id whose ``shots/<id>.yaml`` already exists is left
+      exactly as-is and skipped (not returned, not re-indexed);
+    - the template is written as raw text via
+      :func:`~manju.core.yamlio.atomic_write_text`, NOT :func:`write_yaml` — a
+      YAML dump would strip the guidance comments that tell the human what each
+      field is for;
+    - the skeleton PASSES ``manju check`` on a fresh, empty-Bible project:
+      ``scene`` is left empty and ``characters`` empty, and
+      :class:`~manju.core.models.ShotSpec` types ``scene`` as ``str | None`` —
+      so an empty scene reads as ``None`` and referential-integrity checks find
+      nothing dangling to complain about;
+    - newly created ids are appended to ``shots/index.yaml`` order (existing
+      order preserved, never duplicated).
+
+    Returns the ids actually created — skipped pre-existing ids excluded — in
+    scaffold order.
+    """
+    from .yamlio import atomic_write_text
+
+    created: list[str] = []
+    for i in range(start, start + max(0, n)):
+        sid = f"S{i:03d}"
+        path = project.shot_path(sid)
+        if path.exists():
+            continue  # never overwrite a human's file
+        skeleton = (
+            f"# {sid} — 骨架待填,引擎从不代写内容(§2:创作属于导演)\n"
+            f"id: {sid}\n"
+            "scene:  # bible/scenes.yaml 中的场景 id(留空=未定,先过 check)\n"
+            "characters: []  # bible/characters.yaml 中的角色 id 列表\n"
+            "dialogue:\n"
+            '  speaker: ""  # 说话的角色 id\n'
+            '  text: ""  # 台词原文,后续成为字幕/配音源\n'
+            "duration: auto  # auto=引擎按节奏定时;或填秒数(如 3)\n"
+        )
+        atomic_write_text(path, skeleton)
+        created.append(sid)
+
+    if created:
+        index = project.load_index()
+        for sid in created:
+            if sid not in index.order:
+                index.order.append(sid)
+        project.save_index(index)
+    return created

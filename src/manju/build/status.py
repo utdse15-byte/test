@@ -24,8 +24,11 @@ def project_status(project: Project) -> dict[str, Any]:
     config = project.load_config()
     statuses = evaluate_all(project)
     by_state: dict[str, list[str]] = {}
+    notes: dict[str, str] = {}
     for st in statuses:
         by_state.setdefault(st.state.value, []).append(st.shot_id)
+        if st.note:  # why-stale field evidence rides to the takeover surface
+            notes[st.shot_id] = st.note
 
     # voice states (M3): mirror of the picture-side summary, keyed by the
     # voice_hash staleness anchor; not_needed shots are omitted for signal.
@@ -144,6 +147,7 @@ def project_status(project: Project) -> dict[str, Any]:
         "resolution": f"{config.width}x{config.height}@{config.fps}",
         "shots_total": len(statuses),
         "shots_by_state": by_state,
+        "shot_notes": notes,
         "voice_by_state": voice_by_state,
         "timeline": {
             "exists": timeline is not None,

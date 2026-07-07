@@ -12,6 +12,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from ..core.hashing import hash_file
+
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac"}
@@ -45,3 +47,37 @@ def make_preview(src: Path, thumbs_dir: Path) -> Path | None:
         return dest if proc.returncode == 0 and dest.exists() else None
     except OSError:
         return None
+
+
+def find_duplicate_import(imports_dir: Path, candidate: Path) -> Path | None:
+    """First existing file under imports/ whose content equals ``candidate``'s.
+
+    Imports are sacred (§3): nothing is ever deduped destructively — this only
+    enables `manju import` to warn "已导入过 / already imported: <name>" before
+    minting yet another full copy of the same rushes (§11 import conveniences).
+    Size is the fast path; equality is decided by sha256
+    (:func:`manju.core.hashing.hash_file`). Deterministic: candidates are
+    scanned in sorted path order. Returns None when there is no duplicate,
+    the dir is empty/missing, or the candidate is unreadable.
+    """
+    imports_dir, candidate = Path(imports_dir), Path(candidate)
+    if not imports_dir.is_dir() or not candidate.is_file():
+        return None
+    try:
+        size = candidate.stat().st_size
+    except OSError:
+        return None
+    candidate_hash: str | None = None
+    for existing in sorted(imports_dir.rglob("*")):
+        try:
+            if not existing.is_file() or existing.samefile(candidate):
+                continue
+            if existing.stat().st_size != size:
+                continue  # size fast path: different size can't be identical
+            if candidate_hash is None:
+                candidate_hash = hash_file(candidate)
+            if hash_file(existing) == candidate_hash:
+                return existing
+        except OSError:
+            continue  # a vanished/unreadable entry is never a duplicate
+    return None

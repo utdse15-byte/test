@@ -132,9 +132,26 @@ class Provider(ABC):
         source: str | None = None,
         spec_hash: str | None = None,
     ) -> TakeInfo:
+        import json as _json
+
+        from ..core.spec import spec_payload
+
+        # why-stale evidence: the spec as it was NOW, diffable later (§4.3).
+        # One enrichment point for every generated take. Guarded against
+        # pathological bloat (huge bible excerpts duplicate per take): past 32KB
+        # the snapshot is dropped and staleness degrades to the generic note —
+        # advisory data must never dominate the sidecar.
+        snapshot: dict | None = spec_payload(req.shot, req.bible)
+        try:
+            if len(_json.dumps(snapshot, ensure_ascii=False)) > 32_768:
+                snapshot = None
+        except (TypeError, ValueError):
+            snapshot = None
+
         sidecar = TakeSidecar(
             provider=self.id,
             spec_hash=spec_hash or req.spec_hash,
+            spec_snapshot=snapshot,
             params=dict(params or {}),
             compiled_prompt=compiled_prompt,
             remote=remote,

@@ -51,7 +51,11 @@ class ShotBuildStatus:
 
 def evaluate_shot(project: Project, shot: ShotSpec,
                   bible: dict[str, dict[str, Any]] | None = None) -> ShotBuildStatus:
-    current_hash = compute_spec_hash(shot, bible if bible is not None else project.load_bible())
+    from ..core.spec import diff_spec_fields, spec_payload
+
+    bible = bible if bible is not None else project.load_bible()
+    payload = spec_payload(shot, bible)
+    current_hash = compute_spec_hash(shot, bible)
     takes = project.takes(shot.id)
     selected = shot.status.selected_take
 
@@ -77,9 +81,17 @@ def evaluate_shot(project: Project, shot: ShotSpec,
     if take.sidecar.spec_hash == current_hash:
         return ShotBuildStatus(shot.id, ShotState.FRESH, current_hash, selected, take)
 
+    # why-stale evidence: name the exact fields when the take carries the
+    # spec snapshot it was generated from (older takes degrade to the hash)
+    note = "shot spec changed after this take was generated"
+    if take.sidecar.spec_snapshot:
+        changed = diff_spec_fields(take.sidecar.spec_snapshot, payload)
+        if changed:
+            shown = ", ".join(changed[:6]) + ("…" if len(changed) > 6 else "")
+            note = f"spec changed: {shown}"
     return ShotBuildStatus(
         shot.id, ShotState.STALE, current_hash, selected, take,
-        note="shot spec changed after this take was generated",
+        note=note,
     )
 
 

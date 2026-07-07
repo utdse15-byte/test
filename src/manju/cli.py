@@ -64,12 +64,21 @@ def new(
     preset: Optional[str] = typer.Option(
         None, "--preset", help="pre-fill from a preset kit (see `manju presets`)"
     ),
+    shots: int = typer.Option(0, "--shots", help="scaffold N skeleton shots (S001…)"),
+    check_hook: bool = typer.Option(
+        False, "--check-hook",
+        help="install a git pre-commit hook running manju check",
+    ),
 ):
     """Create a <name>.manju project directory (§3).
 
     With --preset, the kit pre-fills project.yaml / rules.yaml / packaging.yaml
     and the story scaffolds, then stops touching the project — everything it
     wrote is plain, hand-editable text (P3). No --preset ⇒ the generic scaffold.
+
+    --shots N drops N commented skeleton shots that pass check out of the box
+    (骨架待填,引擎从不代写内容); --check-hook installs an opt-in pre-commit
+    gate so broken truth cannot enter history (§1-②).
     """
     dest = (path or Path.cwd()) / name
     spec = None
@@ -95,6 +104,21 @@ def new(
     else:
         append_event(project.root, ACTOR, "new", {"name": name})
         typer.secho(f"created {project.root}", fg=typer.colors.GREEN)
+    if shots > 0:
+        from .core.container import scaffold_shots
+
+        created = scaffold_shots(project, shots)
+        typer.echo(f"  scaffolded {len(created)} shots: {', '.join(created)} "
+                   "(骨架待填,引擎从不代写内容)")
+    if check_hook:
+        from .core.gitops import install_check_hook
+
+        hook = install_check_hook(project.root)
+        if hook:
+            typer.echo(f"  pre-commit hook: {hook} (坏真相进不了历史,§1-②)")
+        else:
+            typer.secho("  ⚠ check hook not installed (no repo, or a foreign "
+                        "pre-commit hook exists)", fg=typer.colors.YELLOW)
 
 
 # ----------------------------------------------------------------- presets
@@ -189,6 +213,7 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
     project = _project()
     registered: list[str] = []
     story_imports: list[str] = []  # the text drops, for the adapt-me hint
+    dup_notes: list[str] = []      # duplicate-content advisories (media only)
     for f in files:
         if not f.exists():
             _fail(f"not found: {f}")
@@ -205,6 +230,19 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
             registered.append(rel)
             story_imports.append(rel)
             continue
+        # duplicate-content advisory (§3: imports are sacred, dedup is never
+        # destructive — we import anyway and say so). Media path only; text
+        # drops above are adapted, not deduped.
+        try:
+            from .media.preview import find_duplicate_import
+
+            dup = find_duplicate_import(project.imports_dir, f)
+            if dup is not None:
+                dup_notes.append(
+                    f"{f.name}: 内容与 {project.relpath(dup)} 完全相同 (duplicate content)"
+                )
+        except Exception:
+            pass
         dest = project.imports_dir / f.name
         n = 2
         while dest.exists():  # imports are never overwritten either
@@ -231,12 +269,14 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
                  {"files": registered, "story_imports": story_imports, "previews": previews})
     if as_json:
         _emit({"imported": registered, "story_imports": story_imports,
-               "previews": previews}, True)
+               "previews": previews, "duplicates": dup_notes}, True)
     else:
         for r in registered:
             typer.secho(f"imported {r}", fg=typer.colors.GREEN)
         for src_rel, thumb in previews.items():
             typer.echo(f"  preview: {thumb}")
+        for note in dup_notes:
+            typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
         for r in story_imports:
             typer.secho(f"  提示 hint: {r} 是文本稿,可改编成剧本(novel→script):"
                         "读它 → 写 story/outline.md、story/script.md → 再拆 shots/",
@@ -317,18 +357,24 @@ def redo(
     seed: Optional[int] = typer.Option(None),
     yes: bool = typer.Option(False, "--yes", "-y",
                              help="approve ask_before-gated spend (§8.3)"),
+    from_take: Optional[str] = typer.Option(
+        None, "--from-take",
+        help="reuse a prior take's recipe (provider+params+seed; R12 Runway pattern)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Force new takes for one shot (append-only; existing selection stands).
 
-    A priced redo stops as waiting_user unless --yes (the same §8.3 ask_before
-    gate as build)."""
-    from .build.graph import WaitingUser, redo_shot
+    --from-take <take> replays that take's recorded recipe (provider + params,
+    seed included) as a fresh append-only take; --provider/--seed still
+    override. A priced redo stops as waiting_user unless --yes (the same §8.3
+    ask_before gate as build)."""
+    from .build.graph import BuildError, WaitingUser, redo_shot
 
     try:
         takes = redo_shot(_project(), shot_id, candidates=candidates,
-                          provider=provider, seed=seed, actor=ACTOR, assume_yes=yes)
-    except WaitingUser as exc:
+                          provider=provider, seed=seed, from_take=from_take,
+                          actor=ACTOR, assume_yes=yes)
+    except (BuildError, WaitingUser) as exc:
         _fail(str(exc))
     if as_json:
         _emit({"shot": shot_id, "takes": takes}, True)
@@ -970,16 +1016,25 @@ def board(
 # -------------------------------------------------------------- pack/unpack
 
 PACK_EXCLUDE = (".manju/", ".git/")
+# Rebuildable render caches (§3): a `manju build` reproduces them from truth, so
+# they are excluded by default — they can dwarf the truth+imports payload. --full
+# keeps them.
+PACK_CACHE = ("renders/segments/", "renders/proxy/")
 
 
 @app.command()
-def pack(out: Optional[Path] = typer.Option(None)):
+def pack(out: Optional[Path] = typer.Option(None),
+         full: bool = typer.Option(False, "--full",
+                                   help="include the rebuildable render caches too")):
     """Archive the project into a single .manjupkg (zip) for backup/migration.
 
     FIX-E: the original project directory name rides in the zip comment, so
-    the archive file can be renamed freely without losing the identity."""
+    the archive file can be renamed freely without losing the identity.
+    The segment/proxy caches are rebuildable (§3) and excluded by default —
+    they can dwarf the truth+imports payload; --full keeps them."""
     project = _project()
     out = out or project.root.parent / (project.root.stem + ".manjupkg")
+    excluded_cache = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
@@ -990,8 +1045,14 @@ def pack(out: Optional[Path] = typer.Option(None)):
             rel = path.relative_to(project.root).as_posix()
             if any(rel.startswith(prefix) for prefix in PACK_EXCLUDE):
                 continue
+            if not full and any(rel.startswith(prefix) for prefix in PACK_CACHE):
+                excluded_cache += path.stat().st_size
+                continue
             zf.write(path, rel)
     typer.secho(f"packed → {out}", fg=typer.colors.GREEN)
+    if excluded_cache:
+        typer.echo(f"  跳过可重建缓存 {excluded_cache / 1e6:.1f} MB "
+                   "(segments/proxy — 重建即回;--full 保留)")
 
 
 @app.command()
@@ -1245,16 +1306,67 @@ def spend(as_json: bool = typer.Option(False, "--json")):
 # ------------------------------------------------------------------- misc
 
 
+def _event_line(e: dict) -> str:
+    return (f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}  "
+            f"{json.dumps(e.get('detail', {}), ensure_ascii=False)}")
+
+
 @app.command()
-def events(n: int = typer.Option(20, "-n"), as_json: bool = typer.Option(False, "--json")):
-    """Tail the collaboration log (who did what, when — §10)."""
-    entries = tail_events(_project().root, n)
-    if as_json:
+def events(n: int = typer.Option(20, "-n"), as_json: bool = typer.Option(False, "--json"),
+           follow: bool = typer.Option(False, "--follow", "-f",
+                                       help="live-tail the log (§10 co-presence)")):
+    """Tail the collaboration log (who did what, when — §10).
+
+    --follow keeps the terminal open and streams each new record as it lands —
+    a second terminal's live window on the AI (or human) working next door.
+    """
+    project = _project()
+    entries = tail_events(project.root, n)
+    if as_json and not follow:
         _emit(entries, True)
-    else:
-        for e in entries:
-            typer.echo(f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}  "
-                       f"{json.dumps(e.get('detail', {}), ensure_ascii=False)}")
+        return
+    for e in entries:
+        typer.echo(_event_line(e))
+    if follow:
+        from .core.events import follow_events
+
+        try:
+            for e in follow_events(project.root):
+                typer.echo(json.dumps(e, ensure_ascii=False) if as_json else _event_line(e))
+        except KeyboardInterrupt:
+            pass
+
+
+@app.command()
+def watch(interval: float = typer.Option(0.8, help="poll interval seconds"),
+          once: bool = typer.Option(False, "--once", help="one check, then exit")):
+    """Dev loop (§10): re-run `manju check` whenever truth changes — edit YAML
+    in your editor, watch findings land here (watchexec/jest-watch pattern).
+
+    Strictly read-only: it only stats files and runs the read-only check, so it
+    never contends with `manju board --serve` or a running build.
+    """
+    from .build.watchloop import watch_ticks
+
+    project = _project()
+    typer.secho(f"watching {project.root.name} (Ctrl-C to stop)", fg=typer.colors.CYAN)
+    exit_code = 0
+    try:
+        for tick in watch_ticks(project, interval_s=interval,
+                                max_ticks=1 if once else None):
+            mark = "✓" if tick.check_ok else ("?" if tick.check_ok is None else "✗")
+            color = (typer.colors.GREEN if tick.check_ok
+                     else typer.colors.YELLOW if tick.check_ok is None
+                     else typer.colors.RED)
+            typer.secho(f"{tick.ts}  {mark} check "
+                        f"{'ok' if tick.check_ok else f'{len(tick.errors)} errors'}",
+                        fg=color)
+            for err in tick.errors[:8]:
+                typer.echo(f"    ✗ {err}")
+            exit_code = 0 if tick.check_ok else 1
+    except KeyboardInterrupt:
+        typer.echo("\nbye")
+    raise typer.Exit(exit_code if once else 0)
 
 
 # ------------------------------------------------- history/snapshot/rollback
@@ -1334,99 +1446,25 @@ def rollback(
 
 @app.command()
 def doctor(as_json: bool = typer.Option(False, "--json")):
-    """Environment health: ffmpeg, fonts, disk, project integrity (§14)."""
-    # Build a structured checks list first, then render human or JSON from it —
-    # exit code stays: env tools (git optional) + project check gate `ok`.
-    checks: list[dict] = []
-    ok = True
+    """Environment health: ffmpeg, fonts, disk, project integrity (§14).
 
-    def add(name: str, chk_ok: bool, detail: str, line: str) -> None:
-        checks.append({"name": name, "ok": chk_ok, "detail": detail, "line": line})
-
-    for tool in ("ffmpeg", "ffprobe", "git"):
-        found = shutil.which(tool)
-        add(tool, found is not None, found or "NOT FOUND",
-            f"{'✓' if found else '✗'} {tool}: {found or 'NOT FOUND'}")
-        ok = ok and (found is not None or tool == "git")  # git is optional
-    try:
-        from .media.card import find_font
-
-        font = find_font()
-        add("cjk_font", font is not None,
-            str(font) if font else "none found (cards will render boxes)",
-            f"{'✓' if font else '⚠'} CJK font: {font or 'none found (cards will render boxes)'}")
-    except ImportError:
-        add("cjk_font", False, "media module unavailable", "⚠ media module unavailable")
-
-    # ---- toolbelt probes (§2.5 adapter wall: absence is a fact, not a failure)
-    import importlib.util as _ilu
-
-    for lib, purpose in (("pyJianYingDraft", "剪映草稿主路"),
-                         ("pycapcut", "国际 CapCut 草稿"),
-                         ("mcp_video", "QC 质量门/媒体分析")):
-        present = _ilu.find_spec(lib) is not None
-        add(lib, True, "installed" if present else f"not installed ({purpose})",
-            f"{'✓' if present else '•'} {lib}: "
-            f"{'installed' if present else f'not installed — {purpose} 走替代路径'}")
-    for binary, purpose in (("capcut-cli", "剪映草稿副路 lint"),
-                            ("tesseract", "must_show OCR 机检")):
-        found = shutil.which(binary)
-        add(binary, True, found or f"not installed ({purpose})",
-            f"{'✓' if found else '•'} {binary}: {found or f'not installed — {purpose} 降级'}")
-    try:
-        from .media.html_card import find_chromium
-
-        chromium = find_chromium()
-        add("chromium", True,
-            str(chromium) if chromium else "not found (html_render → drawtext 兜底)",
-            f"{'✓' if chromium else '•'} chromium (html_render): "
-            f"{chromium or 'not found — 文字卡走 drawtext 兜底'}")
-    except ImportError:
-        pass
-
-    # ---- provider manifests (§8.6): a bad fill fails HERE, not at first spend
-    try:
-        from .providers.manifest import load_manifests
-        from .providers.registry import manifest_errors
-
-        manifests, load_errors = load_manifests()
-        for pid, manifest in sorted(manifests.items()):
-            problems = manifest.validate_for_generic()
-            probe_ok = not problems
-            detail = "ok" if probe_ok else "; ".join(problems)
-            add(f"provider:{pid}", probe_ok, detail,
-                f"{'✓' if probe_ok else '✗'} provider {pid} ({manifest.type}): {detail}")
-            ok = ok and probe_ok
-        for err in load_errors + [e for e in manifest_errors() if e not in load_errors]:
-            add("provider_manifest", False, err, f"✗ provider manifest: {err}")
-            ok = False
-        if not manifests:
-            add("providers", True, "no cloud provider manifests configured",
-                "• no cloud provider manifests configured (~/.manju/providers, §8.6)")
-    except Exception as exc:
-        add("providers", False, str(exc), f"⚠ provider probe errored: {exc}")
+    The probe logic lives in build/doctor.py — one engine core (§2) — this
+    command only finds the project (if any) and renders the checks it returns.
+    """
+    from .build.doctor import run_doctor
 
     try:
-        project = Project.find(Path.cwd())
-        free_gb = shutil.disk_usage(project.root).free / 1e9
-        add("disk_free", free_gb > 2, f"{free_gb:.1f} GB",
-            f"{'✓' if free_gb > 2 else '⚠'} disk free: {free_gb:.1f} GB")
-        report = run_check(project)
-        add("project_check", report.ok,
-            "ok" if report.ok else f"{len(report.errors)} errors",
-            f"{'✓' if report.ok else '✗'} project check: "
-            f"{'ok' if report.ok else f'{len(report.errors)} errors'}")
-        ok = ok and report.ok
+        project: Optional[Project] = Project.find(Path.cwd())
     except ProjectError:
-        add("project", True, "no project in cwd (environment checks only)",
-            "• no project in cwd (environment checks only)")
+        project = None
+    info = run_doctor(project)
     if as_json:
         _emit({"checks": [{"name": c["name"], "ok": c["ok"], "detail": c["detail"]}
-                          for c in checks], "ok": ok}, True)
+                          for c in info["checks"]], "ok": info["ok"]}, True)
     else:
-        for c in checks:
+        for c in info["checks"]:
             typer.echo(c["line"])
-    raise typer.Exit(0 if ok else 1)
+    raise typer.Exit(0 if info["ok"] else 1)
 
 
 @app.command()
