@@ -196,3 +196,75 @@ def compile_prompt(
     if template is not None:
         return template.format_map(_Blank(fields))
     return _default_layout(fields)
+
+
+# -- additive prompt views (goal 7: prompt workbench) --------------------------
+# The build sends exactly ONE prompt per take — :func:`compile_prompt` (the
+# "video prompt"), archived on the sidecar as ``compiled_prompt``. The workbench
+# also wants the picture-only prompt a still-image model consumes, the negative
+# prompt a provider's negative field takes, and a human-facing director's line.
+# These are assembled HERE, from the SAME shared field helpers, so the build path
+# and the workbench bundle can never disagree — and they are strictly additive:
+# nothing above changes, so every existing take/prompt stays byte-identical.
+
+
+def compile_image_prompt(
+    shot: ShotSpec, bible: dict[str, dict], template: str | None = None
+) -> str:
+    """The still-frame (image) prompt (§8.5).
+
+    The SAME assembly as :func:`compile_prompt` but WITHOUT the temporal fields a
+    single frame cannot depict — the timed ``action`` beat and the ``dialogue``.
+    What remains is the picture: scene, characters, camera framing, emotion, and
+    the must-show / avoid quality rails. An agent's ``prompt_override`` still wins
+    verbatim (it is the best prompt compiler, §8.5), exactly as for the video
+    prompt; a ``template`` fills the same placeholders.
+    """
+    override = shot.generation.prompt_override
+    if isinstance(override, str) and override.strip():
+        return override  # verbatim — do not normalize or strip
+    fields = _fields(shot, bible)
+    if template is not None:
+        return template.format_map(_Blank(fields))
+    lines: list[str] = []
+    if fields["scene"]:
+        lines.append(f"Scene: {fields['scene']}")
+    if fields["characters"]:
+        lines.append(f"Characters: {fields['characters']}")
+    if fields["camera"]:
+        lines.append(f"Camera: {fields['camera']}")
+    if fields["emotion"]:
+        lines.append(f"Emotion: {fields['emotion']}")
+    if fields["must_show"]:
+        lines.append(fields["must_show"])
+    if fields["avoid"]:
+        lines.append(fields["avoid"])
+    return "\n".join(lines)
+
+
+def compile_negative_prompt(shot: ShotSpec) -> str:
+    """The negative prompt (§8.5): the shot's ``quality.avoid`` items joined —
+    the exact values :func:`compile_prompt` renders under ``avoid:``, label-free
+    and ready for a provider's dedicated negative field. Empty string when the
+    shot lists nothing to avoid. Deterministic (authored order preserved)."""
+    return ", ".join(s for s in (_fmt(i) for i in (shot.quality.avoid or [])) if s)
+
+
+def compile_director_prompt(shot: ShotSpec, bible: dict[str, dict]) -> str:
+    """A concise director's-intent line for the workbench / human read (§8.5).
+
+    The action beat + emotion + camera framing + what the frame must land —
+    NOT a model input (so ``prompt_override`` deliberately does not apply here;
+    the director's intent is separate from whatever prompt a model receives).
+    Reuses the shared field assembly; empty sections are skipped."""
+    fields = _fields(shot, bible)
+    parts: list[str] = []
+    if fields["action"]:
+        parts.append(f"动作 Action: {fields['action']}")
+    if fields["emotion"]:
+        parts.append(f"情绪 Emotion: {fields['emotion']}")
+    if fields["camera"]:
+        parts.append(f"镜头 Camera: {fields['camera']}")
+    if fields["must_show"]:
+        parts.append(fields["must_show"])
+    return "\n".join(parts)

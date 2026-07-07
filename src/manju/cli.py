@@ -1074,6 +1074,115 @@ def explain(as_json: bool = typer.Option(False, "--json")):
             typer.echo(f"{target:5}  {r.get('latest') or '—'} → {r['verdict']}")
 
 
+# ------------------------------------------------------------------- prompt
+
+
+def _print_prompt_checks(findings: list, *, indent: str = "  ") -> None:
+    """Human render of prompt-check findings (shared by `prompt` and
+    `prompt --check`). Each finding on its own coloured line; a split proposal
+    prints its sub-shot texts + durations (nothing auto-applies)."""
+    colour = {"warning": typer.colors.YELLOW, "advisory": typer.colors.BRIGHT_BLACK}
+    for f in findings:
+        head = f"{indent}[{f['level']}] {f['code']}: {f['message']}"
+        typer.secho(head, fg=colour.get(f["level"]))
+        if f.get("suggestion"):
+            typer.echo(f"{indent}  建议 suggestion: {f['suggestion']}")
+        split = f.get("split")
+        if split:
+            typer.echo(f"{indent}  拆分建议 split ({split['reason']}):")
+            for sub in split["sub_shots"]:
+                text = sub["text"] or "(沿用原动作 / same action)"
+                typer.echo(f"{indent}    {sub['index']}) {text}  ≈{sub['duration_ms']}ms")
+
+
+@app.command()
+def prompt(
+    shot_id: Optional[str] = typer.Argument(None, metavar="SHOT"),
+    check: bool = typer.Option(
+        False, "--check",
+        help="lint EVERY shot's action/prompt text; exit non-zero on warnings"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Prompt workbench (goal 7/8) — read-only.
+
+    `manju prompt S001` shows the exact prompts the build will send (image /
+    video / director / negative), the resolved references with tier lineage, the
+    routed provider and why, the pre-flight cost, and the single-action checks.
+    `--json` emits the whole bundle. `manju prompt --check` runs the single-action
+    checks over every shot and exits non-zero when any warning is found (a
+    lint gate; nothing is spent, nothing is mutated)."""
+    project = _project()
+
+    if check:
+        from .qc.prompt_checks import check_all, has_blocking
+
+        findings = check_all(project)
+        if as_json:
+            _emit({"findings": findings, "ok": not has_blocking(findings)}, True)
+        else:
+            if not findings:
+                typer.secho("prompt check: 没有发现问题 (all shots clean)",
+                            fg=typer.colors.GREEN)
+            else:
+                by_shot: dict[str, list] = {}
+                for f in findings:
+                    by_shot.setdefault(f["shot"], []).append(f)
+                for sid, items in by_shot.items():
+                    typer.secho(f"{sid}", fg=typer.colors.CYAN)
+                    _print_prompt_checks(items)
+                warns = sum(1 for f in findings if f["level"] == "warning")
+                typer.secho(f"prompt check: {warns} 处警告 / {len(findings)} 项发现",
+                            fg=typer.colors.YELLOW if warns else typer.colors.GREEN)
+        if has_blocking(findings):
+            raise typer.Exit(1)
+        return
+
+    if shot_id is None:
+        _fail("prompt: pass a shot id (`manju prompt S001`) or --check")
+    from .build.promptlab import shot_prompt_bundle
+
+    try:
+        bundle = shot_prompt_bundle(project, shot_id)
+    except ProjectError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(bundle, True)
+        return
+
+    typer.secho(f"镜头 {bundle['shot']}  spec_hash={bundle['spec_hash'][:16]}…",
+                fg=typer.colors.CYAN)
+    for label, key in (("图像 image", "image_prompt"), ("视频 video", "video_prompt"),
+                       ("导演 director", "director_prompt"), ("负向 negative", "negative_prompt")):
+        text = bundle[key]
+        typer.secho(f"—— {label} prompt ——", fg=typer.colors.BRIGHT_BLACK)
+        typer.echo(text if text else "(空 / empty)")
+    refs = bundle["references"]
+    typer.secho("—— 参考 references ——", fg=typer.colors.BRIGHT_BLACK)
+    if refs["items"]:
+        for it in refs["items"]:
+            flag = "" if it["exists"] else " (缺失 missing)"
+            loc = it["ref"] if it["is_url"] else (it["path"] or it["ref"])
+            typer.echo(f"  [{it['kind']}] {loc}  ← tier {it['tier']}{flag}")
+    else:
+        typer.echo("  (无 / none)")
+    prov = bundle["provider"]
+    typer.secho("—— 供应商 provider ——", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(f"  选中 chosen: {prov.get('label')}  (why={prov.get('why')})")
+    typer.echo(f"  顺序 order: {' → '.join(prov.get('order') or []) or '(none)'}")
+    typer.echo(f"  回退链 fallback: {' → '.join(prov.get('fallback_chain') or []) or '(none)'}")
+    if prov.get("routing_error"):
+        typer.secho(f"  ⚠ routing.yaml: {prov['routing_error']}", fg=typer.colors.YELLOW)
+    cost = bundle["cost"]
+    typer.secho("—— 预估 cost ——", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(f"  ≈ {cost['estimated_cost']} {cost['currency'] or ''} "
+               f"({cost['duration_ms']}ms)".rstrip())
+    typer.secho("—— 检查 checks ——", fg=typer.colors.BRIGHT_BLACK)
+    if bundle["checks"]:
+        _print_prompt_checks(bundle["checks"])
+    else:
+        typer.secho("  ✓ 单动作检查通过 (single-action checks clean)", fg=typer.colors.GREEN)
+
+
 # ------------------------------------------------------------------- voice
 
 
