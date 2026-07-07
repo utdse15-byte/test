@@ -3431,5 +3431,233 @@ def director_suggest(as_json: bool = typer.Option(False, "--json")):
         typer.echo(f"  · [{s['kind']}] {s['text']}{hint}")
 
 
+# ------------------------------------------------------------------ series
+
+
+series_app = typer.Typer(
+    no_args_is_help=True,
+    help="剧集(长片/多集)总括层(goal V-3):series.yaml 伞状目录 + 全局 bible + "
+         "episodes/<eid>.manju 普通项目。分集与单项目命令完全兼容。",
+)
+app.add_typer(series_app, name="series")
+
+
+def _series(path: Optional[Path] = None):
+    """Resolve the series root from cwd — works from inside an episode too
+    (Series.find walks past the episode's project.yaml to the series.yaml)."""
+    from .core.series import Series, SeriesError
+
+    try:
+        return Series.find(path or Path.cwd())
+    except SeriesError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
+@series_app.command("new")
+def series_new(
+    path: Path,
+    name: Optional[str] = typer.Option(None, "--name", help="series name (default: dir name)"),
+    description: str = typer.Option("", "--description", help="one-line series description"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Scaffold a series umbrella: series.yaml + 全局 bible/ + episodes/ + script/ + reports/."""
+    from .core.series import Series, SeriesError
+
+    try:
+        series = Series.create(path, name=name, description=description)
+    except SeriesError as exc:
+        _fail(str(exc))
+    cfg = series.load_config()
+    append_event(series.root, ACTOR, "series_new", {"name": cfg.name})
+    if as_json:
+        _emit({"root": str(series.root), "name": cfg.name}, True)
+    else:
+        typer.secho(f"created series {series.root}  [{cfg.name}]", fg=typer.colors.GREEN)
+        typer.secho("  下一步:manju series new-episode E01 --title <标题>",
+                    fg=typer.colors.BRIGHT_BLACK)
+
+
+@series_app.command("status")
+def series_status_cmd(as_json: bool = typer.Option(False, "--json")):
+    """跨集状态汇总:每集镜头分布 / 成片 / 花费,加合计行(复用单项目机制,只读)。"""
+    from .core.series import series_status
+
+    series = _series()
+    info = series_status(series)
+    if as_json:
+        _emit(info, True)
+        return
+    typer.secho(f"剧集 / series  {info['series']}", fg=typer.colors.CYAN)
+    for e in info["episodes"]:
+        title = f"  {e['title']}" if e.get("title") else ""
+        if e.get("error"):
+            typer.secho(f"  {e['id']}{title}  ✗ 无法读取:{e['error']}", fg=typer.colors.RED)
+            continue
+        states = ", ".join(f"{k}={v}" for k, v in (e.get("shots_by_state") or {}).items()) or "—"
+        final = e.get("latest_final") or "—"
+        cost = f"{e.get('cost', 0.0)} {e.get('currency') or ''}".rstrip()
+        typer.echo(f"  {e['id']}{title}  镜头[{e.get('shots_total', 0)}]: {states}  "
+                   f"成片: {final}  花费: {cost}")
+    t = info["totals"]
+    typer.secho(
+        f"合计  {t['ok']}/{t['episodes']} 集可读"
+        + (f"(broken {t['errors']})" if t.get("errors") else "")
+        + f"  镜头 {t['shots']}  成片 {t['finals']}  花费 {t['cost']} {t.get('currency') or ''}".rstrip(),
+        fg=typer.colors.BRIGHT_BLACK,
+    )
+
+
+@series_app.command("episodes")
+def series_episodes_cmd(as_json: bool = typer.Option(False, "--json")):
+    """列出已登记的分集(id / 标题 / 是否已在磁盘上)。"""
+    from .core.series import Series
+
+    series = _series()
+    cfg = series.load_config()
+    rows = []
+    for e in cfg.episodes:
+        exists = (series.episode_project_dir(e.id) / "project.yaml").exists()
+        rows.append({"id": e.id, "title": e.title, "exists": exists,
+                     "dir": series.relpath(series.episode_project_dir(e.id))})
+    if as_json:
+        _emit({"series": cfg.name, "episodes": rows}, True)
+        return
+    typer.secho(f"分集 / episodes  ({cfg.name})", fg=typer.colors.CYAN)
+    if not rows:
+        typer.echo("  —  用 manju series new-episode E01 添加")
+        return
+    for r in rows:
+        mark = "" if r["exists"] else "  ⚠ 目录缺失"
+        typer.echo(f"  {r['id']}  {r['title'] or ''}  → {r['dir']}{mark}")
+
+
+@series_app.command("new-episode")
+def series_new_episode_cmd(
+    eid: str,
+    title: str = typer.Option("", "--title", help="episode title"),
+    preset: Optional[str] = typer.Option(None, "--preset", help="preset kit (see `manju presets`)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """在 episodes/<eid>.manju 下新建一个普通项目,并从剧集 bible 播种其 bible。"""
+    from .core.series import SeriesError, new_episode
+
+    series = _series()
+    try:
+        project = new_episode(series, eid, title=title, preset=preset, actor=ACTOR)
+    except SeriesError as exc:
+        _fail(str(exc))
+    rel = series.relpath(project.root)
+    if as_json:
+        _emit({"episode": eid, "title": title, "dir": rel,
+               "preset": project.load_config().preset}, True)
+    else:
+        typer.secho(f"created episode {eid} → {rel}", fg=typer.colors.GREEN)
+        typer.secho("  它是一个普通 .manju 项目:cd 进去用任意 manju 命令(check/build/…)",
+                    fg=typer.colors.BRIGHT_BLACK)
+
+
+@series_app.command("sync-bible")
+def series_sync_bible_cmd(
+    apply: bool = typer.Option(False, "--apply", help="write the ADD candidates (default: report only)"),
+    force: list[str] = typer.Option(
+        [], "--force", help="overwrite a DIVERGED entry explicitly: kind:id "
+        "(repeatable; refused when the episode entry's locked fields would change)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """把剧集 bible 保守同步到各分集:缺失→可新增,不同→只报告(除非 --force kind:id)。"""
+    from .core.series import sync_bible
+
+    series = _series()
+    report = sync_bible(series, apply=apply, force=list(force), actor=ACTOR)
+    if as_json:
+        _emit(report, True)
+        return
+    mode = "已应用 apply" if report["apply"] else "预览 report(未改动)"
+    typer.secho(f"剧集 bible 同步 / sync-bible  [{mode}]", fg=typer.colors.CYAN)
+    for e in report["episodes"]:
+        if e.get("error"):
+            typer.secho(f"  {e['id']}  ✗ {e['error']}", fg=typer.colors.RED)
+            continue
+        if e["added"]:
+            typer.secho(f"  {e['id']} 新增 add: {', '.join(e['added'])}", fg=typer.colors.GREEN)
+        if e["overwritten"]:
+            typer.secho(f"  {e['id']} 覆盖 overwrite: {', '.join(e['overwritten'])}",
+                        fg=typer.colors.YELLOW)
+        if e["diverged"]:
+            typer.secho(f"  {e['id']} 分歧 diverged(只报告,--force 覆盖): "
+                        f"{', '.join(e['diverged'])}", fg=typer.colors.MAGENTA)
+        for ref in e["refused"]:
+            typer.secho(f"  {e['id']} 拒绝 refused: {ref['entry']}(锁定字段 "
+                        f"{', '.join(ref['locked'])} 会变)", fg=typer.colors.RED)
+    t = report["totals"]
+    typer.secho(f"合计  新增 {t['added']}  分歧 {t['diverged']}  覆盖 {t['overwritten']}  "
+                f"拒绝 {t['refused']}  已同步 {t['in_sync']}", fg=typer.colors.BRIGHT_BLACK)
+    if report["unused_force"]:
+        typer.secho(f"  ⚠ 未命中的 --force: {', '.join(report['unused_force'])}",
+                    fg=typer.colors.YELLOW)
+
+
+@series_app.command("characters")
+def series_characters_cmd(as_json: bool = typer.Option(False, "--json")):
+    """全局角色视图:每个角色的分集在场/分歧/出场(复用 manju appearances)。"""
+    from .core.series import series_characters
+
+    series = _series()
+    view = series_characters(series)
+    if as_json:
+        _emit(view, True)
+        return
+    typer.secho(f"全局角色 / characters  ({view['series']})  分集: "
+                f"{', '.join(view['episodes']) or '—'}", fg=typer.colors.CYAN)
+    for c in view["characters"]:
+        name = f"  {c['name']}" if c.get("name") else ""
+        typer.secho(f"  {c['id']}{name}", fg=typer.colors.WHITE)
+        for cell in c["episodes"]:
+            if cell.get("error"):
+                typer.secho(f"      {cell['id']}: ✗ {cell['error']}", fg=typer.colors.RED)
+                continue
+            if not cell.get("present"):
+                typer.secho(f"      {cell['id']}: 不在分集 bible", fg=typer.colors.BRIGHT_BLACK)
+                continue
+            flag = " · 分歧 diverged" if cell.get("diverged") else ""
+            shots = cell.get("appearances") or []
+            tail = f" · 出场 {', '.join(shots)}" if shots else " · 无出场"
+            typer.echo(f"      {cell['id']}: 在场{flag}{tail}")
+    if view["episode_only"]:
+        typer.secho("仅存在于分集 bible / episode-only:", fg=typer.colors.YELLOW)
+        for eo in view["episode_only"]:
+            typer.echo(f"  {eo['id']}  → {', '.join(eo['episodes'])}")
+
+
+@series_app.command("split-script")
+def series_split_script_cmd(
+    file: Path,
+    apply: bool = typer.Option(False, "--apply", help="create missing episodes + write scripts"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """按显式标记(# E01 <标题> / ## E01)确定性地把长稿拆到各分集 story/script.md。"""
+    from .core.series import SeriesError, split_script
+
+    series = _series()
+    try:
+        report = split_script(series, file, apply=apply, actor=ACTOR)
+    except SeriesError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(report, True)
+        return
+    mode = "已应用 apply" if report["apply"] else "预览 report(未改动)"
+    typer.secho(f"长稿拆分 / split-script  [{mode}]  ← {report['source']}",
+                fg=typer.colors.CYAN)
+    for e in report["episodes"]:
+        state = ("新建 created" if e["created"] else
+                 ("已存在 exists" if e["exists"] else "将新建 would-create"))
+        typer.echo(f"  {e['eid']}  {e['title'] or ''}  [{state}]  → {e['script_path']}  "
+                   f"({e['chars']} 字)")
+    if not report["apply"]:
+        typer.secho("  加 --apply 才会创建分集并写入脚本", fg=typer.colors.BRIGHT_BLACK)
+
+
 if __name__ == "__main__":
     app()
