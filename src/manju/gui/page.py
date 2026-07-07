@@ -700,6 +700,92 @@ button.fchip { cursor: pointer; }
   .cmp-videos { grid-template-columns: 1fr; }
 }
 
+/* ============================================ round V: project cockpit ==== */
+/* The one-glance home. Pre-attentive by design (NN/g dashboards): colour is
+   spent ONLY on exceptions — the state strip reuses the board's st-* badges,
+   the risk banner is the only red block and it renders only when non-empty. */
+.cockpit {
+  margin: 0 0 1rem; padding: 1.05rem 1.4rem; background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.ck-hero {
+  display: flex; align-items: center; gap: 1rem 1.4rem; flex-wrap: wrap;
+  justify-content: space-between;
+}
+.ck-state { min-width: 12rem; flex: 1; }
+.ck-phase {
+  display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .04em;
+  color: var(--accent); text-transform: uppercase; margin-bottom: .15rem;
+}
+.ck-sentence { font-size: 1.2rem; font-weight: 700; line-height: 1.35; }
+.ck-human { color: var(--muted); font-size: .84rem; margin-top: .2rem; }
+.ck-cta { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; }
+.btn.ck-primary {
+  font-size: .98rem; padding: .6rem 1.3rem; border-radius: 8px; max-width: 30rem;
+  white-space: normal; text-align: center;
+}
+a.btn.ck-primary { text-decoration: none; }
+.ck-cta .muted { font-size: .74rem; }
+
+/* state strip — shot counts as chips; exception states carry the loud badge,
+   就绪/人工 stay quiet (colour only where it means "act"). */
+.ck-strip { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; align-items: center; }
+.ck-scount {
+  display: inline-flex; align-items: baseline; gap: .3rem; font-size: .78rem;
+  padding: .12rem .55rem; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--panel2); color: var(--muted);
+}
+.ck-scount b { color: var(--fg); font-size: .84rem; }
+.ck-scount.exc { border-color: #5a4718; }
+.ck-final { color: var(--muted); font-size: .8rem; }
+.ck-final .badge { margin-left: .35rem; }
+
+/* risk banner — the ONLY red block, shown by exception (Linear "at risk"). */
+.ck-risks {
+  margin-top: .8rem; border: 1px solid #5a2b2e; border-left-width: 4px;
+  background: #2a1618; border-radius: 8px; padding: .5rem .75rem;
+}
+.ck-risk { display: flex; align-items: baseline; gap: .5rem; font-size: .86rem; padding: .15rem 0; }
+.ck-risk-dot { flex: none; font-size: .7rem; line-height: 1.6; }
+.ck-risk.lvl-error .ck-risk-dot { color: var(--err); }
+.ck-risk.lvl-warn .ck-risk-dot { color: var(--warn); }
+.ck-risk.lvl-info .ck-risk-dot { color: var(--muted); }
+.ck-risk-text { word-break: break-word; }
+
+/* the supporting block grid (deliverables / spend / queue / approvals /
+   activity / suggestions) — calm, one-click-deep detail below the fold. */
+.ck-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: .8rem; margin-top: .9rem;
+}
+.ck-block { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: .55rem .75rem; }
+.ck-block h3 { margin: 0 0 .35rem; font-size: .8rem; color: var(--muted); font-weight: 600; }
+.ck-block.wide { grid-column: 1 / -1; }
+.ck-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.ck-dv { display: inline-flex; align-items: baseline; gap: .3rem; font-size: .76rem;
+  padding: .08rem .5rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
+.ck-dv .badge { font-size: .64rem; padding: .04rem .4rem; }
+.ck-line { font-size: .84rem; margin: .12rem 0; }
+.ck-line .muted { font-size: .78rem; }
+.ck-mini-bar { height: 4px; max-width: 100%; background: var(--panel); border-radius: 999px; overflow: hidden; margin: .35rem 0 .1rem; }
+.ck-mini-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.ck-mini-fill.over { background: var(--err); }
+.ck-ev { display: flex; align-items: baseline; gap: .45rem; font-size: .8rem; padding: .12rem 0; }
+.ck-ev .etime { font-size: .72rem; }
+.ck-sugg { display: flex; align-items: baseline; gap: .4rem; font-size: .82rem; padding: .12rem 0; }
+.ck-err { color: var(--muted); font-size: .8rem; font-style: italic; }
+.ck-empty { color: var(--muted); font-size: .82rem; }
+
+/* onboarding-lead: when a fresh project has nothing yet, the checklist leads
+   and the supporting grid steps back (NN/g empty state → one clear next step). */
+.cockpit.fresh .ck-grid { margin-top: .6rem; }
+
+@media (max-width: 900px) {
+  .cockpit { padding: .9rem .9rem; }
+  .ck-cta { align-items: stretch; width: 100%; }
+  .btn.ck-primary { max-width: none; }
+}
+
 """.strip() + "\n"
 
 # ---------------------------------------------------------------------- JS --
@@ -926,6 +1012,7 @@ _JS = r"""
       tlForce = true;    /* a build may have recompiled the timeline */
       gitStale = true;   /* … and touched the working tree */
       propStale = true;  /* … and an agent may have filed a proposal */
+      cockStale = true;  /* … and moved every number the cockpit shows */
       if (gitOpen) fetchGitPanel();
       if (tasksOpen) fetchTasks();   /* a done job likely wrote a ledger row */
     }
@@ -950,8 +1037,340 @@ _JS = r"""
     updateReviewChip(); /* 未阅 N follows the fresh shots + localStorage mark */
     maybeTimeline(s);   /* async, self-contained: a 500 there never cascades */
     maybeProposals(s);  /* async, at most one fetch per fp change */
+    maybeCockpit(s);    /* async, fingerprint-gated: the round-V cockpit */
     $("dropzone").classList.toggle("hidden", readonly);
     updateGates();
+  }
+
+  /* ========================================================= cockpit ===
+   * Round V (goal item 4): the one-glance home. Its numbers all come from
+   * /api/cockpit (engine reads only — build.status/stale/exportstatus/spend/
+   * director), fetched at most once per fingerprint change (mirroring the
+   * proposals panel), so it rides the SAME poll with no new machinery. Every
+   * node is built via createElement/textContent (CSP + XSS safe); the only
+   * dynamic geometry is a budget mini-bar width set through the CSSOM. */
+  let cockFp = null;      /* fingerprint the current cockpit was fetched at */
+  let cockStale = false;  /* set by a done job; cleared by the next fetch */
+  let cockBusy = false;
+  let cockData = null;
+  let cockErr = null;
+
+  function maybeCockpit(s) {
+    if (typeof s.fp === "string" && s.fp && (s.fp !== cockFp || cockStale)) {
+      fetchCockpit(s.fp);
+    }
+  }
+
+  async function fetchCockpit(fp) {
+    if (cockBusy) return;
+    cockBusy = true;
+    if (fp !== undefined) cockFp = fp;   /* recorded up front: an error must
+                                            not hammer /api/cockpit */
+    cockStale = false;
+    try {
+      cockData = await api("GET", "/api/cockpit");
+      cockErr = null;
+    } catch (err) {
+      cockErr = errMsg(err);   /* section-local degrade; the loop is untouched */
+    } finally {
+      cockBusy = false;
+      renderCockpit();
+    }
+  }
+
+  const CK_STATE_ZH = {
+    missing: "缺失", needs_selection: "待挑选", broken: "损坏",
+    stale: "待更新", manual: "人工", fresh: "就绪",
+  };
+  const CK_STATE_BADGE = {
+    missing: "st-missing", needs_selection: "st-needs", broken: "st-broken",
+    stale: "st-stale", manual: "st-manual", fresh: "st-fresh",
+  };
+  const CK_EXC = { missing: 1, needs_selection: 1, broken: 1, stale: 1 };
+  const CK_FRESH_BADGE = {
+    up_to_date: "st-fresh", stale: "st-stale", missing: "st-missing",
+    problematic: "st-broken", needs_manual: "st-manual", verified: "st-fresh",
+  };
+  const blkErr = (b) => (b && typeof b === "object" && b.error) ? String(b.error) : null;
+
+  function renderCockpit() {
+    const root = $("cockpit");
+    if (!root) return;
+    clear(root);
+    const c = cockData;
+    if (cockErr && !c) {
+      root.appendChild(el("p", "ck-err", "驾驶舱不可用 (cockpit unavailable): " + cockErr));
+      return;
+    }
+    if (!c) { root.appendChild(el("p", "loading", "加载中 (loading)…")); return; }
+
+    const state = c.state || {};
+    const na = c.next_action || {};
+    const fresh = (state.shots_total === 0)
+      || (c.onboarding && c.onboarding.should_show);
+    root.classList.toggle("fresh", !!fresh);
+
+    /* --- HERO: the state sentence + the ONE next action ------------------ */
+    const hero = el("div", "ck-hero");
+    const left = el("div", "ck-state");
+    if (!blkErr(state)) {
+      if (state.phase_zh) left.appendChild(el("div", "ck-phase", state.phase_zh));
+      left.appendChild(el("div", "ck-sentence",
+        state.sentence || "驾驶舱 (cockpit)"));
+    } else {
+      left.appendChild(el("div", "ck-sentence", "状态不可用 (state unavailable)"));
+      left.appendChild(el("div", "ck-err", blkErr(state)));
+    }
+    if (na && na.human_label) left.appendChild(el("div", "ck-human", "下一步 (next): " + na.human_label));
+    hero.appendChild(left);
+    hero.appendChild(renderHeroCTA(na));
+    root.appendChild(hero);
+
+    /* --- STATE STRIP: shot counts by state, exceptions coloured ---------- */
+    if (!blkErr(state) && state.shots_total > 0) {
+      const strip = el("div", "ck-strip");
+      const counts = state.shots_by_state || {};
+      Object.keys(counts).forEach((k) => {
+        const chip = el("span", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+        chip.appendChild(el("b", null, String(counts[k])));
+        chip.appendChild(document.createTextNode(" " + (CK_STATE_ZH[k] || k)));
+        strip.appendChild(chip);
+      });
+      const fin = state.final;
+      if (fin) {
+        const f = el("span", "ck-final",
+          "成片 (final)" + (fin.version ? " " + fin.version : ""));
+        if (fin.freshness) {
+          f.appendChild(el("span", "badge " + (CK_FRESH_BADGE[fin.freshness] || "st-missing"),
+            fin.freshness_zh || fin.freshness));
+        }
+        strip.appendChild(f);
+      }
+      root.appendChild(strip);
+    }
+
+    /* --- RISK BANNER: by exception only (calm when empty) ---------------- */
+    /* the engine risks (qc/stale/budget/broken/lock/crashed-render) come from
+     * /api/cockpit; failed GUI jobs live only in the runner (lastJobs), so they
+     * are appended client-side — the fourth risk class the contract names. */
+    const risks = c.risks;
+    const riskItems = (risks && !blkErr(risks) && Array.isArray(risks.items))
+      ? risks.items.slice() : [];
+    const failedJobs = (lastJobs || []).filter((j) => j.state === "failed").length;
+    if (failedJobs) {
+      riskItems.push({kind: "job", level: "error",
+        text: failedJobs + " 个任务失败 (failed jobs) — 见下方任务区"});
+    }
+    if (blkErr(risks)) {
+      root.appendChild(el("p", "ck-err", "风险读取失败 (risks unavailable): " + blkErr(risks)));
+    }
+    if (riskItems.length) {
+      const banner = el("div", "ck-risks");
+      riskItems.forEach((r) => {
+        const row = el("div", "ck-risk lvl-" + (r.level || "warn"));
+        row.appendChild(el("span", "ck-risk-dot", "●"));
+        row.appendChild(el("span", "ck-risk-text", r.text || r.kind || "risk"));
+        banner.appendChild(row);
+      });
+      root.appendChild(banner);
+    }
+
+    /* --- ONBOARDING lead (fresh project) or the supporting grid ---------- */
+    root.appendChild(renderCockGrid(c, fresh));
+  }
+
+  function renderHeroCTA(na) {
+    const cta = el("div", "ck-cta");
+    if (blkErr(na) || !na.verb || na.verb === "done" || na.verb === "none") {
+      if (na && na.verb === "done") {
+        const a = el("a", "btn ghost ck-primary", "查看成片 · 导出 (exports)");
+        a.href = "/exports";
+        cta.appendChild(a);
+      } else {
+        cta.appendChild(el("span", "muted", na && na.text ? na.text : "无待办 (nothing to do)"));
+      }
+      return cta;
+    }
+    const label = na.text || "开始 (start)";
+    const btn = el("button", "btn primary ck-primary", label);
+    btn.type = "button";
+    const mutating = na.verb === "build" || na.verb === "redo"
+      || na.verb === "repair" || na.verb === "package";
+    if (readonly && mutating) {
+      btn.disabled = true;
+      btn.title = "只读模式 (readonly)";
+    } else {
+      btn.addEventListener("click", () => heroAction(na));
+    }
+    cta.appendChild(btn);
+    if (na.verb === "build" && na.action && na.action.regen_stale) {
+      cta.appendChild(el("span", "muted", "含重做过期 (incl. regen stale)"));
+    }
+    return cta;
+  }
+
+  function heroAction(na) {
+    try {
+      if (na.verb === "story") { openOnboarding(); return; }
+      if (na.verb === "build") { heroBuild(na.action || {}); return; }
+      if (na.shot) { focusShot(na.shot); return; }   /* redo/select/repair: link to the shot */
+      const bp = $("buildpanel");                      /* package/other: link to the build panel */
+      if (bp) bp.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) { toast(errMsg(err), "err"); }
+  }
+
+  function heroBuild(action) {
+    const params = {
+      target: action.target || "final",
+      gen: action.gen || "missing",
+      regen_stale: !!action.regen_stale,
+      force: !!action.force,
+    };
+    showPlanModal("build", params, {
+      title: "构建前计划 (plan before build)",
+      onConfirm: async () => {
+        const confirmed = Object.assign({}, params, { dry_run: false, assume_yes: true });
+        const data = await post(null, "/api/build", confirmed, "构建任务已入队 (build queued)");
+        const gate = spendGateOf(data);   /* SYNCHRONOUS waiting_user, if any */
+        if (gate) {
+          spendSig = "sync:" + Date.now();
+          showSpendBanner(spendText(gate), confirmed, spendSig);
+        }
+      },
+    });
+  }
+
+  function renderCockGrid(c, fresh) {
+    const grid = el("div", "ck-grid");
+
+    /* onboarding leads a fresh project (NN/g: one clear next step) */
+    const ob = c.onboarding;
+    if (fresh && ob && !blkErr(ob) && Array.isArray(ob.steps)) {
+      const b = el("div", "ck-block wide");
+      b.appendChild(el("h3", null, "新手引导 (getting started) · "
+        + (ob.done_count || 0) + "/" + (ob.total || ob.steps.length)));
+      ob.steps.forEach((st) => {
+        const line = el("div", "ck-line");
+        line.appendChild(el("span", null, (st.done ? "✓ " : "○ ")));
+        line.appendChild(el("span", st.done ? "muted" : null, st.title || st.key));
+        b.appendChild(line);
+      });
+      const open = el("button", "btn ghost small", "打开引导 (open guide)");
+      open.type = "button";
+      open.addEventListener("click", () => openOnboarding());
+      b.appendChild(open);
+      grid.appendChild(b);
+    }
+
+    /* deliverables strip (block 4) */
+    grid.appendChild(ckBlock("交付物 (deliverables)", (b) => {
+      const dv = c.deliverables;
+      if (blkErr(dv)) { b.appendChild(el("p", "ck-err", blkErr(dv))); return; }
+      const rows = (dv && Array.isArray(dv.rows)) ? dv.rows : [];
+      if (!rows.length) { b.appendChild(el("p", "ck-empty", "暂无 (none)")); return; }
+      const chips = el("div", "ck-chips");
+      rows.forEach((r) => {
+        const chip = el("span", "ck-dv");
+        chip.appendChild(el("span", null, (r.label || r.kind) + (r.version ? " " + r.version : "")));
+        chip.appendChild(el("span", "badge " + (CK_FRESH_BADGE[r.freshness] || "st-missing"),
+          r.freshness_zh || r.freshness));
+        chip.title = r.basis || "";
+        chips.appendChild(chip);
+      });
+      b.appendChild(chips);
+    }));
+
+    /* spend (block 5) */
+    grid.appendChild(ckBlock("花费 (spend)", (b) => {
+      const sp = c.spend;
+      if (blkErr(sp)) { b.appendChild(el("p", "ck-err", blkErr(sp))); return; }
+      const total = Number(sp && sp.total || 0);
+      const cur = (sp && sp.currency) || "";
+      const limit = sp && sp.budget_limit;
+      b.appendChild(el("div", "ck-line",
+        "已花 " + fmtMoney(total) + " " + cur
+        + (limit ? " / 预算 " + fmtMoney(limit) + " " + cur : " / 预算 ∞")));
+      if (typeof limit === "number" && limit > 0) {
+        const ratio = Math.max(0, total / limit);
+        const bar = el("div", "ck-mini-bar");
+        const fill = el("span", "ck-mini-fill" + (ratio > 0.9 ? " over" : ""));
+        fill.style.width = Math.min(100, ratio * 100).toFixed(1) + "%";  /* CSSOM */
+        bar.appendChild(fill);
+        b.appendChild(bar);
+      }
+      if (sp && typeof sp.delta === "number") {
+        b.appendChild(el("div", "ck-line muted",
+          "估算差 (est. delta) " + (sp.delta >= 0 ? "+" : "") + fmtMoney(sp.delta)));
+      }
+    }));
+
+    /* queue (block 6) — cloud pending from the ledger + live GUI jobs */
+    grid.appendChild(ckBlock("队列 (queue)", (b) => {
+      const q = c.queue;
+      const cloud = (q && !blkErr(q) && typeof q.pending_cloud === "number") ? q.pending_cloud : 0;
+      const active = (lastJobs || []).filter((j) => j.state === "queued" || j.state === "running").length;
+      if (!cloud && !active) { b.appendChild(el("p", "ck-empty", "空闲 (idle)")); return; }
+      if (active) b.appendChild(el("div", "ck-line", "本地任务 (GUI jobs) · " + active + " 进行中"));
+      if (cloud) b.appendChild(el("div", "ck-line", "云端待轮询 (cloud pending) · " + cloud));
+    }));
+
+    /* approvals (block 8) — storyboard 审批 pending */
+    grid.appendChild(ckBlock("审批 (approvals)", (b) => {
+      const ap = c.approvals;
+      if (blkErr(ap)) { b.appendChild(el("p", "ck-err", blkErr(ap))); return; }
+      const pending = ap ? (ap.pending || 0) : 0;
+      if (!pending) { b.appendChild(el("p", "ck-empty", "无待审 (none pending)")); return; }
+      const line = el("div", "ck-line");
+      line.appendChild(el("span", null, pending + " 个镜头待审 (pending)"));
+      b.appendChild(line);
+      const a = el("a", "muted", "去审片 (review) →");
+      a.href = "/review";
+      b.appendChild(a);
+    }));
+
+    /* recent activity (block 7) */
+    grid.appendChild(ckBlock("最近动态 (activity)", (b) => {
+      const act = c.activity;
+      if (blkErr(act)) { b.appendChild(el("p", "ck-err", blkErr(act))); return; }
+      const events = (act && Array.isArray(act.events)) ? act.events : [];
+      if (!events.length) { b.appendChild(el("p", "ck-empty", "暂无动态 (no events)")); return; }
+      events.slice(0, 6).forEach((e) => {
+        const row = el("div", "ck-ev");
+        row.appendChild(el("span", "badge ac-" + (e.actor || "engine"), e.actor || "?"));
+        row.appendChild(el("span", "eaction", e.action || ""));
+        if (e.summary) row.appendChild(el("span", "edetail", e.summary));
+        if (e.ts) row.appendChild(el("span", "etime muted", fmtClock(e.ts)));
+        b.appendChild(row);
+      });
+    }));
+
+    /* suggestions (block 8, the rest of suggest_next) */
+    const sg = c.suggestions;
+    const sgItems = (sg && !blkErr(sg) && Array.isArray(sg.items)) ? sg.items : [];
+    if (sgItems.length) {
+      grid.appendChild(ckBlock("其它建议 (suggestions)", (b) => {
+        sgItems.forEach((s) => {
+          const row = el("div", "ck-sugg");
+          row.appendChild(el("span", "ck-risk-dot muted", "•"));
+          const txt = el("span", null, s.text || s.kind || "");
+          if (s.shot) {
+            txt.classList.add("tnote", "seekable");
+            txt.addEventListener("click", () => { try { focusShot(s.shot); } catch (e) {} });
+          }
+          row.appendChild(txt);
+          b.appendChild(row);
+        });
+      }));
+    }
+
+    return grid;
+  }
+
+  function ckBlock(title, fill) {
+    const b = el("div", "ck-block");
+    b.appendChild(el("h3", null, title));
+    try { fill(b); } catch (err) { b.appendChild(el("p", "ck-err", errMsg(err))); }
+    return b;
   }
 
   /* ---------------------------------------------------------- header --- */
@@ -1191,6 +1610,11 @@ _JS = r"""
     propErr = null;
     propExpanded = {};
     renderProposals();
+    cockFp = null;
+    cockStale = false;
+    cockData = null;
+    cockErr = null;
+    renderCockpit();
     /* a waiting_user banner from the OLD project must not be confirmable
      * against the new one — the resend would target the active project */
     lastJobs.forEach((j) => {
@@ -4123,9 +4547,14 @@ def render_page(project_name: str, token: str) -> str:
         # pro-only page links (still reachable by URL) and shows a hint bar.
         f'<body class="{bcls}">\n'
         + nav + "\n"
-        '<div id="header" class="panel">\n'
+        # round V (goal item 4): the project cockpit — one glance → one action →
+        # activity → risk-by-exception. Filled from /api/cockpit (fingerprint-
+        # gated, riding the existing poll); the state details bar (#header) that
+        # /api/state fills sits directly beneath it.
+        '<div id="cockpit" class="cockpit">\n'
         '  <p class="loading">加载中 (loading)…</p>\n'
         "</div>\n"
+        '<div id="header" class="panel"></div>\n'
         "<main>\n"
         '  <div id="onboarding" class="panel hidden"></div>\n'
         '  <div id="failures" class="panel hidden"></div>\n'

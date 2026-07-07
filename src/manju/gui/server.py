@@ -402,6 +402,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._proposals()
             elif path == "/api/onboarding":
                 self._onboarding_get()
+            elif path == "/api/cockpit":
+                from .cockpit import cockpit_data
+
+                self._send_json(cockpit_data(self.server.project))
             elif path == "/api/tasks":
                 self._tasks_get()
             elif path == "/api/presets":
