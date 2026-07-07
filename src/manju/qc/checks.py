@@ -272,6 +272,7 @@ def run_qc(
     if extract_frames:
         _content_frames(project, report, selected)
     _content_checkers(project, report, statuses, deep)
+    _mention_checks(project, report)
 
     return report
 
@@ -947,3 +948,78 @@ def stale_summary(project: Project) -> list[ShotBuildStatus]:
     """Per-shot build/staleness status (§4.3). QC also surfaces these as info
     items; callers wanting the structured list use this directly."""
     return evaluate_all(project)
+
+
+# --------------------------------------------------------- @mentions (round U)
+
+
+def _mention_checks(project, report) -> None:
+    """@mention advisories (round U, goal item 6). Both are info-level and only
+    ever fire when a shot's free text carries an ``@handle``, so a project that
+    uses no @mentions gets a byte-identical QC report:
+
+      (1) an UNRESOLVED @mention → info naming the nearest-matching asset ids;
+      (2) a RESOLVED character/scene mention NOT yet registered in
+          ``shot.characters`` / ``shot.scene`` → info pointing at
+          ``manju mentions --apply`` (mentions are a registration aid, not a
+          hidden runtime binding — the build never reads them).
+
+    Degrades silently: a broken matrix / unreadable shot never fails QC."""
+    try:
+        from ..core.assets import asset_matrix
+        from ..core.mentions import (
+            nearest_ids,
+            resolve_mentions,
+            shot_mention_text,
+        )
+    except Exception:
+        return
+    try:
+        matrix = asset_matrix(project)
+    except Exception:
+        return
+
+    for sid in project.shot_ids():
+        try:
+            shot = project.load_shot(sid)
+        except Exception:
+            continue
+        text = shot_mention_text(shot)
+        if "@" not in text:
+            continue
+        resolved, unresolved = resolve_mentions(text, matrix)
+
+        seen_unresolved: set[str] = set()
+        for m in unresolved:
+            if m.raw in seen_unresolved:
+                continue
+            seen_unresolved.add(m.raw)
+            hint = nearest_ids(m.raw, matrix)
+            tail = ("最相近:" + ", ".join(hint)) if hint else "资产矩阵中暂无相近条目"
+            report.add(
+                "info", "content", sid,
+                f"@{m.raw} 无法解析到任何资产(矩阵中无此 id 或别名)",
+                suggestion=f"检查拼写,或在 bible 中登记该 id/别名;{tail}",
+            )
+
+        registered_chars = set(shot.characters)
+        advised_chars: set[str] = set()
+        advised_scene = False
+        for m, kind, aid in resolved:
+            if kind == "character" and aid not in registered_chars \
+                    and aid not in advised_chars:
+                advised_chars.add(aid)
+                report.add(
+                    "info", "content", sid,
+                    f"@{m.raw} 已解析为角色 {aid},但未登记进 shot.characters",
+                    suggestion=f"manju mentions --apply {sid} "
+                               "(把 @ 提及写入镜头登记字段;锁定字段不自动写,改用 proposals/)",
+                )
+            elif kind == "scene" and aid != (shot.scene or "") and not advised_scene:
+                advised_scene = True
+                report.add(
+                    "info", "content", sid,
+                    f"@{m.raw} 已解析为场景 {aid},但 shot.scene={shot.scene or '—'}",
+                    suggestion=f"manju mentions --apply {sid} "
+                               "(把 @ 提及写入镜头登记字段;锁定字段不自动写,改用 proposals/)",
+                )

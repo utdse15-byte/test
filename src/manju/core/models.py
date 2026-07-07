@@ -697,3 +697,75 @@ def export_json_schemas() -> dict[str, dict[str, Any]]:
         "timeline": Timeline.model_json_schema(),
         "packaging": PackagingSpec.model_json_schema(),
     }
+
+
+# ---- round U (UA): asset matrix ------------------------------------------
+# Additive read-model schema over the EXISTING bible files (characters/scenes/
+# props/voices/style.yaml). These are OPTIONAL productization fields a human or
+# agent may add to ANY bible entry to drive the asset matrix (goal item 5) and
+# @mention resolution (goal item 6). A bible entry WITHOUT them is unchanged —
+# this is not a parallel store, the bible YAML stays the single source of truth
+# (§3, §4). Every field defaults empty, so :class:`AssetEntry` parsed from a
+# plain bible entry (name + free-form docs) carries no extra data.
+#
+# Byte-stability: this model is only ever READ by ``core/assets.py`` — it is
+# never dumped back to a truth file, and it does not participate in any content
+# key or fingerprint. spec_payload (core/spec.py) hashes the RAW bible dict, not
+# this model, so adding this class changes no existing hash. A project that
+# never writes aliases/relations/default_position/locked_fields keys renders
+# byte-for-byte identically. (Adding those keys to an entry does move the entry
+# dict and therefore the picture spec_hash of the shots that reference it — that
+# is the engine's pre-existing "any bible edit restages" rule, unchanged here.)
+
+
+class AssetEntry(BibleEntry):
+    """The asset-matrix view of a bible entry: a :class:`BibleEntry` plus the
+    optional round-U productization fields. ``extra='allow'`` (from ManjuModel)
+    keeps every free-form doc field (description, appearance, ref_image, …) as
+    model extras, so validating a real bible entry through this class never
+    loses data and never rejects a plain entry.
+
+    - ``aliases``          alternate names/handles the @mention system resolves.
+    - ``relations``        typed-but-free-form links to other entries: a mapping
+                           of a relation verb (located_in / owner / uses / …) to
+                           an id or list of ids. Only the SHAPE is validated —
+                           the verbs are open and the targets are not checked to
+                           exist (a dangling target is surfaced by the matrix, it
+                           is never a hard error).
+    - ``default_position`` a free-form staging hint (e.g. "frame-left").
+    - ``locked_fields``    entry field names the author considers authoritative
+                           (advisory metadata surfaced by the matrix; the real
+                           lock discipline lives in ``locked`` on shots/bible)."""
+
+    aliases: list[str] = Field(default_factory=list)
+    relations: dict[str, Any] = Field(default_factory=dict)
+    default_position: str | None = None
+    locked_fields: list[str] = Field(default_factory=list)
+
+    @field_validator("aliases", "locked_fields", mode="before")
+    @classmethod
+    def _coerce_str_list(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v else []
+        if isinstance(v, (list, tuple)):
+            return [str(x) for x in v if x not in (None, "")]
+        raise ValueError("must be a string or a list of strings")
+
+    @field_validator("relations", mode="before")
+    @classmethod
+    def _validate_relations_shape(cls, v: Any) -> dict[str, Any]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("relations must be a mapping of relation -> id(s)")
+        out: dict[str, Any] = {}
+        for verb, target in v.items():
+            if isinstance(target, (list, tuple)):
+                vals = [str(t) for t in target if t not in (None, "")]
+                if vals:
+                    out[str(verb)] = vals
+            elif target not in (None, ""):
+                out[str(verb)] = str(target)
+        return out

@@ -1372,6 +1372,173 @@ def appearances(as_json: bool = typer.Option(False, "--json")):
                        f"{', '.join(m['shots'])}{hint}")
 
 
+# ----------------------------------------------------------------- assets
+
+assets_app = typer.Typer(no_args_is_help=False,
+                         help="Asset matrix (goal 5): the read model over bible/*.yaml — "
+                              "角色/场景/道具/配音/风格,含别名·关系·参考图·出场。")
+app.add_typer(assets_app, name="assets")
+
+_ASSET_KIND_TITLES = (
+    ("character", "角色 / characters"),
+    ("scene", "场景 / scenes"),
+    ("prop", "道具 / props"),
+    ("voice", "配音 / voices"),
+    ("style", "风格 / styles"),
+)
+
+
+def _asset_row_lines(row: dict) -> list[str]:
+    """The extra attribute lines under an asset row (only non-empty ones)."""
+    lines: list[str] = []
+    if row.get("aliases"):
+        lines.append(f"      别名 aliases: {', '.join(row['aliases'])}")
+    refs = row.get("refs") or {}
+    ref_bits = []
+    if refs.get("images"):
+        ref_bits.append(f"图×{len(refs['images'])}")
+    if refs.get("videos"):
+        ref_bits.append(f"视频×{len(refs['videos'])}")
+    if ref_bits:
+        lines.append(f"      参考 refs: {', '.join(ref_bits)}")
+    if row.get("relations"):
+        rel = "; ".join(
+            f"{verb}→{v if isinstance(v, str) else ', '.join(v)}"
+            for verb, v in row["relations"].items()
+        )
+        lines.append(f"      关系 relations: {rel}")
+    if row.get("default_position"):
+        lines.append(f"      默认位置 default_position: {row['default_position']}")
+    if row.get("locked_fields"):
+        lines.append(f"      标注锁定 locked_fields: {', '.join(row['locked_fields'])}")
+    return lines
+
+
+@assets_app.callback(invoke_without_command=True)
+def assets_main(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")):
+    """Asset matrix table (中文表头). `manju assets show <id>` for one asset's detail."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from .core.assets import asset_matrix
+
+    matrix = asset_matrix(_project())
+    if as_json:
+        _emit(matrix, True)
+        return
+    typer.secho(f"资产矩阵 / asset matrix  (共 {matrix['shots_total']} 镜)",
+                fg=typer.colors.CYAN)
+    for kind, title in _ASSET_KIND_TITLES:
+        rows = matrix["kinds"].get(kind) or []
+        typer.secho(f"{title}  ({len(rows)})", fg=typer.colors.BRIGHT_BLACK)
+        if not rows:
+            typer.echo("  —")
+            continue
+        for row in rows:
+            name = f"  {row['name']}" if row.get("name") else ""
+            shots = row.get("appearances") or []
+            tail = f"  → 出场 {', '.join(shots)} ({len(shots)})" if shots else ""
+            typer.echo(f"  {row['id']}{name}{tail}")
+            for line in _asset_row_lines(row):
+                typer.secho(line, fg=typer.colors.BRIGHT_BLACK)
+
+
+@assets_app.command("show")
+def assets_show(asset_id: str, as_json: bool = typer.Option(False, "--json")):
+    """Detail for one asset by id — aliases, relations, refs, and its appearances."""
+    from .core.assets import asset_matrix, find_asset
+
+    row = find_asset(asset_matrix(_project()), asset_id)
+    if row is None:
+        _fail(f"资产矩阵中没有 id 为 '{asset_id}' 的条目(bible/*.yaml 未登记?)")
+    if as_json:
+        _emit(row, True)
+        return
+    typer.secho(f"{row['id']}  ({row['kind']})"
+                + (f"  {row['name']}" if row.get("name") else ""), fg=typer.colors.CYAN)
+    if row.get("description"):
+        typer.echo(f"  描述 description: {row['description']}")
+    for line in _asset_row_lines(row):
+        typer.echo(line.strip())
+    shots = row.get("appearances") or []
+    typer.secho("出场 / appearances: " + (", ".join(shots) if shots else "—"),
+                fg=typer.colors.BRIGHT_BLACK)
+
+
+# ---------------------------------------------------------------- mentions
+
+
+@app.command()
+def mentions(
+    shot_id: Optional[str] = typer.Argument(None, help="限定单个镜头;省略=全部镜头(--apply 只处理镜头,不动 story 文本)"),
+    check: bool = typer.Option(False, "--check", help="只报告已解析/未解析的 @提及(默认行为)"),
+    apply: bool = typer.Option(False, "--apply", help="把已解析的角色/场景 @提及写入镜头登记字段"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """@提及系统(goal 6):解析 shot 自由文本与 story/*.md 中的 `@id-或-别名`。
+
+    设计立场:@提及是登记辅助,不是隐藏的运行时绑定 —— 构建从不读取 @提及。
+    `--check`(默认)只报告;`--apply` 通过正常写入路径把已解析的角色/场景提及
+    写入 shot.characters / shot.scene(锁定字段绝不自动写,改为建议走 proposals/)。
+    """
+    project = _project()
+    from .core.assets import asset_matrix
+    from .core.mentions import apply_mentions, mention_report
+
+    matrix = asset_matrix(project)
+
+    if apply:
+        results = apply_mentions(project, matrix, shot_id)
+        changed = [r for r in results if r.get("changed")]
+        for r in changed:
+            append_event(project.root, ACTOR, "mentions_apply",
+                         {"shot": r["shot"], "added_characters": r.get("added_characters"),
+                          "set_scene": r.get("set_scene")})
+        if as_json:
+            _emit({"applied": results}, True)
+            return
+        if not changed:
+            typer.secho("没有可写入的角色/场景 @提及(或全部已登记/被锁定)。", fg=typer.colors.YELLOW)
+        for r in results:
+            if r.get("error"):
+                typer.secho(f"{r['shot']}: 出错 {r['error']}", fg=typer.colors.RED)
+                continue
+            if r.get("changed"):
+                bits = []
+                if r.get("added_characters"):
+                    bits.append(f"+角色 {', '.join(r['added_characters'])}")
+                if r.get("set_scene"):
+                    bits.append(f"场景={r['set_scene']}")
+                typer.secho(f"{r['shot']}: {'; '.join(bits)}", fg=typer.colors.GREEN)
+            for sk in r.get("skipped") or []:
+                typer.secho(f"  跳过 @{sk['mention']} ({sk['reason']})", fg=typer.colors.YELLOW)
+        return
+
+    # default / --check: report only
+    report = mention_report(project, matrix, shot_id)
+    if as_json:
+        _emit(report, True)
+        return
+    typer.secho("@ 提及报告 / mentions  (--apply 写入镜头登记字段)", fg=typer.colors.CYAN)
+    for entry in report["shots"]:
+        if not entry["resolved"] and not entry["unresolved"]:
+            continue
+        typer.secho(entry["shot"], fg=typer.colors.BRIGHT_BLACK)
+        for r in entry["resolved"]:
+            reg = r["registered"]
+            mark = "" if reg is None else ("已登记" if reg else "未登记 → --apply")
+            typer.echo(f"  @{r['raw']} → {r['kind']}:{r['asset']}  {mark}")
+        for u in entry["unresolved"]:
+            near = f"  (最相近:{', '.join(u['nearest'])})" if u.get("nearest") else ""
+            typer.secho(f"  @{u['raw']} → 未解析{near}", fg=typer.colors.YELLOW)
+    if report["story"]:
+        typer.secho("story 文本(只报告,不写入):", fg=typer.colors.BRIGHT_BLACK)
+        for s in report["story"]:
+            resolved = ", ".join(f"@{r['raw']}→{r['kind']}:{r['asset']}" for r in s["resolved"])
+            unresolved = ", ".join(f"@{u['raw']}" for u in s["unresolved"])
+            typer.echo(f"  {s['file']}: {resolved}"
+                       + (f"  未解析: {unresolved}" if unresolved else ""))
+
+
 # ------------------------------------------------------------------ tasks
 
 
