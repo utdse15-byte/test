@@ -269,13 +269,10 @@ def look_preview_frame(project: Any, source_relpath: str, at_ms: int,
 # ------------------------------------------------------------------- rendering
 
 
-def _nav(active: str) -> str:
-    from .pages import nav_html
-
-    return nav_html(active)
-
-
 def _shell(title: str, token: str, body: str) -> str:
+    from .pages import GLOSSARY_HEAD, chrome
+
+    nav, bcls = chrome("/edit")
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -286,10 +283,11 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/edit.css">\n'
-        '<script src="/edit.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/edit.js" defer></script>\n'
         "</head>\n"
-        '<body data-page="/edit">\n'
-        + _nav("/edit")
+        f'<body data-page="/edit" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -491,7 +489,7 @@ def _transitions_panel(td_type: str, td_dur: int) -> str:
         f'{_e(_TRANSITION_LABELS.get(t, t))} ({_e(t)})</option>'
         for t in TRANSITION_TYPES)
     return (
-        '<section class="panel ed-trans-panel"><h2>转场 Transitions</h2>'
+        '<section class="panel ed-trans-panel mj-pro-only"><h2>转场 Transitions</h2>'
         '<div class="ed-trans-row">'
         f'<label>默认转场 <select id="ed-trans-type">{opts}</select></label>'
         f'<label>时长 (ms) <input id="ed-trans-dur" class="ed-num" type="number" '
@@ -512,7 +510,7 @@ def _look_panel(look: Any) -> str:
         f'data-preset="{_e(p)}">{_e(_LOOK_LABELS.get(p, p))}</button>'
         for p in LOOK_PRESETS)
     return (
-        '<section class="panel ed-look-panel"><h2>调色 Look</h2>'
+        '<section class="panel ed-look-panel mj-pro-only"><h2>调色 Look</h2>'
         f'<div class="ed-look-chips" id="ed-look-chips">{chips}</div>'
         '<div class="ed-look-row">'
         f'<label>强度 intensity <input id="ed-look-int" type="range" min="0" max="1" '

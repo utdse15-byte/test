@@ -477,6 +477,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-U 导出中心 export center — see _exports_get
             elif self._director_get(path, url):
                 pass  # round-U 导演助手 director loop page — see _director_get
+            elif self._modes_get(path):
+                pass  # round-U 新手/专业 + glossary chrome assets — see _modes_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -548,6 +550,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._exports_post(path, body):  # round-U 导出中心 actions
                     return
                 if self._director_post(path, body):  # round-U director loop actions
+                    return
+                if self._modes_post(path, body):  # round-U mode + glossary toggles
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -2238,6 +2242,42 @@ class _Handler(BaseHTTPRequestHandler):
         handler(body)
         return True
 
+    # ============================================================ round-U
+    # 新手/专业 view switch (goal item 16) + plain-language glossary toggle (item
+    # 18). Both are per-USER preferences in ~/.manju/gui_state.json — NO project
+    # data is read or written, so switching mode never mutates the film. The
+    # mode only shapes which nav links + panels a page renders; every page stays
+    # reachable by URL (a mode never 403s a page). The two static chrome assets
+    # (/glossary.css, /glossary.js) drive the tooltip look, the mode switch and
+    # the 显示专业术语 toggle. Same GET host + POST token/readonly gates as every
+    # other surface (checked in do_GET/do_POST before we run).
+
+    def _modes_get(self, path: str) -> bool:
+        """GET dispatch for the shared glossary + mode chrome assets. Returns
+        True when handled, False so do_GET falls through to its 404."""
+        from . import glossary
+
+        if path == "/glossary.css":
+            self._send_text(glossary.render_glossary_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/glossary.js":
+            self._send_text(glossary.render_glossary_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        return False
+
+    def _modes_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the view-mode + glossary toggles. Same token/readonly
+        gates as every other mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/mode": self._act_set_mode,
+            "/api/pro-terms": self._act_set_pro_terms,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
     def _act_exports_generate(self, body: dict[str, Any]) -> None:
         """Generate/update ONE deliverable through the existing engine path.
 
@@ -2341,6 +2381,38 @@ class _Handler(BaseHTTPRequestHandler):
         with self.server.quick_mutex:
             self.server.state_cache = None  # a new verification changes the page
         self._send_json({"ok": True, "kind": kind, "record": record})
+
+    def _act_set_mode(self, body: dict[str, Any]) -> None:
+        """Switch 新手/专业, or dismiss the fresh-user hint. Per-user only — no
+        project write, no event, no state-cache invalidation."""
+        from .userstate import (
+            MODES,
+            resolve_mode,
+            set_mode,
+            set_mode_hint_dismissed,
+        )
+
+        if body.get("dismiss_hint"):
+            set_mode_hint_dismissed(True)
+            self._send_json({"ok": True, "mode": resolve_mode(),
+                             "hint_dismissed": True})
+            return
+        mode = str(body.get("mode") or "")
+        if mode not in MODES:
+            self._send_error_json(
+                f"invalid mode {mode!r}; expected one of {list(MODES)}", 400)
+            return
+        set_mode(mode)  # choosing a mode also dismisses the hint
+        self._send_json({"ok": True, "mode": mode})
+
+    def _act_set_pro_terms(self, body: dict[str, Any]) -> None:
+        """The §10 显示专业术语 toggle — grey the English original beside each
+        Chinese word. Per-user preference; no project write."""
+        from .userstate import set_show_pro_terms
+
+        show = bool(body.get("show"))
+        set_show_pro_terms(show)
+        self._send_json({"ok": True, "show": show})
 
     def _act_edit_trim(self, body: dict[str, Any]) -> None:
         """Trim a take's in/out — the `manju repair --op inout` engine op run as

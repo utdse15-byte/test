@@ -143,8 +143,9 @@ def test_edit_page_renders_with_content(gui, tmp_project, add_shot, make_take):
     assert quote_take(tmp_project, take) in body
     # inspector affordances baked in server-side
     assert "裁剪 Trim" in body and "素材声" in body and "时长 Duration" in body
-    # honest per-boundary note (no per-boundary override data path today)
-    assert "transition_overrides" in body  # round U: per-boundary override hint
+    # honest per-boundary note (global default picker; per-boundary override
+    # now lives in rules.yaml's transition_overrides — round-U engine change)
+    assert "transition_overrides" in body
     # one boundary marker between the two shots
     assert "ed-bound" in body
 

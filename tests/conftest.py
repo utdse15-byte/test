@@ -25,6 +25,17 @@ from manju.core.yamlio import write_yaml
 PROJECT_NAME = "雨夜便利店"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_gui_state(monkeypatch, tmp_path):
+    """Round U: the per-user GUI mode/glossary prefs live in
+    ``~/.manju/gui_state.json``, which the mode-aware GUI nav resolves AND
+    persists server-side on first render. Redirect it to a hermetic tmp path for
+    every test so no test ever reads or writes a real home; a fresh (absent) file
+    means the round-U default (新手/beginner) applies unless a test sets one.
+    Suites that need their own path (test_gui_core, ...) just override it."""
+    monkeypatch.setenv("MANJU_GUI_STATE", str(tmp_path / "_gui_state_conftest.json"))
+
+
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Project:
     """A freshly scaffolded project with a minimal, valid Bible.

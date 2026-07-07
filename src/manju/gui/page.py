@@ -4089,16 +4089,21 @@ _JS = r"""
 def render_page(project_name: str, token: str) -> str:
     """Return the complete ``<!doctype html>`` document served at ``/``.
 
-    Only two server-side values are embedded — the project name (title) and
-    the per-run CSRF token (``manju-token`` meta tag) — both HTML-escaped.
-    Everything visible is a static skeleton (``#header`` … ``#proposals`` …
+    Two server-side values are embedded — the project name (title) and the
+    per-run CSRF token (``manju-token`` meta tag), both HTML-escaped — plus the
+    mode-aware nav + body class resolved by :func:`manju.gui.pages.chrome` (round
+    U: the 新手/专业 view switch, its fresh-user hint and the 显示专业术语 toggle).
+    Everything else visible is a static skeleton (``#header`` … ``#proposals`` …
     ``#git``, plus the ``#editor`` dialog, the ``#kbdhint`` bar and the
     ``#toast`` rack) that ``/app.js`` fills from ``/api/state`` and the
     v2/v3 endpoints; there is no inline script and no inline ``style=``
     attribute, so the page works under a strict CSP.
     """
+    from .pages import GLOSSARY_HEAD, chrome
+
     name = html.escape(project_name)
     tok = html.escape(token)
+    nav, bcls = chrome("/")
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n'
@@ -4109,25 +4114,15 @@ def render_page(project_name: str, token: str) -> str:
         f"<title>{name} · manju gui</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'  # round-S: shared page chrome (S8b)
-        '<script src="/app.js" defer></script>\n'
+        + GLOSSARY_HEAD                                 # round U: glossary + mode chrome
+        + '<script src="/app.js" defer></script>\n'
         "</head>\n"
-        "<body>\n"
         # round-S (S8b): nav to the server-rendered workbench pages so every
         # capability in docs/WORKBENCH.md is reachable with one obvious click.
-        '<nav class="pnav">'
-        '<a class="active" href="/">工作台</a>'
-        '<a href="/edit">剪辑</a>'
-        '<a href="/review">审片</a>'
-        '<a href="/subtitles">字幕</a>'
-        '<a href="/mixer">混音</a>'
-        '<a href="/packaging">打包</a>'
-        '<a href="/exports">导出中心</a>'
-        '<a href="/compare">对比</a>'
-        '<a href="/library">素材库</a>'
-        '<a href="/providers">服务商</a>'
-        '<a href="/routing">路由</a>'
-        '<a href="/doctor">体检</a>'
-        "</nav>\n"
+        # round U: nav + body class are mode-aware (chrome()); 新手 omits the
+        # pro-only page links (still reachable by URL) and shows a hint bar.
+        f'<body class="{bcls}">\n'
+        + nav + "\n"
         '<div id="header" class="panel">\n'
         '  <p class="loading">加载中 (loading)…</p>\n'
         "</div>\n"

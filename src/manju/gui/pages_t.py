@@ -40,8 +40,9 @@ def _e(x: Any) -> str:
 
 
 def _shell(title: str, token: str, active: str, body: str) -> str:
-    from .pages import nav_html
+    from .pages import GLOSSARY_HEAD, chrome
 
+    nav, bcls = chrome(active)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -52,10 +53,11 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/pages-t.css">\n'
-        '<script src="/pages-t.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/pages-t.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{_e(active)}">\n'
-        + nav_html(active)
+        f'<body data-page="{_e(active)}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -239,19 +241,20 @@ def _bed_panel(title: str, bed: dict[str, Any], opts: list[dict[str, str]], *,
         '<div class="mx-row"><label>音量 gain (dB)</label>'
         + _num(f"{prefix}-gain", bed.get("gain_db", 0), step="0.5") +
         '</div>'
-        '<div class="mx-row"><label>入点 in-point start_offset (ms)</label>'
+        # advanced rows (round U): in-point/fades/ducking hidden in 新手 mode
+        '<div class="mx-row mj-pro-only"><label>入点 in-point start_offset (ms)</label>'
         + _num(f"{prefix}-start", bed.get("start_offset_ms", 0), step="50", mn="0") +
         '</div>'
-        '<div class="mx-row"><label>淡入 fade_in (ms)</label>'
+        '<div class="mx-row mj-pro-only"><label>淡入 fade_in (ms)</label>'
         + _num(f"{prefix}-fadein", bed.get("fade_in_ms", 0), step="50", mn="0") +
         '</div>'
-        '<div class="mx-row"><label>淡出 fade_out (ms)</label>'
+        '<div class="mx-row mj-pro-only"><label>淡出 fade_out (ms)</label>'
         + _num(f"{prefix}-fadeout", bed.get("fade_out_ms", 0), step="50", mn="0") +
         '</div>'
-        '<div class="mx-row"><label>闪避 ducking</label>'
+        '<div class="mx-row mj-pro-only"><label>闪避 ducking</label>'
         f'<input class="{prefix}-duck" type="checkbox"'
         + (" checked" if bed.get("ducking") else "") + "></div>"
-        '<details class="mx-duck"><summary class="muted">闪避参数 ducking shape</summary>'
+        '<details class="mx-duck mj-pro-only"><summary class="muted">闪避参数 ducking shape</summary>'
         '<div class="mx-row"><label>threshold</label>'
         + _num(f"{prefix}-dth", duck.get("threshold", 0.05), step="0.01") + '</div>'
         '<div class="mx-row"><label>ratio</label>'
@@ -300,7 +303,7 @@ def render_mixer(project: Any, token: str) -> str:
 
     trans = mix.get("transition") or {}
     transition = (
-        '<div class="mx-trans panel"><h2>转场音 Transition hit</h2>'
+        '<div class="mx-trans panel mj-pro-only"><h2>转场音 Transition hit</h2>'
         '<div class="mx-row"><label>音源 source</label>'
         + _source_select(opts, trans.get("source"), cls="trans-source") +
         '<audio class="mx-audition trans-audition" controls preload="none"></audio></div>'

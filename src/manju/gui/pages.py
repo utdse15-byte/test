@@ -34,12 +34,18 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+from .glossary import tooltip_html
+
 __all__ = [
     "PAGE_PATHS",
     "render",
     "render_pages_css",
     "render_pages_js",
     "nav_html",
+    "chrome",
+    "body_class",
+    "PRO_ONLY_PAGES",
+    "GLOSSARY_HEAD",
     "set_disabled_in_text",
     "set_strategy_in_text",
     "STRATEGY_NAME_RE",
@@ -70,22 +76,103 @@ _NAV = (
     ("/doctor", "体检"),
 )
 
+# round U (§8): the pro-only pages the 新手 nav omits — providers, routing,
+# doctor, compare. Every one stays reachable by URL (the render never 403s on
+# mode; mode only shapes the nav + panel visibility), so hiding is loss-free.
+PRO_ONLY_PAGES = frozenset({"/compare", "/providers", "/routing", "/doctor"})
+
+# Head stanza every workbench surface shares so the glossary tooltip look + the
+# mode/terms chrome behave identically on the SPA and all server-rendered pages.
+GLOSSARY_HEAD = (
+    '<link rel="stylesheet" href="/glossary.css">\n'
+    '<script src="/glossary.js" defer></script>\n'
+)
+
 
 def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
-def nav_html(active: str) -> str:
-    """The shared top nav (also injected into the SPA skeleton for discovery)."""
+def body_class(mode: str, show_terms: bool) -> str:
+    """The ``<body>`` class server-side render stamps so CSS can shape the view:
+    ``mj-mode-beginner``/``mj-mode-pro`` gate the pro-only panels, ``mj-show-terms``
+    reveals the greyed English originals (§10 显示专业术语)."""
+    parts = ["mj-mode-beginner" if mode == "beginner" else "mj-mode-pro"]
+    if show_terms:
+        parts.append("mj-show-terms")
+    return " ".join(parts)
+
+
+def chrome(active: str) -> tuple[str, str]:
+    """Resolve the per-user view mode + glossary toggle (server-side) and return
+    ``(nav_html, body_class)`` for a page shell. Central so the SPA and every
+    server-rendered page share one mode-aware nav and one body class."""
+    from .userstate import is_mode_hint_dismissed, is_show_pro_terms, resolve_mode
+
+    mode = resolve_mode()
+    show = is_show_pro_terms()
+    nav = nav_html(active, mode=mode, show_terms=show,
+                   hint_dismissed=is_mode_hint_dismissed())
+    return nav, body_class(mode, show)
+
+
+def _mode_controls(mode: str, show_terms: bool) -> str:
+    """The 新手/专业 switch + 显示专业术语 toggle, pinned to the right of the nav.
+    Buttons carry ``data-mode`` for /glossary.js (CSP-safe — no inline handler)."""
+
+    def btn(m: str, label: str) -> str:
+        on = mode == m
+        return (f'<button type="button" class="mj-mode-btn{" on" if on else ""}" '
+                f'data-mode="{m}" aria-pressed="{"true" if on else "false"}">'
+                f"{_e(label)}</button>")
+
+    checked = " checked" if show_terms else ""
+    return (
+        '<span class="mj-nav-ctl">'
+        '<span class="mj-modesw" role="group" aria-label="视图模式 (view mode)">'
+        + btn("beginner", "新手") + btn("pro", "专业")
+        + "</span>"
+        '<label class="mj-terms-toggle" '
+        'title="在每个中文词旁显示英文原词 (show the engineering term beside it)">'
+        f'<input type="checkbox" id="mj-terms-toggle"{checked}> 显示专业术语</label>'
+        "</span>"
+    )
+
+
+def _mode_hint() -> str:
+    """The fresh-user 新手 one-liner (dismissable via /glossary.js)."""
+    return (
+        '<div id="mj-mode-hint" class="mj-mode-hint">'
+        "<span>当前是<b>新手模式</b>:只留常用面板,进阶功能(服务商/路由/体检/对比、"
+        "转场调色等)已收起。随时点右上角<b>专业</b>切回全部功能 — 不会丢任何内容。</span>"
+        '<button type="button" id="mj-mode-hint-x" aria-label="知道了 (dismiss)">'
+        "知道了 ✕</button></div>"
+    )
+
+
+def nav_html(active: str, mode: str = "pro", show_terms: bool = False,
+             hint_dismissed: bool = True) -> str:
+    """The shared top nav (also injected into the SPA skeleton for discovery).
+
+    In 新手 mode the pro-only page links (:data:`PRO_ONLY_PAGES`) are omitted and
+    a dismissable hint bar follows the nav; the pages themselves stay reachable by
+    URL. The mode switch + 显示专业术语 toggle sit at the right on every surface."""
+    beginner = mode == "beginner"
     out = ['<nav class="pnav">']
     for href, label in _NAV:
+        if beginner and href in PRO_ONLY_PAGES:
+            continue
         cls = "active" if href == active else ""
         out.append(f'<a class="{cls}" href="{href}">{_e(label)}</a>')
+    out.append(_mode_controls(mode, show_terms))
     out.append("</nav>")
+    if beginner and not hint_dismissed:
+        out.append(_mode_hint())
     return "".join(out)
 
 
 def _shell(title: str, token: str, active: str, body: str) -> str:
+    nav, bcls = chrome(active)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -95,10 +182,11 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         f"<title>{_e(title)} · manju</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
-        '<script src="/pages.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/pages.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{_e(active)}">\n'
-        + nav_html(active)
+        f'<body data-page="{_e(active)}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -311,7 +399,9 @@ def render_review(project: Any, token: str) -> str:
 
     body = (
         '<div class="page-h"><h1>审片 Review</h1>'
-        '<span class="muted">序审队列 · 键盘 j/k 上下 · g 通过 · x 退回 · 空格 播放/暂停</span></div>\n'
+        '<span class="muted">逐条审阅每个' + tooltip_html("shot") + '选用的'
+        + tooltip_html("take") + ',看 ' + tooltip_html("QC")
+        + ' · 键盘 j/k 上下 · g 通过 · x 退回 · 空格 播放/暂停</span></div>\n'
         + err_line
         + '<div class="rv-progress panel">'
         f'<span id="rv-progress">已审 {reviewed} / {total}</span>'
@@ -377,7 +467,9 @@ def render_compare(project: Any, token: str, a: str | None, b: str | None) -> st
 
     versions = _final_versions(project)
     head = ('<div class="page-h"><h1>对比 Compare</h1>'
-            '<span class="muted">finals 版本差异 · GitHub PR files 式</span></div>')
+            '<span class="muted">成片版本差异 · 逐' + tooltip_html("shot")
+            + '看换了哪条' + tooltip_html("take")
+            + ' · GitHub PR files 式</span></div>')
 
     if len(versions) < 2:
         body = (
@@ -672,7 +764,8 @@ def _provider_rows() -> tuple[list[dict], list[str]]:
 
 def render_providers(project: Any, token: str) -> str:
     head = ('<div class="page-h"><h1>服务商 Providers</h1>'
-            '<span class="muted">manifest 状态板 · 密钥值从不显示</span></div>')
+            '<span class="muted">每个 provider 是一个' + tooltip_html("provider")
+            + ' · 状态板 · 密钥值从不显示</span></div>')
     try:
         rows, load_errors = _provider_rows()
     except Exception as exc:  # never break the page on a probe error
@@ -743,7 +836,9 @@ def render_routing(project: Any, token: str) -> str:
     from ..providers.routing import RoutingError, list_strategies
 
     head = ('<div class="page-h"><h1>路由 Routing</h1>'
-            '<span class="muted">只读策略视图 + 策略选择器(写 timeline/routing.yaml)</span></div>')
+            '<span class="muted">' + tooltip_html("routing") + '与'
+            + tooltip_html("fallback")
+            + '的只读视图 + 策略选择器(写 timeline/routing.yaml)</span></div>')
     try:
         info = list_strategies(project)
     except RoutingError as exc:
