@@ -2057,6 +2057,12 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/edit/look":
             self._edit_look(parse_qs(url.query))
             return True
+        if path == "/edit/wave":
+            self._edit_wave(parse_qs(url.query))
+            return True
+        if path == "/api/edit/synchints":
+            self._edit_synchints()
+            return True
         return False
 
     @staticmethod
@@ -2131,6 +2137,39 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._serve_file(frame)
 
+    def _edit_wave(self, query: dict[str, list[str]]) -> None:
+        """One cached waveform PNG for an audio-bearing take/source (round U,
+        contract B). Lazy: the /edit page GET never calls this — the audio-lane
+        <img> does. An audio-less source (or no ffmpeg) is an honest 404 + JSON
+        note, not a 500. Same media allowlist as the frame endpoints."""
+        rel = self._edit_source(query)
+        if rel is None:
+            self._send_error_json("waveform source not served", 404)
+            return
+        from ..media.waveform import waveform_png
+
+        w = self._q_int(query, "w", 480)
+        h = self._q_int(query, "h", 40)
+        try:
+            png = waveform_png(self.server.project, rel, width=w, height=h)
+        except Exception as exc:  # MediaError (no audio / no ffmpeg) → broken img
+            self._send_error_json(" ".join(str(exc).split()), 404)
+            return
+        self._serve_file(png)
+
+    def _edit_synchints(self) -> None:
+        """Caption/voice sync hints for the compiled timeline (round U, contract
+        C). Runs rms analysis lazily (never the page GET); degrades to an empty
+        list + note without a timeline / voice / ffmpeg. Read-only."""
+        from .synchints import sync_hints_data
+
+        project = self.server.project
+        try:
+            timeline = project.load_timeline()
+        except Exception:
+            timeline = None
+        self._send_json(sync_hints_data(project, timeline))
+
     def _edit_post(self, path: str, body: dict[str, Any]) -> bool:
         """POST dispatch for the 剪辑 EDIT actions. Same token/readonly gates as
         every other mutating POST (checked in do_POST before us)."""
@@ -2139,7 +2178,10 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/edit/audio": self._act_edit_audio,
             "/api/edit/duration": self._act_edit_duration,
             "/api/edit/transition": self._act_edit_transition,
+            "/api/edit/transition-override": self._act_edit_transition_override,
             "/api/edit/look": self._act_edit_look,
+            "/api/edit/handle-rebuild-plan": self._act_edit_handle_rebuild_plan,
+            "/api/edit/handle-rebuild": self._act_edit_handle_rebuild,
         }.get(path)
         if handler is None:
             return False
@@ -3123,6 +3165,158 @@ class _Handler(BaseHTTPRequestHandler):
                              {"transition_default": {"type": ttype, "duration_ms": dur},
                               "via": "gui"})
         self._send_json(payload, status)
+
+    def _act_edit_transition_override(self, body: dict[str, Any]) -> None:
+        """Per-boundary transition override (round U) → rules.transition_overrides
+        keyed by the OUT-edge shot id, through the SAME check-gated rules save the
+        default picker uses.
+
+        - ``{shot, type, duration_ms}`` sets an xfade/fade override — the type is
+          validated against TRANSITION_TYPES and the duration against the ½-clip
+          cap (REPORTS §1: ≤ half the shorter neighbour) → 400 with a 中文 reason
+          otherwise;
+        - ``{shot, cut: true}`` writes ``null`` (硬切);
+        - ``{shot, action: "reset"}`` removes the key (恢复默认).
+        Records an ``edit_rules`` event with the change."""
+        from ..core.models import TRANSITION_TYPES, TransitionSpec
+        from ..core.yamlio import dump_yaml
+        from .edit_engine import max_override_duration_ms
+
+        project = self.server.project
+        shot_id = str(body.get("shot") or "")
+        if not shot_id:
+            self._send_error_json("shot (out-edge id) is required", 400)
+            return
+        action = str(body.get("action") or "")
+        cut = bool(body.get("cut"))
+        detail: dict[str, Any]
+        new_value: Any
+        if action == "reset":
+            new_value = "__remove__"
+            detail = {"transition_override": {"shot": shot_id, "reset": True}}
+        elif cut:
+            new_value = None  # explicit null = hard cut
+            detail = {"transition_override": {"shot": shot_id, "type": "cut"}}
+        else:
+            ttype = str(body.get("type") or "")
+            if ttype not in TRANSITION_TYPES:
+                self._send_error_json(
+                    f"unknown transition type {ttype!r}; one of {list(TRANSITION_TYPES)}", 400)
+                return
+            dur = body.get("duration_ms", 300)
+            try:
+                dur = int(dur)
+            except (TypeError, ValueError):
+                self._send_error_json("duration_ms must be an integer (ms)", 400)
+                return
+            if not (0 <= dur <= 5000):
+                self._send_error_json("duration_ms must be in [0, 5000]", 400)
+                return
+            # REPORTS §1 validity: ≤ half the shorter neighbour clip.
+            try:
+                timeline = project.load_timeline()
+            except Exception:
+                timeline = None
+            cap = max_override_duration_ms(project, timeline, shot_id)
+            if cap is not None and dur > cap:
+                self._send_error_json(
+                    f"转场时长 {dur}ms 超过上限:相邻较短片段一半为 {cap}ms(剪映规则)", 400)
+                return
+            try:
+                spec = TransitionSpec(type=ttype, duration_ms=dur)
+            except Exception as exc:
+                self._send_error_json(
+                    "invalid transition: " + " ".join(str(exc).split()), 400)
+                return
+            new_value = spec.model_dump()
+            detail = {"transition_override": {"shot": shot_id, "type": ttype,
+                                              "duration_ms": dur}}
+        with self.server.quick_mutex:
+            rules = project.load_rules()
+            ov = dict(rules.transition_overrides or {})
+            if new_value == "__remove__":
+                if shot_id not in ov:
+                    self._send_error_json(f"{shot_id} 没有逐切换点覆盖可恢复", 400)
+                    return
+                ov.pop(shot_id, None)
+            elif new_value is None:
+                ov[shot_id] = None
+            else:
+                ov[shot_id] = new_value
+            rules.transition_overrides = ov
+            ok, payload, status = self._gated_save(
+                project.rules_path, dump_yaml(rules.model_dump()),
+                label="timeline/rules.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_rules",
+                             {**detail, "via": "gui"})
+        self._send_json(payload, status)
+
+    def _act_edit_handle_rebuild_plan(self, body: dict[str, Any]) -> None:
+        """Read-only 补拍手柄 proposal (round U, contract F): the extended
+        generate duration + centred trim window + est cost, OR the honest
+        'no duration control' advisory. Never mutates."""
+        from .edit_engine import handle_rebuild_proposal
+
+        project = self.server.project
+        shot_id = str(body.get("shot") or "")
+        if not shot_id or not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        tm = body.get("transition_ms")
+        try:
+            prop = handle_rebuild_proposal(
+                project, shot_id,
+                transition_ms=int(tm) if tm is not None else None)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        self._send_json(prop)
+
+    def _act_edit_handle_rebuild(self, body: dict[str, Any]) -> None:
+        """补拍手柄 (round U, contract F): regenerate the shot LONGER through the
+        existing redo path, then virtual-trim to the centred content span so a
+        degraded xfade earns real handles. Runs on the job runner (serialized
+        against builds), same §8.3 spend gate as redo (assume_yes). A provider
+        without duration control is refused synchronously with the advisory."""
+        from .edit_engine import (
+            NO_DURATION_ADVISORY,
+            handle_rebuild_proposal,
+        )
+
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        if not shot_id or not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        tm = body.get("transition_ms")
+        transition_ms = int(tm) if tm is not None else None
+        assume_yes = bool(body.get("assume_yes"))
+        # refuse up front (no job) when the provider can't be told a duration.
+        try:
+            prop = handle_rebuild_proposal(project, shot_id, transition_ms=transition_ms)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        if not prop.get("supported"):
+            self._send_error_json(NO_DURATION_ADVISORY, 400)
+            return
+
+        def fn(job) -> dict[str, Any]:
+            from .edit_engine import run_handle_rebuild
+
+            return run_handle_rebuild(project, shot_id, transition_ms=transition_ms,
+                                      actor=actor, assume_yes=assume_yes)
+
+        job = self.server.runner.submit(
+            "handle_rebuild", {"shot": shot_id}, fn)
+        self._send_json({"job": job.to_dict()}, 202)
 
     def _act_edit_look(self, body: dict[str, Any]) -> None:
         """Look preset + intensity → bible/style.yaml `look:`, validate-on-save
