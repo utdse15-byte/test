@@ -140,17 +140,27 @@ def fallback_chain(shot: ShotSpec) -> list[str]:
 
     A step with no local mapping (e.g. ``image_to_video``) resolves to the
     first config-declared provider advertising that capability (§8.6), so a
-    filled-in manifest slots straight into existing shots' fallback chains."""
+    filled-in manifest slots straight into existing shots' fallback chains.
+
+    Disabled providers (``disabled: true`` in the manifest, goal item 1) are
+    never selected here — they are skipped exactly like an unavailable step."""
     manifest_providers, _ = _manifest_state()
+    disabled = {
+        pid for pid, p in manifest_providers.items()
+        if getattr(getattr(p, "manifest", None), "disabled", False)
+    }
     chain: list[str] = []
     for step in shot.generation.fallback:
         name = _FALLBACK_MAP.get(step)
         if name is None:
             name = next(
                 (pid for pid, p in sorted(manifest_providers.items())
-                 if step in getattr(getattr(p, "manifest", None), "capabilities", [])),
+                 if pid not in disabled
+                 and step in getattr(getattr(p, "manifest", None), "capabilities", [])),
                 None,
             )
+        if name and name in disabled:  # a disabled provider named via the map: skip it
+            continue
         if name and name not in chain:
             chain.append(name)
     # ensure caption_card is the final element
@@ -171,15 +181,36 @@ def generate_with_fallback(
     A provider that fails (``ProviderFailure`` / ``NeedsHumanInput`` /
     ``MediaError``) is recorded and the next is tried. If every provider fails,
     a single ``ProviderFailure(provider_error)`` is raised whose message lists
-    every attempt and its error."""
-    if chain is None:
-        chain = fallback_chain(req.shot)
+    every attempt and its error.
 
-    order: list[str] = []
+    Provider ORDER (goal item 9): naming a disabled provider explicitly is a
+    hard build error; when a routing.yaml exists the active strategy decides the
+    order; with NO routing file the order is byte-identical to §8.4 (explicit
+    provider first, then the fallback chain)."""
+    from . import routing  # lazy: routing imports the registry back
+
     preferred = req.shot.generation.provider
-    if preferred:
-        order.append(preferred)
-    order += [name for name in chain if name not in order]
+    if preferred and routing.provider_disabled(preferred):
+        raise ProviderFailure(
+            FailureKind.invalid,
+            f"shot {req.shot.id} names provider {preferred!r} but it is disabled "
+            f"(disabled: true) — run `manju providers enable {preferred}` or pick "
+            f"another provider",
+        )
+
+    # A routing.yaml (project or user) lets the active strategy decide the
+    # order — this is the one wiring point, so it applies even when a caller
+    # (build/graph) passes an explicit chain. With NO routing file the passed
+    # chain (or the freshly computed one) drives the order EXACTLY as §8.4 did,
+    # keeping the provider choice byte-identical (pinned).
+    routed = routing.load_routing(req.project)
+    if routed is not None:
+        order = routing.resolve(req.project, req.shot, routed).order
+    else:
+        if chain is None:
+            chain = fallback_chain(req.shot)
+        order = ([preferred] if preferred else [])
+        order += [name for name in chain if name not in order]
 
     media_errors = _media_error_types()
     attempts: list[tuple[str, str]] = []

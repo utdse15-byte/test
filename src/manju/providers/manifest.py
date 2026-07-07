@@ -140,9 +140,19 @@ class LocalCmdConfig(ManjuModel):
 
 class ProviderManifest(ManjuModel):
     id: str
-    type: str = "video"  # video | image | tts | vision
+    type: str = "video"  # video | image | tts | asr | vision
     adapter: str = GENERIC_ADAPTER  # or "module.path:ClassName" escape hatch
     capabilities: list[str] = Field(default_factory=list)
+    # `manju providers disable <id>` flips this — a disabled provider is never
+    # selected by the fallback chain or a routing strategy, and naming it in a
+    # shot's explicit generation.provider is a build error (§8.4/goal-1). The
+    # manifest still loads and doctor still probes it, so the flag is reversible
+    # with `manju providers enable <id>` — it is a policy switch, not a delete.
+    disabled: bool = False
+    # Optional zero-cost reachability endpoint for `manju providers check --live`
+    # (a GET that costs nothing — a health/ping/models route, NEVER a paid
+    # generate call). Left unset, --live simply skips the network probe.
+    ping_url: str | None = None
     auth: AuthConfig = Field(default_factory=AuthConfig)
     submit: SubmitConfig | None = None
     poll: PollConfig | None = None
@@ -255,3 +265,269 @@ def estimate_cost(manifest: ProviderManifest, duration_ms: int, candidates: int 
     """§8.3 dry-run estimate: shots × candidates × duration × unit price."""
     per_take = manifest.cost.per_call + manifest.cost.per_second * (duration_ms / 1000.0)
     return round(per_take * candidates, 6)
+
+
+# --------------------------------------------------------------- scaffolding
+# `manju providers add` writes a fully-commented template per adapter — every
+# ★ line is a field to fill; keys are named, never inlined (§8.2). Structure is
+# already valid so the file round-trips through load_manifests() the moment it
+# lands (a bad *fill* fails at `manju providers check`, not here).
+
+# short adapter names the CLI accepts -> the adapter string stored in the manifest
+ADAPTER_ALIASES: dict[str, str] = {
+    "generic_cloud": GENERIC_ADAPTER,
+    "generic_tts": GENERIC_TTS_ADAPTER,
+    "generic_asr": GENERIC_ASR_ADAPTER,
+    "comfyui": COMFYUI_ADAPTER,
+    "local_cmd": LOCAL_CMD_ADAPTER,
+}
+
+# default adapter per provider `--type`
+_DEFAULT_ADAPTER_FOR_TYPE: dict[str, str] = {
+    "video": "generic_cloud",
+    "image": "generic_cloud",
+    "tts": "generic_tts",
+    "asr": "generic_asr",
+}
+
+PROVIDER_TYPES = ("video", "image", "tts", "asr")
+
+
+def default_adapter_for_type(type_: str) -> str:
+    return _DEFAULT_ADAPTER_FOR_TYPE.get(type_, "generic_cloud")
+
+
+def _header(pid: str, type_: str, adapter_full: str) -> str:
+    return (
+        f"# ~/.manju/providers/{pid}/provider.yaml — Manju provider manifest (§8.2/§8.6)\n"
+        f"#\n"
+        f"# ★-marked fields are the ones to fill in. The API key NEVER lives in this\n"
+        f"# file (§8.2): put it in the environment variable named by auth.key_env and\n"
+        f"# Manju reads it at run time. Validate your fill offline, before any spend:\n"
+        f"#   manju providers check {pid}\n"
+        f"#\n"
+        f"id: {pid}\n"
+        f"type: {type_}\n"
+        f"adapter: {adapter_full}\n"
+        f"disabled: false\n"
+    )
+
+
+def _generic_cloud_template(pid: str, type_: str) -> str:
+    env = f"{pid.upper().replace('-', '_')}_API_KEY"
+    return _header(pid, type_, GENERIC_ADAPTER) + f"""\
+capabilities: [text_to_video]        # ★ what this API can do — drives routing + fallback
+auth:
+  key_env: {env}   # ★ env var holding the API key (never the key itself, §8.2)
+  header: 'Authorization: Bearer {{key}}'
+submit:
+  url: https://api.example.com/v1/videos     # ★ the create-task endpoint
+  method: POST
+  body_template:                             # ★ request body; {{placeholders}} filled per shot
+    prompt: '{{prompt}}'
+    duration: '{{duration_s}}'
+    size: '{{width}}x{{height}}'
+    seed: '{{seed}}'
+  job_id_path: $.data.task_id                # ★ where the job id lives in the submit response
+poll:
+  url: https://api.example.com/v1/videos/{{job_id}}   # ★ status endpoint ({{job_id}} required)
+  status_path: $.data.status                 # ★ where the status string lives
+  status_map:                                # ★ remote status -> queued|running|succeeded|failed
+    PENDING: queued
+    PROCESSING: running
+    SUCCEEDED: succeeded
+    FAILED: failed
+  result_url_path: $.data.video_url          # ★ where the finished media URL lives
+failure:
+  content_rejected_when: [contentPolicy, risk_control]  # markers meaning 审核拒绝 (never retried)
+limits:
+  max_concurrent: 1
+  rate_limit_per_min: 6         # enforced engine-side, not trusted to remote 429s
+cost:
+  per_second: 0.0               # ★ price sheet — feeds `manju spend` and the `cheapest` strategy
+  currency: CNY
+# ping_url: https://api.example.com/health   # optional zero-cost GET for `providers check --live`
+"""
+
+
+def _generic_tts_template(pid: str, type_: str) -> str:
+    env = f"{pid.upper().replace('-', '_')}_API_KEY"
+    return _header(pid, "tts", GENERIC_TTS_ADAPTER) + f"""\
+capabilities: [tts]
+auth:
+  key_env: {env}   # ★ env var holding the API key (never the key itself, §8.2)
+  header: 'Authorization: Bearer {{key}}'
+submit:                                       # most TTS is synchronous — submit IS the result
+  url: https://api.example.com/v1/tts         # ★ the synthesis endpoint
+  method: POST
+  body_template:
+    text: '{{prompt}}'                        # ★ the line to speak
+    voice: default                            # ★ voice id
+  job_id_path: $.id                           # ★ (only used by async TTS APIs)
+tts:
+  audio_url_path: $.data.audio_url            # ★ (or audio_b64_path for inline base64)
+  audio_format: wav
+  language: zh
+cost:
+  per_call: 0.0
+  currency: CNY
+"""
+
+
+def _generic_asr_template(pid: str, type_: str) -> str:
+    env = f"{pid.upper().replace('-', '_')}_API_KEY"
+    return _header(pid, "asr", GENERIC_ASR_ADAPTER) + f"""\
+capabilities: [asr]
+auth:
+  key_env: {env}   # ★ env var holding the API key (never the key itself, §8.2)
+  header: 'Authorization: Bearer {{key}}'
+submit:                                       # most ASR is synchronous — submit IS the result
+  url: https://api.example.com/v1/asr         # ★ the transcribe endpoint
+  method: POST
+  body_template:
+    audio: '{{audio_b64}}'                    # ★ the audio, base64-encoded, goes here
+  job_id_path: $.id                           # ★ (only used by async ASR APIs)
+asr:
+  segments_path: $.data.segments              # ★ list of {{text, start, end}} objects
+  text_key: text
+  start_key: start
+  end_key: end
+  time_unit: ms                               # remote timestamps: "ms" | "s"
+  language: zh
+cost:
+  per_call: 0.0
+  currency: CNY
+"""
+
+
+def _comfyui_template(pid: str, type_: str) -> str:
+    return _header(pid, type_, COMFYUI_ADAPTER) + """\
+capabilities: [image_to_video, text_to_video]   # ★ what this graph produces
+comfyui:
+  base_url: http://127.0.0.1:8188
+  workflow_file: comfyui/workflow_api.json    # ★ project-relative graph, "Save (API Format)"
+  input_map:                                  # ★ "node_id.input_name" -> template
+    '6.text': '{prompt}'                      # bare -> typed value; embedded -> string
+    '3.seed': '{seed}'
+  poll_interval_s: 1.0
+  output_prefer: [videos, gifs, images]       # first video wins, else gif, else image
+cost:
+  per_call: 0.0                               # local generation: free (duration still recorded)
+  currency: CNY
+"""
+
+
+def _local_cmd_template(pid: str, type_: str) -> str:
+    return _header(pid, type_, LOCAL_CMD_ADAPTER) + """\
+capabilities: [text_to_video]
+local_cmd:
+  command: 'mytool --prompt {prompt} --seconds {duration_s} -o {out}'  # ★ {out} is required
+  timeout_s: 300
+  output_ext: .mp4                            # extension of the file the tool writes to {out}
+cost:
+  per_call: 0.0
+  currency: CNY
+"""
+
+
+_TEMPLATES = {
+    GENERIC_ADAPTER: _generic_cloud_template,
+    GENERIC_TTS_ADAPTER: _generic_tts_template,
+    GENERIC_ASR_ADAPTER: _generic_asr_template,
+    COMFYUI_ADAPTER: _comfyui_template,
+    LOCAL_CMD_ADAPTER: _local_cmd_template,
+}
+
+
+def scaffold_template(pid: str, type_: str, adapter: str) -> str:
+    """Return the fully-commented ``provider.yaml`` text for a new provider.
+
+    ``adapter`` is a short alias (``generic_cloud``/``comfyui``/…) or a full
+    ``module:Class`` string; the produced YAML round-trips through
+    :func:`load_manifests`. Raises ``ValueError`` on an unknown adapter."""
+    adapter_full = ADAPTER_ALIASES.get(adapter, adapter)
+    builder = _TEMPLATES.get(adapter_full)
+    if builder is None:
+        raise ValueError(
+            f"no scaffold template for adapter {adapter!r}; "
+            f"known: {sorted(ADAPTER_ALIASES)}"
+        )
+    return builder(pid, type_)
+
+
+# ------------------------------------------------------------ offline fix hints
+# `manju providers check` turns each validate_for_generic() problem into a
+# one-line, do-this-next hint. Unmatched problems pass through verbatim.
+_FIX_HINTS: tuple[tuple[str, str], ...] = (
+    ("is not set in the environment",
+     "export the API key: `export {envvar}=...` (keys never live in the file, §8.2)"),
+    ("submit section is required",
+     "fill the ★ submit: section (url + body_template + job_id_path)"),
+    ("poll section is required",
+     "fill the ★ poll: section (url with {job_id} + status_path + status_map)"),
+    ("poll.url must contain {job_id}",
+     "add the {job_id} placeholder to poll.url"),
+    ("status_map values must be one of",
+     "map every remote status to queued|running|succeeded|failed in poll.status_map"),
+    ("audio_url_path or tts.audio_b64_path",
+     "set tts.audio_url_path (or tts.audio_b64_path) so Manju can read the audio out"),
+    ("comfyui.workflow_file is required",
+     "export a graph from ComfyUI with 'Save (API Format)' and point workflow_file at it"),
+    ("comfyui.base_url does not look like",
+     "set comfyui.base_url to your ComfyUI server, e.g. http://127.0.0.1:8188"),
+    ("local_cmd.command is required",
+     "set local_cmd.command to your generator CLI (include the {out} placeholder)"),
+    ("must contain the {out} placeholder",
+     "add {out} to local_cmd.command — the tool must write the result there"),
+    ("not found on PATH",
+     "install the tool or fix its name so it resolves on PATH"),
+    ("does not look like an HTTP(S) URL",
+     "use a full http:// or https:// URL"),
+)
+
+
+def fix_hint(problem: str, manifest: "ProviderManifest | None" = None) -> str:
+    """A one-line 'do this next' for a validate_for_generic() problem."""
+    for needle, hint in _FIX_HINTS:
+        if needle in problem:
+            envvar = (manifest.auth.key_env if manifest and manifest.auth.key_env
+                      else "PROVIDER_API_KEY")
+            return hint.format(envvar=envvar)
+    return problem
+
+
+def reachability_probe(
+    manifest: ProviderManifest, *, opener=None, timeout: float = 5.0
+) -> tuple[bool | None, str]:
+    """Cheap, zero-cost liveness check for `providers check --live` (§scope).
+
+    ComfyUI uses ``GET {base_url}/system_stats``; any other adapter is probed
+    only if it declares a ``ping_url`` (a free GET the operator vouches for —
+    NEVER a paid generate call). Returns ``(ok, detail)`` where ``ok`` is
+    ``None`` when there is nothing free to probe (the probe is skipped, never a
+    failure). ``opener(url) -> response`` is injectable for tests."""
+    import urllib.error
+    import urllib.request
+
+    if manifest.adapter == COMFYUI_ADAPTER:
+        url = manifest.comfyui.base_url.rstrip("/") + "/system_stats"
+    elif manifest.ping_url:
+        url = manifest.ping_url
+    else:
+        return None, "no zero-cost ping endpoint (set ping_url) — live probe skipped"
+
+    _open = opener or (lambda u: urllib.request.urlopen(u, timeout=timeout))
+    try:
+        resp = _open(url)
+    except urllib.error.HTTPError as exc:
+        return False, f"{url} -> HTTP {exc.code}"
+    except Exception as exc:  # URLError / timeout / OSError: for a local server, unreachable
+        return False, f"{url} -> unreachable ({exc})"
+    code = getattr(resp, "status", None) or getattr(resp, "code", 200)
+    try:
+        resp.close()
+    except Exception:
+        pass
+    if code and code >= 400:
+        return False, f"{url} -> HTTP {code}"
+    return True, f"{url} -> reachable (HTTP {code})"

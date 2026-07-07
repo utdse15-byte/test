@@ -24,6 +24,14 @@ from .registry import (
     get_provider,
     register_provider,
 )
+from .routing import (
+    BUILTIN_STRATEGIES,
+    RoutingError,
+    explain as route_explain,
+    list_strategies as route_list,
+    load_routing,
+    resolve as route_resolve,
+)
 
 __all__ = [
     # base protocol
@@ -39,6 +47,13 @@ __all__ = [
     "register_provider",
     "fallback_chain",
     "generate_with_fallback",
+    # routing strategies (goal 9)
+    "route_resolve",
+    "route_explain",
+    "route_list",
+    "load_routing",
+    "BUILTIN_STRATEGIES",
+    "RoutingError",
     # built-in providers
     "ManualImportProvider",
     "register_manual_take",

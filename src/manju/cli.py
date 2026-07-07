@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import zipfile
@@ -1603,6 +1604,352 @@ def serve_mcp():
     from .mcp.server import main as mcp_main
 
     raise typer.Exit(mcp_main(["--project", str(project.root)]))
+
+
+# ============================================================ providers group
+# `manju providers …` — manage provider manifests (§8.2/§8.6, goal item 1).
+# Keys are NEVER printed: list/show/check report the env-var NAME and whether it
+# is set, and show masks any secret-ish value.
+
+providers_app = typer.Typer(no_args_is_help=True,
+                            help="Manage provider manifests (§8.2/§8.6).")
+app.add_typer(providers_app, name="providers")
+
+_MASK = "***"
+# key names whose VALUE must never be shown (key_env holds an env-var NAME, not
+# a secret, so it is excluded).
+_SECRET_KEY_RE = re.compile(
+    r"(secret|token|password|passwd|credential|api[_-]?key|apikey|access[_-]?key|\bkey\b)",
+    re.IGNORECASE,
+)
+
+
+def _mask_secrets(obj):
+    """Recursively mask any value whose KEY looks secret-ish (never print keys)."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if _SECRET_KEY_RE.search(str(k)) and k != "key_env":
+                out[k] = _MASK
+            else:
+                out[k] = _mask_secrets(v)
+        return out
+    if isinstance(obj, list):
+        return [_mask_secrets(v) for v in obj]
+    return obj
+
+
+def _adapter_short(adapter: str) -> str:
+    from .providers.manifest import ADAPTER_ALIASES
+
+    for alias, full in ADAPTER_ALIASES.items():
+        if full == adapter:
+            return alias
+    return adapter.split(":")[-1] if ":" in adapter else adapter
+
+
+def _pad(s: str, width: int) -> str:
+    return s + " " * max(0, width - len(s))
+
+
+@providers_app.command("list")
+def providers_list(as_json: bool = typer.Option(False, "--json")):
+    """Every discovered manifest: id, type, adapter, capabilities, whether its
+    key env var is set (never the value), enabled/disabled, doctor verdict."""
+    from .providers.manifest import load_manifests
+
+    manifests, load_errors = load_manifests()
+    rows = []
+    for pid, m in sorted(manifests.items()):
+        key_env = m.auth.key_env
+        problems = m.validate_for_generic()
+        rows.append({
+            "id": pid,
+            "type": m.type,
+            "adapter": m.adapter,
+            "adapter_short": _adapter_short(m.adapter),
+            "capabilities": list(m.capabilities),
+            "key_env": key_env,
+            "key_set": (bool(os.environ.get(key_env)) if key_env else None),
+            "enabled": not m.disabled,
+            "doctor_ok": not problems,
+            "doctor": "ok" if not problems else "; ".join(problems),
+        })
+    if as_json:
+        _emit({"providers": rows, "errors": load_errors}, True)
+        return
+    if not rows and not load_errors:
+        typer.echo("no provider manifests configured "
+                   "(~/.manju/providers, §8.6) — try: manju providers add …")
+        return
+    idw = max([len("ID")] + [len(r["id"]) for r in rows])
+    for r in rows:
+        key = (("✓ " if r["key_set"] else "✗ ") + r["key_env"]) if r["key_env"] else "—"
+        status = "enabled" if r["enabled"] else "disabled"
+        verdict = "✓ ok" if r["doctor_ok"] else f"✗ {r['doctor']}"
+        color = (typer.colors.GREEN if r["enabled"] and r["doctor_ok"]
+                 else typer.colors.YELLOW if r["enabled"] else typer.colors.BRIGHT_BLACK)
+        typer.secho(
+            f"{_pad(r['id'], idw)}  {_pad(r['type'], 5)}  {_pad(r['adapter_short'], 12)}  "
+            f"{status:8}  key={key}  {verdict}",
+            fg=color,
+        )
+        if r["capabilities"]:
+            typer.secho(f"{' ' * idw}  caps: {', '.join(r['capabilities'])}",
+                        fg=typer.colors.BRIGHT_BLACK)
+    for e in load_errors:
+        typer.secho(f"✗ {e}", fg=typer.colors.RED)
+
+
+@providers_app.command("add")
+def providers_add(
+    provider_id: str = typer.Argument(..., metavar="ID"),
+    type_: str = typer.Option(..., "--type", help="video | image | tts | asr"),
+    adapter: Optional[str] = typer.Option(
+        None, "--adapter",
+        help="generic_cloud | comfyui | local_cmd | generic_tts | generic_asr "
+             "(default: by --type)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Scaffold ~/.manju/providers/<id>/provider.yaml from a fully-commented
+    template (★ = fields to fill). Refuses to overwrite an existing manifest."""
+    from .core.yamlio import atomic_write_text, read_yaml
+    from .providers.manifest import (
+        PROVIDER_TYPES,
+        default_adapter_for_type,
+        providers_dir,
+        scaffold_template,
+    )
+
+    if type_ not in PROVIDER_TYPES:
+        _fail(f"--type must be one of {list(PROVIDER_TYPES)}, got {type_!r}")
+    adapter = adapter or default_adapter_for_type(type_)
+    try:
+        text = scaffold_template(provider_id, type_, adapter)
+    except ValueError as exc:
+        _fail(str(exc))
+    dest = providers_dir() / provider_id / "provider.yaml"
+    if dest.exists():
+        _fail(f"refusing to overwrite existing manifest: {dest}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(dest, text)
+
+    key_env = None
+    try:
+        key_env = (read_yaml(dest) or {}).get("auth", {}).get("key_env")
+    except Exception:
+        pass
+    steps = ["fill the ★ fields in the file"]
+    if key_env:
+        steps.append(f"export the API key:  export {key_env}=…")
+    steps.append(f"verify offline:      manju providers check {provider_id}")
+    if as_json:
+        _emit({"created": str(dest), "adapter": adapter, "type": type_,
+               "key_env": key_env, "next_steps": steps}, True)
+        return
+    typer.secho(f"created {dest}", fg=typer.colors.GREEN)
+    typer.echo("next steps:")
+    for i, s in enumerate(steps, 1):
+        typer.echo(f"  {i}. {s}")
+
+
+@providers_app.command("check")
+def providers_check(
+    provider_id: str = typer.Argument(..., metavar="ID"),
+    live: bool = typer.Option(False, "--live",
+                              help="also run the cheap, zero-cost reachability probe"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Offline doctor probes for ONE provider, each with a one-line fix hint.
+    --live adds a free reachability check where the adapter defines one
+    (ComfyUI /system_stats; generic REST only if ping_url is set — never a
+    paid call)."""
+    from .providers.manifest import (
+        fix_hint,
+        load_manifests,
+        providers_dir,
+        reachability_probe,
+    )
+
+    manifests, _ = load_manifests()
+    m = manifests.get(provider_id)
+    if m is None:
+        _fail(f"no such provider {provider_id!r} "
+              f"(looked under {providers_dir()}) — see `manju providers list`")
+    problems = m.validate_for_generic()
+    findings = [{"problem": p, "fix": fix_hint(p, m)} for p in problems]
+    live_info = None
+    if live:
+        ok, detail = reachability_probe(m)
+        live_info = {"ok": ok, "detail": detail}
+    passed = (not problems) and not (live_info and live_info["ok"] is False)
+    if as_json:
+        _emit({"id": provider_id, "ok": passed, "enabled": not m.disabled,
+               "problems": findings, "live": live_info}, True)
+        raise typer.Exit(0 if passed else 1)
+    if m.disabled:
+        typer.secho(f"• {provider_id} is disabled "
+                    f"(manju providers enable {provider_id})", fg=typer.colors.BRIGHT_BLACK)
+    if not problems:
+        typer.secho(f"✓ {provider_id}: offline checks pass", fg=typer.colors.GREEN)
+    else:
+        for f in findings:
+            typer.secho(f"✗ {f['problem']}", fg=typer.colors.RED)
+            typer.secho(f"  → fix: {f['fix']}", fg=typer.colors.YELLOW)
+    if live_info is not None:
+        glyph, color = (("✓", typer.colors.GREEN) if live_info["ok"] else
+                        ("•", typer.colors.BRIGHT_BLACK) if live_info["ok"] is None else
+                        ("✗", typer.colors.RED))
+        typer.secho(f"{glyph} live: {live_info['detail']}", fg=color)
+    raise typer.Exit(0 if passed else 1)
+
+
+def _set_disabled_in_text(text: str, disabled: bool) -> str:
+    """Flip (or insert) the top-level ``disabled:`` key while preserving every
+    comment in the manifest — enable/disable is a policy switch, not a rewrite."""
+    val = "true" if disabled else "false"
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.match(r"^disabled\s*:", line):  # top-level key, no indent
+            lines[i] = f"disabled: {val}"
+            return "\n".join(lines)
+    anchor = None
+    for i, line in enumerate(lines):
+        if re.match(r"^(adapter|id)\s*:", line):
+            anchor = i
+    lines.insert((anchor + 1) if anchor is not None else 0, f"disabled: {val}")
+    return "\n".join(lines)
+
+
+def _toggle_provider(provider_id: str, disabled: bool, as_json: bool) -> None:
+    from .core.yamlio import atomic_write_text
+    from .providers.manifest import providers_dir
+
+    path = providers_dir() / provider_id / "provider.yaml"
+    if not path.exists():
+        _fail(f"no such provider {provider_id!r} (looked at {path})")
+    text = path.read_text(encoding="utf-8")
+    atomic_write_text(path, _set_disabled_in_text(text, disabled))
+    state = "disabled" if disabled else "enabled"
+    if as_json:
+        _emit({"id": provider_id, "enabled": not disabled}, True)
+        return
+    typer.secho(f"{provider_id} {state}", fg=typer.colors.GREEN)
+
+
+@providers_app.command("enable")
+def providers_enable(provider_id: str = typer.Argument(..., metavar="ID"),
+                     as_json: bool = typer.Option(False, "--json")):
+    """Clear the manifest's ``disabled`` flag so the provider can be selected."""
+    _toggle_provider(provider_id, False, as_json)
+
+
+@providers_app.command("disable")
+def providers_disable(provider_id: str = typer.Argument(..., metavar="ID"),
+                      as_json: bool = typer.Option(False, "--json")):
+    """Set ``disabled: true`` — the provider is never selected by the fallback
+    chain or a routing strategy; naming it explicitly becomes a build error."""
+    _toggle_provider(provider_id, True, as_json)
+
+
+@providers_app.command("show")
+def providers_show(provider_id: str = typer.Argument(..., metavar="ID"),
+                   as_json: bool = typer.Option(False, "--json")):
+    """Print the manifest with any secret-ish value masked (keys never shown)."""
+    from .core.yamlio import dump_yaml, read_yaml
+    from .providers.manifest import providers_dir
+
+    path = providers_dir() / provider_id / "provider.yaml"
+    if not path.exists():
+        _fail(f"no such provider {provider_id!r} (looked at {path})")
+    masked = _mask_secrets(read_yaml(path) or {})
+    if as_json:
+        _emit(masked, True)
+        return
+    typer.echo(dump_yaml(masked))
+
+
+# =============================================================== routing group
+# `manju route …` — inspect the active routing strategy (goal item 9).
+
+route_app = typer.Typer(no_args_is_help=True,
+                        help="Inspect model-routing strategies (goal 9).")
+app.add_typer(route_app, name="route")
+
+
+@route_app.command("list")
+def route_list_cmd(as_json: bool = typer.Option(False, "--json")):
+    """List routing strategies (built-in + user/project), marking the active one."""
+    from .providers.routing import RoutingError, list_strategies
+
+    try:
+        project: Optional[Project] = Project.find(Path.cwd())
+    except ProjectError:
+        project = None
+    try:
+        info = list_strategies(project)
+    except RoutingError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(info, True)
+        return
+    if info["sources"]:
+        typer.secho(f"routing.yaml sources: {', '.join(info['sources'])} "
+                    "(project wins)", fg=typer.colors.BRIGHT_BLACK)
+    else:
+        typer.secho("no routing.yaml — default §8.4 behaviour "
+                    "(built-in strategies still available)", fg=typer.colors.BRIGHT_BLACK)
+    for s in info["strategies"]:
+        mark = "→" if s["active"] else " "
+        tag = "builtin" if s["builtin"] else "custom"
+        extra = f" priority={s['priority']}" if s["priority"] else ""
+        typer.secho(
+            f" {mark} {_pad(s['name'], 14)} [{tag}]  rules={s['rules']}  "
+            f"else={s['else']}{extra}",
+            fg=typer.colors.CYAN if s["active"] else None,
+        )
+
+
+@route_app.command("explain")
+def route_explain_cmd(shot_id: str = typer.Argument(..., metavar="SHOT"),
+                      as_json: bool = typer.Option(False, "--json")):
+    """Explain which provider the active strategy picks for a shot: which rule
+    fired, which were skipped and why (the debuggability requirement)."""
+    from .providers.routing import RoutingError, explain
+
+    project = _project()
+    try:
+        shot = project.load_shot(shot_id)
+    except ProjectError as exc:
+        _fail(str(exc))
+    try:
+        info = explain(project, shot)
+    except RoutingError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(info, True)
+        return
+    typer.secho(f"shot {info['shot']} — strategy: {info['strategy']}"
+                + (f"  (routing.yaml: {', '.join(info['sources'])})" if info["sources"]
+                   else "  (no routing.yaml — §8.4 default)"),
+                fg=typer.colors.CYAN)
+    if info["explicit_provider"]:
+        typer.echo(f"  explicit provider: {info['explicit_provider']} (always wins)")
+    if info["fired_rule"] is not None:
+        fr = info["fired_rule"]
+        typer.secho(f"  ✓ rule #{fr['index']} fired: match {fr['match']} → use {fr['use']}",
+                    fg=typer.colors.GREEN)
+    else:
+        typer.echo(f"  no rule matched → else: {info['else']}")
+    typer.secho(f"  order: {' → '.join(info['order']) or '(none)'}",
+                fg=typer.colors.CYAN)
+    typer.echo(f"  chosen: {info['chosen'] or '(none)'}")
+    for sk in info["skipped"]:
+        who = f"rule #{sk['rule']}" if "rule" in sk else f"provider {sk['provider']}"
+        typer.secho(f"  · skipped {who}: {sk['reason']}", fg=typer.colors.BRIGHT_BLACK)
 
 
 if __name__ == "__main__":
