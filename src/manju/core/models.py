@@ -268,6 +268,14 @@ class VoiceTakeSidecar(ManjuModel):
     remote: RemoteJobInfo | None = None
     probe: ProbeInfo | None = None
     created_at: str | None = None
+    # Round U voice-repair lineage (media/voicefix, goal item 11): a voice take
+    # minted by the repair loop records which take it replaced (``repaired_from``)
+    # and that it is an audio repair (``audio_repaired``). Both default to None so
+    # a normal synthesis / hand-dropped voice drops them via exclude_none — every
+    # voice sidecar written before this landed is byte-for-byte identical, and the
+    # voice_hash (staleness anchor) is untouched.
+    repaired_from: str | None = None
+    audio_repaired: bool | None = None
 
 
 # ---------------------------------------------------------------------- Bible

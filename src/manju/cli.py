@@ -749,11 +749,52 @@ def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[st
         typer.echo(f"select it with: manju select {shot} {new.name}")
 
 
+def _repair_voice_cli(project: Project, shot: Optional[str], provider: Optional[str],
+                      dry_run: bool, as_json: bool) -> None:
+    """The voice repair loop (round U, §9/§11): regenerate a shot's voice, realign
+    its captions, mark the take repaired — or, with --dry-run, just print the plan.
+    The picture is never touched; the loop itself writes no render output (the
+    final re-renders naturally through content keys on the next build)."""
+    from .media.voicefix import repair_voice
+
+    if not shot:
+        _fail("--op voice requires --shot <id>")
+
+    result = repair_voice(project, shot, dry_run=dry_run, provider=provider, actor=ACTOR)
+
+    if as_json:
+        _emit(result.to_dict(), True)
+        if not result.ok:
+            raise typer.Exit(1)
+        return
+
+    header = ("配音修复计划(dry-run,未改动任何文件)" if dry_run
+              else (f"已修复配音:{shot}" if result.ok else f"配音修复失败:{shot}"))
+    typer.secho(header, fg=(typer.colors.CYAN if dry_run else
+                            (typer.colors.GREEN if result.ok else typer.colors.RED)))
+    for line in result.plan:
+        typer.echo(f"  • {line}")
+    if not dry_run and result.ok:
+        typer.echo(
+            f"  新配音:{result.new_take}(source_take={result.old_take or '无'},"
+            f"audio_repaired=true;voice_hash={(result.voice_hash or '')[:16]}…);旧配音保留")
+        if result.realigned:
+            typer.echo(f"  字幕已比例重排 {len(result.realigned)} 行(下次构建生效)")
+        typer.echo("  提示:运行 `manju build` 重混 — 成片将随新配音重新渲染")
+    for adv in result.advisories:
+        typer.secho(f"  ⚠ {adv}", fg=typer.colors.YELLOW)
+    if not result.ok:
+        if result.failure:
+            typer.secho(f"  原因:{result.failure.get('cause')}", fg=typer.colors.RED, err=True)
+            typer.secho(f"  建议:{result.failure.get('hint')}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
 @app.command()
 def repair(
     auto: bool = typer.Option(False, "--auto"),
     op: Optional[str] = typer.Option(
-        None, "--op", help="explicit repair op: retime|extend|trim|inout|croppad "
+        None, "--op", help="explicit repair op: retime|extend|trim|inout|croppad|voice "
                            "(builds a new take; source is never overwritten)"),
     shot: Optional[str] = typer.Option(None, "--shot", help="shot id for --op"),
     take: Optional[str] = typer.Option(
@@ -768,9 +809,13 @@ def repair(
     mode: Optional[str] = typer.Option(
         None, "--mode", help="extend: freeze|pad_black · croppad: center_crop|pad_blur "
                              "· inout: virtual(default)|reencode"),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="--op voice: tts manifest id (default: first configured)"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="--op voice: print the repair plan in 中文, mutate nothing"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """Repair the film (§9). Two modes:
+    """Repair the film (§9). Three modes:
 
     - `--op <retime|extend|trim|inout|croppad>` runs an explicit ffmpeg repair on
       a shot's take, registering the result as a NEW take (append-only lineage):
@@ -780,6 +825,13 @@ def repair(
         manju repair --op inout   --shot S001 --in-ms 500 --out-ms 1500
         manju repair --op inout   --shot S001 --in-ms 500 --out-ms 1500 --mode reencode
         manju repair --op croppad --shot S001 --mode pad_blur
+    - `--op voice --shot S001 [--dry-run]` runs the VOICE repair loop (round U):
+      keep the picture, regenerate the voice (append-only + repaired_from/audio
+      _repaired lineage), realign the shot's captions to the new duration (manual
+      cues are left untouched with a 中文 advisory), and let the final re-render
+      through content keys. `--dry-run` prints the plan and changes nothing:
+        manju repair --op voice --shot S001 --dry-run
+        manju repair --op voice --shot S001
     - `--auto` executes auto-safe items from repair_plan.yaml (redo/degrade);
       the rest stay for humans. Repair-plan action is 'edit params and rebuild'.
     """
@@ -788,6 +840,9 @@ def repair(
 
     project = _project()
     if op is not None:
+        if op == "voice":
+            _repair_voice_cli(project, shot, provider, dry_run, as_json)
+            return
         _repair_op(project, op, shot, take, factor, ms, mode, in_ms, out_ms, as_json)
         return
     plan_path = project.reports_dir / "repair_plan.yaml"
