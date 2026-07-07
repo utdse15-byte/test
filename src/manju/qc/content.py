@@ -254,13 +254,13 @@ def content_checks(project: Project, shot: ShotSpec, take: TakeInfo, *,
             ))
 
     if agent_tier:
-        vision = vision_provider_id()
-        hint = (f"qc_vision provider '{vision}' 已配置,随生成阶段执行一致性初筛"
-                if vision else
-                "未配置 qc_vision provider(§8.6 type: vision);由 agent 直接终审")
+        # Round V (§6): visual judgment is the driving agent's own eyes + the
+        # skill library's standards, not a vendor slot. Point at the agent pipe.
         items.append(QCItem(
             "warn", "content", shot.id,
-            "待 agent 终审的 must_show 项: " + "; ".join(agent_tier),
-            suggestion=f"看 reports/frames/{shot.id}.jpg 判定;{hint}",
+            "需要图像判读的 must_show 项: " + "; ".join(agent_tier),
+            suggestion="需要图像判读 — 交给驱动 Manju 的 agent:manju qc brief 出题,"
+                       "判读标准见 manju skills show visual-qc-review,"
+                       "结果用 manju qc verdict 回填",
         ))
     return items

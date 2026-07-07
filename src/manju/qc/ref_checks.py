@@ -14,12 +14,14 @@ hint}``:
   3. ``unclear_scale`` — resolution too low (short side < 512) or an extreme
      aspect ratio, so the model can't tell how the subject is framed.
 
-* **VISION-REQUIRED** checks (a scene ref containing people, a prop ref
-  containing people, an outfit conflict between character refs) genuinely need a
-  vision model. Following the ``qc/content.py`` vendor-slot pattern: run through
-  a configured vendor when one is injected, otherwise emit an honest
-  ``needs_vision``(需要视觉模型) advisory naming EXACTLY which check was skipped.
-  A heuristic NEVER fakes a vision verdict.
+* **IMAGE-JUDGMENT** checks (a scene ref containing people, a prop ref
+  containing people, an outfit conflict between character refs) genuinely need
+  eyes. Round V (§6, goal item 6) retires the vision-vendor slot: the structured
+  ``needs_vision`` finding stays (so callers that count it are unchanged), but
+  its prose now points at the AGENT pipe — ``manju qc brief`` → the
+  ``visual-qc-review`` skill's A–J standards → ``manju qc verdict``. An injected
+  screener (a test double / legacy hook) still runs when present; a heuristic
+  NEVER fakes a vision verdict.
 
 Nothing here raises: a missing ffmpeg/ffprobe or a failed probe degrades to
 "no local finding", never to a crash (mirrors ``qc/content.py``).
@@ -317,24 +319,21 @@ def _vision_findings(shot, refset: "RefSet", bible: dict | None,
             if finding is not None:
                 out.append(finding)
             continue
+        # Round V (§6, goal item 6): image judgment is the driving agent's own
+        # eyes + the visual-qc-review skill's A–J standards — not a vision vendor.
+        # The structured `needs_vision`/code slot stays; the prose points at the
+        # agent pipe. `provider` (if any) is kept as a SILENT legacy field only.
+        evidence = {"refs": [r.ref for r in refs], "what": what}
         if provider:
-            out.append(RefFinding(
-                "needs_vision", code,
-                f"{what} — 需要视觉模型;已配置 qc_vision '{provider}',"
-                "将在生成阶段一致性初筛时判断",
-                evidence={"refs": [r.ref for r in refs], "provider": provider},
-                hint=f"{why}(§8.6 vision provider)",
-                subject=subject,
-            ))
-        else:
-            out.append(RefFinding(
-                "needs_vision", code,
-                f"{what} — 需要视觉模型,当前未配置 qc_vision(§8.6 type: vision),"
-                "此项被跳过",
-                evidence={"refs": [r.ref for r in refs]},
-                hint=f"配置 qc_vision provider 后可自动判断:{why}",
-                subject=subject,
-            ))
+            evidence["qc_vision"] = provider
+        out.append(RefFinding(
+            "needs_vision", code,
+            f"{what} — 需要图像判读,交给驱动 Manju 的 agent:manju qc brief 出题,"
+            "判读标准见 manju skills show visual-qc-review,结果用 manju qc verdict 回填",
+            evidence=evidence,
+            hint=f"{why}(交给驱动 Manju 的 agent 用眼判读)",
+            subject=subject,
+        ))
     return out
 
 

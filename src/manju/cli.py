@@ -786,9 +786,22 @@ def auto(
 # ---------------------------------------------------------------- qc/repair
 
 
-@app.command()
-def qc(deep: bool = typer.Option(False), as_json: bool = typer.Option(False, "--json")):
+qc_app = typer.Typer(
+    no_args_is_help=False,
+    help="三层质检 (§9)。子命令 brief/verdict 是 round V 的视觉判读管道 (§6):Manju "
+         "自身不跑视觉模型,而是出题给驱动它的 agent 用眼判读(标准见 "
+         "manju skills show visual-qc-review),再把结论回填。",
+)
+app.add_typer(qc_app, name="qc")
+
+
+@qc_app.callback(invoke_without_command=True)
+def qc_main(ctx: typer.Context,
+            deep: bool = typer.Option(False),
+            as_json: bool = typer.Option(False, "--json")):
     """Three-layer QC; writes reports/qc.json, qc.md, repair_plan.yaml (§9)."""
+    if ctx.invoked_subcommand is not None:
+        return
     from .qc.checks import run_qc as _run_qc
     from .qc.report import write_reports
 
@@ -805,6 +818,76 @@ def qc(deep: bool = typer.Option(False), as_json: bool = typer.Option(False, "--
                     fg=typer.colors.GREEN if report.ok else typer.colors.RED)
     if not report.ok:
         raise typer.Exit(1)
+
+
+@qc_app.command("brief")
+def qc_brief_cmd(
+    shots: Optional[str] = typer.Option(
+        None, "--shots", help="逗号分隔的镜头 id;省略则出题全部可判读镜头"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """出题给驱动 Manju 的 vision-capable agent (§6, goal item 6):每镜头的评审帧
+    (mid + 首/尾)+ 上下文(场景/角色 bible 参考图/must_show/avoid/连续性锁/台词)
+    + 判读标准指针(visual-qc-review)+ 回填 JSON 契约。Manju 自身不判图。"""
+    from .qc.agent_review import qc_brief as _qc_brief
+
+    project = _project()
+    ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
+    brief = _qc_brief(project, ids)
+    if as_json:
+        _emit(brief, True)
+        return
+    typer.secho(f"质检出题 / qc brief:{len(brief['shots'])} 个镜头可判读", fg=typer.colors.CYAN)
+    typer.echo(f"判读标准:manju skills show {brief['criteria']['skill']}"
+               f"({brief['criteria']['note']})")
+    for s in brief["shots"]:
+        typer.echo(f"  {s['shot']}  take={s['take']}")
+        frames = "  ".join(f"{k}={v}" for k, v in (s["frames"] or {}).items() if v)
+        if frames:
+            typer.echo(f"    评审帧:{frames}")
+        must = s["context"].get("must_show") or []
+        if must:
+            typer.echo("    须体现:" + "; ".join(must))
+    for sk in brief["skipped"]:
+        typer.secho(f"  跳过 {sk['shot']}:{sk['reason']}", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo("→ 判读后用 manju qc verdict --from-file <json>(或 - 走 stdin)回填")
+
+
+@qc_app.command("verdict")
+def qc_verdict_cmd(
+    from_file: str = typer.Option(
+        ..., "--from-file", help="判读结果 JSON 文件路径;- 表示从 stdin 读取"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """回填 agent 的视觉判读结果 (§6):写入 reports/qc_agent.jsonl,并与所判 take 的
+    字节内容哈希绑定。下次 manju qc 会把仍匹配当前 take 的判读汇入为 [AI判读] 项
+    (blocker→error / issue→warn / fyi→info);take 一旦重生成,旧判读自动过期。"""
+    from .qc.agent_review import VerdictError, record_verdicts
+
+    project = _project()
+    if from_file == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            text = Path(from_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            _fail(f"无法读取判读文件:{exc}")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        _fail(f"判读 JSON 解析失败:{exc}")
+    try:
+        result = record_verdicts(project, payload, actor=ACTOR)
+    except VerdictError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho(f"已回填 {result['written']} 条 AI 判读 → {result['path']}",
+                    fg=typer.colors.GREEN)
+        if result["levels"]:
+            typer.echo("  级别:" + ", ".join(f"{k}={v}" for k, v in result["levels"].items()))
+        typer.echo("→ 跑 manju qc 查看汇入的 [AI判读] 项")
 
 
 def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[str],

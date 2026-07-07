@@ -272,9 +272,24 @@ def run_qc(
     if extract_frames:
         _content_frames(project, report, selected)
     _content_checkers(project, report, statuses, deep)
+    _content_agent_verdicts(project, report)
     _mention_checks(project, report)
 
     return report
+
+
+def _content_agent_verdicts(project, report) -> None:
+    """Round V (§6, goal item 6): fold the driving agent's own visual verdicts
+    (reports/qc_agent.jsonl) into the content tier. Matching verdicts surface as
+    [AI判读] items at the mapped level; a regenerated take's stale verdicts become
+    one info nudge. Deterministic and crash-proof (never breaks QC itself)."""
+    try:
+        from .agent_review import agent_verdict_items
+
+        report.items.extend(agent_verdict_items(project))
+    except Exception as exc:  # a broken log never breaks QC
+        report.add("info", "content", "qc_agent",
+                   f"AI 判读记录读取失败,已跳过:{exc}")
 
 
 def _content_checkers(project, report, statuses, deep: bool) -> None:

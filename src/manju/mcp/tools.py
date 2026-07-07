@@ -249,6 +249,37 @@ def _h_qc_locked(project: Project, args: dict) -> dict:
     }
 
 
+def _h_qc_brief(project: Project, args: dict) -> dict:
+    """Round V (§6): the review package a vision-capable agent consumes — frames
+    + shot context + the visual-qc-review criteria pointer + the verdict shape."""
+    from ..qc.agent_review import qc_brief
+
+    shots = args.get("shots")
+    if shots is not None and not isinstance(shots, list):
+        raise ToolError("shots must be an array of shot ids")
+    return qc_brief(project, [str(s) for s in shots] if shots else None)
+
+
+def _h_qc_verdict(project: Project, args: dict) -> dict:
+    """Round V (§6): intake the agent's structured verdicts, bind each to the
+    take bytes it judged, append to reports/qc_agent.jsonl. `run_qc` folds them
+    back in as [AI判读] items on the next pass."""
+    from ..qc.agent_review import VerdictError, record_verdicts
+
+    payload = args
+    if "verdicts" not in args and isinstance(args.get("from_file"), str):
+        import json as _json
+
+        try:
+            payload = _json.loads(project.resolve(args["from_file"]).read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ToolError(f"could not read verdict file: {exc}") from exc
+    try:
+        return record_verdicts(project, payload, actor="ai")
+    except VerdictError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def _h_export(project: Project, args: dict) -> dict:
     formats = args.get("formats") or []
     if not isinstance(formats, list) or not formats:
@@ -490,6 +521,42 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "qc.md and repair_plan.yaml. Returns {ok, items, reports} (§9).",
         "inputSchema": _schema({"deep": {"type": "boolean", "default": False}}),
         "handler": _h_qc,
+    },
+    {
+        "name": "qc_brief",
+        "description": "Round V visual-QC (§6): package review frames (mid + "
+        "first/last of the selected take) + shot context (scene, characters with "
+        "their bible ref images, must_show/avoid, continuity locks, dialogue) + a "
+        "pointer to the visual-qc-review skill (the A–J criteria) + the verdict "
+        "JSON shape — for a VISION-CAPABLE agent to judge with its own eyes. "
+        "Manju runs NO vision model. `shots` scopes it; omit for every reviewable "
+        "shot. Then read `manju skills show visual-qc-review` and return verdicts "
+        "via qc_verdict.",
+        "inputSchema": _schema(
+            {"shots": {"type": "array", "items": {"type": "string"},
+                       "description": "shot ids to brief; omit for all"}}
+        ),
+        "handler": _h_qc_brief,
+    },
+    {
+        "name": "qc_verdict",
+        "description": "Round V visual-QC (§6): intake the agent's structured "
+        "verdicts and append them to reports/qc_agent.jsonl, each BOUND to the "
+        "take bytes it judged. `verdicts` is an array of "
+        "{shot, take, criterion, level(blocker|issue|fyi), message(中文), "
+        "evidence, frame_ms?}. Next `qc` pass surfaces matching verdicts as "
+        "[AI判读] items (blocker→error/issue→warn/fyi→info); a regenerated take "
+        "makes its old verdicts stale. Unknown shot is rejected.",
+        "inputSchema": _schema(
+            {
+                "verdicts": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "verdict objects; each needs shot + level",
+                },
+            }
+        ),
+        "handler": _h_qc_verdict,
     },
     {
         "name": "export",

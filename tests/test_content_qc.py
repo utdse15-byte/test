@@ -138,10 +138,14 @@ def test_agent_tier_recorded(tmp_project, add_shot, make_take):
         "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name)
     )
     report = run_qc(tmp_project, None, extract_frames=False)
+    # Round V (§6): the finding still EXISTS, but its prose points at the agent
+    # judgment pipe (qc brief → visual-qc-review → qc verdict), not a vendor slot.
     escalations = [i for i in report.items
-                   if i.area == "content" and "待 agent 终审" in i.message]
+                   if i.area == "content" and "需要图像判读" in i.message]
     assert escalations and escalations[0].level == "warn"
-    assert "qc_vision" in escalations[0].suggestion  # points at the §8.6 slot
+    assert "manju qc brief" in escalations[0].suggestion
+    assert "visual-qc-review" in escalations[0].suggestion
+    assert "qc_vision" not in escalations[0].suggestion  # vendor-slot prose retired
 
 
 # ------------------------------------------------------------- mcp-video

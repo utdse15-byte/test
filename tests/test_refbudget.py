@@ -368,7 +368,12 @@ def test_needs_vision_advisories_fire_without_vendor(tmp_project, add_shot, monk
     assert "outfit_conflict" in codes     # 2 character refs → outfit clash check
     for f in findings:
         if f.level == "needs_vision":
-            assert "需要视觉模型" in f.message  # honest advisory, not a fake verdict
+            # Round V (§6): the structured needs_vision slot stays, but the prose
+            # points at the driving agent's own eyes + the visual-qc-review skill,
+            # not a vision vendor — no fake verdict, no vendor-slot messaging.
+            assert "需要图像判读" in f.message
+            assert "visual-qc-review" in f.message
+            assert "需要视觉模型" not in f.message
 
 
 def test_vision_vendor_runs_when_injected(tmp_project, add_shot, monkeypatch):
