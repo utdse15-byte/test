@@ -1013,6 +1013,57 @@ def board(
         server.server_close()
 
 
+@app.command()
+def gui(
+    host: str = typer.Option("127.0.0.1", help="bind address (non-local hosts print a warning)"),
+    port: int = typer.Option(8321, help="port (0 = pick a free one)"),
+    open_browser: bool = typer.Option(True, "--open/--no-open",
+                                      help="open the page in the default browser"),
+    readonly: bool = typer.Option(False, "--readonly",
+                                  help="review-only: every mutating request is refused"),
+    workspace: Optional[Path] = typer.Option(
+        None, "--workspace",
+        help="serve every *.manju project under this directory (switchable)"),
+):
+    """Local web workbench (§1-⑦ revisited) — a client of the SAME engine core
+    as the CLI/MCP: truth stays in text files, mutations are serialized jobs,
+    and dangerous ops (unlock, gc --hard) are absent, exactly as on MCP."""
+    from .gui.server import create_server, discover_workspace
+
+    projects: Optional[dict] = None
+    if workspace is not None:
+        projects = discover_workspace(workspace)
+        if not projects:
+            _fail(f"no manju projects found under {workspace}")
+        project = next(iter(projects.values()))
+        typer.echo("workspace: " + ", ".join(
+            f"{slug} ({p.root.name})" for slug, p in projects.items()))
+    else:
+        project = _project()
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        typer.secho(f"⚠ binding non-local host {host} — the GUI has no auth beyond "
+                    "its CSRF token; only do this on a trusted network"
+                    + ("" if readonly else " (consider --readonly for review-only sharing)"),
+                    fg=typer.colors.YELLOW)
+    try:
+        server = create_server(project, host=host, port=port, actor=ACTOR,
+                               readonly=readonly, workspace=projects)
+    except OSError as exc:
+        _fail(f"cannot bind {host}:{port} — {exc} (try --port 0 for a free port)")
+    typer.secho(f"manju gui → {server.url}  (Ctrl-C to stop)", fg=typer.colors.GREEN)
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(0.4, lambda: webbrowser.open(server.url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("\nbye")
+    finally:
+        server.close()
+
+
 # -------------------------------------------------------------- pack/unpack
 
 PACK_EXCLUDE = (".manju/", ".git/")

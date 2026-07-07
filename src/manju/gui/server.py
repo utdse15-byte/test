@@ -1,0 +1,1238 @@
+"""The `manju gui` HTTP server (§1-⑦ revisited): stdlib-only, localhost-first.
+
+Position in the architecture: exactly where the CLI and MCP sit — a thin
+client over the same engine core (status/stale/graph/check/explain). The GUI
+adds NO state of its own: every mutation goes through the same functions and
+lands in the same text files + events.jsonl. Dangerous operations (`unlock`,
+`gc --hard`, `pack`/`unpack`, `import` of arbitrary paths) are absent from
+this surface, mirroring the MCP decision (§5, §11).
+
+Threat model (a localhost web server is still a web server):
+
+- **DNS rebinding**: every request's Host header must be localhost/127.0.0.1/
+  [::1] (or the explicitly bound host) — anything else is 403.
+- **CSRF**: state-changing POSTs require the ``X-Manju-Token`` header carrying
+  a per-run random token embedded in the served page. A custom header forces
+  a CORS preflight, which we never answer — blind cross-origin POSTs die.
+- **Path traversal**: /media only serves files under an allowlist of project
+  subtrees, resolved through :meth:`Project.resolve`, which rejects any path
+  escaping the project root. `.manju/`, `.git/`, shots/ etc. are not served.
+- **XSS**: the API returns JSON; the page builds DOM via textContent. The one
+  HTML document we serve carries a strict CSP (script/style self only).
+
+Mutating engine calls are serialized through :class:`~manju.gui.jobs.JobRunner`
+(one at a time, honest to the engine's single-writer design). Quick text-file
+mutations (select / lock) take a small in-process mutex; cross-PROCESS
+exclusion (a CLI build racing a GUI build) is the build-lock's job (§5 value
+locks guard content, not processes — see runtime/buildlock).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
+
+from ..core.container import Project, ProjectError
+from ..core.events import append_event, tail_events
+from .jobs import JobRunner
+from .state import build_state
+
+__all__ = ["GuiServer", "create_server", "serve"]
+
+# Only these project subtrees are ever served over HTTP (read-only).
+MEDIA_PREFIXES = ("media/", "renders/", "reports/", "exports/", "captions/")
+
+_CONTENT_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska", ".webm": "video/webm",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp",
+    ".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+    ".flac": "audio/flac",
+    ".srt": "text/plain; charset=utf-8", ".ass": "text/plain; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".md": "text/plain; charset=utf-8",
+}
+
+_MAX_BODY = 1 << 20  # 1 MiB is plenty for any JSON action body
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
+def _optional_build_lock(root: Path, actor: str):
+    """The per-project process build lock (§5 dual-actor race), feature-detected.
+
+    R2's ``runtime/buildlock`` is an engine-side change that may or may not be
+    present on this line yet: when it is, voice/qc jobs hold the same lock every
+    other surface does; when it is absent this degrades to a no-op context
+    manager, so the GUI is green standalone and lights up the moment the lock
+    module lands (the ``build_lock`` status field fills in the same way)."""
+    try:
+        from ..runtime.buildlock import build_lock
+
+        return build_lock(root, actor=actor)
+    except Exception:  # module absent, or an unexpected signature — never block
+        import contextlib
+
+        return contextlib.nullcontext()
+
+
+def _empty_spend(project: Project) -> dict[str, Any]:
+    """The §8.3 事后 spend report's empty-project shape, served when the
+    ``build.spend`` module (round-r/spend) has not landed yet. Matches the real
+    ``spend_report`` output for a project with no runs (``source="empty"``)."""
+    limit = None
+    try:
+        limit = project.load_config().budget.limit
+    except Exception:
+        pass
+    return {"total": 0, "currency": None, "budget_limit": limit,
+            "by_provider": [], "by_shot": [], "recent": [], "source": "empty"}
+
+
+class GuiServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer carrying the project, token and job runner."""
+
+    daemon_threads = True
+
+    def __init__(self, project: Project, host: str, port: int, actor: str,
+                 readonly: bool = False,
+                 workspace: dict[str, Project] | None = None):
+        self.project = project
+        self.actor = actor
+        self.readonly = readonly
+        self.token = secrets.token_urlsafe(24)
+        self.runner = JobRunner()
+        # select/lock are quick read-modify-write cycles on one YAML file;
+        # serialize them among themselves so two clicks can't interleave.
+        self.quick_mutex = threading.Lock()
+        # /api/state cache keyed by the project fingerprint: polling a large
+        # project must not re-scan every shot when nothing changed
+        self.state_cache: tuple[str, dict[str, Any]] | None = None
+        # workspace mode (--workspace): slug -> Project; ONE active project
+        # per server (self.project), switchable via POST /api/switch. Jobs
+        # already running keep their closed-over project — a switch never
+        # retargets in-flight work.
+        self.workspace = workspace or {}
+        self.active_slug = next(
+            (slug for slug, p in self.workspace.items() if p.root == project.root), None)
+        self.allowed_hosts = set(_LOCAL_HOSTS)
+        if host not in ("", "0.0.0.0", "::"):
+            self.allowed_hosts.add(host)
+        super().__init__((host, port), _Handler)
+
+    def switch_project(self, slug: str) -> Project:
+        target = self.workspace.get(slug)
+        if target is None:
+            raise KeyError(slug)
+        with self.quick_mutex:
+            self.project = target
+            self.active_slug = slug
+            self.state_cache = None
+        return target
+
+    @property
+    def port(self) -> int:
+        return self.server_address[1]
+
+    @property
+    def url(self) -> str:
+        host = self.server_address[0]
+        shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+        return f"http://{shown}:{self.port}/"
+
+    def close(self) -> None:
+        self.runner.shutdown(timeout=1.0)
+        self.server_close()
+
+
+def discover_workspace(root: Path) -> dict[str, Project]:
+    """Scan a directory for manju projects (direct children + the dir itself).
+    Slugs are the directory stems, uniquified with _2/_3 on collision."""
+    found: list[Project] = []
+    root = Path(root).resolve()
+    if (root / "project.yaml").exists():
+        try:
+            found.append(Project(root))
+        except ProjectError:
+            pass
+    for child in sorted(root.iterdir()) if root.is_dir() else []:
+        if child.is_dir() and (child / "project.yaml").exists():
+            try:
+                found.append(Project(child))
+            except ProjectError:
+                continue
+    projects: dict[str, Project] = {}
+    for p in found:
+        slug = base = p.root.stem or "project"
+        n = 2
+        while slug in projects:
+            slug = f"{base}_{n}"
+            n += 1
+        projects[slug] = p
+    return projects
+
+
+def create_server(project: Project, host: str = "127.0.0.1", port: int = 0,
+                  actor: str | None = None, readonly: bool = False,
+                  workspace: dict[str, Project] | None = None) -> GuiServer:
+    actor = actor or os.environ.get("MANJU_ACTOR", "human")
+    return GuiServer(project, host, port, actor, readonly=readonly,
+                     workspace=workspace)
+
+
+def serve(project: Project, host: str = "127.0.0.1", port: int = 8321,
+          open_browser: bool = True) -> None:
+    """Blocking entry point for the CLI."""
+    server = create_server(project, host, port)
+    if open_browser:
+        try:
+            import webbrowser
+
+            threading.Timer(0.4, webbrowser.open, args=[server.url]).start()
+        except Exception:
+            pass  # a browser is a convenience, never a requirement
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.close()
+
+
+# --------------------------------------------------------------------------
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server: GuiServer  # narrowed type
+    protocol_version = "HTTP/1.1"
+
+    # ------------------------------------------------------------- plumbing
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        pass  # a polling UI would drown the terminal; errors go via responses
+
+    def _host_allowed(self) -> bool:
+        host = (self.headers.get("Host") or "").strip()
+        hostname = host.rsplit(":", 1)[0] if (":" in host and not host.startswith("[")) else host
+        if host.startswith("[") and "]" in host:  # [::1]:8321
+            hostname = host[: host.index("]") + 1]
+        return hostname.lower() in self.server.allowed_hosts
+
+    def _send_json(self, data: Any, status: int = 200) -> None:
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_error_json(self, message: str, status: int) -> None:
+        self._send_json({"error": message}, status)
+
+    def _send_text(self, body: str, content_type: str, status: int = 200,
+                   extra: dict[str, str] | None = None) -> None:
+        raw = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _read_body(self) -> dict[str, Any] | None:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > _MAX_BODY:
+            self._send_error_json("request body too large", 413)
+            return None
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send_error_json("invalid JSON body", 400)
+            return None
+        if not isinstance(data, dict):
+            self._send_error_json("JSON body must be an object", 400)
+            return None
+        return data
+
+    # --------------------------------------------------------------- routes
+
+    def do_GET(self) -> None:  # noqa: N802
+        if not self._host_allowed():
+            self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
+            return
+        url = urlsplit(self.path)
+        path = url.path
+        try:
+            if path == "/":
+                self._page()
+            elif path == "/favicon.ico":
+                # a real (tiny) icon: kills the one console 404 every load
+                svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+                       '<rect width="16" height="16" rx="3" fill="#1d2027"/>'
+                       '<rect x="3" y="4" width="10" height="8" rx="1" fill="#6ea8fe"/>'
+                       '<circle cx="6" cy="8" r="1.4" fill="#14161a"/></svg>')
+                self._send_text(svg, "image/svg+xml")
+            elif path == "/app.css":
+                from .page import render_css
+
+                self._send_text(render_css(), "text/css; charset=utf-8")
+            elif path == "/app.js":
+                from .page import render_js
+
+                self._send_text(render_js(), "application/javascript; charset=utf-8")
+            elif path == "/api/state":
+                from .state import project_fingerprint
+
+                fp = project_fingerprint(self.server.project, self.server.runner)
+                cached = self.server.state_cache
+                if cached is not None and cached[0] == fp:
+                    payload = cached[1]
+                else:
+                    payload = build_state(self.server.project, self.server.runner)
+                    payload["fp"] = fp
+                    payload["readonly"] = self.server.readonly
+                    payload["workspace"] = (
+                        {"active": self.server.active_slug,
+                         "count": len(self.server.workspace)}
+                        if self.server.workspace else None)
+                    self.server.state_cache = (fp, payload)
+                self._send_json(payload)
+            elif path == "/api/jobs":
+                self._send_json({"jobs": [j.to_dict() for j in self.server.runner.list()]})
+            elif path == "/api/check":
+                from ..core.check import run_check
+
+                self._send_json(run_check(self.server.project).to_dict())
+            elif path == "/api/explain":
+                from ..build.explain import explain
+
+                self._send_json(explain(self.server.project))
+            elif path == "/api/events":
+                q = parse_qs(url.query)
+                n = 50
+                try:
+                    n = max(1, min(1000, int(q.get("n", ["50"])[0])))
+                except ValueError:
+                    pass
+                actor = q.get("actor", [None])[0]
+                action = q.get("action", [None])[0]
+                events = tail_events(self.server.project.root, 1000)
+                if actor:
+                    events = [e for e in events if e.get("actor") == actor]
+                if action:
+                    events = [e for e in events if e.get("action") == action]
+                self._send_json({"events": events[-n:]})
+            elif path == "/api/projects":
+                self._projects_list()
+            elif path == "/api/watch":
+                self._watch(parse_qs(url.query))
+            elif path == "/api/proposals":
+                self._proposals()
+            elif path == "/api/rules":
+                rules_path = self.server.project.rules_path
+                self._send_json({
+                    "exists": rules_path.exists(),
+                    "yaml": rules_path.read_text(encoding="utf-8") if rules_path.exists() else "",
+                })
+            elif path.startswith("/api/bible/"):
+                self._bible_get(unquote(path[len("/api/bible/"):]))
+            elif path == "/api/spend":
+                try:
+                    from ..build.spend import spend_report
+
+                    self._send_json(spend_report(self.server.project))
+                except ImportError:
+                    # round-r/spend not landed yet — serve the empty-shape report
+                    self._send_json(_empty_spend(self.server.project))
+            elif path == "/api/schema":
+                from ..core.models import export_json_schemas
+
+                self._send_json({"schemas": export_json_schemas()})
+            elif path == "/api/timeline":
+                timeline = self.server.project.load_timeline()
+                self._send_json({"timeline": timeline.model_dump() if timeline else None})
+            elif path == "/api/doctor":
+                from ..build.doctor import run_doctor
+
+                self._send_json(run_doctor(self.server.project))
+            elif path == "/api/git/status":
+                from ..core.gitops import repo_status
+
+                self._send_json({"git": repo_status(self.server.project.root)})
+            elif path == "/api/git/diff":
+                from ..core.gitops import diff_text
+
+                q = parse_qs(url.query)
+                rel = q.get("path", [None])[0]
+                self._send_json({"diff": diff_text(self.server.project.root, rel)})
+            elif path == "/api/git/log":
+                from ..core.gitops import file_log
+
+                q = parse_qs(url.query)
+                rel = q.get("path", [None])[0]
+                try:
+                    n = max(1, min(200, int(q.get("n", ["20"])[0])))
+                except ValueError:
+                    n = 20
+                self._send_json({"log": file_log(self.server.project.root, rel, n=n)})
+            elif path.startswith("/api/shot/"):
+                self._shot_get(unquote(path[len("/api/shot/"):]))
+            elif path.startswith("/media/"):
+                self._media(unquote(path[len("/media/"):]))
+            elif path.startswith("/preview/"):
+                self._preview(unquote(path[len("/preview/"):]))
+            elif path.startswith("/thumb/"):
+                self._thumb(unquote(path[len("/thumb/"):]))
+            else:
+                self._send_error_json("not found", 404)
+        except BrokenPipeError:
+            pass  # client went away mid-response (video seeks do this constantly)
+        except Exception as exc:
+            try:
+                self._send_error_json(" ".join(str(exc).split()), 500)
+            except Exception:
+                pass
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._host_allowed():
+            self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
+            return
+        if self.server.readonly and urlsplit(self.path).path != "/api/validate":
+            # /api/validate is pure (no write) — readonly editors keep live checks
+            self._send_error_json("readonly mode — 只读工作台,操作请回到项目机器", 403)
+            return
+        if self.headers.get("X-Manju-Token") != self.server.token:
+            self._send_error_json("missing or invalid X-Manju-Token", 403)
+            return
+        url = urlsplit(self.path)
+        path = url.path
+        try:
+            if path == "/api/upload":
+                self._act_upload(parse_qs(url.query))
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            if path.startswith("/api/shot/"):
+                self._act_shot_save(unquote(path[len("/api/shot/"):]), body)
+                return
+            if path.startswith("/api/bible/"):
+                self._act_bible_save(unquote(path[len("/api/bible/"):]), body)
+                return
+            handler = {
+                "/api/select": self._act_select,
+                "/api/build": self._act_build,
+                "/api/redo": self._act_redo,
+                "/api/voice": self._act_voice,
+                "/api/qc": self._act_qc,
+                "/api/lock": self._act_lock,
+                "/api/git/commit": self._act_git_commit,
+                "/api/index": self._act_index,
+                "/api/rules": self._act_rules_save,
+                "/api/switch": self._act_switch,
+                "/api/take-note": self._act_take_note,
+                "/api/validate": self._act_validate,
+            }.get(path)
+            if handler is None:
+                self._send_error_json("not found", 404)
+                return
+            handler(body)
+        except BrokenPipeError:
+            pass
+        except Exception as exc:
+            try:
+                self._send_error_json(" ".join(str(exc).split()), 500)
+            except Exception:
+                pass
+
+    # ----------------------------------------------------------------- page
+
+    def _page(self) -> None:
+        from .page import render_page
+
+        try:
+            name = self.server.project.load_config().name
+        except Exception:
+            name = self.server.project.root.name
+        html = render_page(name, self.server.token)
+        self._send_text(
+            html, "text/html; charset=utf-8",
+            extra={
+                "Content-Security-Policy": (
+                    "default-src 'none'; script-src 'self'; style-src 'self'; "
+                    "img-src 'self'; media-src 'self'; connect-src 'self'; "
+                    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                ),
+                "X-Frame-Options": "DENY",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
+
+    # ---------------------------------------------------------------- media
+
+    def _resolve_served(self, rel: str) -> Path | None:
+        """Allowlist + containment gate shared by /media and /preview."""
+        project = self.server.project
+        rel = rel.lstrip("/")
+        if not any(rel.startswith(p) for p in MEDIA_PREFIXES):
+            return None
+        try:
+            abspath = project.resolve(rel)  # rejects escapes above the root
+            # re-check the allowlist against the RESOLVED path: "media/../x"
+            # stays inside the root but must not sidestep the prefix gate,
+            # and a symlink out of an allowed tree must not either
+            if not any(project.relpath(abspath).startswith(p) for p in MEDIA_PREFIXES):
+                return None
+        except ProjectError:
+            return None
+        return abspath
+
+    def _media(self, rel: str) -> None:
+        abspath = self._resolve_served(rel)
+        if abspath is None:
+            self._send_error_json("path not served", 403)
+            return
+        if not abspath.is_file():
+            self._send_error_json("not found", 404)
+            return
+        self._serve_file(abspath)
+
+    def _preview(self, rel: str) -> None:
+        """Browser-safe preview of a take that <video> cannot play natively:
+        lazy ffmpeg transcode into the disposable cache (.manju/webpreview,
+        §3), raw bytes as the degradation path. Same allowlist as /media."""
+        abspath = self._resolve_served(rel)
+        if abspath is None:
+            self._send_error_json("path not served", 403)
+            return
+        if not abspath.is_file():
+            self._send_error_json("not found", 404)
+            return
+        try:
+            from ..media.webpreview import ensure_preview, needs_preview
+
+            if needs_preview(abspath):
+                preview = ensure_preview(self.server.project.root, abspath)
+                if preview is not None:
+                    self._serve_file(preview)
+                    return
+        except Exception:
+            pass  # degrade to the original bytes below
+        self._serve_file(abspath)
+
+    def _thumb(self, rel: str) -> None:
+        """Lazy cached thumbnail of a take (the wall must read at a glance
+        without pressing play). 404 when no thumb can be made — the page
+        just shows the plain card."""
+        abspath = self._resolve_served(rel)
+        if abspath is None:
+            self._send_error_json("path not served", 403)
+            return
+        if not abspath.is_file():
+            self._send_error_json("not found", 404)
+            return
+        try:
+            from ..media.webpreview import ensure_thumb
+
+            thumb = ensure_thumb(self.server.project.root, abspath)
+        except Exception:
+            thumb = None
+        if thumb is None:
+            self._send_error_json("no thumbnail available", 404)
+            return
+        self._serve_file(thumb)
+
+    def _serve_file(self, abspath: Path) -> None:
+        st = abspath.stat()
+        etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
+        ctype = _CONTENT_TYPES.get(abspath.suffix.lower(), "application/octet-stream")
+        size = st.st_size
+        start, end = 0, size - 1
+        status = 200
+        range_header = self.headers.get("Range")
+        if range_header:
+            m = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if m and (m.group(1) or m.group(2)):
+                if m.group(1):
+                    start = int(m.group(1))
+                    if m.group(2):
+                        end = min(int(m.group(2)), size - 1)
+                else:  # suffix range: last N bytes
+                    n = int(m.group(2))
+                    start = max(0, size - n)
+                if start >= size or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = 206
+
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with open(abspath, "rb") as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    # -------------------------------------------------------------- actions
+
+    def _act_select(self, body: dict[str, Any]) -> None:
+        project = self.server.project
+        shot_id, take = str(body.get("shot") or ""), str(body.get("take") or "")
+        if not shot_id or not take:
+            self._send_error_json("shot and take are required", 400)
+            return
+        with self.server.quick_mutex:
+            if project.get_take(shot_id, take) is None:
+                self._send_error_json(f"{shot_id} has no take '{take}'", 404)
+                return
+            project.update_shot_raw(
+                shot_id,
+                lambda d: d.setdefault("status", {}).__setitem__("selected_take", take),
+            )
+            append_event(project.root, self.server.actor, "select",
+                         {"shot": shot_id, "take": take, "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "take": take})
+
+    def _act_validate(self, body: dict[str, Any]) -> None:
+        """Keystroke-time validation for the editors (VS Code settings.json
+        pattern): parse + model-validate ONLY — no write, no full check, no
+        lock verification (those stay in the gated save). Fast and pure, so
+        a debounced client can call it per pause."""
+        kind = str(body.get("kind") or "")
+        parsed, err = self._parse_yaml_mapping(body.get("yaml"))
+        if err:
+            self._send_json({"ok": False, "errors": [err]})
+            return
+        errors: list[str] = []
+        try:
+            if kind == "shot":
+                from ..core.models import ShotSpec
+
+                data = dict(parsed)
+                data.setdefault("id", body.get("id") or "S000")
+                ShotSpec.model_validate(data)
+            elif kind == "rules":
+                from ..core.models import TimelineRules
+
+                TimelineRules.model_validate(parsed)
+            elif kind.startswith("bible/"):
+                if not all(isinstance(v, dict) for v in parsed.values()):
+                    errors.append("bible entries must be mappings (id -> fields)")
+            else:
+                self._send_error_json(f"unknown kind: {kind}", 400)
+                return
+        except Exception as exc:  # pydantic ValidationError -> one-line finding
+            errors = [" ".join(str(exc).split())[:500]]
+        self._send_json({"ok": not errors, "errors": errors})
+
+    def _act_take_note(self, body: dict[str, Any]) -> None:
+        """Director note on a take (review annotation, Frame.io-inspired):
+        one line of YAML under status.take_notes — reviewable, revertible,
+        never touching media (§3). Empty text deletes the note."""
+        project = self.server.project
+        shot_id = str(body.get("shot") or "")
+        take = str(body.get("take") or "")
+        text = str(body.get("text") if body.get("text") is not None else "")
+        if not shot_id or not take:
+            self._send_error_json("shot and take are required", 400)
+            return
+        if len(text) > 2000:
+            self._send_error_json("note too long (max 2000 chars)", 400)
+            return
+        with self.server.quick_mutex:
+            if project.get_take(shot_id, take) is None:
+                self._send_error_json(f"{shot_id} has no take '{take}'", 404)
+                return
+
+            def mutate(d: dict[str, Any]) -> None:
+                status = d.setdefault("status", {})
+                notes = status.get("take_notes")
+                if not isinstance(notes, dict):
+                    notes = {}
+                if text.strip():
+                    notes[take] = text.strip()
+                else:
+                    notes.pop(take, None)
+                if notes:
+                    status["take_notes"] = notes
+                else:
+                    status.pop("take_notes", None)
+
+            project.update_shot_raw(shot_id, mutate)
+            append_event(project.root, self.server.actor, "take_note",
+                         {"shot": shot_id, "take": take,
+                          "deleted": not text.strip(), "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "take": take,
+                         "text": text.strip()})
+
+    def _act_lock(self, body: dict[str, Any]) -> None:
+        from ..core.locks import seal_lock
+
+        project = self.server.project
+        shot_id, fieldpath = str(body.get("shot") or ""), str(body.get("field") or "")
+        if not shot_id or not fieldpath:
+            self._send_error_json("shot and field are required", 400)
+            return
+        with self.server.quick_mutex:
+            try:
+                raw = project.load_shot_raw(shot_id)
+                digest = seal_lock(raw, fieldpath)
+            except (KeyError, IndexError, ProjectError) as exc:
+                self._send_error_json(f"cannot lock: {exc}", 400)
+                return
+
+            def mutate(d: dict[str, Any]) -> None:
+                locked = d.get("locked")
+                if not isinstance(locked, dict):
+                    locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
+                locked[fieldpath] = digest
+                d["locked"] = locked
+
+            project.update_shot_raw(shot_id, mutate)
+            append_event(project.root, self.server.actor, "lock",
+                         {"shot": shot_id, "field": fieldpath, "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "field": fieldpath, "hash": digest})
+
+    def _act_build(self, body: dict[str, Any]) -> None:
+        target = str(body.get("target") or "final")
+        gen = str(body.get("gen") or "missing")
+        if target not in ("proxy", "final", "exports", "qc"):
+            self._send_error_json(f"unknown target: {target}", 400)
+            return
+        if gen not in ("missing", "auto", "off"):
+            self._send_error_json(f"unknown gen mode: {gen}", 400)
+            return
+        regen_stale = bool(body.get("regen_stale"))
+        force = bool(body.get("force"))
+        assume_yes = bool(body.get("assume_yes"))
+        project, actor = self.server.project, self.server.actor
+
+        if body.get("dry_run"):
+            from ..build.graph import run_build
+
+            result = run_build(project, target=target, gen=gen, regen_stale=regen_stale,
+                               dry_run=True, force=force, actor=actor)
+            self._send_json({"dry_run": True, "result": result.to_dict()})
+            return
+
+        params = {"target": target, "gen": gen, "regen_stale": regen_stale,
+                  "force": force, "assume_yes": assume_yes}
+
+        def fn(job) -> dict[str, Any]:
+            import inspect
+
+            from ..build.graph import run_build
+
+            # The ask_before spend gate (assume_yes) and coarse phase progress
+            # (on_phase) are R4/R8 engine extensions the spend sibling
+            # (round-r/spend) carries; pass them only when run_build accepts
+            # them, so this branch is green against the current core and lights
+            # up the moment the gate lands. Until then, the page's dry-run
+            # estimate + confirm is the "always-confirm" fallback.
+            params_sig = inspect.signature(run_build).parameters
+            kwargs: dict[str, Any] = dict(
+                target=target, gen=gen, regen_stale=regen_stale,
+                dry_run=False, force=force, actor=actor)
+            if "assume_yes" in params_sig:
+                kwargs["assume_yes"] = assume_yes
+            if "on_phase" in params_sig:
+                kwargs["on_phase"] = lambda ph: setattr(job, "progress", ph)
+            return run_build(project, **kwargs).to_dict()
+
+        job = self.server.runner.submit("build", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_redo(self, body: dict[str, Any]) -> None:
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        provider = body.get("provider") or None
+        candidates = body.get("candidates")
+        seed = body.get("seed")
+        assume_yes = bool(body.get("assume_yes"))
+        params = {"shot": shot_id, "provider": provider,
+                  "candidates": candidates, "seed": seed, "assume_yes": assume_yes}
+
+        def fn(job) -> dict[str, Any]:
+            import inspect
+
+            from ..build.graph import redo_shot
+
+            kwargs: dict[str, Any] = dict(
+                candidates=int(candidates) if candidates else None,
+                provider=str(provider) if provider else None,
+                seed=int(seed) if seed is not None else None,
+                actor=actor)
+            # assume_yes rides the same spend gate as build (round-r/spend)
+            if "assume_yes" in inspect.signature(redo_shot).parameters:
+                kwargs["assume_yes"] = assume_yes
+            takes = redo_shot(project, shot_id, **kwargs)
+            return {"shot": shot_id, "takes": takes}
+
+        job = self.server.runner.submit("redo", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_voice(self, body: dict[str, Any]) -> None:
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        provider = body.get("provider") or None
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        try:
+            shot = project.load_shot(shot_id)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        if not shot.dialogue.text:
+            self._send_error_json(f"{shot_id} has no dialogue.text to voice", 400)
+            return
+
+        def fn(job) -> dict[str, Any]:
+            from ..providers.tts import get_tts_provider
+
+            tts = get_tts_provider(str(provider) if provider else None)
+            with _optional_build_lock(project.root, actor):
+                media = tts.synthesize(project, project.load_shot(shot_id),
+                                       project.load_bible())
+            append_event(project.root, actor, "voice",
+                         {"shot": shot_id, "take": media.stem, "provider": tts.id,
+                          "via": "gui"})
+            return {"shot": shot_id, "take": media.stem, "media": project.relpath(media)}
+
+        job = self.server.runner.submit("voice", {"shot": shot_id, "provider": provider}, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    # ------------------------------------------------------------ workspace
+
+    def _projects_list(self) -> None:
+        items = []
+        for slug, project in self.server.workspace.items():
+            name = project.root.stem
+            shots = 0
+            try:
+                name = project.load_config().name
+                shots = len(project.shot_ids())
+            except Exception:
+                pass
+            items.append({"slug": slug, "name": name,
+                          "root": str(project.root), "shots": shots,
+                          "active": slug == self.server.active_slug})
+        self._send_json({"projects": items, "workspace": bool(self.server.workspace)})
+
+    def _act_switch(self, body: dict[str, Any]) -> None:
+        """Swap the server's ACTIVE project (workspace mode). One active
+        project per server — in-flight jobs keep the project they closed
+        over; the page reloads its state after switching."""
+        slug = str(body.get("slug") or "")
+        if not self.server.workspace:
+            self._send_error_json("not in workspace mode (start with --workspace)", 400)
+            return
+        try:
+            project = self.server.switch_project(slug)
+        except KeyError:
+            self._send_error_json(f"unknown project: {slug}", 404)
+            return
+        self._send_json({"ok": True, "slug": slug, "root": str(project.root)})
+
+    # ---------------------------------------------------------- watch/lists
+
+    # at most this many watchers may hold threads; extras answer immediately
+    _WATCH_SLOTS = threading.BoundedSemaphore(8)
+
+    def _watch(self, query: dict[str, list[str]]) -> None:
+        """Long-poll change detection: hold the request until the project
+        fingerprint differs from the client's, or the timeout lapses — the
+        page's co-presence channel (its poll loop calls this when idle).
+        A small semaphore caps held threads; a saturated watcher degrades to
+        an immediate answer, which the client treats as a normal re-arm."""
+        import time as _time
+
+        from .state import project_fingerprint
+
+        client_fp = (query.get("fp", [""])[0] or "")
+        try:
+            timeout = min(30.0, max(1.0, float(query.get("timeout", ["25"])[0])))
+        except ValueError:
+            timeout = 25.0
+        if not self._WATCH_SLOTS.acquire(blocking=False):
+            fp = project_fingerprint(self.server.project, self.server.runner)
+            self._send_json({"fp": fp, "changed": fp != client_fp})
+            return
+        try:
+            deadline = _time.monotonic() + timeout
+            while True:
+                fp = project_fingerprint(self.server.project, self.server.runner)
+                if fp != client_fp or _time.monotonic() >= deadline:
+                    self._send_json({"fp": fp, "changed": fp != client_fp})
+                    return
+                _time.sleep(0.5)
+        finally:
+            self._WATCH_SLOTS.release()
+
+    def _proposals(self) -> None:
+        """proposals/ is the AI→human channel (§5) — list it so the human
+        actually SEES requests instead of discovering them by ls."""
+        items = []
+        pdir = self.server.project.proposals_dir
+        if pdir.exists():
+            for p in sorted(pdir.glob("*.md"), reverse=True):
+                try:
+                    text = p.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                truncated = len(text) > 10000
+                items.append({
+                    "name": p.name,
+                    "path": self.server.project.relpath(p),
+                    "mtime": p.stat().st_mtime,
+                    "text": text[:10000],
+                    "truncated": truncated,
+                })
+        self._send_json({"proposals": items})
+
+    # ------------------------------------------------- check-gated writing
+
+    def _gated_save(self, path: Path, text: str, *, label: str) -> tuple[bool, dict[str, Any], int]:
+        """Shared editor core: write the text VERBATIM (atomic), run the full
+        `manju check`, revert when the save introduced any new error. Returns
+        (ok, payload, http_status); the caller appends its own event.
+        Callers must hold quick_mutex."""
+        from ..core.check import run_check
+        from ..core.yamlio import atomic_write_text
+
+        before = path.read_text(encoding="utf-8") if path.exists() else None
+        baseline = set(run_check(self.server.project).errors)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, text if text.endswith("\n") else text + "\n")
+        report = run_check(self.server.project)
+        new_errors = [e for e in report.errors if e not in baseline]
+        if new_errors:
+            if before is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(path, before)
+            # conflict-banner contract (COMPETITIVE-UX-STUDY, Figma pattern):
+            # the client gets the reverted-to truth alongside the errors, so
+            # it can show buffer-vs-truth and re-apply without a second fetch
+            return False, {"error": f"check failed — {label} 已回滚 (reverted)",
+                           "errors": new_errors,
+                           "current": before if before is not None else ""}, 409
+        return True, {"ok": True, "created": before is None,
+                      "warnings": report.warnings}, 200
+
+    @staticmethod
+    def _parse_yaml_mapping(text: Any) -> tuple[dict[str, Any] | None, str | None]:
+        import yaml as _yaml
+
+        if not isinstance(text, str) or not text.strip():
+            return None, "yaml text is required"
+        try:
+            parsed = _yaml.safe_load(text)
+        except _yaml.YAMLError as exc:
+            return None, f"YAML 解析失败: {' '.join(str(exc).split())}"
+        if not isinstance(parsed, dict):
+            return None, "file must be a YAML mapping"
+        return parsed, None
+
+    # --------------------------------------------------------- bible/rules
+
+    _BIBLE_FILES = ("characters", "scenes", "props", "style")
+
+    def _bible_get(self, name: str) -> None:
+        if name not in self._BIBLE_FILES:
+            self._send_error_json(f"unknown bible file: {name}", 404)
+            return
+        path = self.server.project.root / "bible" / f"{name}.yaml"
+        self._send_json({
+            "name": name,
+            "exists": path.exists(),
+            "yaml": path.read_text(encoding="utf-8") if path.exists() else "",
+        })
+
+    def _act_bible_save(self, name: str, body: dict[str, Any]) -> None:
+        if name not in self._BIBLE_FILES:
+            self._send_error_json(f"unknown bible file: {name}", 404)
+            return
+        _, err = self._parse_yaml_mapping(body.get("yaml"))
+        if err:
+            self._send_error_json(err, 400)
+            return
+        project = self.server.project
+        with self.server.quick_mutex:
+            ok, payload, status = self._gated_save(
+                project.root / "bible" / f"{name}.yaml", body["yaml"],
+                label=f"bible/{name}.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_bible",
+                             {"file": name, "via": "gui"})
+        self._send_json(payload, status)
+
+    def _act_rules_save(self, body: dict[str, Any]) -> None:
+        _, err = self._parse_yaml_mapping(body.get("yaml"))
+        if err:
+            self._send_error_json(err, 400)
+            return
+        project = self.server.project
+        with self.server.quick_mutex:
+            ok, payload, status = self._gated_save(
+                project.rules_path, body["yaml"], label="timeline/rules.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_rules",
+                             {"via": "gui"})
+        self._send_json(payload, status)
+
+    # -------------------------------------------------------- index reorder
+
+    def _act_index(self, body: dict[str, Any]) -> None:
+        """Reorder shots — the cut order is one reviewable line of YAML (§3).
+        The incoming order must be a permutation of the CURRENT visible order
+        (index + on-disk extras); previously-unindexed shots become indexed."""
+        project = self.server.project
+        order = body.get("order")
+        if not isinstance(order, list) or not all(isinstance(s, str) for s in order):
+            self._send_error_json("order must be a list of shot ids", 400)
+            return
+        with self.server.quick_mutex:
+            current = project.shot_ids()
+            if sorted(order) != sorted(current):
+                self._send_error_json(
+                    "order must be a permutation of the current shots "
+                    f"(expected {len(current)} ids: {', '.join(current)})", 400)
+                return
+            index = project.load_index()
+            index.order = list(order)
+            project.save_index(index)
+            append_event(project.root, self.server.actor, "reorder",
+                         {"order": order, "via": "gui"})
+        self._send_json({"ok": True, "order": order})
+
+    # ---------------------------------------------------------- shot editor
+
+    _SHOT_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
+    def _shot_get(self, shot_id: str) -> None:
+        """Raw YAML text of one shot file — the editor edits HUMAN TRUTH, so
+        the exact bytes travel, never a model round-trip (§3: a lock sealed
+        over `duration: 3` must not break because a model re-emits 3.0)."""
+        if not self._SHOT_ID_RE.fullmatch(shot_id):
+            self._send_error_json("invalid shot id", 400)
+            return
+        project = self.server.project
+        path = project.shot_path(shot_id)
+        if not path.exists():
+            self._send_json({"id": shot_id, "exists": False, "yaml": "", "locked": []})
+            return
+        text = path.read_text(encoding="utf-8")
+        locked: list[str] = []
+        try:
+            raw = project.load_shot_raw(shot_id)
+            if isinstance(raw.get("locked"), dict):
+                locked = sorted(raw["locked"])
+        except Exception:
+            pass
+        self._send_json({"id": shot_id, "exists": True, "yaml": text, "locked": locked,
+                         "in_index": shot_id in project.load_index().order})
+
+    def _act_shot_save(self, shot_id: str, body: dict[str, Any]) -> None:
+        """Check-gated save: write the text exactly as typed, run the full
+        `manju check`, and REVERT if the save introduced any new error (lock
+        violations included — §5 means the GUI cannot bypass a lock any more
+        than the MCP surface can; unlock stays in the terminal)."""
+        if not self._SHOT_ID_RE.fullmatch(shot_id):
+            self._send_error_json("invalid shot id", 400)
+            return
+        _, err = self._parse_yaml_mapping(body.get("yaml"))
+        if err:
+            self._send_error_json(err if "mapping" not in err else
+                                  "shot file must be a YAML mapping", 400)
+            return
+        project = self.server.project
+        with self.server.quick_mutex:
+            ok, payload, status = self._gated_save(
+                project.shot_path(shot_id), body["yaml"],
+                label=f"shots/{shot_id}.yaml")
+            if ok:
+                payload["shot"] = shot_id
+                if payload["created"]:
+                    # creating via the GUI means the user wants it in the cut:
+                    # index it at the end (the engine would only APPEND it
+                    # implicitly and warn on every check until someone did)
+                    index = project.load_index()
+                    if shot_id not in index.order:
+                        index.order.append(shot_id)
+                        project.save_index(index)
+                        payload["warnings"] = [
+                            w for w in payload["warnings"]
+                            if not (shot_id in w and "index.yaml" in w)
+                        ]
+                append_event(project.root, self.server.actor, "edit_shot",
+                             {"shot": shot_id, "created": payload["created"],
+                              "via": "gui"})
+        self._send_json(payload, status)
+
+    # -------------------------------------------------------------- uploads
+
+    _UPLOAD_MAX = 4 << 30  # 4 GiB
+
+    def _act_upload(self, query: dict[str, list[str]]) -> None:
+        """Browser upload into media/imports — the GUI twin of `manju import`.
+        The MCP surface excludes import because an agent could pull arbitrary
+        FILESYSTEM paths into the project; a browser upload has no such power —
+        the human pushes bytes they already hold, and imports stay append-only
+        (collision-safe names, never overwritten)."""
+        import shutil
+        import uuid as _uuid
+
+        project = self.server.project
+        raw_name = (query.get("name", [""])[0] or "").strip()
+        # basename across both separators; no dotfiles; keep CJK
+        raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
+        if not raw_name or raw_name.startswith("."):
+            self._send_error_json("upload needs ?name=<filename>", 400)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self._send_error_json("Content-Length required", 411)
+            return
+        if length > self._UPLOAD_MAX:
+            self._send_error_json("file too large (max 4 GiB)", 413)
+            return
+
+        tmp_dir = project.runtime_dir / "upload-tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp = tmp_dir / f"up-{_uuid.uuid4().hex}"
+        received = 0
+        try:
+            with open(tmp, "wb") as f:
+                while received < length:
+                    chunk = self.rfile.read(min(1 << 20, length - received))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    received += len(chunk)
+            if received != length:
+                self._send_error_json("upload truncated", 400)
+                return
+            with self.server.quick_mutex:
+                dest = project.imports_dir / raw_name
+                stem, suffix = dest.stem, dest.suffix
+                n = 2
+                while dest.exists():  # imports are never overwritten (§3)
+                    dest = project.imports_dir / f"{stem}_{n}{suffix}"
+                    n += 1
+                shutil.move(str(tmp), dest)
+            rel = project.relpath(dest)
+            preview_rel = None
+            try:
+                from ..media.preview import make_preview
+
+                preview = make_preview(dest, project.runtime_dir / "thumbs")
+                if preview is not None:
+                    preview_rel = project.relpath(preview)
+            except Exception:
+                pass
+            append_event(project.root, self.server.actor, "import",
+                         {"files": [rel], "via": "gui"})
+            self._send_json({"ok": True, "imported": rel, "preview": preview_rel})
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    # ------------------------------------------------------------------ git
+
+    def _act_git_commit(self, body: dict[str, Any]) -> None:
+        from ..core.gitops import commit_all
+
+        message = str(body.get("message") or "").strip()
+        if not message:
+            self._send_error_json("commit message is required", 400)
+            return
+        root = self.server.project.root
+        from ..core.gitops import is_repo
+
+        # the event is appended BEFORE the commit so it rides INSIDE it —
+        # appending after would instantly re-dirty the tree the user just
+        # cleaned (the hash is unknowable pre-commit; git history carries it)
+        if is_repo(root):
+            append_event(root, self.server.actor, "git_commit",
+                         {"message": message, "via": "gui"})
+        result = commit_all(root, message, actor=self.server.actor)
+        if not result.get("ok"):
+            # the audit log must not claim a commit that never happened —
+            # record the failure right after the optimistic entry
+            if is_repo(root):
+                append_event(root, self.server.actor, "git_commit_failed",
+                             {"message": message, "error": result.get("error"),
+                              "via": "gui"})
+            self._send_error_json(result.get("error") or "commit failed", 409)
+            return
+        self._send_json(result)
+
+    def _act_qc(self, body: dict[str, Any]) -> None:
+        project = self.server.project
+        deep = bool(body.get("deep"))
+
+        def fn(job) -> dict[str, Any]:
+            from ..qc.checks import run_qc
+            from ..qc.report import write_reports
+
+            with _optional_build_lock(project.root, self.server.actor):
+                report = run_qc(project, project.load_timeline(), deep=deep)
+                paths = write_reports(project, report)
+            return {
+                "ok": report.ok,
+                "errors": sum(1 for i in report.items if i.level == "error"),
+                "warnings": sum(1 for i in report.items if i.level == "warn"),
+                "reports": {k: project.relpath(v) for k, v in paths.items()},
+            }
+
+        job = self.server.runner.submit("qc", {"deep": deep}, fn)
+        self._send_json({"job": job.to_dict()}, 202)

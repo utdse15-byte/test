@@ -1,0 +1,3326 @@
+"""Local Web GUI front-end (§1-⑦ revisited, ``manju gui``) — v3.
+
+The browser side of the ``manju gui`` command: three pure functions returning
+the page, the stylesheet and the app script that the local HTTP server serves
+as ``/``, ``/app.css`` and ``/app.js``. The GUI is a STRICT CLIENT of the
+engine API — truth stays in the project's text files; the page never computes
+build state itself, it only renders what ``GET /api/state`` (and friends)
+report and posts intents back (`select`, `build`, `redo`, `voice`, `qc`).
+
+v2 added, on the same contract: a check-gated shot YAML editor (+ new-shot
+template), a drag-and-drop importer (``/api/upload``), a proportional
+timeline strip (``/api/timeline``, fingerprint-cached), a doctor panel
+(``/api/doctor``), a collapsible git panel (``/api/git/*``, lazily fetched)
+and the build-lock chip (``state.build_lock``).
+
+v3 adds: fingerprint-driven refresh (``/api/watch`` long-poll replaces the
+idle 5 s interval; the 1.5 s poll survives only while a job is active, since
+job state transitions don't all bump the fingerprint), the §8.3 spend-confirm
+banner (a build job finishing with ``result.waiting_user`` offers 「确认花费
+并构建」 = resend the same params + ``assume_yes``), readonly awareness
+(``state.readonly`` shows a chip and disables every mutating control), a
+collapsible proposals panel (``/api/proposals``, fetched at most once per
+fingerprint change), bible/rules editors reusing the shot-editor dialog
+(``/api/bible/<name>``, ``/api/rules``), ↑/↓ shot reordering
+(``POST /api/index``), the workspace switcher chip (``/api/projects`` +
+``POST /api/switch``), a review keyboard mode (?, j/k, e, 1-9, space),
+``<img>`` rendering for image takes and the ``latest_final_note`` honesty
+line under the header spend row.
+
+v3.1 adds three patterns from REPORTS/COMPETITIVE-UX-STUDY.md: the editor
+conflict banner (a save 409 now carries ``current`` — the reverted-to disk
+text — so the dialog renders a collapsible, approximate buffer-vs-truth line
+diff plus a 以真相为底重填 reload button; the buffer itself is never lost),
+unread-first triage (a per-project ``manju-reviewed-<name>`` localStorage
+snapshot of take names: takes absent from the last snapshot get a 新 chip,
+and the shots bar gains 标记已阅 plus a live 未阅 N count chip) and the
+cache-savings display (``saved_cost``/``skipped`` on dry-run estimates and
+done build jobs render as 缓存命中省 ≈X / 跳过 N — the Nx replayed-hits
+pattern).
+
+Design stance:
+
+  * CSP-friendly by construction (``script-src 'self'; style-src 'self'``):
+    CSS and JS live in external files, there are no inline handlers and no
+    inline ``style=`` attributes (dynamic geometry — budget bar, timeline
+    clip widths — goes through the CSSOM, which strict CSP permits); every
+    mutating request carries the ``X-Manju-Token`` header read from the
+    ``manju-token`` meta tag;
+  * XSS-safe by construction: ALL server-supplied text (dialogue, YAML,
+    git diffs are arbitrary user text) enters the DOM via ``textContent`` /
+    ``createTextNode`` — the script never assigns ``innerHTML``; the diff
+    view splits lines and sets textContent per line; the two values embedded
+    server-side (project name, token) are HTML-escaped here;
+  * zero external assets, zero frameworks — vanilla ES2020 on the dark board
+    palette (:mod:`manju.board.board`), fully offline;
+  * degrade section-by-section: a 500 from /api/timeline, /api/doctor or
+    /api/git/* renders one muted line in its own section and never breaks
+    the poll loop or its neighbours;
+  * pure functions only: no I/O and no imports beyond the stdlib, so the
+    server (and tests) can render without a project on disk.
+"""
+
+from __future__ import annotations
+
+import html
+
+__all__ = ["render_page", "render_css", "render_js"]
+
+# --------------------------------------------------------------------- CSS --
+# Extends the static board's palette and CJK-aware font stack (§1-⑦); the
+# animations are the queued/running job-chip pulse, the amber build-lock pulse
+# and the one-shot flash when a timeline clip is clicked.
+
+_CSS = """
+/* manju gui — dark workbench stylesheet (served as /app.css). */
+:root {
+  --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
+  --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
+  --ok: #7ee2a8; --warn: #ffcf5c; --err: #ff8a90;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Noto Sans Mono CJK SC", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
+    "WenQuanYi Micro Hei", sans-serif;
+  line-height: 1.5; padding-bottom: 4rem;
+}
+main { padding: 0 1.2rem 1.2rem; max-width: 1600px; margin: 0 auto; }
+a { color: var(--accent); }
+.hidden { display: none; }
+.muted { color: var(--muted); }
+.loading { color: var(--muted); margin: 0; }
+h1 { margin: 0; font-size: 1.35rem; }
+h2 {
+  margin: 0 0 .6rem; font-size: 1.02rem; border-bottom: 1px solid var(--line);
+  padding-bottom: .3rem;
+}
+h3 { margin: .2rem 0 .4rem; font-size: .92rem; }
+
+/* ------------------------------------------------------------- panels -- */
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: .9rem 1.1rem; margin: 1rem 0;
+}
+#header {
+  margin: 0 0 1rem; border-radius: 0; border-width: 0 0 1px; padding: 1.1rem 1.4rem;
+}
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.cols .panel { margin: 0; }
+
+/* ------------------------------------------------------------- header -- */
+.head-top { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.chip {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
+  padding: .1rem .6rem; font-size: .78rem; white-space: nowrap;
+}
+.chip.lock { color: var(--warn); border-color: #4a3a12; }
+.chip.build-lock {
+  color: var(--warn); border-color: #6b5518; background: #4a3a12;
+  animation: mj-pulse 1.4s ease-in-out infinite;
+}
+.chip.readonly { color: var(--warn); border-color: #6b5518; background: #4a3a12; font-weight: 700; }
+button.chip { cursor: pointer; font: inherit; font-size: .78rem; color: var(--fg); }
+button.chip:hover { filter: brightness(1.15); }
+
+/* --------------------------------------------------- workspace switcher -- */
+.ws-wrap { position: relative; display: inline-block; }
+.ws-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 70;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  padding: .3rem; min-width: 240px; max-width: min(420px, 90vw);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ws-menu.hidden { display: none; }
+.ws-item {
+  background: transparent; border: 0; color: var(--fg); text-align: left;
+  padding: .35rem .6rem; border-radius: 6px; cursor: pointer; font: inherit;
+  font-size: .84rem; display: flex; gap: .6rem; justify-content: space-between;
+  align-items: baseline; white-space: nowrap;
+}
+.ws-item:hover:not(:disabled) { background: #202b40; }
+.ws-item:disabled { color: var(--muted); cursor: default; }
+.ws-count { color: var(--muted); font-size: .76rem; }
+.spend { color: var(--muted); font-size: .9rem; margin-top: .45rem; }
+.final-note {
+  margin-top: .45rem; padding: .3rem .6rem; border-left: 3px solid var(--warn);
+  background: #4a3a12; color: var(--warn); border-radius: 0 6px 6px 0;
+  font-size: .86rem;
+}
+.bar {
+  height: 5px; max-width: 420px; background: var(--panel2); border-radius: 999px;
+  overflow: hidden; margin: .3rem 0 .1rem;
+}
+.bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.bar-fill.over { background: var(--err); }
+.next-step {
+  margin-top: .6rem; padding: .45rem .7rem; border-left: 3px solid var(--accent);
+  background: #202b40; color: #cfe3ff; border-radius: 0 6px 6px 0; font-size: .92rem;
+}
+.final { margin-top: .6rem; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+.final-link { font-size: .85rem; word-break: break-all; }
+.final-video { width: 100%; }
+.final-video video {
+  max-width: 420px; width: 100%; border-radius: 8px; background: #000;
+  display: block; margin-top: .5rem;
+}
+
+/* ------------------------------------------------------------ buttons -- */
+.btn {
+  background: var(--accent); color: #0b1220; border: 0; border-radius: 6px;
+  padding: .38rem .85rem; font-size: .84rem; font-weight: 700; cursor: pointer;
+  font-family: inherit;
+}
+.btn.ghost { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.btn.small { width: 100%; margin-top: .45rem; padding: .28rem .6rem; font-size: .76rem; }
+.btn.mini { padding: .06rem .5rem; font-size: .76rem; font-weight: 700; line-height: 1.3; }
+.btn:hover:not(:disabled) { filter: brightness(1.12); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.btnrow { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
+
+/* ----------------------------------------------------- import dropzone -- */
+.dropzone {
+  border: 1px dashed var(--line); border-radius: 8px; color: var(--muted);
+  padding: .35rem .8rem; margin: 1rem 0 0; font-size: .8rem; text-align: center;
+  cursor: pointer; user-select: none;
+}
+.dropzone.drag { border-color: var(--accent); color: var(--accent); background: #202b40; }
+.dropzone.busy { border-style: solid; border-color: var(--accent); color: var(--fg); }
+
+/* -------------------------------------------------------- build panel -- */
+.controls { display: flex; flex-wrap: wrap; gap: .5rem 1.4rem; align-items: center; }
+.ctl {
+  color: var(--muted); font-size: .86rem; display: inline-flex;
+  align-items: center; gap: .35rem;
+}
+.ctl select {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .25rem .45rem; font-family: inherit; font-size: .84rem;
+}
+.ctl input[type="checkbox"] { accent-color: var(--accent); }
+.panel-out { margin-top: .8rem; max-height: 320px; overflow: auto; font-size: .86rem; }
+.panel-out:empty { display: none; }
+.panel-out p { margin: .25rem 0; }
+.tablewrap { overflow-x: auto; }
+.panel-out table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.panel-out th, .panel-out td {
+  text-align: left; padding: .25rem .55rem; border-bottom: 1px solid var(--line);
+}
+.panel-out th { color: var(--muted); font-weight: 600; }
+.panel-out td.num, .panel-out th.num { text-align: right; white-space: nowrap; }
+.panel-out tr.total td { font-weight: 700; border-bottom: 0; }
+.panel-out tr.total td.grand { color: var(--star); font-size: .95rem; }
+.panel-out tr.voice-row td { color: #cbb8ff; }
+
+/* --------------------------------------------- spend-confirm banner §8.3 -- */
+.spendbanner {
+  margin-top: .8rem; border: 1px solid #6b5518; background: #4a3a12;
+  color: var(--warn); padding: .6rem .8rem; border-radius: 8px;
+}
+.spendbanner .sb-text { white-space: pre-wrap; word-break: break-word; font-size: .9rem; }
+.spendbanner .btnrow { margin-top: .55rem; }
+.btn.confirm { background: var(--warn); color: #241a02; }
+
+/* ------------------------------------------------- truth files (bible) -- */
+.tfrow {
+  display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
+  margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--line);
+}
+.tfrow .lbl { color: var(--muted); font-size: .82rem; margin-right: .2rem; }
+.vtag { margin-left: .45rem; }
+.why { color: var(--muted); font-size: .84rem; }
+.doc-line { font-family: var(--mono); font-size: .8rem; white-space: pre-wrap; padding: .08rem 0; }
+
+/* ------------------------------------------------- badges (board §11) -- */
+.badge {
+  display: inline-block; font-size: .72rem; font-weight: 700; padding: .12rem .5rem;
+  border-radius: 999px; text-transform: uppercase; letter-spacing: .03em;
+  white-space: nowrap;
+}
+.st-fresh  { background: #17402a; color: #7ee2a8; }
+.st-stale  { background: #4a3a12; color: #ffcf5c; }
+.st-missing{ background: #3a3d44; color: #c4c9d2; }
+.st-manual { background: #23324d; color: #8fb8ff; }
+.st-needs  { background: #4a2f12; color: #ffb27a; }
+.st-broken { background: #4d1f22; color: #ff8a90; }
+
+/* --------------------------------------------------------- jobs strip -- */
+.jb-queued  { background: #3a3d44; color: #c4c9d2; animation: mj-pulse 1.6s ease-in-out infinite; }
+.jb-running { background: #23324d; color: #8fb8ff; animation: mj-pulse 1.1s ease-in-out infinite; }
+.jb-done    { background: #17402a; color: #7ee2a8; }
+.jb-failed  { background: #4d1f22; color: #ff8a90; }
+@keyframes mj-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+.job {
+  display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+  font-size: .86rem; padding: .22rem 0; border-bottom: 1px dashed var(--line);
+}
+.job:last-child { border-bottom: 0; }
+.jkind { font-weight: 700; min-width: 3.5rem; }
+.jsum { color: var(--muted); font-size: .8rem; word-break: break-all; }
+.job details { width: 100%; font-size: .8rem; }
+.job summary { cursor: pointer; color: var(--err); }
+.jerr {
+  white-space: pre-wrap; color: var(--err); background: #0f1114; border-radius: 6px;
+  padding: .4rem .6rem; margin-top: .3rem; word-break: break-all;
+}
+
+/* ------------------------------------------------------ timeline strip -- */
+.tl-strip {
+  display: flex; flex-wrap: nowrap; overflow-x: auto; border-radius: 6px;
+  background: var(--panel2); border: 1px solid var(--line);
+}
+.tl-clip {
+  flex: 0 0 auto; min-width: 26px; padding: .28rem .25rem; font-size: .7rem;
+  font-weight: 700; text-align: center; overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; cursor: pointer; border-right: 1px solid #14161a;
+}
+.tl-clip:last-child { border-right: 0; }
+.tl-clip:hover { filter: brightness(1.25); }
+.tl-h0 { background: #23324d; color: #8fb8ff; }
+.tl-h1 { background: #17402a; color: #7ee2a8; }
+.tl-h2 { background: #3a2a4d; color: #cf9bff; }
+.tl-h3 { background: #4a3a12; color: #ffcf5c; }
+.tl-h4 { background: #1c3f44; color: #7fd9e6; }
+.tl-h5 { background: #4a2f12; color: #ffb27a; }
+.tl-caps {
+  position: relative; height: 10px; margin-top: 4px; background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+}
+.tl-cap {
+  position: absolute; top: 2px; height: 4px; min-width: 3px;
+  background: var(--accent); border-radius: 2px; opacity: .85;
+}
+.tl-ruler {
+  display: flex; justify-content: space-between; color: var(--muted);
+  font-size: .7rem; margin-top: .25rem; font-variant-numeric: tabular-nums;
+}
+.tl-note { font-size: .8rem; }
+@keyframes mj-flash {
+  0% { outline: 3px solid var(--star); outline-offset: 2px; }
+  100% { outline: 3px solid transparent; outline-offset: 2px; }
+}
+.shot.flash { animation: mj-flash 1.5s ease-out 1; }
+
+/* --------------------------------------------------------- shots grid -- */
+.shotsbar { display: flex; align-items: center; gap: .6rem; margin: 1.2rem 0 0; flex-wrap: wrap; }
+.shotsbar h2 { flex: 1; margin: 0; border: 0; padding: 0; }
+.shotsbar:empty { display: none; }
+.ns-form { display: inline-flex; gap: .4rem; align-items: center; }
+.ns-form.hidden { display: none; }
+.ns-input {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .3rem .55rem; font-family: var(--mono);
+  font-size: .84rem; width: 9rem;
+}
+#shots {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
+  gap: 1rem; margin: 1rem 0;
+}
+.shot {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1rem 1.1rem;
+}
+.shot.kb-focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.shot-head { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; }
+.mvbtns { margin-left: auto; display: inline-flex; gap: .3rem; }
+.sid { font-size: 1.05rem; font-weight: 700; }
+.action { margin-top: .3rem; font-size: .92rem; }
+.dialogue { color: var(--muted); margin-top: .25rem; font-size: .9rem; }
+.speaker { color: var(--accent); }
+.note { color: var(--muted); font-size: .82rem; margin-top: .2rem; font-style: italic; }
+.takes { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: .7rem; }
+.take {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  padding: .5rem; width: 196px;
+}
+.take.selected { border: 2px solid var(--star); }
+.take video, .take img { width: 100%; height: auto; border-radius: 5px; background: #000; display: block; }
+.nomedia {
+  width: 100%; aspect-ratio: 9/16; display: flex; align-items: center;
+  justify-content: center; color: var(--muted); font-size: .78rem; background: #000;
+  border-radius: 5px; text-align: center;
+}
+.tname { font-weight: 700; margin: .4rem 0 .1rem; font-size: .88rem; }
+.star { color: var(--star); }
+.tmeta { color: var(--muted); font-size: .74rem; word-break: break-all; }
+.hint { color: var(--warn); font-size: .72rem; margin-top: .25rem; }
+.voice-takes { margin-top: .6rem; display: flex; flex-direction: column; gap: .35rem; }
+.voice-take { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.voice-take audio { height: 30px; max-width: 260px; }
+.vname { color: var(--muted); font-size: .8rem; }
+.empty {
+  background: var(--panel); border: 1px dashed var(--line); border-radius: 10px;
+  padding: 1.4rem; text-align: center; grid-column: 1 / -1;
+}
+
+/* -------------------------------------------------------- shot editor -- */
+dialog.editor { display: none; }
+dialog.editor[open] {
+  display: block; position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%); z-index: 60; margin: 0;
+  width: min(760px, 94vw); max-height: 92vh; overflow: auto;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 10px; padding: 1rem 1.2rem;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, .6);
+}
+dialog.editor::backdrop { background: rgba(8, 9, 12, .72); }
+.ed-head h3 { margin: 0 0 .4rem; font-size: 1rem; }
+.ed-hint { font-size: .78rem; margin: .3rem 0 0; }
+.ed-ta {
+  width: 100%; font-family: var(--mono); font-size: .82rem; line-height: 1.45;
+  background: #0f1114; color: var(--fg); border: 1px solid var(--line);
+  border-radius: 8px; padding: .6rem .7rem; margin-top: .6rem; resize: vertical;
+}
+.ed-errors { margin-top: .5rem; }
+.ed-errors:empty { display: none; }
+.ed-err-title { color: var(--err); font-weight: 700; margin: .2rem 0; font-size: .88rem; }
+.ed-err { color: var(--err); margin: .15rem 0; font-size: .84rem; white-space: pre-wrap; }
+/* live validation strip (debounced /api/validate): a persistent, advisory
+   status line that sits ABOVE the gated Save's own error box. The ✓ is a muted
+   green — softer than the loud badge --ok — because a pure validate pass is not
+   a promise that the check-gated Save will succeed. */
+.ed-valid { margin-top: .5rem; font-size: .84rem; }
+.ed-valid:empty { display: none; }
+.ed-valid-ok { color: #77b596; }   /* muted green: advisory pass */
+.ed-valid-err { color: var(--err); margin: .15rem 0; white-space: pre-wrap; }
+.ed-valid-wait { color: var(--muted); }
+.ed-valid-na { color: var(--muted); }
+
+/* ----------------------------------------------------------- QC panel -- */
+.qc-err  { background: #4d1f22; color: #ff8a90; }
+.qc-warn { background: #4a3a12; color: #ffcf5c; }
+.badge.lvl-error, .badge.lvl-fail { background: #4d1f22; color: #ff8a90; }
+.badge.lvl-warn, .badge.lvl-warning { background: #4a3a12; color: #ffcf5c; }
+.badge.lvl-info, .badge.lvl-ok, .badge.lvl-pass { background: #17402a; color: #7ee2a8; }
+p.lvl-error { color: var(--err); }
+p.lvl-warning { color: var(--warn); }
+p.lvl-ok { color: var(--ok); }
+.qc-item { padding: .3rem 0; border-bottom: 1px dashed var(--line); font-size: .86rem; }
+.qc-item:last-child { border-bottom: 0; }
+.qmsg { margin-left: .45rem; }
+.qshot { color: var(--accent); font-weight: 600; }
+.qsug { font-size: .78rem; margin-top: .1rem; }
+
+/* -------------------------------------------------------- events feed -- */
+.list { max-height: 300px; overflow: auto; }
+.event {
+  display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap;
+  font-size: .84rem; padding: .2rem 0; border-bottom: 1px dashed var(--line);
+}
+.event:last-child { border-bottom: 0; }
+.etime { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ac-human  { background: #23324d; color: #8fb8ff; }
+.ac-ai     { background: #3a2a4d; color: #cf9bff; }
+.ac-engine { background: #3a3d44; color: #c4c9d2; }
+.eaction { font-weight: 600; }
+.edetail { color: var(--muted); font-size: .76rem; word-break: break-all; }
+
+/* ----------------------------------------------------------- git panel -- */
+.git-head { display: flex; align-items: center; gap: .6rem; cursor: pointer; flex-wrap: wrap; }
+.git-head h2 { margin: 0; border: 0; padding: 0; }
+.git-head .chips { flex: 1; }
+.git-arrow { color: var(--muted); font-size: .8rem; }
+.gs-row {
+  display: flex; align-items: center; gap: .55rem; padding: .2rem 0;
+  font-size: .84rem; cursor: pointer; border-bottom: 1px dashed var(--line);
+  flex-wrap: wrap;
+}
+.gs-chip {
+  font-family: var(--mono); font-size: .72rem; background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 .35rem;
+  min-width: 2.1em; text-align: center; white-space: pre;
+}
+.gs-path { word-break: break-all; }
+.diff {
+  background: #0f1114; border: 1px solid var(--line); border-radius: 6px;
+  padding: .45rem .6rem; margin: .3rem 0 .5rem; max-height: 340px; overflow: auto;
+}
+.diff div { font-family: var(--mono); font-size: .76rem; white-space: pre; line-height: 1.4; }
+.dl-add { color: var(--ok); }
+.dl-del { color: var(--err); }
+.dl-hunk { color: var(--accent); }
+.dl-meta { color: var(--muted); font-weight: 700; }
+.git-log-row { color: var(--muted); font-size: .8rem; padding: .12rem 0; display: flex; gap: .5rem; flex-wrap: wrap; }
+.git-hash { font-family: var(--mono); color: var(--accent); }
+.commit-row { display: flex; gap: .5rem; margin-top: .6rem; flex-wrap: wrap; }
+.commit-msg {
+  flex: 1; min-width: 220px; background: var(--panel2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: .3rem .55rem;
+  font-family: inherit; font-size: .84rem;
+}
+
+/* ------------------------------------------------------ proposals panel -- */
+/* same collapsible-head pattern as the git panel (arrow + chips stay live) */
+.prop-row {
+  display: flex; align-items: baseline; gap: .6rem; padding: .25rem 0;
+  border-bottom: 1px dashed var(--line); cursor: pointer; flex-wrap: wrap;
+  font-size: .84rem;
+}
+.prop-name { font-family: var(--mono); font-size: .8rem; word-break: break-all; }
+.prop-date { color: var(--muted); font-size: .76rem; font-variant-numeric: tabular-nums; }
+.prop-pre {
+  background: #0f1114; border: 1px solid var(--line); border-radius: 6px;
+  padding: .5rem .7rem; margin: .25rem 0 .5rem; white-space: pre-wrap;
+  word-break: break-word; font-family: var(--mono); font-size: .78rem;
+  max-height: 320px; overflow: auto;
+}
+
+/* --------------------------------------------------- keyboard hint bar -- */
+#kbdhint {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: .8rem;
+  z-index: 55; background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 999px; padding: .35rem 1rem; font-size: .8rem;
+  color: var(--muted); box-shadow: 0 6px 18px rgba(0, 0, 0, .5);
+  white-space: nowrap; max-width: 94vw; overflow-x: auto;
+}
+#kbdhint.hidden { display: none; }
+#kbdhint b { color: var(--fg); font-weight: 700; }
+
+/* --------------------------------------------------------------- toasts -- */
+#toast {
+  position: fixed; right: 1rem; bottom: 1rem; z-index: 50;
+  display: flex; flex-direction: column; gap: .5rem; max-width: min(380px, 90vw);
+}
+.toast {
+  background: var(--panel2); border: 1px solid var(--line);
+  border-left: 4px solid var(--accent); border-radius: 8px; padding: .55rem .8rem;
+  font-size: .86rem; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); cursor: pointer;
+  word-break: break-word;
+}
+.toast-ok { border-left-color: var(--ok); }
+.toast-warn { border-left-color: var(--warn); }
+.toast-err { border-left-color: var(--err); }
+
+/* ----------------------------------------------------------- responsive -- */
+@media (max-width: 900px) {
+  #shots { grid-template-columns: 1fr; }
+  .cols { grid-template-columns: 1fr; }
+  main { padding: 0 .7rem .9rem; }
+  #header { padding: .9rem .9rem; }
+}
+/* ---- R10: take verdicts/notes, filter chips, spendy trigger ---- */
+.tacts { display: flex; gap: .3rem; margin-top: .35rem; flex-wrap: wrap; align-items: center; }
+.btn.tiny { padding: .1rem .45rem; font-size: .85rem; line-height: 1.4; }
+.btn.tiny.on { border-color: var(--star); color: var(--star); background: rgba(255, 207, 92, .12); }
+.tnote { max-width: 190px; word-break: break-all; }
+.tnote.seekable { cursor: pointer; text-decoration: underline dotted; }
+.tnote.seekable:hover { color: var(--accent); }
+.fchips { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0 .7rem; }
+button.fchip { cursor: pointer; }
+.fchip.on { border-color: var(--accent); color: var(--accent); background: rgba(110, 168, 254, .12); }
+.btn.spendy { border-color: var(--star); }
+.vstack { margin-top: .45rem; display: flex; flex-direction: column; gap: .25rem; }
+.vrow { display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
+.chip.warn { border-color: #e0a030; color: #e0a030; }
+
+/* ---- v3.1: conflict banner — buffer-vs-truth diff inside the editor ---- */
+.ed-truth { margin-top: .6rem; }
+.ed-truth summary { cursor: pointer; color: var(--warn); font-size: .84rem; font-weight: 700; }
+.ed-truth .diff { max-height: 260px; }
+.ed-truth-note { color: var(--muted); font-size: .76rem; margin: .3rem 0 .1rem; }
+.ed-truth .btnrow { margin-top: .5rem; }
+
+/* ---- v3.1: unread-first triage — mark-reviewed + new-take chips ---- */
+.chip.unread { color: var(--accent); border-color: #2b4a7a; background: #202b40; font-weight: 700; }
+.chip.tk-new {
+  color: var(--accent); border-color: #2b4a7a; background: #202b40;
+  font-size: .68rem; padding: 0 .4rem; margin-left: .35rem; vertical-align: middle;
+}
+
+/* ---- v3.1: cache savings (Nx pattern) — estimates + done-build rows ---- */
+.savings {
+  margin-top: .5rem; display: flex; gap: .5rem; flex-wrap: wrap;
+  align-items: center; font-size: .84rem;
+}
+.jsave { color: var(--ok); font-size: .78rem; white-space: nowrap; }
+
+/* ---- R14: A/B take compare overlay (Frame.io comparison viewer) ---- */
+/* A plain fixed div on <body> (NOT inside #shots), so a poll re-render can
+   never destroy it; palette-only, no inline styles. */
+.cmp-btn { margin-left: .2rem; }
+.cmp-overlay {
+  position: fixed; inset: 0; z-index: 80; background: rgba(8, 9, 12, .82);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 2.4vh 1.1rem; overflow: auto;
+}
+.cmp-panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  width: min(1400px, 96vw); padding: 1rem 1.2rem;
+  box-shadow: 0 16px 56px rgba(0, 0, 0, .65);
+}
+.cmp-head { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; }
+.cmp-head h3 { margin: 0; flex: 1; font-size: 1.05rem; min-width: 10rem; }
+.cmp-toggles { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+.cmp-toggle {
+  color: var(--muted); font-size: .86rem; display: inline-flex;
+  align-items: center; gap: .35rem; cursor: pointer; user-select: none;
+}
+.cmp-toggle input[type="checkbox"] { accent-color: var(--accent); }
+.cmp-rate { color: var(--star); font-variant-numeric: tabular-nums; font-weight: 700; }
+.cmp-close {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; width: 2rem; height: 2rem; cursor: pointer;
+  font-size: 1rem; line-height: 1; font-family: inherit;
+}
+.cmp-close:hover { filter: brightness(1.2); }
+.cmp-videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+.cmp-side { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+.cmp-side select {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .3rem .5rem; font-family: inherit;
+  font-size: .84rem; width: 100%;
+}
+.cmp-side video {
+  width: 100%; max-height: 60vh; background: #000; border-radius: 8px; display: block;
+}
+.cmp-cap { color: var(--muted); font-size: .8rem; word-break: break-all; }
+.cmp-cap b { color: var(--fg); }
+.cmp-side .btn.small { margin-top: 0; }
+
+/* ---- R14: events 更多 (show more) ---- */
+.ev-more { margin-top: .6rem; }
+
+@media (max-width: 900px) {
+  .cmp-videos { grid-template-columns: 1fr; }
+}
+
+""".strip() + "\n"
+
+# ---------------------------------------------------------------------- JS --
+# Vanilla ES2020, no frameworks, no external assets. Server data only ever
+# enters the DOM through textContent/createTextNode (dialogue, YAML and git
+# diffs are arbitrary user text). Dynamic styles (budget-bar width, timeline
+# clip geometry) are set through the CSSOM (`el.style.* = ...`), which strict
+# `style-src 'self'` permits — unlike `style=` attributes, which this app
+# never uses.
+
+_JS = r"""
+/* manju gui — front-end app (served as /app.js; source: manju/gui/page.py).
+ *
+ * Strict client of the engine HTTP API: the page never computes build state
+ * itself — it renders /api/state verbatim and posts intents back. CSP is
+ * `script-src 'self'`, so there are no inline handlers; every request sends
+ * the X-Manju-Token header read from the <meta name="manju-token"> tag.
+ */
+"use strict";
+(() => {
+  const tokenMeta = document.querySelector('meta[name="manju-token"]');
+  const TOKEN = tokenMeta ? (tokenMeta.getAttribute("content") || "") : "";
+  const $ = (id) => document.getElementById(id);
+
+  /* ------------------------------------------------------------- DOM --- */
+  /* Every dynamic node gets its text via textContent — never innerHTML. */
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null && text !== "") n.textContent = String(text);
+    return n;
+  };
+  const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
+  const errMsg = (err) => String((err && err.message) || err);
+
+  /* ------------------------------------------------------ formatting --- */
+  const fmtDur = (ms) => {                       /* 90500 -> "01:30.50" */
+    if (typeof ms !== "number" || !isFinite(ms) || ms <= 0) return "—";
+    const total = ms / 1000;
+    const m = Math.floor(total / 60);
+    const s = total - m * 60;
+    return String(m).padStart(2, "0") + ":" + s.toFixed(2).padStart(5, "0");
+  };
+  const fmtMMSS = (ms) => {                      /* 90500 -> "01:30" (ruler) */
+    const t = Math.max(0, Math.round((typeof ms === "number" && isFinite(ms) ? ms : 0) / 1000));
+    return String(Math.floor(t / 60)).padStart(2, "0") + ":" + String(t % 60).padStart(2, "0");
+  };
+  const fmtMoney = (v) =>
+    (typeof v === "number" && isFinite(v)) ? String(Number(v.toFixed(4))) : "?";
+  const fmtClock = (ts) => {                     /* ISO ts -> local HH:MM:SS */
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) {
+      const p = (x) => String(x).padStart(2, "0");
+      return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+    }
+    const m = /\d{2}:\d{2}:\d{2}/.exec(String(ts || ""));
+    return m ? m[0] : String(ts || "");
+  };
+  const jobSeconds = (job) => {
+    if (!job.started || !job.finished) return "";
+    const a = Date.parse(job.started);
+    const b = Date.parse(job.finished);
+    if (isNaN(a) || isNaN(b) || b < a) return "";
+    return ((b - a) / 1000).toFixed(1) + "s";
+  };
+
+  /* ---------------------------------------------------------- toasts --- */
+  const toast = (msg, kind) => {
+    const cls = kind === "err" ? "toast-err" : (kind === "warn" ? "toast-warn" : "toast-ok");
+    const t = el("div", "toast " + cls, msg);
+    t.addEventListener("click", () => t.remove());
+    $("toast").appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+  };
+
+  /* ------------------------------------------------------------- API --- */
+  /* apiRaw never throws on HTTP errors — callers that need the error BODY
+   * (the shot editor renders 409 {"errors":[...]} in place) use it directly;
+   * api() keeps the v1 throw-on-!ok contract for everything else. */
+  const apiRaw = async (method, path, body) => {
+    const opts = { method, headers: { "X-Manju-Token": TOKEN } };
+    if (body !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(path, opts);
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    return { ok: res.ok, status: res.status, data };
+  };
+  const api = async (method, path, body) => {
+    const r = await apiRaw(method, path, body);
+    if (!r.ok) {
+      throw new Error(r.data && r.data.error ? r.data.error : "HTTP " + r.status + " (" + path + ")");
+    }
+    return r.data;
+  };
+
+  /* POST wrapper: disables the button in flight, toasts success/error,
+   * refreshes state after. Errors never propagate — polling must survive. */
+  const post = async (btn, path, body, okMsg) => {
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api("POST", path, body);
+      if (okMsg) toast(okMsg, "ok");
+      await refresh();
+      return data;
+    } catch (err) {
+      toast(errMsg(err), "err");
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+      updateGates();  /* keep Build/QC locked if a job is now active */
+    }
+  };
+
+  /* ---------------------------------------------------- polling/watch --- */
+  /* Idle refreshes ride the /api/watch long-poll (seeded from state.fp):
+   * changed -> fetch state, unchanged -> re-arm. While any job is active the
+   * old 1.5s state polling stays — job state transitions don't all bump the
+   * fingerprint. A watch failure degrades to the old 5s interval for ~60s,
+   * then watch is tried again. document.hidden and the editor dialog pause
+   * everything (the in-flight watch is ABORTED so a stale response can never
+   * clobber the page). */
+  let timer = null;
+  let anyActive = false;   /* any job queued/running: fast poll + build lock */
+  let pollFailed = false;  /* toast once per outage, not once per retry */
+  let editorOpen = false;  /* editor dialog pauses the loop entirely: a
+                              mid-edit rerender must never eat the shots grid */
+  let readonly = false;    /* state.readonly: every mutating control gated */
+  let lastFp = null;       /* state.fp — seeds the /api/watch long-poll */
+  let lastShots = [];      /* last state.shots (new-shot template needs the
+                              first scene id; keyboard mode + reorder too) */
+  let lastJobs = [];       /* last state.jobs (spend banner, switch cleanup) */
+  let lastDoneCount = -1;  /* done-job count: a finished job invalidates the
+                              timeline fingerprint, git panel and proposals */
+  let watchCtl = null;            /* AbortController of the in-flight watch */
+  let watchFallbackUntil = 0;     /* after a watch failure: 5s polls until then */
+  const sigs = {};         /* per-section JSON signatures: skip no-op
+                              re-renders so <video> playback survives polls */
+
+  const section = (key, data, fn) => {
+    const sig = JSON.stringify(data === undefined ? null : data);
+    if (sigs[key] === sig) return;
+    sigs[key] = sig;
+    fn();
+  };
+
+  const stopWatch = () => {
+    if (watchCtl) {
+      watchCtl.abort();   /* its catch sees .aborted and stays silent */
+      watchCtl = null;
+    }
+  };
+  const pauseLive = () => {   /* hidden tab / open editor: full stop */
+    if (timer) clearTimeout(timer);
+    stopWatch();
+  };
+
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    if (document.hidden) return;  /* paused; visibilitychange resumes */
+    if (editorOpen) return;       /* paused; editorClosed() resumes */
+    if (anyActive) { timer = setTimeout(refresh, 1500); return; }
+    if (!lastFp || Date.now() < watchFallbackUntil) {
+      timer = setTimeout(refresh, 5000);  /* no fp yet / watch outage window */
+      return;
+    }
+    armWatch();
+  };
+
+  async function armWatch() {
+    if (watchCtl) return;   /* one in-flight watch only */
+    const ctl = new AbortController();
+    watchCtl = ctl;
+    let changed = false;
+    try {
+      const res = await fetch(
+        "/api/watch?fp=" + encodeURIComponent(lastFp) + "&timeout=25",
+        { headers: { "X-Manju-Token": TOKEN }, signal: ctl.signal });
+      const data = await res.json();
+      if (!res.ok) throw new Error("HTTP " + res.status + " (/api/watch)");
+      changed = !!(data && data.changed);
+    } catch (err) {
+      if (ctl.signal.aborted) return;  /* deliberate pause — stay quiet */
+      if (watchCtl === ctl) watchCtl = null;
+      watchFallbackUntil = Date.now() + 60000;  /* 5s interval for ~60s */
+      schedule();
+      return;
+    }
+    if (watchCtl === ctl) watchCtl = null;
+    if (ctl.signal.aborted || document.hidden || editorOpen) return;  /* paused meanwhile */
+    if (changed) refresh();  /* refresh() re-arms via schedule() */
+    else schedule();         /* timeout lapsed unchanged: just re-arm */
+  }
+
+  async function refresh() {
+    if (timer) clearTimeout(timer);
+    stopWatch();                  /* a direct refresh supersedes the watch */
+    if (editorOpen) return;       /* paused; editorClosed() resumes */
+    try {
+      const s = await api("GET", "/api/state");
+      pollFailed = false;
+      render(s);
+    } catch (err) {
+      if (!pollFailed) {
+        toast("刷新失败 (refresh failed): " + errMsg(err), "err");
+      }
+      pollFailed = true;
+    }
+    schedule();
+  }
+
+  function render(s) {
+    const jobs = Array.isArray(s.jobs) ? s.jobs : [];
+    anyActive = jobs.some((j) => j.state === "queued" || j.state === "running");
+    readonly = s.readonly === true;
+    lastFp = (typeof s.fp === "string" && s.fp) ? s.fp : null;
+    lastShots = Array.isArray(s.shots) ? s.shots : [];
+    lastProjectName = (s.project && s.project.name) ? String(s.project.name) : "";
+    lastJobs = jobs;
+    const doneCount = jobs.filter((j) => j.state === "done").length;
+    if (lastDoneCount >= 0 && doneCount > lastDoneCount) {
+      tlForce = true;    /* a build may have recompiled the timeline */
+      gitStale = true;   /* … and touched the working tree */
+      propStale = true;  /* … and an agent may have filed a proposal */
+      if (gitOpen) fetchGitPanel();
+    }
+    lastDoneCount = doneCount;
+    if (lastFp !== estSeenFp && !anyActive) {
+      estSeenFp = lastFp;
+      updateEstimate();   /* UX-STUDY #1: price follows the project state */
+    }
+    section("header",
+      [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
+       s.latest_final_note, s.build_lock, s.readonly, s.workspace,
+       (s.shots || []).length],
+      () => renderHeader(s));
+    section("jobs", jobs, () => renderJobs(jobs));
+    section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
+    section("qc", s.qc, () => renderQC(s.qc));
+    section("events", s.events, () => renderEvents(s.events || []));
+    renderSpend(jobs);  /* §8.3 waiting_user banner in the build panel */
+    updateReviewChip(); /* 未阅 N follows the fresh shots + localStorage mark */
+    maybeTimeline(s);   /* async, self-contained: a 500 there never cascades */
+    maybeProposals(s);  /* async, at most one fetch per fp change */
+    $("dropzone").classList.toggle("hidden", readonly);
+    updateGates();
+  }
+
+  /* ---------------------------------------------------------- header --- */
+  let finalOpen = false;  /* 成片预览 toggle survives re-renders */
+
+  function renderHeader(s) {
+    const root = $("header");
+    clear(root);
+    const p = s.project || {};
+    const b = s.budget || {};
+    const tl = s.timeline || {};
+
+    const top = el("div", "head-top");
+    top.appendChild(el("h1", null, p.name || "manju"));
+    const chips = el("div", "chips");
+    const chip = (t) => chips.appendChild(el("span", "chip", t));
+    if (p.width && p.height) chip(p.width + "×" + p.height);
+    if (p.fps) chip(p.fps + " fps");
+    if (p.mode) chip("模式 " + p.mode);
+    if (tl.exists) chip("时长 " + fmtDur(tl.duration_ms));
+    chip("分镜 " + (Array.isArray(s.shots) ? s.shots.length : 0));
+    const bl = s.build_lock;
+    if (bl && typeof bl === "object") {
+      /* another process (or a crashed run) holds the build lock right now;
+       * both lock shapes travel here — {pid,actor,started,hostname} and the
+       * unreadable-file {note} — so every key is optional */
+      let txt = "构建中 (building)";
+      if (bl.pid !== undefined && bl.pid !== null) txt += " pid " + bl.pid;
+      if (bl.actor) txt += " · " + bl.actor;
+      if (bl.pid === undefined && !bl.actor && bl.note) txt += " · " + bl.note;
+      const lockChip = el("span", "chip build-lock", txt);
+      if (bl.started) lockChip.title = "started " + bl.started + (bl.hostname ? " @ " + bl.hostname : "");
+      chips.appendChild(lockChip);
+    }
+    if (s.readonly === true) {
+      const ro = el("span", "chip readonly", "只读 (readonly)");
+      ro.title = "只读工作台 — 所有修改操作已停用 (all mutating controls disabled)";
+      chips.appendChild(ro);
+    }
+    if (s.workspace && typeof s.workspace === "object") {
+      chips.appendChild(workspaceChip(s.workspace));
+    }
+    top.appendChild(chips);
+    root.appendChild(top);
+
+    const limitTxt = (b.limit === null || b.limit === undefined) ? "∞" : fmtMoney(b.limit);
+    root.appendChild(el("div", "spend",
+      "花费 " + fmtMoney(b.total_cost || 0) + " " + (b.currency || "") + " / 预算 " + limitTxt));
+    if (typeof b.limit === "number" && b.limit > 0) {
+      const ratio = Math.max(0, (b.total_cost || 0) / b.limit);
+      const bar = el("div", "bar");
+      const fill = el("span", "bar-fill" + (ratio > 0.9 ? " over" : ""));
+      fill.style.width = Math.min(100, ratio * 100).toFixed(1) + "%";  /* CSSOM: CSP-safe */
+      bar.appendChild(fill);
+      root.appendChild(bar);
+    }
+    if (s.latest_final_note) {   /* crashed-render honesty (§3) */
+      root.appendChild(el("div", "final-note", "⚠ 成片提示 (final note): " + s.latest_final_note));
+    }
+
+    if (s.next_step) root.appendChild(el("div", "next-step", "下一步 (next): " + s.next_step));
+
+    const fin = s.latest_final;
+    if (fin && fin.url) {
+      const wrap = el("div", "final");
+      const btn = el("button", "btn ghost", finalOpen ? "成片预览 ▾" : "成片预览 ▸");
+      btn.type = "button";
+      const holder = el("div", "final-video" + (finalOpen ? "" : " hidden"));
+      const mkVideo = () => {
+        if (holder.firstChild) return;
+        const v = document.createElement("video");
+        v.controls = true;
+        v.preload = "none";
+        v.src = fin.url;
+        holder.appendChild(v);
+      };
+      if (finalOpen) mkVideo();
+      btn.addEventListener("click", () => {
+        finalOpen = !finalOpen;
+        btn.textContent = finalOpen ? "成片预览 ▾" : "成片预览 ▸";
+        holder.classList.toggle("hidden", !finalOpen);
+        if (finalOpen) mkVideo();
+      });
+      const a = el("a", "final-link", fin.path || fin.url);
+      a.href = fin.url;
+      wrap.appendChild(btn);
+      wrap.appendChild(a);
+      wrap.appendChild(holder);
+      /* version stack (Frame.io pattern): newest on top, append-only —
+       * every final_vN is one click away; a missing key sidecar is flagged */
+      const finals = Array.isArray(s.finals) ? s.finals : [];
+      if (finals.length > 1) {
+        const stack = el("div", "vstack");
+        finals.forEach((f, i) => {
+          const rowEl = el("div", "vrow");
+          const link = el("a", "final-link", f.name);
+          link.href = f.url;
+          rowEl.appendChild(link);
+          if (i === 0) rowEl.appendChild(el("span", "chip", "当前 (current)"));
+          if (f.has_key === false) {
+            rowEl.appendChild(el("span", "chip warn", "⚠ 无内容键 (no key)"));
+          }
+          if (f.size) rowEl.appendChild(el("span", "muted",
+            (f.size / 1e6).toFixed(1) + " MB"));
+          stack.appendChild(rowEl);
+        });
+        wrap.appendChild(stack);
+      }
+      root.appendChild(wrap);
+    }
+  }
+
+  /* ---------------------------------------------- workspace switcher --- */
+  /* Only rendered when state.workspace is non-null (--workspace mode). The
+   * menu is plain CSP-safe DOM; a document-level click closes any open menu
+   * (menu items run first on the bubble, then the menu hides itself). */
+  function workspaceChip(ws) {
+    const wrap = el("span", "ws-wrap");
+    const chipBtn = el("button", "chip ws",
+      "项目 (project): " + (ws.active || "?") + " ▾");
+    chipBtn.type = "button";
+    chipBtn.title = "切换工作区项目 (switch workspace project) · 共 " + (ws.count || 0);
+    const menu = el("div", "ws-menu hidden");
+    chipBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();   /* the document listener would close it again */
+      closeWsMenus(menu);     /* at most one open menu */
+      if (!menu.classList.contains("hidden")) {
+        menu.classList.add("hidden");
+        return;
+      }
+      clear(menu);
+      menu.appendChild(el("div", "muted ws-item", "加载中 (loading)…"));
+      menu.classList.remove("hidden");
+      try {
+        const data = await api("GET", "/api/projects");
+        clear(menu);
+        const items = (data && Array.isArray(data.projects)) ? data.projects : [];
+        if (!items.length) {
+          menu.appendChild(el("div", "muted ws-item", "无项目 (no projects)"));
+          return;
+        }
+        items.forEach((p) => {
+          const item = el("button", "ws-item");
+          item.type = "button";
+          item.appendChild(el("span", null,
+            (p.active ? "✓ " : "") + (p.name || p.slug)));
+          item.appendChild(el("span", "ws-count", "分镜 " + (p.shots || 0)));
+          item.title = p.root || "";
+          if (p.active) {
+            item.disabled = true;
+          } else if (readonly) {
+            item.disabled = true;
+            item.title = "只读模式 (readonly)";
+          } else {
+            item.addEventListener("click", () => {
+              menu.classList.add("hidden");
+              doSwitch(p.slug);
+            });
+          }
+          menu.appendChild(item);
+        });
+      } catch (err) {
+        clear(menu);
+        menu.appendChild(el("div", "muted ws-item",
+          "项目列表不可用 (projects unavailable): " + errMsg(err)));
+      }
+    });
+    wrap.appendChild(chipBtn);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+
+  function closeWsMenus(except) {
+    document.querySelectorAll(".ws-menu").forEach((m) => {
+      if (m !== except) m.classList.add("hidden");
+    });
+  }
+
+  async function doSwitch(slug) {
+    try {
+      const d = await api("POST", "/api/switch", { slug });
+      toast("已切换项目 (switched): " + ((d && d.slug) || slug), "ok");
+      resetAfterSwitch();
+      refresh();
+    } catch (err) {
+      toast("切换失败 (switch failed): " + errMsg(err), "err");
+    }
+  }
+
+  /* every per-project cache must die with the old project */
+  function resetAfterSwitch() {
+    try { closeCompare(); } catch (e) { /* a stale compare overlay must not outlive the switch */ }
+    Object.keys(sigs).forEach((k) => delete sigs[k]);
+    lastFp = null;
+    lastDoneCount = -1;
+    lastShots = [];
+    lastProjectName = "";   /* triage snapshot is per project name */
+    reviewSnap = null;
+    updateReviewChip();     /* hide 未阅 until the new project renders */
+    finalOpen = false;
+    kbFocusId = null;
+    tlSeenSig = null;
+    tlFingerprint = null;
+    tlForce = false;
+    gitLoaded = false;
+    gitStale = true;
+    gitStatus = null;
+    gitLog = null;
+    gitErr = null;
+    gitLogErr = null;
+    renderGit();
+    if (gitOpen) fetchGitPanel();
+    propFp = null;
+    propStale = false;
+    propLoaded = false;
+    propItems = [];
+    propErr = null;
+    propExpanded = {};
+    renderProposals();
+    /* a waiting_user banner from the OLD project must not be confirmable
+     * against the new one — the resend would target the active project */
+    lastJobs.forEach((j) => {
+      if (j.kind === "build" && j.result && j.result.waiting_user === true) {
+        spendDismissed[j.id] = true;
+      }
+    });
+    spendSig = null;
+    if (spendBox) clear(spendBox);
+  }
+
+  /* ----------------------------------------------------- build panel --- */
+  let buildBtn = null;
+  let qcBtn = null;
+  let estBtn = null;
+  let tfBtns = [];         /* truth-file editor buttons (bible/rules) */
+  let newShotBtn = null;   /* assigned by initShotsBar */
+  const RO_TIP = "只读模式 (readonly)";
+
+  /* Build/QC follow the JOB queue (anyActive) — unrelated to the cross-
+   * process build-lock chip in the header; readonly gates EVERY mutator
+   * (the dry-run Estimate is a POST too, which the server 403s). */
+  function updateGates() {
+    const gate = (btn, queueLocked) => {
+      if (!btn) return;
+      btn.disabled = (queueLocked && anyActive) || readonly;
+      btn.title = readonly ? RO_TIP : "";
+    };
+    gate(buildBtn, true);
+    gate(qcBtn, true);
+    gate(estBtn, false);
+    tfBtns.forEach((b) => gate(b, false));
+    gate(newShotBtn, false);
+  }
+
+  /* --------------------------------------------- spend confirm (§8.3) --- */
+  let spendBox = null;   /* stable container at the top of the build panel */
+  let spendSig = null;   /* "job:<id>" | "sync:<n>" — key of the shown banner */
+  const spendDismissed = {};   /* banner key -> true (dismissed/confirmed) */
+
+  const spendGateOf = (data) => {   /* waiting_user in any envelope shape */
+    if (!data) return null;
+    if (data.waiting_user === true) return data;
+    if (data.result && data.result.waiting_user === true) return data.result;
+    return null;
+  };
+  const spendText = (gate) =>
+    (Array.isArray(gate.errors) && gate.errors.length ? gate.errors[0]
+      : "waiting_user: 需要确认预估花费 (spend confirmation required)");
+
+  /* jobs-driven: the NEWEST build job finishing with result.waiting_user
+   * raises the banner; 确认 resends that job's EXACT params + assume_yes. */
+  function renderSpend(jobs) {
+    if (!spendBox) return;
+    const builds = jobs.filter((j) => j.kind === "build")
+      .sort((a, b) => String(b.created).localeCompare(String(a.created)));
+    const j = builds[0];
+    const waiting = !!(j && j.state === "done" && j.result &&
+      j.result.waiting_user === true && !spendDismissed[j.id]);
+    if (waiting) {
+      if (spendSig !== "job:" + j.id) {
+        spendSig = "job:" + j.id;
+        showSpendBanner(spendText(j.result), j.params || {}, j.id);
+      }
+      return;
+    }
+    /* a job banner clears once its job is dismissed or superseded; a
+     * "sync:" banner (future synchronous waiting_user) stays until acted on */
+    if (spendSig && spendSig.indexOf("job:") === 0) {
+      spendSig = null;
+      clear(spendBox);
+    }
+  }
+
+  function showSpendBanner(text, params, key) {
+    clear(spendBox);
+    const box = el("div", "spendbanner");
+    box.appendChild(el("div", "sb-text", "⚠ " + text));
+    const row = el("div", "btnrow");
+    if (!readonly) {
+      const ok = el("button", "btn confirm", "确认花费并构建 (Confirm & build)");
+      ok.type = "button";
+      ok.addEventListener("click", async () => {
+        const body = Object.assign({}, params, { assume_yes: true, dry_run: false });
+        spendDismissed[key] = true;
+        spendSig = null;
+        const data = await post(ok, "/api/build", body,
+          "已确认花费,构建已重新入队 (confirmed — build re-queued)");
+        if (data) clear(spendBox);
+        else spendDismissed[key] = false;  /* resend failed: keep it retryable */
+      });
+      row.appendChild(ok);
+    }
+    const no = el("button", "btn ghost", "取消 (Dismiss)");
+    no.type = "button";
+    no.addEventListener("click", () => {
+      spendDismissed[key] = true;
+      spendSig = null;
+      clear(spendBox);
+    });
+    row.appendChild(no);
+    box.appendChild(row);
+    spendBox.appendChild(box);
+  }
+
+  /* ---------------------------------------------- bible/rules editors --- */
+  const TRUTH_LABELS = {
+    characters: "bible/characters.yaml", scenes: "bible/scenes.yaml",
+    props: "bible/props.yaml", style: "bible/style.yaml",
+    rules: "timeline/rules.yaml",
+  };
+
+  async function openTruthEditor(name, btn) {
+    const url = name === "rules" ? "/api/rules" : "/api/bible/" + name;
+    const vkind = name === "rules" ? "rules" : "bible/" + name;  /* /api/validate kind */
+    const label = TRUTH_LABELS[name] || name;
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api("GET", url);
+      const hints = [];
+      if (!data || data.exists === false) {
+        hints.push("文件尚不存在,保存即创建 (file does not exist yet — saving creates it)");
+      }
+      showEditor({
+        title: "编辑 (edit) · " + label,
+        yaml: (data && data.yaml) || "",
+        saveUrl: url,
+        label,
+        hints,
+        validate: { kind: vkind },   /* live keystroke validation for this truth file */
+      });
+    } catch (err) {
+      toast("无法加载 (cannot load) " + label + ": " + errMsg(err), "err");
+    } finally {
+      if (btn) btn.disabled = false;
+      updateGates();
+    }
+  }
+
+  let updateEstimate = () => {};  /* bound in initBuildPanel */
+  let estSeenFp = null;
+
+  function initBuildPanel() {
+    const root = $("buildpanel");
+    clear(root);
+    root.appendChild(el("h2", null, "构建 (build)"));
+    spendBox = el("div");   /* the §8.3 waiting_user banner lands here */
+    root.appendChild(spendBox);
+
+    const row = el("div", "controls");
+    const mkSelect = (labelTxt, values) => {
+      const l = el("label", "ctl", labelTxt + " ");
+      const sel = document.createElement("select");
+      values.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = v;
+        sel.appendChild(o);
+      });
+      l.appendChild(sel);
+      row.appendChild(l);
+      return sel;
+    };
+    const mkCheck = (labelTxt) => {
+      const l = el("label", "ctl");
+      const c = document.createElement("input");
+      c.type = "checkbox";
+      l.appendChild(c);
+      l.appendChild(document.createTextNode(" " + labelTxt));
+      row.appendChild(l);
+      return c;
+    };
+    const target = mkSelect("目标 (target)", ["final", "proxy", "exports", "qc"]);
+    const gen = mkSelect("生成 (gen)", ["missing", "auto", "off"]);
+    const regen = mkCheck("重做过期 (regen stale)");
+    const force = mkCheck("强制 (force)");
+    root.appendChild(row);
+
+    /* UX-STUDY #1: the price rides ON the trigger — a silent dry-run keeps
+     * the Build button honest about what clicking it would spend */
+    let estSeq = 0;
+    updateEstimate = async () => {
+      if (readonly || !buildBtn) return;
+      const seq = ++estSeq;
+      try {
+        const data = await api("POST", "/api/build", buildBody(true));
+        if (seq !== estSeq || !data || !data.result) return;
+        const cost = Number(data.result.estimated_cost || 0);
+        const cur = ((data.result.plan || [])
+          .map((it) => it.currency).find(Boolean)) || "";
+        buildBtn.textContent = cost > 0
+          ? "构建 (Build) ≈" + cost + (cur ? " " + cur : "")
+          : "构建 (Build)";
+        buildBtn.classList.toggle("spendy", cost > 0);
+      } catch (err) { /* advisory only: the button stays plain */ }
+    };
+    [target, gen, regen, force].forEach((c) =>
+      c.addEventListener("change", () => updateEstimate()));
+
+    const out = el("div", "panel-out");
+    const buildBody = (dry) => ({
+      target: target.value,
+      gen: gen.value,
+      regen_stale: regen.checked,
+      force: force.checked,
+      dry_run: dry,
+    });
+
+    const btns = el("div", "btnrow");
+    const mkBtn = (label, cls, fn) => {
+      const btn = el("button", "btn " + cls, label);
+      btn.type = "button";
+      btn.addEventListener("click", () => fn(btn));
+      btns.appendChild(btn);
+      return btn;
+    };
+    estBtn = mkBtn("估算 (Estimate)", "ghost", async (btn) => {
+      const data = await post(btn, "/api/build", buildBody(true), "估算完成 (dry run)");
+      if (data && data.result) renderPlan(out, data.result);
+    });
+    buildBtn = mkBtn("构建 (Build)", "primary", async (btn) => {
+      const body = buildBody(false);
+      const data = await post(btn, "/api/build", body, "构建任务已入队 (build queued)");
+      const gate = spendGateOf(data);  /* future-proof: a SYNCHRONOUS response
+                                          carrying waiting_user gets the same banner */
+      if (gate) {
+        spendSig = "sync:" + Date.now();
+        showSpendBanner(spendText(gate), body, spendSig);
+      }
+    });
+    qcBtn = mkBtn("QC", "ghost", (btn) =>
+      post(btn, "/api/qc", {}, "QC 任务已入队 (qc queued)"));
+    mkBtn("检查 (Check)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderCheck(out, await api("GET", "/api/check")); }
+      catch (err) { toast(errMsg(err), "err"); }
+      finally { btn.disabled = false; }
+    });
+    mkBtn("解释 (Explain)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderExplain(out, await api("GET", "/api/explain")); }
+      catch (err) { toast(errMsg(err), "err"); }
+      finally { btn.disabled = false; }
+    });
+    mkBtn("体检 (Doctor)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderDoctor(out, await api("GET", "/api/doctor")); }
+      catch (err) {
+        clear(out);
+        out.appendChild(el("h3", null, "体检 (doctor)"));
+        out.appendChild(el("p", "muted", "体检不可用 (doctor unavailable): " + errMsg(err)));
+      }
+      finally { btn.disabled = false; }
+    });
+    root.appendChild(btns);
+
+    /* truth 文件 (files): bible + rules editors — same dialog flow as shots */
+    const tf = el("div", "tfrow");
+    tf.appendChild(el("span", "lbl", "truth 文件 (files):"));
+    tfBtns = [];
+    ["characters", "scenes", "props", "style", "rules"].forEach((name) => {
+      const b = el("button", "btn ghost mini", name);
+      b.type = "button";
+      b.title = TRUTH_LABELS[name] || name;
+      b.addEventListener("click", () => openTruthEditor(name, b));
+      tf.appendChild(b);
+      tfBtns.push(b);
+    });
+    root.appendChild(tf);
+    root.appendChild(out);
+  }
+
+  function renderPlan(out, result) {
+    clear(out);
+    out.appendChild(el("h3", null, "试算计划 (plan)"));
+    const plan = Array.isArray(result.plan) ? result.plan : [];
+    if (!plan.length) {
+      out.appendChild(el("p", "muted", "无事可做 (nothing to do)。"));
+    } else {
+      const wrap = el("div", "tablewrap");
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      hr.appendChild(el("th", null, "shot"));
+      hr.appendChild(el("th", null, "reason"));
+      hr.appendChild(el("th", null, "provider"));
+      hr.appendChild(el("th", "num", "≈cost"));
+      thead.appendChild(hr);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      plan.forEach((it) => {
+        const tr = document.createElement("tr");
+        const isVoice = it.kind === "voice";
+        if (isVoice) tr.className = "voice-row";
+        const shotCell = el("td", null, it.shot || "");
+        if (isVoice) shotCell.appendChild(el("span", "badge st-manual vtag", "配音"));
+        tr.appendChild(shotCell);
+        tr.appendChild(el("td", null, it.reason || ""));
+        tr.appendChild(el("td", null, it.provider || ""));
+        tr.appendChild(el("td", "num", "≈" + fmtMoney(it.estimated_cost || 0)));
+        tbody.appendChild(tr);
+      });
+      const totalRow = document.createElement("tr");
+      totalRow.className = "total";
+      const lbl = el("td", null, "合计预估 (estimated total)");
+      lbl.colSpan = 3;
+      totalRow.appendChild(lbl);
+      const cur = (plan.find((p) => p.currency) || {}).currency || "";
+      totalRow.appendChild(el("td", "num grand",   /* §8.3: the number a human
+        confirms must be impossible to miss */
+        "≈" + fmtMoney(result.estimated_cost || 0) + (cur ? " " + cur : "")));
+      tbody.appendChild(totalRow);
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      out.appendChild(wrap);
+    }
+    /* cache savings (Nx replayed-hits pattern): what fresh targets did NOT
+     * cost — saved_cost prices skipped regeneration, skipped lists the hits */
+    const skippedShots = Array.isArray(result.skipped) ? result.skipped : [];
+    const savedCost = Number(result.saved_cost || 0);
+    if ((isFinite(savedCost) && savedCost > 0) || skippedShots.length) {
+      const row = el("div", "savings");
+      if (isFinite(savedCost) && savedCost > 0) {
+        row.appendChild(el("span", "badge st-fresh",
+          "缓存命中省 ≈" + fmtMoney(savedCost) + " (saved)"));
+      }
+      if (skippedShots.length) {
+        const skChip = el("span", "chip", "跳过 " + skippedShots.length + " (cache hits)");
+        skChip.title = skippedShots.join(", ");
+        row.appendChild(skChip);
+      }
+      out.appendChild(row);
+    }
+    (result.errors || []).forEach((m) => out.appendChild(el("p", "lvl-error", "错误: " + m)));
+    (result.warnings || []).forEach((m) => out.appendChild(el("p", "lvl-warning", "警告: " + m)));
+  }
+
+  function renderCheck(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "检查 (check)"));
+    out.appendChild(el("p", data.ok ? "lvl-ok" : "lvl-error",
+      data.ok ? "✓ 通过 (ok)" : "✗ 未通过 (failed)"));
+    (data.errors || []).forEach((m) => out.appendChild(el("p", "lvl-error", "错误: " + m)));
+    (data.warnings || []).forEach((m) => out.appendChild(el("p", "lvl-warning", "警告: " + m)));
+  }
+
+  function renderExplain(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "解释 (explain)"));
+    const chips = el("div", "chips");
+    const verdictChip = (label, v) => {
+      if (!v) return;
+      const cls = String(v).startsWith("skip") ? "st-fresh" : "st-stale";
+      chips.appendChild(el("span", "badge " + cls, label + ": " + v));
+    };
+    const renders = data.renders || {};
+    if (renders.final) verdictChip("final", renders.final.verdict);
+    if (renders.proxy) verdictChip("proxy", renders.proxy.verdict);
+    if (data.timeline) verdictChip("timeline", data.timeline.verdict);
+    out.appendChild(chips);
+    if (renders.note) out.appendChild(el("p", "muted", renders.note));
+    (data.shots || []).forEach((sh) => {
+      const v = sh.video || {};
+      if (v.state && v.state !== "fresh") {
+        out.appendChild(el("p", "why",
+          sh.shot + " · " + v.state + (v.why ? " — " + v.why : "")));
+      }
+      const vo = sh.voice;
+      if (vo && vo.state && vo.state !== "fresh") {
+        out.appendChild(el("p", "why",
+          sh.shot + " · 配音 " + vo.state + (vo.why ? " — " + vo.why : "")));
+      }
+    });
+  }
+
+  /* -------------------------------------------------------- doctor ----- */
+  /* GET /api/doctor renders into the same inline-results area Check/Explain
+   * use; `line` arrives preformatted (✓/✗/•/⚠) — shown verbatim, monospace. */
+  function renderDoctor(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "体检 (doctor)"));
+    const chips = el("div", "chips");
+    chips.appendChild(el("span", "badge " + (data.ok ? "st-fresh" : "st-broken"),
+      data.ok ? "✓ 通过 (ok)" : "✗ 有问题 (problems)"));
+    out.appendChild(chips);
+    const list = el("div");
+    (Array.isArray(data.checks) ? data.checks : []).forEach((c) => {
+      list.appendChild(el("div", "doc-line",
+        c.line || ((c.name || "?") + ": " + (c.detail || ""))));
+    });
+    out.appendChild(list);
+  }
+
+  /* ------------------------------------------------------ jobs strip --- */
+  function renderJobs(jobs) {
+    const root = $("jobs");
+    clear(root);
+    if (!jobs.length) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    root.appendChild(el("h2", null, "任务 (jobs)"));
+    const sorted = jobs.slice().sort(
+      (a, b) => String(b.created).localeCompare(String(a.created)));
+    let expandedOne = false;  /* UX-STUDY #5: auto-expand only the newest failure */
+    sorted.slice(0, 8).forEach((j) => {
+      const row = el("div", "job");
+      row.appendChild(el("span", "jkind", j.kind));
+      row.appendChild(el("span", "badge jb-" + j.state, j.state));
+      const secs = jobSeconds(j);
+      if (secs) row.appendChild(el("span", "muted", secs));
+      if (j.state === "done" && j.result) {
+        const r = j.result;
+        let summary = "";
+        if (r.render_path) summary = r.render_path;
+        else if (typeof r.qc_ok === "boolean") summary = "qc_ok: " + (r.qc_ok ? "✓" : "✗");
+        else if (Array.isArray(r.errors) && r.errors.length) summary = r.errors[0];
+        if (summary) row.appendChild(el("span", "jsum", summary));
+        /* cache savings on done builds (Nx pattern): mirror renderPlan */
+        if (j.kind === "build") {
+          const saved = Number(r.saved_cost || 0);
+          if (isFinite(saved) && saved > 0) {
+            row.appendChild(el("span", "jsave",
+              "缓存命中省 ≈" + fmtMoney(saved) + " (saved)"));
+          }
+          const hits = Array.isArray(r.skipped) ? r.skipped : [];
+          if (hits.length) {
+            const sk = el("span", "jsave", "跳过 " + hits.length + " (cache hits)");
+            sk.title = hits.join(", ");
+            row.appendChild(sk);
+          }
+        }
+      }
+      if (j.state === "failed" && j.error) {
+        const det = document.createElement("details");
+        if (!expandedOne) { det.open = true; expandedOne = true; }
+        det.appendChild(el("summary", null, "错误 (error)"));
+        det.appendChild(el("div", "jerr", j.error));
+        row.appendChild(det);
+      }
+      root.appendChild(row);
+    });
+  }
+
+  /* --------------------------------------------------- timeline strip --- */
+  let tlSeenSig = null;      /* state.timeline signature at the last fetch */
+  let tlFingerprint = null;  /* meta.compiled_from of the rendered strip */
+  let tlFetching = false;
+  let tlForce = false;       /* a done job may have recompiled the timeline */
+
+  function maybeTimeline(s) {
+    const t = s.timeline;
+    const root = $("timeline");
+    if (!t || !t.exists) {
+      tlSeenSig = null;
+      tlFingerprint = null;
+      tlForce = false;
+      if (!root.classList.contains("hidden")) { clear(root); root.classList.add("hidden"); }
+      return;
+    }
+    /* /api/state carries no compiled_from, so its cheap timeline sub-object
+     * (exists/duration/mode) + job completions are the "maybe changed"
+     * signal that gates the fetch; the fetched meta.compiled_from stays
+     * cached as the render key, so an unchanged timeline is neither
+     * re-fetched on every poll nor ever re-rendered. */
+    const sig = JSON.stringify(t);
+    if (tlFetching) return;
+    if (!tlForce && sig === tlSeenSig) return;
+    fetchTimeline(sig, root);
+  }
+
+  async function fetchTimeline(sig, root) {
+    tlFetching = true;
+    tlSeenSig = sig;   /* recorded up-front: an error must not hammer /api/timeline */
+    tlForce = false;
+    try {
+      const data = await api("GET", "/api/timeline");
+      const tl = data ? data.timeline : null;
+      const fp = (tl && tl.meta) ? (tl.meta.compiled_from || "?") : null;
+      if (fp !== null && fp === tlFingerprint) return;  /* strip already current */
+      tlFingerprint = fp;
+      renderTimeline(tl);
+    } catch (err) {
+      tlFingerprint = null;  /* next state change (or done job) retries */
+      clear(root);
+      root.classList.remove("hidden");
+      root.appendChild(el("h2", null, "时间线 (timeline)"));
+      root.appendChild(el("p", "muted tl-note",
+        "时间线不可用 (timeline unavailable): " + errMsg(err)));
+    } finally {
+      tlFetching = false;
+    }
+  }
+
+  function renderTimeline(tl) {
+    const root = $("timeline");
+    clear(root);
+    if (!tl) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    root.appendChild(el("h2", null, "时间线 (timeline)"));
+    const tracks = tl.tracks || {};
+    const clips = Array.isArray(tracks.video) ? tracks.video : [];
+    let total = (typeof tl.duration_ms === "number" && tl.duration_ms > 0) ? tl.duration_ms : 0;
+    if (!total) clips.forEach((c) => { total = Math.max(total, (c.start_ms || 0) + (c.duration_ms || 0)); });
+    if (!clips.length || total <= 0) {
+      root.appendChild(el("p", "muted tl-note", "时间线为空 (timeline is empty)"));
+      return;
+    }
+    const strip = el("div", "tl-strip");
+    clips.forEach((c, i) => {
+      const block = el("div", "tl-clip tl-h" + (i % 6), c.shot || "?");
+      /* proportional width via the CSSOM (CSP-safe); .tl-clip min-width in
+       * the stylesheet keeps tiny clips clickable (the strip then scrolls) */
+      block.style.width = (((c.duration_ms || 0) / total) * 100).toFixed(3) + "%";
+      block.title = (c.shot || "?") + " / " + (c.take || "?") + " · " + fmtDur(c.duration_ms);
+      block.addEventListener("click", () => focusShot(c.shot));
+      strip.appendChild(block);
+    });
+    root.appendChild(strip);
+    /* overlay/music tracks are deliberately NOT drawn in v2: at this strip
+     * height they are a handful of near-invisible slivers (low signal), and
+     * the captions rail already marks the spoken beats. */
+    const caps = Array.isArray(tracks.captions) ? tracks.captions : [];
+    if (caps.length) {
+      const rail = el("div", "tl-caps");
+      caps.forEach((c) => {
+        const b = el("div", "tl-cap");
+        const start = Math.max(0, c.start_ms || 0);
+        const width = Math.max(0, (c.end_ms || 0) - start);
+        b.style.left = ((start / total) * 100).toFixed(3) + "%";   /* CSSOM */
+        b.style.width = ((width / total) * 100).toFixed(3) + "%";
+        b.title = (c.speaker ? c.speaker + ": " : "") + (c.text || "");
+        rail.appendChild(b);
+      });
+      root.appendChild(rail);
+    }
+    const ruler = el("div", "tl-ruler");
+    [0, 0.25, 0.5, 0.75, 1].forEach((f) =>
+      ruler.appendChild(el("span", null, fmtMMSS(total * f))));
+    root.appendChild(ruler);
+  }
+
+  function cardById(id) {
+    const cards = document.querySelectorAll("#shots .shot");
+    for (const card of cards) {
+      if (card.dataset.sid === id) return card;
+    }
+    return null;
+  }
+
+  function flashCard(card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.remove("flash");
+    void card.offsetWidth;   /* restart the one-shot CSS animation */
+    card.classList.add("flash");
+    setTimeout(() => card.classList.remove("flash"), 1600);
+  }
+
+  function focusShot(id) {
+    const card = cardById(id);
+    if (card) flashCard(card);
+    else toast("镜头卡片未找到 (shot card not found): " + id, "err");
+  }
+
+  /* ------------------------------------------------------ shots grid --- */
+  const STATE_CLASS = {
+    fresh: "st-fresh", stale: "st-stale", missing: "st-missing",
+    manual: "st-manual", needs_selection: "st-needs", broken: "st-broken",
+  };
+  const PREVIEW_HINT_EXT = { mkv: true, flac: true, m4v: true };
+  const IMAGE_EXT = { png: true, jpg: true, jpeg: true, gif: true, webp: true };
+
+  /* readonly gate for a mutating control: disabled + tooltip (a disabled
+   * button never dispatches click, so listeners can attach unconditionally) */
+  const roGate = (btn) => {
+    if (!readonly) return false;
+    btn.disabled = true;
+    btn.title = RO_TIP;
+    return true;
+  };
+
+  /* ↑/↓ reorder: build the FULL new order from the current state and POST
+   * /api/index. One reorder in flight at a time — the server permutation-
+   * checks against the current shots, and racing swaps could undo each
+   * other; post() handles the disable + toast + refresh. */
+  let reorderBusy = false;
+
+  async function moveShot(i, delta, btn) {
+    if (reorderBusy || readonly) return;
+    const order = lastShots.map((s) => s.id);
+    const j = i + delta;
+    if (i < 0 || i >= order.length || j < 0 || j >= order.length) return;
+    const moved = order[i];
+    order[i] = order[j];
+    order[j] = moved;
+    reorderBusy = true;
+    try {
+      await post(btn, "/api/index", { order }, "已移动 (moved) " + moved);
+    } finally {
+      reorderBusy = false;
+    }
+  }
+
+  let stateFilter = "";  /* UX-STUDY #3: '' = all; survives re-renders */
+
+  function filterChips(shots) {
+    const bar = el("div", "fchips");
+    const counts = {};
+    shots.forEach((s) => { counts[s.state] = (counts[s.state] || 0) + 1; });
+    const mk = (label, value, n) => {
+      const c = el("button",
+        "chip fchip" + (stateFilter === value ? " on" : ""),
+        label + (n !== undefined ? " " + n : ""));
+      c.type = "button";
+      c.addEventListener("click", () => {
+        stateFilter = stateFilter === value ? "" : value;
+        renderShots(lastShots);  /* state unchanged: re-render directly */
+      });
+      bar.appendChild(c);
+    };
+    mk("全部 (all)", "", shots.length);
+    Object.keys(counts).sort().forEach((st) => mk(st, st, counts[st]));
+    return bar;
+  }
+
+  /* -------------------------------------- unread-first triage (Figma) --- */
+  /* localStorage manju-reviewed-<project>: {ts, takes:{shotId:[takeNames]}}.
+   * Take cards carry no created_at, so "new" is approximated as "name absent
+   * from the take-name snapshot stored at the last 标记已阅". No snapshot yet
+   * (never marked) -> nothing is flagged. Storage failures (blocked/corrupt)
+   * silently disable the feature — the grid itself must never break. */
+  let lastProjectName = "";   /* state.project.name — keys the snapshot */
+  let reviewSnap = null;      /* parsed snapshot for the CURRENT render pass */
+  let reviewChipEl = null;    /* 未阅 N chip in the shots bar */
+
+  const reviewKey = () => "manju-reviewed-" + lastProjectName;
+
+  function loadReviewSnapshot() {
+    if (!lastProjectName) return null;
+    try {
+      const raw = window.localStorage.getItem(reviewKey());
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      return (snap && typeof snap === "object" && snap.takes &&
+        typeof snap.takes === "object") ? snap : null;
+    } catch (err) { return null; }
+  }
+
+  function takeNameSnapshot() {
+    const takes = {};
+    lastShots.forEach((s) => {
+      takes[s.id] = (Array.isArray(s.takes) ? s.takes : []).map((t) => String(t.name));
+    });
+    return takes;
+  }
+
+  function isNewTake(snap, shotId, takeName) {
+    if (!snap) return false;
+    const seen = snap.takes[shotId];
+    if (!Array.isArray(seen)) return true;   /* whole shot is post-review */
+    return seen.indexOf(String(takeName)) < 0;
+  }
+
+  function countNewTakes(snap) {
+    if (!snap) return 0;
+    let n = 0;
+    lastShots.forEach((s) =>
+      (Array.isArray(s.takes) ? s.takes : []).forEach((t) => {
+        if (isNewTake(snap, s.id, t.name)) n += 1;
+      }));
+    return n;
+  }
+
+  function markReviewed() {
+    if (!lastProjectName) {
+      toast("项目尚未加载 (project not loaded yet)", "warn");
+      return;
+    }
+    try {
+      window.localStorage.setItem(reviewKey(), JSON.stringify({
+        ts: new Date().toISOString(),
+        takes: takeNameSnapshot(),
+      }));
+      toast("已标记已阅 (marked reviewed)", "ok");
+    } catch (err) {
+      toast("标记失败 (mark reviewed failed): " + errMsg(err), "err");
+      return;
+    }
+    try { renderShots(lastShots); } catch (err) { /* chips are advisory */ }
+    updateReviewChip();
+  }
+
+  function updateReviewChip() {
+    if (!reviewChipEl) return;
+    let n = 0;
+    try { n = countNewTakes(loadReviewSnapshot()); } catch (err) { n = 0; }
+    reviewChipEl.textContent = "未阅 " + n + " (unread)";
+    reviewChipEl.classList.toggle("hidden", n <= 0);
+  }
+
+  function renderShots(shots) {
+    reviewSnap = loadReviewSnapshot();   /* one parse per grid render */
+    const root = $("shots");
+    clear(root);
+    if (!shots.length) {
+      const empty = el("div", "empty");
+      empty.appendChild(el("p", null, "还没有分镜 (no shots yet)。"));
+      empty.appendChild(el("p", "muted",
+        "分镜是创作阶段：请在 shots/*.yaml 中撰写 — 引擎只做确定性构建，从不代你发明分镜。"));
+      root.appendChild(empty);
+      return;
+    }
+    if (Object.keys(shots.reduce((a, s) => (a[s.state] = 1, a), {})).length > 1) {
+      root.appendChild(filterChips(shots));  /* chips only when they filter */
+    } else if (stateFilter) {
+      stateFilter = "";  /* single-state grid: a stale filter must not hide it */
+    }
+    const visible = stateFilter ? shots.filter((s) => s.state === stateFilter) : shots;
+    if (!visible.length) {
+      stateFilter = "";
+      renderShots(shots);  /* the filtered state vanished: reset, re-render */
+      return;
+    }
+    visible.forEach((shot) =>
+      root.appendChild(shotCard(shot, shots.indexOf(shot), shots.length)));
+  }
+
+  function shotCard(shot, idx, total) {
+    const card = el("section", "shot");
+    card.dataset.sid = shot.id;   /* timeline clips scroll to this card */
+    if (shot.id === kbFocusId) card.classList.add("kb-focus");  /* survives re-renders */
+    const head = el("div", "shot-head");
+    head.appendChild(el("span", "sid", shot.id));
+    head.appendChild(el("span",
+      "badge " + (STATE_CLASS[shot.state] || "st-missing"), shot.state));
+    if (shot.voice) {
+      const vc = el("span",
+        "badge " + (STATE_CLASS[shot.voice.state] || "st-missing"),
+        "配音 " + shot.voice.state);
+      if (shot.voice.why) vc.title = shot.voice.why;
+      head.appendChild(vc);
+    }
+    (shot.locked || []).forEach((f) => head.appendChild(el("span", "chip lock", "🔒 " + f)));
+    /* A/B compare (Frame.io): only when >=2 video takes exist to pair. Viewing
+     * is read-only, so it is NOT readonly-gated (the select L/R buttons are). */
+    if (videoTakesOf(shot).length >= 2) {
+      const cmp = el("button", "btn ghost mini cmp-btn", "对比 (Compare)");
+      cmp.type = "button";
+      cmp.title = "并排对比 take (compare two takes side by side)";
+      cmp.addEventListener("click", () => {
+        try { openCompare(shot); }
+        catch (err) { toast("对比打开失败 (compare failed): " + errMsg(err), "err"); }
+      });
+      head.appendChild(cmp);
+    }
+    const mv = el("span", "mvbtns");
+    const mkMove = (label, delta, edge, tip) => {
+      const b = el("button", "btn ghost mini", label);
+      b.type = "button";
+      b.title = tip;
+      if (!roGate(b) && edge) b.disabled = true;   /* first ↑ / last ↓ stay off */
+      b.addEventListener("click", () => moveShot(idx, delta, b));
+      mv.appendChild(b);
+    };
+    mkMove("↑", -1, idx === 0, "上移 (move up)");
+    mkMove("↓", 1, idx === total - 1, "下移 (move down)");
+    head.appendChild(mv);
+    card.appendChild(head);
+
+    if (shot.action) card.appendChild(el("div", "action", shot.action));
+    if (shot.speaker || shot.dialogue) {
+      const d = el("div", "dialogue");
+      if (shot.speaker) d.appendChild(el("span", "speaker", shot.speaker + ": "));
+      d.appendChild(document.createTextNode(shot.dialogue || ""));
+      card.appendChild(d);
+    }
+    if (shot.note) card.appendChild(el("div", "note", shot.note));
+
+    const takes = Array.isArray(shot.takes) ? shot.takes : [];
+    if (takes.length) {
+      const row = el("div", "takes");
+      takes.forEach((t) => row.appendChild(takeCard(shot, t)));
+      card.appendChild(row);
+    } else {
+      card.appendChild(el("div", "dialogue", "还没有 take (no takes yet)"));
+    }
+
+    const voiceTakes = Array.isArray(shot.voice_takes) ? shot.voice_takes : [];
+    if (voiceTakes.length) {
+      const vlist = el("div", "voice-takes");
+      voiceTakes.forEach((v) => {
+        const vrow = el("div", "voice-take");
+        const audio = document.createElement("audio");
+        audio.controls = true;
+        audio.preload = "none";
+        audio.src = v.url;
+        vrow.appendChild(audio);
+        vrow.appendChild(el("span", "vname", v.name + (v.manual ? " (manual)" : "")));
+        vlist.appendChild(vrow);
+      });
+      card.appendChild(vlist);
+    }
+
+    const acts = el("div", "btnrow");
+    const edit = el("button", "btn ghost", "编辑 (Edit)");
+    edit.type = "button";
+    roGate(edit);
+    edit.addEventListener("click", () => openEditorFor(shot.id, edit));
+    acts.appendChild(edit);
+    const redo = el("button", "btn ghost", "重做 (Redo)");
+    redo.type = "button";
+    roGate(redo);
+    redo.addEventListener("click", () =>
+      post(redo, "/api/redo", { shot: shot.id }, shot.id + " 重做已入队 (redo queued)"));
+    acts.appendChild(redo);
+    if (String(shot.dialogue || "").trim()) {
+      const voice = el("button", "btn ghost", "配音 (Voice)");
+      voice.type = "button";
+      roGate(voice);
+      voice.addEventListener("click", () =>
+        post(voice, "/api/voice", { shot: shot.id }, shot.id + " 配音已入队 (voice queued)"));
+      acts.appendChild(voice);
+    }
+    card.appendChild(acts);
+    return card;
+  }
+
+  function takeCard(shot, t) {
+    const box = el("div", "take" + (t.selected ? " selected" : ""));
+    const ext = String(t.ext || "").toLowerCase();
+    if (t.url && IMAGE_EXT[ext]) {
+      /* image takes render as a real <img> — v2 gave them a dead <video> */
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.src = t.url;
+      img.alt = t.name || "take";
+      box.appendChild(img);
+    } else if (t.url) {
+      const v = document.createElement("video");
+      v.controls = true;
+      v.preload = "metadata";
+      v.width = 180;
+      v.src = t.url;
+      if (t.poster) v.poster = t.poster;   /* server thumb rides as poster */
+      box.appendChild(v);
+    } else {
+      box.appendChild(el("div", "nomedia", "no media"));
+    }
+    const name = el("div", "tname", t.name);
+    if (t.selected) name.appendChild(el("span", "star", " ★"));
+    if (isNewTake(reviewSnap, shot.id, t.name)) {
+      /* unread-first triage: absent from the last 标记已阅 snapshot */
+      name.appendChild(el("span", "chip tk-new", "新 (new)"));
+    }
+    box.appendChild(name);
+    box.appendChild(el("div", "tmeta", (t.provider || "?") + " · " + fmtDur(t.duration_ms)));
+    if (PREVIEW_HINT_EXT[ext]) {
+      box.appendChild(el("div", "hint", "浏览器可能无法预览 ." + ext));
+    }
+    /* director note (Frame.io-style): truth text; a mm:ss prefix seeks */
+    if (t.note) {
+      const noteEl = el("div", "note tnote", "📝 " + t.note);
+      noteEl.title = t.note;
+      const m = /^(\d{1,2}):(\d{2})/.exec(t.note);
+      const vid = box.querySelector("video");
+      if (m && vid) {
+        noteEl.classList.add("seekable");
+        noteEl.title = t.note + " — 点击跳转 (click to seek)";
+        noteEl.addEventListener("click", () => {
+          vid.currentTime = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+          if (vid.paused && vid.play) vid.play().catch(() => {});
+        });
+      }
+      box.appendChild(noteEl);
+    }
+    const acts = el("div", "tacts");
+    /* one-key verdicts (UX-STUDY #4): 好/弃 are just take_notes values —
+     * one reviewable YAML line, clicking the active verdict clears it */
+    const verdict = (label, value, tip) => {
+      const b = el("button", "btn tiny" + (t.note === value ? " on" : ""), label);
+      b.type = "button";
+      b.title = tip;
+      roGate(b);
+      b.addEventListener("click", () =>
+        post(b, "/api/take-note",
+          { shot: shot.id, take: t.name, text: t.note === value ? "" : value },
+          (t.note === value ? "已清除评价 " : "已标记" + value + " ")
+            + shot.id + "/" + t.name));
+      acts.appendChild(b);
+    };
+    verdict("👍", "好", "标记 好 (approve)");
+    verdict("👎", "弃", "标记 弃 (reject)");
+    const noteBtn = el("button", "btn tiny", "📝");
+    noteBtn.type = "button";
+    noteBtn.title = "备注 (note) — 以 mm:ss 开头可点击跳转";
+    roGate(noteBtn);
+    noteBtn.addEventListener("click", () => {
+      const entered = window.prompt(
+        "备注 " + shot.id + "/" + t.name + "(留空删除；mm:ss 开头=可跳转):",
+        t.note || "");
+      if (entered === null) return;
+      post(noteBtn, "/api/take-note",
+        { shot: shot.id, take: t.name, text: entered },
+        entered.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注");
+    });
+    acts.appendChild(noteBtn);
+    /* the recipe travels with the output (Runway pattern): same provider,
+     * same seed, one click — append-only new takes, selection untouched */
+    if (t.provider && t.provider !== "manual_import") {
+      const rb = el("button", "btn tiny", "⟳");
+      rb.type = "button";
+      rb.title = "用此参数重做 (redo with these settings"
+        + (t.seed !== null && t.seed !== undefined ? ", seed " + t.seed : "") + ")";
+      roGate(rb);
+      rb.addEventListener("click", () => {
+        const body = { shot: shot.id, provider: t.provider };
+        if (t.seed !== null && t.seed !== undefined) body.seed = t.seed;
+        post(rb, "/api/redo", body,
+          "已入队重做 " + shot.id + " (" + t.provider + ")");
+      });
+      acts.appendChild(rb);
+    }
+    if (!t.selected) {
+      const btn = el("button", "btn small", "选用 (Select)");
+      btn.type = "button";
+      roGate(btn);
+      btn.addEventListener("click", () =>
+        post(btn, "/api/select", { shot: shot.id, take: t.name },
+          "已选用 " + shot.id + " / " + t.name));
+      acts.appendChild(btn);
+    }
+    box.appendChild(acts);
+    return box;
+  }
+
+  /* ------------------------------------------- A/B take compare (R14) --- */
+  /* Frame.io comparison viewer + Resolve Fast Review, in one overlay. Two
+   * <video>s driven from one shot's takes. The overlay is a plain fixed div
+   * mounted on <body> — OUTSIDE #shots — so a poll re-render (which only
+   * rebuilds #shots) can never destroy it; it is read-only, so unlike the
+   * editor it does NOT pause the poll loop. Closed via ✕ or Esc (the global
+   * keydown handler routes Esc here while it is up). Every listener is
+   * try/caught; all text enters via textContent (el()); no inline styles. */
+  let cmpOverlay = null;   /* the mounted overlay element, or null when closed */
+
+  /* takes playable as <video>: has media and is not an image (compare is a
+   * side-by-side video scrub, so image takes are excluded from the pairing) */
+  function videoTakesOf(shot) {
+    return (Array.isArray(shot.takes) ? shot.takes : []).filter((t) =>
+      !!(t && t.url) && !IMAGE_EXT[String(t.ext || "").toLowerCase()]);
+  }
+
+  function closeCompare() {
+    if (!cmpOverlay) return;
+    try {
+      cmpOverlay.querySelectorAll("video").forEach((v) => {
+        try { v.pause(); } catch (e) { /* nothing to stop */ }
+      });
+    } catch (e) { /* teardown is best-effort */ }
+    if (cmpOverlay.parentNode) cmpOverlay.parentNode.removeChild(cmpOverlay);
+    cmpOverlay = null;
+  }
+
+  function openCompare(shot) {
+    closeCompare();   /* at most one overlay at a time */
+    const takes = videoTakesOf(shot);
+    if (takes.length < 2) return;   /* the button only shows for >=2 anyway */
+    const FIT_TARGET = 5;           /* seconds — Resolve Fast Review target */
+
+    let syncOn = false;   /* mirror transport A -> B */
+    let fitOn = false;    /* duration-normalized playbackRate */
+    const sides = [];     /* [leftState, rightState] */
+
+    /* real duration (s): the <video> metadata is authoritative — fake takes
+     * carry no probe, so duration_ms is null; duration_ms is only a fallback */
+    const durSec = (st) => {
+      const v = st && st.video;
+      if (v && isFinite(v.duration) && v.duration > 0) return v.duration;
+      const ms = st && st.take && st.take.duration_ms;
+      return (typeof ms === "number" && isFinite(ms) && ms > 0) ? ms / 1000 : 0;
+    };
+    /* fit 5s: playbackRate = duration / 5, clamped to [0.5, 4] (Resolve Cut) */
+    const fitRateOf = (st) => {
+      const d = durSec(st);
+      if (!fitOn || d <= 0) return 1;
+      return Math.min(4, Math.max(0.5, d / FIT_TARGET));
+    };
+
+    const overlay = el("div", "cmp-overlay");
+    const panel = el("div", "cmp-panel");
+    overlay.appendChild(panel);
+
+    const head = el("div", "cmp-head");
+    head.appendChild(el("h3", null, "对比 (compare) · " + shot.id));
+    const toggles = el("div", "cmp-toggles");
+
+    const syncLabel = el("label", "cmp-toggle");
+    const syncCk = document.createElement("input");
+    syncCk.type = "checkbox";
+    syncLabel.appendChild(syncCk);
+    syncLabel.appendChild(document.createTextNode(" 同步播放 (sync play)"));
+    toggles.appendChild(syncLabel);
+
+    const fitLabel = el("label", "cmp-toggle");
+    const fitCk = document.createElement("input");
+    fitCk.type = "checkbox";
+    fitLabel.appendChild(fitCk);
+    fitLabel.appendChild(document.createTextNode(" 等长回放 (fit 5s)"));
+    const fitRateLbl = el("span", "cmp-rate");   /* ×N.N applied-rate label */
+    fitLabel.appendChild(fitRateLbl);
+    toggles.appendChild(fitLabel);
+    head.appendChild(toggles);
+
+    const closeBtn = el("button", "cmp-close", "✕");
+    closeBtn.type = "button";
+    closeBtn.title = "关闭 (close) · Esc";
+    closeBtn.addEventListener("click", () => {
+      try { closeCompare(); } catch (e) { /* already gone */ }
+    });
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
+
+    const updateFitLabel = () => {
+      if (!fitOn || sides.length < 2) { fitRateLbl.textContent = ""; return; }
+      const l = fitRateOf(sides[0]);
+      const r = fitRateOf(sides[1]);
+      fitRateLbl.textContent = (Math.abs(l - r) < 0.05)
+        ? " ×" + l.toFixed(1)
+        : " 左×" + l.toFixed(1) + " 右×" + r.toFixed(1);
+    };
+    const applyFit = () => {
+      sides.forEach((st) => {
+        try { st.video.playbackRate = fitRateOf(st); } catch (e) { /* pre-metadata */ }
+      });
+      updateFitLabel();
+    };
+
+    const grid = el("div", "cmp-videos");
+    panel.appendChild(grid);
+
+    const makeSide = (defaultIdx, selectLabel) => {
+      const wrap = el("div", "cmp-side");
+      const sel = document.createElement("select");
+      takes.forEach((t, i) => {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = t.name + (t.selected ? " ★" : "");
+        sel.appendChild(o);
+      });
+      const video = document.createElement("video");
+      video.controls = true;
+      video.preload = "metadata";
+      const cap = el("div", "cmp-cap");
+      const selBtn = el("button", "btn small", selectLabel);
+      selBtn.type = "button";
+      roGate(selBtn);   /* /api/select mutates: disabled in readonly */
+
+      const st = { sel, video, cap, selBtn, take: takes[defaultIdx] };
+      sides.push(st);
+
+      const renderCap = () => {
+        clear(cap);
+        const t = st.take;
+        const ms = (isFinite(video.duration) && video.duration > 0)
+          ? video.duration * 1000
+          : (typeof t.duration_ms === "number" ? t.duration_ms : 0);
+        cap.appendChild(el("b", null, t.name));
+        cap.appendChild(document.createTextNode(
+          " · " + (t.provider || "?") + " · " + fmtDur(ms)));
+      };
+      const setTake = (i) => {
+        st.take = takes[i];
+        video.src = st.take.url;   /* property assignment — URL is app-built */
+        renderCap();               /* rate + label refresh on loadedmetadata */
+      };
+
+      sel.addEventListener("change", () => {
+        try { setTake(Number(sel.value)); }
+        catch (e) { toast("切换失败 (switch failed): " + errMsg(e), "err"); }
+      });
+      video.addEventListener("loadedmetadata", () => {
+        try { renderCap(); video.playbackRate = fitRateOf(st); updateFitLabel(); }
+        catch (e) { /* advisory */ }
+      });
+      selBtn.addEventListener("click", () => {
+        try {
+          const takeName = st.take.name;
+          closeCompare();   /* toast + close + refresh — post() refreshes state */
+          post(null, "/api/select", { shot: shot.id, take: takeName },
+            "已选用 " + shot.id + " / " + takeName);
+        } catch (e) { toast("选用失败 (select failed): " + errMsg(e), "err"); }
+      });
+
+      sel.value = String(defaultIdx);
+      wrap.appendChild(sel);
+      wrap.appendChild(video);
+      wrap.appendChild(cap);
+      wrap.appendChild(selBtn);
+      grid.appendChild(wrap);
+      setTake(defaultIdx);
+      return st;
+    };
+
+    /* default pairing: selected take (or first) on the left, newest OTHER on
+     * the right — takes() is oldest-first, so the newest is the last index */
+    const selIdx = takes.findIndex((t) => t.selected);
+    const leftIdx = selIdx >= 0 ? selIdx : 0;
+    let rightIdx = leftIdx;
+    for (let i = takes.length - 1; i >= 0; i--) {
+      if (i !== leftIdx) { rightIdx = i; break; }
+    }
+    makeSide(leftIdx, "选用左 (select L)");
+    makeSide(rightIdx, "选用右 (select R)");
+
+    /* sync: A (left) is the master; play/pause/seek mirror to B. Position
+     * mirroring (seek + >0.25s drift) is suspended while fit 5s is on — fit
+     * deliberately runs the clips at different rates, so only transport
+     * (play/pause) stays linked in that combined mode. */
+    const a = sides[0].video, b = sides[1].video;
+    const safePlay = (v) => { const p = v.play(); if (p && p.catch) p.catch(() => {}); };
+    a.addEventListener("play", () => {
+      try { if (syncOn && b.paused) safePlay(b); } catch (e) { /* transport */ }
+    });
+    a.addEventListener("pause", () => {
+      try { if (syncOn && !b.paused) b.pause(); } catch (e) { /* transport */ }
+    });
+    a.addEventListener("seeked", () => {
+      try { if (syncOn && !fitOn) b.currentTime = a.currentTime; } catch (e) { /* seek */ }
+    });
+    a.addEventListener("timeupdate", () => {
+      try {
+        if (syncOn && !fitOn && Math.abs(b.currentTime - a.currentTime) > 0.25) {
+          b.currentTime = a.currentTime;   /* drift correction */
+        }
+      } catch (e) { /* drift */ }
+    });
+
+    syncCk.addEventListener("change", () => {
+      try {
+        syncOn = syncCk.checked;
+        if (syncOn && !fitOn) {   /* align B to A the moment sync engages */
+          b.currentTime = a.currentTime;
+          if (!a.paused) safePlay(b);
+        }
+      } catch (e) { toast("同步失败 (sync failed): " + errMsg(e), "err"); }
+    });
+    fitCk.addEventListener("change", () => {
+      try { fitOn = fitCk.checked; applyFit(); }
+      catch (e) { toast("等长回放失败 (fit failed): " + errMsg(e), "err"); }
+    });
+
+    document.body.appendChild(overlay);
+    cmpOverlay = overlay;
+  }
+
+  /* ------------------------------------------------------ shot editor --- */
+  /* The editor edits HUMAN TRUTH: the exact YAML bytes travel both ways.
+   * While the dialog is open the poll loop is fully paused (schedule() and
+   * refresh() both early-return), so a mid-edit rerender can never eat the
+   * user's text; the dialog itself lives outside #shots anyway. Saving is
+   * check-gated server-side: a 409 means the file was already reverted. */
+  const SHOT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+  const shotUrl = (id) => "/api/shot/" + encodeURIComponent(id);
+
+  async function newShotTemplate(id) {
+    /* scene defaults to the first scene id seen in existing shots: the shots
+     * cards do not carry `scene`, so peek at the first shot's raw YAML */
+    let scene = "";
+    if (lastShots.length) {
+      try {
+        const d = await api("GET", shotUrl(lastShots[0].id));
+        const m = /^scene:[ \t]*(.+)$/m.exec((d && d.yaml) || "");
+        if (m) scene = m[1].trim().replace(/^["']|["']$/g, "");
+      } catch (err) { /* template scene is a convenience, never a blocker */ }
+    }
+    return "id: " + id + "\nscene: " + scene +
+      "\ncharacters: []\ndialogue: {speaker: \"\", text: \"\"}\nduration: auto\n";
+  }
+
+  async function openEditorFor(id, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api("GET", shotUrl(id));
+      const exists = !!(data && data.exists);
+      const yamlText = exists ? data.yaml : await newShotTemplate(id);
+      showShotEditor(id, yamlText, (data && data.locked) || [], !exists,
+        !data || data.in_index !== false);
+    } catch (err) {
+      toast("无法加载镜头 (cannot load shot) " + id + ": " + errMsg(err), "err");
+    } finally {
+      if (btn) btn.disabled = false;
+      updateGates();
+    }
+  }
+
+  /* shot flavour of the shared dialog (bible/rules reuse the same flow) */
+  function showShotEditor(id, yamlText, locked, isNew, inIndex) {
+    const chips = (Array.isArray(locked) ? locked : []).map((f) => "🔒 " + f);
+    const hints = [];
+    if (chips.length) {
+      hints.push("锁定字段改动会被 check 拒绝并回滚;解锁请在终端运行 manju unlock");
+    }
+    if (!isNew && inIndex === false) {
+      hints.push("该镜头不在 index 顺序中 (not listed in the shot index)");
+    }
+    showEditor({
+      title: (isNew ? "新建镜头 (new shot) · " : "编辑镜头 (edit shot) · ") + id,
+      yaml: yamlText,
+      saveUrl: shotUrl(id),
+      label: id,
+      chips,
+      hints,
+      validate: { kind: "shot", id },   /* live keystroke validation for this shot */
+    });
+  }
+
+  /* --------------------------------------------- conflict banner (409) --- */
+  /* Naive line diff, deliberately LCS-free (multiset membership only):
+   * "-" = line on disk (truth) missing from the buffer, "+" = line in the
+   * buffer missing from truth. Order-insensitive, hence labelled 近似
+   * (approximate) — good enough to see WHAT the check gate reverted. */
+  function naiveLineDiff(bufferText, truthText) {
+    const bufLines = String(bufferText).split("\n");
+    const truthLines = String(truthText).split("\n");
+    const countOf = (lines) => {
+      const m = Object.create(null);
+      lines.forEach((l) => { m[l] = (m[l] || 0) + 1; });
+      return m;
+    };
+    const inBuf = countOf(bufLines);
+    const inTruth = countOf(truthLines);
+    const rows = [];
+    truthLines.forEach((l) => {
+      if (inBuf[l] > 0) inBuf[l] -= 1;
+      else rows.push({ cls: "dl-del", text: "- " + l });
+    });
+    bufLines.forEach((l) => {
+      if (inTruth[l] > 0) inTruth[l] -= 1;
+      else rows.push({ cls: "dl-add", text: "+ " + l });
+    });
+    return rows;
+  }
+
+  /* Collapsible 对比真相 section for the editor's 409 path: the server
+   * already reverted the file and sent the on-disk text back as `current`.
+   * The user's buffer stays untouched unless they click 重填 (and confirm). */
+  function conflictSection(ta, errBox, current) {
+    const det = document.createElement("details");
+    det.className = "ed-truth";
+    det.open = true;   /* the conflict IS the news — start expanded */
+    det.appendChild(el("summary", null, "对比真相 (diff vs truth)"));
+    det.appendChild(el("p", "ed-truth-note",
+      "近似逐行对比 (approximate line diff): - 行仅存在于磁盘真相, + 行仅存在于你的缓冲区 "
+      + "(- lines only on disk, + lines only in your buffer)"));
+    const box = el("div", "diff");
+    const rows = naiveLineDiff(ta.value, current);
+    if (!rows.length) {
+      box.appendChild(el("div", "dl-ctx", "(无逐行差异 no line-level differences)"));
+    } else {
+      /* arbitrary user text: one div per line, textContent only */
+      rows.forEach((r) => box.appendChild(el("div", r.cls, r.text)));
+    }
+    det.appendChild(box);
+    const row = el("div", "btnrow");
+    const reload = el("button", "btn ghost", "以真相为底重填 (reload truth)");
+    reload.type = "button";
+    reload.title = "用磁盘上的当前内容替换编辑区 (replace the textarea with the on-disk text)";
+    reload.addEventListener("click", () => {
+      try {
+        if (ta.value !== current && !window.confirm(
+          "缓冲区与磁盘真相不同,确定用真相覆盖你的编辑?"
+          + " (your buffer differs — replace it with the on-disk truth?)")) {
+          return;
+        }
+        ta.value = current;   /* property assignment — arbitrary text is safe */
+        clear(errBox);        /* buffer now equals truth: the stale diff goes */
+        ta.focus();
+      } catch (err) {
+        toast("重填失败 (reload failed): " + errMsg(err), "err");
+      }
+    });
+    row.appendChild(reload);
+    det.appendChild(row);
+    return det;
+  }
+
+  /* Generic check-gated YAML dialog: GET-raw text in, POST {"yaml"} out;
+   * 400/409 (bad YAML / check failed + reverted) render INSIDE the dialog
+   * with the text intact. opts: {title, yaml, saveUrl, label, chips, hints}. */
+  function showEditor(opts) {
+    const dlg = $("editor");
+    clear(dlg);
+    const head = el("div", "ed-head");
+    head.appendChild(el("h3", null, opts.title));
+    dlg.appendChild(head);
+    if (Array.isArray(opts.chips) && opts.chips.length) {
+      const chips = el("div", "chips");
+      opts.chips.forEach((c) => chips.appendChild(el("span", "chip lock", c)));
+      dlg.appendChild(chips);
+    }
+    (Array.isArray(opts.hints) ? opts.hints : []).forEach((h) =>
+      dlg.appendChild(el("p", "muted ed-hint", h)));
+    const ta = document.createElement("textarea");
+    ta.className = "ed-ta";
+    ta.rows = 22;
+    ta.spellcheck = false;
+    ta.value = opts.yaml;   /* property assignment — arbitrary text is safe */
+    dlg.appendChild(ta);
+
+    /* ---- live validation strip (VS Code settings.json debounce pattern) ----
+     * On each typing pause we POST /api/validate {kind, yaml, id?} and render a
+     * persistent status line here, between the textarea and the buttons.
+     * ADVISORY ONLY: /api/validate is pure — it parses + model-validates the
+     * buffer with NO write, NO full `check`, and NO lock / cross-reference
+     * verification. So a ✓ here is NOT a promise that Save will succeed: the
+     * gated Save below stays the authority and may still 400/409 on things this
+     * cannot see (locked-field edits, missing bible refs, on-disk conflicts). */
+    const vspec = (opts.validate && opts.validate.kind) ? opts.validate : null;
+    const strip = el("div", "ed-valid");
+    if (vspec) dlg.appendChild(strip);   /* only mounted when a kind is known */
+    let valSeq = 0;          /* newest-wins: a superseded reply must never render */
+    let valTimer = null;     /* 600ms input debounce handle */
+    let valWaitTimer = null; /* 300ms "validating…" delay (anti-flicker) handle */
+    let valOffline = false;  /* network-failure latch: no retry until next input */
+
+    const renderValid = () => {
+      clear(strip);
+      strip.appendChild(el("span", "ed-valid-ok", "✓ 校验通过 (valid)"));
+    };
+    const renderInvalid = (errors) => {
+      clear(strip);
+      const lines = (Array.isArray(errors) ? errors : []).filter(Boolean);
+      if (!lines.length) lines.push("校验未通过 (invalid)");
+      /* server-provided strings: one node per line, textContent only (el()) */
+      lines.forEach((m) => strip.appendChild(el("div", "ed-valid-err", "✗ " + m)));
+    };
+    const renderWaiting = () => {
+      clear(strip);
+      strip.appendChild(el("span", "ed-valid-wait", "校验中… (validating)"));
+    };
+    const renderOffline = () => {
+      clear(strip);
+      strip.appendChild(el("div", "ed-valid-na", "校验不可用 (validation unavailable)"));
+    };
+
+    const runValidate = async () => {
+      /* strip.isConnected guards against a closed/replaced dialog (its own
+       * closure lives on; a late reply must not touch a detached node) */
+      if (!vspec || valOffline || !strip.isConnected) return;
+      const seq = ++valSeq;
+      const body = { kind: vspec.kind, yaml: ta.value };
+      if (vspec.id !== undefined && vspec.id !== null) body.id = vspec.id;
+      if (valWaitTimer) clearTimeout(valWaitTimer);
+      valWaitTimer = setTimeout(() => {   /* only if this outlives 300ms */
+        if (seq === valSeq && strip.isConnected) renderWaiting();
+      }, 300);
+      let r = null;
+      try {
+        r = await apiRaw("POST", "/api/validate", body);
+      } catch (err) {
+        r = null;   /* fetch threw (offline / abort): treat as unavailable */
+      }
+      if (valWaitTimer) { clearTimeout(valWaitTimer); valWaitTimer = null; }
+      if (seq !== valSeq || !strip.isConnected) return;  /* superseded / closed */
+      try {
+        if (!r || !r.ok || !r.data || typeof r.data.ok !== "boolean") {
+          /* transport error or a non-validate shape (offline, 403 readonly,
+           * 400 unknown kind): one muted line, then stop until the next input */
+          valOffline = true;
+          renderOffline();
+        } else if (r.data.ok) {
+          renderValid();
+        } else {
+          renderInvalid(r.data.errors);
+        }
+      } catch (e) { /* a render fault must never break typing */ }
+    };
+
+    const scheduleValidate = () => {
+      if (!vspec) return;
+      try {
+        valOffline = false;   /* fresh input lifts the no-retry latch */
+        if (valTimer) clearTimeout(valTimer);
+        valTimer = setTimeout(() => {
+          if (strip.isConnected) runValidate();
+        }, 600);
+      } catch (e) { /* the keystroke path must never throw */ }
+    };
+    if (vspec) {
+      ta.addEventListener("input", scheduleValidate);
+      try { runValidate(); } catch (e) { /* prime once on open */ }
+    }
+
+    const errBox = el("div", "ed-errors");
+    dlg.appendChild(errBox);
+    const row = el("div", "btnrow ed-btnrow");
+    const save = el("button", "btn", "保存 (Save)");
+    save.type = "button";
+    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => closeEditor());
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      cancel.disabled = true;
+      clear(errBox);
+      try {
+        const r = await apiRaw("POST", opts.saveUrl, { yaml: ta.value });
+        if (r.ok) {
+          const d = r.data || {};
+          toast(d.created ? "已创建 " + opts.label + " (created)"
+            : "已保存 " + opts.label + " (saved)", "ok");
+          const warns = Array.isArray(d.warnings) ? d.warnings : [];
+          if (warns.length) toast("警告 (warnings): " + warns.join(" / "), "warn");
+          closeEditor();   /* its close handler forces the state refresh */
+          return;
+        }
+        /* 400 (bad YAML) / 409 (check failed, already reverted server-side):
+         * render errors INSIDE the dialog, keep it open, keep the text */
+        const d = r.data || {};
+        errBox.appendChild(el("p", "ed-err-title", d.error || ("HTTP " + r.status)));
+        (Array.isArray(d.errors) ? d.errors : []).forEach((m) =>
+          errBox.appendChild(el("p", "ed-err", "✗ " + m)));
+        /* conflict banner (Figma visibility-over-locking): the 409 carries
+         * `current` — the reverted-to disk text — so the dialog can show a
+         * buffer-vs-truth diff and offer a one-click reload, no refetch */
+        if (r.status === 409 && typeof d.current === "string") {
+          try { errBox.appendChild(conflictSection(ta, errBox, d.current)); }
+          catch (e) { /* the diff is advisory — the error list above stands */ }
+        }
+      } catch (err) {
+        errBox.appendChild(el("p", "ed-err-title", "保存失败 (save failed): " + errMsg(err)));
+      } finally {
+        save.disabled = false;
+        cancel.disabled = false;
+      }
+    });
+    row.appendChild(save);
+    row.appendChild(cancel);
+    dlg.appendChild(row);
+
+    editorOpen = true;   /* pause polling BEFORE the dialog becomes visible */
+    pauseLive();         /* … and abort the in-flight watch: its late response
+                            must never rerender under the user's cursor */
+    if (typeof dlg.showModal === "function") {
+      if (!dlg.open) dlg.showModal();   /* native: Esc -> cancel -> close event */
+    } else {
+      dlg.setAttribute("open", "");     /* overlay fallback; Esc handled globally */
+    }
+    ta.focus();
+  }
+
+  function closeEditor() {
+    const dlg = $("editor");
+    if (typeof dlg.close === "function" && dlg.open) dlg.close();  /* fires "close" */
+    else { dlg.removeAttribute("open"); editorClosed(); }
+  }
+
+  function editorClosed() {
+    if (!editorOpen) return;
+    editorOpen = false;
+    clear($("editor"));
+    refresh();   /* resume the paused poll loop with fresh state */
+  }
+
+  /* -------------------------------------------------------- shots bar --- */
+  function initShotsBar() {
+    const root = $("shotsbar");
+    clear(root);
+    root.appendChild(el("h2", null, "分镜 (shots)"));
+    const form = el("span", "ns-form hidden");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ns-input";
+    input.placeholder = "S007";
+    input.maxLength = 64;
+    input.pattern = "[A-Za-z0-9_-]{1,64}";
+    const go = el("button", "btn", "创建 (Create)");
+    go.type = "button";
+    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    cancel.type = "button";
+    const newBtn = el("button", "btn ghost", "新建镜头 (New shot)");
+    newBtn.type = "button";
+    newShotBtn = newBtn;   /* readonly-gated via updateGates() */
+    const submit = async () => {
+      const id = input.value.trim();
+      if (!SHOT_ID_RE.test(id)) {
+        toast("无效镜头 id (invalid shot id): 需匹配 [A-Za-z0-9_-]{1,64}", "err");
+        return;
+      }
+      go.disabled = true;
+      newBtn.disabled = true;
+      try {
+        const data = await api("GET", shotUrl(id));
+        let yamlText;
+        let isNew;
+        if (data && data.exists) {
+          yamlText = data.yaml;
+          isNew = false;
+          toast(id + " 已存在,进入编辑 (already exists — editing)", "warn");
+        } else {
+          yamlText = await newShotTemplate(id);
+          isNew = true;
+        }
+        form.classList.add("hidden");
+        input.value = "";
+        showShotEditor(id, yamlText, (data && data.locked) || [], isNew,
+          !data || data.in_index !== false);
+      } catch (err) {
+        toast("无法打开编辑器 (cannot open editor): " + errMsg(err), "err");
+      } finally {
+        go.disabled = false;
+        newBtn.disabled = false;
+      }
+    };
+    go.addEventListener("click", submit);
+    cancel.addEventListener("click", () => form.classList.add("hidden"));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+      else if (e.key === "Escape") form.classList.add("hidden");
+    });
+    newBtn.addEventListener("click", () => {
+      form.classList.toggle("hidden");
+      if (!form.classList.contains("hidden")) input.focus();
+    });
+    form.appendChild(input);
+    form.appendChild(go);
+    form.appendChild(cancel);
+    root.appendChild(form);
+    root.appendChild(newBtn);
+
+    /* unread-first triage: 未阅 N count + 标记已阅 snapshot button. Local
+     * preference only (localStorage) — deliberately NOT readonly-gated. */
+    reviewChipEl = el("span", "chip unread hidden", "未阅 0 (unread)");
+    reviewChipEl.id = "unreadchip";
+    reviewChipEl.title = "上次标记已阅之后新增的 take (takes added since the last mark)";
+    root.appendChild(reviewChipEl);
+    const rvBtn = el("button", "btn ghost", "标记已阅 (Mark reviewed)");
+    rvBtn.type = "button";
+    rvBtn.id = "markreviewed";
+    rvBtn.title = "记录当前 take 清单;此后新增的 take 会带 新 标记 "
+      + "(snapshot current take names — later ones get a 新 chip)";
+    rvBtn.addEventListener("click", () => {
+      try { markReviewed(); } catch (err) { toast(errMsg(err), "err"); }
+    });
+    root.appendChild(rvBtn);
+  }
+
+  /* -------------------------------------------------- import dropzone --- */
+  const UPLOAD_MAX = 4 * 1024 * 1024 * 1024;  /* 4 GiB — the server 413s above */
+  const upQueue = [];
+  let upActive = false;
+  let upDone = 0;
+  let upTotal = 0;
+  let zoneLabel = null;
+
+  const zoneIdleText = () => "拖入素材导入 media/imports (drop files to import)";
+
+  function updateZone() {
+    if (!zoneLabel) return;
+    const zone = $("dropzone");
+    if (upActive) {
+      zone.classList.add("busy");
+      zoneLabel.textContent =
+        "上传中 (uploading) " + Math.min(upDone + 1, upTotal) + "/" + upTotal + "…";
+    } else {
+      zone.classList.remove("busy");
+      zoneLabel.textContent = zoneIdleText();
+    }
+  }
+
+  async function uploadOne(file) {
+    /* RAW bytes as the body — not JSON, not multipart (server contract) */
+    const res = await fetch("/api/upload?name=" + encodeURIComponent(file.name), {
+      method: "POST",
+      headers: { "X-Manju-Token": TOKEN, "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) throw new Error(data && data.error ? data.error : "HTTP " + res.status);
+    return data;
+  }
+
+  async function drainUploads() {
+    upActive = true;
+    while (upQueue.length) {
+      updateZone();
+      const f = upQueue.shift();
+      try {
+        const data = await uploadOne(f);   /* strictly sequential */
+        toast("已导入 (imported) " + ((data && data.imported) || f.name), "ok");
+      } catch (err) {
+        toast("导入失败 (import failed) " + f.name + ": " + errMsg(err), "err");
+      }
+      upDone += 1;
+    }
+    upActive = false;
+    upDone = 0;
+    upTotal = 0;
+    updateZone();
+    refresh();   /* imports land in events/state */
+  }
+
+  function enqueueUploads(fileList) {
+    Array.from(fileList || []).forEach((f) => {
+      if (f.size > UPLOAD_MAX) {
+        toast("跳过 (skipped) " + f.name + ": 超过 4GiB 上限 (over the 4 GiB limit)", "err");
+        return;
+      }
+      upQueue.push(f);
+      upTotal += 1;
+    });
+    if (upQueue.length && !upActive) drainUploads();
+    else updateZone();
+  }
+
+  function initDropzone() {
+    const zone = $("dropzone");
+    clear(zone);
+    zoneLabel = el("span", null, zoneIdleText());
+    zone.appendChild(zoneLabel);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.className = "hidden";
+    input.addEventListener("change", () => {
+      enqueueUploads(input.files);
+      input.value = "";
+    });
+    zone.appendChild(input);
+    zone.addEventListener("click", () => input.click());
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      zone.classList.add("drag");
+    });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("drag");
+      if (e.dataTransfer) enqueueUploads(e.dataTransfer.files);
+    });
+    /* a drop that misses the zone must not navigate away from the workbench */
+    window.addEventListener("dragover", (e) => e.preventDefault());
+    window.addEventListener("drop", (e) => e.preventDefault());
+  }
+
+  /* -------------------------------------------------------- QC panel --- */
+  function renderQC(qc) {
+    const root = $("qc");
+    clear(root);
+    if (!qc) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    root.appendChild(el("h2", null, "QC"));
+    const chips = el("div", "chips");
+    if (qc.ok === true) chips.appendChild(el("span", "badge st-fresh", "✓ 通过"));
+    chips.appendChild(el("span", "badge qc-err", "错误 " + (qc.errors || 0)));
+    chips.appendChild(el("span", "badge qc-warn", "警告 " + (qc.warnings || 0)));
+    root.appendChild(chips);
+    const items = Array.isArray(qc.items) ? qc.items : [];
+    if (!items.length) return;
+    const list = el("div", "list");
+    items.forEach((it) => {
+      const row = el("div", "qc-item");
+      const lvl = String(it.level || "info").toLowerCase();
+      row.appendChild(el("span", "badge lvl-" + lvl, it.level || "info"));
+      const msg = el("span", "qmsg");
+      if (it.shot) msg.appendChild(el("span", "qshot", it.shot + " · "));
+      msg.appendChild(document.createTextNode(it.message || ""));
+      row.appendChild(msg);
+      if (it.suggestion) row.appendChild(el("div", "muted qsug", "建议: " + it.suggestion));
+      list.appendChild(row);
+    });
+    root.appendChild(list);
+  }
+
+  /* ----------------------------------------------------- events feed --- */
+  /* One row builder, shared by the live 15-row tail and the 更多 expansion. */
+  function eventRow(ev) {
+    const row = el("div", "event");
+    row.appendChild(el("span", "etime", fmtClock(ev.ts)));
+    const actor = String(ev.actor || "engine").toLowerCase();
+    const cls = actor === "human" ? "ac-human" : (actor === "ai" ? "ac-ai" : "ac-engine");
+    row.appendChild(el("span", "badge " + cls, ev.actor || "engine"));
+    row.appendChild(el("span", "eaction", ev.action || ""));
+    let detail = "";
+    try { detail = JSON.stringify(ev.detail); } catch (e) { detail = String(ev.detail); }
+    if (detail && detail !== "{}" && detail !== "null" && detail !== "undefined") {
+      const d = el("span", "edetail",
+        detail.length > 120 ? detail.slice(0, 120) + "…" : detail);
+      d.title = detail;
+      row.appendChild(d);
+    }
+    return row;
+  }
+
+  /* The state carries only the newest 15 (server _EVENTS_TAIL); 更多 pulls up
+   * to 100 over the token-free GET /api/events?n=100 and replaces the list,
+   * then hides itself. The live 15-row behavior holds on every poll until the
+   * button is pressed; the expanded view then lives until the NEXT full
+   * re-render of this section — section("events", …) only re-runs when
+   * s.events changes (a new event lands), which resets back to 15 + button. */
+  function renderEvents(events) {
+    const root = $("events");
+    clear(root);
+    root.appendChild(el("h2", null, "事件 (events)"));
+    const list = el("div", "list");
+    const last = events.slice(-15).reverse();
+    if (!last.length) list.appendChild(el("p", "muted", "暂无事件 (no events)"));
+    last.forEach((ev) => list.appendChild(eventRow(ev)));
+    root.appendChild(list);
+    /* only offer 更多 when the tail is full — a shorter tail already IS the
+     * whole log, so fetching 100 would return the very same rows */
+    if (last.length >= 15) {
+      const more = el("button", "btn ghost small ev-more", "更多 (more)");
+      more.type = "button";
+      more.title = "加载最近 100 条事件 (load the latest 100 events)";
+      more.addEventListener("click", async () => {
+        more.disabled = true;
+        try {
+          const data = await api("GET", "/api/events?n=100");
+          const all = (data && Array.isArray(data.events)) ? data.events : [];
+          const rows = all.slice(-100).reverse();   /* newest first, same format */
+          clear(list);
+          if (!rows.length) list.appendChild(el("p", "muted", "暂无事件 (no events)"));
+          rows.forEach((ev) => list.appendChild(eventRow(ev)));
+          more.classList.add("hidden");   /* expanded until the next re-render */
+        } catch (err) {
+          toast("加载更多失败 (load more failed): " + errMsg(err), "err");
+          more.disabled = false;
+        }
+      });
+      root.appendChild(more);
+    }
+  }
+
+  /* -------------------------------------------------------- git panel --- */
+  /* Lazily fetched: on first expand, after each commit, and after each done
+   * job — never on the poll. A 500 (e.g. git endpoints not available)
+   * renders one muted line inside this section only. */
+  let gitOpen = false;
+  let gitLoaded = false;
+  let gitStale = true;
+  let gitBusy = false;
+  let gitStatus = null;    /* /api/git/status payload.git */
+  let gitLog = null;       /* /api/git/log payload.log */
+  let gitErr = null;
+  let gitLogErr = null;
+  let gitBody = null;
+  let gitChips = null;
+
+  function initGitPanel() {
+    const root = $("git");
+    clear(root);
+    const head = el("div", "git-head");
+    const arrow = el("span", "git-arrow", "▸");
+    head.appendChild(arrow);
+    head.appendChild(el("h2", null, "版本 (git)"));
+    gitChips = el("div", "chips");
+    head.appendChild(gitChips);
+    gitBody = el("div", "hidden");
+    head.addEventListener("click", () => {
+      gitOpen = !gitOpen;
+      arrow.textContent = gitOpen ? "▾" : "▸";
+      gitBody.classList.toggle("hidden", !gitOpen);
+      if (gitOpen && (gitStale || !gitLoaded)) fetchGitPanel();
+    });
+    root.appendChild(head);
+    root.appendChild(gitBody);
+  }
+
+  async function fetchGitPanel() {
+    if (gitBusy) return;
+    gitBusy = true;
+    gitErr = null;
+    gitLogErr = null;
+    try {
+      const st = await api("GET", "/api/git/status");
+      gitStatus = st ? st.git : null;
+      gitLog = null;
+      if (gitStatus) {
+        try {
+          const lg = await api("GET", "/api/git/log?n=10");
+          gitLog = (lg && Array.isArray(lg.log)) ? lg.log : [];
+        } catch (err) {
+          gitLogErr = errMsg(err);
+        }
+      }
+      gitLoaded = true;
+      gitStale = false;
+    } catch (err) {
+      gitErr = errMsg(err);
+    } finally {
+      gitBusy = false;
+      renderGit();
+    }
+  }
+
+  function renderDiffInto(holder, text) {
+    clear(holder);
+    if (!text) {
+      holder.appendChild(el("p", "muted", "无差异 (no diff)"));
+      return;
+    }
+    /* server-derived text: SPLIT into lines, one div per line, textContent
+     * only — never innerHTML (a diff carries arbitrary file content) */
+    const box = el("div", "diff");
+    String(text).split("\n").forEach((line) => {
+      let cls = "dl-ctx";
+      if (line.startsWith("+++") || line.startsWith("---")) cls = "dl-meta";
+      else if (line.startsWith("+")) cls = "dl-add";
+      else if (line.startsWith("-")) cls = "dl-del";
+      else if (line.startsWith("@@")) cls = "dl-hunk";
+      else if (line.startsWith("diff ") || line.startsWith("index ")) cls = "dl-meta";
+      box.appendChild(el("div", cls, line === "" ? " " : line));
+    });
+    holder.appendChild(box);
+  }
+
+  function gitFileRow(f) {
+    const wrap = el("div");
+    const row = el("div", "gs-row");
+    row.appendChild(el("span", "gs-chip", f.status || "??"));
+    row.appendChild(el("span", "gs-path", f.path || ""));
+    const holder = el("div", "hidden");
+    let open = false;
+    let busy = false;
+    row.addEventListener("click", async () => {
+      if (busy) return;
+      if (open) {   /* second click collapses */
+        open = false;
+        holder.classList.add("hidden");
+        clear(holder);
+        return;
+      }
+      busy = true;
+      try {
+        const d = await api("GET", "/api/git/diff?path=" + encodeURIComponent(f.path || ""));
+        renderDiffInto(holder, d ? d.diff : null);
+        holder.classList.remove("hidden");
+        open = true;
+      } catch (err) {
+        toast("差异不可用 (diff unavailable): " + errMsg(err), "err");
+      } finally {
+        busy = false;
+      }
+    });
+    wrap.appendChild(row);
+    wrap.appendChild(holder);
+    return wrap;
+  }
+
+  function renderGit() {
+    if (!gitBody || !gitChips) return;
+    clear(gitBody);
+    clear(gitChips);
+    if (gitErr) {
+      gitBody.appendChild(el("p", "muted", "git 状态不可用 (git unavailable): " + gitErr));
+      return;
+    }
+    if (!gitLoaded) {
+      gitBody.appendChild(el("p", "muted", "加载中 (loading)…"));
+      return;
+    }
+    const g = gitStatus;
+    if (!g) {
+      gitBody.appendChild(el("p", "muted", "非 git 仓库 (not a repo)"));
+      return;
+    }
+    /* header chips stay visible even when the body is collapsed again */
+    gitChips.appendChild(el("span", "chip", "分支 (branch) " + (g.branch || "?")));
+    gitChips.appendChild(el("span", "badge " + (g.dirty ? "st-stale" : "st-fresh"),
+      g.dirty ? "有改动 (dirty)" : "干净 (clean)"));
+    if (g.ahead > 0) gitChips.appendChild(el("span", "chip", "领先 (ahead) ↑" + g.ahead));
+    if (g.behind > 0) gitChips.appendChild(el("span", "chip", "落后 (behind) ↓" + g.behind));
+
+    const files = Array.isArray(g.files) ? g.files : [];
+    if (files.length) {
+      const list = el("div");
+      files.forEach((f) => list.appendChild(gitFileRow(f)));
+      if (g.truncated) list.appendChild(el("p", "muted", "(文件列表已截断 truncated)"));
+      gitBody.appendChild(list);
+      const btnrow = el("div", "btnrow");
+      const full = el("button", "btn ghost", "全部差异 (full diff)");
+      full.type = "button";
+      const holder = el("div", "hidden");
+      let fullOpen = false;
+      full.addEventListener("click", async () => {
+        if (fullOpen) {
+          fullOpen = false;
+          holder.classList.add("hidden");
+          clear(holder);
+          return;
+        }
+        full.disabled = true;
+        try {
+          const d = await api("GET", "/api/git/diff");
+          renderDiffInto(holder, d ? d.diff : null);
+          holder.classList.remove("hidden");
+          fullOpen = true;
+        } catch (err) {
+          toast("差异不可用 (diff unavailable): " + errMsg(err), "err");
+        } finally {
+          full.disabled = false;
+        }
+      });
+      btnrow.appendChild(full);
+      gitBody.appendChild(btnrow);
+      gitBody.appendChild(holder);
+    } else {
+      gitBody.appendChild(el("p", "muted", "工作区干净 (working tree clean)"));
+    }
+
+    /* commit box: disabled when the message is empty or the repo is clean;
+     * absent entirely in readonly mode (the diff/log views above stay live) */
+    if (!readonly) {
+      const crow = el("div", "commit-row");
+      const msg = document.createElement("input");
+      msg.type = "text";
+      msg.className = "commit-msg";
+      msg.placeholder = "提交信息 (commit message)";
+      const cbtn = el("button", "btn", "提交 (Commit)");
+      cbtn.type = "button";
+      const syncBtn = () => { cbtn.disabled = !msg.value.trim() || !g.dirty; };
+      const doCommit = async () => {
+        if (cbtn.disabled) return;
+        cbtn.disabled = true;
+        try {
+          const r = await apiRaw("POST", "/api/git/commit", { message: msg.value.trim() });
+          if (r.ok) {
+            toast("已提交 (committed) " + String((r.data && r.data.hash) || "").slice(0, 7), "ok");
+            fetchGitPanel();   /* re-renders the panel (status + log) */
+            return;
+          }
+          toast("提交失败 (commit failed): " +
+            ((r.data && r.data.error) || ("HTTP " + r.status)), "err");
+        } catch (err) {
+          toast("提交失败 (commit failed): " + errMsg(err), "err");
+        }
+        syncBtn();
+      };
+      syncBtn();
+      msg.addEventListener("input", syncBtn);
+      msg.addEventListener("keydown", (e) => { if (e.key === "Enter") doCommit(); });
+      cbtn.addEventListener("click", doCommit);
+      crow.appendChild(msg);
+      crow.appendChild(cbtn);
+      gitBody.appendChild(crow);
+    }
+
+    gitBody.appendChild(el("h3", null, "最近提交 (recent commits)"));
+    if (gitLogErr) {
+      gitBody.appendChild(el("p", "muted", "提交记录不可用 (log unavailable): " + gitLogErr));
+    } else if (!gitLog || !gitLog.length) {
+      gitBody.appendChild(el("p", "muted", "暂无提交 (no commits)"));
+    } else {
+      gitLog.forEach((c) => {
+        const row = el("div", "git-log-row");
+        row.appendChild(el("span", "git-hash", String(c.hash || "").slice(0, 7)));
+        row.appendChild(el("span", null, c.subject || ""));
+        row.appendChild(el("span", "muted", c.author || ""));
+        if (c.ts) row.title = String(c.ts);
+        gitBody.appendChild(row);
+      });
+    }
+  }
+
+  /* --------------------------------------------------- proposals panel --- */
+  /* proposals/ is the AI→human channel (§5) — a collapsible section like the
+   * git panel. Lazily fetched: on first expand, after each done job, and on
+   * a state refresh AT MOST once per fingerprint change (never on the raw
+   * poll cadence). The count badge in the section head stays live even when
+   * the body is collapsed. */
+  let propOpen = false;
+  let propBusy = false;
+  let propLoaded = false;
+  let propStale = false;    /* set by a done job; cleared by the next fetch */
+  let propFp = null;        /* fingerprint the current list was fetched at */
+  let propItems = [];
+  let propErr = null;
+  let propExpanded = {};    /* name -> true: row expansion survives renders */
+  let propBody = null;
+  let propChips = null;
+
+  function initProposalsPanel() {
+    const root = $("proposals");
+    clear(root);
+    const head = el("div", "git-head");
+    const arrow = el("span", "git-arrow", "▸");
+    head.appendChild(arrow);
+    head.appendChild(el("h2", null, "提案 (proposals)"));
+    propChips = el("div", "chips");
+    head.appendChild(propChips);
+    propBody = el("div", "hidden");
+    head.addEventListener("click", () => {
+      propOpen = !propOpen;
+      arrow.textContent = propOpen ? "▾" : "▸";
+      propBody.classList.toggle("hidden", !propOpen);
+      if (propOpen && (!propLoaded || propStale)) fetchProposals();
+    });
+    root.appendChild(head);
+    root.appendChild(propBody);
+  }
+
+  function maybeProposals(s) {
+    if (typeof s.fp === "string" && s.fp && (s.fp !== propFp || propStale)) {
+      fetchProposals(s.fp);
+    }
+  }
+
+  async function fetchProposals(fp) {
+    if (propBusy) return;
+    propBusy = true;
+    if (fp !== undefined) propFp = fp;  /* recorded up front: an error must
+                                           not hammer /api/proposals */
+    propStale = false;
+    try {
+      const d = await api("GET", "/api/proposals");
+      propItems = (d && Array.isArray(d.proposals)) ? d.proposals : [];
+      propErr = null;
+      propLoaded = true;
+    } catch (err) {
+      propErr = errMsg(err);   /* section-local degrade, loop unharmed */
+    } finally {
+      propBusy = false;
+      renderProposals();
+    }
+  }
+
+  const fmtDate = (epochSec) => {   /* proposal mtime -> local Y-m-d HH:MM */
+    if (typeof epochSec !== "number" || !isFinite(epochSec) || epochSec <= 0) return "?";
+    const d = new Date(epochSec * 1000);
+    if (isNaN(d.getTime())) return "?";
+    const p = (x) => String(x).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+      " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  };
+
+  function renderProposals() {
+    if (!propBody || !propChips) return;
+    clear(propBody);
+    clear(propChips);
+    if (propItems.length) {
+      propChips.appendChild(el("span", "badge st-stale", String(propItems.length)));
+    }
+    if (propErr) {
+      propBody.appendChild(el("p", "muted", "提案不可用 (proposals unavailable): " + propErr));
+      return;
+    }
+    if (!propLoaded) {
+      propBody.appendChild(el("p", "muted", "加载中 (loading)…"));
+      return;
+    }
+    if (!propItems.length) {
+      propBody.appendChild(el("p", "muted", "暂无提案 (no proposals)"));
+      return;
+    }
+    propItems.forEach((p) => {   /* newest first, straight from the server */
+      const wrap = el("div");
+      const row = el("div", "prop-row");
+      const arrow = el("span", "git-arrow", propExpanded[p.name] ? "▾" : "▸");
+      row.appendChild(arrow);
+      row.appendChild(el("span", "prop-name", p.name || "?"));
+      row.appendChild(el("span", "prop-date", fmtDate(p.mtime)));
+      if (p.truncated) row.appendChild(el("span", "chip", "已截断 (truncated)"));
+      const pre = el("pre", "prop-pre" + (propExpanded[p.name] ? "" : " hidden"));
+      pre.textContent = p.text || "";   /* arbitrary markdown: text only */
+      row.addEventListener("click", () => {
+        const open = !propExpanded[p.name];
+        propExpanded[p.name] = open;
+        arrow.textContent = open ? "▾" : "▸";
+        pre.classList.toggle("hidden", !open);
+      });
+      wrap.appendChild(row);
+      wrap.appendChild(pre);
+      propBody.appendChild(wrap);
+    });
+  }
+
+  /* --------------------------------------------- review keyboard mode --- */
+  /* "?" toggles the hint bar; j/k walk the shot cards, e opens the editor,
+   * 1-9 select take N, space toggles the selected take's <video>. All of it
+   * is inert while an input/select/textarea or the editor dialog has focus. */
+  let kbFocusId = null;
+  let kbHintOn = false;
+
+  function kbHint() {
+    kbHintOn = !kbHintOn;
+    $("kbdhint").classList.toggle("hidden", !kbHintOn);
+  }
+
+  function kbSetFocus(id) {
+    kbFocusId = id;
+    document.querySelectorAll("#shots .shot").forEach((c) =>
+      c.classList.toggle("kb-focus", c.dataset.sid === kbFocusId));
+    const card = kbFocusId ? cardById(kbFocusId) : null;
+    if (card) flashCard(card);   /* scroll + flash, like timeline clicks */
+  }
+
+  function kbMove(delta) {
+    const ids = lastShots.map((s) => s.id);
+    if (!ids.length) return;
+    const i = ids.indexOf(kbFocusId);
+    let next;
+    if (i < 0) next = delta > 0 ? 0 : ids.length - 1;   /* enter the grid */
+    else next = Math.min(ids.length - 1, Math.max(0, i + delta));
+    kbSetFocus(ids[next]);
+  }
+
+  function kbSelectTake(n) {
+    if (readonly) return;
+    const shot = lastShots.find((s) => s.id === kbFocusId);
+    if (!shot) return;
+    const take = (Array.isArray(shot.takes) ? shot.takes : [])[n - 1];
+    if (!take || take.selected) return;   /* only existing, unselected takes */
+    post(null, "/api/select", { shot: shot.id, take: take.name },
+      "已选用 " + shot.id + " / " + take.name);
+  }
+
+  function kbPlayPause() {
+    const card = kbFocusId ? cardById(kbFocusId) : null;
+    if (!card) return false;   /* no focused card: space keeps scrolling */
+    const v = card.querySelector(".take.selected video");
+    if (v) {
+      if (v.paused) {
+        const p = v.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } else {
+        v.pause();
+      }
+    }
+    return true;   /* a focused card claims space even without a video */
+  }
+
+  /* ------------------------------------------------------------ boot --- */
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      pauseLive();   /* clears the timer AND aborts the in-flight watch, so
+                        a stale long-poll response can never clobber */
+    } else {
+      refresh();
+    }
+  });
+  /* any click outside a workspace menu closes it (menu items run first) */
+  document.addEventListener("click", () => closeWsMenus(null));
+  document.addEventListener("keydown", (e) => {
+    if (cmpOverlay) {   /* compare overlay up: Esc closes it, other keys inert */
+      if (e.key === "Escape") { try { closeCompare(); } catch (err) { /* gone */ } }
+      return;
+    }
+    if (editorOpen) {
+      /* native <dialog> handles Esc itself (cancel -> close event); the
+       * overlay fallback needs the hand-rolled Esc */
+      if (e.key === "Escape" && typeof $("editor").showModal !== "function") closeEditor();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+    if (tag === "input" || tag === "select" || tag === "textarea") return;
+    if (t && t.isContentEditable) return;
+    const k = e.key;
+    if (k === "r") { refresh(); return; }
+    if (k === "?") { kbHint(); return; }
+    if (k === "j" || k === "k") { kbMove(k === "j" ? 1 : -1); return; }
+    if (k === "e") {
+      if (kbFocusId && !readonly) openEditorFor(kbFocusId, null);
+      return;
+    }
+    /* keys with a native meaning stay native on interactive elements */
+    if (tag === "button" || tag === "a" || tag === "video" ||
+        tag === "audio" || tag === "summary") return;
+    if (k === " " || k === "Spacebar") {
+      if (kbPlayPause()) e.preventDefault();   /* the page must not scroll */
+      return;
+    }
+    if (k >= "1" && k <= "9") kbSelectTake(Number(k));
+  });
+
+  /* static bilingual hint bar content (toggled by "?") */
+  (() => {
+    const hint = $("kbdhint");
+    clear(hint);
+    [["j/k", " 上/下一个镜头 (next/prev shot)"],
+     ["e", " 编辑 (edit)"],
+     ["1-9", " 选用 take (select take)"],
+     ["Space", " 播放/暂停 (play/pause)"],
+     ["r", " 刷新 (refresh)"],
+     ["?", " 关闭提示 (hide hints)"]].forEach((pair, i) => {
+      if (i) hint.appendChild(document.createTextNode("  ·  "));
+      hint.appendChild(el("b", null, pair[0]));
+      hint.appendChild(document.createTextNode(pair[1]));
+    });
+  })();
+
+  initBuildPanel();
+  initShotsBar();
+  initDropzone();
+  initGitPanel();
+  initProposalsPanel();
+  $("editor").addEventListener("close", editorClosed);
+  refresh();
+})();
+""".strip() + "\n"
+
+
+def render_page(project_name: str, token: str) -> str:
+    """Return the complete ``<!doctype html>`` document served at ``/``.
+
+    Only two server-side values are embedded — the project name (title) and
+    the per-run CSRF token (``manju-token`` meta tag) — both HTML-escaped.
+    Everything visible is a static skeleton (``#header`` … ``#proposals`` …
+    ``#git``, plus the ``#editor`` dialog, the ``#kbdhint`` bar and the
+    ``#toast`` rack) that ``/app.js`` fills from ``/api/state`` and the
+    v2/v3 endpoints; there is no inline script and no inline ``style=``
+    attribute, so the page works under a strict CSP.
+    """
+    name = html.escape(project_name)
+    tok = html.escape(token)
+    return (
+        "<!doctype html>\n"
+        '<html lang="zh">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f'<meta name="manju-token" content="{tok}">\n'
+        f"<title>{name} · manju gui</title>\n"
+        '<link rel="stylesheet" href="/app.css">\n'
+        '<script src="/app.js" defer></script>\n'
+        "</head>\n"
+        "<body>\n"
+        '<div id="header" class="panel">\n'
+        '  <p class="loading">加载中 (loading)…</p>\n'
+        "</div>\n"
+        "<main>\n"
+        '  <div id="dropzone" class="dropzone"></div>\n'
+        '  <div id="buildpanel" class="panel"></div>\n'
+        '  <div id="jobs" class="panel hidden"></div>\n'
+        '  <div id="timeline" class="panel hidden"></div>\n'
+        '  <div id="shotsbar" class="shotsbar"></div>\n'
+        '  <div id="shots"></div>\n'
+        '  <div class="cols">\n'
+        '    <div id="qc" class="panel hidden"></div>\n'
+        '    <div id="events" class="panel"></div>\n'
+        "  </div>\n"
+        '  <div id="proposals" class="panel"></div>\n'
+        '  <div id="git" class="panel"></div>\n'
+        "</main>\n"
+        '<div id="toast"></div>\n'
+        '<div id="kbdhint" class="hidden"></div>\n'
+        '<dialog id="editor" class="editor"></dialog>\n'
+        "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
+def render_css() -> str:
+    """Return the full stylesheet, served as ``/app.css``."""
+    return _CSS
+
+
+def render_js() -> str:
+    """Return the full application script, served as ``/app.js``."""
+    return _JS

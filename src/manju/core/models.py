@@ -111,6 +111,11 @@ class Generation(ManjuModel):
 class ShotStatus(ManjuModel):
     selected_take: str | None = None
     approved: bool = False
+    # director annotations per take (Frame.io-style review notes, kept as
+    # truth text §3: one reviewable YAML line per note, empty text deletes).
+    # HUMAN truth — never AI-overwritten; lives inside the shot file so
+    # `manju check` validates it and gc/pack never touch it.
+    take_notes: dict[str, str] = Field(default_factory=dict)
 
 
 class ShotSpec(ManjuModel):

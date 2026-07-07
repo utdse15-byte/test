@@ -53,6 +53,13 @@ _STATE_CLASS = {
     ShotState.BROKEN: "st-broken",
 }
 
+# Per-take director verdicts (§R9/R10): a take_notes value of exactly "好"/"弃"
+# is a one-key verdict (approve / reject); anything else is a free note. These
+# mirror the GUI's 👍/👎 verdict buttons as static, colour-coded chips.
+_VERDICT_LABELS = {"好": "👍好", "弃": "👎弃"}
+_VERDICT_CLASS = {"好": "tv-ok", "弃": "tv-no"}
+_NOTE_MAX = 80  # note-line display is truncated ~here; full text rides in title
+
 _CSS = """
 :root {
   --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
@@ -83,6 +90,11 @@ main { padding: 1.2rem 1.6rem; }
 .shot-head .action { color: var(--fg); }
 .shot .dialogue { color: var(--muted); margin: .35rem 0 .7rem; font-size: .95rem; }
 .shot .dialogue .speaker { color: var(--accent); }
+.shot .sel-reject {
+  margin: .5rem 0 .2rem; padding: .3rem .6rem; border-radius: 6px;
+  font-size: .82rem; font-weight: 700; color: #ff8a90;
+  background: #2a1517; border: 1px solid #4d1f22;
+}
 .badge {
   font-size: .72rem; font-weight: 700; padding: .12rem .5rem; border-radius: 999px;
   text-transform: uppercase; letter-spacing: .03em; white-space: nowrap;
@@ -93,6 +105,8 @@ main { padding: 1.2rem 1.6rem; }
 .st-manual { background: #23324d; color: #8fb8ff; }
 .st-needs  { background: #4a2f12; color: #ffb27a; }
 .st-broken { background: #4d1f22; color: #ff8a90; }
+.tv-ok { background: #17402a; color: #7ee2a8; }
+.tv-no { background: #4d1f22; color: #ff8a90; }
 .takes { display: flex; flex-wrap: wrap; gap: .8rem; }
 .take {
   background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
@@ -108,6 +122,11 @@ main { padding: 1.2rem 1.6rem; }
 .take .tname { font-weight: 700; margin: .4rem 0 .15rem; font-size: .9rem; }
 .take .tname .star { color: var(--star); }
 .take .tmeta { color: var(--muted); font-size: .74rem; word-break: break-all; }
+.take .tnote-row { margin-top: .4rem; }
+.take .tnote {
+  margin-top: .4rem; font-size: .76rem; color: #cfe3ff; background: #0f1114;
+  border-radius: 4px; padding: .28rem .42rem; overflow-wrap: anywhere;
+}
 .selcmd { display: flex; align-items: center; gap: .4rem; margin-top: .45rem; }
 .selcmd code {
   flex: 1; background: #0f1114; color: #cfe3ff; padding: .25rem .4rem; border-radius: 4px;
@@ -425,8 +444,34 @@ def _take_meta_full(take: Any) -> str:
     return " · ".join(bits)
 
 
+def _verdict_of(note: str | None) -> str | None:
+    """The one-key verdict a note *is* (exactly ``好``/``弃``), else ``None``."""
+    return note if note in _VERDICT_LABELS else None
+
+
+def _render_take_note(note: str | None) -> str:
+    """Per-take director note (§R9/R10) as static board markup.
+
+    Exactly ``好``/``弃`` renders a colour-coded verdict chip (styled like the
+    build-state badges); any other text renders a truncated ``📝`` line with
+    the full note in the ``title`` attribute. Note text is arbitrary director
+    input, so it is HTML-escaped via :func:`_esc`.
+    """
+    if not note:
+        return ""
+    verdict = _verdict_of(note)
+    if verdict is not None:
+        return (f'<div class="tnote-row"><span class="badge {_VERDICT_CLASS[verdict]}">'
+                f"{_VERDICT_LABELS[verdict]}</span></div>")
+    text = note.strip()
+    if not text:
+        return ""
+    shown = text if len(text) <= _NOTE_MAX else text[:_NOTE_MAX] + "…"
+    return f'<div class="tnote" title="{_esc(text)}">📝 {_esc(shown)}</div>'
+
+
 def _render_take(project: "Project", shot_id: str, take: Any, selected: bool,
-                 serve: bool = False) -> str:
+                 serve: bool = False, note: str | None = None) -> str:
     cls = "take selected" if selected else "take"
     if take.media_path is not None:
         rel = _esc(project.relpath(take.media_path))
@@ -446,6 +491,7 @@ def _render_take(project: "Project", shot_id: str, take: Any, selected: bool,
     star = ' <span class="star">★</span>' if selected else ""
     name = f'<div class="tname">{_esc(take.name)}{star}</div>'
     meta = f'<div class="tmeta">{_take_meta(project, take)}</div>'
+    note_html = _render_take_note(note)
     if serve:
         cmd = _take_action(shot_id, take.name, selected)
     else:
@@ -458,7 +504,7 @@ def _render_take(project: "Project", shot_id: str, take: Any, selected: bool,
                 '<button type="button" onclick="mjCopy(this)">copy</button>'
                 "</div>"
             )
-    return f'<div class="{cls}">{media}{name}{meta}{cmd}</div>'
+    return f'<div class="{cls}">{media}{name}{meta}{note_html}{cmd}</div>'
 
 
 def _take_action(shot_id: str, take_name: str, selected: bool) -> str:
@@ -481,8 +527,10 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
         action = shot.action.main
         speaker = shot.dialogue.speaker
         dtext = shot.dialogue.text
+        take_notes = dict(shot.status.take_notes)
     except Exception:
         action = speaker = dtext = ""
+        take_notes = {}
 
     badge_cls = _STATE_CLASS.get(status.state, "st-missing") if status else "st-missing"
     state_val = status.state.value if status else "unknown"
@@ -518,10 +566,17 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
         dialogue = f'<div class="dialogue">{sp}{_esc(dtext)}</div>'
     note_html = f'<div class="dialogue">{_esc(note)}</div>' if note else ""
 
+    # review signal: the take the director committed to is itself marked 弃
+    sel_reject_html = ""
+    if selected is not None and _verdict_of(take_notes.get(selected)) == "弃":
+        sel_reject_html = ('<div class="sel-reject">'
+                           "⚠ 选中take已标弃 (selected take rejected)</div>")
+
     takes = project.takes(shot_id)
     if takes:
         cards = "".join(
-            _render_take(project, shot_id, t, selected=(t.name == selected), serve=serve)
+            _render_take(project, shot_id, t, selected=(t.name == selected), serve=serve,
+                         note=take_notes.get(t.name))
             for t in takes
         )
         takes_html = f'<div class="takes">{cards}</div>'
@@ -554,7 +609,7 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
             compare_html = _render_compare(project, shot_id, takes, selected)
         actions_html = f'<div class="shot-actions">{"".join(btns)}</div>'
 
-    return (f'<section class="shot">{head}{dialogue}{note_html}'
+    return (f'<section class="shot">{head}{sel_reject_html}{dialogue}{note_html}'
             f"{takes_html}{actions_html}{compare_html}</section>")
 
 
