@@ -132,14 +132,43 @@ class Generation(ManjuModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+REVIEW_STATES = ("needs_review", "in_progress", "approved")
+
+
 class ShotStatus(ManjuModel):
     selected_take: str | None = None
     approved: bool = False
+    # Frame.io-style THREE-STATE review (round U, goal item 3). Additive and
+    # byte-stable: default ``None`` means "legacy" — read from ``approved``.
+    # Values: needs_review | in_progress | approved. Writing it SYNCS the legacy
+    # ``approved`` bool (approved == review=="approved") so every existing reader
+    # stays correct. Never part of spec_payload (status is excluded, core/spec.py)
+    # — a review change never restages a take or marks it stale. Dropped by
+    # ``exclude_none`` on write, so a shot that never sets it is byte-identical.
+    review: str | None = None
     # director annotations per take (Frame.io-style review notes, kept as
     # truth text §3: one reviewable YAML line per note, empty text deletes).
     # HUMAN truth — never AI-overwritten; lives inside the shot file so
     # `manju check` validates it and gc/pack never touch it.
     take_notes: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("review")
+    @classmethod
+    def _known_review(cls, v: str | None) -> str | None:
+        if v is None or v in REVIEW_STATES:
+            return v
+        raise ValueError(
+            f"status.review must be one of {REVIEW_STATES} or unset, got {v!r}"
+        )
+
+    @property
+    def review_state(self) -> str:
+        """The EFFECTIVE three-state review: the explicit ``review`` when set,
+        else derived from the legacy ``approved`` bool (True → ``approved``,
+        else ``needs_review``). This is what the storyboard 审批 chip renders."""
+        if self.review in REVIEW_STATES:
+            return self.review
+        return "approved" if self.approved else "needs_review"
 
 
 class SourceAudio(ManjuModel):

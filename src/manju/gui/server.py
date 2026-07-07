@@ -479,6 +479,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-U 导演助手 director loop page — see _director_get
             elif self._modes_get(path):
                 pass  # round-U 新手/专业 + glossary chrome assets — see _modes_get
+            elif self._storyboard_get(path, url):
+                pass  # round-U 分镜工作台 storyboard table — see _storyboard_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -552,6 +554,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._director_post(path, body):  # round-U director loop actions
                     return
                 if self._modes_post(path, body):  # round-U mode + glossary toggles
+                    return
+                if self._storyboard_post(path, body):  # round-U 分镜工作台 actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -2413,6 +2417,205 @@ class _Handler(BaseHTTPRequestHandler):
         show = bool(body.get("show"))
         set_show_pro_terms(show)
         self._send_json({"ok": True, "show": show})
+
+    # =================================================================
+    # round-U 分镜工作台 STORYBOARD (goal item 3): one server-rendered table
+    # over project.shot_ids() + the asset matrix + build/stale + routing. The
+    # REPORTS §2 columns, two orthogonal chips (状态 take-state / 审批 review).
+    # New region, isolated from the SPA + round-S/T/U page endpoints above. Same
+    # token/readonly/host gates as every mutating surface (checked in
+    # do_GET/do_POST before we run). Every edit is lock-respecting — a locked
+    # path is NEVER written (409 naming the lock, 中文); LOCK reuses the
+    # `manju lock` seal, UNLOCK is deliberately absent (CLI-only containment).
+    # =================================================================
+
+    def _storyboard_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the 分镜工作台 page + its static assets. Returns True
+        when handled (response already sent)."""
+        from . import storyboard
+
+        if path == "/storyboard.css":
+            self._send_text(storyboard.render_storyboard_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/storyboard.js":
+            self._send_text(storyboard.render_storyboard_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path == storyboard.PAGE_PATH:
+            html_doc = storyboard.render(self.server.project, self.server.token)
+            self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
+            return True
+        return False
+
+    def _storyboard_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 分镜工作台 actions (inline edit / approve /
+        batch lock). Single-field lock reuses the shared ``/api/lock``."""
+        handler = {
+            "/api/storyboard/edit": self._act_sb_edit,
+            "/api/storyboard/approve": self._act_sb_approve,
+            "/api/storyboard/lock-batch": self._act_sb_lock_batch,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_sb_edit(self, body: dict[str, Any]) -> None:
+        """Inline edit of one shot free-text field (动作/台词/must_show/avoid)
+        through ``update_shot_raw`` — LOCK-RESPECTING: a write that would touch a
+        locked path is refused 409 naming the lock, never written (§5)."""
+        from .storyboard import EDITABLE_FIELDS, LIST_FIELDS, lock_conflict
+
+        project = self.server.project
+        shot_id = str(body.get("shot") or "")
+        field = str(body.get("field") or "")
+        if not self._SHOT_ID_RE.fullmatch(shot_id):
+            self._send_error_json("invalid shot id", 400)
+            return
+        if not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        if field not in EDITABLE_FIELDS:
+            self._send_error_json(
+                f"field not inline-editable: {field!r} ({', '.join(EDITABLE_FIELDS)})", 400)
+            return
+        value = body.get("value")
+        value = "" if value is None else value
+        with self.server.quick_mutex:
+            try:
+                raw = project.load_shot_raw(shot_id)
+            except ProjectError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+            locked = raw.get("locked") or {}
+            if isinstance(locked, list):
+                locked = {str(p): "" for p in locked}
+            conflict = lock_conflict(locked, field)
+            if conflict is not None:
+                self._send_error_json(
+                    f"字段 {field} 被锁定({conflict})— 已封印,不写入锁定路径"
+                    "(解锁请用命令行 manju unlock)", 409)
+                return
+            is_list = field in LIST_FIELDS
+            if is_list:
+                new_val: Any = [ln.strip() for ln in str(value).splitlines() if ln.strip()]
+            else:
+                new_val = str(value)
+            parent, child = field.split(".", 1)
+
+            def mutate(d: dict[str, Any]) -> None:
+                sub = d.get(parent)
+                if not isinstance(sub, dict):
+                    sub = {}
+                sub[child] = new_val
+                d[parent] = sub
+
+            project.update_shot_raw(shot_id, mutate)
+            append_event(project.root, self.server.actor, "edit_shot",
+                         {"shot": shot_id, "field": field, "via": "gui"})
+        self._send_json({"ok": True, "shot": shot_id, "field": field})
+
+    def _act_sb_approve(self, body: dict[str, Any]) -> None:
+        """Set the three-state review on one shot (chip cycle) or a batch
+        (multi-select). Writing ``review`` SYNCS the legacy ``approved`` bool so
+        every existing reader stays correct. Never touches a locked/creative
+        field — approval is status, orthogonal to the picture spec."""
+        from ..core.models import REVIEW_STATES
+
+        project = self.server.project
+        review = str(body.get("review") or "")
+        if review not in REVIEW_STATES:
+            self._send_error_json(
+                f"review must be one of {REVIEW_STATES}", 400)
+            return
+        shots = body.get("shots")
+        single = body.get("shot")
+        if isinstance(shots, list):
+            ids = [s for s in shots if isinstance(s, str)]
+            batch = True
+        elif single:
+            ids = [str(single)]
+            batch = False
+        else:
+            self._send_error_json("shot or shots is required", 400)
+            return
+        if not ids:
+            self._send_error_json("no shots given", 400)
+            return
+        changed: list[str] = []
+        skipped: list[dict[str, str]] = []
+        with self.server.quick_mutex:
+            for sid in ids:
+                if not self._SHOT_ID_RE.fullmatch(sid) or not project.shot_path(sid).exists():
+                    skipped.append({"shot": sid, "reason": "no such shot"})
+                    continue
+
+                def mutate(d: dict[str, Any]) -> None:
+                    status = d.get("status")
+                    if not isinstance(status, dict):
+                        status = {}
+                    status["review"] = review
+                    status["approved"] = review == "approved"
+                    d["status"] = status
+
+                project.update_shot_raw(sid, mutate)
+                changed.append(sid)
+            if changed:
+                detail: dict[str, Any] = {"review": review, "via": "gui"}
+                if batch:
+                    detail["shots"] = changed
+                else:
+                    detail["shot"] = changed[0]
+                append_event(project.root, self.server.actor, "approve", detail)
+        self._send_json({"ok": True, "review": review, "changed": len(changed),
+                         "shots": changed, "skipped": skipped})
+
+    def _act_sb_lock_batch(self, body: dict[str, Any]) -> None:
+        """Batch LOCK one field across the selected shots — the same seal
+        ``manju lock`` uses (per-shot isolation: a missing field / already-locked
+        shot is skipped with a reason, never a silent failure). UNLOCK stays
+        CLI-only."""
+        from ..core.locks import seal_lock
+
+        project = self.server.project
+        field = str(body.get("field") or "")
+        shots = body.get("shots")
+        if not field:
+            self._send_error_json("field is required", 400)
+            return
+        if not isinstance(shots, list) or not shots or not all(isinstance(s, str) for s in shots):
+            self._send_error_json("shots must be a non-empty list of shot ids", 400)
+            return
+        locked_ids: list[str] = []
+        skipped: list[dict[str, str]] = []
+        with self.server.quick_mutex:
+            for sid in shots:
+                if not self._SHOT_ID_RE.fullmatch(sid) or not project.shot_path(sid).exists():
+                    skipped.append({"shot": sid, "reason": "no such shot"})
+                    continue
+                try:
+                    raw = project.load_shot_raw(sid)
+                    if field in (raw.get("locked") or {}):
+                        skipped.append({"shot": sid, "reason": f"{field} 已锁定"})
+                        continue
+                    digest = seal_lock(raw, field)
+                except (KeyError, IndexError, ValueError, ProjectError) as exc:
+                    skipped.append({"shot": sid, "reason": f"cannot lock: {exc}"})
+                    continue
+
+                def mutate(d: dict[str, Any], digest: str = digest, field: str = field) -> None:
+                    locked = d.get("locked")
+                    if not isinstance(locked, dict):
+                        locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
+                    locked[field] = digest
+                    d["locked"] = locked
+
+                project.update_shot_raw(sid, mutate)
+                append_event(project.root, self.server.actor, "lock",
+                             {"shot": sid, "field": field, "via": "gui"})
+                locked_ids.append(sid)
+        self._send_json({"ok": True, "field": field, "locked": len(locked_ids),
+                         "shots": locked_ids, "skipped": skipped})
 
     def _act_edit_trim(self, body: dict[str, Any]) -> None:
         """Trim a take's in/out — the `manju repair --op inout` engine op run as
