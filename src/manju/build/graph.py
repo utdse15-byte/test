@@ -118,9 +118,32 @@ class BuildResult:
     estimated_cost: float = 0.0
     saved_cost: float = 0.0  # cache savings: what regenerating FRESH shots would cost
     waiting_user: bool = False  # §8.3 ask_before gate: needs an explicit yes
+    # goal 10: structured failure summaries recorded during THIS build (errors +
+    # info-level degradations), newest first — the AI path reads these ids and
+    # cross-references reports/failures.jsonl for the full evidence/hint.
+    failures: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
+
+
+def _record(project: Project, step: str, subject: str, cause: str, *,
+            evidence: str = "", hint: str = "", log_path: str | None = None,
+            level: str = "error", actor: str = "engine",
+            detail: dict | None = None) -> None:
+    """Record one build-phase failure/degradation (goal 10). Best-effort: the
+    build never breaks because a failure could not be logged."""
+    try:
+        from ..core.failures import Failure, record_failure
+
+        record_failure(
+            project,
+            Failure(step=step, subject=subject, cause=cause, evidence=evidence,
+                    hint=hint, log_path=log_path, level=level, actor=actor,
+                    detail=detail or {}),
+        )
+    except Exception:
+        pass
 
 
 def _target_duration_ms(project: Project, shot, rules) -> int:
@@ -234,9 +257,18 @@ def run_build(
 
     Dry-run is READ-ONLY and deliberately runs WITHOUT the lock, so a cost
     estimate stays available even while another actor is mid-build."""
+    from datetime import datetime, timezone
+
     from ..runtime.buildlock import BuildLocked, build_lock
 
+    # Boundary for "failures recorded during THIS build": every structured
+    # record carries a UTC iso-seconds ts in the same format, so a string >= is a
+    # clean time filter (goal 10). Captured before any phase runs.
+    build_start = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     if dry_run:
+        # Dry-run is read-only and never spends, so it never records a real
+        # failure; return as-is (failures stays []).
         return _run_build_phases(
             project, target=target, gen=gen, regen_stale=regen_stale,
             dry_run=True, force=force, actor=actor,
@@ -244,16 +276,41 @@ def run_build(
         )
     try:
         with build_lock(project.root, actor=actor):
-            return _run_build_phases(
+            result = _run_build_phases(
                 project, target=target, gen=gen, regen_stale=regen_stale,
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, on_phase=on_phase,
             )
     except BuildLocked as exc:
+        # Contention is a gate, not a debuggable failure — keep R2 semantics
+        # (one-line ok=False), do not record it as a failure.
         result = BuildResult()
         result.ok = False
         result.errors.append(str(exc))
         return result
+
+    _attach_failures(project, result, build_start)
+    return result
+
+
+def _attach_failures(project: Project, result: BuildResult, since_ts: str) -> None:
+    """Fill ``result.failures`` from reports/failures.jsonl for the AI path.
+
+    Reads back everything recorded at or after this build's start — including the
+    provider-level records dropped deep in the generation stack (base/comfyui/
+    local_cmd), which the build phases never see directly — and hands the AI a
+    compact newest-first list of ids + one-liners. Best-effort (§3)."""
+    try:
+        from ..core.failures import read_failures
+
+        result.failures = [
+            {"id": r.get("id"), "level": r.get("level"), "step": r.get("step"),
+             "subject": r.get("subject"), "cause": r.get("cause")}
+            for r in read_failures(project, n=500)
+            if (r.get("ts") or "") >= since_ts
+        ]
+    except Exception:
+        pass
 
 
 def _run_build_phases(
@@ -285,6 +342,10 @@ def _run_build_phases(
     if not report.ok:
         result.ok = False
         result.errors = [f"check failed: {e}" for e in report.errors]
+        _record(project, "check", "project", "check 未通过,构建被拦下(§5 安全网)",
+                evidence="\n".join(str(e) for e in report.errors[:8]),
+                hint="逐条修复上面的 check 错误后重跑 manju build", actor=actor,
+                detail={"errors": list(report.errors)})
         return result
     result.warnings.extend(report.warnings)
 
@@ -386,11 +447,37 @@ def _run_build_phases(
                 # lineage are shared by whichever provider the fallback picks.
                 refs=resolve_refs(project, shot, bible, params=params),
             )
+            chain = fallback_chain(shot)
             try:
-                takes = generate_with_fallback(req, fallback_chain(shot))
+                takes = generate_with_fallback(req, chain)
             except (ProviderFailure, NeedsHumanInput) as exc:
                 result.warnings.append(f"{shot.id}: generation failed — {exc}")
+                # Every provider (incl. the caption_card terminal) failed: this
+                # shot has NO usable take. The per-provider attempts were already
+                # recorded (base/comfyui/local_cmd); this records the shot-level
+                # outcome so the AI/human sees "S00x produced nothing" directly.
+                attempts = getattr(exc, "detail", {}).get("attempts") if isinstance(
+                    getattr(exc, "detail", None), dict) else None
+                ev = "\n".join(f"[{a['provider']}] {a['error']}" for a in attempts) \
+                    if attempts else " ".join(str(exc).split())
+                _record(project, "generate", shot.id,
+                        "所有供应商都失败,该镜头没有可用镜头",
+                        evidence=ev,
+                        hint="看每个供应商的失败原因(manju failures);"
+                             "或改 generation.provider / 用 caption_card 兜底",
+                        actor=actor)
                 continue
+            # Degradation (goal 10): the take came from a FALLBACK, not the shot's
+            # first choice — record it in the SAME shape at level=info so
+            # "为什么这个镜头变成了字幕卡?" is answerable from the record alone.
+            effective = takes[0].sidecar.provider if takes else None
+            first_choice = shot.generation.provider or (chain[0] if chain else None)
+            if effective and first_choice and effective != first_choice:
+                _record(project, "generate", shot.id,
+                        f"降级:首选 {first_choice} 未产出,改用 {effective}",
+                        hint="同镜头的 generate 失败记录说明了首选为何失败(manju failures)",
+                        level="info", actor=actor,
+                        detail={"first_choice": first_choice, "effective": effective})
             result.generated.extend(f"{shot.id}/{t.name}" for t in takes)
             # reliability (goal item 7): a declared ref dropped by the chosen
             # provider (image_mode: none) or delivered as zero (tier mismatch)
@@ -430,6 +517,11 @@ def _run_build_phases(
                 media = tts.synthesize(project, shot, bible)
             except (_PF, Exception) as exc:
                 result.warnings.append(f"{shot.id}: voice synthesis failed — {exc}")
+                _record(project, "voice", shot.id,
+                        f"配音合成失败({item['provider']})",
+                        evidence=" ".join(str(exc).split())[:800],
+                        hint="确认 TTS manifest/密钥;或用 manju voice 手动补配音",
+                        actor=actor, detail={"provider": item["provider"]})
                 continue
             result.generated.append(f"{shot.id}/{media.stem}")
             append_event(project.root, actor, "voice",
@@ -480,6 +572,11 @@ def _run_build_phases(
                 append_event(project.root, actor, "package_card", {"asset": rel})
         except Exception as exc:
             result.warnings.append(f"packaging card render skipped: {exc}")
+            _record(project, "package", "packaging_card",
+                    "片头/片尾卡渲染被跳过(降级)",
+                    evidence=" ".join(str(exc).split())[:600],
+                    hint="QC 会提示缺失资产;检查 packaging.yaml 与卡片模板",
+                    level="info", actor=actor)
 
     _phase("compile")
     # ---- 3. compile timeline (pure function, §6)
@@ -490,6 +587,10 @@ def _run_build_phases(
     except CompileError as exc:
         result.ok = False
         result.errors.append(str(exc))
+        _record(project, "compile", "timeline", "时间线编译失败",
+                evidence=" ".join(str(exc).split())[:800],
+                hint="按报错定位镜头/时长/字幕规则(§6);见 timeline/rules.yaml",
+                actor=actor)
         return result
     result.timeline_path = project.relpath(tl_path)
     if not overwrote:
@@ -507,6 +608,12 @@ def _run_build_phases(
                 "(建议:修复该 JSON,或把 rules.yaml 的 mode 改回 compiled;"
                 "对照 timeline.generated.json 排查)"
             )
+            _record(project, "compile", "timeline",
+                    "手工 timeline.json 无法解析",
+                    evidence=" ".join(str(exc).split())[:600],
+                    hint="修复该 JSON,或把 rules.yaml mode 改回 compiled;"
+                         "对照 timeline.generated.json",
+                    log_path="timeline/timeline.json", actor=actor)
             return result
 
     # ---- 4. captions
@@ -539,6 +646,13 @@ def _run_build_phases(
                 f"render: {' '.join(str(exc).split())} "
                 "(建议:查看 .manju/logs/render.log 复现单条 ffmpeg 命令)"
             )
+            # The MediaError already carries the ffmpeg stderr tail + the exact
+            # command as its message; record it verbatim as evidence, pointing at
+            # the fuller render log (goal 10).
+            _record(project, "render", target, f"{target} 渲染失败(ffmpeg)",
+                    evidence=str(exc)[-1200:],
+                    hint="查看 .manju/logs/render.log 复现单条 ffmpeg 命令;核对滤镜/输入",
+                    log_path=".manju/logs/render.log", actor=actor)
             return result
         result.render_path = project.relpath(out)
         if target == "final" and out in finals_before:
@@ -557,6 +671,17 @@ def _run_build_phases(
         qc = run_qc(project, timeline)
         result.qc_ok = qc.ok
         result.qc_reports = {k: project.relpath(v) for k, v in write_reports(project, qc).items()}
+        # QC gate (goal 10): a non-passing QC does not abort the build (§9), but
+        # the reason should be one click away. Record it in the same shape, level
+        # info, pointing at the qc report the human/AI reads next.
+        if qc.ok is False:
+            issues = [i for i in getattr(qc, "items", []) if getattr(i, "level", None) == "error"]
+            _record(project, "qc", "final",
+                    f"QC 未通过:{len(issues)} 处错误",
+                    evidence="\n".join(str(getattr(i, "message", i)) for i in issues[:8]),
+                    hint="见 reports/qc.md 逐条处理;必要时 manju repair",
+                    log_path=result.qc_reports.get("md") or "reports/qc.md",
+                    level="info", actor=actor)
 
     # ---- 7. draft exports
     if target in ("final", "exports"):
@@ -580,6 +705,11 @@ def _run_build_phases(
                 )
             except Exception as exc:
                 result.warnings.append(f"jianying native draft skipped: {exc}")
+                _record(project, "export", "jianying_native",
+                        "剪映原生草稿导出被跳过(降级到骨架草稿)",
+                        evidence=" ".join(str(exc).split())[:600],
+                        hint="安装 pyJianYingDraft 可启用原生草稿;final.mp4/SRT 仍是兜底出口(§14)",
+                        level="info", actor=actor)
         if "capcut" in profiles:
             try:
                 from ..exporters.native_draft import export_capcut_native
@@ -589,6 +719,11 @@ def _run_build_phases(
                 )
             except Exception as exc:
                 result.warnings.append(f"capcut draft skipped: {exc}")
+                _record(project, "export", "capcut",
+                        "CapCut 原生草稿导出被跳过(降级)",
+                        evidence=" ".join(str(exc).split())[:600],
+                        hint="安装 pycapcut 可启用;final.mp4/SRT 仍是兜底出口(§14)",
+                        level="info", actor=actor)
 
     append_event(project.root, actor, "build",
                  {"target": target, "ok": result.ok, "render": result.render_path})

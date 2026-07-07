@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS runs (
     remote_job_id TEXT,
     take          TEXT,
     error         TEXT,
-    estimated_cost REAL
+    estimated_cost REAL,
+    failure_id    TEXT
 );
 CREATE TABLE IF NOT EXISTS jobs (
     remote_job_id TEXT PRIMARY KEY,
@@ -115,11 +116,12 @@ class RuntimeState:
         # on a fresh/already-upgraded DB the column is present and sqlite raises
         # "duplicate column name", which we swallow. The ledger is §3-disposable,
         # so a failed upgrade degrades (no estimates) but never raises.
-        try:
-            with self._conn:
-                self._conn.execute("ALTER TABLE runs ADD COLUMN estimated_cost REAL")
-        except sqlite3.Error:
-            pass
+        for column, coltype in (("estimated_cost", "REAL"), ("failure_id", "TEXT")):
+            try:
+                with self._conn:
+                    self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {coltype}")
+            except sqlite3.Error:
+                pass
 
     def _ts(self) -> str:
         return self._now().isoformat()
@@ -150,18 +152,24 @@ class RuntimeState:
         take: str | None = None,
         error: str | None = None,
         estimated_cost: float | None = None,
+        failure_id: str | None = None,
     ) -> int:
         """Append one ledger row (§8.3); return its autoincrement id.
 
         ``estimated_cost`` is the pre-flight *事前* figure for this call, stored
         so ``manju spend`` can show estimate-vs-actual. It stays ``None`` (honest)
-        when no estimate was available — never coerced to 0."""
+        when no estimate was available — never coerced to 0.
+
+        ``failure_id`` cross-references the structured record in
+        ``reports/failures.jsonl`` (goal 10) so the ledger's one-line ``error``
+        (what ``manju tasks`` shows) and the full failure evidence never drift —
+        the reason surfaced in the JOB view matches the failure record exactly."""
         with self._conn:
             cur = self._conn.execute(
                 "INSERT INTO runs "
                 "(ts, shot, provider, params, status, failure_kind, cost, "
-                " currency, remote_job_id, take, error, estimated_cost) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " currency, remote_job_id, take, error, estimated_cost, failure_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     self._ts(),
                     shot,
@@ -175,6 +183,7 @@ class RuntimeState:
                     take,
                     error,
                     None if estimated_cost is None else float(estimated_cost),
+                    failure_id,
                 ),
             )
         return int(cur.lastrowid)

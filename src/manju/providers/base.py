@@ -66,6 +66,72 @@ class NeedsHumanInput(RuntimeError):
     """The manual provider is waiting for a human to supply media (§6, §8.4)."""
 
 
+# Per-kind default hint (goal 10): one actionable line when the provider did not
+# supply a more specific ``detail["hint"]``. content_rejected is first-class and
+# never auto-retried, so its hint points at the action that CAN unblock it.
+_KIND_HINT: dict[str, str] = {
+    "content_rejected": "审核拒绝(§8.1,不自动重试):改写提示词(§8.5)或换供应商后重试",
+    "rate_limited": "触发限流:调低 manifest 的 limits.rate_limit_per_min,或稍后重试",
+    "timeout": "网络/任务超时:检查网络与供应商状态后可重试(此类可安全重试)",
+    "invalid": "输入无效:核对 manifest 字段与 API key(密钥从不入库,§8.2)",
+    "provider_error": "看 evidence 里的 HTTP 状态/响应体,核对 manifest 的 url 与路径映射",
+}
+
+
+def record_provider_failure(project, shot_id: str, provider_id: str,
+                            exc: "ProviderFailure", *, actor: str = "engine") -> str | None:
+    """Record a generation failure as a structured :class:`Failure` (goal 10).
+
+    The single provider-side sink: cloud adapters route every terminal failure
+    here via :meth:`CloudProvider._on_failure`, and the in-process adapters
+    (ComfyUI / local_cmd) call it from their own ``generate`` error path — so a
+    submit/poll/download failure or a 审核拒绝 all land in ``reports/failures.jsonl``
+    in the SAME shape, keyed to the shot. Evidence is the HTTP status + body head
+    / job or node id / the reason the poll surface returned; the hint names the
+    manifest field or the "is ComfyUI running?" check when the caller supplied one
+    in ``detail``. Best-effort — recording never blocks or masks generation.
+
+    Returns the record id (so a ledger row can cross-reference it), or ``None``.
+    """
+    try:
+        from ..core.failures import Failure, record_failure
+
+        detail = dict(exc.detail or {})
+        kind = getattr(exc, "kind", None)
+        kind_val = kind.value if kind is not None else "provider_error"
+        status = detail.get("status")
+        job_id = detail.get("job_id") or detail.get("prompt_id")
+        node_id = detail.get("node_id")
+        body = detail.get("body") or detail.get("reason")
+
+        head_parts: list[str] = []
+        if status is not None:
+            head_parts.append(f"HTTP {status}")
+        if job_id:
+            head_parts.append(f"job {job_id}")
+        if node_id is not None:
+            head_parts.append(f"node {node_id}")
+        head = "  ".join(head_parts)
+        body_head = str(body)[:800] if body else ""
+        evidence = "\n".join(p for p in (head, body_head) if p).strip() or exc.message
+
+        rec = record_failure(
+            project,
+            Failure(
+                step="generate",
+                subject=shot_id,
+                cause=f"{kind_val}: {' '.join(str(exc.message).split())}"[:400],
+                evidence=evidence,
+                hint=detail.get("hint") or _KIND_HINT.get(kind_val, ""),
+                actor=actor,
+                detail={"provider": provider_id, "failure_kind": kind_val},
+            ),
+        )
+        return rec.get("id")
+    except Exception:
+        return None
+
+
 @dataclass
 class GenerationRequest:
     """Everything a provider needs to produce takes for one shot.
@@ -370,6 +436,11 @@ class CloudProvider(Provider):
 
     def _on_failure(self, state, req: GenerationRequest, job_id: str | None,
                     exc: ProviderFailure) -> None:
+        # Structured failure record FIRST (goal 10) — this is disk truth under
+        # reports/ and is independent of the disposable ledger below, so it lands
+        # even when state is None. It returns the record id so the ledger row can
+        # point back at the full evidence (`manju tasks` reason ↔ failures.jsonl).
+        failure_id = record_provider_failure(req.project, req.shot.id, self.id, exc)
         if state is None:
             return
         try:
@@ -383,6 +454,7 @@ class CloudProvider(Provider):
                 failure_kind=exc.kind.value,
                 remote_job_id=job_id,
                 error=exc.message,
+                failure_id=failure_id,
             )
         except (OSError, sqlite3.Error):
             pass

@@ -69,7 +69,13 @@ from urllib.parse import urlencode
 from ..core.container import TakeInfo
 from ..core.hashing import hash_text
 from ..core.models import RemoteJobInfo
-from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
+from .base import (
+    FailureKind,
+    GenerationRequest,
+    Provider,
+    ProviderFailure,
+    record_provider_failure,
+)
 from .generic_cloud import Transport, default_transport, render_body
 from .manifest import COMFYUI_ADAPTER, ProviderManifest
 from .refs import encode_multipart, unreadable_ref_message
@@ -111,6 +117,17 @@ class ComfyUIProvider(Provider):
     # ------------------------------------------------------------- Provider
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        # Record every terminal ComfyUI failure in the SAME shape as cloud ones
+        # (goal 10) — a plain Provider does not pass through CloudProvider, so it
+        # owns its recording. The MediaError/ProviderFailure and its message are
+        # unchanged; we only ADD the structured record before re-raising.
+        try:
+            return self._generate(req)
+        except ProviderFailure as exc:
+            record_provider_failure(req.project, req.shot.id, self.id, exc)
+            raise
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
         workflow_text, wf_rel = self._load_workflow(req)
         workflow = self._parse_workflow(workflow_text, wf_rel)
         values = self._values(req)
@@ -171,6 +188,7 @@ class ComfyUIProvider(Provider):
                 FailureKind.invalid,
                 f"{self.id}: workflow file not found: {rel} "
                 "(export it from ComfyUI with 'Save (API Format)')",
+                detail={"hint": f"从 ComfyUI 'Save (API Format)' 导出 workflow 到 {rel}"},
             )
         return path.read_text(encoding="utf-8"), rel
 
@@ -318,14 +336,16 @@ class ComfyUIProvider(Provider):
                 FailureKind.provider_error,
                 f"{self.id}: cannot reach ComfyUI at {self._base} — is ComfyUI "
                 f"running? ({exc})",
-                detail={"base_url": self._base, "url": url},
+                detail={"base_url": self._base, "url": url,
+                        "hint": f"启动 ComfyUI 并确认 comfyui.base_url={self._base} 可达"},
             ) from exc
         except OSError as exc:  # a raw connection error from a custom transport
             raise ProviderFailure(
                 FailureKind.provider_error,
                 f"{self.id}: cannot reach ComfyUI at {self._base} — is ComfyUI "
                 f"running? ({exc})",
-                detail={"base_url": self._base, "url": url},
+                detail={"base_url": self._base, "url": url,
+                        "hint": f"启动 ComfyUI 并确认 comfyui.base_url={self._base} 可达"},
             ) from exc
 
     def _submit(self, workflow: dict) -> str:

@@ -21,9 +21,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 FFMPEG = "ffmpeg"
 _STDERR_TAIL = 15
+_ARGV_HEAD = 12  # how many argv tokens to keep as evidence (the -i/-vf head)
 
 
 class MediaError(RuntimeError):
@@ -34,13 +36,29 @@ def _quote(cmd: list[str]) -> str:
     return " ".join(shlex.quote(c) for c in cmd)
 
 
-def run_ffmpeg(args: list[str], *, log: Callable[[str], None] | None = None) -> None:
+def run_ffmpeg(
+    args: list[str],
+    *,
+    log: Callable[[str], None] | None = None,
+    project: Any = None,
+    subject: str | None = None,
+    step: str = "render",
+    log_name: str = "render",
+) -> None:
     """Run ``ffmpeg -y -hide_banner -loglevel error <args>``.
 
     ``args`` may contain Path objects; every element is coerced with ``str()``
     so callers never have to remember to stringify paths themselves. On a
     nonzero exit a :class:`MediaError` is raised carrying the last ~15 lines of
     stderr plus the reproducible command line.
+
+    Debuggability (goal 10): when ``project`` (a Project or a bare root path) is
+    supplied, a failure is ALSO recorded as a structured :class:`Failure` before
+    the SAME :class:`MediaError` is raised — evidence is the ffmpeg stderr tail
+    plus the argv head (the ``-i/-vf`` shape that usually explains the exit), and
+    ``log_path`` points at the fuller ``default_log`` file. Recording is
+    best-effort and never changes the exception type or its one-line message
+    (existing callers and their tests are untouched).
     """
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", *[str(a) for a in args]]
     if log is not None:
@@ -48,9 +66,39 @@ def run_ffmpeg(args: list[str], *, log: Callable[[str], None] | None = None) -> 
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-_STDERR_TAIL:])
+        if project is not None:
+            _record_ffmpeg_failure(project, cmd, proc.returncode, tail,
+                                   subject=subject, step=step, log_name=log_name)
         raise MediaError(
             f"ffmpeg failed (exit {proc.returncode}):\n{tail}\n--- command ---\n{_quote(cmd)}"
         )
+
+
+def _record_ffmpeg_failure(project: Any, cmd: list[str], returncode: int, tail: str,
+                           *, subject: str | None, step: str, log_name: str) -> None:
+    """Turn a nonzero ffmpeg exit into a structured Failure. Best-effort: a
+    recording hiccup must never mask the real MediaError the caller expects."""
+    try:
+        from ..core.failures import Failure, record_failure
+
+        argv_head = _quote(cmd[:_ARGV_HEAD])
+        if len(cmd) > _ARGV_HEAD:
+            argv_head += " …"
+        evidence = f"$ {argv_head}\n{tail}" if tail else f"$ {argv_head}"
+        record_failure(
+            project,
+            Failure(
+                step=step,
+                subject=subject or "final",
+                cause=f"ffmpeg exited {returncode}",
+                evidence=evidence,
+                hint=f"复现单条命令见 .manju/logs/{log_name}.log;核对滤镜/输入路径",
+                log_path=f".manju/logs/{log_name}.log",
+                detail={"returncode": returncode},
+            ),
+        )
+    except Exception:
+        pass
 
 
 @contextmanager

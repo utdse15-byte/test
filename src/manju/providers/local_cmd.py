@@ -52,7 +52,13 @@ from typing import Callable
 
 from ..core.container import TakeInfo
 from ..core.models import RemoteJobInfo
-from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
+from .base import (
+    FailureKind,
+    GenerationRequest,
+    Provider,
+    ProviderFailure,
+    record_provider_failure,
+)
 from .manifest import ProviderManifest
 
 
@@ -93,6 +99,17 @@ class LocalCommandProvider(Provider):
     # ------------------------------------------------------------- Provider
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        # A plain Provider records its own terminal failures (goal 10): a missing
+        # binary, a nonzero exit, or a silent no-output run all land in
+        # reports/failures.jsonl in the SAME shape, keyed to the shot — the
+        # exception type and one-line message are untouched.
+        try:
+            return self._generate(req)
+        except ProviderFailure as exc:
+            record_provider_failure(req.project, req.shot.id, self.id, exc)
+            raise
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
         values = self._values(req)
         with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
             out = Path(tmp) / f"out{self._ext}"
@@ -122,7 +139,8 @@ class LocalCommandProvider(Provider):
                 raise ProviderFailure(
                     FailureKind.invalid,
                     f"{self.id}: cannot run {argv[0]!r}: {exc}",
-                    detail={"argv": argv},
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
                 ) from exc
             elapsed = round(self._clock() - t0, 3)
 
@@ -130,7 +148,9 @@ class LocalCommandProvider(Provider):
                 raise ProviderFailure(
                     FailureKind.provider_error,
                     f"{self.id}: command exited {proc.returncode}: {_tail(proc.stderr)}",
-                    detail={"argv": argv, "exit_code": proc.returncode},
+                    detail={"argv": argv, "exit_code": proc.returncode,
+                            "reason": _tail(proc.stderr),
+                            "hint": "复现该命令并看 stderr;必要时在 local_cmd.command 调参"},
                 )
             if not out.exists() or out.stat().st_size == 0:
                 raise ProviderFailure(

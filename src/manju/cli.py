@@ -48,6 +48,19 @@ def _fail(message: str) -> None:
     raise typer.Exit(1)
 
 
+def _record_failure(project, step: str, subject: str, cause: str, *,
+                    evidence: str = "", hint: str = "", log_path: Optional[str] = None) -> None:
+    """Record a CLI-path failure (goal 10). Best-effort: never blocks the exit."""
+    try:
+        from .core.failures import Failure, record_failure
+
+        record_failure(project, Failure(step=step, subject=subject, cause=cause,
+                                        evidence=evidence, hint=hint, log_path=log_path,
+                                        actor=ACTOR))
+    except Exception:
+        pass
+
+
 def _interactive() -> bool:
     """Single choke point for the interactive-terminal-only gate (§5):
     unlock and gc --hard refuse to run without a human at a tty."""
@@ -153,8 +166,14 @@ def presets(as_json: bool = typer.Option(False, "--json")):
 def status(as_json: bool = typer.Option(False, "--json")):
     """Takeover entry point: phase, gaps, spend, next step (§10)."""
     from .build.status import project_status
+    from .core.failures import failures_since_last_build
 
-    info = project_status(_project())
+    project = _project()
+    info = project_status(project)
+    # goal 10: surface failures since the last GREEN build at the takeover entry
+    # point — one number here, the reasons one command away (`manju failures`).
+    recent_failures = failures_since_last_build(project)
+    info["failures_since_build"] = len(recent_failures)
     if as_json:
         _emit(info, True)
         return
@@ -173,6 +192,9 @@ def status(as_json: bool = typer.Option(False, "--json")):
                + (f" / 预算 {info['budget_limit']}" if info["budget_limit"] else ""))
     if info.get("qc_focus"):
         typer.secho("质检重点  " + " · ".join(info["qc_focus"]), fg=typer.colors.MAGENTA)
+    if recent_failures:
+        typer.secho(f"最近失败  {len(recent_failures)} — manju failures 看原因",
+                    fg=typer.colors.RED)
     typer.secho(f"下一步  {info['next_step']}", fg=typer.colors.CYAN)
 
 
@@ -327,6 +349,13 @@ def build(
             typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
         for e in result.errors:
             typer.secho(f"✗ {e}", fg=typer.colors.RED)
+        # goal 10: a compact pointer to the structured failure records this build
+        # produced (errors that stopped a step, not the degradations) — the full
+        # reason/evidence/hint is one command away.
+        _build_errs = [f for f in result.failures if f.get("level") == "error"]
+        if _build_errs:
+            typer.secho(f"失败 {len(_build_errs)} — manju failures 看原因/证据/建议",
+                        fg=typer.colors.RED)
         if result.stale:
             typer.secho(
                 f"⚠ stale(spec 已变,默认不重做,§4.3): {', '.join(result.stale)} — "
@@ -818,6 +847,9 @@ def export(
         try:
             outputs["capcut"] = export_capcut_native(project, timeline)
         except ExporterUnavailable as exc:
+            _record_failure(project, "export", "capcut", "CapCut 原生草稿导出不可用",
+                            evidence=" ".join(str(exc).split())[:400],
+                            hint="安装 pycapcut;或用 --otio/--srt 兜底出口(§14)")
             _fail(str(exc))
     rel_outputs = {k: project.relpath(v) for k, v in outputs.items()}
     append_event(project.root, ACTOR, "export", rel_outputs)
@@ -856,8 +888,15 @@ def package(
     try:
         result = make_package(project, force=force)
     except (PackagingError, MediaError) as exc:  # one-line envelope (FIX-D)
+        _record_failure(project, "package", "final", "封面/预告切片失败",
+                        evidence=" ".join(str(exc).split())[:800],
+                        hint="确认已有 final(manju build);检查 packaging.yaml 与素材",
+                        log_path=".manju/logs/render.log")
         _fail(str(exc))
     except ValidationError as exc:  # a malformed packaging.yaml, same envelope
+        _record_failure(project, "package", "packaging.yaml", "packaging.yaml 无法解析",
+                        evidence=str(exc.errors()[0].get("msg", exc))[:400],
+                        hint="修正 packaging.yaml 的字段(见 manju new 生成的注释模板)")
         _fail(f"packaging.yaml is invalid: {exc.errors()[0].get('msg', exc)}")
     append_event(project.root, ACTOR, "package",
                  {k: result[k] for k in ("cover", "teaser", "skipped")})
@@ -1338,6 +1377,9 @@ def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to s
                 "take": r.get("take"),
                 "remote_job_id": r.get("remote_job_id"),
                 "reason": _reason_tail(r.get("error")),
+                # goal 10: link the ledger row to its full failure record — the
+                # one-line reason here matches reports/failures.jsonl exactly.
+                "failure_id": r.get("failure_id"),
             })
         for j in pending:
             pending_out.append({
@@ -1442,6 +1484,50 @@ def spend(as_json: bool = typer.Option(False, "--json")):
                        f"{r['provider'] or '—':<14}  {r['status']:<10}  "
                        f"{float(r['cost'] or 0.0):g} {rc}{est}")
     typer.secho("（任务/队列视图见 manju tasks）", fg=typer.colors.BRIGHT_BLACK)
+
+
+# --------------------------------------------------------------- failures
+
+
+@app.command()
+def failures(n: int = typer.Option(10, "-n", help="how many recent failures to show"),
+             as_json: bool = typer.Option(False, "--json")):
+    """Recent failures, newest first — make EVERY failure debuggable (goal 10).
+
+    Rendered rustc-style: each record names the STEP and SUBJECT, the one-line
+    CAUSE, a short verbatim EVIDENCE slice (ffmpeg stderr + argv head / HTTP
+    status + body head / the reason a poll returned), one actionable HINT, and
+    where the fuller LOG lives. Degradations (a fallback fired, QC gated, a card
+    skipped) show in the same shape marked ℹ — so "为什么这个镜头变成了字幕卡?"
+    is answerable here. Reads the append-only reports/failures.jsonl; the JOB
+    view with cost is `manju tasks`, the money lens is `manju spend`."""
+    project = _project()
+    from .core.failures import read_failures
+
+    recs = read_failures(project, n)
+    if as_json:
+        _emit({"failures": recs, "shown": len(recs)}, True)
+        return
+    if not recs:
+        typer.echo("暂无失败记录 — reports/failures.jsonl 为空(一切顺利,或还没构建过)")
+        return
+    typer.secho(f"失败 / failures  (最近 {len(recs)},新→旧)", fg=typer.colors.CYAN)
+    for r in recs:
+        is_err = r.get("level") != "info"
+        sym = "✗" if is_err else "ℹ"
+        head_color = typer.colors.RED if is_err else typer.colors.YELLOW
+        typer.secho(f"{sym} {r.get('step', '?')} · {r.get('subject', '?')}",
+                    fg=head_color, bold=True, nl=False)
+        typer.secho(f"   {r.get('ts', '')}  #{r.get('id', '')}",
+                    fg=typer.colors.BRIGHT_BLACK)
+        typer.echo(f"   {r.get('cause', '')}")
+        evidence = r.get("evidence") or ""
+        for line in evidence.splitlines():
+            typer.secho(f"     │ {line}", fg=typer.colors.BRIGHT_BLACK)
+        if r.get("hint"):
+            typer.secho(f"   help: {r['hint']}", fg=typer.colors.CYAN)
+        if r.get("log_path"):
+            typer.secho(f"   log:  {r['log_path']}", fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------- misc
