@@ -112,11 +112,17 @@ class CompileInput:
 
     def fingerprint(self) -> str:
         """Hash of everything that shaped this compile -> meta.compiled_from."""
+        # Round U: fold transition_overrides into the fingerprint ONLY when the
+        # map is non-empty — an untouched project keeps today's hash (the same
+        # non-default-only stance as source_audio / source_window below).
+        rules_dump = self.rules.model_dump()
+        if not rules_dump.get("transition_overrides"):
+            rules_dump.pop("transition_overrides", None)
         payload: dict[str, Any] = {
             "fps": self.config.fps,
             "width": self.config.width,
             "height": self.config.height,
-            "rules": self.rules.model_dump(),
+            "rules": rules_dump,
             "shots": [
                 {
                     "id": s.shot.id,
@@ -350,8 +356,19 @@ def compile_timeline(inp: CompileInput) -> Timeline:
     outro_on = packaging is not None and packaging.outro.enabled
     n_segments = (1 if intro_on else 0) + len(inp.shots) + (1 if outro_on else 0)
 
-    def _transition(seg_idx: int) -> TransitionSpec | None:
-        return None if seg_idx == n_segments - 1 else rules.transition_default
+    # Round U: per-boundary overrides (rules.transition_overrides) — keyed by
+    # the OUT-edge segment's id. The compiler places the override verbatim on
+    # the clip (the render already treats "cut"/None as no fade + no xfade and
+    # unknown types as dip-to-black), so behaviour stays a pure function of the
+    # compiled timeline. The true last segment never carries a transition_out.
+    overrides = rules.transition_overrides
+
+    def _transition(seg_idx: int, seg_id: str) -> TransitionSpec | None:
+        if seg_idx == n_segments - 1:
+            return None
+        if seg_id in overrides:
+            return overrides[seg_id]  # explicit null = hard cut
+        return rules.transition_default
 
     seg_i = 0
     intro_ms = 0  # content starts here; absolute overlays shift past the intro
@@ -368,7 +385,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 ),
                 start_ms=cursor,
                 duration_ms=dur,
-                transition_out=_transition(seg_i),
+                transition_out=_transition(seg_i, "__intro__"),
             )
         )
         cursor += dur
@@ -383,7 +400,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 source=s.take_source,
                 start_ms=cursor,
                 duration_ms=duration_ms,
-                transition_out=_transition(seg_i),
+                transition_out=_transition(seg_i, s.shot.id),
                 # Round-T: the footage's own-audio level/mute travels onto the
                 # clip so the render is purely a function of the compiled
                 # timeline (defaults 0dB/unmuted = today's behaviour).
@@ -465,7 +482,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 ),
                 start_ms=cursor,
                 duration_ms=dur,
-                transition_out=_transition(seg_i),  # last segment → None
+                transition_out=_transition(seg_i, "__outro__"),  # last segment → None
             )
         )
         cursor += dur

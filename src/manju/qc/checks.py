@@ -256,6 +256,7 @@ def run_qc(
     _existence_shots(project, report, statuses, probe, selected)
     _staleness_info(report, statuses)
     _voice_info(project, report)
+    _transition_override_advisories(project, report)
     if timeline is not None:
         _existence_timeline(project, report, timeline, probe)
         _existence_audio_policy(project, report, timeline)
@@ -479,6 +480,38 @@ def _audio_advisories(project, report, timeline: Timeline) -> None:
 
 
 # --------------------------------------------------------- packaging layer
+
+
+def _transition_override_advisories(project, report) -> None:
+    """Round U: sanity for ``rules.transition_overrides`` — an unknown out-edge
+    key or a never-curated type is an advisory, never a crash (the same stance
+    as TRANSITION_TYPES: human/agent-edited truth; the compiler keeps unknown
+    keys inert and the render degrades unknown types to dip-to-black)."""
+    try:
+        rules = project.load_rules()
+    except Exception:
+        return  # unreadable rules are `manju check`'s finding, not QC's
+    overrides = getattr(rules, "transition_overrides", None) or {}
+    if not overrides:
+        return
+    from ..core.models import TRANSITION_TYPES
+
+    known = set(project.shot_ids()) | {"__intro__", "__outro__"}
+    for key, spec in overrides.items():
+        if key not in known:
+            report.add(
+                "warn", "technical", key,
+                f"transition_overrides 中的 “{key}” 不是任何镜头 id(也不是 __intro__/__outro__),"
+                "该转场覆盖不会生效",
+                suggestion="检查 timeline/rules.yaml 里 transition_overrides 的键名是否和镜头 id 一致",
+            )
+        elif spec is not None and spec.type not in TRANSITION_TYPES:
+            report.add(
+                "warn", "technical", key,
+                f"transition_overrides[{key}] 使用了未收录的转场类型 “{spec.type}”,"
+                "渲染时将按黑场过渡(dip-to-black)处理",
+                suggestion=f"可用类型:{', '.join(TRANSITION_TYPES)}",
+            )
 
 
 def _packaging_checks(project, report, timeline) -> None:

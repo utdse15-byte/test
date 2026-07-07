@@ -91,7 +91,10 @@ def test_fingerprint_window_default_byte_stable_and_windowed_recompiles():
             "fps": config.fps,
             "width": config.width,
             "height": config.height,
-            "rules": rules.model_dump(),
+            # round U: transition_overrides folds in only when non-empty, so the
+            # legacy payload strips the default (same stance as the window itself)
+            "rules": {k: v for k, v in rules.model_dump().items()
+                      if k != "transition_overrides"},
             "shots": [
                 {
                     "id": s.shot.id,

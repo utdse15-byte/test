@@ -26,10 +26,11 @@ Design stance mirrors :mod:`manju.gui.pages`:
     disposable ``.manju/frames`` cache); the page GET never shells out to
     ffmpeg, so it serves 200 with or without ffmpeg installed.
 
-Per-boundary transition OVERRIDES are not a data path in the compiler today
-(transitions come uniformly from ``rules.transition_default``); the page is
-honest about that — it offers a GLOBAL default picker and shows each boundary's
-last-build applied/degraded state, and says "全局默认;逐切换点覆盖待后续".
+Per-boundary transition OVERRIDES became a real data path in round U
+(``rules.transition_overrides``, keyed by the OUT-edge segment id; compiler
+places them verbatim). This page still ships only the GLOBAL default picker —
+the per-boundary picker UI lands with the round-U GUI wave — so the strip note
+reads "全局默认;逐切换点可在 rules.yaml 的 transition_overrides 覆盖".
 """
 
 from __future__ import annotations
@@ -497,7 +498,8 @@ def _transitions_panel(td_type: str, td_dur: int) -> str:
         f'min="0" max="5000" step="50" value="{int(td_dur)}"></label>'
         '<button class="btn" id="ed-trans-apply">保存默认</button>'
         "</div>"
-        '<p class="muted ed-hint">全局默认;逐切换点覆盖待后续。'
+        '<p class="muted ed-hint">全局默认;逐切换点可在 timeline/rules.yaml 的 '
+        'transition_overrides 里按镜头 id 覆盖(null 或 cut 表示硬切)。'
         '每个切换点的标记显示上次构建的应用/降级状态(悬停看降级原因)。</p>'
         "</section>")
 

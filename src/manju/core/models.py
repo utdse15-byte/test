@@ -425,6 +425,13 @@ class TimelineRules(ManjuModel):
     mode: Literal["compiled", "manual"] = "compiled"
     timing: TimingRules = Field(default_factory=TimingRules)
     transition_default: TransitionSpec | None = Field(default_factory=TransitionSpec)
+    # Round U: per-boundary overrides. Key = the id of the segment whose
+    # OUT-edge the boundary is (a shot id, or "__intro__"/"__outro__" for the
+    # packaging cards); value replaces transition_default on that one boundary.
+    # An explicit null (or ``type: cut``) means a hard cut. The empty default
+    # is byte-identical to before; unknown keys are inert at compile time and
+    # surfaced by QC as advisories, never a crash (same stance as TRANSITION_TYPES).
+    transition_overrides: dict[str, TransitionSpec | None] = Field(default_factory=dict)
     music: MusicRules = Field(default_factory=MusicRules)
     audio: AudioMixRules = Field(default_factory=AudioMixRules)
     captions: CaptionRules = Field(default_factory=CaptionRules)
