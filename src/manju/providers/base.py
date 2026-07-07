@@ -70,6 +70,12 @@ class GenerationRequest:
     ``spec_hash`` is the shot's staleness anchor (§4.3); generated takes carry
     it in their sidecar so ``manju build`` can tell fresh from stale. Manual
     imports override it with :data:`manju.core.hashing.MANUAL_HASH`.
+
+    ``estimated_cost`` is the pre-flight *事前* price (§8.3) the planner computed
+    for this shot (already ×candidates). A cloud provider threads it onto its
+    ledger row in ``_on_success`` so ``manju spend`` can show estimate-vs-actual
+    for cloud money too, not only local runs. ``None`` when no estimate was
+    available — honest, never coerced to 0.
     """
 
     project: Project
@@ -79,6 +85,7 @@ class GenerationRequest:
     duration_ms: int
     candidates: int = 1
     params: dict = field(default_factory=dict)
+    estimated_cost: float | None = None
 
 
 def probe_media(path: Path) -> ProbeInfo | None:
@@ -301,6 +308,13 @@ class CloudProvider(Provider):
         params = dict(takes[0].sidecar.params) if takes else dict(req.params)
         try:
             state.close_job(job_id, "succeeded")
+            # Attribute-once: a cloud generate() self-records exactly ONE run row
+            # per call — every produced take is folded into this single row
+            # (take=",".join(...)), unlike _record_local_runs which writes one row
+            # PER take. So the per-shot pre-flight estimate (already ×candidates)
+            # is attributed here exactly once; a multi-candidate cloud run cannot
+            # inflate estimated_total. estimated_cost stays None when the request
+            # carried no estimate (honest; spend just shows no delta for this row).
             state.record_run(
                 shot=req.shot.id,
                 provider=self.id,
@@ -310,6 +324,7 @@ class CloudProvider(Provider):
                 currency=currency,
                 remote_job_id=job_id,
                 take=",".join(t.name for t in takes) or None,
+                estimated_cost=req.estimated_cost,
             )
         except (OSError, sqlite3.Error):
             pass

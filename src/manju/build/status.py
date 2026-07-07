@@ -59,7 +59,7 @@ def project_status(project: Project) -> dict[str, Any]:
         with RuntimeState(project.root) as state:
             total, cur = state.total_cost()
             run_log_info = {
-                "runs": len(state.run_log(100000)),  # no COUNT API; count the log
+                "runs": state.count_runs(),  # COUNT(*), not len() over fetched rows
                 "total_cost": float(total),
                 "currency": cur,
                 # in-flight cloud jobs: the resume-polling queue (§8.1) — the
@@ -78,6 +78,13 @@ def project_status(project: Project) -> dict[str, Any]:
 
     timeline = project.load_timeline()
     final = _latest_final(project)
+
+    # FIX-A writes the .key.json sidecar only at render completion, so a latest
+    # final lacking one is likely crash-truncated — say so instead of presenting
+    # it as the project's finished 成片 (assessment 2.10-8, §10 takeover honesty).
+    latest_final_note = None
+    if final is not None and not final.with_suffix(".key.json").exists():
+        latest_final_note = "final may be incomplete (no content-key sidecar; crashed render?)"
 
     qc_summary = None
     qc_path = project.reports_dir / "qc.json"
@@ -132,6 +139,7 @@ def project_status(project: Project) -> dict[str, Any]:
             "mode": timeline.meta.mode if timeline else None,
         },
         "latest_final": project.relpath(final) if final else None,
+        "latest_final_note": latest_final_note,
         "qc": qc_summary,
         "total_cost": total_cost,
         "currency": currency,

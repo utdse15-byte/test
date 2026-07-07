@@ -254,15 +254,22 @@ def build(
     dry_run: bool = typer.Option(False, "--dry-run"),
     force: bool = typer.Option(False, "--force",
                                help="re-render even if the final content key matches (FIX-A)"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """One-command build: fill gaps → timeline → render → QC → exports (§11)."""
+    """One-command build: fill gaps → timeline → render → QC → exports (§11).
+
+    A plan that spends real money stops as waiting_user unless --yes (the §8.3
+    ask_before gate); `--dry-run` shows the plan and estimate without spending.
+    See `manju spend` for where the money actually went."""
     from .build.graph import run_build
 
     if target not in ("proxy", "final", "exports", "qc"):
         _fail(f"unknown target: {target}")
     result = run_build(_project(), target=target, gen=gen,
-                       regen_stale=regen_stale, dry_run=dry_run, force=force, actor=ACTOR)
+                       regen_stale=regen_stale, dry_run=dry_run, force=force,
+                       actor=ACTOR, assume_yes=yes)
     if as_json:
         _emit(result.to_dict(), True)
     else:
@@ -308,13 +315,21 @@ def redo(
     candidates: Optional[int] = typer.Option(None),
     provider: Optional[str] = typer.Option(None),
     seed: Optional[int] = typer.Option(None),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """Force new takes for one shot (append-only; existing selection stands)."""
-    from .build.graph import redo_shot
+    """Force new takes for one shot (append-only; existing selection stands).
 
-    takes = redo_shot(_project(), shot_id, candidates=candidates,
-                      provider=provider, seed=seed, actor=ACTOR)
+    A priced redo stops as waiting_user unless --yes (the same §8.3 ask_before
+    gate as build)."""
+    from .build.graph import WaitingUser, redo_shot
+
+    try:
+        takes = redo_shot(_project(), shot_id, candidates=candidates,
+                          provider=provider, seed=seed, actor=ACTOR, assume_yes=yes)
+    except WaitingUser as exc:
+        _fail(str(exc))
     if as_json:
         _emit({"shot": shot_id, "takes": takes}, True)
     else:
@@ -629,7 +644,9 @@ def repair(
         if auto and issue.get("auto_safe") and issue.get("shot") and \
                 issue.get("action") in ("redo_new_seed", "degrade_fallback"):
             try:
-                redo_shot(project, issue["shot"], actor=ACTOR)
+                # --auto is an explicit human action over a pre-approved plan:
+                # the redo proceeds through the §8.3 gate without re-prompting.
+                redo_shot(project, issue["shot"], actor=ACTOR, assume_yes=True)
                 done += 1
             except Exception as exc:  # a failed repair goes back on the human pile
                 typer.secho(f"⚠ {issue['shot']}: repair failed — {exc}", fg=typer.colors.YELLOW)
@@ -797,11 +814,17 @@ def explain(as_json: bool = typer.Option(False, "--json")):
 def voice(
     shot_id: str,
     provider: Optional[str] = typer.Option(None, help="tts manifest id (default: first configured)"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Synthesize a NEW voice take for one shot (M3, append-only — the newest
     take wins on the next build). Use this to redo a stale voice (§4.3:
-    builds flag stale voices but never redo them on their own)."""
+    builds flag stale voices but never redo them on their own).
+
+    A priced TTS synthesis stops as waiting_user unless --yes — the same §8.3
+    ask_before gate build and redo enforce (R7 spend-gate hole closure)."""
+    from .build.graph import WaitingUser, spend_gate
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
@@ -810,8 +833,13 @@ def voice(
         _fail(f"{shot_id} has no dialogue.text to voice")
     try:
         tts = get_tts_provider(provider)
+        manifest = getattr(tts, "manifest", None)
+        cost = getattr(manifest, "cost", None) if manifest is not None else None
+        if cost is not None:
+            spend_gate(project, cost.per_call, cost.currency, assume_yes=yes,
+                       hint=f"确认后重试:manju voice {shot_id} --yes")
         media = tts.synthesize(project, shot, project.load_bible())
-    except TtsUnavailable as exc:
+    except (TtsUnavailable, WaitingUser) as exc:
         _fail(str(exc))
     append_event(project.root, ACTOR, "voice",
                  {"shot": shot_id, "take": media.stem, "provider": tts.id})
@@ -1062,12 +1090,16 @@ def _reason_tail(text: str | None, limit: int = 90) -> str:
 @app.command()
 def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to show"),
           as_json: bool = typer.Option(False, "--json")):
-    """Recent generation jobs from the run ledger (§8.3, goal 19).
+    """Recent generation jobs from the run ledger — the JOB/QUEUE view (§8.3, goal 19).
 
     Read-only view of the disposable SQLite ledger: recent runs with provider,
     shot, status (succeeded/failed/moderation-rejected), cost and error tail,
     plus still-in-flight cloud jobs (submitted/polling). Footer aggregates spend
-    by provider and the project total (the same numbers `manju status` shows)."""
+    by provider and the project total (the same numbers `manju status` shows).
+
+    For the MONEY view — per-shot/per-provider breakdowns and estimate-vs-actual
+    delta — use `manju spend`; it reads the same ledger through the same query
+    helpers, so the two never disagree on the numbers."""
     project = _project()
     from .runtime.state import RuntimeState
 
@@ -1158,6 +1190,56 @@ def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to s
         typer.echo(f"  {row['provider'] or '—':<14}  {row['cost']:g} {cur}  ({row['runs']} runs)")
     total_cur = currency or "(混合/mixed)"
     typer.secho(f"  合计 / total  {float(total):g} {total_cur}", fg=typer.colors.CYAN)
+
+
+# ------------------------------------------------------------------ spend
+
+
+@app.command()
+def spend(as_json: bool = typer.Option(False, "--json")):
+    """Accumulated spend — the MONEY view (§8.3 事后逐笔记账, made visible).
+
+    Where the money went: per-provider and per-shot breakdowns, the recent runs,
+    and (once dry-run estimates are persisted) estimate-vs-actual delta. Reads the
+    same disposable run ledger `manju tasks` does, through the same query helpers
+    (runtime/state.py cost_by_provider/cost_by_shot); degrades to the on-disk take
+    sidecars when the ledger is gone (§3). `tasks` is the JOB/QUEUE view; this is
+    the money lens over the same truth."""
+    from .build.spend import spend_report
+
+    report = spend_report(_project())
+    if as_json:
+        _emit(report, True)
+        return
+
+    cur = report["currency"] or "(混合/mixed)"
+    typer.secho(f"花费 / spend  (来源/source: {report['source']})", fg=typer.colors.CYAN)
+    typer.secho(f"  合计 / total  {report['total']:g} {cur}", fg=typer.colors.CYAN)
+    if report["estimated_total"] is not None:
+        delta = report["delta"] or 0.0
+        sign = "+" if delta >= 0 else ""
+        typer.echo(f"  预估 / estimated  {report['estimated_total']:g}"
+                   f"   δ(实际−预估) {sign}{delta:g}")
+    if report["budget_limit"] is not None:
+        typer.echo(f"  预算 / budget.limit  {report['budget_limit']:g}")
+
+    if report["by_provider"]:
+        typer.secho("按供应商 / by provider:", fg=typer.colors.BRIGHT_BLACK)
+        for row in report["by_provider"]:
+            typer.echo(f"  {row['provider'] or '—':<14}  {row['cost']:g}  ({row['runs']} runs)")
+    if report["by_shot"]:
+        typer.secho("按镜头 / by shot:", fg=typer.colors.BRIGHT_BLACK)
+        for row in report["by_shot"]:
+            typer.echo(f"  {row['shot'] or '—':<8}  {row['cost']:g}  ({row['runs']} runs)")
+    if report["recent"]:
+        typer.secho("最近 / recent:", fg=typer.colors.BRIGHT_BLACK)
+        for r in report["recent"]:
+            est = f"  (est {r['estimated_cost']:g})" if r["estimated_cost"] is not None else ""
+            rc = r["currency"] or ""
+            typer.echo(f"  {r['ts'] or '':<20}  {r['shot'] or '—':<6}  "
+                       f"{r['provider'] or '—':<14}  {r['status']:<10}  "
+                       f"{float(r['cost'] or 0.0):g} {rc}{est}")
+    typer.secho("（任务/队列视图见 manju tasks）", fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------- misc

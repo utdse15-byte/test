@@ -225,7 +225,10 @@ def test_build_synthesizes_missing_voices_and_prices_them(
         )
 
     monkeypatch.setattr("manju.providers.tts.get_tts_provider", fake_get)
-    result = run_build(tmp_project, target="qc")
+    # the priced voice plan now hits the §8.3 ask_before engine gate first
+    gated = run_build(tmp_project, target="qc")
+    assert gated.waiting_user and not gated.ok
+    result = run_build(tmp_project, target="qc", assume_yes=True)
     assert result.ok, result.errors
     assert any("voice_take_01" in g for g in result.generated)
 

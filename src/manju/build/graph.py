@@ -25,7 +25,38 @@ class BuildError(RuntimeError):
     pass
 
 
-def _record_local_runs(project: Project, takes: list, params: dict) -> None:
+class WaitingUser(RuntimeError):
+    """§8.3 ask_before gate for commands WITHOUT a result envelope
+    (redo/voice): raised instead of spending; carries the estimate so the
+    caller can relay it to the human."""
+
+    def __init__(self, message: str, estimated_cost: float, currency: str | None):
+        super().__init__(message)
+        self.estimated_cost = estimated_cost
+        self.currency = currency
+
+
+def spend_gate(project: Project, estimated_cost: float, currency: str | None,
+               *, assume_yes: bool, hint: str) -> None:
+    """Raise :class:`WaitingUser` when a paid plan lacks an explicit yes (§8.3).
+
+    The engine-side backstop for the envelope-less commands (redo/voice): the
+    design made the agent's discipline the first gate (SKILL.md §5); this makes
+    the engine default to STOP. Zero-cost plans, ``assume_yes``, and projects
+    that removed ``expensive_generation`` from ask_before all pass silently."""
+    if estimated_cost <= 0 or assume_yes:
+        return
+    if "expensive_generation" not in project.load_config().ask_before:
+        return
+    raise WaitingUser(
+        f"waiting_user: 预估花费 {estimated_cost} {currency or ''} "
+        f"命中 ask_before=expensive_generation — {hint}",
+        estimated_cost, currency,
+    )
+
+
+def _record_local_runs(project: Project, takes: list, params: dict,
+                       estimates: dict[str, float] | None = None) -> None:
     """Record generated takes in the run ledger (§8.3).
 
     The cost/run split: cloud providers self-record at poll time
@@ -33,12 +64,21 @@ def _record_local_runs(project: Project, takes: list, params: dict) -> None:
     counting we record here ONLY for LOCAL providers; a provider we cannot
     classify is skipped. All of this is best-effort — the ledger is disposable
     (§3), so bookkeeping must never fail a build.
+
+    ``estimates`` maps ``shot_id -> planned estimated_cost`` (the *事前* dry-run
+    figure); each take's own estimate is looked up by its shot and persisted so
+    ``manju spend`` can show estimate-vs-actual. A shot absent from the map
+    records a ``None`` estimate (honest — no figure available).
     """
+    estimates = estimates or {}
     try:
         from ..providers.registry import available_providers
         from ..runtime.state import RuntimeState
 
         providers = available_providers()
+        # the plan estimate is PER SHOT (already ×candidates): attribute it to
+        # exactly ONE row per shot or a multi-take run inflates estimated_total.
+        remaining = dict(estimates)
         with RuntimeState(project.root) as state:
             for take in takes:
                 provider = providers.get(take.sidecar.provider)
@@ -53,6 +93,7 @@ def _record_local_runs(project: Project, takes: list, params: dict) -> None:
                     cost=remote.cost if remote and remote.cost else 0.0,
                     currency=remote.currency if remote else None,
                     params=params,
+                    estimated_cost=remaining.pop(take.shot_id, None),
                 )
     except (OSError, sqlite3.Error, Exception):  # disposable state, never fatal
         pass
@@ -74,6 +115,8 @@ class BuildResult:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     estimated_cost: float = 0.0
+    saved_cost: float = 0.0  # cache savings: what regenerating FRESH shots would cost
+    waiting_user: bool = False  # §8.3 ask_before gate: needs an explicit yes
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
@@ -178,9 +221,21 @@ def run_build(
     dry_run: bool = False,
     force: bool = False,  # FIX-A: re-render even when the content key matches
     actor: str = "engine",
+    assume_yes: bool = False,  # explicit approval for ask_before-gated spend (§8.3)
+    on_phase=None,  # Callable[[str], None] — coarse progress ("check"/"render"…)
 ) -> BuildResult:
     result = BuildResult()
 
+    def _phase(name: str) -> None:
+        """Coarse progress for watchers. Advisory: a broken callback must
+        never break a build."""
+        if on_phase is not None:
+            try:
+                on_phase(name)
+            except Exception:
+                pass
+
+    _phase("check")
     # ---- 0. check: the hard gate (locks included, §5)
     report = run_check(project)
     if not report.ok:
@@ -199,6 +254,24 @@ def run_build(
         )
         return result
 
+    # ---- 0b. cache hits: FRESH/MANUAL shots skip generation entirely;
+    # saved_cost prices what regenerating the FRESH ones would have spent (§8.3
+    # manifests). Manual imports were never paid work, so they count 0. Advisory
+    # only — pricing must never fail a build.
+    result.skipped = [s.shot_id for s in statuses
+                      if s.state in (ShotState.FRESH, ShotState.MANUAL)]
+    try:
+        rules = project.load_rules()
+        for st in statuses:
+            if st.state != ShotState.FRESH:
+                continue
+            shot = project.load_shot(st.shot_id)
+            cost, _currency = _estimate_shot_cost(
+                shot, _target_duration_ms(project, shot, rules))
+            result.saved_cost += cost
+    except Exception:  # savings are advisory; the skipped list still stands
+        pass
+
     # ---- 1. generation plan (video takes + voice takes, both priced §8.3)
     result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale)
     result.plan += _plan_voice(project, gen=gen)
@@ -209,7 +282,8 @@ def run_build(
     if budget is not None and result.estimated_cost > budget:
         result.ok = False
         result.errors.append(
-            f"estimated cost {result.estimated_cost} exceeds budget {budget} — waiting_user (§8.3)"
+            f"estimated cost {result.estimated_cost} exceeds budget {budget} — "
+            "预算熔断 budget breaker (§8.3): raise project.yaml budget.limit or shrink the plan"
         )
         return result
 
@@ -217,9 +291,30 @@ def run_build(
         result.timeline_path = str(project.timeline_path)
         return result
 
+    # ---- 1b. ask_before gate (§8.3 第一道闸门,现在由引擎兜底,不再只靠 agent
+    # 纪律): a plan that spends real money stops for an explicit yes — uniformly
+    # for every actor. The human's yes is `--yes` / a GUI confirm; an agent's
+    # yes must come from relaying the estimate to the human first (SKILL.md §5
+    # unchanged — the engine now defaults to STOP). Dry-run above is never gated.
+    if (result.estimated_cost > 0 and not assume_yes
+            and "expensive_generation" in config.ask_before):
+        result.ok = False
+        result.waiting_user = True
+        result.errors.append(
+            f"waiting_user: 预估花费 {result.estimated_cost} "
+            f"{next((p.get('currency') for p in result.plan if p.get('currency')), '')} "
+            "命中 ask_before=expensive_generation — 确认后重试:CLI `manju build --yes`,"
+            "MCP/GUI 带 assume_yes(先 dry-run 看计划,§8.3)"
+        )
+        return result
+
+    _phase("generate")
     # ---- 2. generate (fill gaps only; stale/manual are respected, §4.3)
     video_plan = [p for p in result.plan if p.get("kind") != "voice"]
     voice_plan = [p for p in result.plan if p.get("kind") == "voice"]
+    # shot_id -> pre-flight estimate, persisted with each recorded run so
+    # `spend` can show estimate-vs-actual (§8.3 事前 vs 事后).
+    estimates = {p["shot"]: p["estimated_cost"] for p in video_plan}
     if video_plan:
         from ..providers.base import GenerationRequest, NeedsHumanInput, ProviderFailure
         from ..providers.registry import fallback_chain, generate_with_fallback
@@ -236,6 +331,11 @@ def run_build(
                 duration_ms=item["duration_ms"],
                 candidates=item["candidates"],
                 params=dict(shot.generation.params),
+                # §8.3 事前: thread the plan's per-shot estimate onto the request
+                # so a CLOUD provider records it on its own ledger row (local
+                # runs get it via _record_local_runs below). Same figure the
+                # `estimates` map holds — one source, both provider kinds.
+                estimated_cost=item["estimated_cost"],
             )
             try:
                 takes = generate_with_fallback(req, fallback_chain(shot))
@@ -258,13 +358,14 @@ def run_build(
                     break
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
-            _record_local_runs(project, takes, {"reason": item["reason"]})
+            _record_local_runs(project, takes, {"reason": item["reason"]}, estimates)
 
     # ---- 2v. voice synthesis (M3): fill MISSING voices via the configured
     # TTS manifest; stale voices are flagged, never redone (§4.3). Synthesis
     # happens BEFORE the timeline compile so fresh voices drive durations (§6)
     # within the same build.
     if voice_plan:
+        _phase("voice")
         from ..providers.base import ProviderFailure as _PF
         from ..providers.tts import get_tts_provider
 
@@ -327,6 +428,7 @@ def run_build(
         except Exception as exc:
             result.warnings.append(f"packaging card render skipped: {exc}")
 
+    _phase("compile")
     # ---- 3. compile timeline (pure function, §6)
     from ..media.probe import probe_duration_ms
 
@@ -358,6 +460,7 @@ def run_build(
     rules = project.load_rules()
     ass_path = None
     if rules.captions.enabled and timeline.tracks.captions:
+        _phase("captions")
         from ..exporters.srt_ass import export_captions
 
         paths = export_captions(project, timeline)
@@ -366,6 +469,7 @@ def run_build(
 
     # ---- 5. render
     if target in ("proxy", "final"):
+        _phase(f"render:{target}")
         from ..media.render import render_timeline
 
         finals_before = set(project.final_dir.glob("final_v*.mp4"))
@@ -393,6 +497,7 @@ def run_build(
 
     # ---- 6. QC (§9)
     if target in ("proxy", "final", "qc"):
+        _phase("qc")
         from ..qc.checks import run_qc
         from ..qc.report import write_reports
 
@@ -402,6 +507,7 @@ def run_build(
 
     # ---- 7. draft exports
     if target in ("final", "exports"):
+        _phase("exports")
         profiles = set(config.export_profiles)
         if "otio" in profiles:
             from ..exporters.otio import export_otio
@@ -438,9 +544,13 @@ def run_build(
 
 def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
               provider: str | None = None, seed: int | None = None,
-              actor: str = "engine") -> list[str]:
+              actor: str = "engine", assume_yes: bool = False) -> list[str]:
     """`manju redo S002` — force new takes (append-only), regardless of
-    staleness. Selection is only touched when the shot had none."""
+    staleness. Selection is only touched when the shot had none.
+
+    A priced redo raises :class:`WaitingUser` unless ``assume_yes`` — the same
+    §8.3 ask_before gate as ``build`` (the R7 spend-gate hole closure: a priced
+    redo used to spend without ever hitting the gate that ``build`` enforces)."""
     from ..providers.base import GenerationRequest
     from ..providers.registry import fallback_chain, generate_with_fallback
 
@@ -454,6 +564,12 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
         params["seed"] = seed
     if provider:
         shot.generation.provider = provider
+    if candidates:
+        shot.generation.candidates = int(candidates)  # in-memory, for pricing
+    # §8.3 事前: price this redo and gate it just like build before any spend.
+    cost, currency = _estimate_shot_cost(shot, _target_duration_ms(project, shot, rules))
+    spend_gate(project, cost, currency, assume_yes=assume_yes,
+               hint=f"确认后重试:manju redo {shot_id} --yes(或 MCP/GUI 带 assume_yes)")
     req = GenerationRequest(
         project=project,
         shot=shot,
@@ -462,6 +578,9 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
         duration_ms=_target_duration_ms(project, shot, rules),
         candidates=candidates or shot.generation.candidates,
         params=params,
+        # reuse the estimate computed above for the gate (don't recompute) so a
+        # CLOUD redo records it on its ledger row too.
+        estimated_cost=cost,
     )
     takes = generate_with_fallback(req, fallback_chain(shot))
     if not shot.status.selected_take and takes:
@@ -469,6 +588,6 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
         project.update_shot_raw(
             shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
         )
-    _record_local_runs(project, takes, {"redo": True})
+    _record_local_runs(project, takes, {"redo": True}, {shot_id: cost})
     append_event(project.root, actor, "redo", {"shot": shot_id, "takes": [t.name for t in takes]})
     return [t.name for t in takes]

@@ -4,8 +4,10 @@ Two tables, both disposable:
 
 - ``runs`` — the per-call cost ledger and run log (§8.3). One row per generation
   attempt (succeeded or failed), carrying cost/currency, failure kind, the
-  ``remote_job_id`` and the take(s) produced. ``manju status`` reads it to show
-  the project's accumulated spend.
+  ``remote_job_id`` and the take(s) produced. It also persists the pre-flight
+  ``estimated_cost`` (the *事前* dry-run figure), so ``manju spend`` can show
+  estimate-vs-actual — the delta that calibrates trust in the ask_before gate.
+  ``manju status`` reads it to show the project's accumulated spend.
 - ``jobs`` — submitted-but-not-yet-finished remote jobs (§8.1). The
   ``remote_job_id`` is written the instant ``submit`` returns, so a process that
   is killed / loses network / reboots resumes *polling* the same job instead of
@@ -52,7 +54,8 @@ CREATE TABLE IF NOT EXISTS runs (
     currency      TEXT,
     remote_job_id TEXT,
     take          TEXT,
-    error         TEXT
+    error         TEXT,
+    estimated_cost REAL
 );
 CREATE TABLE IF NOT EXISTS jobs (
     remote_job_id TEXT PRIMARY KEY,
@@ -107,6 +110,16 @@ class RuntimeState:
     def _create_schema(self) -> None:
         with self._conn:  # idempotent: CREATE TABLE IF NOT EXISTS
             self._conn.executescript(_SCHEMA)
+        # Forward-upgrade a ledger created before ``estimated_cost`` existed
+        # (rows written by round-Q code have the old column list). Idempotent:
+        # on a fresh/already-upgraded DB the column is present and sqlite raises
+        # "duplicate column name", which we swallow. The ledger is §3-disposable,
+        # so a failed upgrade degrades (no estimates) but never raises.
+        try:
+            with self._conn:
+                self._conn.execute("ALTER TABLE runs ADD COLUMN estimated_cost REAL")
+        except sqlite3.Error:
+            pass
 
     def _ts(self) -> str:
         return self._now().isoformat()
@@ -136,14 +149,19 @@ class RuntimeState:
         remote_job_id: str | None = None,
         take: str | None = None,
         error: str | None = None,
+        estimated_cost: float | None = None,
     ) -> int:
-        """Append one ledger row (§8.3); return its autoincrement id."""
+        """Append one ledger row (§8.3); return its autoincrement id.
+
+        ``estimated_cost`` is the pre-flight *事前* figure for this call, stored
+        so ``manju spend`` can show estimate-vs-actual. It stays ``None`` (honest)
+        when no estimate was available — never coerced to 0."""
         with self._conn:
             cur = self._conn.execute(
                 "INSERT INTO runs "
                 "(ts, shot, provider, params, status, failure_kind, cost, "
-                " currency, remote_job_id, take, error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " currency, remote_job_id, take, error, estimated_cost) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     self._ts(),
                     shot,
@@ -156,6 +174,7 @@ class RuntimeState:
                     remote_job_id,
                     take,
                     error,
+                    None if estimated_cost is None else float(estimated_cost),
                 ),
             )
         return int(cur.lastrowid)
@@ -166,6 +185,13 @@ class RuntimeState:
             "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (int(n),)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def count_runs(self) -> int:
+        """Total ledger rows via SELECT COUNT(*) — `status` (§8.3, §10) and
+        `spend` need the number of runs, not the rows themselves (avoids
+        fetching up to 100k rows just to len() them)."""
+        row = self._conn.execute("SELECT COUNT(*) AS c FROM runs").fetchone()
+        return int(row["c"])
 
     def total_cost(self) -> tuple[float, str | None]:
         """``(sum of runs.cost, currency)``. Currency is the single currency in
@@ -202,6 +228,23 @@ class RuntimeState:
                 "runs": int(r["runs"]),
                 "currency": r["currency"] if r["ccount"] == 1 else None,
             }
+            for r in rows
+        ]
+
+    def cost_by_shot(self) -> list[dict]:
+        """Per-shot spend, highest first — the money view's by-shot breakdown
+        (`manju spend`), the sibling of :meth:`cost_by_provider` (their costs
+        both sum to ``total_cost()[0]``). Each row is ``{shot, cost, runs}``.
+        One SQL GROUP BY so `spend` shares this query layer with `tasks` rather
+        than re-aggregating the run log in Python (§8.3)."""
+        rows = self._conn.execute(
+            "SELECT shot, "
+            "       COALESCE(SUM(cost), 0.0) AS cost, "
+            "       COUNT(*) AS runs "
+            "FROM runs GROUP BY shot ORDER BY cost DESC, shot"
+        ).fetchall()
+        return [
+            {"shot": r["shot"], "cost": float(r["cost"] or 0.0), "runs": int(r["runs"])}
             for r in rows
         ]
 
@@ -285,8 +328,10 @@ class RuntimeState:
                     self._conn.execute(
                         "INSERT INTO runs "
                         "(ts, shot, provider, params, status, failure_kind, cost, "
-                        " currency, remote_job_id, take, error) "
-                        "VALUES (?, ?, ?, ?, 'succeeded', NULL, ?, ?, ?, ?, NULL)",
+                        " currency, remote_job_id, take, error, estimated_cost) "
+                        # estimated_cost is NULL: sidecars carry the ACTUAL cost
+                        # only, never the pre-flight estimate — honest (§3).
+                        "VALUES (?, ?, ?, ?, 'succeeded', NULL, ?, ?, ?, ?, NULL, NULL)",
                         (
                             sidecar.created_at or self._ts(),
                             shot_id,
