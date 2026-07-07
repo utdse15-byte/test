@@ -97,6 +97,61 @@ def _empty_spend(project: Project) -> dict[str, Any]:
             "by_provider": [], "by_shot": [], "recent": [], "source": "empty"}
 
 
+def _deep_merge_packaging(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """One-level merge of a packaging section patch onto the current spec dump.
+    Nested section dicts (intro/cover/logo/…) merge key-by-key; lists
+    (info_cards) and scalars replace wholesale — the §14 packaging shape is flat
+    per section, so no deeper recursion is needed."""
+    out = dict(base)
+    for k, v in (patch or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            merged = dict(out[k])
+            merged.update(v)
+            out[k] = merged
+        else:
+            out[k] = v
+    return out
+
+
+def _packaging_warnings(project: Project, spec: Any) -> list[str]:
+    """Advisory-only packaging warnings the /packaging page surfaces on save —
+    the cover/teaser windows against the newest final's real length, and the
+    intro-card overlap advisories media/packaging.make_package would raise.
+    Degrades to no warnings when there is no final or ffmpeg to probe it."""
+    warnings: list[str] = []
+    final_ms: int | None = None
+    try:
+        final = project.newest_final_path()
+        if final is not None and final.exists():
+            from ..media.probe import probe_duration_ms
+
+            final_ms = probe_duration_ms(final)
+    except Exception:
+        final_ms = None
+    if final_ms:
+        if spec.teaser.enabled:
+            if spec.teaser.from_ms >= final_ms:
+                warnings.append(
+                    f"teaser.from_ms ({spec.teaser.from_ms}ms) 已到/超过 final 末尾 "
+                    f"({final_ms}ms) — 导出会失败")
+            elif spec.teaser.from_ms + spec.teaser.duration_ms > final_ms:
+                warnings.append(
+                    f"teaser 窗口超出 final ({final_ms}ms),导出时会被裁剪")
+        if spec.cover.mode == "frame" and spec.cover.frame_ms >= final_ms:
+            warnings.append(
+                f"cover.frame_ms ({spec.cover.frame_ms}ms) 已到/超过 final 末尾 "
+                f"({final_ms}ms)")
+    if spec.intro.enabled:
+        intro_ms = spec.intro.duration_ms
+        if spec.cover.mode == "frame" and spec.cover.frame_ms < intro_ms:
+            warnings.append(
+                f"cover.frame_ms 落在片头卡内 (0–{intro_ms}ms),封面会显示片头,非正片")
+        if spec.teaser.enabled and spec.teaser.from_ms < intro_ms:
+            warnings.append(
+                f"teaser.from_ms 落在片头卡内 (0–{intro_ms}ms)")
+    return warnings
+
+
 class GuiServer(ThreadingHTTPServer):
     """ThreadingHTTPServer carrying the project, token and job runner."""
 
@@ -416,6 +471,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-T 剪辑 EDIT page + its frame previews — see _edit_get
             elif self._pages_get(path, url):
                 pass  # round-S server-rendered pages (S8b) — see _pages_get
+            elif self._pages_t_get(path, url):
+                pass  # round-T finishing pages (subtitles/mixer/packaging)
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -481,6 +538,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._edit_post(path, body):  # round-T 剪辑 EDIT actions
                     return
                 if self._pages_post(path, body):  # round-S page actions (S8b)
+                    return
+                if self._pages_t_post(path, body):  # round-T finishing actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -2067,6 +2126,61 @@ class _Handler(BaseHTTPRequestHandler):
         handler(body)
         return True
 
+    # ============================================================ round-T
+    # 字幕 subtitles / 混音 mixer / 打包 packaging-v2: the finishing pages that
+    # let a normal video's captions, sound and packaging be completed without
+    # opening JianYing. GET dispatch + their read endpoints (frame/strip/card
+    # preview) here; the mutating actions below. Same token/readonly/host gates
+    # as every other surface (checked in do_GET/do_POST before we run).
+
+    def _pages_t_get(self, path: str, url: Any) -> bool:
+        from . import pages_t
+
+        if path == "/pages-t.css":
+            self._send_text(pages_t.render_pages_t_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/pages-t.js":
+            self._send_text(pages_t.render_pages_t_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path in pages_t.PAGE_PATHS_T:
+            html_doc = pages_t.render(path, self.server.project, self.server.token,
+                                      parse_qs(url.query))
+            self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
+            return True
+        if path == "/frame":
+            self._t_frame(parse_qs(url.query))
+            return True
+        if path == "/api/strip":
+            self._t_strip(parse_qs(url.query))
+            return True
+        if path == "/api/card-preview":
+            self._t_card_preview(parse_qs(url.query))
+            return True
+        if path == "/api/subtitles":
+            from .captions_edit import read_current_cues
+
+            self._send_json(read_current_cues(self.server.project))
+            return True
+        if path == "/api/mixer":
+            from ..build.mixer import read_mixer
+
+            self._send_json(read_mixer(self.server.project))
+            return True
+        return False
+
+    def _pages_t_post(self, path: str, body: dict[str, Any]) -> bool:
+        handler = {
+            "/api/subtitles/save": self._t_subtitles_save,
+            "/api/subtitles/revert": self._t_subtitles_revert,
+            "/api/mixer/apply": self._t_mixer_apply,
+            "/api/packaging/apply": self._t_packaging_apply,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
     def _act_edit_trim(self, body: dict[str, Any]) -> None:
         """Trim a take's in/out — the `manju repair --op inout` engine op run as
         a job (append-only: a NEW take is minted, the source is never touched and
@@ -2262,3 +2376,332 @@ class _Handler(BaseHTTPRequestHandler):
                               "look": {"preset": look.preset, "intensity": look.intensity},
                               "via": "gui"})
         self._send_json(payload, status)
+
+    # ---------------------------------------------------- frame / strip / card
+
+    def _t_frame(self, query: dict[str, list[str]]) -> None:
+        """One cached frame — either a strip file by basename (``?file=``) or a
+        fresh single-frame grab of a served media at a timestamp
+        (``?src=&ms=``). Backs the safe-area preview and the cover fine-tune."""
+        from ..media.frames import extract_frame, frames_cache_dir
+
+        project = self.server.project
+        fname = query.get("file", [None])[0]
+        if fname:
+            if "/" in fname or "\\" in fname or ".." in fname or not fname.endswith(".jpg"):
+                self._send_error_json("bad frame file", 400)
+                return
+            target = frames_cache_dir(project.root) / fname
+            if not target.is_file():
+                self._send_error_json("not found", 404)
+                return
+            self._serve_file(target)
+            return
+        src = query.get("src", [None])[0]
+        if not src:
+            self._send_error_json("src or file is required", 400)
+            return
+        abspath = self._resolve_served(src.lstrip("/"))
+        if abspath is None:
+            self._send_error_json("frame source not served", 403)
+            return
+        if not abspath.is_file():
+            self._send_error_json("not found", 404)
+            return
+        try:
+            at_ms = max(0, int(query.get("ms", ["0"])[0]))
+        except ValueError:
+            at_ms = 0
+        try:
+            width = int(query.get("w", ["0"])[0]) or None
+        except ValueError:
+            width = None
+        from ..media.ffmpeg import MediaError
+
+        try:
+            dest = extract_frame(project, project.relpath(abspath), at_ms, width=width)
+        except MediaError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 500)
+            return
+        self._serve_file(dest)
+
+    def _t_strip(self, query: dict[str, list[str]]) -> None:
+        """A scrub strip of the served media in ONE ffmpeg pass (frames.frame_strip,
+        strip-preferred). Returns each thumbnail's approximate timestamp + a
+        ``/frame?file=`` url so clicks map back to a frame_ms."""
+        from urllib.parse import quote
+
+        from ..media.frames import frame_strip
+        from ..media.probe import probe_duration_ms
+
+        project = self.server.project
+        src = query.get("src", [None])[0]
+        abspath = self._resolve_served(src.lstrip("/")) if src else None
+        if abspath is None or not abspath.is_file():
+            self._send_error_json("strip source not served", 404)
+            return
+        try:
+            count = max(2, min(40, int(query.get("count", ["12"])[0])))
+        except ValueError:
+            count = 12
+        from ..media.ffmpeg import MediaError
+
+        try:
+            paths = frame_strip(project, project.relpath(abspath), count=count)
+        except MediaError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 500)
+            return
+        dur = probe_duration_ms(abspath) or 0
+        frames = [
+            {"ms": int(round(i * dur / count)) if dur else 0,
+             "url": "/frame?file=" + quote(p.name)}
+            for i, p in enumerate(paths)
+        ]
+        self._send_json({"duration_ms": dur, "count": count, "frames": frames})
+
+    def _t_card_preview(self, query: dict[str, list[str]]) -> None:
+        """Live card-preview PNG through the real card chain (cardprev.render_card_preview),
+        cached in .manju/frames. Always 200s: a placeholder SVG when NEITHER
+        renderer (Chromium / ffmpeg) is available."""
+        from .cardprev import render_card_preview
+
+        project = self.server.project
+        text = (query.get("text", [""])[0] or "")[:400]
+        subtext = (query.get("subtext", [""])[0] or "")[:400]
+        template = query.get("template", ["chapter"])[0]
+        if template not in ("chapter", "caption"):
+            template = "chapter"
+        dest, _hit = render_card_preview(project, text=text, subtext=subtext,
+                                         template=template)
+        if dest is None:
+            import html as _html
+
+            label = _html.escape(text or "card")
+            svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="135">'
+                   '<rect width="240" height="135" fill="#14161a"/>'
+                   '<text x="120" y="68" fill="#8b93a3" font-size="12" '
+                   f'text-anchor="middle">{label}</text></svg>')
+            self._send_text(svg, "image/svg+xml")
+            return
+        self._serve_file(dest)
+
+    # --------------------------------------------------------- subtitles write
+
+    def _t_subtitles_save(self, body: dict[str, Any]) -> None:
+        """Save the cue table into captions/captions.srt (§3 human truth).
+
+        First edit in compiled mode requires an explicit confirm (needs_confirm)
+        and then flips rules.captions.mode → manual, snapshotting the compiled
+        captions into captions.generated.srt for comparison. Empty/inverted cues
+        are rejected before any write; overlaps beyond the QC tolerance warn."""
+        from ..core.yamlio import atomic_write_text
+        from .captions_edit import (
+            CaptionEditError,
+            _timeline_cues,
+            cues_to_srt,
+            normalize_cues,
+            validate_cues,
+        )
+
+        project, actor = self.server.project, self.server.actor
+        try:
+            cues = normalize_cues(body.get("cues"))
+        except CaptionEditError as exc:
+            self._send_error_json(str(exc), 400)
+            return
+        errors, warnings = validate_cues(cues)
+        if errors:
+            self._send_json({"ok": False, "errors": errors, "warnings": warnings}, 400)
+            return
+        confirm = bool(body.get("confirm_manual"))
+        with self.server.quick_mutex:
+            rules = project.load_rules()
+            was_manual = rules.captions.mode == "manual"
+            if not was_manual and not confirm:
+                self._send_json({
+                    "ok": False, "needs_confirm": True, "warnings": warnings,
+                    "message": ("接管字幕为 manual:captions.srt 将成为人工truth,编译版本转存 "
+                                "captions.generated.srt 用于对比;重建时 ASS 从人工字幕逐字重烧 "
+                                "(= final 重渲染)。"),
+                })
+                return
+            project.captions_dir.mkdir(parents=True, exist_ok=True)
+            srt_path = project.captions_dir / "captions.srt"
+            gen_path = project.captions_dir / "captions.generated.srt"
+            flipped = False
+            if not was_manual:
+                # snapshot the compiled comparison BEFORE overwriting captions.srt
+                if not gen_path.exists():
+                    if srt_path.exists():
+                        atomic_write_text(gen_path, srt_path.read_text(encoding="utf-8"))
+                    else:
+                        tcues = _timeline_cues(project)
+                        if tcues:
+                            atomic_write_text(gen_path, cues_to_srt(tcues))
+                rules.captions.mode = "manual"
+                project.save_rules(rules)
+                flipped = True
+            atomic_write_text(srt_path, cues_to_srt(cues))
+            append_event(project.root, actor, "captions_edit",
+                         {"cues": len(cues), "mode_flip": flipped, "mode": "manual",
+                          "via": "gui"})
+        self._send_json({
+            "ok": True, "cues": len(cues), "flipped": flipped, "warnings": warnings,
+            "rebuild": "captions.srt 已更新 — 运行 build 后 ASS 逐字重烧 = final 重渲染",
+        })
+
+    def _t_subtitles_revert(self, body: dict[str, Any]) -> None:
+        """还原自动字幕: flip rules.captions.mode back to compiled and restore the
+        compiled captions (from captions.generated.srt, else regenerate from the
+        timeline, else drop captions.srt so the next build regenerates)."""
+        from ..core.yamlio import atomic_write_text
+        from .captions_edit import _timeline_cues, cues_to_srt
+
+        project, actor = self.server.project, self.server.actor
+        with self.server.quick_mutex:
+            rules = project.load_rules()
+            if rules.captions.mode != "manual":
+                self._send_json({"ok": True, "restored": False,
+                                 "message": "已是自动字幕 (already compiled)"})
+                return
+            rules.captions.mode = "compiled"
+            project.save_rules(rules)
+            srt_path = project.captions_dir / "captions.srt"
+            gen_path = project.captions_dir / "captions.generated.srt"
+            restored = False
+            if gen_path.exists():
+                atomic_write_text(srt_path, gen_path.read_text(encoding="utf-8"))
+                restored = True
+            else:
+                tcues = _timeline_cues(project)
+                if tcues:
+                    atomic_write_text(srt_path, cues_to_srt(tcues))
+                    restored = True
+                else:
+                    srt_path.unlink(missing_ok=True)  # next build regenerates
+            append_event(project.root, actor, "captions_revert",
+                         {"restored": restored, "mode": "compiled", "via": "gui"})
+        self._send_json({
+            "ok": True, "restored": restored,
+            "message": "已还原自动字幕 — 运行 build 重新生成并重烧 (final 重渲染)",
+        })
+
+    # ------------------------------------------------------------- mixer write
+
+    def _t_mixer_apply(self, body: dict[str, Any]) -> None:
+        """apply_mixer verbatim: validate-through-models, write via the atomic
+        save paths, ONE mixer event, and return the rebuild verdict
+        (timeline/final/segments_restale)."""
+        from ..build.mixer import MixerError, apply_mixer
+
+        project, actor = self.server.project, self.server.actor
+        changes = body.get("changes")
+        if not isinstance(changes, dict):
+            self._send_error_json("changes object is required", 400)
+            return
+        with self.server.quick_mutex:
+            try:
+                changes = self._resolve_mixer_sources(changes)
+                result = apply_mixer(project, changes, actor=actor)
+            except MixerError as exc:
+                self._send_error_json(
+                    "mixer 校验失败 (invalid): " + " ".join(str(exc).split()), 400)
+                return
+        self._send_json({"ok": True, **result})
+
+    def _resolve_mixer_sources(self, changes: dict[str, Any]) -> dict[str, Any]:
+        """Resolve any ``lib:<hash8>`` source token to a real project path by
+        copying the library asset into imports (reusing the lib-use copy), so a
+        BGM/ambient/sfx source picked from the library becomes a normal human
+        asset before apply_mixer sees it."""
+        changes = dict(changes)
+        for bed in ("music", "ambient"):
+            b = changes.get(bed)
+            if isinstance(b, dict) and "source" in b:
+                b = dict(b)
+                b["source"] = self._resolve_source_token(b["source"])
+                changes[bed] = b
+        if isinstance(changes.get("sfx"), list):
+            new_sfx = []
+            for s in changes["sfx"]:
+                if isinstance(s, dict) and "source" in s:
+                    s = dict(s)
+                    s["source"] = self._resolve_source_token(s["source"])
+                new_sfx.append(s)
+            changes["sfx"] = new_sfx
+        return changes
+
+    def _resolve_source_token(self, token: Any) -> Any:
+        import shutil
+
+        from ..build.mixer import MixerError
+        from ..core.library import Library, LibraryError
+
+        if not isinstance(token, str) or not token.startswith("lib:"):
+            return token
+        hash8 = token[len("lib:"):]
+        lib = Library()
+        try:
+            entry = lib.get(hash8)
+        except LibraryError as exc:
+            raise MixerError(f"library asset {hash8!r} not found") from exc
+        blob = lib.blob_path(entry)
+        if not blob.exists():
+            raise MixerError(f"library blob missing: {entry['blob']}")
+        project, actor = self.server.project, self.server.actor
+        dest_dir = project.imports_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        ext = Path(entry["blob"]).suffix
+        stem = Path(entry["name"]).stem or "asset"
+        dest = dest_dir / f"{stem}{ext}"
+        n = 2
+        while dest.exists():
+            dest = dest_dir / f"{stem}_{n}{ext}"
+            n += 1
+        shutil.copy2(blob, dest)
+        rel = project.relpath(dest)
+        append_event(project.root, actor, "lib_use",
+                     {"hash": entry["hash"], "name": entry["name"],
+                      "as": "imports", "dest": rel, "via": "gui-mixer"})
+        return rel
+
+    # --------------------------------------------------------- packaging write
+
+    def _t_packaging_apply(self, body: dict[str, Any]) -> None:
+        """Structured packaging edit: deep-merge the section patch onto the
+        current spec, model-validate (surfacing the model validators inline),
+        then the same check-gated verbatim write the S8a editor uses. Cover
+        frame_ms + teaser window get final-length advisories."""
+        from pydantic import ValidationError
+
+        from ..core.models import PackagingSpec
+
+        project, actor = self.server.project, self.server.actor
+        patch = body.get("patch")
+        if not isinstance(patch, dict):
+            self._send_error_json("patch object is required", 400)
+            return
+        with self.server.quick_mutex:
+            merged = _deep_merge_packaging(project.load_packaging().model_dump(), patch)
+            try:
+                spec = PackagingSpec.model_validate(merged)
+            except ValidationError as exc:
+                self._send_error_json(
+                    "packaging 校验失败 (invalid): "
+                    + " ".join(str(exc).split())[:500], 400)
+                return
+            import yaml as _yaml
+
+            text = _yaml.safe_dump(spec.model_dump(), allow_unicode=True, sort_keys=False)
+            ok, payload, status = self._gated_save(
+                project.packaging_path, text, label="timeline/packaging.yaml")
+            if not ok:
+                self._send_json(payload, status)
+                return
+            warnings = _packaging_warnings(project, spec)
+            append_event(project.root, actor, "edit_packaging",
+                         {"keys": sorted(patch.keys()), "via": "gui"})
+        self._send_json({
+            "ok": True, "changed": sorted(patch.keys()), "warnings": warnings,
+            "rebuild": "packaging.yaml 已更新 — 卡片/封面在 build/package 时生成",
+        })
