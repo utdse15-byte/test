@@ -297,6 +297,51 @@ def _h_propose(project: Project, args: dict) -> dict:
     return {"path": rel}
 
 
+# ------------------------------------------------- director loop (goal 17)
+# The six-step collaboration contract, driven end-to-end over one audited
+# surface. propose/confirm/execute are DELIBERATELY three separate tools — an
+# agent must relay the impact + cost to the human and get a confirm before any
+# spend (§8.3 approve-before-execute). The paid steps' assume_yes comes ONLY
+# from the confirmed proposal, enforced engine-side at execute time too.
+
+
+def _h_director_propose(project: Project, args: dict) -> dict:
+    from ..build.director import DirectorError, propose
+
+    actions = args.get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise ToolError("actions must be a non-empty array of whitelisted action objects")
+    try:
+        proposal = propose(project, actions, why=str(args.get("why") or ""), actor="ai")
+    except DirectorError as exc:
+        raise ToolError(str(exc)) from exc
+    return proposal.model_dump()
+
+
+def _h_director_confirm(project: Project, args: dict) -> dict:
+    from ..build.director import DirectorError, confirm
+
+    try:
+        return confirm(project, str(args["id"]), actor="ai").model_dump()
+    except DirectorError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def _h_director_execute(project: Project, args: dict) -> dict:
+    from ..build.director import DirectorError, execute
+
+    try:
+        return execute(project, str(args["id"]), actor="ai").to_dict()
+    except DirectorError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def _h_director_suggest(project: Project, args: dict) -> dict:
+    from ..build.director import suggest_next
+
+    return {"suggestions": [s.to_dict() for s in suggest_next(project)]}
+
+
 # --------------------------------------------------------------- registry
 
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -458,6 +503,67 @@ TOOL_DEFS: list[dict[str, Any]] = [
             ["title", "body"],
         ),
         "handler": _h_propose,
+    },
+    {
+        "name": "director_propose",
+        "description": "PROPOSE a plan for the AI-director loop (goal 17, step 1). "
+        "`actions` is an array of whitelisted action objects (each has a `type`: "
+        "build|redo|voice|repair|mixer|captions|packaging|snapshot|rollback), each "
+        "1:1 with an engine entry point. Each is shape-validated and annotated with "
+        "its impact (affected shots/outputs) and est cost (the SAME dry-run "
+        "estimators). Persists reports/proposals/<id>.yaml and returns the full "
+        "proposal. Nothing runs and nothing is spent — relay the cost to the human, "
+        "then confirm. Example action: {\"type\":\"redo\",\"shot\":\"S002\"}.",
+        "inputSchema": _schema(
+            {
+                "actions": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "minItems": 1,
+                    "description": "whitelisted action objects, each with a 'type'",
+                },
+                "why": {"type": "string", "description": "one line: why this plan"},
+            },
+            ["actions"],
+        ),
+        "handler": _h_director_propose,
+    },
+    {
+        "name": "director_confirm",
+        "description": "CONFIRM a proposal (goal 17, step 3) — the explicit, "
+        "separate approve-before-execute gate. NEVER call this without first "
+        "relaying the proposal's impact + est cost to the human and getting their "
+        "yes (§8.3). A proposal whose project changed since it was proposed is "
+        "refused as 待更新/expired. Returns the updated proposal.",
+        "inputSchema": _schema(
+            {"id": {"type": "string", "description": "proposal id, e.g. prop_0001"}},
+            ["id"],
+        ),
+        "handler": _h_director_confirm,
+    },
+    {
+        "name": "director_execute",
+        "description": "EXECUTE a CONFIRMED proposal (goal 17, steps 4-6): runs its "
+        "actions in order through the real engine, auto-snapshots BEFORE mutating "
+        "(so rollback is one step), stops at the first failure, and returns the "
+        "structured diff (truth text + finals) plus next-step suggestions. Paid "
+        "steps ride the confirmed proposal's assume_yes — the spend gate still "
+        "applies engine-side (defense in depth). Only a confirmed, current "
+        "proposal executes.",
+        "inputSchema": _schema(
+            {"id": {"type": "string", "description": "proposal id, e.g. prop_0001"}},
+            ["id"],
+        ),
+        "handler": _h_director_execute,
+    },
+    {
+        "name": "director_suggest",
+        "description": "SUGGEST NEXT (goal 17, step 6, standalone): deterministic "
+        "next-step nudges from the existing signals (stale→redo, QC→repair, "
+        "missing→generate, budget→remind). Each carries a ready-made action "
+        "payload you can pass straight to director_propose. Read-only.",
+        "inputSchema": _EMPTY_SCHEMA,
+        "handler": _h_director_suggest,
     },
 ]
 

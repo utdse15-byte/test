@@ -475,6 +475,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-T finishing pages (subtitles/mixer/packaging)
             elif self._exports_get(path, url):
                 pass  # round-U 导出中心 export center — see _exports_get
+            elif self._director_get(path, url):
+                pass  # round-U 导演助手 director loop page — see _director_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -544,6 +546,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._pages_t_post(path, body):  # round-T finishing actions
                     return
                 if self._exports_post(path, body):  # round-U 导出中心 actions
+                    return
+                if self._director_post(path, body):  # round-U director loop actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -2862,3 +2866,108 @@ class _Handler(BaseHTTPRequestHandler):
             "ok": True, "changed": sorted(patch.keys()), "warnings": warnings,
             "rebuild": "packaging.yaml 已更新 — 卡片/封面在 build/package 时生成",
         })
+
+    # =================================================================
+    # round-U 导演助手 /director (director_page.py): the six-step AI-director
+    # loop as one page — propose → impact/cost(试跑) → 确认 → 执行 → diff →
+    # 下一步建议. Every button calls the SAME build/director core the CLI/MCP
+    # drive; 确认 and 执行 are DELIBERATELY separate POSTs, never one (§8.3
+    # approve-before-execute). Isolated GET/POST region, same token/readonly/
+    # host gates as every other surface (checked in do_GET/do_POST before us).
+    # =================================================================
+
+    def _director_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the director page + its read endpoints. Returns True
+        when handled, False so do_GET falls through to its 404."""
+        from . import director_page
+
+        if path == "/director.css":
+            self._send_text(director_page.render_director_css(),
+                            "text/css; charset=utf-8")
+            return True
+        if path == "/director.js":
+            self._send_text(director_page.render_director_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path in director_page.PAGE_PATHS_DIRECTOR:
+            html_doc = director_page.render(path, self.server.project,
+                                            self.server.token, parse_qs(url.query))
+            self._send_text(html_doc, "text/html; charset=utf-8",
+                            extra=self._PAGES_CSP)
+            return True
+        if path == "/api/director/state":
+            self._send_json(director_page.proposals_payload(self.server.project))
+            return True
+        if path == "/api/director/suggest":
+            from ..build.director import suggest_next
+
+            self._send_json({"suggestions": [
+                s.to_dict() for s in suggest_next(self.server.project)]})
+            return True
+        return False
+
+    def _director_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the director loop actions. Same token/readonly gates
+        as every other mutating POST (checked in do_POST before us). propose /
+        confirm / run are separate endpoints — the page never fuses confirm+run."""
+        handler = {
+            "/api/director/propose": self._act_director_propose,
+            "/api/director/confirm": self._act_director_confirm,
+            "/api/director/run": self._act_director_run,
+            "/api/director/reject": self._act_director_reject,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_director_propose(self, body: dict[str, Any]) -> None:
+        from ..build.director import DirectorError, propose
+
+        actions = body.get("actions")
+        if not isinstance(actions, list) or not actions:
+            self._send_error_json("actions must be a non-empty array", 400)
+            return
+        try:
+            proposal = propose(self.server.project, actions,
+                               why=str(body.get("why") or ""), actor=self.server.actor)
+        except DirectorError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        self._send_json({"ok": True, **proposal.model_dump()})
+
+    def _act_director_confirm(self, body: dict[str, Any]) -> None:
+        from ..build.director import DirectorError, confirm
+
+        pid = str(body.get("id") or "")
+        try:
+            proposal = confirm(self.server.project, pid, actor=self.server.actor)
+        except DirectorError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 409)
+            return
+        self._send_json({"ok": True, **proposal.model_dump()})
+
+    def _act_director_run(self, body: dict[str, Any]) -> None:
+        """Execute a confirmed proposal. Runs synchronously (the engine's own
+        build/value locks serialize against any concurrent job); a phase callback
+        would need a job handle, so the page shows a done-state on reload."""
+        from ..build.director import DirectorError, execute
+
+        pid = str(body.get("id") or "")
+        try:
+            outcome = execute(self.server.project, pid, actor=self.server.actor)
+        except DirectorError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 409)
+            return
+        self._send_json(outcome.to_dict())
+
+    def _act_director_reject(self, body: dict[str, Any]) -> None:
+        from ..build.director import DirectorError, reject
+
+        pid = str(body.get("id") or "")
+        try:
+            proposal = reject(self.server.project, pid, actor=self.server.actor)
+        except DirectorError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 409)
+            return
+        self._send_json({"ok": True, **proposal.model_dump()})

@@ -3073,6 +3073,248 @@ def routing_explain_cmd(
         typer.secho(f"    ↳ {r['why_detail']}", fg=typer.colors.BRIGHT_BLACK)
     typer.secho(f" 合计预估 ≈ {round(total, 6)} {currency or ''}", fg=typer.colors.CYAN)
 
+# ============================================================= director group
+# `manju director …` — the AI-director loop as one auditable contract (goal 17):
+# read state → propose → cost/impact → confirm → execute → diff → suggest next.
+# Every subcommand carries --json for agents; human output is 中文 (§10 glossary:
+# 试跑/花费护栏/修复方案/待更新). The LLM lives in the external agent (§0); Manju
+# only ships the deterministic six-step contract the agent (or GUI user) drives.
+
+director_app = typer.Typer(no_args_is_help=True,
+                           help="AI 导演协作环:提案→花费/影响→确认→执行→差异→下一步(goal 17)。")
+app.add_typer(director_app, name="director")
+
+
+def _director_actions(from_file: Optional[Path], actions_json: Optional[str]) -> tuple[list, str]:
+    """Resolve the action list (+ optional why) from --from-file (YAML: a list,
+    or a {why, actions} mapping) or --actions-json (a JSON array)."""
+    import json as _json
+
+    from .core.yamlio import read_yaml
+
+    if bool(from_file) == bool(actions_json):
+        _fail("pass exactly one of --from-file / --actions-json")
+    why = ""
+    if from_file is not None:
+        if not from_file.exists():
+            _fail(f"not found: {from_file}")
+        data = read_yaml(from_file)
+    else:
+        try:
+            data = _json.loads(actions_json)
+        except _json.JSONDecodeError as exc:
+            _fail(f"--actions-json is not valid JSON: {exc}")
+    if isinstance(data, dict):
+        why = str(data.get("why") or "")
+        actions = data.get("actions")
+    else:
+        actions = data
+    if not isinstance(actions, list) or not actions:
+        _fail("plan must be a non-empty list of actions (or {why, actions:[…]})")
+    return actions, why
+
+
+def _director_print_proposal(proposal, *, current: Optional[bool] = None) -> None:
+    typer.secho(f"提案 {proposal.id}  [{proposal.state}]"
+                + ("  · 待更新(expired)" if current is False else ""),
+                fg=typer.colors.CYAN, bold=True)
+    if proposal.why:
+        typer.echo(f"  为什么 why: {proposal.why}")
+    cur = proposal.currency or ""
+    typer.echo(f"  预估花费 est cost: {proposal.estimated_cost:g} {cur}"
+               "   （试跑 dry-run 口径,花费护栏在执行时再次把关)")
+    for i, pa in enumerate(proposal.actions):
+        a = pa.action
+        shots = ", ".join(pa.impact.get("shots") or []) or "—"
+        outs = ", ".join(pa.impact.get("outputs") or []) or "—"
+        c = f"  花费≈{pa.estimated_cost:g} {pa.currency or ''}" if pa.estimated_cost else ""
+        typer.echo(f"  #{i} {a.get('type')} {_director_action_brief(a)}"
+                   f"   影响镜头:{shots} · 产物:{outs}{c}")
+        if pa.result is not None:
+            mark = "✓" if pa.result.get("ok") else "✗"
+            typer.echo(f"      {mark} {pa.result.get('error') or '完成'}")
+
+
+def _director_action_brief(a: dict) -> str:
+    t = a.get("type")
+    if t == "build":
+        return f"target={a.get('target')} gen={a.get('gen')}"
+    if t in ("redo", "voice"):
+        return f"{a.get('shot')}" + (f" provider={a['provider']}" if a.get("provider") else "")
+    if t == "repair":
+        return f"{a.get('op')} {a.get('shot')}"
+    if t in ("captions", "packaging", "rollback"):
+        return f"{a.get('op')}" + (f" {a.get('shot') or a.get('path') or ''}").rstrip()
+    if t == "snapshot":
+        return a.get("label") or ""
+    if t == "mixer":
+        return ", ".join((a.get("changes") or {}).keys())
+    return ""
+
+
+@director_app.command("propose")
+def director_propose(
+    from_file: Optional[Path] = typer.Option(None, "--from-file", "-f",
+        help="YAML plan file: a list of actions, or {why, actions:[…]}"),
+    actions_json: Optional[str] = typer.Option(None, "--actions-json",
+        help="a JSON array of action objects (agent path)"),
+    why: Optional[str] = typer.Option(None, "--why", help="one line: why this plan"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """PROPOSE a plan (step 1) — validate + annotate impact/cost, persist to
+    reports/proposals/<id>.yaml. Nothing runs and nothing is spent."""
+    from .build.director import DirectorError, propose
+
+    project = _project()
+    actions, file_why = _director_actions(from_file, actions_json)
+    try:
+        proposal = propose(project, actions, why=(why if why is not None else file_why),
+                           actor=ACTOR)
+    except DirectorError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(proposal.model_dump(), True)
+        return
+    _director_print_proposal(proposal, current=True)
+    typer.secho(f"→ 确认:manju director confirm {proposal.id}", fg=typer.colors.BRIGHT_BLACK)
+
+
+@director_app.command("list")
+def director_list(as_json: bool = typer.Option(False, "--json")):
+    """List proposals, newest first, with their state and a 待更新 flag."""
+    from .build.director import _is_current, list_proposals
+
+    project = _project()
+    proposals = list_proposals(project)
+    rows = [pr.summary(current=_is_current(project, pr)) for pr in proposals]
+    if as_json:
+        _emit({"proposals": rows}, True)
+        return
+    if not rows:
+        typer.echo("暂无提案 — manju director propose 起草一个")
+        return
+    typer.secho("导演提案 / director proposals (新→旧)", fg=typer.colors.CYAN)
+    for r in rows:
+        flag = " 待更新" if (r["current"] is False and r["state"] in ("proposed", "confirmed")) else ""
+        cur = r["currency"] or ""
+        typer.echo(f"  {r['id']}  [{r['state']}{flag}]  {r['actions']} 步  "
+                   f"≈{r['estimated_cost']:g} {cur}  [{r['actor']}]  {r['why'][:40]}")
+
+
+@director_app.command("show")
+def director_show(proposal_id: str, as_json: bool = typer.Option(False, "--json")):
+    """Show one proposal in full: actions, impact, 试跑 cost, and (if run) result."""
+    from .build.director import DirectorError, _is_current, load_proposal
+
+    project = _project()
+    try:
+        proposal = load_proposal(project, proposal_id)
+    except DirectorError as exc:
+        _fail(str(exc))
+    current = _is_current(project, proposal)
+    if as_json:
+        payload = proposal.model_dump()
+        payload["current"] = current
+        _emit(payload, True)
+        return
+    _director_print_proposal(proposal, current=current)
+
+
+@director_app.command("confirm")
+def director_confirm(proposal_id: str, as_json: bool = typer.Option(False, "--json")):
+    """CONFIRM a proposal (step 3) — the explicit approve-before-execute gate.
+    Never implied; a proposal whose project moved is refused as 待更新."""
+    from .build.director import DirectorError, confirm
+
+    project = _project()
+    try:
+        proposal = confirm(project, proposal_id, actor=ACTOR)
+    except DirectorError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(proposal.model_dump(), True)
+        return
+    typer.secho(f"已确认 {proposal.id} — 执行:manju director run {proposal.id}",
+                fg=typer.colors.GREEN)
+
+
+@director_app.command("reject")
+def director_reject(proposal_id: str, as_json: bool = typer.Option(False, "--json")):
+    """Reject a proposal (kept on disk — history only grows)."""
+    from .build.director import DirectorError, reject
+
+    project = _project()
+    try:
+        proposal = reject(project, proposal_id, actor=ACTOR)
+    except DirectorError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(proposal.model_dump(), True)
+        return
+    typer.secho(f"已否决 {proposal.id}", fg=typer.colors.YELLOW)
+
+
+@director_app.command("run")
+def director_run(proposal_id: str, as_json: bool = typer.Option(False, "--json")):
+    """EXECUTE a confirmed proposal (steps 4-6): run in order, auto-snapshot
+    first (还原 一步到位), stop at the first failure, then show the diff and the
+    next-step suggestions. Paid steps ride the confirmed proposal's assume_yes."""
+    from .build.director import DirectorError, execute
+
+    project = _project()
+    try:
+        outcome = execute(project, proposal_id, actor=ACTOR)
+    except DirectorError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(outcome.to_dict(), True)
+        return
+    mark = "✓ 完成" if outcome.ok else "✗ 失败(第一处失败即停)"
+    color = typer.colors.GREEN if outcome.ok else typer.colors.RED
+    typer.secho(f"{mark}  {outcome.proposal_id}  [{outcome.state}]", fg=color, bold=True)
+    snap = outcome.snapshot or {}
+    if snap.get("sha"):
+        typer.echo(f"  存档点 snapshot: {snap['sha']}（还原:manju rollback file / snapshot）")
+    elif snap.get("note"):
+        typer.secho(f"  存档点跳过: {snap['note']}", fg=typer.colors.BRIGHT_BLACK)
+    for r in outcome.results:
+        m = "✓" if r.get("ok") else "✗"
+        typer.echo(f"  {m} #{r['index']} {r['type']}"
+                   + (f" — {r.get('error')}" if not r.get("ok") else ""))
+    if outcome.failure:
+        typer.secho(f"  失败 failure #{outcome.failure.get('id')}: "
+                    f"{outcome.failure.get('cause')}", fg=typer.colors.RED)
+    out = outcome.diff.get("outputs", {})
+    if out.get("new_finals") or out.get("rerendered_finals"):
+        typer.echo(f"  产物差异:新成片 {out.get('new_finals') or '—'} · "
+                   f"重渲染 {out.get('rerendered_finals') or '—'}")
+    if outcome.suggestions:
+        typer.secho("  下一步建议 / suggest next:", fg=typer.colors.CYAN)
+        for s in outcome.suggestions:
+            hint = "（可转为新提案）" if s.get("action") else ""
+            typer.echo(f"    · [{s['kind']}] {s['text']}{hint}")
+
+
+@director_app.command("suggest")
+def director_suggest(as_json: bool = typer.Option(False, "--json")):
+    """SUGGEST NEXT (step 6, standalone) — deterministic next-step nudges from
+    the existing signals (待更新→重做, 质检→修复方案, 缺失→生成, 花费护栏→提醒);
+    each carries a ready-made action payload to turn into the next proposal."""
+    from .build.director import suggest_next
+
+    project = _project()
+    suggestions = [s.to_dict() for s in suggest_next(project)]
+    if as_json:
+        _emit({"suggestions": suggestions}, True)
+        return
+    if not suggestions:
+        typer.echo("暂无建议 — 一切就绪,或先 manju build")
+        return
+    typer.secho("下一步建议 / suggest next", fg=typer.colors.CYAN)
+    for s in suggestions:
+        hint = "  （manju director propose 转为提案）" if s.get("action") else ""
+        typer.echo(f"  · [{s['kind']}] {s['text']}{hint}")
+
 
 if __name__ == "__main__":
     app()
