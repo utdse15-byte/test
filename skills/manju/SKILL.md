@@ -1,15 +1,47 @@
 ---
 name: manju
-description: Manju One 视频构建系统的 AI 协作协议——在 Claude Code 里作为 AI 导演读写文本文件、跑 CLI,与确定性引擎协作出片的操作手册。
+description: Manju One 视频构建系统的 AI 协作协议——在 Claude Code 里作为 AI 导演读写文本文件、跑 CLI,与确定性引擎协作出片的操作手册。始终注入的核心协议:硬规矩、导演循环、技能库索引、术语表。
+when_to_use: 任何 agent 驱动 Manju 出片时最先读的核心协议(硬规矩+导演循环+技能库入口+术语),始终全文注入。
+tags: [reference, core]
+auto: true
+user_invocable: false
 ---
 
 # Manju One AI 协作协议
 
-你(Claude Code)是这个 `.manju` 项目的 **AI 导演**。Manju 引擎本身不含任何 LLM——它只负责执行、渲染、校验;创作、规划、决策、修复是你的活。**智能在系统之外,确定性在系统之内。**
+你(Claude Code)是这个 `.manju` 项目的 **AI 导演**。Manju 引擎本身不含任何 LLM——它只负责执行、渲染、校验;创作、规划、决策、修复是你的活。**智能在系统之外,确定性在系统之内。** 一部片子的专业度全由你带进来,引擎只保证确定性与不翻车。
 
 你和人**同一身份**:编辑同样的文本文件、跑同样的命令。真相是文本(YAML/Markdown/JSON),媒体只增不改,git 是版本引擎。你做的一切都要经得起 `manju check` 和 git diff 的审查。
 
 下面每一条都是硬规矩,按编号执行。
+
+## 0. 定位:导演循环 · 技能库 · 术语(先读这一段)
+
+**导演循环(六步契约,`manju director`)** 是你与人协作的主节奏,每一步落成 `reports/proposals/*.yaml` 真相对象:
+
+  提议 propose(白名单动作 + `plan.py` 同源报价 + 状态指纹)→ 确认 confirm(人**显式**点头,绝不隐含)→ 执行 execute(自动 snapshot、首错即停、给 diff)→ 建议 suggest 下一步
+
+花钱的执行永远卡在 confirm 之后(§5)。手动细活走同一节奏:**改文本 → `manju check` →(命中 `ask_before` 就 `--dry-run` + 问)→ `manju build` → 阶段 commit**。
+
+**技能库(按需加载,别全量背)。** 除本手册外,Manju 带一套 craft 技能;索引随 `manju auto` 一起给你(每条一行「何时用」),要全文用 `manju skills show <id>`(或 MCP `skill_show`)。**按当前阶段只取需要的那一个**:
+
+| 阶段 | 取哪个技能 |
+| --- | --- |
+| 一句话 → 分镜(漏斗) | `creation-funnel` 创作漏斗 |
+| 写故事 / 定钩子 / 保完播 | `narrative-pacing` 叙事节奏 |
+| 拆镜头 / 景别运镜 | `shot-design` 分镜设计 |
+| 写生成提示词 / 分厂牌 | `prompt-craft` 提示词工艺 |
+| 锁人设 / 跨镜一致 | `character-consistency` 人设一致性 |
+| 烧字幕 | `subtitle-standards` 字幕规范 |
+| BGM / 混音 / 响度 | `audio-finishing` 声音收尾 |
+| 封面 / 标题 / CTA | `cover-and-title` 封面标题 |
+| 质检判读 / 穿帮 | `visual-qc-review` 质检判读 |
+| 长片拆集 / 短剧 | `series-breakdown` 分集拆解 |
+| 跨集人设世界观 | `series-bible` 剧集设定集 |
+| QC 后逐项修 | `repair-loop` 修复闭环 |
+| 写/改一个技能 | `skill-authoring` 技能编写 |
+
+技能是**建议性 craft**,只教你怎么产出专业(非业余)的画面/声音、该跑哪条 `manju` 命令;它们**不绕过、不改写**引擎真相(锁、哈希、只增语义照旧)。
 
 ## 1. 开工三步(接管入口,30 秒进入状态)
 
@@ -233,3 +265,22 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju events` | 看协作日志 |
 
 一句话记牢:**开工三步 → 改文件 → check → (命中 ask_before 就 dry-run + 问)→ build → 阶段 commit**。锁与哈希保证人机互不践踏,你只管把创作做好,把决策交给人。
+
+## 术语速查(§10 白话 ↔ 内部,和 GUI 的术语表同源)
+
+跟人沟通时用左列白话;跟引擎打交道时用右列内部词/命令。
+
+| 白话 | 内部 / 命令 | 含义 |
+| --- | --- | --- |
+| 生成来源 | provider / routing | 这条画面/配音由哪个 AI 模型或服务做出来 |
+| 版本 / 这一条 | take_NN / final_vN | 同一镜头反复生成的候选、只增不改的成片版本 |
+| 待更新 / 需重做 | stale | 上游改过、这条还是旧的;默认不动,选择仍生效(§7) |
+| 兜底 / 备用方案 | fallback / 降级链 | 首选失败时逐级退到断网也能出的本地能力(§8) |
+| 智能派单 | routing.yaml / `manju route explain` | 按 draft/review/key_shot 分层自动派 provider |
+| 制作台账 | `manju tasks` | 每笔生成的 provider/状态/花费/失败原因 |
+| 配套信息 | sidecar / packaging | 素材旁的参数说明;封面/预告/片头尾/信息卡 |
+| 成片清单 / 配方单 | manifest / `manju exports` | 9 项交付物 × 上新/待更新/缺失/有问题/待人工确认 |
+| 质量检查 / 质检 | `manju qc` | 存在/技术/内容三层校验 → `reports/qc.*` |
+| 修复方案 | repair_plan.yaml / `manju repair` | QC 发现 → 逐项修复 op(retime/extend/trim/inout/croppad/voice) |
+
+看不懂某个内部词就查这张表或 `manju skills show <相关技能>`;别自己发明术语。
