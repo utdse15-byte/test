@@ -59,13 +59,24 @@ def normalize_segment(
     duration_ms: int | None = None,
     source_gain_db: float = 0.0,
     source_mute: bool = False,
+    source_in_ms: int = 0,
     log: Log = None,
 ) -> Path:
+    """Normalize ``src`` into a uniform WxH/fps/stereo segment.
+
+    ``source_in_ms`` (round-T, additive) seeks INTO the source before reading
+    the window — 0 keeps the historical byte-identical behaviour (no ``-ss``).
+    A positive value is used both for clips carrying a real in-point and, by the
+    boundary compositor, to lift the handle regions (tail of A / head of B) out
+    of the raw footage for a cross-dissolve.
+    """
     src = Path(src)
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     is_image = src.suffix.lower() in IMAGE_EXTS
     dur_s = (duration_ms / 1000.0) if duration_ms is not None else None
+    # An in-point is meaningless for a still image (it is looped, not seeked).
+    in_s = source_in_ms / 1000.0 if (source_in_ms > 0 and not is_image) else 0.0
 
     args: list[str] = []
 
@@ -85,15 +96,21 @@ def normalize_segment(
     info = probe(src)
     has_audio = bool(info.has_audio)
     src_dur = info.duration_ms
+    # Material available AFTER the in-point (the window is read from here).
+    avail = None if src_dur is None else max(0, src_dur - source_in_ms)
 
     extend_s: float | None = None
-    if dur_s is not None and (src_dur is None or src_dur < duration_ms):
+    if dur_s is not None and (avail is None or avail < duration_ms):
         # Short source: clone the tail generously; -t below trims to exact.
         extend_s = dur_s
     vf = _video_filter(width, height, fps, extend_stop_s=extend_s)
 
+    # `-ss` before `-i` seeks all streams together; combined with the `-t`
+    # trim + fps filter below the window stays frame-exact.
+    seek = ["-ss", f"{in_s:.3f}"] if in_s > 0 else []
+
     if has_audio:
-        args += ["-i", str(src)]
+        args += [*seek, "-i", str(src)]
         af_parts = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
         # Round-T per-shot source audio: mute drops the footage's own track to
         # silence (volume=0 -> digital zeros, astats RMS -inf); a gain shifts its
@@ -109,7 +126,7 @@ def normalize_segment(
         args += ["-filter_complex", f"[0:v]{vf}[v];[0:a]{','.join(af_parts)}[a]"]
         args += ["-map", "[v]", "-map", "[a]"]
     else:
-        args += ["-i", str(src)]
+        args += [*seek, "-i", str(src)]
         args += ["-f", "lavfi", "-i", ANULLSRC]
         args += ["-filter_complex", f"[0:v]{vf}[v]"]
         args += ["-map", "[v]", "-map", "1:a"]

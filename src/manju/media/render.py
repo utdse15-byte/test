@@ -13,16 +13,42 @@ is baked into the (cached) per-segment render, with the fade durations folded
 into the cache key, so §7 ②'s structural intent (transitions rendered as
 cached units, incremental by construction) holds.
 
-Design note — why not xfade/acrossfade seams (§7 ② names them): a true
-cross-dissolve needs media HANDLES — extra frames beyond the cut point on
-both sides. Manju's takes are generated/normalized to exactly their timeline
-duration, so there are no handles: crossfading would either shorten the film
-by the overlap (desyncing the audio-driven caption/voice timings, §6) or
+Transition model — xfade family, honestly bounded (round-T): the design note
+below still stands (a true cross-dissolve needs media HANDLES — extra frames
+beyond the cut on both sides). Round-T implements the honest version rather
+than pretending: an ``xfade_*`` transition is APPLIED only when real handle
+footage exists on BOTH sides of the cut — the outgoing clip's source runs past
+its window end (a duration clamp left spare TAIL) and the incoming clip carries
+a source in-point (a set_inout left spare HEAD, ``VideoClip.source_in_ms``). It
+then renders a content-addressed BOUNDARY segment (tailA+handle ⨯ headB+handle,
+xfade + acrossfade) and restructures the concat as [A shortened][boundary][B
+shortened] — the overlap consumes HANDLE material, never timeline time, so the
+total duration and every downstream audio/caption offset are preserved to the
+frame (the incoming clip's window-start frame still lands at the same timeline
+instant). When either handle is missing (generative card/kenburns takes are
+exactly window-length; imported footage without a clamp/in-point) the transition
+DEGRADES to the existing dip-to-black and a build warning names the boundary
+("no handles; used dip-to-black"). Applied-vs-degraded is a RENDER-TIME fact
+(recorded in the log + a ``.transitions.json`` sidecar); the compiler only ever
+records the REQUESTED spec (timeline purity). FUTURE WORK: generative takes are
+regenerable and could be re-rendered ``+handle`` longer on demand to earn a real
+cross-dissolve — deliberately out of scope this round (correctness first).
+
+Color look (round-T): a deterministic eq/colorbalance chain (``_look_filter``)
+read from ``bible/style.yaml``'s ``look:`` mapping is appended to the FINAL/proxy
+video chain BEFORE the subtitle burn and folded into the final content key —
+changing the look re-renders the final but NOT the (look-free) segments. The
+default (preset none / intensity 0) is a strict no-op: no filter, absent from
+the content key, byte-identical to before.
+
+Design note — why not xfade/acrossfade seams UNCONDITIONALLY (§7 ② names them):
+a true cross-dissolve needs media HANDLES — extra frames beyond the cut point on
+both sides. Manju's GENERATED takes are normalized to exactly their timeline
+duration, so they have no handles: crossfading them would either shorten the
+film by the overlap (desyncing the audio-driven caption/voice timings, §6) or
 replay frames around the cut (visible stutter). Dip-to-black is the honest
-deterministic transition under exact-duration takes. If cross-dissolves are
-ever wanted, the change belongs in the compiler/providers first (allocate
-+transition_ms handles at generation and carry source in-points on clips),
-not here.
+deterministic transition under exact-duration takes; the round-T xfade path
+above applies only where the handles are REAL imported footage.
 
 Design note — media write durability (R3, OPTIMIZATION-ASSESSMENT §3 #2/#3):
 media follows the same temp+replace discipline as text truth (core/yamlio.py).
@@ -50,18 +76,29 @@ from __future__ import annotations
 import json
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file, short_hash
-from ..core.models import AudioClip, OverlayClip, Timeline, VideoClip
-from ..core.yamlio import atomic_write_text
+from ..core.models import AudioClip, LookSpec, OverlayClip, Timeline, VideoClip
+from ..core.yamlio import atomic_write_text, read_yaml
 from .card import find_font
 from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
 from .normalize import normalize_segment
 from .probe import probe_duration_ms
 
 Log = Callable[[str], None] | None
+
+# The segment encode profile (matches normalize._encode_args): every piece that
+# lands in the concat list — cached segment, boundary segment, or a build-time
+# trim of a segment — is encoded with THESE params so the concat demuxer can
+# stitch them with a stream copy (the whole pipeline already relies on
+# independently-encoded same-profile segments concatenating cleanly).
+_SEG_ENC = [
+    "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+]
 
 
 def _even(n: int) -> int:
@@ -293,13 +330,17 @@ def _segment_cache_key(
     parts: list[object] = [
         hash_file(src), width, height, fps, clip.duration_ms, target, fade_in_ms, fade_out_ms
     ]
-    # Round-T per-shot source audio: fold gain/mute into the key ONLY when
-    # non-default, so an untouched clip keeps a byte-identical key (its cached
-    # segment is reused) while a changed one re-normalizes exactly one segment.
+    # Round-T per-shot source audio + source in-point: each folds into the key
+    # ONLY when non-default, so an untouched clip keeps a byte-identical key
+    # (cached segment reused) while a changed one re-normalizes exactly one
+    # segment / reads a different source window.
     if clip.source_mute:
         parts.append("srcmute")
     elif clip.source_gain_db:
         parts.append(f"srcgain:{clip.source_gain_db}")
+    in_ms = getattr(clip, "source_in_ms", 0)
+    if in_ms:
+        parts.append(("source_in_ms", in_ms))
     return cache_key(*parts)
 
 
@@ -345,11 +386,13 @@ def _build_segment(
         seg_path.unlink(missing_ok=True)
     seg_path.parent.mkdir(parents=True, exist_ok=True)
 
+    in_ms = getattr(clip, "source_in_ms", 0)
     if fade_in_ms == 0 and fade_out_ms == 0:
         normalize_segment(
             src, seg_path, width=width, height=height, fps=fps,
             duration_ms=clip.duration_ms,
             source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
+            source_in_ms=in_ms,
             log=log,
         )
         return seg_path
@@ -361,6 +404,7 @@ def _build_segment(
             src, base, width=width, height=height, fps=fps,
             duration_ms=clip.duration_ms,
             source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
+            source_in_ms=in_ms,
             log=log,
         )
         _apply_fades(
@@ -368,6 +412,332 @@ def _build_segment(
             fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, log=log,
         )
     return seg_path
+
+
+# ============================================================ color look (round-T)
+
+
+def _look_num(x: float) -> str:
+    """Deterministic compact number for a look filter value (fixed precision,
+    trailing zeros stripped): 0.30*0.5 -> '0.15', 1.0 -> '1', 0.0 -> '0'. The
+    formatting is stable run-to-run, so a look's filtergraph is content-keyable."""
+    s = f"{x:.4f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
+def _look_warm(i: float) -> str:
+    # Push reds up / blues down across shadows→highlights (warmer temperature),
+    # a touch more saturation. i scales every shift from 0 (neutral) to full.
+    return (
+        f"colorbalance=rs={_look_num(0.30 * i)}:bs={_look_num(-0.30 * i)}"
+        f":rm={_look_num(0.15 * i)}:bm={_look_num(-0.15 * i)}"
+        f":rh={_look_num(0.10 * i)}:bh={_look_num(-0.10 * i)},"
+        f"eq=saturation={_look_num(1 + 0.10 * i)}"
+    )
+
+
+def _look_cool(i: float) -> str:
+    # Mirror of warm: reds down / blues up (cooler), slight saturation lift.
+    return (
+        f"colorbalance=rs={_look_num(-0.30 * i)}:bs={_look_num(0.30 * i)}"
+        f":rm={_look_num(-0.12 * i)}:bm={_look_num(0.12 * i)}"
+        f":rh={_look_num(-0.08 * i)}:bh={_look_num(0.08 * i)},"
+        f"eq=saturation={_look_num(1 + 0.05 * i)}"
+    )
+
+
+def _look_bw(i: float) -> str:
+    # Desaturate toward monochrome (saturation 1→0) with a hair more contrast.
+    return f"eq=saturation={_look_num(1 - i)}:contrast={_look_num(1 + 0.10 * i)}"
+
+
+def _look_film(i: float) -> str:
+    # Filmic: gentle contrast + slight desaturation + lifted gamma, teal
+    # shadows / warm highlights via colorbalance.
+    return (
+        f"eq=contrast={_look_num(1 + 0.15 * i)}:saturation={_look_num(1 - 0.15 * i)}"
+        f":gamma={_look_num(1 - 0.05 * i)},"
+        f"colorbalance=rs={_look_num(-0.10 * i)}:bs={_look_num(0.10 * i)}"
+        f":rh={_look_num(0.12 * i)}:bh={_look_num(-0.12 * i)}"
+    )
+
+
+def _look_vivid(i: float) -> str:
+    # Punchy: strong saturation + contrast + a whisker of brightness.
+    return (
+        f"eq=saturation={_look_num(1 + 0.50 * i)}:contrast={_look_num(1 + 0.20 * i)}"
+        f":brightness={_look_num(0.02 * i)}"
+    )
+
+
+# Each preset is a fixed filter chain parameterised by intensity i∈(0,1]; at
+# i→0 every knob returns to its neutral default, so intensity 0 == preset none.
+_LOOK_BUILDERS: dict[str, Callable[[float], str]] = {
+    "warm": _look_warm,
+    "cool": _look_cool,
+    "bw": _look_bw,
+    "film": _look_film,
+    "vivid": _look_vivid,
+}
+
+
+def load_look(project: Project) -> LookSpec:
+    """THE reading contract for the color look (round-T): ``bible/style.yaml``'s
+    top-level ``look:`` mapping → :class:`LookSpec`. A malformed/absent look
+    degrades to none (a build is never crashed by a style typo, matching the
+    caption-style reader). This is the single place style.yaml's look is read."""
+    try:
+        data = read_yaml(project.root / "bible" / "style.yaml")
+    except Exception:
+        return LookSpec()
+    look = data.get("look") if isinstance(data, dict) else None
+    if not isinstance(look, dict):
+        return LookSpec()
+    try:
+        return LookSpec.model_validate(look)
+    except Exception:
+        return LookSpec()
+
+
+def _look_filter(look: LookSpec) -> str:
+    """The eq/colorbalance chain for a look, or "" for a no-op look (preset
+    none or intensity 0). Appended to the final/proxy vchain before subtitles."""
+    if not look.active:
+        return ""
+    builder = _LOOK_BUILDERS.get(look.preset)
+    return builder(look.intensity) if builder else ""
+
+
+# ==================================================== handle-aware transitions
+
+
+# ffmpeg xfade transition name for each curated ``xfade_*`` spec type.
+_XFADE_TRANSITIONS = {
+    "xfade_fade": "fade",
+    "xfade_slideleft": "slideleft",
+    "xfade_slideright": "slideright",
+    "xfade_wipeleft": "wipeleft",
+    "xfade_circleopen": "circleopen",
+}
+
+
+def _n_frames(ms: float, fps: int) -> int:
+    return max(0, round(ms * fps / 1000.0))
+
+
+def _frames_ms(frames: int, fps: int) -> int:
+    return round(frames * 1000.0 / fps)
+
+
+@dataclass
+class _Boundary:
+    """A resolved interior boundary between clip ``i`` and clip ``i+1`` that
+    carries an ``xfade_*`` request. ``applied`` xfades own a boundary segment
+    and shorten their neighbours; degraded ones fell back to dip-to-black."""
+
+    i: int
+    requested: str
+    duration_ms: int
+    applied: bool
+    half_ms: int = 0     # frame-aligned handle length taken from each side
+    xfade: str = ""      # ffmpeg transition name (applied only)
+    reason: str = ""     # why it degraded (names the boundary in the warning)
+
+
+def _probe_source_ms(project: Project, clip: VideoClip, cache: dict[str, int | None]) -> int | None:
+    src = project.resolve(clip.source)
+    key = str(src)
+    if key not in cache:
+        cache[key] = probe_duration_ms(src) if src.exists() else None
+    return cache[key]
+
+
+def _xfade_half_ms(duration_ms: int, fps: int) -> int:
+    """Handle length taken from EACH side = half the transition, snapped to a
+    whole frame so the [A-half][boundary=2·half][B-half] restructuring stays
+    frame-exact (the sum of frame counts is invariant)."""
+    return _frames_ms(max(1, _n_frames(duration_ms / 2.0, fps)), fps)
+
+
+def _plan_transitions(
+    project: Project, clips: list[VideoClip], fps: int, *, log: Log = None
+) -> tuple[list[_Boundary], list[tuple[int, int]]]:
+    """Resolve every interior boundary and the per-segment fade params.
+
+    Returns ``(xfade_boundaries, seg_fades)`` where ``seg_fades[i]`` is the
+    ``(fade_in_ms, fade_out_ms)`` baked into clip ``i``'s cached segment. The
+    baseline is exactly :func:`_fade_params` (so a timeline with only fade/cut
+    transitions is byte-identical); the ONLY departures are ``xfade_*`` types:
+    an applied xfade leaves both edges fade-free (the boundary owns the
+    dissolve), a degraded one bakes dip-to-black halves like a plain ``fade``.
+
+    Deterministic and shared by the render AND :func:`final_content_key`, so the
+    segment cache keys can never drift from what is actually rendered.
+    """
+    seg_fades = [list(_fade_params(clips, i)) for i in range(len(clips))]
+    boundaries: list[_Boundary] = []
+    src_cache: dict[str, int | None] = {}
+    frame_ms = 1000.0 / fps if fps else 0.0
+
+    for i in range(len(clips) - 1):
+        tout = clips[i].transition_out
+        if tout is None or tout.type not in _XFADE_TRANSITIONS:
+            continue  # None / fade / cut / unknown → _fade_params already correct
+        a, b = clips[i], clips[i + 1]
+        half_ms = _xfade_half_ms(tout.duration_ms, fps)
+        reason = ""
+        # A clip must survive giving up a handle on BOTH edges (adjacent xfades),
+        # so require 2·half of room; then both handles must be REAL footage.
+        if a.duration_ms - 2 * half_ms < frame_ms or b.duration_ms - 2 * half_ms < frame_ms:
+            reason = f"clip too short for a {tout.duration_ms}ms cross-dissolve"
+        else:
+            a_src = _probe_source_ms(project, a, src_cache)
+            b_src = _probe_source_ms(project, b, src_cache)
+            a_tail = None if a_src is None else a_src - (a.source_in_ms + a.duration_ms)
+            b_head = b.source_in_ms  # material before the incoming window start
+            if a_src is None or a_tail < half_ms:
+                reason = "no tail handle on the outgoing clip"
+            elif b_head < half_ms:
+                reason = "no head handle on the incoming clip"
+
+        if not reason:
+            boundaries.append(_Boundary(
+                i=i, requested=tout.type, duration_ms=tout.duration_ms,
+                applied=True, half_ms=half_ms, xfade=_XFADE_TRANSITIONS[tout.type],
+            ))
+        else:
+            half = tout.duration_ms // 2  # dip-to-black, byte-identical to a "fade"
+            seg_fades[i][1] = half
+            seg_fades[i + 1][0] = half
+            boundaries.append(_Boundary(
+                i=i, requested=tout.type, duration_ms=tout.duration_ms,
+                applied=False, reason=reason,
+            ))
+    return boundaries, [tuple(f) for f in seg_fades]
+
+
+def _boundary_cache_key(
+    project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
+    *, width: int, height: int, fps: int, target: str,
+) -> str:
+    """Content identity of a boundary segment: both neighbour segment keys
+    (which already fold source hashes, dims, fps, durations and in-points) plus
+    the transition shape. Changing the transition TYPE re-keys only the boundary
+    (the neighbours' fade-free segment keys are unchanged), so the boundary
+    re-renders while the segment cache is reused."""
+    ka = _segment_cache_key(project, a, width=width, height=height, fps=fps,
+                            target=target, fade_in_ms=0, fade_out_ms=0)
+    kb = _segment_cache_key(project, b, width=width, height=height, fps=fps,
+                            target=target, fade_in_ms=0, fade_out_ms=0)
+    return cache_key("xfade-boundary", ka, kb, boundary.xfade,
+                     boundary.duration_ms, boundary.half_ms, width, height, fps, target)
+
+
+def _build_boundary_segment(
+    project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
+    *, width: int, height: int, fps: int, target: str, log: Log,
+) -> Path:
+    """Render (or reuse) the content-addressed boundary segment for an applied
+    xfade: the outgoing tail (last half real + half tail-handle) cross-dissolved
+    with the incoming head (half head-handle + first half real), video via
+    ``xfade`` and audio via ``acrossfade`` over the same window. Length = 2·half,
+    which exactly replaces the ``half`` trimmed off each neighbour."""
+    key = _boundary_cache_key(project, a, b, boundary,
+                              width=width, height=height, fps=fps, target=target)
+    seg_path = project.segments_dir / f"xfade_{short_hash(key)}.mp4"
+    if seg_path.exists():
+        if probe_duration_ms(seg_path) is not None:
+            return seg_path
+        if log is not None:
+            log(f"boundary cache: {seg_path.name} unreadable — evicting and rebuilding")
+        seg_path.unlink(missing_ok=True)
+    seg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    half = boundary.half_ms
+    layer_ms = 2 * half
+    a_src = project.resolve(a.source)
+    b_src = project.resolve(b.source)
+    with tempfile.TemporaryDirectory(dir=seg_path.parent) as tmp:
+        tmpd = Path(tmp)
+        a_layer = tmpd / "a.mp4"
+        b_layer = tmpd / "b.mp4"
+        # Outgoing: start half BEFORE the window end → half real + half tail-handle.
+        normalize_segment(a_src, a_layer, width=width, height=height, fps=fps,
+                          duration_ms=layer_ms,
+                          source_in_ms=a.source_in_ms + a.duration_ms - half, log=log)
+        # Incoming: start half BEFORE the window start → half head-handle + half real.
+        normalize_segment(b_src, b_layer, width=width, height=height, fps=fps,
+                          duration_ms=layer_ms, source_in_ms=b.source_in_ms - half, log=log)
+        d = layer_ms / 1000.0
+        fc = (
+            f"[0:v][1:v]xfade=transition={boundary.xfade}:duration={d:.3f}:offset=0,"
+            f"fps={fps},format=yuv420p[v];"
+            f"[0:a][1:a]acrossfade=d={d:.3f}[a]"
+        )
+        with atomic_output(seg_path) as tmp_out:
+            run_ffmpeg(
+                ["-i", str(a_layer), "-i", str(b_layer), "-filter_complex", fc,
+                 "-map", "[v]", "-map", "[a]", *_SEG_ENC, str(tmp_out)],
+                log=log,
+            )
+    return seg_path
+
+
+def _trim_segment(
+    src: Path, dest: Path, *, start_ms: int, dur_ms: int, fps: int, log: Log
+) -> None:
+    """Re-encode ``src`` to ``[start_ms, start_ms+dur_ms)`` with the segment
+    profile so the result concats (stream-copy) with the cached segments. Used
+    to shorten an applied xfade's neighbours by the handle they lent the
+    boundary. Output seeking (``-ss`` after ``-i``) keeps the cut frame-accurate."""
+    run_ffmpeg(
+        ["-i", str(src), "-ss", f"{start_ms / 1000.0:.3f}", "-t", f"{dur_ms / 1000.0:.3f}",
+         "-vf", f"fps={fps},format=yuv420p", *_SEG_ENC, str(dest)],
+        log=log,
+    )
+
+
+def _assemble_video_pieces(
+    project: Project, clips: list[VideoClip], segments: list[Path],
+    boundaries: list[_Boundary], *, width: int, height: int, fps: int,
+    target: str, tmp_dir: Path, log: Log,
+) -> list[Path]:
+    """The ordered concat pieces once applied xfades restructure the track:
+    each clip contributes its cached segment (untouched when it lends no handle)
+    or a shortened trim, and every applied boundary segment is spliced in at its
+    cut. Total frame count is invariant: each boundary is 2·half and removes
+    exactly half from each neighbour."""
+    applied = {b.i: b for b in boundaries if b.applied}
+    head_trim = {b.i + 1: b.half_ms for b in applied.values()}
+    tail_trim = {b.i: b.half_ms for b in applied.values()}
+    pieces: list[Path] = []
+    for idx, clip in enumerate(clips):
+        ht = head_trim.get(idx, 0)
+        tt = tail_trim.get(idx, 0)
+        if ht == 0 and tt == 0:
+            pieces.append(segments[idx])  # untouched → the cached segment as-is
+        else:
+            piece = tmp_dir / f"piece_{idx:04d}.mp4"
+            _trim_segment(segments[idx], piece, start_ms=ht,
+                          dur_ms=clip.duration_ms - ht - tt, fps=fps, log=log)
+            pieces.append(piece)
+        b = applied.get(idx)
+        if b is not None:
+            pieces.append(_build_boundary_segment(
+                project, clips[idx], clips[idx + 1], b,
+                width=width, height=height, fps=fps, target=target, log=log,
+            ))
+    return pieces
+
+
+def _write_transitions_sidecar(media_path: Path, report: list[dict]) -> None:
+    """Round-T: record the render-time transition facts (applied vs degraded,
+    per boundary) next to a fresh final. Derived metadata — NOT part of the
+    content key, written after the mp4/key sidecar like the timeline snapshot."""
+    atomic_write_text(
+        media_path.with_suffix(".transitions.json"),
+        json.dumps({"transitions": report}, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def _concat_line(path: Path) -> str:
@@ -635,25 +1005,37 @@ def final_content_key(
     can skip the render instead of minting final_vN+1 forever."""
     width, height, fps = timeline.width, timeline.height, timeline.fps
     clips = list(timeline.tracks.video)
+    # Round-T: the segment fade params come from the shared boundary plan so a
+    # degraded xfade's baked dip-to-black is reflected here exactly as rendered.
+    # For a timeline with only fade/cut transitions the plan == _fade_params, so
+    # the seg keys (and this content key) are byte-identical to before.
+    _boundaries, seg_fades = _plan_transitions(project, clips, fps, log=None)
     seg_keys = [
         _segment_cache_key(
             project, clip, width=width, height=height, fps=fps, target=target,
-            fade_in_ms=_fade_params(clips, i)[0], fade_out_ms=_fade_params(clips, i)[1],
+            fade_in_ms=seg_fades[i][0], fade_out_ms=seg_fades[i][1],
         )
         if project.resolve(clip.source).exists()
         else f"missing:{clip.source}"
         for i, clip in enumerate(clips)
     ]
+    # Round-T: strip a default (0) source in-point from the hashed timeline so a
+    # project that never trims a clip keeps a byte-identical content key (the
+    # whole-file source hash inside each seg key already covers the bytes).
+    tl_payload = timeline.model_dump(exclude={"meta"})  # meta is provenance, not content
+    for vc in tl_payload.get("tracks", {}).get("video", []):
+        if isinstance(vc, dict):
+            if vc.get("source_in_ms", 0) == 0:
+                vc.pop("source_in_ms", None)
+            # source-audio rides the segment keys (round-T): always excluded
+            vc.pop("source_gain_db", None)
+            vc.pop("source_mute", None)
     payload = {
-        # meta is provenance, not content. Round-T: the per-shot source-audio
-        # fields are EXCLUDED here because they are already carried by the
-        # ordered segment keys below (they change the normalized segment, not the
-        # timeline arrangement) — so a clip at its source-audio defaults leaves
+        # tl_payload excludes meta (provenance) and strips default source_in_ms;
+        # the per-shot source-audio fields are excluded below for the same
+        # reason: all three ride the ordered segment keys, so defaults leave
         # this content key byte-identical to before the fields existed.
-        "timeline": timeline.model_dump(
-            exclude={"meta": True,
-                     "tracks": {"video": {"__all__": {"source_gain_db", "source_mute"}}}}
-        ),
+        "timeline": tl_payload,
         "segments": seg_keys,
         "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
         "audio": _audio_input_hashes(project, timeline),
@@ -665,6 +1047,12 @@ def final_content_key(
     img_hashes = _overlay_image_hashes(project, timeline)
     if img_hashes:
         payload["overlay_images"] = img_hashes
+    # Round-T: the color look re-keys the FINAL (a look change re-renders the
+    # final, not the segments). Folded in ONLY when active, so preset none /
+    # intensity 0 keeps a byte-identical content key.
+    look = load_look(project)
+    if look.active:
+        payload["look"] = {"preset": look.preset, "intensity": look.intensity}
     return cache_key(payload)
 
 
@@ -763,16 +1151,42 @@ def render_timeline(
     total_ms = timeline.duration_ms or sum(c.duration_ms for c in video_clips)
     total_s = total_ms / 1000.0
 
+    # Round-T: resolve interior boundaries first — this decides each segment's
+    # baked fade params (an applied xfade leaves its edges fade-free; a degraded
+    # one bakes dip-to-black) and which boundaries earn a real cross-dissolve.
+    xfade_boundaries, seg_fades = _plan_transitions(project, video_clips, fps, log=log)
+
     # ① + ② normalize each clip into a cached segment (fades baked in). --
     segments: list[Path] = []
     for i, clip in enumerate(video_clips):
-        fade_in_ms, fade_out_ms = _fade_params(video_clips, i)
+        fade_in_ms, fade_out_ms = seg_fades[i]
         segments.append(
             _build_segment(
                 project, clip, width=width, height=height, fps=fps, target=target,
                 fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, log=log,
             )
         )
+
+    # Record the render-time transition facts: applied xfades name their handle
+    # length; degraded ones warn, naming the boundary (goal: every degrade is
+    # visible). Timeline purity holds — the compiler recorded only the request.
+    transitions_report: list[dict] = []
+    for b in xfade_boundaries:
+        a_shot, b_shot = video_clips[b.i].shot, video_clips[b.i + 1].shot
+        pair = f"{a_shot}->{b_shot}"
+        if b.applied:
+            log(f"transition {pair}: applied {b.requested} "
+                f"(real handles, {b.half_ms}ms each side)")
+            transitions_report.append(
+                {"boundary": pair, "requested": b.requested, "applied": True,
+                 "half_ms": b.half_ms}
+            )
+        else:
+            log(f"transition {pair}: no handles; used dip-to-black ({b.reason})")
+            transitions_report.append(
+                {"boundary": pair, "requested": b.requested, "applied": False,
+                 "reason": b.reason}
+            )
 
     # timeline.tracks.overlay (title cards + packaging info cards + round-Q
     # branding) is burned in the final composition pass below (§7 step ④ /
@@ -795,19 +1209,35 @@ def render_timeline(
     with tempfile.TemporaryDirectory(dir=out_path.parent) as tmp:
         tmp_dir = Path(tmp)
         # ③ concat the uniform segments with the concat demuxer (stream copy).
+        # Round-T: when applied xfades are present the track is restructured into
+        # [A shortened][boundary][B shortened] pieces (same profile → still a
+        # stream-copy concat); with none, this is exactly the segment list.
+        if any(b.applied for b in xfade_boundaries):
+            pieces = _assemble_video_pieces(
+                project, video_clips, segments, xfade_boundaries,
+                width=width, height=height, fps=fps, target=target,
+                tmp_dir=tmp_dir, log=log,
+            )
+        else:
+            pieces = segments
         list_file = tmp_dir / "concat.txt"
-        list_file.write_text("".join(_concat_line(s) for s in segments), encoding="utf-8")
+        list_file.write_text("".join(_concat_line(s) for s in pieces), encoding="utf-8")
         concat_mp4 = tmp_dir / "concat.mp4"
         run_ffmpeg(
             ["-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(concat_mp4)],
             log=log,
         )
 
-        # ④ + ⑤ + ⑥ single final pass: scale (+ burn subtitles) + audio mix + mux.
+        # ④ + ⑤ + ⑥ single final pass: scale (+ look + burn subtitles) + audio mix + mux.
         extra_inputs, audio_stmts, aout = _build_audio_graph(
             timeline, project, target=target, total_s=total_s
         )
         vchain = f"[0:v]scale={out_w}:{out_h}:flags=bicubic,setsar=1"
+        # Round-T: the deterministic color look rides here — after scale/setsar,
+        # BEFORE the subtitle burn — for both final and proxy. "" for a no-op look.
+        look_chain = _look_filter(load_look(project))
+        if look_chain:
+            vchain += "," + look_chain
         if ass_file is not None:
             vchain += f",ass={_escape_filter_path(ass_file)}"
         if text_overlays:
@@ -873,5 +1303,8 @@ def render_timeline(
     # overwritable proxy or a caller-supplied out_path).
     if fresh_final:
         _write_timeline_sidecar(out_path, timeline)
+        # Round-T: record which xfades were applied vs degraded to dip-to-black.
+        if transitions_report:
+            _write_transitions_sidecar(out_path, transitions_report)
 
     return out_path

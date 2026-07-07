@@ -247,9 +247,73 @@ class BibleEntry(ManjuModel):
 # ------------------------------------------------------------ timeline/rules
 
 
+# Transition types the render understands (round-T). "fade" is the historical
+# dip-to-black; "cut" is a hard cut (no fade); the "xfade_*" family are real
+# handle-aware cross-dissolves (media/render.py). The set is kept small and
+# curated. Validation stays LENIENT (an unknown type renders as a hard cut)
+# because TransitionSpec is human/agent-edited truth and must never crash a
+# build over a typo — the compiler records whatever was requested verbatim.
+TRANSITION_TYPES = (
+    "fade",           # dip-to-black (default; per-segment fade halves)
+    "cut",            # hard cut, no fade
+    "xfade_fade",     # cross-dissolve (ffmpeg xfade=fade)
+    "xfade_slideleft",
+    "xfade_slideright",
+    "xfade_wipeleft",
+    "xfade_circleopen",
+)
+
+
 class TransitionSpec(ManjuModel):
+    """A transition on a clip's out-edge. ``type`` defaults to the historical
+    ``fade`` (dip-to-black); see ``TRANSITION_TYPES`` for the curated set. The
+    ``xfade_*`` family is applied by the render ONLY when real media handles
+    exist on both sides, else it honestly degrades to dip-to-black (§7,
+    render.py). Additive: the default (fade/300) is byte-identical to before."""
+
     type: str = "fade"
     duration_ms: int = 300
+
+
+# ------------------------------------------------------------------ color look
+
+LOOK_PRESETS = ("none", "warm", "cool", "bw", "film", "vivid")
+
+
+class LookSpec(ManjuModel):
+    """A deterministic color look applied in the FINAL/proxy pass (round-T).
+
+    Read from ``bible/style.yaml``'s top-level ``look:`` mapping (the reading
+    contract lives in one place: ``media/render.py:load_look``). The default
+    (preset ``none`` / intensity 0) is a strict no-op: the look filter chain is
+    omitted from the video chain AND from the final content key, so a project
+    that never sets a look renders byte-for-byte identically to before. Each
+    preset is a fixed eq/colorbalance chain whose strength interpolates toward
+    neutral with ``intensity`` (so intensity 0 == none); the exact strings are
+    documented on ``media/render.py:_look_filter``."""
+
+    preset: str = "none"
+    intensity: float = 1.0
+
+    @field_validator("preset")
+    @classmethod
+    def _known_preset(cls, v: str) -> str:
+        if v not in LOOK_PRESETS:
+            raise ValueError(f"look.preset must be one of {LOOK_PRESETS}, got {v!r}")
+        return v
+
+    @field_validator("intensity")
+    @classmethod
+    def _clamp_intensity(cls, v: float) -> float:
+        v = float(v)
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"look.intensity must be in [0, 1], got {v!r}")
+        return v
+
+    @property
+    def active(self) -> bool:
+        """A look that actually changes any pixel: a real preset at >0 strength."""
+        return self.preset != "none" and self.intensity > 0.0
 
 
 class TimingRules(ManjuModel):
@@ -519,6 +583,14 @@ class VideoClip(ManjuModel):
     # its defaults leaves both the segment cache AND the content key byte-stable.
     source_gain_db: float = 0.0
     source_mute: bool = False
+    # Source in-point (round-T): the offset INTO the source where this clip's
+    # timeline window begins. Default 0 = read the source from its head (today's
+    # behaviour, byte-identical — omitted from the content-key payload when 0).
+    # A value >0 means imported footage was trimmed (set_inout) leaving spare
+    # HEAD material before the window: that is the real handle a cross-dissolve
+    # needs on the incoming side. The compiler does not populate this yet (a
+    # future `set_inout` will); it is carried here so the render can honour it.
+    source_in_ms: int = 0
 
 
 class OverlayClip(ManjuModel):
