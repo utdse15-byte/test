@@ -159,6 +159,67 @@ def presets(as_json: bool = typer.Option(False, "--json")):
     typer.secho("用法 / usage: manju new <名字> --preset <name>", fg=typer.colors.BRIGHT_BLACK)
 
 
+# ------------------------------------------------------------------ create
+# The creation funnel (round V, goal item 2): 立意→梗概→节拍→剧本→分镜→生成计划
+# →生成 as staged data. `manju create` (no arg) is the funnel checklist; `manju
+# create <stage>` scaffolds a stage template. The engine scaffolds, never authors
+# (§2) — the templates collapse to zero content, so writing one does not complete
+# the stage.
+
+_FUNNEL_MARK = {"done": "✓", "current": "▶", "todo": "○"}
+_FUNNEL_COLOR = {"done": typer.colors.GREEN, "current": typer.colors.CYAN,
+                 "todo": typer.colors.BRIGHT_BLACK}
+
+
+@app.command()
+def create(
+    stage: Optional[str] = typer.Argument(
+        None, help="brief|synopsis|beats — scaffold that stage's template; "
+                   "omit to print the funnel checklist"),
+    force: bool = typer.Option(False, "--force", help="overwrite an existing file"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """创作漏斗 / creation funnel (goal item 2).
+
+    `manju create` (无参数) 打印七阶段清单(立意→梗概→节拍→剧本→分镜→生成计划→生成)
+    并高亮当前阶段与下一步;`manju create <stage>` 为 brief/synopsis/beats 写模板
+    (已存在则拒绝覆盖,除非 --force)。剧本用 `manju new` 已脚手架的 story/script.md。
+    """
+    from .build.funnel import FunnelError, funnel_status, scaffold_stage
+
+    project = _project()
+    if stage is None:
+        info = funnel_status(project)
+        if as_json:
+            _emit(info, True)
+            return
+        typer.secho(f"创作漏斗 / creation funnel  ({info['done']}/{info['total']} 完成)",
+                    fg=typer.colors.CYAN, bold=True)
+        for s in info["stages"]:
+            mark = _FUNNEL_MARK.get(s["state"], "·")
+            typer.secho(f"  {mark} {s['cn']}({s['id']})  {s['evidence']}",
+                        fg=_FUNNEL_COLOR.get(s["state"]))
+        cur = info.get("current")
+        if cur is None:
+            typer.secho("下一步  全部完成 ✅ — 可 manju build 出片", fg=typer.colors.GREEN)
+        else:
+            entry = next(s for s in info["stages"] if s["id"] == cur)
+            typer.secho(f"下一步  【{entry['cn']}】{entry['next_action']}", fg=typer.colors.CYAN)
+        return
+
+    try:
+        result = scaffold_stage(project, stage, force=force, actor=ACTOR)
+    except FunnelError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(result, True)
+        return
+    typer.secho(f"已生成模板 {result['path']} — 编辑它填入内容(引擎从不代写,§2)",
+                fg=typer.colors.GREEN)
+    typer.secho("查看进度:manju create   ·   写作参考:manju skills show creation-funnel",
+                fg=typer.colors.BRIGHT_BLACK)
+
+
 # ------------------------------------------------------------------ status
 
 

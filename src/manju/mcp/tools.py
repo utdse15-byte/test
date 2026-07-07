@@ -342,6 +342,13 @@ def _h_director_suggest(project: Project, args: dict) -> dict:
     return {"suggestions": [s.to_dict() for s in suggest_next(project)]}
 
 
+def _h_funnel_status(project: Project, args: dict) -> dict:
+    """Read-only creation-funnel status (round V, goal item 2)."""
+    from ..build.funnel import funnel_status
+
+    return funnel_status(project)
+
+
 # --------------------------------------------------------------- registry
 
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -582,6 +589,17 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "payload you can pass straight to director_propose. Read-only.",
         "inputSchema": _EMPTY_SCHEMA,
         "handler": _h_director_suggest,
+    },
+    {
+        "name": "funnel_status",
+        "description": "创作漏斗状态 (round V, goal item 2): the staged creation "
+        "workflow as data — 立意→梗概→节拍→剧本→分镜→生成计划→生成. Per-stage "
+        "{id, cn(中文名), state(done|current|todo), artifact, evidence, skill, "
+        "next_action}; the first not-done stage is `current`. Read-only: it "
+        "detects progress from files on disk, scaffolds nothing and spends "
+        "nothing. Use it to know what to write next before generating.",
+        "inputSchema": _EMPTY_SCHEMA,
+        "handler": _h_funnel_status,
     },
     {
         "name": "skill_list",

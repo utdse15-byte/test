@@ -203,7 +203,7 @@ class Suggestion:
     """A deterministic next-step nudge carrying a ready-made action payload the
     agent/user can pass straight into :func:`propose`."""
 
-    kind: str           # redo | repair | generate | package | budget | select
+    kind: str           # funnel | redo | repair | generate | package | budget | select
     text: str           # 中文, user-facing
     action: dict[str, Any] | None = None  # None = advisory only (no proposal action)
     shot: str | None = None
@@ -1048,12 +1048,35 @@ def suggest_next(project: Project) -> list[Suggestion]:
     only (no LLM, §0). Each suggestion carries a ready-made action payload an
     agent/user can pass straight back into :func:`propose`, closing the loop:
 
+    - creation funnel pre-storyboard → 先把故事写完 (advisory, funnel next_action);
     - stale shots → 建议重做 (redo);
     - QC errors/warnings → 建议修复方案 (repair, when a QC item names an op);
     - missing final / cover → 建议生成 (build / package);
     - budget 近上限 → 提醒 (advisory, no action).
+
+    Funnel awareness (round V, part C): when the creation funnel's current stage
+    is still pre-storyboard (立意/梗概/节拍/剧本), the FIRST suggestion is that
+    stage's next_action — finish the story before spending on shots. It carries
+    the skill pointer in its text and no proposal action (a story edit is a human
+    write, not a whitelisted director action). Additive: once the storyboard is
+    done, no funnel suggestion is emitted and the existing signals lead.
     """
     out: list[Suggestion] = []
+
+    # funnel first, but only pre-storyboard (advisory — a story edit is not a
+    # whitelisted action). Never lets a funnel read error sink the suggestions.
+    try:
+        from .funnel import PRE_STORYBOARD, funnel_current
+
+        cur = funnel_current(project)
+        if cur and cur["id"] in PRE_STORYBOARD:
+            out.append(Suggestion(
+                kind="funnel",
+                text=f"建议先完成{cur['cn']}:{cur['next_action']}",
+                action=None))
+    except Exception:
+        pass
+
     try:
         statuses = evaluate_all(project)
     except Exception:
