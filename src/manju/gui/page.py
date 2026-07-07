@@ -3287,9 +3287,21 @@ def render_page(project_name: str, token: str) -> str:
         f'<meta name="manju-token" content="{tok}">\n'
         f"<title>{name} · manju gui</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'
+        '<link rel="stylesheet" href="/pages.css">\n'  # round-S: shared page chrome (S8b)
         '<script src="/app.js" defer></script>\n'
         "</head>\n"
         "<body>\n"
+        # round-S (S8b): nav to the server-rendered workbench pages so every
+        # capability in docs/WORKBENCH.md is reachable with one obvious click.
+        '<nav class="pnav">'
+        '<a class="active" href="/">工作台</a>'
+        '<a href="/review">审片</a>'
+        '<a href="/compare">对比</a>'
+        '<a href="/library">素材库</a>'
+        '<a href="/providers">服务商</a>'
+        '<a href="/routing">路由</a>'
+        '<a href="/doctor">体检</a>'
+        "</nav>\n"
         '<div id="header" class="panel">\n'
         '  <p class="loading">加载中 (loading)…</p>\n'
         "</div>\n"

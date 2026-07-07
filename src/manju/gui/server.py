@@ -400,6 +400,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._preview(unquote(path[len("/preview/"):]))
             elif path.startswith("/thumb/"):
                 self._thumb(unquote(path[len("/thumb/"):]))
+            elif self._pages_get(path, url):
+                pass  # round-S server-rendered pages (S8b) — see _pages_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -427,6 +429,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/upload":
                 self._act_upload(parse_qs(url.query))
                 return
+            if path == "/api/lib/upload":  # round-S: stream upload straight into the library (S8b)
+                self._act_lib_upload(parse_qs(url.query))
+                return
             body = self._read_body()
             if body is None:
                 return
@@ -451,6 +456,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/validate": self._act_validate,
             }.get(path)
             if handler is None:
+                if self._pages_post(path, body):  # round-S page actions (S8b)
+                    return
                 self._send_error_json("not found", 404)
                 return
             handler(body)
@@ -1236,3 +1243,418 @@ class _Handler(BaseHTTPRequestHandler):
 
         job = self.server.runner.submit("qc", {"deep": deep}, fn)
         self._send_json({"job": job.to_dict()}, 202)
+
+    # =================================================================
+    # round-S GUI PAGES (S8b): six server-rendered routes + their actions.
+    # New region, isolated from the SPA endpoints above — the workbench's
+    # review/compare/library/providers/routing/doctor pages, each a strict
+    # client of the same engine core the CLI calls (docs/WORKBENCH.md).
+    # =================================================================
+
+    _PAGES_CSP = {
+        "Content-Security-Policy": (
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "img-src 'self'; media-src 'self'; connect-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        ),
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+    }
+
+    def _pages_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the round-S pages + their static/read assets.
+        Returns True when handled (response already sent), False otherwise so
+        do_GET falls through to its 404."""
+        from . import pages
+
+        if path == "/pages.css":
+            self._send_text(pages.render_pages_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/pages.js":
+            self._send_text(pages.render_pages_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path in pages.PAGE_PATHS:
+            html_doc = pages.render(path, self.server.project, self.server.token,
+                                    parse_qs(url.query))
+            self._send_text(html_doc, "text/html; charset=utf-8",
+                            extra=self._PAGES_CSP)
+            return True
+        if path == "/api/route-explain":
+            self._route_explain(parse_qs(url.query))
+            return True
+        if path.startswith("/lib-thumb/"):
+            self._lib_asset(unquote(path[len("/lib-thumb/"):]), thumb=True)
+            return True
+        if path.startswith("/lib-blob/"):
+            self._lib_asset(unquote(path[len("/lib-blob/"):]), thumb=False)
+            return True
+        return False
+
+    def _pages_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the round-S page actions. Same token/readonly
+        gates as every other mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/repair": self._act_repair,
+            "/api/providers/toggle": self._act_providers_toggle,
+            "/api/routing/strategy": self._act_routing_strategy,
+            "/api/lib/use": self._act_lib_use,
+            "/api/lib/tag": self._act_lib_tag,
+            "/api/lib/note": self._act_lib_note,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    # -------------------------------------------------- routing (read)
+
+    def _route_explain(self, query: dict[str, list[str]]) -> None:
+        """Per-shot route explain (routing view popover + review context):
+        which rule fired, which were skipped and why."""
+        from ..providers.routing import RoutingError, explain
+
+        shot_id = query.get("shot", [""])[0] or ""
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+        try:
+            shot = self.server.project.load_shot(shot_id)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        try:
+            self._send_json(explain(self.server.project, shot))
+        except RoutingError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+
+    def _act_routing_strategy(self, body: dict[str, Any]) -> None:
+        """Strategy picker — writes ONLY the top-level ``strategy:`` key into
+        timeline/routing.yaml, then validates on save and reverts on failure
+        (never leaves the routing file naming an unknown strategy)."""
+        from ..core.yamlio import atomic_write_text
+        from ..providers.routing import (
+            RoutingError,
+            list_strategies,
+            project_routing_path,
+        )
+
+        from .pages import STRATEGY_NAME_RE, set_strategy_in_text
+
+        strat = str(body.get("strategy") or "")
+        if not STRATEGY_NAME_RE.fullmatch(strat):
+            self._send_error_json("invalid strategy name", 400)
+            return
+        project = self.server.project
+        path = project_routing_path(project)
+        with self.server.quick_mutex:
+            before = path.read_text(encoding="utf-8") if path.exists() else None
+            new_text = set_strategy_in_text(before or "", strat)
+            if not new_text.endswith("\n"):
+                new_text += "\n"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(path, new_text)
+            try:  # validate-on-save: still parses AND names a known strategy
+                info = list_strategies(project)
+                names = {s["name"] for s in info["strategies"]}
+                if strat not in names:
+                    raise RoutingError(
+                        f"unknown strategy {strat!r}; available: {sorted(names)}")
+            except RoutingError as exc:
+                if before is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_write_text(path, before)
+                self._send_error_json(
+                    "strategy 已回滚 (reverted): " + " ".join(str(exc).split()), 400)
+                return
+            append_event(project.root, self.server.actor, "route_strategy",
+                         {"strategy": strat, "via": "gui"})
+        self._send_json({"ok": True, "strategy": strat})
+
+    # -------------------------------------------------- repair (review)
+
+    def _act_repair(self, body: dict[str, Any]) -> None:
+        """A per-finding repair op from the review page: builds a NEW take from
+        a source take (append-only — the source is never touched), through the
+        same repair_ops the CLI's `manju repair --op` calls. Serialized on the
+        job runner + the build lock like every other media-writing job."""
+        project, actor = self.server.project, self.server.actor
+        shot_id = str(body.get("shot") or "")
+        op = str(body.get("op") or "")
+        take = body.get("take") or None
+        if not shot_id or not project.shot_path(shot_id).exists():
+            self._send_error_json(f"unknown shot: {shot_id}", 404)
+            return
+        if op not in ("retime", "extend", "trim", "croppad"):
+            self._send_error_json(
+                f"unknown repair op: {op!r} (retime|extend|trim|croppad)", 400)
+            return
+        if take is None:
+            try:
+                take = project.load_shot(shot_id).status.selected_take
+            except ProjectError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+        if not take:
+            self._send_error_json(
+                f"{shot_id} has no selected take — pass a take or select one first", 400)
+            return
+        take = str(take)
+        factor, ms, mode = body.get("factor"), body.get("ms"), body.get("mode")
+
+        def fn(job) -> dict[str, Any]:
+            from ..media.repair_ops import (
+                crop_pad_take,
+                extend_take,
+                retime_take,
+                trim_take,
+            )
+
+            with _optional_build_lock(project.root, actor):
+                if op == "retime":
+                    new = retime_take(project, shot_id, take,
+                                      float(factor if factor is not None else 1.0))
+                elif op == "extend":
+                    new = extend_take(project, shot_id, take, int(ms or 0),
+                                      mode=str(mode or "freeze"))
+                elif op == "trim":
+                    new = trim_take(project, shot_id, take, int(ms or 0))
+                else:
+                    new = crop_pad_take(project, shot_id, take,
+                                        mode=str(mode or "center_crop"))
+            append_event(project.root, actor, "repair",
+                         {"shot": shot_id, "op": op, "source_take": take,
+                          "new_take": new.name, "via": "gui"})
+            return {"shot": shot_id, "op": op, "source_take": take,
+                    "new_take": new.name, "params": new.sidecar.params}
+
+        job = self.server.runner.submit("repair", {"shot": shot_id, "op": op}, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    # -------------------------------------------------- providers
+
+    def _act_providers_toggle(self, body: dict[str, Any]) -> None:
+        """Enable/disable a provider by flipping the manifest's ``disabled:``
+        key (comment-preserving, the same policy switch the CLI makes). Secret
+        values are never touched or read."""
+        from ..core.yamlio import atomic_write_text
+        from ..providers.manifest import providers_dir
+
+        from .pages import set_disabled_in_text
+
+        pid = str(body.get("id") or "")
+        if not pid or "/" in pid or "\\" in pid or pid.startswith("."):
+            self._send_error_json("invalid provider id", 400)
+            return
+        disabled = bool(body.get("disabled"))
+        path = providers_dir() / pid / "provider.yaml"
+        if not path.exists():
+            self._send_error_json(f"no such provider: {pid}", 404)
+            return
+        with self.server.quick_mutex:
+            text = path.read_text(encoding="utf-8")
+            atomic_write_text(path, set_disabled_in_text(text, disabled))
+            append_event(self.server.project.root, self.server.actor,
+                         "provider_toggle",
+                         {"id": pid, "enabled": not disabled, "via": "gui"})
+        self._send_json({"ok": True, "id": pid, "enabled": not disabled})
+
+    # -------------------------------------------------- library
+
+    def _lib_asset(self, hash8: str, *, thumb: bool) -> None:
+        """Serve a library thumbnail or blob by its content-hash handle. The
+        library lives outside every project, so /media never reaches it; this
+        route resolves through the index (hash8 → entry) and contains the
+        result inside the library root (no path is ever taken from the client)."""
+        from ..core.library import Library, LibraryError
+
+        lib = Library()
+        try:
+            entry = lib.get(hash8)
+        except LibraryError:
+            self._send_error_json("not found", 404)
+            return
+        if thumb:
+            rel = entry.get("thumb")
+            target = (lib.root / rel) if rel else None
+        else:
+            target = lib.blob_path(entry)
+        if target is None or not target.is_file():
+            self._send_error_json("no such asset", 404)
+            return
+        try:
+            resolved = target.resolve()
+            if not resolved.is_relative_to(lib.root.resolve()):
+                self._send_error_json("path not served", 403)
+                return
+        except OSError:
+            self._send_error_json("not found", 404)
+            return
+        self._serve_file(resolved)
+
+    def _act_lib_use(self, body: dict[str, Any]) -> None:
+        """Copy a library asset INTO the current project (refs/ or imports/),
+        honouring the project's no-overwrite suffixing — the same core path as
+        `manju lib use`. The library stays independent; the copy is a normal
+        human asset from then on."""
+        import shutil
+        from pathlib import Path
+
+        from ..core.library import Library, LibraryError
+
+        hash8 = str(body.get("hash") or body.get("hash8") or "")
+        as_ = str(body.get("as") or "refs")
+        if as_ not in ("refs", "imports"):
+            self._send_error_json("as must be 'refs' or 'imports'", 400)
+            return
+        lib = Library()
+        try:
+            entry = lib.get(hash8)
+        except LibraryError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        blob = lib.blob_path(entry)
+        if not blob.exists():
+            self._send_error_json(f"library blob missing: {entry['blob']}", 400)
+            return
+        project, actor = self.server.project, self.server.actor
+        with self.server.quick_mutex:
+            dest_dir = project.imports_dir if as_ == "imports" else project.refs_dir
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            ext = Path(entry["blob"]).suffix
+            stem = Path(entry["name"]).stem or "asset"
+            dest = dest_dir / f"{stem}{ext}"
+            n = 2
+            while dest.exists():  # no-overwrite suffixing (§3), like `lib use`
+                dest = dest_dir / f"{stem}_{n}{ext}"
+                n += 1
+            shutil.copy2(blob, dest)
+            rel = project.relpath(dest)
+            append_event(project.root, actor, "lib_use",
+                         {"hash": entry["hash"], "name": entry["name"],
+                          "as": as_, "dest": rel, "via": "gui"})
+        self._send_json({"ok": True, "dest": rel, "as": as_, "name": entry["name"]})
+
+    def _lib_find_entry(self, index: dict[str, Any], hash8: str) -> dict[str, Any] | None:
+        from ..core.library import _hex
+
+        needle = hash8.strip().removeprefix("sha256:").lower()
+        if not needle:
+            return None
+        for e in index["assets"]:
+            if _hex(e["hash"]).startswith(needle):
+                return e
+        return None
+
+    def _act_lib_tag(self, body: dict[str, Any]) -> None:
+        """Replace an asset's tags (comma string or list) in the library index."""
+        from ..core.library import Library, LibraryError, _clean_tags
+
+        hash8 = str(body.get("hash") or "")
+        raw = body.get("tags")
+        if isinstance(raw, str):
+            tags = [t.strip() for t in raw.split(",")]
+        elif isinstance(raw, list):
+            tags = [str(t) for t in raw]
+        else:
+            tags = []
+        lib = Library()
+        with self.server.quick_mutex:
+            try:
+                index = lib.load_index()
+            except LibraryError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+            entry = self._lib_find_entry(index, hash8)
+            if entry is None:
+                self._send_error_json(f"no asset with hash {hash8!r}", 404)
+                return
+            entry["tags"] = _clean_tags(tags)
+            lib._save_index(index)
+            append_event(self.server.project.root, self.server.actor, "lib_tag",
+                         {"hash": entry["hash"], "tags": entry["tags"], "via": "gui"})
+        self._send_json({"ok": True, "hash": entry["hash"], "tags": entry["tags"]})
+
+    def _act_lib_note(self, body: dict[str, Any]) -> None:
+        """Set an asset's free-text note in the library index."""
+        from ..core.library import Library, LibraryError
+
+        hash8 = str(body.get("hash") or "")
+        note = str(body.get("note") or "")
+        if len(note) > 2000:
+            self._send_error_json("note too long (max 2000 chars)", 400)
+            return
+        lib = Library()
+        with self.server.quick_mutex:
+            try:
+                index = lib.load_index()
+            except LibraryError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+            entry = self._lib_find_entry(index, hash8)
+            if entry is None:
+                self._send_error_json(f"no asset with hash {hash8!r}", 404)
+                return
+            entry["note"] = note.strip()
+            lib._save_index(index)
+            append_event(self.server.project.root, self.server.actor, "lib_note",
+                         {"hash": entry["hash"], "via": "gui"})
+        self._send_json({"ok": True, "hash": entry["hash"], "note": entry["note"]})
+
+    def _act_lib_upload(self, query: dict[str, list[str]]) -> None:
+        """Stream a browser upload straight into the private library (the GUI
+        twin of `manju lib add`): dedup by content hash is the library's job.
+        Reuses the same bounded streaming discipline as /api/upload."""
+        import uuid as _uuid
+
+        from ..core.library import Library, LibraryError, _hex
+
+        raw_name = (query.get("name", [""])[0] or "").strip()
+        raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
+        if not raw_name or raw_name.startswith("."):
+            self._send_error_json("upload needs ?name=<filename>", 400)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self._send_error_json("Content-Length required", 411)
+            return
+        if length > self._UPLOAD_MAX:
+            self._send_error_json("file too large (max 4 GiB)", 413)
+            return
+        holder = self.server.project.runtime_dir / "upload-tmp" / _uuid.uuid4().hex
+        holder.mkdir(parents=True, exist_ok=True)
+        tmp = holder / raw_name  # keep the real name so the library records it
+        received = 0
+        try:
+            with open(tmp, "wb") as f:
+                while received < length:
+                    chunk = self.rfile.read(min(1 << 20, length - received))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    received += len(chunk)
+            if received != length:
+                self._send_error_json("upload truncated", 400)
+                return
+            lib = Library()
+            try:
+                res = lib.add(tmp, tags=None, note=None)
+            except LibraryError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+            entry = res["entry"]
+            append_event(self.server.project.root, self.server.actor, "lib_add",
+                         {"hash": entry["hash"], "name": entry["name"],
+                          "deduped": res["deduped"], "via": "gui"})
+            self._send_json({"ok": True, "hash8": _hex(entry["hash"])[:8],
+                             "name": entry["name"], "deduped": res["deduped"]})
+        finally:
+            tmp.unlink(missing_ok=True)
+            try:
+                holder.rmdir()
+            except OSError:
+                pass
