@@ -962,3 +962,46 @@ from_take; single gitops/doctor kept where three agents ported copies.
 **Verified:** 867 tests green consolidated (was 693 pre-S; +174); all six
 GUI pages + plan/onboarding/failures live-smoked over real HTTP (POST guards
 verified working: token + DNS-rebinding 403s).
+
+---
+
+## 2026-07-07 — round T: finish WITHOUT leaving Manju
+
+**The corrected goal (owner clarification):** backend tools are capability
+sources, never the problem; the problem is having to OPEN JianYing/CapCut to
+finish a normal video. Round T closed those moments (6 agents, 2 waves; the
+pre-clarification "minimize binaries" agents were cancelled/kept only where
+still consistent — the T1 binaries agent was user-cancelled and dropped):
+
+- **音量/BGM (audio finishing):** BGM in-point + fade-in (music/ambient),
+  per-shot footage gain/mute folded into the segment cache (one clip's change
+  re-encodes exactly one segment), mixer read/apply API — surfaced as the
+  /mixer page (sliders, BGM picker from imports+library with 试听, in-point,
+  fades, sfx list editor) and per-clip audio in the /edit inspector.
+- **裁剪 (cropping):** frame-accurate set_inout repair op; VIRTUAL mode
+  (default) hardlinks the source with a sidecar window — spare head/tail
+  handles retained; frame/scrub-strip service (.manju/frames, cached).
+- **转场/调色 (polish):** handle-aware REAL crossfades (xfade family) as
+  content-addressed boundary segments — total duration exact to the frame,
+  applied only with real handles (virtual trims provide them — proven e2e
+  applied vs dip-to-black control), degrade recorded per boundary in
+  final_vN.transitions.json; color looks (warm/cool/bw/film/vivid ×
+  intensity) in the final pass, content-keyed, intensity-0 byte-identical.
+- **字幕 (subtitles):** /subtitles editor — inline cue text/timing edit,
+  add/split/merge/delete, explicit manual-takeover confirm on first edit
+  (generated.srt kept for comparison; 还原自动字幕 reverts), safe-area
+  preview over a real frame.
+- **排序/卡片/封面 (order/cards/cover):** /edit timeline strip (thumbs,
+  reorder, trim scrubber, duration, transition default picker with
+  per-boundary applied/degraded markers, look picker with before/after
+  frames); /packaging v2 forms with live card previews; cover picked off a
+  frame strip writing cover.frame_ms; teaser two-thumb range.
+
+**Honest boundaries recorded in-page:** per-boundary transition OVERRIDES are
+not a data path yet (global default + per-boundary state display);
+generative-take handle regeneration deferred (virtual-trimmed footage is the
+handle source today).
+
+**Verified:** 972 tests green consolidated (was 867; +105); /edit /subtitles
+/mixer /packaging live-smoked over real HTTP incl. a mixer apply that wrote
+rules.yaml and reported its re-render verdict; applied-xfade e2e in-suite.

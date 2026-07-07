@@ -146,6 +146,8 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju compare [a b] [--json]` | S | per-shot diff between finals: takes/captions/audio/packaging + why |
 | `manju lib add/list/show/use/rm` | S | private cross-project asset library (~/.manju/library, content-addressed, tags) |
 | `manju failures [-n] [--json]` | S | recent structured failures: step, cause, evidence, hint, log path |
+| `manju repair --op inout --in-ms A --out-ms B [--mode virtual\|reencode]` | T | crop a clip's time range (virtual = keeps handles for real crossfades) |
+| `manju frames <source> [--at ms \| --strip N]` | T | cached frame / scrub-strip previews (cover picker, GUI trimmer) |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
