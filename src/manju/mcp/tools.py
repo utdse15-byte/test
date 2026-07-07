@@ -347,6 +347,24 @@ def _h_director_suggest(project: Project, args: dict) -> dict:
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
 
 
+def _h_skill_list(project: Project, args: dict) -> dict:
+    from ..core.skills import list_skills
+
+    return {"skills": [s.to_dict() for s in list_skills(project)]}
+
+
+def _h_skill_show(project: Project, args: dict) -> dict:
+    from ..core.skills import load_skill
+
+    skill_id = str(args.get("id") or "")
+    try:
+        info = load_skill(project, skill_id)
+    except KeyError as exc:
+        raise ToolError(str(exc)) from exc
+    text = info.path.read_text(encoding="utf-8") if info.path else ""
+    return {"skill": info.to_dict(), "text": text}
+
+
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
@@ -564,6 +582,23 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "payload you can pass straight to director_propose. Read-only.",
         "inputSchema": _EMPTY_SCHEMA,
         "handler": _h_director_suggest,
+    },
+    {
+        "name": "skill_list",
+        "description": "技能库索引 (round V): every visible skill (project > user "
+        "> bundled) with id, 何时用 one-liner, tags. Progressive disclosure: read "
+        "this index cheaply, then pull ONE skill's full text via skill_show — "
+        "never inline the whole library.",
+        "inputSchema": _EMPTY_SCHEMA,
+        "handler": _h_skill_list,
+    },
+    {
+        "name": "skill_show",
+        "description": "One skill's FULL SKILL.md text by id (project > user > "
+        "bundled resolution). Load on demand when the index says it applies to "
+        "the task at hand.",
+        "inputSchema": _schema({"id": {"type": "string"}}, ["id"]),
+        "handler": _h_skill_show,
     },
 ]
 

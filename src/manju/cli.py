@@ -592,6 +592,64 @@ def propose(
         typer.secho(f"proposal → {rel}", fg=typer.colors.GREEN)
 
 
+# ------------------------------------------------------------------- skills
+
+skills_app = typer.Typer(no_args_is_help=False,
+                         help="技能库 (round V): packaged domain expertise the "
+                              "driving agent loads on demand — index first, "
+                              "one skill's full text via show。")
+app.add_typer(skills_app, name="skills")
+
+
+@skills_app.callback(invoke_without_command=True)
+def skills_list(ctx: typer.Context,
+                as_json: bool = typer.Option(False, "--json")):
+    """List every visible skill (project > user > bundled)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from .core.skills import list_skills
+
+    project = _project_or_none()
+    rows = list_skills(project)
+    if as_json:
+        _emit({"skills": [r.to_dict() for r in rows]}, True)
+        return
+    if not rows:
+        typer.echo("技能库为空 — 在 skills/<id>/SKILL.md 添加技能")
+        return
+    typer.secho("技能库 / skills(project > user > bundled)", fg=typer.colors.CYAN)
+    for r in rows:
+        src = "" if r.source == "bundled" else f"  [{r.source}]"
+        typer.echo(f"  {r.id:<22} {r.when_to_use or r.description}{src}")
+    typer.secho("  → manju skills show <id> 查看全文", fg=typer.colors.BRIGHT_BLACK)
+
+
+@skills_app.command("show")
+def skills_show(skill_id: str,
+                as_json: bool = typer.Option(False, "--json")):
+    """One skill's full SKILL.md text."""
+    from .core.skills import load_skill
+
+    project = _project_or_none()
+    try:
+        info = load_skill(project, skill_id)
+    except KeyError as exc:
+        _fail(str(exc))
+    text = info.path.read_text(encoding="utf-8") if info.path else ""
+    if as_json:
+        _emit({"skill": info.to_dict(), "text": text}, True)
+    else:
+        typer.echo(text)
+
+
+def _project_or_none():
+    """skills work outside a project too (bundled + user tiers only)."""
+    try:
+        return Project.find(Path.cwd())
+    except ProjectError:
+        return None
+
+
 # -------------------------------------------------------------------- auto
 
 
@@ -622,8 +680,6 @@ def auto(
     strictly a subprocess. Structured integrations: `manju serve-mcp`."""
     import subprocess
 
-    import manju
-
     from .agents import AgentResolutionError, build_command, resolve_agent
 
     project = _project()
@@ -634,19 +690,23 @@ def auto(
     except AgentResolutionError as exc:
         _fail(str(exc))
 
-    # Prefer a project-local skill, then the repo-bundled skills/manju/SKILL.md.
-    skill_text: Optional[str] = None
-    for cand in (
-        project.root / "skills" / "manju" / "SKILL.md",
-        Path(manju.__file__).resolve().parents[2] / "skills" / "manju" / "SKILL.md",
-    ):
-        if cand.exists():
-            skill_text = cand.read_text(encoding="utf-8")
-            break
+    # Round V progressive disclosure: the core protocol skill travels in full
+    # (project > user > bundled resolution via core/skills), every OTHER skill
+    # only as an index line — the agent pulls full bodies on demand with
+    # `manju skills show <id>` instead of hauling the whole library每次.
+    from .core.skills import CORE_SKILL_ID, skill_index_text, skill_text
 
-    if skill_text:
-        composed = ("按照以下 Manju 操作手册工作:\n\n" + skill_text
-                    + "\n\n---\n\n任务:" + prompt_text)
+    try:
+        core_text: Optional[str] = skill_text(project, CORE_SKILL_ID)
+    except KeyError:
+        core_text = None
+    index = skill_index_text(project, exclude=(CORE_SKILL_ID,))
+
+    if core_text:
+        composed = "按照以下 Manju 操作手册工作:\n\n" + core_text
+        if index:
+            composed += "\n\n---\n\n" + index
+        composed += "\n\n---\n\n任务:" + prompt_text
     else:
         composed = _MINI_PLAYBOOK + "\n\n任务:" + prompt_text
 
