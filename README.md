@@ -122,7 +122,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `manju new [--preset <kit>]` | M0/P3 | scaffold a project (auto `git init`; a preset pre-fills the skeleton) |
-| `manju presets [--json]` | P3 | list the 8 preset kits |
+| `manju presets [--json]` | P3 | list the 3 neutral preset kits (blank / vertical_ai_video / horizontal_ai_video) |
 | `manju status [--json]` | M0 | takeover entry: stage, gaps, next step, spend |
 | `manju check` | M0 | schema + referential + lock + secret validation |
 | `manju import <files…>` | M0 | register into `imports/` (proxy/thumb/waveform) |
