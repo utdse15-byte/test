@@ -290,9 +290,17 @@ def _segment_cache_key(
     """The one segment-key formula, shared by the segment cache and the
     final content key (FIX-A) so they can never drift apart."""
     src = project.resolve(clip.source)
-    return cache_key(
+    parts: list[object] = [
         hash_file(src), width, height, fps, clip.duration_ms, target, fade_in_ms, fade_out_ms
-    )
+    ]
+    # Round-T per-shot source audio: fold gain/mute into the key ONLY when
+    # non-default, so an untouched clip keeps a byte-identical key (its cached
+    # segment is reused) while a changed one re-normalizes exactly one segment.
+    if clip.source_mute:
+        parts.append("srcmute")
+    elif clip.source_gain_db:
+        parts.append(f"srcgain:{clip.source_gain_db}")
+    return cache_key(*parts)
 
 
 def _build_segment(
@@ -340,7 +348,9 @@ def _build_segment(
     if fade_in_ms == 0 and fade_out_ms == 0:
         normalize_segment(
             src, seg_path, width=width, height=height, fps=fps,
-            duration_ms=clip.duration_ms, log=log,
+            duration_ms=clip.duration_ms,
+            source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
+            log=log,
         )
         return seg_path
 
@@ -349,7 +359,9 @@ def _build_segment(
         base = Path(tmp) / "base.mp4"
         normalize_segment(
             src, base, width=width, height=height, fps=fps,
-            duration_ms=clip.duration_ms, log=log,
+            duration_ms=clip.duration_ms,
+            source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
+            log=log,
         )
         _apply_fades(
             base, seg_path, duration_ms=clip.duration_ms,
@@ -370,6 +382,25 @@ def _fmt_num(x: float | int) -> str:
     if isinstance(x, float) and x.is_integer():
         return str(int(x))
     return str(x)
+
+
+def _bed_seek_head(clip: AudioClip) -> list[str]:
+    """In-point filters for a music/ambient bed (round-T ``start_offset_ms``):
+    trim the head of the SOURCE and rebase timestamps to zero so the bed begins
+    at the seeked point (``atrim=start`` then ``asetpts``). Empty when the
+    in-point is 0 — a default bed keeps a byte-identical filtergraph."""
+    if clip.start_offset_ms > 0:
+        off = clip.start_offset_ms / 1000.0
+        return [f"atrim=start={off:.3f}", "asetpts=PTS-STARTPTS"]
+    return []
+
+
+def _bed_fade_in(clip: AudioClip) -> list[str]:
+    """Fade-in filter for a bed (round-T ``fade_in_ms``): ramp up from silence
+    over the clip's opening. Empty when 0 (byte-stable default)."""
+    if clip.fade_in_ms > 0:
+        return [f"afade=t=in:st=0:d={clip.fade_in_ms / 1000.0:.3f}"]
+    return []
 
 
 def _duck_filter(clip: AudioClip) -> str:
@@ -478,10 +509,12 @@ def _build_audio_graph(
         next_idx += 1
         inputs += ["-i", str(project.resolve(clip.source))]
         chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
+        chain += _bed_seek_head(clip)  # round-T in-point (byte-stable when 0)
         if clip.start_ms > 0:
             chain.append(f"adelay={clip.start_ms}:all=1")
         if clip.gain_db:
             chain.append(f"volume={clip.gain_db}dB")
+        chain += _bed_fade_in(clip)  # round-T fade-in (byte-stable when 0)
         chain.append("apad")
         chain.append(f"atrim=0:{total_s:.3f}")
         if clip.fade_out_ms > 0:
@@ -509,10 +542,12 @@ def _build_audio_graph(
         else:
             inputs += ["-i", str(project.resolve(clip.source))]
         chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
+        chain += _bed_seek_head(clip)  # round-T in-point (byte-stable when 0)
         if clip.start_ms > 0:
             chain.append(f"adelay={clip.start_ms}:all=1")
         if clip.gain_db:
             chain.append(f"volume={clip.gain_db}dB")
+        chain += _bed_fade_in(clip)  # round-T fade-in (byte-stable when 0)
         chain.append("apad")
         chain.append(f"atrim=0:{total_s:.3f}")
         if clip.fade_out_ms > 0:
@@ -610,7 +645,15 @@ def final_content_key(
         for i, clip in enumerate(clips)
     ]
     payload = {
-        "timeline": timeline.model_dump(exclude={"meta"}),  # meta is provenance, not content
+        # meta is provenance, not content. Round-T: the per-shot source-audio
+        # fields are EXCLUDED here because they are already carried by the
+        # ordered segment keys below (they change the normalized segment, not the
+        # timeline arrangement) — so a clip at its source-audio defaults leaves
+        # this content key byte-identical to before the fields existed.
+        "timeline": timeline.model_dump(
+            exclude={"meta": True,
+                     "tracks": {"video": {"__all__": {"source_gain_db", "source_mute"}}}}
+        ),
         "segments": seg_keys,
         "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
         "audio": _audio_input_hashes(project, timeline),

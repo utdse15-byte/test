@@ -57,6 +57,8 @@ def normalize_segment(
     height: int,
     fps: int,
     duration_ms: int | None = None,
+    source_gain_db: float = 0.0,
+    source_mute: bool = False,
     log: Log = None,
 ) -> Path:
     src = Path(src)
@@ -93,6 +95,15 @@ def normalize_segment(
     if has_audio:
         args += ["-i", str(src)]
         af_parts = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
+        # Round-T per-shot source audio: mute drops the footage's own track to
+        # silence (volume=0 -> digital zeros, astats RMS -inf); a gain shifts its
+        # level. Applied here — folded into the segment cache key upstream — so it
+        # is baked into the cached segment that feeds the concat [0:a] bus. A
+        # default (0dB, unmuted) clip adds nothing: the command stays byte-stable.
+        if source_mute:
+            af_parts.append("volume=0")
+        elif source_gain_db:
+            af_parts.append(f"volume={source_gain_db}dB")
         if dur_s is not None:
             af_parts.append("apad")  # pad audio so it too reaches the target length
         args += ["-filter_complex", f"[0:v]{vf}[v];[0:a]{','.join(af_parts)}[a]"]

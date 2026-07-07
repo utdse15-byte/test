@@ -120,6 +120,14 @@ class CompileInput:
                     "voice_source": s.voice_source,
                     "voice_duration_ms": s.voice_duration_ms,
                     "voice_timing": s.voice_timing,
+                    # Round-T: fold per-shot source-audio into the fingerprint ONLY
+                    # when non-default, so a change (footage gain/mute) recompiles
+                    # the timeline while an untouched project keeps today's hash.
+                    **(
+                        {"source_audio": s.shot.source_audio.model_dump()}
+                        if (s.shot.source_audio.gain_db or s.shot.source_audio.mute)
+                        else {}
+                    ),
                 }
                 for s in self.shots
             ],
@@ -359,6 +367,11 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 start_ms=cursor,
                 duration_ms=duration_ms,
                 transition_out=_transition(seg_i),
+                # Round-T: the footage's own-audio level/mute travels onto the
+                # clip so the render is purely a function of the compiled
+                # timeline (defaults 0dB/unmuted = today's behaviour).
+                source_gain_db=s.shot.source_audio.gain_db,
+                source_mute=s.shot.source_audio.mute,
             )
         )
         seg_i += 1
@@ -488,6 +501,10 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 gain_db=rules.music.gain_db,
                 ducking=rules.music.ducking,
                 fade_out_ms=rules.music.fade_out_ms,
+                # BGM in-point + fade-in (round-T): seek into the source and ramp
+                # up from silence, carried onto the clip (defaults 0 = today's).
+                start_offset_ms=rules.music.start_offset_ms,
+                fade_in_ms=rules.music.fade_in_ms,
                 # ducking shape travels onto the clip so the render is purely a
                 # function of the compiled timeline (defaults = today's constants)
                 duck_threshold=rules.music.duck_threshold,
@@ -536,6 +553,8 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 ducking=audio.ambient.ducking,
                 fade_out_ms=audio.ambient.fade_out_ms,
                 loop=True,
+                start_offset_ms=audio.ambient.start_offset_ms,
+                fade_in_ms=audio.ambient.fade_in_ms,
                 duck_threshold=audio.ambient.duck_threshold,
                 duck_ratio=audio.ambient.duck_ratio,
                 duck_attack_ms=audio.ambient.duck_attack_ms,

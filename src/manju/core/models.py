@@ -118,6 +118,25 @@ class ShotStatus(ManjuModel):
     take_notes: dict[str, str] = Field(default_factory=dict)
 
 
+class SourceAudio(ManjuModel):
+    """Per-shot control over the imported footage's OWN sound (round-T).
+
+    A human's clip may carry usable diegetic audio (an actor's line, room
+    tone) or unwanted noise the mixer wants down or gone. ``gain_db`` shifts
+    that source track's level; ``mute`` drops it entirely. Both are folded into
+    the segment-normalize cache key ONLY when non-default, so an untouched shot
+    keeps a byte-identical segment (its cached render is reused) and a changed
+    one re-normalizes exactly one segment (§7, §14 incremental design).
+
+    Deliberately NOT part of spec_payload (core/spec.py): the footage's own
+    audio never restages the PICTURE, so tweaking it must never make a video
+    take look stale.
+    """
+
+    gain_db: float = 0.0
+    mute: bool = False
+
+
 class ShotSpec(ManjuModel):
     id: str
     scene: str | None = None
@@ -130,6 +149,9 @@ class ShotSpec(ManjuModel):
     quality: Quality = Field(default_factory=Quality)
     generation: Generation = Field(default_factory=Generation)
     status: ShotStatus = Field(default_factory=ShotStatus)
+    # Imported-footage own-audio control (round-T). Default (0 dB, unmuted) is a
+    # no-op: the segment cache key omits it, so today's projects are byte-stable.
+    source_audio: SourceAudio = Field(default_factory=SourceAudio)
     # Value-hash locks (§5): dotted path -> sha256 of the canonical value at
     # lock time. A hand-written bare list is accepted but flagged "unsealed"
     # by `manju check` until `manju lock` seals it with real hashes.
@@ -243,6 +265,13 @@ class MusicRules(ManjuModel):
     gain_db: float = -18.0
     ducking: bool = True
     fade_out_ms: int = 1500
+    # BGM in-point + fade-in (round-T). ``start_offset_ms`` seeks INTO the source
+    # before it is laid under the picture (skip a long intro / land on the drop);
+    # ``fade_in_ms`` ramps it up from silence at the film's start. Both default
+    # to 0 — an untouched project renders a byte-identical audio filtergraph
+    # (pinned in tests) — and travel onto the compiled AudioClip.
+    start_offset_ms: int = 0
+    fade_in_ms: int = 0
     # Sidechain ducking shape (render.py _build_audio_graph). Defaults are the
     # historical hardcoded constants — a project that never touches them renders
     # a byte-identical filtergraph (pinned in tests). threshold/ratio are the
@@ -274,6 +303,10 @@ class AmbientRules(ManjuModel):
     gain_db: float = -24.0
     ducking: bool = False
     fade_out_ms: int = 1000
+    # In-point + fade-in, same knobs (and same 0 defaults) as MusicRules — an
+    # ambient bed can also seek into its source and fade up from silence (§7 ⑤).
+    start_offset_ms: int = 0
+    fade_in_ms: int = 0
     # Sidechain ducking shape, same knobs (and same historical defaults) as
     # MusicRules — an ambient bed ducks under speech exactly like BGM (§7 ⑤).
     duck_threshold: float = 0.05
@@ -478,6 +511,14 @@ class VideoClip(ManjuModel):
     start_ms: int
     duration_ms: int
     transition_out: TransitionSpec | None = None
+    # Imported-footage own-audio (round-T), carried from ShotSpec.source_audio by
+    # the compiler. Applied at SEGMENT-normalize time (folded into the segment
+    # cache key only when non-default), so the footage's own sound rides the
+    # concatenated [0:a] bus at the level the mixer chose — or not at all. The
+    # final content key carries these via the ordered segment keys, so a clip at
+    # its defaults leaves both the segment cache AND the content key byte-stable.
+    source_gain_db: float = 0.0
+    source_mute: bool = False
 
 
 class OverlayClip(ManjuModel):
@@ -506,6 +547,12 @@ class AudioClip(ManjuModel):
     ducking: bool = False
     fade_out_ms: int = 0
     loop: bool = False  # loop the source to fill duration_ms (ambient beds)
+    # In-point + fade-in (round-T), carried from Music/AmbientRules by the
+    # compiler. ``start_offset_ms`` seeks into the SOURCE before it is laid down
+    # (head atrim + PTS reset); ``fade_in_ms`` ramps up from silence at the clip
+    # start. Both default 0 — an unset clip renders exactly today's filtergraph.
+    start_offset_ms: int = 0
+    fade_in_ms: int = 0
     # Per-clip sidechain ducking shape, carried from Music/AmbientRules by the
     # compiler so the render renders each clip's own knobs. Defaults are the
     # historical constants: an unducked clip (or one compiled before these

@@ -51,11 +51,20 @@ def _build_script(lib, project: "Project", timeline: Timeline):
         # tpad clone); drafts express the same intent as a mild slow-down:
         # source shorter than target -> speed = source/target automatically.
         source_us = min(material.duration, target_us)
-        segment = lib.VideoSegment(
-            material,
-            trange(clip.start_ms * ms, target_us),
-            source_timerange=trange(0, source_us),
-        )
+        vseg_kwargs: dict = {"source_timerange": trange(0, source_us)}
+        # Round-T: the footage's OWN audio level/mute — carried as the segment
+        # volume when non-default (mute -> 0). Guarded: older library builds
+        # without a VideoSegment ``volume`` kwarg keep today's behaviour.
+        if clip.source_mute:
+            vseg_kwargs["volume"] = 0.0
+        elif clip.source_gain_db:
+            vseg_kwargs["volume"] = _volume_from_db(clip.source_gain_db)
+        try:
+            segment = lib.VideoSegment(material, trange(clip.start_ms * ms, target_us),
+                                       **vseg_kwargs)
+        except TypeError:  # library build without a volume kwarg
+            segment = lib.VideoSegment(material, trange(clip.start_ms * ms, target_us),
+                                       source_timerange=trange(0, source_us))
         script.add_segment(segment, "main")
 
     def _audio_segment(a):
@@ -66,12 +75,25 @@ def _build_script(lib, project: "Project", timeline: Timeline):
         start_us, end_us), or None when the clip trims to nothing."""
         material = lib.AudioMaterial(str(project.resolve(a.source)))
         target_us = (a.duration_ms or timeline.duration_ms) * ms
-        target_us = min(target_us, material.duration)
+        # Round-T: BGM/ambient in-point — seek into the SOURCE (start_offset_ms)
+        # and bound the read to what remains after the seek (default 0 = today).
+        in_us = max(0, a.start_offset_ms * ms)
+        target_us = min(target_us, max(0, material.duration - in_us))
         if target_us <= 0:
             return None
         start_us = a.start_ms * ms
-        segment = lib.AudioSegment(material, trange(start_us, target_us),
-                                   volume=_volume_from_db(a.gain_db))
+        vol = _volume_from_db(a.gain_db)
+        if in_us > 0:
+            # Only reshape the source read for a real in-point; guarded so a
+            # library build without a source_timerange kwarg still exports.
+            try:
+                segment = lib.AudioSegment(material, trange(start_us, target_us),
+                                           source_timerange=trange(in_us, target_us),
+                                           volume=vol)
+            except TypeError:
+                segment = lib.AudioSegment(material, trange(start_us, target_us), volume=vol)
+        else:  # default in-point: byte-identical to before round-T
+            segment = lib.AudioSegment(material, trange(start_us, target_us), volume=vol)
         return segment, start_us, start_us + target_us
 
     def _add_audio(track_name: str, clips) -> None:

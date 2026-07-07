@@ -77,6 +77,12 @@ def _us(ms: int | float | None) -> int:
     return int(round((ms or 0) * US_PER_MS))
 
 
+def _volume_from_db(gain_db: float) -> float:
+    """Linear volume (JianYing's per-segment scale) from a dB gain — mirrors
+    the native draft path (native_draft._volume_from_db), clamped to [0, 2]."""
+    return max(0.0, min(2.0, 10 ** (gain_db / 20.0)))
+
+
 def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
     config = project.load_config()
     name = config.name
@@ -106,14 +112,21 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "height": height,
             }
         )
-        video_segments.append(
-            {
-                "id": seg_id,
-                "material_id": mat_id,
-                "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
-                "source_timerange": {"start": 0, "duration": dur_us},
-            }
-        )
+        seg: dict[str, Any] = {
+            "id": seg_id,
+            "material_id": mat_id,
+            "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
+            "source_timerange": {"start": 0, "duration": dur_us},
+        }
+        # Round-T: the footage's OWN audio level/mute rides the video segment,
+        # emitted ONLY when non-default so a project that never touches it exports
+        # a byte-identical draft. Mute -> volume 0 + a "muted" flag.
+        if clip.source_mute:
+            seg["volume"] = 0.0
+            seg["muted"] = True
+        elif clip.source_gain_db:
+            seg["volume"] = _volume_from_db(clip.source_gain_db)
+        video_segments.append(seg)
 
     # --- audio tracks ------------------------------------------------------
     # Voice, music, sfx and the ambient bed each go on their OWN audio track:
@@ -142,14 +155,20 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "duration": dur_us,
             }
         )
-        segments.append(
-            {
-                "id": seg_id,
-                "material_id": mat_id,
-                "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
-                "source_timerange": {"start": 0, "duration": dur_us},
-            }
-        )
+        seg: dict[str, Any] = {
+            "id": seg_id,
+            "material_id": mat_id,
+            "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
+            # Round-T: BGM/ambient in-point (start_offset_ms) becomes the source
+            # in-point — default 0 keeps this byte-identical to before.
+            "source_timerange": {"start": _us(clip.start_offset_ms), "duration": dur_us},
+        }
+        # Round-T: carry the clip's gain as a per-segment volume, ONLY when
+        # non-default (0 dB -> volume 1.0, JianYing's default; omitted for
+        # byte-stability). fade_in/out live in the render, not the draft schema.
+        if clip.gain_db:
+            seg["volume"] = _volume_from_db(clip.gain_db)
+        segments.append(seg)
 
     for idx, clip in enumerate(timeline.tracks.voice):
         _add_audio(clip, "voice", idx, voice_segments)

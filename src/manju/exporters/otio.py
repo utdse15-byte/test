@@ -66,12 +66,19 @@ def _external_reference(target_url: str, duration_ms: int | float | None,
 
 
 def _video_clip(clip: VideoClip, fps: float) -> dict[str, Any]:
+    # Round-T: the footage's own-audio level/mute travels in metadata, added ONLY
+    # when non-default so an untouched clip exports byte-identically to before.
+    meta: dict[str, Any] = {"shot": clip.shot, "take": clip.take}
+    if clip.source_mute:
+        meta["source_mute"] = True
+    elif clip.source_gain_db:
+        meta["source_gain_db"] = clip.source_gain_db
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": clip.shot,
         "source_range": _time_range(0, clip.duration_ms, fps),
         "media_reference": _external_reference(clip.source, clip.duration_ms, fps),
-        "metadata": {"manju": {"shot": clip.shot, "take": clip.take}},
+        "metadata": {"manju": meta},
     }
 
 
@@ -83,10 +90,17 @@ def _audio_clip(clip: AudioClip, fps: float, kind: str) -> dict[str, Any]:
     meta: dict[str, Any] = {"track": kind, "start_ms": clip.start_ms}
     if clip.loop:
         meta["loop"] = True
+    # Round-T: BGM/ambient in-point + fade-in noted in metadata, added ONLY when
+    # non-default (voice/music/sfx and unchanged beds stay byte-identical).
+    if clip.start_offset_ms:
+        meta["start_offset_ms"] = clip.start_offset_ms
+    if clip.fade_in_ms:
+        meta["fade_in_ms"] = clip.fade_in_ms
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": name,
-        "source_range": _time_range(0, clip.duration_ms, fps),
+        # The in-point becomes the source_range start (0 by default -> byte-stable).
+        "source_range": _time_range(clip.start_offset_ms, clip.duration_ms, fps),
         "media_reference": _external_reference(clip.source, clip.duration_ms, fps),
         "metadata": {"manju": meta},
     }
