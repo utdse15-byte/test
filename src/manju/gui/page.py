@@ -4121,6 +4121,7 @@ def render_page(project_name: str, token: str) -> str:
         '<a href="/subtitles">字幕</a>'
         '<a href="/mixer">混音</a>'
         '<a href="/packaging">打包</a>'
+        '<a href="/exports">导出中心</a>'
         '<a href="/compare">对比</a>'
         '<a href="/library">素材库</a>'
         '<a href="/providers">服务商</a>'

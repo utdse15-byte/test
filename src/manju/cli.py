@@ -976,6 +976,57 @@ def package(
             typer.secho(f"⚠ {warning}", fg=typer.colors.YELLOW)
 
 
+# ----------------------------------------------------------------- exports
+
+
+_FRESHNESS_COLOR = {
+    "up_to_date": typer.colors.GREEN,
+    "stale": typer.colors.YELLOW,
+    "missing": typer.colors.BRIGHT_BLACK,
+    "problematic": typer.colors.RED,
+    "needs_manual": typer.colors.CYAN,
+    "verified": typer.colors.GREEN,
+}
+
+
+@app.command()
+def exports(as_json: bool = typer.Option(False, "--json")):
+    """导出中心 Export center — every finished-output's freshness at a glance.
+
+    One honest table over the nine deliverables (成片/预览版/SRT/ASS/OTIO/剪映
+    草稿/CapCut 草稿/封面/预告): 上新 / 待更新 / 缺失 / 有问题 / 待人工确认 /
+    已人工确认, each with the one-line evidence behind the verdict. Read-only —
+    never spends, never mutates. Reads the SAME engine (build/exportstatus) the
+    GUI /exports page renders, so the two can never disagree. `--json` for agents."""
+    from .build.exportstatus import deliverables_data
+
+    project = _project()
+    data = deliverables_data(project)
+    if as_json:
+        _emit(data, True)
+        return
+
+    typer.secho("导出中心 / exports", fg=typer.colors.CYAN)
+    for row in data["deliverables"]:
+        color = _FRESHNESS_COLOR.get(row["freshness"], typer.colors.WHITE)
+        ver = f" {row['version']}" if row["version"] else ""
+        verified = ""
+        if row["freshness"] == "verified" and row["verified_by"]:
+            verified = f"  [{row['verified_by']} @ {str(row['verified_at'] or '')[:19]}]"
+        typer.echo(
+            f"  {row['label']:<18}"
+            + typer.style(f"{row['freshness_zh']:<5}", fg=color)
+            + f"{ver}{verified}"
+        )
+        typer.secho(f"      └ {row['basis']}", fg=typer.colors.BRIGHT_BLACK)
+        if row["path"]:
+            typer.secho(f"        {row['path']}", fg=typer.colors.BRIGHT_BLACK)
+    counts = "  ".join(f"{k}:{v}" for k, v in sorted(data["counts"].items()))
+    typer.secho(f"合计 / by state:  {counts}", fg=typer.colors.BRIGHT_BLACK)
+    typer.secho("（生成/更新与标记已人工确认见 manju gui → 导出中心）",
+                fg=typer.colors.BRIGHT_BLACK)
+
+
 # ----------------------------------------------------------------- explain
 
 

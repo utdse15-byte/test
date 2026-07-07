@@ -61,6 +61,7 @@ _NAV = (
     ("/subtitles", "字幕"),
     ("/mixer", "混音"),
     ("/packaging", "打包"),
+    ("/exports", "导出中心"),
     ("/compare", "对比"),
     ("/library", "素材库"),
     ("/providers", "服务商"),

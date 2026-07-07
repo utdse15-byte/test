@@ -473,6 +473,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-S server-rendered pages (S8b) — see _pages_get
             elif self._pages_t_get(path, url):
                 pass  # round-T finishing pages (subtitles/mixer/packaging)
+            elif self._exports_get(path, url):
+                pass  # round-U 导出中心 export center — see _exports_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -540,6 +542,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._pages_post(path, body):  # round-S page actions (S8b)
                     return
                 if self._pages_t_post(path, body):  # round-T finishing actions
+                    return
+                if self._exports_post(path, body):  # round-U 导出中心 actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -2180,6 +2184,159 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         handler(body)
         return True
+
+    # =================================================================
+    # round-U 导出中心 EXPORT CENTER (goal item 4): one server-rendered page
+    # over build/exportstatus.deliverables — the SAME rows `manju exports`
+    # prints, so CLI and GUI can never disagree. New region, isolated from the
+    # SPA + round-S/T page endpoints above. Same token/readonly/host gates as
+    # every mutating surface (checked in do_GET/do_POST before we run). Priced
+    # deliverables (final/proxy) are NOT generable here — the page links to the
+    # workbench build (plan modal → confirm); the free exporters + packaging
+    # cover/teaser go through the EXISTING engine paths (§8.3 no silent spend).
+    # =================================================================
+
+    # exporters/packaging draft kinds → whether generation is a build (never) or
+    # a free/local export (always here). final/proxy are deliberately absent.
+    _EXPORT_GEN_KINDS = ("srt", "ass", "otio", "jianying", "capcut", "cover", "teaser")
+
+    def _exports_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the 导出中心 page + its static/read assets. Returns
+        True when handled (response already sent)."""
+        from . import exports_page
+
+        if path == "/exports.css":
+            self._send_text(exports_page.render_exports_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/exports.js":
+            self._send_text(exports_page.render_exports_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path == exports_page.PAGE_PATH:
+            html_doc = exports_page.render(self.server.project, self.server.token)
+            self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
+            return True
+        if path == "/api/exports":
+            from ..build.exportstatus import deliverables_data
+
+            self._send_json(deliverables_data(self.server.project))
+            return True
+        return False
+
+    def _exports_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 导出中心 actions (generate/update + verify)."""
+        handler = {
+            "/api/exports/generate": self._act_exports_generate,
+            "/api/exports/verify": self._act_exports_verify,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_exports_generate(self, body: dict[str, Any]) -> None:
+        """Generate/update ONE deliverable through the existing engine path.
+
+        - srt/ass  → exporters.srt_ass.export_captions (writes both)
+        - otio     → exporters.otio.export_otio
+        - jianying → exporters.jianying.export_jianying (+ native attempt)
+        - capcut   → exporters.native_draft.export_capcut_native (pycapcut)
+        - cover/teaser → media.packaging.make_package (local ffmpeg cut)
+
+        final/proxy are refused with a pointer to the workbench build so a paid
+        render always goes through the plan modal (§8.3 no silent spend). Runs on
+        the job runner (serialized against builds), returns 202 with the job."""
+        project, actor = self.server.project, self.server.actor
+        kind = str(body.get("kind") or "")
+        if kind in ("final", "proxy"):
+            self._send_error_json(
+                "成片/预览版请在工作台构建(计划弹窗确认花费),导出中心不直接消费", 400)
+            return
+        if kind not in self._EXPORT_GEN_KINDS:
+            self._send_error_json(
+                f"unknown deliverable: {kind!r} ({', '.join(self._EXPORT_GEN_KINDS)})", 400)
+            return
+
+        def fn(job) -> dict[str, Any]:
+            from ..core.events import append_event
+
+            if kind in ("srt", "ass", "otio", "jianying", "capcut"):
+                timeline = project.load_timeline()
+                if timeline is None:
+                    raise RuntimeError("no timeline.json — run `manju build` first")
+            if kind in ("srt", "ass"):
+                from ..exporters.srt_ass import export_captions
+
+                out = export_captions(project, timeline)
+                result = {k: project.relpath(v) for k, v in out.items()}
+                append_event(project.root, actor, "export",
+                             {**result, "via": "gui"})
+            elif kind == "otio":
+                from ..exporters.otio import export_otio
+
+                out = export_otio(project, timeline)
+                result = {"otio": project.relpath(out)}
+                append_event(project.root, actor, "export", {**result, "via": "gui"})
+            elif kind == "jianying":
+                from ..exporters.jianying import export_jianying
+                from ..exporters.native_draft import (
+                    ExporterUnavailable,
+                    export_jianying_native,
+                )
+
+                out = export_jianying(project, timeline)  # skeleton + lint
+                result = {"jianying": project.relpath(out)}
+                try:
+                    nat = export_jianying_native(project, timeline)
+                    result["jianying_native"] = project.relpath(nat)
+                except ExporterUnavailable as exc:
+                    result["note"] = " ".join(str(exc).split())
+                append_event(project.root, actor, "export",
+                             {"jianying": result["jianying"], "via": "gui"})
+            elif kind == "capcut":
+                from ..exporters.native_draft import (
+                    ExporterUnavailable,
+                    export_capcut_native,
+                )
+
+                try:
+                    out = export_capcut_native(project, timeline)
+                except ExporterUnavailable as exc:
+                    raise RuntimeError(" ".join(str(exc).split())) from exc
+                result = {"capcut": project.relpath(out)}
+                append_event(project.root, actor, "export", {**result, "via": "gui"})
+            else:  # cover / teaser
+                from ..media.packaging import make_package
+
+                result = make_package(project)
+                append_event(project.root, actor, "package",
+                             {k: result[k] for k in ("cover", "teaser", "skipped")
+                              if k in result} | {"via": "gui"})
+            return result
+
+        job = self.server.runner.submit("export", {"kind": kind}, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_exports_verify(self, body: dict[str, Any]) -> None:
+        """标记已人工确认 for a desktop draft — appends to
+        reports/verifications.jsonl (truth-is-text, §3). A draft shows 已人工确认
+        only while its content hash still matches; regenerating flips it back."""
+        from ..build.exportstatus import ExportStatusError, mark_verified
+        from ..core.events import append_event
+
+        project, actor = self.server.project, self.server.actor
+        kind = str(body.get("kind") or "")
+        note = str(body.get("note") or "")[:200]
+        try:
+            record = mark_verified(project, kind, actor, note)
+        except ExportStatusError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        append_event(project.root, actor, "verify_draft",
+                     {"kind": kind, "note": note, "via": "gui"})
+        with self.server.quick_mutex:
+            self.server.state_cache = None  # a new verification changes the page
+        self._send_json({"ok": True, "kind": kind, "record": record})
 
     def _act_edit_trim(self, body: dict[str, Any]) -> None:
         """Trim a take's in/out — the `manju repair --op inout` engine op run as

@@ -25,7 +25,7 @@ from pathlib import Path
 
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file
-from ..core.models import CoverSpec, PackagingCard, PackagingSpec, TeaserSpec
+from ..core.models import CoverSpec, PackagingCard, PackagingSpec, ProjectConfig, TeaserSpec
 from ..timeline.compiler import snap_to_frame_grid
 from ..timeline.packaging import packaging_card_relpath
 from .ffmpeg import MediaError, default_log, run_ffmpeg
@@ -188,6 +188,22 @@ def _write_key(media_path: Path, key: str, kind: str) -> None:
     )
 
 
+def cover_cache_key(config: ProjectConfig, final_hash: str, cover: CoverSpec) -> str:
+    """THE cover.png content key: final bytes + cover spec + project resolution.
+
+    Extracted so :mod:`manju.build.exportstatus` (the round-U export center) can
+    judge cover freshness against the SAME key ``_make_cover`` writes into
+    ``cover.key.json`` — one formula, never a parallel staleness path."""
+    return cache_key(final_hash, "cover", cover.model_dump(), config.width, config.height)
+
+
+def teaser_cache_key(config: ProjectConfig, final_hash: str, teaser: TeaserSpec) -> str:
+    """THE teaser.mp4 content key: final bytes + teaser spec + final encoder
+    params + fps. Shared with the export center for the same reason as
+    :func:`cover_cache_key` (round-U)."""
+    return cache_key(final_hash, "teaser", teaser.model_dump(), _enc_params("final"), config.fps)
+
+
 # --------------------------------------------------------------- cover/teaser
 
 
@@ -246,7 +262,7 @@ def _make_cover(
     config = project.load_config()
     dest = project.exports_dir / "packaging" / "cover.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    key = cache_key(final_hash, "cover", cover.model_dump(), config.width, config.height)
+    key = cover_cache_key(config, final_hash, cover)
     if not force and dest.exists() and _read_key(dest) == key:
         return dest, True
     if cover.mode == "card":
@@ -278,7 +294,7 @@ def _make_teaser(
     enc = _enc_params("final")
     dest = project.exports_dir / "packaging" / "teaser.mp4"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    key = cache_key(final_hash, "teaser", teaser.model_dump(), enc, config.fps)
+    key = teaser_cache_key(config, final_hash, teaser)
     if not force and dest.exists() and _read_key(dest) == key:
         return dest, True, None
 
