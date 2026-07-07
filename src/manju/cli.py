@@ -1333,9 +1333,19 @@ def transcribe(
 
 # ------------------------------------------------------------------- board
 
+# `board` is a command GROUP: the bare `manju board` (and `--serve`) keep the
+# review workbench (§1-⑦), while `board scene` / `board keyframes` add the
+# multi-image storyboard + keyframe scaffolding of round-U (goal item 12).
+board_app = typer.Typer(
+    invoke_without_command=True,
+    help="Review workbench + multi-image storyboards (round-U goal item 12).",
+)
+app.add_typer(board_app, name="board")
 
-@app.command()
+
+@board_app.callback(invoke_without_command=True)
 def board(
+    ctx: typer.Context,
     serve: bool = typer.Option(False, "--serve/--no-serve",
                                help="serve an actionable local workspace instead of writing board.html"),
     port: int = typer.Option(8787, "--port", help="serve port (--serve)"),
@@ -1345,10 +1355,13 @@ def board(
 ):
     """Review board — the director's workbench (§1-⑦).
 
-    Default: write a static, self-contained ``board.html``. With ``--serve`` it
-    becomes a live, ACTIONABLE workspace on localhost: click to select takes,
-    redo/rollback shots, build/qc/package/snapshot — a thin veneer over the same
-    core the CLI calls (unlock/gc/pack stay off this surface, like MCP §11)."""
+    Bare ``manju board`` writes a static, self-contained ``board.html``; with
+    ``--serve`` it becomes a live, ACTIONABLE workspace on localhost (select
+    takes, redo/rollback, build/qc/package/snapshot — a thin veneer over the same
+    core the CLI calls, unlock/gc/pack stay off this surface, like MCP §11).
+    Subcommands compose storyboards: ``board scene`` / ``board keyframes``."""
+    if ctx.invoked_subcommand is not None:
+        return  # dispatch to `scene` / `keyframes`
     project = _project()
     if not serve:
         from .board.board import generate_board
@@ -1375,6 +1388,95 @@ def board(
         typer.echo("stopping…")
     finally:
         server.server_close()
+
+
+@board_app.command("scene")
+def board_scene(
+    scene: str = typer.Argument(..., help="scene id (bible/scenes.yaml) to storyboard"),
+    grid: int = typer.Option(4, "--grid", help="4 (2×2, 4-panel) or 9 (3×3, 9-panel)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Compose a multi-panel storyboard of a scene's shots (goal item 12).
+
+    Each panel is a shot's best frame — a declared reference image, else a
+    mid-frame of its newest take — captioned with the shot id, tiled 2×2 or 3×3.
+    Cached under .manju/frames (content-addressed by the input frames + grid),
+    so an unchanged scene returns the same file for free."""
+    project = _project()
+    if grid not in (4, 9):
+        _fail("--grid must be 4 or 9")
+    from .media.boards import scene_board
+    from .media.ffmpeg import MediaError
+
+    try:
+        out = scene_board(project, scene, grid=grid)
+    except MediaError as exc:
+        _record_failure(project, "board", scene, "storyboard 合成失败",
+                        evidence=" ".join(str(exc).split())[:600])
+        _fail(str(exc))
+    rel = project.relpath(out)
+    append_event(project.root, ACTOR, "board_scene", {"scene": scene, "grid": grid, "output": rel})
+    if as_json:
+        _emit({"scene": scene, "grid": grid, "board": rel, "ok": True}, True)
+    else:
+        typer.secho(f"board: {rel}", fg=typer.colors.GREEN)
+
+
+@board_app.command("keyframes")
+def board_keyframes(
+    shot: str = typer.Argument(..., help="shot id whose action to break into keyframes"),
+    n: int = typer.Option(4, "--n", help="number of keyframe beats to suggest"),
+    scaffold: bool = typer.Option(
+        False, "--scaffold",
+        help="WRITE the suggested keyframes into the shot spec (else just print)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Break a shot's action into a keyframe sequence (goal item 12, part D).
+
+    Splits the shot's action (deterministically, at Chinese/English clause
+    boundaries) into ``--n`` beats mapped to start / mid… / end keyframes.
+    Without ``--scaffold`` it only PRINTS the suggestion (中文); with
+    ``--scaffold`` it writes them into ``shots/<id>.yaml`` via the normal spec
+    write path, respecting locks (a sealed ``keyframes`` field is refused)."""
+    project = _project()
+    try:
+        sh = project.load_shot(shot)
+    except ProjectError as exc:
+        _fail(str(exc))
+    from .media.boards import (
+        KeyframeScaffoldError,
+        beats_to_keyframes,
+        breakdown_action,
+        scaffold_keyframes,
+    )
+
+    text = (sh.action.main or "").strip() or (sh.dialogue.text or "").strip()
+    beats = breakdown_action(text, n)
+
+    if not scaffold:
+        kfs = beats_to_keyframes(beats)
+        if as_json:
+            _emit({"shot": shot, "n": len(beats), "keyframes": kfs, "scaffolded": False}, True)
+        else:
+            typer.secho(
+                f"镜头 {shot} 动作拆解建议(共 {len(beats)} 拍;加 --scaffold 写入 keyframes):",
+                fg=typer.colors.CYAN,
+            )
+            for i, kf in enumerate(kfs, 1):
+                typer.echo(f"  {i}. [{kf['position']}] {kf['prompt']}")
+        return
+
+    try:
+        kfs = scaffold_keyframes(project, shot, beats)
+    except KeyframeScaffoldError as exc:
+        _fail(str(exc))
+    append_event(project.root, ACTOR, "board_keyframes",
+                 {"shot": shot, "n": len(beats), "scaffolded": True})
+    if as_json:
+        _emit({"shot": shot, "n": len(beats), "keyframes": kfs, "scaffolded": True}, True)
+    else:
+        typer.secho(f"{shot}: 已写入 {len(kfs)} 个关键帧到 keyframes(可 manju check 复核)",
+                    fg=typer.colors.GREEN)
 
 
 @app.command()

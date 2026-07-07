@@ -20,11 +20,16 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from ..core.models import ShotSpec
+from ..core.models import KeyframeSpec, ShotSpec
 from .base import CloudProvider, FailureKind, GenerationRequest, ProviderFailure
 from .jsonpath import JsonPathError, assign, extract
-from .manifest import GENERIC_ADAPTER, JOB_STATES, ProviderManifest
+from .manifest import FIRST_LAST_CAPABILITY, GENERIC_ADAPTER, JOB_STATES, ProviderManifest
 from .refs import RefItem, base64_ref, encode_multipart, unreadable_ref_message
+
+# Tier label recorded on a keyframe-sourced ref (its own lineage bucket, distinct
+# from the resolve_refs tiers — a first/last-frame image is authored on the shot's
+# keyframe, not resolved through the ref tiering).
+TIER_KEYFRAME = "keyframe"
 
 
 class HttpResponse(NamedTuple):
@@ -82,6 +87,36 @@ def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
 def _one_or_list(values: list, max_n: int) -> object:
     """A single-ref field carries the scalar; a multi-ref field carries a list."""
     return values[0] if max_n == 1 and len(values) == 1 else values
+
+
+def _first_last_keyframes(
+    shot: ShotSpec, duration_ms: int
+) -> tuple[KeyframeSpec | None, KeyframeSpec | None]:
+    """The shot's start + end keyframes (goal item 12), or ``(None, None)``.
+
+    A keyframe is the START when ``position == start`` (or ``at_ms <= 0``) and the
+    END when ``position == end`` (or ``at_ms >= duration_ms``). Reads the additive
+    ``keyframes`` field tolerantly (typed KeyframeSpec objects, or raw dicts on a
+    directly-built request) so a request assembled either way sees the same
+    frames. A shot with no keyframes yields ``(None, None)`` → no delivery."""
+    raw = getattr(shot, "keyframes", None) or []
+    kfs: list[KeyframeSpec] = []
+    for entry in raw:
+        if isinstance(entry, KeyframeSpec):
+            kfs.append(entry)
+        else:
+            try:
+                kfs.append(KeyframeSpec.model_validate(entry))
+            except Exception:
+                continue
+    start = next((k for k in kfs if k.position == "start"), None)
+    if start is None:
+        start = next((k for k in kfs if k.at_ms is not None and k.at_ms <= 0), None)
+    end = next((k for k in kfs if k.position == "end"), None)
+    if end is None and duration_ms:
+        end = next((k for k in kfs
+                    if k.at_ms is not None and k.at_ms >= duration_ms), None)
+    return start, end
 
 
 def _body_as_fields(body: dict) -> dict[str, str]:
@@ -375,8 +410,119 @@ class GenericCloudProvider(CloudProvider):
         # ref_delivery dict is byte-identical to today (byte-identity contract).
         if budget.active:
             delivery["budget"] = budget.to_lineage()
+
+        # First/last-frame task (goal item 12, round U): a shot with keyframes at
+        # start AND end whose images resolve to real local files, routed to a
+        # provider that advertises `first_last_frame`, delivers both per the
+        # `refs.first_last_*` mapping. Folds into the SAME ref_delivery lineage.
+        files += self._deliver_first_last(body, req, delivery)
+
         req.params["ref_delivery"] = delivery
         return files
+
+    def _deliver_first_last(
+        self, body: dict, req: GenerationRequest, delivery: dict
+    ) -> list[tuple[str, str, bytes]]:
+        """Deliver the shot's start+end keyframe images as a first/last-frame task.
+
+        No-op (returns ``[]``, records nothing) unless ALL of: the manifest opts
+        in with ``refs.first_last_mode != none``; it advertises the
+        ``first_last_frame`` capability; the shot has a start keyframe AND an end
+        keyframe; and BOTH images resolve to what the chosen encoding needs
+        (existing local files for base64/multipart, URLs for url_field). Any of
+        those unmet → a byte-identical request (the round-U absence contract).
+        A resolvable-but-unreadable file raises ``invalid`` BEFORE the paid POST,
+        exactly like the ref path (reliability #3)."""
+        rc = self.manifest.refs
+        if rc.first_last_mode == "none":
+            return []
+        if FIRST_LAST_CAPABILITY not in self.manifest.capabilities:
+            return []
+        start_kf, end_kf = _first_last_keyframes(req.shot, req.duration_ms)
+        if start_kf is None or end_kf is None:
+            return []
+        start = self._resolve_keyframe(req, start_kf)
+        end = self._resolve_keyframe(req, end_kf)
+        if start is None or end is None:
+            return []
+
+        enc = rc.first_last_encoding
+        if enc in ("base64_field", "multipart"):
+            # both must be real local files (the round-U "resolve to real local
+            # files" condition) — otherwise stay byte-identical
+            if not (start.exists and end.exists and not start.is_url
+                    and not end.is_url):
+                return []
+        elif enc == "url_field":
+            if not (start.is_url and end.is_url):
+                return []
+
+        files: list[tuple[str, str, bytes]] = []
+        if enc == "base64_field":
+            self._guard_readable([start, end])  # pre-submit, zero-cost
+            first_v = base64_ref(start, data_uri=rc.data_uri, mime=rc.mime)
+            last_v = base64_ref(end, data_uri=rc.data_uri, mime=rc.mime)
+            self._assign_first_last(body, rc, first_v, last_v)
+        elif enc == "url_field":
+            self._assign_first_last(body, rc, start.ref, end.ref)
+        elif enc == "multipart":
+            self._guard_readable([start, end])
+            assert start.path is not None and end.path is not None
+            files.append((rc.first_last_multipart_first, start.path.name,
+                          start.path.read_bytes()))
+            files.append((rc.first_last_multipart_last, end.path.name,
+                          end.path.read_bytes()))
+
+        delivery["first_last"] = {
+            "mode": rc.first_last_mode,
+            "encoding": enc,
+            "start": {"ref": start.ref, "role": "start", "delivered_as": enc},
+            "end": {"ref": end.ref, "role": "end", "delivered_as": enc},
+        }
+        return files
+
+    def _assign_first_last(self, body: dict, rc, first_v, last_v) -> None:
+        """Write the two frame values into ``body`` per the configured shape:
+        ``fields`` → two JSONPaths (Kling image + image_tail); ``array`` → one
+        JSONPath receiving ``[first, last]`` (Runway)."""
+        if rc.first_last_mode == "fields":
+            assign(body, rc.first_frame_field, first_v)
+            assign(body, rc.last_frame_field, last_v)
+        elif rc.first_last_mode == "array":
+            assign(body, rc.frames_field, [first_v, last_v])
+
+    def _resolve_keyframe(self, req: GenerationRequest,
+                          kf: KeyframeSpec) -> RefItem | None:
+        """Resolve a keyframe's ``image`` (project path / absolute / URL / bible
+        asset id) to a :class:`RefItem`, or ``None`` when there is nothing to
+        resolve. Mirrors the ref resolver's URL-vs-local classification so the
+        delivery shares the same encoding helpers."""
+        img = (kf.image or "").strip()
+        if not img:
+            return None
+        if img.startswith(("http://", "https://")):
+            return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=None,
+                           is_url=True, exists=True)
+        # bible asset id (character/scene) → its ref_image
+        entry = req.bible.get(img)
+        if isinstance(entry, dict):
+            for key in ("ref_image", "ref_images"):
+                val = entry.get(key)
+                if isinstance(val, (list, tuple)):
+                    val = val[0] if val else None
+                if val:
+                    img = str(val)
+                    break
+        try:
+            path = req.project.resolve(img)
+        except Exception:
+            p = Path(img)
+            path = p if p.is_absolute() else None
+        if path is None:
+            return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=None,
+                           is_url=False, exists=False)
+        return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=path,
+                       is_url=False, exists=path.is_file())
 
     def _guard_readable(self, items: list[RefItem]) -> None:
         msg = unreadable_ref_message(items)

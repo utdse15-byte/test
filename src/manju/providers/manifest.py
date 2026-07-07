@@ -136,6 +136,12 @@ class ComfyConfig(ManjuModel):
 
 IMAGE_MODES = ("none", "base64_field", "url_field", "multipart")
 VIDEO_MODES = ("none", "url_field")
+# First/last-frame delivery (goal item 12, round U). The capability string a
+# provider advertises to opt in, the two real body shapes, and the encodings
+# reused from the image modes.
+FIRST_LAST_CAPABILITY = "first_last_frame"
+FIRST_LAST_MODES = ("none", "fields", "array")
+FIRST_LAST_ENCODINGS = ("base64_field", "url_field", "multipart")
 
 
 class RefsConfig(ManjuModel):
@@ -162,6 +168,28 @@ class RefsConfig(ManjuModel):
     video_mode: str = "none"           # none | url_field
     video_field: str | None = None     # ★ jsonpath into body_template for video refs
     max_videos: int = 1
+
+    # First/last-frame delivery (goal item 12, round U). When a shot carries
+    # keyframes at BOTH start and end whose images resolve to real local files
+    # AND the provider advertises the ``first_last_frame`` capability, the two
+    # frames are delivered here. Two real body shapes, both configurable exactly
+    # like the fields above:
+    #   fields : two JSONPaths — ``first_frame_field`` + ``last_frame_field``
+    #            (Kling-style ``image`` + ``image_tail``);
+    #   array  : one JSONPath ``frames_field`` receiving ``[first, last]``
+    #            (Runway-style array).
+    # ``first_last_encoding`` reuses the image encodings: ``base64_field``
+    # (honours ``data_uri`` / ``mime``), ``url_field``, or ``multipart`` (the two
+    # frames ride as file parts named by ``first_last_multipart_first`` /
+    # ``_last``). Default (mode ``none``) is a strict no-op — an unset manifest
+    # sends a byte-identical request, so existing manifests are unaffected.
+    first_last_mode: str = "none"                  # none | fields | array
+    first_frame_field: str | None = None           # ★ jsonpath (fields mode) start frame
+    last_frame_field: str | None = None            # ★ jsonpath (fields mode) end frame
+    frames_field: str | None = None                # ★ jsonpath (array mode) [first, last]
+    first_last_encoding: str = "base64_field"      # base64_field | url_field | multipart
+    first_last_multipart_first: str = "image"      # multipart part name, start frame
+    first_last_multipart_last: str = "image_tail"  # multipart part name, end frame
 
 
 class LocalCmdConfig(ManjuModel):
@@ -290,6 +318,26 @@ class ProviderManifest(ManjuModel):
                        f"when refs.image_mode is {r.image_mode}")
         if r.video_mode == "url_field" and not r.video_field:
             out.append("refs.video_field is required when refs.video_mode is url_field")
+        # First/last-frame delivery (goal item 12). Default mode `none` is clean.
+        if r.first_last_mode not in FIRST_LAST_MODES:
+            out.append(f"refs.first_last_mode must be one of {FIRST_LAST_MODES}, "
+                       f"got {r.first_last_mode!r}")
+        elif r.first_last_mode != "none":
+            if r.first_last_encoding not in FIRST_LAST_ENCODINGS:
+                out.append(f"refs.first_last_encoding must be one of "
+                           f"{FIRST_LAST_ENCODINGS}, got {r.first_last_encoding!r}")
+            if r.first_last_mode == "fields" and not (r.first_frame_field
+                                                      and r.last_frame_field):
+                out.append("refs.first_frame_field AND refs.last_frame_field are "
+                           "required when refs.first_last_mode is fields")
+            if r.first_last_mode == "array" and not r.frames_field:
+                out.append("refs.frames_field is required when refs.first_last_mode "
+                           "is array")
+            if FIRST_LAST_CAPABILITY not in self.capabilities:
+                out.append(
+                    f"refs.first_last_mode is set but capabilities does not list "
+                    f"{FIRST_LAST_CAPABILITY!r} — add it so the首尾帧任务 is routed here"
+                )
         return out
 
 
@@ -543,6 +591,12 @@ _FIX_HINTS: tuple[tuple[str, str], ...] = (
      "install the tool or fix its name so it resolves on PATH"),
     ("does not look like an HTTP(S) URL",
      "use a full http:// or https:// URL"),
+    ("first_frame_field AND refs.last_frame_field",
+     "fill refs.first_frame_field + refs.last_frame_field (Kling image + image_tail)"),
+    ("refs.frames_field is required",
+     "set refs.frames_field to the array JSONPath (Runway [first,last])"),
+    ("capabilities does not list 'first_last_frame'",
+     "add first_last_frame to capabilities so the首尾帧任务 routes to this provider"),
 )
 
 

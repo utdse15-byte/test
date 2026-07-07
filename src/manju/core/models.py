@@ -801,3 +801,60 @@ class AssetEntry(BibleEntry):
             elif target not in (None, ""):
                 out[str(verb)] = str(target)
         return out
+
+# ---- round U (UF): keyframes -----------------------------------------------
+# Multi-image storyboard / keyframe sequence support (goal item 12). Everything
+# for this feature lives in this ONE appended block — the ShotSpec class body
+# above is deliberately untouched: the ``keyframes`` field is injected onto it
+# below via model_fields + model_rebuild.
+#
+# Byte-identity contract (tested): a shot with no ``keyframes`` key is unchanged
+# EVERYWHERE — spec_hash, voice_hash, content keys, normalized segments — because
+# keyframes are NOT part of ``core/spec.spec_payload`` (they guide first/last
+# frame video tasks and the storyboard grid; they never restage the picture that
+# spec_hash anchors). The default is an empty list, so an untouched project keeps
+# a byte-identical shape.
+
+KEYFRAME_POSITIONS = ("start", "mid", "end")
+
+
+class KeyframeSpec(ManjuModel):
+    """One frame in a shot's storyboard / keyframe sequence (goal item 12).
+
+    Either an anchored ``position`` (``start`` | ``mid`` | ``end``) OR an
+    explicit ``at_ms`` timestamp locates the frame; ``image`` is what the frame
+    should look like — a project-relative path, an absolute path, an
+    ``http(s)://`` URL, or a bible asset id (character/scene) whose ``ref_image``
+    is used; ``prompt`` is a short text beat describing the moment. Every field
+    is optional (defaults ``None``) so a hand-authored partial keyframe still
+    validates — the truth file stays forgiving (§4).
+    """
+
+    position: Literal["start", "mid", "end"] | None = None
+    at_ms: int | None = None
+    image: str | None = None
+    prompt: str | None = None
+
+    @property
+    def role(self) -> str | None:
+        """``start`` / ``mid`` / ``end`` from ``position``; else derived from
+        ``at_ms`` (0 or negative ⇒ ``start``). ``None`` when neither field
+        locates the frame. The first/last-frame task reader keys off this."""
+        if self.position in KEYFRAME_POSITIONS:
+            return self.position
+        if self.at_ms is not None and self.at_ms <= 0:
+            return "start"
+        return None
+
+
+# Inject ``keyframes: list[KeyframeSpec] = []`` onto ShotSpec WITHOUT editing the
+# class body (round-U additive contract). A shot with no keyframes reads back an
+# empty list and the field never enters a hash, so every existing key/render is
+# byte-identical. Guarded so a re-import can never double-inject / re-rebuild.
+if "keyframes" not in ShotSpec.model_fields:
+    from pydantic.fields import FieldInfo as _FieldInfo
+
+    ShotSpec.model_fields["keyframes"] = _FieldInfo(
+        annotation=list[KeyframeSpec], default_factory=list
+    )
+    ShotSpec.model_rebuild(force=True)
