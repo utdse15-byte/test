@@ -651,6 +651,22 @@ def _write_key_sidecar(media_path: Path, content_key: str, target: str) -> None:
     )
 
 
+def _write_timeline_sidecar(media_path: Path, timeline: Timeline) -> None:
+    """Round-S compare ground truth: persist the compiled timeline next to an
+    engine-minted final as ``final_vN.timeline.json`` (canonical JSON of the
+    timeline the final was rendered from).
+
+    Derived metadata, NOT part of the content key (``final_content_key`` never
+    reads it) and written strictly AFTER the mp4+key sidecar are in place — so
+    build idempotency is untouched and a snapshot existing implies its final is
+    complete. ``manju compare`` uses these snapshots for a per-shot diff; finals
+    minted before this landed simply lack one and degrade to a key-only diff."""
+    atomic_write_text(
+        media_path.with_suffix(".timeline.json"),
+        json.dumps(timeline.model_dump(), ensure_ascii=False, indent=2) + "\n",
+    )
+
+
 def _latest_final_with_key(project: Project) -> tuple[Path, str] | None:
     latest = project.newest_final_path()  # numeric: v10 beats v9
     if latest is None:
@@ -807,5 +823,12 @@ def render_timeline(
     # Written strictly AFTER os.replace has the mp4 fully in place — a sidecar
     # existing implies its mp4 is complete (see module design note).
     _write_key_sidecar(out_path, content_key, target)
+
+    # Round-S: an engine-minted final also carries a snapshot of the timeline it
+    # was rendered from, so `manju compare` has per-shot ground truth. Additive
+    # and excluded from the content key; only for fresh final_vN (never the
+    # overwritable proxy or a caller-supplied out_path).
+    if fresh_final:
+        _write_timeline_sidecar(out_path, timeline)
 
     return out_path

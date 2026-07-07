@@ -1497,6 +1497,93 @@ def rollback(
 
 
 @app.command()
+def compare(
+    a: Optional[str] = typer.Argument(None, help="older final name (e.g. final_v2)"),
+    b: Optional[str] = typer.Argument(None, help="newer final name (e.g. final_v3)"),
+    show_unchanged: bool = typer.Option(
+        False, "--all", help="also list shots that did not change"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Diff two finals — what changed between final_vA and final_vB (goal 11).
+
+    Duration/resolution/fps deltas over a per-shot change map (same/different
+    take with each take's provider, added/removed/moved/duration-changed),
+    caption cue diff, audio-track diff and packaging diff — each with a
+    root-cause line correlated from events.jsonl. Reads the per-final timeline
+    snapshots persisted at render time; finals rendered before snapshots
+    existed degrade to a key-only diff. Default: the latest two finals."""
+    from .build.compare import CompareError, compare_finals
+
+    try:
+        diff = compare_finals(_project(), a, b)
+    except CompareError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(diff, True)
+        return
+
+    ha, hb = diff["a"], diff["b"]
+    typer.secho(f"比较 compare  {ha['name']} → {hb['name']}", fg=typer.colors.CYAN)
+    s = diff["summary"]
+    if s.get("duration_delta_ms") is not None:
+        d = s["duration_delta_ms"]
+        sign = "+" if d >= 0 else ""
+        typer.echo(f"  时长 duration  {s['duration_a_ms']}ms → {s['duration_b_ms']}ms"
+                   f"  ({sign}{d}ms)")
+    typer.echo("  分辨率 resolution  "
+               + (f"{s['resolution_a']} → {s['resolution_b']}" if s["resolution_changed"]
+                  else f"{s.get('resolution_a') or '—'} (unchanged)"))
+    typer.echo("  帧率 fps  "
+               + (f"{s['fps_a']} → {s['fps_b']}" if s["fps_changed"]
+                  else f"{s.get('fps_a') or '—'} (unchanged)"))
+
+    if diff["degraded"]:
+        typer.secho(f"  ⚠ {diff['note']}", fg=typer.colors.YELLOW)
+        return
+
+    if diff["identical"]:
+        typer.secho("  内容键一致 content keys match — identical renders",
+                    fg=typer.colors.GREEN)
+
+    def _provider_arrow(entry_a, entry_b):
+        pa = (entry_a or {}).get("provider")
+        pb = (entry_b or {}).get("provider")
+        return f"  ({pa or '?'}→{pb or '?'})" if pa != pb else ""
+
+    changed = [c for c in diff["changes"] if c["change"] != "unchanged"]
+    typer.secho(f"变更 changes ({len(changed)}):", fg=typer.colors.MAGENTA
+                if changed else typer.colors.BRIGHT_BLACK)
+    for c in changed:
+        line = f"  {c['shot']:<16}  {c['change']}"
+        if c["change"] in ("take_changed", "duration_changed", "moved", "added", "removed"):
+            av, bv = c.get("a") or {}, c.get("b") or {}
+            if c["change"] == "take_changed":
+                line += (f"  {av.get('take')}→{bv.get('take')}"
+                         + _provider_arrow(av, bv))
+            elif c["change"] == "duration_changed":
+                line += f"  {av.get('duration_ms')}ms→{bv.get('duration_ms')}ms"
+            elif c["change"] == "moved":
+                line += f"  #{av.get('order')}→#{bv.get('order')}"
+            elif c["change"] == "added":
+                line += f"  {bv.get('take')} ({bv.get('provider') or '?'})"
+            elif c["change"] == "removed":
+                line += f"  {av.get('take')} ({av.get('provider') or '?'})"
+        elif c["change"] == "captions_changed":
+            line += f"  {c['a']['count']}→{c['b']['count']} cues"
+        if c.get("why"):
+            line += f"  — {c['why']}"
+        typer.echo(line)
+    if not changed:
+        typer.echo("  —（无差异 no differences)")
+
+    if show_unchanged:
+        unchanged = [c["shot"] for c in diff["changes"] if c["change"] == "unchanged"]
+        if unchanged:
+            typer.secho("镜头无变化 unchanged: " + ", ".join(unchanged),
+                        fg=typer.colors.BRIGHT_BLACK)
+
+
+@app.command()
 def doctor(as_json: bool = typer.Option(False, "--json")):
     """Environment health: ffmpeg, fonts, disk, project integrity (§14).
 
@@ -1593,6 +1680,185 @@ def schema(out: Optional[Path] = typer.Option(None, help="write one .schema.json
     for name, schema_dict in schemas.items():
         write_json(out / f"{name}.schema.json", schema_dict)
     typer.secho(f"wrote {len(schemas)} schemas → {out}", fg=typer.colors.GREEN)
+
+
+# -------------------------------------------------------- private library
+
+lib_app = typer.Typer(no_args_is_help=True,
+                      help="Private asset library (local, user-level, never uploaded). "
+                           "个人素材库:内容寻址去重 + 标签 + 预览,可复用到任意项目。")
+app.add_typer(lib_app, name="lib")
+
+
+def _lib():
+    from .core.library import Library
+
+    return Library()
+
+
+def _lib_entry_public(entry: dict) -> dict:
+    """The index row as the CLI/GUI surface it (hash8 handle up front)."""
+    from .core.library import _hex
+
+    return {"hash8": _hex(entry["hash"])[:8], **entry}
+
+
+@lib_app.command("add")
+def lib_add(
+    files: list[Path],
+    tag: Optional[str] = typer.Option(None, "--tag", help="comma-separated tags"),
+    note: Optional[str] = typer.Option(None, "--note", help="a free-text note"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Copy files into the private library, deduped by content hash. The source
+    is never moved or deleted; re-adding identical bytes just merges tags."""
+    from .core.library import LibraryError, _hex
+
+    lib = _lib()
+    tags = [t.strip() for t in (tag or "").split(",") if t.strip()]
+    results: list[dict] = []
+    for f in files:
+        if not f.exists():
+            _fail(f"not found: {f}")
+        try:
+            res = lib.add(f, tags=tags, note=note)
+        except LibraryError as exc:
+            _fail(str(exc))
+        results.append({"name": res["entry"]["name"],
+                        "hash8": _hex(res["entry"]["hash"])[:8],
+                        "deduped": res["deduped"]})
+    if as_json:
+        _emit({"added": results, "library": str(lib.root)}, True)
+    else:
+        for r in results:
+            if r["deduped"]:
+                typer.secho(f"already in library: {r['name']} ({r['hash8']}) — tags merged",
+                            fg=typer.colors.YELLOW)
+            else:
+                typer.secho(f"added {r['name']} ({r['hash8']})", fg=typer.colors.GREEN)
+
+
+@lib_app.command("list")
+def lib_list(
+    tag: Optional[str] = typer.Option(None, "--tag", help="only assets with this tag"),
+    kind: Optional[str] = typer.Option(None, "--kind", help="video | image | audio | other"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """List library assets (optionally filtered by tag / kind)."""
+    lib = _lib()
+    entries = lib.list_assets(tag=tag, kind=kind)
+    if as_json:
+        _emit({"library": str(lib.root),
+               "assets": [_lib_entry_public(e) for e in entries]}, True)
+        return
+    if not entries:
+        typer.echo(f"素材库为空 empty library ({lib.root})")
+        return
+    typer.secho(f"素材库 library ({lib.root}) — {len(entries)} 项", fg=typer.colors.CYAN)
+    for e in entries:
+        pub = _lib_entry_public(e)
+        tags = f"  [{', '.join(e['tags'])}]" if e.get("tags") else ""
+        size_mb = (e.get("size") or 0) / 1e6
+        typer.echo(f"  {pub['hash8']}  {e['kind']:<6}  {size_mb:6.2f}MB  {e['name']}{tags}")
+        if e.get("note"):
+            typer.secho(f"        ↳ {e['note']}", fg=typer.colors.BRIGHT_BLACK)
+
+
+@lib_app.command("show")
+def lib_show(hash8: str, as_json: bool = typer.Option(False, "--json")):
+    """Show one library asset by its hash handle."""
+    from .core.library import LibraryError
+
+    lib = _lib()
+    try:
+        entry = lib.get(hash8)
+    except LibraryError as exc:
+        _fail(str(exc))
+    pub = _lib_entry_public(entry)
+    pub["blob_path"] = str(lib.blob_path(entry))
+    if as_json:
+        _emit(pub, True)
+        return
+    typer.secho(f"{pub['hash8']}  {entry['name']}", fg=typer.colors.CYAN)
+    typer.echo(f"  kind    {entry['kind']}")
+    typer.echo(f"  size    {(entry.get('size') or 0) / 1e6:.2f} MB")
+    typer.echo(f"  hash    {entry['hash']}")
+    typer.echo(f"  blob    {pub['blob_path']}")
+    typer.echo(f"  tags    {', '.join(entry.get('tags') or []) or '—'}")
+    typer.echo(f"  added   {entry.get('added')}")
+    if entry.get("note"):
+        typer.echo(f"  note    {entry['note']}")
+    if entry.get("thumb"):
+        typer.echo(f"  thumb   {lib.root / entry['thumb']}")
+
+
+@lib_app.command("use")
+def lib_use(
+    hash8: str,
+    as_: str = typer.Option("refs", "--as", help="refs (media/refs) | imports (media/imports)"),
+    name: Optional[str] = typer.Option(None, "--name", help="destination filename (default: original)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Copy a library asset INTO the current project (honoring no-overwrite
+    suffixing). The project copy is a normal human asset from then on; the
+    library stays independent."""
+    from .core.library import LibraryError
+
+    if as_ not in ("refs", "imports"):
+        _fail("--as must be 'refs' or 'imports'")
+    lib = _lib()
+    try:
+        entry = lib.get(hash8)
+    except LibraryError as exc:
+        _fail(str(exc))
+    blob = lib.blob_path(entry)
+    if not blob.exists():
+        _fail(f"library blob missing on disk: {blob}")
+
+    project = _project()
+    dest_dir = project.imports_dir if as_ == "imports" else project.refs_dir
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    ext = Path(entry["blob"]).suffix
+    stem = Path(name).stem if name else Path(entry["name"]).stem
+    suffix = Path(name).suffix if (name and Path(name).suffix) else ext
+    dest = dest_dir / f"{stem}{suffix}"
+    n = 2
+    while dest.exists():  # project no-overwrite suffixing (§3), same as import
+        dest = dest_dir / f"{stem}_{n}{suffix}"
+        n += 1
+    shutil.copy2(blob, dest)
+    rel = project.relpath(dest)
+    append_event(project.root, ACTOR, "lib_use",
+                 {"hash": entry["hash"], "name": entry["name"], "as": as_, "dest": rel})
+    if as_json:
+        _emit({"dest": rel, "as": as_, "hash": entry["hash"], "name": entry["name"]}, True)
+    else:
+        typer.secho(f"used {entry['name']} → {rel}", fg=typer.colors.GREEN)
+
+
+@lib_app.command("rm")
+def lib_rm(
+    hash8: str,
+    yes: bool = typer.Option(False, "--yes", help="confirm removal (required)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Remove an asset from the library (library-side only; projects untouched).
+    Requires --yes — the library is the user's, so deletion is explicit."""
+    from .core.library import LibraryError
+
+    lib = _lib()
+    try:
+        entry = lib.get(hash8)
+    except LibraryError as exc:
+        _fail(str(exc))
+    if not yes:
+        _fail(f"refusing to remove {entry['name']} without --yes "
+              "(库属于你,删除需显式确认)")
+    lib.remove(hash8)
+    if as_json:
+        _emit({"removed": entry["hash"], "name": entry["name"]}, True)
+    else:
+        typer.secho(f"removed {entry['name']} from library", fg=typer.colors.YELLOW)
 
 
 @app.command("serve-mcp")
