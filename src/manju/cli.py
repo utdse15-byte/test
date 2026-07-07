@@ -1601,6 +1601,106 @@ def mentions(
             typer.echo(f"  {s['file']}: {resolved}"
                        + (f"  未解析: {unresolved}" if unresolved else ""))
 
+# -------------------------------------------------------------------- refs
+
+
+def _shot_manifest(project, shot):
+    """The ProviderManifest that WOULD deliver this shot's refs — the explicit
+    provider, else the first provider in its fallback chain that carries one.
+    ``None`` when the shot routes only to built-in local providers (no budget)."""
+    try:
+        from .providers.registry import fallback_chain, get_manifest
+
+        order = ([shot.generation.provider] if shot.generation.provider else [])
+        order += [n for n in fallback_chain(shot) if n not in order]
+        for name in order:
+            manifest = get_manifest(name)
+            if manifest is not None:
+                return manifest
+    except Exception:
+        return None
+    return None
+
+
+@app.command()
+def refs(shot_id: str = typer.Argument(..., help="the shot to inspect"),
+         as_json: bool = typer.Option(False, "--json")):
+    """Resolve a shot's reference inputs and report resolution + budget +
+    cleanliness (goal items 9 & 10). Read-only, spends nothing.
+
+    - RESOLUTION: which refs resolved and from which tier (params/shot/bible/
+      media-refs), with their role;
+    - BUDGET: against the delivering provider's manifest limits — what would be
+      delivered and what omitted (each omission's consequence in 中文); with no
+      budget configured it says delivery is byte-identical to today;
+    - CLEANLINESS: local ffmpeg heuristics (busy background / lighting conflict /
+      unclear scale) plus honest needs_vision advisories for the checks a vision
+      model must make."""
+    from .providers.refbudget import allocate, classify_role
+    from .providers.refs import resolve_refs
+    from .qc.ref_checks import check_refs
+
+    project = _project()
+    try:
+        shot = project.load_shot(shot_id)
+    except Exception as exc:
+        _fail(f"无法加载镜头 {shot_id}:{exc}")
+    bible = project.load_bible()
+    refset = resolve_refs(project, shot, bible)
+    manifest = _shot_manifest(project, shot)
+    limits = manifest.limits if manifest is not None else None
+    budget = allocate(refset, limits, shot, bible=bible)
+    findings = check_refs(project, shot, refset, bible=bible)
+
+    def _ref_row(item) -> dict:
+        return {"ref": item.ref, "tier": item.tier,
+                "role": classify_role(item, shot, bible),
+                "exists": item.exists, "is_url": item.is_url}
+
+    if as_json:
+        _emit({
+            "shot": shot_id,
+            "provider": manifest.id if manifest is not None else None,
+            "resolution": {
+                "images": [_ref_row(it) for it in refset.image_items()],
+                "videos": [_ref_row(it) for it in refset.video_items()],
+                "primary_image": refset.primary_image_source,
+            },
+            "budget": {"active": budget.active, **budget.to_lineage()},
+            "cleanliness": [f.to_dict() for f in findings],
+        }, True)
+        return
+
+    typer.secho(f"参考 / refs — 镜头 {shot_id}"
+                + (f"  (provider: {manifest.id})" if manifest is not None else ""),
+                fg=typer.colors.CYAN)
+
+    typer.secho("解析 / resolution:", fg=typer.colors.BRIGHT_BLACK)
+    for kind, items in (("图像 images", refset.image_items()),
+                        ("视频 videos", refset.video_items())):
+        typer.echo(f"  {kind}:")
+        if not items:
+            typer.echo("    —")
+        for it in items:
+            mark = "✓" if it.exists else ("URL" if it.is_url else "缺失")
+            role = classify_role(it, shot, bible)
+            typer.echo(f"    [{it.tier}] {it.ref}  {role}  {mark}")
+
+    typer.secho("预算 / budget:", fg=typer.colors.BRIGHT_BLACK)
+    for line in budget.human_lines():
+        typer.echo("  " + line)
+
+    typer.secho("洁净度 / cleanliness:", fg=typer.colors.BRIGHT_BLACK)
+    if not findings:
+        typer.echo("  无发现 / clean")
+    _level_color = {"error": typer.colors.RED, "warn": typer.colors.YELLOW,
+                    "needs_vision": typer.colors.MAGENTA, "info": typer.colors.BLUE}
+    for f in findings:
+        typer.secho(f"  [{f.level}] {f.code}: {f.message}",
+                    fg=_level_color.get(f.level, None))
+        if f.hint:
+            typer.echo(f"      → {f.hint}")
+
 
 # ------------------------------------------------------------------ tasks
 

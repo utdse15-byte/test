@@ -236,20 +236,43 @@ class ComfyUIProvider(Provider):
         ``{image_upload}``, upload the primary local ref via ``POST /upload/image``
         and set ``values['image_upload']`` to the LoadImage name. Records the
         delivery lineage for the take; validates the ref is readable BEFORE the
-        upload."""
+        upload.
+
+        Reference budget (goal item 9): ComfyUI consumes a single primary image,
+        so the only budget that changes its behaviour is ``max_ref_images: 0``,
+        which omits the reference entirely. Any positive (or unset) budget keeps
+        the single primary; when a budget is configured the allocation audit
+        block is attached to ``ref_delivery`` for parity with generic_cloud."""
+        from .refbudget import allocate
+
         refset = req.refset()
+        budget = allocate(refset, self.manifest.limits, req.shot, bible=req.bible)
+        # a max_ref_images budget of 0 forbids ALL reference images here
+        budget_omits = budget.max_images == 0
+        budget_block = {"budget": budget.to_lineage()} if budget.active else {}
+
         if not self._uses_upload():
             # {image} path mode (or no image at all): record what path (if any)
             # was handed to the graph so silent ref-dropping stays visible.
-            primary = refset.primary_image
+            primary = None if budget_omits else refset.primary_image
+            if budget_omits and refset.primary_image is not None:
+                values["image"] = ""  # the budget removed the path from the graph
             imgs = ([{"ref": refset.primary_image_path_str(),
                       "tier": refset.primary_image_source, "delivered_as": "path"}]
-                    if refset.image_items() else [])
+                    if (refset.image_items() and not budget_omits) else [])
             return {"image_mode": "path" if primary is not None else "none",
-                    "images": imgs, "videos": []}
+                    "images": imgs, "videos": [], **budget_block}
 
-        primary = refset.primary_image
+        primary = None if budget_omits else refset.primary_image
         if primary is None:
+            if budget_omits:
+                raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: input_map uses {_UPLOAD_PLACEHOLDER} but the "
+                    f"provider's reference budget is max_ref_images: 0 — this "
+                    f"workflow needs a reference image; raise the budget or drop "
+                    f"the upload node",
+                )
             msg = unreadable_ref_message(refset.image_items())
             detail = f" ({msg})" if msg else ""
             raise ProviderFailure(
@@ -266,6 +289,7 @@ class ComfyUIProvider(Provider):
                         "delivered_as": "upload",
                         "uploaded": {"name": name, "subfolder": subfolder}}],
             "videos": [],
+            **budget_block,
         }
 
     def _upload_image(self, path: Path) -> tuple[str, str]:

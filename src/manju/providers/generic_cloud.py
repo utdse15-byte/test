@@ -320,15 +320,27 @@ class GenericCloudProvider(CloudProvider):
         Records the delivery lineage on ``req.params['ref_delivery']`` so it is
         archived on the take. Raises ``invalid`` for a missing/unreadable local
         ref (naming path + tier) or a local path handed to a URL field (naming
-        the manifest field) — all BEFORE the paid POST (reliability #3)."""
+        the manifest field) — all BEFORE the paid POST (reliability #3).
+
+        Reference budget (goal item 9): when ``limits.max_ref_images`` /
+        ``max_ref_videos`` are set, the refs are first passed through the
+        deterministic, priority-ordered allocator; only the budget-allocated
+        subset is delivered and ``ref_delivery.budget`` records both what was
+        selected and what was omitted (each with a 中文 reason). With NO budget
+        configured the allocator returns the refs in their resolved order with
+        zero omissions, so the delivered bytes AND the ``ref_delivery`` block are
+        byte-identical to before (pinned)."""
+        from .refbudget import allocate
+
         rc = self.manifest.refs
         refset = req.refset()
+        budget = allocate(refset, self.manifest.limits, req.shot, bible=req.bible)
         delivery: dict = {"image_mode": rc.image_mode, "video_mode": rc.video_mode,
                           "images": [], "videos": []}
         files: list[tuple[str, str, bytes]] = []
 
         if rc.image_mode != "none" and rc.max_images > 0:
-            items = refset.image_items()[: rc.max_images]
+            items = budget.selected_images[: rc.max_images]
             if items:
                 self._guard_readable(items)  # local refs must exist (pre-submit)
                 if rc.image_mode == "base64_field":
@@ -350,7 +362,7 @@ class GenericCloudProvider(CloudProvider):
                 ]
 
         if rc.video_mode == "url_field" and rc.max_videos > 0:
-            vitems = refset.video_items()[: rc.max_videos]
+            vitems = budget.selected_videos[: rc.max_videos]
             if vitems:
                 urls = [self._require_url(it, rc.video_field) for it in vitems]
                 assign(body, rc.video_field, _one_or_list(urls, rc.max_videos))
@@ -359,6 +371,10 @@ class GenericCloudProvider(CloudProvider):
                     for it in vitems
                 ]
 
+        # Only a CONFIGURED budget adds the audit block — otherwise the
+        # ref_delivery dict is byte-identical to today (byte-identity contract).
+        if budget.active:
+            delivery["budget"] = budget.to_lineage()
         req.params["ref_delivery"] = delivery
         return files
 

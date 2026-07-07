@@ -67,6 +67,16 @@ class LimitsConfig(ManjuModel):
     max_resolution: str | None = None
     max_concurrent: int = 1
     rate_limit_per_min: int = 6  # enforced engine-side (§8.2), not trusted to remote 429s
+    # Reference-image/-video budget (goal item 9). BOTH default None: with no
+    # budget configured the delivery path is byte-identical to today (the
+    # providers/refbudget allocator is a no-op and no `budget` block is
+    # recorded). When set, the delivery adapters send only the budget-allocated
+    # subset — a priority-ordered pick with every omission explained in 中文,
+    # auditable per take via ref_delivery.budget. These are a MANIFEST-level
+    # policy, distinct from refs.max_images/max_videos (the per-field API-shape
+    # cap): the budget decides WHICH refs survive across every field.
+    max_ref_images: int | None = None
+    max_ref_videos: int | None = None
 
 
 class CostConfig(ManjuModel):
