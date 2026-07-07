@@ -208,6 +208,19 @@ class TakeSidecar(ManjuModel):
     qc: dict[str, Any] = Field(default_factory=dict)
     source: str | None = None  # original path for manual imports
     created_at: str | None = None
+    # VIRTUAL TRIM (round-T): the take's WINDOW into its own media file — the
+    # [source_in_ms, source_out_ms) region a virtual ``set_inout`` selected
+    # WITHOUT re-encoding. The defaults describe the WHOLE file (in 0, out None =
+    # to the end), so every take made before this landed — and every generative
+    # take — reads back byte-for-byte the same and never participates in a hash
+    # (spec_hash is the picture's; the window is a media edit, not a restage).
+    # A virtual trim mints a take whose media is a HARDLINK of the source file
+    # with these two set, leaving spare HEAD (in>0) and TAIL (out<file_duration)
+    # material — the real handles a cross-dissolve needs (media/render.py). The
+    # compiler reads them to bound the clip's source material and to seed
+    # ``VideoClip.source_in_ms``; the render seeks to the in-point.
+    source_in_ms: int = 0
+    source_out_ms: int | None = None
 
 
 class VoiceTakeSidecar(ManjuModel):

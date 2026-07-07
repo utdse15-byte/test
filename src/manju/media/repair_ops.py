@@ -15,7 +15,11 @@ without re-introducing off-grid drift.
     extend_take     lengthen by freezing the last frame, or padding black
     trim_take       shorten from the tail (frame-snapped)
     set_inout_take  crop to an exact [in, out) source region (TAKE IN/OUT), the
-                    frame-accurate cut a GUI trim control drives
+                    frame-accurate cut a GUI trim control drives. Two modes:
+                    "virtual" (the DEFAULT) records the window in the sidecar and
+                    HARDLINKS the source media, so the trim leaves spare HEAD/TAIL
+                    material — the real handles a cross-dissolve needs; "reencode"
+                    bakes the region into new bytes (no handles; legacy TB path).
     crop_pad_take   fix an aspect mismatch: center-crop, or scale-fit onto a
                     blurred-background pad (the vertical-video treatment)
 
@@ -25,6 +29,7 @@ vocabulary, kept deliberately separate from the mix/normalize pipeline.
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -240,27 +245,38 @@ def trim_take(project: Project, shot: str, take: str, ms: int) -> TakeInfo:
 
 
 def set_inout_take(project: Project, shot: str, take: str,
-                   in_ms: int, out_ms: int) -> TakeInfo:
-    """TAKE IN/OUT: register a NEW take that is exactly the source's
-    ``[in_ms, out_ms)`` region, re-encoded frame-accurately.
+                   in_ms: int, out_ms: int, mode: str = "virtual") -> TakeInfo:
+    """TAKE IN/OUT: register a NEW take that is the source's ``[in_ms, out_ms)``
+    region. Two modes, same validation, same append-only lineage:
 
-    The cut is a fast input seek (``-ss`` *before* ``-i``) combined with a
-    frames-exact output trim (``-t`` on the snapped span + a forced ``-r`` frame
-    rate). Modern ffmpeg makes an input seek accurate under a re-encode — it
-    decodes from the preceding keyframe and drops frames until the target — so
-    the output's first frame is the source frame at ``in_ms`` and the length is
-    the snapped span, verified against probes by the tests. Because the seek is
-    applied to every input stream and output PTS restart at zero, audio stays in
-    lock-step with picture. Duration is snapped to the project frame grid so the
-    cropped take drops onto the timeline without off-grid drift.
+    - ``mode="virtual"`` (the DEFAULT, the shape a GUI trim control drives):
+      record the window in the sidecar (``source_in_ms``/``source_out_ms``) and
+      HARDLINK (fallback copy) the source media into the new take. NOTHING is
+      re-encoded, so the trim keeps ALL the original bytes — the material before
+      ``in_ms`` and after ``out_ms`` survives as spare HEAD/TAIL. Those are the
+      real media HANDLES a handle-aware cross-dissolve consumes (media/render.py):
+      the compiler seeds ``VideoClip.source_in_ms`` from the window and the render
+      seeks to it. This is why a virtually-trimmed take earns a true xfade where a
+      re-encoded one degrades to dip-to-black.
+    - ``mode="reencode"`` (legacy TB path): bake the region into new bytes. The
+      cut is a fast input seek (``-ss`` *before* ``-i``) plus a frames-exact
+      output trim (``-t`` on the snapped span + a forced ``-r``). Modern ffmpeg
+      makes the input seek accurate under the re-encode — it decodes from the
+      preceding keyframe and drops frames until the target — so the first frame
+      is the source frame at ``in_ms`` and the length is the snapped span. The
+      re-encode discards the head/tail, so the new take carries NO handles.
 
-    Validation (clean one-line errors): ``0 <= in_ms < out_ms <= source
-    duration`` and the region must span at least one whole frame. The source
-    take is never touched (append-only, §3); lineage records
-    ``op="set_inout"`` with ``in_ms``/``out_ms``/``source_take``.
+    Both snap the length to the project frame grid so the cropped take drops onto
+    the timeline without off-grid drift, and both leave the source take untouched
+    (append-only, §3). Validation (clean one-line errors): ``0 <= in_ms < out_ms
+    <= source duration``, the region spans at least one whole frame, and the mode
+    is known. Lineage records ``op="set_inout"``, the ``mode``,
+    ``in_ms``/``out_ms``/``target_ms`` and ``source_take``.
     """
     in_ms = int(in_ms)
     out_ms = int(out_ms)
+    if mode not in ("virtual", "reencode"):
+        raise MediaError(f"set_inout mode must be virtual|reencode (got {mode!r})")
     if in_ms < 0:
         raise MediaError(f"in-ms must be >= 0 (got {in_ms})")
     if out_ms <= in_ms:
@@ -278,8 +294,16 @@ def set_inout_take(project: Project, shot: str, take: str,
             f"region [{in_ms},{out_ms}) is shorter than one frame at {fps}fps"
         )
     target_ms = snap_to_frame_grid(out_ms - in_ms, fps)
-    log = default_log(project.root, "repair")
 
+    if mode == "virtual":
+        return _set_inout_virtual(project, shot, src, info, in_ms, out_ms, target_ms)
+    return _set_inout_reencode(project, shot, src, info, in_ms, out_ms, target_ms, fps)
+
+
+def _set_inout_reencode(project: Project, shot: str, src: TakeInfo, info: ProbeInfo,
+                        in_ms: int, out_ms: int, target_ms: int, fps: int) -> TakeInfo:
+    """Bake the ``[in_ms, out_ms)`` region into new bytes (TB's original path)."""
+    log = default_log(project.root, "repair")
     d, out = _tmp_out()
     try:
         # -ss BEFORE -i: fast input seek, accurate under the re-encode below.
@@ -292,8 +316,51 @@ def set_inout_take(project: Project, shot: str, take: str,
         return _register_repaired(
             project, shot, src, out,
             op="set_inout",
-            params={"in_ms": in_ms, "out_ms": out_ms, "target_ms": target_ms},
+            params={"mode": "reencode", "in_ms": in_ms, "out_ms": out_ms,
+                    "target_ms": target_ms},
         )
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _set_inout_virtual(project: Project, shot: str, src: TakeInfo, info: ProbeInfo,
+                       in_ms: int, out_ms: int, target_ms: int) -> TakeInfo:
+    """Zero-copy trim: the new take's media is a HARDLINK (fallback copy) of the
+    source file; the ``[in_ms, out_ms)`` window lives in the sidecar, so the spare
+    HEAD (``in_ms>0``) and TAIL (``out_ms<file_duration``) survive as real handles.
+    Append-only; the source is untouched (a hardlink never mutates its target)."""
+    src_media = src.media_path
+    # Stage the link on the project filesystem (under media/gen) so
+    # register_take's move is a rename that PRESERVES the hardlink — a temp on a
+    # different device would make shutil.move silently copy (still correct, just
+    # not zero-copy). We do the same probe seed as _register_repaired but keep
+    # the window's length (not the whole-file length) as the take's duration.
+    staging = project.gen_dir
+    staging.mkdir(parents=True, exist_ok=True)
+    d = Path(tempfile.mkdtemp(prefix="manju_repair_", dir=staging))
+    tmp_out = d / ("out" + src_media.suffix.lower())
+    try:
+        try:
+            os.link(src_media, tmp_out)  # zero-copy: dest shares the source inode
+        except OSError:
+            shutil.copy2(src_media, tmp_out)  # cross-device / unsupported → copy
+        probe = ProbeInfo(
+            duration_ms=target_ms, width=info.width, height=info.height,
+            fps=info.fps, has_audio=info.has_audio,
+        )
+        sidecar = TakeSidecar(
+            provider="repair",
+            # inherit the source's spec_hash: a virtual trim changes the media
+            # window, never the generative PICTURE intent, so the shot stays
+            # FRESH with the new take exactly like a re-encode trim (§4.3).
+            spec_hash=src.sidecar.spec_hash,
+            params={"op": "set_inout", "mode": "virtual", "source_take": src.name,
+                    "in_ms": in_ms, "out_ms": out_ms, "target_ms": target_ms},
+            probe=probe,
+            source_in_ms=in_ms,
+            source_out_ms=out_ms,
+        )
+        return project.register_take(shot, tmp_out, sidecar, move=True)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

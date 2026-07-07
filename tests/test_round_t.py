@@ -86,12 +86,17 @@ def test_set_inout_frame_accurate_and_lineage(inout_project, tmp_path):
 
     project, take = inout_project
     fps = project.load_config().fps
-    new = set_inout_take(project, "S001", take.name, 500, 1500)
+    # mode="reencode" bakes the region into new bytes (the legacy TB path). The
+    # raw-media frame-accuracy assertions below only hold for the re-encoded take;
+    # the new DEFAULT (virtual) leaves the whole file behind a sidecar window and
+    # is covered by test_virtual_trim.py.
+    new = set_inout_take(project, "S001", take.name, 500, 1500, mode="reencode")
 
     # --- lineage (append-only new take with repair provenance) ---
     assert new.name != take.name
     assert new.sidecar.provider == "repair"
     assert new.sidecar.params["op"] == "set_inout"
+    assert new.sidecar.params["mode"] == "reencode"
     assert new.sidecar.params["source_take"] == take.name
     assert new.sidecar.params["in_ms"] == 500
     assert new.sidecar.params["out_ms"] == 1500
@@ -105,6 +110,9 @@ def test_set_inout_frame_accurate_and_lineage(inout_project, tmp_path):
     # --- content differs from the source head (it is the [500,1500) region) ---
     assert _head_frame_hash(new.media_path, tmp_path) != \
         _head_frame_hash(take.media_path, tmp_path)
+
+    # --- a re-encoded trim carries NO window (no handles) ---
+    assert new.sidecar.source_in_ms == 0 and new.sidecar.source_out_ms is None
 
     # --- audio survives the cut (kept in sync via the re-encode) ---
     assert _probe(new.media_path).has_audio is True

@@ -713,7 +713,10 @@ def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[st
         elif op == "inout":
             if in_ms is None or out_ms is None:
                 _fail("--op inout requires --in-ms and --out-ms")
-            new = set_inout_take(project, shot, src_take, in_ms, out_ms)
+            # Virtual is the default (leaves handles for a real cross-dissolve);
+            # --mode reencode bakes the region into new bytes (no handles).
+            new = set_inout_take(project, shot, src_take, in_ms, out_ms,
+                                 mode=mode or "virtual")
         elif op == "croppad":
             new = crop_pad_take(project, shot, src_take, mode=mode or "center_crop")
         else:
@@ -751,7 +754,8 @@ def repair(
     out_ms: Optional[int] = typer.Option(
         None, "--out-ms", help="set_inout region end in ms, exclusive (--op inout)"),
     mode: Optional[str] = typer.Option(
-        None, "--mode", help="extend: freeze|pad_black · croppad: center_crop|pad_blur"),
+        None, "--mode", help="extend: freeze|pad_black · croppad: center_crop|pad_blur "
+                             "· inout: virtual(default)|reencode"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Repair the film (§9). Two modes:
@@ -762,6 +766,7 @@ def repair(
         manju repair --op extend  --shot S001 --ms 500 --mode freeze
         manju repair --op trim    --shot S001 --ms 300
         manju repair --op inout   --shot S001 --in-ms 500 --out-ms 1500
+        manju repair --op inout   --shot S001 --in-ms 500 --out-ms 1500 --mode reencode
         manju repair --op croppad --shot S001 --mode pad_blur
     - `--auto` executes auto-safe items from repair_plan.yaml (redo/degrade);
       the rest stay for humans. Repair-plan action is 'edit params and rebuild'.

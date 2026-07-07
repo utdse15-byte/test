@@ -593,6 +593,16 @@ def _plan_transitions(
         else:
             a_src = _probe_source_ms(project, a, src_cache)
             b_src = _probe_source_ms(project, b, src_cache)
+            # Spare TAIL = whatever the source file has PAST the material this
+            # clip lays down. The clip reads [source_in_ms, source_in_ms+duration)
+            # and the boundary compositor lifts the handle from source_in_ms +
+            # duration_ms - half onward, so the tail available is measured from
+            # exactly that read edge — which, for a virtually-trimmed take (where
+            # duration_ms tracks the window out−in), equals file_duration −
+            # source_out_ms, the footage kept beyond the window's out-point. Spare
+            # HEAD = source_in_ms, the footage kept before the window's in-point.
+            # A virtual trim leaves BOTH >0, so it earns a real cross-dissolve; a
+            # re-encoded trim (or a card exactly window-length) leaves both 0.
             a_tail = None if a_src is None else a_src - (a.source_in_ms + a.duration_ms)
             b_head = b.source_in_ms  # material before the incoming window start
             if a_src is None or a_tail < half_ms:

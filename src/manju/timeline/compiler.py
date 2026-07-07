@@ -60,6 +60,14 @@ class ShotInput:
     # word boundaries from the TTS engine ([{start_ms,end_ms,text}, …], voice-
     # relative): captions snap to real speech instead of the weighted split
     voice_timing: list[dict] | None = None
+    # VIRTUAL TRIM window (round-T): the selected take's [in, out) region into
+    # its media file, carried from the take sidecar. ``source_in_ms`` seeds the
+    # compiled clip's in-point (the render seeks there; it is the incoming HEAD
+    # handle); with a window, ``take_duration_ms`` is already the window length,
+    # so ``duration: auto`` bounds the clip by the trimmed material. Defaults
+    # (0 / None = whole file) leave the compile byte-identical to before.
+    source_in_ms: int = 0
+    source_out_ms: int | None = None
 
 
 @dataclass
@@ -126,6 +134,15 @@ class CompileInput:
                     **(
                         {"source_audio": s.shot.source_audio.model_dump()}
                         if (s.shot.source_audio.gain_db or s.shot.source_audio.mute)
+                        else {}
+                    ),
+                    # Round-T virtual trim: fold the take's source WINDOW ONLY when
+                    # non-default, so re-trimming (a different in/out, even at the
+                    # same length) recompiles while a whole-file take keeps today's
+                    # hash. Byte-identical when in==0 and out is None.
+                    **(
+                        {"source_window": [s.source_in_ms, s.source_out_ms]}
+                        if (s.source_in_ms or s.source_out_ms is not None)
                         else {}
                     ),
                 }
@@ -372,6 +389,13 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 # timeline (defaults 0dB/unmuted = today's behaviour).
                 source_gain_db=s.shot.source_audio.gain_db,
                 source_mute=s.shot.source_audio.mute,
+                # Round-T virtual trim: the window in-point seeds the clip so the
+                # render seeks there and the pre-``in`` footage is the incoming
+                # HEAD handle a cross-dissolve needs. Default 0 = read from the
+                # head (byte-identical). ``duration_ms`` already came from the
+                # window length via ``take_duration_ms`` (rules still clamp), so
+                # the material after ``in+duration_ms`` is the spare TAIL handle.
+                source_in_ms=s.source_in_ms,
             )
         )
         seg_i += 1
@@ -620,6 +644,17 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
         take_dur = take.sidecar.probe.duration_ms if take.sidecar.probe else None
         if take_dur is None:
             take_dur = probe_fn(take.media_path)
+        # Round-T virtual trim: a windowed take's own media is the WHOLE source
+        # file (a hardlink), so the material the compiler may lay down is the
+        # WINDOW length, not the file length — derive it from in/out (rules still
+        # clamp in _resolve_duration_ms). Defaults (in 0 / out None) leave
+        # take_dur exactly as before, so whole-file takes are byte-identical.
+        in_ms = take.sidecar.source_in_ms or 0
+        out_ms = take.sidecar.source_out_ms
+        if out_ms is not None:
+            take_dur = max(1, out_ms - in_ms)
+        elif in_ms and take_dur is not None:
+            take_dur = max(1, take_dur - in_ms)
         shots.append(
             ShotInput(
                 shot=project.load_shot(status.shot_id),
@@ -629,6 +664,8 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
                 voice_source=project.relpath(voice) if voice else None,
                 voice_duration_ms=probe_fn(voice) if voice else None,
                 voice_timing=_load_voice_timing(voice) if voice else None,
+                source_in_ms=in_ms,
+                source_out_ms=out_ms,
             )
         )
 
