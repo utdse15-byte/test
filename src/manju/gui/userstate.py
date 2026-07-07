@@ -47,6 +47,8 @@ __all__ = [
     "set_mode_hint_dismissed",
     "is_show_pro_terms",
     "set_show_pro_terms",
+    "is_snap_enabled",
+    "set_snap_enabled",
 ]
 
 _VERSION = 1
@@ -182,4 +184,23 @@ def is_show_pro_terms() -> bool:
 def set_show_pro_terms(show: bool = True) -> None:
     state = load_gui_state()
     state["show_pro_terms"] = bool(show)
+    save_gui_state(state)
+
+
+# --------------------------------------------------------- 剪辑 snapping (round V)
+
+
+def is_snap_enabled() -> bool:
+    """Whether the /edit playhead+trim snapping (magnet) is on — Native Cut v2
+    §B. Default **on** (the Kdenlive-family convention): an absent key reads as
+    enabled, so a fresh user gets snapping without a first toggle."""
+    val = load_gui_state().get("edit_snap")
+    return True if val is None else bool(val)
+
+
+def set_snap_enabled(enabled: bool = True) -> None:
+    """Persist the /edit snapping toggle (additive per-user key). Best-effort —
+    an unwritable home is a shrug, exactly like the other preferences here."""
+    state = load_gui_state()
+    state["edit_snap"] = bool(enabled)
     save_gui_state(state)

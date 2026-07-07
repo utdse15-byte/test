@@ -2067,6 +2067,22 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/edit/synchints":
             self._edit_synchints()
             return True
+        if path == "/api/edit/playback-source":
+            from . import edit
+
+            self._send_json(edit.playback_source(self.server.project))
+            return True
+        if path == "/api/edit/snap":
+            from .userstate import is_snap_enabled
+
+            self._send_json({"enabled": is_snap_enabled()})
+            return True
+        if path == "/api/edit/undo":
+            from . import edit
+
+            self._send_json({"events": edit.edit_undo_events(self.server.project),
+                             "note": edit.UNDO_PANEL_NOTE})
+            return True
         return False
 
     @staticmethod
@@ -2186,6 +2202,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/edit/look": self._act_edit_look,
             "/api/edit/handle-rebuild-plan": self._act_edit_handle_rebuild_plan,
             "/api/edit/handle-rebuild": self._act_edit_handle_rebuild,
+            "/api/edit/snap": self._act_edit_snap,
+            "/api/edit/revert": self._act_edit_revert,
         }.get(path)
         if handler is None:
             return False
@@ -3355,6 +3373,128 @@ class _Handler(BaseHTTPRequestHandler):
                              {"file": "style",
                               "look": {"preset": look.preset, "intensity": look.intensity},
                               "via": "gui"})
+        self._send_json(payload, status)
+
+    def _act_edit_snap(self, body: dict[str, Any]) -> None:
+        """Persist the /edit snapping (magnet) toggle — a per-USER preference in
+        gui_state.json (Native Cut v2 §B, additive key). No project write, no
+        event: switching snap never mutates the film."""
+        from .userstate import set_snap_enabled
+
+        enabled = bool(body.get("enabled"))
+        set_snap_enabled(enabled)
+        self._send_json({"ok": True, "enabled": enabled})
+
+    def _act_edit_revert(self, body: dict[str, Any]) -> None:
+        """Honest, git-backed tier-1 revert (Native Cut v2 §C): re-apply the value
+        in effect BEFORE the event at ``index`` through the SAME engine endpoint
+        the original edit used. The revert is ITSELF a normal event (undo is
+        visible history, not erased history). File/history tiers are surfaced to
+        the client (which routes them to the guarded /api/git/rollback-file).
+        Media/takes are append-only and never reach here (plan_revert refuses)."""
+        from . import edit
+        from ..core.models import LookSpec, TransitionSpec
+        from ..core.yamlio import dump_yaml
+
+        project, actor = self.server.project, self.server.actor
+        idx = body.get("index")
+        try:
+            index = int(idx)
+        except (TypeError, ValueError):
+            self._send_error_json("index is required (int)", 400)
+            return
+        try:
+            plan = edit.plan_revert(project, index)
+        except IndexError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        except ValueError as exc:
+            self._send_error_json(str(exc), 400)
+            return
+        ts = body.get("ts")
+        if ts and plan.get("ts") and str(ts) != str(plan.get("ts")):
+            self._send_error_json("撤销目标已过期(有新的改动),请刷新后重试", 409)
+            return
+        if plan.get("tier") != 1:
+            # file / history tiers: the client confirms + calls rollback-file.
+            self._send_json({"ok": True, **plan})
+            return
+
+        endpoint = plan["endpoint"]
+        ap = plan["apply"]
+        with self.server.quick_mutex:
+            if endpoint in ("transition", "transition-override"):
+                rules = project.load_rules()
+                if endpoint == "transition":
+                    rules.transition_default = TransitionSpec(
+                        type=ap["type"], duration_ms=int(ap["duration_ms"]))
+                    detail: dict[str, Any] = {"transition_default": {
+                        "type": ap["type"], "duration_ms": int(ap["duration_ms"])}}
+                else:
+                    ov = dict(rules.transition_overrides or {})
+                    shot = ap["shot"]
+                    if ap.get("action") == "reset":
+                        ov.pop(shot, None)
+                        detail = {"transition_override": {"shot": shot, "reset": True}}
+                    elif ap.get("cut"):
+                        ov[shot] = None
+                        detail = {"transition_override": {"shot": shot, "type": "cut"}}
+                    else:
+                        ov[shot] = TransitionSpec(
+                            type=ap["type"], duration_ms=int(ap["duration_ms"])).model_dump()
+                        detail = {"transition_override": {
+                            "shot": shot, "type": ap["type"],
+                            "duration_ms": int(ap["duration_ms"])}}
+                    rules.transition_overrides = ov
+                ok, payload, status = self._gated_save(
+                    project.rules_path, dump_yaml(rules.model_dump()),
+                    label="timeline/rules.yaml")
+                if ok:
+                    append_event(project.root, actor, "edit_rules",
+                                 {**detail, "revert_of": index, "via": "gui"})
+            elif endpoint == "look":
+                from ..core.yamlio import read_yaml
+
+                look = LookSpec(preset=ap["preset"], intensity=float(ap["intensity"]))
+                style_path = project.root / "bible" / "style.yaml"
+                data: Any = {}
+                if style_path.exists():
+                    try:
+                        data = read_yaml(style_path) or {}
+                    except Exception:
+                        data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                data["look"] = {"preset": look.preset, "intensity": look.intensity}
+                ok, payload, status = self._gated_save(
+                    style_path, dump_yaml(data), label="bible/style.yaml")
+                if ok:
+                    append_event(project.root, actor, "edit_bible",
+                                 {"file": "style",
+                                  "look": {"preset": look.preset, "intensity": look.intensity},
+                                  "revert_of": index, "via": "gui"})
+            elif endpoint == "duration":
+                from .edit import set_duration_in_text
+
+                shot = ap["shot"]
+                raw = ap.get("duration", "auto")
+                valstr = "auto" if (raw == "auto" or raw is None) else str(raw)
+                spath = project.shot_path(shot)
+                if not spath.exists():
+                    self._send_error_json(f"unknown shot: {shot}", 404)
+                    return
+                text = spath.read_text(encoding="utf-8")
+                ok, payload, status = self._gated_save(
+                    spath, set_duration_in_text(text, valstr), label=f"shots/{shot}.yaml")
+                if ok:
+                    append_event(project.root, actor, "edit_shot",
+                                 {"shot": shot, "field": "duration", "duration": valstr,
+                                  "revert_of": index, "via": "gui"})
+            else:
+                self._send_error_json(f"unsupported revert endpoint: {endpoint}", 400)
+                return
+        if isinstance(payload, dict) and status == 200:
+            payload = {**payload, "reverted": plan.get("label", ""), "tier": 1}
         self._send_json(payload, status)
 
     # ---------------------------------------------------- frame / strip / card

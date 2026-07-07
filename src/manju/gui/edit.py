@@ -59,6 +59,10 @@ __all__ = [
     "look_preview_frame",
     "transitions_state",
     "set_duration_in_text",
+    "playback_source",
+    "edit_undo_events",
+    "plan_revert",
+    "UNDO_PANEL_NOTE",
     "STRIP_COUNT",
 ]
 
@@ -215,6 +219,272 @@ def set_duration_in_text(text: str, value: str) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------- playback source (v2 §D)
+
+
+def playback_source(project: Any) -> dict[str, Any]:
+    """Resolve the newest playable render for the preview player, honestly:
+    a fresh **final** wins, else the **proxy**, else an empty state (先构建).
+
+    The URL points at the Range-capable ``/media`` endpoint so the ``<video>``
+    can seek (Tier 1: play the render, REPORTS §D). ``stale`` flags a final that
+    a rebuild would supersede (成片可能已过期), read from the same ``build.explain``
+    verdict the dirty chip uses. Best-effort — any read error degrades to the
+    empty state, never raises, so a plain GET always resolves a source."""
+    from urllib.parse import quote as _quote
+
+    try:
+        final = project.newest_final_path()
+    except Exception:
+        final = None
+    if final is not None:
+        try:
+            if final.is_file():
+                rel = project.relpath(final)
+                stale, _why = _unbuilt(project)
+                return {"kind": "final", "rel": rel,
+                        "url": "/media/" + _quote(rel, safe="/"),
+                        "label": final.name, "stale": bool(stale)}
+        except Exception:
+            pass
+    try:
+        proxy = project.proxy_dir / "proxy.mp4"
+        if proxy.is_file():
+            rel = project.relpath(proxy)
+            return {"kind": "proxy", "rel": rel,
+                    "url": "/media/" + _quote(rel, safe="/"),
+                    "label": "proxy.mp4", "stale": False}
+    except Exception:
+        pass
+    return {"kind": None, "rel": None, "url": None, "label": None, "stale": False}
+
+
+# ------------------------------------------------------- honest undo (v2 §C)
+
+# events.jsonl actions the 撤销 surface reads: the edit-surface mutations. Undo
+# is honest, git-backed history — NEVER a volatile JS stack (REPORTS §1c/§C).
+_UNDO_ACTIONS = frozenset({
+    "edit_rules", "edit_bible", "edit_shot", "mixer", "repair",
+    "handle_rebuild", "rollback_file", "rollback_shot", "snapshot", "select",
+})
+
+# The honest note the panel carries: undo is VISIBLE history, not erased history;
+# media/takes are append-only (选择版本, never "undone").
+UNDO_PANEL_NOTE = ("撤销是可见的历史(git 回滚),不是易失撤销栈 — 每次撤销本身也是一条改动。"
+                   "素材/takes 追加不回滚,只选择版本。")
+
+
+def _look_label(preset: str, intensity: Any) -> str:
+    return f"{_LOOK_LABELS.get(preset, preset)} · 强度 {intensity}"
+
+
+def _find_prior(prior: list, pred) -> Any:
+    """The newest event in ``prior`` (oldest→newest) matching ``pred``, or None —
+    the recorded 'previous value' a tier-1 revert re-applies."""
+    for ev in reversed(prior):
+        if pred(ev):
+            return ev
+    return None
+
+
+def _revert_plan_for(ev: dict, prior: list) -> dict[str, Any] | None:
+    """The machine revert plan for one edit event, or None when the event is not
+    a field-level (tier-1) revert. Tier-1 re-applies the value in effect BEFORE
+    this event, recovered from ``prior`` (the earlier events) — durable + honest.
+
+    Returns one of:
+      * ``{"tier": 1, "endpoint": ..., "apply": {...}, "label": ...}`` — re-apply
+        via the SAME engine endpoint the original edit used;
+      * ``{"tier": "file", "file": rel, "label": ...}`` — no recorded prior value:
+        fall to a git file rollback (tier 2);
+      * ``None`` — append-only / informational (no tier-1 path)."""
+    action = ev.get("action")
+    d = ev.get("detail") or {}
+
+    if action == "edit_rules" and "transition_default" in d:
+        p = _find_prior(prior, lambda e: e.get("action") == "edit_rules"
+                        and "transition_default" in (e.get("detail") or {}))
+        if p is None:
+            return {"tier": "file", "file": "timeline/rules.yaml",
+                    "label": "回滚 timeline/rules.yaml 到上一版本"}
+        td = (p.get("detail") or {})["transition_default"]
+        return {"tier": 1, "endpoint": "transition",
+                "apply": {"type": td.get("type", "cut"),
+                          "duration_ms": int(td.get("duration_ms", 0) or 0)},
+                "label": "默认转场恢复到 "
+                         + _TRANSITION_LABELS.get(td.get("type", "cut"), td.get("type", "cut"))}
+
+    if action == "edit_rules" and "transition_override" in d:
+        shot = (d["transition_override"] or {}).get("shot")
+        if not shot:
+            return None
+        p = _find_prior(prior, lambda e: e.get("action") == "edit_rules"
+                        and ((e.get("detail") or {}).get("transition_override") or {}).get("shot") == shot)
+        if p is None:
+            # no earlier override for this out-edge → the prior state was 无覆盖.
+            return {"tier": 1, "endpoint": "transition-override",
+                    "apply": {"shot": shot, "action": "reset"},
+                    "label": f"转场覆盖 {shot} 恢复默认"}
+        pov = (p.get("detail") or {})["transition_override"]
+        if pov.get("reset"):
+            apply = {"shot": shot, "action": "reset"}
+        elif pov.get("type") == "cut":
+            apply = {"shot": shot, "cut": True}
+        else:
+            apply = {"shot": shot, "type": pov.get("type", "cut"),
+                     "duration_ms": int(pov.get("duration_ms", 0) or 0)}
+        return {"tier": 1, "endpoint": "transition-override", "apply": apply,
+                "label": f"转场覆盖 {shot} 恢复到上一版本"}
+
+    if action == "edit_bible" and "look" in d:
+        p = _find_prior(prior, lambda e: e.get("action") == "edit_bible"
+                        and "look" in (e.get("detail") or {}))
+        if p is None:
+            return {"tier": "file", "file": "bible/style.yaml",
+                    "label": "回滚 bible/style.yaml 到上一版本"}
+        lk = (p.get("detail") or {})["look"]
+        return {"tier": 1, "endpoint": "look",
+                "apply": {"preset": lk.get("preset", "none"),
+                          "intensity": float(lk.get("intensity", 1.0) or 0.0)},
+                "label": "调色恢复到 " + _look_label(lk.get("preset", "none"),
+                                                   lk.get("intensity", 1.0))}
+
+    if action == "edit_shot" and d.get("field") == "duration":
+        shot = d.get("shot")
+        p = _find_prior(prior, lambda e: e.get("action") == "edit_shot"
+                        and (e.get("detail") or {}).get("field") == "duration"
+                        and (e.get("detail") or {}).get("shot") == shot)
+        if p is None:
+            return {"tier": "file", "file": f"shots/{shot}.yaml",
+                    "label": f"回滚 shots/{shot}.yaml 到上一版本"}
+        return {"tier": 1, "endpoint": "duration",
+                "apply": {"shot": shot, "duration": (p.get("detail") or {}).get("duration", "auto")},
+                "label": f"时长 {shot} 恢复到上一版本"}
+
+    if action == "mixer":
+        # the mixer event records WHICH shots changed, not the prior gain — so
+        # there is no recorded value to re-apply: honest tier-2 (file rollback).
+        shots = d.get("shots") or []
+        if len(shots) == 1:
+            return {"tier": "file", "file": f"shots/{shots[0]}.yaml",
+                    "label": f"回滚 shots/{shots[0]}.yaml 到上一版本"}
+        return {"tier": "file", "file": "timeline/rules.yaml",
+                "label": "回滚 timeline/rules.yaml 到上一版本"}
+
+    return None
+
+
+def _undo_what(ev: dict) -> str:
+    """A one-line 中文 summary of what an edit event changed (the 撤销 list row)."""
+    action = ev.get("action")
+    d = ev.get("detail") or {}
+    if action == "edit_rules" and "transition_default" in d:
+        td = d["transition_default"]
+        return ("默认转场 → " + _TRANSITION_LABELS.get(td.get("type"), str(td.get("type")))
+                + f" {int(td.get('duration_ms', 0) or 0)}ms")
+    if action == "edit_rules" and "transition_override" in d:
+        ov = d["transition_override"]
+        shot = ov.get("shot", "?")
+        if ov.get("reset"):
+            return f"转场覆盖 {shot} → 恢复默认"
+        if ov.get("type") == "cut":
+            return f"转场覆盖 {shot} → 硬切"
+        return (f"转场覆盖 {shot} → " + _TRANSITION_LABELS.get(ov.get("type"), str(ov.get("type")))
+                + f" {int(ov.get('duration_ms', 0) or 0)}ms")
+    if action == "edit_bible" and "look" in d:
+        lk = d["look"]
+        return "调色 → " + _look_label(lk.get("preset", "none"), lk.get("intensity", 1.0))
+    if action == "edit_shot" and d.get("field") == "duration":
+        return f"时长 {d.get('shot', '?')} → {d.get('duration', 'auto')}"
+    if action == "mixer":
+        return "素材声 → " + (", ".join(d.get("shots") or []) or ", ".join(d.get("changed") or []))
+    if action == "repair":
+        return f"裁剪 {d.get('shot', '?')} → 新 take {d.get('new_take', '')}"
+    if action == "handle_rebuild":
+        return f"补拍手柄 {d.get('shot', '?')} → take {d.get('trim_take', '')}"
+    if action == "rollback_file":
+        return f"回滚文件 {d.get('path', '?')}"
+    if action == "rollback_shot":
+        return f"回滚版本 {d.get('shot', '?')} → {d.get('take', '')}"
+    if action == "select":
+        return f"选用 {d.get('shot', '?')} · {d.get('take', '')}"
+    if action == "snapshot":
+        return "快照" + (f":{d.get('label')}" if d.get("label") else "")
+    return str(action)
+
+
+def edit_undo_events(project: Any, n: int = 8) -> list[dict[str, Any]]:
+    """The last ``n`` edit-surface events with an honest revert affordance each
+    (Native Cut v2 §C). Newest first. Read-only: builds the 撤销 panel from the
+    events.jsonl tail (git-backed truth), never a volatile stack.
+
+    Each row carries ``index`` (absolute position in the log — the handle the
+    revert endpoint reverts by), ``what/ts/actor``, a ``tier`` and, for tier-1,
+    the recovered previous-value ``label``; append-only rows (media/takes) carry
+    ``revertable=False`` and a 选择版本 note."""
+    from ..core.events import tail_events
+
+    allev = tail_events(project.root, 100_000)
+    indexed = [(i, ev) for i, ev in enumerate(allev)
+               if ev.get("action") in _UNDO_ACTIONS]
+    out: list[dict[str, Any]] = []
+    for i, ev in indexed[-n:]:
+        plan = _revert_plan_for(ev, allev[:i])
+        action = ev.get("action")
+        file_rel: str | None = None
+        if plan is not None and plan.get("tier") == 1:
+            tier: Any = 1
+            revertable = True
+            label = plan["label"]
+            note = None
+        elif plan is not None and plan.get("tier") == "file":
+            tier = "file"
+            revertable = True
+            label = plan["label"]
+            file_rel = plan.get("file")
+            note = None
+        elif action in ("repair", "handle_rebuild"):
+            tier, revertable, label = "append", False, ""
+            note = "素材/takes 追加不回滚,只在下方选择版本"
+        elif action in ("select", "rollback_shot"):
+            tier, revertable, label = "version", False, ""
+            note = "版本选择(追加式,可再选回)"
+        elif action == "rollback_file":
+            tier, revertable, label = "history", False, ""
+            note = "这本身就是一次撤销(git 回滚)"
+        else:  # snapshot / other
+            tier, revertable, label = "info", False, ""
+            note = None
+        out.append({"index": i, "ts": ev.get("ts", ""), "actor": ev.get("actor", "?"),
+                    "action": action, "what": _undo_what(ev), "tier": tier,
+                    "revertable": revertable, "label": label, "file": file_rel,
+                    "note": note})
+    out.reverse()
+    return out
+
+
+def plan_revert(project: Any, index: int) -> dict[str, Any]:
+    """The revert plan for the event at absolute log ``index`` — the pure core the
+    ``/api/edit/revert`` endpoint dispatches on. Raises ``IndexError`` for an
+    out-of-range index and ``ValueError`` for an event with no revert path."""
+    from ..core.events import tail_events
+
+    allev = tail_events(project.root, 100_000)
+    if index < 0 or index >= len(allev):
+        raise IndexError(f"事件索引超出范围: {index}")
+    ev = allev[index]
+    if ev.get("action") not in _UNDO_ACTIONS:
+        raise ValueError("该事件不在撤销范围内")
+    plan = _revert_plan_for(ev, allev[:index])
+    if plan is None:
+        raise ValueError("素材/版本类改动是追加式的,不能撤销(只选择版本)")
+    plan = dict(plan)
+    plan["index"] = index
+    plan["ts"] = ev.get("ts", "")
+    plan["action"] = ev.get("action")
+    return plan
+
+
 # ---------------------------------------------------------- look preview frame
 
 
@@ -306,9 +576,58 @@ def _shell(title: str, token: str, body: str) -> str:
         '<div class="btnrow"><button class="btn ghost" id="ed-modal-cancel">取消</button>'
         '<button class="btn" id="ed-modal-ok">确认</button></div></div></div>\n'
         + _seam_modal()
+        + _keymap_modal()
+        + _footer_hints()
         + "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
         "</body>\n</html>\n"
     )
+
+
+# The 6-key universal map (REPORTS Native Cut v2 §A) + the extras, advertised in
+# the ? overlay and the footer. Every row is ALSO reachable by click (WCAG 2.5.7):
+# the key is only an accelerator over an existing button/control.
+_KEYMAP: tuple[tuple[str, str], ...] = (
+    ("空格 Space", "播放 / 暂停预览"),
+    ("← / →", "逐帧移动播放头(按住 Shift = 1 秒)"),
+    ("Home / End", "跳到时间线开头 / 结尾"),
+    ("↑ / ↓", "跳到上一个 / 下一个片段切换点"),
+    ("I / O", "把入点 / 出点设到播放头(填入裁剪框并聚焦“裁剪”)"),
+    ("Z", "在缩放档位之间切换(×1 / ×2 / ×4)"),
+    ("N", "开关吸附(磁吸到片段/字幕边界与整秒)"),
+    ("[ / ]", "缩小 / 放大时间线"),
+    ("Ctrl+Z / Ctrl+Shift+Z", "撤销 / 重做上一次改动(git 回滚,非易失栈)"),
+    ("Esc", "关闭弹窗 / 覆盖层"),
+    ("?", "打开这张快捷键表"),
+)
+
+
+def _keymap_modal() -> str:
+    """The bilingual keyboard-map overlay (`?` / the 快捷键 button). A CSP-safe
+    dialog — no inline handlers; the JS toggles ``.hidden`` and Esc closes it."""
+    rows = "".join(
+        f'<tr><th scope="row"><kbd>{_e(k)}</kbd></th><td>{_e(v)}</td></tr>'
+        for k, v in _KEYMAP)
+    return (
+        '<div id="ed-keymap-modal" class="ed-modal hidden" role="dialog" '
+        'aria-modal="true" aria-labelledby="ed-keymap-title">'
+        '<div class="ed-modal-card">'
+        '<h2 id="ed-keymap-title">键盘快捷键 Keyboard map</h2>'
+        '<p class="muted ed-hint">每个快捷键都只是按钮的加速器 —— 所有操作都能点击完成'
+        '(无需拖拽,WCAG 2.5.7)。在输入框里打字时快捷键自动让位。</p>'
+        f'<table class="ed-keymap-table">{rows}</table>'
+        '<div class="btnrow"><button class="btn" id="ed-keymap-close">关闭 (Esc)</button></div>'
+        "</div></div>\n")
+
+
+def _footer_hints() -> str:
+    """The always-visible footer hint bar advertising the keymap (Shotcut /
+    LosslessCut both train users to reach for ``?``)."""
+    return (
+        '<div class="ed-footer-hints" id="ed-footer-hints">'
+        '<span>空格 播放</span><span>←→ 逐帧</span><span>I/O 入出点</span>'
+        '<span>N 吸附</span><span>Z 缩放</span><span>Ctrl+Z 撤销</span>'
+        '<button class="ed-foot-key" id="ed-keymap-foot" title="全部快捷键">? 快捷键</button>'
+        "</div>\n")
 
 
 def _seam_modal() -> str:
@@ -351,23 +670,37 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     mixer = _mixer_by_shot(project)
     unbuilt, unbuilt_why = _unbuilt(project)
 
+    from .userstate import is_snap_enabled
+
+    snap_on = is_snap_enabled()
+
     out: list[str] = []
-    # ---- header + rebuild affordance
+    # ---- header + rebuild affordance + undo / keyboard-map toolbar (v2 §A/§C)
     out.append('<div class="page-h">')
     out.append("<h1>剪辑 Edit</h1>")
     if unbuilt:
         out.append(f'<span class="chip ed-dirty" title="{_e(unbuilt_why)}">有未构建的修改</span>')
+    out.append('<button class="btn ghost" id="ed-undo-btn" aria-expanded="false" '
+               'title="最近改动 · 一键撤销(git 回滚)">撤销 Undo</button>')
+    out.append('<button class="btn ghost" id="ed-keymap-btn" '
+               'title="键盘快捷键(或按 ?)">快捷键 ?</button>')
     out.append('<button class="btn ghost" id="ed-rebuild">重新构建 (rebuild)</button>')
     out.append("</div>")
     out.append('<p class="muted ed-sub">剪辑级收尾:多轨道 · 顺序 · 裁剪 · 素材声 · 转场 · 调色 · '
                "字幕/语音同步 — 全部无需打开剪映。所有修改走同一引擎核心与事件。</p>")
+
+    # ---- honest-undo panel (git-backed; hidden until toggled) — v2 §C
+    out.append(_undo_panel())
+
+    # ---- preview player (plays the newest final/proxy) — v2 §D
+    out.append(_playback_section(project))
 
     # ---- transitions default + look pickers
     out.append(_transitions_panel(td_type, td_dur))
     out.append(_look_panel(look))
 
     # ---- multi-track lanes view (from the COMPILED timeline, read-only)
-    out.append(_lanes_section(project, timeline))
+    out.append(_lanes_section(project, timeline, snap_on))
 
     # ---- caption/voice sync-hints panel (advanced; JS fills it lazily)
     out.append(_synchints_panel(timeline))
@@ -413,13 +746,17 @@ _WAVE_W = 480
 _WAVE_H = 40
 
 
-def _lanes_section(project: Any, timeline: Any) -> str:
+def _lanes_section(project: Any, timeline: Any, snap_on: bool = True) -> str:
     """The stacked typed lanes (主轨道 / 字幕 / 音频) from the compiled timeline.
 
     Pure DOM with ms geometry baked into ``data-*`` attributes; ``/edit.js``
     positions every block against the shared timeline width (upper-covers-lower
     is a visual convention only — lanes never mutate). No timeline yet → an
-    honest 'build first' note, so the page GET never needs ffmpeg."""
+    honest 'build first' note, so the page GET never needs ffmpeg.
+
+    Round V: carries ``data-fps`` (frame-step + frame-grid snap) and ``data-snap``
+    (the persisted magnet state) so the keyboard/snapping layer needs no fetch on
+    load, and adds a magnet toggle + a snap-tick ruler overlay."""
     p = ['<section class="panel ed-lanes-panel"><div class="ed-lanes-head">',
          "<h2>多轨道 Lanes</h2>"]
     if timeline is None:
@@ -431,14 +768,22 @@ def _lanes_section(project: Any, timeline: Any) -> str:
     if not total or not tracks.video:
         # a compiled-but-empty timeline: recompute a best-effort total
         total = max([1] + [c.start_ms + c.duration_ms for c in tracks.video])
+    fps = int(getattr(timeline, "fps", 0) or 0) or 24
     p.append('<div class="ed-zoom"><label>缩放 <input id="ed-zoom" type="range" '
              'min="1" max="8" step="0.5" value="1"></label>'
-             '<span class="muted ed-hint" id="ed-zoom-val">×1</span></div></div>')
+             '<span class="muted ed-hint" id="ed-zoom-val">×1</span>'
+             '<button class="btn ghost mini ed-magnet" id="ed-snap-toggle" '
+             f'aria-pressed="{"true" if snap_on else "false"}" '
+             'title="吸附到片段/字幕边界与整秒(N 切换,按住 Alt 临时关闭)">'
+             f'吸附 N {"开" if snap_on else "关"}</button>'
+             '</div></div>')
 
-    p.append(f'<div class="ed-lanes" id="ed-lanes" data-total="{total}">')
-    # global playhead ruler
+    p.append(f'<div class="ed-lanes" id="ed-lanes" data-total="{total}" '
+             f'data-fps="{fps}" data-snap="{"1" if snap_on else "0"}">')
+    # global playhead ruler (+ a snap-tick overlay the JS fills)
     p.append('<div class="ed-ruler" id="ed-ruler"><div class="ed-lane-track" '
-             f'data-total="{total}"><div class="ed-playhead" id="ed-playhead"></div>'
+             f'data-total="{total}"><div class="ed-snapticks" id="ed-snapticks"></div>'
+             '<div class="ed-playhead" id="ed-playhead"></div>'
              '</div></div>')
 
     # 主轨道 (video)
@@ -735,6 +1080,53 @@ def _look_panel(look: Any) -> str:
         "</section>")
 
 
+def _undo_panel() -> str:
+    """The honest-undo surface (v2 §C): a collapsible toolbar panel the JS fills
+    from ``/api/edit/undo``. Hidden until the 撤销 button toggles it. Server-
+    rendered shell only (CSP-safe) — no volatile stack, git-backed truth."""
+    return (
+        '<section class="panel ed-undo-panel hidden" id="ed-undo-panel" '
+        'aria-label="最近改动 · 撤销">'
+        '<div class="ed-undo-head"><h2>最近改动 · 撤销</h2>'
+        '<button class="btn ghost mini" id="ed-snapshot-btn" '
+        'title="给当前工程打一个 git 快照,整段编辑一键可回">开始编辑前先快照</button></div>'
+        f'<p class="muted ed-hint">{_e(UNDO_PANEL_NOTE)}</p>'
+        '<div class="ed-undo-list" id="ed-undo-list"></div>'
+        '<p class="muted ed-hint">需要整项目回滚?到 '
+        '<a href="/history">历史 / 回滚</a> 页。</p>'
+        "</section>")
+
+
+def _playback_section(project: Any) -> str:
+    """The preview player above the lanes (v2 §D, Tier 1): one ``<video>`` over
+    the newest final/proxy served by the Range-capable ``/media`` endpoint, with
+    an honest empty state (先构建) when neither exists. The playhead syncs both
+    ways in ``/edit.js`` (timeupdate → playhead; ruler click/step → seek)."""
+    src = playback_source(project)
+    if src["kind"] is None:
+        return (
+            '<section class="panel ed-play-panel" id="ed-play-panel" data-kind="">'
+            '<h2>预览播放 Preview</h2>'
+            '<p class="muted ed-hint" id="ed-play-empty">还没有成片或预览版可播放 —— '
+            '先构建(点上方“重新构建”),这里就能按空格播放整条时间线,播放头与多轨道联动。'
+            '(在此之前,点击标尺仍显示定格预览。)</p></section>')
+    kind_label = "成片 final" if src["kind"] == "final" else "预览版 proxy"
+    stale = ('<span class="chip ed-dirty" id="ed-play-stale" '
+             'title="有未构建的修改,成片可能已过期">成片可能已过期</span>'
+             if src["stale"] else "")
+    return (
+        '<section class="panel ed-play-panel" id="ed-play-panel" '
+        f'data-kind="{_e(src["kind"])}" data-src="{_e(src["url"])}">'
+        '<div class="ed-play-head"><h2>预览播放 Preview</h2>'
+        f'<span class="chip ed-play-kind">{_e(kind_label)} · {_e(src["label"])}</span>'
+        f'{stale}</div>'
+        '<video class="ed-play-video" id="ed-preview-video" preload="metadata" '
+        f'playsinline controls src="{_e(src["url"])}"></video>'
+        '<p class="muted ed-hint">空格 播放/暂停 · ←/→ 逐帧(Shift=1 秒) · '
+        '点击下方标尺跳转 —— 播放头与多轨道联动。</p>'
+        "</section>")
+
+
 # ------------------------------------------------------------------ tiny reads
 
 
@@ -917,6 +1309,58 @@ button.ed-bound { background: none; cursor: pointer; }
 button.ed-bound:hover .ed-bound-label { text-decoration: underline; }
 
 @media (max-width: 700px) { .ed-look-pair { grid-template-columns: 1fr; } }
+
+/* -------- round V: preview player (§D) -------- */
+.ed-play-head { display: flex; align-items: baseline; gap: .7rem; flex-wrap: wrap; }
+.ed-play-kind { background: var(--panel2); }
+.ed-play-video { width: 100%; max-width: 640px; margin-top: .6rem; border-radius: 8px;
+  border: 1px solid var(--line); background: #000; display: block; }
+
+/* -------- round V: honest-undo panel (§C) -------- */
+.ed-undo-panel.hidden { display: none; }
+.ed-undo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.ed-undo-list { display: flex; flex-direction: column; gap: .4rem; margin: .5rem 0; }
+.ed-undo-item { display: flex; align-items: center; gap: .6rem; padding: .4rem .6rem;
+  border: 1px solid var(--line); border-left-width: 3px; border-radius: 6px;
+  background: var(--panel2); font-size: .84rem; }
+.ed-undo-item.tier1 { border-left-color: var(--ok); }
+.ed-undo-item.file { border-left-color: var(--warn); }
+.ed-undo-item.append, .ed-undo-item.version, .ed-undo-item.history, .ed-undo-item.info {
+  border-left-color: var(--line); }
+.ed-undo-what { flex: 1 1 auto; }
+.ed-undo-meta { color: var(--muted); font-size: .74rem; }
+.ed-undo-empty { color: var(--muted); font-size: .82rem; }
+
+/* -------- round V: magnet toggle + snap ticks (§B) -------- */
+.ed-magnet[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.ed-magnet[aria-pressed="false"] { opacity: .7; }
+.ed-snapticks { position: absolute; top: 0; bottom: 0; left: 0; right: 0; pointer-events: none; }
+.ed-snaptick { position: absolute; top: 40%; bottom: 0; width: 1px; background: var(--line); }
+.ed-snaptick.sec { top: 15%; background: var(--muted); }
+
+/* -------- round V: keyboard-map overlay (§A) -------- */
+.ed-keymap-table { width: 100%; border-collapse: collapse; font-size: .86rem; margin: .6rem 0; }
+.ed-keymap-table th, .ed-keymap-table td { text-align: left; padding: .3rem .5rem;
+  border-bottom: 1px solid var(--line); vertical-align: top; }
+.ed-keymap-table th { white-space: nowrap; width: 12rem; }
+kbd { font-family: var(--mono); font-size: .8rem; background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 4px; padding: .05rem .35rem; }
+
+/* -------- round V: footer hint bar (§A) -------- */
+.ed-footer-hints { position: sticky; bottom: 0; z-index: 40; display: flex; flex-wrap: wrap;
+  align-items: center; gap: .5rem 1rem; margin-top: 1.2rem; padding: .45rem .8rem;
+  background: var(--panel); border-top: 1px solid var(--line); font-size: .78rem; color: var(--muted); }
+.ed-footer-hints span { white-space: nowrap; }
+.ed-foot-key { margin-left: auto; color: var(--accent); font: inherit; cursor: pointer;
+  background: none; border: 1px solid var(--line); border-radius: 999px; padding: .1rem .7rem; }
+
+/* -------- round V: visible focus (WCAG 2.4.7) on accelerated controls -------- */
+.ed-magnet:focus-visible, .ed-foot-key:focus-visible, #ed-undo-btn:focus-visible,
+#ed-keymap-btn:focus-visible, .ed-vclip:focus-visible, .ed-bound:focus-visible,
+.ed-undo-item button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.ed-play-video:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 """
 
 
@@ -1290,6 +1734,7 @@ _EDIT_JS = r"""
       clips[j].style.width = Math.max(0.4, d / lanesTotal * 100) + "%";
     }
     placeHintMarks();
+    placeSnapTicks();
   }
   var zoomEl = document.getElementById("ed-zoom");
   if (zoomEl) zoomEl.addEventListener("input", function () {
@@ -1300,11 +1745,50 @@ _EDIT_JS = r"""
   });
   window.addEventListener("resize", layoutLanes);
 
-  function seekTo(ms) {
-    ms = Math.max(0, Math.min(lanesTotal, Math.round(ms)));
-    var ph = document.getElementById("ed-playhead");
-    if (ph) ph.style.left = (ms / lanesTotal * 100) + "%";
-    // find the covering video clip → grab a preview frame
+  // ---- round V: playhead state + snapping + Tier-1 video playback ----
+  var fps = lanes ? (parseInt(lanes.getAttribute("data-fps"), 10) || 24) : 24;
+  var frameMs = Math.max(1, Math.round(1000 / fps));
+  var snapOn = lanes ? lanes.getAttribute("data-snap") === "1" : true;
+  var playheadMs = 0;
+  var video = document.getElementById("ed-preview-video");
+
+  function snapTargets() {
+    // clip boundaries + caption cue edges + whole seconds (Native Cut v2 §B)
+    var t = [];
+    var clips = lanes ? lanes.querySelectorAll(".ed-vclip, .ed-cclip") : [];
+    for (var i = 0; i < clips.length; i++) {
+      var s = parseInt(clips[i].getAttribute("data-ms-start"), 10) || 0;
+      var d = parseInt(clips[i].getAttribute("data-ms-dur"), 10) || 0;
+      t.push(s); t.push(s + d);
+    }
+    for (var sec = 0; sec <= lanesTotal; sec += 1000) t.push(sec);
+    return t;
+  }
+  function applySnap(ms) {
+    if (!snapOn) return ms;
+    var best = ms, bestD = Infinity;
+    var px = trackPx();
+    var msPerPx = px > 0 ? (lanesTotal / px) : 0;
+    var thresh = Math.max(frameMs, msPerPx * 8);  // ~8px, but never below a frame
+    var tg = snapTargets();
+    for (var i = 0; i < tg.length; i++) {
+      var dd = Math.abs(tg[i] - ms);
+      if (dd < bestD && dd <= thresh) { bestD = dd; best = tg[i]; }
+    }
+    return Math.round(best);
+  }
+  function placeSnapTicks() {
+    var host = document.getElementById("ed-snapticks");
+    if (!host) return;
+    host.textContent = "";
+    for (var sec = 0; sec <= lanesTotal; sec += 1000) {
+      var d = document.createElement("div");
+      d.className = "ed-snaptick sec";
+      d.style.left = (sec / lanesTotal * 100) + "%";
+      host.appendChild(d);
+    }
+  }
+  function stillFrameAt(ms) {
     var vclips = lanes ? lanes.querySelectorAll(".ed-vclip") : [];
     for (var i = 0; i < vclips.length; i++) {
       var s = parseInt(vclips[i].getAttribute("data-ms-start"), 10) || 0;
@@ -1325,13 +1809,42 @@ _EDIT_JS = r"""
       }
     }
   }
+  function paintPlayhead(ms) {
+    var ph = document.getElementById("ed-playhead");
+    if (ph) ph.style.left = (ms / lanesTotal * 100) + "%";
+  }
+  // seekTo: move the playhead (snapping unless bypassed), seek the <video>, and
+  // show a still frame while paused. opts.fromVideo = driven by timeupdate (no
+  // re-seek, no still); opts.bypass = Alt held / frame-step (skip snapping).
+  function seekTo(ms, opts) {
+    opts = opts || {};
+    ms = Math.max(0, Math.min(lanesTotal, Math.round(ms)));
+    if (!opts.fromVideo && !opts.bypass) ms = applySnap(ms);
+    playheadMs = ms;
+    paintPlayhead(ms);
+    if (video && !opts.fromVideo) { try { video.currentTime = ms / 1000; } catch (e) {} }
+    if (!video || video.paused) stillFrameAt(ms);
+  }
+  if (video) {
+    video.addEventListener("timeupdate", function () {
+      if (video.paused) return;
+      seekTo(video.currentTime * 1000, { fromVideo: true });
+    });
+  }
+  function togglePlay() {
+    if (!video) { toast("先构建成片或预览版再播放", false); return; }
+    if (video.paused) { video.play().catch(function () {}); }
+    else { video.pause(); }
+  }
+  function stepFrame(dir, big) { seekTo(playheadMs + dir * (big ? 1000 : frameMs), { bypass: true }); }
+
   var ruler = document.getElementById("ed-ruler");
   if (ruler) ruler.addEventListener("click", function (e) {
     var track = ruler.querySelector(".ed-lane-track");
     if (!track) return;
     var r = track.getBoundingClientRect();
     if (r.width <= 0) return;
-    seekTo((e.clientX - r.left) / r.width * lanesTotal);
+    seekTo((e.clientX - r.left) / r.width * lanesTotal, { bypass: e.altKey });
   });
 
   // ---------------------------------------------------------- sync hints
@@ -1469,6 +1982,219 @@ _EDIT_JS = r"""
     if (seam && seam.tagName === "BUTTON") { openSeam(seam); return; }
     var vc = e.target.closest(".ed-vclip");
     if (vc) { seekTo(parseInt(vc.getAttribute("data-ms-start"), 10) || 0); return; }
+  });
+
+  // ============================================ round V: keyboard + snap + undo
+  var zoomVal = document.getElementById("ed-zoom-val");
+  function setZoom(z) {
+    zoom = Math.max(1, Math.min(8, z));
+    if (zoomEl) zoomEl.value = String(zoom);
+    if (zoomVal) zoomVal.textContent = "×" + zoom;
+    layoutLanes();
+  }
+  function cycleZoom() { setZoom(zoom >= 4 ? 1 : (zoom < 2 ? 2 : 4)); }
+
+  // -- snapping magnet toggle (persisted per-user, §B) --
+  function setSnap(on, persist) {
+    snapOn = !!on;
+    if (lanes) lanes.setAttribute("data-snap", snapOn ? "1" : "0");
+    var btn = document.getElementById("ed-snap-toggle");
+    if (btn) {
+      btn.setAttribute("aria-pressed", snapOn ? "true" : "false");
+      btn.textContent = "吸附 N " + (snapOn ? "开" : "关");
+    }
+    if (persist) post("/api/edit/snap", { enabled: snapOn });
+    toast(snapOn ? "吸附已开 (snap on)" : "吸附已关 (snap off)", true);
+  }
+  var snapBtn = document.getElementById("ed-snap-toggle");
+  if (snapBtn) snapBtn.addEventListener("click", function () { setSnap(!snapOn, true); });
+
+  // -- edit-point jump (↑/↓) + the covered clip for I/O --
+  function boundaries() {
+    var b = [0, lanesTotal];
+    var vclips = lanes ? lanes.querySelectorAll(".ed-vclip") : [];
+    for (var i = 0; i < vclips.length; i++) {
+      var s = parseInt(vclips[i].getAttribute("data-ms-start"), 10) || 0;
+      var d = parseInt(vclips[i].getAttribute("data-ms-dur"), 10) || 0;
+      b.push(s); b.push(s + d);
+    }
+    b = b.filter(function (v, i, a) { return a.indexOf(v) === i; });
+    b.sort(function (x, y) { return x - y; });
+    return b;
+  }
+  function jumpEdit(dir) {
+    var b = boundaries(), i;
+    if (dir < 0) {
+      for (i = b.length - 1; i >= 0; i--) if (b[i] < playheadMs - 1) { seekTo(b[i], { bypass: true }); return; }
+      seekTo(0, { bypass: true });
+    } else {
+      for (i = 0; i < b.length; i++) if (b[i] > playheadMs + 1) { seekTo(b[i], { bypass: true }); return; }
+      seekTo(lanesTotal, { bypass: true });
+    }
+  }
+  function coveringVClip(ms) {
+    var vclips = lanes ? lanes.querySelectorAll(".ed-vclip") : [];
+    for (var i = 0; i < vclips.length; i++) {
+      var s = parseInt(vclips[i].getAttribute("data-ms-start"), 10) || 0;
+      var d = parseInt(vclips[i].getAttribute("data-ms-dur"), 10) || 0;
+      if (ms >= s && ms < s + d) return vclips[i];
+    }
+    return null;
+  }
+  // I / O: set the covered clip's trim in/out at the playhead — PREFILL the
+  // existing trim inputs + focus 裁剪 (never a silent re-encode, §A).
+  function setInOut(which) {
+    var vc = coveringVClip(playheadMs);
+    if (!vc) { toast("播放头不在任何主轨道片段上", false); return; }
+    var sid = vc.getAttribute("data-shot");
+    var s = parseInt(vc.getAttribute("data-ms-start"), 10) || 0;
+    var inSrc = parseInt(vc.getAttribute("data-in"), 10) || 0;
+    var off = Math.max(0, inSrc + (playheadMs - s));
+    openInspector(sid);
+    var insp = inspectorFor(sid);
+    if (!insp) { toast("该分镜暂无编辑面板", false); return; }
+    var field = insp.querySelector(which === "in" ? ".ed-in" : ".ed-out");
+    if (!field) { toast("先在审片页给该分镜选一个 take 才能裁剪", false); return; }
+    field.value = String(off);
+    var applyBtn = insp.querySelector(".ed-trim");
+    if (applyBtn) applyBtn.focus();
+    toast((which === "in" ? "入点 in" : "出点 out") + " 设为 " + off + "ms — 核对后点“裁剪成新 take”", true);
+  }
+
+  // -- keyboard-map overlay (?) --
+  var keymapModal = document.getElementById("ed-keymap-modal");
+  function keymapToggle() { if (keymapModal) keymapModal.classList.toggle("hidden"); }
+  function keymapClose() { if (keymapModal) keymapModal.classList.add("hidden"); }
+  ["ed-keymap-btn", "ed-keymap-foot"].forEach(function (id) {
+    var b = document.getElementById(id);
+    if (b) b.addEventListener("click", keymapToggle);
+  });
+  var keymapCloseBtn = document.getElementById("ed-keymap-close");
+  if (keymapCloseBtn) keymapCloseBtn.addEventListener("click", keymapClose);
+
+  // -- honest-undo panel (§C) --
+  var undoPanel = document.getElementById("ed-undo-panel");
+  var undoBtn = document.getElementById("ed-undo-btn");
+  function undoRender(items) {
+    var list = document.getElementById("ed-undo-list");
+    if (!list) return;
+    list.textContent = "";
+    if (!items || !items.length) {
+      var e = document.createElement("p");
+      e.className = "ed-undo-empty";
+      e.textContent = "还没有可撤销的改动。编辑转场 / 调色 / 时长后,这里列出最近改动。";
+      list.appendChild(e); return;
+    }
+    items.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "ed-undo-item " + (it.tier === 1 ? "tier1" : it.tier);
+      var what = document.createElement("span");
+      what.className = "ed-undo-what"; what.textContent = it.what;
+      var meta = document.createElement("span");
+      meta.className = "ed-undo-meta"; meta.textContent = it.actor + " · " + (it.ts || "");
+      row.appendChild(what); row.appendChild(meta);
+      if (it.revertable) {
+        var b = document.createElement("button");
+        b.className = "btn ghost mini";
+        b.textContent = it.tier === "file" ? "回滚文件" : "撤销";
+        if (it.label) b.title = it.label;
+        b.addEventListener("click", function () { undoRevert(it); });
+        row.appendChild(b);
+      } else if (it.note) {
+        var n = document.createElement("span");
+        n.className = "ed-undo-meta"; n.textContent = it.note;
+        row.appendChild(n);
+      }
+      list.appendChild(row);
+    });
+  }
+  function undoLoad() {
+    fetch("/api/edit/undo").then(function (r) { return r.json(); }).then(function (d) {
+      undoRender(d.events || []);
+    }).catch(function () {});
+  }
+  function undoRevert(it) {
+    if (it.tier === "file") {
+      if (!window.confirm("将 " + (it.file || it.label || "该文件") +
+          " 从 git 回滚到上一版本?这会覆盖当前文本改动。")) return;
+      post("/api/git/rollback-file", { path: it.file }).then(function (res) {
+        if (res.status === 200) { toast("已回滚 " + it.file, true); reloadSoon(); }
+        else toast(errText(res), false);
+      });
+      return;
+    }
+    post("/api/edit/revert", { index: it.index, ts: it.ts }).then(function (res) {
+      if (res.status === 200) { toast("已撤销:" + (res.data.reverted || it.what), true); reloadSoon(); }
+      else toast(errText(res), false);
+    });
+  }
+  function undoToggle(forceOpen) {
+    if (!undoPanel) return;
+    var willShow = forceOpen === true || undoPanel.classList.contains("hidden");
+    undoPanel.classList.toggle("hidden", !willShow);
+    if (undoBtn) undoBtn.setAttribute("aria-expanded", willShow ? "true" : "false");
+    if (willShow) undoLoad();
+  }
+  if (undoBtn) undoBtn.addEventListener("click", function () { undoToggle(); });
+  var snapshotBtn = document.getElementById("ed-snapshot-btn");
+  if (snapshotBtn) snapshotBtn.addEventListener("click", function () {
+    post("/api/git/snapshot", { label: "编辑前快照" }).then(function (res) {
+      if (res.status === 200) {
+        toast(res.data.clean ? "工程已是干净快照" : ("已快照 " + (res.data.sha || "")), true);
+      } else toast(errText(res), false);
+    });
+  });
+
+  // Ctrl+Z / Ctrl+Shift+Z: honest git-backed undo/redo of the last edit (redo is
+  // the same op on the newest event — a revert is itself an event, §C).
+  function revertNewest() {
+    fetch("/api/edit/undo").then(function (r) { return r.json(); }).then(function (d) {
+      var items = d.events || [], top = null;
+      for (var i = 0; i < items.length; i++) { if (items[i].revertable) { top = items[i]; break; } }
+      if (!top) { toast("没有可撤销的改动", false); return; }
+      undoToggle(true);
+      undoRevert(top);
+    }).catch(function () {});
+  }
+
+  // ---- the ONE keydown accelerator handler (mirrors page.py discipline) ----
+  function typingInField(t) {
+    if (!t) return false;
+    var tag = (t.tagName || "").toLowerCase();
+    return tag === "input" || tag === "select" || tag === "textarea" || t.isContentEditable;
+  }
+  document.addEventListener("keydown", function (e) {
+    // Esc always closes popovers, even from a field.
+    if (e.key === "Escape") {
+      keymapClose();
+      if (typeof closeSeam === "function") closeSeam();
+      if (typeof closeModal === "function") closeModal();
+      return;
+    }
+    // typing in a field NEVER triggers an accelerator (input-focus guard).
+    if (typingInField(e.target) || typingInField(document.activeElement)) return;
+    if (e.altKey) return;  // Alt is the snap-bypass modifier, not an accelerator
+    if (e.ctrlKey || e.metaKey) {
+      if ((e.key || "").toLowerCase() === "z") { e.preventDefault(); revertNewest(); }
+      return;  // ignore every other ctrl/meta chord
+    }
+    switch (e.key) {
+      case " ": case "Spacebar": e.preventDefault(); togglePlay(); break;
+      case "ArrowLeft": e.preventDefault(); stepFrame(-1, e.shiftKey); break;
+      case "ArrowRight": e.preventDefault(); stepFrame(1, e.shiftKey); break;
+      case "ArrowUp": e.preventDefault(); jumpEdit(-1); break;
+      case "ArrowDown": e.preventDefault(); jumpEdit(1); break;
+      case "Home": e.preventDefault(); seekTo(0, { bypass: true }); break;
+      case "End": e.preventDefault(); seekTo(lanesTotal, { bypass: true }); break;
+      case "i": case "I": setInOut("in"); break;
+      case "o": case "O": setInOut("out"); break;
+      case "n": case "N": setSnap(!snapOn, true); break;
+      case "z": case "Z": cycleZoom(); break;
+      case "[": setZoom(zoom - 1); break;
+      case "]": setZoom(zoom + 1); break;
+      case "?": e.preventDefault(); keymapToggle(); break;
+      default: break;
+    }
   });
 
   if (lanes) { layoutLanes(); loadSyncHints(); }
