@@ -148,6 +148,16 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju failures [-n] [--json]` | S | recent structured failures: step, cause, evidence, hint, log path |
 | `manju repair --op inout --in-ms A --out-ms B [--mode virtual\|reencode]` | T | crop a clip's time range (virtual = keeps handles for real crossfades) |
 | `manju frames <source> [--at ms \| --strip N]` | T | cached frame / scrub-strip previews (cover picker, GUI trimmer) |
+| `manju assets [show <id>]` | U | asset matrix over the bible: 角色/场景/道具/配音/风格 with aliases, relations, appearances |
+| `manju mentions [--check\|--apply]` | U | @角色/@场景 mentions in shot text: report or register into the spec (lock-respecting) |
+| `manju prompt <shot> [--json] / --check` | U | prompt workbench bundle: 4 prompts + refs lineage + provider trace + cost + single-action checks |
+| `manju refs <shot> [--json]` | U | reference resolution + per-provider budget allocation (selected/省略+impact) + cleanliness QC |
+| `manju repair --op voice --shot <id> [--dry-run]` | U | voice repair loop: keep footage, regen TTS, realign cues (manual cues untouched), remix via keys |
+| `manju board scene <id> [--grid 4\|9] / keyframes <shot> --n N [--scaffold]` | U | 4/9-panel storyboards; action → keyframe beats (writes only with --scaffold) |
+| `manju build --mode quality\|balanced\|speed` | U | quality modes: provider bias + retries + bounded parallel generation (gates preserved) |
+| `manju routing explain [<shot>] [--mode]` | U | per-shot: chosen provider, why (explicit/rule/tier/fallback), full order, est cost |
+| `manju exports [--json]` | U | 导出中心 status: 9 deliverables × 上新/待更新/缺失/有问题/待人工确认 + human verification log |
+| `manju director propose/confirm/run/suggest [--json]` | U | the six-step AI-director contract: propose → cost → confirm → execute → diff → next |
 | `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |

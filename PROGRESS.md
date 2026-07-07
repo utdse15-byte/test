@@ -1005,3 +1005,76 @@ handle source today).
 **Verified:** 972 tests green consolidated (was 867; +105); /edit /subtitles
 /mixer /packaging live-smoked over real HTTP incl. a mixer apply that wrote
 rules.yaml and reported its re-render verdict; applied-xfade e2e in-suite.
+
+## 2026-07-07 — round U: productization — 分镜/资产/提示词/实验室/导出中心/导演/新手模式
+
+Twelve parallel Opus agents (6 engine + research + 5 GUI) + inline architect
+work, integrated one cherry-pick at a time, CI green at every pushed tip.
+REPORTS/ROUND-U-REFERENCES.md (verified vendor limits: Kling 4 refs /
+image+image_tail, Runway 3 / position first|last, Vidu 7 / positional pair,
+PixVerse 3→7 / integer img_ids; Frame.io/GitHub/AME status vocabulary; the
+§10 glossary) drove the GUI specs.
+
+- **Per-boundary transitions (inline):** rules.transition_overrides — out-edge
+  keyed, null/cut = hard cut, compiler places verbatim, fingerprint folds only
+  when non-empty (byte-identity pinned), QC advisories on unknown keys/types;
+  /edit seam popover writes it (½-clip validity, 恢复默认, event).
+- **Native cut depth (UJ):** /edit multi-track lanes (主轨道/字幕/音频) off the
+  compiled timeline, playhead + zoom, per-clip waveforms (media/waveform.py:
+  showwavespic PNG + astats RMS buckets, frames-style cache), subtitle/voice
+  sync hints (cue-over-silence / speech-without-cue / cue-early; honest
+  degrade), 补拍手柄 handle rebuild = extended-duration redo + virtual-trim
+  centering behind cost confirm (advisory when provider lacks duration).
+- **分镜工作台 (UG):** /storyboard REPORTS-§2 table (角色 chips via asset
+  matrix, 来源=routing resolution, 状态 vs 审批 as orthogonal chips), additive
+  three-state review synced to legacy approved (spec-hash pinned), inline
+  edits lock-respecting 409, lock-only GUI (unlock stays CLI), batch
+  approve/lock.
+- **资产矩阵 + @提及 (UA):** core/assets.py read model over the bible (aliases/
+  relations/default_position/locked_fields/appearances), mentions.py
+  registration aid (--check/--apply, locks respected), QC advisories.
+- **提示词工作台 (UB):** promptlab bundle == the build's own assembly (4
+  prompts, refs lineage, provider trace, cost) + single-action checks (CJK
+  clause/motion/duration heuristics, deterministic split suggestions).
+- **参考图预算/清洁度 (UC):** manifest limits.max_ref_images; deterministic
+  allocation (selected/省略 + 中文 impact), delivery + lineage integration,
+  byte-identical without limits; local ffmpeg heuristics (busy background /
+  lighting conflict / scale) + honest needs_vision slots.
+- **语音修复 (UD):** repair --op voice — keep footage, regen via build's TTS
+  resolution, proportional cue realign (manual cues untouched + advisory),
+  content-key remix, audio_repaired sidecar + failure records + dry-run.
+- **质量模式/可读路由 (UE):** build --mode quality|balanced|speed (strategy
+  bias + retries + bounded parallel submission; ask_before/budget/lock
+  semantics preserved, deterministic commit order); routing.yaml tiers
+  (draft/review/key_shot) + ShotSpec.tier (outside spec_payload — tagging
+  never restages); manju routing explain.
+- **分镜图/关键帧 (UF):** 4/9-panel xstack boards (cached), ShotSpec.keyframes
+  (byte-identical default), first_last_frame capability + configurable field
+  mapping (Kling/Runway/multipart styles) in generic_cloud with delivery
+  lineage, breakdown_action beats + --scaffold gating.
+- **导出中心 (UH):** build/exportstatus 9 deliverables × 上新/待更新/缺失/
+  有问题/待人工确认 with honest basis lines; desktop drafts capped at
+  待人工确认 until a human marks verified (reports/verifications.jsonl,
+  hash-bound — regenerate flips it back); /exports page + manju exports off
+  one engine.
+- **导演助手 (UL):** the six-step contract as a persistent object
+  (reports/proposals/*.yaml): propose (whitelisted actions, plan.py-identical
+  costs, state fingerprint expiry) → confirm (separate, never implied) →
+  execute (auto-snapshot, first-failure stop, diff) → suggest next; CLI +
+  4 MCP tools + /director page.
+- **新手/专业 + 白话 (UK):** top-level mode switch (fresh→新手, existing→专业;
+  hide-never-delete, every page URL-reachable), gui/glossary.py as the §10
+  single source (生成来源/版本/待更新/兜底/智能派单/制作台账/配套信息/成片清单/
+  质量检查/修复方案…), first-appearance tooltips + 显示专业术语 toggle.
+
+**Honest boundaries:** external real-world validation stays user-side — a paid
+video vendor run (needs an API key), desktop 剪映/CapCut draft opening (export
+center tracks both as 待人工确认 with a mark-verified flow), and visual-
+consistency QC (the qc_vision slot needs a vision vendor; ref cleanliness
+person/outfit checks emit needs_vision advisories until then).
+
+**Verified:** 1263 tests green consolidated (was 972; +291); /storyboard /lab
+/exports /director /edit live-smoked over real HTTP — including a per-boundary
+override POST that landed in rules.yaml, a storyboard approval that persisted
+three-state review, and mode/glossary toggles; CI green at every integration
+push.
