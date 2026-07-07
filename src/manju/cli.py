@@ -675,14 +675,16 @@ def qc(deep: bool = typer.Option(False), as_json: bool = typer.Option(False, "--
 
 
 def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[str],
-               factor: float, ms: int, mode: Optional[str], as_json: bool) -> None:
-    """Explicit repair op (round-Q, §9): builds a NEW take from a source take —
-    append-only, the source is never touched."""
+               factor: float, ms: int, mode: Optional[str],
+               in_ms: Optional[int], out_ms: Optional[int], as_json: bool) -> None:
+    """Explicit repair op (round-Q/round-T, §9): builds a NEW take from a source
+    take — append-only, the source is never touched."""
     from .media.ffmpeg import MediaError
     from .media.repair_ops import (
         crop_pad_take,
         extend_take,
         retime_take,
+        set_inout_take,
         trim_take,
     )
 
@@ -708,10 +710,14 @@ def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[st
             if ms <= 0:
                 _fail("--op trim requires --ms > 0")
             new = trim_take(project, shot, src_take, ms)
+        elif op == "inout":
+            if in_ms is None or out_ms is None:
+                _fail("--op inout requires --in-ms and --out-ms")
+            new = set_inout_take(project, shot, src_take, in_ms, out_ms)
         elif op == "croppad":
             new = crop_pad_take(project, shot, src_take, mode=mode or "center_crop")
         else:
-            _fail(f"unknown --op {op!r} (choose retime|extend|trim|croppad)")
+            _fail(f"unknown --op {op!r} (choose retime|extend|trim|inout|croppad)")
     except (MediaError, ProjectError) as exc:
         _fail(f"repair failed: {exc}")
 
@@ -732,7 +738,7 @@ def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[st
 def repair(
     auto: bool = typer.Option(False, "--auto"),
     op: Optional[str] = typer.Option(
-        None, "--op", help="explicit repair op: retime|extend|trim|croppad "
+        None, "--op", help="explicit repair op: retime|extend|trim|inout|croppad "
                            "(builds a new take; source is never overwritten)"),
     shot: Optional[str] = typer.Option(None, "--shot", help="shot id for --op"),
     take: Optional[str] = typer.Option(
@@ -740,17 +746,22 @@ def repair(
     factor: float = typer.Option(
         1.0, "--factor", help="retime duration multiplier (0.9 = 10% faster/shorter)"),
     ms: int = typer.Option(0, "--ms", help="extend/trim amount in milliseconds"),
+    in_ms: Optional[int] = typer.Option(
+        None, "--in-ms", help="set_inout region start in ms (--op inout)"),
+    out_ms: Optional[int] = typer.Option(
+        None, "--out-ms", help="set_inout region end in ms, exclusive (--op inout)"),
     mode: Optional[str] = typer.Option(
         None, "--mode", help="extend: freeze|pad_black · croppad: center_crop|pad_blur"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Repair the film (§9). Two modes:
 
-    - `--op <retime|extend|trim|croppad>` runs an explicit ffmpeg repair on a
-      shot's take, registering the result as a NEW take (append-only lineage):
+    - `--op <retime|extend|trim|inout|croppad>` runs an explicit ffmpeg repair on
+      a shot's take, registering the result as a NEW take (append-only lineage):
         manju repair --op retime  --shot S001 --factor 0.9
         manju repair --op extend  --shot S001 --ms 500 --mode freeze
         manju repair --op trim    --shot S001 --ms 300
+        manju repair --op inout   --shot S001 --in-ms 500 --out-ms 1500
         manju repair --op croppad --shot S001 --mode pad_blur
     - `--auto` executes auto-safe items from repair_plan.yaml (redo/degrade);
       the rest stay for humans. Repair-plan action is 'edit params and rebuild'.
@@ -760,7 +771,7 @@ def repair(
 
     project = _project()
     if op is not None:
-        _repair_op(project, op, shot, take, factor, ms, mode, as_json)
+        _repair_op(project, op, shot, take, factor, ms, mode, in_ms, out_ms, as_json)
         return
     plan_path = project.reports_dir / "repair_plan.yaml"
     if not plan_path.exists():
@@ -788,6 +799,53 @@ def repair(
         _emit({"repaired": done, "remaining": left}, True)
     else:
         typer.echo(f"repaired {done}, remaining for human review: {left}")
+
+
+# ------------------------------------------------------------------ frames
+
+
+@app.command()
+def frames(
+    source: str = typer.Argument(..., help="project-relative media path "
+                                          "(e.g. media/gen/S001/take_01.mp4)"),
+    at_ms: int = typer.Option(0, "--at", help="single-frame timestamp in ms"),
+    strip: int = typer.Option(0, "--strip", help="N evenly-spaced scrub thumbnails"),
+    width: Optional[int] = typer.Option(
+        None, "--width", help="scale to this pixel width (aspect kept)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Preview still frames from any project media (round-T).
+
+    Backs the GUI trim/scrub control and the cover picker; a pure preview that
+    never writes the film's cover (that stays `packaging.cover.frame_ms`).
+    Frames are cached under `.manju/frames` (disposable, §3).
+
+        manju frames media/gen/S001/take_01.mp4 --at 1500
+        manju frames renders/final/final_v1.mp4 --strip 10 --width 160 --json
+    """
+    from .media.ffmpeg import MediaError
+    from .media.frames import extract_frame, frame_strip
+
+    project = _project()
+    try:
+        if strip > 0:
+            paths = frame_strip(project, source, count=strip,
+                                width=width if width else 160)
+            rels = [project.relpath(p) for p in paths]
+            _emit({"source": source, "count": len(rels), "width": width or 160,
+                   "strip": rels}, as_json)
+            if not as_json:
+                for r in rels:
+                    typer.echo(r)
+        else:
+            path = extract_frame(project, source, at_ms, width=width)
+            rel = project.relpath(path)
+            _emit({"source": source, "at_ms": at_ms, "width": width,
+                   "frame": rel}, as_json)
+            if not as_json:
+                typer.echo(rel)
+    except (MediaError, ProjectError) as exc:
+        _fail(f"frames failed: {exc}")
 
 
 # ------------------------------------------------------------------ export

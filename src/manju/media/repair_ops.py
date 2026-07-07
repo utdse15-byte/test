@@ -11,11 +11,13 @@ Durations are always snapped to the project frame grid (FIX-B, the same rule the
 compiler and packaging use) so a repaired clip drops straight onto the timeline
 without re-introducing off-grid drift.
 
-    retime_take    speed up / slow down (setpts + an atempo chain)
-    extend_take    lengthen by freezing the last frame, or padding black
-    trim_take      shorten from the tail (frame-snapped)
-    crop_pad_take  fix an aspect mismatch: center-crop, or scale-fit onto a
-                   blurred-background pad (the vertical-video treatment)
+    retime_take     speed up / slow down (setpts + an atempo chain)
+    extend_take     lengthen by freezing the last frame, or padding black
+    trim_take       shorten from the tail (frame-snapped)
+    set_inout_take  crop to an exact [in, out) source region (TAKE IN/OUT), the
+                    frame-accurate cut a GUI trim control drives
+    crop_pad_take   fix an aspect mismatch: center-crop, or scale-fit onto a
+                    blurred-background pad (the vertical-video treatment)
 
 None of these edit ``media/render.py`` — repair is its own small filtergraph
 vocabulary, kept deliberately separate from the mix/normalize pipeline.
@@ -229,6 +231,68 @@ def trim_take(project: Project, shot: str, take: str, ms: int) -> TakeInfo:
         return _register_repaired(
             project, shot, src, out,
             op="trim", params={"ms": ms, "target_ms": target_ms},
+        )
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------------------------------------------------------- set in/out (crop)
+
+
+def set_inout_take(project: Project, shot: str, take: str,
+                   in_ms: int, out_ms: int) -> TakeInfo:
+    """TAKE IN/OUT: register a NEW take that is exactly the source's
+    ``[in_ms, out_ms)`` region, re-encoded frame-accurately.
+
+    The cut is a fast input seek (``-ss`` *before* ``-i``) combined with a
+    frames-exact output trim (``-t`` on the snapped span + a forced ``-r`` frame
+    rate). Modern ffmpeg makes an input seek accurate under a re-encode — it
+    decodes from the preceding keyframe and drops frames until the target — so
+    the output's first frame is the source frame at ``in_ms`` and the length is
+    the snapped span, verified against probes by the tests. Because the seek is
+    applied to every input stream and output PTS restart at zero, audio stays in
+    lock-step with picture. Duration is snapped to the project frame grid so the
+    cropped take drops onto the timeline without off-grid drift.
+
+    Validation (clean one-line errors): ``0 <= in_ms < out_ms <= source
+    duration`` and the region must span at least one whole frame. The source
+    take is never touched (append-only, §3); lineage records
+    ``op="set_inout"`` with ``in_ms``/``out_ms``/``source_take``.
+    """
+    in_ms = int(in_ms)
+    out_ms = int(out_ms)
+    if in_ms < 0:
+        raise MediaError(f"in-ms must be >= 0 (got {in_ms})")
+    if out_ms <= in_ms:
+        raise MediaError(f"out-ms ({out_ms}) must be greater than in-ms ({in_ms})")
+
+    src = _resolve_take(project, shot, take)
+    info = _src_probe(src)
+    if out_ms > info.duration_ms:
+        raise MediaError(
+            f"out-ms ({out_ms}) exceeds source duration ({info.duration_ms}ms)"
+        )
+    fps = project.load_config().fps or int(round(info.fps or 24)) or 24
+    if round((out_ms - in_ms) * fps / 1000) < 1:
+        raise MediaError(
+            f"region [{in_ms},{out_ms}) is shorter than one frame at {fps}fps"
+        )
+    target_ms = snap_to_frame_grid(out_ms - in_ms, fps)
+    log = default_log(project.root, "repair")
+
+    d, out = _tmp_out()
+    try:
+        # -ss BEFORE -i: fast input seek, accurate under the re-encode below.
+        args: list[str] = ["-ss", _sec(in_ms), "-i", src.media_path,
+                           "-t", _sec(target_ms)]
+        if not info.has_audio:
+            args += ["-an"]
+        args += ["-r", str(fps), *_ENC, str(out)]
+        run_ffmpeg(args, log=log)
+        return _register_repaired(
+            project, shot, src, out,
+            op="set_inout",
+            params={"in_ms": in_ms, "out_ms": out_ms, "target_ms": target_ms},
         )
     finally:
         shutil.rmtree(d, ignore_errors=True)
