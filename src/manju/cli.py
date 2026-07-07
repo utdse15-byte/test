@@ -352,7 +352,13 @@ def build(
 
 @app.command()
 def redo(
-    shot_id: str,
+    shot_id: Optional[str] = typer.Argument(None),
+    shots: Optional[str] = typer.Option(
+        None, "--shots", help="batch: comma-separated shot ids (S001,S003)"),
+    all_stale: bool = typer.Option(False, "--all-stale", help="batch: redo every STALE shot"),
+    all_missing: bool = typer.Option(False, "--all-missing", help="batch: redo every MISSING shot"),
+    all_shots: bool = typer.Option(
+        False, "--all", help="batch: redo every shot (still excludes manual/locked)"),
     candidates: Optional[int] = typer.Option(None),
     provider: Optional[str] = typer.Option(None),
     seed: Optional[int] = typer.Option(None),
@@ -363,14 +369,46 @@ def redo(
         help="reuse a prior take's recipe (provider+params+seed; R12 Runway pattern)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """Force new takes for one shot (append-only; existing selection stands).
+    """Force new takes (append-only; existing selection stands).
 
-    --from-take <take> replays that take's recorded recipe (provider + params,
-    seed included) as a fresh append-only take; --provider/--seed still
-    override. A priced redo stops as waiting_user unless --yes (the same §8.3
-    ask_before gate as build)."""
-    from .build.graph import BuildError, WaitingUser, redo_shot
+    One shot: `manju redo S002`. --from-take <take> replays that take's recorded
+    recipe (provider + params, seed included); --provider/--seed still override.
 
+    Batch: `--shots S001,S003`, `--all-stale`, `--all-missing`, `--all` (mutually
+    exclusive with each other and with a positional shot id). The whole batch
+    runs under one build lock and one aggregated spend gate; manual/locked shots
+    are skipped with a reason (§4.3/§5).
+
+    A priced redo stops as waiting_user unless --yes (the same §8.3 gate as build)."""
+    from .build.graph import BuildError, WaitingUser, redo_batch, redo_shot
+
+    batch_flags = [bool(shots), all_stale, all_missing, all_shots]
+    if any(batch_flags):
+        if shot_id is not None:
+            _fail("redo: a positional shot id is mutually exclusive with "
+                  "--shots/--all-stale/--all-missing/--all")
+        if sum(batch_flags) > 1:
+            _fail("redo: --shots/--all-stale/--all-missing/--all are mutually exclusive")
+        if from_take is not None:
+            _fail("redo: --from-take reuses ONE take's recipe — it cannot combine "
+                  "with a batch selector")
+        shot_ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
+        try:
+            result = redo_batch(_project(), shots=shot_ids, all_stale=all_stale,
+                                all_missing=all_missing, all_shots=all_shots,
+                                candidates=candidates, provider=provider, seed=seed,
+                                actor=ACTOR, assume_yes=yes)
+        except (BuildError, WaitingUser) as exc:
+            _fail(str(exc))
+        if as_json:
+            _emit(result.to_dict(), True)
+        else:
+            _print_batch_result(result, "redo")
+        return
+
+    if shot_id is None:
+        _fail("redo: pass a shot id (`manju redo S002`) or a batch selector "
+              "(--all-stale / --all-missing / --all / --shots S001,S003)")
     try:
         takes = redo_shot(_project(), shot_id, candidates=candidates,
                           provider=provider, seed=seed, from_take=from_take,
@@ -381,6 +419,23 @@ def redo(
         _emit({"shot": shot_id, "takes": takes}, True)
     else:
         typer.secho(f"{shot_id}: new takes {', '.join(takes)}", fg=typer.colors.GREEN)
+
+
+def _print_batch_result(result, verb: str) -> None:
+    """Human render of a BatchResult (redo/voice) — ran / skipped / failed, each
+    reason on its own line so no exclusion is silent (§4.3)."""
+    for sid in result.ran:
+        names = ", ".join(result.takes.get(sid, []))
+        typer.secho(f"✓ {sid}: {verb} → {names}", fg=typer.colors.GREEN)
+    for item in result.skipped:
+        typer.secho(f"– {item['shot']} 跳过 skipped: {item['reason']}",
+                    fg=typer.colors.YELLOW)
+    for item in result.failed:
+        typer.secho(f"✗ {item['shot']} 失败 failed: {item['reason']}", fg=typer.colors.RED)
+    typer.echo(
+        f"{verb}: {len(result.ran)} ran, {len(result.skipped)} skipped, "
+        f"{len(result.failed)} failed; 预估 {result.estimated_cost} "
+        f"{result.currency or ''}".rstrip())
 
 
 # ------------------------------------------------------------------ select
@@ -859,22 +914,56 @@ def explain(as_json: bool = typer.Option(False, "--json")):
 
 @app.command()
 def voice(
-    shot_id: str,
+    shot_id: Optional[str] = typer.Argument(None),
+    shots: Optional[str] = typer.Option(
+        None, "--shots", help="batch: comma-separated shot ids (S001,S003)"),
+    all_shots: bool = typer.Option(
+        False, "--all", help="batch: voice every dialogued shot that is MISSING"),
+    missing: bool = typer.Option(
+        False, "--missing", help="batch: voice every shot with dialogue but no voice take"),
     provider: Optional[str] = typer.Option(None, help="tts manifest id (default: first configured)"),
     yes: bool = typer.Option(False, "--yes", "-y",
                              help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """Synthesize a NEW voice take for one shot (M3, append-only — the newest
-    take wins on the next build). Use this to redo a stale voice (§4.3:
-    builds flag stale voices but never redo them on their own).
+    """Synthesize a NEW voice take (M3, append-only — the newest take wins on the
+    next build). Use this to redo a stale voice (§4.3: builds flag stale voices
+    but never redo them on their own).
+
+    One shot: `manju voice S002`. Batch: `--missing` (every shot needing voice),
+    `--shots S001,S003` (explicit — the escape hatch for re-voicing a stale
+    line), `--all` (every dialogued shot, but only the MISSING ones run; stale
+    voices stay advisory-only, §4.3). One build lock + one aggregated spend gate.
 
     A priced TTS synthesis stops as waiting_user unless --yes — the same §8.3
     ask_before gate build and redo enforce (R7 spend-gate hole closure)."""
-    from .build.graph import WaitingUser, spend_gate
+    from .build.graph import BuildError, WaitingUser, spend_gate, voice_batch
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
+
+    batch_flags = [bool(shots), all_shots, missing]
+    if any(batch_flags):
+        if shot_id is not None:
+            _fail("voice: a positional shot id is mutually exclusive with --shots/--all/--missing")
+        if sum(batch_flags) > 1:
+            _fail("voice: --shots/--all/--missing are mutually exclusive")
+        shot_ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
+        try:
+            result = voice_batch(project, shots=shot_ids, all_shots=all_shots,
+                                 missing=missing, provider=provider,
+                                 actor=ACTOR, assume_yes=yes)
+        except (BuildError, WaitingUser) as exc:
+            _fail(str(exc))
+        if as_json:
+            _emit(result.to_dict(), True)
+        else:
+            _print_batch_result(result, "voice")
+        return
+
+    if shot_id is None:
+        _fail("voice: pass a shot id (`manju voice S002`) or a batch selector "
+              "(--missing / --all / --shots S001,S003)")
     shot = project.load_shot(shot_id)
     if not shot.dialogue.text:
         _fail(f"{shot_id} has no dialogue.text to voice")

@@ -17,6 +17,7 @@ from typing import Any
 from ..core.check import run_check
 from ..core.container import Project
 from ..core.events import append_event
+from ..core.hashing import get_by_path
 from ..timeline.compiler import CompileError, build_timeline
 from .stale import ShotBuildStatus, ShotState, evaluate_all
 
@@ -611,18 +612,30 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
                                  assume_yes=assume_yes)
 
 
-def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None = None,
-                      provider: str | None = None, seed: int | None = None,
-                      from_take: str | None = None,
-                      actor: str = "engine", assume_yes: bool = False) -> list[str]:
-    from ..providers.base import GenerationRequest
-    from ..providers.registry import fallback_chain, generate_with_fallback
+@dataclass
+class _RedoPlan:
+    """A priced, override-applied redo, ready to run — the unit shared by the
+    single redo and the batch so both price and generate off exactly one
+    code path (one estimator, one selection rule, one ledger write)."""
 
+    shot: Any  # ShotSpec, with overrides applied in-memory (never written back)
+    params: dict[str, Any]
+    cost: float
+    currency: str | None
+    candidates: int | None  # explicit --candidates override, else None
+
+
+def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
+               provider: str | None, seed: int | None, from_take: str | None,
+               rules, bible) -> _RedoPlan:
+    """Apply the redo overrides to an in-memory shot and price it (§8.3 事前).
+
+    The overrides only ever live on the in-memory ``ShotSpec`` — a redo is
+    append-only and never writes generation.* back (§4.3), so the shot file's
+    sealed fields stay byte-identical. ``from_take`` replays a prior take's
+    recorded recipe (R12); it is single-redo only (a per-take gesture, never a
+    batch one)."""
     shot = project.load_shot(shot_id)
-    bible = project.load_bible()
-    from ..core.spec import compute_spec_hash
-
-    rules = project.load_rules()
     params = dict(shot.generation.params)
     if from_take is not None:
         prior = project.get_take(shot_id, from_take)
@@ -639,28 +652,441 @@ def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None 
         shot.generation.provider = provider
     if candidates:
         shot.generation.candidates = int(candidates)  # in-memory, for pricing
-    # §8.3 事前: price this redo and gate it just like build before any spend.
     cost, currency = _estimate_shot_cost(shot, _target_duration_ms(project, shot, rules))
-    spend_gate(project, cost, currency, assume_yes=assume_yes,
-               hint=f"确认后重试:manju redo {shot_id} --yes(或 MCP/GUI 带 assume_yes)")
+    return _RedoPlan(shot, params, cost, currency, candidates)
+
+
+def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
+              actor: str) -> list[str]:
+    """Generate a redo from a priced plan — no lock, no spend gate (the caller
+    owns both). Append-only: mints fresh takes and only fills an *empty*
+    selection, never overturning an existing one (§4.3)."""
+    from ..core.spec import compute_spec_hash
+    from ..providers.base import GenerationRequest
+    from ..providers.registry import fallback_chain, generate_with_fallback
+
+    shot = plan.shot
     req = GenerationRequest(
         project=project,
         shot=shot,
         bible=bible,
         spec_hash=compute_spec_hash(shot, bible),
         duration_ms=_target_duration_ms(project, shot, rules),
-        candidates=candidates or shot.generation.candidates,
-        params=params,
-        # reuse the estimate computed above for the gate (don't recompute) so a
-        # CLOUD redo records it on its ledger row too.
-        estimated_cost=cost,
+        candidates=plan.candidates or shot.generation.candidates,
+        params=plan.params,
+        # reuse the estimate computed for the gate (don't recompute) so a CLOUD
+        # redo records it on its ledger row too.
+        estimated_cost=plan.cost,
     )
     takes = generate_with_fallback(req, fallback_chain(shot))
     if not shot.status.selected_take and takes:
         choice = takes[-1].name
         project.update_shot_raw(
-            shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
+            shot.id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
         )
-    _record_local_runs(project, takes, {"redo": True}, {shot_id: cost})
-    append_event(project.root, actor, "redo", {"shot": shot_id, "takes": [t.name for t in takes]})
+    _record_local_runs(project, takes, {"redo": True}, {shot.id: plan.cost})
+    append_event(project.root, actor, "redo", {"shot": shot.id, "takes": [t.name for t in takes]})
     return [t.name for t in takes]
+
+
+def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None = None,
+                      provider: str | None = None, seed: int | None = None,
+                      from_take: str | None = None,
+                      actor: str = "engine", assume_yes: bool = False) -> list[str]:
+    rules = project.load_rules()
+    bible = project.load_bible()
+    plan = _plan_redo(project, shot_id, candidates=candidates, provider=provider,
+                      seed=seed, from_take=from_take, rules=rules, bible=bible)
+    # §8.3 事前: price this redo and gate it just like build before any spend.
+    spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
+               hint=f"确认后重试:manju redo {shot_id} --yes(或 MCP/GUI 带 assume_yes)")
+    return _run_redo(project, plan, bible=bible, rules=rules, actor=actor)
+
+
+# ============================================================ batch operations
+# One selector → many shots, but the same three invariants as the single redo,
+# only enforced ONCE for the whole set (R2 §5): one process build lock held for
+# the entire batch (never per-shot churn), one aggregated §8.3 spend gate on the
+# TOTAL (never a partial re-ask mid-batch), and — §4.3 — manual/locked content
+# is never silently overturned; every exclusion is reported with its reason.
+#
+# Deliberately NOT built: `select --batch`. Regeneration is mechanical and the
+# engine will do it in bulk; *selection* is a per-take human judgment (§3) and
+# is never a bulk operation — the engine regenerates in bulk but never DECIDES
+# in bulk. That is a design stance, not an omission.
+
+
+@dataclass
+class BatchResult:
+    """The envelope every batch command returns (redo/voice). ``requested`` is
+    the universe the selector considered; ``ran`` the shots that actually
+    generated; ``skipped``/``failed`` each carry a per-shot ``reason`` so no
+    exclusion is ever silent (§4.3). ``estimated_cost`` is the aggregate the
+    spend gate fired on; ``actual_cost`` sums what the produced takes recorded."""
+
+    requested: list[str] = field(default_factory=list)
+    ran: list[str] = field(default_factory=list)
+    skipped: list[dict[str, str]] = field(default_factory=list)   # {shot, reason}
+    failed: list[dict[str, str]] = field(default_factory=list)    # {shot, reason}
+    takes: dict[str, list[str]] = field(default_factory=dict)     # shot -> take names
+    estimated_cost: float = 0.0
+    actual_cost: float = 0.0
+    currency: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in self.__dict__.items()}
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """One-line reason for a per-shot failure (FIX-D collapse). Composition
+    point for round-s/failures: when a richer failure classifier lands in the
+    tree it can wrap this; absent it (current tree) a plain, collapsed line."""
+    try:  # round-s/failures, if present, turns a raw exc into a structured reason
+        from .failures import describe_failure  # type: ignore
+        return describe_failure(exc)
+    except Exception:
+        pass
+    return " ".join(str(exc).split()) or exc.__class__.__name__
+
+
+# override → the shot field a batch-wide override would overturn if sealed (§5)
+_OVERRIDE_LOCK_PATHS = {
+    "provider": "generation.provider",
+    "seed": "generation.params.seed",
+    "candidates": "generation.candidates",
+}
+
+
+def _lock_collisions(project: Project, shot_id: str, *, provider: str | None,
+                     seed: int | None, candidates: int | None) -> list[str]:
+    """Sealed fields (§5) a batch override would overturn — mirrors how the
+    single redo respects locks: an override that would change a locked
+    generation.* field is refused rather than silently applied (§4.3). No
+    override, or an override equal to the sealed value, collides with nothing."""
+    try:
+        raw = project.load_shot_raw(shot_id)
+    except Exception:
+        return []
+    locked = raw.get("locked") or {}
+    if isinstance(locked, list):  # bare list form: `locked: [a.b]`
+        locked = {str(p): "" for p in locked}
+    if not isinstance(locked, dict):
+        return []
+    overrides = {"provider": provider, "seed": seed, "candidates": candidates}
+    collisions: list[str] = []
+    for key, value in overrides.items():
+        if value is None:
+            continue
+        path = _OVERRIDE_LOCK_PATHS[key]
+        if path not in locked:
+            continue
+        try:
+            current = get_by_path(raw, path)
+        except (KeyError, IndexError, ValueError):
+            current = None
+        new = int(value) if key == "candidates" else value
+        if current != new:  # a real change to a sealed field -> refuse
+            collisions.append(path)
+    return collisions
+
+
+def _selector_mode(shots, all_stale: bool, all_missing: bool, all_shots: bool) -> str:
+    """Resolve exactly one batch selector; the four are mutually exclusive and
+    at least one is required (the CLI mirrors this, plus the positional-id XOR)."""
+    active = [name for name, on in (
+        ("shots", bool(shots)),
+        ("all-stale", all_stale),
+        ("all-missing", all_missing),
+        ("all", all_shots),
+    ) if on]
+    if not active:
+        raise BuildError(
+            "redo_batch: no selector — pass shots=[…] or all_stale/all_missing/all_shots")
+    if len(active) > 1:
+        raise BuildError(f"redo_batch: selectors are mutually exclusive, got {active}")
+    return active[0]
+
+
+def redo_batch(project: Project, shots: list[str] | None = None, *,
+               all_stale: bool = False, all_missing: bool = False,
+               all_shots: bool = False, candidates: int | None = None,
+               provider: str | None = None, seed: int | None = None,
+               actor: str = "engine", assume_yes: bool = False) -> BatchResult:
+    """`manju redo --all-stale` / `--all-missing` / `--all` / `--shots S001,S003`
+    — regenerate many shots under ONE build lock and ONE spend gate.
+
+    Selectors (mutually exclusive, and exclusive with a positional shot id at
+    the CLI): ``shots`` an explicit list; ``all_stale`` every STALE shot;
+    ``all_missing`` every MISSING shot; ``all_shots`` every shot (redo forces
+    new takes regardless of staleness — that is what makes ``--all`` different
+    from ``--all-stale``).
+
+    Exclusions are BY DEFAULT and never silent — each lands in
+    :attr:`BatchResult.skipped` with a reason: a MANUAL shot (a hand-placed take
+    is never batch-regenerated, §4.3); a shot whose sealed generation.* field a
+    supplied override would overturn (§5); and, under ``--all-stale`` /
+    ``--all-missing``, any shot not in that target state.
+
+    The whole batch runs under a single :func:`~manju.runtime.buildlock.build_lock`
+    (no per-shot re-acquire), and one aggregated §8.3 gate raises
+    :class:`WaitingUser` with the TOTAL and per-shot breakdown unless
+    ``assume_yes`` — there is never a partial re-ask mid-batch. Per-shot errors
+    are isolated: one provider failure lands that shot in
+    :attr:`BatchResult.failed` and the rest still generate.
+
+    (There is deliberately no batch *select* — see this module's batch section.)
+    """
+    mode = _selector_mode(shots, all_stale, all_missing, all_shots)  # validate first
+    from ..runtime.buildlock import build_lock
+
+    with build_lock(project.root, actor=actor):  # ONE hold for the whole batch
+        return _redo_batch_locked(
+            project, mode, list(shots or []), candidates=candidates,
+            provider=provider, seed=seed, actor=actor, assume_yes=assume_yes)
+
+
+def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
+                       candidates: int | None, provider: str | None,
+                       seed: int | None, actor: str, assume_yes: bool) -> BatchResult:
+    rules = project.load_rules()
+    bible = project.load_bible()
+    by_id = {s.shot_id: s for s in evaluate_all(project)}
+    considered = shots if mode == "shots" else project.shot_ids()
+
+    result = BatchResult(requested=list(considered))
+    to_run: list[str] = []
+    for sid in considered:
+        st = by_id.get(sid)
+        if st is None:
+            result.failed.append({"shot": sid, "reason": "no such shot in this project"})
+            continue
+        state = st.state
+        # selector-scoped skips (only --all-stale / --all-missing narrow by state)
+        if mode == "all-stale" and state != ShotState.STALE:
+            result.skipped.append({"shot": sid,
+                "reason": f"state is {state.value}; --all-stale only redoes stale shots"})
+            continue
+        if mode == "all-missing" and state != ShotState.MISSING:
+            result.skipped.append({"shot": sid,
+                "reason": f"state is {state.value}; --all-missing only redoes missing shots"})
+            continue
+        # invariant exclusions (§4.3 / §5) — every selector, explicit list included
+        if state == ShotState.MANUAL:
+            result.skipped.append({"shot": sid,
+                "reason": "manual import (§4.3) — a hand-placed take is never batch-regenerated"})
+            continue
+        collisions = _lock_collisions(project, sid, provider=provider, seed=seed,
+                                      candidates=candidates)
+        if collisions:
+            result.skipped.append({"shot": sid,
+                "reason": f"locked (§5): {', '.join(collisions)} sealed — an override would overturn it"})
+            continue
+        to_run.append(sid)
+
+    # price the whole batch off the shared estimator, then gate ONCE on the total
+    plans: dict[str, _RedoPlan] = {}
+    for sid in to_run:
+        try:
+            plans[sid] = _plan_redo(project, sid, candidates=candidates, provider=provider,
+                                    seed=seed, from_take=None, rules=rules, bible=bible)
+        except BuildError as exc:
+            result.failed.append({"shot": sid, "reason": _failure_reason(exc)})
+    run_ids = [sid for sid in to_run if sid in plans]
+    result.estimated_cost = sum(plans[sid].cost for sid in run_ids)
+    result.currency = next((plans[sid].currency for sid in run_ids
+                            if plans[sid].currency), None)
+
+    if (result.estimated_cost > 0 and not assume_yes
+            and "expensive_generation" in project.load_config().ask_before):
+        breakdown = ", ".join(f"{sid}={plans[sid].cost}" for sid in run_ids)
+        raise WaitingUser(
+            f"waiting_user: 批量预估花费 {result.estimated_cost} {result.currency or ''} "
+            f"({len(run_ids)} 镜头: {breakdown}) 命中 ask_before=expensive_generation — "
+            f"确认后重试:manju redo <selector> --yes(先 dry-run 看计划,§8.3)",
+            result.estimated_cost, result.currency)
+
+    # generate — per-shot error isolation: one failure never aborts the rest
+    for sid in run_ids:
+        try:
+            result.takes[sid] = _run_redo(project, plans[sid], bible=bible,
+                                          rules=rules, actor=actor)
+            result.ran.append(sid)
+        except Exception as exc:  # ProviderFailure/NeedsHumanInput/MediaError/…
+            result.failed.append({"shot": sid, "reason": _failure_reason(exc)})
+
+    result.actual_cost = _sum_actual_take_cost(project, result.takes)
+    append_event(project.root, actor, "redo_batch", {
+        "mode": mode,
+        "requested": result.requested,
+        "ran": result.ran,
+        "skipped": [s["shot"] for s in result.skipped],
+        "failed": [f["shot"] for f in result.failed],
+        "estimated_cost": result.estimated_cost,
+    })
+    return result
+
+
+def _sum_actual_take_cost(project: Project, takes: dict[str, list[str]]) -> float:
+    """Best-effort sum of what the freshly produced takes actually cost — cloud
+    takes carry ``remote.cost``; local ones (the offline fallback) record 0."""
+    total = 0.0
+    for shot_id, names in takes.items():
+        try:
+            for t in project.takes(shot_id):
+                if t.name in names and t.sidecar.remote and t.sidecar.remote.cost:
+                    total += t.sidecar.remote.cost
+        except Exception:  # pricing is advisory; never fail the result
+            pass
+    return total
+
+
+# ------------------------------------------------------------------ voice batch
+
+
+def _voice_selector_mode(shots, all_shots: bool, missing: bool) -> str:
+    active = [name for name, on in (
+        ("shots", bool(shots)),
+        ("all", all_shots),
+        ("missing", missing),
+    ) if on]
+    if not active:
+        raise BuildError("voice_batch: no selector — pass shots=[…] or all_shots/missing")
+    if len(active) > 1:
+        raise BuildError(f"voice_batch: selectors are mutually exclusive, got {active}")
+    return active[0]
+
+
+def voice_batch(project: Project, shots: list[str] | None = None, *,
+                all_shots: bool = False, missing: bool = False,
+                provider: str | None = None, actor: str = "engine",
+                assume_yes: bool = False) -> BatchResult:
+    """`manju voice --all` / `--missing` / `--shots S001,S003` — synthesize many
+    voice takes under ONE build lock and ONE spend gate (the redo shape, applied
+    to sound).
+
+    Selectors: ``missing`` shots with dialogue but no voice take (VoiceState
+    MISSING); ``shots`` an explicit list (the escape hatch that re-voices a
+    STALE line — a per-shot human decision); ``all_shots`` every dialogued shot,
+    but only the MISSING ones actually run. STALE voices stay advisory-only
+    (§4.3): ``--all`` NEVER batch-regenerates them — it skips them with a reason
+    and points at ``--shots``. Manual (hand-dropped) voices are likewise skipped
+    under ``--all`` / ``--missing``.
+
+    One aggregated §8.3 gate on the per_call total raises :class:`WaitingUser`
+    unless ``assume_yes``; per-shot synthesis errors are isolated into
+    :attr:`BatchResult.failed`."""
+    mode = _voice_selector_mode(shots, all_shots, missing)
+    from ..runtime.buildlock import build_lock
+
+    with build_lock(project.root, actor=actor):
+        return _voice_batch_locked(project, mode, list(shots or []),
+                                   provider=provider, actor=actor, assume_yes=assume_yes)
+
+
+def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
+                        provider: str | None, actor: str,
+                        assume_yes: bool) -> BatchResult:
+    from ..providers.tts import TtsUnavailable, get_tts_provider, tts_providers
+    from .voice import VoiceState, evaluate_all_voices
+
+    by_id = {v.shot_id: v for v in evaluate_all_voices(project)}
+    considered = shots if mode == "shots" else project.shot_ids()
+
+    result = BatchResult(requested=list(considered))
+    to_run: list[str] = []
+    for sid in considered:
+        vs = by_id.get(sid)
+        if vs is None:
+            result.failed.append({"shot": sid, "reason": "no such shot in this project"})
+            continue
+        state = vs.state
+        if state == VoiceState.NOT_NEEDED:
+            result.skipped.append({"shot": sid, "reason": "no dialogue.text to voice"})
+            continue
+        if mode == "missing" and state != VoiceState.MISSING:
+            result.skipped.append({"shot": sid,
+                "reason": f"voice state is {state.value}; --missing only voices shots with no take"})
+            continue
+        if mode == "all" and state != VoiceState.MISSING:
+            # §4.3: --all fills gaps, never overturns an existing voice
+            reason = {
+                VoiceState.FRESH: "voice already fresh",
+                VoiceState.STALE: "stale voice is advisory-only (§4.3) — re-voice explicitly with --shots",
+                VoiceState.MANUAL: "hand-dropped voice (§4.3) — never batch-regenerated",
+            }.get(state, f"voice state is {state.value}")
+            result.skipped.append({"shot": sid, "reason": reason})
+            continue
+        to_run.append(sid)  # 'shots' mode: synth regardless of state (escape hatch)
+
+    if not to_run:
+        append_event(project.root, actor, "voice_batch", _voice_event(mode, result))
+        return result
+
+    # resolve the TTS provider + price once; a config miss fails every candidate
+    # (honest — nothing can run) but still returns the fully-reasoned envelope.
+    try:
+        providers = tts_providers()
+        if not providers:
+            raise TtsUnavailable("no TTS provider configured (§8.6, type: tts)")
+        provider_id = provider or sorted(providers)[0]
+        if provider_id not in providers:
+            raise TtsUnavailable(
+                f"unknown TTS provider {provider_id!r}; configured: {sorted(providers)}")
+        manifest = providers[provider_id]
+    except TtsUnavailable as exc:
+        for sid in to_run:
+            result.failed.append({"shot": sid, "reason": str(exc)})
+        append_event(project.root, actor, "voice_batch", _voice_event(mode, result))
+        return result
+
+    per_call = manifest.cost.per_call or 0.0
+    result.currency = manifest.cost.currency
+    result.estimated_cost = per_call * len(to_run)
+    if (result.estimated_cost > 0 and not assume_yes
+            and "expensive_generation" in project.load_config().ask_before):
+        breakdown = ", ".join(f"{sid}={per_call}" for sid in to_run)
+        raise WaitingUser(
+            f"waiting_user: 批量配音预估 {result.estimated_cost} {result.currency or ''} "
+            f"({len(to_run)} 镜头: {breakdown}) 命中 ask_before=expensive_generation — "
+            f"确认后重试:manju voice <selector> --yes(§8.3)",
+            result.estimated_cost, result.currency)
+
+    bible = project.load_bible()
+    tts = get_tts_provider(provider_id)
+    for sid in to_run:
+        try:
+            media = tts.synthesize(project, project.load_shot(sid), bible)
+            result.takes[sid] = [media.stem]
+            result.ran.append(sid)
+            append_event(project.root, actor, "voice",
+                         {"shot": sid, "take": media.stem, "provider": provider_id})
+        except Exception as exc:
+            result.failed.append({"shot": sid, "reason": _failure_reason(exc)})
+
+    result.actual_cost = _sum_actual_voice_cost(project, result.takes)
+    append_event(project.root, actor, "voice_batch", _voice_event(mode, result))
+    return result
+
+
+def _voice_event(mode: str, result: BatchResult) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "requested": result.requested,
+        "ran": result.ran,
+        "skipped": [s["shot"] for s in result.skipped],
+        "failed": [f["shot"] for f in result.failed],
+        "estimated_cost": result.estimated_cost,
+    }
+
+
+def _sum_actual_voice_cost(project: Project, takes: dict[str, list[str]]) -> float:
+    total = 0.0
+    for shot_id, names in takes.items():
+        try:
+            for media, sidecar in project.voice_takes(shot_id):
+                if (sidecar is not None and media.stem in names
+                        and sidecar.remote and sidecar.remote.cost):
+                    total += sidecar.remote.cost
+        except Exception:
+            pass
+    return total
