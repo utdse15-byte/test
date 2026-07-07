@@ -200,12 +200,16 @@ def generate_with_fallback(
 
     # A routing.yaml (project or user) lets the active strategy decide the
     # order — this is the one wiring point, so it applies even when a caller
-    # (build/graph) passes an explicit chain. With NO routing file the passed
-    # chain (or the freshly computed one) drives the order EXACTLY as §8.4 did,
-    # keeping the provider choice byte-identical (pinned).
+    # (build/graph) passes an explicit chain. A build mode's routing bias
+    # (req.routing_bias, goal 14) engages the same resolver even with NO routing
+    # file so `--mode speed/quality` still biases the else branch. With no
+    # routing file AND no mode bias the passed chain (or the freshly computed
+    # one) drives the order EXACTLY as §8.4 did — byte-identical (pinned).
     routed = routing.load_routing(req.project)
-    if routed is not None:
-        order = routing.resolve(req.project, req.shot, routed).order
+    bias = getattr(req, "routing_bias", None)
+    if routed is not None or bias is not None:
+        config = routed or routing._default_config()
+        order = routing.resolve(req.project, req.shot, config, else_bias=bias).order
     else:
         if chain is None:
             chain = fallback_chain(req.shot)

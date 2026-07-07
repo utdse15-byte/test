@@ -319,20 +319,32 @@ def build(
                                help="re-render even if the final content key matches (FIX-A)"),
     yes: bool = typer.Option(False, "--yes", "-y",
                              help="approve ask_before-gated spend (§8.3)"),
+    mode: Optional[str] = typer.Option(
+        None, "--mode",
+        help="build mode: quality | balanced | speed (goal 14) — biases the "
+             "provider strategy, retries and generation concurrency; overrides "
+             "project.yaml build.mode. Omit to use the project default."),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """One-command build: fill gaps → timeline → render → QC → exports (§11).
 
     A plan that spends real money stops as waiting_user unless --yes (the §8.3
     ask_before gate); `--dry-run` shows the plan and estimate without spending.
-    See `manju spend` for where the money actually went."""
+    See `manju spend` for where the money actually went.
+
+    --mode quality|balanced|speed (goal 14) turns one knob for provider strategy
+    bias + retry budget + generation concurrency; explicit per-shot providers and
+    routing rules are never overridden. `manju routing explain` previews it."""
     from .build.graph import run_build
+    from .core.models import BUILD_MODE_NAMES
 
     if target not in ("proxy", "final", "exports", "qc"):
         _fail(f"unknown target: {target}")
+    if mode is not None and mode not in BUILD_MODE_NAMES:
+        _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
     result = run_build(_project(), target=target, gen=gen,
                        regen_stale=regen_stale, dry_run=dry_run, force=force,
-                       actor=ACTOR, assume_yes=yes)
+                       actor=ACTOR, assume_yes=yes, mode=mode)
     if as_json:
         _emit(result.to_dict(), True)
     else:
@@ -2633,6 +2645,9 @@ def route_list_cmd(as_json: bool = typer.Option(False, "--json")):
             f"else={s['else']}{extra}",
             fg=typer.colors.CYAN if s["active"] else None,
         )
+    for t in info.get("tiers", []):
+        typer.secho(f"   tier {_pad(t['name'], 12)} {t.get('description') or ''} "
+                    f"→ use {t['use']}", fg=typer.colors.BRIGHT_BLACK)
 
 
 @route_app.command("explain")
@@ -2660,18 +2675,92 @@ def route_explain_cmd(shot_id: str = typer.Argument(..., metavar="SHOT"),
                 fg=typer.colors.CYAN)
     if info["explicit_provider"]:
         typer.echo(f"  explicit provider: {info['explicit_provider']} (always wins)")
+    if info.get("tier"):
+        typer.echo(f"  tier: {info['tier']}")
     if info["fired_rule"] is not None:
         fr = info["fired_rule"]
         typer.secho(f"  ✓ rule #{fr['index']} fired: match {fr['match']} → use {fr['use']}",
                     fg=typer.colors.GREEN)
+    elif info.get("fired_tier") is not None:
+        ft = info["fired_tier"]
+        typer.secho(f"  ✓ tier {ft['name']} fired: {ft.get('description') or ''} "
+                    f"→ use {ft['use']}", fg=typer.colors.GREEN)
     else:
-        typer.echo(f"  no rule matched → else: {info['else']}")
+        typer.echo(f"  no rule/tier matched → else: {info['else']}")
     typer.secho(f"  order: {' → '.join(info['order']) or '(none)'}",
                 fg=typer.colors.CYAN)
     typer.echo(f"  chosen: {info['chosen'] or '(none)'}")
     for sk in info["skipped"]:
         who = f"rule #{sk['rule']}" if "rule" in sk else f"provider {sk['provider']}"
         typer.secho(f"  · skipped {who}: {sk['reason']}", fg=typer.colors.BRIGHT_BLACK)
+
+
+# `manju routing explain [<shot>]` — the per-shot decision + cost table (goal 15).
+# Distinct from `route explain <shot>` (which dumps one shot's rule-firing
+# internals): this reads EVERY shot (or one), naming the chosen provider, WHY
+# (explicit / rule / tier / fallback), the fallback order after the head, and the
+# estimated cost via the SAME estimators plan.py/dry-run use, in a 中文 table.
+
+routing_app = typer.Typer(no_args_is_help=True,
+                          help="Per-shot routing decisions + cost (goal 15).")
+app.add_typer(routing_app, name="routing")
+
+_WHY_CN = {"explicit": "钦定", "rule": "规则", "tier": "分级", "fallback": "兜底"}
+
+
+@routing_app.command("explain")
+def routing_explain_cmd(
+    shot_id: Optional[str] = typer.Argument(
+        None, metavar="[SHOT]", help="one shot; omit to explain every shot"),
+    mode: Optional[str] = typer.Option(
+        None, "--mode", help="preview a build mode's routing bias: "
+                             "quality | balanced | speed (goal 14)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Explain, per shot, which provider routing chooses and WHY — chosen head,
+    reason (钦定/规则/分级/兜底), the fallback order after it, and the estimated
+    cost (the same estimators `build --dry-run` uses). --mode previews a build
+    mode's bias without generating anything."""
+    from .core.models import BUILD_MODE_NAMES
+    from .gui.plan import routing_explain
+    from .providers.routing import RoutingError
+
+    project = _project()
+    if mode is not None and mode not in BUILD_MODE_NAMES:
+        _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
+    ids = None
+    if shot_id is not None:
+        try:
+            project.load_shot(shot_id)  # validate it exists
+        except ProjectError as exc:
+            _fail(str(exc))
+        ids = [shot_id]
+    try:
+        info = routing_explain(project, ids, mode=mode)
+    except RoutingError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(info, True)
+        return
+    head = "routing.yaml: " + (", ".join(info["sources"]) + " (project wins)"
+                               if info["sources"] else "无 — §8.4 default")
+    if info["mode"]:
+        head += f"  ·  mode={info['mode']}"
+    typer.secho(head, fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f" {_pad('镜头', 8)} {_pad('选用(head)', 18)} {_pad('原因', 6)} "
+                f"{_pad('预估', 8)} 兜底顺序", fg=typer.colors.CYAN)
+    total = 0.0
+    currency = None
+    for r in info["rows"]:
+        total += float(r["estimated_cost"] or 0)
+        currency = currency or r.get("currency")
+        why = _WHY_CN.get(r["why"], r["why"])
+        rest = " → ".join(r["fallback_order"]) or "(无)"
+        typer.echo(
+            f" {_pad(r['shot'], 8)} {_pad(r['chosen'] or '(none)', 18)} "
+            f"{_pad(why, 6)} {_pad(str(r['estimated_cost']), 8)} {rest}")
+        typer.secho(f"    ↳ {r['why_detail']}", fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f" 合计预估 ≈ {round(total, 6)} {currency or ''}", fg=typer.colors.CYAN)
 
 
 if __name__ == "__main__":

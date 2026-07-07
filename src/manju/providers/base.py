@@ -155,6 +155,14 @@ class GenerationRequest:
     candidates: int = 1
     params: dict = field(default_factory=dict)
     estimated_cost: float | None = None
+    # Build-mode knobs (goal item 14), both additive and default-absent so a
+    # request built the old way is byte-identical: ``routing_bias`` is the else-
+    # selector the active `manju build --mode` biases toward (threaded to
+    # routing.resolve in the registry); ``max_retries`` overrides a cloud
+    # provider's retry budget for retryable (rate-limit / timeout) failures for
+    # THIS call only (None → the provider's own default, i.e. today's behaviour).
+    routing_bias: str | None = None
+    max_retries: int | None = None
     # Reference inputs (goal item 7) — resolved once at the build call site so
     # the tiering, lineage and reliability signals are shared across providers.
     # Additive and default-absent: a request built the old way (or a test) lazily
@@ -334,6 +342,10 @@ class CloudProvider(Provider):
             job_id: str | None = req.params.get("remote_job_id")
             if not job_id:
                 job_id = self._resume_job_id(state, req)
+            # Build-mode retry budget (goal 14): the request may cap retries for
+            # THIS call (quality retries hardest, speed least); None keeps the
+            # provider's own default — byte-identical to before modes existed.
+            max_retries = self._max_retries if req.max_retries is None else req.max_retries
             attempt = 0
             while True:
                 try:
@@ -349,7 +361,7 @@ class CloudProvider(Provider):
                         self._on_failure(state, req, job_id, exc)
                         raise  # §8.1: first-class, never auto-retried
                     retryable = exc.kind in (FailureKind.rate_limited, FailureKind.timeout)
-                    if not retryable or attempt >= self._max_retries:
+                    if not retryable or attempt >= max_retries:
                         self._on_failure(state, req, job_id, exc)
                         raise
                     attempt += 1

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["action_plan"]
+__all__ = ["action_plan", "routing_explain"]
 
 
 def _one_line(exc: BaseException) -> str:
@@ -34,17 +34,18 @@ def _routing_on(project: Any) -> bool:
 
 
 def _provider_label(project: Any, shot: Any, routing_on: bool,
-                    explicit: str | None = None) -> str:
+                    explicit: str | None = None, *, else_bias: str | None = None) -> str:
     """The provider the shot will actually try first. An explicit override wins;
-    else routing's resolved head when a routing.yaml is present; else the static
-    fallback label the build plan already uses."""
+    else routing's resolved head when a routing.yaml is present OR a build mode
+    biases the else selector (``else_bias``, goal 14 — the plan stays honest
+    about which provider a mode would pick); else the static fallback label."""
     if explicit:
         return explicit
-    if routing_on:
+    if routing_on or else_bias:
         try:
             from ..providers.routing import resolve
 
-            chosen = resolve(project, shot).chosen
+            chosen = resolve(project, shot, else_bias=else_bias).chosen
             if chosen:
                 return chosen
         except Exception:
@@ -113,17 +114,21 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
         raise ValueError(f"unknown target: {target}")
     if gen not in ("missing", "auto", "off"):
         raise ValueError(f"unknown gen mode: {gen}")
+    from ..build.modes import mode_else_bias
+
+    mode = params.get("mode") or None
+    else_bias = mode_else_bias(mode)  # None when no mode / no bias
     result = run_build(project, target=target, gen=gen,
                        regen_stale=bool(params.get("regen_stale")),
-                       dry_run=True, force=bool(params.get("force")))
+                       dry_run=True, force=bool(params.get("force")), mode=mode)
     rows: list[dict[str, Any]] = []
     for it in (result.plan or []):
         kind = it.get("kind") or "video"
         provider = it.get("provider")
-        if routing_on and kind != "voice":
+        if (routing_on or else_bias) and kind != "voice":
             try:
                 provider = _provider_label(project, project.load_shot(it.get("shot")),
-                                           True, None)
+                                           routing_on, None, else_bias=else_bias)
             except Exception:
                 pass
         rows.append({
@@ -218,6 +223,69 @@ def _batch_redo_plan(project: Any, params: dict[str, Any], routing_on: bool) -> 
                      "reason": (state.value if state is not None else "redo"),
                      "provider": prov, "estimated_cost": float(cost), "currency": currency})
     return _envelope("batch-redo", rows, skipped, routing=routing_on)
+
+
+# -------------------------------------------------- routing explain (goal 15)
+
+
+def _why(project: Any, shot: Any, res: Any, config: Any) -> tuple[str, str]:
+    """(category, 中文 detail) for how a shot got its head provider. Shared by
+    the CLI ``routing explain`` and any GUI routing view, so the two can never
+    disagree on the reason. Categories: explicit / rule / tier / fallback."""
+    explicit = getattr(shot.generation, "provider", None)
+    if explicit and res.chosen == explicit:
+        return ("explicit", f"钦定供应商 {explicit}(总是优先)")
+    if res.fired_rule is not None:
+        fr = res.fired_rule
+        return ("rule", f"规则 #{fr['index']} 命中 {fr['match']} → {fr['use']}")
+    if getattr(res, "fired_tier", None) is not None:
+        ft = res.fired_tier
+        desc = ft.get("description") or ""
+        return ("tier", f"分级 {ft['name']}" + (f":{desc}" if desc else ""))
+    return ("fallback", f"兜底链(§8.4);else={res.else_selector}")
+
+
+def routing_explain(project: Any, shot_ids: list[str] | None = None, *,
+                    mode: str | None = None) -> dict[str, Any]:
+    """Per-shot routing decision + cost, for ``manju routing explain [<shot>]``
+    (goal 15) and the GUI. For each shot: the chosen head provider and WHY
+    (explicit / rule / tier / fallback), the full fallback order AFTER the head,
+    and the estimated cost via the SAME estimators build's dry-run and gui/plan
+    use — so the CLI, the GUI and the plan modal can never disagree.
+
+    ``mode`` (goal 14) previews a build mode's routing bias without running a
+    build; ``None`` reflects the plain active strategy."""
+    from ..build.graph import _estimate_shot_cost, _target_duration_ms
+    from ..build.modes import mode_else_bias
+    from ..providers.routing import load_routing, resolve
+
+    config = load_routing(project)  # may be None → §8.4 default (resolve handles it)
+    else_bias = mode_else_bias(mode)
+    rules = project.load_rules()
+    ids = list(shot_ids) if shot_ids is not None else project.shot_ids()
+    rows: list[dict[str, Any]] = []
+    for sid in ids:
+        shot = project.load_shot(sid)
+        res = resolve(project, shot, config, else_bias=else_bias)
+        why, why_detail = _why(project, shot, res, config)
+        dur = _target_duration_ms(project, shot, rules)
+        cost, currency = _estimate_shot_cost(shot, dur)
+        rows.append({
+            "shot": sid,
+            "tier": getattr(shot, "tier", None),
+            "chosen": res.chosen,
+            "why": why,
+            "why_detail": why_detail,
+            "fallback_order": res.order[1:],
+            "estimated_cost": float(cost),
+            "currency": currency,
+        })
+    return {
+        "mode": mode,
+        "routing": config is not None,
+        "sources": list(config.sources) if config is not None else [],
+        "rows": rows,
+    }
 
 
 def _batch_voice_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[str, Any]:

@@ -26,11 +26,33 @@ Built-in strategies (shipped as DATA, see :data:`BUILTIN_STRATEGIES`):
 (per-second-cheapest capable manifest), ``quality_first`` (a priority list the
 user edits).
 
+Human-readable TIERS (goal item 15). A routing.yaml may also carry an optional
+``tiers:`` mapping — a director-facing vocabulary the rules read::
+
+    tiers:
+      draft:    {description: 草稿:先快后好,便宜看个大概, use: [caption_card]}
+      review:   {description: 审片:够看清就行,      use: [comfyui]}
+      key_shot: {description: 关键镜头:优先质量,     use: [runway, comfyui]}
+
+A shot reaches a tier through a dedicated **additive** ``ShotSpec.tier`` field
+(``tier: key_shot`` in the shot YAML). That path is chosen deliberately over
+``generation.params.tier``: :func:`manju.core.spec.spec_payload` hashes the whole
+``generation`` block but NOT top-level ``tier``, so tagging a shot's tier is a
+pure routing choice that never restages the picture or marks an existing take
+stale. Rules may also match it explicitly (``match: {tier: key_shot}``).
+
 Resolution order (the pin): ``shot.generation.provider`` (explicit always wins)
-> the active strategy's first matching rule > the §8.4 fallback chain (always
-the safety net). Disabled providers are skipped, the reason recorded. When
-NEITHER routing file exists the whole module is bypassed by the registry, so
-the provider choice is byte-identical to §8.4.
+> the active strategy's first matching rule > the shot's ``tiers:`` mapping (a
+tier is an implicit rule keyed on ``shot.tier``) > the ``else`` selector > the
+§8.4 fallback chain (always the safety net). Disabled providers are skipped, the
+reason recorded. When NEITHER routing file exists the whole module is bypassed
+by the registry, and with no ``tiers:`` / no tier match keys the resolution is
+byte-identical to §8.4.
+
+Build MODES (goal item 14) bias resolution without touching the pin: the caller
+passes ``else_bias`` (from ``manju build --mode``) which replaces ONLY the
+*neutral* ``fallback`` else — an explicit provider, a fired rule, a fired tier
+and an opinionated strategy ``else`` are all left untouched.
 """
 
 from __future__ import annotations
@@ -54,6 +76,7 @@ KNOWN_MATCH_KEYS = {
     "characters_include",
     "scene",
     "provider_capability",
+    "tier",  # goal 15: the shot's human-readable routing tier (ShotSpec.tier)
 }
 
 # `else:` selectors that are meta-behaviours rather than a literal provider id
@@ -83,6 +106,8 @@ class RoutingError(ValueError):
 class RoutingConfig:
     strategy: str = "default"
     strategies: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # goal 15: human-readable tiers (name -> {description, use: [provider ids]}).
+    tiers: dict[str, dict[str, Any]] = field(default_factory=dict)
     sources: list[str] = field(default_factory=list)  # "user" / "project", low→high
 
 
@@ -129,6 +154,8 @@ def load_routing(project) -> RoutingConfig | None:
             cfg.strategy = str(data["strategy"])
         for name, sdef in (data.get("strategies") or {}).items():
             cfg.strategies[name] = sdef
+        for name, tdef in (data.get("tiers") or {}).items():  # project tier wins
+            cfg.tiers[name] = tdef
     return cfg
 
 
@@ -172,6 +199,26 @@ def _normalize_strategy(name: str, raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(priority, list):
         raise RoutingError(f"strategy {name!r}: priority must be a list")
     return {"rules": norm_rules, "else": else_sel, "priority": [str(p) for p in priority]}
+
+
+def _normalize_tier(name: str, raw: Any) -> dict[str, Any]:
+    """A tier is ``{description: 中文一句话, use: [provider priority list]}``.
+    Both keys optional; ``use`` must be a list. Malformed → RoutingError (surfaced
+    by the route commands, never a silent false)."""
+    if not isinstance(raw, dict):
+        raise RoutingError(f"tier {name!r} must be a mapping with description/use")
+    use = raw.get("use", []) or []
+    if not isinstance(use, list):
+        raise RoutingError(f"tier {name!r}: use must be a list of provider ids")
+    return {"description": str(raw.get("description", "") or ""),
+            "use": [str(p) for p in use]}
+
+
+def tier_def(config: RoutingConfig, name: str) -> dict[str, Any] | None:
+    """The normalized tier definition for ``name``, or ``None`` if undefined."""
+    if name in config.tiers:
+        return _normalize_tier(name, config.tiers[name])
+    return None
 
 
 def _strategy_def(config: RoutingConfig, name: str) -> dict[str, Any]:
@@ -260,6 +307,8 @@ def _match_one(key: str, expected: Any, shot) -> bool:
         return any(c in shot.characters for c in wanted)
     if key == "provider_capability":
         return expected in shot.generation.fallback
+    if key == "tier":
+        return getattr(shot, "tier", None) == expected
     if key.startswith("params."):
         return shot.generation.params.get(key[len("params."):]) == expected
     raise RoutingError(
@@ -289,6 +338,9 @@ class Resolution:
     fired_rule: dict[str, Any] | None
     else_selector: str
     skipped: list[dict[str, Any]]
+    # goal 15: the tier that supplied the head, when a `tiers:` mapping fired
+    # (name + description + resolved use list); None otherwise.
+    fired_tier: dict[str, Any] | None = None
 
     @property
     def chosen(self) -> str | None:
@@ -309,15 +361,24 @@ def _capable_sorted(cat: dict[str, _ProviderView], shot, *, kind: str | None = N
     return [v.id for v in cands]
 
 
-def resolve(project, shot, config: RoutingConfig | None = None) -> Resolution:
-    """Resolve the ordered provider list for one shot under the active strategy."""
+def resolve(project, shot, config: RoutingConfig | None = None, *,
+            else_bias: str | None = None) -> Resolution:
+    """Resolve the ordered provider list for one shot under the active strategy.
+
+    ``else_bias`` (goal 14, build modes) replaces ONLY the *neutral* ``fallback``
+    else selector — so a mode never re-routes a shot an explicit provider, a rule
+    or a tier already claimed, and never overrides an opinionated strategy whose
+    else the user deliberately set to something other than ``fallback``."""
     from .registry import fallback_chain
 
     if config is None:
         config = load_routing(project) or _default_config()
     cat = _catalog()
     strat = _strategy_def(config, config.strategy)
-    else_sel = strat["else"]
+    # A build mode biases ONLY the neutral fallback else — an opinionated strategy
+    # else (local/cheapest/quality/literal) the user chose is left untouched.
+    else_sel = else_bias if (else_bias is not None and strat["else"] == "fallback") \
+        else strat["else"]
     order: list[str] = []
     skipped: list[dict[str, Any]] = []
 
@@ -347,8 +408,20 @@ def resolve(project, shot, config: RoutingConfig | None = None) -> Resolution:
             break
         skipped.append({"rule": i, "reason": _why_no_match(rule["match"], shot)})
 
-    # 3. the `else` selector — only when no rule fired
+    # 2t. the shot's TIER (goal 15) — an implicit rule keyed on shot.tier, tried
+    #     only when no explicit strategy rule fired. Its `use` list is a priority.
+    fired_tier: dict[str, Any] | None = None
     if fired is None:
+        shot_tier = getattr(shot, "tier", None)
+        if shot_tier:
+            tdef = tier_def(config, shot_tier)
+            if tdef is not None:
+                fired_tier = {"name": shot_tier, **tdef}
+                for pid in tdef["use"]:
+                    add(pid)
+
+    # 3. the `else` selector — only when neither a rule nor a tier fired
+    if fired is None and fired_tier is None:
         if else_sel == "fallback":
             pass  # the safety net below is exactly this
         elif else_sel == "local":
@@ -381,7 +454,8 @@ def resolve(project, shot, config: RoutingConfig | None = None) -> Resolution:
                 kept.append(pid)
         order = kept
 
-    return Resolution(shot.id, config.strategy, order, fired, else_sel, skipped)
+    return Resolution(shot.id, config.strategy, order, fired, else_sel, skipped,
+                      fired_tier=fired_tier)
 
 
 def resolved_order(project, shot) -> list[str]:
@@ -410,7 +484,9 @@ def explain(project, shot) -> dict[str, Any]:
         "sources": config.sources,
         "routing_file": bool(config.sources),
         "explicit_provider": shot.generation.provider,
+        "tier": getattr(shot, "tier", None),
         "fired_rule": res.fired_rule,
+        "fired_tier": res.fired_tier,
         "else": res.else_selector,
         "order": res.order,
         "chosen": res.chosen,
@@ -433,4 +509,7 @@ def list_strategies(project) -> dict[str, Any]:
             "else": strat["else"],
             "priority": strat["priority"],
         })
-    return {"active": config.strategy, "sources": config.sources, "strategies": out}
+    tiers = [{"name": n, **_normalize_tier(n, config.tiers[n])}
+             for n in sorted(config.tiers)]
+    return {"active": config.strategy, "sources": config.sources,
+            "strategies": out, "tiers": tiers}

@@ -100,6 +100,54 @@ def _record_local_runs(project: Project, takes: list, params: dict,
         pass
 
 
+def _concurrent_generate(items, gen_one, *, max_workers: int,
+                         budget_limit: float | None):
+    """Drive ``gen_one`` over ``items`` in a bounded thread pool (goal 14).
+
+    Returns ``(results_by_shot, tripped, running_cost)``. Provider calls run
+    concurrently (``max_workers`` at once), but this function performs NO
+    order-dependent commit — the caller applies that strictly in plan order from
+    the returned dict, so the outcome is deterministic no matter who finished
+    first. The one live governor here is the budget: as each shot's ACTUAL cost
+    lands, it is summed, and the instant the running total exceeds
+    ``budget_limit`` no NEW shot is submitted (in-flight ones finish). With the
+    default free/local providers every actual cost is 0, so the trip never fires
+    and the result set equals ``items`` — nothing observable changes but the
+    order of execution."""
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+    from concurrent.futures import wait as _wait
+
+    items = list(items)
+    results: dict[str, dict] = {}
+    running = 0.0
+    tripped = False
+    next_i = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        in_flight: dict = {}
+
+        def _fill() -> None:
+            nonlocal next_i
+            while (next_i < len(items) and len(in_flight) < max_workers
+                   and not tripped):
+                it = items[next_i]
+                next_i += 1
+                in_flight[ex.submit(gen_one, it)] = it["shot"]
+
+        _fill()
+        while in_flight:
+            finished, _ = _wait(list(in_flight), return_when=FIRST_COMPLETED)
+            for fut in finished:
+                sid = in_flight.pop(fut)
+                res = fut.result()
+                results[sid] = res
+                running += float(res.get("actual_cost", 0.0) or 0.0)
+                if (budget_limit is not None and running > budget_limit
+                        and not tripped):
+                    tripped = True
+            _fill()
+    return results, tripped, running
+
+
 @dataclass
 class BuildResult:
     ok: bool = True
@@ -246,6 +294,7 @@ def run_build(
     force: bool = False,  # FIX-A: re-render even when the content key matches
     actor: str = "engine",
     assume_yes: bool = False,  # explicit approval for ask_before-gated spend (§8.3)
+    mode: str | None = None,  # goal 14: quality|balanced|speed (flag) — None = default
     on_phase=None,  # Callable[[str], None] — coarse progress ("check"/"render"…)
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
@@ -272,14 +321,14 @@ def run_build(
         return _run_build_phases(
             project, target=target, gen=gen, regen_stale=regen_stale,
             dry_run=True, force=force, actor=actor,
-            assume_yes=assume_yes, on_phase=on_phase,
+            assume_yes=assume_yes, mode=mode, on_phase=on_phase,
         )
     try:
         with build_lock(project.root, actor=actor):
             result = _run_build_phases(
                 project, target=target, gen=gen, regen_stale=regen_stale,
                 dry_run=False, force=force, actor=actor,
-                assume_yes=assume_yes, on_phase=on_phase,
+                assume_yes=assume_yes, mode=mode, on_phase=on_phase,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -323,6 +372,7 @@ def _run_build_phases(
     force: bool = False,  # FIX-A: re-render even when the content key matches
     actor: str = "engine",
     assume_yes: bool = False,  # §8.3 ask_before gate (spend cluster)
+    mode: str | None = None,  # goal 14: build mode name/flag (None = engine default)
     on_phase=None,  # advisory coarse-progress callback (spend cluster)
 ) -> BuildResult:
     result = BuildResult()
@@ -383,6 +433,19 @@ def _run_build_phases(
     result.estimated_cost = sum(p["estimated_cost"] for p in result.plan)
 
     config = project.load_config()
+
+    # ---- 1a. build mode knobs (goal 14): --mode flag > project.yaml build.mode >
+    # None. A None mode is the byte-identical default path (serial generation, no
+    # routing bias, today's retry budget). A bad mode value is a clean, early
+    # build error — never a traceback and never a partial spend.
+    from .modes import BuildModeError, knobs_for, resolve_mode
+    try:
+        mode_knobs = knobs_for(resolve_mode(mode, config))
+    except BuildModeError as exc:
+        result.ok = False
+        result.errors.append(f"build --mode: {exc}")
+        return result
+
     budget = config.budget.limit
     if budget is not None and result.estimated_cost > budget:
         result.ok = False
@@ -415,6 +478,20 @@ def _run_build_phases(
 
     _phase("generate")
     # ---- 2. generate (fill gaps only; stale/manual are respected, §4.3)
+    #
+    # Concurrency (goal 14): with NO build mode ``mode_knobs`` is None → the loop
+    # runs SERIALLY, generate-then-commit per shot, byte-identically to the
+    # pre-modes engine. A mode raises max_workers > 1, and the provider calls run
+    # in a bounded thread pool while the ORDER-DEPENDENT commit (events, ledger,
+    # result mutation) is still applied strictly in plan order after a gather —
+    # so results are deterministic regardless of who finished first. The three
+    # spend invariants are preserved: the ask_before gate above already ran
+    # BEFORE any submission; a running-actual-cost budget trip stops NEW
+    # submissions (below); and the build_lock/WaitingUser semantics are untouched
+    # (this whole body already runs under the caller's lock). Each shot writes to
+    # its OWN take directory, so parallel register_take never collides; the only
+    # shared write left inside a worker is a cloud provider's best-effort ledger
+    # self-record (already swallow-guarded, §3).
     video_plan = [p for p in result.plan if p.get("kind") != "voice"]
     voice_plan = [p for p in result.plan if p.get("kind") == "voice"]
     # shot_id -> pre-flight estimate, persisted with each recorded run so
@@ -426,7 +503,16 @@ def _run_build_phases(
         from ..providers.registry import fallback_chain, generate_with_fallback
 
         bible = project.load_bible()
-        for item in video_plan:
+        gen_bias = mode_knobs.else_bias if mode_knobs else None
+        gen_retries = mode_knobs.retries if mode_knobs else None
+        max_workers = mode_knobs.max_workers if mode_knobs else 1
+
+        def _gen_one(item: dict) -> dict:
+            """Worker: build the request and run the provider fallback for ONE
+            shot. Pure w.r.t. the shared BuildResult — it only reads project truth
+            and writes this shot's own take dir; all order-dependent bookkeeping
+            is deferred to ``_commit_one``. Never raises: a provider failure is
+            captured and committed like the serial path did."""
             shot = project.load_shot(item["shot"])
             st = next(s for s in statuses if s.shot_id == shot.id)
             params = dict(shot.generation.params)
@@ -443,6 +529,10 @@ def _run_build_phases(
                 # runs get it via _record_local_runs below). Same figure the
                 # `estimates` map holds — one source, both provider kinds.
                 estimated_cost=item["estimated_cost"],
+                # goal 14: mode routing bias + retry budget for this call (both
+                # None when no mode → byte-identical request).
+                routing_bias=gen_bias,
+                max_retries=gen_retries,
                 # Reference inputs (goal item 7): resolve ONCE here so tiering +
                 # lineage are shared by whichever provider the fallback picks.
                 refs=resolve_refs(project, shot, bible, params=params),
@@ -450,7 +540,23 @@ def _run_build_phases(
             chain = fallback_chain(shot)
             try:
                 takes = generate_with_fallback(req, chain)
-            except (ProviderFailure, NeedsHumanInput) as exc:
+                exc: BaseException | None = None
+            except (ProviderFailure, NeedsHumanInput) as e:
+                takes, exc = None, e
+            actual = 0.0
+            for t in (takes or []):
+                remote = t.sidecar.remote
+                if remote and remote.cost:
+                    actual += remote.cost
+            return {"item": item, "shot": shot, "req": req, "chain": chain,
+                    "takes": takes, "exc": exc, "actual_cost": actual}
+
+        def _commit_one(res: dict) -> None:
+            """Serial, order-dependent commit for one generated shot — the exact
+            side effects the pre-modes loop applied inline, unchanged."""
+            item, shot, req, chain = res["item"], res["shot"], res["req"], res["chain"]
+            takes, exc = res["takes"], res["exc"]
+            if exc is not None:
                 result.warnings.append(f"{shot.id}: generation failed — {exc}")
                 # Every provider (incl. the caption_card terminal) failed: this
                 # shot has NO usable take. The per-provider attempts were already
@@ -466,7 +572,7 @@ def _run_build_phases(
                         hint="看每个供应商的失败原因(manju failures);"
                              "或改 generation.provider / 用 caption_card 兜底",
                         actor=actor)
-                continue
+                return
             # Degradation (goal 10): the take came from a FALLBACK, not the shot's
             # first choice — record it in the SAME shape at level=info so
             # "为什么这个镜头变成了字幕卡?" is answerable from the record alone.
@@ -499,6 +605,30 @@ def _run_build_phases(
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
             _record_local_runs(project, takes, {"reason": item["reason"]}, estimates)
+
+        if max_workers <= 1:
+            # serial — generate then commit per shot, in plan order (unchanged).
+            for item in video_plan:
+                _commit_one(_gen_one(item))
+        else:
+            # bounded parallel generation; commit deterministically in plan order.
+            done, tripped, running = _concurrent_generate(
+                video_plan, _gen_one, max_workers=max_workers, budget_limit=budget)
+            for item in video_plan:
+                res = done.get(item["shot"])
+                if res is not None:
+                    _commit_one(res)
+            if tripped:
+                unsub = [it["shot"] for it in video_plan if it["shot"] not in done]
+                result.warnings.append(
+                    f"预算熔断(并发生成:实际花费 {running} 已超 budget.limit={budget}"
+                    f",§8.3): 停止提交新镜头 " + ", ".join(unsub or ["(无)"]) +
+                    " — 已生成的镜头不受影响;提高 budget.limit 或缩减计划后重跑")
+                _record(project, "generate", "budget",
+                        "并发生成触发预算熔断,未提交的镜头被跳过",
+                        evidence=f"running_cost={running} > budget={budget}; skipped={unsub}",
+                        hint="提高 project.yaml budget.limit 或缩减计划;并发上限由 --mode 决定",
+                        level="info", actor=actor)
 
     # ---- 2v. voice synthesis (M3): fill MISSING voices via the configured
     # TTS manifest; stale voices are flagged, never redone (§4.3). Synthesis

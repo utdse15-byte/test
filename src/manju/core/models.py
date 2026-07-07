@@ -40,12 +40,36 @@ class BudgetConfig(ManjuModel):
     currency: str = "CNY"
 
 
+# Concurrency quality modes (goal item 14). A project MAY pin a default build
+# mode; the `manju build --mode` flag always wins over this. Purely additive and
+# default-absent: `build: None` on the ProjectConfig means "engine default"
+# (serial generation, no routing bias, today's retry counts) — so a project.yaml
+# WITHOUT a build: section behaves byte-identically to before this landed.
+BUILD_MODE_NAMES = ("quality", "balanced", "speed")
+
+
+class BuildConfig(ManjuModel):
+    # None = leave it to the engine default (byte-identical to pre-modes);
+    # quality | balanced | speed pick the concurrency/retry/strategy-bias knobs
+    # in build/modes.py. Validated here so a typo surfaces at `manju check`.
+    mode: str | None = None
+
+    @field_validator("mode")
+    @classmethod
+    def _known_mode(cls, v: str | None) -> str | None:
+        if v is None or v in BUILD_MODE_NAMES:
+            return v
+        raise ValueError(f"build.mode must be one of {BUILD_MODE_NAMES} or unset, got {v!r}")
+
+
 class ProjectConfig(ManjuModel):
     name: str
     width: int = 1080
     height: int = 1920
     fps: int = 24
     mode: Literal["manual", "copilot", "autopilot"] = "copilot"
+    # Default build mode (goal 14); None keeps today's behaviour. `--mode` wins.
+    build: BuildConfig | None = None
     ask_before: list[str] = Field(
         default_factory=lambda: ["expensive_generation", "final_export", "lock_change"]
     )
@@ -142,6 +166,14 @@ class ShotSpec(ManjuModel):
     scene: str | None = None
     characters: list[str] = Field(default_factory=list)
     duration: float | Literal["auto"] = "auto"  # seconds when numeric
+    # Human-readable routing TIER (goal item 15): a director tag like ``draft`` /
+    # ``review`` / ``key_shot`` that a routing.yaml ``tiers:`` section maps to a
+    # provider priority list, and that routing rules may ``match: {tier: ...}``.
+    # A dedicated top-level field (NOT generation.params) is the chosen additive
+    # path precisely because spec_payload (core/spec.py) does NOT include it —
+    # tagging a shot's tier is a routing choice, so it must never restage the
+    # PICTURE or mark existing takes stale. Default None → byte-identical.
+    tier: str | None = None
     camera: Camera = Field(default_factory=Camera)
     action: Action = Field(default_factory=Action)
     dialogue: Dialogue = Field(default_factory=Dialogue)
