@@ -870,3 +870,44 @@ out of the box (scaffolds are not authorship; comments survive via raw text
 write); `manju new --check-hook` — opt-in pre-commit hook running `manju
 check` (husky pattern: broken truth cannot enter history; never clobbers a
 foreign hook). All four live-smoked end to end in a scratch project.
+
+---
+
+## 2026-07-07 — round R: the two lines unified — R1–R27 strengths ported onto main
+
+**The fork:** claude/project-optimization-gui-jzr1ml developed 38 commits
+(R1–R27) in parallel from the round-M base while rounds N–Q happened here.
+Round R ported its strengths onto this line as ADAPTED features (not git
+merges) via four Opus port agents + integrator conflict resolution:
+
+- **Engine safety:** cross-process build lock (.manju/build.lock; contention
+  = one-line ok=False, dry-run lockless), media write durability (temp+
+  os.replace for segments/proxy/finals, ffprobe-gated cache hits — truncated
+  debris can no longer poison finals), gitops as THE single git wrapper
+  (history.py delegates; §1-② containment everywhere), MCP qc lock.
+- **Spend governance:** ask_before becomes a real engine gate (build/redo/
+  voice; WaitingUser + --yes/assume_yes; the R7 redo/voice spend holes
+  closed), `manju spend` (money view; `tasks` stays the queue view — shared
+  query layer so numbers can't drift), estimates persist into the ledger
+  (additive nullable column, legacy rows read as None) for estimate-vs-
+  actual deltas, cache-savings surfaced.
+- **Dev loop + provenance:** `manju watch` (read-only fingerprint check
+  loop), `events --follow`, `new --check-hook` (opt-in pre-commit check),
+  doctor module-ized (all probes kept + build-lock/gc-reclaimable), why-
+  stale names the changed FIELDS (spec snapshots in take sidecars, ≤32KB,
+  additive — manual takes stay snapshot-free), `redo --from-take` (recipe
+  reuse), import content-dedup (advisory).
+- **GUI workbench:** `manju gui` — async jobs, watch-driven refresh,
+  spend-confirm (lights up against the real gate), per-take director notes
+  (take_notes in shot YAML = human truth; 好/弃 verdict chips reach the
+  static board too), A/B compare, workspace switcher, web previews, git
+  panel over unified gitops; unlock/gc unreachable (403). Coexists with
+  `board --serve` (lightweight review) — roles documented in docs/GUI.md.
+
+**Integration seams fixed by hand:** run_build/redo lock-wrapper now threads
+assume_yes/on_phase into the phases body; redo composes lock + spend gate +
+from_take; single gitops/doctor kept where three agents ported copies.
+
+**Verified:** 693 tests green consolidated (was 493); `manju gui` live-smoked
+(state/doctor/spend=sidecars/git panel/403s). Their R-line PROGRESS/DECISIONS
+/reports preserved verbatim under fork notes.
