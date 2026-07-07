@@ -84,3 +84,35 @@ bans genre tokens from kit data so flavor cannot creep back; `--preset
 blank` is pinned byte-for-byte to the generic scaffold. This supersedes the
 round-O kit list; the playbook (SKILL.md) carries the genre workflows
 instead.
+
+<!-- From the parallel R-line (merged in round R): -->
+
+## 5. The GUI ships now, as a pure client (§1-⑦ deferral revisited)
+
+Design (§1-⑦) postponed a workbench GUI indefinitely: the static review board
+covered ~80% of the value at ~1/20 of the cost. As built (user-directed
+reversal of the *timing*, not the *architecture*): `manju gui` is a local web
+workbench implemented as the **third client of the unchanged engine core** —
+the same functions the CLI and MCP call, zero new dependencies (stdlib
+`http.server`), truth still in text files, jobs in-memory only. The original
+rationale for deferral was cost and the risk of a second source of truth; the
+first is paid deliberately (the user asked), the second is structurally
+avoided. The MCP dangerous-surface rule carries over verbatim: no `unlock`,
+no `gc --hard`, no `pack`/`unpack`, no arbitrary-path `import` over HTTP (§5,
+§11). The static board remains for offline/share use.
+
+## 6. ask_before becomes an engine gate, not just agent discipline (§8.3)
+
+Design (§8.3, §10) made the agent's discipline the first spending gate:
+SKILL.md orders a stop-and-ask when a plan hits `ask_before`, and the engine
+only enforced the budget ceiling (事中熔断). As built, the engine now also
+enforces the first gate itself: a non-dry-run whose plan estimates cost > 0
+while `expensive_generation` is in `ask_before` returns
+`ok=false, waiting_user=true` unless the caller passed an explicit
+`assume_yes` (`--yes` on the CLI, `assume_yes` on MCP/GUI). Uniform across
+actors: the human's yes is one flag away; the agent's yes must still come
+from the human (SKILL.md §5 unchanged — the engine just stops trusting that
+discipline alone). Dry-run estimates are never gated, so "问前先 dry-run"
+stays frictionless. Rationale: a discipline-only gate silently degrades as
+agents and surfaces multiply; the cheapest honest place to stop money is the
+single code path every surface already funnels through.

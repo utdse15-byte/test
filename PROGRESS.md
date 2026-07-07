@@ -418,3 +418,455 @@ project; compare markup on multi-take shots.
 several verified in chunks; the consolidated single run (493 passed) is the
 authoritative result. OMP_THREAD_LIMIT=1 tames tesseract in constrained
 environments.
+
+---
+
+# ——— Parallel line merged (round R) ———
+# The entries below (R1–R27) come from the sibling branch
+# claude/project-optimization-gui-jzr1ml, which developed in parallel from
+# the round-M base (54bdd54) while rounds N–Q happened on this line. Round R
+# ported its features onto this line (adapted, not cherry-picked); these
+# entries are preserved verbatim as that line's history.
+
+---
+
+## 2026-07-05 — rounds R1+R2: `manju gui` workbench + process build lock
+
+**Done (R1, GUI):** `manju gui` — stdlib-only local web workbench as the
+THIRD client of the same engine core (§1-⑦ deferral revisited, user-directed;
+DECISIONS.md #5): consolidated `/api/state` (read-only, no ffprobe, poll-safe),
+strictly serialized job runner (build/redo/voice/qc FIFO — honest to the
+engine's single-writer design), select/lock as the same one-line text edits
+the CLI writes, `Range`+ETag media serving behind an allowlist with a
+RESOLVED-path re-check (the test suite caught a live `media/../project.yaml`
+bypass before it ever shipped), DNS-rebinding Host guard, per-run CSRF token,
+strict CSP, vanilla-JS front-end (textContent-only DOM, adaptive 1.5s/5s
+polling, paused when hidden). Browser-codec reality handled: `/preview/<rel>`
+lazily transcodes non-browser-safe takes (.mkv/.flac/ProRes…) once into the
+disposable `.manju/webpreview` cache (media/webpreview.py, atomic tmp+replace,
+(path,mtime,size)-keyed) and degrades to raw bytes. Dangerous ops (unlock,
+gc --hard, pack, arbitrary-path import) absent from the surface, mirroring
+MCP (§5). Docs: docs/GUI.md (architecture, full API, threat model, zh
+quickstart).
+
+**Done (R2, process lock):** `.manju/build.lock` (runtime/buildlock.py):
+O_EXCL atomic create + holder JSON (pid/actor/started/hostname) + heartbeat
+thread + staleness rules (dead pid on same host, or mtime age) + steal-once —
+closing the dual-actor race §5's value locks never covered (human terminal ×
+AI session × GUI all mutating at once). Wired engine-side so every surface
+gets it: run_build (dry-run deliberately LOCKLESS — estimates stay available
+mid-build), redo_shot, and the CLI/GUI voice+qc+gc paths. Contention is a
+one-line ok=False/BuildLocked finding, never a traceback; `manju status` and
+`/api/state` surface the active holder.
+
+**Assessment:** REPORTS/OPTIMIZATION-ASSESSMENT.md — the convenience/
+real-world audit behind these rounds (P0s: this lock; media write durability
+— fix in flight). 303 tests green at round end (was 251).
+
+**Next:** durable media writes (tmp+replace for segments/finals, cache
+integrity gate); hygiene cheap wins (gitignore scaffold, ledger COUNT,
+truncated-final honesty); GUI shot editor with check-on-save.
+
+---
+
+## 2026-07-05 — round R3: media write durability (P0) + hygiene wins
+
+**Done (durability):** media now follows the same temp+replace discipline as
+text (§3): every ffmpeg artifact destined for a durable location (segment
+cache, proxy, final) encodes into a sibling `.{name}.tmp-<pid>-<rand>.mp4`
+(dot-prefixed — invisible to the `final_v*` globs; real extension last so
+muxer inference holds) and lands via `os.replace` only on success
+(media/ffmpeg.py `atomic_output`). Cache hits pass a cheap integrity gate
+(header ffprobe) — a truncated segment is evicted and rebuilt with a warning
+instead of poisoning every future final. The proxy no longer destroys its
+previous good copy at encode start, and its stale `.key.json` can no longer
+vouch for corrupt bytes (old sidecar removed only at swap time); final
+sidecars are written strictly AFTER the mp4 is in place. RED-proofed: with
+the pre-fix code restored, 5/9 of the new tests fail exactly along the
+claimed failure modes (planted garbage reused; crash-partial persisted;
+proxy false-reuse).
+
+**Done (hygiene):** scaffold .gitignore covers the gen-media extensions
+MEDIA_EXTS accepts (.mkv/.webm/.m4v/.jpeg/.m4a/.flac), reports/frames/ and
+board.html; run ledger counts via SELECT COUNT(*); `status` flags a latest
+final that lacks its content-key sidecar ("crashed render?" honesty);
+`find_duplicate_import` (size fast-path + sha256) backs a duplicate-content
+advisory on import — never destructive, imports stay sacred (§3).
+
+**Next:** ask_before engine gate (§8.3); GUI v2 (shot editor with
+check-on-save + revert, upload, git panel, timeline strip, doctor).
+
+---
+
+## 2026-07-05 — rounds R4–R6: ask_before engine gate + GUI v2 + co-presence
+
+**Done (R4, ask_before → engine gate, DECISIONS #6):** a non-dry-run whose
+plan estimates cost > 0 while `expensive_generation` ∈ ask_before now stops
+engine-side as `ok=false, waiting_user=true` (uniform for every actor) until
+an explicit yes: CLI `--yes`, MCP `assume_yes` (schema documents "only after
+relaying the estimate to the human"), GUI body flag. Dry-run stays lockless
+AND gate-less, so 问前先 dry-run keeps zero friction. SKILL.md playbook
+updated to the enforced flow (dry-run → 问人 → assume_yes;构建锁行为;
+via:"gui" events are human decisions; latest_final_note handling).
+
+**Done (R5, GUI v2 surface):** check-gated text editors over the SAME truth
+files the CLI edits — shots (`/api/shot/<id>` GET raw text / POST write-
+verbatim + full `manju check` + auto-revert on any new error, lock violations
+included), bible files and timeline rules (same `_gated_save` core); shot
+reorder (`/api/index`, permutation-validated — the cut order stays one
+reviewable YAML line); browser upload into imports/ (append-only, collision-
+suffixed, streamed via .manju tmp; MCP still excludes import by design — the
+browser can't reach arbitrary filesystem paths, so the GUI twin is safe);
+git panel endpoints over new `core/gitops.py` (status/diff/log read-only +
+commit as the ONLY write; no checkout/reset/revert on any manju surface;
+the git_commit event is appended BEFORE committing so it rides inside the
+commit); `/api/doctor` over new `build/doctor.py` (extracted from the CLI —
+one probe implementation for both surfaces); `/api/timeline` passthrough;
+front-end v2 (editor dialogs, dropzone, timeline strip, doctor/git panels,
+build-lock chip).
+
+**Done (R6, co-presence + honesty):** `/api/watch` long-poll on a cheap
+project fingerprint (stat-walk over truth text/timeline/QC/finals/events/
+take-dirs + job revision — never probes media): an AI edit appears in the
+browser in ~0.5s. `/api/state` is served from a fingerprint-keyed cache, so
+polling large projects costs one stat-walk until something changes.
+`/api/proposals` lists the AI→human channel (§5) so requests are SEEN.
+`manju gui --readonly` refuses every mutation (LAN review sharing).
+Builds refresh an existing board.html (a stale board lies — §1-⑦);
+gc also clears the webpreview cache and no longer leaves its own lock
+behind. Pre-commit adversarial review + per-take thumbnails in flight.
+
+---
+
+## 2026-07-05 — round R7: workspace mode + spend-gate closure + take thumbs
+
+**Done:** `manju gui --workspace <dir>` — one server over every project in a
+directory, ONE active project switchable via `/api/switch` (state cache
+reset; in-flight jobs keep the project they closed over; the stale-tab
+media caveat is documented, not hidden). `/api/events` gains actor/action
+filters. Per-take lazy thumbnails: `/thumb/<rel>` frame-grabs (50% seek,
+sub-0.5s clips fall back to first frame — found live against ffmpeg 6.1),
+≤320px, cached beside the previews; every take card now reads at a glance.
+Spend-gate hole closed: a priced `manju redo` / `manju voice` raised no
+gate (only build did) — both now raise the same `waiting_user:` line via a
+shared `spend_gate` helper unless `--yes`/`assume_yes`; MCP redo schema
+documents it; SKILL.md notes the error-form for envelope-less commands.
+
+**Next:** front-end v3 (watch-driven refresh, spend-confirm banner,
+readonly awareness, proposals panel, bible/rules editors, reorder buttons,
+workspace switcher, review keyboard mode, image-take rendering fix);
+pre-commit adversarial review findings.
+
+---
+
+## 2026-07-05 — round R8: adversarial review response + build progress
+
+**Done (review, P1s):** the pre-commit adversarial review found and we fixed:
+(1) gitops CONTAINMENT — a project without its own .git nested inside an
+outer repository leaked the enclosing tree (status listed foreign files,
+`/api/git/diff` served content from OUTSIDE the project over HTTP, and
+commit_all staged the whole outer repo — reviewer-reproduced): `is_repo` now
+requires `rev-parse --show-toplevel == project root`, every gitops function
+guards on it, and user pathspecs that resolve outside the root are rejected;
+(2) MCP `qc` bypassed the process build lock SKILL.md promises — now held.
+
+**Done (review, P2s):** failed GUI commits append `git_commit_failed` (the
+audit log can't claim a commit that never happened); budget-breaker message
+no longer says "waiting_user" (it isn't approvable); queued→running now bumps
+the job revision so the cached state can't show a running build as queued;
+`/api/watch` capped at 8 held threads (saturated watchers answer
+immediately); GUI.md GET table unsplit + payload/threat-model drift fixed
+(assume_yes on the build row, build_lock/latest_final_note/thumb fields,
+editor-vs-build race honestly named as out of lock scope).
+
+**Done (progress):** `run_build(on_phase=…)` publishes coarse phases
+(check/generate/voice/compile/captions/render:<target>/qc/exports) —
+advisory, exception-proof; GUI jobs carry `progress` and the build job wires
+it through, so a long render is no longer an opaque "running" badge.
+
+**Review verdicts kept:** state-cache tearing impossible (GIL snapshot);
+upload single-decode + basename + mutex-held collision loop; fingerprint
+covers engine writes (atomic tmp+rename bumps the take-dir mtime); gate
+ordering budget→dry-run→ask_before correct.
+
+---
+
+## 2026-07-06 — session close: rounds R1–R9 (GUI workbench arc)
+
+**Shipped this session (one push-ready branch, each round committed):**
+R1 `manju gui` — stdlib local web workbench as the third client of the
+unchanged engine core (§1-⑦ revisited, DECISIONS #5). R2 process build lock
+(.manju/build.lock, DECISIONS gap the design's own §3 comment promised).
+R3 media write durability P0 (atomic tmp+replace for segments/proxy/final,
+cache integrity gate; RED-proofed). R4 ask_before → engine-enforced spend
+gate (DECISIONS #6) + SKILL.md playbook update. R5 GUI v2: check-gated
+editors over the same truth files (shots/bible/rules, auto-revert), upload,
+git panel (read-mostly, commit-only), doctor, timeline strip. R6 co-presence:
+/api/watch long-poll fingerprint, fingerprint-cached /api/state, proposals
+surface, --readonly. R7 workspace mode (multi-project switcher) + spend-gate
+closure over redo/voice + events filtering. R8 adversarial-review response:
+gitops CONTAINMENT P1 (nested-repo leak), MCP qc lock, phase progress on
+jobs. R9 per-take director notes + the 6-product UX study with adoption
+shortlist (REPORTS/UX-STUDY.md).
+
+**Honest state:** front-end v3 (live-watch client, spend-confirm banner,
+review keyboard, workspace switcher UI, take-note UI) was cut short by an
+API session limit mid-agent; the committed page is the verified v2 plus the
+workspace switcher (browser-smoked: sections render, estimate works, no JS
+errors), and EVERY v3 server endpoint is live and tested — the remaining
+work is page-only wiring, listed in UX-STUDY.md's shortlist alongside the
+ten adoption candidates. Figma/Obsidian study legs also lost to the limit.
+
+**Where the next session starts:** UX-STUDY.md shortlist #1–#5 (price on
+the trigger, why-stale field diff, state filter chips, one-key verdicts,
+failure auto-expand) — all small, all engine-true.
+
+---
+
+## 2026-07-06 — round R10: UX shortlist lands in the workbench
+
+**Done:** four of the study's top five, live-verified in Chromium:
+#1 price on the trigger — a silent dry-run keeps the 构建 button honest
+("构建 ≈5 CNY"), refreshed on control change and every project fingerprint
+move, never in readonly; #3 state filter chips over the shot grid (hidden
+when only one state exists; a vanished filtered state resets itself);
+#4 one-key verdicts — 👍好/👎弃 are just take_notes values (one reviewable
+YAML line; clicking the active verdict clears it), plus the 📝 free-text
+note editor with the Frame.io timecode convention (an "mm:ss …" note is
+click-to-seek on the take's player); #5 the newest failed job auto-expands
+its error (GHA pattern). Discovered en route: the "lost" front-end v3 had
+in fact landed watch/spend-confirm/readonly/reorder/truth-editor chips
+before the API limit killed its reporter — browser-smoked and kept.
+
+**Open (#2):** the why-stale FIELD diff needs a spec snapshot in future
+take sidecars (today only the hash is stored — there is nothing to diff
+against); scoped for the next engine round.
+
+---
+
+## 2026-07-06 — round R11: why-stale names the fields (UX-STUDY #2 closed)
+
+**Done:** every generated take's sidecar now carries `spec_snapshot` — the
+canonical spec_payload at generation time (one enrichment point:
+Provider._register; manual imports stay snapshot-free, they are never
+stale). Staleness evaluation diffs the snapshot against the current payload
+and the note becomes "spec changed: camera.shot_size, scene_bible.lighting"
+instead of the bare hash shrug — evidence that propagates untouched through
+status, the board, `manju explain`, and every GUI shot card (they all render
+the note). Pre-snapshot takes degrade to the generic note. diff_spec_fields
+is a pure sorted dotted-path diff in core/spec.py.
+
+---
+
+## 2026-07-06 — round R12: version stack + recipe-reuse redo
+
+**Done:** UX-STUDY #6 and #7. The 成片预览 panel now stacks every
+`final_v*` newest-first (append-only lineage made visible): one-click links,
+size, a 当前 (current) chip, and a ⚠ 无内容键 flag on any final missing its
+`.key.json` sidecar (crashed-render honesty at the exact place someone would
+grab the file). Take cards carry their generation seed, and a ⟳ button
+re-runs the SAME provider+seed as an append-only redo — the recipe travels
+with the output (Runway pattern), selection untouched.
+
+---
+
+## 2026-07-06 — round R13: doctor states the operational facts
+
+**Done:** `manju doctor` (and /api/doctor) now reports an active/crashed
+build lock (holder pid/actor/since + the exact file a human may remove —
+informational, never gates ok) and the reclaimable cache total
+(segments/proxy/webpreview → "manju gc"). The place people look when
+"nothing works" now names the two most common reasons.
+
+---
+
+## 2026-07-06 — round R14: top of the 8-product synthesis lands
+
+**Done:** COMPETITIVE-UX-STUDY.md (all 8 products + machine synthesis,
+recovered legs included) committed with UX-STUDY.md cross-linked; then its
+P0/S recommendations: board.html now stamps the generating project
+fingerprint (meta tag + footer; `board_fingerprint()` reads it back — a
+stale board is DETECTABLE, Descript Export→Update pattern); BuildResult
+gains `skipped` (FRESH/MANUAL cache hits, finally populated) and
+`saved_cost` (what regenerating the FRESH shots would have cost — Nx
+replayed-hits pattern, advisory, never fails a build); editor 409s carry
+the reverted-to truth text for the conflict banner (Figma pattern), and
+`/api/schema` serves the truth-file JSON Schemas (§12) as editor-validation
+groundwork. Remaining from the synthesis top-5: unread-first triage and the
+validation/conflict UI wiring (page-side).
+
+---
+
+## 2026-07-06 — round R15: conflict banner, unread triage, savings display
+
+**Done (front-end, Opus-drafted / chief-engineer-integrated):** editor 409s
+now render a 对比真相 diff (buffer vs reverted-to truth, approximate
+line-diff, labeled) with one-click 以真相为底重填 (confirm-gated) — the
+check-gate keeps protecting truth while typed work survives (Figma
+pattern); unread-first triage via a localStorage per-project review
+snapshot — 新 chips on unseen takes, 未阅 N counter, 标记已阅 button
+(local preference, deliberately not readonly-gated); cache savings
+surface in estimates and done-build rows (跳过 N cache hits + 缓存命中省
+≈X when priced). Browser-smoked end to end: 409 → diff → reload-truth
+restored the exact disk bytes; a server-side new take flipped 未阅 1.
+
+---
+
+## 2026-07-06 — round R16: manju spend (§8.3 事后 made visible)
+
+**Done (Opus-drafted module / chief-engineer wiring):** `build/spend.py`
+spend_report — ledger-authoritative totals by provider and by shot with the
+sidecar-derived fallback (§3 disposability honored: any SQLite failure
+degrades, never raises), recent runs newest-first, budget context, honest
+"source" marker. Surfaced as `manju spend [--json]` and GET /api/spend.
+Live-smoked on the demo project (sidecar fallback path). The third §8.3
+guardrail layer (事后逐笔记账) now has a human surface to match the first
+two (dry-run estimates, engine ask_before gate).
+
+---
+
+## 2026-07-06 — round R17: keystroke-time editor validation
+
+**Done (chief-engineer endpoint / Opus UI):** POST /api/validate — pure
+parse + pydantic model check over the same truth models (no write, no full
+check, no lock scan; the gated save stays the authority) — and the editors'
+debounced (600ms) live strip: ✓ 校验通过 / red error lines / 校验中 only
+past 300ms (anti-flicker) / offline latch until the next keystroke;
+sequence-guarded against stale replies. Browser-proven: typing
+`duration: nonsense` turns the strip red with the pydantic finding, fixing
+it returns the ✓. Kills the submit-time-409-only feedback loop the
+synthesis called the GUI's most trust-damaging moment (VS Code
+settings.json pattern; COMPETITIVE-UX-STUDY P0 #1).
+
+---
+
+## 2026-07-06 — round R18: A/B compare, fit-5s review, events depth + pack hygiene
+
+**Done (Opus UI / chief-engineer engine+integration):** 「对比 (Compare)」
+overlay for any shot with ≥2 video takes — side-by-side players with take
+selectors (selected vs newest-other default), sync-play with drift
+correction, 等长回放 fit-5s (playbackRate = duration/5 clamped [0.5,4],
+Resolve Cut-page pattern), and 选用左/右 writing the one-line selection;
+mounted outside #shots so polling can't destroy it (Frame.io comparison
+viewer). Events feed gains 「更多」 (100-row fetch). `manju pack` skips the
+rebuildable segment/proxy caches by default (--full keeps; skipped MB
+reported) — backups stop dwarfing their own truth. Browser-proven with real
+2s/8s clips: rates [0.5, 1.6], selection landed on disk.
+
+---
+
+## 2026-07-06 — R19 note: voice-preview (试听) deferred with evidence
+
+Probed live Edge TTS from this environment for the CapCut-pattern 试听
+button: blocked by the sandbox's TLS-intercepting proxy (aiohttp trusts
+certifi only — SSL_CERT_FILE/REQUESTS_CA_BUNDLE ignored), i.e. an
+environment limitation, not a product one (round K live-verified the same
+wire in a clean env). Deferred rather than shipped unverifiable; the
+endpoint design (short sample into .manju/webpreview, never a take, job-
+borne, graceful "TTS 不可用") is recorded here for the next session.
+
+---
+
+## 2026-07-06 — round R19: static board reaches GUI parity on review notes
+
+**Done (Opus / chief-engineer gated):** the shareable board.html now renders
+per-take 👍好/👎弃 verdict chips and 📝 notes (escaped, 80-char display cap,
+full text in title) and warns when the SELECTED take is 弃-marked — the
+offline artifact carries the same review signal as the live workbench.
+XSS-proofed by test (script tag in a note arrives escaped).
+
+---
+
+## 2026-07-06 — round R20: docs coherence sweep
+
+**Done (Opus, code-verified):** GUI.md route tables now cover all 36 server
+routes (spend/schema/validate/projects/switch added; events filters, job
+progress field, 409 "current" contract, state payload fields documented);
+README CLI table complete against all 28 commands (spend + schema rows,
+pack --full); SKILL.md points agents at `manju spend --json` for 花费
+review. Every claim greps back to the handler code.
+
+---
+
+## 2026-07-06 — round R21: spend delta — estimates persist into the ledger
+
+**Done (Opus under chief-engineer schema spec):** the runs ledger gains a
+nullable `estimated_cost` column (idempotent ALTER upgrade — §3 disposable,
+degrades on failure, never coerces None to 0); builds and redos record the
+planned estimate alongside the actual; `spend_report` (and thus
+`manju spend` + /api/spend) carries per-run estimated_cost plus
+estimated_total and delta when any estimate exists — the calibration
+column for the ask_before gate. Proven end-to-end: a real gated build's
+generated take carries its 2.0 estimate in the ledger row.
+
+---
+
+## 2026-07-06 — round R22: adversarial review response (R10–R21 range)
+
+**Fixed (review-found):** estimate over-count — the ledger writes one row
+per take but stamped EVERY row with the full per-shot plan estimate, so a
+multi-take run inflated estimated_total ×N (reviewer reproduced 2×);
+estimates now attribute to exactly one row per shot (unit-proven).
+Sidecar-fallback currency no longer treats a None as "mixed";
+/api/validate is exempt from the readonly gate (it is pure — readonly
+editors keep live checks); board_fingerprint's docstring now states the
+honest comparison contract (null-runner fingerprint, not the GUI's live
+one, which folds the job revision in).
+
+**Recorded, deferred:** cloud runs don't yet carry estimates into the
+ledger (CloudProvider self-records at poll time without the plan figure) —
+today's delta only covers local runs; spec_snapshot duplicates bible
+excerpts per take (advisory bloat); a future provider overriding spec_hash
+while the snapshot auto-captures could make why-stale fall back to the
+generic note. Reviewer verified safe: filterChips recursion bounded,
+saved_cost/estimated_cost disjoint under regen_stale, ledger migration
+idempotent against a genuinely legacy table, compare overlay lifecycle.
+
+---
+
+## 2026-07-06 — round R23: cloud runs carry their estimates (delta gap closed)
+
+**Done (Opus under chief-engineer spec):** GenerationRequest gains
+estimated_cost (None-honest); both build and redo populate it from the plan;
+CloudProvider._on_success threads it onto the cloud ledger row — the spend
+delta now measures what it claimed to: cloud estimate vs cloud actual, not
+just free local runs (closes the R22 review's SECONDARY finding).
+Scripted-transport-proven end to end.
+
+---
+
+## 2026-07-06 — round R24: live acceptance《边境电台》+ findings closed
+
+**Done:** a second full acceptance film driven purely through the CLI/GUI in
+a clean scratch project: scaffold → bible/3 CJK shots → check → dry-run →
+build (caption_card offline chain, final_v1 1080×1920@24, QC 通过) → every
+session feature asserted live (why-stale field naming, spend ledger with
+persisted estimates delta 0.0, take-note 好 chip + fingerprint stamp on the
+board, pack skipping the planted segment cache, second build reusing the
+final via content key with skipped/saved_cost populated, doctor
+gc_reclaimable, GUI zero-pageerror with the stale note and verdict chip
+visible on the cards). Fresh-clone suite verification: 438/438.
+
+**Findings closed:** `manju status --json` (the 30-second takeover surface)
+now carries `shot_notes` — the why-stale evidence rode only on
+explain/MCP/GUI before (acceptance finding #1); the GUI serves a real
+favicon (finding #4: the one console 404 every load). Recorded as expected
+behavior: build auto-select writes into shot YAML with its warning (#2),
+doctor --json strips the human glyph line by design (#3), offline fallback
+terminates at caption_card without a still to animate (#5).
+
+---
+
+## 2026-07-06 — round R27: the dev-loop wave (watch / follow / scaffold / hook)
+
+**Done (three parallel Opus modules under chief-engineer contracts + CLI
+wiring):** `manju watch [--once]` — fingerprint-driven check loop
+(watchexec/jest-watch pattern; first tick immediate, re-checks only when
+truth moves, torn mid-editor writes never kill it); `manju events --follow`
+— binary-mode live tail of the collaboration log (§10 co-presence from a
+second terminal; torn-write buffering, truncation recovery, CJK-safe byte
+offsets); `manju new --shots N` — commented skeleton shots that pass check
+out of the box (scaffolds are not authorship; comments survive via raw text
+write); `manju new --check-hook` — opt-in pre-commit hook running `manju
+check` (husky pattern: broken truth cannot enter history; never clobbers a
+foreign hook). All four live-smoked end to end in a scratch project.
