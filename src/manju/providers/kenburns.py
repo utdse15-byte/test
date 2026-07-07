@@ -14,15 +14,15 @@ from pathlib import Path
 from ..core.container import TakeInfo
 from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
 
-_IMAGE_EXTS = (".png", ".jpg", ".jpeg")
-
 
 class KenburnsProvider(Provider):
     id = "ffmpeg_kenburns"
     kind = "local"
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
-        image, image_source = self._resolve_image(req)
+        refset = req.refset()
+        image = refset.primary_image
+        image_source = refset.primary_image_source
         if image is None:
             raise ProviderFailure(
                 FailureKind.invalid,
@@ -62,6 +62,13 @@ class KenburnsProvider(Provider):
                             # build graph advises when a shot fell back to a
                             # generic refs_dir image (showcase finding)
                             "image_source": image_source,
+                            # how the reference was delivered (goal item 7) —
+                            # kenburns consumes the frame as a local path
+                            "ref_delivery": {
+                                "image_mode": "path",
+                                "images": [{"ref": image_ref, "tier": image_source,
+                                            "delivered_as": "path"}],
+                            },
                             "zoom_from": 1.0,
                             "zoom_to": zoom_to,
                             "duration_ms": req.duration_ms,
@@ -71,59 +78,6 @@ class KenburnsProvider(Provider):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         return takes
-
-    # -- reference image resolution order (a) -> (b) -> (c) -----------------
-
-    def _resolve_image(self, req: GenerationRequest) -> tuple[Path | None, str]:
-        """Returns (image, source) where source names the resolution tier:
-        'params' | 'bible' | 'refs_dir_fallback' — the last one means a
-        generic project image was used, worth an advisory downstream."""
-        project = req.project
-
-        # (a) explicit param
-        explicit = req.params.get("image")
-        if explicit:
-            cand = _as_path(project, explicit)
-            if cand and cand.exists():
-                return cand, "params"
-
-        # (b) bible ref_image: first character(s), then scene
-        bible = req.bible or {}
-        keys: list[str] = list(req.shot.characters)
-        if req.shot.scene:
-            keys.append(req.shot.scene)
-        for key in keys:
-            entry = bible.get(key)
-            if isinstance(entry, dict) and entry.get("ref_image"):
-                cand = _as_path(project, entry["ref_image"])
-                if cand and cand.exists():
-                    return cand, "bible"
-
-        # (c) first image under media/refs, sorted by name
-        if project.refs_dir.exists():
-            imgs = sorted(
-                (
-                    p
-                    for p in project.refs_dir.glob("*")
-                    if p.is_file() and p.suffix.lower() in _IMAGE_EXTS
-                ),
-                key=lambda p: p.name,
-            )
-            if imgs:
-                return imgs[0], "refs_dir_fallback"
-
-        return None, "none"
-
-
-def _as_path(project, value) -> Path | None:
-    """Resolve a value that may be absolute or project-relative."""
-    p = Path(value)
-    if p.is_absolute():
-        return p
-    try:
-        return project.resolve(value)
-    except Exception:
-        return None
 
 
 def _ref_str(project, path: Path) -> str:

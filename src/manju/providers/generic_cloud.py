@@ -22,8 +22,9 @@ from typing import Callable, NamedTuple
 
 from ..core.models import ShotSpec
 from .base import CloudProvider, FailureKind, GenerationRequest, ProviderFailure
-from .jsonpath import JsonPathError, extract
+from .jsonpath import JsonPathError, assign, extract
 from .manifest import GENERIC_ADAPTER, JOB_STATES, ProviderManifest
+from .refs import RefItem, base64_ref, encode_multipart, unreadable_ref_message
 
 
 class HttpResponse(NamedTuple):
@@ -76,6 +77,26 @@ def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
     }
     values.update(req.params)
     return values
+
+
+def _one_or_list(values: list, max_n: int) -> object:
+    """A single-ref field carries the scalar; a multi-ref field carries a list."""
+    return values[0] if max_n == 1 and len(values) == 1 else values
+
+
+def _body_as_fields(body: dict) -> dict[str, str]:
+    """Flatten a rendered JSON body to multipart text fields — scalars pass
+    through as strings, containers are JSON-encoded so the file part rides
+    alongside every body value (goal item 7, multipart mode)."""
+    fields: dict[str, str] = {}
+    for key, value in body.items():
+        if isinstance(value, (dict, list)):
+            fields[key] = json.dumps(value, ensure_ascii=False)
+        elif isinstance(value, bool):
+            fields[key] = "true" if value else "false"
+        else:
+            fields[key] = str(value)
+    return fields
 
 
 def render_body(template: object, values: dict[str, object]) -> object:
@@ -175,11 +196,20 @@ class GenericCloudProvider(CloudProvider):
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
         self._enforce_limits(req.shot, req.duration_ms)
-        body = json.dumps(
-            render_body(cfg.body_template, _placeholder_map(req)), ensure_ascii=False
-        ).encode("utf-8")
+        rendered = render_body(cfg.body_template, _placeholder_map(req))
+        # Reference inputs (goal item 7): inject per the manifest `refs:` section,
+        # validating every local ref is readable BEFORE this paid POST. Returns
+        # any multipart file parts and records the delivery lineage on req.params
+        # so it lands on the take (auditable per take).
+        files = self._deliver_refs(rendered, req)
+        if files:
+            content_type, body = encode_multipart(_body_as_fields(rendered), files)
+            headers = self._headers({**cfg.extra_headers, "Content-Type": content_type})
+        else:
+            body = json.dumps(rendered, ensure_ascii=False).encode("utf-8")
+            headers = self._headers(cfg.extra_headers)
         self._throttle()
-        resp = self._transport(cfg.method, cfg.url, self._headers(cfg.extra_headers), body)
+        resp = self._transport(cfg.method, cfg.url, headers, body)
         if resp.status == 429:
             raise ProviderFailure(
                 FailureKind.rate_limited, f"{self.id}: remote rate limit (429)",
@@ -278,6 +308,74 @@ class GenericCloudProvider(CloudProvider):
         dest = Path(dest_dir) / f"result{suffix}"
         dest.write_bytes(resp.body)
         return [dest]
+
+    # --------------------------------------------------------- refs delivery
+
+    def _deliver_refs(
+        self, body: dict, req: GenerationRequest
+    ) -> list[tuple[str, str, bytes]]:
+        """Inject reference inputs into the rendered ``body`` per ``manifest.refs``.
+
+        Returns multipart file parts (empty unless ``image_mode: multipart``).
+        Records the delivery lineage on ``req.params['ref_delivery']`` so it is
+        archived on the take. Raises ``invalid`` for a missing/unreadable local
+        ref (naming path + tier) or a local path handed to a URL field (naming
+        the manifest field) — all BEFORE the paid POST (reliability #3)."""
+        rc = self.manifest.refs
+        refset = req.refset()
+        delivery: dict = {"image_mode": rc.image_mode, "video_mode": rc.video_mode,
+                          "images": [], "videos": []}
+        files: list[tuple[str, str, bytes]] = []
+
+        if rc.image_mode != "none" and rc.max_images > 0:
+            items = refset.image_items()[: rc.max_images]
+            if items:
+                self._guard_readable(items)  # local refs must exist (pre-submit)
+                if rc.image_mode == "base64_field":
+                    values = [base64_ref(it, data_uri=rc.data_uri, mime=rc.mime)
+                              for it in items]
+                    assign(body, rc.field, _one_or_list(values, rc.max_images))
+                elif rc.image_mode == "url_field":
+                    urls = [self._require_url(it, rc.field) for it in items]
+                    assign(body, rc.field, _one_or_list(urls, rc.max_images))
+                elif rc.image_mode == "multipart":
+                    for i, it in enumerate(items):
+                        assert it.path is not None
+                        fld = rc.multipart_field if len(items) == 1 \
+                            else f"{rc.multipart_field}{i}"
+                        files.append((fld, it.path.name, it.path.read_bytes()))
+                delivery["images"] = [
+                    {"ref": it.ref, "tier": it.tier, "delivered_as": rc.image_mode}
+                    for it in items
+                ]
+
+        if rc.video_mode == "url_field" and rc.max_videos > 0:
+            vitems = refset.video_items()[: rc.max_videos]
+            if vitems:
+                urls = [self._require_url(it, rc.video_field) for it in vitems]
+                assign(body, rc.video_field, _one_or_list(urls, rc.max_videos))
+                delivery["videos"] = [
+                    {"ref": it.ref, "tier": it.tier, "delivered_as": "url_field"}
+                    for it in vitems
+                ]
+
+        req.params["ref_delivery"] = delivery
+        return files
+
+    def _guard_readable(self, items: list[RefItem]) -> None:
+        msg = unreadable_ref_message(items)
+        if msg is not None:
+            raise ProviderFailure(FailureKind.invalid, f"{self.id}: {msg}")
+
+    def _require_url(self, item: RefItem, field: str | None) -> str:
+        if not item.is_url:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"{self.id}: refs field {field!r} is a URL field but reference "
+                f"{item.ref!r} (tier: {item.tier}) is a local path — host it and "
+                f"reference the URL, or use refs.image_mode base64_field/multipart",
+            )
+        return item.ref
 
     # ------------------------------------------------------------- helpers
 

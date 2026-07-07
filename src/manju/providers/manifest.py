@@ -124,6 +124,36 @@ class ComfyConfig(ManjuModel):
     output_prefer: list[str] = Field(default_factory=lambda: ["videos", "gifs", "images"])
 
 
+IMAGE_MODES = ("none", "base64_field", "url_field", "multipart")
+VIDEO_MODES = ("none", "url_field")
+
+
+class RefsConfig(ManjuModel):
+    """How a generic_cloud provider receives reference INPUTS (goal item 7).
+
+    Reference images reach cloud video/image APIs in one of three real shapes:
+    a base64 data-URI field (Runway ``promptImage``), a public URL field (Kling
+    ``image_url`` accepts either), or a multipart file part. Video refs are
+    almost always URL-only.
+
+    ``field`` / ``video_field`` are mini-JSONPaths INTO the rendered body where
+    the ref value is written (e.g. ``$.image_url``). ``data_uri`` controls the
+    base64 shape: ``true`` embeds ``data:<mime>;base64,…`` (Runway); ``false``
+    sends the raw base64 string (Kling forbids the prefix). ``multipart_field``
+    is the file-part name when ``image_mode: multipart``.
+    """
+
+    image_mode: str = "none"           # none | base64_field | url_field | multipart
+    field: str | None = None           # ★ jsonpath into body_template for image refs
+    max_images: int = 1
+    data_uri: bool = True              # base64_field: data-URI (Runway) vs raw (Kling)
+    mime: str | None = None            # override MIME for data_uri (else guessed)
+    multipart_field: str = "image"     # multipart: file-part form field name
+    video_mode: str = "none"           # none | url_field
+    video_field: str | None = None     # ★ jsonpath into body_template for video refs
+    max_videos: int = 1
+
+
 class LocalCmdConfig(ManjuModel):
     """Local-command adapter config: drive any local generator CLI (§8.6).
 
@@ -163,6 +193,7 @@ class ProviderManifest(ManjuModel):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     comfyui: ComfyConfig = Field(default_factory=ComfyConfig)
     local_cmd: LocalCmdConfig = Field(default_factory=LocalCmdConfig)
+    refs: RefsConfig = Field(default_factory=RefsConfig)
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —
@@ -195,6 +226,7 @@ class ProviderManifest(ManjuModel):
                 bad = [v for v in self.poll.status_map.values() if v not in JOB_STATES]
                 if bad:
                     problems.append(f"status_map values must be one of {JOB_STATES}, got {bad}")
+            problems.extend(self._refs_problems())
         if self.adapter == COMFYUI_ADAPTER:
             # doctor probe (§8.6): a bad ComfyUI fill fails HERE, not at first run.
             if not self.comfyui.workflow_file:
@@ -231,6 +263,24 @@ class ProviderManifest(ManjuModel):
         if self.auth.key_env and not os.environ.get(self.auth.key_env):
             problems.append(f"auth.key_env {self.auth.key_env} is not set in the environment")
         return problems
+
+    def _refs_problems(self) -> list[str]:
+        """Reference-delivery config sanity (goal item 7). A bad `refs:` fill
+        fails at `manju doctor`, not at the first paid submit. Default
+        (image_mode/video_mode = none) is always clean, so existing manifests
+        are unaffected."""
+        r = self.refs
+        out: list[str] = []
+        if r.image_mode not in IMAGE_MODES:
+            out.append(f"refs.image_mode must be one of {IMAGE_MODES}, got {r.image_mode!r}")
+        if r.video_mode not in VIDEO_MODES:
+            out.append(f"refs.video_mode must be one of {VIDEO_MODES}, got {r.video_mode!r}")
+        if r.image_mode in ("base64_field", "url_field") and not r.field:
+            out.append(f"refs.field (jsonpath into body_template) is required "
+                       f"when refs.image_mode is {r.image_mode}")
+        if r.video_mode == "url_field" and not r.video_field:
+            out.append("refs.video_field is required when refs.video_mode is url_field")
+        return out
 
 
 def providers_dir() -> Path:

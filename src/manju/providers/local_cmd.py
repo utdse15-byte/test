@@ -26,8 +26,18 @@ Manifest (``local_cmd`` section)::
 
 The command runs with ``cwd`` = project root and the parent environment plus
 ``MANJU_*`` vars (MANJU_SHOT_ID / MANJU_PROMPT / MANJU_WIDTH / MANJU_HEIGHT /
-MANJU_FPS / MANJU_DURATION_S / MANJU_SEED / MANJU_IMAGE / MANJU_REFS_DIR /
-MANJU_OUT / MANJU_PROJECT_ROOT), so a tool can read either argv or the env.
+MANJU_FPS / MANJU_DURATION_S / MANJU_SEED / MANJU_IMAGE / MANJU_VIDEO_REF /
+MANJU_REFS_DIR / MANJU_OUT / MANJU_PROJECT_ROOT), so a tool can read either argv
+or the env.
+
+Reference placeholders (goal item 7), resolved through the shared
+:func:`manju.providers.refs.resolve_refs` so tiering + lineage match every other
+provider. Precedence within each kind is most-specific-first:
+
+    {image}      the primary reference IMAGE (shot.params > shot refs > bible >
+                 media/refs), as an absolute path, or "" when none resolves
+    {video_ref}  the primary reference VIDEO, same tier order, or ""
+    {refs_dir}   the media/refs directory itself, for tools that scan it
 """
 
 from __future__ import annotations
@@ -40,7 +50,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from ..core.container import Project, TakeInfo
+from ..core.container import TakeInfo
 from ..core.models import RemoteJobInfo
 from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
 from .manifest import ProviderManifest
@@ -139,6 +149,7 @@ class LocalCommandProvider(Provider):
                     "exit_code": proc.returncode,
                     "duration_s": elapsed,  # local: cost 0, but duration is recorded
                     "command": self.manifest.local_cmd.command,
+                    "ref_delivery": self._ref_delivery(req),
                 },
                 compiled_prompt=compiled,
                 remote=RemoteJobInfo(
@@ -153,6 +164,8 @@ class LocalCommandProvider(Provider):
         from .prompt import compile_prompt
 
         config = req.project.load_config()
+        refset = req.refset()
+        primary_video = refset.primary_video
         return {
             "prompt": compile_prompt(req.shot, req.bible),
             "width": config.width,
@@ -160,8 +173,30 @@ class LocalCommandProvider(Provider):
             "fps": config.fps,
             "duration_s": req.duration_ms / 1000.0,
             "seed": req.params.get("seed", 0),
-            "image": _resolve_ref_image(req),
+            "image": refset.primary_image_path_str(),
+            "video_ref": str(primary_video) if primary_video is not None else "",
             "refs_dir": str(req.project.refs_dir),
+        }
+
+    def _ref_delivery(self, req: GenerationRequest) -> dict:
+        """What refs the command line actually consumed (goal item 7), keyed off
+        the placeholders present in the command — so the build layer can flag a
+        shot whose declared ref never reaches the tool."""
+        refset = req.refset()
+        command = self.manifest.local_cmd.command or ""
+        images: list[dict] = []
+        videos: list[dict] = []
+        if "{image}" in command and refset.image_items():
+            images.append({"ref": refset.primary_image_path_str(),
+                           "tier": refset.primary_image_source, "delivered_as": "path"})
+        if "{video_ref}" in command and refset.primary_video is not None:
+            v = refset.video_items()[0]
+            videos.append({"ref": v.ref, "tier": v.tier, "delivered_as": "path"})
+        return {
+            "image_mode": "path" if images else "none",
+            "video_mode": "path" if videos else "none",
+            "images": images,
+            "videos": videos,
         }
 
     def _build_argv(self, values: dict) -> list[str]:
@@ -192,6 +227,7 @@ class LocalCommandProvider(Provider):
                 "MANJU_DURATION_S": str(values.get("duration_s", "")),
                 "MANJU_SEED": str(values.get("seed", "")),
                 "MANJU_IMAGE": str(values.get("image", "")),
+                "MANJU_VIDEO_REF": str(values.get("video_ref", "")),
                 "MANJU_REFS_DIR": str(values.get("refs_dir", "")),
                 "MANJU_OUT": str(values.get("out", "")),
             }
@@ -204,32 +240,3 @@ def _tail(text: str, limit: int = 300) -> str:
     if not text:
         return ""
     return " ".join(text.split())[-limit:]
-
-
-def _resolve_ref_image(req: GenerationRequest) -> str:
-    """Resolve {image}: explicit param, then a bible ref_image (characters then
-    scene). Returns an absolute path string, or "" when none is available."""
-    project: Project = req.project
-    explicit = req.params.get("image")
-    if explicit:
-        p = _as_path(project, explicit)
-        return str(p) if p and p.exists() else str(explicit)
-    bible = req.bible or {}
-    keys = list(req.shot.characters) + ([req.shot.scene] if req.shot.scene else [])
-    for key in keys:
-        entry = bible.get(key)
-        if isinstance(entry, dict) and entry.get("ref_image"):
-            p = _as_path(project, entry["ref_image"])
-            if p and p.exists():
-                return str(p)
-    return ""
-
-
-def _as_path(project: Project, value) -> Path | None:
-    p = Path(value)
-    if p.is_absolute():
-        return p
-    try:
-        return project.resolve(value)
-    except Exception:
-        return None

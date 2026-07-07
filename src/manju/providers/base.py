@@ -29,10 +29,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from ..core.container import Project, TakeInfo
 from ..core.models import ProbeInfo, RemoteJobInfo, ShotSpec, TakeSidecar
+
+if TYPE_CHECKING:
+    from .refs import RefSet
 
 
 class FailureKind(str, Enum):
@@ -86,6 +89,25 @@ class GenerationRequest:
     candidates: int = 1
     params: dict = field(default_factory=dict)
     estimated_cost: float | None = None
+    # Reference inputs (goal item 7) — resolved once at the build call site so
+    # the tiering, lineage and reliability signals are shared across providers.
+    # Additive and default-absent: a request built the old way (or a test) lazily
+    # resolves via :meth:`refset` on first use, so every provider still sees refs.
+    refs: "RefSet | None" = None
+
+    def refset(self) -> "RefSet":
+        """The resolved :class:`~manju.providers.refs.RefSet` for this shot.
+
+        Returns the RefSet populated at the call site, or lazily resolves (and
+        caches) one from the request's own ``project``/``shot``/``bible``/``params``
+        so directly-constructed requests are never ref-blind."""
+        if self.refs is None:
+            from .refs import resolve_refs
+
+            self.refs = resolve_refs(
+                self.project, self.shot, self.bible, params=self.params
+            )
+        return self.refs
 
 
 def probe_media(path: Path) -> ProbeInfo | None:

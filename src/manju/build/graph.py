@@ -361,12 +361,14 @@ def _run_build_phases(
     estimates = {p["shot"]: p["estimated_cost"] for p in video_plan}
     if video_plan:
         from ..providers.base import GenerationRequest, NeedsHumanInput, ProviderFailure
+        from ..providers.refs import ref_reliability_notes, resolve_refs
         from ..providers.registry import fallback_chain, generate_with_fallback
 
         bible = project.load_bible()
         for item in video_plan:
             shot = project.load_shot(item["shot"])
             st = next(s for s in statuses if s.shot_id == shot.id)
+            params = dict(shot.generation.params)
             req = GenerationRequest(
                 project=project,
                 shot=shot,
@@ -374,12 +376,15 @@ def _run_build_phases(
                 spec_hash=st.spec_hash,
                 duration_ms=item["duration_ms"],
                 candidates=item["candidates"],
-                params=dict(shot.generation.params),
+                params=params,
                 # §8.3 事前: thread the plan's per-shot estimate onto the request
                 # so a CLOUD provider records it on its own ledger row (local
                 # runs get it via _record_local_runs below). Same figure the
                 # `estimates` map holds — one source, both provider kinds.
                 estimated_cost=item["estimated_cost"],
+                # Reference inputs (goal item 7): resolve ONCE here so tiering +
+                # lineage are shared by whichever provider the fallback picks.
+                refs=resolve_refs(project, shot, bible, params=params),
             )
             try:
                 takes = generate_with_fallback(req, fallback_chain(shot))
@@ -387,6 +392,10 @@ def _run_build_phases(
                 result.warnings.append(f"{shot.id}: generation failed — {exc}")
                 continue
             result.generated.extend(f"{shot.id}/{t.name}" for t in takes)
+            # reliability (goal item 7): a declared ref dropped by the chosen
+            # provider (image_mode: none) or delivered as zero (tier mismatch)
+            # surfaces here so silent ref-dropping is impossible.
+            result.warnings.extend(ref_reliability_notes(shot.id, req.refset(), takes))
             # showcase finding: with ANY image under media/refs, the §8.4
             # chain sends every missing shot to kenburns with that same
             # generic image — correct per spec, surprising in practice.
@@ -663,6 +672,7 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
     selection, never overturning an existing one (§4.3)."""
     from ..core.spec import compute_spec_hash
     from ..providers.base import GenerationRequest
+    from ..providers.refs import resolve_refs
     from ..providers.registry import fallback_chain, generate_with_fallback
 
     shot = plan.shot
@@ -677,6 +687,9 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
         # reuse the estimate computed for the gate (don't recompute) so a CLOUD
         # redo records it on its ledger row too.
         estimated_cost=plan.cost,
+        # refs use the request params (which on a redo carry the reused take's
+        # image), matching the resolver's params-tier read (goal item 7).
+        refs=resolve_refs(project, shot, bible, params=plan.params),
     )
     takes = generate_with_fallback(req, fallback_chain(shot))
     if not shot.status.selected_take and takes:

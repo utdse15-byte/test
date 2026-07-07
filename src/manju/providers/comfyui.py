@@ -36,13 +36,23 @@ Manifest (``comfyui`` section)::
         "3.seed": "{seed}"
         "50.width": "{width}"
         "50.height": "{height}"
-        "52.image": "{image}"
+        "52.image": "{image_upload}"             # uploads the ref, subs the name
+        # "52.image": "{image}"                  # OR: raw path for path-based nodes
       poll_interval_s: 1.0
       # output_node: "9"                         # optional: pin the output node
       output_prefer: [videos, gifs, images]      # first video wins, else gif, else image
 
+Reference images (goal item 7): a workflow that loads a still via a LoadImage
+node needs the file to live in ComfyUI's ``input/`` directory. ``{image_upload}``
+does the real ``POST /upload/image`` (multipart) and substitutes the returned
+name where the input_map targets that LoadImage input, so a local project ref
+reaches the node reliably; ``{image}`` stays a raw path for nodes that read a
+path directly. The resolved ref is shared with every other provider via
+:func:`manju.providers.refs.resolve_refs`.
+
 Costs are 0 (local); the take's lineage still records the workflow file hash,
-the mapped node inputs, the prompt_id and the wall-clock duration (§4.2).
+the mapped node inputs, the prompt_id, the wall-clock duration and (when used)
+the uploaded reference name/subfolder (§4.2).
 """
 
 from __future__ import annotations
@@ -56,14 +66,15 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlencode
 
-from ..core.container import Project, TakeInfo
+from ..core.container import TakeInfo
 from ..core.hashing import hash_text
 from ..core.models import RemoteJobInfo
 from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
 from .generic_cloud import Transport, default_transport, render_body
 from .manifest import COMFYUI_ADAPTER, ProviderManifest
+from .refs import encode_multipart, unreadable_ref_message
 
-_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+_UPLOAD_PLACEHOLDER = "{image_upload}"
 
 
 class ComfyUIProvider(Provider):
@@ -103,6 +114,7 @@ class ComfyUIProvider(Provider):
         workflow_text, wf_rel = self._load_workflow(req)
         workflow = self._parse_workflow(workflow_text, wf_rel)
         values = self._values(req)
+        ref_delivery = self._deliver_refs(req, values)  # may POST /upload/image
         mapped = self._apply_input_map(workflow, values)
 
         t0 = self._clock()
@@ -133,6 +145,7 @@ class ComfyUIProvider(Provider):
                     "output": chosen,
                     "base_url": self._base,
                     "duration_s": elapsed,  # local: cost 0, but duration is recorded
+                    "ref_delivery": ref_delivery,
                 },
                 compiled_prompt=str(values.get("prompt") or "") or None,
                 remote=RemoteJobInfo(
@@ -190,10 +203,80 @@ class ComfyUIProvider(Provider):
             "shot_id": req.shot.id,
         }
         values.update(req.params)  # shot generation.params verbatim (§8.6)
-        # prompt + resolved image are authoritative — set after the params merge
+        # prompt + resolved image are authoritative — set after the params merge.
+        # {image} is the raw path (path-based nodes); {image_upload} is filled by
+        # _deliver_refs only when the workflow actually uploads (goal item 7).
         values["prompt"] = compile_prompt(req.shot, req.bible)
-        values["image"] = _resolve_ref_image(req)
+        values["image"] = req.refset().primary_image_path_str()
         return values
+
+    def _uses_upload(self) -> bool:
+        return any(_UPLOAD_PLACEHOLDER in tpl for tpl in self._cfg.input_map.values())
+
+    def _deliver_refs(self, req: GenerationRequest, values: dict) -> dict:
+        """Reference delivery (goal item 7). When the input_map uses
+        ``{image_upload}``, upload the primary local ref via ``POST /upload/image``
+        and set ``values['image_upload']`` to the LoadImage name. Records the
+        delivery lineage for the take; validates the ref is readable BEFORE the
+        upload."""
+        refset = req.refset()
+        if not self._uses_upload():
+            # {image} path mode (or no image at all): record what path (if any)
+            # was handed to the graph so silent ref-dropping stays visible.
+            primary = refset.primary_image
+            imgs = ([{"ref": refset.primary_image_path_str(),
+                      "tier": refset.primary_image_source, "delivered_as": "path"}]
+                    if refset.image_items() else [])
+            return {"image_mode": "path" if primary is not None else "none",
+                    "images": imgs, "videos": []}
+
+        primary = refset.primary_image
+        if primary is None:
+            msg = unreadable_ref_message(refset.image_items())
+            detail = f" ({msg})" if msg else ""
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"{self.id}: input_map uses {_UPLOAD_PLACEHOLDER} but shot "
+                f"{req.shot.id} has no usable local reference image{detail}",
+            )
+        name, subfolder = self._upload_image(primary)
+        values["image_upload"] = f"{subfolder}/{name}" if subfolder else name
+        return {
+            "image_mode": "upload",
+            "images": [{"ref": refset.primary_image_path_str(),
+                        "tier": refset.primary_image_source,
+                        "delivered_as": "upload",
+                        "uploaded": {"name": name, "subfolder": subfolder}}],
+            "videos": [],
+        }
+
+    def _upload_image(self, path: Path) -> tuple[str, str]:
+        """Real ComfyUI ``POST /upload/image`` (multipart). Returns
+        ``(name, subfolder)`` from the response — the file now lives in ComfyUI's
+        ``input/`` dir and can be referenced by a LoadImage node."""
+        content_type, body = encode_multipart(
+            {"type": "input", "overwrite": "true"},
+            [("image", path.name, path.read_bytes())],
+        )
+        resp = self._http("POST", f"{self._base}/upload/image", body,
+                          headers={"Content-Type": content_type})
+        if resp.status >= 400:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: /upload/image failed (HTTP {resp.status}): "
+                f"{resp.text()[:400]}",
+                detail={"path": str(path)},
+            )
+        try:
+            data = resp.json()
+            name = data["name"]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: /upload/image returned no name ({exc})",
+                detail={"body": resp.text()[:400]},
+            ) from exc
+        return str(name), str(data.get("subfolder", "") or "")
 
     def _apply_input_map(self, workflow: dict, values: dict) -> dict[str, object]:
         """Write templated values into ``workflow[node_id]['inputs'][name]``.
@@ -222,8 +305,10 @@ class ComfyUIProvider(Provider):
 
     # ---------------------------------------------------- submit/poll/view
 
-    def _http(self, method: str, url: str, body: bytes | None = None):
-        headers = {"Content-Type": "application/json"} if body is not None else {}
+    def _http(self, method: str, url: str, body: bytes | None = None,
+              headers: dict[str, str] | None = None):
+        if headers is None:
+            headers = {"Content-Type": "application/json"} if body is not None else {}
         try:
             return self._transport(method, url, headers, body)
         except ProviderFailure as exc:
@@ -369,32 +454,3 @@ def _node_sort_key(node_id: str):
     """Numeric node ids sort numerically ("9" before "10"), others lexically."""
     s = str(node_id)
     return (0, int(s)) if s.isdigit() else (1, s)
-
-
-def _resolve_ref_image(req: GenerationRequest) -> str:
-    """Resolve a reference image for {image}: explicit param, then a bible
-    ref_image (characters then scene). Returns an absolute path string, or ""."""
-    project: Project = req.project
-    explicit = req.params.get("image")
-    if explicit:
-        p = _as_path(project, explicit)
-        return str(p) if p and p.exists() else str(explicit)
-    bible = req.bible or {}
-    keys = list(req.shot.characters) + ([req.shot.scene] if req.shot.scene else [])
-    for key in keys:
-        entry = bible.get(key)
-        if isinstance(entry, dict) and entry.get("ref_image"):
-            p = _as_path(project, entry["ref_image"])
-            if p and p.exists():
-                return str(p)
-    return ""
-
-
-def _as_path(project: Project, value) -> Path | None:
-    p = Path(value)
-    if p.is_absolute():
-        return p
-    try:
-        return project.resolve(value)
-    except Exception:
-        return None
