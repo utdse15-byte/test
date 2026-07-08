@@ -266,7 +266,8 @@ def render(path: str, project: Any, token: str, query: dict[str, list[str]]) -> 
     if path == "/compare":
         return render_compare(project, token, one("a"), one("b"))
     if path == "/library":
-        return render_library(project, token, one("tag"), one("kind"), one("shot"))
+        return render_library(project, token, one("tag"), one("kind"), one("shot"),
+                              one("orphans"))
     if path == "/providers":
         return render_providers(project, token)
     if path == "/routing":
@@ -950,7 +951,7 @@ def _library_shot_suggestions_html(project: Any, shot_id: str) -> str:
 
 
 def render_library(project: Any, token: str, tag: str | None, kind: str | None,
-                   shot: str | None = None) -> str:
+                   shot: str | None = None, refs_orphans: str | None = None) -> str:
     from ..core.library import Library, LibraryError, _hex
 
     head = ('<div class="page-h"><h1>素材库 Library</h1>'
@@ -1000,8 +1001,161 @@ def render_library(project: Any, token: str, tag: str | None, kind: str | None,
         grid = '<div class="lib-grid">' + "".join(cards) + "</div>"
 
     body = (head + f'<p class="muted">{_e(str(lib.root))}</p>' + suggest_html
-            + filters + upload + grid)
+            + filters + upload + grid
+            + _refs_section_html(project, orphans_only=bool(refs_orphans)))
     return _shell("素材库", token, "/library", body, project)
+
+
+# ================================================ media/refs ownership (§3)
+# Round AA goal item 3 (GUI half): core/refs.py's refs_report/assign_ref, one
+# read-only section appended to the SAME /library page (not a new route, not
+# a rebuild of the personal-library grid above — the task's own "do not
+# rebuild the library page" constraint). Every row here is, by definition,
+# REFERENCE material (media/refs) — never a project's generated/imported
+# PRODUCTION media (renders/, media/imports/), which this page's personal
+# library grid above already mixes with no source metadata of its own to
+# label; the distinction is made visible here instead (§ the section header).
+
+
+def _refs_file_options_html(rows: list[dict[str, Any]]) -> str:
+    opts = ['<option value="">选择参考文件… (choose a file)</option>']
+    for r in rows:
+        label = r["file"] + ("(孤儿)" if r["orphan"] else "")
+        opts.append(f'<option value="{_e(r["file"])}">{_e(label)}</option>')
+    return "".join(opts)
+
+
+def _refs_owner_options_html(project: Any) -> str:
+    """Known-id picker options for 关联 (assign): every shot id, grouped
+    separately from every bible character/scene/prop id — a plain
+    ``<select>``/``<optgroup>``, no fancy autocomplete (goal item 3's own
+    scope note). Each option value is ``"<kind>:<id>"``; the page JS splits
+    on the first ``:`` and POSTs the right ``shot=``/``character=``/
+    ``scene=``/``prop=`` field to ``/api/refs/assign``."""
+    from ..core.refs import bible_owner_map
+
+    shot_opts = "".join(
+        f'<option value="shot:{_e(s)}">{_e(s)}</option>' for s in sorted(project.shot_ids())
+    )
+    groups = []
+    if shot_opts:
+        groups.append(f'<optgroup label="镜头 (shots)">{shot_opts}</optgroup>')
+
+    owner_map = bible_owner_map(project)
+    by_kind: dict[str, list[str]] = {"characters": [], "scenes": [], "props": []}
+    for asset_id, bible_file in owner_map.items():
+        if bible_file in by_kind:
+            by_kind[bible_file].append(asset_id)
+    kind_label = {"characters": "角色 (characters)", "scenes": "场景 (scenes)",
+                  "props": "道具 (props)"}
+    kind_param = {"characters": "character", "scenes": "scene", "props": "prop"}
+    for bible_file in ("characters", "scenes", "props"):
+        ids = sorted(by_kind[bible_file])
+        if not ids:
+            continue
+        opts = "".join(
+            f'<option value="{kind_param[bible_file]}:{_e(aid)}">{_e(aid)}</option>'
+            for aid in ids
+        )
+        groups.append(f'<optgroup label="{kind_label[bible_file]}">{opts}</optgroup>')
+    return "".join(groups)
+
+
+def _refs_section_html(project: Any, orphans_only: bool) -> str:
+    from ..core.refs import refs_report
+
+    try:
+        report = refs_report(project)
+    except Exception as exc:
+        return (
+            '<div class="refs-section">'
+            '<div class="page-h"><h2>参考素材归属 (media/refs ownership)</h2></div>'
+            f'<p class="err panel">{_e(exc)}</p></div>'
+        )
+
+    rows = report["files"]
+    if orphans_only:
+        rows = [r for r in rows if r["orphan"]]
+
+    filters = (
+        '<div class="lib-filters panel"><div class="lib-frow">'
+        f'<a class="filter-chip{"" if orphans_only else " active"}" href="/library">全部</a>'
+        f'<a class="filter-chip{" active" if orphans_only else ""}" href="/library?orphans=1">'
+        f'只看孤儿 (orphans only) · {report["orphan_count"]}</a>'
+        '</div></div>'
+    )
+
+    if not rows:
+        table_html = ('<p class="muted">没有孤儿参考文件 (no orphan refs)。</p>' if orphans_only
+                      else '<p class="muted">media/refs 目录为空 (no ref files)。</p>')
+    else:
+        trs = []
+        for r in rows:
+            rel = r["file"]
+            thumb = ""
+            if r["kind"] in ("image", "video"):
+                thumb = (f'<img class="refs-thumb" src="/thumb/{quote(rel, safe="/")}" '
+                         'alt="" loading="lazy">')
+            owners = "、".join(r["owners"]) if r["owners"] else "—"
+            trs.append(
+                "<tr>"
+                f'<td>{thumb}</td>'
+                f'<td class="refs-file" title="{_e(rel)}">{_e(rel)}</td>'
+                f'<td>{_e(r["kind"])}</td>'
+                f'<td>{_e(r["role"])}</td>'
+                f'<td>{_e(owners)}</td>'
+                f'<td>{"是" if r["bible_pinned"] else "否"}</td>'
+                f'<td>{"孤儿" if r["orphan"] else "—"}</td>'
+                "</tr>"
+            )
+        table_html = (
+            '<div class="tablewrap"><table class="cmp-table"><thead><tr>'
+            "<th>预览</th><th>文件</th><th>类型</th><th>角色</th><th>归属</th>"
+            "<th>bible 已固定</th><th>孤儿</th>"
+            "</tr></thead><tbody>" + "".join(trs) + "</tbody></table></div>"
+        )
+
+    missing = report["missing"]
+    if missing:
+        items = "".join(
+            f'<li>{_e(m["bible_file"])}:{_e(m["asset_id"])} · {_e(m["field"])} → '
+            f'{_e(m["value"])} (文件不存在, missing)</li>'
+            for m in missing
+        )
+        missing_html = (
+            '<div class="refs-missing"><h3>缺失指向 (missing pointers)</h3>'
+            f'<ul>{items}</ul></div>'
+        )
+    else:
+        missing_html = '<p class="muted">没有失效的 bible 指向 (no missing bible pointers)。</p>'
+
+    owner_options = _refs_owner_options_html(project)
+    assign_form = (
+        '<div class="refs-assign panel">'
+        '<h3>关联 (assign)</h3>'
+        '<p class="muted">把一个 media/refs 文件关联到镜头或 bible 资产'
+        '(重命名为 {id}_ref 约定,并按需回写 bible ref_image;已有的 bible 指向'
+        '会自动跟着改名)。</p>'
+        '<div class="refs-assign-row">'
+        f'<select id="refs-assign-file">{_refs_file_options_html(report["files"])}</select>'
+        f'<select id="refs-assign-target">{owner_options}</select>'
+        '<button type="button" class="btn mini" id="refs-assign-btn">关联</button>'
+        '</div><div id="refs-assign-out" class="muted"></div>'
+        '</div>'
+    ) if report["files"] else ""
+
+    return (
+        '<div class="refs-section">'
+        '<div class="page-h"><h2>参考素材归属 (media/refs ownership) '
+        '<span class="muted">参考素材 (reference) — 与生成/导入的成品素材 '
+        '(production media, renders/imports) 分开管理</span></h2></div>'
+        f'<p class="muted">{_e(report["note"])}</p>'
+        f"{filters}"
+        f'<div class="panel">{table_html}</div>'
+        f'<div class="panel">{missing_html}</div>'
+        + assign_form +
+        "</div>"
+    )
 
 
 # ============================================================ 服务商 providers
@@ -1393,6 +1547,17 @@ body.rv-queue-on .rv-shot:not(.rv-qcurrent) { display: none; }
 .lib-suggest { margin: .8rem 0; }
 .lib-suggest h2 { font-size: 1rem; display: flex; align-items: center; gap: .6rem; }
 .lib-matched { font-size: .74rem; color: var(--accent); }
+
+/* -------------------------------------------- refs ownership (round AA #3) */
+.refs-section { margin-top: 1.4rem; }
+.refs-section .page-h h2 { font-size: 1.05rem; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+.refs-thumb { width: 46px; height: 46px; object-fit: cover; border-radius: 4px; background: var(--panel2); border: 1px solid var(--line); }
+.refs-file { font-family: var(--mono); font-size: .8rem; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.refs-missing ul { margin: .3rem 0 0; padding-left: 1.2rem; font-size: .82rem; }
+.refs-missing li { margin: .15rem 0; }
+.refs-assign-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.refs-assign select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .45rem; font: inherit; max-width: 100%; }
+.refs-assign #refs-assign-out { min-height: 1.1rem; font-size: .82rem; }
 
 /* -------------------------------------------------------- providers -- */
 .pv-card { margin: .8rem 0; }
@@ -1787,6 +1952,35 @@ _PAGES_JS = r"""
       }).then(function (res) {
         if (res.status === 200) { toast("已入库 (added)", true); reloadSoon(); }
         else toast((res.data && res.data.error) || "失败", false);
+      });
+    });
+
+    // -------- media/refs ownership 关联 (assign) — round AA goal item 3 --
+    var assignBtn = document.getElementById("refs-assign-btn");
+    if (assignBtn) assignBtn.addEventListener("click", function () {
+      var fileSel = document.getElementById("refs-assign-file");
+      var targetSel = document.getElementById("refs-assign-target");
+      var out = document.getElementById("refs-assign-out");
+      var relpath = fileSel ? fileSel.value : "";
+      var target = targetSel ? targetSel.value : "";
+      if (!relpath || !target) {
+        if (out) out.textContent = "请先选择文件和归属目标 (pick a file and a target)";
+        return;
+      }
+      var sep = target.indexOf(":");
+      var kind = target.slice(0, sep);
+      var id = target.slice(sep + 1);
+      var body = { relpath: relpath };
+      body[kind] = id;
+      post("/api/refs/assign", body).then(function (res) {
+        if (res.status === 200 && res.data.ok) {
+          toast("已关联 (assigned) → " + res.data.new, true);
+          reloadSoon();
+        } else {
+          var msg = (res.data && res.data.error) || "关联失败 (assign failed)";
+          if (out) out.textContent = msg;
+          toast(msg, false);
+        }
       });
     });
   }

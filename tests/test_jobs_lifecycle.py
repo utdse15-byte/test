@@ -199,8 +199,13 @@ def test_interrupted_detection_no_duplicate_on_second_construction(tmp_path):
     assert rec["kind"] == "build"
     assert rec["state"] == "interrupted"
     assert rec["cancelable"] is False
-    assert rec["retryable"] is True
+    # round AA item 6: an interrupted job's params_summary is a LOSSY
+    # compaction (long lists/strings truncated), so a faithful resubmit is
+    # not possible in general — retryable is now False, with a 中文 note
+    # explaining why in place of the retry button.
+    assert rec["retryable"] is False
     assert "上次退出" in rec["error"]
+    assert "无法原样重试" in rec["note"]
 
     lines_after_1 = _read_jsonl(log_path)
     synthetic_1 = [ln for ln in lines_after_1 if ln.get("state") == "interrupted"]
@@ -216,6 +221,10 @@ def test_interrupted_detection_no_duplicate_on_second_construction(tmp_path):
 
     assert len(interrupted2) == 1
     assert interrupted2[0]["id"] == "dangling1"
+    # the re-read-from-disk path (rec already state="interrupted") gets the
+    # same retryable=False + note treatment as the freshly-detected one above.
+    assert interrupted2[0]["retryable"] is False
+    assert "无法原样重试" in interrupted2[0]["note"]
 
     lines_after_2 = _read_jsonl(log_path)
     synthetic_2 = [ln for ln in lines_after_2 if ln.get("state") == "interrupted"]
@@ -406,3 +415,73 @@ def test_jobrunner_batch_fn_cancel_mid_run_partial_progress_recorded():
         assert final.result["canceled"] is True
     finally:
         r.shutdown(timeout=2.0)
+
+
+# ============================== E. interrupted-job GUI surfacing (item 6)
+
+
+def _seed_dangling_jobs_log(runtime_dir):
+    """A jobs.jsonl trail whose last record for ``dangling9`` is "running" —
+    the same crash shape :meth:`JobRunner._scan_interrupted` looks for. Must
+    be written BEFORE the GUI server (and therefore its JobRunner) is
+    constructed — interrupted() is computed once at construction time."""
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    log_path = runtime_dir / "jobs.jsonl"
+    log_path.write_text(
+        json.dumps({"ts": "2020-01-01T00:00:00+00:00", "id": "dangling9", "kind": "build",
+                    "state": "queued", "params_summary": {"target": "final"}, "error": None}) + "\n"
+        + json.dumps({"ts": "2020-01-01T00:00:01+00:00", "id": "dangling9", "kind": "build",
+                      "state": "running", "params_summary": {"target": "final"}, "error": None}) + "\n",
+        encoding="utf-8",
+    )
+    return log_path
+
+
+def test_api_jobs_merges_interrupted_entries_retryable_false_with_note(tmp_project):
+    """GET /api/jobs (round AA item 6): interrupted() is merged into the
+    SAME "jobs" array (state="interrupted") — response shape stays exactly
+    {"jobs": [...]}, so every existing poller (lab/ingest/edit/series/
+    exports pages, all of which filter by job id) is unaffected, but a human
+    looking at the queue panel now sees the dangling job with retryable
+    False and the honesty note instead of it silently being absent."""
+    _seed_dangling_jobs_log(tmp_project.runtime_dir)
+
+    server = create_server(tmp_project, host="127.0.0.1", port=0, actor="human")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, data = _req(server, "/api/jobs")
+        assert status == 200
+        hits = [j for j in data["jobs"] if j["id"] == "dangling9"]
+        assert len(hits) == 1
+        j = hits[0]
+        assert j["state"] == "interrupted"
+        assert j["kind"] == "build"
+        assert j["cancelable"] is False
+        assert j["retryable"] is False
+        assert "无法原样重试" in j["note"]
+    finally:
+        server.shutdown()
+        server.close()
+
+
+def test_api_jobs_retry_on_interrupted_id_is_clean_4xx_zh_error(tmp_project):
+    """POST /api/jobs/retry on an interrupted job id (round AA item 6): a
+    clean 4xx 中文 error, never a bare "unknown job" 404 and never a 500/
+    stack trace — the explicit guard in ``_act_jobs_retry`` this round added."""
+    _seed_dangling_jobs_log(tmp_project.runtime_dir)
+
+    server = create_server(tmp_project, host="127.0.0.1", port=0, actor="human")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, data = _post(server, "/api/jobs/retry", {"job_id": "dangling9"})
+        assert 400 <= status < 500
+        assert "error" in data
+        msg = data["error"]
+        # a 中文 message, not the generic English "unknown job: ..." 404
+        assert any("一" <= ch <= "鿿" for ch in msg)
+        assert "重试" in msg
+    finally:
+        server.shutdown()
+        server.close()

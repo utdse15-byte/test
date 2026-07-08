@@ -441,7 +441,18 @@ class _Handler(BaseHTTPRequestHandler):
                     self.server.state_cache = (fp, payload)
                 self._send_json(payload)
             elif path == "/api/jobs":
-                self._send_json({"jobs": [j.to_dict() for j in self.server.runner.list()]})
+                # round AA item 6: JobRunner.interrupted() (a past GUI
+                # process's dangling queued/running/canceling jobs) is
+                # merged into the SAME "jobs" array, distinguished only by
+                # ``state="interrupted"`` — the response shape stays exactly
+                # {"jobs": [...]}, so every existing poller (lab/ingest/
+                # edit/series/exports pages, which all match by job id) is
+                # unaffected; the queue panel renders the extra entries with
+                # a distinct chip + note (page.py renderJobs).
+                self._send_json({
+                    "jobs": [j.to_dict() for j in self.server.runner.list()]
+                    + self.server.runner.interrupted(),
+                })
             elif path == "/api/check":
                 from ..core.check import run_check
 
@@ -477,6 +488,22 @@ class _Handler(BaseHTTPRequestHandler):
                 from .cockpit import cockpit_data
 
                 self._send_json(cockpit_data(self.server.project))
+            elif path == "/api/evaluate":
+                # round AA item 8 (GUI half): the cockpit's honest usage/
+                # rework lens — read-only, no lock, same shape as `manju
+                # evaluate --json`. evaluate() already degrades to an
+                # all-zeros report for a fresh project (its own module
+                # docstring) rather than raising, so no extra guard here.
+                from ..core.evaluate import evaluate
+
+                self._send_json(evaluate(self.server.project))
+            elif path == "/api/refs":
+                # round AA item 3 (GUI half): media/refs ownership report —
+                # read-only, no lock (mirrors /api/cockpit and /api/evaluate
+                # above); the one mutating action is POST /api/refs/assign.
+                from ..core.refs import refs_report
+
+                self._send_json(refs_report(self.server.project))
             elif path == "/api/tasks":
                 self._tasks_get()
             elif path == "/api/presets":
@@ -639,6 +666,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/onboarding/dismiss": self._act_onboarding_dismiss,
                 "/api/take-note": self._act_take_note,
                 "/api/validate": self._act_validate,
+                "/api/refs/assign": self._act_refs_assign,
             }.get(path)
             if handler is None:
                 if self._edit_post(path, body):  # round-T 剪辑 EDIT actions
@@ -970,6 +998,41 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "shot": shot_id, "take": take,
                          "text": text.strip()})
 
+    def _act_refs_assign(self, body: dict[str, Any]) -> None:
+        """POST /api/refs/assign (round AA item 3): the refs section's one
+        mutating action — wraps :func:`core.refs.assign_ref` in the build
+        lock exactly like every other light writer above (``_act_lock``,
+        ``_act_take_note``), because ``assign_ref`` itself does NOT take it
+        (its own module docstring's lock contract: the caller holds it —
+        the CLI's ``refs assign`` command is the other caller and does the
+        same via ``cli._write_lock``). Refuses (409, BuildLocked -> the
+        round-Z ``_optional_build_lock`` convention) under a held
+        cross-process build lock, and surfaces every ``RefsError`` (already
+        中文, one line) as a clean 400 rather than a 500 stack trace."""
+        from ..core.refs import RefsError, assign_ref
+        from ..runtime.buildlock import BuildLocked
+
+        project = self.server.project
+        relpath = str(body.get("relpath") or "")
+        if not relpath:
+            self._send_error_json("relpath is required", 400)
+            return
+        targets = {
+            k: str(body[k]) for k in ("shot", "character", "scene", "prop")
+            if body.get(k)
+        }
+        with self.server.quick_mutex:
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    result = assign_ref(project, relpath, actor=self.server.actor, **targets)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
+            except RefsError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+        self._send_json(result)
+
     def _act_lock(self, body: dict[str, Any]) -> None:
         """NO CAS (round AA item 5, #1 audit): the click carries only shot +
         field; the digest it seals is computed FRESH from `load_shot_raw`
@@ -1245,10 +1308,25 @@ class _Handler(BaseHTTPRequestHandler):
         that is not yet terminal, or whose params no longer validate (e.g. a
         redo/voice job whose shot was deleted since it failed) — the SAME
         validation the original action's own handler would run, since the
-        retry path rebuilds the exact same closure via :meth:`_build_retry_fn`."""
+        retry path rebuilds the exact same closure via :meth:`_build_retry_fn`.
+
+        Round AA item 6: an INTERRUPTED job (a past GUI process's dangling
+        queued/running job — :meth:`JobRunner.interrupted`) is explicitly
+        refused here too, with a 中文 reason, rather than falling through to
+        the generic "unknown job" 404 below — ``runner.get()`` never finds
+        one (they are read-only dicts, never resurrected into the runnable
+        queue), so without this guard a human clicking retry on one would
+        just see an opaque, English "unknown job" instead of the real reason
+        (jobs.jsonl's ``params_summary`` is lossy — a faithful resubmit is
+        not possible in general; see gui/jobs.py's ``_INTERRUPTED_RETRY_NOTE``)."""
         job_id = str(body.get("job_id") or "")
         if not job_id:
             self._send_error_json("job_id is required", 400)
+            return
+        if any(rec.get("id") == job_id for rec in self.server.runner.interrupted()):
+            self._send_error_json(
+                f"任务 {job_id} 是中断任务,无法原样重试(参数摘要有损)——请从原页面重新发起",
+                409)
             return
         orig = self.server.runner.get(job_id)
         if orig is None:

@@ -75,6 +75,20 @@ _INTERRUPTED_ERROR = (
     "GUI 上次退出时该任务仍在运行,实际结果未知——请核对产物后按需重试"
 )
 
+# round AA item 6: WHY an interrupted job's "重试" button is gone. jobs.jsonl
+# only ever persists ``params_summary`` (:func:`_summarize_params`), not the
+# original ``params`` — a batch kind's shot list beyond the first 8 is
+# truncated to ``"...(+N more)"`` and long strings are cut at 200 chars, so
+# resubmitting FROM this record in general would silently run a DIFFERENT
+# (smaller) job than the one that was interrupted. That is worse than no
+# retry at all, so :func:`_interrupted_job_dict` sets ``retryable: False``
+# and carries this note instead — the honest fix is to go back to the page
+# that started the job and re-initiate it there, where the full params are
+# still available.
+_INTERRUPTED_RETRY_NOTE = (
+    "中断任务无法原样重试(参数摘要有损)——请从原页面重新发起"
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -164,10 +178,18 @@ class Job:
 def _interrupted_job_dict(rec: dict[str, Any]) -> dict[str, Any]:
     """A jobs.jsonl record (freshly detected as dangling, OR already
     ``state="interrupted"`` from an earlier construction) rendered in the
-    SAME shape :meth:`Job.to_dict` produces, so the GUI queue panel can
-    render a dangling job with the exact same row renderer as a live one —
-    it is read-only data, never a live :class:`Job` (see
-    :meth:`JobRunner.interrupted`)."""
+    SAME shape :meth:`Job.to_dict` produces (plus one extra key, ``note``),
+    so the GUI queue panel can render a dangling job with almost the exact
+    same row renderer as a live one — it is read-only data, never a live
+    :class:`Job` (see :meth:`JobRunner.interrupted`).
+
+    ``retryable`` is always ``False`` here (round AA item 6): unlike a
+    ``failed``/``canceled`` live :class:`Job`, whose ``params`` dict is the
+    exact one it ran with, this record only ever has ``params_summary`` —
+    already lossy on write (:func:`_summarize_params`) — so a resubmit built
+    from it could silently run a smaller/different job than the one that was
+    interrupted. ``note`` carries the 中文 explanation the queue panel shows
+    in place of a retry button (:data:`_INTERRUPTED_RETRY_NOTE`)."""
     return {
         "id": rec.get("id"),
         "kind": rec.get("kind"),
@@ -181,7 +203,8 @@ def _interrupted_job_dict(rec: dict[str, Any]) -> dict[str, Any]:
         "finished": rec.get("ts"),
         "retry_of": None,
         "cancelable": False,
-        "retryable": True,
+        "retryable": False,
+        "note": _INTERRUPTED_RETRY_NOTE,
     }
 
 
@@ -304,9 +327,16 @@ class JobRunner:
         Computed ONCE at construction (see :meth:`_scan_interrupted`); these
         are read-only, :meth:`Job.to_dict`-shaped dicts, NOT live
         :class:`Job` objects — they are never resurrected into the runnable
-        queue (cancel()/get() do not see them; a "retry" on one goes through
-        the GUI's normal per-kind retry path, which re-submits fresh with the
-        recorded params — see gui/server.py's ``_act_jobs_retry``)."""
+        queue (cancel()/get() do not see them). Unlike a normal failed/
+        canceled job, one of these is NOT retryable (round AA item 6):
+        jobs.jsonl only ever recorded this job's ``params_summary``, a
+        LOSSY compaction (:func:`_summarize_params` truncates long lists/
+        strings), so ``gui/server.py``'s ``_act_jobs_retry`` refuses a
+        resubmit built from it (a 中文 4xx, never a silent
+        smaller-than-intended re-run) — every dict here carries
+        ``retryable=False`` plus a ``note`` explaining that, and the queue
+        panel points the human back at the page that started the job
+        instead of offering a retry button."""
         return list(self._interrupted)
 
     def busy(self) -> bool:

@@ -260,6 +260,10 @@ button.chip:hover { filter: brightness(1.15); }
 .jb-canceled  { background: #3a3d44; color: #ffcf5c; }
 .jb-done      { background: #17402a; color: #7ee2a8; }
 .jb-failed    { background: #4d1f22; color: #ff8a90; }
+/* round AA item 6: interrupted is an HONESTY signal, not a failure — the
+ * same info-blue pairing jb-running/st-manual already use, not error red. */
+.jb-interrupted { background: #23324d; color: #8fb8ff; }
+.jnote { color: var(--muted); font-size: .8rem; }
 @keyframes mj-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 .job {
   display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
@@ -779,6 +783,21 @@ a.btn.ck-primary { text-decoration: none; }
 .ck-err { color: var(--muted); font-size: .8rem; font-style: italic; }
 .ck-empty { color: var(--muted); font-size: .82rem; }
 
+/* --------------------------------------- evaluate block (round AA item 8) */
+.ck-eval-sub { margin: .5rem 0; }
+.ck-eval-sub h4 { margin: 0 0 .25rem; font-size: .78rem; color: var(--muted); font-weight: 600; }
+/* info callout, not a warning — same info-blue pairing jb-running/st-manual
+   already use elsewhere, deliberately NOT the amber/red risk colours: the
+   honesty section is a permanent, calm disclosure, not an exception alert. */
+.ck-honesty {
+  margin-top: .6rem; padding: .5rem .7rem; border-radius: 8px;
+  background: #23324d; border: 1px solid #345a91;
+}
+.ck-honesty h4 { margin: 0 0 .3rem; font-size: .8rem; color: #8fb8ff; font-weight: 600; }
+.ck-honesty-summary { font-size: .82rem; margin: 0 0 .3rem; }
+.ck-honesty ul { margin: .2rem 0 0; padding-left: 1.15rem; }
+.ck-honesty li { font-size: .78rem; margin: .18rem 0; color: var(--muted); }
+
 /* onboarding-lead: when a fresh project has nothing yet, the checklist leads
    and the supporting grid steps back (NN/g empty state → one clear next step). */
 .cockpit.fresh .ck-grid { margin-top: .6rem; }
@@ -1041,6 +1060,7 @@ _JS = r"""
     maybeTimeline(s);   /* async, self-contained: a 500 there never cascades */
     maybeProposals(s);  /* async, at most one fetch per fp change */
     maybeCockpit(s);    /* async, fingerprint-gated: the round-V cockpit */
+    maybeEvaluate(s);   /* async, fingerprint-gated: round AA item 8 */
     $("dropzone").classList.toggle("hidden", readonly);
     updateGates();
   }
@@ -1078,6 +1098,39 @@ _JS = r"""
     } finally {
       cockBusy = false;
       renderCockpit();
+    }
+  }
+
+  /* ---------------------------------------------------- evaluate (item 8)
+   * Round AA goal item 8: the honest usage/rework lens (core/evaluate.py),
+   * surfaced in the cockpit as its own block — fetched separately from
+   * /api/evaluate (read-only, no lock), same fingerprint-gated shape as the
+   * cockpit fetch above so it rides the SAME poll with no new machinery.
+   * Independent busy/err/data state: a broken /api/evaluate must never take
+   * the rest of the cockpit down with it. */
+  let evalFp = null;
+  let evalBusy = false;
+  let evalData = null;
+  let evalErr = null;
+
+  function maybeEvaluate(s) {
+    if (typeof s.fp === "string" && s.fp && s.fp !== evalFp) {
+      fetchEvaluate(s.fp);
+    }
+  }
+
+  async function fetchEvaluate(fp) {
+    if (evalBusy) return;
+    evalBusy = true;
+    if (fp !== undefined) evalFp = fp;
+    try {
+      evalData = await api("GET", "/api/evaluate");
+      evalErr = null;
+    } catch (err) {
+      evalErr = errMsg(err);
+    } finally {
+      evalBusy = false;
+      renderCockpit();  /* re-render the grid with the freshly loaded block */
     }
   }
 
@@ -1366,7 +1419,110 @@ _JS = r"""
       }));
     }
 
+    /* evaluate (round AA item 8) — its own wide block: skill usage / rework
+     * hotspots / QC tallies, then the mandatory honesty section VERBATIM. */
+    grid.appendChild(renderEvaluateBlock());
+
     return grid;
+  }
+
+  /* ------------------------------------------------- evaluate (item 8) --- */
+  function renderEvaluateBlock() {
+    const b = el("div", "ck-block wide");
+    b.appendChild(el("h3", null, "评估 (evaluate)"));
+    if (evalErr && !evalData) {
+      b.appendChild(el("p", "ck-err", "评估不可用 (evaluate unavailable): " + evalErr));
+      return b;
+    }
+    if (!evalData) {
+      b.appendChild(el("p", "loading", "加载中 (loading)…"));
+      return b;
+    }
+    const ev = evalData;
+
+    /* 技能使用 skills: top used + never-used */
+    const skSub = el("div", "ck-eval-sub");
+    const skills = ev.skills || {};
+    skSub.appendChild(el("h4", null, "技能使用 (skills) · 已用 "
+      + (skills.used_total || 0) + "/" + (skills.installed_total || 0)));
+    const topUsed = (skills.usage || []).filter((r) => r.count > 0).slice(0, 5);
+    if (topUsed.length) {
+      const chips = el("div", "ck-chips");
+      topUsed.forEach((r) => {
+        const chip = el("span", "ck-dv");
+        chip.appendChild(el("span", null, r.id + " ×" + r.count));
+        if (r.low_n) chip.appendChild(el("span", "badge lvl-warn", "样本少"));
+        chips.appendChild(chip);
+      });
+      skSub.appendChild(chips);
+    } else {
+      skSub.appendChild(el("p", "ck-empty", "暂无技能调用记录 (no skill usage yet)"));
+    }
+    const neverUsed = skills.never_used || [];
+    if (neverUsed.length) {
+      skSub.appendChild(el("div", "ck-line muted",
+        "从未使用 (never used): " + neverUsed.join("、")));
+    }
+    b.appendChild(skSub);
+
+    /* 返工热点 rework hotspots: top redo + repair shots */
+    const rhSub = el("div", "ck-eval-sub");
+    rhSub.appendChild(el("h4", null, "返工热点 (rework hotspots)"));
+    const wf = ev.workflow || {};
+    const redo = wf.redo || {};
+    const repair = wf.repair || {};
+    const redoTop = (redo.hotspots || []).slice(0, 5);
+    if (redoTop.length) {
+      rhSub.appendChild(el("div", "ck-line", "重做 (redo) 共 " + (redo.total || 0) + " 次 · "
+        + redoTop.map((r) => r.shot + " ×" + r.count).join("、")));
+    } else {
+      rhSub.appendChild(el("p", "ck-empty", "暂无重做记录 (no redo yet)"));
+    }
+    const repairTop = (repair.hotspots || []).slice(0, 5);
+    if (repairTop.length) {
+      rhSub.appendChild(el("div", "ck-line", "修复 (repair) 共 " + (repair.total || 0) + " 次 · "
+        + repairTop.map((r) => r.shot + " ×" + r.count).join("、")));
+    }
+    b.appendChild(rhSub);
+
+    /* QC verdict tallies */
+    const qcSub = el("div", "ck-eval-sub");
+    const qc = ev.qc || {};
+    qcSub.appendChild(el("h4", null, "QC 判读 (verdicts) · 共 " + (qc.verdicts_total || 0)));
+    if (qc.verdicts_total) {
+      const chips = el("div", "ck-chips");
+      const by = qc.by_level || {};
+      const lvlBadge = { blocker: "lvl-error", issue: "lvl-warn", fyi: "lvl-info" };
+      ["blocker", "issue", "fyi"].forEach((lv) => {
+        const n = by[lv] || 0;
+        if (!n) return;
+        chips.appendChild(el("span", "badge " + lvlBadge[lv], lv + " " + n));
+      });
+      qcSub.appendChild(chips);
+    } else {
+      qcSub.appendChild(el("p", "ck-empty", "暂无 QC 判读记录 (no QC verdicts yet)"));
+    }
+    b.appendChild(qcSub);
+
+    /* honesty — VERBATIM, visible, styled as an info callout (not a warning):
+     * this section IS the point of the feature (goal item 8), never fine print. */
+    const hn = ev.honesty || {};
+    const callout = el("div", "ck-honesty");
+    callout.appendChild(el("h4", null, "诚实说明 (honesty)"));
+    if (hn.summary) callout.appendChild(el("p", "ck-honesty-summary", hn.summary));
+    const claims = Array.isArray(hn.cannot_claim) ? hn.cannot_claim : [];
+    if (claims.length) {
+      const ul = document.createElement("ul");
+      claims.forEach((c) => {
+        const li = document.createElement("li");
+        li.textContent = c;
+        ul.appendChild(li);
+      });
+      callout.appendChild(ul);
+    }
+    b.appendChild(callout);
+
+    return b;
   }
 
   function ckBlock(title, fill) {
@@ -2135,7 +2291,12 @@ _JS = r"""
     sorted.slice(0, 8).forEach((j) => {
       const row = el("div", "job");
       row.appendChild(el("span", "jkind", j.kind));
-      row.appendChild(el("span", "badge jb-" + j.state, j.state));
+      /* round AA item 6: an interrupted job (a past GUI process's dangling
+       * queued/running job — see gui/jobs.py's JobRunner.interrupted()) gets
+       * its own 中文 chip, never the raw English state word every other
+       * state renders as-is. */
+      row.appendChild(el("span", "badge jb-" + j.state,
+        j.state === "interrupted" ? "已中断" : j.state));
       const secs = jobSeconds(j);
       if (secs) row.appendChild(el("span", "muted", secs));
       /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
@@ -2143,6 +2304,13 @@ _JS = r"""
        * never re-derives the state-machine rule. */
       if (j.retry_of) {
         row.appendChild(el("span", "muted", "重试自 #" + j.retry_of));
+      }
+      if (j.state === "interrupted" && j.note) {
+        /* visible, not tucked into a <details> — the honesty note IS the
+         * point of this chip, never fine print (goal item 6). No cancel/
+         * retry buttons render for this state: cancelable/retryable are
+         * both false straight off the same dict, so nothing below adds them. */
+        row.appendChild(el("span", "jnote", j.note));
       }
       if (j.cancelable) {
         const cancelBtn = el("button", "btn mini ghost", "取消");

@@ -326,5 +326,10 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
         "failures": _failures(project),
         "shots": _shot_cards(project),
         "events": tail_events(project.root, _EVENTS_TAIL),
-        "jobs": [j.to_dict() for j in runner.list()],
+        # round AA item 6: interrupted() (a past GUI process's dangling
+        # queued/running/canceling jobs, computed once at JobRunner
+        # construction) merged into the SAME list as the live jobs,
+        # distinguished only by state="interrupted" — the SPA's jobs strip
+        # (page.py renderJobs) already iterates this list generically.
+        "jobs": [j.to_dict() for j in runner.list()] + runner.interrupted(),
     }
