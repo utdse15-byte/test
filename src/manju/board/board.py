@@ -20,6 +20,7 @@ written atomically.
 from __future__ import annotations
 
 import html
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -304,7 +305,7 @@ _SERVE_JS = """
     overlay(true, MSG[action] || "处理中…");
     fetch("/api/" + action, {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: {"Content-Type": "application/json", "X-Manju-Token": (typeof MANJU_TOKEN!=="undefined"?MANJU_TOKEN:"")},
       body: JSON.stringify(body || {})
     }).then(function(r){
       return r.json().catch(function(){
@@ -1068,7 +1069,7 @@ def _render_panels(project: "Project") -> str:
     return f'<section class="mj-panels"><div class="mj-tabs">{tabbar}</div>{panels}</section>'
 
 
-def render_board(project: "Project", serve: bool = False) -> str:
+def render_board(project: "Project", serve: bool = False, token: str = "") -> str:
     """Build the board HTML document.
 
     ``serve=False`` (default) is the static, self-contained board — byte-for-byte
@@ -1077,6 +1078,10 @@ def render_board(project: "Project", serve: bool = False) -> str:
     point at ``/media/<relpath>``, per-take/-shot/header action buttons appear, an
     inline vanilla-JS layer POSTs to ``/api/<action>`` with a busy overlay, and a
     tabbed inspector (project/subtitles/bible/log/assets/QC) rides above the shots.
+
+    ``token`` (Round Y, review #12) is the server's per-run token; in serve mode
+    it is embedded as ``MANJU_TOKEN`` so the board's own ``post()`` sends it in
+    the ``X-Manju-Token`` header. The static board never carries it.
     """
     statuses = {s.shot_id: s for s in evaluate_all(project)}
     rollbackable = _rollbackable_shots(project, statuses) if serve else set()
@@ -1095,6 +1100,10 @@ def render_board(project: "Project", serve: bool = False) -> str:
     css = (_CSS + "\n" + _SERVE_CSS) if serve else _CSS
     css = css.replace("MANJU_ASPECT", _project_aspect(project))
     script = (_JS + "\n" + _SERVE_JS) if serve else _JS
+    if serve:
+        # Prepend the token as a JS const the serve-mode post() sends. Only in
+        # serve mode, so the static board stays byte-for-byte identical.
+        script = f"var MANJU_TOKEN={json.dumps(token)};\n" + script
     body_extras = _SERVE_BODY if serve else ""
 
     # In serve mode the QC section moves into the panel strip (above the shots);

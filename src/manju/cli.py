@@ -2372,6 +2372,23 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
                 )
         if dest.exists():
             _fail(f"destination exists, refusing to overwrite: {dest}")
+        # Round Y (review #20 hardening): validate every member BEFORE extraction.
+        # stdlib extractall already neutralises `..`/absolute paths in member
+        # NAMES, but it does NOT stop a SYMLINK member (a zip can carry one) from
+        # being recreated and letting a later member write through it to outside
+        # the destination. Reject symlink members and any traversal/absolute name
+        # up front — an archive that carries them is not a normal `.manjupkg`.
+        import stat as _stat
+
+        for info in zf.infolist():
+            nm = info.filename
+            if nm.startswith("/") or nm.startswith("\\") or ".." in Path(nm).parts:
+                _fail(f"拒绝解包:压缩包成员路径越界或为绝对路径 → {nm!r}"
+                      "(不是正常的 .manjupkg,可能是恶意压缩包)")
+            mode = info.external_attr >> 16
+            if mode and _stat.S_ISLNK(mode):
+                _fail(f"拒绝解包:压缩包含符号链接成员 → {nm!r}"
+                      "(symlink 可越出解包目录,正常 .manjupkg 不含符号链接)")
         names = zf.namelist()
         zf.extractall(dest)
     (dest / ".manju").mkdir(exist_ok=True)

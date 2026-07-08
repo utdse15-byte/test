@@ -44,6 +44,14 @@ def running(project: Project) -> Iterator[tuple[str, object]]:
         thread.join(timeout=2)
 
 
+def _post(server, url, **kw):
+    """POST with the board's per-run token (Round Y #12). Every mutating POST
+    must carry X-Manju-Token now."""
+    headers = kw.pop("headers", {})
+    headers.setdefault("X-Manju-Token", server.token)
+    return httpx.post(url, headers=headers, **kw)
+
+
 @pytest.fixture
 def one_shot_project(tmp_project: Project, add_shot: Callable, make_take: Callable) -> Project:
     """A project with one shot, two takes, take_01 selected."""
@@ -83,7 +91,7 @@ def test_static_board_is_byte_identical(one_shot_project, monkeypatch):
 
 
 def test_serve_html_has_action_js_and_media_urls(one_shot_project):
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         r = httpx.get(base + "/")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
@@ -103,7 +111,7 @@ def test_media_serves_legit_file(one_shot_project):
     take = one_shot_project.get_take("S001", "take_01")
     rel = one_shot_project.relpath(take.media_path)
     expected = take.media_path.read_bytes()
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         r = httpx.get(base + "/media/" + rel)
     assert r.status_code == 200
     assert r.headers.get("Accept-Ranges") == "bytes"
@@ -114,7 +122,7 @@ def test_media_range_returns_206(one_shot_project):
     take = one_shot_project.get_take("S001", "take_01")
     rel = one_shot_project.relpath(take.media_path)
     full = take.media_path.read_bytes()
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         r = httpx.get(base + "/media/" + rel, headers={"Range": "bytes=2-5"})
     assert r.status_code == 206
     assert r.headers["Content-Range"] == f"bytes 2-5/{len(full)}"
@@ -123,7 +131,7 @@ def test_media_range_returns_206(one_shot_project):
 
 
 def test_media_traversal_is_blocked(one_shot_project):
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         # percent-encoded ".." bypasses client-side normalization → hits the guard
         r = httpx.get(base + "/media/%2e%2e/%2e%2e/etc/passwd")
         assert r.status_code == 403
@@ -144,7 +152,7 @@ def test_media_refuses_project_truth_files(one_shot_project):
     read ANY project file, not just previews — project.yaml, a shot's YAML,
     the event ledger and the runtime sqlite state must all 403, even though
     they are legitimately inside the project root."""
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         for rel in (
             "project.yaml",
             "shots/S001.yaml",
@@ -166,7 +174,7 @@ def test_media_serves_allowlisted_preview_surfaces(one_shot_project):
     thumbs.mkdir(parents=True, exist_ok=True)
     (thumbs / "take_01.jpg").write_bytes(b"thumbbytes")
 
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         r = httpx.get(base + "/media/reports/frames/S001.jpg")
         assert r.status_code == 200
         assert r.content == b"posterbytes"
@@ -180,8 +188,8 @@ def test_media_serves_allowlisted_preview_surfaces(one_shot_project):
 
 def test_select_flips_selection_and_records_event(one_shot_project, monkeypatch):
     monkeypatch.setenv("MANJU_ACTOR", "director")
-    with running(one_shot_project) as (base, _):
-        r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+    with running(one_shot_project) as (base, server):
+        r = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"})
     assert r.status_code == 200 and r.json()["ok"] is True
     # status.selected_take flipped on disk
     assert one_shot_project.load_shot("S001").status.selected_take == "take_02"
@@ -195,8 +203,8 @@ def test_select_flips_selection_and_records_event(one_shot_project, monkeypatch)
 
 
 def test_select_bad_take_is_clean_error(one_shot_project):
-    with running(one_shot_project) as (base, _):
-        r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "nope"})
+    with running(one_shot_project) as (base, server):
+        r = _post(server, base + "/api/select", json={"shot": "S001", "take": "nope"})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False and "nope" in body["error"]
@@ -224,8 +232,8 @@ def test_select_refuses_when_selected_take_locked(one_shot_project):
     )
 
     before = one_shot_project.load_shot("S001").status.selected_take
-    with running(one_shot_project) as (base, _):
-        r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+    with running(one_shot_project) as (base, server):
+        r = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False
@@ -241,8 +249,8 @@ def test_select_refuses_when_build_locked(one_shot_project):
     before = one_shot_project.load_shot("S001").status.selected_take
     lock = BuildLock(one_shot_project.root, actor="human").acquire()
     try:
-        with running(one_shot_project) as (base, _):
-            r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+        with running(one_shot_project) as (base, server):
+            r = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"})
     finally:
         lock.release()
     assert r.status_code == 200
@@ -252,12 +260,12 @@ def test_select_refuses_when_build_locked(one_shot_project):
 
 
 def test_rollback_shot_round_trips(one_shot_project):
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         # two selects give rollback something to return to
-        assert httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_01"}).json()["ok"]
-        assert httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"}).json()["ok"]
+        assert _post(server, base + "/api/select", json={"shot": "S001", "take": "take_01"}).json()["ok"]
+        assert _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"}).json()["ok"]
         assert one_shot_project.load_shot("S001").status.selected_take == "take_02"
-        r = httpx.post(base + "/api/rollback_shot", json={"shot": "S001"})
+        r = _post(server, base + "/api/rollback_shot", json={"shot": "S001"})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True and body["take"] == "take_01" and body["was"] == "take_02"
@@ -266,8 +274,8 @@ def test_rollback_shot_round_trips(one_shot_project):
 
 @pytest.mark.parametrize("action", ["unlock", "gc", "pack", "unpack", "import", "bogus"])
 def test_dangerous_and_unknown_actions_are_404(one_shot_project, action):
-    with running(one_shot_project) as (base, _):
-        r = httpx.post(base + "/api/" + action, json={})
+    with running(one_shot_project) as (base, server):
+        r = _post(server, base + "/api/" + action, json={})
     assert r.status_code == 404
     assert r.json()["ok"] is False
     # and they are genuinely not in the API surface
@@ -275,7 +283,7 @@ def test_dangerous_and_unknown_actions_are_404(one_shot_project, action):
 
 
 def test_get_unknown_route_is_404(one_shot_project):
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         assert httpx.get(base + "/nope").status_code == 404
 
 
@@ -283,7 +291,7 @@ def test_busy_lock_returns_409(one_shot_project):
     with running(one_shot_project) as (base, server):
         server.mutation_lock.acquire()  # simulate an in-flight mutation
         try:
-            r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+            r = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"})
         finally:
             server.mutation_lock.release()
     assert r.status_code == 409
@@ -293,13 +301,59 @@ def test_busy_lock_returns_409(one_shot_project):
     assert one_shot_project.load_shot("S001").status.selected_take == "take_01"
 
 
+# --------------------------------------------------- control-plane guards (#12)
+
+
+def test_mutating_post_without_token_is_403(one_shot_project):
+    """Round Y (#12): a cross-site POST carries no X-Manju-Token → 403, no
+    mutation. This is the CSRF hole the review flagged, now closed."""
+    with running(one_shot_project) as (base, _):
+        r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+    assert r.status_code == 403
+    assert one_shot_project.load_shot("S001").status.selected_take == "take_01"
+
+
+def test_wrong_token_is_403(one_shot_project):
+    with running(one_shot_project) as (base, _):
+        r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"},
+                       headers={"X-Manju-Token": "not-the-token"})
+    assert r.status_code == 403
+    assert one_shot_project.load_shot("S001").status.selected_take == "take_01"
+
+
+def test_bad_host_header_is_403(one_shot_project):
+    """DNS-rebinding guard: a foreign Host that resolves to localhost is refused
+    on GET and POST alike."""
+    with running(one_shot_project) as (base, server):
+        g = httpx.get(base + "/", headers={"Host": "evil.example.com"})
+        p = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"},
+                  headers={"Host": "evil.example.com"})
+    assert g.status_code == 403 and p.status_code == 403
+    assert one_shot_project.load_shot("S001").status.selected_take == "take_01"
+
+
+def test_served_page_carries_the_token(one_shot_project):
+    with running(one_shot_project) as (base, server):
+        body = httpx.get(base + "/").text
+    assert server.token in body and "X-Manju-Token" in body
+
+
+def test_token_authorized_select_still_works(one_shot_project):
+    """The board's own JS (which has the token) can still mutate — the guard
+    only blocks token-less cross-site requests, not the legitimate user."""
+    with running(one_shot_project) as (base, server):
+        r = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert one_shot_project.load_shot("S001").status.selected_take == "take_02"
+
+
 # ------------------------------------------------------- compare + panels (serve)
 
 
 def test_compare_markup_present_for_multi_take_shot(one_shot_project):
     """A shot with >=2 takes gets a compare toggle + a side-by-side grid driven
     by ONE synchronized play button, each cell carrying its select + metadata."""
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         body = httpx.get(base + "/").text
     assert "对比 compare" in body and 'data-compare="1"' in body   # per-shot toggle
     assert 'class="compare-wrap"' in body                          # the compare grid
@@ -322,7 +376,7 @@ def test_panels_render_with_real_content(one_shot_project):
     (p.imports_dir / "bgm.wav").write_bytes(b"RIFF0000WAVE")
     append_event(p.root, "director", "select", {"shot": "S001", "take": "take_02"})
 
-    with running(p) as (base, _):
+    with running(p) as (base, server):
         body = httpx.get(base + "/").text
 
     # the tabbed strip carries all six panels, server-rendered
@@ -349,7 +403,7 @@ def test_subs_panel_flags_manual_mode(one_shot_project):
     p.captions_dir.mkdir(exist_ok=True)
     (p.captions_dir / "captions.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n手改字幕\n", encoding="utf-8")
-    with running(p) as (base, _):
+    with running(p) as (base, server):
         body = httpx.get(base + "/").text
     assert "MANUAL" in body and "手改字幕" in body
 
@@ -360,7 +414,7 @@ def test_bible_panel_marks_locked_fields(one_shot_project):
         {"linxia": {"name": "林夏", "appearance": "短发黑风衣",
                     "locked": {"appearance": "sha256:deadbeef"}}},
     )
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         body = httpx.get(base + "/").text
     assert "🔒" in body
 
@@ -370,14 +424,14 @@ def test_export_registered_but_dangerous_surface_absent(one_shot_project):
     assert "export" in API_ACTIONS
     for danger in ("unlock", "gc", "pack", "unpack"):
         assert danger not in API_ACTIONS
-    with running(one_shot_project) as (base, _):
+    with running(one_shot_project) as (base, server):
         for danger in ("unlock", "gc", "pack"):
-            assert httpx.post(base + "/api/" + danger, json={}).status_code == 404
+            assert _post(server, base + "/api/" + danger, json={}).status_code == 404
 
 
 def test_export_unknown_profile_is_clean_error(one_shot_project):
-    with running(one_shot_project) as (base, _):
-        r = httpx.post(base + "/api/export", json={"profiles": ["bogus"]})
+    with running(one_shot_project) as (base, server):
+        r = _post(server, base + "/api/export", json={"profiles": ["bogus"]})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False and "bogus" in body["error"]
@@ -399,8 +453,8 @@ def test_build_endpoint_produces_a_final(tmp_path):
     root = make_sample_project(tmp_path / "样片", shots=2)
     project = Project(root)
     assert project.newest_final_path() is None  # nothing built yet
-    with running(project) as (base, _):
-        r = httpx.post(base + "/api/build", json={"target": "final"}, timeout=300.0)
+    with running(project) as (base, server):
+        r = _post(server, base + "/api/build", json={"target": "final"}, timeout=300.0)
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True and body["build_ok"] is True
@@ -420,8 +474,8 @@ def test_export_endpoint_produces_files(tmp_path):
     root = make_sample_project(tmp_path / "导出样片", shots=2)
     project = Project(root)
     assert run_build(project, target="final").ok  # compiles timeline.json + renders
-    with running(project) as (base, _):
-        r = httpx.post(base + "/api/export",
+    with running(project) as (base, server):
+        r = _post(server, base + "/api/export",
                        json={"profiles": ["srt", "otio"]}, timeout=120.0)
     assert r.status_code == 200
     body = r.json()

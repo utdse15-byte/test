@@ -113,6 +113,13 @@ ACTION_TYPES = (
 _PRICED_TYPES = ("build", "redo", "voice")
 
 
+def _has_priced_action(proposal) -> bool:
+    """True if the proposal contains any action that can spend real money
+    (build/redo/voice). Round Y (#15): the human-only confirmation gate keys on
+    this — free proposals stay AI-confirmable, paid ones need a human."""
+    return any(pa.action.get("type") in _PRICED_TYPES for pa in proposal.actions)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -300,6 +307,16 @@ def state_fingerprint(project: Project) -> str:
         "shots": shots,
         "rules": _file_hash(project.rules_path),
         "packaging": _file_hash(project.packaging_path),
+        # Round Y (review #45): fold the project files that steer COST and
+        # ROUTING so a confirmed plan expires when the money/provider picture
+        # changes underneath it — project.yaml (budget, build mode, ask_before)
+        # and timeline/routing.yaml (which provider fires, at what price). A
+        # confirmed proposal was priced against these; a change must re-price.
+        # (Provider MANIFESTS live in ~/.manju — machine-level config, not
+        # project truth — so they stay out of the project fingerprint; the
+        # ask_before/spend gate at execute time is the remaining backstop.)
+        "config": _file_hash(project.root / "project.yaml"),
+        "routing": _file_hash(project.root / "timeline" / "routing.yaml"),
     })
 
 
@@ -603,6 +620,19 @@ def confirm(project: Project, proposal_id: str, actor: str | None = None) -> Pro
         raise DirectorError(
             f"proposal {proposal_id} is {proposal.state} — only a proposed plan can "
             "be confirmed (re-propose if it was rejected/expired/already run)")
+    # Round Y (review #15): a HARD code-level human-only gate on paid proposals.
+    # The tool description said "never confirm without a human yes", but that is
+    # a prompt-level hope, not enforcement — an MCP/auto agent (actor="ai") could
+    # propose→confirm→execute and self-approve real spend. Now a proposal that
+    # contains ANY priced action (build/redo/voice) can only be confirmed by a
+    # HUMAN actor: the CLI `manju director confirm` and the GUI 确认 button both
+    # run as actor="human"; the MCP `director_confirm` tool runs as actor="ai"
+    # and is refused here. Free (local/text) proposals stay AI-confirmable.
+    if _has_priced_action(proposal) and actor != "human":
+        raise DirectorError(
+            f"proposal {proposal_id} 含付费动作(build/redo/voice)——付费提案必须由人类确认,"
+            "不能由 AI 自行确认。请人在 `manju director confirm` 或 GUI 导演页点确认"
+            "(AI 只能确认纯本地/文本类提案)")
     if not _is_current(project, proposal):
         proposal.state = "expired"
         _save(project, proposal)
@@ -654,6 +684,13 @@ def execute(project: Project, proposal_id: str, actor: str | None = None,
         raise DirectorError(
             f"proposal {proposal_id} is {proposal.state} — only a confirmed "
             "proposal can execute (confirm it first — confirm is a separate step)")
+    # Round Y (review #15) belt-and-suspenders: even a proposal already marked
+    # confirmed must have been confirmed BY A HUMAN if it spends — catches a
+    # hand-edited/tampered proposal file that set confirmed_by to an ai actor.
+    if _has_priced_action(proposal) and proposal.confirmed_by != "human":
+        raise DirectorError(
+            f"proposal {proposal_id} 含付费动作,但确认人不是 human"
+            f"(confirmed_by={proposal.confirmed_by!r})——付费提案只能由人类确认后执行")
     if not _is_current(project, proposal):
         proposal.state = "expired"
         _save(project, proposal)

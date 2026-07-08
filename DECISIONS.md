@@ -134,3 +134,50 @@ single code path every surface already funnels through.
   media/render.py sizes are real maintenance debt; splitting them is
   deliberately NOT bundled into a correctness round (too much churn alongside
   85 behavioral fixes). Recorded here as standing debt for a dedicated round.
+
+## 9. Round Y — closing the round-W accounting gap (external review)
+
+An external review re-checked the round-W "85 issues" work and correctly found
+that my round-W claim of "84 fixed / 1 design call / 0 not-real" was WRONG.
+Reconciling the agent packages against the full 1–85 list, FIVE issues were
+never assigned to any agent: #4, #12, #15, #19, #45. Of those, #19 (MCP
+select_take) was incidentally fixed by WE's #39 unified checked write. The
+other four were genuinely unfixed. Root cause: I tracked agent REPORTS instead
+of reconciling coverage against the source list back-to-front. Fixed in round Y:
+
+- **#4 media-ext determinism** — `MEDIA_EXTS` is now an ORDERED tuple (video >
+  image > audio); `Project.takes()` picks by priority (deterministic across
+  processes) and records a conflict on `TakeInfo.error` when a stem has >1
+  media file, surfaced via staleness/check.
+- **#12 board CSRF/token** — `board/server.py` now carries the same control
+  plane as the GUI: per-run token (X-Manju-Token) on every mutating POST, Host
+  allowlist (DNS-rebinding), Content-Type gate, body-size cap. The token is
+  embedded into the served page's own JS; a foreign page cannot read it. Static
+  board stays byte-identical (serve-only JS).
+- **#15 MCP director hard human-gate** — `director.confirm` REFUSES an
+  `actor != "human"` confirmation of any proposal containing a priced action
+  (build/redo/voice); `execute` re-checks `confirmed_by == "human"` for paid
+  proposals (catches a tampered proposal file). Free/local proposals stay
+  AI-confirmable. This is now a code-level boundary, not a prompt-level hope.
+- **#45 director fingerprint** — `state_fingerprint` now folds project.yaml
+  (budget/mode) and timeline/routing.yaml (which provider, at what price), so a
+  confirmed plan expires when the cost/routing picture moves. Provider manifests
+  live in ~/.manju (machine config, not project truth) — out of the project
+  fingerprint; the execute-time ask_before/spend gate is the remaining backstop.
+- **#20 unpack hardening** — `manju unpack` validates every zip member before
+  extraction: rejects symlink members and absolute/`..` names (stdlib
+  extractall already neutralises name traversal, but not symlink-through-write).
+
+### Standing design debt (documented, NOT claimed fixed)
+
+- **#5 cross-process locking on GUI/MCP mutating handlers** — real; the unified
+  `select_take_checked` write and the CLI mutating commands take the
+  cross-process build lock, but most GUI handlers and several MCP tools still
+  rely only on the in-process mutex. A future round should route them through a
+  shared cross-process write guard. NOT counted as fixed.
+- **#6 rate_limit_per_min** — best-effort interval throttle in generic_cloud,
+  NOT a precise cross-process token bucket. `max_concurrent` IS hard-enforced.
+- **#7 budget is a soft limit** — accepted design; the trip message is honest
+  ("不再提交新任务;进行中的 N 个镜头仍会完成并计费"). Not advertised as a hard cap.
+- **#8 large-file refactor** (cli.py / build/graph.py / media/render.py) —
+  maintenance debt for a dedicated refactor round, not a correctness bug.

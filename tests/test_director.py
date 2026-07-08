@@ -407,13 +407,34 @@ def test_mcp_driven_roundtrip_build_mocked(git_project, monkeypatch):
 
     monkeypatch.setattr(graph, "run_build", fake_run_build)
 
+    from manju.build.director import confirm as director_confirm
+
     proposed = call_tool(git_project, "director_propose",
                          {"actions": [{"type": "build", "target": "final"}]})
     pid = proposed["id"]
-    call_tool(git_project, "director_confirm", {"id": pid})
+    # Round Y (#15): MCP (actor="ai") may NOT confirm a paid proposal — a human
+    # must. Confirm through the human path (what the CLI/GUI do), then MCP can
+    # mechanically execute the human-approved plan.
+    director_confirm(git_project, pid, actor="human")
     outcome = call_tool(git_project, "director_execute", {"id": pid})
     assert outcome["ok"] is True
     assert outcome["results"][0]["type"] == "build"
+
+
+def test_mcp_cannot_self_confirm_paid_proposal(git_project):
+    """Round Y (#15): the hard human-only gate — an AI actor cannot confirm a
+    proposal that spends (build/redo/voice). Free proposals stay AI-confirmable."""
+    from manju.mcp.tools import ToolError, call_tool
+
+    paid = call_tool(git_project, "director_propose",
+                     {"actions": [{"type": "build", "target": "final"}]})
+    with pytest.raises(ToolError, match="付费"):
+        call_tool(git_project, "director_confirm", {"id": paid["id"]})
+
+    # a free (local/text) proposal is still AI-confirmable
+    free = call_tool(git_project, "director_propose", {"actions": [{"type": "snapshot"}]})
+    confirmed = call_tool(git_project, "director_confirm", {"id": free["id"]})
+    assert confirmed["state"] == "confirmed"
 
 
 def test_mcp_confirm_expired_is_error(git_project):

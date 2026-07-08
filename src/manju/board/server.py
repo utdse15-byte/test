@@ -38,6 +38,16 @@ traversal is still blocked because the media route reads arbitrary paths.
 
 from __future__ import annotations
 
+import secrets
+
+# Hostnames a browser is allowed to send in the Host header — the
+# DNS-rebinding guard: a foreign name that resolves to 127.0.0.1 is refused
+# (Round Y, review #12; mirrors gui/server.py's allowlist).
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+# Board POST bodies are tiny JSON control messages; cap to stop a hostile
+# large body from tying the handler up.
+_MAX_BODY_BYTES = 1 << 20  # 1 MiB
+
 import json
 import mimetypes
 import os
@@ -272,6 +282,21 @@ class BoardServer(ThreadingHTTPServer):
         super().__init__(server_address, BoardHandler)
         self.project = project
         self.mutation_lock = threading.Lock()
+        # Round Y (review #12): the board exposes MUTATING POST actions
+        # (select/rollback/snapshot/build/qc/package/redo/export). Bound to
+        # localhost is NOT sufficient — a page in the user's browser can POST
+        # to 127.0.0.1 (CSRF), and CORS only blocks READING the reply, not the
+        # side effect. So the board now carries the SAME control-plane guards
+        # as the main GUI (gui/server.py): a per-run token every mutating POST
+        # must echo, a Host allowlist (DNS-rebinding guard), a JSON
+        # Content-Type gate, and a request-body size cap. The token is minted
+        # here and embedded into the served page so the board's own JS sends
+        # it; a foreign page cannot read it.
+        self.token = secrets.token_urlsafe(24)
+        self.allowed_hosts = set(_LOCAL_HOSTS)
+        host = server_address[0]
+        if host and host not in ("0.0.0.0", "::"):
+            self.allowed_hosts.add(host.lower())
 
 
 class BoardHandler(BaseHTTPRequestHandler):
@@ -287,9 +312,35 @@ class BoardHandler(BaseHTTPRequestHandler):
     def log_message(self, *args: Any) -> None:  # keep the console quiet
         pass
 
+    # ---- control-plane guards (Round Y, review #12)
+
+    def _host_ok(self) -> bool:
+        """DNS-rebinding guard: the Host header's hostname must be a known local
+        name. A foreign name pointing at 127.0.0.1 is refused."""
+        raw = self.headers.get("Host", "")
+        hostname = raw.rsplit(":", 1)[0].strip().lower() if raw else ""
+        # bracketed IPv6 keeps its brackets in the allowlist
+        if raw.startswith("[") and "]" in raw:
+            hostname = raw[: raw.index("]") + 1].lower()
+        return hostname in self.server.allowed_hosts  # type: ignore[attr-defined]
+
+    def _reject_bad_host(self) -> bool:
+        if self._host_ok():
+            return False
+        self._read_body_raw()  # drain so keep-alive stays sane
+        self._send_json(HTTPStatus.FORBIDDEN,
+                        {"ok": False, "error": "bad Host header (DNS-rebinding guard)"})
+        return True
+
+    def _token_ok(self) -> bool:
+        return secrets.compare_digest(
+            self.headers.get("X-Manju-Token", ""), self.server.token)  # type: ignore[attr-defined]
+
     # ---- routing
 
     def do_GET(self) -> None:
+        if self._reject_bad_host():
+            return
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._serve_board()
@@ -299,6 +350,8 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
     def do_HEAD(self) -> None:
+        if self._reject_bad_host():
+            return
         # Mirror GET for media (browsers may probe) without a body.
         path = urlparse(self.path).path
         if path.startswith("/media/"):
@@ -307,10 +360,25 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:
+        if self._reject_bad_host():
+            return
         path = urlparse(self.path).path
         if not path.startswith("/api/"):
             self._read_body_raw()  # drain so keep-alive stays sane
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+            return
+        # Round Y (review #12): every mutating POST must echo the per-run token
+        # and be a JSON request — a cross-site form POST carries neither.
+        if not self._token_ok():
+            self._read_body_raw()
+            self._send_json(HTTPStatus.FORBIDDEN,
+                            {"ok": False, "error": "missing or invalid X-Manju-Token"})
+            return
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype and ctype != "application/json":
+            self._read_body_raw()
+            self._send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                            {"ok": False, "error": "Content-Type must be application/json"})
             return
         self._handle_api(path[len("/api/"):])
 
@@ -318,7 +386,7 @@ class BoardHandler(BaseHTTPRequestHandler):
 
     def _serve_board(self) -> None:
         try:
-            html = render_board(self._project, serve=True)
+            html = render_board(self._project, serve=True, token=self.server.token)
         except Exception as exc:  # a broken project should not kill the thread
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR,
                             {"ok": False, "error": _one_line(str(exc))})
@@ -478,6 +546,12 @@ class BoardHandler(BaseHTTPRequestHandler):
             n = int(length)
         except ValueError:
             return b""
+        # Round Y (review #12): cap the body — read at most the limit + 1 so an
+        # over-limit request is detected without pulling the whole thing into
+        # memory; the JSON parse then fails and _handle_api returns 400.
+        if n > _MAX_BODY_BYTES:
+            self.rfile.read(min(n, _MAX_BODY_BYTES + 1))
+            return b"__oversize__"
         return self.rfile.read(n) if n > 0 else b""
 
     def _read_json_body(self) -> dict | None:

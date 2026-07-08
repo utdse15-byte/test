@@ -35,7 +35,18 @@ from .models import (
 from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml
 
 PROJECT_FILE = "project.yaml"
-MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".png", ".jpg", ".jpeg", ".wav", ".mp3", ".m4a", ".flac"}
+# Round Y (review #4): an ORDERED tuple, not a set. `Project.takes()` picks a
+# take's media file by walking this in order, so when a take dir somehow holds
+# more than one media file for the same stem (e.g. take_01.mp4 AND take_01.mov)
+# the choice is DETERMINISTIC (video > image > audio, highest-fidelity video
+# first) across processes/Python versions — a set's iteration order is not.
+# `takes()` also surfaces the collision as a conflict on TakeInfo.error so
+# `manju check` reports it instead of silently tolerating an ambiguous take.
+# Membership tests (`ext in MEDIA_EXTS`) and `sorted(MEDIA_EXTS)` work
+# identically on a tuple, so every other caller is unaffected.
+MEDIA_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".m4v",
+              ".png", ".jpg", ".jpeg",
+              ".wav", ".mp3", ".m4a", ".flac")
 
 # The bible is a generic dict-of-files keyed by id (§4). This is the ONE list
 # of first-class bible files — scaffolded at `manju new`, merged by load_bible,
@@ -440,10 +451,16 @@ class Project:
                     if k not in ("source_in_ms", "source_out_ms")
                 }
                 sidecar = TakeSidecar.model_validate(safe_raw)
-            media = next(
-                (tdir / (name + ext) for ext in MEDIA_EXTS if (tdir / (name + ext)).exists()),
-                None,
-            )
+            # Round Y (review #4): resolve media by MEDIA_EXTS PRIORITY ORDER,
+            # deterministic across processes. If more than one media file exists
+            # for this stem the pick is still stable (first by priority) AND the
+            # ambiguity is recorded so `manju check` can flag it — an accident a
+            # human should notice, not silently absorb.
+            present = [ext for ext in MEDIA_EXTS if (tdir / (name + ext)).exists()]
+            media = (tdir / (name + present[0])) if present else None
+            if len(present) > 1 and error is None:
+                error = (f"take 有多个媒体文件({', '.join(name + e for e in present)})"
+                         f"— 已按优先级选用 {name + present[0]};请删除多余的,避免歧义")
             if skip_ghosts and media is None:
                 continue
             infos.append(TakeInfo(shot_id, name, media, sidecar_path, sidecar, error=error))
