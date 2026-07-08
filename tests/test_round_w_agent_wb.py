@@ -581,6 +581,9 @@ def test_gui_state_version_stack_numeric_order_past_v9(tmp_project):
         def list(self):
             return []
 
+        def interrupted(self):  # round AA: build_state merges these into "jobs"
+            return []
+
     tmp_project.final_dir.mkdir(parents=True, exist_ok=True)
     for n in range(1, 12):
         (tmp_project.final_dir / f"final_v{n}.mp4").write_bytes(b"x")
