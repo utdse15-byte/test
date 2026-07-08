@@ -262,6 +262,16 @@ class RuntimeState:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_run(self, run_id: int) -> dict | None:
+        """One ledger row by its autoincrement id, or ``None`` (goal: CLI
+        ``manju tasks retry <id>`` — the run ledger has no LIVE job registry
+        the way the GUI's JobRunner does, so retry is sourced from this row's
+        recorded shot/provider/params rather than a re-enqueued job)."""
+        row = self._conn.execute(
+            "SELECT * FROM runs WHERE id = ?", (int(run_id),)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def count_runs(self) -> int:
         """Total ledger rows via SELECT COUNT(*) — `status` (§8.3, §10) and
         `spend` need the number of runs, not the rows themselves (avoids

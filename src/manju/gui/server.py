@@ -543,6 +543,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/voice": self._act_voice,
                 "/api/redo-batch": self._act_redo_batch,
                 "/api/voice-batch": self._act_voice_batch,
+                "/api/jobs/cancel": self._act_jobs_cancel,
+                "/api/jobs/retry": self._act_jobs_retry,
                 "/api/plan": self._act_plan,
                 "/api/qc": self._act_qc,
                 "/api/lock": self._act_lock,
@@ -924,6 +926,12 @@ class _Handler(BaseHTTPRequestHandler):
                 kwargs["assume_yes"] = assume_yes
             if "on_phase" in params_sig:
                 kwargs["on_phase"] = lambda ph: setattr(job, "progress", ph)
+            # goal A (honest job cancellation): wire the job's own cancel flag
+            # into run_build's checkpoints — same defensive feature-detection
+            # as assume_yes/on_phase above, so this stays green even against
+            # an older core that has not landed should_cancel yet.
+            if "should_cancel" in params_sig:
+                kwargs["should_cancel"] = job.should_cancel
             return run_build(project, **kwargs).to_dict()
 
         job = self.server.runner.submit("build", params, fn)
@@ -1078,6 +1086,192 @@ class _Handler(BaseHTTPRequestHandler):
 
         job = self.server.runner.submit("voice_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
+
+    # --------------------------------------------------- job cancel / retry
+    # (goal: "running jobs cannot be canceled yet" — the mature-workstation
+    # gap. See gui/jobs.py: Job/JobRunner for the cooperative-cancel core;
+    # this is the HTTP surface plus the per-kind retry re-submit logic that
+    # JobRunner itself deliberately does not know about (it is engine-agnostic
+    # by design, see its module docstring).)
+
+    def _act_jobs_cancel(self, body: dict[str, Any]) -> None:
+        job_id = str(body.get("job_id") or "")
+        if not job_id:
+            self._send_error_json("job_id is required", 400)
+            return
+        job = self.server.runner.cancel(job_id)
+        if job is None:
+            self._send_error_json(f"unknown job: {job_id}", 404)
+            return
+        self._send_json({"job": job.to_dict()})
+
+    def _act_jobs_retry(self, body: dict[str, Any]) -> None:
+        """Re-enqueue a FRESH job with the same kind/params as a failed or
+        canceled one (goal B): new id, ``retry_of`` lineage pointing at the
+        original. Refuses (400/409, one line — never a bare traceback) a job
+        that is not yet terminal, or whose params no longer validate (e.g. a
+        redo/voice job whose shot was deleted since it failed) — the SAME
+        validation the original action's own handler would run, since the
+        retry path rebuilds the exact same closure via :meth:`_build_retry_fn`."""
+        job_id = str(body.get("job_id") or "")
+        if not job_id:
+            self._send_error_json("job_id is required", 400)
+            return
+        orig = self.server.runner.get(job_id)
+        if orig is None:
+            self._send_error_json(f"unknown job: {job_id}", 404)
+            return
+        if orig.state not in ("failed", "canceled"):
+            self._send_error_json(
+                f"只能重试已失败/已取消的任务(job {job_id} 当前状态: {orig.state})", 409)
+            return
+        try:
+            fn = self._build_retry_fn(orig.kind, dict(orig.params))
+        except ValueError as exc:
+            self._send_error_json(str(exc), 400)
+            return
+        job = self.server.runner.submit(orig.kind, dict(orig.params), fn, retry_of=orig.id)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _build_retry_fn(self, kind: str, params: dict[str, Any]):
+        """Rebuild the work-function closure for ``kind``+``params`` — the
+        SAME shape each ``_act_*`` handler above builds from a fresh request
+        body, sourced from a past job's recorded params instead. Raises
+        ``ValueError`` (caught by the caller, surfaced as a 400) for params
+        that no longer validate — never silently retries something that
+        cannot possibly succeed the same way it could not have been submitted
+        fresh."""
+        project, actor = self.server.project, self.server.actor
+
+        if kind == "build":
+            from ..build.graph import GEN_MODES
+
+            target = str(params.get("target") or "final")
+            gen = str(params.get("gen") or "missing")
+            if target not in ("proxy", "final", "exports", "qc"):
+                raise ValueError(f"unknown target: {target}")
+            if gen not in GEN_MODES:
+                raise ValueError(f"unknown gen mode: {gen}")
+            regen_stale = bool(params.get("regen_stale"))
+            force = bool(params.get("force"))
+            assume_yes = bool(params.get("assume_yes"))
+
+            def fn(job) -> dict[str, Any]:
+                import inspect
+
+                from ..build.graph import run_build
+
+                params_sig = inspect.signature(run_build).parameters
+                kwargs: dict[str, Any] = dict(
+                    target=target, gen=gen, regen_stale=regen_stale,
+                    dry_run=False, force=force, actor=actor)
+                if "assume_yes" in params_sig:
+                    kwargs["assume_yes"] = assume_yes
+                if "on_phase" in params_sig:
+                    kwargs["on_phase"] = lambda ph: setattr(job, "progress", ph)
+                if "should_cancel" in params_sig:
+                    kwargs["should_cancel"] = job.should_cancel
+                return run_build(project, **kwargs).to_dict()
+
+            return fn
+
+        if kind == "redo":
+            shot_id = str(params.get("shot") or "")
+            if not shot_id or not project.shot_path(shot_id).exists():
+                raise ValueError(f"unknown shot: {shot_id}")
+            provider = params.get("provider") or None
+            candidates = params.get("candidates")
+            seed = params.get("seed")
+            assume_yes = bool(params.get("assume_yes"))
+
+            def fn(job) -> dict[str, Any]:
+                import inspect
+
+                from ..build.graph import redo_shot
+
+                kwargs: dict[str, Any] = dict(
+                    candidates=int(candidates) if candidates else None,
+                    provider=str(provider) if provider else None,
+                    seed=int(seed) if seed is not None else None,
+                    actor=actor)
+                if "assume_yes" in inspect.signature(redo_shot).parameters:
+                    kwargs["assume_yes"] = assume_yes
+                takes = redo_shot(project, shot_id, **kwargs)
+                return {"shot": shot_id, "takes": takes}
+
+            return fn
+
+        if kind == "voice":
+            shot_id = str(params.get("shot") or "")
+            try:
+                shot = project.load_shot(shot_id)
+            except ProjectError as exc:
+                raise ValueError(str(exc)) from exc
+            if not shot.dialogue.text:
+                raise ValueError(f"{shot_id} has no dialogue.text to voice")
+            provider = params.get("provider") or None
+            assume_yes = bool(params.get("assume_yes"))
+
+            def fn(job) -> dict[str, Any]:
+                from ..build.graph import spend_gate
+                from ..providers.tts import get_tts_provider
+
+                tts = get_tts_provider(str(provider) if provider else None)
+                manifest = getattr(tts, "manifest", None)
+                cost = getattr(manifest, "cost", None) if manifest is not None else None
+                if cost is not None:
+                    spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
+                              hint=f"确认后重试:GUI 配音带 assume_yes,"
+                                   f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+                with _optional_build_lock(project.root, actor):
+                    media = tts.synthesize(project, project.load_shot(shot_id),
+                                           project.load_bible())
+                append_event(project.root, actor, "voice",
+                             {"shot": shot_id, "take": media.stem, "provider": tts.id,
+                              "via": "gui"})
+                return {"shot": shot_id, "take": media.stem, "media": project.relpath(media)}
+
+            return fn
+
+        if kind == "redo_batch":
+            shots = params.get("shots")
+            if not isinstance(shots, list) or not shots:
+                raise ValueError("shots must be a non-empty list of shot ids")
+            provider = params.get("provider") or None
+            seed = params.get("seed")
+            candidates = params.get("candidates")
+            assume_yes = bool(params.get("assume_yes"))
+
+            def fn(job) -> dict[str, Any]:
+                from ..build.graph import redo_batch
+
+                return redo_batch(
+                    project, shots=list(shots),
+                    candidates=int(candidates) if candidates else None,
+                    provider=str(provider) if provider else None,
+                    seed=int(seed) if seed is not None else None,
+                    actor=actor, assume_yes=assume_yes).to_dict()
+
+            return fn
+
+        if kind == "voice_batch":
+            shots = params.get("shots")
+            if not isinstance(shots, list) or not shots:
+                raise ValueError("shots must be a non-empty list of shot ids")
+            provider = params.get("provider") or None
+            assume_yes = bool(params.get("assume_yes"))
+
+            def fn(job) -> dict[str, Any]:
+                from ..build.graph import voice_batch
+
+                return voice_batch(
+                    project, shots=list(shots),
+                    provider=str(provider) if provider else None,
+                    actor=actor, assume_yes=assume_yes).to_dict()
+
+            return fn
+
+        raise ValueError(f"retry not supported for job kind: {kind!r}")
 
     # ---------------------------------------------------- onboarding (item 2)
 

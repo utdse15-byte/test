@@ -254,16 +254,19 @@ button.chip:hover { filter: brightness(1.15); }
 .st-broken { background: #4d1f22; color: #ff8a90; }
 
 /* --------------------------------------------------------- jobs strip -- */
-.jb-queued  { background: #3a3d44; color: #c4c9d2; animation: mj-pulse 1.6s ease-in-out infinite; }
-.jb-running { background: #23324d; color: #8fb8ff; animation: mj-pulse 1.1s ease-in-out infinite; }
-.jb-done    { background: #17402a; color: #7ee2a8; }
-.jb-failed  { background: #4d1f22; color: #ff8a90; }
+.jb-queued    { background: #3a3d44; color: #c4c9d2; animation: mj-pulse 1.6s ease-in-out infinite; }
+.jb-running   { background: #23324d; color: #8fb8ff; animation: mj-pulse 1.1s ease-in-out infinite; }
+.jb-canceling { background: #4a3a12; color: #ffcf5c; animation: mj-pulse 0.9s ease-in-out infinite; }
+.jb-canceled  { background: #3a3d44; color: #ffcf5c; }
+.jb-done      { background: #17402a; color: #7ee2a8; }
+.jb-failed    { background: #4d1f22; color: #ff8a90; }
 @keyframes mj-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 .job {
   display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
   font-size: .86rem; padding: .22rem 0; border-bottom: 1px dashed var(--line);
 }
 .job:last-child { border-bottom: 0; }
+.job .btn.mini { flex: 0 0 auto; }
 .jkind { font-weight: 700; min-width: 3.5rem; }
 .jsum { color: var(--muted); font-size: .8rem; word-break: break-all; }
 .job details { width: 100%; font-size: .8rem; }
@@ -2135,6 +2138,28 @@ _JS = r"""
       row.appendChild(el("span", "badge jb-" + j.state, j.state));
       const secs = jobSeconds(j);
       if (secs) row.appendChild(el("span", "muted", secs));
+      /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
+       * cancelable/retryable come straight from Job.to_dict() so the client
+       * never re-derives the state-machine rule. */
+      if (j.retry_of) {
+        row.appendChild(el("span", "muted", "重试自 #" + j.retry_of));
+      }
+      if (j.cancelable) {
+        const cancelBtn = el("button", "btn mini ghost", "取消");
+        cancelBtn.type = "button";
+        roGate(cancelBtn);  /* disabled + tooltip in readonly; click never fires then */
+        cancelBtn.addEventListener("click", () =>
+          post(cancelBtn, "/api/jobs/cancel", { job_id: j.id }, "已请求取消 (cancel requested)"));
+        row.appendChild(cancelBtn);
+      }
+      if (j.retryable) {
+        const retryBtn = el("button", "btn mini ghost", "重试");
+        retryBtn.type = "button";
+        roGate(retryBtn);
+        retryBtn.addEventListener("click", () =>
+          post(retryBtn, "/api/jobs/retry", { job_id: j.id }, "已重新提交 (retried)"));
+        row.appendChild(retryBtn);
+      }
       if (j.state === "done" && j.result) {
         const r = j.result;
         let summary = "";
@@ -2185,10 +2210,11 @@ _JS = r"""
           }
         }
       }
-      if (j.state === "failed" && j.error) {
+      if ((j.state === "failed" || j.state === "canceled") && j.error) {
         const det = document.createElement("details");
         if (!expandedOne) { det.open = true; expandedOne = true; }
-        det.appendChild(el("summary", null, "错误 (error)"));
+        det.appendChild(el("summary", null,
+          j.state === "canceled" ? "已取消 (canceled)" : "错误 (error)"));
         det.appendChild(el("div", "jerr", j.error));
         row.appendChild(det);
       }

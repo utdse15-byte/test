@@ -305,9 +305,10 @@ def test_concurrent_generate_deterministic_and_complete():
         time.sleep((10 - idx) * 0.005)
         return {"shot": item["shot"], "actual_cost": 0.0}
 
-    results, tripped, running, in_flight_at_trip = _concurrent_generate(
+    results, tripped, canceled, running, in_flight_at_trip = _concurrent_generate(
         items, gen_one, max_workers=4, budget_limit=None)
     assert not tripped
+    assert not canceled  # goal: honest job cancellation — no should_cancel passed
     assert in_flight_at_trip == []  # trip never fired -> nothing to snapshot
     assert set(results) == {it["shot"] for it in items}  # all ran
 
@@ -324,9 +325,10 @@ def test_concurrent_generate_budget_trip_stops_new_submissions():
         return {"shot": item["shot"], "actual_cost": 10.0}
 
     # workers=2 so submission is staged; budget 25 trips after ~3 completions
-    results, tripped, running, in_flight_at_trip = _concurrent_generate(
+    results, tripped, canceled, running, in_flight_at_trip = _concurrent_generate(
         items, gen_one, max_workers=2, budget_limit=25.0)
     assert tripped
+    assert not canceled  # a budget trip is not a cancellation
     assert running > 25.0
     assert len(submitted) < len(items)          # NEW submissions were stopped
     assert set(results) == set(submitted)       # only submitted shots have results
@@ -368,9 +370,10 @@ def test_concurrent_generate_honors_provider_max_concurrent(monkeypatch):
             concurrent_now -= 1
         return {"shot": item["shot"], "actual_cost": 0.0}
 
-    results, tripped, running, _ = _concurrent_generate(
+    results, tripped, canceled, running, _ = _concurrent_generate(
         items, gen_one, max_workers=4, budget_limit=None,
         head_provider=lambda it: "capped")
+    assert not canceled
     assert not tripped
     assert set(results) == {it["shot"] for it in items}
     assert max_concurrent_seen == 1  # never more than the manifest's cap

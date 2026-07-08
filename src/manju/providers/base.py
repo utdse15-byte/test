@@ -66,6 +66,31 @@ class NeedsHumanInput(RuntimeError):
     """The manual provider is waiting for a human to supply media (§6, §8.4)."""
 
 
+class ProviderCanceled(RuntimeError):
+    """The caller's ``should_cancel()`` tripped while THIS call was polling a
+    remote job (goal: honest job cancellation, gui/jobs.py JobRunner.cancel).
+
+    Deliberately NOT a :class:`ProviderFailure` / :class:`NeedsHumanInput` /
+    ``MediaError`` — it is not a failure at all, so
+    :func:`providers.registry.generate_with_fallback`'s per-provider ``except``
+    clauses never catch it and silently "try the next provider"; it propagates
+    straight out and the build unwinds as a cancellation, not a degradation.
+
+    The remote job may still complete and bill: its id was already persisted
+    the moment ``submit()`` returned (§8.1 "提交成功即写入" — see
+    :meth:`CloudProvider._on_submit`), so a later build/poll resumes it rather
+    than resubmitting (never double-charges). This exception only means "we
+    stopped WAITING for it here"."""
+
+    def __init__(self, provider_id: str, job_id: str):
+        super().__init__(
+            f"{provider_id}: 已取消等待任务 {job_id} 完成 — 远程任务可能仍在进行并计费,"
+            f"job id 已记录(§8.1),后续构建/轮询会恢复轮询而不是重新提交"
+        )
+        self.provider_id = provider_id
+        self.job_id = job_id
+
+
 # Per-kind default hint (goal 10): one actionable line when the provider did not
 # supply a more specific ``detail["hint"]``. content_rejected is first-class and
 # never auto-retried, so its hint points at the action that CAN unblock it.
@@ -168,6 +193,11 @@ class GenerationRequest:
     # Additive and default-absent: a request built the old way (or a test) lazily
     # resolves via :meth:`refset` on first use, so every provider still sees refs.
     refs: "RefSet | None" = None
+    # Cooperative cancellation (goal: honest job cancellation): checked between
+    # CloudProvider poll sleeps (never mid-HTTP-call). Additive and
+    # default-absent — a request built the old way never observes it, so the
+    # default path (no GUI job cancel wired) is byte-identical.
+    should_cancel: Callable[[], bool] | None = None
 
     def refset(self) -> "RefSet":
         """The resolved :class:`~manju.providers.refs.RefSet` for this shot.
@@ -377,7 +407,7 @@ class CloudProvider(Provider):
                         self._resolve_intent(state, intent_id, job_id)
                         intent_id = None
                         self._on_submit(state, req, job_id)  # 提交成功即写入
-                    info = self._poll_to_completion(job_id)
+                    info = self._poll_to_completion(job_id, should_cancel=req.should_cancel)
                     takes = self._download_and_register(req, job_id, info)
                     self._on_success(state, req, job_id, info, takes)
                     return takes
@@ -612,10 +642,20 @@ class CloudProvider(Provider):
     def _backoff(self, i: int) -> float:
         return min(self._base_delay * (2 ** i), self._max_delay)
 
-    def _poll_to_completion(self, job_id: str) -> dict:
+    def _poll_to_completion(self, job_id: str, *,
+                            should_cancel: Callable[[], bool] | None = None) -> dict:
         elapsed = 0.0
         i = 0
         while True:
+            # Cooperative cancellation (goal: honest job cancellation): observed
+            # BETWEEN poll sleeps, never mid-HTTP-call. Trips STOP WAITING —
+            # they never mark the remote job failed/retried (§8.1: the job id
+            # is already persisted, so a later poll/build resumes it instead
+            # of resubmitting). should_cancel is None by default (no GUI job
+            # wired a cancel flag), so this is a no-op on the byte-identical
+            # default path.
+            if should_cancel is not None and should_cancel():
+                raise ProviderCanceled(self.id, job_id)
             status, info = self.poll(job_id)
             info = info or {}
             if status == "succeeded":

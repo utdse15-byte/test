@@ -2604,8 +2604,17 @@ def _reason_tail(text: str | None, limit: int = 90) -> str:
     return one if len(one) <= limit else "…" + one[-limit:]
 
 
-@app.command()
-def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to show"),
+tasks_app = typer.Typer(
+    no_args_is_help=False,
+    help="任务 / tasks — the run-ledger JOB/QUEUE view (§8.3, goal 19). "
+         "`manju tasks` alone lists recent runs; `cancel`/`retry` act on one row.",
+)
+app.add_typer(tasks_app, name="tasks")
+
+
+@tasks_app.callback(invoke_without_command=True)
+def tasks(ctx: typer.Context,
+          n: int = typer.Option(20, "-n", help="how many recent ledger rows to show"),
           as_json: bool = typer.Option(False, "--json")):
     """Recent generation jobs from the run ledger — the JOB/QUEUE view (§8.3, goal 19).
 
@@ -2616,7 +2625,13 @@ def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to s
 
     For the MONEY view — per-shot/per-provider breakdowns and estimate-vs-actual
     delta — use `manju spend`; it reads the same ledger through the same query
-    helpers, so the two never disagree on the numbers."""
+    helpers, so the two never disagree on the numbers.
+
+    `manju tasks cancel <id>` / `manju tasks retry <id>` act on one row — see
+    their own --help for what "cancel" honestly means from the CLI (goal:
+    job cancellation, round X)."""
+    if ctx.invoked_subcommand is not None:
+        return
     project = _project()
     from .runtime.state import RuntimeState
 
@@ -2710,6 +2725,93 @@ def tasks(n: int = typer.Option(20, "-n", help="how many recent ledger rows to s
         typer.echo(f"  {row['provider'] or '—':<14}  {row['cost']:g} {cur}  ({row['runs']} runs)")
     total_cur = currency or "(混合/mixed)"
     typer.secho(f"  合计 / total  {float(total):g} {total_cur}", fg=typer.colors.CYAN)
+
+
+@tasks_app.command("cancel")
+def tasks_cancel(
+    job_id: str = typer.Argument(..., help="run-ledger row id (see `manju tasks`)"),
+):
+    """Cancel a task — HONEST scope note (goal: job cancellation, round X).
+
+    The GUI (`manju gui`) has a LIVE in-process job registry (gui/jobs.py
+    JobRunner): a running build/redo/voice job there can be cooperatively
+    canceled from the same server process that is running it, because the
+    cancel request and the running job share memory (a threading.Event) —
+    see the GUI queue panel's 取消 button.
+
+    The CLI has NO such registry. `manju build` / `manju redo` / `manju voice`
+    run SYNCHRONOUSLY in the terminal that invoked them; this ledger
+    (`manju tasks`) records already-submitted/finished attempts, not a live
+    queue a second CLI invocation could reach into. So this command refuses
+    to pretend — it can never actually stop a build running in another
+    terminal. It always exits non-zero with the honest alternative."""
+    typer.secho(
+        "manju tasks cancel: CLI 任务没有可取消的进行中队列(GUI 才有 —— `manju gui`)。\n"
+        "  · 若某个 manju build/redo/voice 正在别的终端跑,请在那个终端按 Ctrl-C\n"
+        "    终止它 —— 构建会正常收尾(build_lock 释放,已生成分段作为内容寻址\n"
+        "    缓存保留,可复用,不会回滚)。\n"
+        "  · 若你想停掉一条已提交、还在轮询的云端任务(`manju tasks` 的\n"
+        "    进行中/pending 一栏),目前只能等它在下一次构建/轮询时收尾;远程\n"
+        "    任务可能已经在计费,job id 已记录(§8.1),不会被重复提交。\n"
+        "  · 交互式取消(真正生效)见 `manju gui` 的任务面板。",
+        fg=typer.colors.YELLOW)
+    raise typer.Exit(1)
+
+
+@tasks_app.command("retry")
+def tasks_retry(
+    run_id: int = typer.Argument(..., help="run-ledger row id to retry (see `manju tasks`)"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before-gated spend (§8.3)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Retry a FAILED run-ledger row — a direct, synchronous re-run of the
+    same shot/provider recipe (goal: honest job retry).
+
+    Unlike the GUI's retry (a fresh JobRunner job with `retry_of` lineage,
+    re-enqueued behind whatever else is queued), the CLI has no live job
+    registry to re-enqueue into: this runs the SAME §8.3-gated `redo_shot`
+    any `manju redo` uses, right now, sourced from the failed row's recorded
+    shot/provider/seed instead of typed-out flags — a fresh ledger row lands
+    on success, exactly like typing `manju redo <shot>` again would.
+
+    Refuses (one line, never a traceback) a row that is not `failed`, or
+    whose shot no longer exists — never silently retries something that can
+    no longer validate."""
+    project = _project()
+    from .runtime.state import RuntimeState
+
+    with RuntimeState(project.root) as state:
+        row = state.get_run(run_id)
+    if row is None:
+        _fail(f"没有 id 为 {run_id} 的任务记录(见 `manju tasks`)")
+    if row.get("status") != "failed":
+        _fail(f"只能重试已失败的任务(#{run_id} 当前状态: {row.get('status')})")
+    shot_id = row.get("shot")
+    if not shot_id:
+        _fail(f"#{run_id} 没有记录 shot,无法重试")
+    if not project.shot_path(shot_id).exists():
+        _fail(f"#{run_id} 对应的镜头 {shot_id} 已不存在,无法重试")
+    provider = row.get("provider") or None
+    try:
+        params = json.loads(row.get("params") or "{}") or {}
+    except (json.JSONDecodeError, TypeError):
+        params = {}
+    seed = params.get("seed") if isinstance(params, dict) else None
+
+    from .build.graph import BuildError, WaitingUser, redo_shot
+
+    try:
+        takes = redo_shot(project, shot_id, provider=provider,
+                          seed=int(seed) if seed is not None else None,
+                          actor=ACTOR, assume_yes=yes)
+    except (BuildError, WaitingUser) as exc:
+        _fail(str(exc))
+    payload = {"ok": True, "retry_of": run_id, "shot": shot_id, "takes": takes}
+    _emit(payload, as_json)
+    if not as_json:
+        typer.secho(f"已重试 #{run_id} → {shot_id}: {', '.join(takes)}",
+                    fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------------ spend

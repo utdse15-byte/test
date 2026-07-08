@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from ..core.check import run_check
 from ..core.container import Project
@@ -24,6 +24,26 @@ from .stale import ShotBuildStatus, ShotState, evaluate_all
 
 class BuildError(RuntimeError):
     pass
+
+
+class BuildCanceled(BuildError):
+    """Raised when a ``should_cancel()`` checkpoint trips mid-build (goal:
+    honest cooperative cancellation — gui/jobs.py ``JobRunner.cancel``).
+
+    Always raised from INSIDE ``run_build``'s ``with build_lock(...)`` block,
+    so it unwinds through the lock's own ``finally: lock.release()`` exactly
+    like any other exception — a canceled build never leaves the project
+    locked. Whatever was already generated stays on disk as ordinary
+    content-addressed cache (§3): nothing is rolled back, and a later build
+    reuses it instead of re-spending. Carries what was already done/spent so
+    the caller (CLI/GUI/MCP) reports it honestly instead of a bare "canceled"."""
+
+    def __init__(self, message: str, *, generated: list[str], spent: float,
+                 currency: str | None):
+        super().__init__(message)
+        self.generated = generated
+        self.spent = spent
+        self.currency = currency
 
 
 # Round W (issue #3): the single source of truth for --gen's three legal
@@ -160,14 +180,23 @@ def _provider_semaphore(name: str | None, cache: dict):
 
 
 def _concurrent_generate(items, gen_one, *, max_workers: int,
-                         budget_limit: float | None, head_provider=None):
+                         budget_limit: float | None, head_provider=None,
+                         should_cancel: "Callable[[], bool] | None" = None):
     """Drive ``gen_one`` over ``items`` in a bounded thread pool (goal 14).
 
-    Returns ``(results_by_shot, tripped, running_cost, in_flight_at_trip)``.
-    Provider calls run concurrently (``max_workers`` at once), but this
-    function performs NO order-dependent commit — the caller applies that
-    strictly in plan order from the returned dict, so the outcome is
-    deterministic no matter who finished first.
+    Returns ``(results_by_shot, tripped, canceled, running_cost,
+    in_flight_at_trip)``. Provider calls run concurrently (``max_workers`` at
+    once), but this function performs NO order-dependent commit — the caller
+    applies that strictly in plan order from the returned dict, so the
+    outcome is deterministic no matter who finished first.
+
+    ``should_cancel`` (goal: honest job cancellation) is checked before EVERY
+    new submission — the same "between per-shot generation submissions"
+    checkpoint the serial path uses — so a trip stops handing out new work
+    while whatever is already in flight finishes normally (mirrors the
+    budget-trip honesty below: ``canceled=True`` tells the caller which
+    already-committed results it can keep). ``None`` (no GUI job wired a
+    cancel flag) never checks anything — byte-identical to before.
 
     Per-provider concurrency (goal 8): ``head_provider(item) -> str | None``
     resolves the provider whose manifest ``limits.max_concurrent`` should gate
@@ -195,6 +224,7 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
     results: dict[str, dict] = {}
     running = 0.0
     tripped = False
+    canceled = False
     next_i = 0
     sem_cache: dict = {}
     in_flight_at_trip: list[str] = []
@@ -210,9 +240,12 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
         in_flight: dict = {}
 
         def _fill() -> None:
-            nonlocal next_i
+            nonlocal next_i, canceled
             while (next_i < len(items) and len(in_flight) < max_workers
-                   and not tripped):
+                   and not tripped and not canceled):
+                if should_cancel is not None and should_cancel():
+                    canceled = True
+                    break
                 it = items[next_i]
                 next_i += 1
                 in_flight[ex.submit(_gated, it)] = it["shot"]
@@ -224,6 +257,12 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
                 sid = in_flight.pop(fut)
                 res = fut.result()
                 results[sid] = res
+                # A per-shot ProviderCanceled (goal: honest job cancellation —
+                # this item's own poll loop observed should_cancel and stopped
+                # waiting, §8.1) also counts as canceled, even if _fill() above
+                # never itself saw the flag between submissions.
+                if res.get("canceled") and not canceled:
+                    canceled = True
                 running += float(res.get("actual_cost", 0.0) or 0.0)
                 if (budget_limit is not None and running > budget_limit
                         and not tripped):
@@ -234,7 +273,7 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
                     # shrinks as the while loop drains it.
                     in_flight_at_trip = list(in_flight.values())
             _fill()
-    return results, tripped, running, in_flight_at_trip
+    return results, tripped, canceled, running, in_flight_at_trip
 
 
 @dataclass
@@ -263,6 +302,12 @@ class BuildResult:
     estimated_cost: float = 0.0
     saved_cost: float = 0.0  # cache savings: what regenerating FRESH shots would cost
     waiting_user: bool = False  # §8.3 ask_before gate: needs an explicit yes
+    # goal: honest job cancellation — a should_cancel() checkpoint tripped
+    # mid-build (gui/jobs.py JobRunner.cancel). ``generated``/``errors`` still
+    # carry what was actually produced and the honest cancellation message;
+    # this flag lets a caller distinguish "canceled" from an ordinary ok=False
+    # failure without string-matching the error text.
+    canceled: bool = False
     # goal 10: structured failure summaries recorded during THIS build (errors +
     # info-level degradations), newest first — the AI path reads these ids and
     # cross-references reports/failures.jsonl for the full evidence/hint.
@@ -469,6 +514,7 @@ def run_build(
     mode: str | None = None,  # goal 14: quality|balanced|speed (flag) — None = default
     on_phase=None,  # Callable[[str], None] — coarse progress ("check"/"render"…)
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
+    should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
     *content*; this process lock guards the dual-actor scenario — a human
@@ -483,7 +529,18 @@ def run_build(
     ``include_unindexed`` (review #5, default False): a shot that exists on
     disk but is not in ``shots/index.yaml`` order is excluded from the plan
     AND the compiled timeline — index order is the order authority. Pass
-    True (``manju build --include-unindexed``) to include it anyway."""
+    True (``manju build --include-unindexed``) to include it anyway.
+
+    ``should_cancel`` (goal: honest job cancellation, default ``None`` = the
+    byte-identical original behaviour): a zero-arg predicate checked between
+    phases, between per-shot generation submissions, and around the render
+    step — gui/jobs.py's ``JobRunner`` wires a job's cancel flag here so a
+    GUI cancel click actually stops a running build. A trip raises
+    :class:`BuildCanceled` internally, which this function turns into a
+    clean, ``ok=False, canceled=True`` result (lock released, nothing rolled
+    back — see :class:`BuildCanceled`'s docstring) instead of an exception
+    reaching the caller. Dry-run never checks it (read-only and instant —
+    nothing to cancel)."""
     from datetime import datetime, timezone
 
     from ..runtime.buildlock import BuildLocked, build_lock
@@ -510,7 +567,10 @@ def run_build(
 
     if dry_run:
         # Dry-run is read-only and never spends, so it never records a real
-        # failure; return as-is (failures stays []).
+        # failure; return as-is (failures stays []). should_cancel is
+        # deliberately NOT threaded in here: dry-run is synchronous and free
+        # (§8.3) — there is nothing to cancel, and this early-return branch
+        # has no try/except to unwind a BuildCanceled cleanly.
         return _run_build_phases(
             project, target=target, gen=gen, regen_stale=regen_stale,
             dry_run=True, force=force, actor=actor,
@@ -523,7 +583,7 @@ def run_build(
                 project, target=target, gen=gen, regen_stale=regen_stale,
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, mode=mode, on_phase=on_phase,
-                include_unindexed=include_unindexed,
+                include_unindexed=include_unindexed, should_cancel=should_cancel,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -531,6 +591,22 @@ def run_build(
         result = BuildResult()
         result.ok = False
         result.errors.append(str(exc))
+        return result
+    except BuildCanceled as exc:
+        # goal: honest job cancellation. build_lock's own context manager
+        # already released the lock (its finally: runs before this except,
+        # since the raise happened INSIDE the with-block); nothing here needs
+        # to unlock anything. Report exactly what the checkpoint knew: what
+        # was generated and what was actually spent — never a bare "canceled".
+        result = BuildResult()
+        result.ok = False
+        result.canceled = True
+        result.generated = list(exc.generated)
+        result.errors.append(str(exc))
+        append_event(project.root, actor, "build",
+                     {"target": target, "ok": False, "canceled": True,
+                      "generated": exc.generated, "spent": exc.spent,
+                      "currency": exc.currency})
         return result
 
     _attach_failures(project, result, build_start)
@@ -570,12 +646,45 @@ def _run_build_phases(
     mode: str | None = None,  # goal 14: build mode name/flag (None = engine default)
     on_phase=None,  # advisory coarse-progress callback (spend cluster)
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
+    should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
 ) -> BuildResult:
     result = BuildResult()
+    # goal: honest job cancellation — running total of what THIS build has
+    # actually spent so far, updated as each shot's takes commit (see
+    # _commit_one below). Used only to word the cancellation message
+    # honestly (已花费 X); advisory, like every other spend figure in this
+    # module — a bookkeeping miss must never fail the build.
+    spent_so_far: dict[str, Any] = {"total": 0.0, "currency": None}
+
+    def _cancel_check(where: str, *, remote_pending: bool = False) -> None:
+        """Raise :class:`BuildCanceled` iff ``should_cancel()`` trips. The one
+        choke point every checkpoint below calls, so the honest message shape
+        (what was generated, what was spent, whether a remote job may still
+        be billing) is built in exactly one place."""
+        if should_cancel is None or not should_cancel():
+            return
+        total = spent_so_far["total"]
+        currency = spent_so_far["currency"]
+        cost_str = f"{total:g}" + (f" {currency}" if currency else "")
+        parts = [
+            f"已取消({where})",
+            f"{len(result.generated)} 个产物已完成并缓存(内容寻址,可复用)",
+            f"已花费 {cost_str}",
+        ]
+        if remote_pending:
+            parts.append(
+                "该镜头的远程任务可能仍在进行并计费,job id 已记录(§8.1),"
+                "后续构建会恢复轮询而不是重新提交"
+            )
+        raise BuildCanceled("; ".join(parts), generated=list(result.generated),
+                            spent=total, currency=currency)
 
     def _phase(name: str) -> None:
-        """Coarse progress for watchers. Advisory: a broken callback must
-        never break a build."""
+        """Coarse progress for watchers, AND the "between phases" cancel
+        checkpoint (goal: honest job cancellation) — checked first so a
+        cancellation trip is reported before any (possibly misleading)
+        progress update for the phase that will never run."""
+        _cancel_check(f"阶段 phase={name}")
         if on_phase is not None:
             try:
                 on_phase(name)
@@ -706,7 +815,12 @@ def _run_build_phases(
     # `spend` can show estimate-vs-actual (§8.3 事前 vs 事后).
     estimates = {p["shot"]: p["estimated_cost"] for p in video_plan}
     if video_plan:
-        from ..providers.base import GenerationRequest, NeedsHumanInput, ProviderFailure
+        from ..providers.base import (
+            GenerationRequest,
+            NeedsHumanInput,
+            ProviderCanceled,
+            ProviderFailure,
+        )
         from ..providers.refs import ref_reliability_notes, resolve_refs
         from ..providers.registry import fallback_chain, generate_with_fallback
 
@@ -744,26 +858,49 @@ def _run_build_phases(
                 # Reference inputs (goal item 7): resolve ONCE here so tiering +
                 # lineage are shared by whichever provider the fallback picks.
                 refs=resolve_refs(project, shot, bible, params=params),
+                # goal: honest job cancellation — a cloud provider's poll loop
+                # (CloudProvider._poll_to_completion) observes this between
+                # sleeps and stops WAITING (never mid-HTTP-call) via
+                # ProviderCanceled, caught below like any other terminal
+                # outcome so this function still never raises.
+                should_cancel=should_cancel,
             )
             chain = fallback_chain(shot)
+            canceled = False
             try:
                 takes = generate_with_fallback(req, chain)
                 exc: BaseException | None = None
             except (ProviderFailure, NeedsHumanInput) as e:
                 takes, exc = None, e
+            except ProviderCanceled as e:
+                # Not a failure (§8.1: the remote job may still complete and
+                # bill; its id is already persisted for resume) — the caller
+                # (the loop below / _concurrent_generate) treats this shot as
+                # "stopped, not spent-on-nothing" and raises BuildCanceled at
+                # the next checkpoint rather than recording a failure.
+                takes, exc = None, e
+                canceled = True
             actual = 0.0
             for t in (takes or []):
                 remote = t.sidecar.remote
                 if remote and remote.cost:
                     actual += remote.cost
             return {"item": item, "shot": shot, "req": req, "chain": chain,
-                    "takes": takes, "exc": exc, "actual_cost": actual}
+                    "takes": takes, "exc": exc, "actual_cost": actual,
+                    "canceled": canceled}
 
         def _commit_one(res: dict) -> None:
             """Serial, order-dependent commit for one generated shot — the exact
             side effects the pre-modes loop applied inline, unchanged."""
             item, shot, req, chain = res["item"], res["shot"], res["req"], res["chain"]
             takes, exc = res["takes"], res["exc"]
+            if res.get("canceled"):
+                # goal: honest job cancellation — a ProviderCanceled stopped
+                # this shot's poll loop from waiting; it produced NO take, so
+                # there is nothing to commit, and it is NOT a failure (§8.1:
+                # the remote job may still complete/bill; its id already
+                # persisted for resume). The next _cancel_check call raises.
+                return
             if exc is not None:
                 result.warnings.append(f"{shot.id}: generation failed — {exc}")
                 # Every provider (incl. the caption_card terminal) failed: this
@@ -813,11 +950,29 @@ def _run_build_phases(
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
             _record_local_runs(project, takes, {"reason": item["reason"]}, estimates)
+            # goal: honest job cancellation — running spend for THIS build, so
+            # a checkpoint that trips right after this shot can say exactly
+            # what has already been spent (§8.3 honesty, not just §80's).
+            spent_so_far["total"] += float(res.get("actual_cost", 0.0) or 0.0)
+            if spent_so_far["currency"] is None:
+                spent_so_far["currency"] = next(
+                    (t.sidecar.remote.currency for t in takes
+                     if t.sidecar.remote and t.sidecar.remote.currency), None)
 
         if max_workers <= 1:
-            # serial — generate then commit per shot, in plan order (unchanged).
+            # serial — generate then commit per shot, in plan order. The
+            # cancel checkpoint sits BEFORE each new submission (goal: honest
+            # job cancellation, "between per-shot generation submissions") —
+            # should_cancel=None (the default) makes _cancel_check a no-op,
+            # so this loop is byte-identical to before.
             for item in video_plan:
-                _commit_one(_gen_one(item))
+                _cancel_check(f"生成:{item['shot']}(尚未开始)")
+                res = _gen_one(item)
+                _commit_one(res)
+                if res.get("canceled"):
+                    # This shot's own poll loop stopped waiting — raise now
+                    # rather than waiting for the next iteration's pre-check.
+                    _cancel_check(f"生成:{item['shot']}", remote_pending=True)
         else:
             # #8: which provider's manifest max_concurrent should gate each
             # shot's worker slot — resolved the SAME way generate_with_fallback
@@ -834,13 +989,21 @@ def _run_build_phases(
                     head_provider_by_shot[item["shot"]] = None
 
             # bounded parallel generation; commit deterministically in plan order.
-            done, tripped, running, in_flight_at_trip = _concurrent_generate(
+            done, tripped, gen_canceled, running, in_flight_at_trip = _concurrent_generate(
                 video_plan, _gen_one, max_workers=max_workers, budget_limit=budget,
-                head_provider=lambda it: head_provider_by_shot.get(it["shot"]))
+                head_provider=lambda it: head_provider_by_shot.get(it["shot"]),
+                should_cancel=should_cancel)
             for item in video_plan:
                 res = done.get(item["shot"])
                 if res is not None:
                     _commit_one(res)
+            if gen_canceled:
+                # goal: honest job cancellation — should_cancel() tripped
+                # (either between submissions or inside one shot's poll loop);
+                # every already-committed result above is real (generated +
+                # cached), everything else was never submitted or never billed.
+                remote_pending = any(bool(r.get("canceled")) for r in done.values())
+                _cancel_check("生成(并发提交已停止)", remote_pending=remote_pending)
             if tripped:
                 unsub = [it["shot"] for it in video_plan if it["shot"] not in done]
                 # §80 honesty: the trip stops NEW submissions only — shots already
@@ -873,6 +1036,10 @@ def _run_build_phases(
 
         bible = project.load_bible()
         for item in voice_plan:
+            # goal: honest job cancellation — same "between per-shot
+            # submissions" checkpoint as the video generation loop above;
+            # should_cancel=None (default) makes this a no-op.
+            _cancel_check(f"配音:{item['shot']}(尚未开始)")
             shot = project.load_shot(item["shot"])
             try:
                 tts = get_tts_provider(item["provider"])
@@ -1011,11 +1178,30 @@ def _run_build_phases(
     if target in ("proxy", "final"):
         _phase(f"render:{target}")
         from ..media.render import render_timeline
+        # goal: honest job cancellation — media/render.py itself is a
+        # read-only surface this round (its segment/boundary/final pipeline
+        # is not touched); cancel_scope makes every run_ffmpeg call IT makes
+        # transitively cancel-aware instead, so a trip kills whichever ffmpeg
+        # subprocess is actually running rather than waiting for the current
+        # encode to finish. should_cancel is None on the default path, so
+        # this is a genuine no-op then.
+        from ..media.ffmpeg import MediaCanceled, cancel_scope
 
         finals_before = set(project.final_dir.glob("final_v*.mp4"))
         try:
-            out = render_timeline(project, timeline, target=target, ass_file=ass_path,
-                                  force=force)
+            with cancel_scope(should_cancel):
+                out = render_timeline(project, timeline, target=target, ass_file=ass_path,
+                                      force=force)
+        except MediaCanceled as exc:
+            _cancel_check(f"渲染:{target}(ffmpeg 已终止)")
+            # Defensive: should_cancel() is true (that is what raised
+            # MediaCanceled in the first place), so _cancel_check above
+            # always raises — this is unreachable in practice, but never
+            # silently swallow a canceled render as a generic failure.
+            raise BuildCanceled(
+                str(exc), generated=list(result.generated),
+                spent=spent_so_far["total"], currency=spent_so_far["currency"],
+            ) from exc
         except Exception as exc:  # FIX-D: MediaError etc. -> one-line diagnostic
             from ..media.ffmpeg import MediaError
 
