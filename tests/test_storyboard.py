@@ -174,6 +174,25 @@ def test_empty_project_page(gui):
     assert "分镜工作台" in text and "还没有镜头" in text
 
 
+def test_detail_row_includes_lazy_take_previews(gui, add_shot, make_take):
+    """round X agent XF (pain #8): every take gets a small preview card in the
+    row drawer, but NEVER wired eagerly — only data-src/data-poster, so a
+    plain page GET never triggers an ffmpeg transcode (never block page GET
+    on ffmpeg); /storyboard.js assigns the real src only on drawer-open."""
+    add_shot(gui.project, "S001")
+    take = make_take(gui.project, "S001", "h")
+    alt = make_take(gui.project, "S001", "h2")
+    status, _, html = _req(gui, "/storyboard", raw=True)
+    text = html.decode("utf-8")
+    assert status == 200
+    assert "版本预览" in text
+    assert take.name in text and alt.name in text
+    assert 'class="sb-take-video"' in text
+    assert "data-src=" in text and "data-poster=" in text
+    # lazy only: no eagerly-wired src= attribute on the take preview elements
+    assert ' src="/preview' not in text and ' src="/media' not in text
+
+
 def test_char_chips_resolve_aliases(gui, add_shot):
     write_yaml(gui.project.root / "bible" / "characters.yaml",
                {"linxia": {"name": "林夏", "aliases": ["阿夏", "夏"]},

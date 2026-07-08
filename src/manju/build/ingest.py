@@ -50,7 +50,20 @@ never destructive (mirrors `media.preview.find_duplicate_import`'s stance),
 it just avoids minting a second copy of bytes already in the project. A
 duplicate WITHIN the batch itself (two dropped files with identical content)
 is caught the same way, against the first row that claimed those bytes.
-"""
+
+LIBRARY dedup (round X agent XF — extends the above, never duplicates it): a
+file whose content hash is NOT already in the project but IS already sitting
+in the user's private library (``core.library``, ``~/.manju/library``) never
+silently mints a second copy either. ``--on-duplicate`` (default ``skip``)
+governs what happens: ``skip`` marks the row ``skip_duplicate`` with a 中文
+advisory naming the library asset's tags (mirroring the project-side
+message); ``import`` classifies the row normally and just ATTACHES the
+advisory (``IngestRow.library_hint``) so the reviewer sees it without losing
+the row; ``link`` does the same but additionally sources the copy from the
+LIBRARY'S OWN blob instead of the dropped file (byte-identical either way —
+this only changes provenance, recorded in the hint). A project-internal hit
+(the dedup above) always wins over a library hit — this section only runs
+for files that were NOT already found inside the project."""
 
 from __future__ import annotations
 
@@ -92,6 +105,7 @@ _REF_SUFFIX_RE = re.compile(r"^(?P<base>.+)_ref\d*$")
 _BIBLE_REF_FILES = ("characters", "scenes", "props")
 
 ROLES = ("auto", "take", "voice", "ref")
+ON_DUPLICATE_STRATEGIES = ("skip", "import", "link")
 
 
 class IngestError(ValueError):
@@ -116,13 +130,19 @@ class IngestRow:
     shot_id: str | None = None  # resolved shot id (take / voice / shot_ref)
     asset_id: str | None = None  # resolved bible asset id (bible_ref)
     asset_kind: str | None = None  # "characters" | "scenes" | "props"
+    # round X agent XF: set when this file's content hash ALSO matches an
+    # asset already in the user's private library (core.library) — a 中文
+    # advisory naming the library asset's tags, kept even when the row still
+    # proceeds as a normal action (--on-duplicate import/link). None when no
+    # library hit was found (or the library is unavailable).
+    library_hint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "file": self.file, "name": self.name, "hash": self.hash,
             "action": self.action, "target": self.target, "reason": self.reason,
             "shot_id": self.shot_id, "asset_id": self.asset_id,
-            "asset_kind": self.asset_kind,
+            "asset_kind": self.asset_kind, "library_hint": self.library_hint,
         }
 
 
@@ -166,12 +186,23 @@ def plan_ingest(
     *,
     role: str = "auto",
     shot: str | None = None,
+    on_duplicate: str = "skip",
 ) -> IngestPlan:
     """Classify every file under ``paths`` (files and/or directories,
     expanded recursively) into a target step. READ-ONLY: nothing moves,
-    nothing is written — see :func:`apply_ingest` for execution."""
+    nothing is written — see :func:`apply_ingest` for execution.
+
+    ``on_duplicate`` (round X agent XF) governs ONLY files whose content
+    hash matches something already in the user's private LIBRARY (never the
+    project-internal dedup above, which always skips) — see the module
+    docstring's "LIBRARY dedup" section."""
     if role not in ROLES:
         raise IngestError(f"未知 --role: {role!r} — 只能是 {'/'.join(ROLES)}")
+    if on_duplicate not in ON_DUPLICATE_STRATEGIES:
+        raise IngestError(
+            f"未知 --on-duplicate: {on_duplicate!r} — 只能是 "
+            f"{'/'.join(ON_DUPLICATE_STRATEGIES)}"
+        )
     if shot is not None:
         if not is_safe_segment(shot):
             raise IngestError(
@@ -184,6 +215,7 @@ def plan_ingest(
 
     files = _collect_files(paths)
     existing_index = _existing_hash_index(project)
+    library_index = _library_hash_index()
     shot_ids = set(project.shot_ids())
     bible_owner = _bible_owner_map(project)
 
@@ -207,9 +239,59 @@ def plan_ingest(
             ))
             continue
         seen_in_batch[h] = f.name
+
+        lib_hit = library_index.get(h)
+        if lib_hit is not None:
+            hash8, tags_str = lib_hit["hash8"], lib_hit["tags_str"]
+            hint = (f"内容已在素材库中(标签: {tags_str}) — hash8={hash8};"
+                    f"可用 `manju lib use {hash8}` 复用,或用 --on-duplicate 调整此行为")
+            if on_duplicate == "skip":
+                rows.append(IngestRow(
+                    file=str(f), name=f.name, hash=h, action="skip_duplicate",
+                    target=f"素材库 library:{hash8}",
+                    reason=f"内容已存在于素材库(标签: {tags_str}),跳过(--on-duplicate=skip)",
+                    library_hint=hint,
+                ))
+                continue
+            row = _classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
+                            bible_owner=bible_owner)
+            if on_duplicate == "link" and lib_hit.get("blob_exists"):
+                row = replace(row, file=lib_hit["blob_path"],
+                             library_hint=hint + " — 已从素材库复制(provenance: library)")
+            else:
+                row = replace(row, library_hint=hint)
+            rows.append(row)
+            continue
+
         rows.append(_classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
                               bible_owner=bible_owner))
     return IngestPlan(rows=rows)
+
+
+def _library_hash_index() -> dict[str, dict[str, Any]]:
+    """content hash -> {hash8, tags_str, blob_path, blob_exists} for every
+    asset in the user's private library (round X agent XF). Best-effort:
+    a missing/unreadable library degrades to an empty index, never an
+    error — ingest must keep working even when the library shelf is absent."""
+    try:
+        from ..core.library import Library, LibraryError, _hex
+    except ImportError:
+        return {}
+    try:
+        lib = Library()
+        assets = lib.assets()
+    except LibraryError:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for a in assets:
+        blob = lib.blob_path(a)
+        out[a["hash"]] = {
+            "hash8": _hex(a["hash"])[:8],
+            "tags_str": ", ".join(a.get("tags") or []) or "无标签",
+            "blob_path": str(blob),
+            "blob_exists": blob.exists(),
+        }
+    return out
 
 
 def _collect_files(paths: list[Path] | list[str]) -> list[Path]:

@@ -390,18 +390,57 @@ def check(as_json: bool = typer.Option(False, "--json")):
 # sniffing (a .md is a script, a .txt is a novel; a .mp4 is media).
 TEXT_IMPORT_SUFFIXES = {".txt", ".md"}
 
+# round X agent XF: `--on-duplicate` governs a hit against the private
+# LIBRARY (never the project-internal dup check above, which always imports
+# + warns — see the docstring below). skip = default, do not copy the bytes
+# into imports/, just advise reuse; import = copy anyway, advise; link =
+# copy anyway but FROM the library's own blob, noting provenance.
+ON_DUPLICATE_STRATEGIES = ("skip", "import", "link")
+
 
 @app.command("import")
-def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
+def import_(
+    files: list[Path],
+    as_json: bool = typer.Option(False, "--json"),
+    on_duplicate: str = typer.Option(
+        "skip", "--on-duplicate",
+        help="内容已在个人素材库中时的处理: skip(默认,不导入,提示复用) | "
+             "import(仍导入,附带提示) | link(从素材库复制,标注来源)"),
+):
     """Register a file into the project. Real footage/audio → media/imports
     (sacred: never deleted, §3). Text (.txt/.md) → story/imports/<name>.md
     instead, as adaptable source text the AI director can turn into a script
-    (novel→script). Both honour the same no-overwrite _2 suffixing."""
+    (novel→script). Both honour the same no-overwrite _2 suffixing.
+
+    Every media file's content hash is ALSO checked against the private
+    asset library (``core.library``, ~/.manju/library — round X agent XF):
+    a hit reports "素材库中已有(标签: …)" and, by default (--on-duplicate
+    skip), the file is NOT copied into media/imports at all — `manju lib use`
+    already gives you that content, tags included. --on-duplicate import
+    copies anyway (just keeps the advisory); --on-duplicate link copies too,
+    but reads the bytes FROM the library's own blob (still byte-identical)
+    and notes the provenance. This is separate from the project-internal
+    duplicate check below (already-imported content), which always imports
+    and warns — that one is about avoiding a SECOND identical copy inside
+    THIS project, not about the reusable shelf."""
+    if on_duplicate not in ON_DUPLICATE_STRATEGIES:
+        _fail(f"--on-duplicate 必须是 {'/'.join(ON_DUPLICATE_STRATEGIES)} 之一,"
+              f"实际 {on_duplicate!r}")
     project = _project()
     registered: list[str] = []
     story_imports: list[str] = []  # the text drops, for the adapt-me hint
     dup_notes: list[str] = []      # duplicate-content advisories (media only)
+    lib_notes: list[str] = []      # library-reuse advisories (media only)
+    skipped_lib: list[str] = []    # files skipped because of a library hit
     with _write_lock(project):
+        from .core.library import Library, LibraryError, _hex
+
+        try:
+            lib = Library()
+            lib_by_hash = {e["hash"]: e for e in lib.assets()}
+        except LibraryError:
+            lib, lib_by_hash = None, {}
+
         for f in files:
             if not f.exists():
                 _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"
@@ -419,6 +458,35 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
                 registered.append(rel)
                 story_imports.append(rel)
                 continue
+
+            # library-reuse advisory (round X agent XF) — checked BEFORE the
+            # project-internal dup check since it can skip the copy entirely.
+            copy_src = f
+            if lib_by_hash:
+                try:
+                    from .core.hashing import hash_file
+
+                    fh = hash_file(f)
+                except OSError:
+                    fh = None
+                lib_hit = lib_by_hash.get(fh) if fh else None
+                if lib_hit is not None:
+                    hash8 = _hex(lib_hit["hash"])[:8]
+                    tags_str = ", ".join(lib_hit.get("tags") or []) or "无标签"
+                    note = f"{f.name}: 素材库中已有(标签: {tags_str})— hash8={hash8}"
+                    if on_duplicate == "skip":
+                        lib_notes.append(
+                            note + f" — 已跳过导入,可用 `manju lib use {hash8}` 复用"
+                            "(加 --on-duplicate import/link 可强制导入)")
+                        skipped_lib.append(f.name)
+                        continue
+                    if on_duplicate == "link" and lib is not None:
+                        blob = lib.blob_path(lib_hit)
+                        if blob.exists():
+                            copy_src = blob
+                            note += " — 已从素材库复制(provenance: library)"
+                    lib_notes.append(note)
+
             # duplicate-content advisory (§3: imports are sacred, dedup is never
             # destructive — we import anyway and say so). Media path only; text
             # drops above are adapted, not deduped.
@@ -437,7 +505,7 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
             while dest.exists():  # imports are never overwritten either
                 dest = project.imports_dir / f"{f.stem}_{n}{f.suffix}"
                 n += 1
-            shutil.copy2(f, dest)
+            shutil.copy2(copy_src, dest)
             registered.append(project.relpath(dest))
         # §11: derived previews (thumbnail/waveform) into the disposable runtime
         # dir; the segment cache is the lazy proxy (§7 ①). Best-effort only. Text
@@ -455,10 +523,14 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
         except ImportError:
             pass
         append_event(project.root, ACTOR, "import",
-                     {"files": registered, "story_imports": story_imports, "previews": previews})
+                     {"files": registered, "story_imports": story_imports,
+                      "previews": previews, "on_duplicate": on_duplicate,
+                      "skipped_library_duplicates": skipped_lib})
     if as_json:
         _emit({"imported": registered, "story_imports": story_imports,
-               "previews": previews, "duplicates": dup_notes}, True)
+               "previews": previews, "duplicates": dup_notes,
+               "library_duplicates": lib_notes, "skipped_library": skipped_lib,
+               "on_duplicate": on_duplicate}, True)
     else:
         for r in registered:
             typer.secho(f"imported {r}", fg=typer.colors.GREEN)
@@ -466,6 +538,8 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
             typer.echo(f"  preview: {thumb}")
         for note in dup_notes:
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
+        for note in lib_notes:
+            typer.secho(f"⚠ {note}", fg=typer.colors.CYAN)
         for r in story_imports:
             typer.secho(f"  提示 hint: {r} 是文本稿,可改编成剧本(novel→script):"
                         "读它 → 写 story/outline.md、story/script.md → 再拆 shots/",
@@ -515,6 +589,8 @@ def _print_ingest_table(plan, result=None) -> None:
             f"{pad(row.target, target_w)}  {row.reason}{status}",
             fg=color,
         )
+        if row.library_hint and row.action != "skip_duplicate":
+            typer.secho(f"    ↳ {row.library_hint}", fg=typer.colors.BRIGHT_BLACK)
 
 
 @app.command()
@@ -523,6 +599,10 @@ def ingest(
     role: str = typer.Option("auto", "--role", help="auto | take | voice | ref"),
     shot: Optional[str] = typer.Option(
         None, "--shot", help="强制把这批文件都归到这一个镜头(如外部重生成了几条候选)"),
+    on_duplicate: str = typer.Option(
+        "skip", "--on-duplicate",
+        help="文件内容已在素材库中时的处理: skip(默认,跳过并提示复用) | "
+             "import(仍按正常分类导入,附带提示) | link(同 import,但从素材库复制,标注来源)"),
     apply: bool = typer.Option(
         False, "--apply", help="执行计划;默认只预演(dry-run),不改动任何文件"),
     as_json: bool = typer.Option(False, "--json"),
@@ -534,7 +614,8 @@ def ingest(
     S001 的新 take;``S001.wav``/``S001_voice.mp3`` → S001 的新配音;
     ``S001_ref.png``/``S001_ref2.png`` → S001 的参考图;``linxia_ref.png`` →
     bible 角色/场景/道具 linxia 的参考图;其余按普通素材导入 media/imports,并注明原因。
-    内容已存在的文件会被跳过(素材只增不改,§3)。
+    内容已存在于本项目的文件会被跳过(素材只增不改,§3);内容已在个人素材库中的文件按
+    --on-duplicate 处理(默认 skip,见上)。
 
     默认只打印计划(dry-run,不改动任何文件);加 --apply 才真正执行,一行失败即停止,
     并如实报告已经落地的部分。"""
@@ -542,7 +623,7 @@ def ingest(
 
     project = _project()
     try:
-        plan = plan_ingest(project, paths, role=role, shot=shot)
+        plan = plan_ingest(project, paths, role=role, shot=shot, on_duplicate=on_duplicate)
     except IngestError as exc:
         _fail(str(exc), code="ingest_invalid")
         raise  # unreachable

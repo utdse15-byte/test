@@ -211,6 +211,15 @@ def lab_data(project: Any, shot_id: str) -> dict[str, Any]:
         for it in refset.items
     ]
 
+    # 素材库建议 library reuse suggestions (round X agent XF, pain #7/#8) — a
+    # broken/absent library must never break the lab page.
+    try:
+        from ..core.library import suggest_from_library
+
+        library_suggestions = suggest_from_library(project, shot)
+    except Exception:
+        library_suggestions = []
+
     return {
         "shot": shot_id,
         "bundle": bundle,
@@ -223,6 +232,7 @@ def lab_data(project: Any, shot_id: str) -> dict[str, Any]:
             **budget.to_lineage(),
         },
         "cleanliness": cleanliness,
+        "library_suggestions": library_suggestions,
         "candidates": _candidates(project, shot),
         "shot_ids": project.shot_ids(),
     }
@@ -442,6 +452,39 @@ def _refs_editor_html(param_refs: list[str]) -> str:
     )
 
 
+def _library_suggestion_card_html(row: dict[str, Any]) -> str:
+    thumb = row.get("thumb")
+    thumb_html = (f'<img class="lab-thumb" src="/lib-thumb/{_e(row["hash8"])}" alt="">'
+                 if thumb else '<div class="lab-thumb lab-nothumb muted">无预览</div>')
+    matched = "、".join(row.get("matched") or [])
+    return (
+        f'<div class="lab-suggest-card" data-hash="{_e(row["hash8"])}">'
+        f'{thumb_html}'
+        f'<div class="lab-suggest-name" title="{_e(row.get("name"))}">{_e(row.get("name"))}</div>'
+        f'<div class="lab-suggest-meta muted">{_e(row.get("kind"))} · 命中:{_e(matched)}</div>'
+        '<button type="button" class="btn mini" data-lab="suggest-use" '
+        f'data-hash="{_e(row["hash8"])}" title="复制入项目参考并加入本镜头">采用</button>'
+        '</div>'
+    )
+
+
+def _library_suggestions_html(rows: list[dict[str, Any]]) -> str:
+    """素材库建议 strip (round X agent XF, pain #7/#8) — deterministic tag/kind
+    matches from :func:`manju.core.library.suggest_from_library`, offered
+    right where a director is already deciding this shot's refs. Empty when
+    nothing matched — no placeholder noise on the common case."""
+    if not rows:
+        return ""
+    cards = "".join(_library_suggestion_card_html(r) for r in rows)
+    return (
+        '<div class="lab-suggest">'
+        '<div class="lab-subh">素材库建议 Library suggestions '
+        '<span class="muted">(标签匹配本镜头角色/场景)</span></div>'
+        f'<div class="lab-suggest-row">{cards}</div>'
+        '</div>'
+    )
+
+
 def _panel_refs(data: dict[str, Any]) -> str:
     ref_rows = "".join(_ref_row_html(r) for r in data["ref_rows"]) \
         or '<li class="muted">（无解析到的参考）</li>'
@@ -454,6 +497,7 @@ def _panel_refs(data: dict[str, Any]) -> str:
         + f'<div class="lab-subh">洁净度 Cleanliness</div>'
         + _cleanliness_html(data["cleanliness"])
         + _refs_editor_html(data["param_refs"])
+        + _library_suggestions_html(data.get("library_suggestions") or [])
         + '</section>'
     )
 
@@ -783,6 +827,17 @@ _LAB_CSS = """
 .lab-saveref { display: inline-flex; gap: .3rem; align-items: center; flex-wrap: wrap; }
 .gl { border-bottom: 1px dotted var(--muted); cursor: help; }
 .lab-empty, .lab-uphint { font-size: .78rem; }
+
+/* -------------------------------------------- 素材库建议 library suggestions */
+.lab-suggest { margin-top: .7rem; }
+.lab-suggest-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .3rem; }
+.lab-suggest-card {
+  width: 8.5rem; border: 1px solid var(--line); border-radius: 8px; padding: .4rem;
+  background: var(--panel2); display: flex; flex-direction: column; gap: .2rem;
+}
+.lab-suggest-card .lab-thumb { max-height: 80px; }
+.lab-suggest-name { font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lab-suggest-meta { font-size: .7rem; }
 """
 
 
@@ -956,6 +1011,28 @@ _LAB_JS = r"""
     }).catch(function () { toast("网络错误", false); });
   }
 
+  // -------- 素材库建议 library suggestion adopt (round X agent XF) --------
+  // Reuses the EXISTING lib-use flow (copy blob -> media/refs) then the
+  // existing refs-save flow (append into generation.params.refs) — two
+  // sequential calls to already-shipped endpoints, no new server surface.
+  function adoptSuggestion(card) {
+    var hash = card.getAttribute("data-hash");
+    post("/api/lib/use", { hash: hash, as: "refs" }).then(function (res) {
+      if (res.status !== 200 || !res.data.ok) {
+        toast((res.data && res.data.error) || "采用失败", false);
+        return null;
+      }
+      var refs = currentRefs();
+      if (refs.indexOf(res.data.dest) === -1) refs.push(res.data.dest);
+      renderRefs(refs);
+      return post("/api/lab/refs", { shot: SHOT, refs: refs });
+    }).then(function (res2) {
+      if (!res2) return;
+      if (res2.status === 200 && res2.data.ok) { toast("已采用素材库建议", true); reloadSoon(); }
+      else { toast((res2.data && res2.data.error) || "保存失败", false); }
+    }).catch(function () { toast("网络错误", false); });
+  }
+
   // -------- delegated click handling --------
   document.addEventListener("click", function (ev) {
     var t = ev.target;
@@ -990,6 +1067,9 @@ _LAB_JS = r"""
       if (act === "generate") return doGenerate(btn);
       if (act === "pick") { var c = btn.closest(".lab-cand"); if (c) pickTake(c); return; }
       if (act === "saveref") { var c2 = btn.closest(".lab-cand"); if (c2) saveAsRef(c2); return; }
+      if (act === "suggest-use") {
+        var c3 = btn.closest(".lab-suggest-card"); if (c3) adoptSuggestion(c3); return;
+      }
     }
     var qbtn = t.closest && t.closest(".lab-qbtn");
     if (qbtn) {

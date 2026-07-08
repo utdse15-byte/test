@@ -168,6 +168,130 @@ def test_cli_use_copies_into_project_with_no_overwrite(lib_root, src_file, tmp_p
     assert actions.count("lib_use") == 3
 
 
+# ----------------------------------- `manju import` vs library (round X agent XF)
+
+
+def test_import_default_skips_a_library_duplicate(lib_root, src_file, tmp_project, monkeypatch):
+    seed = src_file("seed.mp4", b"reusable-bytes")
+    add = runner.invoke(app, ["lib", "add", str(seed), "--tag", "hero,broll", "--json"])
+    assert add.exit_code == 0, add.output
+
+    monkeypatch.chdir(tmp_project.root)
+    dropped = src_file("dropped.mp4", b"reusable-bytes")  # same content, different name
+    result = runner.invoke(app, ["import", str(dropped), "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["imported"] == []                      # NOT copied — default is skip
+    assert data["skipped_library"] == ["dropped.mp4"]
+    assert data["library_duplicates"] and "hero" in data["library_duplicates"][0]
+    assert data["library_duplicates"][0].startswith("dropped.mp4")
+    assert not (tmp_project.imports_dir / "dropped.mp4").exists()
+
+
+def test_import_on_duplicate_import_copies_anyway(lib_root, src_file, tmp_project, monkeypatch):
+    seed = src_file("seed2.mp4", b"reusable-bytes-2")
+    runner.invoke(app, ["lib", "add", str(seed), "--tag", "logo", "--json"])
+
+    monkeypatch.chdir(tmp_project.root)
+    dropped = src_file("dropped2.mp4", b"reusable-bytes-2")
+    result = runner.invoke(app, ["import", str(dropped), "--on-duplicate", "import", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["imported"] == ["media/imports/dropped2.mp4"]
+    assert data["library_duplicates"] and "logo" in data["library_duplicates"][0]
+    assert (tmp_project.imports_dir / "dropped2.mp4").exists()
+
+
+def test_import_on_duplicate_link_sources_from_library_blob(lib_root, src_file, tmp_project, monkeypatch):
+    seed = src_file("seed3.mp4", b"reusable-bytes-3")
+    runner.invoke(app, ["lib", "add", str(seed), "--tag", "sting", "--json"])
+
+    monkeypatch.chdir(tmp_project.root)
+    dropped = src_file("dropped3.mp4", b"reusable-bytes-3")
+    result = runner.invoke(app, ["import", str(dropped), "--on-duplicate", "link", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["imported"] == ["media/imports/dropped3.mp4"]
+    assert "provenance: library" in data["library_duplicates"][0]
+    landed = tmp_project.imports_dir / "dropped3.mp4"
+    assert landed.exists() and landed.read_bytes() == b"reusable-bytes-3"
+
+
+def test_import_bad_on_duplicate_fails_cleanly(tmp_project, src_file, monkeypatch):
+    monkeypatch.chdir(tmp_project.root)
+    f = src_file("x.mp4", b"x")
+    result = runner.invoke(app, ["import", str(f), "--on-duplicate", "bogus"])
+    assert result.exit_code != 0
+
+
+def test_import_no_library_hit_behaves_as_before(lib_root, src_file, tmp_project, monkeypatch):
+    """An empty/irrelevant library never changes plain-import behaviour."""
+    monkeypatch.chdir(tmp_project.root)
+    f = src_file("plain.mp4", b"nothing-in-the-library")
+    result = runner.invoke(app, ["import", str(f), "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["imported"] == ["media/imports/plain.mp4"]
+    assert data["library_duplicates"] == [] and data["skipped_library"] == []
+
+
+# ------------------------------------- suggest_from_library (round X agent XF)
+
+
+def test_suggest_from_library_matches_by_character_tag(lib_root, src_file, tmp_project):
+    from manju.core.library import suggest_from_library
+
+    still = src_file("linxia_ref.png", b"a-portrait")
+    Library().add(still, tags=["linxia", "portrait"])
+
+    from manju.core.models import ShotSpec
+
+    shot = ShotSpec(id="S001", scene="convenience_store", characters=["linxia"])
+    rows = suggest_from_library(tmp_project, shot)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "linxia_ref.png"
+    assert "linxia" in rows[0]["matched"]
+
+
+def test_suggest_from_library_matches_by_bible_name(lib_root, src_file, tmp_project):
+    from manju.core.library import suggest_from_library
+    from manju.core.models import ShotSpec
+
+    still = src_file("portrait.png", b"another-portrait")
+    Library().add(still, tags=["林夏"])  # matches characters.linxia's bible `name`
+
+    shot = ShotSpec(id="S002", characters=["linxia"])
+    rows = suggest_from_library(tmp_project, shot)
+    assert len(rows) == 1 and rows[0]["matched"] == ["林夏"]
+
+
+def test_suggest_from_library_no_match_is_empty(lib_root, src_file, tmp_project):
+    from manju.core.library import suggest_from_library
+    from manju.core.models import ShotSpec
+
+    Library().add(src_file("unrelated.png", b"nope"), tags=["some_other_tag"])
+    shot = ShotSpec(id="S003", scene="convenience_store", characters=["linxia"])
+    rows = suggest_from_library(tmp_project, shot)
+    assert rows == []
+
+
+def test_suggest_from_library_ignores_non_image_video_kinds(lib_root, src_file, tmp_project):
+    from manju.core.library import suggest_from_library
+    from manju.core.models import ShotSpec
+
+    Library().add(src_file("theme.wav", b"audio-bytes"), tags=["linxia"])
+    shot = ShotSpec(id="S004", characters=["linxia"])
+    assert suggest_from_library(tmp_project, shot) == []
+
+
+def test_suggest_from_library_empty_library_is_empty(lib_root, tmp_project):
+    from manju.core.library import suggest_from_library
+    from manju.core.models import ShotSpec
+
+    shot = ShotSpec(id="S005", characters=["linxia"])
+    assert suggest_from_library(tmp_project, shot) == []
+
+
 def test_cli_rm_requires_yes(lib_root, src_file):
     f = src_file("temp.mp4", b"delete-me")
     add = runner.invoke(app, ["lib", "add", str(f), "--json"])

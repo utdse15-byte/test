@@ -14,6 +14,7 @@ test is skipped where ffmpeg is absent.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -374,6 +375,43 @@ def test_library_use_into_project_honors_no_overwrite(gui, tmp_project):
     assert status == 200
     assert data2["dest"] != data["dest"] and "_2" in data2["dest"]
     assert first.read_bytes() == original_bytes         # first copy intact
+
+
+def test_library_page_shot_query_shows_suggestions(gui, tmp_project, add_shot):
+    """round X agent XF: /library?shot=S001 surfaces the SAME deterministic
+    tag/kind suggestions the shot lab offers, using the shared card markup
+    (so 用到项目(refs) works out of the box, no new JS)."""
+    from pathlib import Path
+
+    from manju.core.library import Library
+
+    add_shot(tmp_project, "S001")  # default scene/characters include "linxia"
+    lib = Library()
+    still = Path(os.environ["MANJU_LIBRARY"]).parent / "_linxia.png"
+    still.parent.mkdir(parents=True, exist_ok=True)
+    still.write_bytes(b"a-portrait")
+    lib.add(still, tags=["linxia"])
+
+    status, _, body = _html(gui, "/library?shot=S001")
+    assert status == 200
+    assert "为镜头 S001 推荐" in body
+    assert "_linxia.png" in body
+    assert "命中" in body
+    assert "用到项目(refs)" in body   # the shared, already-wired adopt button
+
+
+def test_library_page_shot_query_no_match_is_honest(gui, tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    status, _, body = _html(gui, "/library?shot=S001")
+    assert status == 200
+    assert "为镜头 S001 推荐" in body
+    assert "没有匹配" in body
+
+
+def test_library_page_unknown_shot_degrades_cleanly(gui, tmp_project):
+    status, _, body = _html(gui, "/library?shot=NOPE")
+    assert status == 200
+    assert "未找到镜头" in body
 
 
 def test_library_tag_and_note_roundtrip(gui):

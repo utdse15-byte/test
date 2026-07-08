@@ -317,3 +317,93 @@ def _clean_tags(tags: list[str] | None) -> list[str]:
         if t and t not in out:
             out.append(t)
     return out
+
+
+# ------------------------------------------------------- library reuse (round X)
+# Goal item 7/8: surface the private library's own assets as REUSE suggestions
+# for a shot being worked on, instead of the human having to remember what is
+# already sitting in ~/.manju/library. Deterministic tag/kind matching only —
+# no embeddings, no fuzzy scoring — so the same shot always yields the same
+# suggestions and a reviewer can see exactly WHY an asset was suggested.
+
+
+def _entry_tag_candidates(entry: Any) -> set[str]:
+    """The searchable tokens for one bible entry (character/scene): its own
+    id is added by the caller; this adds ``name``, ``aliases`` and any
+    free-form ``tags`` the author added by hand (bible entries are free-form
+    dicts, §4 — ``tags`` is not a modeled field, just a convention this reads
+    if present). Never raises on a malformed entry."""
+    out: set[str] = set()
+    if not isinstance(entry, dict):
+        return out
+    name = entry.get("name")
+    if isinstance(name, str) and name.strip():
+        out.add(name.strip())
+    for key in ("aliases", "tags"):
+        val = entry.get(key)
+        if isinstance(val, str):
+            out.update(t.strip() for t in val.split(",") if t.strip())
+        elif isinstance(val, (list, tuple)):
+            out.update(str(v).strip() for v in val if v not in (None, "") and str(v).strip())
+    return out
+
+
+def suggest_from_library(project: Any, shot: Any, *,
+                         library: "Library | None" = None) -> list[dict[str, Any]]:
+    """素材库建议 rows for one shot (round X, pain #7/#8: asset reuse).
+
+    Deterministic tag/kind matching ONLY: the shot's own id, its ``scene``
+    id and its ``characters`` ids — plus, for each of those, the matching
+    bible entry's ``name``/``aliases``/free-form ``tags`` — are matched
+    (case-insensitively) against every library asset's tags. Only
+    ``image``/``video`` library assets are eligible (the kinds a ref/take
+    slot can actually use; audio/other never surface here). A library asset
+    with no tag overlap is never suggested — there is no fuzzy/embedding
+    fallback, so a human can always see exactly which tag matched.
+
+    Read-only and total: a missing/unreadable library or bible degrades to
+    an empty list, never an exception — this is advisory UI, not truth.
+    """
+    lib = library if library is not None else Library()
+    try:
+        assets = lib.assets()
+    except LibraryError:
+        return []
+    if not assets:
+        return []
+
+    try:
+        bible = project.load_bible()
+    except Exception:
+        bible = {}
+
+    candidates: set[str] = set()
+    scene = getattr(shot, "scene", None)
+    if scene:
+        candidates.add(str(scene))
+        candidates |= _entry_tag_candidates(bible.get(str(scene)))
+    for cid in (getattr(shot, "characters", None) or []):
+        candidates.add(str(cid))
+        candidates |= _entry_tag_candidates(bible.get(str(cid)))
+    candidates = {c.strip().lower() for c in candidates if c and c.strip()}
+    if not candidates:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for a in assets:
+        if a.get("kind") not in ("image", "video"):
+            continue
+        asset_tags = {str(t).strip().lower() for t in (a.get("tags") or []) if t}
+        matched = candidates & asset_tags
+        if not matched:
+            continue
+        rows.append({
+            "hash8": _hex(a["hash"])[:8],
+            "name": a.get("name"),
+            "kind": a.get("kind"),
+            "tags": list(a.get("tags") or []),
+            "matched": sorted(matched),
+            "thumb": a.get("thumb"),
+        })
+    rows.sort(key=lambda r: (-len(r["matched"]), str(r["name"] or "")))
+    return rows

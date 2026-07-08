@@ -239,6 +239,72 @@ def test_lab_page_empty_project(gui, tmp_project):
     assert "还没有镜头" in html
 
 
+# ============================================ 素材库建议 library suggestions (round X)
+
+
+def test_lab_page_shows_library_suggestion_for_matching_tag(gui, tmp_project, add_shot, tmp_path):
+    from manju.core.library import Library
+
+    add_shot(tmp_project, "S001")  # default scene/characters include "linxia"
+    still = tmp_path / "linxia_ref.png"
+    still.write_bytes(b"a-portrait")
+    Library().add(still, tags=["linxia", "portrait"])
+
+    status, _, html = _html(gui, "/lab?shot=S001")
+    assert status == 200
+    assert "素材库建议" in html
+    assert "linxia_ref.png" in html
+    assert 'data-lab="suggest-use"' in html
+
+
+def test_lab_page_no_suggestion_strip_when_no_match(gui, tmp_project, add_shot, tmp_path):
+    from manju.core.library import Library
+
+    add_shot(tmp_project, "S001")
+    unrelated = tmp_path / "unrelated.png"
+    unrelated.write_bytes(b"x")
+    Library().add(unrelated, tags=["something_else"])
+
+    status, _, html = _html(gui, "/lab?shot=S001")
+    assert status == 200
+    assert "素材库建议" not in html
+
+
+def test_lab_data_endpoint_includes_library_suggestions(gui, tmp_project, add_shot, tmp_path):
+    from manju.core.library import Library
+
+    add_shot(tmp_project, "S001")
+    still = tmp_path / "linxia2.png"
+    still.write_bytes(b"portrait-2")
+    Library().add(still, tags=["linxia"])
+
+    status, _, data = _req(gui, "/api/lab/data?shot=S001")
+    assert status == 200
+    assert data["library_suggestions"]
+    assert data["library_suggestions"][0]["name"] == "linxia2.png"
+
+
+def test_lab_suggest_use_adopts_into_shot_refs(gui, tmp_project, add_shot, tmp_path):
+    from manju.core.library import Library
+
+    add_shot(tmp_project, "S001")
+    still = tmp_path / "linxia3.png"
+    still.write_bytes(b"portrait-3")
+    entry = Library().add(still, tags=["linxia"])["entry"]
+    from manju.core.library import _hex
+
+    hash8 = _hex(entry["hash"])[:8]
+
+    # the adopt flow is client-side (two existing endpoints); prove they
+    # compose correctly: lib/use copies the blob, lab/refs appends it.
+    status, _, use_data = _post(gui, "/api/lib/use", {"hash": hash8, "as": "refs"})
+    assert status == 200 and use_data["ok"] is True
+    dest = use_data["dest"]
+    status2, _, refs_data = _post(gui, "/api/lab/refs", {"shot": "S001", "refs": [dest]})
+    assert status2 == 200 and refs_data["ok"] is True
+    assert tmp_project.load_shot("S001").generation.params.get("refs") == [dest]
+
+
 # ================================================== prompt_override edit + lock
 
 

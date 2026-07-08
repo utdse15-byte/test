@@ -266,7 +266,7 @@ def render(path: str, project: Any, token: str, query: dict[str, list[str]]) -> 
     if path == "/compare":
         return render_compare(project, token, one("a"), one("b"))
     if path == "/library":
-        return render_library(project, token, one("tag"), one("kind"))
+        return render_library(project, token, one("tag"), one("kind"), one("shot"))
     if path == "/providers":
         return render_providers(project, token)
     if path == "/routing":
@@ -334,11 +334,34 @@ _REPAIR_OPS = (
 )
 
 
+# build/stale ShotState -> 中文 word + badge class (mirrors gui.storyboard's
+# _STATE_ZH/_STATE_BADGE, kept as a small local copy — round X agent XF,
+# queue-mode filter chips AND the per-card badge need it, and pages.py stays
+# independent of storyboard.py's private vocabulary).
+_RV_BUILDSTATE_ZH = {
+    "missing": "无版本", "fresh": "最新", "stale": "待更新", "manual": "手动置入",
+    "needs_selection": "待挑选", "broken": "缺媒体",
+}
+_RV_BUILDSTATE_BADGE = {
+    "missing": "st-missing", "fresh": "st-fresh", "stale": "st-stale",
+    "manual": "st-manual", "needs_selection": "st-needs", "broken": "st-broken",
+}
+
+
 def render_review(project: Any, token: str) -> str:
     shots = project.shot_ids()
     qc_by_shot, qc_err = _qc_by_shot(project)
     reviewed = 0
     cards: list[str] = []
+
+    # one staleness pass for the whole page (round X agent XF QUEUE filter
+    # chips: 待选/待审/已通过/待更新 combine build/stale states + review_state).
+    try:
+        from ..build.stale import evaluate_all
+
+        build_states = {st.shot_id: st.state.value for st in evaluate_all(project)}
+    except Exception:
+        build_states = {}
 
     for idx, sid in enumerate(shots):
         try:
@@ -355,6 +378,8 @@ def render_review(project: Any, token: str) -> str:
             takes = []
         sel = next((t for t in takes if t.name == selected), None)
         alts = [t for t in takes if t.name != selected]
+        build_state = build_states.get(sid, "missing")
+        review_state = shot.status.review_state if shot else "needs_review"
 
         # large player of the selected take, poster = QC mid-frame when present
         frame = project.reports_dir / "frames" / f"{sid}.jpg"
@@ -390,18 +415,27 @@ def render_review(project: Any, token: str) -> str:
             if frame_url else ""
         )
 
-        # prior takes as small alternates
+        # prior takes as small alternates — round X agent XF (pain #8): each
+        # alt now carries a LAZY preview (data-src only, never src=) behind a
+        # ▶ button, so the review page's initial GET never triggers ffmpeg
+        # for takes that are not even the focal player (never block page GET
+        # on ffmpeg). Clicking ▶ reveals the small <video> and assigns src.
         alt_html = ""
         if alts:
             items = []
             for t in alts:
-                _u, _x, thumb = _take_media(project, t)
+                url, _x, thumb = _take_media(project, t)
                 note = take_notes.get(t.name)
                 note_html = f'<span class="rv-alt-note" title="{_e(note)}">📝</span>' if note else ""
                 thumb_img = (f'<img src="{_e(thumb)}" alt="">' if thumb
                              else '<div class="rv-alt-noimg"></div>')
+                play_btn = (f'<button type="button" class="rv-alt-play" data-act="preview" '
+                            f'title="预览(懒加载)">▶</button>' if url else "")
+                video_el = (f'<video class="rv-alt-video hidden" muted controls preload="none" '
+                           f'data-src="{_e(url)}"></video>' if url else "")
                 items.append(
-                    f'<div class="rv-alt">{thumb_img}'
+                    f'<div class="rv-alt" data-take="{_e(t.name)}">'
+                    f'<div class="rv-alt-media">{thumb_img}{play_btn}{video_el}</div>'
                     f'<button class="btn ghost mini" data-act="select" '
                     f'data-take="{_e(t.name)}">换用 {_e(t.name)}</button>{note_html}</div>'
                 )
@@ -418,14 +452,18 @@ def render_review(project: Any, token: str) -> str:
         note_val = _e(take_notes.get(selected)) if selected else ""
         state_badge = (f'<span class="badge st-{_state_badge(shot.status)}">'
                        f'{_e(_state_word(shot))}</span>' if shot else "")
+        build_badge = (f'<span class="badge {_RV_BUILDSTATE_BADGE.get(build_state, "st-missing")}" '
+                       f'title="状态(版本新鲜度)">{_e(_RV_BUILDSTATE_ZH.get(build_state, build_state))}'
+                       f'</span>')
         action = _e(shot.action.main) if shot else ""
         dialogue = _e(shot.dialogue.text) if shot else ""
         reviewed_attr = "1" if take_notes else "0"
 
         cards.append(
             f'<section class="rv-shot panel" id="rv-{_e(sid)}" data-shot="{_e(sid)}" '
-            f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}">\n'
-            f'  <div class="rv-head"><h2>{_e(sid)} {state_badge}'
+            f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}" '
+            f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}">\n'
+            f'  <div class="rv-head"><h2>{_e(sid)} {state_badge}{build_badge}'
             f'<span class="rv-idx muted">#{idx + 1}</span></h2>'
             f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div></div>\n'
             f'  <div class="rv-body">\n'
@@ -435,6 +473,7 @@ def render_review(project: Any, token: str) -> str:
             f'  <div class="rv-actions btnrow">\n'
             f'    <button class="btn" data-act="good" title="快捷键 g">好</button>\n'
             f'    <button class="btn ghost" data-act="reject" title="快捷键 x">弃</button>\n'
+            f'    <button class="btn ghost" data-act="qapprove" title="标记已通过">通过 ✓</button>\n'
             f'    <button class="btn ghost" data-act="redo">重做</button>\n'
             f'    <span class="rv-repair">修:{repair_btns}</span>\n'
             f'    <button class="btn ghost" data-act="route">路由?</button>\n'
@@ -466,10 +505,44 @@ def render_review(project: Any, token: str) -> str:
         '<span class="bar rv-bar"><span class="bar-fill" id="rv-progress-fill" '
         f'data-pct="{pct}"></span></span>'
         "</div>\n"
+        + _queue_bar_html()
         + cards_html
         + _consistency_section(project)
     )
     return _shell("审片", token, "/review", body, project)
+
+
+# ------------------------------------------------ QUEUE mode (round X agent XF)
+# Batch review by shot status (pain #7/#8): filter chips over the SAME state
+# vocabulary the storyboard page's 状态/审批 columns already use (build/stale
+# ShotState + the three-state review), plus a one-at-a-time flow layered on
+# top of the existing per-card actions (never a second mutation path).
+
+_RV_QUEUE_FILTERS = (
+    ("all", "全部"),
+    ("needs_selection", "待选"),
+    ("needs_review", "待审"),
+    ("approved", "已通过"),
+    ("stale", "待更新"),
+)
+
+
+def _queue_bar_html() -> str:
+    chips = "".join(
+        f'<button type="button" class="filter-chip rv-qfilter{" active" if key == "all" else ""}" '
+        f'data-filter="{_e(key)}">{_e(label)}</button>'
+        for key, label in _RV_QUEUE_FILTERS
+    )
+    return (
+        '<div class="rv-queue-bar panel">'
+        f'<div class="rv-qfilters"><span class="muted">筛选:</span>{chips}</div>'
+        '<div class="rv-queue-ctl">'
+        '<button type="button" class="btn ghost mini" id="rv-queue-toggle">进入队列模式</button>'
+        '<span id="rv-queue-pos" class="rv-queue-pos muted"></span>'
+        '<button type="button" class="btn ghost mini" id="rv-q-prev" title="上一条 (k)">‹ 上一条</button>'
+        '<button type="button" class="btn ghost mini" id="rv-q-next" title="下一条 (j)">下一条 ›</button>'
+        '</div></div>'
+    )
 
 
 # --------------------------------------------- 跨镜一致性 consistency (round X)
@@ -794,7 +867,81 @@ def _lib_kinds() -> tuple[str, ...]:
     return ("video", "image", "audio", "other")
 
 
-def render_library(project: Any, token: str, tag: str | None, kind: str | None) -> str:
+def _lib_card_html(a: dict[str, Any], hash8: str, *, matched: list[str] | None = None) -> str:
+    """One library asset card. Shared by the main grid and the 素材库建议 strip
+    (round X agent XF, ``?shot=``) — ``matched`` (present only on a
+    suggestion) adds a "命中" line naming which tag(s) matched, so a
+    reviewer sees exactly why the asset was suggested."""
+    thumb = a.get("thumb")
+    if thumb:
+        thumb_html = f'<img class="lib-thumb" src="/lib-thumb/{_e(hash8)}" alt="">'
+    else:
+        thumb_html = (f'<div class="lib-thumb lib-thumb-ph">'
+                      f'{_e((a.get("kind") or "?")[:3])}</div>')
+    tags = a.get("tags") or []
+    tag_html = "".join(f'<span class="lib-tag">#{_e(t)}</span>' for t in tags)
+    note = a.get("note")
+    size_mb = (a.get("size") or 0) / 1e6
+    matched_html = (f'<div class="lib-matched">命中: {_e("、".join(matched))}</div>'
+                    if matched else "")
+    return (
+        f'<div class="lib-card panel" data-hash="{_e(hash8)}">'
+        f"{thumb_html}"
+        f'<div class="lib-name" title="{_e(a.get("name"))}">{_e(a.get("name"))}</div>'
+        f'<div class="lib-meta muted">{_e(a.get("kind"))} · {size_mb:.2f}MB · {_e(hash8)}</div>'
+        f"{matched_html}"
+        f'<div class="lib-tags">{tag_html}</div>'
+        + (f'<div class="lib-note muted">{_e(note)}</div>' if note else "")
+        + '<div class="lib-actions">'
+        '<button class="btn mini" data-act="use" data-as="refs">用到项目(refs)</button>'
+        '<button class="btn ghost mini" data-act="use" data-as="imports">用到 imports</button>'
+        "</div>"
+        '<div class="lib-edit">'
+        f'<input class="lib-tag-input" placeholder="加标签(逗号分隔)" value="{_e(",".join(tags))}">'
+        '<button class="btn ghost mini" data-act="tag">存标签</button></div>'
+        '<div class="lib-edit">'
+        f'<input class="lib-note-input" placeholder="备注 note" value="{_e(note or "")}">'
+        '<button class="btn ghost mini" data-act="note">存备注</button></div>'
+        "</div>"
+    )
+
+
+def _library_shot_suggestions_html(project: Any, shot_id: str) -> str:
+    """素材库建议 strip for one shot (round X agent XF, pain #7/#8, ``?shot=``
+    on /library): the SAME deterministic tag/kind matches the shot lab's 参考
+    panel offers, reusing the identical card + 用到项目(refs) adopt action —
+    just reachable from the library's own browse page too. Degrades to a
+    single muted line (never an error) on a broken shot/library."""
+    from ..core.library import _hex
+
+    try:
+        shot = project.load_shot(shot_id)
+    except Exception:
+        return (f'<div class="lib-suggest panel"><span class="err">'
+                f'未找到镜头 {_e(shot_id)}</span></div>')
+    try:
+        from ..core.library import suggest_from_library
+
+        rows = suggest_from_library(project, shot)
+    except Exception:
+        rows = []
+    if not rows:
+        body = '<p class="muted">没有匹配该镜头角色/场景标签的素材库项。</p>'
+    else:
+        cards = "".join(
+            _lib_card_html(r, r["hash8"], matched=r.get("matched"))
+            for r in rows
+        )
+        body = f'<div class="lib-grid">{cards}</div>'
+    return (
+        '<div class="lib-suggest panel">'
+        f'<h2>为镜头 {_e(shot_id)} 推荐 <a class="filter-chip" href="/library">清除</a></h2>'
+        f"{body}</div>"
+    )
+
+
+def render_library(project: Any, token: str, tag: str | None, kind: str | None,
+                   shot: str | None = None) -> str:
     from ..core.library import Library, LibraryError, _hex
 
     head = ('<div class="page-h"><h1>素材库 Library</h1>'
@@ -805,6 +952,8 @@ def render_library(project: Any, token: str, tag: str | None, kind: str | None) 
     except LibraryError as exc:
         return _shell("素材库", token, "/library",
                       head + f'<p class="err panel">{_e(exc)}</p>', project)
+
+    suggest_html = _library_shot_suggestions_html(project, shot) if shot else ""
 
     # filter chips (built from ALL assets, not the filtered view)
     all_tags = sorted({t for a in all_assets for t in (a.get("tags") or [])})
@@ -838,41 +987,11 @@ def render_library(project: Any, token: str, tag: str | None, kind: str | None) 
     if not assets:
         grid = '<p class="muted panel">素材库为空 (no assets)。</p>'
     else:
-        cards = []
-        for a in assets:
-            hash8 = _hex(a["hash"])[:8]
-            thumb = a.get("thumb")
-            if thumb:
-                thumb_html = f'<img class="lib-thumb" src="/lib-thumb/{_e(hash8)}" alt="">'
-            else:
-                thumb_html = (f'<div class="lib-thumb lib-thumb-ph">'
-                              f'{_e((a.get("kind") or "?")[:3])}</div>')
-            tags = a.get("tags") or []
-            tag_html = "".join(f'<span class="lib-tag">#{_e(t)}</span>' for t in tags)
-            note = a.get("note")
-            size_mb = (a.get("size") or 0) / 1e6
-            cards.append(
-                f'<div class="lib-card panel" data-hash="{_e(hash8)}">'
-                f"{thumb_html}"
-                f'<div class="lib-name" title="{_e(a.get("name"))}">{_e(a.get("name"))}</div>'
-                f'<div class="lib-meta muted">{_e(a.get("kind"))} · {size_mb:.2f}MB · {_e(hash8)}</div>'
-                f'<div class="lib-tags">{tag_html}</div>'
-                + (f'<div class="lib-note muted">{_e(note)}</div>' if note else "")
-                + '<div class="lib-actions">'
-                '<button class="btn mini" data-act="use" data-as="refs">用到项目(refs)</button>'
-                '<button class="btn ghost mini" data-act="use" data-as="imports">用到 imports</button>'
-                "</div>"
-                '<div class="lib-edit">'
-                f'<input class="lib-tag-input" placeholder="加标签(逗号分隔)" value="{_e(",".join(tags))}">'
-                '<button class="btn ghost mini" data-act="tag">存标签</button></div>'
-                '<div class="lib-edit">'
-                f'<input class="lib-note-input" placeholder="备注 note" value="{_e(note or "")}">'
-                '<button class="btn ghost mini" data-act="note">存备注</button></div>'
-                "</div>"
-            )
+        cards = [_lib_card_html(a, _hex(a["hash"])[:8]) for a in assets]
         grid = '<div class="lib-grid">' + "".join(cards) + "</div>"
 
-    body = head + f'<p class="muted">{_e(str(lib.root))}</p>' + filters + upload + grid
+    body = (head + f'<p class="muted">{_e(str(lib.root))}</p>' + suggest_html
+            + filters + upload + grid)
     return _shell("素材库", token, "/library", body, project)
 
 
@@ -1182,7 +1301,18 @@ _PAGES_CSS = """
 .rv-frame img { width: 100%; border-radius: 6px; border: 1px solid var(--line); display: block; margin-top: .2rem; }
 .rv-alts-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .3rem; }
 .rv-alt { display: flex; flex-direction: column; gap: .2rem; width: 120px; }
+.rv-alt-media { position: relative; width: 120px; height: 68px; }
 .rv-alt img, .rv-alt-noimg { width: 120px; height: 68px; object-fit: cover; border-radius: 5px; background: var(--panel2); border: 1px solid var(--line); }
+.rv-alt-video { width: 120px; height: 68px; object-fit: cover; border-radius: 5px; background: #000; }
+.rv-alt-video.hidden { display: none; }
+.rv-alt-play {
+  position: absolute; inset: 0; margin: auto; width: 1.8rem; height: 1.8rem; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.5);
+  cursor: pointer; font-size: .8rem; line-height: 1;
+}
+.rv-alt-media.playing img, .rv-alt-media.playing .rv-alt-noimg, .rv-alt-media.playing .rv-alt-play {
+  display: none;
+}
 .rv-actions { align-items: center; }
 .rv-repair { display: inline-flex; align-items: center; gap: .35rem; flex-wrap: wrap; color: var(--muted); font-size: .8rem; }
 .rv-noterow { display: flex; gap: .5rem; margin-top: .6rem; }
@@ -1191,6 +1321,15 @@ _PAGES_CSS = """
   border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .84rem;
 }
 .rv-explain { margin-top: .5rem; font-size: .84rem; font-family: var(--mono); }
+
+/* ------------------------------------------------------- queue mode (round X) */
+.rv-queue-bar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; justify-content: space-between; }
+.rv-qfilters { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.rv-queue-ctl { display: flex; gap: .4rem; align-items: center; }
+.rv-queue-pos { font-size: .82rem; min-width: 3.5rem; text-align: center; }
+#rv-queue-toggle.on { background: var(--accent); color: #0b1220; font-weight: 700; }
+.rv-shot.rv-filtered-out { display: none; }
+body.rv-queue-on .rv-shot:not(.rv-qcurrent) { display: none; }
 
 @media (max-width: 820px) { .rv-body { grid-template-columns: 1fr; } }
 
@@ -1242,6 +1381,9 @@ _PAGES_CSS = """
 .lib-tag { font-size: .72rem; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 0 .5rem; color: var(--accent); }
 .lib-actions { display: flex; gap: .35rem; flex-wrap: wrap; }
 .lib-edit { display: flex; gap: .35rem; }
+.lib-suggest { margin: .8rem 0; }
+.lib-suggest h2 { font-size: 1rem; display: flex; align-items: center; gap: .6rem; }
+.lib-matched { font-size: .74rem; color: var(--accent); }
 
 /* -------------------------------------------------------- providers -- */
 .pv-card { margin: .8rem 0; }
@@ -1352,6 +1494,11 @@ _PAGES_JS = r"""
     if (!shots.length) return;
     var active = 0;
 
+    // ---- QUEUE mode (round X agent XF, pain #7/#8: batch review by state) --
+    var qFilter = "all";
+    var queueMode = false;
+    var qIndex = 0;
+
     function updateProgress() {
       var done = document.querySelectorAll('.rv-shot[data-reviewed="1"]').length;
       var meter = document.getElementById("rv-progress");
@@ -1367,6 +1514,32 @@ _PAGES_JS = r"""
       shots[active].scrollIntoView({ behavior: "smooth", block: "start" });
     }
     function currentVideo() { return shots[active].querySelector("video"); }
+
+    function matchesFilter(s) {
+      if (qFilter === "all") return true;
+      if (qFilter === "needs_selection" || qFilter === "stale") {
+        return (s.getAttribute("data-buildstate") || "missing") === qFilter;
+      }
+      return (s.getAttribute("data-review") || "needs_review") === qFilter;
+    }
+    function filteredShots() { return shots.filter(matchesFilter); }
+    function updateQueueUI() {
+      var list = filteredShots();
+      var pos = document.getElementById("rv-queue-pos");
+      shots.forEach(function (s) {
+        s.classList.remove("rv-qcurrent");
+        s.classList.toggle("rv-filtered-out", !matchesFilter(s));
+      });
+      if (!queueMode) { if (pos) pos.textContent = ""; return; }
+      if (!list.length) { if (pos) pos.textContent = "0 / 0"; return; }
+      if (qIndex >= list.length) qIndex = list.length - 1;
+      if (qIndex < 0) qIndex = 0;
+      var cur = list[qIndex];
+      cur.classList.add("rv-qcurrent");
+      if (pos) pos.textContent = (qIndex + 1) + " / " + list.length;
+      var i = shots.indexOf(cur);
+      if (i >= 0) setActive(i);
+    }
 
     function verdict(kind) {
       var s = shots[active];
@@ -1421,7 +1594,20 @@ _PAGES_JS = r"""
           else toast((res.data && res.data.error) || "失败", false);
         });
       }
+      else if (act === "qapprove") {
+        post("/api/storyboard/approve", { shot: shot, review: "approved" }).then(function (res) {
+          if (res.status === 200) {
+            s.setAttribute("data-review", "approved");
+            toast(shot + " 已通过", true);
+            updateQueueUI();
+            if (queueMode) { qIndex++; updateQueueUI(); }
+          } else toast((res.data && res.data.error) || "失败", false);
+        });
+      }
       else if (act === "redo") {
+        // existing redo flow — confirmed client-side since it spends money
+        // the moment the jobs runner picks it up (round X agent XF queue mode).
+        if (!window.confirm("重做镜头 " + shot + "？将产生新的生成花费。")) return;
         post("/api/redo", { shot: shot }).then(function (res) {
           if (res.status === 202) toast("重做已排队 (queued)", true);
           else toast((res.data && res.data.error) || "失败", false);
@@ -1451,9 +1637,53 @@ _PAGES_JS = r"""
       }
     });
 
+    // ---- queue toolbar: filter chips, mode toggle, prev/next, alt preview --
+    document.addEventListener("click", function (e) {
+      var play = e.target.closest(".rv-alt-play");
+      if (play) {
+        var media = play.closest(".rv-alt-media");
+        var vid = media && media.querySelector(".rv-alt-video[data-src]");
+        if (vid) {
+          vid.setAttribute("src", vid.getAttribute("data-src"));
+          vid.removeAttribute("data-src");
+          vid.classList.remove("hidden");
+          media.classList.add("playing");
+          vid.play().catch(function () {});
+        }
+        return;
+      }
+      var chip = e.target.closest(".rv-qfilter");
+      if (chip) {
+        document.querySelectorAll(".rv-qfilter").forEach(function (c) {
+          c.classList.toggle("active", c === chip);
+        });
+        qFilter = chip.getAttribute("data-filter");
+        qIndex = 0;
+        updateQueueUI();
+        return;
+      }
+      if (e.target.id === "rv-queue-toggle") {
+        queueMode = !queueMode;
+        document.body.classList.toggle("rv-queue-on", queueMode);
+        e.target.classList.toggle("on", queueMode);
+        e.target.textContent = queueMode ? "退出队列模式" : "进入队列模式";
+        qIndex = 0;
+        updateQueueUI();
+        return;
+      }
+      if (e.target.id === "rv-q-prev") { qIndex--; updateQueueUI(); return; }
+      if (e.target.id === "rv-q-next") { qIndex++; updateQueueUI(); return; }
+    });
+
     document.addEventListener("keydown", function (e) {
       var tag = e.target && e.target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (queueMode && (e.key === "j" || e.key === "k")) {
+        qIndex += (e.key === "j") ? 1 : -1;
+        updateQueueUI();
+        e.preventDefault();
+        return;
+      }
       if (e.key === "j") { setActive(active + 1); e.preventDefault(); }
       else if (e.key === "k") { setActive(active - 1); e.preventDefault(); }
       else if (e.key === "g") { verdict("good"); e.preventDefault(); }

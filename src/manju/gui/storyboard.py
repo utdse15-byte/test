@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import html
 from typing import Any
+from urllib.parse import quote
 
 __all__ = [
     "PAGE_PATH",
@@ -234,9 +235,48 @@ def _state_chip(state: str, note: str) -> str:
     return f'<span class="badge {badge}"{tip}>{_e(zh)}</span>'
 
 
+def _take_preview_html(project: Any, take: Any, selected: str | None) -> str:
+    """One take's small, LAZY preview card (round X agent XF, pain #8: fine-
+    grained clip previews). ``src``/``poster`` are NOT set server-side — only
+    ``data-src``/``data-poster`` are — so opening the page never triggers a
+    single ffmpeg transcode; ``/storyboard.js`` assigns the real attributes
+    only when this drawer is actually opened by a human (never block page
+    GET on ffmpeg). Reuses the EXISTING ``/preview`` and ``/thumb`` lazy
+    endpoints (``gui.state.playable_url`` — the same helper the review page's
+    big player uses) rather than inventing a second transcode path."""
+    if take.media_path is None:
+        return ""
+    from .state import playable_url
+
+    sel_badge = ' <span class="badge st-fresh">已选用</span>' if take.name == selected else ""
+    is_audio = take.media_path.suffix.lower() in (".wav", ".mp3", ".m4a", ".flac")
+    if is_audio:
+        url, _ext = playable_url(project, take.media_path)
+        return (
+            '<div class="sb-take-prev">'
+            f'<div class="sb-take-prev-name">{_e(take.name)}{sel_badge}</div>'
+            f'<audio class="sb-take-audio" preload="none" controls '
+            f'data-src="{_e(url)}"></audio>'
+            '</div>'
+        )
+    rel = project.relpath(take.media_path)
+    url, _ext = playable_url(project, take.media_path)
+    thumb_url = "/thumb/" + quote(rel, safe="/")
+    return (
+        '<div class="sb-take-prev">'
+        f'<div class="sb-take-prev-name">{_e(take.name)}{sel_badge}</div>'
+        '<div class="sb-take-video-wrap" data-pending="1">'
+        f'<video class="sb-take-video" preload="none" muted controls playsinline '
+        f'data-src="{_e(url)}" data-poster="{_e(thumb_url)}"></video>'
+        '<span class="sb-take-prev-pending muted">点击展开后懒加载预览</span>'
+        '</div></div>'
+    )
+
+
 def _detail_row(project: Any, shot_id: str, shot: Any, note: str) -> str:
     """The hidden drawer under a row: the full spec (raw YAML truth) + take notes
-    (§3) + the why-stale evidence. colspan spans every column."""
+    (§3) + the why-stale evidence + per-take lazy previews. colspan spans
+    every column."""
     try:
         raw_text = project.shot_path(shot_id).read_text(encoding="utf-8")
     except Exception:
@@ -249,12 +289,25 @@ def _detail_row(project: Any, shot_id: str, shot: Any, note: str) -> str:
         notes_html = f'<div class="sb-notes"><h4>版本笔记 (take notes)</h4><ul>{rows}</ul></div>'
     why = f'<div class="sb-why hint">状态说明:{_e(note)}</div>' if note else ""
     lock_ctl = _lock_controls(shot_id, shot)
+
+    try:
+        takes = project.takes(shot_id, skip_ghosts=True)
+    except Exception:
+        takes = []
+    takes_html = ""
+    if takes:
+        selected = shot.status.selected_take
+        cards = "".join(_take_preview_html(project, t, selected) for t in takes)
+        takes_html = (f'<div class="sb-takes"><h4>版本预览 (take previews)</h4>'
+                      f'<div class="sb-takes-row">{cards}</div></div>')
+
     return (
         f'<tr class="sb-detail hidden" data-detail="{_e(shot_id)}"><td colspan="13">'
         f'<div class="sb-drawer">'
         f'<div class="sb-drawer-head"><h3>{_e(shot_id)} 详情 (detail)</h3>'
         f'<button class="btn ghost mini sb-close" type="button">收起 (close)</button></div>'
         f'{why}{lock_ctl}'
+        f'{takes_html}'
         f'<h4>完整规格 (full spec)</h4>'
         f'<pre class="sb-spec">{_e(raw_text)}</pre>'
         f'{notes_html}'
@@ -501,6 +554,18 @@ _CSS = """
 }
 .sb-notes ul { margin: .2rem 0 0 1.1rem; }
 .sb-lockctl { margin: .4rem 0; }
+.sb-takes { margin: .5rem 0; }
+.sb-takes-row { display: flex; flex-wrap: wrap; gap: .6rem; }
+.sb-take-prev { width: 11rem; }
+.sb-take-prev-name { font-size: .76rem; margin-bottom: .2rem; }
+.sb-take-video-wrap { position: relative; }
+.sb-take-video, .sb-take-audio { width: 100%; display: block; border-radius: 6px; background: var(--bg); }
+.sb-take-video { max-height: 110px; }
+.sb-take-prev-pending {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: .72rem; text-align: center; padding: .3rem; pointer-events: none;
+}
+.sb-take-video-wrap[data-pending="0"] .sb-take-prev-pending { display: none; }
 .sb-legend { font-size: .8rem; line-height: 1.8; margin-top: 1rem; }
 .sb-empty { margin-top: 1rem; }
 .btn.mini, .chip.mini { font-size: .74rem; }
@@ -539,11 +604,34 @@ _JS = r"""
   function reloadSoon() { setTimeout(function () { location.reload(); }, 400); }
 
   // ---- row detail drawer ----------------------------------------------------
+  // round X agent XF: per-take previews inside the drawer are NEVER wired to
+  // src/poster server-side (only data-src/data-poster) — this is the ONLY
+  // place that assigns them, and only on the FIRST open, so a page with many
+  // shots never triggers a single ffmpeg transcode just from being loaded.
+  function loadTakePreviews(det) {
+    det.querySelectorAll(".sb-take-video[data-src]").forEach(function (v) {
+      var wrap = v.closest(".sb-take-video-wrap");
+      v.poster = v.getAttribute("data-poster") || "";
+      v.src = v.getAttribute("data-src");
+      v.removeAttribute("data-src");
+      v.addEventListener("loadeddata", function () {
+        if (wrap) wrap.setAttribute("data-pending", "0");
+      });
+      v.addEventListener("error", function () {
+        if (wrap) wrap.setAttribute("data-pending", "0");
+      });
+    });
+    det.querySelectorAll("audio.sb-take-audio[data-src]").forEach(function (a) {
+      a.src = a.getAttribute("data-src");
+      a.removeAttribute("data-src");
+    });
+  }
   function toggleDetail(shot, force) {
     var det = document.querySelector('tr.sb-detail[data-detail="' + CSS.escape(shot) + '"]');
     if (!det) return;
     var open = (force === undefined) ? det.classList.contains("hidden") : force;
     det.classList.toggle("hidden", !open);
+    if (open) loadTakePreviews(det);
     var tog = document.querySelector('tr.sb-row[data-shot="' + CSS.escape(shot) + '"] .sb-toggle');
     if (tog) { tog.classList.toggle("open", open); tog.textContent = open ? "▾" : "▸"; }
   }

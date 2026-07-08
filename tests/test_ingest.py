@@ -304,6 +304,131 @@ def test_dedup_within_batch(tmp_project, add_shot, tmp_path):
 
 
 # ======================================================================
+# LIBRARY dedup (round X agent XF) — --on-duplicate skip|import|link
+# ======================================================================
+
+
+@pytest.fixture
+def lib_env(tmp_path, monkeypatch):
+    """Isolate the private library at a tmp dir for these tests."""
+    monkeypatch.setenv("MANJU_LIBRARY", str(tmp_path / "_library"))
+    from manju.core.library import Library
+
+    return Library()
+
+
+def test_library_hit_default_skips_and_hints(tmp_project, tmp_path, lib_env):
+    seed = tmp_path / "seed.mp4"
+    seed.write_bytes(b"library-bytes")
+    lib_env.add(seed, tags=["broll", "night"])
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "unmatched.mp4", b"library-bytes")  # same content as the library asset
+    row = plan_ingest(tmp_project, [batch]).rows[0]
+    assert row.action == "skip_duplicate"
+    assert "素材库" in row.target
+    assert row.library_hint and "broll" in row.library_hint and "night" in row.library_hint
+
+
+def test_library_hit_import_still_classifies_and_attaches_hint(tmp_project, add_shot, tmp_path, lib_env):
+    add_shot(tmp_project, "S001")
+    seed = tmp_path / "seed.mp4"
+    seed.write_bytes(b"library-bytes-2")
+    lib_env.add(seed, tags=["hero"])
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "S001_take.mp4", b"library-bytes-2")
+    row = plan_ingest(tmp_project, [batch], on_duplicate="import").rows[0]
+    assert row.action == "take" and row.shot_id == "S001"       # classified normally
+    assert row.library_hint and "hero" in row.library_hint       # advisory still attached
+
+
+def test_library_hit_link_sources_copy_from_library_blob(tmp_project, tmp_path, lib_env):
+    seed = tmp_path / "seed.mp4"
+    seed.write_bytes(b"library-bytes-3")
+    added = lib_env.add(seed, tags=["logo"])
+    blob = lib_env.blob_path(added["entry"])
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    dropped = _drop(batch, "unmatched2.mp4", b"library-bytes-3")
+    row = plan_ingest(tmp_project, [batch], on_duplicate="link").rows[0]
+    assert row.action == "import"
+    assert row.file == str(blob) and row.file != str(dropped)
+    assert row.library_hint and "provenance: library" in row.library_hint
+
+
+def test_library_hit_link_apply_lands_correct_bytes(tmp_project, tmp_path, lib_env):
+    """apply_ingest, not just plan_ingest: link mode's row.file swap must
+    actually land the library's bytes in the project on --apply."""
+    seed = tmp_path / "seed4.mp4"
+    seed.write_bytes(b"library-bytes-4")
+    lib_env.add(seed, tags=["hero"])
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "unmatched4.mp4", b"library-bytes-4")
+    plan = plan_ingest(tmp_project, [batch], on_duplicate="link")
+    result = apply_ingest(tmp_project, plan, actor="test")
+    assert result.stopped_at is None and result.results[0].ok
+    landed_rel = result.results[0].detail["imported"]
+    landed = tmp_project.resolve(landed_rel)
+    assert landed.exists() and landed.read_bytes() == b"library-bytes-4"
+
+
+def test_no_library_hit_leaves_hint_none(tmp_project, tmp_path, lib_env):
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "fresh.mp4", b"never-seen-bytes")
+    row = plan_ingest(tmp_project, [batch]).rows[0]
+    assert row.action == "import"
+    assert row.library_hint is None
+
+
+def test_project_dedup_wins_over_library_hit(tmp_project, tmp_path, lib_env):
+    """A project-internal hit is always a plain skip — the library hint is
+    only computed for files NOT already found inside the project."""
+    tmp_project.imports_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.imports_dir / "already.mp4").write_bytes(b"shared-bytes")
+    seed = tmp_path / "seed.mp4"
+    seed.write_bytes(b"shared-bytes")
+    lib_env.add(seed, tags=["also-in-library"])
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "incoming.mp4", b"shared-bytes")
+    row = plan_ingest(tmp_project, [batch]).rows[0]
+    assert row.action == "skip_duplicate"
+    assert row.target == "media/imports/already.mp4"   # project hit, not library
+    assert row.library_hint is None
+
+
+def test_bad_on_duplicate_raises(tmp_project, tmp_path):
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "x.mp4", b"x")
+    with pytest.raises(IngestError, match="on-duplicate"):
+        plan_ingest(tmp_project, [batch], on_duplicate="bogus")
+
+
+def test_cli_ingest_on_duplicate_flag_skips_by_default(in_project, tmp_path, lib_env):
+    seed = tmp_path / "seed.mp4"
+    seed.write_bytes(b"cli-library-bytes")
+    lib_env.add(seed, tags=["cli-tag"])
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    _drop(batch, "cli_drop.mp4", b"cli-library-bytes")
+
+    result = runner.invoke(app, ["ingest", str(batch), "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["rows"][0]["action"] == "skip_duplicate"
+    assert "cli-tag" in data["rows"][0]["library_hint"]
+
+
+# ======================================================================
 # plan_ingest is read-only
 # ======================================================================
 
