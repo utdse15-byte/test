@@ -506,6 +506,12 @@ def _h_skill_show(project: Project, args: dict) -> dict:
     except KeyError as exc:
         raise ToolError(str(exc)) from exc
     text = info.path.read_text(encoding="utf-8") if info.path else ""
+    # round AA (goal item 8): content served over MCP is the same usage
+    # signal core/evaluate.py reports on — best-effort, never blocks the show.
+    try:
+        append_event(project.root, "ai", "skill_used", {"skill": skill_id, "via": "mcp"})
+    except Exception:
+        pass
     return {"skill": info.to_dict(), "text": text}
 
 

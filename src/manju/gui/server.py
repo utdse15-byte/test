@@ -4827,10 +4827,18 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/create/skill":
             sid = (parse_qs(url.query).get("id") or [""])[0]
             try:
-                self._send_json(
-                    create_page.skill_payload(self.server.project, sid))
+                payload = create_page.skill_payload(self.server.project, sid)
             except KeyError as exc:
                 self._send_error_json(" ".join(str(exc).split()), 404)
+                return True
+            # round AA (goal item 8): the skill modal serves full SKILL.md
+            # content, same "skill_used" usage signal as CLI/MCP show.
+            try:
+                append_event(self.server.project.root, self.server.actor,
+                            "skill_used", {"skill": sid, "via": "gui"})
+            except Exception:
+                pass
+            self._send_json(payload)
             return True
         return False
 

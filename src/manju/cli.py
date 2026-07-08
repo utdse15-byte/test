@@ -1218,6 +1218,14 @@ def skills_show(skill_id: str,
     except KeyError as exc:
         _fail(str(exc))
     text = info.path.read_text(encoding="utf-8") if info.path else ""
+    # round AA (goal item 8): a skill's content was actually SERVED — the
+    # usage signal core/evaluate.py reports on. Only inside a project (no
+    # events.jsonl to write to otherwise); best-effort, never blocks the show.
+    if project is not None:
+        try:
+            append_event(project.root, ACTOR, "skill_used", {"skill": skill_id, "via": "cli"})
+        except Exception:
+            pass
     if as_json:
         _emit({"skill": info.to_dict(), "text": text}, True)
     else:
@@ -1283,6 +1291,15 @@ def auto(
     except KeyError:
         core_text = None
     index = skill_index_text(project, exclude=(CORE_SKILL_ID,))
+
+    # round AA (goal item 8): the auto-injection path IS content served —
+    # every `manju auto` run hands the driven agent the core skill's full
+    # body, the same "skill_used" signal `manju skills show` records.
+    if core_text:
+        try:
+            append_event(project.root, ACTOR, "skill_used", {"skill": CORE_SKILL_ID, "via": "auto"})
+        except Exception:
+            pass
 
     if core_text:
         composed = "按照以下 Manju 操作手册工作:\n\n" + core_text
@@ -3334,6 +3351,72 @@ def failures(n: int = typer.Option(10, "-n", help="how many recent failures to s
             typer.secho(f"   help: {r['hint']}", fg=typer.colors.CYAN)
         if r.get("log_path"):
             typer.secho(f"   log:  {r['log_path']}", fg=typer.colors.BRIGHT_BLACK)
+
+
+# ------------------------------------------------------------------ evaluate
+
+
+@app.command()
+def evaluate(as_json: bool = typer.Option(False, "--json")):
+    """技能/工作流的诚实用量评估 (round AA, goal item 8)。
+
+    只读 events.jsonl + reports/qc_agent.jsonl:技能实际被读取的次数、
+    redo/repair 的镜头级返工热点、AI QC 判读的 blocker/issue/fyi 分布——
+    从不编造生产率或质量归因数字(见结尾的『不能证明』段落)。只读,不加锁。
+    """
+    from .core.evaluate import evaluate as _evaluate
+
+    project = _project()
+    report = _evaluate(project)
+    if as_json:
+        _emit(report, True)
+        return
+
+    typer.secho(f"评估报告 / evaluate  ({report['project'] or '?'})",
+                fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"日志事件共 {report['events_total']} 条")
+
+    sk = report["skills"]
+    typer.secho(f"\n技能使用 / skills  ({sk['used_total']}/{sk['installed_total']} 用过)",
+                fg=typer.colors.CYAN)
+    used_rows = [r for r in sk["usage"] if r["count"] > 0]
+    if not used_rows:
+        typer.secho("  （还没有任何 skill_used 记录）", fg=typer.colors.BRIGHT_BLACK)
+    for row in used_rows:
+        via = ", ".join(f"{k}={v}" for k, v in row["by_via"].items())
+        low = "  [low-N]" if row["low_n"] else ""
+        typer.echo(f"  {row['id']:<24} {row['count']:>4} 次  最近 {row['last_used'] or '—'}"
+                    f"  via: {via}{low}")
+    if sk["never_used"]:
+        typer.secho("  从未用过: " + ", ".join(sk["never_used"]), fg=typer.colors.BRIGHT_BLACK)
+
+    wf = report["workflow"]
+    typer.secho("\n返工热点 / rework hotspots", fg=typer.colors.CYAN)
+    typer.echo(f"  redo 共 {wf['redo']['total']} 次")
+    for h in wf["redo"]["hotspots"]:
+        low = "  [low-N]" if h["low_n"] else ""
+        typer.echo(f"    {h['shot']:<10} {h['count']:>4} 次{low}")
+    typer.echo(f"  repair 共 {wf['repair']['total']} 次")
+    for h in wf["repair"]["hotspots"]:
+        low = "  [low-N]" if h["low_n"] else ""
+        typer.echo(f"    {h['shot']:<10} {h['count']:>4} 次{low}")
+    fn = wf["funnel"]
+    if fn["never_scaffolded"]:
+        typer.secho("  从未脚手架的阶段: " + ", ".join(fn["never_scaffolded"]),
+                    fg=typer.colors.BRIGHT_BLACK)
+
+    qc = report["qc"]
+    typer.secho(f"\nQC 结果 / qc verdicts  (共 {qc['verdicts_total']} 条判读)",
+                fg=typer.colors.CYAN)
+    lv = qc["by_level"]
+    typer.echo(f"  blocker={lv['blocker']}  issue={lv['issue']}  fyi={lv['fyi']}")
+    if qc["malformed_lines"]:
+        typer.secho(f"  {qc['malformed_lines']} 行无法解析,已跳过", fg=typer.colors.YELLOW)
+
+    honesty = report["honesty"]
+    typer.secho(f"\n提示 / honesty — {honesty['summary']}", fg=typer.colors.YELLOW, bold=True)
+    for line in honesty["cannot_claim"]:
+        typer.secho(f"  · {line}", fg=typer.colors.YELLOW)
 
 
 # ------------------------------------------------------------------- misc
