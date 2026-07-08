@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..core.container import ProjectError
 from ..core.models import AudioClip, Timeline, VideoClip
 from ..core.yamlio import write_json
 
@@ -53,6 +54,25 @@ def _time_range(start_ms: int | float, duration_ms: int | float | None,
     }
 
 
+def _require_contained_source(project: "Project", source: str, *, label: str) -> None:
+    """goal item 78: refuse to write ``source`` into the OTIO document unless
+    it stays inside the project root — the SAME containment semantics
+    render.py's ``project.resolve(clip.source)`` already enforces for the
+    rendered film. Unlike JianYing's ``_abs_path`` (which needs the resolved
+    absolute path), OTIO's ``target_url`` keeps the ORIGINAL project-relative
+    string byte-identically (existing exports pin this); this call is pure
+    validation — its return value is discarded, only a containment failure
+    matters."""
+    try:
+        project.resolve(source)
+    except Exception as exc:
+        raise ProjectError(
+            f"导出失败:{label} 的素材路径超出项目边界或不合法: {source!r} — "
+            "OTIO 导出不允许引用项目外文件(与渲染 render 的边界语义一致)。"
+            "请先 `manju import` 把素材放进项目,再导出。"
+        ) from exc
+
+
 def _external_reference(target_url: str, duration_ms: int | float | None,
                         fps: float) -> dict[str, Any]:
     return {
@@ -65,7 +85,8 @@ def _external_reference(target_url: str, duration_ms: int | float | None,
     }
 
 
-def _video_clip(clip: VideoClip, fps: float) -> dict[str, Any]:
+def _video_clip(project: "Project", clip: VideoClip, fps: float) -> dict[str, Any]:
+    _require_contained_source(project, clip.source, label=f"{clip.shot}/{clip.take}")
     # Round-T: the footage's own-audio level/mute travels in metadata, added ONLY
     # when non-default so an untouched clip exports byte-identically to before.
     meta: dict[str, Any] = {"shot": clip.shot, "take": clip.take}
@@ -82,8 +103,9 @@ def _video_clip(clip: VideoClip, fps: float) -> dict[str, Any]:
     }
 
 
-def _audio_clip(clip: AudioClip, fps: float, kind: str) -> dict[str, Any]:
+def _audio_clip(project: "Project", clip: AudioClip, fps: float, kind: str) -> dict[str, Any]:
     name = Path(clip.source).stem or kind
+    _require_contained_source(project, clip.source, label=f"{kind}:{name}")
     # OTIO has no loop semantics: an ambient bed is represented at its timeline
     # start/duration with the source referenced as-is; the loop intent is only
     # recorded in metadata (and only when set, so voice/music stay byte-stable).
@@ -121,11 +143,11 @@ def export_otio(project: "Project", timeline: Timeline) -> Path:
     config = project.load_config()
     fps = float(timeline.fps or config.fps or 24)
 
-    video_children = [_video_clip(c, fps) for c in timeline.tracks.video]
-    audio_children = [_audio_clip(c, fps, "voice") for c in timeline.tracks.voice]
-    audio_children += [_audio_clip(c, fps, "music") for c in timeline.tracks.music]
-    audio_children += [_audio_clip(c, fps, "sfx") for c in timeline.tracks.sfx]
-    audio_children += [_audio_clip(c, fps, "ambient") for c in timeline.tracks.ambient]
+    video_children = [_video_clip(project, c, fps) for c in timeline.tracks.video]
+    audio_children = [_audio_clip(project, c, fps, "voice") for c in timeline.tracks.voice]
+    audio_children += [_audio_clip(project, c, fps, "music") for c in timeline.tracks.music]
+    audio_children += [_audio_clip(project, c, fps, "sfx") for c in timeline.tracks.sfx]
+    audio_children += [_audio_clip(project, c, fps, "ambient") for c in timeline.tracks.ambient]
 
     stack = {
         "OTIO_SCHEMA": "Stack.1",

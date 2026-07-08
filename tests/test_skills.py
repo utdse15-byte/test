@@ -46,11 +46,37 @@ def test_bundled_core_skill_visible_without_project():
 
 
 def test_project_tier_wins_over_bundled(tmp_project):
+    """Every id EXCEPT the core protocol id — project tier wins."""
+    _write_skill(tmp_project.root / "skills", "narrative", when="本项目自定义手册")
+    rows = {s.id: s for s in list_skills(tmp_project)}
+    assert rows["narrative"].source == "project"
+    assert rows["narrative"].when_to_use == "本项目自定义手册"
+
+
+def test_project_tier_cannot_shadow_core_skill(tmp_project):
+    """Round W goal item 46: the PROJECT tier may NOT override
+    ``CORE_SKILL_ID`` — a downloaded/untrusted project's own
+    ``skills/manju/SKILL.md`` must never shadow the core operating protocol
+    (supersedes the old "project wins over bundled" contract for THIS one
+    id). ``manju skills`` / MCP ``skill_list`` must also surface a loud
+    warning that the shadow attempt was ignored."""
+    from manju.core.skills import core_skill_shadow_warning
+
     _write_skill(tmp_project.root / "skills", CORE_SKILL_ID,
-                 name="manju", when="本项目自定义手册")
+                 name="manju", when="恶意项目自定义手册")
+
     info = load_skill(tmp_project, CORE_SKILL_ID)
-    assert info.source == "project"
-    assert info.when_to_use == "本项目自定义手册"
+    assert info.source == "bundled"  # NOT "project" — never shadowed
+    assert info.when_to_use != "恶意项目自定义手册"
+
+    rows = {s.id: s for s in list_skills(tmp_project)}
+    assert rows[CORE_SKILL_ID].source == "bundled"
+
+    warning = core_skill_shadow_warning(tmp_project)
+    assert warning and CORE_SKILL_ID in warning
+
+    # a project WITHOUT a shot at shadowing the core id gets no warning
+    assert core_skill_shadow_warning(None) is None
 
 
 def test_user_tier_between_project_and_bundled(tmp_project, tmp_path, monkeypatch):
@@ -138,6 +164,33 @@ def test_cli_skills_outside_project(tmp_path, monkeypatch):
     assert CORE_SKILL_ID in res.output
 
 
+def test_cli_skills_list_warns_on_core_shadow_attempt(tmp_project, monkeypatch):
+    """Round W goal item 46: `manju skills` (plain and --json) surfaces a
+    loud warning when the project tried to shadow the core skill, and never
+    returns the project's version of it."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from manju.cli import app
+
+    _write_skill(tmp_project.root / "skills", CORE_SKILL_ID,
+                 name="manju", when="恶意项目自定义手册")
+    monkeypatch.chdir(tmp_project.root)
+    runner = CliRunner()
+
+    res = runner.invoke(app, ["skills"])
+    assert res.exit_code == 0
+    assert "不允许被项目层覆盖" in res.output
+
+    res_json = runner.invoke(app, ["skills", "--json"])
+    assert res_json.exit_code == 0
+    data = json.loads(res_json.output)
+    assert data["core_skill_shadow_warning"] and CORE_SKILL_ID in data["core_skill_shadow_warning"]
+    core_row = next(s for s in data["skills"] if s["id"] == CORE_SKILL_ID)
+    assert core_row["source"] == "bundled"
+
+
 # ------------------------------------------------------------------ MCP
 
 
@@ -148,6 +201,7 @@ def test_mcp_skill_tools(tmp_project):
     listed = call_tool(tmp_project, "skill_list", {})
     ids = [s["id"] for s in listed["skills"]]
     assert CORE_SKILL_ID in ids and "narrative" in ids
+    assert listed["core_skill_shadow_warning"] is None  # no shadow attempt here
 
     shown = call_tool(tmp_project, "skill_show", {"id": "narrative"})
     assert "正文" in shown["text"]

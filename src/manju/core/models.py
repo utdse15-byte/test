@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .idents import validate_safe_segment
+
 SHOT_SIZES = (
     "extreme_wide",
     "wide",
@@ -218,6 +220,15 @@ class ShotSpec(ManjuModel):
     # by `manju check` until `manju lock` seals it with real hashes.
     locked: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("id")
+    @classmethod
+    def _safe_id(cls, v: str) -> str:
+        # goal item 11: the id is used as a path segment (shots/<id>.yaml,
+        # media/gen/<id>/...) everywhere downstream — validated here so a
+        # hand-authored or agent-written shot file can never carry a
+        # traversal/absolute-path id past `manju check`.
+        return validate_safe_segment(v, label="shot_id")
+
     @field_validator("locked", mode="before")
     @classmethod
     def _coerce_locked(cls, v: Any) -> dict[str, str]:
@@ -233,6 +244,17 @@ class ShotIndex(ManjuModel):
 
     order: list[str] = Field(default_factory=list)
     defaults: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("order")
+    @classmethod
+    def _safe_order(cls, v: list[str]) -> list[str]:
+        # goal item 11: every order entry becomes `shots_dir / f"{id}.yaml"`
+        # (Project.shot_path) — validated here so a hand-edited index.yaml
+        # can never smuggle a traversal id into the shot list (`manju check`
+        # reports it as a normal validation error, not a crash).
+        for sid in v:
+            validate_safe_segment(sid, label="shots/index.yaml order 条目")
+        return v
 
 
 # --------------------------------------------------------------- Take sidecar
@@ -860,11 +882,16 @@ class KeyframeSpec(ManjuModel):
 
     Either an anchored ``position`` (``start`` | ``mid`` | ``end``) OR an
     explicit ``at_ms`` timestamp locates the frame; ``image`` is what the frame
-    should look like — a project-relative path, an absolute path, an
-    ``http(s)://`` URL, or a bible asset id (character/scene) whose ``ref_image``
-    is used; ``prompt`` is a short text beat describing the moment. Every field
-    is optional (defaults ``None``) so a hand-authored partial keyframe still
-    validates — the truth file stays forgiving (§4).
+    should look like — a project-relative path, an ``http(s)://`` URL, or a
+    bible asset id (character/scene) whose ``ref_image`` is used; ``prompt`` is
+    a short text beat describing the moment. Every field is optional (defaults
+    ``None``) so a hand-authored partial keyframe still validates — the truth
+    file stays forgiving (§4).
+
+    goal item 17: an ABSOLUTE local path, or a relative path that resolves
+    outside the project root, is REFUSED at resolution time (same containment
+    guard refs.py uses) — it is never read from disk, so it can never leak an
+    outside-project file into a cloud provider request.
     """
 
     position: Literal["start", "mid", "end"] | None = None

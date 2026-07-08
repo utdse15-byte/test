@@ -386,9 +386,15 @@ _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additional
 
 
 def _h_skill_list(project: Project, args: dict) -> dict:
-    from ..core.skills import list_skills
+    from ..core.skills import core_skill_shadow_warning, list_skills
 
-    return {"skills": [s.to_dict() for s in list_skills(project)]}
+    return {
+        "skills": [s.to_dict() for s in list_skills(project)],
+        # goal item 46: a loud warning when the project tried to shadow the
+        # core protocol skill (id "manju") — the shadow is already ignored by
+        # list_skills; this makes the ignoring visible to the MCP caller too.
+        "core_skill_shadow_warning": core_skill_shadow_warning(project),
+    }
 
 
 def _h_skill_show(project: Project, args: dict) -> dict:

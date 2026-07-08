@@ -40,6 +40,7 @@ __all__ = [
     "list_skills",
     "load_skill",
     "skill_index_text",
+    "core_skill_shadow_warning",
     "CORE_SKILL_ID",
 ]
 
@@ -154,14 +155,48 @@ def _scan(root: Path, source: str) -> dict[str, SkillInfo]:
     return out
 
 
+def _project_skills_dir(project) -> Path:
+    return Path(project.root) / "skills"
+
+
+def core_skill_shadow_warning(project=None) -> str | None:
+    """A loud 中文 warning line when a PROJECT carries its own
+    ``skills/manju/SKILL.md`` (goal item 46) — the id core/skills.py refuses
+    to let the project tier override, precisely because a downloaded/
+    untrusted project could otherwise shadow the core operating protocol an
+    agent's every action is checked against. ``None`` when there is nothing
+    to warn about (no project, or no such shadow attempt)."""
+    if project is None:
+        return None
+    shadow_path = _project_skills_dir(project) / CORE_SKILL_ID / "SKILL.md"
+    if not shadow_path.is_file():
+        return None
+    return (
+        f"⚠ 检测到项目内 skills/{CORE_SKILL_ID}/SKILL.md,但核心协议技能"
+        f"({CORE_SKILL_ID!r})不允许被项目层覆盖(可能是不可信项目伪装核心操作协议)"
+        "——已忽略,继续使用 bundled/user 版本。如果这是你自己的项目,请改用其他 "
+        "skill id,或把覆盖放进 ~/.manju/skills(user 层允许覆盖)。"
+    )
+
+
 def list_skills(project=None) -> list[SkillInfo]:
     """Every visible skill, project > user > bundled per id; the core protocol
-    skill first, then alphabetical. ``project`` may be None (no project tier)."""
+    skill first, then alphabetical. ``project`` may be None (no project tier).
+
+    goal item 46: the PROJECT tier may NOT override ``CORE_SKILL_ID`` — a
+    project's own machine is not the same trust boundary as an untrusted
+    downloaded project, and the core skill IS the operating protocol every
+    other safety rail (locks, check-before-build, ask_before) is described
+    in. The user tier (``~/.manju/skills``, the user's OWN machine) can still
+    override it, same as always.
+    """
     merged: dict[str, SkillInfo] = {}
     merged.update(_scan(bundled_skills_dir(), "bundled"))
     merged.update(_scan(user_skills_dir(), "user"))
     if project is not None:
-        merged.update(_scan(Path(project.root) / "skills", "project"))
+        project_scan = _scan(_project_skills_dir(project), "project")
+        project_scan.pop(CORE_SKILL_ID, None)  # never let a project shadow core
+        merged.update(project_scan)
 
     def key(info: SkillInfo):
         return (0 if info.id == CORE_SKILL_ID else 1, info.id)
@@ -186,13 +221,21 @@ def skill_text(project, skill_id: str) -> str:
 
 def skill_index_text(project=None, *, exclude: tuple[str, ...] = ()) -> str:
     """The 中文 index block agents receive instead of the whole library —
-    one line per skill: id + 何时用. Empty string when nothing to list."""
+    one line per skill: id + 何时用. Empty string when nothing to list AND no
+    shadow warning applies (goal item 46: the warning still surfaces even if
+    every other skill is excluded, e.g. ``manju auto``'s
+    ``exclude=(CORE_SKILL_ID,)`` call)."""
     rows = [s for s in list_skills(project) if s.id not in exclude]
-    if not rows:
+    warning = core_skill_shadow_warning(project)
+    if not rows and not warning:
         return ""
-    lines = ["可用技能库(用 `manju skills show <id>` 取全文,按需加载,不要全量复制):"]
-    for s in rows:
-        hint = s.when_to_use or s.description
-        src = "" if s.source == "bundled" else f" [{s.source}]"
-        lines.append(f"  - {s.id}: {hint}{src}")
+    lines: list[str] = []
+    if warning:
+        lines.append(warning)
+    if rows:
+        lines.append("可用技能库(用 `manju skills show <id>` 取全文,按需加载,不要全量复制):")
+        for s in rows:
+            hint = s.when_to_use or s.description
+            src = "" if s.source == "bundled" else f" [{s.source}]"
+            lines.append(f"  - {s.id}: {hint}{src}")
     return "\n".join(lines)

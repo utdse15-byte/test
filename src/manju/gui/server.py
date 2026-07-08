@@ -41,6 +41,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..core.container import Project, ProjectError
 from ..core.events import append_event, tail_events
+from ..core.idents import SAFE_SEGMENT_PATTERN
 from .jobs import JobRunner
 from .state import build_state
 
@@ -1390,7 +1391,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------- shot editor
 
-    _SHOT_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+    # goal item 11: the ONE canonical safe-segment pattern (core/idents.py) —
+    # kept as a compiled attribute here (not just calling is_safe_segment) so
+    # the many `self._SHOT_ID_RE.fullmatch(...)` call sites below stay
+    # unchanged; the source of truth for the pattern itself now lives in core.
+    _SHOT_ID_RE = re.compile(SAFE_SEGMENT_PATTERN)
 
     def _shot_get(self, shot_id: str) -> None:
         """Raw YAML text of one shot file — the editor edits HUMAN TRUTH, so

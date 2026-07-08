@@ -66,6 +66,20 @@ def test_select_json_selects_take_and_logs_event(in_project, add_shot, make_take
     assert any(a == "select" for _, a in actions)
 
 
+def test_select_refuses_traversal_shot_id_cleanly(in_project, tmp_path):
+    """goal item 11: `manju select` cleanly refuses a shot id shaped like a
+    path traversal — no take is ever written outside shots/media/gen, and the
+    failure is a normal `_fail()` (nonzero exit, no Python traceback), not a
+    crash — before this fix `shot_path` performed no validation at all."""
+    result = runner.invoke(app, ["select", "../../evil", "take_01"])
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "shot_id" in result.output
+    # nothing escaped the project: no file named after the traversal attempt
+    # exists anywhere near the project or its parent
+    assert not any(p.name == "evil" for p in in_project.root.parent.rglob("evil*"))
+
+
 def test_lock_json_returns_hash_and_tamper_fails_check(in_project, add_shot):
     add_shot(in_project, "S001")
 
@@ -249,3 +263,32 @@ def test_pack_excludes_rebuildable_caches(tmp_project, add_shot, monkeypatch, tm
     assert runner.invoke(app, ["pack", "--out", str(out_full), "--full"]).exit_code == 0
     full_names = set(zipfile.ZipFile(out_full).namelist())
     assert "renders/segments/seg.mp4" in full_names
+
+
+def test_pack_never_follows_symlink_to_outside_file(tmp_project, add_shot, monkeypatch, tmp_path):
+    """goal item 14: a symlink inside the project pointing at a file OUTSIDE
+    the project must never have its target bytes embedded in the .manjupkg
+    under the safe-looking in-project name — that would leak an
+    outside-project file through a package that is supposed to represent
+    only the project directory. The symlink is skipped (with a warning),
+    never followed."""
+    import zipfile
+
+    add_shot(tmp_project, "S001")
+    outside = tmp_path / "outside_secret.txt"
+    outside.write_bytes(b"TOP-SECRET-OUTSIDE-PROJECT-BYTES")
+    link = tmp_project.root / "media" / "refs" / "sneaky_link.txt"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+
+    monkeypatch.chdir(tmp_project.root)
+    out = tmp_path / "symlink.manjupkg"
+    result = runner.invoke(app, ["pack", "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert "符号链接" in result.output  # the skip warning fired
+
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        assert "media/refs/sneaky_link.txt" not in names  # never stored
+        for n in names:
+            assert zf.read(n) != b"TOP-SECRET-OUTSIDE-PROJECT-BYTES"

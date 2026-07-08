@@ -14,7 +14,12 @@ Routes:
                                    HTTP Range support (``206`` / ``Accept-Ranges``)
                                    so browsers can seek a ``<video>``. The
                                    resolved path MUST stay inside the project
-                                   root (``..``/absolute/symlink escapes → 403).
+                                   root (``..``/absolute/symlink escapes → 403)
+                                   AND inside the preview-surface allowlist
+                                   (``BoardHandler._MEDIA_PREFIXES`` — media/,
+                                   reports/frames/, .manju/thumbs/): truth
+                                   files like project.yaml, shots/*.yaml or
+                                   .manju/state.sqlite are never served here.
   POST /api/<action>             → JSON in, ``{ok: true, ...}`` / ``{ok: false,
                                    error: "one line"}`` out. Only the seven safe
                                    actions below exist; anything else is 404.
@@ -321,16 +326,35 @@ class BoardHandler(BaseHTTPRequestHandler):
 
     # ---- GET /media/<relpath>
 
+    # goal item 40: project-root containment alone let `/media/<relpath>` read
+    # ANY project file — project.yaml, shots/*.yaml, story/*, events.jsonl,
+    # .manju/state.sqlite — not just the media/preview surfaces the board
+    # actually links to. Allowlisted to what board.py actually renders as an
+    # image/video/poster src: take media + imports thumbnails under media/,
+    # keyframe posters under reports/frames/, and the thumb/waveform cache
+    # under .manju/thumbs/ (NOT the rest of .manju — state.sqlite/events stay
+    # unreachable). Mirrors the GUI's MEDIA_PREFIXES allowlist (gui/server.py).
+    _MEDIA_PREFIXES = ("media/", "reports/frames/", ".manju/thumbs/")
+
     def _safe_media_path(self, rel: str) -> Path:
         """Resolve a project-relative media path, refusing any escape above the
-        project root. ``Path.resolve()`` collapses ``..`` AND follows symlinks,
-        so a symlink pointing outside the tree is rejected too. Raises
-        :class:`ValueError` on an escape (→ 403)."""
+        project root AND anything outside the preview-surface allowlist above.
+        ``Path.resolve()`` collapses ``..`` AND follows symlinks, so a symlink
+        pointing outside the tree — or outside the allowlist — is rejected
+        too. Raises :class:`ValueError` on a refusal (→ 403)."""
         root = self._project.root  # already absolute + resolved (Project.__init__)
         rel = unquote(rel).lstrip("/")  # an absolute-looking path is treated as project-relative
+        if not any(rel.startswith(p) for p in self._MEDIA_PREFIXES):
+            raise ValueError("path is not a served preview surface")
         candidate = (root / rel).resolve()
         if candidate != root and not candidate.is_relative_to(root):
             raise ValueError("path escapes the project root")
+        # re-check the allowlist against the RESOLVED path: "media/../x" stays
+        # inside the root but must not sidestep the prefix gate, and neither
+        # must a symlink that resolves out of an allowed tree into another.
+        rel_resolved = candidate.relative_to(root).as_posix()
+        if not any(rel_resolved.startswith(p) for p in self._MEDIA_PREFIXES):
+            raise ValueError("path is not a served preview surface")
         return candidate
 
     def _serve_media(self, rel: str) -> None:

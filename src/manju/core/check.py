@@ -39,6 +39,12 @@ SECRET_PATTERNS = [
 ]
 
 SCAN_SUFFIXES = {".yaml", ".yml", ".json", ".md", ".txt", ".srt", ".ass"}
+# goal item 21: media/ used to be skipped wholesale, which also hid the text
+# sidecars/notes/prompts real projects keep under media/refs, media/imports,
+# media/gen. Bound per-file scan size so pulling media/ back into scope can
+# never make `manju check` slow — binary/video/audio files are excluded by
+# SUFFIX already, so this only bounds oddly large text files.
+MAX_SCAN_BYTES = 2_000_000  # 2 MB
 
 
 @dataclass
@@ -211,9 +217,16 @@ def run_check(project: Project) -> CheckReport:
         if not path.is_file() or path.suffix.lower() not in SCAN_SUFFIXES:
             continue
         rel = path.relative_to(project.root).as_posix()
-        if rel.startswith((".git/", ".manju/", "media/", "renders/")):
+        # .git/.manju are VCS/runtime internals, never project truth text;
+        # renders/ is compiled binary output. media/ is DELIBERATELY NOT
+        # skipped here (goal item 21) — media/refs, media/imports, media/gen
+        # commonly hold text sidecars/notes/prompts, and binary media is
+        # already excluded by SCAN_SUFFIXES above.
+        if rel.startswith((".git/", ".manju/", "renders/")):
             continue
         try:
+            if path.stat().st_size > MAX_SCAN_BYTES:
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue

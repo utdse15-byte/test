@@ -367,6 +367,69 @@ def test_first_last_only_start_keyframe_no_delivery(tmp_project, add_shot, monke
     assert sent["frames"] == ""
 
 
+# ------------------------------------------ goal item 17: keyframe resolution
+# must go through the SAME containment guard refs.py uses, not an independent
+# (and leakier) absolute-path fallback.
+
+
+def test_first_last_absolute_keyframe_path_is_refused_before_submit(
+    tmp_project, add_shot, monkeypatch, tmp_path
+):
+    """The concrete leak this closes: before the fix, an absolute keyframe
+    image path that ``project.resolve`` refused fell back to reading the RAW
+    absolute path — an outside-project file's bytes ended up base64-encoded
+    into the request body. Now it must refuse with a ProviderFailure BEFORE
+    any network call, and the outside file's bytes must never appear
+    anywhere in what would have been sent."""
+    monkeypatch.setenv("KLING_X_KEY", "k")
+    _, b = _two_frames(tmp_project)
+    outside = tmp_path / "outside_keyframe.png"
+    outside.write_bytes(b"TOP-SECRET-OUTSIDE-KEYFRAME-BYTES")
+    manifest = _fl_manifest({"first_last_mode": "fields", "first_frame_field": "$.image",
+                             "last_frame_field": "$.image_tail"})
+    transport = ScriptedTransport([_resp(200, {"data": {"task_id": "j1"}})])
+    provider = GenericCloudProvider(manifest, transport=transport, sleep_fn=lambda s: None)
+    req = _kf_req(tmp_project, add_shot,
+                  [{"position": "start", "image": str(outside)},
+                   {"position": "end", "image": "media/refs/f1.png"}])
+    with pytest.raises(ProviderFailure) as exc:
+        provider.submit(req)
+    assert exc.value.kind is FailureKind.invalid
+    assert "把文件放进项目" in str(exc.value)
+    assert transport.requests == []  # refused BEFORE the paid POST
+
+
+def test_first_last_escaping_relative_keyframe_path_is_refused(
+    tmp_project, add_shot, monkeypatch, tmp_path
+):
+    import os
+
+    monkeypatch.setenv("KLING_X_KEY", "k")
+    _two_frames(tmp_project)
+    outside = tmp_path / "outside_keyframe2.png"
+    outside.write_bytes(b"outside-bytes")
+    escaping = os.path.relpath(str(outside), start=str(tmp_project.root))
+    assert escaping.startswith("..")
+    manifest = _fl_manifest({"first_last_mode": "fields", "first_frame_field": "$.image",
+                             "last_frame_field": "$.image_tail"})
+    transport = ScriptedTransport([_resp(200, {"data": {"task_id": "j1"}})])
+    provider = GenericCloudProvider(manifest, transport=transport, sleep_fn=lambda s: None)
+    req = _kf_req(tmp_project, add_shot,
+                  [{"position": "start", "image": escaping},
+                   {"position": "end", "image": "media/refs/f1.png"}])
+    with pytest.raises(ProviderFailure):
+        provider.submit(req)
+    assert transport.requests == []
+
+
+def test_resolve_keyframe_uses_shared_refs_guard(tmp_project, add_shot):
+    """``_resolve_keyframe`` must go through ``providers.refs.resolve_local_ref``
+    — the SAME function refs.py uses — rather than its own resolution."""
+    from manju.providers import generic_cloud, refs
+
+    assert generic_cloud.resolve_local_ref is refs.resolve_local_ref
+
+
 def test_first_last_unresolvable_end_frame_skips(tmp_project, add_shot, monkeypatch):
     """The delivery gate requires BOTH images to resolve to real local files; a
     missing end frame means the condition is unmet → the request stays

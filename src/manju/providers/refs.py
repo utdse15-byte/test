@@ -68,6 +68,10 @@ class RefItem:
     path: Path | None   # resolved local file, or None for a URL
     is_url: bool
     exists: bool
+    # goal item 13/17: set (in Chinese) when ``ref`` named an absolute path or
+    # one that resolves outside the project root — the untrusted-project
+    # containment guard refused it rather than treating it as "missing".
+    blocked_reason: str | None = None
 
 
 @dataclass
@@ -261,6 +265,8 @@ def unreadable_ref_message(items: list[RefItem]) -> str | None:
     for it in items:
         if it.is_url:
             continue
+        if it.blocked_reason:
+            return it.blocked_reason
         if it.path is None or not it.path.exists():
             return f"reference file not found: {it.ref} (tier: {it.tier})"
         try:
@@ -391,9 +397,10 @@ def _make_item(project: "Project", value: Any, tier: str, kind: str) -> RefItem:
     s = str(value)
     if _is_url(s):
         return RefItem(ref=s, tier=tier, kind=kind, path=None, is_url=True, exists=True)
-    p = _as_path(project, s)
+    p, reason = resolve_local_ref(project, s)
     exists = bool(p and p.exists() and p.is_file())
-    return RefItem(ref=s, tier=tier, kind=kind, path=p, is_url=False, exists=exists)
+    return RefItem(ref=s, tier=tier, kind=kind, path=p, is_url=False, exists=exists,
+                   blocked_reason=reason)
 
 
 def _classify(project: "Project", value: Any, tier: str) -> RefItem:
@@ -403,14 +410,34 @@ def _classify(project: "Project", value: Any, tier: str) -> RefItem:
     return _make_item(project, value, tier, kind)
 
 
-def _as_path(project: "Project", value: Any) -> Path | None:
+def resolve_local_ref(project: "Project", value: str) -> tuple[Path | None, str | None]:
+    """THE ONE containment guard for a local ref/keyframe path (goal item
+    13/17) — every provider-facing resolver that turns an authored path into
+    a local file that gets read and uploaded MUST call this instead of
+    re-implementing its own absolute/escape handling.
+
+    Refuses an ABSOLUTE path and any path that resolves outside the project
+    root — a downloaded/untrusted project must never make a cloud provider
+    read and upload a file outside its own directory (§ threat model).
+    Returns ``(resolved_path, None)`` on success, or ``(None, reason)`` — a
+    ready-to-surface 中文 explanation — when the path is refused. A path that
+    is simply absent (never existed) is NOT refused here; it resolves to a
+    real (missing) path and the caller's own existence check reports that.
+    """
     p = Path(value)
     if p.is_absolute():
-        return p
+        return None, (
+            f"引用路径不能是绝对路径: {value} — provider 会读取并上传该文件,"
+            "不允许指向项目外部。把文件放进项目(manju import 或 media/refs)再引用。"
+        )
     try:
-        return project.resolve(value)
+        resolved = project.resolve(value)
     except Exception:
-        return None
+        return None, (
+            f"引用路径超出项目边界: {value} — 把文件放进项目"
+            "(manju import 或 media/refs)再引用。"
+        )
+    return resolved, None
 
 
 def _ref_str(project: "Project", path: Path) -> str:

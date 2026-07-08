@@ -589,7 +589,13 @@ def select(
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Pick a take (the decision is one line of text — §3)."""
+    from .core.idents import UnsafeIdentifierError, validate_safe_segment
+
     project = _project()
+    try:
+        validate_safe_segment(shot_id, label="shot_id")  # goal item 11
+    except UnsafeIdentifierError as exc:
+        _fail(str(exc))
     if file:
         from .providers.manual import register_manual_take
 
@@ -708,16 +714,20 @@ app.add_typer(skills_app, name="skills")
 @skills_app.callback(invoke_without_command=True)
 def skills_list(ctx: typer.Context,
                 as_json: bool = typer.Option(False, "--json")):
-    """List every visible skill (project > user > bundled)."""
+    """List every visible skill (project > user > bundled; project can never
+    override the core protocol skill — goal item 46)."""
     if ctx.invoked_subcommand is not None:
         return
-    from .core.skills import list_skills
+    from .core.skills import core_skill_shadow_warning, list_skills
 
     project = _project_or_none()
     rows = list_skills(project)
+    warning = core_skill_shadow_warning(project)
     if as_json:
-        _emit({"skills": [r.to_dict() for r in rows]}, True)
+        _emit({"skills": [r.to_dict() for r in rows], "core_skill_shadow_warning": warning}, True)
         return
+    if warning:
+        typer.secho(warning, fg=typer.colors.YELLOW)
     if not rows:
         typer.echo("技能库为空 — 在 skills/<id>/SKILL.md 添加技能")
         return
@@ -818,8 +828,20 @@ def auto(
     if shutil.which(argv[0]) is None:
         _fail(f"agent CLI '{argv[0]}' not found on PATH — install it or pick "
               "another via --agent/MANJU_AGENT/project.yaml:agent")
-    append_event(project.root, ACTOR, "auto",
-                 {"prompt": prompt_text, "agent": argv[0]})
+    # goal item 49: the FULL prompt used to ride into events.jsonl verbatim —
+    # a project truth file that gets `git add`-ed at snapshot and can carry
+    # customer info, plot secrets, links, or a stray token/key the user typed
+    # into their prompt. Only a sha256 (so the exact prompt is still provable
+    # from a log) + a short, non-secret-shaped preview are recorded now.
+    import hashlib
+
+    prompt_preview = prompt_text[:80]
+    append_event(project.root, ACTOR, "auto", {
+        "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+        "prompt_preview": prompt_preview,
+        "prompt_len": len(prompt_text),
+        "agent": argv[0],
+    })
     env = dict(os.environ)
     env["MANJU_ACTOR"] = "ai"  # every action the driven agent takes is logged as ai
     proc = subprocess.run(argv, cwd=project.root, env=env)
@@ -1867,15 +1889,27 @@ def pack(out: Optional[Path] = typer.Option(None),
     FIX-E: the original project directory name rides in the zip comment, so
     the archive file can be renamed freely without losing the identity.
     The segment/proxy caches are rebuildable (§3) and excluded by default —
-    they can dwarf the truth+imports payload; --full keeps them."""
+    they can dwarf the truth+imports payload; --full keeps them.
+
+    goal item 14: a symlink is NEVER followed — ``path.is_file()`` (used
+    below) is true for a symlink to a file too, and a naive ``zf.write``
+    would read the TARGET's bytes and store them under the safe-looking
+    in-archive name, smuggling an outside-project file into the package.
+    Symlinks are skipped with a warning instead (the zip writer here has no
+    portable way to store a real symlink entry)."""
     project = _project()
     out = out or project.root.parent / (project.root.stem + ".manjupkg")
     excluded_cache = 0
+    skipped_symlinks: list[str] = []
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
         ).encode("utf-8")
         for path in sorted(project.root.rglob("*")):
+            if path.is_symlink():
+                if path.is_file():  # only files matter for the pack payload
+                    skipped_symlinks.append(path.relative_to(project.root).as_posix())
+                continue
             if not path.is_file():
                 continue
             rel = path.relative_to(project.root).as_posix()
@@ -1889,13 +1923,39 @@ def pack(out: Optional[Path] = typer.Option(None),
     if excluded_cache:
         typer.echo(f"  跳过可重建缓存 {excluded_cache / 1e6:.1f} MB "
                    "(segments/proxy — 重建即回;--full 保留)")
+    if skipped_symlinks:
+        typer.secho(
+            f"  ⚠ 跳过 {len(skipped_symlinks)} 个符号链接(symlink 可能指向项目外文件,"
+            f"打包时永不跟随):{', '.join(skipped_symlinks[:5])}"
+            + (" …" if len(skipped_symlinks) > 5 else ""),
+            fg=typer.colors.YELLOW,
+        )
+
+
+def _sanitize_archive_stem(stem: str) -> str:
+    """A restore-directory name derived from the ARCHIVE'S OWN FILENAME
+    (goal item 20) — never from the zip comment, which is archive-controlled
+    content an untrusted .manjupkg fully owns. ``Path.stem`` is always a
+    single path component (it cannot itself contain ``/`` on any OS), so the
+    only remaining risk is a degenerate value like ``""`` / ``"."`` / ``".."``
+    — guarded here with a safe fallback."""
+    stem = stem.strip()
+    if not stem or set(stem) <= {"."}:
+        return "restored"
+    return stem
 
 
 @app.command()
 def unpack(archive: Path, dest: Optional[Path] = typer.Option(
-        None, "--dest", help="override the restored directory (default: the original name)")):
-    """Restore a .manjupkg. FIX-E: the ORIGINAL project name is restored by
-    default (embedded at pack time); --dest overrides it."""
+        None, "--dest", help="override the restored directory (default: from the archive filename)")):
+    """Restore a .manjupkg.
+
+    goal item 20: the default restore directory comes from the ARCHIVE's OWN
+    FILENAME stem (sanitized), never from the zip comment — a comment is
+    archive-controlled content, and trusting it for a path let a malicious
+    .manjupkg pick where it lands (e.g. a comment name like ``../../etc`` or
+    an absolute path) whenever the user omitted --dest. The zip-comment name
+    is shown for information only when it differs."""
     if not archive.exists():
         _fail(f"not found: {archive}")
     original_name: str | None = None
@@ -1905,9 +1965,17 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
             if isinstance(meta, dict) and meta.get("manjupkg"):
                 original_name = str(meta.get("name") or "") or None
         except (json.JSONDecodeError, UnicodeDecodeError):
-            original_name = None  # pre-FIX-E archive: fall back to the stem
+            original_name = None
+        default_name = _sanitize_archive_stem(archive.stem) + ".manju"
         if dest is None:
-            dest = Path.cwd() / (original_name or (archive.stem + ".manju"))
+            dest = Path.cwd() / default_name
+            if original_name and original_name != default_name:
+                typer.secho(
+                    f"  注:压缩包内记录的原项目名为 '{original_name}',但为避免信任 "
+                    f"zip comment 里的路径,恢复目录名取自压缩包文件名 → {default_name}"
+                    "(如需原名,--dest 显式指定)",
+                    fg=typer.colors.BRIGHT_BLACK,
+                )
         if dest.exists():
             _fail(f"destination exists, refusing to overwrite: {dest}")
         zf.extractall(dest)
@@ -3081,18 +3149,22 @@ def providers_add(
     from .providers.manifest import (
         PROVIDER_TYPES,
         default_adapter_for_type,
-        providers_dir,
+        provider_manifest_dir,
         scaffold_template,
     )
 
     if type_ not in PROVIDER_TYPES:
         _fail(f"--type must be one of {list(PROVIDER_TYPES)}, got {type_!r}")
+    try:
+        provider_dir = provider_manifest_dir(provider_id)  # goal item 72
+    except ValueError as exc:
+        _fail(str(exc))
     adapter = adapter or default_adapter_for_type(type_)
     try:
         text = scaffold_template(provider_id, type_, adapter)
     except ValueError as exc:
         _fail(str(exc))
-    dest = providers_dir() / provider_id / "provider.yaml"
+    dest = provider_dir / "provider.yaml"
     if dest.exists():
         _fail(f"refusing to overwrite existing manifest: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -3190,9 +3262,12 @@ def _set_disabled_in_text(text: str, disabled: bool) -> str:
 
 def _toggle_provider(provider_id: str, disabled: bool, as_json: bool) -> None:
     from .core.yamlio import atomic_write_text
-    from .providers.manifest import providers_dir
+    from .providers.manifest import provider_manifest_dir
 
-    path = providers_dir() / provider_id / "provider.yaml"
+    try:
+        path = provider_manifest_dir(provider_id) / "provider.yaml"  # goal item 72
+    except ValueError as exc:
+        _fail(str(exc))
     if not path.exists():
         _fail(f"no such provider {provider_id!r} (looked at {path})")
     text = path.read_text(encoding="utf-8")
@@ -3224,9 +3299,12 @@ def providers_show(provider_id: str = typer.Argument(..., metavar="ID"),
                    as_json: bool = typer.Option(False, "--json")):
     """Print the manifest with any secret-ish value masked (keys never shown)."""
     from .core.yamlio import dump_yaml, read_yaml
-    from .providers.manifest import providers_dir
+    from .providers.manifest import provider_manifest_dir
 
-    path = providers_dir() / provider_id / "provider.yaml"
+    try:
+        path = provider_manifest_dir(provider_id) / "provider.yaml"  # goal item 72
+    except ValueError as exc:
+        _fail(str(exc))
     if not path.exists():
         _fail(f"no such provider {provider_id!r} (looked at {path})")
     masked = _mask_secrets(read_yaml(path) or {})

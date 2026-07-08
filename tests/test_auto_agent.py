@@ -120,6 +120,41 @@ def test_auto_runs_fake_agent_with_playbook_and_ai_actor(tmp_project, tmp_path,
     assert events["detail"]["agent"] == str(fake)
 
 
+def test_auto_event_never_carries_the_full_prompt(tmp_project, tmp_path, monkeypatch):
+    """goal item 49: events.jsonl (project truth, git-snapshotted) must never
+    carry the FULL prompt — only a sha256 (still provable) + a short preview.
+    A prompt with something secret-shaped in it must not leak into the log."""
+    import hashlib
+
+    fake = tmp_path / "fakeagent2"
+    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    monkeypatch.chdir(tmp_project.root)
+    monkeypatch.delenv("MANJU_AGENT", raising=False)
+    # filler padded well past the 80-char preview boundary, THEN a
+    # secret-shaped token — proves truncation, not just hashing (a secret
+    # sitting in the first 80 chars is, by the review's own spec, still a
+    # preview char like any other; what must never happen is the FULL text,
+    # including anything past char 80, riding into the log).
+    filler = "客户内部信息" * 20  # well over 80 chars
+    secret_tail = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz"
+    prompt = filler + " " + secret_tail
+    assert prompt[:80].find(secret_tail) == -1  # sanity: secret is PAST char 80
+    result = runner.invoke(app, ["auto", prompt, "--agent", f"{fake} {{prompt}}"])
+    assert result.exit_code == 0
+
+    raw_log = (tmp_project.root / "events.jsonl").read_text(encoding="utf-8")
+    assert secret_tail not in raw_log
+
+    events = json.loads(raw_log.strip().splitlines()[-1])
+    detail = events["detail"]
+    assert "prompt" not in detail  # the old full-text key is gone
+    assert detail["prompt_sha256"] == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    assert detail["prompt_preview"] == prompt[:80]
+    assert detail["prompt_len"] == len(prompt)
+
+
 def test_auto_fails_cleanly_when_agent_missing(tmp_project, monkeypatch):
     monkeypatch.chdir(tmp_project.root)
     monkeypatch.delenv("MANJU_AGENT", raising=False)

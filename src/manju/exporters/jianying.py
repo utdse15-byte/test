@@ -35,6 +35,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..core.container import ProjectError
 from ..core.models import AudioClip, CaptionLine, Timeline, VideoClip
 from ..core.yamlio import atomic_write_text, read_json, write_json
 
@@ -64,13 +65,24 @@ def _ratio(width: int, height: int) -> str:
     return f"{int(width) // g}:{int(height) // g}"
 
 
-def _abs_path(project: "Project", source: str) -> str:
+def _abs_path(project: "Project", source: str, *, label: str) -> str:
     """Absolute POSIX path for a project-relative source (JianYing wants
-    absolute paths; ids stay diff-stable regardless)."""
+    absolute paths; ids stay diff-stable regardless).
+
+    goal item 78: this used to fall back to the RAW source path (even an
+    absolute/outside-project one) whenever ``project.resolve`` refused it —
+    silently writing an outside-project path into the draft. It now refuses
+    the whole export with a 中文 error naming the clip, the same containment
+    semantics render.py's ``project.resolve(clip.source)`` already enforces —
+    an exported draft must stay as self-contained as the rendered film."""
     try:
         return project.resolve(source).as_posix()
-    except Exception:
-        return Path(source).as_posix()
+    except Exception as exc:
+        raise ProjectError(
+            f"导出失败:{label} 的素材路径超出项目边界或不合法: {source!r} — "
+            "JianYing 导出不允许引用项目外文件(与渲染 render 的边界语义一致)。"
+            "请先 `manju import` 把素材放进项目,再导出。"
+        ) from exc
 
 
 def _us(ms: int | float | None) -> int:
@@ -106,7 +118,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "id": mat_id,
                 "type": "video",
                 "material_name": f"{clip.shot}/{clip.take}",
-                "path": _abs_path(project, clip.source),
+                "path": _abs_path(project, clip.source, label=f"{clip.shot}/{clip.take}"),
                 "duration": dur_us,
                 "width": width,
                 "height": height,
@@ -151,7 +163,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "id": mat_id,
                 "type": "audio",
                 "material_name": Path(clip.source).name,
-                "path": _abs_path(project, clip.source),
+                "path": _abs_path(project, clip.source, label=f"{kind}[{idx}]"),
                 "duration": dur_us,
             }
         )

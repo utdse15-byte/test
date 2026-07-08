@@ -139,6 +139,42 @@ def test_media_traversal_is_blocked(one_shot_project):
         assert raw_status in (403, 404)
 
 
+def test_media_refuses_project_truth_files(one_shot_project):
+    """goal item 40: project-root containment alone let `/media/<relpath>`
+    read ANY project file, not just previews — project.yaml, a shot's YAML,
+    the event ledger and the runtime sqlite state must all 403, even though
+    they are legitimately inside the project root."""
+    with running(one_shot_project) as (base, _):
+        for rel in (
+            "project.yaml",
+            "shots/S001.yaml",
+            "shots/index.yaml",
+            "events.jsonl",
+            ".manju/state.sqlite",
+        ):
+            r = httpx.get(base + "/media/" + rel)
+            assert r.status_code == 403, f"{rel} should not be served, got {r.status_code}"
+
+
+def test_media_serves_allowlisted_preview_surfaces(one_shot_project):
+    """The allowlist added for goal item 40 must not regress the actual
+    preview surfaces board.py links to: media/, reports/frames/, and the
+    .manju/thumbs cache."""
+    (one_shot_project.reports_dir / "frames").mkdir(parents=True, exist_ok=True)
+    (one_shot_project.reports_dir / "frames" / "S001.jpg").write_bytes(b"posterbytes")
+    thumbs = one_shot_project.runtime_dir / "thumbs"
+    thumbs.mkdir(parents=True, exist_ok=True)
+    (thumbs / "take_01.jpg").write_bytes(b"thumbbytes")
+
+    with running(one_shot_project) as (base, _):
+        r = httpx.get(base + "/media/reports/frames/S001.jpg")
+        assert r.status_code == 200
+        assert r.content == b"posterbytes"
+        r2 = httpx.get(base + "/media/.manju/thumbs/take_01.jpg")
+        assert r2.status_code == 200
+        assert r2.content == b"thumbbytes"
+
+
 # ----------------------------------------------------------------------- /api
 
 

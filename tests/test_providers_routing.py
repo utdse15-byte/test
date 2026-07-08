@@ -125,6 +125,25 @@ def test_add_rejects_bad_type(providers_dir):
     assert "--type must be one of" in res.output
 
 
+# --------------------------------------------------- goal item 72: provider_id
+# path-segment hardening — add/enable/disable/show all reject an id shaped
+# like a traversal/absolute path instead of building a path from it.
+
+
+@pytest.mark.parametrize("cmd", [
+    ["providers", "add", "../../evil", "--type", "video"],
+    ["providers", "enable", "../../evil"],
+    ["providers", "disable", "../../evil"],
+    ["providers", "show", "../../evil"],
+])
+def test_provider_commands_refuse_traversal_id(providers_dir, tmp_path, cmd):
+    res = runner.invoke(app, cmd)
+    assert res.exit_code != 0
+    # nothing named "evil" was ever created anywhere near the hermetic tmp
+    # providers dir — the validator refuses BEFORE any path is even built
+    assert not any(p.name == "evil" for p in tmp_path.parent.rglob("evil"))
+
+
 # ================================================================ providers list
 
 

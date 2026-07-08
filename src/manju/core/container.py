@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .idents import UnsafeIdentifierError, validate_safe_segment
 from .models import (
     PackagingSpec,
     ProjectConfig,
@@ -40,14 +41,18 @@ MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".png", ".jpg", ".jpeg", 
 # everywhere at once (goal item 11: props.yaml and voices.yaml).
 BIBLE_FILES = ("characters", "scenes", "props", "style", "voices")
 
-GITIGNORE = """\
+# goal item 38: generated the gitignore lines FROM MEDIA_EXTS instead of a
+# hand-maintained partial list, so a new extension added to MEDIA_EXTS (the
+# one canonical media-extension list) can never silently fall out of the
+# ignore rules again — `git add -A` at snapshot time must never pick up
+# media/gen output regardless of which of these extensions it landed as.
+def _media_gitignore_lines() -> str:
+    return "\n".join(f"media/gen/**/*{ext}" for ext in sorted(MEDIA_EXTS))
+
+
+GITIGNORE = f"""\
 # Derived and heavy artifacts stay out of git; truth text goes in (§3)
-media/gen/**/*.mp4
-media/gen/**/*.mov
-media/gen/**/*.png
-media/gen/**/*.jpg
-media/gen/**/*.wav
-media/gen/**/*.mp3
+{_media_gitignore_lines()}
 media/generated/
 media/imports/
 renders/
@@ -271,8 +276,17 @@ class Project:
         )
         return ordered + [s for s in on_disk if s not in ordered]
 
+    def _safe_shot_id(self, shot_id: str) -> str:
+        """The ONE choke point every shot-id-to-path caller passes through
+        (goal item 11) — CLI/MCP/board/GUI arguments, index.yaml entries, and
+        model ids all end up here via ``shot_path``/``takes_dir``."""
+        try:
+            return validate_safe_segment(shot_id, label="shot_id")
+        except UnsafeIdentifierError as exc:
+            raise ProjectError(str(exc)) from exc
+
     def shot_path(self, shot_id: str) -> Path:
-        return self.shots_dir / f"{shot_id}.yaml"
+        return self.shots_dir / f"{self._safe_shot_id(shot_id)}.yaml"
 
     def load_shot_raw(self, shot_id: str) -> dict[str, Any]:
         """Raw YAML dict — locks are verified against this, not the model,
@@ -362,7 +376,7 @@ class Project:
     # ----------------------------------------------------------------- takes
 
     def takes_dir(self, shot_id: str) -> Path:
-        return self.gen_dir / shot_id
+        return self.gen_dir / self._safe_shot_id(shot_id)
 
     def takes(self, shot_id: str) -> list[TakeInfo]:
         tdir = self.takes_dir(shot_id)

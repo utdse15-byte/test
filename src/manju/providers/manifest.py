@@ -19,6 +19,7 @@ from pathlib import Path
 
 from pydantic import Field, ValidationError
 
+from ..core.idents import UnsafeIdentifierError, validate_safe_segment
 from ..core.models import ManjuModel
 from ..core.yamlio import read_yaml
 
@@ -344,6 +345,21 @@ class ProviderManifest(ManjuModel):
 def providers_dir() -> Path:
     override = os.environ.get("MANJU_PROVIDERS_DIR")
     return Path(override) if override else Path.home() / ".manju" / "providers"
+
+
+def provider_manifest_dir(provider_id: str) -> Path:
+    """``providers_dir() / <id>`` — validated (goal item 72) so a
+    ``provider_id`` coming from ``manju providers add/enable/disable/show``
+    can never carry ``../``, an absolute path, or another path-segment
+    escape into the user-level providers directory. Raises ``ValueError``
+    (a 中文 explanation) instead of ``UnsafeIdentifierError`` so CLI call
+    sites can catch it the same way they already catch other bad-argument
+    ``ValueError``s."""
+    try:
+        validate_safe_segment(provider_id, label="provider_id")
+    except UnsafeIdentifierError as exc:
+        raise ValueError(str(exc)) from exc
+    return providers_dir() / provider_id
 
 
 def load_manifests() -> tuple[dict[str, ProviderManifest], list[str]]:

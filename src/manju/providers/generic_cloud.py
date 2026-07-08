@@ -24,7 +24,7 @@ from ..core.models import KeyframeSpec, ShotSpec
 from .base import CloudProvider, FailureKind, GenerationRequest, ProviderFailure
 from .jsonpath import JsonPathError, assign, extract
 from .manifest import FIRST_LAST_CAPABILITY, GENERIC_ADAPTER, JOB_STATES, ProviderManifest
-from .refs import RefItem, base64_ref, encode_multipart, unreadable_ref_message
+from .refs import RefItem, base64_ref, encode_multipart, resolve_local_ref, unreadable_ref_message
 
 # Tier label recorded on a keyframe-sourced ref (its own lineage bucket, distinct
 # from the resolve_refs tiers — a first/last-frame image is authored on the shot's
@@ -445,6 +445,14 @@ class GenericCloudProvider(CloudProvider):
         end = self._resolve_keyframe(req, end_kf)
         if start is None or end is None:
             return []
+        # goal item 17: an explicit boundary violation (absolute path / path
+        # escaping the project root) is a LOUD pre-submit refusal — the same
+        # treatment refs.py gives a declared-but-unreadable ref — rather than
+        # the silent "feature not configured" no-op below (that stays for a
+        # keyframe that is simply absent).
+        for it in (start, end):
+            if it.blocked_reason:
+                raise ProviderFailure(FailureKind.invalid, f"{self.id}: {it.blocked_reason}")
 
         enc = rc.first_last_encoding
         if enc in ("base64_field", "multipart"):
@@ -493,10 +501,13 @@ class GenericCloudProvider(CloudProvider):
 
     def _resolve_keyframe(self, req: GenerationRequest,
                           kf: KeyframeSpec) -> RefItem | None:
-        """Resolve a keyframe's ``image`` (project path / absolute / URL / bible
-        asset id) to a :class:`RefItem`, or ``None`` when there is nothing to
-        resolve. Mirrors the ref resolver's URL-vs-local classification so the
-        delivery shares the same encoding helpers."""
+        """Resolve a keyframe's ``image`` (project path / URL / bible asset
+        id) to a :class:`RefItem`, or ``None`` when there is nothing to
+        resolve. goal item 17: local-path resolution goes through the SAME
+        ``resolve_local_ref`` containment guard refs use — an absolute path
+        or one that escapes the project root is REFUSED, never read, even
+        though it used to have its own independent (and leakier) resolution
+        here."""
         img = (kf.image or "").strip()
         if not img:
             return None
@@ -513,16 +524,10 @@ class GenericCloudProvider(CloudProvider):
                 if val:
                     img = str(val)
                     break
-        try:
-            path = req.project.resolve(img)
-        except Exception:
-            p = Path(img)
-            path = p if p.is_absolute() else None
-        if path is None:
-            return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=None,
-                           is_url=False, exists=False)
+        path, reason = resolve_local_ref(req.project, img)
+        exists = bool(path and path.is_file())
         return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=path,
-                       is_url=False, exists=path.is_file())
+                       is_url=False, exists=exists, blocked_reason=reason)
 
     def _guard_readable(self, items: list[RefItem]) -> None:
         msg = unreadable_ref_message(items)

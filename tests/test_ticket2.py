@@ -57,6 +57,44 @@ def test_secret_scan_clean_samples_pass(tmp_project, sample):
     assert report.ok, f"false positive on: {sample!r} -> {report.errors}"
 
 
+# ---------------------------------------------------------------- goal item 21
+
+
+def test_secret_scan_no_longer_skips_media_directory(tmp_project):
+    """media/ used to be skipped WHOLESALE — a secret in a text sidecar/notes
+    file under media/refs or media/imports slipped past `manju check`
+    entirely. Only .git/.manju/renders/ stay skipped now; binary media is
+    excluded by SUFFIX, not by living under media/."""
+    notes = tmp_project.root / "media" / "refs" / "notes.txt"
+    notes.parent.mkdir(parents=True, exist_ok=True)
+    notes.write_text("api_key=sk-proj-AbCdEf1234567890GhIjKl\n", encoding="utf-8")
+    report = run_check(tmp_project)
+    assert any("API key/secret" in e for e in report.errors)
+
+
+def test_secret_scan_still_skips_binary_media_by_suffix(tmp_project):
+    """Pulling media/ back into scope must not start reading actual media
+    bytes as text — only the already-covered text suffixes get scanned."""
+    media = tmp_project.root / "media" / "imports" / "clip.mp4"
+    media.parent.mkdir(parents=True, exist_ok=True)
+    media.write_bytes(b"sk-proj-AbCdEf1234567890GhIjKl" * 3)  # secret-shaped, wrong suffix
+    report = run_check(tmp_project)
+    assert not any("clip.mp4" in e for e in report.errors)
+
+
+def test_secret_scan_bounds_large_text_file_size(tmp_project):
+    """A per-file size bound keeps the now-larger scan surface (media/ back
+    in scope) fast — an oversized text file is skipped rather than read in
+    full; `check` must simply not hang or crash on it."""
+    from manju.core.check import MAX_SCAN_BYTES
+
+    big = tmp_project.root / "media" / "imports" / "huge_notes.txt"
+    big.parent.mkdir(parents=True, exist_ok=True)
+    big.write_text("x" * (MAX_SCAN_BYTES + 1000), encoding="utf-8")
+    report = run_check(tmp_project)  # must simply not hang/crash
+    assert isinstance(report.ok, bool)
+
+
 # ---------------------------------------------------------------- FIX-D ----
 
 
@@ -106,8 +144,16 @@ def test_build_fails_cleanly_on_invalid_manual_timeline(tmp_project, add_shot,
 # ---------------------------------------------------------------- FIX-E ----
 
 
-def test_pack_preserves_original_name(tmp_project, monkeypatch, tmp_path):
-    """雨夜便利店.manju → arbitrary.manjupkg → unpack restores 雨夜便利店.manju."""
+def test_unpack_default_dest_follows_archive_filename_not_comment(
+    tmp_project, monkeypatch, tmp_path
+):
+    """Round W (goal item 20, supersedes the old FIX-E "preserves original
+    name" contract): the zip comment's embedded project name is
+    archive-controlled content and is no longer trusted for path purposes —
+    a malicious .manjupkg could carry a comment name like ``../../etc`` or an
+    absolute path to steer the default restore location. The default restore
+    directory now comes from the ARCHIVE'S OWN FILENAME (sanitized), so
+    renaming the .manjupkg changes the default restore name too."""
     monkeypatch.chdir(tmp_project.root)
     archive = tmp_path / "arbitrary-name.manjupkg"
     result = CliRunner().invoke(app, ["pack", "--out", str(archive)])
@@ -118,9 +164,43 @@ def test_pack_preserves_original_name(tmp_project, monkeypatch, tmp_path):
     monkeypatch.chdir(out_dir)
     result = CliRunner().invoke(app, ["unpack", str(archive)])
     assert result.exit_code == 0, result.output
-    restored = out_dir / tmp_project.root.name  # 雨夜便利店.manju
+    restored = out_dir / "arbitrary-name.manju"  # from the ARCHIVE filename now
     assert restored.is_dir(), sorted(p.name for p in out_dir.iterdir())
     assert (restored / "project.yaml").exists()
+    # the comment-embedded original name must NOT be used for the path
+    assert not (out_dir / tmp_project.root.name).exists()
+
+
+def test_unpack_ignores_malicious_comment_name_for_dest(tmp_project, monkeypatch, tmp_path):
+    """The concrete attack (goal item 20): a hand-crafted zip comment naming a
+    path-like project name must NOT steer where an unpack (without --dest)
+    lands — only the archive's own filename does."""
+    import json
+    import zipfile
+
+    monkeypatch.chdir(tmp_project.root)
+    archive = tmp_path / "evil.manjupkg"
+    result = CliRunner().invoke(app, ["pack", "--out", str(archive)])
+    assert result.exit_code == 0, result.output
+
+    # tamper the comment the same way `pack` would have written it, but with
+    # a path-traversal-shaped "name"
+    with zipfile.ZipFile(archive, "a") as zf:
+        zf.comment = json.dumps(
+            {"manjupkg": 1, "name": "../../../../tmp/manju_pwned"}, ensure_ascii=False
+        ).encode("utf-8")
+
+    out_dir = tmp_path / "restore2"
+    out_dir.mkdir()
+    monkeypatch.chdir(out_dir)
+    result = CliRunner().invoke(app, ["unpack", str(archive)])
+    assert result.exit_code == 0, result.output
+    # lands next to the archive-derived name, INSIDE out_dir — never escapes
+    restored = out_dir / "evil.manju"
+    assert restored.is_dir()
+    assert (restored / "project.yaml").exists()
+    # nothing was ever written at the attacker-chosen path
+    assert not Path("/tmp/manju_pwned").exists()
 
 
 def test_unpack_dest_overrides_name(tmp_project, monkeypatch, tmp_path):

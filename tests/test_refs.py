@@ -265,6 +265,62 @@ def test_generic_cloud_missing_ref_errors_before_submit(tmp_project, add_shot,
     assert transport.requests == []  # zero-cost failure
 
 
+def test_absolute_ref_path_is_refused_not_read(tmp_project, add_shot, tmp_path):
+    """goal item 13: an absolute local path must be REFUSED at resolution —
+    never resolved to the real outside-project file. Before this fix,
+    ``refs._as_path`` returned the absolute path AS-IS whenever it was
+    absolute, so a downstream provider would read and upload it."""
+    outside = tmp_path / "outside_secret.png"
+    outside.write_bytes(b"secret-bytes")
+    shot = add_shot(tmp_project, "S001",
+                    generation={"params": {"image": str(outside)}})
+    rs = resolve_refs(tmp_project, shot, {})
+    item = rs.image_items()[0]
+    assert item.path is None
+    assert not item.exists
+    assert item.blocked_reason is not None
+    assert "把文件放进项目" in item.blocked_reason
+    from manju.providers.refs import unreadable_ref_message
+
+    assert unreadable_ref_message([item]) == item.blocked_reason
+
+
+def test_escaping_relative_ref_path_is_refused(tmp_project, add_shot, tmp_path):
+    """A relative path that resolves OUTSIDE the project root via ``../`` is
+    refused the same way an absolute path is."""
+    import os
+
+    outside = tmp_path / "outside_secret2.png"
+    outside.write_bytes(b"secret-bytes")
+    escaping = os.path.relpath(str(outside), start=str(tmp_project.root))
+    assert escaping.startswith("..")  # sanity: genuinely escapes
+    shot = add_shot(tmp_project, "S001",
+                    generation={"params": {"image": escaping}})
+    rs = resolve_refs(tmp_project, shot, {})
+    item = rs.image_items()[0]
+    assert item.path is None
+    assert not item.exists
+    assert item.blocked_reason is not None
+
+
+def test_generic_cloud_absolute_ref_refuses_before_submit(tmp_project, add_shot,
+                                                           monkeypatch, tmp_path):
+    """End-to-end: an absolute ref path must never reach base64/multipart
+    encoding (which would read the file) — the provider refuses BEFORE any
+    HTTP call, and the outside file's bytes never appear anywhere."""
+    monkeypatch.setenv("VIDEO_X_KEY", "k")
+    outside = tmp_path / "outside_ref.png"
+    outside.write_bytes(b"TOP-SECRET-OUTSIDE-REF-BYTES")
+    manifest = _cloud_manifest({"image_mode": "base64_field", "field": "$.image_url"})
+    transport = ScriptedTransport([_resp(200, {"data": {"task_id": "j1"}})])
+    provider = GenericCloudProvider(manifest, transport=transport, sleep_fn=lambda s: None)
+    with pytest.raises(ProviderFailure) as exc:
+        provider.submit(_cloud_req(tmp_project, add_shot, image=str(outside)))
+    assert exc.value.kind is FailureKind.invalid
+    assert "把文件放进项目" in str(exc.value)
+    assert transport.requests == []  # refused before the paid POST
+
+
 def test_generic_cloud_multipart_shape(tmp_project, add_shot, monkeypatch):
     monkeypatch.setenv("VIDEO_X_KEY", "k")
     raw = b"filebytes"
