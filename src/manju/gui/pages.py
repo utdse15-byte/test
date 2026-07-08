@@ -363,6 +363,12 @@ def render_review(project: Any, token: str) -> str:
     except Exception:
         build_states = {}
 
+    # round AA item 5 (#1): CAS token per shot — the note input below is
+    # pre-filled with the CURRENT note text at render time (a human may sit on
+    # this page before saving), so /pages.js echoes this back as expected_rev
+    # on /api/take-note; a stale card refuses instead of clobbering.
+    from ..core.writes import shot_text_hash
+
     for idx, sid in enumerate(shots):
         try:
             shot = project.load_shot(sid)
@@ -459,10 +465,13 @@ def render_review(project: Any, token: str) -> str:
         dialogue = _e(shot.dialogue.text) if shot else ""
         reviewed_attr = "1" if take_notes else "0"
 
+        rev = shot_text_hash(project, sid) if shot else ""
+
         cards.append(
             f'<section class="rv-shot panel" id="rv-{_e(sid)}" data-shot="{_e(sid)}" '
             f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}" '
-            f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}">\n'
+            f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}" '
+            f'data-rev="{_e(rev)}">\n'
             f'  <div class="rv-head"><h2>{_e(sid)} {state_badge}{build_badge}'
             f'<span class="rv-idx muted">#{idx + 1}</span></h2>'
             f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div></div>\n'
@@ -1549,7 +1558,13 @@ _PAGES_JS = r"""
       var noteEl = s.querySelector(".rv-note-input");
       var extra = noteEl && noteEl.value.trim() ? " · " + noteEl.value.trim() : "";
       var label = kind === "good" ? "好" : "弃";
-      post("/api/take-note", { shot: shot, take: take, text: label + extra }).then(function (res) {
+      /* round AA item 5 (#1): data-rev is the CAS token this card's note was
+       * rendered at — echoed back as expected_rev so a save against a card
+       * left open past someone else's edit is refused (409), not clobbered. */
+      var noteBody = { shot: shot, take: take, text: label + extra };
+      var rev = s.getAttribute("data-rev");
+      if (rev) noteBody.expected_rev = rev;
+      post("/api/take-note", noteBody).then(function (res) {
         if (res.status === 200) {
           s.setAttribute("data-reviewed", "1");
           s.classList.add("reviewed");
@@ -1581,7 +1596,10 @@ _PAGES_JS = r"""
         var take = s.getAttribute("data-take");
         if (!take) { toast("先选用一个 take", false); return; }
         var val = s.querySelector(".rv-note-input").value.trim();
-        post("/api/take-note", { shot: shot, take: take, text: val }).then(function (res) {
+        var noteBody2 = { shot: shot, take: take, text: val };
+        var rev2 = s.getAttribute("data-rev");
+        if (rev2) noteBody2.expected_rev = rev2;
+        post("/api/take-note", noteBody2).then(function (res) {
           if (res.status === 200) {
             toast("备注已存", true);
             if (val) { s.setAttribute("data-reviewed", "1"); updateProgress(); }

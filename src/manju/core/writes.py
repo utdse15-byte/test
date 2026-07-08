@@ -40,6 +40,28 @@ here — see its own docstring in ``core/history.py`` for why: it restores a
 PREVIOUSLY recorded human decision from the event ledger, not a fresh one,
 and undo must not be blockable by the very lock a mistaken forward selection
 would trip (that would turn a recovery path into one more way to get stuck).
+
+Round AA item 5 (#1) adds a FOURTH, OPTIONAL guard on top of the three above:
+**CAS** (optimistic concurrency). A GUI form or MCP client that LOADED a shot,
+then SAVES after some other entrance edited it in between, would otherwise
+silently last-writer-win the whole file — nobody is at fault, and nothing
+above (lock guard / write / post-write check) catches it, because the write
+itself is perfectly valid content. Pass ``expected_text_hash`` (the
+:func:`shot_text_hash` a caller saw when it loaded the shot) and a write
+against a file that moved underneath it since is refused — :class:`WriteRejected`,
+BEFORE anything is written — instead of silently overwriting. ``None`` (the
+default) skips the check entirely, so every EXISTING call site (select,
+lock, ``mentions --apply``, none of which round-trip through a client that
+could go stale) is byte-for-byte unaffected.
+
+The CLI never passes ``expected_text_hash``: a CLI command's read-modify-write
+is a single call inside a single process (and, for the writers that mutate
+more than a value-hash-locked field, already inside the process's own
+``build_lock`` hold — see ``cli.py``'s ``_write_lock``), so there is no window
+for a second entrance to move the file between the CLI's read and its write.
+Threading CAS through the CLI would only add a parameter nothing there ever
+needs — see each GUI/MCP call site (gui/server.py, mcp/tools.py) for where it
+actually threads through.
 """
 
 from __future__ import annotations
@@ -49,6 +71,7 @@ from typing import Any, Callable
 from .check import run_check
 from .container import Project
 from .events import append_event
+from .hashing import hash_text
 from .yamlio import atomic_write_text
 
 
@@ -90,15 +113,22 @@ def checked_shot_write(
     *,
     guard_paths: tuple[str, ...] = (),
     on_locked: str | None = None,
+    expected_text_hash: str | None = None,
 ) -> dict[str, Any]:
     """Write ``shot_id``'s raw file via ``mutate`` through the shared pipeline
-    (lock guard → write → post-write check → revert-on-regression).
+    (CAS check → lock guard → write → post-write check → revert-on-regression).
 
     ``guard_paths`` are dotted paths this write is ABOUT to move; if any is
     (or is nested under, or is an ancestor of) a recorded value-hash lock,
     the write is refused before anything touches disk. Pass ``()`` to skip
     the guard (the caller has already filtered what it will touch, e.g.
     ``mentions.apply_to_shot`` — which still gets the post-write check).
+
+    ``expected_text_hash`` (round AA item 5, #1): the optional optimistic-
+    concurrency (CAS) token — :func:`shot_text_hash` as the caller saw it at
+    LOAD time. When set and it no longer matches the file's CURRENT text, the
+    write is refused before anything touches disk (someone else edited this
+    shot since the caller loaded it). ``None`` (the default) skips the check.
 
     Returns ``{"ok": True, "shot": shot_id, "check_warnings": [...]}``.
     Raises :class:`WriteRejected` — never partially applies a mutation.
@@ -117,6 +147,12 @@ def checked_shot_write(
             ))
 
     original_text = path.read_text(encoding="utf-8")
+
+    if expected_text_hash is not None and hash_text(original_text) != expected_text_hash:
+        raise WriteRejected(
+            f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)——请刷新后重试"
+        )
+
     before = run_check(project)
     before_errors = {e for e in before.errors if label in e}
 
@@ -184,3 +220,23 @@ def selected_take_lock_block(project: Project, shot_id: str) -> str | None:
     two full `manju check` runs (build/graph.py's redo inline auto-fill)."""
     raw = project.load_shot_raw(shot_id)
     return _lock_blocking(_coerce_locked(raw.get("locked")), _SELECTED_TAKE_GUARD)
+
+
+def shot_text_hash(project: Project, shot_id: str) -> str:
+    """The CAS token every READ entrance exposes (round AA item 5, #1): MCP
+    ``get_shot``'s ``rev``, the GUI shot editor / storyboard cell / take-note
+    forms embed this in what they render, then send it back on save so
+    :func:`checked_shot_write`'s ``expected_text_hash`` (or an equivalent
+    inline check at a write path that does not go through it, e.g. the GUI's
+    raw-text shot editor) can refuse a save that would clobber someone else's
+    edit instead of silently last-writer-winning.
+
+    ``sha256:<hex>`` — the SAME canonical form :func:`core.hashing.hash_text`
+    uses everywhere else a text hash is rendered. Returns ``""`` for a shot
+    that does not exist yet: there is no prior text to collide with, and a
+    client that loaded "not found" naturally round-trips that as its rev.
+    """
+    path = project.shot_path(shot_id)
+    if not path.exists():
+        return ""
+    return hash_text(path.read_text(encoding="utf-8"))

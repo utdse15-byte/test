@@ -442,6 +442,8 @@ class _EmptyLookup:
 
 def _shot_row(project: Any, sid: str, shot: Any, matrix: dict[str, Any], lookup: Any,
               scene_names: dict[str, str], st: Any, routing_on: bool) -> str:
+    from ..core.writes import shot_text_hash
+
     scene = shot.scene or ""
     scene_label = scene_names.get(scene, scene) if scene else "—"
     cam = f"{shot.camera.shot_size} · {shot.camera.movement}"
@@ -449,9 +451,14 @@ def _shot_row(project: Any, sid: str, shot: Any, matrix: dict[str, Any], lookup:
     state = st.state.value if st is not None else "missing"
     note = st.note if st is not None else ""
     review_state = shot.status.review_state
+    # round AA item 5 (#1): the CAS token this row's rendered field values were
+    # read at — /storyboard.js echoes it back as `expected_rev` on a cell save
+    # (_act_sb_edit) so a save against a row a human sat on for a while cannot
+    # silently clobber an edit that landed from elsewhere in the meantime.
+    rev = shot_text_hash(project, sid)
 
     return (
-        f'<tr class="sb-row" data-shot="{_e(sid)}">'
+        f'<tr class="sb-row" data-shot="{_e(sid)}" data-rev="{_e(rev)}">'
         f'<td class="sb-sel"><input type="checkbox" class="sb-check" '
         f'data-shot="{_e(sid)}"></td>'
         f'<td class="sb-id"><button class="sb-toggle" type="button" '
@@ -673,8 +680,15 @@ _JS = r"""
     save.addEventListener("click", function (ev) { ev.stopPropagation(); commit(); });
     function commit() {
       save.disabled = true;
-      post("/api/storyboard/edit",
-           { shot: shot, field: field, value: input.value }).then(function (res) {
+      /* round AA item 5 (#1): the row's data-rev is the CAS token this cell's
+       * value was rendered at — echoed back as expected_rev so a save against
+       * a row that went stale (edited elsewhere while this cell sat open) is
+       * refused (409) instead of silently overwriting. */
+      var row = cell.closest("tr.sb-row");
+      var editBody = { shot: shot, field: field, value: input.value };
+      var rev = row ? row.getAttribute("data-rev") : null;
+      if (rev) editBody.expected_rev = rev;
+      post("/api/storyboard/edit", editBody).then(function (res) {
         if (res.status === 200 && res.data.ok) { toast(shot + " " + field + " 已保存", true); reloadSoon(); }
         else if (res.status === 409) { toast(res.data.error || "字段被锁定", false); save.disabled = false; }
         else { toast(res.data.error || "保存失败", false); save.disabled = false; }

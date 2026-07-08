@@ -150,6 +150,8 @@ def _h_list_shots(project: Project, args: dict) -> dict:
 
 
 def _h_get_shot(project: Project, args: dict) -> dict:
+    from ..core.writes import shot_text_hash
+
     shot_id = args["shot_id"]
     path = project.shot_path(shot_id)
     if not path.exists():
@@ -158,13 +160,17 @@ def _h_get_shot(project: Project, args: dict) -> dict:
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
         data = {}
-    return {"id": shot_id, "yaml": text, "data": data}
+    # Round AA item 5 (#1): `rev` is the CAS token — pass it back as
+    # update_shot's `expected_rev` to be refused (instead of silently
+    # overwriting) if another entrance edits this shot before you save.
+    return {"id": shot_id, "yaml": text, "data": data, "rev": shot_text_hash(project, shot_id)}
 
 
 def _h_update_shot(project: Project, args: dict) -> dict:
     """The ONLY write-to-shot-file tool. Strict safety pipeline (§5)."""
     shot_id = args["shot_id"]
     yaml_content = args["yaml_content"]
+    expected_rev = args.get("expected_rev")
     path = project.shot_path(shot_id)
     if not path.exists():
         raise ToolError(f"shot not found: {shot_id}")
@@ -216,11 +222,26 @@ def _h_update_shot(project: Project, args: dict) -> dict:
     # ``tools/call`` dispatch already turns any raised exception into an
     # ``isError`` result (mcp/server.py), so a second local catch here would
     # only re-word the identical message, not change the outcome.
+    from ..core.hashing import hash_text
     from ..runtime.buildlock import build_lock
 
     with build_lock(project.root, actor="ai"):
         # (6-pre) baseline check errors mentioning this shot's file
         original_text = path.read_text(encoding="utf-8")
+
+        # Round AA item 5 (#1): optimistic concurrency (CAS). `expected_rev`
+        # is the `rev` get_shot returned when the caller loaded this shot —
+        # checked HERE, inside the lock and right before the write, so it
+        # compares against the text this call is actually about to replace
+        # (never a snapshot from before the lock-acquire race). `None` (an
+        # agent that never called get_shot, or does not care) skips the
+        # check, unchanged from before this round.
+        if expected_rev is not None and hash_text(original_text) != expected_rev:
+            raise ToolError(
+                f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)——"
+                "请刷新后重试(重新调用 get_shot 获取最新 rev 再保存)"
+            )
+
         before = run_check(project)
         before_errors = {e for e in before.errors if label in e}
 
@@ -529,7 +550,9 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "get_shot",
-        "description": "Read one shot file: raw YAML text plus the parsed mapping.",
+        "description": "Read one shot file: raw YAML text plus the parsed mapping, "
+        "plus `rev` — a content hash. Pass `rev` back as update_shot's `expected_rev` "
+        "for optimistic-concurrency (CAS) protection against a stale overwrite.",
         "inputSchema": _schema(
             {"shot_id": {"type": "string", "description": "e.g. S002"}},
             ["shot_id"],
@@ -547,6 +570,14 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "yaml_content": {
                     "type": "string",
                     "description": "Full replacement YAML for the shot file.",
+                },
+                "expected_rev": {
+                    "type": "string",
+                    "description": "Optional optimistic-concurrency (CAS) token: "
+                    "the `rev` get_shot returned when you loaded this shot. If the "
+                    "shot changed since (another entrance wrote it), the write is "
+                    "refused instead of silently overwriting — call get_shot again "
+                    "for the current rev and retry. Omit to skip the check.",
                 },
             },
             ["shot_id", "yaml_content"],

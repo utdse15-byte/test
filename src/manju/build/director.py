@@ -849,15 +849,58 @@ def _record_action_failure(project: Project, action: dict, exc: ActionError,
 
 # ---------------------------------------------------------- action dispatch
 
+# Round AA (residual B, DECISIONS §9): execute() dispatches a MIX of action
+# types. Four already take the cross-process ``runtime.buildlock.BuildLock``
+# INSIDE their own engine function; wrapping them again here would
+# self-deadlock (BuildLock is not reentrant — a second acquire in the same
+# call always raises, even with zero external contention, exactly the
+# no-double-acquire regression tests/test_write_locks.py already guards for
+# GUI select/mixer). The rest write straight to disk (git commit, media
+# repair sidecar + take file, captions.srt / rules.yaml, packaging.yaml) with
+# NO lock of their own anywhere in their call chain — each is wrapped
+# INDIVIDUALLY, right here at the dispatch site, so a director execute() run
+# can no longer interleave with a concurrent CLI/GUI/MCP mutation of the same
+# project mid-action. Table (derived by reading each handler's own engine
+# call, not guessed):
+#
+#   action type | build_lock                              | why
+#   ------------|------------------------------------------|---------------------------
+#   build       | locked internally (graph.run_build)       | skip — would self-deadlock
+#   redo        | locked internally (graph.redo_shot)       | skip — would self-deadlock
+#   voice       | locked internally (graph.voice_batch)     | skip — would self-deadlock
+#   mixer       | locked internally (mixer.apply_mixer)     | skip — would self-deadlock
+#   repair      | NONE (media/repair_ops.py never locks)    | wrapped here
+#   captions    | NONE (writes captions.srt/rules directly) | wrapped here
+#   packaging   | NONE (media/packaging.py never locks)     | wrapped here
+#   snapshot    | NONE (core/history.py never locks)        | wrapped here
+#   rollback    | NONE (core/history.py never locks)        | wrapped here
+_LOCKED_INTERNALLY = frozenset({"build", "redo", "voice", "mixer"})
+
 
 def _run_action(project: Project, action: dict, actor: str, on_phase) -> dict[str, Any]:
     """Dispatch one validated action to its real engine entry point. Raises
-    :class:`ActionError` on a clean failure (first-failure stop)."""
+    :class:`ActionError` on a clean failure (first-failure stop).
+
+    See the type -> build_lock table above ``_LOCKED_INTERNALLY``: four
+    action types already take the cross-process build lock inside their own
+    engine function (never wrap those again here — self-deadlock); the rest
+    are wrapped individually, right here, so every action this loop runs is
+    now cross-process-safe exactly once."""
     atype = action["type"]
     handler = _DISPATCH.get(atype)
     if handler is None:  # unreachable — validation whitelisted the type
         raise ActionError(f"no handler for action type {atype!r}")
-    return handler(project, action, actor, on_phase)
+    if atype in _LOCKED_INTERNALLY:
+        return handler(project, action, actor, on_phase)
+
+    from ..runtime.buildlock import BuildLocked
+    from ..runtime.buildlock import build_lock as _build_lock
+
+    try:
+        with _build_lock(project.root, actor=actor):
+            return handler(project, action, actor, on_phase)
+    except BuildLocked as exc:
+        raise ActionError(str(exc), subject=action.get("shot") or atype) from exc
 
 
 def _do_build(project, action, actor, on_phase) -> dict[str, Any]:

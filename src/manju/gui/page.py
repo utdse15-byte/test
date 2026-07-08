@@ -2988,8 +2988,11 @@ _JS = r"""
       const data = await api("GET", shotUrl(id));
       const exists = !!(data && data.exists);
       const yamlText = exists ? data.yaml : await newShotTemplate(id);
+      /* round AA item 5 (#1): `rev` is the CAS token GET returned (""
+       * for a not-yet-existing shot) — threaded into the shared dialog so
+       * Save can prove the buffer still matches what was loaded. */
       showShotEditor(id, yamlText, (data && data.locked) || [], !exists,
-        !data || data.in_index !== false);
+        !data || data.in_index !== false, (data && data.rev) || "");
     } catch (err) {
       toast("无法加载镜头 (cannot load shot) " + id + ": " + errMsg(err), "err");
     } finally {
@@ -2999,7 +3002,7 @@ _JS = r"""
   }
 
   /* shot flavour of the shared dialog (bible/rules reuse the same flow) */
-  function showShotEditor(id, yamlText, locked, isNew, inIndex) {
+  function showShotEditor(id, yamlText, locked, isNew, inIndex, rev) {
     const chips = (Array.isArray(locked) ? locked : []).map((f) => "🔒 " + f);
     const hints = [];
     if (chips.length) {
@@ -3016,6 +3019,7 @@ _JS = r"""
       chips,
       hints,
       validate: { kind: "shot", id },   /* live keystroke validation for this shot */
+      rev,   /* round AA item 5 (#1): CAS token, echoed back on Save below */
     });
   }
 
@@ -3091,7 +3095,11 @@ _JS = r"""
 
   /* Generic check-gated YAML dialog: GET-raw text in, POST {"yaml"} out;
    * 400/409 (bad YAML / check failed + reverted) render INSIDE the dialog
-   * with the text intact. opts: {title, yaml, saveUrl, label, chips, hints}. */
+   * with the text intact. opts: {title, yaml, saveUrl, label, chips, hints,
+   * rev}. `rev` (round AA item 5, #1) is the CAS token — when set, it rides
+   * along as `expected_rev` in the save POST so the server can refuse a
+   * save whose buffer went stale instead of silently overwriting; only the
+   * shot editor sets it today (bible/rules/packaging omit it, unaffected). */
   function showEditor(opts) {
     const dlg = $("editor");
     clear(dlg);
@@ -3209,7 +3217,9 @@ _JS = r"""
       cancel.disabled = true;
       clear(errBox);
       try {
-        const r = await apiRaw("POST", opts.saveUrl, { yaml: ta.value });
+        const saveBody = { yaml: ta.value };
+        if (opts.rev !== undefined && opts.rev !== null) saveBody.expected_rev = opts.rev;
+        const r = await apiRaw("POST", opts.saveUrl, saveBody);
         if (r.ok) {
           const d = r.data || {};
           toast(d.created ? "已创建 " + opts.label + " (created)"

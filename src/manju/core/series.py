@@ -35,6 +35,7 @@ CLI takes), the directory carries the engine's project suffix.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shutil
 import subprocess
@@ -350,6 +351,20 @@ def new_episode(series: Series, eid: str, *, title: str = "", preset: str | None
     (a plain copy — the episode owns it afterwards), registers ``{id, title}`` in
     series.yaml, and writes a series-level event. ``git_init`` defaults to False so
     the episode's truth text is tracked by the SERIES repo instead of a nested one.
+
+    Round AA (residual A, DECISIONS §9): ``series.yaml`` is a file every
+    concurrent ``new_episode``/``split_script`` call reads-modifies-writes —
+    two racing calls could each load it before either saves, and whichever
+    saves LAST would silently drop the other's registration (a classic lost
+    update). The NEW episode directory itself needs no lock (``Project.create``
+    + the bible seed write into a path nothing else can know about until this
+    call returns), so only the register step — load config, append, save,
+    all INSIDE the series root's own ``BuildLock`` — is locked; that is the
+    one write here that touches something already known to other processes.
+    A busy series lock leaves the new project directory ON DISK but
+    UNREGISTERED — honestly reported (never silently dropped): ``Series.
+    episode_ids()`` already folds in on-disk-but-unregistered ``*.manju``
+    dirs, so a retry (or ``manju series episodes``) finds it either way.
     """
     if not _EID_RE.match(eid):
         raise SeriesError(
@@ -378,8 +393,35 @@ def new_episode(series: Series, eid: str, *, title: str = "", preset: str | None
 
     _seed_episode_bible(series, project)
 
-    config.episodes.append(EpisodeRef(id=eid, title=title))
-    series.save_config(config)
+    from ..runtime.buildlock import BuildLocked, build_lock
+
+    try:
+        with build_lock(series.root, actor=actor):
+            # re-read INSIDE the lock: another new_episode may have landed
+            # between our pre-check above and here — never silently clobber
+            # a concurrent registration.
+            config = series.load_config()
+            if not any(e.id == eid for e in config.episodes):
+                config.episodes.append(EpisodeRef(id=eid, title=title))
+                series.save_config(config)
+    except BuildLocked as exc:
+        # NOTE: the project directory + its seeded bible are ALREADY on disk
+        # and safe (never rolled back — nothing else could see them yet
+        # anyway); only the series.yaml registration step failed. Re-running
+        # new_episode(eid) would now hit the "episode already exists" guard
+        # above (the directory is there), so recovery is either wait for the
+        # lock to free and hand-append {id, title} to series.yaml, or just
+        # use the project — `Series.episode_ids()` already folds in an
+        # on-disk-but-unregistered `*.manju` dir, so `manju series episodes`
+        # / `series-status` see it either way.
+        raise SeriesError(
+            f"{eid} 的项目目录与 bible 已创建,但 series.yaml 正被其它进程占用"
+            f"(build_lock),未能登记 —— 等锁释放后手动在 series.yaml 里补一条 "
+            f"{{id: {eid}, title: ...}} 即可(目录已存在,重跑 new-episode 会报"
+            "\"already exists\");`manju series episodes` 已能看到这个未登记的目录。"
+            f"{' '.join(str(exc).split())}"
+        ) from exc
+
     append_event(series.root, actor, "series_new_episode",
                  {"episode": eid, "title": title, "preset": preset})
     return project
@@ -541,7 +583,27 @@ def sync_bible(series: Series, *, apply: bool = False,
     bible files per episode is genuinely multi-second. A trip never touches
     the episode it is currently on; every episode already appended to
     ``episodes`` (and, on ``apply=True``, already written) stays as-is.
+
+    Round AA (residual A, DECISIONS §9): this call writes into MULTIPLE
+    episode PROJECTS in one pass, each of which is also an independent CLI/
+    GUI/MCP mutation target on its own — a straight per-file write (the
+    pre-round-AA shape) had no cross-process guard, so a `manju build`
+    running against episode E03 could interleave with sync-bible mid-write
+    into E03's bible/*.yaml. Every episode's WHOLE write section below (all
+    its bible-kind files, one hold) is now wrapped in THAT episode's own
+    ``runtime.buildlock.BuildLock`` — the SAME lock a CLI/GUI/MCP build
+    against that lone episode project would take. ``apply=False`` (a pure
+    report) never acquires anything — nothing is written, so there is
+    nothing to protect. A BUSY episode STOPS the whole sync run right there
+    (fail-fast, mirroring ``build.ingest.apply_ingest``'s ``stopped_at``):
+    every episode processed before it is already synced and STAYS synced;
+    ``stopped_at`` names the id of the episode we could not get into, and
+    that episode's own report entry carries a 中文 ``error`` naming it — the
+    SAME field an unreadable/broken episode already reports through, so
+    every existing CLI/GUI renderer needs no changes to show it.
     """
+    from ..runtime.buildlock import BuildLocked, build_lock
+
     force_set = _normalize_force(force)
     forced_used: set[str] = set()
     config = series.load_config()
@@ -550,6 +612,7 @@ def sync_bible(series: Series, *, apply: bool = False,
     episodes: list[dict[str, Any]] = []
     totals = {"added": 0, "diverged": 0, "overwritten": 0, "refused": 0, "in_sync": 0}
     canceled = False
+    stopped_at: str | None = None
 
     for ref in config.episodes:
         if should_cancel is not None and should_cancel():
@@ -566,48 +629,59 @@ def sync_bible(series: Series, *, apply: bool = False,
             episodes.append(ep_report)
             continue
 
-        for kind in BIBLE_FILES:
-            s_entries = series_bible.get(kind, {})
-            if not s_entries:
-                continue
-            ep_data = _load_episode_bible_file(project, kind)
-            file_changed = False
-            for eid, s_entry in s_entries.items():
-                key = f"{kind}:{eid}"
-                if eid not in ep_data:
-                    ep_report["added"].append(key)
-                    totals["added"] += 1
-                    if apply:
-                        ep_data[eid] = deepcopy(s_entry)
-                        file_changed = True
-                        append_event(series.root, actor, "series_sync_bible",
-                                     {"episode": ref.id, "entry": key, "action": "add"})
-                    continue
-                if ep_data[eid] == s_entry:
-                    ep_report["in_sync"] += 1
-                    totals["in_sync"] += 1
-                    continue
-                # diverged
-                if key in force_set:
-                    forced_used.add(key)
-                    conflicts = _locked_conflicts(ep_data[eid], s_entry)
-                    if conflicts:
-                        ep_report["refused"].append({"entry": key, "locked": conflicts})
-                        totals["refused"] += 1
-                    else:
-                        ep_report["overwritten"].append(key)
-                        totals["overwritten"] += 1
-                        if apply:
-                            ep_data[eid] = deepcopy(s_entry)
-                            file_changed = True
-                            append_event(series.root, actor, "series_sync_bible",
-                                         {"episode": ref.id, "entry": key,
-                                          "action": "overwrite"})
-                else:
-                    ep_report["diverged"].append(key)
-                    totals["diverged"] += 1
-            if apply and file_changed:
-                write_yaml(project.root / "bible" / f"{kind}.yaml", ep_data)
+        lock_ctx = build_lock(project.root, actor=actor) if apply else contextlib.nullcontext()
+        try:
+            with lock_ctx:
+                for kind in BIBLE_FILES:
+                    s_entries = series_bible.get(kind, {})
+                    if not s_entries:
+                        continue
+                    ep_data = _load_episode_bible_file(project, kind)
+                    file_changed = False
+                    for eid, s_entry in s_entries.items():
+                        key = f"{kind}:{eid}"
+                        if eid not in ep_data:
+                            ep_report["added"].append(key)
+                            totals["added"] += 1
+                            if apply:
+                                ep_data[eid] = deepcopy(s_entry)
+                                file_changed = True
+                                append_event(series.root, actor, "series_sync_bible",
+                                             {"episode": ref.id, "entry": key, "action": "add"})
+                            continue
+                        if ep_data[eid] == s_entry:
+                            ep_report["in_sync"] += 1
+                            totals["in_sync"] += 1
+                            continue
+                        # diverged
+                        if key in force_set:
+                            forced_used.add(key)
+                            conflicts = _locked_conflicts(ep_data[eid], s_entry)
+                            if conflicts:
+                                ep_report["refused"].append({"entry": key, "locked": conflicts})
+                                totals["refused"] += 1
+                            else:
+                                ep_report["overwritten"].append(key)
+                                totals["overwritten"] += 1
+                                if apply:
+                                    ep_data[eid] = deepcopy(s_entry)
+                                    file_changed = True
+                                    append_event(series.root, actor, "series_sync_bible",
+                                                 {"episode": ref.id, "entry": key,
+                                                  "action": "overwrite"})
+                        else:
+                            ep_report["diverged"].append(key)
+                            totals["diverged"] += 1
+                    if apply and file_changed:
+                        write_yaml(project.root / "bible" / f"{kind}.yaml", ep_data)
+        except BuildLocked as exc:
+            ep_report["error"] = (
+                f"{ref.id} 正被其它进程构建占用(build_lock)——已在此处停止同步,"
+                f"{ref.id} 之前的分集已完成同步。{' '.join(str(exc).split())}"
+            )
+            episodes.append(ep_report)
+            stopped_at = ref.id
+            break
 
         episodes.append(ep_report)
 
@@ -623,6 +697,7 @@ def sync_bible(series: Series, *, apply: bool = False,
         "apply": apply,
         "totals": totals,
         "episodes": episodes,
+        "stopped_at": stopped_at,
         "unused_force": sorted(force_set - forced_used),
         # goal: honest job cancellation — mirrors BuildResult/BatchResult's
         # canceled/errors shape (see build/graph.py) so gui/jobs.py's
@@ -632,6 +707,9 @@ def sync_bible(series: Series, *, apply: bool = False,
         "note": (
             "保守同步:缺失→可新增;不同→只报告 DIVERGED(绝不自动覆盖),需 "
             "--force kind:id 显式覆盖;分集条目若有 core/locks 值锁且被覆盖字段会变则拒绝。"
+            + ("" if stopped_at is None else
+               f" 本次同步在分集 {stopped_at} 处停止(该分集正被占用)——之前的分集已同步,"
+               "稍后对该分集重跑 sync-bible 即可继续。")
         ),
     }
 

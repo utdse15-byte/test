@@ -835,7 +835,16 @@ class _Handler(BaseHTTPRequestHandler):
         regression, plus the process build lock (in-process quick_mutex AND
         the cross-process build_lock — the GUI job runner is its own
         process, so an in-process mutex alone does not stop a concurrent CLI
-        `select`)."""
+        `select`).
+
+        NO CAS (round AA item 5, #1 audit): a select click carries only the
+        take name the button was already bound to — the client never held a
+        loaded snapshot of shot state that could go stale, so there is
+        nothing for optimistic concurrency to protect here; it would only
+        turn every ordinary select into a spurious 409 if some unrelated
+        field changed underneath in the meantime. Contrast with
+        `_act_take_note`/`_act_sb_edit` below, whose client DOES hold a
+        rendered form/table."""
         from ..core.writes import WriteRejected, select_take_checked
         from ..runtime.buildlock import BuildLocked
 
@@ -897,18 +906,33 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_take_note(self, body: dict[str, Any]) -> None:
         """Director note on a take (review annotation, Frame.io-inspired):
         one line of YAML under status.take_notes — reviewable, revertible,
-        never touching media (§3). Empty text deletes the note."""
+        never touching media (§3). Empty text deletes the note.
+
+        Round AA item 5 (#1): CAS-protected — the review page (gui/pages.py
+        render_review) pre-fills the note input with the CURRENT note text at
+        RENDER time and a human may sit on that page typing before either
+        clicking 保存备注 or a 好/弃 verdict button — the "rendered form
+        holding stale state" this round's audit targeted, same as the
+        storyboard cell edit below. `expected_rev` (optional, the shot
+        card's `data-rev` the page rendered) is checked against the file's
+        CURRENT hash before writing, INSIDE the same build_lock hold as the
+        write itself (no TOCTOU window against a concurrent CLI/MCP write in
+        between); a mismatch is refused 409 with the same 中文 CAS message
+        `core.writes.checked_shot_write` uses."""
+        from ..core.writes import shot_text_hash
+        from ..runtime.buildlock import BuildLocked
+
         project = self.server.project
         shot_id = str(body.get("shot") or "")
         take = str(body.get("take") or "")
         text = str(body.get("text") if body.get("text") is not None else "")
+        expected_rev = body.get("expected_rev")
         if not shot_id or not take:
             self._send_error_json("shot and take are required", 400)
             return
         if len(text) > 2000:
             self._send_error_json("note too long (max 2000 chars)", 400)
             return
-        from ..runtime.buildlock import BuildLocked
 
         with self.server.quick_mutex:
             if project.get_take(shot_id, take) is None:
@@ -931,6 +955,11 @@ class _Handler(BaseHTTPRequestHandler):
 
             try:
                 with _optional_build_lock(project.root, self.server.actor):
+                    if expected_rev is not None and shot_text_hash(project, shot_id) != expected_rev:
+                        self._send_error_json(
+                            f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)"
+                            "——请刷新后重试", 409)
+                        return
                     project.update_shot_raw(shot_id, mutate)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
@@ -942,6 +971,11 @@ class _Handler(BaseHTTPRequestHandler):
                          "text": text.strip()})
 
     def _act_lock(self, body: dict[str, Any]) -> None:
+        """NO CAS (round AA item 5, #1 audit): the click carries only shot +
+        field; the digest it seals is computed FRESH from `load_shot_raw`
+        inside this very critical section (below), never from a value the
+        client rendered earlier — there is no client-held snapshot that
+        could go stale, so CAS has nothing to protect here."""
         from ..core.locks import seal_lock
         from ..runtime.buildlock import BuildLocked
 
@@ -1678,7 +1712,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------- check-gated writing
 
-    def _gated_save(self, path: Path, text: str, *, label: str) -> tuple[bool, dict[str, Any], int]:
+    def _gated_save(self, path: Path, text: str, *, label: str,
+                    expected_text_hash: str | None = None) -> tuple[bool, dict[str, Any], int]:
         """Shared editor core: write the text VERBATIM (atomic), run the full
         `manju check`, revert when the save introduced any new error. Returns
         (ok, payload, http_status); the caller appends its own event.
@@ -1690,8 +1725,19 @@ class _Handler(BaseHTTPRequestHandler):
         ONCE, here, covers all of them — no per-call-site duplication. Busy
         (another process mid-build) degrades to the SAME (ok=False, 409)
         shape a check-regression already uses, so every caller's existing
-        ``self._send_json(payload, status)`` renders it without change."""
+        ``self._send_json(payload, status)`` renders it without change.
+
+        Round AA item 5 (#1): ``expected_text_hash`` (optional, ``None`` by
+        default) is the CAS check — compared against the CURRENT on-disk text
+        INSIDE this same ``build_lock`` hold, right before the write (never a
+        snapshot from before the lock-acquire race). A mismatch is refused
+        with the SAME (ok=False, 409) shape as a check regression, so it also
+        needs no per-caller rendering change. Only the shot editor passes it
+        today (§ audit: it is the one truth-file form here whose client holds
+        a FULL raw-text snapshot a human may sit on before saving — bible/
+        rules/packaging callers stay ``None``, byte-for-byte unaffected)."""
         from ..core.check import run_check
+        from ..core.hashing import hash_text
         from ..core.yamlio import atomic_write_text
         from ..runtime.buildlock import BuildLocked
 
@@ -1699,6 +1745,13 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             with _optional_build_lock(project.root, self.server.actor):
                 before = path.read_text(encoding="utf-8") if path.exists() else None
+                current_hash = hash_text(before) if before is not None else ""
+                if expected_text_hash is not None and current_hash != expected_text_hash:
+                    return False, {
+                        "error": "该镜头在你加载后已被其他入口修改(乐观锁校验失败)"
+                                 "——请刷新后重试",
+                        "current": before if before is not None else "",
+                    }, 409
                 baseline = set(run_check(project).errors)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(path, text if text.endswith("\n") else text + "\n")
@@ -1850,14 +1903,18 @@ class _Handler(BaseHTTPRequestHandler):
     def _shot_get(self, shot_id: str) -> None:
         """Raw YAML text of one shot file — the editor edits HUMAN TRUTH, so
         the exact bytes travel, never a model round-trip (§3: a lock sealed
-        over `duration: 3` must not break because a model re-emits 3.0)."""
+        over `duration: 3` must not break because a model re-emits 3.0).
+
+        ``rev`` (round AA item 5, #1) is the CAS token: the editor sends it
+        back on save so a stale buffer (someone else edited this shot after
+        it was loaded here) is refused instead of silently overwritten."""
         if not self._SHOT_ID_RE.fullmatch(shot_id):
             self._send_error_json("invalid shot id", 400)
             return
         project = self.server.project
         path = project.shot_path(shot_id)
         if not path.exists():
-            self._send_json({"id": shot_id, "exists": False, "yaml": "", "locked": []})
+            self._send_json({"id": shot_id, "exists": False, "yaml": "", "locked": [], "rev": ""})
             return
         text = path.read_text(encoding="utf-8")
         locked: list[str] = []
@@ -1867,14 +1924,26 @@ class _Handler(BaseHTTPRequestHandler):
                 locked = sorted(raw["locked"])
         except Exception:
             pass
+        from ..core.hashing import hash_text
+
         self._send_json({"id": shot_id, "exists": True, "yaml": text, "locked": locked,
-                         "in_index": shot_id in project.load_index().order})
+                         "in_index": shot_id in project.load_index().order,
+                         "rev": hash_text(text)})
 
     def _act_shot_save(self, shot_id: str, body: dict[str, Any]) -> None:
         """Check-gated save: write the text exactly as typed, run the full
         `manju check`, and REVERT if the save introduced any new error (lock
         violations included — §5 means the GUI cannot bypass a lock any more
-        than the MCP surface can; unlock stays in the terminal)."""
+        than the MCP surface can; unlock stays in the terminal).
+
+        Round AA item 5 (#1): CAS-protected — the client holds the FULL raw
+        YAML text loaded via GET (a textarea a human may sit on for a while
+        before saving), the textbook "rendered form holding stale state"
+        this round's audit targeted. ``expected_rev`` (optional, echoing the
+        GET response's ``rev``) threads into ``_gated_save``; a stale rev is
+        refused 409 with the same 中文 CAS message
+        ``core.writes.checked_shot_write`` uses for the mutate-based
+        entrances (storyboard/take-note, below)."""
         if not self._SHOT_ID_RE.fullmatch(shot_id):
             self._send_error_json("invalid shot id", 400)
             return
@@ -1883,11 +1952,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(err if "mapping" not in err else
                                   "shot file must be a YAML mapping", 400)
             return
+        expected_rev = body.get("expected_rev")
+        if expected_rev is not None and not isinstance(expected_rev, str):
+            self._send_error_json("expected_rev must be a string", 400)
+            return
         project = self.server.project
         with self.server.quick_mutex:
             ok, payload, status = self._gated_save(
                 project.shot_path(shot_id), body["yaml"],
-                label=f"shots/{shot_id}.yaml")
+                label=f"shots/{shot_id}.yaml", expected_text_hash=expected_rev)
             if ok:
                 payload["shot"] = shot_id
                 if payload["created"]:
@@ -3152,13 +3225,30 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_sb_edit(self, body: dict[str, Any]) -> None:
         """Inline edit of one shot free-text field (动作/台词/must_show/avoid)
         through ``update_shot_raw`` — LOCK-RESPECTING: a write that would touch a
-        locked path is refused 409 naming the lock, never written (§5)."""
+        locked path is refused 409 naming the lock, never written (§5).
+
+        Round AA item 5 (#1): CAS-protected — the storyboard TABLE is
+        rendered server-side with every shot's current field values baked
+        into the DOM (a human may sit on the page mid-review, double-click a
+        cell, and save it minutes later): the "rendered form/table holding
+        stale state" this round's audit targeted, alongside the shot editor
+        and take-note. ``expected_rev`` (optional, the row's ``data-rev`` the
+        page rendered) is checked against the file's CURRENT hash INSIDE the
+        same build_lock hold as the write (no TOCTOU window against a
+        concurrent CLI/MCP write in between); a mismatch is refused 409 with
+        the same 中文 CAS message ``core.writes.checked_shot_write`` uses.
+        (Contrast: ``_act_sb_approve``/``_act_sb_lock_batch`` below stay
+        CAS-free — the approval chip and the lock button do not round-trip
+        any FIELD VALUE the client rendered earlier, only a shot id + a
+        target state/field name, so there is nothing that can go stale.)"""
         from .storyboard import EDITABLE_FIELDS, LIST_FIELDS, lock_conflict
+        from ..core.writes import shot_text_hash
         from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
         shot_id = str(body.get("shot") or "")
         field = str(body.get("field") or "")
+        expected_rev = body.get("expected_rev")
         if not self._SHOT_ID_RE.fullmatch(shot_id):
             self._send_error_json("invalid shot id", 400)
             return
@@ -3202,6 +3292,11 @@ class _Handler(BaseHTTPRequestHandler):
 
             try:
                 with _optional_build_lock(project.root, self.server.actor):
+                    if expected_rev is not None and shot_text_hash(project, shot_id) != expected_rev:
+                        self._send_error_json(
+                            f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)"
+                            "——请刷新后重试", 409)
+                        return
                     project.update_shot_raw(shot_id, mutate)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
