@@ -170,7 +170,16 @@ class GuiServer(ThreadingHTTPServer):
         self.actor = actor
         self.readonly = readonly
         self.token = secrets.token_urlsafe(24)
-        self.runner = JobRunner()
+        # round AA4: jobs.jsonl persistence needs the project's runtime dir —
+        # only available when the server starts already bound to a project.
+        # An unbound server (no project, no --workspace pick yet) starts with
+        # persistence disabled (JobRunner(None) — see its own docstring);
+        # bind_project()/switch_project() deliberately do NOT re-point an
+        # already-running runner at a different project's jobs.jsonl (jobs
+        # already queued/running keep referencing whatever project they
+        # closed over, exactly like every other per-job project reference in
+        # this file — see bind_project's own docstring).
+        self.runner = JobRunner(project.runtime_dir if project is not None else None)
         # select/lock are quick read-modify-write cycles on one YAML file;
         # serialize them among themselves so two clicks can't interleave.
         self.quick_mutex = threading.Lock()
@@ -1147,7 +1156,9 @@ class _Handler(BaseHTTPRequestHandler):
                 candidates=int(candidates) if candidates else None,
                 provider=str(provider) if provider else None,
                 seed=int(seed) if seed is not None else None,
-                actor=actor, assume_yes=assume_yes).to_dict()
+                actor=actor, assume_yes=assume_yes,
+                # goal: honest job cancellation — between-shot checkpoint
+                should_cancel=job.should_cancel).to_dict()
 
         job = self.server.runner.submit("redo_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
@@ -1168,7 +1179,9 @@ class _Handler(BaseHTTPRequestHandler):
             return voice_batch(
                 project, shots=list(shots),
                 provider=str(provider) if provider else None,
-                actor=actor, assume_yes=assume_yes).to_dict()
+                actor=actor, assume_yes=assume_yes,
+                # goal: honest job cancellation — between-shot checkpoint
+                should_cancel=job.should_cancel).to_dict()
 
         job = self.server.runner.submit("voice_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
@@ -1336,7 +1349,8 @@ class _Handler(BaseHTTPRequestHandler):
                     candidates=int(candidates) if candidates else None,
                     provider=str(provider) if provider else None,
                     seed=int(seed) if seed is not None else None,
-                    actor=actor, assume_yes=assume_yes).to_dict()
+                    actor=actor, assume_yes=assume_yes,
+                    should_cancel=job.should_cancel).to_dict()
 
             return fn
 
@@ -1353,7 +1367,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return voice_batch(
                     project, shots=list(shots),
                     provider=str(provider) if provider else None,
-                    actor=actor, assume_yes=assume_yes).to_dict()
+                    actor=actor, assume_yes=assume_yes,
+                    should_cancel=job.should_cancel).to_dict()
 
             return fn
 
@@ -2727,7 +2742,21 @@ class _Handler(BaseHTTPRequestHandler):
                     from ..media.webpreview import ensure_preview
 
                     made = 0
-                    for rel in _sources:
+                    for i, rel in enumerate(_sources):
+                        # goal: honest job cancellation — checked before each
+                        # source's transcode; a trip never kills a transcode
+                        # already in flight, only stops the next one from
+                        # starting (same shape as the batch kinds in build/graph.py).
+                        if job.should_cancel():
+                            remaining = len(_sources) - i
+                            return {
+                                "requested": len(_sources), "made": made,
+                                "canceled": True,
+                                "errors": [
+                                    f"已取消:{made}/{len(_sources)} 个预览已生成并保留"
+                                    f"(已生成的文件不受影响),{remaining} 个源未处理"
+                                ],
+                            }
                         try:
                             abspath = project.resolve(rel)
                         except Exception:
@@ -4875,8 +4904,16 @@ class _Handler(BaseHTTPRequestHandler):
         """Classify every file staged under ``batch`` — READ-ONLY, exactly
         ``build.ingest.plan_ingest`` run against the staging dir as its one
         directory argument (the same shape a CLI ``manju ingest <dir>`` call
-        takes). Nothing moves; this only returns the plan."""
-        from ..build.ingest import IngestError, plan_ingest
+        takes). Nothing moves; this only returns the plan.
+
+        Round AA4: hashing a large batch of big video files is genuinely
+        multi-second (whole-file sha256, one per staged file — see
+        build/ingest.py's ``hash_file`` loop), so this runs on the jobs
+        runner like every other heavyweight action, not inline on the HTTP
+        thread. ``role``/``shot`` are validated up front (cheap, mirrors
+        ``plan_ingest``'s own checks) so an obviously bad request is a 400,
+        never a pointless job."""
+        from ..build.ingest import ROLES
 
         project = self.server.project
         batch = str(body.get("batch") or "")
@@ -4888,13 +4925,34 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("还没有已上传的文件 (batch 为空或不存在)", 400)
             return
         role = str(body.get("role") or "auto")
-        shot = body.get("shot") or None
-        try:
-            plan = plan_ingest(project, [stage], role=role, shot=str(shot) if shot else None)
-        except IngestError as exc:
-            self._send_error_json(" ".join(str(exc).split()), 400)
+        if role not in ROLES:
+            self._send_error_json(f"未知 --role: {role!r} — 只能是 {'/'.join(ROLES)}", 400)
             return
-        self._send_json({"batch": batch, **plan.to_dict()})
+        shot = body.get("shot") or None
+        if shot is not None:
+            # mirrors plan_ingest's own validation order (safe-segment check
+            # BEFORE ever touching shot_path — an unsafe id must never reach
+            # it, or Project raises ProjectError instead of a clean 400).
+            if not is_safe_segment(str(shot)):
+                self._send_error_json(f"--shot 不合法: {shot!r}", 400)
+                return
+            if not project.shot_path(str(shot)).exists():
+                self._send_error_json(f"--shot 指定的镜头不存在: {shot}", 404)
+                return
+
+        def fn(job) -> dict[str, Any]:
+            from ..build.ingest import IngestError, plan_ingest
+
+            try:
+                plan = plan_ingest(project, [stage], role=role,
+                                   shot=str(shot) if shot else None,
+                                   should_cancel=job.should_cancel)
+            except IngestError as exc:
+                raise RuntimeError(" ".join(str(exc).split())) from exc
+            return {"batch": batch, **plan.to_dict()}
+
+        job = self.server.runner.submit("ingest_plan", {"batch": batch, "role": role}, fn)
+        self._send_json({"job": job.to_dict()}, 202)
 
     @staticmethod
     def _ingest_overrides_from_body(raw: Any, rows: list[Any]) -> dict[int, dict[str, Any]]:
@@ -4965,7 +5023,9 @@ class _Handler(BaseHTTPRequestHandler):
             # entries into project truth — cross-process build lock, same as
             # redo/repair (§9).
             with _optional_build_lock(project.root, actor):
-                result = apply_ingest(project, plan, actor=actor, overrides=overrides)
+                result = apply_ingest(project, plan, actor=actor, overrides=overrides,
+                                      # goal: honest job cancellation — between-row checkpoint
+                                      should_cancel=job.should_cancel)
             shutil.rmtree(stage, ignore_errors=True)
             return {**plan.to_dict(), **result.to_dict()}
 
@@ -5022,8 +5082,16 @@ class _Handler(BaseHTTPRequestHandler):
         the CLI ``manju series new-episode`` calls (delegates to
         ``Project.create``, seeds the episode bible from the series bible,
         registers it in series.yaml and lands a ``series_new_episode`` event —
-        all inside ``new_episode`` itself, nothing duplicated here)."""
-        from ..core.series import Series, SeriesError, new_episode
+        all inside ``new_episode`` itself, nothing duplicated here).
+
+        Round AA4: ``Project.create`` scaffolds a whole new project directory
+        (preset apply + bible seed included) — genuinely multi-second, so
+        this now runs on the jobs runner. The cheap, fast checks
+        ``new_episode`` itself would raise on (bad eid shape, already exists)
+        are re-checked here OUTSIDE the closure so an obviously bad request
+        is a 400, never a pointless job."""
+        from ..core.container import PROJECT_FILE
+        from ..core.series import Series, _EID_RE, new_episode
 
         project = self.server.project
         series = Series.find_or_none(project.root)
@@ -5034,16 +5102,30 @@ class _Handler(BaseHTTPRequestHandler):
         if not eid:
             self._send_error_json("eid is required", 400)
             return
+        if not _EID_RE.match(eid):
+            self._send_error_json(
+                f"invalid episode id {eid!r}: use E01/E02… or a lowercase slug (a-z0-9_-)", 400)
+            return
+        ep_dir = series.episode_project_dir(eid)
+        config = series.load_config()
+        if any(e.id == eid for e in config.episodes) or (ep_dir / PROJECT_FILE).exists():
+            # 400, not 409: matches every other SeriesError this endpoint
+            # surfaced synchronously before round AA4 moved the heavy
+            # scaffolding onto the jobs runner — this is the SAME check
+            # new_episode() itself would have raised from.
+            self._send_error_json(f"episode already exists: {eid}", 400)
+            return
         title = str(body.get("title") or "").strip()
-        with self.server.quick_mutex:
-            try:
+        params = {"eid": eid, "title": title}
+
+        def fn(job) -> dict[str, Any]:
+            with self.server.quick_mutex:
                 new_project = new_episode(series, eid, title=title,
                                           actor=self.server.actor)
-            except SeriesError as exc:
-                self._send_error_json(" ".join(str(exc).split()), 400)
-                return
-        self._send_json({"ok": True, "eid": eid, "title": title,
-                         "dir": series.relpath(new_project.root)})
+            return {"eid": eid, "title": title, "dir": series.relpath(new_project.root)}
+
+        job = self.server.runner.submit("series_new_episode", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
 
     def _act_series_sync_apply(self, body: dict[str, Any]) -> None:
         """The SAFE subset of ``sync_bible``: ``apply=True`` with NO ``force``
@@ -5051,18 +5133,25 @@ class _Handler(BaseHTTPRequestHandler):
         touched (core/series.py's own guarantee, not re-implemented here).
         The GUI intentionally never accepts a ``force`` field from the
         request body — overwriting a divergence stays a command-line act,
-        exactly like ``unlock``/``gc --hard`` are absent from this surface."""
-        from ..core.series import Series, SeriesError, sync_bible
+        exactly like ``unlock``/``gc --hard`` are absent from this surface.
+
+        Round AA4: syncing (and writing) several bible files per episode
+        across a many-episode series is genuinely multi-second — runs on the
+        jobs runner, with a between-episode cancel checkpoint
+        (core/series.py: sync_bible's own should_cancel)."""
+        from ..core.series import Series, sync_bible
 
         project = self.server.project
         series = Series.find_or_none(project.root)
         if series is None:
             self._send_error_json("当前项目不属于任何剧集 (not part of a series)", 400)
             return
-        with self.server.quick_mutex:
-            try:
-                report = sync_bible(series, apply=True, actor=self.server.actor)
-            except SeriesError as exc:
-                self._send_error_json(" ".join(str(exc).split()), 400)
-                return
-        self._send_json({"ok": True, **report})
+
+        def fn(job) -> dict[str, Any]:
+            with self.server.quick_mutex:
+                report = sync_bible(series, apply=True, actor=self.server.actor,
+                                    should_cancel=job.should_cancel)
+            return {"ok": True, **report}
+
+        job = self.server.runner.submit("series_sync_bible", {}, fn)
+        self._send_json({"job": job.to_dict()}, 202)

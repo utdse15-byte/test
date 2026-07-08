@@ -189,9 +189,18 @@ class IngestRow:
 @dataclass
 class IngestPlan:
     rows: list[IngestRow] = field(default_factory=list)
+    # goal: honest job cancellation — a should_cancel() checkpoint tripped
+    # mid-hash (plan_ingest is READ-ONLY, but hashing a large batch of big
+    # video files is genuinely multi-second, §GUI jobs). ``rows`` still holds
+    # everything classified before the trip; nothing was ever written either
+    # way. Mirrors BuildResult/BatchResult's canceled/errors shape so
+    # gui/jobs.py's JobRunner can generically recognize this as "canceled".
+    canceled: bool = False
+    errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"rows": [r.to_dict() for r in self.rows]}
+        return {"rows": [r.to_dict() for r in self.rows],
+                "canceled": self.canceled, "errors": self.errors}
 
 
 @dataclass
@@ -211,16 +220,22 @@ class IngestRowResult:
 @dataclass
 class IngestApplyResult:
     results: list[IngestRowResult] = field(default_factory=list)
-    stopped_at: int | None = None  # row index where a failure stopped the run
+    stopped_at: int | None = None  # row index where a failure OR a cancel stopped the run
     # round AA (goal item 2): the persisted batch record's id — always set
     # (either caller-supplied or generated) once apply_ingest returns; see
     # build.batches for reports/ingest_batches/<batch_id>.yaml.
     batch_id: str = ""
+    # goal: honest job cancellation — see IngestPlan.canceled above; every row
+    # in ``results`` before the trip already executed (apply_ingest is append-
+    # only registration, §3) and stays landed.
+    canceled: bool = False
+    errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "results": [r.to_dict() for r in self.results],
             "stopped_at": self.stopped_at, "batch_id": self.batch_id,
+            "canceled": self.canceled, "errors": self.errors,
         }
 
 
@@ -234,6 +249,7 @@ def plan_ingest(
     role: str = "auto",
     shot: str | None = None,
     on_duplicate: str = "skip",
+    should_cancel: "Callable[[], bool] | None" = None,
 ) -> IngestPlan:
     """Classify every file under ``paths`` (files and/or directories,
     expanded recursively) into a target step. READ-ONLY: nothing moves,
@@ -242,7 +258,12 @@ def plan_ingest(
     ``on_duplicate`` (round X agent XF) governs ONLY files whose content
     hash matches something already in the user's private LIBRARY (never the
     project-internal dedup above, which always skips) — see the module
-    docstring's "LIBRARY dedup" section."""
+    docstring's "LIBRARY dedup" section.
+
+    ``should_cancel`` (goal: honest job cancellation) is checked before EVERY
+    file's hash — hashing a large batch of big video files is genuinely
+    multi-second, and this is a GUI-jobs-runner concern only (``None``, the
+    default, means every CLI call stays byte-identical to before)."""
     if role not in ROLES:
         raise IngestError(f"未知 --role: {role!r} — 只能是 {'/'.join(ROLES)}")
     if on_duplicate not in ON_DUPLICATE_STRATEGIES:
@@ -268,8 +289,14 @@ def plan_ingest(
 
     rows: list[IngestRow] = []
     seen_in_batch: dict[str, str] = {}  # hash -> first file name claiming it
+    canceled = False
 
     for f in files:
+        # goal: honest job cancellation — checked before hashing the NEXT
+        # file, so a trip never kills a hash already in progress.
+        if should_cancel is not None and should_cancel():
+            canceled = True
+            break
         h = hash_file(f)
         if h in existing_index:
             rows.append(IngestRow(
@@ -314,7 +341,14 @@ def plan_ingest(
 
         rows.append(_classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
                               bible_owner=bible_owner))
-    return IngestPlan(rows=rows)
+
+    errors = []
+    if canceled:
+        errors.append(
+            f"已取消:{len(rows)}/{len(files)} 个文件已分类(只读预演,未写入任何内容)——"
+            "可重新生成计划继续核对剩余文件"
+        )
+    return IngestPlan(rows=rows, canceled=canceled, errors=errors)
 
 
 def _library_hash_index() -> dict[str, dict[str, Any]]:
@@ -787,6 +821,7 @@ def apply_ingest(
     batch_id: str | None = None,
     clock: Callable[[], datetime] | None = None,
     source: str = "",
+    should_cancel: "Callable[[], bool] | None" = None,
 ) -> IngestApplyResult:
     """Execute a (possibly hand-edited) plan through the existing
     registration paths. Runs rows IN ORDER; a row that raises stops the
@@ -808,7 +843,14 @@ def apply_ingest(
     engine turns into a path); ``clock`` exists purely so callers/tests can
     pin the timestamp instead of reaching for ``datetime.now()`` here
     directly. ``source`` is a free-text, purely informational note (usually
-    the paths handed to :func:`plan_ingest`) recorded on the batch record."""
+    the paths handed to :func:`plan_ingest`) recorded on the batch record.
+
+    ``should_cancel`` (goal: honest job cancellation) is checked before EVERY
+    row — a trip never kills a row already being registered, only stops the
+    NEXT one; every row already landed (``results``) stays (import is
+    append-only/copy-only, §3), and the batch record below is still written
+    for whatever landed. ``None`` (every CLI call) is byte-identical to
+    before."""
     from .batches import new_batch_id, write_batch_record
 
     overrides = overrides or {}
@@ -821,9 +863,14 @@ def apply_ingest(
 
     results: list[IngestRowResult] = []
     stopped_at: int | None = None
+    canceled = False
     landed = 0
 
     for i, row in enumerate(plan.rows):
+        if should_cancel is not None and should_cancel():
+            stopped_at = i
+            canceled = True
+            break
         eff = _apply_override(row, overrides.get(i))
         if eff.action == "skip_duplicate":
             results.append(IngestRowResult(row=eff, ok=True, detail={"skipped": True}))
@@ -848,9 +895,16 @@ def apply_ingest(
         })
         landed += 1
 
+    errors = []
+    if canceled:
+        remaining = len(plan.rows) - len(results)
+        errors.append(
+            f"已取消:{landed}/{len(plan.rows)} 项已落地(已完成的不受影响),"
+            f"剩余 {remaining} 项未处理"
+        )
     append_event(project.root, actor, "ingest", {
         "rows": len(plan.rows), "attempted": len(results), "landed": landed,
-        "stopped_at": stopped_at,
+        "stopped_at": stopped_at, "canceled": canceled,
     })
 
     write_batch_record(
@@ -858,4 +912,6 @@ def apply_ingest(
         source=source, results=results,
     )
 
-    return IngestApplyResult(results=results, stopped_at=stopped_at, batch_id=resolved_batch_id)
+    return IngestApplyResult(results=results, stopped_at=stopped_at,
+                             batch_id=resolved_batch_id,
+                             canceled=canceled, errors=errors)

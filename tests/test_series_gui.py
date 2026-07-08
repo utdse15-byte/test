@@ -139,6 +139,21 @@ def _post(server, path, body, token=None, **kw):
     return _req(server, path, method="POST", body=body, headers=headers, **kw)
 
 
+def _poll_job(server, job_id, tries=200):
+    """round AA4: new-episode / sync-bible-apply now run on the jobs runner
+    (Project.create scaffolding / per-episode bible writes are genuinely
+    multi-second) — same submit+poll shape every other GUI test suite uses."""
+    import time
+
+    for _ in range(tries):
+        status, _, data = _req(server, "/api/jobs")
+        job = next((j for j in data["jobs"] if j["id"] == job_id), None)
+        if job and job["state"] in ("done", "failed"):
+            return job
+        time.sleep(0.02)
+    raise TimeoutError("job did not finish")
+
+
 # ================================================================== A. episodes
 
 
@@ -214,10 +229,12 @@ def test_banner_absent_over_real_http_for_plain_project(gui_plain):
 
 def test_new_episode_round_trip(gui, two_episodes):
     series, e1, e2 = two_episodes
-    status, _, data = _post(gui, "/api/series/new-episode",
+    status, _, resp = _post(gui, "/api/series/new-episode",
                             {"eid": "E03", "title": "第三集"})
-    assert status == 200, data
-    assert data["ok"] is True
+    assert status == 202, resp  # round AA4: scaffolding now runs on the jobs runner
+    job = _poll_job(gui, resp["job"]["id"])
+    assert job["state"] == "done", job
+    data = job["result"]
     assert data["eid"] == "E03"
 
     # registered in series.yaml (the SAME core.series.new_episode the CLI uses)
@@ -284,8 +301,11 @@ def test_sync_safe_apply_writes_missing_leaves_diverged_untouched(gui, two_episo
     write_yaml(series.bible_dir / "characters.yaml",
                {"linxia": {"name": "林夏"}, "akun": {"name": "阿坤"}})
 
-    status, _, data = _post(gui, "/api/series/sync-bible/apply", {})
-    assert status == 200, data
+    status, _, resp = _post(gui, "/api/series/sync-bible/apply", {})
+    assert status == 202, resp  # round AA4: sync now runs on the jobs runner
+    job = _poll_job(gui, resp["job"]["id"])
+    assert job["state"] == "done", job
+    data = job["result"]
     assert data["totals"]["added"] >= 1
     assert data["totals"]["overwritten"] == 0
 
@@ -314,9 +334,12 @@ def test_sync_apply_endpoint_never_accepts_force(gui, two_episodes):
     write_yaml(e1.root / "bible" / "characters.yaml", {"linxia": {"name": "旧"}})
     write_yaml(series.bible_dir / "characters.yaml", {"linxia": {"name": "新"}})
 
-    status, _, data = _post(gui, "/api/series/sync-bible/apply",
+    status, _, resp = _post(gui, "/api/series/sync-bible/apply",
                             {"force": ["characters:linxia"]})
-    assert status == 200, data
+    assert status == 202, resp  # round AA4: sync now runs on the jobs runner
+    job = _poll_job(gui, resp["job"]["id"])
+    assert job["state"] == "done", job
+    data = job["result"]
     assert data["totals"]["overwritten"] == 0
     assert read_yaml(e1.root / "bible" / "characters.yaml")["linxia"]["name"] == "旧"
 

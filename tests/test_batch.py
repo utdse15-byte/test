@@ -279,7 +279,10 @@ def test_batchresult_to_dict_shape(mixed, fake_gen):
     r = redo_batch(mixed, all_shots=True, actor="ai", assume_yes=True)
     d = r.to_dict()
     assert set(d) == {"requested", "ran", "skipped", "failed", "takes",
-                      "estimated_cost", "actual_cost", "currency"}
+                      "estimated_cost", "actual_cost", "currency",
+                      # round AA4: honest job cancellation — mirrors
+                      # BuildResult's canceled/errors shape (build/graph.py)
+                      "canceled", "errors"}
     assert set(d["requested"]) >= {"S001", "S002", "S003", "S004", "S005"}
     assert all(set(s) == {"shot", "reason"} for s in d["skipped"])
 
@@ -298,7 +301,8 @@ def test_cli_redo_all_json(in_mixed, fake_gen):
     assert res.exit_code == 0, res.output
     data = json.loads(res.output)
     assert set(data) == {"requested", "ran", "skipped", "failed", "takes",
-                         "estimated_cost", "actual_cost", "currency"}
+                         "estimated_cost", "actual_cost", "currency",
+                         "canceled", "errors"}
     assert "S004" in [s["shot"] for s in data["skipped"]]
 
 

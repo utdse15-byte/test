@@ -1,25 +1,61 @@
 """Serialized job runner for the GUI (§1-⑦ revisited).
 
-Mutating engine operations (build / redo / voice / qc / repair) run in ONE
-worker thread, strictly FIFO. That is an honest model of the engine's
-single-writer assumption: the build graph, the timeline compiler and the
-SQLite ledger were designed for one writer at a time (§3, §5 value locks
+Mutating engine operations (build / redo / voice / qc / repair / batch kinds /
+…) run in ONE worker thread, strictly FIFO. That is an honest model of the
+engine's single-writer assumption: the build graph, the timeline compiler and
+the SQLite ledger were designed for one writer at a time (§3, §5 value locks
 guard *content*, not *processes*). The GUI therefore never runs two mutating
 operations concurrently — a second click queues behind the first.
 
-Jobs are in-memory only (the runner dies with the server); durable history
-lives where it always did — events.jsonl and the run ledger. The result of a
-job is whatever dict the engine call returned, so the front-end renders the
-same payload the CLI would have printed with --json.
+Jobs themselves are in-memory only (the live queue/state machine dies with the
+server) — but round AA4 adds a durable, best-effort TRANSITION LOG,
+``.manju/jobs.jsonl`` (one JSON line per submit/start/cancel/finish), so a GUI
+crash/restart can honestly say "this job was still running when the GUI died,
+its actual outcome is unknown" instead of silently forgetting it ever existed.
+This log is operational history for THIS process's job queue, not the durable
+collaboration log — that role stays events.jsonl/the run ledger, and the
+result of a job is still whatever dict the engine call returned, so the
+front-end renders the same payload the CLI would have printed with --json.
+
+``jobs.jsonl`` schema — one JSON object per line, UTF-8, newest last::
+
+    {"ts": "<iso8601 UTC>", "id": "<job id>", "kind": "<job kind>",
+     "state": "queued|running|canceling|canceled|done|failed|interrupted",
+     "params_summary": {...}, "error": "<str | null>"}
+
+``params_summary`` is ``params`` with long lists/strings truncated (see
+:func:`_summarize_params`) — this log is capped at :data:`_JOBS_LOG_CAP`
+lines (rewritten to the newest N on every :class:`JobRunner` construction,
+mirroring the simplest existing precedent for a disposable, single-writer,
+single-process log — unlike ``events.jsonl``/``failures.jsonl``, which are
+durable multi-process collaboration/ledger logs and get either no rotation or
+a byte-size rotation behind a cross-process lock, ``jobs.jsonl`` is written by
+exactly one process's one worker thread, so a plain startup cap is enough).
+``state="interrupted"`` is synthetic — see :meth:`JobRunner.interrupted`.
+
+**Cross-process honesty**: an MCP tool call or a CLI invocation (``manju
+build`` run directly in a terminal) is a SEPARATE OS process with its own
+Python interpreter — it never touches this module's in-memory queue or this
+GUI's ``jobs.jsonl``. The GUI's job queue can never see, list, cancel, or
+report on a build/redo/voice/qc run started via the CLI or an MCP tool call,
+and vice versa: cancelling a GUI job has zero effect on a concurrent CLI
+process (they are only ever kept from CORRUPTING data by the cross-process
+``.manju/build.lock`` — see runtime/buildlock.py — never by shared visibility
+into each other's progress or cancel state). A user running both at once sees
+two independent queues/histories; this is a real limitation, not a bug to
+paper over.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import queue
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 __all__ = ["Job", "JobRunner"]
@@ -27,15 +63,53 @@ __all__ = ["Job", "JobRunner"]
 # Keep this many finished jobs around for the UI; older ones are dropped.
 _HISTORY_CAP = 50
 
+# jobs.jsonl (round AA4): disposable operational history, capped/rewritten to
+# this many newest lines on every JobRunner construction — see module
+# docstring for why this is a plain cap rather than a byte-size rotation.
+_JOBS_LOG_FILE = "jobs.jsonl"
+_JOBS_LOG_CAP = 500
+
+# The 中文 honesty note stamped onto a job a past GUI process left dangling —
+# see JobRunner._scan_interrupted and its own module-docstring cross-ref.
+_INTERRUPTED_ERROR = (
+    "GUI 上次退出时该任务仍在运行,实际结果未知——请核对产物后按需重试"
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _summarize_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Compact ``params`` for a jobs.jsonl line — a batch kind's ``shots``
+    list (redo_batch/voice_batch/…) could run to hundreds of ids, and this
+    log is meant to stay a cheap, bounded operational trail, not a second
+    copy of every request body. Never raises: an unsummarizable value
+    degrades to its type name rather than breaking persistence."""
+    out: dict[str, Any] = {}
+    for k, v in (params or {}).items():
+        try:
+            if isinstance(v, (list, tuple)):
+                seq = list(v)
+                out[k] = seq if len(seq) <= 8 else seq[:8] + [f"...(+{len(seq) - 8} more)"]
+            elif isinstance(v, str) and len(v) > 200:
+                out[k] = v[:200] + "…(truncated)"
+            elif isinstance(v, (str, int, float, bool)) or v is None:
+                out[k] = v
+            elif isinstance(v, dict):
+                out[k] = f"<dict:{len(v)} keys>"
+            else:
+                out[k] = str(type(v).__name__)
+        except Exception:
+            out[k] = "<unrepresentable>"
+    return out
+
+
 @dataclass
 class Job:
     id: str
-    kind: str  # "build" | "redo" | "voice" | "qc" | "repair"
+    kind: str  # e.g. "build" | "redo" | "voice" | "qc" | "repair" | … — the
+               # runner itself never enumerates kinds (kind-agnostic by design)
     params: dict[str, Any]
     state: str = "queued"  # queued | running | canceling | canceled | done | failed
     progress: str | None = None  # coarse phase ("render:final"…), advisory
@@ -87,15 +161,55 @@ class Job:
         return self.cancel_event.is_set()
 
 
+def _interrupted_job_dict(rec: dict[str, Any]) -> dict[str, Any]:
+    """A jobs.jsonl record (freshly detected as dangling, OR already
+    ``state="interrupted"`` from an earlier construction) rendered in the
+    SAME shape :meth:`Job.to_dict` produces, so the GUI queue panel can
+    render a dangling job with the exact same row renderer as a live one —
+    it is read-only data, never a live :class:`Job` (see
+    :meth:`JobRunner.interrupted`)."""
+    return {
+        "id": rec.get("id"),
+        "kind": rec.get("kind"),
+        "params": rec.get("params_summary"),
+        "state": "interrupted",
+        "progress": None,
+        "error": rec.get("error") or _INTERRUPTED_ERROR,
+        "result": None,
+        "created": None,
+        "started": None,
+        "finished": rec.get("ts"),
+        "retry_of": None,
+        "cancelable": False,
+        "retryable": True,
+    }
+
+
 class JobRunner:
     """One daemon worker thread; submit() returns immediately with a Job."""
 
-    def __init__(self) -> None:
+    def __init__(self, runtime_dir: "Path | str | None" = None) -> None:
+        """``runtime_dir`` (round AA4) is the project's ``.manju`` directory
+        (``Project.runtime_dir`` — threaded in from gui/server.py's
+        construction site). ``None`` (the default — every bare ``JobRunner()``
+        a test constructs, and any server started unbound with no project
+        yet) disables jobs.jsonl persistence entirely: no file is ever
+        written or read, and :meth:`interrupted` always returns ``[]``. This
+        keeps the runner usable standalone (tests, an unbound workspace
+        picker) exactly as before this round."""
         self._queue: "queue.Queue[tuple[Job, Callable[[Job], dict[str, Any]]] | None]" = queue.Queue()
         self._jobs: dict[str, Job] = {}
         self._order: list[str] = []  # insertion order, oldest first
         self._lock = threading.Lock()
         self._rev = 0  # bumps on submit and on completion — cheap change signal
+        self._jobs_log_path: "Path | None" = (
+            Path(runtime_dir) / _JOBS_LOG_FILE if runtime_dir is not None else None
+        )
+        self._persist_lock = threading.Lock()
+        # goal: interrupted-job honesty — computed ONCE at construction, from
+        # whatever jobs.jsonl says about the PREVIOUS process's queue. Never
+        # touches self._jobs (these are not live Jobs — see interrupted()).
+        self._interrupted: list[dict[str, Any]] = self._scan_interrupted()
         self._worker = threading.Thread(target=self._run, name="manju-gui-jobs", daemon=True)
         self._worker.start()
 
@@ -122,6 +236,9 @@ class JobRunner:
             self._order.append(job.id)
             self._rev += 1
             self._trim_locked()
+        # persisted BEFORE the job is even queued for execution, so the
+        # "queued" line in jobs.jsonl always precedes its own "running" line.
+        self._persist(job)
         self._queue.put((job, fn))
         return job
 
@@ -133,15 +250,17 @@ class JobRunner:
           spends anything.
         - **running**: the cancel flag is set and the state moves to
           ``canceling``; the job's own work function observes the flag at
-          ITS checkpoints (today: ``run_build(should_cancel=...)``) and
-          unwinds honestly, landing on ``canceled``. Cancellation is
-          cooperative, never forced — a work function that does not check
-          the flag simply finishes on its own (lands on ``done``/``failed``
-          as usual; the cancel request had no effect beyond being recorded).
+          ITS checkpoints (today: ``run_build(should_cancel=...)`` and every
+          batch kind's between-item checkpoint) and unwinds honestly,
+          landing on ``canceled``. Cancellation is cooperative, never forced
+          — a work function that does not check the flag simply finishes on
+          its own (lands on ``done``/``failed`` as usual; the cancel request
+          had no effect beyond being recorded).
         - **already terminal** (done/failed/canceled) or **unknown id**: a
           no-op — returns the job (or ``None`` for an unknown id) unchanged,
           so a stale double-click from the UI is harmless.
         """
+        changed = False
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -151,11 +270,15 @@ class JobRunner:
                 job.error = "已取消:排队中被取消,从未运行,未产生任何花费"
                 job.finished = _now()
                 self._rev += 1
+                changed = True
             elif job.state == "running":
                 job.cancel_event.set()
                 job.state = "canceling"
                 self._rev += 1
-            return job
+                changed = True
+        if changed:  # a no-op cancel (already terminal) writes no extra line
+            self._persist(job)
+        return job
 
     def revision(self) -> int:
         with self._lock:
@@ -169,6 +292,22 @@ class JobRunner:
         """Newest first — what the UI shows."""
         with self._lock:
             return [self._jobs[i] for i in reversed(self._order)]
+
+    def interrupted(self) -> list[dict[str, Any]]:
+        """Jobs a PAST GUI process left dangling — non-terminal (queued/
+        running/canceling) the moment this process's jobs.jsonl tail was last
+        written, meaning the previous process died (crash or plain restart)
+        before that job ever reached done/failed/canceled. Its real outcome
+        (did the ffmpeg encode finish? did the provider call land?) is
+        genuinely unknown — see :data:`_INTERRUPTED_ERROR`.
+
+        Computed ONCE at construction (see :meth:`_scan_interrupted`); these
+        are read-only, :meth:`Job.to_dict`-shaped dicts, NOT live
+        :class:`Job` objects — they are never resurrected into the runnable
+        queue (cancel()/get() do not see them; a "retry" on one goes through
+        the GUI's normal per-kind retry path, which re-submits fresh with the
+        recorded params — see gui/server.py's ``_act_jobs_retry``)."""
+        return list(self._interrupted)
 
     def busy(self) -> bool:
         with self._lock:
@@ -192,10 +331,13 @@ class JobRunner:
                     # goal A: canceled while still queued (cancel() ran
                     # before the worker dequeued it) — it never runs, so
                     # there is nothing to unwind and nothing was spent.
+                    # cancel() already persisted this transition; no second
+                    # line needed here.
                     continue
                 job.state = "running"
                 job.started = _now()
                 self._rev += 1  # queued->running must move the fingerprint too
+            self._persist(job)
             try:
                 job.result = fn(job)
                 # goal A: some engine calls (build/graph.py: run_build) never
@@ -227,6 +369,7 @@ class JobRunner:
                 job.finished = _now()
                 with self._lock:
                     self._rev += 1
+            self._persist(job)
 
     def _trim_locked(self) -> None:
         """Drop the oldest FINISHED jobs beyond the cap (never active ones)."""
@@ -238,3 +381,124 @@ class JobRunner:
                     break
             else:  # everything active (absurd, but never spin)
                 return
+
+    # ------------------------------------------------------- jobs.jsonl (AA4)
+
+    def _persist(self, job: Job) -> None:
+        """Append one jobs.jsonl transition line for ``job``'s CURRENT state
+        — called at submit/start/cancel/finish. Best-effort: a disk hiccup
+        must never break the in-memory job queue (mirrors
+        ``core.events.append_event``'s stance, just scoped to this process's
+        disposable operational history rather than the durable collaboration
+        log — see the module docstring)."""
+        if self._jobs_log_path is None:
+            return
+        record = {
+            "ts": _now(),
+            "id": job.id,
+            "kind": job.kind,
+            "state": job.state,
+            "params_summary": _summarize_params(job.params),
+            "error": job.error,
+        }
+        self._append_records([record])
+
+    def _append_records(self, records: list[dict[str, Any]]) -> None:
+        if self._jobs_log_path is None or not records:
+            return
+        try:
+            with self._persist_lock:
+                self._jobs_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self._jobs_log_path, "a", encoding="utf-8") as f:
+                    for rec in records:
+                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+        except OSError:
+            pass  # operational history only — never blocks a job (module docstring)
+
+    def _rewrite_log(self, records: list[dict[str, Any]]) -> None:
+        """Cap/rotate: replace jobs.jsonl with exactly ``records`` (the newest
+        :data:`_JOBS_LOG_CAP` lines) — see the module docstring for why a
+        plain startup rewrite is enough for this single-process log."""
+        if self._jobs_log_path is None:
+            return
+        try:
+            self._jobs_log_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._jobs_log_path.with_name(self._jobs_log_path.name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                for rec in records:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            os.replace(tmp, self._jobs_log_path)
+        except OSError:
+            pass  # a rotation hiccup must never block GUI startup
+
+    def _scan_interrupted(self) -> list[dict[str, Any]]:
+        """On construction: read jobs.jsonl, cap it to the newest
+        :data:`_JOBS_LOG_CAP` lines (rewriting the file if it was longer),
+        then find every job id whose LAST record is still non-terminal — a
+        previous GUI process died with that job queued/running/canceling.
+
+        Each freshly-found dangling job gets exactly ONE synthetic
+        ``state="interrupted"`` record appended to jobs.jsonl, so a LATER
+        construction (another GUI restart) recognizes it as already-flagged
+        and does not append a second one — but it STILL surfaces in this
+        construction's return value (and every later one, via the
+        ``elif`` branch below), so the job stays visible in the queue panel
+        across restarts until the user retries/dismisses it, rather than
+        silently vanishing after the first restart that notices it."""
+        if self._jobs_log_path is None or not self._jobs_log_path.exists():
+            return []
+        try:
+            raw_lines = self._jobs_log_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+
+        records: list[dict[str, Any]] = []
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # a torn write must not brick the scan (mirrors events.py)
+
+        if len(records) > _JOBS_LOG_CAP:
+            records = records[-_JOBS_LOG_CAP:]
+            self._rewrite_log(records)
+
+        last_by_id: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for rec in records:
+            jid = rec.get("id")
+            if not jid:
+                continue
+            if jid not in last_by_id:
+                order.append(jid)
+            last_by_id[jid] = rec
+
+        interrupted: list[dict[str, Any]] = []
+        new_records: list[dict[str, Any]] = []
+        for jid in order:
+            rec = last_by_id[jid]
+            state = rec.get("state")
+            if state in ("queued", "running", "canceling"):
+                synth = {
+                    "ts": _now(),
+                    "id": jid,
+                    "kind": rec.get("kind"),
+                    "state": "interrupted",
+                    "params_summary": rec.get("params_summary"),
+                    "error": _INTERRUPTED_ERROR,
+                }
+                interrupted.append(_interrupted_job_dict(synth))
+                new_records.append(synth)
+            elif state == "interrupted":
+                interrupted.append(_interrupted_job_dict(rec))
+            # any other terminal state (done/failed/canceled) -> not dangling,
+            # nothing to surface.
+
+        if new_records:
+            self._append_records(new_records)
+        return interrupted

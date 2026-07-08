@@ -41,7 +41,7 @@ import subprocess
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -519,7 +519,8 @@ def series_characters(series: Series) -> dict[str, Any]:
 
 def sync_bible(series: Series, *, apply: bool = False,
                force: list[str] | set[str] | None = None,
-               actor: str = "human") -> dict[str, Any]:
+               actor: str = "human",
+               should_cancel: "Callable[[], bool] | None" = None) -> dict[str, Any]:
     """Conservative, explicit series-bible → episode-bible sync (truth-is-text).
 
     For every series-bible entry, per episode:
@@ -533,6 +534,13 @@ def sync_bible(series: Series, *, apply: bool = False,
     (core/locks bible tier — see :func:`_locked_conflicts`); otherwise the force
     is REFUSED and reported. ``apply=False`` (default) is a pure report — nothing
     is written. Every applied change (add or forced overwrite) lands an event.
+
+    ``should_cancel`` (goal: honest job cancellation, GUI-jobs-runner only —
+    ``None``, the default, keeps every CLI call byte-identical) is checked
+    BETWEEN two episodes — a many-episode series syncing/writing several
+    bible files per episode is genuinely multi-second. A trip never touches
+    the episode it is currently on; every episode already appended to
+    ``episodes`` (and, on ``apply=True``, already written) stays as-is.
     """
     force_set = _normalize_force(force)
     forced_used: set[str] = set()
@@ -541,8 +549,12 @@ def sync_bible(series: Series, *, apply: bool = False,
 
     episodes: list[dict[str, Any]] = []
     totals = {"added": 0, "diverged": 0, "overwritten": 0, "refused": 0, "in_sync": 0}
+    canceled = False
 
     for ref in config.episodes:
+        if should_cancel is not None and should_cancel():
+            canceled = True
+            break
         ep_report: dict[str, Any] = {
             "id": ref.id, "title": ref.title, "error": None,
             "added": [], "diverged": [], "overwritten": [], "refused": [], "in_sync": 0,
@@ -599,11 +611,24 @@ def sync_bible(series: Series, *, apply: bool = False,
 
         episodes.append(ep_report)
 
+    errors: list[str] = []
+    if canceled:
+        remaining = len(config.episodes) - len(episodes)
+        errors.append(
+            f"已取消:{len(episodes)}/{len(config.episodes)} 集已检查"
+            + ("并写入" if apply else "")
+            + f"(已处理的分集不受影响),剩余 {remaining} 集未处理"
+        )
     return {
         "apply": apply,
         "totals": totals,
         "episodes": episodes,
         "unused_force": sorted(force_set - forced_used),
+        # goal: honest job cancellation — mirrors BuildResult/BatchResult's
+        # canceled/errors shape (see build/graph.py) so gui/jobs.py's
+        # JobRunner can generically recognize this dict result as "canceled".
+        "canceled": canceled,
+        "errors": errors,
         "note": (
             "保守同步:缺失→可新增;不同→只报告 DIVERGED(绝不自动覆盖),需 "
             "--force kind:id 显式覆盖;分集条目若有 core/locks 值锁且被覆盖字段会变则拒绝。"

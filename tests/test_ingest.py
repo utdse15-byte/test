@@ -861,8 +861,11 @@ def test_gui_upload_plan_apply_roundtrip(gui, tmp_project, add_shot):
                                 {"X-Manju-Token": gui.token})
     assert status == 200 and data["ok"] is True
 
-    status, plan = _post(gui, "/api/ingest/plan", {"batch": "b1"})
-    assert status == 200
+    status, data = _post(gui, "/api/ingest/plan", {"batch": "b1"})
+    assert status == 202  # round AA4: plan hashing now runs on the jobs runner
+    plan_job = _poll_job(gui, data["job"]["id"])
+    assert plan_job["state"] == "done"
+    plan = plan_job["result"]
     assert plan["rows"][0]["action"] == "take" and plan["rows"][0]["shot_id"] == "S001"
 
     status, applied = _post(gui, "/api/ingest/apply", {"batch": "b1"})
@@ -878,8 +881,10 @@ def test_gui_upload_plan_apply_roundtrip(gui, tmp_project, add_shot):
 def test_gui_apply_respects_overrides(gui, tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     _raw_upload(gui, "b2", "unnamed.mp4", b"vid-bytes", {"X-Manju-Token": gui.token})
-    status, plan = _post(gui, "/api/ingest/plan", {"batch": "b2"})
-    assert plan["rows"][0]["action"] == "import"
+    status, data = _post(gui, "/api/ingest/plan", {"batch": "b2"})
+    assert status == 202  # round AA4: plan hashing now runs on the jobs runner
+    plan_job = _poll_job(gui, data["job"]["id"])
+    assert plan_job["result"]["rows"][0]["action"] == "import"
 
     status, applied = _post(gui, "/api/ingest/apply", {
         "batch": "b2", "overrides": {"0": {"action": "take", "id": "S001"}},

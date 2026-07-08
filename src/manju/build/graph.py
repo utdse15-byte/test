@@ -1485,6 +1485,16 @@ class BatchResult:
     estimated_cost: float = 0.0
     actual_cost: float = 0.0
     currency: str | None = None
+    # goal: honest job cancellation — a should_cancel() checkpoint tripped
+    # BETWEEN two shots of the batch (see _redo_batch_locked/_voice_batch_locked
+    # below). Mirrors BuildResult's canceled/errors shape (build/graph.py) so
+    # gui/jobs.py's JobRunner can generically recognize a dict result as
+    # "canceled" (it only ever checks these two keys, kind-agnostically). Every
+    # shot already in ``ran`` before the trip keeps its take(s) — a batch redo/
+    # voice is append-only, so a partial run is never a partial CORRUPTION,
+    # just fewer shots than requested.
+    canceled: bool = False
+    errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
@@ -1564,7 +1574,8 @@ def redo_batch(project: Project, shots: list[str] | None = None, *,
                all_stale: bool = False, all_missing: bool = False,
                all_shots: bool = False, candidates: int | None = None,
                provider: str | None = None, seed: int | None = None,
-               actor: str = "engine", assume_yes: bool = False) -> BatchResult:
+               actor: str = "engine", assume_yes: bool = False,
+               should_cancel: "Callable[[], bool] | None" = None) -> BatchResult:
     """`manju redo --all-stale` / `--all-missing` / `--all` / `--shots S001,S003`
     — regenerate many shots under ONE build lock and ONE spend gate.
 
@@ -1587,6 +1598,16 @@ def redo_batch(project: Project, shots: list[str] | None = None, *,
     are isolated: one provider failure lands that shot in
     :attr:`BatchResult.failed` and the rest still generate.
 
+    ``should_cancel`` (goal: honest job cancellation) is checked BETWEEN two
+    shots' generation — the same "between per-item" checkpoint shape as
+    :func:`run_build`'s per-shot loop — so a GUI cancel click stops the batch
+    from starting its NEXT shot while whatever is already generating finishes
+    normally. Every shot already landed in ``ran`` before the trip keeps its
+    take (append-only, §3) — the batch just stops early, honestly reported via
+    :attr:`BatchResult.canceled`/``errors``. ``None`` (no GUI job wired a
+    cancel flag, e.g. every CLI call) never checks anything — byte-identical
+    to before this parameter existed.
+
     (There is deliberately no batch *select* — see this module's batch section.)
     """
     mode = _selector_mode(shots, all_stale, all_missing, all_shots)  # validate first
@@ -1595,12 +1616,14 @@ def redo_batch(project: Project, shots: list[str] | None = None, *,
     with build_lock(project.root, actor=actor):  # ONE hold for the whole batch
         return _redo_batch_locked(
             project, mode, list(shots or []), candidates=candidates,
-            provider=provider, seed=seed, actor=actor, assume_yes=assume_yes)
+            provider=provider, seed=seed, actor=actor, assume_yes=assume_yes,
+            should_cancel=should_cancel)
 
 
 def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
                        candidates: int | None, provider: str | None,
-                       seed: int | None, actor: str, assume_yes: bool) -> BatchResult:
+                       seed: int | None, actor: str, assume_yes: bool,
+                       should_cancel: "Callable[[], bool] | None" = None) -> BatchResult:
     rules = project.load_rules()
     bible = project.load_bible()
     by_id = {s.shot_id: s for s in evaluate_all(project)}
@@ -1660,6 +1683,17 @@ def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
 
     # generate — per-shot error isolation: one failure never aborts the rest
     for sid in run_ids:
+        # goal: honest job cancellation — checked BEFORE this shot starts, so
+        # a trip never kills a generation already in flight, only stops the
+        # NEXT one from starting (mirrors run_build's per-shot checkpoint).
+        if should_cancel is not None and should_cancel():
+            result.canceled = True
+            remaining = len(run_ids) - len(result.ran) - len(result.failed)
+            result.errors.append(
+                f"已取消:{len(result.ran)}/{len(run_ids)} 个镜头已生成并保留"
+                f"(append-only,已产出的 take 不受影响),{remaining} 个镜头未开始"
+            )
+            break
         try:
             result.takes[sid] = _run_redo(project, plans[sid], bible=bible,
                                           rules=rules, actor=actor)
@@ -1675,6 +1709,7 @@ def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
         "skipped": [s["shot"] for s in result.skipped],
         "failed": [f["shot"] for f in result.failed],
         "estimated_cost": result.estimated_cost,
+        "canceled": result.canceled,
     })
     return result
 
@@ -1712,7 +1747,8 @@ def _voice_selector_mode(shots, all_shots: bool, missing: bool) -> str:
 def voice_batch(project: Project, shots: list[str] | None = None, *,
                 all_shots: bool = False, missing: bool = False,
                 provider: str | None = None, actor: str = "engine",
-                assume_yes: bool = False) -> BatchResult:
+                assume_yes: bool = False,
+                should_cancel: "Callable[[], bool] | None" = None) -> BatchResult:
     """`manju voice --all` / `--missing` / `--shots S001,S003` — synthesize many
     voice takes under ONE build lock and ONE spend gate (the redo shape, applied
     to sound).
@@ -1727,18 +1763,22 @@ def voice_batch(project: Project, shots: list[str] | None = None, *,
 
     One aggregated §8.3 gate on the per_call total raises :class:`WaitingUser`
     unless ``assume_yes``; per-shot synthesis errors are isolated into
-    :attr:`BatchResult.failed`."""
+    :attr:`BatchResult.failed`. ``should_cancel`` (goal: honest job
+    cancellation) is checked between two shots' synthesis — see
+    :func:`redo_batch`'s docstring for the exact same checkpoint shape."""
     mode = _voice_selector_mode(shots, all_shots, missing)
     from ..runtime.buildlock import build_lock
 
     with build_lock(project.root, actor=actor):
         return _voice_batch_locked(project, mode, list(shots or []),
-                                   provider=provider, actor=actor, assume_yes=assume_yes)
+                                   provider=provider, actor=actor, assume_yes=assume_yes,
+                                   should_cancel=should_cancel)
 
 
 def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
                         provider: str | None, actor: str,
-                        assume_yes: bool) -> BatchResult:
+                        assume_yes: bool,
+                        should_cancel: "Callable[[], bool] | None" = None) -> BatchResult:
     from ..providers.tts import TtsUnavailable, get_tts_provider, tts_providers
     from .voice import VoiceState, evaluate_all_voices
 
@@ -1807,6 +1847,16 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
     bible = project.load_bible()
     tts = get_tts_provider(provider_id)
     for sid in to_run:
+        # goal: honest job cancellation — same "before the next item" checkpoint
+        # as redo_batch above.
+        if should_cancel is not None and should_cancel():
+            result.canceled = True
+            remaining = len(to_run) - len(result.ran) - len(result.failed)
+            result.errors.append(
+                f"已取消:{len(result.ran)}/{len(to_run)} 个镜头已配音并保留"
+                f"(append-only,已产出的 take 不受影响),{remaining} 个镜头未开始"
+            )
+            break
         try:
             media = tts.synthesize(project, project.load_shot(sid), bible)
             result.takes[sid] = [media.stem]
@@ -1829,6 +1879,7 @@ def _voice_event(mode: str, result: BatchResult) -> dict[str, Any]:
         "skipped": [s["shot"] for s in result.skipped],
         "failed": [f["shot"] for f in result.failed],
         "estimated_cost": result.estimated_cost,
+        "canceled": result.canceled,
     }
 
 

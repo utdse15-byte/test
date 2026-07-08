@@ -527,6 +527,21 @@ _SERIES_JS = r"""
   }
   function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
 
+  // round AA4: 新建集 / sync-bible apply now run on the jobs runner
+  // (Project.create scaffolding / per-episode bible writes are genuinely
+  // multi-second) — same submit+poll shape every other page uses.
+  function pollJob(jobId, tries) {
+    tries = tries || 0;
+    return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
+      var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
+      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (tries > 600) return job || null;
+      return new Promise(function (res) { setTimeout(res, 100); }).then(function () {
+        return pollJob(jobId, tries + 1);
+      });
+    });
+  }
+
   function doCopy(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
@@ -542,33 +557,66 @@ _SERIES_JS = r"""
     var eidEl = document.getElementById("sr-new-eid");
     var titleEl = document.getElementById("sr-new-title");
     var out = document.getElementById("sr-new-result");
+    var btn = document.getElementById("sr-new-btn");
     var eid = (eidEl.value || "").trim();
     var title = (titleEl.value || "").trim();
     if (!eid) { toast("请填写集号 eid", false); return; }
+    if (btn) btn.disabled = true;
+    if (out) out.textContent = "新建中…";
     post("/api/series/new-episode", { eid: eid, title: title }).then(function (res) {
-      if (res.status === 200) {
-        toast("已新建 " + eid, true);
-        if (out) out.textContent = "已新建 → " + (res.data.dir || eid);
-        reloadSoon();
-      } else {
+      if (res.status !== 202 || !res.data.job) {
+        if (btn) btn.disabled = false;
         if (out) out.textContent = (res.data && res.data.error) || "失败";
         toast((res.data && res.data.error) || "失败", false);
+        return;
       }
+      pollJob(res.data.job.id).then(function (job) {
+        if (btn) btn.disabled = false;
+        if (!job) { toast("新建超时", false); return; }
+        if (job.state === "done") {
+          var result = job.result || {};
+          toast("已新建 " + eid, true);
+          if (out) out.textContent = "已新建 → " + (result.dir || eid);
+          reloadSoon();
+        } else {
+          if (out) out.textContent = job.error || "失败";
+          toast(job.error || "失败", false);
+        }
+      });
     });
   }
 
   function doSyncApply() {
     var out = document.getElementById("sr-sync-result");
+    var btn = document.getElementById("sr-sync-apply-btn");
+    if (btn) btn.disabled = true;
+    if (out) out.textContent = "同步中…";
     post("/api/series/sync-bible/apply", {}).then(function (res) {
-      if (res.status === 200) {
-        var t = res.data.totals || {};
-        if (out) out.textContent = "已应用:新增 " + (t.added || 0) + " 条(分歧条目未改动)";
-        toast("同步已应用", true);
-        reloadSoon();
-      } else {
+      if (res.status !== 202 || !res.data.job) {
+        if (btn) btn.disabled = false;
         if (out) out.textContent = (res.data && res.data.error) || "失败";
         toast((res.data && res.data.error) || "失败", false);
+        return;
       }
+      pollJob(res.data.job.id).then(function (job) {
+        if (btn) btn.disabled = false;
+        if (!job) { toast("同步超时", false); return; }
+        if (job.state === "done") {
+          var result = job.result || {};
+          var t = result.totals || {};
+          if (result.canceled) {
+            if (out) out.textContent = (result.errors && result.errors[0]) || "同步已取消";
+            toast((result.errors && result.errors[0]) || "同步已取消", false);
+          } else {
+            if (out) out.textContent = "已应用:新增 " + (t.added || 0) + " 条(分歧条目未改动)";
+            toast("同步已应用", true);
+          }
+          reloadSoon();
+        } else {
+          if (out) out.textContent = job.error || "失败";
+          toast(job.error || "失败", false);
+        }
+      });
     });
   }
 

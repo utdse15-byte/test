@@ -289,13 +289,32 @@ _INGEST_JS = r"""
 
   function doPlan() {
     var rs = currentRoleShot();
+    var planBtn = document.getElementById("ing-plan-btn");
+    if (planBtn) planBtn.disabled = true;
+    // round AA4: /api/ingest/plan now hashes the batch on the jobs runner
+    // (a large batch of big video files is genuinely multi-second) — submit
+    // + poll, same shape as doApply() below.
     post("/api/ingest/plan", { batch: batchId, role: rs.role, shot: rs.shot }).then(function (res) {
-      if (res.status === 200) {
-        renderTable(res.data);
-        toast("计划已生成 · " + (res.data.rows || []).length + " 项", true);
-      } else {
-        toast(res.data.error || "生成计划失败", false);
+      if (res.status !== 202 || !res.data.job) {
+        if (planBtn) planBtn.disabled = false;
+        toast((res.data && res.data.error) || "生成计划失败", false);
+        return;
       }
+      pollJob(res.data.job.id).then(function (job) {
+        if (planBtn) planBtn.disabled = false;
+        if (!job) { toast("生成计划超时", false); return; }
+        if (job.state === "done") {
+          var plan = job.result || {};
+          renderTable(plan);
+          if (plan.canceled) {
+            toast((plan.errors && plan.errors[0]) || "计划已取消", false);
+          } else {
+            toast("计划已生成 · " + (plan.rows || []).length + " 项", true);
+          }
+        } else {
+          toast(job.error || "生成计划失败", false);
+        }
+      });
     });
   }
 
