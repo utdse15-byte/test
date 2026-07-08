@@ -170,11 +170,19 @@ of reconciling coverage against the source list back-to-front. Fixed in round Y:
 
 ### Standing design debt (documented, NOT claimed fixed)
 
-- **#5 cross-process locking on GUI/MCP mutating handlers** — real; the unified
-  `select_take_checked` write and the CLI mutating commands take the
-  cross-process build lock, but most GUI handlers and several MCP tools still
-  rely only on the in-process mutex. A future round should route them through a
-  shared cross-process write guard. NOT counted as fixed.
+- **#5 cross-process locking on GUI/MCP mutating handlers** — CLOSED in round Z
+  (agent ZA audit): all ~76 GUI POST handlers, 24 MCP tools and 8 board actions
+  classified (already-locked / pure-read / light-writer); 27 light-writers now
+  acquire the fail-fast build_lock (11 at the shared `_gated_save` choke point,
+  16 individually; board rollback/qc/package/export and MCP update_shot/export
+  had zero coverage before). Lock order: in-process mutex outer → build_lock
+  inner, everywhere. BuildLocked surfaces as the same 409 busy shape on all
+  three servers. TWO honestly-flagged residuals remain OPEN (engine-level, not
+  handler wraps): `series sync-bible/new-episode` write bible files across
+  MULTIPLE episode projects (needs per-episode locking inside core/series.py),
+  and `director execute` dispatches a mix of already-locked and unlocked action
+  types (needs a per-action-type fix inside build/director.py — a blanket wrap
+  would self-deadlock the locked ones).
 - **#6 rate_limit_per_min** — best-effort interval throttle in generic_cloud,
   NOT a precise cross-process token bucket. `max_concurrent` IS hard-enforced.
 - **#7 budget is a soft limit** — accepted design; the trip message is honest
