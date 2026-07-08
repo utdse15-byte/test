@@ -174,3 +174,37 @@ def test_status_surfaces_pending_jobs(tmp_project):
         state.open_job("job_9", provider="video_x", shot="S001")
     info = project_status(tmp_project)
     assert info["run_log"]["pending_jobs"] == 1
+
+
+def test_status_never_sums_across_currencies(tmp_project, add_shot, monkeypatch):
+    """Goal 79: mixing 10 CNY + 2 USD must never render as a single
+    currency-mislabeled number (e.g. "12 USD" just because the last take
+    processed happened to be USD) — status groups per currency and only
+    collapses to a single total_cost/currency when there is exactly one."""
+    from manju.core.models import RemoteJobInfo, TakeSidecar
+    from manju.build.status import project_status
+
+    # force the sidecar fallback path (no ledger rows) so this exercises the
+    # sidecar-derived currency grouping specifically.
+    monkeypatch.setattr(
+        "manju.runtime.state.RuntimeState.count_runs", lambda self: 0)
+
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    media1 = tmp_project.root / "m1.mp4"
+    media1.write_bytes(b"x")
+    media2 = tmp_project.root / "m2.mp4"
+    media2.write_bytes(b"y")
+    tmp_project.register_take(
+        "S001", media1,
+        TakeSidecar(provider="cloud_a", spec_hash="h",
+                   remote=RemoteJobInfo(job_id="j1", cost=10.0, currency="CNY")))
+    tmp_project.register_take(
+        "S002", media2,
+        TakeSidecar(provider="cloud_b", spec_hash="h",
+                   remote=RemoteJobInfo(job_id="j2", cost=2.0, currency="USD")))
+
+    info = project_status(tmp_project)
+    assert info["currency"] is None  # never a specific (wrong) currency when mixed
+    by_currency = {c["currency"]: c["cost"] for c in info["spend_by_currency"]}
+    assert by_currency == {"CNY": 10.0, "USD": 2.0}

@@ -42,18 +42,38 @@ def project_status(project: Project) -> dict[str, Any]:
     except Exception:
         pass  # voice summary is advisory
 
-    total_cost = 0.0
-    currency = config.budget.currency
+    # goal 79: NEVER sum across currencies into one silently-mislabeled number
+    # — group per currency first (sidecar_by_currency), then derive the
+    # single-number total_cost/currency fields ONLY when there is exactly one
+    # currency in play (kept for backward-compat callers); a genuinely mixed
+    # ledger sets currency=None rather than whatever the LAST take happened
+    # to carry (the actual bug: the old loop overwrote `currency` on every
+    # iteration regardless of whether it matched the running total).
+    sidecar_totals: dict[str | None, float] = {}
     for st in statuses:
         for take in project.takes(st.shot_id):
-            if take.sidecar.remote and take.sidecar.remote.cost:
-                total_cost += take.sidecar.remote.cost
-                currency = take.sidecar.remote.currency
+            remote = take.sidecar.remote
+            if remote and remote.cost:
+                sidecar_totals[remote.currency] = (
+                    sidecar_totals.get(remote.currency, 0.0) + float(remote.cost))
+    sidecar_by_currency = [
+        {"currency": cur, "cost": round(cost, 6)}
+        for cur, cost in sorted(sidecar_totals.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    if len(sidecar_by_currency) == 1:
+        total_cost = sidecar_by_currency[0]["cost"]
+        currency = sidecar_by_currency[0]["currency"]
+    elif sidecar_by_currency:  # genuinely mixed -> a raw sum is not a real number
+        total_cost = sum(c["cost"] for c in sidecar_by_currency)
+        currency = None
+    else:
+        total_cost = 0.0
+        currency = config.budget.currency
 
     # Run ledger snapshot (§8.3), best-effort — the SQLite state is disposable
     # (§3), so any failure degrades to an "unavailable" marker, never an error.
     run_log_info: dict[str, Any] = {
-        "runs": 0, "total_cost": 0.0, "currency": None,
+        "runs": 0, "total_cost": 0.0, "currency": None, "by_currency": [],
         "note": "state.sqlite unavailable",
     }
     try:
@@ -65,6 +85,9 @@ def project_status(project: Project) -> dict[str, Any]:
                 "runs": state.count_runs(),  # COUNT(*), not len() over fetched rows
                 "total_cost": float(total),
                 "currency": cur,
+                # goal 79: the honest per-currency breakdown — never merges
+                # 10 CNY + 2 USD into one meaningless "12".
+                "by_currency": state.total_cost_by_currency(),
                 # in-flight cloud jobs: the resume-polling queue (§8.1) — the
                 # one runtime-only state, so surface it at the takeover entry
                 "pending_jobs": len(state.pending_jobs()),
@@ -76,8 +99,8 @@ def project_status(project: Project) -> dict[str, Any]:
     # §3 rebuild source and the fallback when the ledger has no runs yet.
     if run_log_info.get("runs"):
         total_cost = run_log_info["total_cost"]
-        if run_log_info.get("currency"):
-            currency = run_log_info["currency"]
+        currency = run_log_info["currency"]
+        sidecar_by_currency = run_log_info.get("by_currency") or sidecar_by_currency
 
     # Process build lock (R2): the takeover entry point must say when the OTHER
     # party (or a crashed run) holds the mutating build right now. Read-only
@@ -159,6 +182,9 @@ def project_status(project: Project) -> dict[str, Any]:
         "qc": qc_summary,
         "total_cost": total_cost,
         "currency": currency,
+        # goal 79: the honest breakdown — display ALL currencies present
+        # (e.g. "12 CNY + 2 USD") instead of ever merging them into one number.
+        "spend_by_currency": sidecar_by_currency,
         "run_log": run_log_info,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),

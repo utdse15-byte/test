@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -48,20 +50,119 @@ class HttpResponse(NamedTuple):
 # error statuses — status classification is the provider's job, not urllib's.
 Transport = Callable[[str, str, dict[str, str], bytes | None], HttpResponse]
 
+# Network hygiene (goal W, #43/#44/#54): every generic_cloud/tts/asr/comfyui
+# call funnels through THIS one transport by default, so a scheme allowlist
+# and a size cap live in exactly one place and stay consistent everywhere —
+# "unify via one shared helper". Generous default (2 GiB): large video/image
+# results are legitimate; the cap exists to stop an OOM from an unbounded or
+# misbehaving response, not to constrain normal media sizes. Override with
+# MANJU_MAX_DOWNLOAD_BYTES (an int; <=0 disables the cap for the rare
+# legitimately-unbounded job).
+DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+_ALLOWED_URL_SCHEMES = ("http", "https")
+_READ_CHUNK = 65536
+
+
+def _max_response_bytes() -> int | None:
+    override = os.environ.get("MANJU_MAX_DOWNLOAD_BYTES")
+    if override:
+        try:
+            value = int(override)
+        except ValueError:
+            return DEFAULT_MAX_RESPONSE_BYTES
+        return value if value > 0 else None
+    return DEFAULT_MAX_RESPONSE_BYTES
+
+
+def _read_capped(resp, url: str, max_bytes: int | None) -> bytes:
+    """Stream ``resp`` up to ``max_bytes``, refusing (never buffering
+    unbounded) past the cap — the #43 OOM guard: a runaway or hostile
+    response is cut off instead of exhausted into memory."""
+    if max_bytes is None:
+        return resp.read()
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = resp.read(_READ_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"response from {url} exceeded the {max_bytes}-byte cap "
+                "(configurable via MANJU_MAX_DOWNLOAD_BYTES) — refusing to "
+                "buffer further (goal 43, OOM guard)",
+                detail={"url": url, "max_bytes": max_bytes},
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 def default_transport(method: str, url: str, headers: dict[str, str],
                       body: bytes | None) -> HttpResponse:
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        # #43: an unexpected scheme (file://, ftp://, data://…) is refused
+        # BEFORE urlopen ever touches it — never a surprise local-file read or
+        # non-HTTP protocol dial from a manifest/response-supplied URL.
+        raise ProviderFailure(
+            FailureKind.invalid,
+            f"refusing non-http(s) URL scheme {scheme!r}: {url}",
+            detail={"url": url, "scheme": scheme},
+        )
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    max_bytes = _max_response_bytes()
     try:
         with urllib.request.urlopen(request, timeout=60) as resp:
-            return HttpResponse(resp.status, dict(resp.headers), resp.read())
+            return HttpResponse(resp.status, dict(resp.headers),
+                                _read_capped(resp, url, max_bytes))
     except urllib.error.HTTPError as exc:  # still a response — classify upstream
-        return HttpResponse(exc.code, dict(exc.headers or {}), exc.read())
+        return HttpResponse(exc.code, dict(exc.headers or {}),
+                            _read_capped(exc, url, max_bytes))
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ProviderFailure(
             FailureKind.timeout, f"network error calling {url}: {exc}",
             detail={"url": url},
         ) from exc
+
+
+def _write_bytes_atomic(dest: Path, data: bytes) -> None:
+    """Write ``data`` to ``dest`` via temp-file + ``os.replace`` (#43/#44) —
+    a killed process mid-write can never leave a half-written result file at
+    the path the pipeline trusts. Shared by every provider download path
+    (generic_cloud/tts/comfyui) so the durability guarantee is consistent."""
+    import uuid
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f".{dest.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:6]}")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def reject_html_error_page(resp: "HttpResponse", url: str, provider_id: str) -> None:
+    """A "successful" (2xx) download that is actually an HTML/error page — an
+    expired signed URL, a CDN error page, a login wall — must never be written
+    to disk as if it were the promised media (#43/#44/#54). Raises with a
+    short verbatim snippet so the failure is diagnosable from evidence alone;
+    a no-op when the content type is unset or genuinely not HTML."""
+    ctype = (resp.headers.get("Content-Type") or resp.headers.get("content-type") or "").lower()
+    if "text/html" in ctype:
+        snippet = " ".join(resp.text()[:300].split())
+        raise ProviderFailure(
+            FailureKind.provider_error,
+            f"{provider_id}: download from {url} returned text/html instead of "
+            f"media (likely an error page) — snippet: {snippet!r}",
+            detail={"url": url, "content_type": ctype},
+        )
 
 
 def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
@@ -187,6 +288,14 @@ class GenericCloudProvider(CloudProvider):
         self._clock = clock
         self._last_submit: float | None = None
         self._results: dict[str, dict] = {}  # job_id -> last successful poll info
+        # #53: the duration/candidates THIS job was submitted with, so poll()'s
+        # cost fallback (no cost_path in the response) can price per_call +
+        # per_second×duration instead of per_call alone. #8: a lock so
+        # concurrent generate() calls sharing this cached provider instance
+        # can't race _throttle()'s read-sleep-write into a burst that exceeds
+        # rate_limit_per_min.
+        self._submitted: dict[str, dict] = {}
+        self._throttle_lock = threading.Lock()
 
     # ------------------------------------------------------------ plumbing
 
@@ -214,16 +323,24 @@ class GenericCloudProvider(CloudProvider):
         return FailureKind.provider_error
 
     def _throttle(self) -> None:
-        """Engine-side rate limiting (§8.2): we do not rely on remote 429s."""
+        """Engine-side rate limiting (§8.2): we do not rely on remote 429s.
+
+        Goal 8: a lock serializes the read-sleep-write sequence, so concurrent
+        ``generate()`` calls sharing this cached provider instance (goal-14
+        concurrent build) cannot race two near-simultaneous reads of
+        ``_last_submit`` into a burst that exceeds ``rate_limit_per_min`` — a
+        thread waiting on the lock is itself correctly spaced from whoever
+        holds it."""
         per_min = self.manifest.limits.rate_limit_per_min
         if per_min <= 0:
             return
         min_interval = 60.0 / per_min
-        if self._last_submit is not None:
-            wait = min_interval - (self._clock() - self._last_submit)
-            if wait > 0:
-                self._sleep(wait)
-        self._last_submit = self._clock()
+        with self._throttle_lock:
+            if self._last_submit is not None:
+                wait = min_interval - (self._clock() - self._last_submit)
+                if wait > 0:
+                    self._sleep(wait)
+            self._last_submit = self._clock()
 
     # ---------------------------------------------------- CloudProvider API
 
@@ -264,6 +381,12 @@ class GenericCloudProvider(CloudProvider):
                 f"{self.id}: cannot read job id ({exc})",
                 detail={"body": resp.text()[:2000]},
             ) from exc
+        # #53: remember this job's duration for poll()'s cost fallback. #29:
+        # this adapter's submit/poll/download path always returns exactly ONE
+        # result per job (one result_url, one downloaded file) — the fallback
+        # cost is priced for 1, never req.candidates, matching what is
+        # actually produced/billed.
+        self._submitted[str(job_id)] = {"duration_ms": req.duration_ms}
         return str(job_id)
 
     def poll(self, job_id: str) -> tuple[str, dict]:
@@ -316,8 +439,17 @@ class GenericCloudProvider(CloudProvider):
                     info["currency"] = self.manifest.cost.currency
                 except (JsonPathError, TypeError, ValueError):
                     pass
-            if "cost" not in info:  # fall back to the manifest's price sheet
-                info["cost"] = self.manifest.cost.per_call
+            if "cost" not in info:
+                # #53: fall back to the manifest's price sheet using the SAME
+                # per_call + per_second×duration shape estimate_cost() uses —
+                # per_call alone under-reports a per-second-priced provider.
+                # Candidates is always 1 here (#29: this adapter never returns
+                # more than one result per job).
+                sub = self._submitted.get(job_id) or {}
+                duration_s = float(sub.get("duration_ms") or 0) / 1000.0
+                info["cost"] = round(
+                    self.manifest.cost.per_call
+                    + self.manifest.cost.per_second * duration_s, 6)
                 info["currency"] = self.manifest.cost.currency
             self._results[job_id] = info
         return status, info
@@ -339,9 +471,13 @@ class GenericCloudProvider(CloudProvider):
                 f"{self.id}: download failed with HTTP {resp.status}",
                 detail={"url": url},
             )
+        # #43/#44: a 200 that is actually an HTML/error page (expired signed
+        # URL, CDN error page…) must never be written to disk as if it were
+        # the promised media.
+        reject_html_error_page(resp, url, self.id)
         suffix = Path(url.split("?", 1)[0]).suffix or ".mp4"
         dest = Path(dest_dir) / f"result{suffix}"
-        dest.write_bytes(resp.body)
+        _write_bytes_atomic(dest, resp.body)
         return [dest]
 
     # --------------------------------------------------------- refs delivery

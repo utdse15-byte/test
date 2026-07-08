@@ -142,6 +142,29 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
     return _envelope("build", rows, [], saved_cost=result.saved_cost, routing=routing_on)
 
 
+def _priced_shot_for_row(project: Any, shot: Any, explicit: str | None, *,
+                         else_bias: str | None = None):
+    """An in-memory shot copy with ``generation.provider`` pinned to the SAME
+    head that will be shown as the row's provider label (#7): an explicit
+    override wins outright; else routing's resolved head when active; else the
+    untouched shot (static fallback head — byte-identical default). Returns
+    the original ``shot`` when nothing needs to change (no needless copy).
+
+    This is the fix for the review's exact failure mode: ``_redo_plan`` /
+    ``_batch_redo_plan`` showed the routed provider via ``_provider_label``
+    but priced the UNTOUCHED shot — routing.yaml could send a shot to
+    provider B while the estimate still quoted provider A's price."""
+    if explicit:
+        if str(explicit) == getattr(shot.generation, "provider", None):
+            return shot
+        priced = shot.model_copy(deep=True)
+        priced.generation.provider = str(explicit)
+        return priced
+    from ..build.graph import _routed_shot_for_pricing
+
+    return _routed_shot_for_pricing(project, shot, else_bias=else_bias)
+
+
 def _redo_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[str, Any]:
     from ..build.graph import _estimate_shot_cost, _target_duration_ms
 
@@ -151,8 +174,9 @@ def _redo_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[s
     shot = project.load_shot(shot_id)
     rules = project.load_rules()
     dur = _target_duration_ms(project, shot, rules)
-    cost, currency = _estimate_shot_cost(shot, dur)
     explicit = params.get("provider") or None
+    priced_shot = _priced_shot_for_row(project, shot, str(explicit) if explicit else None)
+    cost, currency = _estimate_shot_cost(priced_shot, dur)
     rows = [{
         "shot": shot_id, "kind": "video", "reason": "redo (regenerate take)",
         "provider": _provider_label(project, shot, routing_on,
@@ -213,7 +237,9 @@ def _batch_redo_plan(project: Any, params: dict[str, Any], routing_on: bool) -> 
         try:
             shot = project.load_shot(sid)
             dur = _target_duration_ms(project, shot, rules)
-            cost, currency = _estimate_shot_cost(shot, dur)
+            priced_shot = _priced_shot_for_row(
+                project, shot, str(provider) if provider else None)
+            cost, currency = _estimate_shot_cost(priced_shot, dur)
             prov = _provider_label(project, shot, routing_on,
                                    str(provider) if provider else None)
         except Exception as exc:
@@ -269,7 +295,15 @@ def routing_explain(project: Any, shot_ids: list[str] | None = None, *,
         res = resolve(project, shot, config, else_bias=else_bias)
         why, why_detail = _why(project, shot, res, config)
         dur = _target_duration_ms(project, shot, rules)
-        cost, currency = _estimate_shot_cost(shot, dur)
+        # #7: price the SAME head `res.chosen` reports — reuse this ALREADY
+        # resolved Resolution rather than re-resolving through
+        # _routed_shot_for_pricing, so "chosen" and "estimated_cost" can never
+        # disagree.
+        priced_shot = shot
+        if res.chosen and res.chosen != getattr(shot.generation, "provider", None):
+            priced_shot = shot.model_copy(deep=True)
+            priced_shot.generation.provider = res.chosen
+        cost, currency = _estimate_shot_cost(priced_shot, dur)
         rows.append({
             "shot": sid,
             "tier": getattr(shot, "tier", None),

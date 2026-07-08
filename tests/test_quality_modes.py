@@ -305,9 +305,10 @@ def test_concurrent_generate_deterministic_and_complete():
         time.sleep((10 - idx) * 0.005)
         return {"shot": item["shot"], "actual_cost": 0.0}
 
-    results, tripped, running = _concurrent_generate(
+    results, tripped, running, in_flight_at_trip = _concurrent_generate(
         items, gen_one, max_workers=4, budget_limit=None)
     assert not tripped
+    assert in_flight_at_trip == []  # trip never fired -> nothing to snapshot
     assert set(results) == {it["shot"] for it in items}  # all ran
 
 
@@ -323,12 +324,56 @@ def test_concurrent_generate_budget_trip_stops_new_submissions():
         return {"shot": item["shot"], "actual_cost": 10.0}
 
     # workers=2 so submission is staged; budget 25 trips after ~3 completions
-    results, tripped, running = _concurrent_generate(
+    results, tripped, running, in_flight_at_trip = _concurrent_generate(
         items, gen_one, max_workers=2, budget_limit=25.0)
     assert tripped
     assert running > 25.0
     assert len(submitted) < len(items)          # NEW submissions were stopped
     assert set(results) == set(submitted)       # only submitted shots have results
+    # goal 80: the shot(s) still running the instant the trip fired are named —
+    # they finish and bill regardless of the trip, and did land in `results`.
+    assert set(in_flight_at_trip) <= set(results)
+
+
+def test_concurrent_generate_honors_provider_max_concurrent(monkeypatch):
+    """Goal 8: a manifest declaring max_concurrent=1 never sees more than one
+    IN-FLIGHT call at a time, even though the global pool runs several workers —
+    the per-provider semaphore sits UNDER the global pool."""
+    from manju.providers.manifest import ProviderManifest
+
+    manifest = ProviderManifest.model_validate({
+        "id": "capped", "type": "video", "adapter": "generic_cloud",
+        "capabilities": ["text_to_video"],
+        "submit": {"url": "https://x/v", "body_template": {}, "job_id_path": "$.id"},
+        "poll": {"url": "https://x/v/{job_id}", "status_path": "$.s",
+                 "status_map": {"ok": "succeeded"}},
+        "limits": {"max_concurrent": 1},
+    })
+    import manju.providers.registry as registry_mod
+    monkeypatch.setattr(registry_mod, "get_manifest",
+                        lambda name: manifest if name == "capped" else None)
+
+    items = [{"shot": f"S{i:03d}"} for i in range(1, 6)]
+    concurrent_now = 0
+    max_concurrent_seen = 0
+    lock = threading.Lock()
+
+    def gen_one(item):
+        nonlocal concurrent_now, max_concurrent_seen
+        with lock:
+            concurrent_now += 1
+            max_concurrent_seen = max(max_concurrent_seen, concurrent_now)
+        time.sleep(0.02)
+        with lock:
+            concurrent_now -= 1
+        return {"shot": item["shot"], "actual_cost": 0.0}
+
+    results, tripped, running, _ = _concurrent_generate(
+        items, gen_one, max_workers=4, budget_limit=None,
+        head_provider=lambda it: "capped")
+    assert not tripped
+    assert set(results) == {it["shot"] for it in items}
+    assert max_concurrent_seen == 1  # never more than the manifest's cap
 
 
 # =========================================== SPEND-GATE ORDER UNDER CONCURRENCY
@@ -445,11 +490,16 @@ def test_routing_explain_mode_preview_biases_head(providers_dir, tmp_project, ad
     _write(providers_dir, "acloud", _cloud_manifest("acloud", ["image_to_video"], 0.09))
     _write(providers_dir, "zcloud", _cloud_manifest("zcloud", ["image_to_video"], 0.01))
     _routing(tmp_project, {"strategy": "default"})  # neutral else=fallback
-    add_shot(tmp_project, "S001")
-    base = routing_explain(tmp_project)["rows"][0]["chosen"]
-    speed = routing_explain(tmp_project, mode="speed")["rows"][0]["chosen"]
-    assert base == "acloud"               # plain §8.4 single-capability pick
-    assert speed == "zcloud"              # cheapest bias reorders the head
+    add_shot(tmp_project, "S001", duration=4.0)
+    base_row = routing_explain(tmp_project)["rows"][0]
+    speed_row = routing_explain(tmp_project, mode="speed")["rows"][0]
+    assert base_row["chosen"] == "acloud"   # plain §8.4 single-capability pick
+    assert speed_row["chosen"] == "zcloud"  # cheapest bias reorders the head
+    # goal 7: the COST follows the chosen head too — acloud's estimate must not
+    # leak into the speed-biased row (and vice versa).
+    assert base_row["estimated_cost"] == pytest.approx(4.0 * 0.09)
+    assert speed_row["estimated_cost"] == pytest.approx(4.0 * 0.01)
+    assert base_row["estimated_cost"] != speed_row["estimated_cost"]
 
 
 def test_routing_explain_cli_json(providers_dir, tmp_project, add_shot):

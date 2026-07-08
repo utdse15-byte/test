@@ -312,6 +312,38 @@ def test_cheapest_orders_by_per_second(providers_dir, tmp_project, add_shot):
     assert order.index("cheapcloud") < order.index("dearcloud")
 
 
+def test_cheapest_weighs_per_call_and_duration_not_just_per_second(
+        providers_dir, tmp_project, add_shot):
+    """Goal 30: a high-per-call/low-per-second provider can beat a
+    low-per-call/high-per-second one on a SHORT clip — 'cheapest' must price
+    per_call + per_second × expected_duration, not per_second alone (which
+    would wrongly always prefer the low-per-second provider)."""
+    def _manifest(pid, caps, *, per_call, per_second):
+        m = _cloud_manifest(pid, caps, per_second)
+        m["cost"]["per_call"] = per_call
+        return m
+
+    # flat_fee: 1.0 per call, 0/s -> always 1.0 regardless of duration
+    _write(providers_dir, "flat_fee", _manifest(
+        "flat_fee", ["image_to_video"], per_call=1.0, per_second=0.0))
+    # metered: 0 per call, 0.5/s -> cheaper only once duration exceeds 2s
+    _write(providers_dir, "metered", _manifest(
+        "metered", ["image_to_video"], per_call=0.0, per_second=0.5))
+    write_yaml(tmp_project.root / "timeline" / "routing.yaml", {"strategy": "cheapest"})
+    _reset_cache()
+
+    # a short (1s) shot: metered (0.5) beats flat_fee (1.0)
+    short = add_shot(tmp_project, "S001", duration=1.0)
+    order = routing.resolve(tmp_project, short).order
+    assert order.index("metered") < order.index("flat_fee")
+
+    # a long (10s) shot: flat_fee (1.0) beats metered (5.0) — the per_second-only
+    # ranking this fix replaces would have picked metered first every time.
+    long_shot = add_shot(tmp_project, "S002", duration=10.0)
+    order2 = routing.resolve(tmp_project, long_shot).order
+    assert order2.index("flat_fee") < order2.index("metered")
+
+
 def test_quality_first_priority_list(providers_dir, tmp_project, add_shot):
     _write(providers_dir, "a", _cloud_manifest("a", ["image_to_video"]))
     _write(providers_dir, "b", _cloud_manifest("b", ["image_to_video"]))

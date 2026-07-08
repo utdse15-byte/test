@@ -1941,9 +1941,11 @@ _EDIT_JS = r"""
       var pl = res.data;
       if (!pl.supported) { toast(pl.advisory || "无法补拍手柄", false); return; }
       var msg = "补拍手柄:加长到 " + pl.extended_ms + "ms 后回裁,预估 "
-        + (pl.estimated_cost || 0) + " " + (pl.currency || "") + "。继续?";
+        + (pl.estimated_cost || 0) + " " + (pl.currency || "") + "(供应商 "
+        + (pl.provider || "?") + ")。继续?";
       if (!window.confirm(msg)) return;
-      post("/api/edit/handle-rebuild", { shot: seamState.out, assume_yes: true })
+      post("/api/edit/handle-rebuild",
+        { shot: seamState.out, assume_yes: true, provider: pl.provider })
         .then(function (r2) {
           if (r2.status !== 202) { toast(errText(r2), false); return; }
           toast("补拍手柄排队…", true);

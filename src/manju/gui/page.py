@@ -2589,7 +2589,7 @@ _JS = r"""
       voice.addEventListener("click", () =>
         showPlanModal("voice", { shot: shot.id }, {
           title: "配音前计划 (plan before voice) · " + shot.id,
-          onConfirm: () => post(voice, "/api/voice", { shot: shot.id },
+          onConfirm: () => post(voice, "/api/voice", { shot: shot.id, assume_yes: true },
             shot.id + " 配音已入队 (voice queued)"),
         }));
       acts.appendChild(voice);

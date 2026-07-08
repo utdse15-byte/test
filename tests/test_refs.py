@@ -580,6 +580,31 @@ def test_encode_multipart_roundtrip_shape():
     assert body.rstrip().endswith(f"--{boundary}--".encode())
 
 
+def test_encode_multipart_sanitizes_hostile_filename():
+    """Goal 44: a filename carrying quotes/CR/LF must never reach the
+    Content-Disposition header raw — it could terminate the filename
+    attribute early or inject extra header/body content."""
+    hostile = 'evil".jpg\r\nX-Injected: yes\r\n\r\n--boundary'
+    ct, body = encode_multipart({}, [("image", hostile, b"XYZ")])
+    text = body.decode("utf-8", errors="replace")
+    lines = text.split("\r\n")
+    disposition = next(ln for ln in lines if ln.startswith("Content-Disposition"))
+    # the CRLFs that would have split the hostile string into a real injected
+    # "X-Injected: yes" header line are gone — it survives only as inert text
+    # fused into the single filename attribute, never its own header line.
+    assert not any(ln.strip() == "X-Injected: yes" for ln in lines)
+    # the double quote is stripped too, so filename="" still closes cleanly
+    # right after the (sanitized) filename value, not mid-string.
+    assert disposition.count('"') == 4  # name="image"  filename="...&lt;one close&gt;"
+
+    # an all-hostile filename (nothing printable survives) falls back to a
+    # generated safe name rather than an empty filename="" attribute.
+    ct2, body2 = encode_multipart({}, [("image", '"\r\n\r\n', b"XYZ")])
+    text2 = body2.decode("utf-8", errors="replace")
+    assert 'filename=""' not in text2
+    assert "filename=\"upload-" in text2
+
+
 def test_refset_empty_defaults():
     rs = RefSet()
     assert rs.images == [] and rs.videos == [] and rs.primary_image is None

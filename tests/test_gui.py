@@ -277,6 +277,52 @@ def test_voice_job_fails_cleanly_without_tts(gui, tmp_project, add_shot, monkeyp
     assert job["state"] == "failed" and job["error"]
 
 
+def _write_tts_manifest(tmp_path, monkeypatch):
+    from manju.core.yamlio import write_yaml
+    import manju.providers.registry as registry_mod
+
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path / "_providers"))
+    monkeypatch.setenv("TTS_X_KEY", "k")
+    write_yaml(tmp_path / "_providers" / "tts_x" / "provider.yaml", {
+        "id": "tts_x", "type": "tts", "adapter": "generic_tts",
+        "auth": {"key_env": "TTS_X_KEY"},
+        "submit": {"url": "https://api.example.com/v1/tts",
+                  "body_template": {"text": "{text}"}, "job_id_path": "$.data.task_id"},
+        "tts": {"audio_url_path": "$.data.audio_url", "audio_format": "wav"},
+        "cost": {"per_call": 5.0, "currency": "CNY"},
+    })
+    registry_mod._manifest_cache = None
+
+
+def test_voice_endpoint_gated_like_cli(gui, tmp_project, add_shot, tmp_path, monkeypatch):
+    """Goal 61: the GUI's single-shot voice action routes through the SAME
+    §8.3 ask_before gate the CLI ``manju voice`` uses — a priced synthesis
+    without an explicit ``assume_yes`` fails the job as waiting_user and
+    spends nothing (previously this endpoint called the TTS provider
+    directly with no gate at all)."""
+    _write_tts_manifest(tmp_path, monkeypatch)
+    add_shot(tmp_project, "S001")
+
+    # no assume_yes -> waiting_user, nothing spent, no voice take written
+    status, _, data = _post(gui, "/api/voice", {"shot": "S001"})
+    assert status == 202
+    job = _wait_job(gui, data["job"]["id"])
+    assert job["state"] == "failed"
+    assert "waiting_user" in (job["error"] or "")
+    assert tmp_project.voice_takes("S001") == []
+
+    # assume_yes -> proceeds through the (offline, no real network) provider
+    # call and fails cleanly for lack of a live transport — but the important
+    # assertion is it got PAST the gate, not that TTS network mocking works.
+    status2, _, data2 = _post(gui, "/api/voice", {"shot": "S001", "assume_yes": True})
+    assert status2 == 202
+    job2 = _wait_job(gui, data2["job"]["id"])
+    # a real network call will fail in this offline test env; the gate itself
+    # is proven by the FIRST call's waiting_user + the fact this one is not
+    # rejected as waiting_user.
+    assert "waiting_user" not in (job2.get("error") or "")
+
+
 def test_voice_validation(gui, tmp_project, add_shot):
     add_shot(tmp_project, "S002", dialogue={"speaker": "", "text": ""})
     status, _, data = _post(gui, "/api/voice", {"shot": "S002"})

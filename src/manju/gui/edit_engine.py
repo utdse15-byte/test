@@ -220,13 +220,21 @@ def handle_rebuild_proposal(project: Any, shot_id: str, *,
         return prop
     from ..build.graph import _estimate_shot_cost
 
-    cost, currency = _estimate_shot_cost(shot, extended_ms)
+    # #7: price the SAME provider `provider` (above) already resolved and
+    # displays — not the untouched shot, which would still price the static
+    # fallback head when routing sent this shot elsewhere.
+    priced_shot = shot
+    if provider and provider != getattr(shot.generation, "provider", None):
+        priced_shot = shot.model_copy(deep=True)
+        priced_shot.generation.provider = provider
+    cost, currency = _estimate_shot_cost(priced_shot, extended_ms)
     prop["estimated_cost"] = float(cost)
     prop["currency"] = currency
     return prop
 
 
 def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None = None,
+                       provider: str | None = None,
                        actor: str = "human", assume_yes: bool = False) -> dict[str, Any]:
     """Execute 补拍手柄: regenerate ``shot_id`` at the extended duration through
     the existing redo path, then virtual-trim back to the centred content span.
@@ -236,7 +244,16 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
     that the caller can offer to select. Holds the process build lock and passes
     the SAME §8.3 spend gate as ``manju redo`` (``assume_yes`` to proceed).
     Raises :class:`HandleRebuildError` when the provider has no duration control
-    or the generation produced nothing to trim."""
+    or the generation produced nothing to trim.
+
+    ``provider`` (goal 63) is the provider the CALLER's proposal priced — the
+    GUI passes back what :func:`handle_rebuild_proposal` showed the human when
+    the popover was rendered. The redo is pinned to EXACTLY that provider
+    (routing is never silently re-resolved between propose and execute); if
+    the freshly-resolved head no longer matches (routing.yaml edited, a
+    manifest disabled, …) this refuses with a 已重新报价 message instead of
+    running a provider the human never confirmed. ``provider=None`` (an older
+    caller) falls back to resolving fresh at execute time, as before."""
     prop = handle_rebuild_proposal(project, shot_id, transition_ms=transition_ms)
     if not prop["supported"]:
         raise HandleRebuildError(NO_DURATION_ADVISORY)
@@ -244,6 +261,7 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
     extended_ms = int(prop["extended_ms"])
     clip_ms = int(prop["clip_ms"])
     half_ms = int(prop["half_ms"])
+    pinned_provider = provider or prop["provider"]
 
     from ..build.graph import _estimate_shot_cost, _plan_redo, _run_redo, spend_gate
     from ..core.events import append_event
@@ -253,8 +271,18 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
     with build_lock(project.root, actor=actor):
         rules = project.load_rules()
         bible = project.load_bible()
-        plan = _plan_redo(project, shot_id, candidates=None, provider=None, seed=None,
-                          from_take=None, rules=rules, bible=bible)
+        if provider is not None:
+            # #63: refuse rather than silently run a provider the human never
+            # saw/confirmed — re-resolve fresh, right before spending, and
+            # compare against what the proposal the caller is honoring priced.
+            current = routed_provider(project, project.load_shot(shot_id))
+            if current != provider:
+                raise HandleRebuildError(
+                    f"已重新报价:供应商从提案的 {provider} 变为 {current}"
+                    "(routing 配置发生变化)— 请重新查看补拍手柄提案后再确认"
+                )
+        plan = _plan_redo(project, shot_id, candidates=None, provider=pinned_provider,
+                          seed=None, from_take=None, rules=rules, bible=bible)
         # the "duration param": drive the provider LONGER by overriding the
         # in-memory shot's duration (never written back — a redo is append-only).
         plan.shot.duration = extended_ms / 1000.0

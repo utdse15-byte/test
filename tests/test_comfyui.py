@@ -139,6 +139,27 @@ def test_input_mapping_poll_to_success_and_lineage(request_for, tmp_project):
     assert sc.remote and sc.remote.job_id == "p1" and sc.remote.cost == 0.0
 
 
+def test_download_rejects_html_error_page(request_for, tmp_project):
+    """Goal 43/44/54: a /view download that 200s with an HTML/error page must
+    never be written to disk as if it were the promised media."""
+    from manju.providers.base import ProviderFailure
+
+    provider = ComfyUIProvider(
+        _manifest(tmp_project),
+        transport=ScriptedTransport([
+            _resp(200, {"prompt_id": "p1", "number": 1, "node_errors": {}}),
+            _history_ok("p1", {"9": {"gifs": [
+                {"filename": "final.mp4", "subfolder": "vids", "type": "output"}]}}),
+            HttpResponse(200, {"Content-Type": "text/html"}, b"<html>error</html>"),
+        ]),
+        sleep_fn=lambda s: None,
+    )
+    req = request_for()
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(req)
+    assert "html" in str(exc.value).lower()
+
+
 def test_node_error_surfaces_node_id(request_for, tmp_project):
     provider = ComfyUIProvider(
         _manifest(tmp_project),

@@ -45,6 +45,7 @@ def test_report_surfaces_estimate_total_delta_and_per_row(tmp_project):
     # estimate-vs-actual: sum of estimates 7.5, delta = actual - estimated = 0.5
     assert report["estimated_total"] == pytest.approx(7.5)
     assert report["delta"] == pytest.approx(0.5)
+    assert report["delta_coverage"] == "覆盖 2/2 条记录"  # fully covered here
 
     # per-row estimate rides each recent entry (newest first: S002 leads)
     recent = report["recent"]
@@ -56,7 +57,10 @@ def test_report_surfaces_estimate_total_delta_and_per_row(tmp_project):
 
 def test_estimated_total_sums_only_non_none_estimates(tmp_project):
     # One priced run and one estimate-less run: estimated_total counts only the
-    # priced one; delta is actual-total minus that partial estimate sum.
+    # priced one. Goal 67: the delta must compare "actual for the SAME covered
+    # rows" against that partial estimate — NOT the grand total (8.0) against a
+    # partial estimate, which would misrepresent the delta as if it covered
+    # everything. `total` itself stays the true all-rows figure.
     with RuntimeState(tmp_project.root) as st:
         st.record_run(shot="S001", provider="cloud_a", status="succeeded",
                       cost=5.0, currency="CNY", estimated_cost=4.0)
@@ -65,9 +69,10 @@ def test_estimated_total_sums_only_non_none_estimates(tmp_project):
 
     report = spend_report(tmp_project)
 
-    assert report["total"] == pytest.approx(8.0)
-    assert report["estimated_total"] == pytest.approx(4.0)  # only S001's 4.0
-    assert report["delta"] == pytest.approx(4.0)            # 8.0 - 4.0
+    assert report["total"] == pytest.approx(8.0)              # true all-rows total
+    assert report["estimated_total"] == pytest.approx(4.0)    # only S001's 4.0
+    assert report["delta"] == pytest.approx(1.0)               # S001: 5.0 - 4.0 only
+    assert report["delta_coverage"] == "覆盖 1/2 条记录"
     by_shot = {r["shot"]: r for r in report["recent"]}
     assert by_shot["S001"]["estimated_cost"] == pytest.approx(4.0)
     assert by_shot["S002"]["estimated_cost"] is None

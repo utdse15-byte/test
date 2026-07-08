@@ -1,6 +1,6 @@
 """Runtime state — SQLite that holds only *rebuildable* state (§1-⑥, §3, §8).
 
-Two tables, both disposable:
+Three tables, all disposable:
 
 - ``runs`` — the per-call cost ledger and run log (§8.3). One row per generation
   attempt (succeeded or failed), carrying cost/currency, failure kind, the
@@ -12,6 +12,17 @@ Two tables, both disposable:
   ``remote_job_id`` is written the instant ``submit`` returns, so a process that
   is killed / loses network / reboots resumes *polling* the same job instead of
   resubmitting — an interrupted long task never double-charges (§8.1, §14).
+- ``intents`` (goal 27) — a PRE-SUBMIT breadcrumb written BEFORE the paid
+  ``submit()`` call, closing the one window ``jobs`` cannot cover: a job id
+  does not exist yet, so a crash between "we are about to call submit()" and
+  "submit() returned a job id" leaves NOTHING in ``jobs`` to resume — a
+  restart would resubmit blindly, and the remote side may already have
+  received (and be billing) the first attempt. An intent starts ``open``; a
+  submit that returns cleanly (success OR a caught local exception) resolves
+  it (``resolved`` / ``error``) in the SAME process. Only a genuine crash
+  leaves it ``open`` forever — :meth:`dangling_intents` finds those so the
+  caller can flag them instead of resubmitting blindly (§8.1 double-charge
+  window closed).
 
 §3 discipline and the one honest caveat
 ----------------------------------------
@@ -26,6 +37,12 @@ and far preferable to maintaining a second source of truth that could drift.
 :meth:`rebuild` accordingly leaves the ``jobs`` table alone except for pruning
 pending jobs older than seven days, which are treated as stale.
 
+That worst case is exactly what goal 27 narrows further: ``jobs``/``intents``
+are best-effort for READS (§3, disposable, rebuildable) but a FAILURE TO WRITE
+a pre-submit intent or a post-submit job id must never be silently swallowed —
+see ``providers/base.py: CloudProvider.generate()`` for the loud (never blocks
+generation, but never silent) handling.
+
 Standard-library ``sqlite3`` only; WAL journaling; UTF-8; pathlib throughout.
 """
 
@@ -34,6 +51,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -68,6 +86,15 @@ CREATE TABLE IF NOT EXISTS jobs (
     submitted_at  TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     PRIMARY KEY (provider, remote_job_id)
+);
+CREATE TABLE IF NOT EXISTS intents (
+    id            TEXT PRIMARY KEY,
+    provider      TEXT NOT NULL,
+    shot          TEXT NOT NULL,
+    params_hash   TEXT,
+    ts            TEXT NOT NULL,
+    remote_job_id TEXT,
+    status        TEXT NOT NULL DEFAULT 'open'
 );
 """
 
@@ -244,7 +271,13 @@ class RuntimeState:
 
     def total_cost(self) -> tuple[float, str | None]:
         """``(sum of runs.cost, currency)``. Currency is the single currency in
-        use, or ``None`` when mixed or none is recorded (§8.3)."""
+        use, or ``None`` when mixed or none is recorded (§8.3).
+
+        The float itself is a RAW cross-currency sum when multiple currencies
+        are in play (e.g. 10 CNY + 2 USD sums to a meaningless 12) — kept only
+        for backward compatibility with callers that need a single number.
+        Use :meth:`total_cost_by_currency` (goal 79) for an honest breakdown
+        that never merges different currencies into one total."""
         total = self._conn.execute(
             "SELECT COALESCE(SUM(cost), 0.0) AS total FROM runs"
         ).fetchone()["total"]
@@ -256,6 +289,21 @@ class RuntimeState:
         ]
         currency = codes[0] if len(codes) == 1 else None
         return (float(total or 0.0), currency)
+
+    def total_cost_by_currency(self) -> list[dict]:
+        """Per-currency totals (goal 79) — the honest replacement for a single
+        summed number when spend spans multiple currencies: 10 CNY + 2 USD
+        must never collapse into a meaningless "12". Highest cost first; a
+        NULL currency (a row that never recorded one) groups under ``None``."""
+        rows = self._conn.execute(
+            "SELECT currency, COALESCE(SUM(cost), 0.0) AS cost, COUNT(*) AS runs "
+            "FROM runs GROUP BY currency ORDER BY cost DESC"
+        ).fetchall()
+        return [
+            {"currency": r["currency"], "cost": float(r["cost"] or 0.0),
+             "runs": int(r["runs"])}
+            for r in rows
+        ]
 
     def cost_by_provider(self) -> list[dict]:
         """Per-provider spend, highest first — the breakdown behind
@@ -348,6 +396,68 @@ class RuntimeState:
             sql += " AND provider = ?"
             args.append(provider)
         sql += " ORDER BY submitted_at DESC, rowid DESC"
+        rows = self._conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------- intents
+
+    def open_intent(self, *, provider: str, shot: str,
+                    params_hash: str | None = None) -> str:
+        """Persist a PRE-SUBMIT intent (§8.1 double-submit window, goal 27):
+        written BEFORE the paid ``submit()`` call so a crash between "we are
+        about to spend money" and "we know the remote job id" leaves a
+        breadcrumb — the interval :meth:`open_job` cannot cover because the
+        job id does not exist yet. Returns a local intent id (never a remote
+        one); pass it to :meth:`resolve_intent` once ``submit()`` returns (or
+        raises)."""
+        intent_id = uuid.uuid4().hex
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO intents (id, provider, shot, params_hash, ts, "
+                "remote_job_id, status) VALUES (?, ?, ?, ?, ?, NULL, 'open')",
+                (intent_id, provider, shot, params_hash, self._ts()),
+            )
+        return intent_id
+
+    def resolve_intent(self, intent_id: str, remote_job_id: str | None) -> None:
+        """Fold a submit's outcome back onto its intent (goal 27): a
+        ``remote_job_id`` closes the double-submit window cleanly
+        (``resolved`` — :meth:`jobs`/:meth:`pending_jobs` owns resume from
+        here); ``None`` means ``submit()`` raised BEFORE returning an id,
+        handled locally in the SAME process (``error`` — safe, nothing to
+        flag). An intent that never reaches this call (a genuine crash) stays
+        ``open`` — see :meth:`dangling_intents`."""
+        with self._conn:
+            if remote_job_id:
+                self._conn.execute(
+                    "UPDATE intents SET remote_job_id = ?, status = 'resolved' "
+                    "WHERE id = ?",
+                    (remote_job_id, intent_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE intents SET status = 'error' WHERE id = ?",
+                    (intent_id,),
+                )
+
+    def dangling_intents(
+        self, *, shot: str | None = None, provider: str | None = None
+    ) -> list[dict]:
+        """Intents still ``open`` (goal 27) — a submit call that started and
+        never resolved IN THIS PROCESS (the process died before
+        :meth:`resolve_intent` could run). The remote side MAY have already
+        received and be billing that attempt; a caller finding one here
+        should flag it for human review rather than resubmit blindly.
+        Newest first, optionally filtered."""
+        sql = "SELECT * FROM intents WHERE status = 'open'"
+        args: list[Any] = []
+        if shot is not None:
+            sql += " AND shot = ?"
+            args.append(shot)
+        if provider is not None:
+            sql += " AND provider = ?"
+            args.append(provider)
+        sql += " ORDER BY ts DESC, rowid DESC"
         rows = self._conn.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
 

@@ -154,11 +154,25 @@ class GenericAsrProvider:
         return [s for s in segments if s.text and s.end_ms > s.start_ms]
 
     def transcribe(self, media: Path) -> list[TranscriptSegment]:
-        from .generic_cloud import render_body
+        from .generic_cloud import _max_response_bytes, render_body
 
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
-        audio_b64 = base64.b64encode(Path(media).read_bytes()).decode("ascii")
+        # #54: the SAME size cap generic_cloud's downloads enforce, applied to
+        # the local read before base64-encoding it into memory — a huge local
+        # file must not be silently loaded whole (OOM guard, goal W).
+        max_bytes = _max_response_bytes()
+        media_path = Path(media)
+        size = media_path.stat().st_size
+        if max_bytes is not None and size > max_bytes:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"{self.id}: {media_path} is {size} bytes, over the "
+                f"{max_bytes}-byte cap (configurable via MANJU_MAX_DOWNLOAD_BYTES) "
+                "— refusing to load it whole for base64 upload",
+                detail={"path": str(media_path), "size": size, "max_bytes": max_bytes},
+            )
+        audio_b64 = base64.b64encode(media_path.read_bytes()).decode("ascii")
         values = {
             "audio_b64": audio_b64,
             "filename": Path(media).name,

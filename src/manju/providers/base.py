@@ -345,6 +345,14 @@ class CloudProvider(Provider):
         # costs money, bookkeeping is not.
         state = self._open_state(req)
         try:
+            # goal 27: an intent left OPEN by an earlier, unresolved attempt for
+            # this shot+provider means that attempt may have reached the remote
+            # side and could be billing right now — flag it loudly (never
+            # silently) rather than proceeding as if nothing happened. Advisory
+            # only: it does not block THIS call, which is presumably the
+            # human/agent's deliberate new attempt.
+            self._flag_dangling_intents(state, req)
+
             # Resume contract (§8.1, §14): a persisted job id — passed explicitly
             # or found still-pending for this shot+provider — means skip submit
             # and re-poll, so an interrupted long task never resubmits/re-charges.
@@ -357,15 +365,27 @@ class CloudProvider(Provider):
             max_retries = self._max_retries if req.max_retries is None else req.max_retries
             attempt = 0
             while True:
+                intent_id: str | None = None
                 try:
                     if not job_id:
+                        # goal 27: the PRE-SUBMIT breadcrumb — written before the
+                        # paid call, resolved right after it returns (or raises)
+                        # in the SAME process. Only a genuine crash between these
+                        # two lines leaves it open for the NEXT attempt to flag.
+                        intent_id = self._open_intent(state, req)
                         job_id = self.submit(req)
+                        self._resolve_intent(state, intent_id, job_id)
+                        intent_id = None
                         self._on_submit(state, req, job_id)  # 提交成功即写入
                     info = self._poll_to_completion(job_id)
                     takes = self._download_and_register(req, job_id, info)
                     self._on_success(state, req, job_id, info, takes)
                     return takes
                 except ProviderFailure as exc:
+                    if intent_id is not None:
+                        # submit() itself raised: resolved locally, right here —
+                        # not a dangling/open intent (goal 27).
+                        self._resolve_intent(state, intent_id, None)
                     if exc.kind is FailureKind.content_rejected:
                         self._on_failure(state, req, job_id, exc)
                         raise  # §8.1: first-class, never auto-retried
@@ -414,15 +434,124 @@ class CloudProvider(Provider):
             )
         return job_id
 
+    def _flag_dangling_intents(self, state, req: GenerationRequest) -> None:
+        """goal 27: an intent left ``open`` by an earlier attempt for this
+        shot+provider that never resolved (a process crash between opening
+        the intent and getting a job id back) — the remote side may already
+        be billing it. Recorded as a LOUD structured Failure (visible in
+        ``manju failures``/the build's failure summary) so a resubmit is never
+        blind, even though it does not block THIS call. Best-effort: state is
+        disposable (§3) — a lookup failure here is silent (nothing to flag,
+        not a hidden problem)."""
+        if state is None:
+            return
+        try:
+            dangling = state.dangling_intents(shot=req.shot.id, provider=self.id)
+        except (OSError, sqlite3.Error):
+            return
+        if not dangling:
+            return
+        try:
+            from ..core.failures import Failure, record_failure
+
+            record_failure(
+                req.project,
+                Failure(
+                    step="generate", subject=req.shot.id,
+                    cause=f"{self.id}: {len(dangling)} 个未确认的提交意图(可能已提交并计费)",
+                    evidence="\n".join(
+                        f"intent {d['id']} opened {d['ts']}" for d in dangling[:8]),
+                    hint="核对该 provider 后台/账单确认是否已提交成功,"
+                         "再决定是否重试(goal 27,避免重复提交/重复计费)",
+                    level="info", actor="engine",
+                    detail={"provider": self.id, "intent_ids": [d["id"] for d in dangling]},
+                ),
+            )
+        except Exception:
+            pass
+
+    def _open_intent(self, state, req: GenerationRequest) -> str | None:
+        """goal 27: persist the pre-submit intent BEFORE the paid call. A
+        failure to persist is NOT silently swallowed (§3 read-only
+        disposability does not cover this write) — it is recorded as a loud
+        structured Failure, but generation still proceeds: refusing to spend
+        because local bookkeeping is unavailable would be a worse regression
+        than the (bounded, documented) double-submit risk it exists to shrink."""
+        if state is None:
+            return None
+        try:
+            from ..core.hashing import hash_text
+
+            params_hash = hash_text(str(sorted(req.params.items())))
+        except Exception:
+            params_hash = None
+        try:
+            return state.open_intent(provider=self.id, shot=req.shot.id,
+                                     params_hash=params_hash)
+        except (OSError, sqlite3.Error) as exc:
+            try:
+                from ..core.failures import Failure, record_failure
+
+                record_failure(
+                    req.project,
+                    Failure(
+                        step="generate", subject=req.shot.id,
+                        cause=f"{self.id}: 无法写入提交前意图记录(intent),继续生成",
+                        evidence=str(exc),
+                        hint="本地 .manju/state.sqlite 写入失败;若随后进程崩溃,"
+                             "重启后无法自动判断该次提交是否已发生(goal 27)",
+                        level="info", actor="engine",
+                        detail={"provider": self.id},
+                    ),
+                )
+            except Exception:
+                pass
+            return None
+
+    def _resolve_intent(self, state, intent_id: str | None,
+                        remote_job_id: str | None) -> None:
+        """goal 27: fold submit()'s outcome back onto its intent — best-effort
+        (a failure here just means the NEXT run's dangling-intent scan sees a
+        stale-but-actually-fine row; §3 disposable read)."""
+        if state is None or intent_id is None:
+            return
+        try:
+            state.resolve_intent(intent_id, remote_job_id)
+        except (OSError, sqlite3.Error):
+            pass
+
     def _on_submit(self, state, req: GenerationRequest, job_id: str) -> None:
+        """Persist the confirmed job id (§8.1 "提交成功即写入"). goal 27: a
+        failure to persist is surfaced LOUDLY (a structured Failure) instead
+        of a bare ``except: pass`` — §3 disposability covers reads, not a
+        pending-money write whose loss would silently reopen the resume
+        contract's double-submit window. Generation still proceeds (the
+        job id is already resolved on its intent above; refusing to continue
+        here would not undo the spend that already happened)."""
         if state is None:
             return
         try:
             state.open_job(
                 job_id, provider=self.id, shot=req.shot.id, params=dict(req.params)
             )
-        except (OSError, sqlite3.Error):
-            pass
+        except (OSError, sqlite3.Error) as exc:
+            try:
+                from ..core.failures import Failure, record_failure
+
+                record_failure(
+                    req.project,
+                    Failure(
+                        step="generate", subject=req.shot.id,
+                        cause=f"{self.id}: 已提交的远程任务 {job_id} 未能写入本地 jobs 表",
+                        evidence=str(exc),
+                        hint="若进程随后崩溃,重启后可能重新提交该镜头 "
+                             "(goal 27 双重计费窗口);必要时核对 provider 后台",
+                        level="info", actor="engine",
+                        detail={"provider": self.id, "remote_job_id": job_id},
+                    ),
+                )
+            except Exception:
+                pass
 
     def _on_success(self, state, req: GenerationRequest, job_id: str, info: dict,
                     takes: list[TakeInfo]) -> None:

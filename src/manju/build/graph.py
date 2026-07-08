@@ -100,20 +100,87 @@ def _record_local_runs(project: Project, takes: list, params: dict,
         pass
 
 
+def _resolve_head_provider(project: Project, shot, else_bias: str | None) -> str | None:
+    """Best-effort: the provider a shot's fallback attempt will try FIRST —
+    used only to pick which manifest's ``max_concurrent`` (goal 8) gates the
+    worker slot. Mirrors ``providers.registry.generate_with_fallback``'s own
+    resolution (routing when a routing.yaml/mode bias is active, else the
+    shot's explicit provider, else the §8.4 fallback chain's head). Advisory:
+    an unresolved head returns ``None`` (unlimited), never raises."""
+    if shot.generation.provider:
+        return shot.generation.provider
+    try:
+        from ..providers import routing
+
+        config = routing.load_routing(project)
+        if config is not None or else_bias is not None:
+            order = routing.resolve(project, shot, config, else_bias=else_bias).order
+            if order:
+                return order[0]
+    except Exception:
+        pass
+    try:
+        from ..providers.registry import fallback_chain
+
+        chain = fallback_chain(shot)
+        return chain[0] if chain else None
+    except Exception:
+        return None
+
+
+def _provider_semaphore(name: str | None, cache: dict):
+    """The shared :class:`threading.Semaphore` gating concurrent calls to
+    provider ``name`` (goal 8), sized by its manifest's
+    ``limits.max_concurrent``. ``None`` (unlimited — today's behaviour) when
+    the name is unresolved or the provider has no manifest at all (every
+    built-in local provider: kenburns/caption_card/manual_import), since only
+    a config-declared manifest carries a real concurrency policy. Cached per
+    ``name`` so every worker in one build shares the SAME semaphore object."""
+    if name is None:
+        return None
+    if name not in cache:
+        import threading
+
+        try:
+            from ..providers.registry import get_manifest
+
+            manifest = get_manifest(name)
+        except Exception:
+            manifest = None
+        limit = manifest.limits.max_concurrent if manifest is not None else None
+        cache[name] = threading.Semaphore(limit) if limit and limit > 0 else None
+    return cache[name]
+
+
 def _concurrent_generate(items, gen_one, *, max_workers: int,
-                         budget_limit: float | None):
+                         budget_limit: float | None, head_provider=None):
     """Drive ``gen_one`` over ``items`` in a bounded thread pool (goal 14).
 
-    Returns ``(results_by_shot, tripped, running_cost)``. Provider calls run
-    concurrently (``max_workers`` at once), but this function performs NO
-    order-dependent commit — the caller applies that strictly in plan order from
-    the returned dict, so the outcome is deterministic no matter who finished
-    first. The one live governor here is the budget: as each shot's ACTUAL cost
-    lands, it is summed, and the instant the running total exceeds
-    ``budget_limit`` no NEW shot is submitted (in-flight ones finish). With the
-    default free/local providers every actual cost is 0, so the trip never fires
-    and the result set equals ``items`` — nothing observable changes but the
-    order of execution."""
+    Returns ``(results_by_shot, tripped, running_cost, in_flight_at_trip)``.
+    Provider calls run concurrently (``max_workers`` at once), but this
+    function performs NO order-dependent commit — the caller applies that
+    strictly in plan order from the returned dict, so the outcome is
+    deterministic no matter who finished first.
+
+    Per-provider concurrency (goal 8): ``head_provider(item) -> str | None``
+    resolves the provider whose manifest ``limits.max_concurrent`` should gate
+    THIS item's worker slot — the same head :func:`providers.routing.resolve`
+    (or the §8.4 fallback chain) would try first. A manifest declaring
+    ``max_concurrent: 1`` therefore never receives more than one concurrent
+    call, even though the global pool runs ``max_workers`` at once: the
+    semaphore acquire sits UNDER (nested inside) the global pool, so a worker
+    thread blocks on the provider's own slot rather than the fallback attempt
+    running unbounded. No ``head_provider`` (or an unresolved head) is
+    unlimited — byte-identical to before goal 8.
+
+    The other live governor is the budget: as each shot's ACTUAL cost lands,
+    it is summed, and the instant the running total exceeds ``budget_limit``
+    no NEW shot is submitted (in-flight ones finish — goal 80 honesty:
+    ``in_flight_at_trip`` is a snapshot of the shots still running at the exact
+    moment the trip fired, so the caller can say exactly which N will still
+    complete and bill). With the default free/local providers every actual
+    cost is 0, so the trip never fires and the result set equals ``items`` —
+    nothing observable changes but the order of execution."""
     from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
     from concurrent.futures import wait as _wait
 
@@ -122,6 +189,16 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
     running = 0.0
     tripped = False
     next_i = 0
+    sem_cache: dict = {}
+    in_flight_at_trip: list[str] = []
+
+    def _gated(item):
+        sem = _provider_semaphore(head_provider(item), sem_cache) if head_provider else None
+        if sem is None:
+            return gen_one(item)
+        with sem:
+            return gen_one(item)
+
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         in_flight: dict = {}
 
@@ -131,7 +208,7 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
                    and not tripped):
                 it = items[next_i]
                 next_i += 1
-                in_flight[ex.submit(gen_one, it)] = it["shot"]
+                in_flight[ex.submit(_gated, it)] = it["shot"]
 
         _fill()
         while in_flight:
@@ -144,8 +221,13 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
                 if (budget_limit is not None and running > budget_limit
                         and not tripped):
                     tripped = True
+                    # snapshot: shots still running RIGHT NOW will complete and
+                    # bill regardless of the trip (goal 80) — _fill() below
+                    # submits nothing new once tripped, so this list only
+                    # shrinks as the while loop drains it.
+                    in_flight_at_trip = list(in_flight.values())
             _fill()
-    return results, tripped, running
+    return results, tripped, running, in_flight_at_trip
 
 
 @dataclass
@@ -202,13 +284,49 @@ def _target_duration_ms(project: Project, shot, rules) -> int:
     return rules.timing.default_shot_ms
 
 
-def _estimate_shot_cost(shot, duration_ms: int) -> tuple[float, str | None]:
-    """§8.3 dry-run pricing from provider manifests (§8.6). The price is taken
-    from the provider that would actually run first: the shot's explicit
-    provider, else the first cloud provider on its fallback chain. Local
-    providers are free; a missing/broken manifest prices as 0 (doctor flags it)."""
+def _routed_shot_for_pricing(project: Project | None, shot, *, else_bias: str | None = None):
+    """An in-memory copy of ``shot`` with ``generation.provider`` pinned to the
+    head :func:`providers.routing.resolve` would pick (#7) — so
+    :func:`_estimate_shot_cost` prices the SAME provider execution will
+    actually try first, not the static fallback-chain head. The review's exact
+    failure mode: gui/plan.py already showed routing's resolved provider as a
+    label while the cost number still priced the untouched shot.
+
+    Returns ``shot`` unchanged (no copy, no routing lookup) when there is
+    nothing to resolve: no ``project``, an explicit ``generation.provider``
+    already pinned (it always wins over routing anyway), or — the common,
+    byte-identical default — no routing.yaml active and no build-mode bias.
+    Advisory only: any resolution failure degrades to the untouched shot,
+    never raises."""
+    if project is None or getattr(shot.generation, "provider", None):
+        return shot
     try:
-        from ..providers.manifest import estimate_cost
+        from ..providers import routing
+
+        config = routing.load_routing(project)
+        if config is None and else_bias is None:
+            return shot  # byte-identical default: no routing file, no mode bias
+        chosen = routing.resolve(project, shot, config, else_bias=else_bias).chosen
+        if not chosen:
+            return shot
+        priced = shot.model_copy(deep=True)
+        priced.generation.provider = chosen
+        return priced
+    except Exception:
+        return shot  # pricing is advisory; never blocks planning
+
+
+def _candidates_clamp_note(shot) -> str | None:
+    """§29: generic_cloud's submit/poll/download path always returns exactly
+    ONE result per job (one ``result_url``, one downloaded file) — a
+    ``candidates > 1`` shot routed there is priced (and will be produced) as
+    1, never silently oversold. Returns the 中文 note to surface on the plan
+    row, or ``None`` when there is nothing to clamp (candidates<=1, or the
+    provider that would price this shot first is not generic_cloud)."""
+    if int(getattr(shot.generation, "candidates", 1) or 1) <= 1:
+        return None
+    try:
+        from ..providers.manifest import GENERIC_ADAPTER
         from ..providers.registry import fallback_chain, get_manifest
 
         names = ([shot.generation.provider] if shot.generation.provider else []) \
@@ -216,8 +334,40 @@ def _estimate_shot_cost(shot, duration_ms: int) -> tuple[float, str | None]:
         for name in names:
             manifest = get_manifest(name)
             if manifest is not None:
+                if manifest.adapter == GENERIC_ADAPTER:
+                    return (f"{name}: 该 provider 单次只产一个候选,已按 1 计价 "
+                            f"(generation.candidates={shot.generation.candidates})")
+                return None  # the provider that would price/run first isn't generic_cloud
+    except Exception:
+        pass
+    return None
+
+
+def _estimate_shot_cost(shot, duration_ms: int) -> tuple[float, str | None]:
+    """§8.3 dry-run pricing from provider manifests (§8.6). The price is taken
+    from the provider that would actually run first: the shot's explicit
+    provider, else the first cloud provider on its fallback chain. Local
+    providers are free; a missing/broken manifest prices as 0 (doctor flags it).
+
+    Callers that want the estimate to follow ``providers.routing`` (#7) pass a
+    shot already resolved through :func:`_routed_shot_for_pricing` — this
+    function stays routing-agnostic (and its 2-arg signature stable) so the
+    many call sites that monkeypatch it in tests are unaffected."""
+    try:
+        from ..providers.manifest import GENERIC_ADAPTER, estimate_cost
+        from ..providers.registry import fallback_chain, get_manifest
+
+        names = ([shot.generation.provider] if shot.generation.provider else []) \
+            + fallback_chain(shot)
+        for name in names:
+            manifest = get_manifest(name)
+            if manifest is not None:
+                # §29: generic_cloud never produces more than one take per job —
+                # price exactly what will be produced, not candidates × price.
+                candidates = (1 if manifest.adapter == GENERIC_ADAPTER
+                             else shot.generation.candidates)
                 return (
-                    estimate_cost(manifest, duration_ms, shot.generation.candidates),
+                    estimate_cost(manifest, duration_ms, candidates),
                     manifest.cost.currency,
                 )
     except Exception:  # pricing is advisory; never blocks planning
@@ -258,7 +408,8 @@ def _plan_voice(project: Project, *, gen: str) -> list[dict[str, Any]]:
 
 
 def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
-                     gen: str, regen_stale: bool) -> list[dict[str, Any]]:
+                     gen: str, regen_stale: bool,
+                     else_bias: str | None = None) -> list[dict[str, Any]]:
     rules = project.load_rules()
     plan: list[dict[str, Any]] = []
     for st in statuses:
@@ -269,7 +420,10 @@ def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
         if shot.generation.strategy == "manual":
             continue  # this shot is explicitly waiting for a human import
         duration_ms = _target_duration_ms(project, shot, rules)
-        cost, currency = _estimate_shot_cost(shot, duration_ms)
+        # #7: price the SAME provider routing (incl. build-mode bias) would
+        # actually try first, not the static fallback-chain head.
+        priced_shot = _routed_shot_for_pricing(project, shot, else_bias=else_bias)
+        cost, currency = _estimate_shot_cost(priced_shot, duration_ms)
         plan.append(
             {
                 "shot": st.shot_id,
@@ -279,6 +433,9 @@ def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
                 "provider": shot.generation.provider or "auto(fallback chain)",
                 "estimated_cost": cost,
                 "currency": currency,
+                # #29: non-None only when a candidates>1 shot prices/generates
+                # through generic_cloud (which always produces exactly one take).
+                "candidates_note": _candidates_clamp_note(shot),
             }
         )
     return plan
@@ -421,6 +578,24 @@ def _run_build_phases(
         )
         return result
 
+    config = project.load_config()
+
+    # ---- 1a. build mode knobs (goal 14): --mode flag > project.yaml build.mode >
+    # None. A None mode is the byte-identical default path (serial generation, no
+    # routing bias, today's retry budget). A bad mode value is a clean, early
+    # build error — never a traceback and never a partial spend. Resolved BEFORE
+    # the plan/savings pricing below (moved up, #7) so both price the SAME
+    # routing-biased provider execution will actually pick, not a bias-blind
+    # fallback head.
+    from .modes import BuildModeError, knobs_for, resolve_mode
+    try:
+        mode_knobs = knobs_for(resolve_mode(mode, config))
+    except BuildModeError as exc:
+        result.ok = False
+        result.errors.append(f"build --mode: {exc}")
+        return result
+    else_bias = mode_knobs.else_bias if mode_knobs else None
+
     # ---- 0b. cache hits: FRESH/MANUAL shots skip generation entirely;
     # saved_cost prices what regenerating the FRESH ones would have spent (§8.3
     # manifests). Manual imports were never paid work, so they count 0. Advisory
@@ -433,30 +608,21 @@ def _run_build_phases(
             if st.state != ShotState.FRESH:
                 continue
             shot = project.load_shot(st.shot_id)
+            priced_shot = _routed_shot_for_pricing(project, shot, else_bias=else_bias)
             cost, _currency = _estimate_shot_cost(
-                shot, _target_duration_ms(project, shot, rules))
+                priced_shot, _target_duration_ms(project, shot, rules))
             result.saved_cost += cost
     except Exception:  # savings are advisory; the skipped list still stands
         pass
 
-    # ---- 1. generation plan (video takes + voice takes, both priced §8.3)
-    result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale)
+    # ---- 1. generation plan (video takes + voice takes, both priced §8.3):
+    # priced via the SAME routing.resolve() (incl. tier/mode bias) the generate
+    # phase below will use, so the estimate and the ask_before/budget gates see
+    # the provider that will actually run first (#7).
+    result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale,
+                                   else_bias=else_bias)
     result.plan += _plan_voice(project, gen=gen)
     result.estimated_cost = sum(p["estimated_cost"] for p in result.plan)
-
-    config = project.load_config()
-
-    # ---- 1a. build mode knobs (goal 14): --mode flag > project.yaml build.mode >
-    # None. A None mode is the byte-identical default path (serial generation, no
-    # routing bias, today's retry budget). A bad mode value is a clean, early
-    # build error — never a traceback and never a partial spend.
-    from .modes import BuildModeError, knobs_for, resolve_mode
-    try:
-        mode_knobs = knobs_for(resolve_mode(mode, config))
-    except BuildModeError as exc:
-        result.ok = False
-        result.errors.append(f"build --mode: {exc}")
-        return result
 
     budget = config.budget.limit
     if budget is not None and result.estimated_cost > budget:
@@ -623,22 +789,46 @@ def _run_build_phases(
             for item in video_plan:
                 _commit_one(_gen_one(item))
         else:
+            # #8: which provider's manifest max_concurrent should gate each
+            # shot's worker slot — resolved the SAME way generate_with_fallback
+            # will pick a head (routing when active, else the explicit
+            # provider, else the §8.4 chain's first entry). Precomputed
+            # serially (cheap: no network) before the pool starts.
+            head_provider_by_shot: dict[str, str | None] = {}
+            for item in video_plan:
+                try:
+                    hshot = project.load_shot(item["shot"])
+                    head_provider_by_shot[item["shot"]] = _resolve_head_provider(
+                        project, hshot, gen_bias)
+                except Exception:
+                    head_provider_by_shot[item["shot"]] = None
+
             # bounded parallel generation; commit deterministically in plan order.
-            done, tripped, running = _concurrent_generate(
-                video_plan, _gen_one, max_workers=max_workers, budget_limit=budget)
+            done, tripped, running, in_flight_at_trip = _concurrent_generate(
+                video_plan, _gen_one, max_workers=max_workers, budget_limit=budget,
+                head_provider=lambda it: head_provider_by_shot.get(it["shot"]))
             for item in video_plan:
                 res = done.get(item["shot"])
                 if res is not None:
                     _commit_one(res)
             if tripped:
                 unsub = [it["shot"] for it in video_plan if it["shot"] not in done]
+                # §80 honesty: the trip stops NEW submissions only — shots already
+                # in flight at that moment keep running and WILL be billed. Say so
+                # in the gate's own output, not just in code comments.
+                inflight_note = (
+                    f";进行中的 {len(in_flight_at_trip)} 个镜头仍会完成并计费"
+                    f"({', '.join(in_flight_at_trip)})"
+                ) if in_flight_at_trip else "(没有仍在进行中的镜头)"
                 result.warnings.append(
-                    f"预算熔断(并发生成:实际花费 {running} 已超 budget.limit={budget}"
-                    f",§8.3): 停止提交新镜头 " + ", ".join(unsub or ["(无)"]) +
+                    f"预算已到上限:不再提交新任务(并发生成:实际花费 {running} "
+                    f"已超 budget.limit={budget},§8.3)。不再提交的镜头 "
+                    + ", ".join(unsub or ["(无)"]) + inflight_note +
                     " — 已生成的镜头不受影响;提高 budget.limit 或缩减计划后重跑")
                 _record(project, "generate", "budget",
                         "并发生成触发预算熔断,未提交的镜头被跳过",
-                        evidence=f"running_cost={running} > budget={budget}; skipped={unsub}",
+                        evidence=f"running_cost={running} > budget={budget}; skipped={unsub}; "
+                                 f"in_flight_at_trip={in_flight_at_trip}",
                         hint="提高 project.yaml budget.limit 或缩减计划;并发上限由 --mode 决定",
                         level="info", actor=actor)
 
@@ -956,7 +1146,11 @@ def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
         shot.generation.provider = provider
     if candidates:
         shot.generation.candidates = int(candidates)  # in-memory, for pricing
-    cost, currency = _estimate_shot_cost(shot, _target_duration_ms(project, shot, rules))
+    # #7: when no explicit provider pinned the shot above, price the SAME head
+    # providers.routing.resolve() would pick — a redo run with routing active
+    # would otherwise be estimated off the static fallback-chain head.
+    priced_shot = _routed_shot_for_pricing(project, shot)
+    cost, currency = _estimate_shot_cost(priced_shot, _target_duration_ms(project, shot, rules))
     return _RedoPlan(shot, params, cost, currency, candidates)
 
 

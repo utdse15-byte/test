@@ -114,6 +114,8 @@ class GenericTtsProvider:
         return values
 
     def _audio_from(self, data, *, dest_dir: Path) -> Path:
+        from .generic_cloud import _write_bytes_atomic, reject_html_error_page
+
         cfg = self.manifest.tts
         dest = dest_dir / f"voice.{cfg.audio_format.lstrip('.')}"
         if cfg.audio_b64_path:
@@ -124,7 +126,7 @@ class GenericTtsProvider:
                     FailureKind.provider_error,
                     f"{self.id}: cannot read inline audio ({exc}) — check tts.audio_b64_path",
                 ) from exc
-            dest.write_bytes(blob)
+            _write_bytes_atomic(dest, blob)
             return dest
         try:
             url = str(extract(data, cfg.audio_url_path))
@@ -133,6 +135,9 @@ class GenericTtsProvider:
                 FailureKind.provider_error,
                 f"{self.id}: cannot read audio URL ({exc}) — check tts.audio_url_path",
             ) from exc
+        # #54: the SAME scheme allowlist + size cap generic_cloud's
+        # default_transport enforces apply here too when no transport was
+        # injected (this provider defaults to it, like generic_cloud/asr).
         resp = self._transport("GET", url, {}, None)
         if resp.status >= 400 or not resp.body:
             raise ProviderFailure(
@@ -140,7 +145,10 @@ class GenericTtsProvider:
                 f"{self.id}: audio download failed with HTTP {resp.status}",
                 detail={"url": url},
             )
-        dest.write_bytes(resp.body)
+        # #43/#44/#54: a 200 that is actually an HTML/error page must never
+        # be written to disk as if it were the promised audio.
+        reject_html_error_page(resp, url, self.id)
+        _write_bytes_atomic(dest, resp.body)
         return dest
 
     def synthesize(self, project: Project, shot: ShotSpec, bible: dict) -> Path:

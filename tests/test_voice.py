@@ -92,6 +92,29 @@ def test_synthesize_registers_voice_take_with_hash(tmp_project, add_shot, tts_en
     assert sidecar.remote and sidecar.remote.cost == 0.02
 
 
+def test_synthesize_rejects_html_error_page(tmp_project, add_shot, tts_env):
+    """Goal 43/44/54: an audio_url that 200s with an HTML error page (expired
+    signed URL, CDN error…) must never be written to disk as if it were the
+    synthesized audio."""
+    from manju.providers.base import ProviderFailure
+    from manju.providers.tts import get_tts_provider
+
+    shot = add_shot(tmp_project, "S001",
+                    dialogue={"speaker": "linxia", "text": "这不可能。"})
+    provider = get_tts_provider(
+        transport=ScriptedTransport([
+            _resp({"data": {"audio_url": "https://cdn.example.com/v.wav"}}),
+            HttpResponse(200, {"Content-Type": "text/html"},
+                        b"<html>Link expired</html>"),
+        ]),
+        sleep_fn=lambda s: None,
+    )
+    with pytest.raises(ProviderFailure) as exc:
+        provider.synthesize(tmp_project, shot, tmp_project.load_bible())
+    assert "html" in str(exc.value).lower()
+    assert tmp_project.voice_takes("S001") == []
+
+
 def test_synthesize_inline_b64_form(tmp_project, add_shot, tmp_path, monkeypatch):
     from manju.providers.tts import get_tts_provider
 

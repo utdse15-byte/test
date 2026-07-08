@@ -290,13 +290,26 @@ def base64_ref(item: RefItem, *, data_uri: bool = True, mime: str | None = None)
     return f"data:{guessed};base64,{b64}"
 
 
+def _safe_multipart_filename(name: str) -> str:
+    """A multipart filename safe to embed in a hand-built Content-Disposition
+    header (#44, goal W). POSIX filenames may legally contain double quotes,
+    CR or LF — embedded raw, any of those can terminate the ``filename=""``
+    attribute early or inject extra header/body content into the request.
+    Strips CR/LF and double quotes; falls back to a generated safe name when
+    nothing printable survives (an all-quote/newline filename, or empty)."""
+    cleaned = name.replace("\r", "").replace("\n", "").replace('"', "").strip()
+    return cleaned or f"upload-{uuid.uuid4().hex[:8]}"
+
+
 def encode_multipart(
     fields: dict[str, str], files: list[tuple[str, str, bytes]]
 ) -> tuple[str, bytes]:
     """Encode a ``multipart/form-data`` body (stdlib only, no deps). Returns
     ``(content_type, body)``. ``files`` items are ``(field_name, filename,
     bytes)``. Used by the comfyui ``POST /upload/image`` and the generic_cloud
-    ``multipart`` image mode."""
+    ``multipart`` image mode. ``filename`` is sanitized (#44) before it is
+    embedded in the Content-Disposition header — the one place every caller's
+    multipart upload goes through, so the limit stays consistent."""
     boundary = "----manju" + uuid.uuid4().hex
     parts: list[bytes] = []
 
@@ -308,8 +321,9 @@ def encode_multipart(
         w(f'Content-Disposition: form-data; name="{name}"\r\n\r\n')
         w(f"{value}\r\n")
     for name, filename, data in files:
+        safe_name = _safe_multipart_filename(filename)
         w(f"--{boundary}\r\n")
-        w(f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n')
+        w(f'Content-Disposition: form-data; name="{name}"; filename="{safe_name}"\r\n')
         w("Content-Type: application/octet-stream\r\n\r\n")
         w(data)
         w("\r\n")

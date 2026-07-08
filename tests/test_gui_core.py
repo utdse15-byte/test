@@ -160,6 +160,52 @@ def test_plan_provider_from_routing_when_present(gui, tmp_project, add_shot):
     assert data["rows"] and all(r["provider"] for r in data["rows"])
 
 
+def test_plan_redo_prices_routed_provider_not_static_head(gui, tmp_project, add_shot, monkeypatch):
+    """Goal 7: gui/plan.py's redo row already SHOWED the routing-resolved
+    provider label; the estimated_cost must price that SAME provider, not the
+    untouched shot's static fallback head."""
+    import manju.providers.registry as registry_mod
+    from manju.core.yamlio import write_yaml
+
+    def _manifest(pid, per_second):
+        return {
+            "id": pid, "type": "video", "adapter": "generic_cloud",
+            "capabilities": ["text_to_video"],
+            "auth": {"key_env": f"{pid.upper()}_KEY"},
+            "submit": {"url": "https://x/v", "body_template": {}, "job_id_path": "$.id"},
+            "poll": {"url": "https://x/v/{job_id}", "status_path": "$.s",
+                     "status_map": {"ok": "succeeded"}},
+            "cost": {"per_second": per_second, "currency": "CNY"},
+        }
+
+    providers_dir = tmp_project.root.parent / "manju_providers_gui_plan"
+    write_yaml(providers_dir / "aaa_cheap" / "provider.yaml", _manifest("aaa_cheap", 0.01))
+    write_yaml(providers_dir / "zzz_pricey" / "provider.yaml", _manifest("zzz_pricey", 0.20))
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(providers_dir))
+    monkeypatch.setenv("AAA_CHEAP_KEY", "k")
+    monkeypatch.setenv("ZZZ_PRICEY_KEY", "k")
+    registry_mod._manifest_cache = None
+
+    add_shot(tmp_project, "S001", duration=4.0)
+    # routing sends this shot to zzz_pricey (a literal else selector) even
+    # though the static fallback chain would pick aaa_cheap first.
+    (tmp_project.root / "timeline" / "routing.yaml").write_text(
+        "strategy: default\nstrategies:\n  default:\n    rules: []\n"
+        "    else: zzz_pricey\n", encoding="utf-8")
+    registry_mod._manifest_cache = None
+
+    _, _, redo = _post(gui, "/api/plan", {"action": "redo", "shot": "S001"})
+    assert redo["rows"][0]["provider"] == "zzz_pricey"
+    # 4s × 0.20/s — NOT 4s × 0.01/s (aaa_cheap, the static fallback head)
+    assert redo["rows"][0]["estimated_cost"] == pytest.approx(0.80)
+
+    _, _, batch = _post(gui, "/api/plan",
+                        {"action": "batch-redo", "shots": ["S001"]})
+    assert batch["rows"][0]["provider"] == "zzz_pricey"
+    assert batch["rows"][0]["estimated_cost"] == pytest.approx(0.80)
+    registry_mod._manifest_cache = None
+
+
 def test_plan_redo_and_voice_shape(gui, tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     _, _, redo = _post(gui, "/api/plan", {"action": "redo", "shot": "S001"})

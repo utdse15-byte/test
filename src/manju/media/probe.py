@@ -15,6 +15,10 @@ from ..core.models import ProbeInfo
 from .ffmpeg import MediaError
 
 FFPROBE = "ffprobe"
+# #55: ffprobe is a metadata read, not a render — it gets a HARD, short-ish
+# default timeout (unlike run_ffmpeg's generous render default) so a
+# corrupt/unreadable/network-mounted file can never hang check/build.
+DEFAULT_PROBE_TIMEOUT_S = 60.0
 
 
 def _to_int_ms(seconds: str | float | None) -> int | None:
@@ -44,15 +48,23 @@ def _parse_fps(rate: str | None) -> float | None:
         return None
 
 
-def probe(path: Path) -> ProbeInfo:
+def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S) -> ProbeInfo:
     """Full technical probe. Raises :class:`MediaError` if the file is
-    unreadable or ffprobe emits no parseable JSON."""
+    unreadable, ffprobe emits no parseable JSON, or it exceeds ``timeout``
+    seconds (#55: a corrupt file / network mount must not hang forever;
+    ``None`` disables the cap)."""
     path = Path(path)
     cmd = [
         FFPROBE, "-v", "error", "-print_format", "json",
         "-show_format", "-show_streams", str(path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError(
+            f"ffprobe 超时(>{timeout}s)for {path} — 可能是损坏媒体或网络挂载路径(goal W/#55)"
+        ) from exc
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-15:])
         raise MediaError(f"ffprobe failed for {path}:\n{tail}")

@@ -363,6 +363,77 @@ def test_generate_fresh_submits_once_and_records_closed_job_and_cost(tmp_project
         assert log[0]["take"] == takes[0].name
 
 
+def test_generate_resolves_intent_on_success(tmp_project, add_shot):
+    """Goal 27: the pre-submit intent is written BEFORE submit() and resolved
+    to the confirmed job id right after — never left dangling on a clean run."""
+    project = tmp_project
+    shot = add_shot(project, "S001")
+    provider = _ScriptedCloud()
+    provider.generate(_req(project, shot))
+
+    with RuntimeState(project.root) as st:
+        assert st.dangling_intents() == []  # nothing left open
+        row = st._conn.execute("SELECT * FROM intents").fetchone()
+        assert row is not None
+        assert row["status"] == "resolved" and row["remote_job_id"] == "job_fresh_1"
+        assert row["provider"] == "cloud_test" and row["shot"] == "S001"
+
+
+def test_generate_resolves_intent_locally_on_submit_failure(tmp_project, add_shot):
+    """Goal 27: when submit() itself raises, the intent is resolved (status
+    'error') IN THIS PROCESS — it must never be mistaken for a dangling
+    (crashed, possibly-billed) intent on the next attempt."""
+    project = tmp_project
+    shot = add_shot(project, "S001")
+
+    class _FailingSubmit(_ScriptedCloud):
+        def submit(self, req):
+            self.submit_calls += 1
+            raise ProviderFailure(FailureKind.invalid, "bad request")
+
+    provider = _FailingSubmit()
+    with pytest.raises(ProviderFailure):
+        provider.generate(_req(project, shot))
+
+    with RuntimeState(project.root) as st:
+        assert st.dangling_intents() == []  # resolved locally, not left open
+        row = st._conn.execute("SELECT * FROM intents").fetchone()
+        assert row is not None and row["status"] == "error"
+        assert row["remote_job_id"] is None
+
+
+def test_dangling_intent_from_earlier_crash_is_flagged_not_silent(tmp_project, add_shot):
+    """Goal 27: an intent left OPEN by an earlier attempt (simulating a crash
+    between opening the intent and getting the job id back) is flagged as a
+    LOUD structured Failure on the next generate() call — never silently
+    ignored — but does NOT block the new attempt."""
+    from manju.core.failures import read_failures
+
+    project = tmp_project
+    shot = add_shot(project, "S001")
+    with RuntimeState(project.root) as st:
+        stale_id = st.open_intent(provider="cloud_test", shot="S001")
+        # never resolved — simulates the process dying right here
+
+    provider = _ScriptedCloud()
+    takes = provider.generate(_req(project, shot))
+    assert len(takes) == 1  # the new attempt proceeds; not blocked
+
+    failures = read_failures(project, n=20)
+    assert any(
+        "未确认的提交意图" in f.get("cause", "") and stale_id in (f.get("evidence") or "")
+        for f in failures
+    )
+    with RuntimeState(project.root) as st:
+        # the OLD intent stays open (still needs human review); the NEW
+        # submit's own intent resolved cleanly.
+        still_dangling = {d["id"] for d in st.dangling_intents()}
+        assert stale_id in still_dangling
+        resolved = st._conn.execute(
+            "SELECT * FROM intents WHERE status = 'resolved'").fetchone()
+        assert resolved is not None and resolved["remote_job_id"] == "job_fresh_1"
+
+
 def test_generate_records_failure_kind_and_closes_job(tmp_project, add_shot):
     project = tmp_project
     shot = add_shot(project, "S001")

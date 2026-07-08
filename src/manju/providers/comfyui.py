@@ -473,6 +473,8 @@ class ComfyUIProvider(Provider):
         return None
 
     def _download(self, chosen: dict, dest_dir: Path) -> Path:
+        from .generic_cloud import _write_bytes_atomic, reject_html_error_page
+
         query = urlencode(
             {
                 "filename": chosen["filename"],
@@ -480,7 +482,10 @@ class ComfyUIProvider(Provider):
                 "type": chosen.get("type", "output"),
             }
         )
-        resp = self._http("GET", f"{self._base}/view?{query}")
+        url = f"{self._base}/view?{query}"
+        # #54: same scheme allowlist + size cap as generic_cloud (this adapter
+        # defaults to the SAME default_transport).
+        resp = self._http("GET", url)
         if resp.status >= 400 or not resp.body:
             raise ProviderFailure(
                 FailureKind.provider_error,
@@ -488,9 +493,13 @@ class ComfyUIProvider(Provider):
                 f"ComfyUI (HTTP {resp.status})",
                 detail={"output": chosen},
             )
+        # #43/#44/#54: a 200 that is actually an HTML/error page (a ComfyUI
+        # server error page, a proxy in front of it…) must never be written
+        # to disk as if it were the promised media.
+        reject_html_error_page(resp, url, self.id)
         suffix = Path(chosen["filename"]).suffix or ".png"
         dest = dest_dir / f"comfyui{suffix}"
-        dest.write_bytes(resp.body)
+        _write_bytes_atomic(dest, resp.body)
         return dest
 
 

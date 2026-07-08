@@ -179,6 +179,25 @@ def test_happy_path_registers_take(request_for, monkeypatch):
     assert headers["Authorization"] == "Bearer k-secret"
 
 
+def test_fallback_cost_uses_per_second_and_duration_not_per_call_alone(request_for, monkeypatch):
+    """Goal 53: when the response carries no cost_path, the fallback cost
+    prices per_call + per_second × duration (the SAME shape estimate_cost()
+    uses) — not per_call alone, which under-reports a per-second-priced
+    provider."""
+    provider, transport = _provider(
+        [
+            _resp(200, {"data": {"task_id": "job_1"}}),
+            _resp(200, {"data": {"status": "SUCCEEDED",
+                                 "video_url": "https://cdn.example.com/out.mp4"}}),
+            HttpResponse(200, {}, b"FAKEVIDEO"),
+        ],
+        monkeypatch,
+    )
+    req = request_for(duration_ms=5000)  # 5s × 0.08/s = 0.4 (per_call defaults to 0)
+    takes = provider.generate(req)
+    assert takes[0].sidecar.remote.cost == pytest.approx(0.4)
+
+
 def test_content_rejected_never_retried(request_for, monkeypatch):
     provider, transport = _provider(
         [
@@ -306,9 +325,13 @@ def test_dry_run_prices_from_manifest(tmp_path, monkeypatch, tmp_project, add_sh
     result = run_build(tmp_project, dry_run=True)
     assert result.ok
     assert len(result.plan) == 1
-    # 4s × 0.08 × 2 candidates
-    assert result.plan[0]["estimated_cost"] == pytest.approx(0.64)
-    assert result.estimated_cost == pytest.approx(0.64)
+    # goal 29: generic_cloud's submit/poll/download path always returns exactly
+    # ONE result per job — candidates is clamped to 1 for pricing (4s × 0.08 ×
+    # 1), not 2, so the estimate matches what will actually be produced/billed.
+    assert result.plan[0]["estimated_cost"] == pytest.approx(0.32)
+    assert result.estimated_cost == pytest.approx(0.32)
+    assert "candidates_note" in result.plan[0]
+    assert "已按 1 计价" in result.plan[0]["candidates_note"]
 
 
 def test_budget_breaker_on_estimate(tmp_path, monkeypatch, tmp_project, add_shot):
@@ -319,7 +342,10 @@ def test_budget_breaker_on_estimate(tmp_path, monkeypatch, tmp_project, add_shot
     add_shot(tmp_project, "S001", duration=4.0,
              generation={"provider": "video_x", "candidates": 2})
     config = tmp_project.load_config()
-    config.budget.limit = 0.5  # below the 0.64 estimate
+    # goal 29: candidates is clamped to 1 for generic_cloud pricing, so the
+    # honest estimate is 0.32 (4s × 0.08 × 1), not 0.64 — set the limit below
+    # THAT so the breaker still trips.
+    config.budget.limit = 0.25
     tmp_project.save_config(config)
 
     from manju.build.graph import run_build
@@ -327,3 +353,110 @@ def test_budget_breaker_on_estimate(tmp_path, monkeypatch, tmp_project, add_shot
     result = run_build(tmp_project, dry_run=False)
     assert not result.ok
     assert any("budget" in e for e in result.errors)  # §8.3 熔断 -> waiting_user
+
+
+def test_dry_run_prices_the_routed_provider_not_the_static_head(
+        tmp_path, monkeypatch, tmp_project, add_shot):
+    """Goal 7: when a routing.yaml sends the shot to a DIFFERENT provider than
+    the static §8.4 fallback-chain head, the dry-run estimate must price the
+    provider that will ACTUALLY run — not the untouched fallback head."""
+    import manju.providers.registry as registry_mod
+
+    # "aaa_cheap" sorts first alphabetically -> the static fallback chain picks
+    # it with no explicit shot.generation.provider and no routing.
+    write_yaml(tmp_path / "aaa_cheap" / "provider.yaml",
+              {**_manifest_dict(), "id": "aaa_cheap",
+               "auth": {"key_env": "AAA_CHEAP_KEY"},
+               "cost": {"per_second": 0.01, "currency": "CNY"}})
+    write_yaml(tmp_path / "zzz_pricey" / "provider.yaml",
+              {**_manifest_dict(), "id": "zzz_pricey",
+               "auth": {"key_env": "ZZZ_PRICEY_KEY"},
+               "cost": {"per_second": 0.20, "currency": "CNY"}})
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path))
+    monkeypatch.setenv("AAA_CHEAP_KEY", "k")
+    monkeypatch.setenv("ZZZ_PRICEY_KEY", "k")
+    registry_mod._manifest_cache = None
+
+    # no explicit shot.generation.provider — the static chain would pick
+    # aaa_cheap (alphabetically-first capable manifest).
+    add_shot(tmp_project, "S001", duration=4.0, generation={"candidates": 1})
+    from manju.providers.registry import fallback_chain
+
+    shot = tmp_project.load_shot("S001")
+    assert fallback_chain(shot)[0] == "aaa_cheap"  # confirms the static head
+
+    # routing sends this shot to zzz_pricey instead (a literal else selector).
+    write_yaml(tmp_project.root / "timeline" / "routing.yaml",
+              {"strategy": "default",
+               "strategies": {"default": {"rules": [], "else": "zzz_pricey"}}})
+    registry_mod._manifest_cache = None
+
+    from manju.build.graph import run_build
+
+    result = run_build(tmp_project, dry_run=True)
+    assert result.ok
+    assert len(result.plan) == 1
+    # 4s × 0.20/s (zzz_pricey) — NOT 4s × 0.01/s (aaa_cheap, the static head)
+    assert result.plan[0]["estimated_cost"] == pytest.approx(0.80)
+
+
+# ============================================== network hygiene (goal 43/44/54)
+
+
+def test_default_transport_refuses_non_http_scheme():
+    """Goal 43: a non-http(s) URL (file://, ftp://, data://…) is refused
+    before urlopen ever touches it — never a surprise local-file read or
+    non-HTTP protocol dial from a manifest/response-supplied URL."""
+    from manju.providers.generic_cloud import default_transport
+
+    with pytest.raises(ProviderFailure) as exc:
+        default_transport("GET", "file:///etc/passwd", {}, None)
+    assert "scheme" in str(exc.value).lower()
+
+
+def test_default_transport_caps_response_size(monkeypatch):
+    """Goal 43: an oversized response is refused mid-stream (never buffered
+    unbounded into memory) — configurable via MANJU_MAX_DOWNLOAD_BYTES."""
+    import io
+
+    from manju.providers import generic_cloud as gc_mod
+
+    monkeypatch.setenv("MANJU_MAX_DOWNLOAD_BYTES", "10")
+
+    class _FakeResp:
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n=-1):
+            return io.BytesIO(b"x" * 1000).read(n if n and n > 0 else 1000)
+
+    monkeypatch.setattr(gc_mod.urllib.request, "urlopen", lambda *a, **k: _FakeResp())
+    with pytest.raises(ProviderFailure) as exc:
+        gc_mod.default_transport("GET", "https://example.com/huge", {}, None)
+    assert "cap" in str(exc.value).lower() or "10-byte" in str(exc.value)
+
+
+def test_download_rejects_html_error_page(request_for, monkeypatch):
+    """Goal 43/44: a 200 response that is actually an HTML error page (an
+    expired signed URL, a CDN error…) must never be written to disk as the
+    result media."""
+    provider, transport = _provider(
+        [
+            _resp(200, {"data": {"task_id": "job_1"}}),
+            _resp(200, {"data": {"status": "SUCCEEDED",
+                                 "video_url": "https://cdn.example.com/out.mp4"}}),
+            HttpResponse(200, {"Content-Type": "text/html"},
+                        b"<html><body>Link expired</body></html>"),
+        ],
+        monkeypatch,
+    )
+    req = request_for()
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(req)
+    assert "html" in str(exc.value).lower()

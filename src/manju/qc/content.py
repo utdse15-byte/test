@@ -76,28 +76,47 @@ def tesseract_available() -> bool:
     return shutil.which("tesseract") is not None
 
 
+# Aligned with the existing hard timeouts in qc/checks.py (the same tier-1
+# probe family) rather than invented independently: 30s for a plain ffprobe
+# read, 60s for a single-frame ffmpeg extraction, 300s for a whole-clip filter
+# decode (mirrors checks.py's blackdetect/volumedetect). OCR has no existing
+# precedent here (tesseract is new to this module) — given generously so a
+# loaded host doesn't manufacture false UNKNOWNs.
+_PROBE_TIMEOUT_S = 30.0
+_FRAME_TIMEOUT_S = 60.0
+_OCR_TIMEOUT_S = 120.0
+_DETECT_TIMEOUT_S = 300.0
+
+
 def sample_frames(media: Path, dest_dir: Path, *, count: int = 3) -> list[Path]:
     """Sample frames at 25/50/75% so a token visible anywhere in the shot is
-    seen. Uses ffprobe duration; falls back to the first frame on failure."""
+    seen. Uses ffprobe duration; falls back to the first frame on failure.
+
+    #55: every subprocess call here carries a hard timeout — a corrupt file
+    or a stuck filter degrades to "no frames" (UNKNOWN downstream), never a
+    hang."""
     frames: list[Path] = []
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=nw=1:nk=1", str(media)],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, timeout=_PROBE_TIMEOUT_S,
         ).stdout.strip()
         duration = float(out)
-    except (subprocess.CalledProcessError, ValueError, OSError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError):
         duration = 0.0
     points = [duration * p for p in (0.25, 0.5, 0.75)] if duration > 0 else [0.0]
     for i, t in enumerate(points[:count]):
         frame = dest_dir / f"{media.stem}_qc_{i}.jpg"
-        proc = subprocess.run(
-            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-ss", f"{t:.3f}", "-i", str(media), "-frames:v", "1", "-q:v", "3",
-             str(frame)],
-            capture_output=True,
-        )
+        try:
+            proc = subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-ss", f"{t:.3f}", "-i", str(media), "-frames:v", "1", "-q:v", "3",
+                 str(frame)],
+                capture_output=True, timeout=_FRAME_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if proc.returncode == 0 and frame.exists():
             frames.append(frame)
     return frames
@@ -105,13 +124,18 @@ def sample_frames(media: Path, dest_dir: Path, *, count: int = 3) -> list[Path]:
 
 def ocr_frame(frame: Path) -> str | None:
     """Tesseract OCR (Chinese + English). None = OCR unavailable/failed —
-    callers must treat that as UNKNOWN, never as 'text absent'."""
+    callers must treat that as UNKNOWN, never as 'text absent'. #55: a hung
+    tesseract process degrades to None (UNKNOWN) after the timeout, same as
+    "tool missing"."""
     if not tesseract_available():
         return None
-    proc = subprocess.run(
-        ["tesseract", str(frame), "stdout", "-l", "chi_sim+eng", "--psm", "6"],
-        capture_output=True, text=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["tesseract", str(frame), "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+            capture_output=True, text=True, timeout=_OCR_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if proc.returncode != 0:
         return None
     # OCR loves inserting spaces inside CJK; normalize before matching
@@ -139,12 +163,17 @@ def check_ocr_assertion(assertion: Assertion, frames: list[Path]) -> Verdict:
 
 
 def _detect(media: Path, filter_expr: str, marker: str) -> bool | None:
-    """Run an ffmpeg detector filter; True = detected, None = probe failed."""
-    proc = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-i", str(media), "-vf", filter_expr,
-         "-an", "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
+    """Run an ffmpeg detector filter; True = detected, None = probe failed
+    (#55: including a timeout — the whole clip is decoded, so this is the
+    longest-running probe here; still bounded, never unbounded)."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(media), "-vf", filter_expr,
+             "-an", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=_DETECT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if proc.returncode != 0:
         return None
     return marker in proc.stderr

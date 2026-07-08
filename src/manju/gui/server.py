@@ -952,9 +952,18 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json({"job": job.to_dict()}, 202)
 
     def _act_voice(self, body: dict[str, Any]) -> None:
+        """单镜头配音 (goal 61): routes through the SAME §8.3 ask_before gate
+        the CLI ``manju voice`` uses — a priced synthesis without an explicit
+        ``assume_yes`` fails the job as ``waiting_user`` and spends nothing,
+        exactly like ``/api/lab/generate`` (round UE) and ``/api/redo``
+        already do. Previously this endpoint called the TTS provider directly
+        with no gate at all — the GUI's plan modal showed the estimate (via
+        ``/api/plan`` action=voice) but a confirm here never carried that
+        forward into a real spend check."""
         project, actor = self.server.project, self.server.actor
         shot_id = str(body.get("shot") or "")
         provider = body.get("provider") or None
+        assume_yes = bool(body.get("assume_yes"))
         if not shot_id:
             self._send_error_json("shot is required", 400)
             return
@@ -968,9 +977,16 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         def fn(job) -> dict[str, Any]:
+            from ..build.graph import spend_gate
             from ..providers.tts import get_tts_provider
 
             tts = get_tts_provider(str(provider) if provider else None)
+            manifest = getattr(tts, "manifest", None)
+            cost = getattr(manifest, "cost", None) if manifest is not None else None
+            if cost is not None:
+                spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
+                          hint=f"确认后重试:GUI 配音带 assume_yes,"
+                               f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
             with _optional_build_lock(project.root, actor):
                 media = tts.synthesize(project, project.load_shot(shot_id),
                                        project.load_bible())
@@ -979,7 +995,8 @@ class _Handler(BaseHTTPRequestHandler):
                           "via": "gui"})
             return {"shot": shot_id, "take": media.stem, "media": project.relpath(media)}
 
-        job = self.server.runner.submit("voice", {"shot": shot_id, "provider": provider}, fn)
+        job = self.server.runner.submit(
+            "voice", {"shot": shot_id, "provider": provider, "assume_yes": assume_yes}, fn)
         self._send_json({"job": job.to_dict()}, 202)
 
     # ----------------------------------------------------- plan (§8.3 / §4.4)
@@ -3323,7 +3340,16 @@ class _Handler(BaseHTTPRequestHandler):
         existing redo path, then virtual-trim to the centred content span so a
         degraded xfade earns real handles. Runs on the job runner (serialized
         against builds), same §8.3 spend gate as redo (assume_yes). A provider
-        without duration control is refused synchronously with the advisory."""
+        without duration control is refused synchronously with the advisory.
+
+        Goal 63: the client sends back ``provider`` — the value its EARLIER
+        ``/api/edit/handle-rebuild-plan`` call showed in the confirm popover.
+        When present it is compared against a FRESH resolution here (routing
+        may have changed in the time the human spent looking at the popover)
+        and again inside the job right before spending; either mismatch
+        refuses with a 已重新报价 message rather than silently running a
+        provider the human never confirmed. Omitting it (an older client)
+        falls back to resolving fresh, as before."""
         from .edit_engine import (
             NO_DURATION_ADVISORY,
             handle_rebuild_proposal,
@@ -3337,6 +3363,7 @@ class _Handler(BaseHTTPRequestHandler):
         tm = body.get("transition_ms")
         transition_ms = int(tm) if tm is not None else None
         assume_yes = bool(body.get("assume_yes"))
+        proposed_provider = body.get("provider") or None
         # refuse up front (no job) when the provider can't be told a duration.
         try:
             prop = handle_rebuild_proposal(project, shot_id, transition_ms=transition_ms)
@@ -3349,11 +3376,18 @@ class _Handler(BaseHTTPRequestHandler):
         if not prop.get("supported"):
             self._send_error_json(NO_DURATION_ADVISORY, 400)
             return
+        if proposed_provider and proposed_provider != prop.get("provider"):
+            self._send_error_json(
+                f"已重新报价:供应商从提案的 {proposed_provider} 变为 "
+                f"{prop.get('provider')}(routing 配置发生变化)— "
+                "请重新查看补拍手柄提案后再确认", 409)
+            return
 
         def fn(job) -> dict[str, Any]:
             from .edit_engine import run_handle_rebuild
 
             return run_handle_rebuild(project, shot_id, transition_ms=transition_ms,
+                                      provider=proposed_provider,
                                       actor=actor, assume_yes=assume_yes)
 
         job = self.server.runner.submit(

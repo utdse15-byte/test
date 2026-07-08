@@ -131,6 +131,21 @@ def test_sync_asr_submit_is_result(monkeypatch, tmp_path):
     assert sent["lang"] == "zh" and sent["audio"]  # b64 payload present
 
 
+def test_transcribe_refuses_oversized_local_file(monkeypatch, tmp_path):
+    """Goal 54: a local media file over the (shared, generic_cloud) size cap
+    is refused before being loaded whole into memory for base64 upload."""
+    monkeypatch.setenv("ASR_X_KEY", "k")
+    monkeypatch.setenv("MANJU_MAX_DOWNLOAD_BYTES", "1024")
+    manifest = ProviderManifest.model_validate(_asr_manifest())
+    provider = GenericAsrProvider(manifest, transport=ScriptedTransport([]),
+                                  sleep_fn=lambda s: None)
+    media = tmp_path / "huge.wav"
+    media.write_bytes(b"x" * 2048)
+    with pytest.raises(ProviderFailure) as exc:
+        provider.transcribe(media)
+    assert "cap" in str(exc.value).lower() or "1024" in str(exc.value)
+
+
 def test_async_asr_polls_to_completion(monkeypatch, tmp_path):
     monkeypatch.setenv("ASR_X_KEY", "k")
     manifest = ProviderManifest.model_validate(_asr_manifest(
@@ -225,3 +240,56 @@ def test_cli_transcribe_manual_paths(tmp_project, monkeypatch, tmp_path):
     monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path / "none"))
     result = runner.invoke(app, ["transcribe", "media/imports/interview.mp4"])
     assert result.exit_code == 1
+
+
+def test_cli_transcribe_refuses_media_outside_project(tmp_project, monkeypatch, tmp_path):
+    """Goal 52: an absolute (or ../-escaping) media path is refused — cloud ASR
+    would otherwise upload arbitrary local files to an external provider."""
+    from typer.testing import CliRunner
+
+    from manju.cli import app
+
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"RIFFfake")
+    monkeypatch.chdir(tmp_project.root)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["transcribe", str(outside), "--text", "hello"])
+    assert result.exit_code == 1
+    assert "manju import" in result.output and "containment" in result.output.lower()
+
+    # a ../ escape from inside the project is refused the same way
+    result2 = runner.invoke(app, ["transcribe", f"../{outside.name}", "--text", "hello"])
+    assert result2.exit_code == 1
+
+
+def test_cli_transcribe_cloud_asr_spend_gated(tmp_project, monkeypatch, tmp_path):
+    """Goal 52: the cloud ASR on-ramp goes through the SAME §8.3 ask_before
+    gate build/redo/voice enforce — a priced call without --yes stops as
+    waiting_user and never reaches the provider."""
+    from typer.testing import CliRunner
+
+    from manju.cli import app
+    from manju.core.yamlio import write_yaml
+
+    media = tmp_project.imports_dir / "clip.wav"
+    media.write_bytes(b"RIFFfake")
+
+    write_yaml(tmp_path / "asr_x" / "provider.yaml", {
+        "id": "asr_x", "type": "asr", "adapter": "generic_asr",
+        "auth": {"key_env": "ASR_X_KEY"},
+        "submit": {"url": "https://api.example.com/v1/asr",
+                  "body_template": {"audio": "{audio_b64}"}, "job_id_path": "$.id"},
+        "asr": {"segments_path": "$.data.segments"},
+        "cost": {"per_call": 3.0, "currency": "CNY"},
+    })
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path))
+    monkeypatch.setenv("ASR_X_KEY", "k")
+    monkeypatch.chdir(tmp_project.root)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["transcribe", "media/imports/clip.wav"])
+    assert result.exit_code == 1
+    assert "waiting_user" in result.output
+    # nothing was written — the gate stopped it before any network call
+    assert not (tmp_project.captions_dir / "transcripts" / "clip.srt").exists()

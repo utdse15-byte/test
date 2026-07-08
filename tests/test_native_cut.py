@@ -502,6 +502,73 @@ def test_handle_rebuild_runs_with_mock_provider(tmp_project, add_shot):
     assert ev["detail"]["shot"] == "S001" and ev["detail"]["trim_take"] == trim
 
 
+def test_handle_rebuild_refuses_when_routing_drifted_since_proposal(tmp_project, add_shot):
+    """Goal 63: the executed redo is pinned to the provider the PROPOSAL
+    priced (the GUI passes back what handle_rebuild_proposal showed); if
+    routing.yaml changes in the window between propose and confirm, refuse
+    with a 已重新报价 message instead of silently running a different,
+    un-priced provider. No ffmpeg needed — the refusal fires before any
+    generation is attempted."""
+    from manju.core.models import ShotSpec, TakeSidecar
+    from manju.core.yamlio import write_yaml
+    from manju.providers.base import GenerationRequest, Provider
+    from manju.providers.registry import register_provider
+    from manju.gui.edit_engine import (
+        HandleRebuildError,
+        handle_rebuild_proposal,
+        run_handle_rebuild,
+    )
+
+    class _StubProvider(Provider):
+        kind = "local"
+
+        def __init__(self, id_: str):
+            self.id = id_
+            self.called = False
+
+        def generate(self, req: GenerationRequest):
+            self.called = True  # must never be reached by this test
+            raise AssertionError("generate() should not run when routing drifted")
+
+    prov_a = _StubProvider("route_a")
+    prov_b = _StubProvider("route_b")
+    register_provider(prov_a)
+    register_provider(prov_b)
+    # no explicit generation.provider -> routing decides the head
+    add_shot(tmp_project, "S001", duration=2,
+             generation={"candidates": 1, "fallback": ["caption_card"]})
+    write_yaml(tmp_project.root / "timeline" / "routing.yaml", {
+        "strategy": "default",
+        "strategies": {"default": {"rules": [], "else": "route_a"}}})
+
+    prop = handle_rebuild_proposal(tmp_project, "S001", transition_ms=500)
+    assert prop["supported"] is True
+    assert prop["provider"] == "route_a"
+
+    # routing drifts in the window between propose (shown to the human) and
+    # confirm (this call) — e.g. someone edited routing.yaml meanwhile.
+    write_yaml(tmp_project.root / "timeline" / "routing.yaml", {
+        "strategy": "default",
+        "strategies": {"default": {"rules": [], "else": "route_b"}}})
+
+    with pytest.raises(HandleRebuildError) as exc:
+        run_handle_rebuild(tmp_project, "S001", transition_ms=500,
+                           provider=prop["provider"], actor="human", assume_yes=True)
+    assert "已重新报价" in str(exc.value)
+    assert "route_a" in str(exc.value) and "route_b" in str(exc.value)
+    assert not prov_a.called and not prov_b.called  # refused before any spend
+
+    # unchanged routing (no drift) still runs through to the pinned provider —
+    # confirms the check is a real refuse-on-mismatch, not a blanket block.
+    write_yaml(tmp_project.root / "timeline" / "routing.yaml", {
+        "strategy": "default",
+        "strategies": {"default": {"rules": [], "else": "route_a"}}})
+    with pytest.raises(AssertionError):  # our stub deliberately raises once called
+        run_handle_rebuild(tmp_project, "S001", transition_ms=500,
+                           provider="route_a", actor="human", assume_yes=True)
+    assert prov_a.called
+
+
 # ================================================================ F. mode + guards
 
 

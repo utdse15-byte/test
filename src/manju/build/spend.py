@@ -57,14 +57,24 @@ def spend_report(project: Project) -> dict:
     Shape::
 
         {
-          "total": float,                # summed cost across all runs
+          "total": float,                # summed cost across all runs — a RAW
+                                         #   cross-currency sum when mixed (goal 79:
+                                         #   kept for backward compat; use by_currency
+                                         #   for an honest breakdown)
           "currency": str | None,        # the single spend currency, or None
                                          #   when mixed / none recorded
+          "by_currency": [{"currency", "cost": float, "runs": int}, ...],  # cost desc
+                                         # (goal 79) — never merges different
+                                         # currencies into one number; ALWAYS use
+                                         # this to display spend, not total+currency
           "budget_limit": float | None,  # project.yaml budget.limit
-          "estimated_total": float | None,  # sum of non-None run estimates, or
-                                            #   None when no estimate exists
-          "delta": float | None,         # total - estimated_total (None if no
-                                         #   estimate exists) — spend-delta column
+          "estimated_total": float | None,  # sum of estimates over the COVERED
+                                            #   rows only (goal 67), or None when
+                                            #   no row carries one
+          "delta": float | None,         # (actual - estimated) over ONLY the rows
+                                         #   that carry an estimate (goal 67) — never
+                                         #   "all actual" minus "some estimated"
+          "delta_coverage": str | None,  # "覆盖 N/M 条记录" (goal 67), None with delta
           "by_provider": [{"provider", "runs": int, "cost": float}, ...],  # cost desc
           "by_shot":     [{"shot", "runs": int, "cost": float}, ...],      # cost desc
           "recent": [{"ts","shot","provider","take","cost","currency","status",
@@ -73,9 +83,9 @@ def spend_report(project: Project) -> dict:
         }
 
     ``recent`` is newest first, capped at the 20 most recent runs.
-    ``estimated_total``/``delta`` are populated only when at least one ledger row
-    carries an estimate; the sidecar fallback (§3) leaves both ``None`` because
-    sidecars record the actual cost only.
+    ``estimated_total``/``delta``/``delta_coverage`` are populated only when at
+    least one ledger row carries an estimate; the sidecar fallback (§3) leaves
+    all three ``None`` because sidecars record the actual cost only.
 
     The run ledger (``RuntimeState``) is authoritative whenever it holds rows.
     Because that SQLite state is disposable (§3), every ledger access is wrapped
@@ -130,6 +140,7 @@ def _from_ledger(project: Project) -> dict | None:
                 return None  # ledger present but empty -> fall back to sidecars
             rows = state.run_log(n)  # every row, newest first
             total, currency = state.total_cost()
+            by_currency = state.total_cost_by_currency()  # goal 79
             by_provider = [
                 {"provider": r["provider"], "runs": r["runs"], "cost": r["cost"]}
                 for r in state.cost_by_provider()
@@ -141,23 +152,35 @@ def _from_ledger(project: Project) -> dict | None:
     except Exception:
         return None
 
-    # Spend delta: sum the estimates actually present (rows predating the feature
-    # carry None), then compare against the actual total. Both stay None when no
-    # row carries an estimate, so the delta column simply doesn't render.
-    est_values = [r["estimated_cost"] for r in rows if r["estimated_cost"] is not None]
-    if est_values:
-        estimated_total: float | None = float(sum(est_values))
-        delta: float | None = float(total) - estimated_total
+    # Spend delta (goal 67): comparing "actual total over ALL rows" against
+    # "estimated total over only the rows that carry one" is not a real delta
+    # when some rows predate the estimate feature (or a provider never wrote
+    # one) — it silently mixes an all-rows figure with a subset figure. Fixed:
+    # both sides of the subtraction are restricted to the SAME covered subset;
+    # `total` itself is untouched (still the true all-rows actual).
+    covered = [r for r in rows if r["estimated_cost"] is not None]
+    if covered:
+        estimated_total: float | None = float(sum(r["estimated_cost"] for r in covered))
+        actual_covered = float(sum(r["cost"] for r in covered))
+        delta: float | None = actual_covered - estimated_total
+        delta_coverage = f"覆盖 {len(covered)}/{len(rows)} 条记录"
     else:
         estimated_total = None
         delta = None
+        delta_coverage = None
 
     return {
         "total": float(total),
         "currency": currency,
+        # goal 79: the honest per-currency breakdown — display ALL currencies
+        # (e.g. 12 CNY + 2 USD) rather than a single merged/mislabeled number.
+        "by_currency": by_currency,
         "budget_limit": None,  # filled in by spend_report
         "estimated_total": estimated_total,
         "delta": delta,
+        # goal 67: how much of the ledger the delta actually covers — a delta
+        # over 3/10 records is a different claim than one over 10/10.
+        "delta_coverage": delta_coverage,
         "by_provider": by_provider,
         "by_shot": by_shot,
         "recent": [
@@ -189,7 +212,7 @@ def _from_sidecars(project: Project) -> dict:
     provider_pairs: list[tuple[Any, float]] = []
     shot_pairs: list[tuple[Any, float]] = []
     recent: list[dict] = []
-    currencies: set[str] = set()
+    currency_totals: dict[str | None, float] = {}
     total = 0.0
     takes_seen = 0
 
@@ -203,7 +226,7 @@ def _from_sidecars(project: Project) -> dict:
             if remote is not None and remote.cost:
                 cost = float(remote.cost)
                 currency = remote.currency
-                currencies.add(currency)
+                currency_totals[currency] = currency_totals.get(currency, 0.0) + cost
             total += cost
             provider_pairs.append((sidecar.provider, cost))
             shot_pairs.append((shot_id, cost))
@@ -225,9 +248,11 @@ def _from_sidecars(project: Project) -> dict:
         return {
             "total": 0.0,
             "currency": None,
+            "by_currency": [],
             "budget_limit": None,
             "estimated_total": None,
             "delta": None,
+            "delta_coverage": None,
             "by_provider": [],
             "by_shot": [],
             "recent": [],
@@ -235,13 +260,20 @@ def _from_sidecars(project: Project) -> dict:
         }
 
     recent.sort(key=lambda r: r["ts"] or "", reverse=True)
+    by_currency = [
+        {"currency": cur, "cost": round(cost, 6)}
+        for cur, cost in sorted(currency_totals.items(), key=lambda kv: kv[1], reverse=True)
+    ]
     return {
         "total": total,
-        "currency": next(iter(currencies)) if len(currencies) == 1 else None,
+        "currency": next(iter(currency_totals)) if len(currency_totals) == 1 else None,
+        # goal 79: the honest per-currency breakdown, same shape as the ledger path.
+        "by_currency": by_currency,
         "budget_limit": None,  # filled in by spend_report
         # sidecars never carry the pre-flight estimate, so the delta is None.
         "estimated_total": None,
         "delta": None,
+        "delta_coverage": None,
         "by_provider": _aggregate(provider_pairs, "provider"),
         "by_shot": _aggregate(shot_pairs, "shot"),
         "recent": recent[:_RECENT_LIMIT],

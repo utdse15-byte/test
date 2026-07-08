@@ -27,6 +27,16 @@ FFMPEG = "ffmpeg"
 _STDERR_TAIL = 15
 _ARGV_HEAD = 12  # how many argv tokens to keep as evidence (the -i/-vf head)
 
+# Timeouts (goal W, #55): every ffmpeg call gets SOME timeout — a corrupt
+# input, a network-mounted path or a stuck filter must never hang check/
+# render/package forever. Renders can legitimately run long (many shots, high
+# resolution, complex filter graphs), so the default here is deliberately
+# generous rather than short. Override per call (``timeout=``) or globally via
+# MANJU_FFMPEG_TIMEOUT_S (seconds; <=0 disables the cap, for the rare
+# legitimately-unbounded job).
+DEFAULT_FFMPEG_TIMEOUT_S = 7200.0  # 2h
+_UNSET = object()  # sentinel: "caller did not override" vs. an explicit None (no cap)
+
 
 class MediaError(RuntimeError):
     """Any failure in the media pipeline (bad ffmpeg exit, unreadable probe...)."""
@@ -34,6 +44,17 @@ class MediaError(RuntimeError):
 
 def _quote(cmd: list[str]) -> str:
     return " ".join(shlex.quote(c) for c in cmd)
+
+
+def _default_ffmpeg_timeout() -> float | None:
+    override = os.environ.get("MANJU_FFMPEG_TIMEOUT_S")
+    if override:
+        try:
+            value = float(override)
+        except ValueError:
+            return DEFAULT_FFMPEG_TIMEOUT_S
+        return value if value > 0 else None
+    return DEFAULT_FFMPEG_TIMEOUT_S
 
 
 def run_ffmpeg(
@@ -44,6 +65,7 @@ def run_ffmpeg(
     subject: str | None = None,
     step: str = "render",
     log_name: str = "render",
+    timeout: float | None = _UNSET,  # type: ignore[assignment]
 ) -> None:
     """Run ``ffmpeg -y -hide_banner -loglevel error <args>``.
 
@@ -51,6 +73,12 @@ def run_ffmpeg(
     so callers never have to remember to stringify paths themselves. On a
     nonzero exit a :class:`MediaError` is raised carrying the last ~15 lines of
     stderr plus the reproducible command line.
+
+    ``timeout`` (goal W, #55): seconds before the subprocess is killed and a
+    structured :class:`MediaError` raised — defaults to
+    :data:`DEFAULT_FFMPEG_TIMEOUT_S` (generous; renders can legitimately run
+    long). Pass an explicit smaller value for short-lived calls (frame
+    extraction, thumbnails) or ``None`` to disable the cap outright.
 
     Debuggability (goal 10): when ``project`` (a Project or a bare root path) is
     supplied, a failure is ALSO recorded as a structured :class:`Failure` before
@@ -60,11 +88,14 @@ def run_ffmpeg(
     best-effort and never changes the exception type or its one-line message
     (existing callers and their tests are untouched).
     """
+    if timeout is _UNSET:
+        timeout = _default_ffmpeg_timeout()
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", *[str(a) for a in args]]
     if log is not None:
         log(_quote(cmd))
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout)
     except FileNotFoundError:
         # ffmpeg not on PATH — the #1 first-run blocker. Rewrite the raw
         # OSError traceback into the what/why/how-to-fix triple (clig.dev:
@@ -85,6 +116,26 @@ def run_ffmpeg(
             except Exception:
                 pass
         raise MediaError(msg)
+    except subprocess.TimeoutExpired as exc:
+        # #55: a stuck filter / corrupt input / network-mounted path must not
+        # hang forever — kill it and surface a structured, actionable error.
+        msg = (
+            f"ffmpeg 超时(>{timeout}s)— 可能是损坏媒体、网络挂载路径或卡住的 filter "
+            f"(goal W/#55)。命令: {_quote(cmd)}"
+        )
+        if project is not None:
+            try:
+                from ..core.failures import Failure, record_failure
+
+                record_failure(project, Failure(
+                    step=step, subject=subject or "ffmpeg",
+                    cause=f"ffmpeg 超时(>{timeout}s)",
+                    evidence=_quote(cmd[:_ARGV_HEAD]),
+                    hint="检查输入媒体是否损坏/挂载是否可达;必要时调大 "
+                         "MANJU_FFMPEG_TIMEOUT_S 或传 run_ffmpeg(timeout=...)"))
+            except Exception:
+                pass
+        raise MediaError(msg) from exc
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-_STDERR_TAIL:])
         if project is not None:

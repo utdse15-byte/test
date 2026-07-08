@@ -244,6 +244,7 @@ class _ProviderView:
     per_call: float
     disabled: bool
     exists: bool
+    adapter: str = ""  # goal 30: needed to mirror the #29 candidates-clamp when pricing
 
 
 def _catalog() -> dict[str, _ProviderView]:
@@ -270,6 +271,7 @@ def _catalog() -> dict[str, _ProviderView]:
             per_call=float(m.cost.per_call),
             disabled=bool(getattr(m, "disabled", False)),
             exists=True,
+            adapter=m.adapter,
         )
     for pid, prov in available_providers().items():  # built-ins + constructed manifests
         if pid in cat:
@@ -277,6 +279,44 @@ def _catalog() -> dict[str, _ProviderView]:
         else:
             cat[pid] = _ProviderView(pid, prov.kind, [], 0.0, 0.0, False, True)
     return cat
+
+
+def _provider_price(view: "_ProviderView", duration_s: float, candidates: int) -> float:
+    """The price THIS provider would actually be charged for one shot (goal
+    30): ``per_call + per_second × expected_duration``, times candidates —
+    the same shape ``providers.manifest.estimate_cost`` uses, not just
+    ``per_second`` alone (a short clip on a high-per-call provider can easily
+    beat a low-per-second one). Mirrors the #29 clamp: generic_cloud's
+    submit/poll/download path always returns exactly ONE result per job, so
+    it is priced at 1 candidate regardless of what the shot requests — the
+    same honest number the estimator and the ledger fallback show."""
+    from .manifest import GENERIC_ADAPTER
+
+    eff_candidates = 1 if view.adapter == GENERIC_ADAPTER else max(1, int(candidates or 1))
+    return view.per_call + view.per_second * max(0.0, duration_s) * eff_candidates
+
+
+def _shot_price_inputs(project: Any, shot: Any) -> tuple[float, int]:
+    """(expected_duration_s, candidates) for :func:`_provider_price` — the SAME
+    target-duration helper ``build.graph`` uses for its own estimate, so
+    ``cheapest`` ranks providers on the price the estimator/ledger will
+    actually show. Degrades to the shot's raw ``duration`` (0 for "auto") when
+    the build module or project rules are unavailable — advisory only, a
+    resolution failure here must never break routing."""
+    candidates = max(1, int(getattr(shot.generation, "candidates", 1) or 1))
+    duration_s = 0.0
+    d = getattr(shot, "duration", None)
+    if isinstance(d, (int, float)) and not isinstance(d, bool):
+        duration_s = float(d)
+    if project is not None:
+        try:
+            from ..build.graph import _target_duration_ms
+
+            rules = project.load_rules()
+            duration_s = _target_duration_ms(project, shot, rules) / 1000.0
+        except Exception:
+            pass
+    return duration_s, candidates
 
 
 # ------------------------------------------------------------- match evaluation
@@ -348,16 +388,25 @@ class Resolution:
 
 
 def _capable_sorted(cat: dict[str, _ProviderView], shot, *, kind: str | None = None,
-                    by_cost: bool = False) -> list[str]:
+                    by_cost: bool = False, project: Any = None) -> list[str]:
     """Enabled providers advertising a capability this shot's pipeline calls
     for (its generation.fallback steps), optionally filtered to one kind and
-    ordered per-second-cheapest first."""
+    ordered cheapest-first.
+
+    Goal 30: "cheapest" ranks by the REAL per-shot price — ``per_call +
+    per_second × expected_duration`` (candidates-clamped per #29) — not just
+    ``per_second``, so a high-per-call/low-per-second provider is no longer
+    wrongly preferred for a short clip over the opposite shape."""
     needs = set(shot.generation.fallback)
     cands = [v for v in cat.values()
              if v.exists and not v.disabled
              and (kind is None or v.kind == kind)
              and (set(v.capabilities) & needs)]
-    cands.sort(key=(lambda v: (v.per_second, v.id)) if by_cost else (lambda v: v.id))
+    if by_cost:
+        duration_s, candidates = _shot_price_inputs(project, shot)
+        cands.sort(key=lambda v: (_provider_price(v, duration_s, candidates), v.id))
+    else:
+        cands.sort(key=lambda v: v.id)
     return [v.id for v in cands]
 
 
@@ -428,7 +477,7 @@ def resolve(project, shot, config: RoutingConfig | None = None, *,
             for pid in _capable_sorted(cat, shot, kind="local"):
                 add(pid)
         elif else_sel == "cheapest":
-            for pid in _capable_sorted(cat, shot, by_cost=True):
+            for pid in _capable_sorted(cat, shot, by_cost=True, project=project):
                 add(pid)
         elif else_sel == "quality":
             for pid in strat["priority"]:

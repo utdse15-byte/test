@@ -321,7 +321,15 @@ def status(as_json: bool = typer.Option(False, "--json")):
     typer.echo(f"成片  {info['latest_final'] or '—'}")
     if info["qc"]:
         typer.echo(f"QC   errors={info['qc'].get('errors')} warnings={info['qc'].get('warnings')}")
-    typer.echo(f"花费  {info['total_cost']} {info['currency']}"
+    # goal 79: never print a currency-mislabeled number — when spend spans
+    # more than one currency, show every currency's own total (12 CNY + 2 USD)
+    # instead of a single merged figure.
+    by_currency = info.get("spend_by_currency") or []
+    if len(by_currency) > 1:
+        spend_txt = " + ".join(f"{c['cost']:g} {c['currency'] or '?'}" for c in by_currency)
+    else:
+        spend_txt = f"{info['total_cost']} {info['currency'] or ''}".strip()
+    typer.echo(f"花费  {spend_txt}"
                + (f" / 预算 {info['budget_limit']}" if info["budget_limit"] else ""))
     if info.get("qc_focus"):
         typer.secho("质检重点  " + " · ".join(info["qc_focus"]), fg=typer.colors.MAGENTA)
@@ -1667,6 +1675,8 @@ def transcribe(
     from_srt: Optional[Path] = typer.Option(None, "--from-srt", help="manual input: normalize your own SRT"),
     text: Optional[str] = typer.Option(None, "--text", help="manual input: plain transcript, auto-timed over the media"),
     out: Optional[Path] = typer.Option(None, help="output SRT (default captions/transcripts/<name>.srt)"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Transcribe imported real footage into an SRT (M4 ASR slot, on demand).
@@ -1674,7 +1684,18 @@ def transcribe(
     Three equal on-ramps: a configured cloud ASR manifest (§8.6, type: asr),
     --from-srt with human-made subtitles, or --text with the raw transcript
     (distributed over the media duration). The scripted-drama main line never
-    needs this — its captions come from dialogue + TTS alignment."""
+    needs this — its captions come from dialogue + TTS alignment.
+
+    ``media`` must resolve INSIDE the project (§8.2 containment, R goal 52):
+    an absolute or ``../``-escaping path is refused — cloud ASR uploads the
+    file's bytes to an external provider, so a path outside the project could
+    otherwise exfiltrate local files the project never claimed. Bring outside
+    footage in first with `manju import <file>`.
+
+    A priced cloud ASR call stops as waiting_user unless --yes — the same
+    §8.3 ask_before gate build/redo/voice enforce (goal 52 spend-gate hole
+    closure); the manual --from-srt/--text on-ramps are always free."""
+    from .build.graph import WaitingUser, spend_gate
     from .providers.asr import (
         AsrUnavailable,
         distribute_text,
@@ -1684,7 +1705,12 @@ def transcribe(
     )
 
     project = _project()
-    media_abs = media if media.is_absolute() else project.root / media
+    try:
+        media_abs = project.resolve(media)
+    except ProjectError:
+        _fail(f"{media}: 路径在项目外(§8.2 containment)— transcribe 只接受项目内素材,"
+              f"云 ASR 会把文件内容上传给外部 provider。先 `manju import {media}` "
+              "把素材带进项目(media/imports/),再对项目内路径跑 transcribe。")
     if not media_abs.exists():
         _fail(f"media not found: {media}")
     if from_srt and text:
@@ -1707,6 +1733,12 @@ def transcribe(
         try:
             asr = get_asr_provider(provider)
         except AsrUnavailable as exc:
+            _fail(str(exc))
+        cost = asr.manifest.cost
+        try:
+            spend_gate(project, cost.per_call, cost.currency, assume_yes=yes,
+                      hint=f"确认后重试:manju transcribe {media} --yes")
+        except WaitingUser as exc:
             _fail(str(exc))
         segments = asr.transcribe(media_abs)
         source = asr.id
@@ -2503,14 +2535,23 @@ def spend(as_json: bool = typer.Option(False, "--json")):
         _emit(report, True)
         return
 
-    cur = report["currency"] or "(混合/mixed)"
     typer.secho(f"花费 / spend  (来源/source: {report['source']})", fg=typer.colors.CYAN)
-    typer.secho(f"  合计 / total  {report['total']:g} {cur}", fg=typer.colors.CYAN)
+    # goal 79: never print a currency-mislabeled total — with more than one
+    # currency in play, show every currency's own total instead of merging.
+    by_currency = report.get("by_currency") or []
+    if len(by_currency) > 1:
+        parts = " + ".join(f"{c['cost']:g} {c['currency'] or '?'}" for c in by_currency)
+        typer.secho(f"  合计 / total  {parts}(混合币种,按币种分列/mixed currencies)",
+                    fg=typer.colors.CYAN)
+    else:
+        cur = report["currency"] or ""
+        typer.secho(f"  合计 / total  {report['total']:g} {cur}", fg=typer.colors.CYAN)
     if report["estimated_total"] is not None:
         delta = report["delta"] or 0.0
         sign = "+" if delta >= 0 else ""
+        coverage = f"  ({report['delta_coverage']})" if report.get("delta_coverage") else ""
         typer.echo(f"  预估 / estimated  {report['estimated_total']:g}"
-                   f"   δ(实际−预估) {sign}{delta:g}")
+                   f"   δ(实际−预估) {sign}{delta:g}{coverage}")
     if report["budget_limit"] is not None:
         typer.echo(f"  预算 / budget.limit  {report['budget_limit']:g}")
 
