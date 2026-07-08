@@ -206,23 +206,36 @@ def _h_update_shot(project: Project, args: dict) -> dict:
             "MCP, §5): " + "; ".join(str(v) for v in violations)
         )
 
-    # (6-pre) baseline check errors mentioning this shot's file
-    original_text = path.read_text(encoding="utf-8")
-    before = run_check(project)
-    before_errors = {e for e in before.errors if label in e}
+    # Round Z (agent ZA): the actual write+recheck is the cross-process-racy
+    # part (§9) — wrapped in the same build lock every other mutating
+    # entrance (build/redo/qc/select_take) takes, so this can no longer land
+    # mid-build. Parsing/schema/lock-checks above are pure reads, held
+    # outside the lock on purpose (never block a build over a request that
+    # was going to be rejected anyway). ``BuildLocked`` deliberately
+    # propagates uncaught, like ``_h_qc`` — the MCP server's own
+    # ``tools/call`` dispatch already turns any raised exception into an
+    # ``isError`` result (mcp/server.py), so a second local catch here would
+    # only re-word the identical message, not change the outcome.
+    from ..runtime.buildlock import build_lock
 
-    # (5) atomic write of the parsed dict
-    write_yaml(path, new_data)
+    with build_lock(project.root, actor="ai"):
+        # (6-pre) baseline check errors mentioning this shot's file
+        original_text = path.read_text(encoding="utf-8")
+        before = run_check(project)
+        before_errors = {e for e in before.errors if label in e}
 
-    # (6) re-check; restore on any NEW error mentioning this shot's file
-    after = run_check(project)
-    new_errors = [e for e in after.errors if label in e and e not in before_errors]
-    if new_errors:
-        atomic_write_text(path, original_text)  # roll back the edit
-        return {
-            "error": f"edit rejected: it introduces check errors in {label}",
-            "check_errors": new_errors,
-        }
+        # (5) atomic write of the parsed dict
+        write_yaml(path, new_data)
+
+        # (6) re-check; restore on any NEW error mentioning this shot's file
+        after = run_check(project)
+        new_errors = [e for e in after.errors if label in e and e not in before_errors]
+        if new_errors:
+            atomic_write_text(path, original_text)  # roll back the edit
+            return {
+                "error": f"edit rejected: it introduces check errors in {label}",
+                "check_errors": new_errors,
+            }
 
     append_event(project.root, "ai", "mcp_update_shot", {"shot": shot_id})
     return {"ok": True, "check_warnings": after.warnings}
@@ -340,24 +353,31 @@ def _h_qc_verdict(project: Project, args: dict) -> dict:
 
 
 def _h_export(project: Project, args: dict) -> dict:
+    # Round Z (agent ZA): srt/ass land in captions/ — the SAME files a
+    # concurrent build's own captions phase writes (§9) — so this needs the
+    # cross-process build lock too, mirroring qc/select_take. BuildLocked
+    # propagates uncaught (see _h_update_shot's note above).
+    from ..runtime.buildlock import build_lock
+
     formats = args.get("formats") or []
     if not isinstance(formats, list) or not formats:
         raise ToolError("formats must be a non-empty array of srt|otio|jianying")
-    timeline = project.load_timeline()
-    if timeline is None:
-        raise ToolError("no timeline.json — run the build tool first")
-    outputs: dict[str, str] = {}
-    for fmt in formats:
-        if fmt == "srt":
-            paths = export_captions(project, timeline)
-            outputs["srt"] = project.relpath(paths["srt"])
-            outputs["ass"] = project.relpath(paths["ass"])
-        elif fmt == "otio":
-            outputs["otio"] = project.relpath(export_otio(project, timeline))
-        elif fmt == "jianying":
-            outputs["jianying"] = project.relpath(export_jianying(project, timeline))
-        else:
-            raise ToolError(f"unknown export format: {fmt!r} (use srt|otio|jianying)")
+    with build_lock(project.root, actor="ai"):
+        timeline = project.load_timeline()
+        if timeline is None:
+            raise ToolError("no timeline.json — run the build tool first")
+        outputs: dict[str, str] = {}
+        for fmt in formats:
+            if fmt == "srt":
+                paths = export_captions(project, timeline)
+                outputs["srt"] = project.relpath(paths["srt"])
+                outputs["ass"] = project.relpath(paths["ass"])
+            elif fmt == "otio":
+                outputs["otio"] = project.relpath(export_otio(project, timeline))
+            elif fmt == "jianying":
+                outputs["jianying"] = project.relpath(export_jianying(project, timeline))
+            else:
+                raise ToolError(f"unknown export format: {fmt!r} (use srt|otio|jianying)")
     return {"outputs": outputs}
 
 

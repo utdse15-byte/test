@@ -899,6 +899,8 @@ class _Handler(BaseHTTPRequestHandler):
         if len(text) > 2000:
             self._send_error_json("note too long (max 2000 chars)", 400)
             return
+        from ..runtime.buildlock import BuildLocked
+
         with self.server.quick_mutex:
             if project.get_take(shot_id, take) is None:
                 self._send_error_json(f"{shot_id} has no take '{take}'", 404)
@@ -918,7 +920,12 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     status.pop("take_notes", None)
 
-            project.update_shot_raw(shot_id, mutate)
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    project.update_shot_raw(shot_id, mutate)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, self.server.actor, "take_note",
                          {"shot": shot_id, "take": take,
                           "deleted": not text.strip(), "via": "gui"})
@@ -927,6 +934,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _act_lock(self, body: dict[str, Any]) -> None:
         from ..core.locks import seal_lock
+        from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
         shot_id, fieldpath = str(body.get("shot") or ""), str(body.get("field") or "")
@@ -948,7 +956,12 @@ class _Handler(BaseHTTPRequestHandler):
                 locked[fieldpath] = digest
                 d["locked"] = locked
 
-            project.update_shot_raw(shot_id, mutate)
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    project.update_shot_raw(shot_id, mutate)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, self.server.actor, "lock",
                          {"shot": shot_id, "field": fieldpath, "via": "gui"})
         self._send_json({"ok": True, "shot": shot_id, "field": fieldpath, "hash": digest})
@@ -1654,29 +1667,44 @@ class _Handler(BaseHTTPRequestHandler):
         """Shared editor core: write the text VERBATIM (atomic), run the full
         `manju check`, revert when the save introduced any new error. Returns
         (ok, payload, http_status); the caller appends its own event.
-        Callers must hold quick_mutex."""
+        Callers must hold quick_mutex.
+
+        Round Z (agent ZA): every truth-file editor funnels through here
+        (bible/rules/packaging/shot/duration/transition/look/caption-style),
+        so wrapping the write+recheck in the cross-process ``build_lock``
+        ONCE, here, covers all of them — no per-call-site duplication. Busy
+        (another process mid-build) degrades to the SAME (ok=False, 409)
+        shape a check-regression already uses, so every caller's existing
+        ``self._send_json(payload, status)`` renders it without change."""
         from ..core.check import run_check
         from ..core.yamlio import atomic_write_text
+        from ..runtime.buildlock import BuildLocked
 
-        before = path.read_text(encoding="utf-8") if path.exists() else None
-        baseline = set(run_check(self.server.project).errors)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, text if text.endswith("\n") else text + "\n")
-        report = run_check(self.server.project)
-        new_errors = [e for e in report.errors if e not in baseline]
-        if new_errors:
-            if before is None:
-                path.unlink(missing_ok=True)
-            else:
-                atomic_write_text(path, before)
-            # conflict-banner contract (COMPETITIVE-UX-STUDY, Figma pattern):
-            # the client gets the reverted-to truth alongside the errors, so
-            # it can show buffer-vs-truth and re-apply without a second fetch
-            return False, {"error": f"check failed — {label} 已回滚 (reverted)",
-                           "errors": new_errors,
-                           "current": before if before is not None else ""}, 409
-        return True, {"ok": True, "created": before is None,
-                      "warnings": report.warnings}, 200
+        project = self.server.project
+        try:
+            with _optional_build_lock(project.root, self.server.actor):
+                before = path.read_text(encoding="utf-8") if path.exists() else None
+                baseline = set(run_check(project).errors)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(path, text if text.endswith("\n") else text + "\n")
+                report = run_check(project)
+                new_errors = [e for e in report.errors if e not in baseline]
+                if new_errors:
+                    if before is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write_text(path, before)
+                    # conflict-banner contract (COMPETITIVE-UX-STUDY, Figma
+                    # pattern): the client gets the reverted-to truth
+                    # alongside the errors, so it can show buffer-vs-truth
+                    # and re-apply without a second fetch
+                    return False, {"error": f"check failed — {label} 已回滚 (reverted)",
+                                   "errors": new_errors,
+                                   "current": before if before is not None else ""}, 409
+                return True, {"ok": True, "created": before is None,
+                              "warnings": report.warnings}, 200
+        except BuildLocked as exc:
+            return False, {"error": str(exc)}, 409
 
     @staticmethod
     def _parse_yaml_mapping(text: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -1770,6 +1798,8 @@ class _Handler(BaseHTTPRequestHandler):
         """Reorder shots — the cut order is one reviewable line of YAML (§3).
         The incoming order must be a permutation of the CURRENT visible order
         (index + on-disk extras); previously-unindexed shots become indexed."""
+        from ..runtime.buildlock import BuildLocked
+
         project = self.server.project
         order = body.get("order")
         if not isinstance(order, list) or not all(isinstance(s, str) for s in order):
@@ -1784,7 +1814,12 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             index = project.load_index()
             index.order = list(order)
-            project.save_index(index)
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    project.save_index(index)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, self.server.actor, "reorder",
                          {"order": order, "via": "gui"})
         self._send_json({"ok": True, "order": order})
@@ -1975,16 +2010,26 @@ class _Handler(BaseHTTPRequestHandler):
         """Restore ONE truth-text file from git (core/history.rollback_file):
         story/shots/bible/timeline/captions/project.yaml only — media, renders
         and exports are refused. Runs ``check`` afterwards and reports findings
-        (the CLI does the same); the rollback itself is already an event."""
-        from ..core.history import HistoryError, rollback_file
+        (the CLI does the same); the rollback itself is already an event.
 
+        Round Z (agent ZA): ``rollback_file`` overwrites a truth file straight
+        from git with no lock of its own (§9 gap) — wrapped here in the
+        cross-process build lock, same as every other truth-file write."""
+        from ..core.history import HistoryError, rollback_file
+        from ..runtime.buildlock import BuildLocked
+
+        project = self.server.project
         rel = str(body.get("path") or "").strip()
         ref = str(body.get("ref") or "HEAD").strip() or "HEAD"
         if not rel:
             self._send_error_json("path is required", 400)
             return
         try:
-            result = rollback_file(self.server.project, rel, ref)
+            with self.server.quick_mutex, _optional_build_lock(project.root, self.server.actor):
+                result = rollback_file(project, rel, ref)
+        except BuildLocked as exc:
+            self._send_error_json(str(exc), 409)
+            return
         except HistoryError as exc:
             self._send_error_json(str(exc), 400)
             return
@@ -2157,28 +2202,35 @@ class _Handler(BaseHTTPRequestHandler):
         if not STRATEGY_NAME_RE.fullmatch(strat):
             self._send_error_json("invalid strategy name", 400)
             return
+        from ..runtime.buildlock import BuildLocked
+
         project = self.server.project
         path = project_routing_path(project)
         with self.server.quick_mutex:
-            before = path.read_text(encoding="utf-8") if path.exists() else None
-            new_text = set_strategy_in_text(before or "", strat)
-            if not new_text.endswith("\n"):
-                new_text += "\n"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(path, new_text)
-            try:  # validate-on-save: still parses AND names a known strategy
-                info = list_strategies(project)
-                names = {s["name"] for s in info["strategies"]}
-                if strat not in names:
-                    raise RoutingError(
-                        f"unknown strategy {strat!r}; available: {sorted(names)}")
-            except RoutingError as exc:
-                if before is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    atomic_write_text(path, before)
-                self._send_error_json(
-                    "strategy 已回滚 (reverted): " + " ".join(str(exc).split()), 400)
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    before = path.read_text(encoding="utf-8") if path.exists() else None
+                    new_text = set_strategy_in_text(before or "", strat)
+                    if not new_text.endswith("\n"):
+                        new_text += "\n"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write_text(path, new_text)
+                    try:  # validate-on-save: still parses AND names a known strategy
+                        info = list_strategies(project)
+                        names = {s["name"] for s in info["strategies"]}
+                        if strat not in names:
+                            raise RoutingError(
+                                f"unknown strategy {strat!r}; available: {sorted(names)}")
+                    except RoutingError as exc:
+                        if before is None:
+                            path.unlink(missing_ok=True)
+                        else:
+                            atomic_write_text(path, before)
+                        self._send_error_json(
+                            "strategy 已回滚 (reverted): " + " ".join(str(exc).split()), 400)
+                        return
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
                 return
             append_event(project.root, self.server.actor, "route_strategy",
                          {"strategy": strat, "via": "gui"})
@@ -2911,59 +2963,64 @@ class _Handler(BaseHTTPRequestHandler):
         def fn(job) -> dict[str, Any]:
             from ..core.events import append_event
 
-            if kind in ("srt", "ass", "otio", "jianying", "capcut"):
-                timeline = project.load_timeline()
-                if timeline is None:
-                    raise RuntimeError("no timeline.json — run `manju build` first")
-            if kind in ("srt", "ass"):
-                from ..exporters.srt_ass import export_captions
+            # Round Z (agent ZA): these writers share captions/ with a
+            # concurrent build's own captions phase (and cover/teaser share
+            # media.packaging with build's packaging-card phase) — the
+            # cross-process build lock keeps a GUI export from landing mid-build.
+            with _optional_build_lock(project.root, actor):
+                if kind in ("srt", "ass", "otio", "jianying", "capcut"):
+                    timeline = project.load_timeline()
+                    if timeline is None:
+                        raise RuntimeError("no timeline.json — run `manju build` first")
+                if kind in ("srt", "ass"):
+                    from ..exporters.srt_ass import export_captions
 
-                out = export_captions(project, timeline)
-                result = {k: project.relpath(v) for k, v in out.items()}
-                append_event(project.root, actor, "export",
-                             {**result, "via": "gui"})
-            elif kind == "otio":
-                from ..exporters.otio import export_otio
+                    out = export_captions(project, timeline)
+                    result = {k: project.relpath(v) for k, v in out.items()}
+                    append_event(project.root, actor, "export",
+                                 {**result, "via": "gui"})
+                elif kind == "otio":
+                    from ..exporters.otio import export_otio
 
-                out = export_otio(project, timeline)
-                result = {"otio": project.relpath(out)}
-                append_event(project.root, actor, "export", {**result, "via": "gui"})
-            elif kind == "jianying":
-                from ..exporters.jianying import export_jianying
-                from ..exporters.native_draft import (
-                    ExporterUnavailable,
-                    export_jianying_native,
-                )
+                    out = export_otio(project, timeline)
+                    result = {"otio": project.relpath(out)}
+                    append_event(project.root, actor, "export", {**result, "via": "gui"})
+                elif kind == "jianying":
+                    from ..exporters.jianying import export_jianying
+                    from ..exporters.native_draft import (
+                        ExporterUnavailable,
+                        export_jianying_native,
+                    )
 
-                out = export_jianying(project, timeline)  # skeleton + lint
-                result = {"jianying": project.relpath(out)}
-                try:
-                    nat = export_jianying_native(project, timeline)
-                    result["jianying_native"] = project.relpath(nat)
-                except ExporterUnavailable as exc:
-                    result["note"] = " ".join(str(exc).split())
-                append_event(project.root, actor, "export",
-                             {"jianying": result["jianying"], "via": "gui"})
-            elif kind == "capcut":
-                from ..exporters.native_draft import (
-                    ExporterUnavailable,
-                    export_capcut_native,
-                )
+                    out = export_jianying(project, timeline)  # skeleton + lint
+                    result = {"jianying": project.relpath(out)}
+                    try:
+                        nat = export_jianying_native(project, timeline)
+                        result["jianying_native"] = project.relpath(nat)
+                    except ExporterUnavailable as exc:
+                        result["note"] = " ".join(str(exc).split())
+                    append_event(project.root, actor, "export",
+                                 {"jianying": result["jianying"], "via": "gui"})
+                elif kind == "capcut":
+                    from ..exporters.native_draft import (
+                        ExporterUnavailable,
+                        export_capcut_native,
+                    )
 
-                try:
-                    out = export_capcut_native(project, timeline)
-                except ExporterUnavailable as exc:
-                    raise RuntimeError(" ".join(str(exc).split())) from exc
-                result = {"capcut": project.relpath(out)}
-                append_event(project.root, actor, "export", {**result, "via": "gui"})
-            else:  # cover / teaser
-                from ..media.packaging import make_package
+                    try:
+                        out = export_capcut_native(project, timeline)
+                    except ExporterUnavailable as exc:
+                        raise RuntimeError(" ".join(str(exc).split())) from exc
+                    result = {"capcut": project.relpath(out)}
+                    append_event(project.root, actor, "export", {**result, "via": "gui"})
+                else:  # cover / teaser
+                    from ..media.packaging import make_package
 
-                result = make_package(project)
-                append_event(project.root, actor, "package",
-                             {k: result[k] for k in ("cover", "teaser", "skipped")
-                              if k in result} | {"via": "gui"})
-            return result
+                    result = make_package(project)
+                    append_event(project.root, actor, "package",
+                                 {k: result[k] for k in ("cover", "teaser", "skipped")
+                                  if k in result} | {"via": "gui"})
+                return result
 
         job = self.server.runner.submit("export", {"kind": kind}, fn)
         self._send_json({"job": job.to_dict()}, 202)
@@ -3068,6 +3125,7 @@ class _Handler(BaseHTTPRequestHandler):
         through ``update_shot_raw`` — LOCK-RESPECTING: a write that would touch a
         locked path is refused 409 naming the lock, never written (§5)."""
         from .storyboard import EDITABLE_FIELDS, LIST_FIELDS, lock_conflict
+        from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
         shot_id = str(body.get("shot") or "")
@@ -3113,7 +3171,12 @@ class _Handler(BaseHTTPRequestHandler):
                 sub[child] = new_val
                 d[parent] = sub
 
-            project.update_shot_raw(shot_id, mutate)
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    project.update_shot_raw(shot_id, mutate)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, self.server.actor, "edit_shot",
                          {"shot": shot_id, "field": field, "via": "gui"})
         self._send_json({"ok": True, "shot": shot_id, "field": field})
@@ -3124,6 +3187,7 @@ class _Handler(BaseHTTPRequestHandler):
         every existing reader stays correct. Never touches a locked/creative
         field — approval is status, orthogonal to the picture spec."""
         from ..core.models import REVIEW_STATES
+        from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
         review = str(body.get("review") or "")
@@ -3148,21 +3212,27 @@ class _Handler(BaseHTTPRequestHandler):
         changed: list[str] = []
         skipped: list[dict[str, str]] = []
         with self.server.quick_mutex:
-            for sid in ids:
-                if not self._SHOT_ID_RE.fullmatch(sid) or not project.shot_path(sid).exists():
-                    skipped.append({"shot": sid, "reason": "no such shot"})
-                    continue
+            try:
+                with _optional_build_lock(project.root, self.server.actor):  # one hold, whole batch
+                    for sid in ids:
+                        if (not self._SHOT_ID_RE.fullmatch(sid)
+                                or not project.shot_path(sid).exists()):
+                            skipped.append({"shot": sid, "reason": "no such shot"})
+                            continue
 
-                def mutate(d: dict[str, Any]) -> None:
-                    status = d.get("status")
-                    if not isinstance(status, dict):
-                        status = {}
-                    status["review"] = review
-                    status["approved"] = review == "approved"
-                    d["status"] = status
+                        def mutate(d: dict[str, Any]) -> None:
+                            status = d.get("status")
+                            if not isinstance(status, dict):
+                                status = {}
+                            status["review"] = review
+                            status["approved"] = review == "approved"
+                            d["status"] = status
 
-                project.update_shot_raw(sid, mutate)
-                changed.append(sid)
+                        project.update_shot_raw(sid, mutate)
+                        changed.append(sid)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             if changed:
                 detail: dict[str, Any] = {"review": review, "via": "gui"}
                 if batch:
@@ -3179,6 +3249,7 @@ class _Handler(BaseHTTPRequestHandler):
         shot is skipped with a reason, never a silent failure). UNLOCK stays
         CLI-only."""
         from ..core.locks import seal_lock
+        from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
         field = str(body.get("field") or "")
@@ -3192,31 +3263,38 @@ class _Handler(BaseHTTPRequestHandler):
         locked_ids: list[str] = []
         skipped: list[dict[str, str]] = []
         with self.server.quick_mutex:
-            for sid in shots:
-                if not self._SHOT_ID_RE.fullmatch(sid) or not project.shot_path(sid).exists():
-                    skipped.append({"shot": sid, "reason": "no such shot"})
-                    continue
-                try:
-                    raw = project.load_shot_raw(sid)
-                    if field in (raw.get("locked") or {}):
-                        skipped.append({"shot": sid, "reason": f"{field} 已锁定"})
-                        continue
-                    digest = seal_lock(raw, field)
-                except (KeyError, IndexError, ValueError, ProjectError) as exc:
-                    skipped.append({"shot": sid, "reason": f"cannot lock: {exc}"})
-                    continue
+            try:
+                with _optional_build_lock(project.root, self.server.actor):  # one hold, whole batch
+                    for sid in shots:
+                        if (not self._SHOT_ID_RE.fullmatch(sid)
+                                or not project.shot_path(sid).exists()):
+                            skipped.append({"shot": sid, "reason": "no such shot"})
+                            continue
+                        try:
+                            raw = project.load_shot_raw(sid)
+                            if field in (raw.get("locked") or {}):
+                                skipped.append({"shot": sid, "reason": f"{field} 已锁定"})
+                                continue
+                            digest = seal_lock(raw, field)
+                        except (KeyError, IndexError, ValueError, ProjectError) as exc:
+                            skipped.append({"shot": sid, "reason": f"cannot lock: {exc}"})
+                            continue
 
-                def mutate(d: dict[str, Any], digest: str = digest, field: str = field) -> None:
-                    locked = d.get("locked")
-                    if not isinstance(locked, dict):
-                        locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
-                    locked[field] = digest
-                    d["locked"] = locked
+                        def mutate(d: dict[str, Any], digest: str = digest,
+                                   field: str = field) -> None:
+                            locked = d.get("locked")
+                            if not isinstance(locked, dict):
+                                locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
+                            locked[field] = digest
+                            d["locked"] = locked
 
-                project.update_shot_raw(sid, mutate)
-                append_event(project.root, self.server.actor, "lock",
-                             {"shot": sid, "field": field, "via": "gui"})
-                locked_ids.append(sid)
+                        project.update_shot_raw(sid, mutate)
+                        append_event(project.root, self.server.actor, "lock",
+                                     {"shot": sid, "field": field, "via": "gui"})
+                        locked_ids.append(sid)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
         self._send_json({"ok": True, "field": field, "locked": len(locked_ids),
                          "shots": locked_ids, "skipped": skipped})
 
@@ -3299,6 +3377,7 @@ class _Handler(BaseHTTPRequestHandler):
         field, §5). The panel shows the full resolved lineage read-only; this
         action edits only the explicit param slot the director controls."""
         from . import lab_page
+        from ..runtime.buildlock import BuildLocked
 
         project, actor = self.server.project, self.server.actor
         shot_id = str(body.get("shot") or "")
@@ -3329,7 +3408,12 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     params.pop("refs", None)
 
-            project.update_shot_raw(shot_id, mutate)
+            try:
+                with _optional_build_lock(project.root, actor):
+                    project.update_shot_raw(shot_id, mutate)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, actor, "edit_shot",
                          {"shot": shot_id, "field": "generation.params.refs",
                           "via": "gui"})
@@ -3340,6 +3424,7 @@ class _Handler(BaseHTTPRequestHandler):
         receives. Lock-respecting (409 + 中文 on a sealed field, §5). Empty text
         clears the override (falls back to the compiled prompt)."""
         from . import lab_page
+        from ..runtime.buildlock import BuildLocked
 
         project, actor = self.server.project, self.server.actor
         shot_id = str(body.get("shot") or "")
@@ -3369,7 +3454,12 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     gen.pop("prompt_override", None)
 
-            project.update_shot_raw(shot_id, mutate)
+            try:
+                with _optional_build_lock(project.root, actor):
+                    project.update_shot_raw(shot_id, mutate)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, actor, "edit_shot",
                          {"shot": shot_id, "field": "generation.prompt_override",
                           "via": "gui"})
@@ -3385,6 +3475,7 @@ class _Handler(BaseHTTPRequestHandler):
             breakdown_action,
             scaffold_keyframes,
         )
+        from ..runtime.buildlock import BuildLocked
 
         project, actor = self.server.project, self.server.actor
         shot_id = str(body.get("shot") or "")
@@ -3411,9 +3502,13 @@ class _Handler(BaseHTTPRequestHandler):
         beats = breakdown_action(action, n)
         with self.server.quick_mutex:
             try:
-                kfs = scaffold_keyframes(project, shot_id, beats)
+                with _optional_build_lock(project.root, actor):
+                    kfs = scaffold_keyframes(project, shot_id, beats)
             except KeyframeScaffoldError as exc:
                 self._send_error_json(" ".join(str(exc).split()), 409)
+                return
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
                 return
             append_event(project.root, actor, "board_keyframes",
                          {"shot": shot_id, "beats": n, "via": "gui"})
@@ -3556,7 +3651,14 @@ class _Handler(BaseHTTPRequestHandler):
                     lst.append(ref_rel)
                 params["refs"] = lst
 
-            project.update_shot_raw(shot_id, mutate)
+            from ..runtime.buildlock import BuildLocked
+
+            try:
+                with _optional_build_lock(project.root, actor):
+                    project.update_shot_raw(shot_id, mutate)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, actor, "save_ref",
                          {"shot": shot_id, "take": take, "ref": ref_rel,
                           "dest": "refs", "via": "gui"})
@@ -4237,6 +4339,7 @@ class _Handler(BaseHTTPRequestHandler):
         captions into captions.generated.srt for comparison. Empty/inverted cues
         are rejected before any write; overlaps beyond the QC tolerance warn."""
         from ..core.yamlio import atomic_write_text
+        from ..runtime.buildlock import BuildLocked
         from .captions_edit import (
             CaptionEditError,
             _timeline_cues,
@@ -4267,23 +4370,28 @@ class _Handler(BaseHTTPRequestHandler):
                                 "(= final 重渲染)。"),
                 })
                 return
-            project.captions_dir.mkdir(parents=True, exist_ok=True)
-            srt_path = project.captions_dir / "captions.srt"
-            gen_path = project.captions_dir / "captions.generated.srt"
-            flipped = False
-            if not was_manual:
-                # snapshot the compiled comparison BEFORE overwriting captions.srt
-                if not gen_path.exists():
-                    if srt_path.exists():
-                        atomic_write_text(gen_path, srt_path.read_text(encoding="utf-8"))
-                    else:
-                        tcues = _timeline_cues(project)
-                        if tcues:
-                            atomic_write_text(gen_path, cues_to_srt(tcues))
-                rules.captions.mode = "manual"
-                project.save_rules(rules)
-                flipped = True
-            atomic_write_text(srt_path, cues_to_srt(cues))
+            try:
+                with _optional_build_lock(project.root, actor):
+                    project.captions_dir.mkdir(parents=True, exist_ok=True)
+                    srt_path = project.captions_dir / "captions.srt"
+                    gen_path = project.captions_dir / "captions.generated.srt"
+                    flipped = False
+                    if not was_manual:
+                        # snapshot the compiled comparison BEFORE overwriting captions.srt
+                        if not gen_path.exists():
+                            if srt_path.exists():
+                                atomic_write_text(gen_path, srt_path.read_text(encoding="utf-8"))
+                            else:
+                                tcues = _timeline_cues(project)
+                                if tcues:
+                                    atomic_write_text(gen_path, cues_to_srt(tcues))
+                        rules.captions.mode = "manual"
+                        project.save_rules(rules)
+                        flipped = True
+                    atomic_write_text(srt_path, cues_to_srt(cues))
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, actor, "captions_edit",
                          {"cues": len(cues), "mode_flip": flipped, "mode": "manual",
                           "via": "gui"})
@@ -4297,6 +4405,7 @@ class _Handler(BaseHTTPRequestHandler):
         compiled captions (from captions.generated.srt, else regenerate from the
         timeline, else drop captions.srt so the next build regenerates)."""
         from ..core.yamlio import atomic_write_text
+        from ..runtime.buildlock import BuildLocked
         from .captions_edit import _timeline_cues, cues_to_srt
 
         project, actor = self.server.project, self.server.actor
@@ -4306,21 +4415,26 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "restored": False,
                                  "message": "已是自动字幕 (already compiled)"})
                 return
-            rules.captions.mode = "compiled"
-            project.save_rules(rules)
-            srt_path = project.captions_dir / "captions.srt"
-            gen_path = project.captions_dir / "captions.generated.srt"
-            restored = False
-            if gen_path.exists():
-                atomic_write_text(srt_path, gen_path.read_text(encoding="utf-8"))
-                restored = True
-            else:
-                tcues = _timeline_cues(project)
-                if tcues:
-                    atomic_write_text(srt_path, cues_to_srt(tcues))
-                    restored = True
-                else:
-                    srt_path.unlink(missing_ok=True)  # next build regenerates
+            try:
+                with _optional_build_lock(project.root, actor):
+                    rules.captions.mode = "compiled"
+                    project.save_rules(rules)
+                    srt_path = project.captions_dir / "captions.srt"
+                    gen_path = project.captions_dir / "captions.generated.srt"
+                    restored = False
+                    if gen_path.exists():
+                        atomic_write_text(srt_path, gen_path.read_text(encoding="utf-8"))
+                        restored = True
+                    else:
+                        tcues = _timeline_cues(project)
+                        if tcues:
+                            atomic_write_text(srt_path, cues_to_srt(tcues))
+                            restored = True
+                        else:
+                            srt_path.unlink(missing_ok=True)  # next build regenerates
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             append_event(project.root, actor, "captions_revert",
                          {"restored": restored, "mode": "compiled", "via": "gui"})
         self._send_json({
@@ -4847,7 +4961,11 @@ class _Handler(BaseHTTPRequestHandler):
         overrides = self._ingest_overrides_from_body(raw_overrides, plan.rows)
 
         def fn(job) -> dict[str, Any]:
-            result = apply_ingest(project, plan, actor=actor, overrides=overrides)
+            # Round Z (agent ZA): apply_ingest registers takes/refs/bible
+            # entries into project truth — cross-process build lock, same as
+            # redo/repair (§9).
+            with _optional_build_lock(project.root, actor):
+                result = apply_ingest(project, plan, actor=actor, overrides=overrides)
             shutil.rmtree(stage, ignore_errors=True)
             return {**plan.to_dict(), **result.to_dict()}
 

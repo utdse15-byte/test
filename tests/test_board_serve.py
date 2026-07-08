@@ -243,7 +243,15 @@ def test_select_refuses_when_selected_take_locked(one_shot_project):
 def test_select_refuses_when_build_locked(one_shot_project):
     """Round W (#9): board select takes the cross-process build lock too —
     a held lock (a concurrent CLI/MCP/GUI process) refuses it, distinct from
-    the board's own in-process mutation_lock (test_busy_lock_returns_409)."""
+    the board's own in-process mutation_lock (test_busy_lock_returns_409).
+
+    Round Z (agent ZA): a held build lock now surfaces as the SAME 409
+    "busy" shape ``mutation_lock`` contention already used — previously this
+    downgraded to a 200 ``{ok:false}`` (folded into ``_ApiError`` alongside
+    unrelated business-rule refusals like a locked field); now ``_handle_api``
+    gives ``BuildLocked`` its own 409 branch, matching the GUI's
+    ``/api/select`` (which has always been 409 for this same case — see
+    ``test_gui.py::test_select_refuses_when_build_locked``)."""
     from manju.runtime.buildlock import BuildLock
 
     before = one_shot_project.load_shot("S001").status.selected_take
@@ -253,7 +261,7 @@ def test_select_refuses_when_build_locked(one_shot_project):
             r = _post(server, base + "/api/select", json={"shot": "S001", "take": "take_02"})
     finally:
         lock.release()
-    assert r.status_code == 200
+    assert r.status_code == 409
     body = r.json()
     assert body["ok"] is False
     assert one_shot_project.load_shot("S001").status.selected_take == before  # unchanged

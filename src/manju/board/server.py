@@ -61,6 +61,7 @@ from urllib.parse import unquote, urlparse
 
 from ..core.container import Project
 from ..core.events import append_event
+from ..runtime.buildlock import BuildLocked
 from .board import render_board
 
 __all__ = ["make_server", "serve_board", "BoardServer", "API_ACTIONS"]
@@ -95,9 +96,17 @@ def _api_select(project: Project, body: dict) -> dict:
     lock guard, post-write check scoped to the shot, revert on regression.
     Takes the process build lock itself — `select_take_checked` deliberately
     does not (see its docstring), so build's own auto-select never
-    self-deadlocks on its own already-held lock."""
+    self-deadlocks on its own already-held lock.
+
+    Round Z (agent ZA): ``BuildLocked`` is deliberately NOT caught here
+    anymore — it now propagates to ``_handle_api``'s own 409 branch (the
+    same "busy" shape ``mutation_lock`` contention already returns), instead
+    of downgrading to a 200 ``{ok:false}`` the way a content-lock
+    (``WriteRejected``) rejection does. The two are different things: a
+    ``WriteRejected`` is a clean business-rule refusal; a ``BuildLocked`` is
+    "try again shortly", worth a distinct status."""
     from ..core.writes import WriteRejected, select_take_checked
-    from ..runtime.buildlock import BuildLocked, build_lock
+    from ..runtime.buildlock import build_lock
 
     shot = body.get("shot")
     take = body.get("take")
@@ -106,19 +115,27 @@ def _api_select(project: Project, body: dict) -> dict:
     try:
         with build_lock(project.root, actor=_actor()):
             result = select_take_checked(project, shot, take, actor=_actor(), via="board")
-    except (WriteRejected, BuildLocked) as exc:
+    except WriteRejected as exc:
         raise _ApiError(str(exc)) from exc
     return {"shot": result["shot"], "take": result["take"]}
 
 
 def _api_rollback_shot(project: Project, body: dict) -> dict:
+    """Round Z (agent ZA): ``rollback_shot`` writes ``status.selected_take``
+    straight to the shot file with no lock of its own (§9 gap — its own
+    docstring explains why it skips the VALUE-lock guard in
+    ``select_take_checked``, but that is a different lock from the
+    cross-process build lock guarded here). ``BuildLocked`` propagates to
+    ``_handle_api``'s own 409 branch, same shape as ``mutation_lock`` busy."""
     from ..core.history import HistoryError, rollback_shot
+    from ..runtime.buildlock import build_lock
 
     shot = body.get("shot")
     if not shot:
         raise _ApiError("shot is required")
     try:
-        return rollback_shot(project, shot)  # records its own event (actor from env)
+        with build_lock(project.root, actor=_actor()):
+            return rollback_shot(project, shot)  # records its own event (actor from env)
     except HistoryError as exc:
         raise _ApiError(str(exc)) from exc
 
@@ -156,11 +173,16 @@ def _api_build(project: Project, body: dict) -> dict:
 
 
 def _api_qc(project: Project, body: dict) -> dict:
+    # Round Z (agent ZA): qc writes qc.json/qc.md/repair_plan.yaml (a
+    # mutation, §9) — the board path held no process lock for it before,
+    # unlike the GUI/MCP qc surfaces which already do.
     from ..qc.checks import run_qc
     from ..qc.report import write_reports
+    from ..runtime.buildlock import build_lock
 
-    report = run_qc(project, project.load_timeline())
-    write_reports(project, report)
+    with build_lock(project.root, actor=_actor()):
+        report = run_qc(project, project.load_timeline())
+        write_reports(project, report)
     errors = sum(1 for it in report.items if it.level == "error")
     warns = sum(1 for it in report.items if it.level == "warn")
     infos = sum(1 for it in report.items if it.level not in ("error", "warn"))
@@ -172,9 +194,11 @@ def _api_package(project: Project, body: dict) -> dict:
 
     from ..media.ffmpeg import MediaError
     from ..media.packaging import PackagingError, make_package
+    from ..runtime.buildlock import build_lock
 
     try:
-        result = make_package(project)
+        with build_lock(project.root, actor=_actor()):
+            result = make_package(project)
     except (PackagingError, MediaError) as exc:
         raise _ApiError(str(exc)) from exc
     except ValidationError as exc:
@@ -212,6 +236,7 @@ _EXPORT_PROFILES = ("srt", "otio", "jianying", "capcut")
 def _api_export(project: Project, body: dict) -> dict:
     from ..exporters.otio import export_otio
     from ..exporters.srt_ass import export_captions
+    from ..runtime.buildlock import build_lock
 
     # Validate the request (input) before checking state, so a malformed
     # profiles list is rejected the same whether or not a timeline exists.
@@ -222,37 +247,41 @@ def _api_export(project: Project, body: dict) -> dict:
     if unknown:
         raise _ApiError(f"unknown export profile(s): {', '.join(map(str, unknown))} "
                         "(use srt|otio|jianying|capcut)")
-    timeline = project.load_timeline()
-    if timeline is None:
-        raise _ApiError("no timeline.json — run build first")
 
-    outputs: dict[str, str] = {}
-    notes: list[str] = []
-    if "srt" in profiles:
-        paths = export_captions(project, timeline)
-        outputs["srt"] = project.relpath(paths["srt"])
-        outputs["ass"] = project.relpath(paths["ass"])
-    if "otio" in profiles:
-        outputs["otio"] = project.relpath(export_otio(project, timeline))
-    if "jianying" in profiles:
-        from ..exporters.jianying import export_jianying
-        from ..exporters.native_draft import ExporterUnavailable, export_jianying_native
+    # Round Z (agent ZA): srt/ass land in captions/ — the same files a
+    # concurrent build's captions phase writes (§9) — build lock guards it.
+    with build_lock(project.root, actor=_actor()):
+        timeline = project.load_timeline()
+        if timeline is None:
+            raise _ApiError("no timeline.json — run build first")
 
-        outputs["jianying"] = project.relpath(export_jianying(project, timeline))
-        try:
-            outputs["jianying_native"] = project.relpath(
-                export_jianying_native(project, timeline))
-        except ExporterUnavailable as exc:
-            notes.append(f"jianying_native skipped: {_one_line(str(exc))}")
-    if "capcut" in profiles:
-        from ..exporters.native_draft import ExporterUnavailable, export_capcut_native
+        outputs: dict[str, str] = {}
+        notes: list[str] = []
+        if "srt" in profiles:
+            paths = export_captions(project, timeline)
+            outputs["srt"] = project.relpath(paths["srt"])
+            outputs["ass"] = project.relpath(paths["ass"])
+        if "otio" in profiles:
+            outputs["otio"] = project.relpath(export_otio(project, timeline))
+        if "jianying" in profiles:
+            from ..exporters.jianying import export_jianying
+            from ..exporters.native_draft import ExporterUnavailable, export_jianying_native
 
-        try:
-            outputs["capcut"] = project.relpath(export_capcut_native(project, timeline))
-        except ExporterUnavailable as exc:
-            notes.append(f"capcut skipped: {_one_line(str(exc))}")
+            outputs["jianying"] = project.relpath(export_jianying(project, timeline))
+            try:
+                outputs["jianying_native"] = project.relpath(
+                    export_jianying_native(project, timeline))
+            except ExporterUnavailable as exc:
+                notes.append(f"jianying_native skipped: {_one_line(str(exc))}")
+        if "capcut" in profiles:
+            from ..exporters.native_draft import ExporterUnavailable, export_capcut_native
 
-    append_event(project.root, _actor(), "export", outputs)  # mirrors cli.export
+            try:
+                outputs["capcut"] = project.relpath(export_capcut_native(project, timeline))
+            except ExporterUnavailable as exc:
+                notes.append(f"capcut skipped: {_one_line(str(exc))}")
+
+        append_event(project.root, _actor(), "export", outputs)  # mirrors cli.export
     return {"outputs": outputs, "notes": notes}
 
 
@@ -531,6 +560,13 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, payload)
         except _ApiError as exc:
             self._send_json(HTTPStatus.OK, {"ok": False, "error": _one_line(str(exc))})
+        except BuildLocked as exc:
+            # Round Z (agent ZA): a SEPARATE process (CLI `manju build`, or
+            # another manju surface) holds the cross-process build lock — the
+            # SAME "busy" shape mutation_lock's own contention returns above,
+            # so the board's client-side handling needs no new branch.
+            self._send_json(HTTPStatus.CONFLICT,
+                            {"ok": False, "error": _one_line(str(exc))})
         except Exception as exc:  # any core failure → clean one-line envelope, never a 500 stack
             self._send_json(HTTPStatus.OK, {"ok": False, "error": _one_line(str(exc))})
         finally:
