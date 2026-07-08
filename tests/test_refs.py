@@ -15,7 +15,12 @@ import json
 import types
 
 import pytest
+from typer.testing import CliRunner
 
+from manju.cli import app
+from manju.core.check import run_check
+from manju.core.refs import RefsError, assign_ref, refs_report
+from manju.core.yamlio import read_yaml, write_yaml
 from manju.providers.base import FailureKind, GenerationRequest, ProviderFailure
 from manju.providers.comfyui import ComfyUIProvider
 from manju.providers.generic_cloud import GenericCloudProvider, HttpResponse
@@ -36,6 +41,8 @@ from manju.providers.refs import (
     ref_reliability_notes,
     resolve_refs,
 )
+
+runner = CliRunner()
 
 
 # --------------------------------------------------------------- fixtures
@@ -610,3 +617,397 @@ def test_refset_empty_defaults():
     assert rs.images == [] and rs.videos == [] and rs.primary_image is None
     assert rs.primary_image_source == "none"
     assert not rs.has_declared_refs()
+
+
+# ============================================================ core/refs.py
+# Reference-asset OWNERSHIP / traceability (round-AA goal item 3): the
+# media/refs report derivation (`refs_report`) and the one write action that
+# makes an ownership relationship real (`assign_ref`), plus the `manju check`
+# advisory and the CLI surface. Distinct from everything above this marker —
+# that's `providers/refs.py`'s reference-INPUT resolver (goal item 7); this
+# section is about who OWNS a file already sitting in media/refs.
+
+
+@pytest.fixture
+def in_project(tmp_project, monkeypatch):
+    monkeypatch.chdir(tmp_project.root)
+    return tmp_project
+
+
+# --------------------------------------------------------------- refs_report
+
+
+def test_report_shot_ref_owner_via_naming(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    _touch(tmp_project, "media/refs/S001_ref.png")
+    report = refs_report(tmp_project)
+    assert report["total"] == 1
+    row = report["files"][0]
+    assert row == {
+        "file": "media/refs/S001_ref.png", "kind": "image", "role": "shot_ref",
+        "owners": ["S001"], "bible_pinned": False, "orphan": False,
+    }
+    assert report["counts_by_role"]["shot_ref"] == 1
+    assert report["orphan_count"] == 0
+    assert report["missing"] == []
+
+
+def test_report_character_ref_owner_via_naming(tmp_project):
+    _touch(tmp_project, "media/refs/linxia_ref.png")
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["role"] == "character_ref"
+    assert row["owners"] == ["characters:linxia"]
+    assert row["bible_pinned"] is False  # naming matched, but no bible pin was SET
+    assert row["orphan"] is False
+    assert report["counts_by_role"]["character_ref"] == 1
+
+
+def test_report_scene_ref_and_prop_ref_roles(tmp_project):
+    write_yaml(tmp_project.root / "bible" / "props.yaml", {"coin": {"name": "coin"}})
+    _touch(tmp_project, "media/refs/convenience_store_ref.png")
+    _touch(tmp_project, "media/refs/coin_ref.png")
+    report = refs_report(tmp_project)
+    by_file = {r["file"]: r for r in report["files"]}
+    assert by_file["media/refs/convenience_store_ref.png"]["role"] == "scene_ref"
+    assert by_file["media/refs/convenience_store_ref.png"]["owners"] == ["scenes:convenience_store"]
+    assert by_file["media/refs/coin_ref.png"]["role"] == "prop_ref"
+    assert by_file["media/refs/coin_ref.png"]["owners"] == ["props:coin"]
+    assert report["counts_by_role"]["scene_ref"] == 1
+    assert report["counts_by_role"]["prop_ref"] == 1
+
+
+def test_report_bible_pin_on_nonconventional_filename(tmp_project):
+    """A file that does NOT match the naming convention is still traced back
+    to its owner when a bible entry explicitly pins it — role stays
+    'unknown' (role is naming-only, per contract) but owners/bible_pinned
+    reflect the real usage."""
+    _touch(tmp_project, "media/refs/weird_name.png")
+    chars = read_yaml(tmp_project.root / "bible" / "characters.yaml")
+    chars["linxia"]["ref_image"] = "media/refs/weird_name.png"
+    write_yaml(tmp_project.root / "bible" / "characters.yaml", chars)
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["role"] == "unknown"
+    assert row["bible_pinned"] is True
+    assert row["owners"] == ["characters:linxia"]
+    assert row["orphan"] is False
+    assert report["counts_by_role"]["unknown"] == 1
+
+
+def test_report_shot_declared_ref_without_naming_convention(tmp_project, add_shot):
+    """A shot that wires up a ref file via generation.params.image WITHOUT
+    renaming it to the convention still traces back — owners must reflect
+    real usage, not just the filename guess (module docstring's point)."""
+    _touch(tmp_project, "media/refs/custom.png")
+    add_shot(tmp_project, "S001", generation={"params": {"image": "media/refs/custom.png"}})
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["role"] == "unknown"  # naming convention doesn't match "custom"
+    assert row["owners"] == ["S001"]
+    assert row["orphan"] is False
+
+
+def test_report_shot_top_level_refs_field_is_traced(tmp_project, add_shot):
+    _touch(tmp_project, "media/refs/anotherone.png")
+    add_shot(tmp_project, "S001", refs={"images": ["media/refs/anotherone.png"]})
+    report = refs_report(tmp_project)
+    assert report["files"][0]["owners"] == ["S001"]
+
+
+def test_report_orphan(tmp_project):
+    _touch(tmp_project, "media/refs/nobody_wants_me.png")
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["role"] == "unknown"
+    assert row["owners"] == []
+    assert row["bible_pinned"] is False
+    assert row["orphan"] is True
+    assert report["orphan_count"] == 1
+    assert report["counts_by_role"]["unknown"] == 1
+
+
+def test_report_missing_bible_pointer(tmp_project):
+    chars = read_yaml(tmp_project.root / "bible" / "characters.yaml")
+    chars["linxia"]["ref_image"] = "media/refs/ghost.png"
+    write_yaml(tmp_project.root / "bible" / "characters.yaml", chars)
+    report = refs_report(tmp_project)
+    assert report["files"] == []  # ghost.png doesn't exist -> no row for it
+    assert report["missing"] == [{
+        "bible_file": "characters", "asset_id": "linxia",
+        "field": "ref_image", "value": "media/refs/ghost.png",
+    }]
+
+
+def test_report_shot_wins_over_bible_on_ambiguous_naming(tmp_project, add_shot):
+    """A shot id that collides with a bible asset id: the ingest classifier's
+    stance (shot wins) is mirrored here."""
+    add_shot(tmp_project, "linxia")
+    _touch(tmp_project, "media/refs/linxia_ref.png")
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["role"] == "shot_ref"
+    assert row["owners"] == ["linxia"]
+
+
+def test_report_empty_refs_dir(tmp_project):
+    report = refs_report(tmp_project)
+    assert isinstance(report.pop("note"), str) and report["files"] == []
+    assert report == {
+        "files": [], "total": 0, "missing": [],
+        "counts_by_role": {k: 0 for k in
+                           ("shot_ref", "character_ref", "scene_ref", "prop_ref", "unknown")},
+        "orphan_count": 0,
+    }
+
+
+def test_report_deterministic_ordering(tmp_project):
+    _touch(tmp_project, "media/refs/zzz.png")
+    _touch(tmp_project, "media/refs/aaa.png")
+    _touch(tmp_project, "media/refs/sub/mmm.png")
+    files_a = [r["file"] for r in refs_report(tmp_project)["files"]]
+    files_b = [r["file"] for r in refs_report(tmp_project)["files"]]
+    assert files_a == files_b == sorted(files_a)
+
+
+# ---------------------------------------------------------------- assign_ref
+
+
+def test_assign_ref_to_shot_renames_and_report_reflects_it(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    src = _touch(tmp_project, "media/refs/loose.png")
+    result = assign_ref(tmp_project, "media/refs/loose.png", shot="S001", actor="test")
+    assert result["ok"] is True
+    assert result["old"] == "media/refs/loose.png"
+    assert result["new"] == "media/refs/S001_ref.png"
+    assert result["renamed"] is True
+    assert result["address"] == "S001"
+    assert not src.exists()
+    assert (tmp_project.root / "media" / "refs" / "S001_ref.png").exists()
+
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["file"] == "media/refs/S001_ref.png"
+    assert row["owners"] == ["S001"]
+    assert row["orphan"] is False
+
+
+def test_assign_ref_to_character_sets_ref_image(tmp_project):
+    _touch(tmp_project, "media/refs/loose2.png")
+    result = assign_ref(tmp_project, "media/refs/loose2.png", character="linxia", actor="test")
+    assert result["new"] == "media/refs/linxia_ref.png"
+    assert result["address"] == "characters:linxia"
+    bible = tmp_project.load_bible()
+    assert bible["linxia"]["ref_image"] == "media/refs/linxia_ref.png"
+
+    report = refs_report(tmp_project)
+    row = report["files"][0]
+    assert row["bible_pinned"] is True
+    assert row["owners"] == ["characters:linxia"]
+
+
+def test_assign_ref_to_scene_and_prop(tmp_project):
+    write_yaml(tmp_project.root / "bible" / "props.yaml", {"coin": {"name": "coin"}})
+    _touch(tmp_project, "media/refs/s.png")
+    _touch(tmp_project, "media/refs/p.png")
+    r1 = assign_ref(tmp_project, "media/refs/s.png", scene="convenience_store", actor="test")
+    r2 = assign_ref(tmp_project, "media/refs/p.png", prop="coin", actor="test")
+    assert r1["new"] == "media/refs/convenience_store_ref.png"
+    assert r2["new"] == "media/refs/coin_ref.png"
+    props = read_yaml(tmp_project.root / "bible" / "props.yaml")
+    assert props["coin"]["ref_image"] == "media/refs/coin_ref.png"
+
+
+def test_assign_ref_never_overwrites_additive_ref_image(tmp_project):
+    """Assigning a SECOND file to an already-pinned asset appends, mirroring
+    build/ingest.py's `_set_bible_ref_image` contract (never destructive)."""
+    _touch(tmp_project, "media/refs/first.png")
+    _touch(tmp_project, "media/refs/second.png")
+    assign_ref(tmp_project, "media/refs/first.png", character="linxia", actor="test")
+    assign_ref(tmp_project, "media/refs/second.png", character="linxia", actor="test")
+    bible = tmp_project.load_bible()
+    assert bible["linxia"]["ref_image"] == ["media/refs/linxia_ref.png", "media/refs/linxia_ref_2.png"]
+
+
+def test_assign_ref_repoints_existing_bible_pin_on_rename(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    _touch(tmp_project, "media/refs/weird_name_xyz.png")
+    scenes = read_yaml(tmp_project.root / "bible" / "scenes.yaml")
+    scenes["convenience_store"]["ref_image"] = "media/refs/weird_name_xyz.png"
+    write_yaml(tmp_project.root / "bible" / "scenes.yaml", scenes)
+
+    result = assign_ref(tmp_project, "media/refs/weird_name_xyz.png", shot="S001", actor="test")
+    assert result["repointed"] == ["scenes:convenience_store"]
+    scenes = read_yaml(tmp_project.root / "bible" / "scenes.yaml")
+    assert scenes["convenience_store"]["ref_image"] == result["new"]
+
+
+def test_assign_ref_noop_when_already_correctly_named(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    _touch(tmp_project, "media/refs/S001_ref.png")
+    result = assign_ref(tmp_project, "media/refs/S001_ref.png", shot="S001", actor="test")
+    assert result["renamed"] is False
+    assert result["old"] == result["new"] == "media/refs/S001_ref.png"
+
+
+def test_assign_ref_appends_ref_assign_event(tmp_project, add_shot):
+    from manju.core.events import tail_events
+
+    add_shot(tmp_project, "S001")
+    _touch(tmp_project, "media/refs/loose.png")
+    assign_ref(tmp_project, "media/refs/loose.png", shot="S001", actor="test")
+    events = tail_events(tmp_project.root, n=5)
+    assert events[-1]["action"] == "ref_assign"
+    assert events[-1]["detail"]["new"] == "media/refs/S001_ref.png"
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"shot": "S001", "character": "linxia"}])
+def test_assign_ref_requires_exactly_one_target(tmp_project, add_shot, kwargs):
+    add_shot(tmp_project, "S001")
+    _touch(tmp_project, "media/refs/loose.png")
+    with pytest.raises(RefsError):
+        assign_ref(tmp_project, "media/refs/loose.png", actor="test", **kwargs)
+
+
+def test_assign_ref_refuses_missing_file(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    with pytest.raises(RefsError):
+        assign_ref(tmp_project, "media/refs/nope.png", shot="S001", actor="test")
+
+
+def test_assign_ref_refuses_path_outside_refs_dir(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    with pytest.raises(RefsError, match="media/refs"):
+        assign_ref(tmp_project, "story/brief.md", shot="S001", actor="test")
+
+
+def test_assign_ref_refuses_escaping_path(tmp_project, add_shot, tmp_path):
+    add_shot(tmp_project, "S001")
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"x")
+    with pytest.raises(RefsError):
+        assign_ref(tmp_project, "../outside.png", shot="S001", actor="test")
+
+
+def test_assign_ref_refuses_unknown_shot(tmp_project):
+    _touch(tmp_project, "media/refs/loose.png")
+    with pytest.raises(RefsError):
+        assign_ref(tmp_project, "media/refs/loose.png", shot="S999", actor="test")
+
+
+def test_assign_ref_refuses_unknown_bible_asset(tmp_project):
+    _touch(tmp_project, "media/refs/loose.png")
+    with pytest.raises(RefsError):
+        assign_ref(tmp_project, "media/refs/loose.png", character="nope", actor="test")
+
+
+# ------------------------------------------------------------- check advisory
+
+
+def test_check_warns_on_orphan_refs(tmp_project):
+    _touch(tmp_project, "media/refs/nobody_wants_me.png")
+    report = run_check(tmp_project)
+    assert report.ok  # a warning, never an error
+    assert any("孤儿" in w and "media/refs" in w for w in report.warnings)
+
+
+def test_check_orphan_warning_disappears_after_assign(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    _touch(tmp_project, "media/refs/loose.png")
+    before = run_check(tmp_project)
+    assert any("孤儿" in w for w in before.warnings)
+
+    assign_ref(tmp_project, "media/refs/loose.png", shot="S001", actor="test")
+    after = run_check(tmp_project)
+    assert not any("孤儿" in w for w in after.warnings)
+
+
+def test_check_warns_on_missing_bible_ref_pointer(tmp_project):
+    chars = read_yaml(tmp_project.root / "bible" / "characters.yaml")
+    chars["linxia"]["ref_image"] = "media/refs/ghost.png"
+    write_yaml(tmp_project.root / "bible" / "characters.yaml", chars)
+    report = run_check(tmp_project)
+    assert report.ok
+    assert any("ghost.png" in w and "characters.yaml" in w for w in report.warnings)
+
+
+# --------------------------------------------------------------------- CLI
+
+
+def test_cli_refs_json_matches_refs_report(in_project, add_shot):
+    add_shot(in_project, "S001")
+    _touch(in_project, "media/refs/S001_ref.png")
+    _touch(in_project, "media/refs/orphan.png")
+    result = runner.invoke(app, ["refs", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data == refs_report(in_project)
+
+
+def test_cli_refs_orphans_flag_filters(in_project, add_shot):
+    add_shot(in_project, "S001")
+    _touch(in_project, "media/refs/S001_ref.png")  # owned — must be filtered OUT
+    _touch(in_project, "media/refs/nobody.png")     # orphan — must survive the filter
+    result = runner.invoke(app, ["refs", "--orphans", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert all(r["orphan"] for r in data["files"])
+    assert {r["file"] for r in data["files"]} == {"media/refs/nobody.png"}
+
+
+def test_cli_refs_table_prints_orphan_count(in_project):
+    _touch(in_project, "media/refs/nobody.png")
+    result = runner.invoke(app, ["refs"])
+    assert result.exit_code == 0, result.output
+    assert "孤儿 1" in result.output
+
+
+def test_cli_refs_assign_to_shot(in_project, add_shot):
+    add_shot(in_project, "S001")
+    _touch(in_project, "media/refs/loose.png")
+    result = runner.invoke(app, ["refs", "assign", "media/refs/loose.png", "--shot", "S001", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["new"] == "media/refs/S001_ref.png"
+    assert (in_project.root / "media" / "refs" / "S001_ref.png").exists()
+    assert not (in_project.root / "media" / "refs" / "loose.png").exists()
+
+
+def test_cli_refs_assign_to_character(in_project):
+    _touch(in_project, "media/refs/loose.png")
+    result = runner.invoke(
+        app, ["refs", "assign", "media/refs/loose.png", "--character", "linxia", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["new"] == "media/refs/linxia_ref.png"
+    bible = in_project.load_bible()
+    assert bible["linxia"]["ref_image"] == "media/refs/linxia_ref.png"
+
+
+def test_cli_refs_assign_refuses_no_target(in_project):
+    _touch(in_project, "media/refs/loose.png")
+    result = runner.invoke(app, ["refs", "assign", "media/refs/loose.png", "--json"])
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["code"] == "refs_assign_invalid"
+
+
+def test_cli_refs_assign_refuses_unknown_shot(in_project):
+    _touch(in_project, "media/refs/loose.png")
+    result = runner.invoke(
+        app, ["refs", "assign", "media/refs/loose.png", "--shot", "S999", "--json"])
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert "S999" in data["error"]
+
+
+def test_cli_refs_shot_subcommand_still_resolves(in_project, add_shot):
+    """The pre-existing per-shot resolution/budget/cleanliness inspect (goal
+    items 9 & 10) moved from bare `refs <id>` to `refs shot <id>` — guard
+    that the move kept its shape."""
+    add_shot(in_project, "S001")
+    result = runner.invoke(app, ["refs", "shot", "S001", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["shot"] == "S001"
+    assert "resolution" in data and "budget" in data and "cleanliness" in data

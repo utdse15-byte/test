@@ -392,6 +392,31 @@ def run_check(project: Project) -> CheckReport:
                     "(toolbelt write-back rule, §2.5)"
                 )
 
+    # ---- round-AA goal item 3: media/refs ownership cleanliness. Orphan
+    # ref files (nothing under shots/bible resolves to or pins them) and
+    # bible ref_image/ref_video pointers naming a file that no longer exists
+    # are both silent today — surfaced here as warnings (never errors: an
+    # orphan file or a stale pointer never breaks a build, it's just noise a
+    # human should eventually clean up). Reuses `refs_report` (core/refs.py)
+    # so this can never disagree with `manju refs`/`manju refs assign`; wrapped
+    # defensively so a report-derivation bug is a finding, never a traceback.
+    try:
+        from .refs import refs_report
+
+        rr = refs_report(project)
+        if rr["orphan_count"] > 0:
+            report.warnings.append(
+                f"media/refs 有 {rr['orphan_count']} 个未关联引用文件(孤儿)— "
+                "运行 `manju refs` 查看,`manju refs assign` 关联或删除"
+            )
+        for m in rr["missing"]:
+            report.warnings.append(
+                f"bible/{m['bible_file']}.yaml:{m['asset_id']} 的 {m['field']} "
+                f"指向不存在的文件: {m['value']!r}"
+            )
+    except Exception as exc:  # never let the refs report crash check itself
+        report.warnings.append(f"media/refs 归属报告生成失败 — {' '.join(str(exc).split())}")
+
     # ---- secret scan (keys never enter the project directory)
     for path in project.root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in SCAN_SUFFIXES:

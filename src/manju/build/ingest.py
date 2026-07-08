@@ -96,7 +96,6 @@ additions, layered on top without changing what lands where:
 
 from __future__ import annotations
 
-import re
 import shutil
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -107,8 +106,9 @@ from ..core.container import Project
 from ..core.events import append_event
 from ..core.hashing import hash_file
 from ..core.idents import is_safe_segment
+from ..core.refs import (REF_SUFFIX_RE, bible_owner_map, copy_collision_safe,
+                         set_bible_ref_image)
 from ..core.writes import WriteRejected, select_take_checked, selected_take_lock_block
-from ..core.yamlio import read_yaml, write_yaml
 from ..media.preview import make_preview
 from ..providers.manual import register_manual_take
 
@@ -127,14 +127,10 @@ TAKE_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 VOICE_AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac"}
 REF_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 
-# ``_ref`` / ``_ref2`` / ``_ref10`` — a trailing numeric suffix disambiguates
-# several stills for the same id without changing the classification.
-_REF_SUFFIX_RE = re.compile(r"^(?P<base>.+)_ref\d*$")
-
-# Bible files whose entries are addressable, ref-image-bearing assets (§4).
-# ``style``/``voices`` are excluded — they are not id-keyed the same way an
-# asset-matrix character/scene/prop entry is (core/assets.py mirrors this).
-_BIBLE_REF_FILES = ("characters", "scenes", "props")
+# ``_ref`` / ``_ref2`` / ``_ref10`` id-candidate extraction (ref_candidates),
+# the bible-owner map, and the never-overwrite copy — all shared with
+# core/refs.py (round-AA goal item 3's ownership report/assign), imported
+# above instead of defined here twice.
 
 ROLES = ("auto", "take", "voice", "ref")
 ON_DUPLICATE_STRATEGIES = ("skip", "import", "link")
@@ -268,7 +264,7 @@ def plan_ingest(
     existing_index = _existing_hash_index(project)
     library_index = _library_hash_index()
     shot_ids = set(project.shot_ids())
-    bible_owner = _bible_owner_map(project)
+    bible_owner = bible_owner_map(project)
 
     rows: list[IngestRow] = []
     seen_in_batch: dict[str, str] = {}  # hash -> first file name claiming it
@@ -390,22 +386,6 @@ def _existing_hash_index(project: Project) -> dict[str, str]:
     return index
 
 
-def _bible_owner_map(project: Project) -> dict[str, str]:
-    """asset id -> which of characters/scenes/props.yaml it lives in. Reads
-    the RAW files (not the merged ``load_bible``) so ``apply_ingest`` writes
-    back to the correct file."""
-    owner: dict[str, str] = {}
-    for fname in _BIBLE_REF_FILES:
-        path = project.root / "bible" / f"{fname}.yaml"
-        if not path.exists():
-            continue
-        data = read_yaml(path) or {}
-        if isinstance(data, dict):
-            for k in data:
-                owner.setdefault(str(k), fname)
-    return owner
-
-
 # -------------------------------------------------------------- classify
 
 
@@ -448,7 +428,7 @@ def _ref_split_candidates(stem: str) -> tuple[list[str], list[str]]:
     """Same (exact, fuzzy) split as :func:`_split_candidates`, for the ref
     naming convention (``_ref``/``_refN`` suffix instead of ``_take``/``_voice``)."""
     exact: list[str] = []
-    m = _REF_SUFFIX_RE.match(stem)
+    m = REF_SUFFIX_RE.match(stem)
     if m:
         exact.append(m.group("base"))
     exact.append(stem)
@@ -670,20 +650,6 @@ def _import_row(f: Path, h: str, *, reason: str, match: str = "unmatched", candi
 # ------------------------------------------------------------------ apply
 
 
-def _copy_collision_safe(dest_dir: Path, stem: str, suffix: str, src: Path) -> Path:
-    """The same never-overwrite _2/_3 suffixing every other import path in
-    this engine uses (cli.import_, gui _act_upload, gui _act_lab_save_ref)."""
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    suffix = suffix if suffix.startswith(".") or not suffix else f".{suffix}"
-    dest = dest_dir / f"{stem}{suffix}"
-    n = 2
-    while dest.exists():
-        dest = dest_dir / f"{stem}_{n}{suffix}"
-        n += 1
-    shutil.copy2(src, dest)
-    return dest
-
-
 def _register_manual_voice_take(project: Project, shot_id: str, file: Path) -> Path:
     """Hand-dropped voice take: copied under the append-only voice_take_NN
     name, WITHOUT a sidecar — the exact convention ``build/voice.py``'s
@@ -698,29 +664,6 @@ def _register_manual_voice_take(project: Project, shot_id: str, file: Path) -> P
         raise IngestError(f"拒绝覆盖已存在的配音 take: {dest}")
     shutil.copy2(file, dest)
     return dest
-
-
-def _set_bible_ref_image(project: Project, asset_kind: str, asset_id: str, ref_rel: str) -> None:
-    """Register ``ref_rel`` onto ``asset_id``'s ``ref_image`` field. Never
-    destructive: an absent field is set; an existing scalar becomes a
-    2-item list rather than being overwritten; an existing list is appended
-    to (deduplicated) — the bible edit is purely additive."""
-    path = project.root / "bible" / f"{asset_kind}.yaml"
-    data = read_yaml(path) or {}
-    if not isinstance(data, dict):
-        raise IngestError(f"bible/{asset_kind}.yaml 不是合法的映射,拒绝写入")
-    entry = data.get(asset_id)
-    if not isinstance(entry, dict):
-        raise IngestError(f"bible/{asset_kind}.yaml 中未找到资产: {asset_id}")
-    cur = entry.get("ref_image")
-    if cur in (None, ""):
-        entry["ref_image"] = ref_rel
-    elif isinstance(cur, list):
-        if ref_rel not in cur:
-            cur.append(ref_rel)
-    elif cur != ref_rel:
-        entry["ref_image"] = [cur, ref_rel]
-    write_yaml(path, data)
 
 
 def _maybe_auto_select(project: Project, shot_id: str, take: str, *, actor: str) -> dict[str, Any]:
@@ -790,7 +733,7 @@ def _execute_row(project: Project, row: IngestRow, *, actor: str) -> dict[str, A
             raise IngestError("shot_ref 需要 shot_id")
         if not project.shot_path(row.shot_id).exists():
             raise IngestError(f"镜头不存在: {row.shot_id}")
-        dest = _copy_collision_safe(project.refs_dir, f"{row.shot_id}_ref", src.suffix.lower(), src)
+        dest = copy_collision_safe(project.refs_dir, f"{row.shot_id}_ref", src.suffix.lower(), src)
         return {"shot": row.shot_id, "ref": project.relpath(dest)}
 
     if row.action == "bible_ref":
@@ -798,17 +741,17 @@ def _execute_row(project: Project, row: IngestRow, *, actor: str) -> dict[str, A
             raise IngestError("bible_ref 需要 asset_id")
         asset_kind = row.asset_kind
         if not asset_kind:
-            owner = _bible_owner_map(project)
+            owner = bible_owner_map(project)
             asset_kind = owner.get(row.asset_id)
         if not asset_kind:
             raise IngestError(f"bible 中未找到资产: {row.asset_id}")
-        dest = _copy_collision_safe(project.refs_dir, f"{row.asset_id}_ref", src.suffix.lower(), src)
+        dest = copy_collision_safe(project.refs_dir, f"{row.asset_id}_ref", src.suffix.lower(), src)
         ref_rel = project.relpath(dest)
-        _set_bible_ref_image(project, asset_kind, row.asset_id, ref_rel)
+        set_bible_ref_image(project, asset_kind, row.asset_id, ref_rel)
         return {"asset_id": row.asset_id, "asset_kind": asset_kind, "ref": ref_rel}
 
     if row.action == "import":
-        dest = _copy_collision_safe(project.imports_dir, src.stem, src.suffix, src)
+        dest = copy_collision_safe(project.imports_dir, src.stem, src.suffix, src)
         rel = project.relpath(dest)
         preview_rel = None
         try:

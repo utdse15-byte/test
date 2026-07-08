@@ -2826,9 +2826,66 @@ def _shot_manifest(project, shot):
     return None
 
 
-@app.command()
-def refs(shot_id: str = typer.Argument(..., help="the shot to inspect"),
-         as_json: bool = typer.Option(False, "--json")):
+# `refs` is a command GROUP (round-AA goal item 3): the bare `manju refs`
+# (and `--orphans`) is the project-wide media/refs OWNERSHIP report — who
+# uses which file, which are orphans, which bible pointers are dangling.
+# `refs shot <id>` keeps the pre-existing per-shot resolution/budget/
+# cleanliness inspection (goal items 9 & 10) verbatim, just moved under the
+# group (mirrors `assets` / `assets show`'s bare-report-vs-named-subcommand
+# split). `refs assign` is the new mutator that fixes an orphan/ownership
+# gap by renaming the file / setting a bible field — never a parallel index.
+refs_app = typer.Typer(
+    invoke_without_command=True,
+    help="media/refs 归属追溯(goal item 3)+ 单镜头参考解析/预算/洁净度(goal items 9-10)。",
+)
+app.add_typer(refs_app, name="refs")
+
+
+@refs_app.callback(invoke_without_command=True)
+def refs_main(
+    ctx: typer.Context,
+    orphans: bool = typer.Option(False, "--orphans", help="只显示孤儿(未关联)参考文件"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """media/refs 归属报告(goal item 3,只读):每个文件的角色(shot_ref /
+    character_ref / scene_ref / prop_ref / unknown,来自文件名约定)、归属
+    (镜头 id,或 bible 资产地址如 characters:hero)、是否被 bible ref_image 钉住、
+    是否孤儿(无归属也未被钉住);外加 bible 指向不存在文件的缺失指针列表。
+
+    子命令:``refs shot <id>`` 单镜头参考解析/预算/洁净度(goal items 9-10);
+    ``refs assign <relpath> --shot/--character/--scene/--prop`` 关联一个孤儿。"""
+    if ctx.invoked_subcommand is not None:
+        return  # dispatch to `shot` / `assign`
+    from .core.refs import refs_report
+
+    project = _project()
+    report = refs_report(project)
+    rows = [r for r in report["files"] if r["orphan"]] if orphans else report["files"]
+
+    if as_json:
+        _emit({**report, "files": rows}, True)
+        return
+
+    header = f"参考资产归属 / refs — 共 {report['total']} 个文件"
+    if report["orphan_count"]:
+        header += f",孤儿 {report['orphan_count']} 个"
+    typer.secho(header, fg=typer.colors.CYAN)
+    if not rows:
+        typer.echo("  (无孤儿)" if orphans else "  media/refs 为空")
+    for r in rows:
+        owners = ", ".join(r["owners"]) if r["owners"] else "—"
+        pinned = "钉住" if r["bible_pinned"] else "  "
+        line = f"  [{r['kind']:>5}] {r['role']:<13} {r['file']}  归属: {owners}  {pinned}"
+        typer.secho(line, fg=typer.colors.YELLOW if r["orphan"] else None)
+    if not orphans and report["missing"]:
+        typer.secho("缺失指针 / bible 指向不存在的文件:", fg=typer.colors.RED)
+        for m in report["missing"]:
+            typer.echo(f"  bible/{m['bible_file']}.yaml:{m['asset_id']}.{m['field']} → {m['value']}")
+
+
+@refs_app.command("shot")
+def refs_shot(shot_id: str = typer.Argument(..., help="the shot to inspect"),
+             as_json: bool = typer.Option(False, "--json")):
     """Resolve a shot's reference inputs and report resolution + budget +
     cleanliness (goal items 9 & 10). Read-only, spends nothing.
 
@@ -2904,6 +2961,47 @@ def refs(shot_id: str = typer.Argument(..., help="the shot to inspect"),
                     fg=_level_color.get(f.level, None))
         if f.hint:
             typer.echo(f"      → {f.hint}")
+
+
+@refs_app.command("assign")
+def refs_assign(
+    relpath: str = typer.Argument(..., help="media/refs 下的文件相对路径"),
+    shot: Optional[str] = typer.Option(None, "--shot", help="归属到某个镜头(重命名为 {shot}_ref)"),
+    character: Optional[str] = typer.Option(
+        None, "--character", help="归属到某个 bible 角色(重命名为 {id}_ref 并写 ref_image)"),
+    scene: Optional[str] = typer.Option(
+        None, "--scene", help="归属到某个 bible 场景(重命名为 {id}_ref 并写 ref_image)"),
+    prop: Optional[str] = typer.Option(
+        None, "--prop", help="归属到某个 bible 道具(重命名为 {id}_ref 并写 ref_image)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """把一个 media/refs 文件关联到唯一归属(goal item 3)——修正的是真相本身
+    (重命名文件 / 写 bible ref_image 字段),不是一份会漂移的并行索引。
+
+    --shot / --character / --scene / --prop 四选一,精确一个。文件已被 bible
+    钉住时,重命名会同步更新那个指针,永不留下悬空引用。"""
+    from .core.refs import RefsError, assign_ref
+
+    project = _project()
+    with _write_lock(project):
+        try:
+            result = assign_ref(project, relpath, shot=shot, character=character,
+                                scene=scene, prop=prop, actor=ACTOR)
+        except RefsError as exc:
+            _fail(str(exc), code="refs_assign_invalid")
+            raise  # unreachable
+
+    if as_json:
+        _emit(result, True)
+        return
+    if result["renamed"]:
+        typer.secho(f"refs: {result['old']} → {result['new']}  归属: {result['address']}",
+                    fg=typer.colors.GREEN)
+    else:
+        typer.secho(f"refs: {result['new']} 已归属 {result['address']}(文件名未变)",
+                    fg=typer.colors.GREEN)
+    if result["repointed"]:
+        typer.echo("  已同步更新的 bible 指针: " + ", ".join(result["repointed"]))
 
 
 # ------------------------------------------------------------------ tasks
