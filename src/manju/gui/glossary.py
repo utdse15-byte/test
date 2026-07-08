@@ -167,6 +167,42 @@ body.mj-show-terms .mj-en { display: inline; }
 }
 .mj-terms-toggle input { accent-color: var(--accent); }
 
+/* ---- project switcher (round X agent XE) ------------------------------ */
+.mj-ws-wrap { position: relative; display: inline-flex; }
+.mj-ws-btn {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .18rem .7rem; font: inherit; font-size: .8rem;
+  cursor: pointer;
+}
+.mj-ws-btn:hover { border-color: var(--accent); }
+.mj-ws-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 95;
+  min-width: 260px; max-width: 360px; max-height: 60vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .5); padding: .35rem;
+}
+.mj-ws-menu.hidden { display: none; }
+.mj-ws-group-title {
+  color: var(--muted); font-size: .72rem; padding: .3rem .5rem .1rem;
+  text-transform: none;
+}
+.mj-ws-item {
+  display: flex; flex-direction: column; gap: .1rem; width: 100%; text-align: left;
+  background: transparent; border: 0; border-radius: 6px; color: var(--fg);
+  padding: .35rem .5rem; font: inherit; font-size: .82rem; cursor: pointer;
+}
+.mj-ws-item:hover:not(:disabled) { background: var(--panel2); }
+.mj-ws-item:disabled { color: var(--muted); cursor: default; }
+.mj-ws-item-path { color: var(--muted); font-size: .72rem; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.mj-ws-sep { border-top: 1px solid var(--line); margin: .3rem 0; }
+.mj-ws-manage {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: 0; color: var(--accent); padding: .35rem .5rem; font: inherit;
+  font-size: .82rem; cursor: pointer; text-decoration: none;
+}
+.mj-ws-manage:hover { text-decoration: underline; }
+
 /* ---- fresh-user hint bar (dismissable) -------------------------------- */
 .mj-mode-hint {
   display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
@@ -228,6 +264,113 @@ _GLOSSARY_JS = r"""
       /* toggle the body class live (instant), then persist the preference */
       document.body.classList.toggle("mj-show-terms", toggle.checked);
       post("/api/pro-terms", { show: toggle.checked });
+    });
+  }
+
+  /* -------------------------------------------- project switcher (round X) */
+  /* Always present in the shared nav (pages.py's `_workspace_switcher`) once
+   * a project is bound — lazily fetches /api/workspace/recents on first open,
+   * groups by series, and opens a pick via POST /api/workspace/open (a full
+   * server REBIND — see gui/server.py's GuiServer.bind_project), then reloads
+   * to `/` so the freshly bound project's SPA loads. */
+  var wsBtn = document.getElementById("mj-ws-btn");
+  var wsMenu = document.getElementById("mj-ws-menu");
+
+  function wsClear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+  function wsItem(row) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mj-ws-item";
+    var name = document.createElement("span");
+    name.textContent = (row.current ? "✓ " : "") + (row.name || row.path);
+    btn.appendChild(name);
+    var path = document.createElement("span");
+    path.className = "mj-ws-item-path";
+    path.textContent = row.path;
+    btn.appendChild(path);
+    if (row.current) {
+      btn.disabled = true;
+      btn.title = "当前项目 (current project)";
+    } else {
+      btn.addEventListener("click", function () { wsOpen(row.path); });
+    }
+    return btn;
+  }
+
+  function wsOpen(path) {
+    if (wsMenu) wsMenu.classList.add("hidden");
+    post("/api/workspace/open", { path: path })
+      .then(function (resp) {
+        if (resp && resp.ok === false) return;
+        window.location.href = "/";
+      })
+      .catch(function () { /* the switcher is a convenience — a failed open
+        just leaves the menu closed; the picker page (below) has full errors */ });
+  }
+
+  function wsRender(data) {
+    wsClear(wsMenu);
+    var recents = (data && Array.isArray(data.recents)) ? data.recents : [];
+    if (!recents.length) {
+      var empty = document.createElement("div");
+      empty.className = "mj-ws-group-title";
+      empty.textContent = "还没有最近项目 (no recent projects)";
+      wsMenu.appendChild(empty);
+    } else {
+      var seen = {};
+      recents.forEach(function (row) {
+        var series = row.series;
+        if (series && !seen[series.root]) {
+          seen[series.root] = true;
+          var title = document.createElement("div");
+          title.className = "mj-ws-group-title";
+          title.textContent = "剧集 (series): " + series.name;
+          wsMenu.appendChild(title);
+        }
+        wsMenu.appendChild(wsItem(row));
+      });
+    }
+    var sep = document.createElement("div");
+    sep.className = "mj-ws-sep";
+    wsMenu.appendChild(sep);
+    var manage = document.createElement("a");
+    manage.className = "mj-ws-manage";
+    manage.href = "/?workspace=1";
+    manage.textContent = "管理工作区 / 新建项目 (manage workspace) →";
+    wsMenu.appendChild(manage);
+  }
+
+  if (wsBtn && wsMenu) {
+    wsBtn.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var willOpen = wsMenu.classList.contains("hidden");
+      wsMenu.classList.add("hidden");
+      wsBtn.setAttribute("aria-expanded", "false");
+      if (!willOpen) return;
+      wsClear(wsMenu);
+      var loading = document.createElement("div");
+      loading.className = "mj-ws-group-title";
+      loading.textContent = "加载中 (loading)…";
+      wsMenu.appendChild(loading);
+      wsMenu.classList.remove("hidden");
+      wsBtn.setAttribute("aria-expanded", "true");
+      fetch("/api/workspace/recents")
+        .then(function (r) { return r.json(); })
+        .then(wsRender)
+        .catch(function () {
+          wsClear(wsMenu);
+          var err = document.createElement("div");
+          err.className = "mj-ws-group-title";
+          err.textContent = "最近项目不可用 (recents unavailable)";
+          wsMenu.appendChild(err);
+        });
+    });
+    document.addEventListener("click", function (ev) {
+      if (wsMenu.classList.contains("hidden")) return;
+      if (ev.target === wsBtn || wsMenu.contains(ev.target)) return;
+      wsMenu.classList.add("hidden");
+      wsBtn.setAttribute("aria-expanded", "false");
     });
   }
 })();

@@ -30,15 +30,38 @@ app = typer.Typer(add_completion=False, no_args_is_help=True,
 
 ACTOR = os.environ.get("MANJU_ACTOR", "human")
 
+# round X agent XE: touch ~/.manju/recents.json at most ONCE per process — a
+# cheap module-level flag, not a config knob (guards against recursion/perf:
+# some commands resolve the project more than once per invocation). Each real
+# `manju ...` run is a fresh process, so this is naturally "once per
+# invocation"; in-process test harnesses that invoke the Typer app repeatedly
+# reset it explicitly (`monkeypatch.setattr(cli, "_RECENTS_TOUCHED", False)`).
+_RECENTS_TOUCHED = False
+
+
+def _touch_recents_once(project: Project) -> None:
+    global _RECENTS_TOUCHED
+    if _RECENTS_TOUCHED:
+        return
+    _RECENTS_TOUCHED = True
+    try:
+        from .core.recents import touch_recent
+
+        touch_recent(project)
+    except Exception:
+        pass  # recents is a convenience shelf, never load-bearing (§3)
+
 
 def _project(path: Optional[Path] = None) -> Project:
     try:
-        return Project.find(path or Path.cwd())
+        project = Project.find(path or Path.cwd())
     except ProjectError as exc:
         # Route through _fail so --json callers get the structured {"error": …}
         # shape on this (the #1 first-run) error path too. code is stable.
         _fail(str(exc), code="no_project")
         raise  # unreachable (_fail raises), keeps the type checker happy
+    _touch_recents_once(project)
+    return project
 
 
 def _emit(data, as_json: bool) -> None:
@@ -2097,10 +2120,16 @@ def gui(
 ):
     """Local web workbench (§1-⑦ revisited) — a client of the SAME engine core
     as the CLI/MCP: truth stays in text files, mutations are serialized jobs,
-    and dangerous ops (unlock, gc --hard) are absent, exactly as on MCP."""
+    and dangerous ops (unlock, gc --hard) are absent, exactly as on MCP.
+
+    Round X (agent XE, user pain #6/#8): OUTSIDE a project (and without
+    ``--workspace``) this no longer fails — it serves a WORKSPACE PICKER
+    instead (recents list with per-project status, 按路径打开/新建项目 forms).
+    Opening a project from the picker rebinds this SAME server to it."""
     from .gui.server import create_server, discover_workspace
 
     projects: Optional[dict] = None
+    project: Optional[Project] = None
     if workspace is not None:
         projects = discover_workspace(workspace)
         if not projects:
@@ -2109,7 +2138,15 @@ def gui(
         typer.echo("workspace: " + ", ".join(
             f"{slug} ({p.root.name})" for slug, p in projects.items()))
     else:
-        project = _project()
+        try:
+            project = Project.find(Path.cwd())
+            _touch_recents_once(project)
+        except ProjectError:
+            project = None
+            typer.secho(
+                "未在项目目录下 (not inside a project) — 提供工作区选择器 "
+                "(serving the workspace picker):从最近项目中选,或按路径/新建打开。",
+                fg=typer.colors.YELLOW)
     if host not in ("127.0.0.1", "localhost", "::1"):
         typer.secho(f"⚠ binding non-local host {host} — the GUI has no auth beyond "
                     "its CSRF token; only do this on a trusted network"

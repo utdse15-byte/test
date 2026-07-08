@@ -58,6 +58,15 @@ class MCPServer:
     def project(self) -> Project:
         if self._project is None:
             self._project = Project.find(self._project_start)
+            # round X (agent XE): MCP server startup touches recents exactly
+            # once — `self._project` is cached above, so this branch only
+            # ever runs on the FIRST successful resolution per process.
+            try:
+                from ..core.recents import touch_recent
+
+                touch_recent(self._project)
+            except Exception:
+                pass  # recents is a convenience shelf, never load-bearing (§3)
         return self._project
 
     # ---- main loop

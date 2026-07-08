@@ -176,6 +176,26 @@ def _mode_controls(mode: str, show_terms: bool) -> str:
     )
 
 
+def _workspace_switcher() -> str:
+    """The compact project-switcher trigger (round X agent XE, user pain #6):
+    a recents-backed dropdown, always present in the shared nav so it works on
+    the SPA AND every server-rendered page alike. Population + the open/rebind
+    action are lazy (`GET /api/workspace/recents` on first open, `POST
+    /api/workspace/open` on pick) and live in the shared chrome script
+    (:mod:`manju.gui.glossary`'s ``render_glossary_js``) so this stays a pure,
+    CSP-safe static shell — no inline handlers, nothing baked in server-side
+    besides the two empty containers JS fills."""
+    return (
+        '<span class="mj-ws-wrap">'
+        '<button type="button" id="mj-ws-btn" class="mj-ws-btn" '
+        'aria-haspopup="true" aria-expanded="false" title="切换/打开项目 (switch project)">'
+        "项目 ▾</button>"
+        '<div id="mj-ws-menu" class="mj-ws-menu hidden" role="menu" '
+        'aria-label="切换项目 (switch project)"></div>'
+        "</span>"
+    )
+
+
 def _mode_hint() -> str:
     """The fresh-user 新手 one-liner (dismissable via /glossary.js)."""
     return (
@@ -202,6 +222,7 @@ def nav_html(active: str, mode: str = "pro", show_terms: bool = False,
         cls = "active" if href == active else ""
         out.append(f'<a class="{cls}" href="{href}">{_e(label)}</a>')
     out.append(_mode_controls(mode, show_terms))
+    out.append(_workspace_switcher())
     out.append("</nav>")
     if beginner and not hint_dismissed:
         out.append(_mode_hint())

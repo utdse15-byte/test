@@ -158,9 +158,14 @@ class GuiServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, project: Project, host: str, port: int, actor: str,
+    def __init__(self, project: Project | None, host: str, port: int, actor: str,
                  readonly: bool = False,
                  workspace: dict[str, Project] | None = None):
+        # round X (agent XE): `project` is now Optional — `manju gui` OUTSIDE a
+        # project (and without --workspace) starts the server UNBOUND, serving
+        # the workspace picker (gui/workspace.py) at `/` until bind_project()
+        # rebinds it. Every project-dependent route is gated on this in do_GET/
+        # do_POST (see the `self.project is None` branches there).
         self.project = project
         self.actor = actor
         self.readonly = readonly
@@ -178,7 +183,8 @@ class GuiServer(ThreadingHTTPServer):
         # retargets in-flight work.
         self.workspace = workspace or {}
         self.active_slug = next(
-            (slug for slug, p in self.workspace.items() if p.root == project.root), None)
+            (slug for slug, p in self.workspace.items()
+             if project is not None and p.root == project.root), None)
         self.allowed_hosts = set(_LOCAL_HOSTS)
         if host not in ("", "0.0.0.0", "::"):
             self.allowed_hosts.add(host)
@@ -193,6 +199,30 @@ class GuiServer(ThreadingHTTPServer):
             self.active_slug = slug
             self.state_cache = None
         return target
+
+    def bind_project(self, project: Project) -> None:
+        """Round X: rebind this SAME server to `project` — from the workspace
+        picker (no project was bound yet) or from the in-chrome switcher (a
+        different project than the currently bound one). Deliberately does
+        NOT touch `self.workspace` (the --workspace DIRECTORY-SCAN dict, a
+        separate, older feature): mutating it here would make the SPA's
+        pre-existing workspace chip (`state.workspace` truthy -> `/api/state`)
+        pop up a SECOND, redundant switcher any time a recents-based open
+        happens outside --workspace mode. The two stay independent; the round-X
+        switcher (gui/pages.py's nav + /api/workspace/*) is the only UI for
+        recents-based switching. Jobs already running keep their closed-over
+        project, exactly like switch_project."""
+        with self.quick_mutex:
+            self.project = project
+            self.active_slug = next(
+                (slug for slug, p in self.workspace.items() if p.root == project.root), None)
+            self.state_cache = None
+        try:
+            from ..core.recents import touch_recent
+
+            touch_recent(project)
+        except Exception:
+            pass  # recents is a convenience shelf, never load-bearing (§3)
 
     @property
     def port(self) -> int:
@@ -236,12 +266,20 @@ def discover_workspace(root: Path) -> dict[str, Project]:
     return projects
 
 
-def create_server(project: Project, host: str = "127.0.0.1", port: int = 0,
+def create_server(project: Project | None, host: str = "127.0.0.1", port: int = 0,
                   actor: str | None = None, readonly: bool = False,
                   workspace: dict[str, Project] | None = None) -> GuiServer:
     actor = actor or os.environ.get("MANJU_ACTOR", "human")
-    return GuiServer(project, host, port, actor, readonly=readonly,
-                     workspace=workspace)
+    server = GuiServer(project, host, port, actor, readonly=readonly,
+                       workspace=workspace)
+    if project is not None:  # server startup: touch recents (round X, once)
+        try:
+            from ..core.recents import touch_recent
+
+            touch_recent(project)
+        except Exception:
+            pass
+    return server
 
 
 def serve(project: Project, host: str = "127.0.0.1", port: int = 8321,
@@ -337,7 +375,14 @@ class _Handler(BaseHTTPRequestHandler):
         path = url.path
         try:
             if path == "/":
-                self._page()
+                # round X: unbound (no project — outside a project, no
+                # --workspace) OR an explicit "manage workspace" visit from
+                # the in-chrome switcher (`/?workspace=1`) both serve the
+                # picker; a normal bound visit serves the SPA as before.
+                if self.server.project is None or parse_qs(url.query).get("workspace"):
+                    self._workspace_page()
+                else:
+                    self._page()
             elif path == "/favicon.ico":
                 # a real (tiny) icon: kills the one console 404 every load
                 svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
@@ -353,6 +398,22 @@ class _Handler(BaseHTTPRequestHandler):
                 from .page import render_js
 
                 self._send_text(render_js(), "application/javascript; charset=utf-8")
+            elif path == "/workspace.css":
+                from . import workspace as _ws
+
+                self._send_text(_ws.render_workspace_css(), "text/css; charset=utf-8")
+            elif path == "/workspace.js":
+                from . import workspace as _ws
+
+                self._send_text(_ws.render_workspace_js(),
+                                "application/javascript; charset=utf-8")
+            elif path == "/api/workspace/recents":
+                self._workspace_recents()
+            elif self.server.project is None:
+                # round X: everything else needs a bound project — the picker
+                # (served above at `/`) is the only way forward from here.
+                self._send_error_json(
+                    "尚未打开项目 (no project open) — 访问 / 打开工作区选择器", 404)
             elif path == "/api/state":
                 from .state import project_fingerprint
 
@@ -530,6 +591,16 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             if body is None:
                 return
+            if self.server.project is None:
+                # round X: no project bound yet — only the workspace-picker
+                # actions (open by path / create new) make sense here; both
+                # REBIND the server (see GuiServer.bind_project) instead of
+                # requiring every other route to guard a None project.
+                if self._workspace_post(path, body):
+                    return
+                self._send_error_json(
+                    "尚未打开项目 (no project open) — 访问 / 打开工作区选择器", 404)
+                return
             if path.startswith("/api/shot/"):
                 self._act_shot_save(unquote(path[len("/api/shot/"):]), body)
                 return
@@ -582,6 +653,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._ingest_post(path, body):  # round-X 批量入库 batch ingest actions
                     return
                 if self._series_post(path, body):  # round-X 剧集工作台 series actions
+                    return
+                if self._workspace_post(path, body):  # round-X workspace open/new (switcher)
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -1425,6 +1498,98 @@ class _Handler(BaseHTTPRequestHandler):
         self.server.switch_project(slug)
         self._send_json({"ok": True, "slug": slug, "name": name,
                          "root": str(project.root),
+                         "preset": (spec.name if spec else None)}, 201)
+
+    # -------------------------------------------------- workspace picker (round X)
+
+    def _workspace_page(self) -> None:
+        """The picker page: served at `/` when no project is bound, or at
+        `/?workspace=1` from the in-chrome switcher's "管理工作区" link."""
+        from ..presets import list_presets
+        from . import workspace as _ws
+
+        try:
+            presets = [p.to_public_dict() for p in list_presets()]
+        except Exception:
+            presets = []
+        html_doc = _ws.render_picker_page(
+            self.server.token, bound=self.server.project, presets=presets)
+        self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
+
+    def _workspace_recents(self) -> None:
+        """`GET /api/workspace/recents` — the data the picker page AND the
+        in-chrome switcher dropdown (glossary.js) both render from. Works
+        whether or not a project is bound."""
+        from . import workspace as _ws
+
+        current = self.server.project.root if self.server.project is not None else None
+        self._send_json(_ws.recents_payload(current))
+
+    def _workspace_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the workspace-picker actions. Works with or
+        without a project already bound — both REBIND the server via
+        GuiServer.bind_project. Same token/readonly gates as every other
+        mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/workspace/open": self._act_workspace_open,
+            "/api/workspace/new": self._act_workspace_new,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_workspace_open(self, body: dict[str, Any]) -> None:
+        """Open (by absolute/relative path) a project the recents list points
+        at, or any other manju project — REBINDS this server to it."""
+        raw = str(body.get("path") or "").strip()
+        if not raw:
+            self._send_error_json("path is required", 400)
+            return
+        try:
+            project = Project(Path(raw).expanduser())
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        self.server.bind_project(project)
+        self._send_json({"ok": True, "root": str(project.root)})
+
+    def _act_workspace_new(self, body: dict[str, Any]) -> None:
+        """新建项目 from the picker/switcher — the SAME core `manju new`/the
+        --workspace `/api/new-project` action uses (Project.create + optional
+        preset), then REBINDS the server to the fresh project. Unlike
+        `_act_new_project` this works with NO project bound yet, and its
+        parent directory is explicit (`path`) or defaults to the server
+        process's cwd (mirrors the CLI's `manju new --path`/cwd default),
+        never a sibling of `self.server.project` (which may not exist)."""
+        name = str(body.get("name") or "").strip()
+        if not name or name.startswith(".") or not self._NAME_RE.fullmatch(name):
+            self._send_error_json("invalid project name", 400)
+            return
+        preset = body.get("preset") or None
+        vertical = bool(body.get("vertical", True))
+        raw_parent = str(body.get("path") or "").strip()
+        parent = Path(raw_parent).expanduser() if raw_parent else Path.cwd()
+        dest = parent / name
+        try:
+            spec = None
+            if preset:
+                from ..presets import load_preset
+
+                spec = load_preset(str(preset))
+            project = Project.create(dest, name=name, vertical=vertical, git_init=False)
+            if spec is not None:
+                from ..presets import apply_preset
+
+                apply_preset(project, spec)
+            append_event(project.root, self.server.actor, "new",
+                         {"name": name, "preset": (spec.name if spec else None),
+                          "via": "gui"})
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        self.server.bind_project(project)
+        self._send_json({"ok": True, "name": name, "root": str(project.root),
                          "preset": (spec.name if spec else None)}, 201)
 
     # ---------------------------------------------------------- watch/lists

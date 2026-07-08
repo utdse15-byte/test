@@ -36,6 +36,15 @@ def _isolate_gui_state(monkeypatch, tmp_path):
     monkeypatch.setenv("MANJU_GUI_STATE", str(tmp_path / "_gui_state_conftest.json"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_recents(monkeypatch, tmp_path):
+    """Round X (agent XE): ``cli._project()``/GUI-server-startup/MCP-server-
+    startup all touch ``~/.manju/recents.json`` on every real invocation —
+    redirect it to a hermetic tmp path for every test so the suite never reads
+    or writes a real home (mirrors ``_isolate_gui_state`` above)."""
+    monkeypatch.setenv("MANJU_RECENTS", str(tmp_path / "_recents_conftest.json"))
+
+
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Project:
     """A freshly scaffolded project with a minimal, valid Bible.
