@@ -273,16 +273,20 @@ def run_qc(
         _content_frames(project, report, selected)
     _content_checkers(project, report, statuses, deep)
     _content_agent_verdicts(project, report)
+    _content_qc_coverage(project, report)
     _mention_checks(project, report)
 
     return report
 
 
 def _content_agent_verdicts(project, report) -> None:
-    """Round V (§6, goal item 6): fold the driving agent's own visual verdicts
-    (reports/qc_agent.jsonl) into the content tier. Matching verdicts surface as
-    [AI判读] items at the mapped level; a regenerated take's stale verdicts become
-    one info nudge. Deterministic and crash-proof (never breaks QC itself)."""
+    """Round V (§6, goal item 6); widened round X (agent XB, user pain #2):
+    fold the driving agent's/human's visual verdicts (reports/qc_agent.jsonl)
+    into the content tier — both per-SHOT verdicts and cross-shot CONSISTENCY
+    verdicts (§ qc/agent_review module docstring). Matching verdicts surface as
+    [AI判读] items at the mapped level; a regenerated take (or unit member)
+    stales its verdict into one info nudge. Deterministic and crash-proof
+    (never breaks QC itself)."""
     try:
         from .agent_review import agent_verdict_items
 
@@ -290,6 +294,29 @@ def _content_agent_verdicts(project, report) -> None:
     except Exception as exc:  # a broken log never breaks QC
         report.add("info", "content", "qc_agent",
                    f"AI 判读记录读取失败,已跳过:{exc}")
+
+
+def _content_qc_coverage(project, report) -> None:
+    """Round X (agent XB, user pain #2): ONE info item surfacing AI-judgment
+    coverage gaps — shots and consistency units that have NEVER been AI/human
+    -judged (as opposed to merely stale, which already gets its own item(s)
+    above). Silent when there are no gaps; degrades to a skip note on any
+    failure, never fails QC itself."""
+    try:
+        from .agent_review import qc_coverage
+
+        cov = qc_coverage(project)
+        gaps = cov.get("summary", {}).get("gaps", 0)
+        if gaps:
+            report.add(
+                "info", "content", "qc_coverage",
+                f"{gaps} 个镜头/一致性组合未经 AI 判读",
+                suggestion="manju qc brief 出题(单镜)/ manju qc brief --mode consistency "
+                           "出题(一致性组合)/ manju qc coverage 查看明细",
+            )
+    except Exception as exc:  # a broken coverage read never breaks QC
+        report.add("info", "content", "qc_coverage",
+                   f"AI 判读覆盖率读取失败,已跳过:{exc}")
 
 
 def _content_checkers(project, report, statuses, deep: bool) -> None:

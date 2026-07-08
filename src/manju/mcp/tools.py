@@ -295,13 +295,28 @@ def _h_qc_locked(project: Project, args: dict) -> dict:
 
 def _h_qc_brief(project: Project, args: dict) -> dict:
     """Round V (§6): the review package a vision-capable agent consumes — frames
-    + shot context + the visual-qc-review criteria pointer + the verdict shape."""
+    + shot context + the visual-qc-review criteria pointer + the verdict shape.
+    Round X (agent XB): `mode="consistency"` briefs cross-shot comparison units
+    (character/pair/scene contact sheets) instead of per-shot rows."""
     from ..qc.agent_review import qc_brief
 
     shots = args.get("shots")
     if shots is not None and not isinstance(shots, list):
         raise ToolError("shots must be an array of shot ids")
-    return qc_brief(project, [str(s) for s in shots] if shots else None)
+    mode = str(args.get("mode") or "shots")
+    try:
+        return qc_brief(project, [str(s) for s in shots] if shots else None, mode=mode)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def _h_qc_coverage(project: Project, args: dict) -> dict:
+    """Round X (agent XB, user pain #2): per-shot and per-consistency-unit
+    AI-judgment coverage — reviewed / stale / never, plus a summary with a
+    total `gaps` count (never-reviewed shots + units)."""
+    from ..qc.agent_review import qc_coverage
+
+    return qc_coverage(project)
 
 
 def _h_qc_verdict(project: Project, args: dict) -> dict:
@@ -586,12 +601,38 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "JSON shape — for a VISION-CAPABLE agent to judge with its own eyes. "
         "Manju runs NO vision model. `shots` scopes it; omit for every reviewable "
         "shot. Then read `manju skills show visual-qc-review` and return verdicts "
-        "via qc_verdict.",
+        "via qc_verdict. Round X (agent XB, user pain #2): `mode=consistency` "
+        "briefs CROSS-shot comparison units instead of per-shot rows — one "
+        "contact-sheet image per character appearing in >1 shot (bible ref + "
+        "one take frame per appearance, identity/outfit drift), one side-by-side "
+        "pair board per adjacent shot pair sharing a scene, and one contact "
+        "sheet per scene (scene/lighting continuity). Return verdicts with "
+        "`unit` (not `shot`) via qc_verdict; each binds to ALL member take "
+        "hashes at once.",
         "inputSchema": _schema(
-            {"shots": {"type": "array", "items": {"type": "string"},
-                       "description": "shot ids to brief; omit for all"}}
+            {
+                "shots": {"type": "array", "items": {"type": "string"},
+                         "description": "shot ids to brief; omit for all. In "
+                         "consistency mode, keeps units with >=1 matching member"},
+                "mode": {"type": "string", "enum": ["shots", "consistency"],
+                         "default": "shots",
+                         "description": "shots = per-shot rows (default); "
+                         "consistency = cross-shot comparison units"},
+            }
         ),
         "handler": _h_qc_brief,
+    },
+    {
+        "name": "qc_coverage",
+        "description": "Round X (agent XB, user pain #2): per-shot AND "
+        "per-consistency-unit AI-judgment coverage — {shots: {id: state}, "
+        "units: {id: {state, kind, label}}, summary: {..., gaps}}, state is "
+        "reviewed (a verdict's bound bytes match the CURRENT take(s)) / stale "
+        "(a verdict exists but bytes moved) / never (no verdict was ever "
+        "recorded). `summary.gaps` is the never-reviewed count `run_qc` also "
+        "surfaces as one info item.",
+        "inputSchema": _EMPTY_SCHEMA,
+        "handler": _h_qc_coverage,
     },
     {
         "name": "qc_verdict",
@@ -601,15 +642,18 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "{shot, take, criterion, level(blocker|issue|fyi), message(中文), "
         "evidence, frame_ms?}. Next `qc` pass surfaces matching verdicts as "
         "[AI判读] items (blocker→error/issue→warn/fyi→info); a regenerated take "
-        "makes its old verdicts stale. Unknown shot is rejected. Instead of "
-        "`verdicts` inline, pass `from_file` (a project-relative path to a JSON "
-        "file holding the same payload).",
+        "makes its old verdicts stale. Unknown shot is rejected. Round X (agent "
+        "XB): a verdict may instead carry `unit` (a comparison-unit id from a "
+        "`qc_brief mode=consistency` response) — it binds to ALL of that unit's "
+        "member take hashes at once. Instead of `verdicts` inline, pass "
+        "`from_file` (a project-relative path to a JSON file holding the same "
+        "payload).",
         "inputSchema": _schema(
             {
                 "verdicts": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "verdict objects; each needs shot + level",
+                    "description": "verdict objects; each needs (shot or unit) + level",
                 },
                 "from_file": {
                     "type": "string",

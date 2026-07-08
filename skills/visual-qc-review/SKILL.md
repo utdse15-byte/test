@@ -80,7 +80,8 @@ Manju 引擎自己不看画面(§0 不含 LLM)——它跑得动的便宜检查�
 ## Manju 落地
 
 - **QC 报告**:`manju qc [--deep]` → `reports/qc.json`/`qc.md`/`repair_plan.yaml`;三层(存在/技术/内容)。视觉判据缺视觉厂牌时发 `needs_vision` advisory(点名跳过了哪条,及是否配了 `qc_vision` provider)。
-- **裁决管道(兄弟 agent VC 在建)**:`manju qc brief`(供帧 + 逐镜 A/B/C/D/E/F/H 判据)→ 你产出上面的 JSON 数组 → `manju qc verdict`(收裁决)。契约形状即本页 JSON。
+- **裁决管道**:`manju qc brief`(供帧 + 逐镜 A/B/C/D/E/F/H 判据)→ 你产出上面的 JSON 数组 → `manju qc verdict`(收裁决)。契约形状即本页 JSON。
+- **一致性判读(round X)**:一致性是跨镜/镜头对参考图的属性,不是单镜属性——`manju qc brief --mode consistency` 出的不是逐镜帧,而是 COMPARISON UNIT:每个出场 >1 镜的角色一张对照看板(bible 参考图 + 每个出场镜头一帧,判 A/B 身份服装)、每对共享场景的相邻镜头一张并排图(判 C/D 场景光照)、每个场景一张整体看板(同判 C/D)。裁决 JSON 把 `shot` 换成 `unit`(取自 brief 的 `unit` 字段,如 `character:linxia`),一条裁决对该组合内**所有**成员镜头的当前字节生效——任一成员重生成,裁决整体过期。`manju qc coverage` 看哪些镜头/组合还没判读过。
 - **两级 QC(守 §0)**:Manju 跑便宜 C 行;V 行由驱动 agent 的视觉填。
 - **修复闭环**:裁决 → `repair-loop`(map 到 repair op)→ 重做 → 复核。
 - **PSE 是法务安全必加项**,不依赖视觉、便宜、且是唯一能伤到观众的缺陷 → `manju qc` 硬闸。

@@ -36,8 +36,11 @@ from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
 from .frames import extract_frame, frames_cache_dir
 from .probe import probe_duration_ms
 
-# grid (panel count) -> (cols, rows). Only 4 (2×2) and 9 (3×3) are supported.
-GRID_DIMS: dict[int, tuple[int, int]] = {4: (2, 2), 9: (3, 3)}
+# grid (panel count) -> (cols, rows). 4 (2×2) and 9 (3×3) are the storyboard
+# grids; 2 (2×1, side-by-side) was added in round X (agent XB) for the
+# consistency-QC pair board (qc/agent_review.py) — two frames compared directly,
+# no blank filler cells.
+GRID_DIMS: dict[int, tuple[int, int]] = {2: (2, 1), 4: (2, 2), 9: (3, 3)}
 _DEFAULT_CELL = (480, 270)  # 16:9-ish default when no project aspect is known
 _JPEG_EXTS = (".jpg", ".jpeg")
 
@@ -46,11 +49,11 @@ _JPEG_EXTS = (".jpg", ".jpeg")
 
 
 def grid_dims(grid: int) -> tuple[int, int]:
-    """``(cols, rows)`` for a panel count. Raises for anything but 4 or 9."""
+    """``(cols, rows)`` for a panel count. Raises for anything but 2, 4 or 9."""
     try:
         return GRID_DIMS[int(grid)]
     except (KeyError, ValueError, TypeError):
-        raise MediaError(f"grid must be 4 (2×2) or 9 (3×3), got {grid!r}") from None
+        raise MediaError(f"grid must be 2 (2×1), 4 (2×2) or 9 (3×3), got {grid!r}") from None
 
 
 def _even(n: int) -> int:
@@ -171,6 +174,14 @@ def _shot_cell_dims(project: Project) -> tuple[int, int]:
     cw = 480
     ch = _even(round(cw * h / w))
     return cw, ch
+
+
+def board_cell_dims(project: Project) -> tuple[int, int]:
+    """Public alias of :func:`_shot_cell_dims` (round X, agent XB) — the
+    consistency-QC contact sheets (qc/agent_review.py) reuse the same
+    project-aspect cell sizing as scene boards, without reaching into a
+    name-mangled private helper."""
+    return _shot_cell_dims(project)
 
 
 def _best_frame(project: Project, shot, bible: dict) -> Path | None:

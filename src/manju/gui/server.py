@@ -1713,11 +1713,48 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/lib/use": self._act_lib_use,
             "/api/lib/tag": self._act_lib_tag,
             "/api/lib/note": self._act_lib_note,
+            "/api/qc/verdict": self._act_qc_verdict,
         }.get(path)
         if handler is None:
             return False
         handler(body)
         return True
+
+    def _act_qc_verdict(self, body: dict[str, Any]) -> None:
+        """Round X (agent XB, user pain #2): a HUMAN spot-checking the /review
+        page's 跨镜一致性 consistency units files a verdict through the SAME
+        intake `manju qc verdict` / the `qc_verdict` MCP tool use — token-gated
+        like every mutating POST, actor="human" (record_verdicts already takes
+        an `actor` param; agents are not the only ones who can file verdicts).
+        Accepts either `unit` (a consistency comparison-unit id) or `shot`
+        (round-V per-shot) — same payload shape as the CLI/MCP verdict body."""
+        from ..qc.agent_review import VerdictError, record_verdicts
+
+        project = self.server.project
+        verdict: dict[str, Any] = {
+            "criterion": body.get("criterion"),
+            "level": body.get("level"),
+            "message": body.get("message"),
+            "evidence": body.get("evidence", ""),
+        }
+        unit = str(body.get("unit") or "").strip()
+        if unit:
+            verdict["unit"] = unit
+        else:
+            verdict["shot"] = body.get("shot")
+            if body.get("take") is not None:
+                verdict["take"] = body.get("take")
+        if body.get("frame_ms") is not None:
+            verdict["frame_ms"] = body.get("frame_ms")
+
+        with self.server.quick_mutex:
+            try:
+                result = record_verdicts(project, {"verdicts": [verdict]},
+                                         actor=self.server.actor)
+            except VerdictError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+        self._send_json({"ok": True, **result})
 
     # -------------------------------------------------- routing (read)
 

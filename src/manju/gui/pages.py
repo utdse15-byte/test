@@ -413,8 +413,100 @@ def render_review(project: Any, token: str) -> str:
         f'data-pct="{pct}"></span></span>'
         "</div>\n"
         + cards_html
+        + _consistency_section(project)
     )
     return _shell("审片", token, "/review", body)
+
+
+# --------------------------------------------- 跨镜一致性 consistency (round X)
+
+# criterion codes worth offering in the verdict form's dropdown — the A–J
+# codes visual-qc-review actually asks a consistency judge to apply (identity/
+# outfit §A/B, scene/lighting continuity §C/D); the full A–J list stays in the
+# skill, this is just a shortcut for the common cases.
+_CS_CRITERIA = (
+    "A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4",
+    "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4",
+)
+
+_CS_STATE_LABEL = {"reviewed": "已判读", "stale": "已过期", "never": "未判读"}
+_CS_STATE_CLASS = {"reviewed": "st-fresh", "stale": "st-stale", "never": "st-missing"}
+
+
+def _consistency_section(project: Any) -> str:
+    """The 跨镜一致性 Consistency section of /review (round X, agent XB — user
+    pain #2: visual-consistency QC judged shots in isolation). Renders the
+    same comparison units ``qc brief --mode consistency`` computes: a contact
+    sheet per unit, its member shots, the criteria hint, coverage chip, and a
+    verdict FORM a human can file directly (POSTs into the same intake agents
+    use, actor=human). Degrades to one muted line on any failure — a broken
+    matrix/board never breaks the review page."""
+    try:
+        from ..qc.agent_review import qc_brief as _qc_brief
+
+        brief = _qc_brief(project, mode="consistency")
+    except Exception as exc:
+        return (
+            '<div class="page-h"><h2>跨镜一致性 Consistency</h2></div>\n'
+            f'<p class="err panel">一致性组合加载失败:{_e(exc)}</p>'
+        )
+
+    units = brief.get("units") or []
+    coverage = ((brief.get("coverage") or {}).get("units")) or {}
+    skipped = brief.get("skipped") or []
+
+    if not units:
+        body = ('<p class="muted panel">暂无可判读的一致性组合(需要至少两个共享角色/'
+                '场景、且已选 take 的镜头)。</p>')
+    else:
+        body = "\n".join(_consistency_card(u, coverage.get(u["unit"], {})) for u in units)
+
+    skip_html = ""
+    if skipped:
+        items = "".join(
+            f'<li>{_e(s.get("unit", ""))}:{_e(s.get("reason", ""))}</li>' for s in skipped
+        )
+        skip_html = (f'<details class="muted cs-skipped"><summary>跳过 {len(skipped)} '
+                    f'个组合</summary><ul>{items}</ul></details>')
+
+    return (
+        '<div class="page-h"><h2>跨镜一致性 Consistency</h2>'
+        '<span class="muted">角色出场对照表 · 相邻镜头场景对比 · 场景整体看板 — '
+        '一致性是跨镜属性,不逐镜孤立判读;人工可在此现场提交裁决</span></div>\n'
+        + body + skip_html
+    )
+
+
+def _consistency_card(unit: dict, cov: dict) -> str:
+    img = unit.get("image")
+    img_html = (f'<img class="cs-board" src="/media/{quote(str(img), safe="/")}" alt="">'
+               if img else '<p class="muted">看板尚未生成(需要 ffmpeg)</p>')
+    members = ", ".join(m["shot"] for m in (unit.get("members") or []))
+    state = cov.get("state", "never")
+    state_label = _CS_STATE_LABEL.get(state, state)
+    state_cls = _CS_STATE_CLASS.get(state, "st-missing")
+    criteria = unit.get("criteria") or {}
+    crit_opts = "".join(f'<option value="{_e(c)}">{_e(c)}</option>' for c in _CS_CRITERIA)
+
+    return (
+        f'<section class="panel cs-unit" data-unit="{_e(unit["unit"])}">'
+        f'  <div class="cs-head"><b>[{_e(unit.get("kind"))}] {_e(unit.get("label"))}</b>'
+        f'  <span class="badge {state_cls} cs-state">{_e(state_label)}</span></div>'
+        f'  <div class="muted">成员镜头:{_e(members)}</div>'
+        f'  <div class="muted">判据 {_e(criteria.get("sections"))}:{_e(criteria.get("note"))}</div>'
+        f'  {img_html}'
+        f'  <div class="cs-form btnrow">'
+        f'    <select class="cs-criterion">{crit_opts}</select>'
+        f'    <select class="cs-level">'
+        f'      <option value="fyi">fyi</option>'
+        f'      <option value="issue">issue</option>'
+        f'      <option value="blocker">blocker</option>'
+        f'    </select>'
+        f'    <input class="cs-message" placeholder="中文结论(必填)">'
+        f'    <button type="button" class="btn ghost mini" data-act="cs-submit">提交裁决</button>'
+        f'  </div>'
+        f"</section>"
+    )
 
 
 def _qc_badge(level: str) -> str:
@@ -1036,6 +1128,15 @@ _PAGES_CSS = """
 
 @media (max-width: 820px) { .rv-body { grid-template-columns: 1fr; } }
 
+/* ------------------------------------------- consistency (round X, XB) -- */
+.cs-unit { margin: .8rem 0; }
+.cs-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+.cs-board { display: block; max-width: 100%; margin: .5rem 0; border-radius: 8px; border: 1px solid var(--line); }
+.cs-form { align-items: center; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
+.cs-form select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .4rem; font: inherit; font-size: .84rem; }
+.cs-message { flex: 1; min-width: 220px; background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .84rem; }
+.cs-skipped { margin-top: .6rem; font-size: .84rem; }
+
 /* --------------------------------------------------------- compare -- */
 .cmp-picker { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; }
 .cmp-picker select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .45rem; font: inherit; }
@@ -1143,6 +1244,39 @@ _PAGES_JS = r"""
   else if (page === "/providers") initProviders();
   else if (page === "/routing") initRouting();
   else if (page === "/doctor") initDoctor();
+  if (page === "/review") initReviewConsistency();
+
+  // ------------------------------- 跨镜一致性 consistency verdict form (round X)
+  function initReviewConsistency() {
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest('[data-act="cs-submit"]');
+      if (!btn) return;
+      var card = btn.closest(".cs-unit");
+      if (!card) return;
+      var unit = card.getAttribute("data-unit");
+      var crit = card.querySelector(".cs-criterion").value;
+      var level = card.querySelector(".cs-level").value;
+      var msgEl = card.querySelector(".cs-message");
+      var msg = msgEl.value.trim();
+      if (!msg) { toast("请填写中文结论", false); return; }
+      btn.disabled = true;
+      post("/api/qc/verdict", { unit: unit, criterion: crit, level: level, message: msg })
+        .then(function (res) {
+          btn.disabled = false;
+          if (res.status === 200) {
+            toast("裁决已提交:" + unit, true);
+            msgEl.value = "";
+            var chip = card.querySelector(".cs-state");
+            if (chip) {
+              chip.textContent = "已判读";
+              chip.className = "badge st-fresh cs-state";
+            }
+          } else {
+            toast((res.data && res.data.error) || "失败", false);
+          }
+        });
+    });
+  }
 
   // ------------------------------------------------------------- review
   function initReview() {

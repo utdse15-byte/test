@@ -1066,20 +1066,47 @@ def qc_main(ctx: typer.Context,
 @qc_app.command("brief")
 def qc_brief_cmd(
     shots: Optional[str] = typer.Option(
-        None, "--shots", help="逗号分隔的镜头 id;省略则出题全部可判读镜头"),
+        None, "--shots", help="逗号分隔的镜头 id;省略则出题全部可判读镜头/组合"),
+    mode: str = typer.Option(
+        "shots", "--mode",
+        help="shots(逐镜出题,默认) | consistency(一致性组合出题:角色出场对照表 / "
+             "相邻镜头场景对比 / 场景整体看板 — round X 解决跨镜一致性)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """出题给驱动 Manju 的 vision-capable agent (§6, goal item 6):每镜头的评审帧
-    (mid + 首/尾)+ 上下文(场景/角色 bible 参考图/must_show/avoid/连续性锁/台词)
-    + 判读标准指针(visual-qc-review)+ 回填 JSON 契约。Manju 自身不判图。"""
+    """出题给驱动 Manju 的 vision-capable agent (§6, goal item 6;一致性组合见 round X)。
+
+    --mode shots(默认):每镜头的评审帧(mid + 首/尾)+ 上下文(场景/角色 bible 参考图/
+    must_show/avoid/连续性锁/台词)。--mode consistency:跨镜 COMPARISON UNIT ——
+    每个出场 >1 镜的角色一张对照看板(bible 参考图 + 每个出场镜头一帧)、每对共享
+    场景的相邻镜头一张并排对比图、每个场景一张整体看板 —— 一致性是跨镜属性,不该
+    逐镜孤立判读。两种模式都只出判读标准指针(visual-qc-review)+ 回填 JSON 契约,
+    Manju 自身不判图。"""
     from .qc.agent_review import qc_brief as _qc_brief
 
     project = _project()
+    if mode not in ("shots", "consistency"):
+        _fail(f"--mode 必须是 shots|consistency,收到 {mode!r}")
     ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
-    brief = _qc_brief(project, ids)
+    brief = _qc_brief(project, ids, mode=mode)
     if as_json:
         _emit(brief, True)
         return
+
+    if mode == "consistency":
+        typer.secho(f"质检出题(一致性)/ qc brief --mode consistency:"
+                    f"{len(brief['units'])} 个组合可判读", fg=typer.colors.CYAN)
+        typer.echo(f"判读标准:manju skills show {brief['criteria']['skill']}"
+                   f"({brief['criteria']['note']})")
+        for u in brief["units"]:
+            members = ", ".join(m["shot"] for m in u["members"])
+            typer.echo(f"  [{u['kind']}] {u['unit']}  成员:{members}")
+            if u.get("image"):
+                typer.echo(f"    对比图:{u['image']}")
+        for sk in brief["skipped"]:
+            typer.secho(f"  跳过 {sk['unit']}:{sk['reason']}", fg=typer.colors.BRIGHT_BLACK)
+        typer.echo("→ 判读后用 manju qc verdict --from-file <json>(每条判读带 unit 字段)回填")
+        return
+
     typer.secho(f"质检出题 / qc brief:{len(brief['shots'])} 个镜头可判读", fg=typer.colors.CYAN)
     typer.echo(f"判读标准:manju skills show {brief['criteria']['skill']}"
                f"({brief['criteria']['note']})")
@@ -1094,6 +1121,33 @@ def qc_brief_cmd(
     for sk in brief["skipped"]:
         typer.secho(f"  跳过 {sk['shot']}:{sk['reason']}", fg=typer.colors.BRIGHT_BLACK)
     typer.echo("→ 判读后用 manju qc verdict --from-file <json>(或 - 走 stdin)回填")
+
+
+@qc_app.command("coverage")
+def qc_coverage_cmd(as_json: bool = typer.Option(False, "--json")):
+    """AI 判读覆盖率(round X agent XB,user pain #2):每个镜头 / 一致性组合是
+    reviewed(判读仍与当前字节匹配)/ stale(判读过期)/ never(从未判读过)。"""
+    from .qc.agent_review import qc_coverage as _qc_coverage
+
+    project = _project()
+    cov = _qc_coverage(project)
+    if as_json:
+        _emit(cov, True)
+        return
+    s = cov["summary"]
+    typer.secho(
+        f"覆盖率:镜头 {s['shots_reviewed']}/{s['shots_total']} 已判读"
+        f"(过期 {s['shots_stale']}, 未判读 {s['shots_never']}) · "
+        f"组合 {s['units_reviewed']}/{s['units_total']} 已判读"
+        f"(过期 {s['units_stale']}, 未判读 {s['units_never']})",
+        fg=typer.colors.CYAN,
+    )
+    for sid, state in cov["shots"].items():
+        if state != "reviewed":
+            typer.echo(f"  镜头 {sid}: {state}")
+    for uid, info in cov["units"].items():
+        if info["state"] != "reviewed":
+            typer.echo(f"  组合 {uid} [{info['kind']}]: {info['state']}")
 
 
 @qc_app.command("verdict")
