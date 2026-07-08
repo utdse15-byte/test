@@ -921,3 +921,189 @@ def test_gui_plan_rejects_bad_batch_id(gui):
 def test_gui_plan_empty_batch_is_a_clean_400(gui):
     status, data = _post(gui, "/api/ingest/plan", {"batch": "nosuchbatch"})
     assert status == 400
+
+
+# ======================================================================
+# GUI — 批次评审 batch review (round AA6, goal item 4): the ONE view over
+# everything a landed batch added. These set up a persisted batch record
+# straight through `apply_ingest` (the upload/plan/apply HTTP roundtrip is
+# already covered above) so each test can focus on the review endpoints.
+# ======================================================================
+
+
+def _apply_review_batch(project, tmp_path, actor="tester", **kw):
+    """One matched take (S001) + one unmatched import — enough to exercise
+    both the "has a shot link/thumbnail" and "has neither" enrichment
+    branches in a single batch."""
+    batch = tmp_path / "review_batch"
+    batch.mkdir()
+    _drop(batch, "S001.mp4", b"v1")     # index 0: matched take
+    _drop(batch, "mystery.bin", b"v2")  # index 1: unmatched import
+    plan = plan_ingest(project, [batch])
+    return apply_ingest(project, plan, actor=actor, **kw)
+
+
+def test_gui_batches_list_endpoint(gui, tmp_project, add_shot, tmp_path):
+    add_shot(tmp_project, "S001")
+    result = _apply_review_batch(tmp_project, tmp_path)
+    status, data = _req(gui, "/api/ingest/batches")
+    assert status == 200
+    entry = next(b for b in data["batches"] if b["batch"] == result.batch_id)
+    assert entry["items"] == 2
+    assert entry["counts"] == {"pending": 2}
+
+
+def test_gui_batch_detail_enriches_items(gui, tmp_project, add_shot, tmp_path):
+    add_shot(tmp_project, "S001")
+    result = _apply_review_batch(tmp_project, tmp_path)
+    status, data = _req(gui, "/api/ingest/batch?id=" + result.batch_id)
+    assert status == 200
+    assert data["batch"] == result.batch_id
+
+    take_item = next(it for it in data["items"] if it["action"] == "take")
+    assert take_item["thumb_url"] is not None and take_item["thumb_url"].startswith("/thumb/")
+    assert take_item["preview_url"] is not None
+    assert take_item["link"] == "/lab?shot=S001"
+
+    import_item = next(it for it in data["items"] if it["action"] == "import")
+    assert import_item["link"] is None       # no shot/asset id to link to
+    assert import_item["thumb_url"] is None  # .bin is not a known media type
+
+
+def test_gui_batch_detail_bad_id_is_400_missing_is_404(gui):
+    from urllib.parse import quote
+
+    status, _ = _req(gui, "/api/ingest/batch?id=" + quote("../evil"))
+    assert status == 400
+    status, _ = _req(gui, "/api/ingest/batch?id=nosuchbatch")
+    assert status == 404
+
+
+def test_gui_review_confirm_happy_path(gui, tmp_project, add_shot, tmp_path):
+    from manju.build.batches import load_batch
+
+    add_shot(tmp_project, "S001")
+    result = _apply_review_batch(tmp_project, tmp_path)
+    status, data = _post(gui, "/api/ingest/batch/review",
+                         {"batch": result.batch_id, "index": 0, "decision": "confirm",
+                          "note": "看过了,没问题"})
+    assert status == 200 and data["ok"] is True
+    assert data["item"]["review"] == "confirmed"
+    assert data["item"]["note"] == "看过了,没问题"
+    assert load_batch(tmp_project, result.batch_id)["items"][0]["review"] == "confirmed"
+
+
+def test_gui_review_bad_decision_is_400(gui, tmp_project, add_shot, tmp_path):
+    add_shot(tmp_project, "S001")
+    result = _apply_review_batch(tmp_project, tmp_path)
+    status, data = _post(gui, "/api/ingest/batch/review",
+                         {"batch": result.batch_id, "index": 0, "decision": "bogus"})
+    assert status == 400
+
+
+def test_gui_review_bad_index_is_400(gui, tmp_project, add_shot, tmp_path):
+    add_shot(tmp_project, "S001")
+    result = _apply_review_batch(tmp_project, tmp_path)
+    status, data = _post(gui, "/api/ingest/batch/review",
+                         {"batch": result.batch_id, "index": "not-an-int", "decision": "confirm"})
+    assert status == 400
+
+
+def test_gui_review_bad_batch_id_is_400(gui):
+    status, data = _post(gui, "/api/ingest/batch/review",
+                         {"batch": "../evil", "index": 0, "decision": "confirm"})
+    assert status == 400
+
+
+def test_gui_review_refused_when_build_locked_no_mutation(gui, tmp_project, add_shot, tmp_path):
+    from manju.build.batches import load_batch
+    from manju.runtime.buildlock import BuildLock
+
+    add_shot(tmp_project, "S001")
+    result = _apply_review_batch(tmp_project, tmp_path)
+
+    lock = BuildLock(tmp_project.root, actor="human").acquire()
+    try:
+        status, data = _post(gui, "/api/ingest/batch/review",
+                             {"batch": result.batch_id, "index": 0, "decision": "confirm"})
+        assert status == 409
+        assert "error" in data
+    finally:
+        lock.release()
+    # untouched while the lock was held
+    assert load_batch(tmp_project, result.batch_id)["items"][0]["review"] == "pending"
+
+    # released -> the SAME request now succeeds normally
+    status, data = _post(gui, "/api/ingest/batch/review",
+                         {"batch": result.batch_id, "index": 0, "decision": "confirm"})
+    assert status == 200 and data["ok"] is True
+    assert load_batch(tmp_project, result.batch_id)["items"][0]["review"] == "confirmed"
+
+
+def test_gui_confirm_matched_touches_only_pending_matched_items(gui, tmp_project, add_shot, tmp_path):
+    """A batch with a matched-and-still-pending item, a matched item that was
+    ALREADY reviewed (flagged), and an unmatched-pending item — the "全部确认
+    已匹配" convenience must touch ONLY the first."""
+    from manju.build.batches import load_batch, review_item
+
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    batch = tmp_path / "mixed_batch"
+    batch.mkdir()
+    _drop(batch, "S001.mp4", b"v1")      # index 0: matched, pending -> touched
+    _drop(batch, "S002.mp4", b"v2")      # index 1: matched, pre-flagged -> untouched
+    _drop(batch, "mystery.bin", b"v3")   # index 2: unmatched, pending -> untouched
+    plan = plan_ingest(tmp_project, [batch])
+    result = apply_ingest(tmp_project, plan, actor="tester")
+    review_item(tmp_project, result.batch_id, 1, decision="flag", note="先别动", actor="reviewer")
+
+    status, data = _post(gui, "/api/ingest/batch/confirm-matched", {"batch": result.batch_id})
+    assert status == 200 and data["ok"] is True
+    assert data["confirmed"] == 1
+    assert len(data["results"]) == 1
+    assert data["results"][0]["index"] == 0
+
+    items = load_batch(tmp_project, result.batch_id)["items"]
+    reviews = {it["index"]: it["review"] for it in items}
+    assert reviews[0] == "confirmed"
+    assert reviews[1] == "flagged"    # already reviewed -> left alone
+    assert reviews[2] == "pending"    # not matched -> left alone
+
+
+def test_gui_confirm_matched_bad_batch_id_is_400(gui):
+    status, data = _post(gui, "/api/ingest/batch/confirm-matched", {"batch": "../evil"})
+    assert status == 400
+
+
+def test_gui_confirm_matched_unknown_batch_is_404(gui):
+    status, data = _post(gui, "/api/ingest/batch/confirm-matched", {"batch": "nosuchbatch"})
+    assert status == 404
+
+
+def test_gui_apply_batch_id_then_review_detail_roundtrip(gui, tmp_project, add_shot):
+    """The apply job's result now carries ``batch_id`` (round AA) — walk the
+    FULL GUI path: upload -> plan job -> apply job -> its returned batch_id
+    -> /api/ingest/batch detail, all through the jobs runner (not
+    apply_ingest called directly, unlike the other tests in this section)."""
+    add_shot(tmp_project, "S001")
+    status, data = _raw_upload(gui, "rtbatch", "S001.mp4", b"vid-bytes",
+                               {"X-Manju-Token": gui.token})
+    assert status == 200
+
+    status, data = _post(gui, "/api/ingest/plan", {"batch": "rtbatch"})
+    assert status == 202
+    plan_job = _poll_job(gui, data["job"]["id"])
+    assert plan_job["state"] == "done"
+
+    status, applied = _post(gui, "/api/ingest/apply", {"batch": "rtbatch"})
+    assert status == 202
+    job = _poll_job(gui, applied["job"]["id"])
+    assert job["state"] == "done"
+    batch_id = job["result"]["batch_id"]
+    assert batch_id
+
+    status, detail = _req(gui, "/api/ingest/batch?id=" + batch_id)
+    assert status == 200
+    assert detail["batch"] == batch_id
+    assert detail["items"][0]["shot_id"] == "S001"
+    assert detail["items"][0]["link"] == "/lab?shot=S001"

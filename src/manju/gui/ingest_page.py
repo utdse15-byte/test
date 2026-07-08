@@ -100,8 +100,31 @@ def render(project: Any, token: str) -> str:
         "<b>普通导入</b> 未匹配到镜头/角色约定,同 `manju import` 落进 media/imports · "
         "<b>跳过(重复)</b> 内容已存在于项目里,素材只增不改(§3)"
         "</div>"
+        + _review_section_html()
     )
     return _shell("批量入库", token, body)
+
+
+def _review_section_html() -> str:
+    """批次评审 batch review (round AA6, goal item 4): ONE view over every
+    item a landed batch added — match/staged/review state, note, per-row
+    confirm/flag/discard/查看, a "全部确认已匹配" batch action — so reviewing
+    a batch never means opening every shot it touched one at a time. Own
+    section on the SAME /ingest page (not a new page framework): the batch
+    selector defaults to nothing selected until `/api/ingest/batches`
+    answers (see ingest.js's `loadBatches`), same "nothing to show before
+    the fetch" stance the plan/apply table above already takes."""
+    return (
+        '<div class="ing-review panel" id="ing-review">'
+        '<div class="ing-rv-head"><h2>批次评审 Batch review</h2>'
+        '<label class="ing-field">批次 <select id="ing-rv-batch"></select></label>'
+        '<button type="button" class="btn ghost" id="ing-rv-refresh">刷新批次列表</button>'
+        '<button type="button" class="btn" id="ing-rv-confirm-all">全部确认已匹配</button>'
+        "</div>"
+        '<div id="ing-rv-filters" class="ing-rv-filters"></div>'
+        '<div id="ing-rv-table-wrap"></div>'
+        "</div>"
+    )
 
 
 # ============================================================ assets (css/js)
@@ -141,6 +164,29 @@ _INGEST_CSS = """
 .ing-status.ing-ok { color: var(--ok); }
 .ing-status.ing-bad { color: var(--err); }
 .ing-legend { font-size: .8rem; line-height: 1.7; margin-top: 1rem; }
+
+/* 批次评审 batch review (round AA6) — .badge/.st-*/.filter-chip/.btn.mini all
+   reused as-is from /app.css + /pages.css (loaded before this sheet), never
+   redefined here; only this section's own layout is new. */
+.ing-review { margin-top: 1.2rem; display: flex; flex-direction: column; gap: .6rem; }
+.ing-rv-head { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
+.ing-rv-head h2 { margin: 0; font-size: 1rem; }
+.ing-rv-head select {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .2rem .5rem; font: inherit; font-size: .84rem; min-width: 260px;
+}
+.ing-rv-filters { display: flex; flex-direction: column; gap: .3rem; }
+.ing-rv-frow { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; font-size: .8rem; }
+.ing-rv-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.ing-rv-table th, .ing-rv-table td {
+  padding: .35rem .5rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle;
+}
+.ing-rv-thumb img {
+  width: 64px; height: 40px; object-fit: cover; border-radius: 4px; display: block; background: var(--panel2);
+}
+.ing-rv-note { max-width: 220px; word-break: break-word; }
+.ing-rv-actions { display: flex; gap: .3rem; flex-wrap: wrap; }
+#ing-view-batch-link { margin-left: .6rem; }
 """
 
 
@@ -354,8 +400,31 @@ _INGEST_JS = r"""
         } else {
           toast(job.error || "入库失败", false);
         }
+        // round AA6: apply's job result now carries batch_id — surface a
+        // direct way into the review view instead of making the reviewer
+        // hunt for the batch they just landed in the selector below.
+        if (job.state === "done" && result.batch_id) showReviewLink(result.batch_id);
       });
     });
+  }
+
+  function showReviewLink(batchIdToView) {
+    var wrap = document.getElementById("ing-table-wrap");
+    if (!wrap) return;
+    var existing = document.getElementById("ing-view-batch-link");
+    if (existing) existing.remove();
+    var a = document.createElement("a");
+    a.id = "ing-view-batch-link";
+    a.href = "#ing-review";
+    a.className = "btn ghost";
+    a.textContent = "查看本批次评审";
+    a.addEventListener("click", function (e) {
+      e.preventDefault();
+      loadBatches(batchIdToView);
+      var section = document.getElementById("ing-review");
+      if (section) section.scrollIntoView({ behavior: "smooth" });
+    });
+    wrap.appendChild(a);
   }
 
   function resetBatch() {
@@ -401,6 +470,317 @@ _INGEST_JS = r"""
     });
   }
 
+  // ======================================================================
+  // 批次评审 BATCH REVIEW (round AA6, goal item 4): ONE view over every item
+  // a landed batch added, with per-row confirm/flag/discard/查看 and a
+  // "全部确认已匹配" batch action. Lives on the same /ingest page (own
+  // section, #ing-review) — no new page framework, see ingest_page.py's
+  // _review_section_html().
+  // ======================================================================
+
+  var REVIEW_MATCH_STATES = ["matched", "pending", "unmatched", "conflict", "manual"];
+  var REVIEW_STATES = ["pending", "confirmed", "flagged", "discarded", "auto"];
+  var MATCH_BADGE = {
+    matched: "st-fresh", pending: "st-stale", conflict: "st-needs",
+    unmatched: "st-missing", manual: "st-manual"
+  };
+  var MATCH_LABEL = {
+    matched: "已匹配", pending: "待核实", conflict: "冲突", unmatched: "未匹配", manual: "人工指定"
+  };
+  var REVIEW_BADGE = {
+    pending: "st-stale", confirmed: "st-fresh", flagged: "st-needs",
+    discarded: "st-broken", auto: "st-manual"
+  };
+  var REVIEW_LABEL = {
+    pending: "待评审", confirmed: "已确认", flagged: "已标记", discarded: "已丢弃", auto: "自动(去重)"
+  };
+
+  var rvItems = [];
+  var rvMatchFilter = "all";
+  var rvReviewFilter = "all";
+
+  function rvCountsLabel(counts) {
+    counts = counts || {};
+    var parts = [];
+    REVIEW_STATES.forEach(function (s) {
+      if (counts[s]) parts.push((REVIEW_LABEL[s] || s) + " " + counts[s]);
+    });
+    return parts.length ? parts.join(" · ") : "无条目";
+  }
+
+  function loadBatches(preferId) {
+    var sel = document.getElementById("ing-rv-batch");
+    if (!sel) return Promise.resolve();
+    return fetch("/api/ingest/batches").then(function (r) { return r.json(); }).then(function (d) {
+      var batches = d.batches || [];
+      sel.innerHTML = "";
+      batches.forEach(function (b) {
+        var opt = document.createElement("option");
+        opt.value = b.batch;
+        opt.textContent = b.batch + "(" + b.items + " 项 · " + rvCountsLabel(b.counts) + ")";
+        sel.appendChild(opt);
+      });
+      var have = batches.some(function (b) { return b.batch === preferId; });
+      var want = (preferId && have) ? preferId : (batches[0] ? batches[0].batch : null);
+      if (want) {
+        sel.value = want;
+        return loadBatchDetail(want);
+      }
+      rvItems = [];
+      renderReviewFilters();
+      renderReviewTable();
+    });
+  }
+
+  function loadBatchDetail(batchIdToLoad) {
+    if (!batchIdToLoad) return Promise.resolve();
+    return fetch("/api/ingest/batch?id=" + encodeURIComponent(batchIdToLoad)).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        return { status: r.status, data: d };
+      });
+    }).then(function (res) {
+      if (res.status !== 200) {
+        toast((res.data && res.data.error) || "加载批次失败", false);
+        return;
+      }
+      rvItems = res.data.items || [];
+      renderReviewFilters();
+      renderReviewTable();
+    });
+  }
+
+  function rvFilterGroup(label, values, active, labelMap, onPick) {
+    var row = document.createElement("div");
+    row.className = "ing-rv-frow";
+    var lbl = document.createElement("span");
+    lbl.className = "muted";
+    lbl.textContent = label + ":";
+    row.appendChild(lbl);
+    var all = document.createElement("button");
+    all.type = "button";
+    all.className = "filter-chip" + (active === "all" ? " active" : "");
+    all.textContent = "全部";
+    all.addEventListener("click", function () { onPick("all"); });
+    row.appendChild(all);
+    values.forEach(function (v) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "filter-chip" + (v === active ? " active" : "");
+      btn.textContent = labelMap[v] || v;
+      btn.addEventListener("click", function () { onPick(v); });
+      row.appendChild(btn);
+    });
+    return row;
+  }
+
+  function renderReviewFilters() {
+    var wrap = document.getElementById("ing-rv-filters");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    wrap.appendChild(rvFilterGroup("匹配状态", REVIEW_MATCH_STATES, rvMatchFilter, MATCH_LABEL,
+      function (v) { rvMatchFilter = v; renderReviewFilters(); renderReviewTable(); }));
+    wrap.appendChild(rvFilterGroup("评审状态", REVIEW_STATES, rvReviewFilter, REVIEW_LABEL,
+      function (v) { rvReviewFilter = v; renderReviewFilters(); renderReviewTable(); }));
+  }
+
+  function rvActionBtn(label, act) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn mini";
+    btn.setAttribute("data-act", act);
+    btn.textContent = label;
+    return btn;
+  }
+
+  function renderReviewTable() {
+    var wrap = document.getElementById("ing-rv-table-wrap");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    var items = rvItems.filter(function (it) {
+      if (rvMatchFilter !== "all" && it.match !== rvMatchFilter) return false;
+      if (rvReviewFilter !== "all" && it.review !== rvReviewFilter) return false;
+      return true;
+    });
+    if (!items.length) {
+      var empty = document.createElement("div");
+      empty.className = "muted";
+      empty.textContent = rvItems.length ? "没有符合筛选条件的条目" : "该批次没有条目,或还没有选择批次";
+      wrap.appendChild(empty);
+      return;
+    }
+    var table = document.createElement("table");
+    table.className = "ing-rv-table";
+    var thead = document.createElement("thead");
+    var htr = document.createElement("tr");
+    ["预览", "文件", "动作", "目标", "匹配", "自动选用", "评审", "备注", "操作"].forEach(function (h) {
+      var th = document.createElement("th");
+      th.textContent = h;
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    var tbody = document.createElement("tbody");
+    items.forEach(function (it) {
+      var tr = document.createElement("tr");
+      tr.setAttribute("data-index", String(it.index));
+
+      var tdThumb = document.createElement("td");
+      tdThumb.className = "ing-rv-thumb";
+      if (it.thumb_url) {
+        var img = document.createElement("img");
+        img.src = it.thumb_url;
+        img.alt = "";
+        img.loading = "lazy";
+        tdThumb.appendChild(img);
+      }
+      tr.appendChild(tdThumb);
+
+      var tdName = document.createElement("td");
+      tdName.className = "ing-name";
+      tdName.textContent = it.name || "";
+      tr.appendChild(tdName);
+
+      var tdAction = document.createElement("td");
+      tdAction.textContent = ACTION_LABELS[it.action] || it.action || "";
+      tr.appendChild(tdAction);
+
+      var tdTarget = document.createElement("td");
+      var targetLabel = it.shot_id || it.asset_id || "—";
+      if (it.link) {
+        var a = document.createElement("a");
+        a.href = it.link;
+        a.textContent = targetLabel;
+        tdTarget.appendChild(a);
+      } else {
+        tdTarget.textContent = targetLabel;
+      }
+      tr.appendChild(tdTarget);
+
+      var tdMatch = document.createElement("td");
+      var matchBadge = document.createElement("span");
+      matchBadge.className = "badge " + (MATCH_BADGE[it.match] || "st-missing");
+      matchBadge.textContent = MATCH_LABEL[it.match] || it.match || "";
+      tdMatch.appendChild(matchBadge);
+      tr.appendChild(tdMatch);
+
+      var tdStaged = document.createElement("td");
+      if (it.staged) {
+        var stagedBadge = document.createElement("span");
+        stagedBadge.className = "badge st-manual";
+        stagedBadge.textContent = "已自动选用";
+        tdStaged.appendChild(stagedBadge);
+      }
+      tr.appendChild(tdStaged);
+
+      var tdReview = document.createElement("td");
+      tdReview.className = "ing-rv-review";
+      var reviewBadge = document.createElement("span");
+      reviewBadge.className = "badge " + (REVIEW_BADGE[it.review] || "st-missing");
+      reviewBadge.textContent = REVIEW_LABEL[it.review] || it.review || "";
+      tdReview.appendChild(reviewBadge);
+      tr.appendChild(tdReview);
+
+      var tdNote = document.createElement("td");
+      tdNote.className = "ing-rv-note muted";
+      tdNote.textContent = it.note || "";
+      tr.appendChild(tdNote);
+
+      var tdActions = document.createElement("td");
+      tdActions.className = "ing-rv-actions";
+      tdActions.appendChild(rvActionBtn("确认", "confirm"));
+      tdActions.appendChild(rvActionBtn("标记问题", "flag"));
+      tdActions.appendChild(rvActionBtn("丢弃", "discard"));
+      tdActions.appendChild(rvActionBtn("查看", "view"));
+      tr.appendChild(tdActions);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+
+  function doReview(index, decision, note) {
+    var sel = document.getElementById("ing-rv-batch");
+    var batchIdInView = sel ? sel.value : null;
+    if (!batchIdInView) return;
+    post("/api/ingest/batch/review",
+      { batch: batchIdInView, index: index, decision: decision, note: note }
+    ).then(function (res) {
+      if (res.status !== 200) {
+        toast((res.data && res.data.error) || "操作失败", false);
+        return;
+      }
+      var updated = res.data.item;
+      var i = rvItems.findIndex(function (it) { return it.index === index; });
+      if (i >= 0 && updated) {
+        // merge: keep the enriched preview_url/thumb_url/link this GET-only
+        // response never carries, only review/note (and everything else,
+        // unchanged) come from the server's fresh copy.
+        var merged = {};
+        Object.keys(rvItems[i]).forEach(function (k) { merged[k] = rvItems[i][k]; });
+        Object.keys(updated).forEach(function (k) { merged[k] = updated[k]; });
+        rvItems[i] = merged;
+      }
+      var verb = decision === "confirm" ? "已确认" : decision === "flag" ? "已标记" : "已丢弃";
+      toast(res.data.undo ? (verb + "(" + res.data.undo + ")") : verb, true);
+      renderReviewTable();
+      loadBatches(batchIdInView);  // refresh the selector's per-state counts
+    });
+  }
+
+  function onReviewTableClick(e) {
+    var btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    var tr = btn.closest("tr[data-index]");
+    if (!tr) return;
+    var index = parseInt(tr.getAttribute("data-index"), 10);
+    var item = rvItems.filter(function (it) { return it.index === index; })[0];
+    if (!item) return;
+    var act = btn.getAttribute("data-act");
+    if (act === "view") {
+      if (item.preview_url) window.open(item.preview_url, "_blank", "noopener");
+      else toast("该条目没有可预览的素材", false);
+      return;
+    }
+    if (act === "confirm") {
+      doReview(index, "confirm", "");
+      return;
+    }
+    if (act === "flag") {
+      var flagNote = window.prompt("标记问题 " + (item.name || "") + "(说明原因,可留空):", item.note || "");
+      if (flagNote === null) return;
+      doReview(index, "flag", flagNote);
+      return;
+    }
+    if (act === "discard") {
+      var msg = "确定丢弃「" + (item.name || "") + "」的评审结果?\n\n"
+        + "若该条目此前自动选用了一个 take(空镜头自动选用),只有在镜头此后没有被重新"
+        + "选择的情况下才会一并撤销该次自动选用;已落地的素材本身不会被删除(素材只增不改)。";
+      if (!window.confirm(msg)) return;
+      var discardNote = window.prompt("备注(可留空):", item.note || "");
+      if (discardNote === null) return;
+      doReview(index, "discard", discardNote);
+      return;
+    }
+  }
+
+  function doConfirmAllMatched() {
+    var sel = document.getElementById("ing-rv-batch");
+    var batchIdInView = sel ? sel.value : null;
+    if (!batchIdInView) { toast("请先选择一个批次", false); return; }
+    var btn = document.getElementById("ing-rv-confirm-all");
+    if (btn) btn.disabled = true;
+    post("/api/ingest/batch/confirm-matched", { batch: batchIdInView }).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (res.status !== 200) {
+        toast((res.data && res.data.error) || "操作失败", false);
+        return;
+      }
+      toast("已确认 " + res.data.confirmed + " 项已匹配条目", true);
+      loadBatches(batchIdInView);
+    });
+  }
+
   resetBatch();
   var fileInput = document.getElementById("ing-files");
   if (fileInput) fileInput.addEventListener("change", function () {
@@ -410,5 +790,19 @@ _INGEST_JS = r"""
   if (planBtn2) planBtn2.addEventListener("click", doPlan);
   var resetBtn = document.getElementById("ing-reset-btn");
   if (resetBtn) resetBtn.addEventListener("click", resetBatch);
+
+  var rvBatchSel = document.getElementById("ing-rv-batch");
+  if (rvBatchSel) rvBatchSel.addEventListener("change", function () {
+    loadBatchDetail(rvBatchSel.value);
+  });
+  var rvRefreshBtn = document.getElementById("ing-rv-refresh");
+  if (rvRefreshBtn) rvRefreshBtn.addEventListener("click", function () {
+    loadBatches(rvBatchSel ? rvBatchSel.value : null);
+  });
+  var rvConfirmAllBtn = document.getElementById("ing-rv-confirm-all");
+  if (rvConfirmAllBtn) rvConfirmAllBtn.addEventListener("click", doConfirmAllMatched);
+  var rvTableWrap = document.getElementById("ing-rv-table-wrap");
+  if (rvTableWrap) rvTableWrap.addEventListener("click", onReviewTableClick);
+  loadBatches(null);
 })();
 """

@@ -4937,7 +4937,75 @@ class _Handler(BaseHTTPRequestHandler):
             html_doc = ingest_page.render(self.server.project, self.server.token)
             self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
             return True
+        if path == "/api/ingest/batches":
+            self._act_ingest_batches_list()
+            return True
+        if path == "/api/ingest/batch":
+            self._act_ingest_batch_detail(url)
+            return True
         return False
+
+    def _act_ingest_batches_list(self) -> None:
+        """GET /api/ingest/batches — every persisted batch (newest first),
+        each with a per-review-state item count (round AA6, goal item 4's
+        batch selector). Same shape ``manju ingest-batches --json`` emits."""
+        from ..build.batches import list_batches
+
+        self._send_json({"batches": list_batches(self.server.project)})
+
+    @staticmethod
+    def _ingest_enrich_item(item: dict[str, Any]) -> dict[str, Any]:
+        """Add what the review-view table needs to render a row WITHOUT the
+        client re-deriving anything (round AA6): a preview/thumbnail URL for
+        whatever this row actually landed (None when its media kind has none
+        — see ``state.media_urls_for_rel``, never a new thumbnailer), and a
+        link target for its owning shot (the shot lab page's ``?shot=``
+        deep link — the same convention ``lab_page.py`` itself already uses
+        for a shot cross-link; a bible asset has no addressable page of its
+        own yet, so ``link`` stays ``None`` for a ``bible_ref`` row rather
+        than invent one)."""
+        from urllib.parse import quote
+
+        from .state import media_urls_for_rel
+
+        landed = item.get("landed") or {}
+        action = item.get("action")
+        if action in ("take", "voice"):
+            rel = landed.get("media")
+        elif action in ("shot_ref", "bible_ref"):
+            rel = landed.get("ref")
+        elif action == "import":
+            rel = landed.get("imported")
+        else:  # skip_duplicate, or a failed row that landed nothing
+            rel = None
+        preview_url, thumb_url = media_urls_for_rel(rel)
+        item["preview_url"] = preview_url
+        item["thumb_url"] = thumb_url
+        shot_id = item.get("shot_id")
+        item["link"] = f"/lab?shot={quote(str(shot_id), safe='')}" if shot_id else None
+        return item
+
+    def _act_ingest_batch_detail(self, url: Any) -> None:
+        """GET /api/ingest/batch?id=<batch_id> — one persisted batch, every
+        item enriched (see ``_ingest_enrich_item``). 400 on a structurally
+        unsafe id (never reaches ``load_batch``/the filesystem), 404 when the
+        id is well-formed but no such batch exists (or its record is
+        unreadable) — ``build.batches.BatchError`` covers both of the
+        latter, same as every other batch-id caller in this engine."""
+        from ..build.batches import BatchError, load_batch
+
+        project = self.server.project
+        batch_id = parse_qs(url.query).get("id", [""])[0]
+        if not is_safe_segment(batch_id):
+            self._send_error_json("id 不合法(仅字母数字下划线连字符)", 400)
+            return
+        try:
+            data = load_batch(project, batch_id)
+        except BatchError as exc:
+            self._send_error_json(str(exc), 404)
+            return
+        items = [self._ingest_enrich_item(dict(it or {})) for it in (data.get("items") or [])]
+        self._send_json({**data, "items": items})
 
     def _ingest_post(self, path: str, body: dict[str, Any]) -> bool:
         """POST dispatch for the 批量入库 plan/apply actions. Same token/readonly
@@ -4947,6 +5015,8 @@ class _Handler(BaseHTTPRequestHandler):
         handler = {
             "/api/ingest/plan": self._act_ingest_plan,
             "/api/ingest/apply": self._act_ingest_apply,
+            "/api/ingest/batch/review": self._act_ingest_batch_review,
+            "/api/ingest/batch/confirm-matched": self._act_ingest_confirm_matched,
         }.get(path)
         if handler is None:
             return False
@@ -5134,6 +5204,100 @@ class _Handler(BaseHTTPRequestHandler):
 
         job = self.server.runner.submit("ingest", {"batch": batch, "rows": len(plan.rows)}, fn)
         self._send_json({"job": job.to_dict()}, 202)
+
+    # -------------------------------------------- round AA6 批次评审 batch review
+
+    def _act_ingest_batch_review(self, body: dict[str, Any]) -> None:
+        """POST /api/ingest/batch/review {batch, index, decision, note} — one
+        item's confirm/flag/discard, through the exact ``build.batches.
+        review_item`` the CLI's ``ingest-confirm``/``ingest-flag``/
+        ``ingest-discard`` call. Strict validation (400) BEFORE ever touching
+        the batch record or taking a lock: an unsafe ``batch`` id, a
+        non-integer ``index``, or a ``decision`` outside
+        ``REVIEW_DECISIONS`` never gets as far as ``review_item`` (which
+        would itself raise the identical ``BatchError`` — checking the cheap
+        cases here just avoids taking the lock for an obviously bad request,
+        mirroring ``_act_ingest_plan``'s stance on its own role/shot checks).
+        Same lock discipline ``/api/ingest/apply`` uses (``_optional_build_lock``,
+        round Z) — ``review_item``'s own docstring requires every caller to
+        hold the cross-process build lock for the full call, since a discard
+        may write ``status.selected_take`` on the owning shot; ``BuildLocked``
+        maps to 409 exactly like ``/api/select`` (round Z's convention).
+        Returns the updated item AS review_item REPORTED IT — including
+        ``undo`` verbatim, so the client never has to guess/embellish whether
+        an auto-selected take's undo actually happened (round AA6 goal item
+        3: never claim an undo that did not happen)."""
+        from ..build.batches import BatchError, REVIEW_DECISIONS, review_item
+        from ..runtime.buildlock import BuildLocked
+
+        project, actor = self.server.project, self.server.actor
+        batch = str(body.get("batch") or "")
+        if not is_safe_segment(batch):
+            self._send_error_json("batch 不合法(仅字母数字下划线连字符)", 400)
+            return
+        try:
+            index = int(body.get("index"))
+        except (TypeError, ValueError):
+            self._send_error_json("index 必须是整数", 400)
+            return
+        decision = str(body.get("decision") or "")
+        if decision not in REVIEW_DECISIONS:
+            self._send_error_json(
+                f"未知 decision: {decision!r} — 只能是 {'/'.join(REVIEW_DECISIONS)}", 400)
+            return
+        note = str(body.get("note") or "")
+        with self.server.quick_mutex:
+            try:
+                with _optional_build_lock(project.root, actor):
+                    result = review_item(project, batch, index, decision=decision,
+                                         note=note, actor=actor)
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
+            except BatchError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+        self._send_json({"ok": True, **result})
+
+    def _act_ingest_confirm_matched(self, body: dict[str, Any]) -> None:
+        """POST /api/ingest/batch/confirm-matched {batch[, note]} — the "全部
+        确认已匹配" batch convenience: confirms every item that is STILL
+        ``review="pending"`` AND ``match="matched"`` — never re-touches an
+        item a reviewer already confirmed/flagged/discarded, and never
+        guesses on a ``pending``/``conflict``/``unmatched``/``manual`` row
+        (those still need a human look). One lock hold for the whole loop
+        (mirrors ``_act_sb_approve``/``_act_sb_lock_batch``'s "one hold,
+        whole batch" pattern) — the item list is read fresh INSIDE that same
+        hold so nothing landed by a concurrent writer between the read and
+        the loop is missed or double-processed."""
+        from ..build.batches import BatchError, load_batch, review_item
+        from ..runtime.buildlock import BuildLocked
+
+        project, actor = self.server.project, self.server.actor
+        batch = str(body.get("batch") or "")
+        if not is_safe_segment(batch):
+            self._send_error_json("batch 不合法(仅字母数字下划线连字符)", 400)
+            return
+        note = str(body.get("note") or "")
+        results: list[dict[str, Any]] = []
+        with self.server.quick_mutex:
+            try:
+                with _optional_build_lock(project.root, actor):  # one hold, whole batch
+                    data = load_batch(project, batch)
+                    indices = [
+                        it["index"] for it in (data.get("items") or [])
+                        if it.get("match") == "matched" and it.get("review") == "pending"
+                    ]
+                    for idx in indices:
+                        results.append(review_item(
+                            project, batch, idx, decision="confirm", note=note, actor=actor))
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
+            except BatchError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+        self._send_json({"ok": True, "batch": batch, "confirmed": len(results), "results": results})
 
     # =================================================================
     # round-X 剧集工作台 SERIES (user pain #4): the GUI half of core/series.py

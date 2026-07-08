@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from .jobs import JobRunner
 
-__all__ = ["build_state", "project_fingerprint"]
+__all__ = ["build_state", "media_urls_for_rel", "project_fingerprint"]
 
 _EVENTS_TAIL = 15
 
@@ -102,6 +102,33 @@ def playable_url(project: "Project", path: Any) -> tuple[str, str]:
     except Exception:
         pass  # preview layer is a convenience, never a requirement
     return media_url(rel), ext
+
+
+def media_urls_for_rel(rel: str | None) -> tuple[str | None, str | None]:
+    """(preview_url, thumb_url) for a project-relative media path that is
+    already known (round AA6, the ingest batch review view) — e.g. a batch
+    item's ``landed`` take/ref/import path, which is stored as a plain
+    ``project.relpath(...)`` STRING in ``reports/ingest_batches/<id>.yaml``,
+    never a live ``Path``. Same routing convention as :func:`playable_url` /
+    ``pages._take_media`` (``/preview`` transcode for a non-browser-safe
+    container, ``/thumb`` for a video/image, never invented for audio or an
+    unrecognized extension) — just working off the stored string directly
+    instead of re-deriving it from an on-disk file, since a batch item's
+    source file may not even exist as a Path handle at read time (only its
+    already-landed project-relative copy does). ``(None, None)`` when *rel*
+    itself is falsy (e.g. a skipped/failed row landed nothing) — this never
+    invents a thumbnailer for a media kind the project has no preview path
+    for; the caller renders that as no thumbnail, not an error."""
+    if not rel:
+        return None, None
+    from pathlib import Path
+
+    from ..media.webpreview import AUDIO_EXTS, MEDIA_EXTS, needs_preview
+
+    suffix = Path(rel).suffix.lower()
+    url = ("/preview/" if needs_preview(Path(rel)) else "/media/") + quote(rel, safe="/")
+    thumb = "/thumb/" + quote(rel, safe="/") if suffix in MEDIA_EXTS and suffix not in AUDIO_EXTS else None
+    return url, thumb
 
 
 def _take_card(project: "Project", shot_id: str, take: Any, selected: str | None,
