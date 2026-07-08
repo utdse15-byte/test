@@ -61,9 +61,26 @@ def build_command(template: str, prompt: str) -> list[str]:
 
 def resolve_agent(project_agent: str | None, flag: str | None) -> str:
     """Return the agent TEMPLATE per the resolution order, or raise with a
-    one-line message naming every way to configure one."""
-    for spec in (flag, os.environ.get("MANJU_AGENT"), project_agent):
+    one-line message naming every way to configure one.
+
+    Trust boundary (round W, review #83): ``--agent`` and ``MANJU_AGENT`` are
+    machine-level (the operator typed them) and accept free-form templates.
+    ``project.yaml:agent`` travels WITH the project — a downloaded project must
+    not be able to run an arbitrary local command — so the project tier only
+    accepts a KNOWN agent name; a template there is refused with the fix.
+    """
+    for source, spec in (("flag", flag),
+                         ("env", os.environ.get("MANJU_AGENT")),
+                         ("project", project_agent)):
         if spec and spec.strip():
+            spec = spec.strip()
+            if source == "project" and spec not in KNOWN_AGENTS:
+                raise AgentResolutionError(
+                    "project.yaml 里的 agent 只能是已知代理名("
+                    + "/".join(KNOWN_AGENTS)
+                    + f");收到自定义命令 {spec!r}。项目文件可能来自他人,"
+                    "自定义模板请改用 --agent 或 MANJU_AGENT 在本机传入"
+                )
             return _expand(spec)
     for name, template in KNOWN_AGENTS.items():
         if shutil.which(name):

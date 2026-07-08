@@ -73,6 +73,11 @@ def _fail(message: str, *, code: str = "error") -> None:
             depth += 1
     except Exception:
         as_json = False
+    # Round W (review #82): the frame walk is an implementation detail a
+    # refactor could break; the argv fallback keeps the JSON error contract
+    # honest even then (a command invoked with --json NEVER gets colored prose).
+    if not as_json and "--json" in sys.argv[1:]:
+        as_json = True
     if as_json:
         typer.echo(json.dumps({"error": message, "code": code}, ensure_ascii=False))
     else:

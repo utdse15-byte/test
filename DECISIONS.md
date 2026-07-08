@@ -116,3 +116,21 @@ discipline alone). Dry-run estimates are never gated, so "问前先 dry-run"
 stays frictionless. Rationale: a discipline-only gate silently degrades as
 agents and surfaces multiply; the cheapest honest place to stop money is the
 single code path every surface already funnels through.
+
+## 8. Round W (external 10-round review): meta-tier decisions
+
+- **#83 project-supplied agent commands refused**: `project.yaml:agent` now
+  accepts only KNOWN agent names (claude/codex/gemini/qwen/aider); free-form
+  command templates remain available via `--agent`/`MANJU_AGENT` (machine
+  trust). A downloaded project must not name an arbitrary local command.
+  `local_cmd` providers were already machine-level (~/.manju/providers).
+- **#84 dependency constraints**: constraints.txt pins the core runtime deps;
+  CI installs with `-c constraints.txt`. Refresh deliberately (bump + full
+  suite), not by drift.
+- **#82 `_fail` JSON detection**: the frame-walk stays (call-site-free), now
+  backed by an argv `--json` fallback so the structured-error contract cannot
+  silently regress under refactoring.
+- **#85 large-file refactor deferred**: cli.py / build/graph.py /
+  media/render.py sizes are real maintenance debt; splitting them is
+  deliberately NOT bundled into a correctness round (too much churn alongside
+  85 behavioral fixes). Recorded here as standing debt for a dedicated round.

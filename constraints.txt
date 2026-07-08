@@ -1,0 +1,16 @@
+# Round W (review #84): dependency constraints for reproducible dev/CI installs.
+# These pin the core runtime deps to the versions the suite is verified
+# against; refresh DELIBERATELY (bump + full suite green) rather than by
+# drift. CI installs with `pip install -c constraints.txt`.
+pydantic==2.13.4
+pydantic_core==2.46.4
+typer==0.26.8
+click==8.4.2
+PyYAML==6.0.1
+rich==15.0.0
+shellingham==1.5.4
+typing_extensions==4.16.0
+annotated-types==0.7.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+Pygments==2.20.0
