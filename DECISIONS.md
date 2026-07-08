@@ -177,15 +177,48 @@ of reconciling coverage against the source list back-to-front. Fixed in round Y:
   16 individually; board rollback/qc/package/export and MCP update_shot/export
   had zero coverage before). Lock order: in-process mutex outer → build_lock
   inner, everywhere. BuildLocked surfaces as the same 409 busy shape on all
-  three servers. TWO honestly-flagged residuals remain OPEN (engine-level, not
-  handler wraps): `series sync-bible/new-episode` write bible files across
-  MULTIPLE episode projects (needs per-episode locking inside core/series.py),
-  and `director execute` dispatches a mix of already-locked and unlocked action
-  types (needs a per-action-type fix inside build/director.py — a blanket wrap
-  would self-deadlock the locked ones).
+  three servers. The two engine-level residuals flagged here were CLOSED in
+  round AA (item 5): `sync_bible(apply=True)` now wraps each episode's whole
+  write section in THAT episode's own build_lock (a busy episode stops the run
+  fail-fast, earlier episodes stay synced, `stopped_at` names it) and
+  `new_episode` locks only the series.yaml register step; `director execute`
+  now carries an explicit per-action-type table at the dispatch — build/redo/
+  voice/mixer lock internally (skipped, would self-deadlock), repair/captions/
+  packaging/snapshot/rollback are wrapped individually at the dispatch site.
 - **#6 rate_limit_per_min** — best-effort interval throttle in generic_cloud,
   NOT a precise cross-process token bucket. `max_concurrent` IS hard-enforced.
 - **#7 budget is a soft limit** — accepted design; the trip message is honest
   ("不再提交新任务;进行中的 N 个镜头仍会完成并计费"). Not advertised as a hard cap.
 - **#8 large-file refactor** (cli.py / build/graph.py / media/render.py) —
   maintenance debt for a dedicated refactor round, not a correctness bug.
+
+## 10. Round AA — review states are stored, ownership is derived (2026-07-08)
+
+Two data-model calls that shaped the whole round:
+
+- **Ingest batch records** live in `reports/ingest_batches/<batch_id>.yaml`
+  (the `reports/qc_agent.jsonl` precedent: human review decisions are project
+  truth, git-tracked, human-readable). Only the REVIEW DECISIONS
+  (confirm/flag/discard + notes) are stored state — everything else on a batch
+  item (what landed where, match confidence, candidates) is written once at
+  apply time from facts the engine derived. `discard` undoes an auto-staged
+  selection ONLY if it is still the staged take; it never deletes media
+  (append-only, §3).
+- **Reference ownership is DERIVED, never registered.** `core/refs.py` computes
+  the refs report from existing truth (the `{id}_ref` naming convention, bible
+  ref fields, shot YAML ref params) on every call; `refs assign` makes a
+  relationship real by RENAMING the file / setting the bible field — there is
+  deliberately no refs.yaml index that could drift from the files.
+
+Consistency/honesty calls: CAS (`expected_text_hash` on `checked_shot_write`)
+is opt-in and applied ONLY where a client demonstrably holds stale rendered
+state (GUI shot editor / storyboard cell / take note; MCP update_shot via
+`expected_rev`) — fire-and-forget single-field actions and the single-process
+CLI were deliberately skipped (spurious 409s, no staleness window). Interrupted
+GUI jobs (found in `.manju/jobs.jsonl` on restart) are surfaced but NOT
+retryable — `params_summary` is lossy by design, so a faithful resubmit is
+impossible; the UI says so instead of pretending. Cross-process job control
+(GUI seeing/canceling CLI/MCP runs) is documented out of scope in
+`gui/jobs.py`. `manju evaluate` reports usage/rework/QC correlations ONLY and
+renders its honesty section (what the data cannot claim) as part of the
+output, not as fine print.

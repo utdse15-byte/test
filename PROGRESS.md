@@ -1249,3 +1249,53 @@ All eight user pains addressed:
 
 **Verified:** 1931 tests green consolidated (was 1716; +215); CI green at
 every integration push.
+
+## 2026-07-08 — Round AA: confirmation flows, traceability, consistency, honesty (8-item goal)
+
+Two waves (5 engine + 3 GUI Sonnet agents, worktree isolation, hand-resolved
+integration), all eight items landed:
+
+- **确认导入 (items 1+2):** every IngestRow carries a match state
+  (matched/pending/unmatched/conflict/manual) + candidates; >1 plausible owner
+  NEVER lands on a guess (downgrades to plain import naming every candidate);
+  every apply persists reports/ingest_batches/<batch_id>.yaml; a take landing
+  on an EMPTY shot is auto-selected via the checked write path (via="ingest",
+  never past a lock, never over an existing pick) and the batch review's
+  discard undoes exactly that — only if still selected.
+- **批次评审 (item 4):** /ingest review panel — batch selector with per-state
+  counts, match/review filter chips, thumb/preview/target-link table,
+  确认/标记/丢弃(真实 undo 反馈)/查看 per row, 全部确认已匹配 under one lock
+  hold; CLI ingest-batches/-review/-confirm/-flag/-discard.
+- **引用关系 (item 3):** core/refs.py DERIVES ownership (naming convention +
+  bible pins + shot ref params — no second registry to drift); manju refs
+  (+--orphans/--json), refs assign renames/pins under build_lock; check warns
+  on orphans + dangling bible pointers; /library 参考素材归属 section with
+  assign picker; 参考 vs 成品 labeled.
+- **写入一致性 (item 5):** CAS — checked_shot_write(expected_text_hash) +
+  shot_text_hash; GUI shot editor/storyboard cell/take-note send their loaded
+  rev, stale → 409 (中文); MCP get_shot returns rev, update_shot takes
+  expected_rev; round-Z residuals CLOSED: sync_bible wraps each episode's
+  writes in that episode's own build_lock (busy episode stops the run honestly,
+  stopped_at names it), director execute carries an explicit per-action-type
+  lock table (repair/captions/packaging/snapshot/rollback wrapped; build/redo/
+  voice/mixer lock internally).
+- **任务诚实 (item 6):** .manju/jobs.jsonl lifecycle records (capped 500);
+  jobs interrupted by a GUI restart surface as 已中断 (retryable=false + 中文
+  note — params_summary is lossy, no fake resubmit; retry POST → clean 409);
+  series new-episode/sync-bible-apply/ingest-plan routed through the runner;
+  cancel checkpoints added to redo_batch/voice_batch/ingest apply+plan/
+  sync_bible/edit_preview_batch — partial progress always reported truthfully.
+- **剧集连续性 (item 7):** series_continuity() — per-episode verdicts
+  (有问题>缺素材>待同步>完整, documented precedence), characters+scenes+props
+  continuity matrices (generalized from series_characters), voice-field
+  divergences, packaging mode-vs-outlier 参考性提示; manju series continuity
+  + /api/series/continuity + series-page matrix with sync links.
+- **技能评估 (item 8):** skill_used/funnel events at real call sites; core/
+  evaluate.py + manju evaluate + cockpit 评估 block — usage counts, never-used
+  skills, redo/repair hotspots, QC tallies, funnel completion — with a
+  REQUIRED honesty section (correlation only, no fabricated productivity
+  claims) rendered as part of the output; REPORTS/ROUND-AA-EVALUATION.md maps
+  each metric to the real-world practice it mirrors + a falsifiable cut list.
+
+**Verified:** 2090 tests green consolidated (was 1931; +159); wave-1 CI green
+at 66cf442; every mutation path stayed on the checked-write/lock conventions.
