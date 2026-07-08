@@ -43,6 +43,7 @@ __all__ = [
     "render_pages_js",
     "nav_html",
     "chrome",
+    "series_banner_html",
     "body_class",
     "PRO_ONLY_PAGES",
     "GLOSSARY_HEAD",
@@ -107,16 +108,48 @@ def body_class(mode: str, show_terms: bool) -> str:
     return " ".join(parts)
 
 
-def chrome(active: str) -> tuple[str, str]:
+def series_banner_html(project: Any) -> str:
+    """Round X (agent XD, user pain #4): the 剧集 membership banner — rendered
+    into the chrome when the GUI's bound project is an EPISODE of a series
+    (``Series.find`` walks up past the episode's ``project.yaml`` to the
+    umbrella's ``series.yaml`` — see core/series.py). Absent for a plain
+    project (no series.yaml anywhere above it) or when the series.yaml can't
+    be read — a broken umbrella must never break the episode's own chrome."""
+    try:
+        from ..core.series import Series
+
+        series = Series.find_or_none(project.root)
+    except Exception:
+        series = None
+    if series is None:
+        return ""
+    try:
+        name = series.load_config().name
+    except Exception:
+        name = series.root.name
+    return (
+        '<div class="mj-series-banner">本片属于剧集《' + _e(name) + "》"
+        '<a href="/series">→ 剧集工作台</a></div>'
+    )
+
+
+def chrome(active: str, project: Any = None) -> tuple[str, str]:
     """Resolve the per-user view mode + glossary toggle (server-side) and return
     ``(nav_html, body_class)`` for a page shell. Central so the SPA and every
-    server-rendered page share one mode-aware nav and one body class."""
+    server-rendered page share one mode-aware nav and one body class.
+
+    ``project`` is optional (default ``None`` — unchanged nav, no banner) so
+    every existing call site stays byte-identical; pass the bound project to
+    also render the 剧集 membership banner (:func:`series_banner_html`) right
+    after the nav."""
     from .userstate import is_mode_hint_dismissed, is_show_pro_terms, resolve_mode
 
     mode = resolve_mode()
     show = is_show_pro_terms()
     nav = nav_html(active, mode=mode, show_terms=show,
                    hint_dismissed=is_mode_hint_dismissed())
+    if project is not None:
+        nav += series_banner_html(project)
     return nav, body_class(mode, show)
 
 
@@ -175,8 +208,8 @@ def nav_html(active: str, mode: str = "pro", show_terms: bool = False,
     return "".join(out)
 
 
-def _shell(title: str, token: str, active: str, body: str) -> str:
-    nav, bcls = chrome(active)
+def _shell(title: str, token: str, active: str, body: str, project: Any = None) -> str:
+    nav, bcls = chrome(active, project)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -415,7 +448,7 @@ def render_review(project: Any, token: str) -> str:
         + cards_html
         + _consistency_section(project)
     )
-    return _shell("审片", token, "/review", body)
+    return _shell("审片", token, "/review", body, project)
 
 
 # --------------------------------------------- 跨镜一致性 consistency (round X)
@@ -575,7 +608,7 @@ def render_compare(project: Any, token: str, a: str | None, b: str | None) -> st
             + _e(", ".join(versions) or "无")
             + "</p>"
         )
-        return _shell("对比", token, "/compare", body)
+        return _shell("对比", token, "/compare", body, project)
 
     # dropdowns default to the latest two
     da, db = versions[-2], versions[-1]
@@ -600,7 +633,7 @@ def render_compare(project: Any, token: str, a: str | None, b: str | None) -> st
         diff = compare_finals(project, sel_a, sel_b)
     except CompareError as exc:
         body = head + picker + f'<p class="err panel">{_e(exc)}</p>'
-        return _shell("对比", token, "/compare", body)
+        return _shell("对比", token, "/compare", body, project)
 
     # side-by-side players
     players = (
@@ -636,7 +669,7 @@ def render_compare(project: Any, token: str, a: str | None, b: str | None) -> st
             + "</div>"
         )
         body = head + picker + note + summary + players
-        return _shell("对比", token, "/compare", body)
+        return _shell("对比", token, "/compare", body, project)
 
     # per-shot change strip (Frame.io / PR-files: unchanged dimmed)
     rows = []
@@ -694,7 +727,7 @@ def render_compare(project: Any, token: str, a: str | None, b: str | None) -> st
 
     body = (head + picker + summary + strip + caps_html + audio_html + pkg_html
             + players)
-    return _shell("对比", token, "/compare", body)
+    return _shell("对比", token, "/compare", body, project)
 
 
 def _delta_chip(label: str, value: str, *, bad: bool = False) -> str:
@@ -750,7 +783,7 @@ def render_library(project: Any, token: str, tag: str | None, kind: str | None) 
         all_assets = lib.assets()
     except LibraryError as exc:
         return _shell("素材库", token, "/library",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+                      head + f'<p class="err panel">{_e(exc)}</p>', project)
 
     # filter chips (built from ALL assets, not the filtered view)
     all_tags = sorted({t for a in all_assets for t in (a.get("tags") or [])})
@@ -819,7 +852,7 @@ def render_library(project: Any, token: str, tag: str | None, kind: str | None) 
         grid = '<div class="lib-grid">' + "".join(cards) + "</div>"
 
     body = head + f'<p class="muted">{_e(str(lib.root))}</p>' + filters + upload + grid
-    return _shell("素材库", token, "/library", body)
+    return _shell("素材库", token, "/library", body, project)
 
 
 # ============================================================ 服务商 providers
@@ -866,7 +899,7 @@ def render_providers(project: Any, token: str) -> str:
         rows, load_errors = _provider_rows()
     except Exception as exc:  # never break the page on a probe error
         return _shell("服务商", token, "/providers",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+                      head + f'<p class="err panel">{_e(exc)}</p>', project)
 
     cards = []
     for r in rows:
@@ -922,7 +955,7 @@ def render_providers(project: Any, token: str) -> str:
     )
 
     body = head + err_html + "".join(cards) + add_panel
-    return _shell("服务商", token, "/providers", body)
+    return _shell("服务商", token, "/providers", body, project)
 
 
 # ============================================================ 路由 routing
@@ -939,7 +972,7 @@ def render_routing(project: Any, token: str) -> str:
         info = list_strategies(project)
     except RoutingError as exc:
         return _shell("路由", token, "/routing",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+                      head + f'<p class="err panel">{_e(exc)}</p>', project)
 
     active = info["active"]
     sources = info.get("sources") or []
@@ -986,7 +1019,7 @@ def render_routing(project: Any, token: str) -> str:
 
     body = (head + f'<p class="muted">{src_line}</p>' + picker + explain_panel
             + '<div class="rt-cards">' + "".join(cards) + "</div>")
-    return _shell("路由", token, "/routing", body)
+    return _shell("路由", token, "/routing", body, project)
 
 
 # ============================================================ 体检 doctor
@@ -1001,7 +1034,7 @@ def render_doctor(project: Any, token: str) -> str:
         report = run_doctor(project)
     except Exception as exc:
         return _shell("体检", token, "/doctor",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+                      head + f'<p class="err panel">{_e(exc)}</p>', project)
 
     overall = ('<span class="badge st-fresh">全部通过</span>' if report.get("ok")
                else '<span class="badge st-needs">有问题</span>')
@@ -1019,7 +1052,7 @@ def render_doctor(project: Any, token: str) -> str:
         )
     body = (head + f'<div class="dr-overall panel">{overall}</div>'
             + '<div class="dr-list panel">' + "".join(rows) + "</div>")
-    return _shell("体检", token, "/doctor", body)
+    return _shell("体检", token, "/doctor", body, project)
 
 
 # ============================================================ text helpers
@@ -1085,6 +1118,18 @@ _PAGES_CSS = """
 }
 .pnav a.active { background: var(--accent); color: #0b1220; font-weight: 700; border-color: var(--accent); }
 .pnav a:hover { filter: brightness(1.15); }
+
+/* round X (agent XD): 剧集 series-membership banner, injected by chrome()
+   right after the nav on every page that passes it a project. */
+.mj-series-banner {
+  display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  padding: .4rem 1.2rem; background: var(--panel2); border-bottom: 1px solid var(--line);
+  font-size: .84rem; color: var(--fg);
+}
+.mj-series-banner a {
+  color: var(--accent); text-decoration: none; font-weight: 600;
+}
+.mj-series-banner a:hover { text-decoration: underline; }
 
 .page-h { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin: 1.1rem 0 .5rem; }
 .page-h h1 { font-size: 1.25rem; }

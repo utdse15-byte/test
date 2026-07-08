@@ -492,6 +492,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-V 创作 creation funnel workspace — see _create_get
             elif self._ingest_get(path, url):
                 pass  # round-X 批量入库 batch ingest — see _ingest_get
+            elif self._series_get(path, url):
+                pass  # round-X 剧集工作台 series workbench — see _series_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -576,6 +578,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._create_post(path, body):  # round-V 创作 funnel actions
                     return
                 if self._ingest_post(path, body):  # round-X 批量入库 batch ingest actions
+                    return
+                if self._series_post(path, body):  # round-X 剧集工作台 series actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -4490,3 +4494,98 @@ class _Handler(BaseHTTPRequestHandler):
 
         job = self.server.runner.submit("ingest", {"batch": batch, "rows": len(plan.rows)}, fn)
         self._send_json({"job": job.to_dict()}, 202)
+
+    # =================================================================
+    # round-X 剧集工作台 SERIES (user pain #4): the GUI half of core/series.py
+    # (CLI-first — Series.find/series_status/new_episode/sync_bible/
+    # series_characters/split_script). Own dispatch region, same token/
+    # readonly/host gates as every other surface (checked in do_GET/do_POST
+    # before us). The GUI server is bound to exactly ONE project; this page
+    # never hot-swaps it to "open" a sibling episode (see gui/series_page.py's
+    # module docstring) and the ONE mutating action beyond 新建集 is the
+    # sync-bible SAFE-subset apply (missing-adds only, no --force) — a
+    # diverged bible entry is never writable from here, mirroring the
+    # workbench's unlock/gc --hard containment stance.
+    # =================================================================
+
+    def _series_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for /series + its static assets. Returns True when
+        handled (response already sent), False so do_GET falls through to 404."""
+        from . import series_page
+
+        if path == "/series.css":
+            self._send_text(series_page.render_series_css(),
+                            "text/css; charset=utf-8")
+            return True
+        if path == "/series.js":
+            self._send_text(series_page.render_series_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path in series_page.PAGE_PATHS_SERIES:
+            html_doc = series_page.render(self.server.project, self.server.token)
+            self._send_text(html_doc, "text/html; charset=utf-8",
+                            extra=self._PAGES_CSP)
+            return True
+        return False
+
+    def _series_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 剧集工作台 actions. Same token/readonly gates
+        as every other mutating POST (checked in do_POST before us)."""
+        handler = {
+            "/api/series/new-episode": self._act_series_new_episode,
+            "/api/series/sync-bible/apply": self._act_series_sync_apply,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_series_new_episode(self, body: dict[str, Any]) -> None:
+        """Scaffold episode ``eid`` — the SAME :func:`core.series.new_episode`
+        the CLI ``manju series new-episode`` calls (delegates to
+        ``Project.create``, seeds the episode bible from the series bible,
+        registers it in series.yaml and lands a ``series_new_episode`` event —
+        all inside ``new_episode`` itself, nothing duplicated here)."""
+        from ..core.series import Series, SeriesError, new_episode
+
+        project = self.server.project
+        series = Series.find_or_none(project.root)
+        if series is None:
+            self._send_error_json("当前项目不属于任何剧集 (not part of a series)", 400)
+            return
+        eid = str(body.get("eid") or "").strip()
+        if not eid:
+            self._send_error_json("eid is required", 400)
+            return
+        title = str(body.get("title") or "").strip()
+        with self.server.quick_mutex:
+            try:
+                new_project = new_episode(series, eid, title=title,
+                                          actor=self.server.actor)
+            except SeriesError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+                return
+        self._send_json({"ok": True, "eid": eid, "title": title,
+                         "dir": series.relpath(new_project.root)})
+
+    def _act_series_sync_apply(self, body: dict[str, Any]) -> None:
+        """The SAFE subset of ``sync_bible``: ``apply=True`` with NO ``force``
+        — missing entries get added, a diverged entry is reported but never
+        touched (core/series.py's own guarantee, not re-implemented here).
+        The GUI intentionally never accepts a ``force`` field from the
+        request body — overwriting a divergence stays a command-line act,
+        exactly like ``unlock``/``gc --hard`` are absent from this surface."""
+        from ..core.series import Series, SeriesError, sync_bible
+
+        project = self.server.project
+        series = Series.find_or_none(project.root)
+        if series is None:
+            self._send_error_json("当前项目不属于任何剧集 (not part of a series)", 400)
+            return
+        with self.server.quick_mutex:
+            try:
+                report = sync_bible(series, apply=True, actor=self.server.actor)
+            except SeriesError as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+                return
+        self._send_json({"ok": True, **report})
