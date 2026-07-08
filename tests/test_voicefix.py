@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from manju.core.models import VoiceTakeSidecar
-from manju.core.spec import compute_spec_hash, compute_voice_hash
+from manju.core.spec import VOICE_VERSION, compute_spec_hash, compute_voice_hash
 from manju.core.yamlio import write_yaml
 from manju.providers.generic_cloud import HttpResponse
 
@@ -182,7 +182,17 @@ def test_full_loop_regenerates_realigns_and_marks(
     assert new_sidecar is not None
     assert new_sidecar.repaired_from == "voice_take_01"
     assert new_sidecar.audio_repaired is True  # the MARK
-    assert new_sidecar.voice_hash == compute_voice_hash(shot, tmp_project.load_bible())
+    # round W (review #60): the repaired take was RE-synthesized (not copied),
+    # so it goes through the same VOICE_VERSION + provider-descriptor hashing
+    # as any fresh synthesis — mirrors test_voice.py's assertion.
+    import manju.providers.tts as tts_mod
+    from manju.providers.tts import voice_provider_descriptor
+
+    assert new_sidecar.voice_hash_version == VOICE_VERSION
+    assert new_sidecar.voice_hash == compute_voice_hash(
+        shot, tmp_project.load_bible(), version=VOICE_VERSION,
+        provider=voice_provider_descriptor(tts_mod.get_tts_provider("tts_x")),
+    )
 
     # (3) captions realigned PROPORTIONALLY: span 2000→3000 about cap_start=200
     assert len(result.realigned) == 1 and not result.locked_cues

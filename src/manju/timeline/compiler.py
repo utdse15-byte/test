@@ -640,9 +640,17 @@ def _load_voice_timing(voice: Path) -> list[dict] | None:
         return None
 
 
-def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
+def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
+                          include_unindexed: bool = False) -> CompileInput:
     """Assemble the compiler's input from the project. Raises CompileError
-    listing every shot that cannot go on the timeline (missing/unselected)."""
+    listing every shot that cannot go on the timeline (missing/unselected).
+
+    ``include_unindexed=False`` (default, round W review #5): only shots in
+    ``shots/index.yaml`` order can reach the timeline — index order is the
+    order authority, so a draft shot that exists on disk but was never added
+    to the index can never silently affect the compiled film. Pass
+    ``include_unindexed=True`` (``manju build --include-unindexed``) to opt
+    back into the old behaviour for one call."""
     from ..build.stale import evaluate_all  # local import: build depends on timeline too
 
     config = project.load_config()
@@ -650,7 +658,7 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
     shots: list[ShotInput] = []
     problems: list[str] = []
 
-    for status in evaluate_all(project):
+    for status in evaluate_all(project, indexed_only=not include_unindexed):
         if not status.usable:
             problems.append(f"{status.shot_id}: {status.state.value}"
                             + (f" ({status.note})" if status.note else ""))
@@ -698,13 +706,14 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn) -> CompileInput:
     )
 
 
-def build_timeline(project: Project, probe_fn: ProbeFn) -> tuple[Timeline, Path, bool]:
+def build_timeline(project: Project, probe_fn: ProbeFn, *,
+                    include_unindexed: bool = False) -> tuple[Timeline, Path, bool]:
     """Compile and write. Returns (timeline, written_path, overwrote_truth).
 
     mode=manual makes timeline.json human truth: we only ever write
     timeline.generated.json next to it (§6).
     """
-    inp = gather_compile_input(project, probe_fn)
+    inp = gather_compile_input(project, probe_fn, include_unindexed=include_unindexed)
     timeline = compile_timeline(inp)
     manual = project.load_rules().mode == "manual"
     path = project.save_timeline(timeline, generated_only=manual)

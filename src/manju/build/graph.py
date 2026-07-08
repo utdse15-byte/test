@@ -296,6 +296,7 @@ def run_build(
     assume_yes: bool = False,  # explicit approval for ask_before-gated spend (§8.3)
     mode: str | None = None,  # goal 14: quality|balanced|speed (flag) — None = default
     on_phase=None,  # Callable[[str], None] — coarse progress ("check"/"render"…)
+    include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
     *content*; this process lock guards the dual-actor scenario — a human
@@ -305,7 +306,12 @@ def run_build(
     one-line, ``ok=False`` result (BuildLocked → errors), never a traceback.
 
     Dry-run is READ-ONLY and deliberately runs WITHOUT the lock, so a cost
-    estimate stays available even while another actor is mid-build."""
+    estimate stays available even while another actor is mid-build.
+
+    ``include_unindexed`` (review #5, default False): a shot that exists on
+    disk but is not in ``shots/index.yaml`` order is excluded from the plan
+    AND the compiled timeline — index order is the order authority. Pass
+    True (``manju build --include-unindexed``) to include it anyway."""
     from datetime import datetime, timezone
 
     from ..runtime.buildlock import BuildLocked, build_lock
@@ -322,6 +328,7 @@ def run_build(
             project, target=target, gen=gen, regen_stale=regen_stale,
             dry_run=True, force=force, actor=actor,
             assume_yes=assume_yes, mode=mode, on_phase=on_phase,
+            include_unindexed=include_unindexed,
         )
     try:
         with build_lock(project.root, actor=actor):
@@ -329,6 +336,7 @@ def run_build(
                 project, target=target, gen=gen, regen_stale=regen_stale,
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, mode=mode, on_phase=on_phase,
+                include_unindexed=include_unindexed,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -374,6 +382,7 @@ def _run_build_phases(
     assume_yes: bool = False,  # §8.3 ask_before gate (spend cluster)
     mode: str | None = None,  # goal 14: build mode name/flag (None = engine default)
     on_phase=None,  # advisory coarse-progress callback (spend cluster)
+    include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
 ) -> BuildResult:
     result = BuildResult()
 
@@ -399,7 +408,10 @@ def _run_build_phases(
         return result
     result.warnings.extend(report.warnings)
 
-    statuses = evaluate_all(project)
+    # review #5: index order is the order authority — a shot on disk but not
+    # in shots/index.yaml never enters the plan or the compiled timeline
+    # unless include_unindexed opts back in (check still WARNS about it).
+    statuses = evaluate_all(project, indexed_only=not include_unindexed)
     result.stale = [s.shot_id for s in statuses if s.state == ShotState.STALE]
     if not statuses:
         result.ok = False
@@ -671,7 +683,7 @@ def _run_build_phases(
 
     # ---- 2b. auto-select where no human decision exists yet (filling a gap
     # is allowed; overturning a selection never is)
-    for st in evaluate_all(project):
+    for st in evaluate_all(project, indexed_only=not include_unindexed):
         if st.state == ShotState.NEEDS_SELECTION:
             takes = project.takes(st.shot_id)
             usable = [t for t in takes if t.media_path is not None]
@@ -713,7 +725,9 @@ def _run_build_phases(
     from ..media.probe import probe_duration_ms
 
     try:
-        timeline, tl_path, overwrote = build_timeline(project, probe_duration_ms)
+        timeline, tl_path, overwrote = build_timeline(
+            project, probe_duration_ms, include_unindexed=include_unindexed
+        )
     except CompileError as exc:
         result.ok = False
         result.errors.append(str(exc))
@@ -935,7 +949,7 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
     """Generate a redo from a priced plan — no lock, no spend gate (the caller
     owns both). Append-only: mints fresh takes and only fills an *empty*
     selection, never overturning an existing one (§4.3)."""
-    from ..core.spec import compute_spec_hash
+    from ..core.spec import SPEC_VERSION, compute_spec_hash
     from ..providers.base import GenerationRequest
     from ..providers.refs import resolve_refs
     from ..providers.registry import fallback_chain, generate_with_fallback
@@ -945,7 +959,12 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
         project=project,
         shot=shot,
         bible=bible,
-        spec_hash=compute_spec_hash(shot, bible),
+        # round W: every FRESHLY generated take is hashed/snapshotted at the
+        # current SPEC_VERSION (Provider._register stamps spec_version to
+        # match) — a redo must agree with the normal build path, or the
+        # sidecar's spec_hash and spec_version would describe two different
+        # payload shapes.
+        spec_hash=compute_spec_hash(shot, bible, version=SPEC_VERSION, project_root=project.root),
         duration_ms=_target_duration_ms(project, shot, rules),
         candidates=plan.candidates or shot.generation.candidates,
         params=plan.params,

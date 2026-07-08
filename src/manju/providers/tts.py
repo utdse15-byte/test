@@ -30,11 +30,12 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from ..core.container import Project
+from ..core.hashing import hash_value
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
-from ..core.spec import compute_voice_hash, voice_payload
+from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
 from .base import FailureKind, ProviderFailure
 from .jsonpath import JsonPathError, extract
 from .manifest import GENERIC_TTS_ADAPTER, ProviderManifest, load_manifests
@@ -42,6 +43,37 @@ from .manifest import GENERIC_TTS_ADAPTER, ProviderManifest, load_manifests
 
 class TtsUnavailable(RuntimeError):
     pass
+
+
+def manifest_fingerprint(manifest: ProviderManifest | None) -> str | None:
+    """A stable fingerprint of WHAT the manifest would ask the provider to do
+    (round W, review #60): the submit endpoint + body template — the two
+    things that, if edited, change the real request even when the manifest id
+    stays the same (e.g. someone swaps the underlying model inside the same
+    ``tts_x`` manifest). ``None`` manifest (no submit section, e.g. the Edge
+    TTS module:Class adapter) still yields a stable constant fingerprint."""
+    submit = getattr(manifest, "submit", None) if manifest is not None else None
+    return hash_value({
+        "url": getattr(submit, "url", None),
+        "body_template": getattr(submit, "body_template", None),
+    })
+
+
+def voice_provider_descriptor(provider: Any) -> dict[str, Any]:
+    """``{id, fingerprint, language, format}`` for VOICE_VERSION=2 hashing — the
+    resolved provider's identity + manifest shape + language/format, so a
+    provider/model/language/format swap is visible to voice staleness
+    (review #60). Works uniformly for :class:`GenericTtsProvider` and
+    :class:`~manju.providers.edge_tts.EdgeTtsProvider` — both expose
+    ``.id``/``.manifest``."""
+    manifest = getattr(provider, "manifest", None)
+    tts_cfg = getattr(manifest, "tts", None) if manifest is not None else None
+    return {
+        "id": getattr(provider, "id", None),
+        "fingerprint": manifest_fingerprint(manifest),
+        "language": getattr(tts_cfg, "language", None),
+        "format": getattr(tts_cfg, "audio_format", None),
+    }
 
 
 class GenericTtsProvider:
@@ -144,7 +176,11 @@ class GenericTtsProvider:
             audio = self._audio_from(data, dest_dir=Path(tmp))
             sidecar = VoiceTakeSidecar(
                 provider=self.id,
-                voice_hash=compute_voice_hash(shot, bible),
+                voice_hash=compute_voice_hash(
+                    shot, bible, version=VOICE_VERSION,
+                    provider=voice_provider_descriptor(self),
+                ),
+                voice_hash_version=VOICE_VERSION,
                 params={"text": shot.dialogue.text, "speaker": shot.dialogue.speaker},
                 remote=RemoteJobInfo(
                     job_id=job_id,

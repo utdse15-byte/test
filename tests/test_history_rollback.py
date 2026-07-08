@@ -119,6 +119,23 @@ def test_rollback_file_refuses_media_and_escapes(tmp_path):
         rollback_file(project, "notes.txt")
 
 
+@needs_git
+def test_rollback_file_refuses_compiled_timeline_artifacts(tmp_path):
+    """review #74: timeline/timeline.json and timeline/timeline.generated.json
+    are COMPILED ARTIFACTS (the build's output), not truth text — even though
+    they sit under timeline/ and end in .json (which the generic
+    prefix/suffix rule would otherwise allow). rollback must refuse both and
+    point at rebuilding instead of git-checkout-restoring a stale artifact."""
+    project = Project.create(tmp_path / "产物测试", git_init=True)
+    snapshot(project, "基线")
+    for rel in ("timeline/timeline.json", "timeline/timeline.generated.json"):
+        with pytest.raises(HistoryError, match="编译产物|manju build"):
+            rollback_file(project, rel)
+    # the actual truth file living in the SAME directory is still restorable
+    result = rollback_file(project, "timeline/rules.yaml")
+    assert result["path"] == "timeline/rules.yaml"
+
+
 def test_rollback_file_requires_git(tmp_project):
     with pytest.raises(HistoryError, match="patch engine"):
         rollback_file(tmp_project, "timeline/rules.yaml")

@@ -109,8 +109,12 @@ def _register_repaired(
         provider="repair",
         # inherit the source's spec_hash so a repaired clip of an up-to-date take
         # is still 'fresh' w.r.t. the shot spec (§4.3); the repair did not change
-        # the generative intent, only the media.
+        # the generative intent, only the media. spec_version travels WITH it
+        # (round W) — a v2 source stays judged at v2, a pre-round-W source (None)
+        # stays judged at v1; mismatching the two would compare hashes computed
+        # under different payload shapes.
         spec_hash=src.sidecar.spec_hash,
+        spec_version=src.sidecar.spec_version,
         params={"op": op, "source_take": src.name, **params},
         probe=out_probe,
     )
@@ -353,7 +357,9 @@ def _set_inout_virtual(project: Project, shot: str, src: TakeInfo, info: ProbeIn
             # inherit the source's spec_hash: a virtual trim changes the media
             # window, never the generative PICTURE intent, so the shot stays
             # FRESH with the new take exactly like a re-encode trim (§4.3).
+            # spec_version travels with it (round W) — see _register_repaired.
             spec_hash=src.sidecar.spec_hash,
+            spec_version=src.sidecar.spec_version,
             params={"op": "set_inout", "mode": "virtual", "source_take": src.name,
                     "in_ms": in_ms, "out_ms": out_ms, "target_ms": target_ms},
             probe=probe,

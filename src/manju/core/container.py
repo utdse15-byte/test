@@ -268,9 +268,18 @@ class Project:
     def save_index(self, index: ShotIndex) -> None:
         write_yaml(self.shots_dir / "index.yaml", index.model_dump())
 
-    def shot_ids(self) -> list[str]:
-        """Order from index.yaml, then any shot files not yet in the index."""
+    def shot_ids(self, *, indexed_only: bool = False) -> list[str]:
+        """Order from index.yaml, then any shot files not yet in the index.
+
+        ``indexed_only=True`` (round W, review #5) returns ONLY
+        ``shots/index.yaml`` order — a shot that exists on disk but was never
+        added to the index is excluded entirely. ``index.yaml`` is the order
+        authority; ``manju check`` still WARNS about an unindexed shot (it is
+        not silently ignored — see core/check.py), but build/timeline must not
+        treat a draft shot as part of the film without an explicit opt-in."""
         ordered = list(self.load_index().order)
+        if indexed_only:
+            return ordered
         on_disk = sorted(
             p.stem for p in self.shots_dir.glob("*.yaml") if p.name != "index.yaml"
         )

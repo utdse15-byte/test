@@ -42,6 +42,16 @@ _ROLLBACK_PREFIXES = ("story/", "shots/", "bible/", "timeline/", "captions/")
 _ROLLBACK_FILES = ("project.yaml",)
 _ROLLBACK_SUFFIXES = {".yaml", ".yml", ".md", ".srt", ".json"}
 _REFUSED_PREFIXES = ("media/", "renders/", "exports/", ".manju/")
+# review #74: timeline/ carries BOTH truth text (rules.yaml, routing.yaml,
+# packaging.yaml) AND the compiler's COMPILED OUTPUT (timeline.json,
+# timeline.generated.json) — the ".json" suffix + "timeline/" prefix rule
+# above would otherwise let rollback "restore" a build artifact as if it were
+# a human decision. Excluded by exact relpath regardless of mode: even under
+# rules.mode=manual (where timeline.json IS hand-authored truth) git already
+# tracks it like any other file — `git checkout <ref> -- timeline/timeline.json`
+# works directly; this module's job is only to keep the COMPILED-artifact case
+# from silently masquerading as a truth-text rollback.
+_ROLLBACK_ARTIFACTS = ("timeline/timeline.json", "timeline/timeline.generated.json")
 
 
 def _git(project: Project, *args: str) -> subprocess.CompletedProcess:
@@ -202,6 +212,13 @@ def rollback_file(project: Project, relpath: str, ref: str = "HEAD") -> dict[str
         raise HistoryError(
             f"'{rel}' is media/derived output — rollback only restores truth "
             "text (story/, shots/, bible/, timeline/, captions/, project.yaml)"
+        )
+    if rel in _ROLLBACK_ARTIFACTS:
+        raise HistoryError(
+            f"'{rel}' 是编译产物(timeline compiler 的输出),不是真相文本 — "
+            "rollback 只回滚 story/shots/bible/timeline 规则文件/captions/project.yaml 等"
+            "人工真相;时间线内容由 `manju build` 从 shots/*.yaml + timeline/rules.yaml 等"
+            "真相重新编译得到,请改用 `manju build` 重新生成,而不是回滚编译产物"
         )
     if not (rel in _ROLLBACK_FILES or any(rel.startswith(p) for p in _ROLLBACK_PREFIXES)):
         raise HistoryError(

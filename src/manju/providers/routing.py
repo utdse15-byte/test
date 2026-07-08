@@ -494,6 +494,63 @@ def explain(project, shot) -> dict[str, Any]:
     }
 
 
+def validate_config(project) -> list[str]:
+    """Full-file validation for `manju check` (round W, review #26): parse
+    ``timeline/routing.yaml`` (+ the user default) and surface unknown
+    strategy/tier/provider references and shape errors as 中文 problem
+    strings. Empty list = clean (including "no routing file at all", which is
+    always clean — routing.yaml is optional). Never raises: every
+    :class:`RoutingError` is caught and turned into one line, so a bad routing
+    file is a `manju check` FINDING, never a traceback."""
+    problems: list[str] = []
+    try:
+        config = load_routing(project)
+    except RoutingError as exc:
+        return [f"timeline/routing.yaml: 解析失败 — {exc}"]
+    if config is None:
+        return problems
+
+    cat = _catalog()
+
+    def _check_provider(pid: str, where: str) -> None:
+        view = cat.get(pid)
+        if view is None or not view.exists:
+            problems.append(f"routing: {where} 引用了未注册的 provider {pid!r}"
+                            "(检查该 provider 的 manifest 是否存在)")
+
+    names = list(BUILTIN_STRATEGIES) + [n for n in config.strategies if n not in BUILTIN_STRATEGIES]
+    strat_defs: dict[str, dict[str, Any]] = {}
+    for name in names:
+        try:
+            strat_defs[name] = _strategy_def(config, name)
+        except RoutingError as exc:
+            problems.append(f"routing: strategy {name!r} 定义有误 — {exc}")
+    if config.strategy not in names:
+        problems.append(
+            f"routing: 激活策略 strategy: {config.strategy!r} 未定义 "
+            f"— 可用策略: {sorted(names)}"
+        )
+
+    for name, sdef in strat_defs.items():
+        for i, rule in enumerate(sdef["rules"]):
+            _check_provider(rule["use"], f"strategy {name!r} rule[{i}].use")
+        for pid in sdef["priority"]:
+            _check_provider(pid, f"strategy {name!r} priority")
+        if sdef["else"] not in META_ELSE:
+            _check_provider(sdef["else"], f"strategy {name!r} else")
+
+    for tname, traw in config.tiers.items():
+        try:
+            tdef = _normalize_tier(tname, traw)
+        except RoutingError as exc:
+            problems.append(f"routing: tier {tname!r} 定义有误 — {exc}")
+            continue
+        for pid in tdef["use"]:
+            _check_provider(pid, f"tier {tname!r} use")
+
+    return problems
+
+
 def list_strategies(project) -> dict[str, Any]:
     config = load_routing(project) or _default_config()
     names = list(BUILTIN_STRATEGIES) + [n for n in config.strategies

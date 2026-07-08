@@ -31,9 +31,10 @@ from pathlib import Path
 
 from ..core.container import Project
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
-from ..core.spec import compute_voice_hash, voice_payload
+from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
 from .base import FailureKind, ProviderFailure
 from .manifest import ProviderManifest
+from .tts import voice_provider_descriptor
 
 
 class EdgeTtsProvider:
@@ -105,7 +106,11 @@ class EdgeTtsProvider:
                 )
             sidecar = VoiceTakeSidecar(
                 provider=self.id,
-                voice_hash=compute_voice_hash(shot, bible),
+                voice_hash=compute_voice_hash(
+                    shot, bible, version=VOICE_VERSION,
+                    provider=voice_provider_descriptor(self),
+                ),
+                voice_hash_version=VOICE_VERSION,
                 params={"text": shot.dialogue.text, "speaker": shot.dialogue.speaker,
                         "voice": voice, "words": len(words)},
                 remote=RemoteJobInfo(job_id=None, cost=None,

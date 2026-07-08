@@ -304,6 +304,13 @@ class TakeSidecar(ManjuModel):
     # ``VideoClip.source_in_ms``; the render seeks to the in-point.
     source_in_ms: int = 0
     source_out_ms: int | None = None
+    # round W (review #37/#16): which SPEC_VERSION payload `spec_hash` was
+    # computed under (core/spec.py). None (dropped by exclude_none on write)
+    # means "made before this landed" — read as version 1 EVERYWHERE, so an
+    # existing take's freshness is judged by v1 forever (§4.3 conservatism,
+    # no mass restage). The generation path (providers/base.py Provider.
+    # _register) stamps every NEW take with the current SPEC_VERSION.
+    spec_version: int | None = None
 
 
 class VoiceTakeSidecar(ManjuModel):
@@ -327,6 +334,13 @@ class VoiceTakeSidecar(ManjuModel):
     # voice_hash (staleness anchor) is untouched.
     repaired_from: str | None = None
     audio_repaired: bool | None = None
+    # round W (review #60): which VOICE_VERSION payload `voice_hash` was
+    # computed under (core/spec.py). None (dropped by exclude_none) means
+    # "made before this landed" — read as version 1, so an existing voice
+    # take's freshness stays judged by v1 forever (§4.3 conservatism). The
+    # synthesis path (providers/tts.py, providers/edge_tts.py) stamps every
+    # NEW voice take with the current VOICE_VERSION.
+    voice_hash_version: int | None = None
 
 
 # ---------------------------------------------------------------------- Bible

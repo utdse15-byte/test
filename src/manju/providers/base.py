@@ -230,14 +230,22 @@ class Provider(ABC):
     ) -> TakeInfo:
         import json as _json
 
-        from ..core.spec import spec_payload
+        from ..core.spec import SPEC_VERSION, spec_payload
 
         # why-stale evidence: the spec as it was NOW, diffable later (§4.3).
         # One enrichment point for every generated take. Guarded against
         # pathological bloat (huge bible excerpts duplicate per take): past 32KB
         # the snapshot is dropped and staleness degrades to the generic note —
         # advisory data must never dominate the sidecar.
-        snapshot: dict | None = spec_payload(req.shot, req.bible)
+        #
+        # round W (review #37/#16): every NEWLY generated take is snapshotted
+        # (and hashed, via req.spec_hash — build/stale.py always computes that
+        # at SPEC_VERSION for a fresh take) at the CURRENT SPEC_VERSION, and the
+        # sidecar records which version so staleness compares apples to apples
+        # forever after (§4.3 conservatism — old takes keep being judged by the
+        # version they were made under; only new ones gain the new fields).
+        snapshot: dict | None = spec_payload(req.shot, req.bible, version=SPEC_VERSION,
+                                             project_root=req.project.root)
         try:
             if len(_json.dumps(snapshot, ensure_ascii=False)) > 32_768:
                 snapshot = None
@@ -247,6 +255,7 @@ class Provider(ABC):
         sidecar = TakeSidecar(
             provider=self.id,
             spec_hash=spec_hash or req.spec_hash,
+            spec_version=SPEC_VERSION,
             spec_snapshot=snapshot,
             params=dict(params or {}),
             compiled_prompt=compiled_prompt,

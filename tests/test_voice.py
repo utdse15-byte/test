@@ -63,8 +63,8 @@ def tts_env(tmp_path, monkeypatch):
 
 
 def test_synthesize_registers_voice_take_with_hash(tmp_project, add_shot, tts_env):
-    from manju.core.spec import compute_voice_hash
-    from manju.providers.tts import get_tts_provider
+    from manju.core.spec import VOICE_VERSION, compute_voice_hash
+    from manju.providers.tts import get_tts_provider, voice_provider_descriptor
 
     shot = add_shot(tmp_project, "S001",
                     dialogue={"speaker": "linxia", "text": "这不可能。"})
@@ -81,7 +81,13 @@ def test_synthesize_registers_voice_take_with_hash(tmp_project, add_shot, tts_en
     assert len(voices) == 1
     _, sidecar = voices[0]
     assert sidecar is not None
-    assert sidecar.voice_hash == compute_voice_hash(shot, tmp_project.load_bible())
+    # round W (review #60): synthesis records VOICE_VERSION + the resolved
+    # provider/manifest fingerprint, not just text/speaker/voice_ref.
+    assert sidecar.voice_hash_version == VOICE_VERSION
+    assert sidecar.voice_hash == compute_voice_hash(
+        shot, tmp_project.load_bible(), version=VOICE_VERSION,
+        provider=voice_provider_descriptor(provider),
+    )
     assert sidecar.provider == "tts_x"
     assert sidecar.remote and sidecar.remote.cost == 0.02
 

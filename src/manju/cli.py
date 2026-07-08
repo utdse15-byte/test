@@ -423,6 +423,11 @@ def build(
         help="build mode: quality | balanced | speed (goal 14) — biases the "
              "provider strategy, retries and generation concurrency; overrides "
              "project.yaml build.mode. Omit to use the project default."),
+    include_unindexed: bool = typer.Option(
+        False, "--include-unindexed",
+        help="also build shots that exist on disk but are not in "
+             "shots/index.yaml order (default: excluded — index order is the "
+             "order authority, §5 review #5). `manju check` still warns about them."),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """One-command build: fill gaps → timeline → render → QC → exports (§11).
@@ -443,7 +448,8 @@ def build(
         _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
     result = run_build(_project(), target=target, gen=gen,
                        regen_stale=regen_stale, dry_run=dry_run, force=force,
-                       actor=ACTOR, assume_yes=yes, mode=mode)
+                       actor=ACTOR, assume_yes=yes, mode=mode,
+                       include_unindexed=include_unindexed)
     if as_json:
         _emit(result.to_dict(), True)
     else:

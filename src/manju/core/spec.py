@@ -4,14 +4,42 @@ Only fields that affect the rendered picture participate, after canonical
 serialization: scene/characters (together with their Bible excerpts), camera,
 action, quality, and generation parameters. `status`, `locked`, and notes are
 deliberately excluded so that human decisions never make a take look stale.
+
+VERSIONED HASHES (round W, review #37/#16/#60) — §4.3 conservatism extended to
+new provider-input fields WITHOUT mass-restaging every existing take:
+
+    SPEC_VERSION  = 2   dialogue {speaker,text} + (when non-empty) keyframes
+                        both already flow into the real prompt/provider call
+                        (dialogue -> prompt compiler; keyframes -> first/last
+                        frame video tasks) but were excluded from v1's payload.
+    VOICE_VERSION = 2   the resolved TTS provider id + a manifest fingerprint
+                        (endpoint + body template) + language/format — a
+                        provider/model/language/format swap must be visible to
+                        voice staleness, not just the dialogue line.
+
+``version`` defaults to **1** on every function here — the exact v1 payload,
+byte-identical to before this landed (pinned by test_hash_versions.py). Only
+callers that opt in (new take generation, staleness comparisons that read a
+take's own recorded ``spec_version``/``voice_hash_version``) pass a higher
+version. An EXISTING take is judged FOREVER by the version it was generated
+under (documented §4.3 conservatism) — bumping SPEC_VERSION/VOICE_VERSION never
+mass-invalidates a project; only NEWLY generated takes record the new version
+and gain the new sensitivity.
 """
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
-from .hashing import hash_value
+from .hashing import hash_file, hash_value
 from .models import ShotSpec
+
+SPEC_VERSION = 2
+VOICE_VERSION = 2
+
+_URL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 
 
 def _bible_excerpt(bible: dict[str, dict[str, Any]], key: str | None) -> Any:
@@ -22,12 +50,66 @@ def _bible_excerpt(bible: dict[str, dict[str, Any]], key: str | None) -> Any:
     return entry
 
 
-def spec_payload(shot: ShotSpec, bible: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+def _keyframe_image_hash(image: str, project_root: Path | str | None) -> str | None:
+    """sha256 of a keyframe's LOCAL file content, when ``image`` resolves to one
+    on disk — so editing the referenced image's BYTES (not just its path or
+    prompt text) also restages a v2 take. A bible-asset id, an http(s):// URL,
+    or a path that does not resolve to an existing file yields ``None`` (the
+    `image` string itself still participates in the payload either way)."""
+    if not image or _URL_SCHEME_RE.match(image):
+        return None
+    if project_root is None:
+        return None
+    p = Path(image)
+    if not p.is_absolute():
+        p = Path(project_root) / image
+    try:
+        if p.is_file():
+            return hash_file(p)
+    except OSError:
+        return None
+    return None
+
+
+def _keyframes_payload(shot: ShotSpec, project_root: Path | str | None) -> list[dict[str, Any]]:
+    """v2 keyframes payload (review #37/#16): position/at_ms + image + prompt,
+    plus ``image_file_hash`` when the image is a resolvable local file. Empty
+    when the shot has no keyframes — the caller omits the key entirely in that
+    case, keeping a keyframe-less shot's v2 payload shaped exactly like v1's."""
+    out: list[dict[str, Any]] = []
+    for kf in shot.keyframes:
+        entry: dict[str, Any] = {
+            "position": kf.position,
+            "at_ms": kf.at_ms,
+            "image": kf.image,
+            "prompt": kf.prompt,
+        }
+        file_hash = _keyframe_image_hash(kf.image or "", project_root)
+        if file_hash is not None:
+            entry["image_file_hash"] = file_hash
+        out.append(entry)
+    return out
+
+
+def spec_payload(
+    shot: ShotSpec,
+    bible: dict[str, dict[str, Any]] | None = None,
+    *,
+    version: int = 1,
+    project_root: Path | str | None = None,
+) -> dict[str, Any]:
     """The exact dict that gets hashed. Kept as a named function so tests can
-    assert what does / does not participate."""
+    assert what does / does not participate.
+
+    ``version=1`` (default) is byte-identical to the pre-round-W payload.
+    ``version=2`` (:data:`SPEC_VERSION`) additionally hashes ``dialogue`` and,
+    when non-empty, ``keyframes`` — both real provider inputs today. Pass
+    ``project_root`` so a keyframe's local image file content can be hashed;
+    omitted, the keyframe entry still carries its path/prompt (a rename or
+    prompt edit is still caught either way)."""
     bible = bible or {}
     generation = shot.generation.model_dump(exclude_none=False)
-    return {
+    payload: dict[str, Any] = {
         "scene": shot.scene,
         "scene_bible": _bible_excerpt(bible, shot.scene),
         "characters": shot.characters,
@@ -38,10 +120,22 @@ def spec_payload(shot: ShotSpec, bible: dict[str, dict[str, Any]] | None = None)
         "duration": shot.duration,
         "generation": generation,
     }
+    if version >= 2:
+        payload["dialogue"] = {"speaker": shot.dialogue.speaker, "text": shot.dialogue.text}
+        keyframes = _keyframes_payload(shot, project_root)
+        if keyframes:
+            payload["keyframes"] = keyframes
+    return payload
 
 
-def compute_spec_hash(shot: ShotSpec, bible: dict[str, dict[str, Any]] | None = None) -> str:
-    return hash_value(spec_payload(shot, bible))
+def compute_spec_hash(
+    shot: ShotSpec,
+    bible: dict[str, dict[str, Any]] | None = None,
+    *,
+    version: int = 1,
+    project_root: Path | str | None = None,
+) -> str:
+    return hash_value(spec_payload(shot, bible, version=version, project_root=project_root))
 
 
 def diff_spec_fields(old: dict[str, Any], new: dict[str, Any], prefix: str = "") -> list[str]:
@@ -71,24 +165,49 @@ def diff_spec_fields(old: dict[str, Any], new: dict[str, Any], prefix: str = "")
 VOICE_BIBLE_KEYS = ("voice", "voice_ref", "voice_sample", "voice_id", "tone")
 
 
-def voice_payload(shot: ShotSpec, bible: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+def voice_payload(
+    shot: ShotSpec,
+    bible: dict[str, dict[str, Any]] | None = None,
+    *,
+    version: int = 1,
+    provider: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """What shapes a generated VOICE take (M3 TTS staleness anchor, FIX-F):
     the line itself, who speaks it, and the speaker's voice reference from the
     bible. Camera/action/quality are picture-side and excluded — the exact
     mirror of spec_payload's exclusion of dialogue.
 
-    Not yet wired into any provider: TTS lands in M3 with a real cloud API;
-    this function exists now so the staleness rule is pinned before wiring.
+    ``version=2`` (:data:`VOICE_VERSION`, review #60) additionally hashes the
+    RESOLVED TTS provider identity — ``provider`` is
+    ``{id, fingerprint, language, format}`` (see
+    ``providers.tts.voice_provider_descriptor``) — so a provider/model/
+    language/output-format swap changes the hash even when the line itself
+    did not. ``provider=None`` at v2 still hashes (as all-``None`` fields),
+    never crashes: provider resolution is a caller concern, not this
+    function's.
     """
     bible = bible or {}
     speaker_entry = bible.get(shot.dialogue.speaker) or {}
     voice_ref = {k: speaker_entry[k] for k in VOICE_BIBLE_KEYS if k in speaker_entry}
-    return {
+    payload: dict[str, Any] = {
         "text": shot.dialogue.text,
         "speaker": shot.dialogue.speaker,
         "voice_ref": voice_ref,
     }
+    if version >= 2:
+        provider = provider or {}
+        payload["provider"] = provider.get("id")
+        payload["manifest_fingerprint"] = provider.get("fingerprint")
+        payload["language"] = provider.get("language")
+        payload["format"] = provider.get("format")
+    return payload
 
 
-def compute_voice_hash(shot: ShotSpec, bible: dict[str, dict[str, Any]] | None = None) -> str:
-    return hash_value(voice_payload(shot, bible))
+def compute_voice_hash(
+    shot: ShotSpec,
+    bible: dict[str, dict[str, Any]] | None = None,
+    *,
+    version: int = 1,
+    provider: dict[str, Any] | None = None,
+) -> str:
+    return hash_value(voice_payload(shot, bible, version=version, provider=provider))
