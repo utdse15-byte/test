@@ -94,9 +94,9 @@ def render(project: Any, token: str) -> str:
 
     head = (
         '<div class="page-h"><h1>剧集工作台 Series</h1>'
-        '<span class="muted">跨集聚合(series_status/series_characters)与保守同步'
-        "(sync_bible)的只读+安全写视图 —— 强制覆盖(--force)与长稿拆分落地只留在命令行"
-        "</span></div>"
+        '<span class="muted">跨集聚合(series_status/series_characters/series_continuity)'
+        "与保守同步(sync_bible)的只读+安全写视图 —— 强制覆盖(--force)与长稿拆分落地只留在"
+        "命令行</span></div>"
     )
 
     try:
@@ -124,6 +124,7 @@ def render(project: Any, token: str) -> str:
     body = (
         head
         + _episodes_section(series, project)
+        + _continuity_section(series)
         + _sync_bible_section(series)
         + _characters_section(series)
         + _split_script_section(series)
@@ -221,6 +222,149 @@ def _episodes_section(series: Any, project: Any) -> str:
     )
 
 
+# ============================================================ A2. continuity
+
+
+# verdict (series_continuity) -> the .badge st-* suffix (severity order mirrors
+# _STATE_BADGE above: fresh=ok, stale=needs-attention-soon, needs=incomplete,
+# broken=worst).
+_VERDICT_BADGE = {
+    "完整": "st-fresh", "待同步": "st-stale", "缺素材": "st-needs", "有问题": "st-broken",
+}
+
+
+def _asset_grid(title: str, rows: list[dict[str, Any]], eps: list[str]) -> str:
+    """One present/diverged/appearances grid — the SAME rendering shape
+    `_characters_section` already uses, generalized so scenes/props reuse it
+    (mirrors core/series.py's `_asset_continuity_matrix` generalizing the
+    engine those grids read from)."""
+    if not rows:
+        return ""
+    trows: list[str] = []
+    for c in rows:
+        cid, name = c["id"], c.get("name")
+        cells: list[str] = []
+        for cell in c["episodes"]:
+            if cell.get("error"):
+                cells.append(f'<td class="err">✗ {_e(cell["error"])}</td>')
+                continue
+            if not cell.get("present"):
+                cells.append('<td class="muted">不在场</td>')
+                continue
+            n = len(cell.get("appearances") or [])
+            if cell.get("diverged"):
+                label = "语音分歧 voice" if cell.get("voice_diverged") else "分歧 diverged"
+                badge = f'<span class="badge st-needs">{_e(label)}</span>'
+            else:
+                badge = '<span class="badge st-fresh">在场</span>'
+            cells.append(f'<td>{badge}<span class="muted"> 出场×{n}</span></td>')
+        name_html = f' <span class="muted">{_e(name)}</span>' if name else ""
+        trows.append(f'<tr><td><b>{_e(cid)}</b>{name_html}</td>' + "".join(cells) + "</tr>")
+    header_cells = "".join(f"<th>{_e(eid)}</th>" for eid in eps)
+    return (
+        f'<h4>{_e(title)}</h4>'
+        '<div class="tablewrap"><table class="sr-table"><thead><tr>'
+        f"<th>id</th>{header_cells}</tr></thead><tbody>" + "".join(trows)
+        + "</tbody></table></div>"
+    )
+
+
+def _continuity_section(series: Any) -> str:
+    """全局连续性 Continuity (round AA7, goal item 7) — a strict render of
+    `series_continuity`: the episode-verdict matrix (镜头/检查/同步/引用 + a
+    verdict chip), the characters/scenes/props continuity grids (same pattern
+    as `_characters_section`, generalized), and the voice/packaging outlier
+    callouts. Read-only — no job (see core.series.series_continuity's
+    docstring for why); 待同步 rows link straight into the sync-bible section
+    below instead of duplicating its diff view."""
+    from ..core.series import series_continuity
+
+    try:
+        view = series_continuity(series)
+    except Exception as exc:
+        return (
+            '<section class="panel sr-continuity"><h2>全局连续性 Continuity</h2>'
+            f'<p class="err">读取失败:{_e(exc)}</p></section>'
+        )
+
+    rows: list[str] = []
+    for e in view["episodes"]:
+        eid = e["id"]
+        if e.get("error"):
+            rows.append(
+                f'<tr class="sr-ct-row"><td>{_e(eid)}</td><td>{_e(e.get("title"))}</td>'
+                f'<td colspan="5" class="err">✗ {_e(e["error"])}</td></tr>'
+            )
+            continue
+        by = e.get("shots_by_state") or {}
+        shots_html = " ".join(f"{_e(s)}={n}" for s, n in by.items() if n) or "—"
+        bible = e.get("bible_sync") or {}
+        refs = e.get("refs") or {}
+        sync_text = f"新增{bible.get('added', 0)}/分歧{bible.get('diverged', 0)}"
+        sync_html = (
+            f'<a href="#sr-sync-ep-{_e(eid)}">{_e(sync_text)}</a>'
+            if (bible.get("added") or bible.get("diverged")) else _e(sync_text)
+        )
+        verdict = e.get("verdict", "")
+        badge_cls = _VERDICT_BADGE.get(verdict, "st-needs")
+        rows.append(
+            f'<tr class="sr-ct-row" data-eid="{_e(eid)}">'
+            f'<td>{_e(eid)}</td><td>{_e(e.get("title"))}</td>'
+            f'<td>{_e(shots_html)}</td>'
+            f'<td>错误{e.get("check_errors", 0)}/警告{e.get("check_warnings", 0)}</td>'
+            f'<td>{sync_html}</td>'
+            f'<td>孤儿{refs.get("orphan", 0)}/缺失{refs.get("missing", 0)}</td>'
+            f'<td><span class="badge {badge_cls}">{_e(verdict)}</span></td></tr>'
+        )
+
+    matrix = (
+        '<div class="tablewrap"><table class="sr-table"><thead><tr>'
+        "<th>集</th><th>标题</th><th>镜头</th><th>检查</th><th>同步</th><th>引用</th><th>结论</th>"
+        "</tr></thead><tbody>"
+        + ("".join(rows) or '<tr><td colspan="7" class="muted">还没有分集</td></tr>')
+        + "</tbody></table></div>"
+    )
+
+    t = view["totals"]
+    totals_html = (
+        f'<p class="muted">合计 完整 {t.get("complete", 0)} · 缺素材 {t.get("missing_assets", 0)}'
+        f' · 有问题 {t.get("problem", 0)} · 待同步 {t.get("needs_sync", 0)}'
+        + (f" · {t['errors']} 集出错" if t.get("errors") else "")
+        + "</p>"
+    )
+
+    eps = [e["id"] for e in view["episodes"] if not e.get("error")]
+    grids_html = "".join(
+        g for g in (
+            _asset_grid("角色 characters", view.get("characters") or [], eps),
+            _asset_grid("场景 scenes", view.get("scenes") or [], eps),
+            _asset_grid("道具 props", view.get("props") or [], eps),
+        ) if g
+    )
+
+    outliers = view.get("packaging_outliers") or []
+    outlier_html = ""
+    if outliers:
+        items = "".join(
+            f'<li><b>{_e(o["field"])}</b>:多数 {_e(o["majority"])} · 例外 '
+            + _e("、".join(f"{x['episode']}={x['value']}" for x in o["outliers"]))
+            + "</li>"
+            for o in outliers
+        )
+        outlier_html = (
+            '<div class="sr-ct-outliers"><h4>片头/片尾/封面偏差 packaging '
+            '<span class="muted">(参考性提示,不代表错误)</span></h4>'
+            f"<ul>{items}</ul></div>"
+        )
+
+    return (
+        '<section class="panel sr-continuity"><h2>全局连续性 Continuity'
+        f' <span class="muted">· {_e(view["series"])}</span></h2>'
+        f'<p class="muted">{_e(view.get("note", ""))}</p>'
+        + matrix + totals_html + grids_html + outlier_html + "</section>"
+    )
+
+
 # ============================================================= B. sync-bible
 
 
@@ -280,9 +424,12 @@ def _sync_bible_section(series: Any) -> str:
     ep_blocks: list[str] = []
     for ep in report["episodes"]:
         eid = ep["id"]
+        # round AA7: the continuity dashboard's 待同步 episodes link straight
+        # here (`#sr-sync-ep-<eid>`) instead of duplicating the diff view.
+        anchor_id = f'sr-sync-ep-{_e(eid)}'
         if ep.get("error"):
             ep_blocks.append(
-                f'<div class="sr-sync-ep panel"><h4>{_e(eid)}</h4>'
+                f'<div class="sr-sync-ep panel" id="{anchor_id}"><h4>{_e(eid)}</h4>'
                 f'<p class="err">✗ {_e(ep["error"])}</p></div>'
             )
             continue
@@ -302,7 +449,8 @@ def _sync_bible_section(series: Any) -> str:
                 + diverged_html + "</div>")
         parts.append(f'<p class="muted">已同步 in-sync:{ep.get("in_sync", 0)} 条</p>')
         ep_blocks.append(
-            f'<div class="sr-sync-ep panel"><h4>{_e(eid)}</h4>' + "".join(parts) + "</div>")
+            f'<div class="sr-sync-ep panel" id="{anchor_id}"><h4>{_e(eid)}</h4>'
+            + "".join(parts) + "</div>")
 
     t = report["totals"]
     totals_html = (
@@ -494,6 +642,10 @@ _SERIES_CSS = """
 .sr-eo { margin-top: .6rem; font-size: .84rem; }
 .sr-split-file { margin: .8rem 0; }
 .sr-split-cmd { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
+.sr-continuity h4 { margin: .9rem 0 .4rem; font-size: .92rem; }
+.sr-ct-outliers { margin-top: .8rem; font-size: .86rem; }
+.sr-ct-outliers ul { margin: .3rem 0 0; padding-left: 1.2rem; }
+.sr-ct-outliers li { margin: .15rem 0; }
 """
 
 

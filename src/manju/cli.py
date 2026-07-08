@@ -4868,6 +4868,60 @@ def series_characters_cmd(as_json: bool = typer.Option(False, "--json")):
             typer.echo(f"  {eo['id']}  → {', '.join(eo['episodes'])}")
 
 
+@series_app.command("continuity")
+def series_continuity_cmd(as_json: bool = typer.Option(False, "--json")):
+    """全局连续性看板(只读):每集 完整/缺素材/有问题/待同步 结论 + 角色/场景/道具跨集矩阵 +
+    语音/包装偏差参考性提示(见 core/series.py:series_continuity 的结论优先级说明)。"""
+    from .core.series import SeriesError, series_continuity
+
+    series = _series()
+    try:
+        view = series_continuity(series)
+    except SeriesError as exc:
+        _fail(str(exc))
+    if as_json:
+        _emit(view, True)
+        return
+
+    verdict_color = {
+        "完整": typer.colors.GREEN, "待同步": typer.colors.YELLOW,
+        "缺素材": typer.colors.MAGENTA, "有问题": typer.colors.RED,
+    }
+    typer.secho(f"剧集连续性 / continuity  ({view['series']})", fg=typer.colors.CYAN)
+    for e in view["episodes"]:
+        if e.get("error"):
+            typer.secho(f"  {e['id']}  ✗ 无法读取:{e['error']}", fg=typer.colors.RED)
+            continue
+        by = e.get("shots_by_state") or {}
+        states = ", ".join(f"{k}={v}" for k, v in by.items()) or "—"
+        bible = e.get("bible_sync") or {}
+        refs = e.get("refs") or {}
+        title = f" {e['title']}" if e.get("title") else ""
+        typer.secho(
+            f"  {e['id']}{title}  [{e['verdict']}]  镜头[{e.get('shots_total', 0)}]: {states}  "
+            f"检查 错误{e.get('check_errors', 0)}/警告{e.get('check_warnings', 0)}  "
+            f"同步 新增{bible.get('added', 0)}/分歧{bible.get('diverged', 0)}  "
+            f"引用 孤儿{refs.get('orphan', 0)}/缺失{refs.get('missing', 0)}",
+            fg=verdict_color.get(e["verdict"], typer.colors.WHITE),
+        )
+    t = view["totals"]
+    typer.secho(
+        f"合计  完整 {t.get('complete', 0)}  缺素材 {t.get('missing_assets', 0)}  "
+        f"有问题 {t.get('problem', 0)}  待同步 {t.get('needs_sync', 0)}"
+        + (f"  broken {t['errors']}" if t.get("errors") else ""),
+        fg=typer.colors.BRIGHT_BLACK,
+    )
+    if view["needs_sync"]:
+        typer.secho(f"  待同步分集: {', '.join(view['needs_sync'])}  "
+                    "→ manju series sync-bible", fg=typer.colors.YELLOW)
+    if view.get("packaging_outliers"):
+        typer.secho("  包装参考性提示 packaging outliers(不代表错误):",
+                    fg=typer.colors.BRIGHT_BLACK)
+        for o in view["packaging_outliers"]:
+            eps = ", ".join(f"{x['episode']}={x['value']}" for x in o["outliers"])
+            typer.echo(f"    {o['field']}: 多数={o['majority']}  例外: {eps}")
+
+
 @series_app.command("split-script")
 def series_split_script_cmd(
     file: Path,

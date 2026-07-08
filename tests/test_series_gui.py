@@ -184,6 +184,63 @@ def test_series_page_404s_never_for_plain_project(gui_plain):
     assert "分集 Episodes" not in html
 
 
+# =============================================================== A2. continuity
+
+
+def test_continuity_endpoint_matches_core(gui, two_episodes):
+    """GET /api/series/continuity is a strict, read-only render of
+    core.series.series_continuity — no job, no lock (round AA7)."""
+    from manju.core.series import series_continuity
+
+    series, e1, e2 = two_episodes
+    status, headers, data = _req(gui, "/api/series/continuity")
+    assert status == 200
+    expected = series_continuity(series)
+    assert data["series"] == expected["series"]
+    assert [e["id"] for e in data["episodes"]] == [e["id"] for e in expected["episodes"]]
+    assert data["totals"] == expected["totals"]
+    assert data["needs_sync"] == expected["needs_sync"]
+
+
+def test_continuity_endpoint_404_when_not_in_series(gui_plain):
+    status, _, data = _req(gui_plain, "/api/series/continuity")
+    assert status == 400
+    assert "剧集" in data["error"]
+
+
+def test_continuity_section_renders_verdict_matrix(gui, two_episodes):
+    """Two freshly-seeded, shot-less episodes are both 完整 (in sync, no
+    check errors, nothing missing) — the matrix table + verdict chips render."""
+    series, e1, e2 = two_episodes
+    status, _, html = _html(gui, "/series")
+    assert status == 200
+    assert "全局连续性 Continuity" in html
+    assert "E01" in html and "E02" in html
+    assert "完整" in html
+
+
+def test_continuity_section_links_diverged_episode_into_sync_bible(gui, two_episodes):
+    """A 待同步 episode's row links straight into the existing sync-bible
+    section instead of duplicating the diff view."""
+    series, e1, e2 = two_episodes
+    write_yaml(e1.root / "bible" / "characters.yaml", {"linxia": {"name": "林夏(分集改)"}})
+
+    status, _, html = _html(gui, "/series")
+    assert status == 200
+    assert "待同步" in html
+    assert 'href="#sr-sync-ep-E01"' in html
+    assert 'id="sr-sync-ep-E01"' in html
+
+
+def test_continuity_section_is_csp_safe(gui, two_episodes):
+    status, headers, html = _html(gui, "/series")
+    assert status == 200
+    assert "<script>" not in html
+    assert "onclick=" not in html and "style=" not in html
+    csp = headers.get("Content-Security-Policy", "")
+    assert "script-src 'self'" in csp and "unsafe-inline" not in csp
+
+
 # ------------------------------------------------------------------ B. banner
 
 

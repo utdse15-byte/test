@@ -21,12 +21,13 @@ from manju.cli import app
 from manju.core.check import run_check
 from manju.core.container import Project
 from manju.core.events import tail_events
-from manju.core.models import ShotSpec
+from manju.core.models import PackagingSpec, ShotSpec
 from manju.core.series import (
     Series,
     SeriesError,
     new_episode,
     series_characters,
+    series_continuity,
     series_status,
     split_script,
     sync_bible,
@@ -377,6 +378,167 @@ def test_characters_degrades_on_broken_episode(tmp_series: Series):
     cells = {c["id"]: c for c in linxia["episodes"]}
     assert "error" in cells["E02"]
     assert cells["E01"].get("present") is True
+
+
+# -------------------------------------------------------------- series_continuity
+
+
+def _select_manual_take(project: Project, shot_id: str, make_take) -> None:
+    """Give ``shot_id`` a selected MANUAL take (state MANUAL — usable/"built")
+    without needing real media or a matching spec_hash (mirrors
+    test_savings.py's ``_select_fresh_take`` sibling, MANUAL_HASH variant)."""
+    take = make_take(project, shot_id, "manual")
+    project.update_shot_raw(
+        shot_id,
+        lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name),
+    )
+
+
+@pytest.fixture
+def three_episodes(tmp_series: Series, make_take):
+    """One complete episode (built + in-sync bible), one missing assets
+    (a shot with no take at all), one diverged bible (a voice field changed) —
+    the round-AA7 fixture for series_continuity's verdict precedence."""
+    e1 = new_episode(tmp_series, "E01", title="完整集")
+    _add_shot(e1, "S001")
+    _select_manual_take(e1, "S001", make_take)
+
+    e2 = new_episode(tmp_series, "E02", title="缺素材集")
+    _add_shot(e2, "S001")  # no take selected at all -> shots_by_state.missing
+
+    e3 = new_episode(tmp_series, "E03", title="待同步集")
+    # diverge a VOICE-shaping field specifically (name stays the same).
+    write_yaml(e3.root / "bible" / "characters.yaml",
+               {"linxia": {"name": "林夏", "voice": "换了配音"}})
+
+    # a packaging outlier: E02 turns on a distinct intro; E01/E03 keep default.
+    pkg = PackagingSpec()
+    pkg.intro.enabled = True
+    pkg.intro.style_preset = "neon"
+    e2.save_packaging(pkg)
+
+    return tmp_series, e1, e2, e3
+
+
+def test_continuity_verdicts_and_totals(three_episodes):
+    series, e1, e2, e3 = three_episodes
+    view = series_continuity(series)
+
+    assert view["series"] == SERIES_NAME
+    verdicts = {e["id"]: e["verdict"] for e in view["episodes"]}
+    assert verdicts == {"E01": "完整", "E02": "缺素材", "E03": "待同步"}
+
+    t = view["totals"]
+    assert t["episodes"] == 3
+    assert t["ok"] == 3
+    assert t["errors"] == 0
+    assert t["complete"] == 1
+    assert t["missing_assets"] == 1
+    assert t["needs_sync"] == 1
+    assert t["problem"] == 0
+    assert view["needs_sync"] == ["E03"]
+
+    e1_row = next(e for e in view["episodes"] if e["id"] == "E01")
+    assert e1_row["shots_built"] == 1
+    assert e1_row["shots_selected"] == 1
+    e2_row = next(e for e in view["episodes"] if e["id"] == "E02")
+    assert e2_row["shots_by_state"].get("missing") == 1
+    assert e2_row["shots_built"] == 0
+
+
+def test_continuity_characters_matrix_and_voice_divergence(three_episodes):
+    series, e1, e2, e3 = three_episodes
+    view = series_continuity(series)
+
+    linxia = next(c for c in view["characters"] if c["id"] == "linxia")
+    cells = {c["id"]: c for c in linxia["episodes"]}
+    assert cells["E01"]["present"] is True and cells["E01"]["diverged"] is False
+    assert cells["E03"]["diverged"] is True
+    assert cells["E03"]["voice_diverged"] == ["voice"]
+    assert "voice_diverged" not in cells["E01"]
+
+    assert any(v["id"] == "linxia" and v["episode"] == "E03" and v["fields"] == ["voice"]
+               for v in view["voice_divergences"])
+    # scenes/props matrices generalize the same engine (present, even if empty).
+    assert "scenes" in view and "props" in view
+    store = next((s for s in view["scenes"] if s["id"] == "store"), None)
+    assert store is not None
+    assert {c["id"] for c in store["episodes"]} == {"E01", "E02", "E03"}
+
+
+def test_continuity_packaging_outliers_are_referential(three_episodes):
+    series, e1, e2, e3 = three_episodes
+    view = series_continuity(series)
+
+    outliers = {o["field"]: o for o in view["packaging_outliers"]}
+    assert "intro.enabled" in outliers
+    assert {x["episode"] for x in outliers["intro.enabled"]["outliers"]} == {"E02"}
+    assert "intro.style_preset" in outliers
+    assert {x["episode"] for x in outliers["intro.style_preset"]["outliers"]} == {"E02"}
+    # never a verdict input — E02's verdict is driven by its missing shot,
+    # not by the packaging outlier.
+    e2_row = next(e for e in view["episodes"] if e["id"] == "E02")
+    assert e2_row["verdict"] == "缺素材"
+
+
+def test_continuity_tolerates_broken_episode(tmp_series: Series):
+    new_episode(tmp_series, "E01", title="好的")
+    broken = new_episode(tmp_series, "E02", title="坏的")
+    (broken.root / "project.yaml").unlink()
+
+    view = series_continuity(tmp_series)
+    rows = {e["id"]: e for e in view["episodes"]}
+    assert "error" in rows["E02"]
+    assert "verdict" not in rows["E02"]
+    assert rows["E01"]["verdict"] == "完整"  # freshly seeded, in sync, no shots
+    assert view["totals"]["errors"] == 1
+    assert view["totals"]["ok"] == 1
+
+    # the cross-episode matrices surface the SAME error on E02's column,
+    # never a silent gap.
+    linxia = next(c for c in view["characters"] if c["id"] == "linxia")
+    cells = {c["id"]: c for c in linxia["episodes"]}
+    assert "error" in cells["E02"]
+    assert cells["E01"]["present"] is True
+
+
+def test_continuity_problem_verdict_beats_missing_and_sync(tmp_series: Series):
+    """errors beat missing beats out-of-sync (the documented precedence): a
+    check ERROR wins even when the SAME episode also has a missing shot and a
+    diverged bible entry."""
+    e1 = new_episode(tmp_series, "E01")
+    _add_shot(e1, "S001")  # missing (no take) — would be 缺素材 on its own
+    write_yaml(e1.root / "bible" / "characters.yaml", {"linxia": {"name": "改名了"}})  # diverged
+    # a genuine check error: reference a character absent from the bible.
+    _add_shot(e1, "S002", characters=["nobody"])
+
+    view = series_continuity(tmp_series)
+    e1_row = next(e for e in view["episodes"] if e["id"] == "E01")
+    assert e1_row["check_errors"] >= 1
+    assert e1_row["verdict"] == "有问题"
+
+
+def test_cli_continuity_json(cli_series: Series, make_take):
+    e1 = new_episode(cli_series, "E01", title="一")
+    _add_shot(e1, "S001")
+    _select_manual_take(e1, "S001", make_take)
+
+    res = runner.invoke(app, ["series", "continuity", "--json"])
+    assert res.exit_code == 0, res.output
+    data = json.loads(res.output)
+    assert data["series"] == SERIES_NAME
+    assert data["episodes"][0]["id"] == "E01"
+    assert data["episodes"][0]["verdict"] == "完整"
+    assert "characters" in data and "totals" in data
+
+
+def test_cli_continuity_table_output_shows_verdicts(three_episodes, monkeypatch):
+    series, e1, e2, e3 = three_episodes
+    monkeypatch.chdir(series.root)
+    res = runner.invoke(app, ["series", "continuity"])
+    assert res.exit_code == 0, res.output
+    assert "完整" in res.output and "缺素材" in res.output and "待同步" in res.output
+    assert "待同步分集" in res.output
 
 
 # ---------------------------------------------------------------- split_script

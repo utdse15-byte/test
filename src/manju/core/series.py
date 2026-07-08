@@ -430,19 +430,45 @@ def new_episode(series: Series, eid: str, *, title: str = "", preset: str | None
 # ------------------------------------------------------------- series_status
 
 
-def series_status(series: Series) -> dict[str, Any]:
-    """Per-episode aggregation over the EXISTING per-project machinery — read-only.
+def _episode_build_summary(project: Project) -> dict[str, Any]:
+    """Per-episode shot/build/spend probing — ``build.stale.evaluate_all``
+    (the same state summary `manju status` prints), ``Project.
+    newest_final_path`` (the one numeric final resolver), and ``build.spend.
+    spend_report`` (ledger-or-sidecar total, §3 fallback).
 
-    Each episode reuses ``build.stale.evaluate_all`` (the same state summary
-    `manju status` prints), ``Project.newest_final_path`` (the one numeric final
-    resolver), and ``build.spend.spend_report`` (ledger-or-sidecar total, §3
-    fallback). An unreadable episode degrades to ``{"error": …}`` instead of
-    killing the whole table. A totals row sums shots / finals / cost across the
-    readable episodes.
+    Round AA7 (goal item 7): extracted out of :func:`series_status` so
+    :func:`series_continuity` reuses the EXACT same probing instead of
+    re-walking ``evaluate_all`` a second way — one engine, two read models.
     """
     from ..build.spend import spend_report
     from ..build.stale import evaluate_all
 
+    statuses = evaluate_all(project)
+    by_state: dict[str, int] = {}
+    for st in statuses:
+        by_state[st.state.value] = by_state.get(st.state.value, 0) + 1
+    final = project.newest_final_path()
+    spend = spend_report(project)
+    cost = float(spend.get("total") or 0.0)
+    return {
+        "shots_total": len(statuses),
+        "shots_by_state": by_state,
+        "latest_final": project.relpath(final) if final else None,
+        "cost": cost,
+        "currency": spend.get("currency"),
+        "spend_source": spend.get("source"),
+    }
+
+
+def series_status(series: Series) -> dict[str, Any]:
+    """Per-episode aggregation over the EXISTING per-project machinery — read-only.
+
+    Each episode reuses :func:`_episode_build_summary` (``build.stale.
+    evaluate_all`` + ``Project.newest_final_path`` + ``build.spend.
+    spend_report``). An unreadable episode degrades to ``{"error": …}`` instead
+    of killing the whole table. A totals row sums shots / finals / cost across
+    the readable episodes.
+    """
     config = series.load_config()
     episodes: list[dict[str, Any]] = []
     totals = {"episodes": 0, "ok": 0, "errors": 0, "shots": 0, "finals": 0, "cost": 0.0}
@@ -453,27 +479,14 @@ def series_status(series: Series) -> dict[str, Any]:
         totals["episodes"] += 1
         try:
             project = series.open_episode(ref.id)
-            statuses = evaluate_all(project)
-            by_state: dict[str, int] = {}
-            for st in statuses:
-                by_state[st.state.value] = by_state.get(st.state.value, 0) + 1
-            final = project.newest_final_path()
-            spend = spend_report(project)
-            cost = float(spend.get("total") or 0.0)
-            entry.update({
-                "shots_total": len(statuses),
-                "shots_by_state": by_state,
-                "latest_final": project.relpath(final) if final else None,
-                "cost": cost,
-                "currency": spend.get("currency"),
-                "spend_source": spend.get("source"),
-            })
+            summary = _episode_build_summary(project)
+            entry.update(summary)
             totals["ok"] += 1
-            totals["shots"] += len(statuses)
-            totals["finals"] += 1 if final else 0
-            totals["cost"] += cost
-            if spend.get("currency"):
-                currency = spend["currency"]
+            totals["shots"] += summary["shots_total"]
+            totals["finals"] += 1 if summary["latest_final"] else 0
+            totals["cost"] += summary["cost"]
+            if summary["currency"]:
+                currency = summary["currency"]
         except Exception as exc:  # degrade per-episode, never kill the table
             entry["error"] = str(exc)
             totals["errors"] += 1
@@ -486,69 +499,107 @@ def series_status(series: Series) -> dict[str, Any]:
 # ---------------------------------------------------------- series_characters
 
 
-def series_characters(series: Series) -> dict[str, Any]:
-    """The GLOBAL character view (the "global character management" read model).
-
-    Keyed on the series bible's characters: for each, its per-episode presence
-    (in that episode's bible? diverged from the series entry?) and its per-episode
-    appearances (reusing the ``manju appearances`` walk per episode). Characters
-    present only in an episode bible (never promoted to the series bible) are
-    listed under ``episode_only`` so the global view is honest about drift.
+def _episode_asset_context(
+    series: Series, config: SeriesConfig,
+    kinds: tuple[str, ...] = ("characters", "scenes", "props"),
+) -> dict[str, dict[str, Any]]:
+    """Open every registered episode ONCE and collect what the asset-continuity
+    matrices need: each episode's own bible-by-kind maps (for ``kinds``) and its
+    ``appearances()`` walk (which reports characters/scenes/props together in
+    ONE pass — see :mod:`core.appearances`). Shared by :func:`series_characters`
+    and :func:`series_continuity` so N episode projects are opened once per
+    caller, not once per asset kind.
     """
     from .appearances import appearances
 
-    config = series.load_config()
-    series_chars = _load_series_bible_by_file(series).get("characters", {})
-    ep_ids = [e.id for e in config.episodes]
-
-    # Open each episode once: its appearances walk + its own characters bible.
     ep_ctx: dict[str, dict[str, Any]] = {}
     for ref in config.episodes:
         try:
             project = series.open_episode(ref.id)
             ep_ctx[ref.id] = {
-                "chars": _load_episode_bible_file(project, "characters"),
-                "app": appearances(project).get("characters", {}),
+                "bible_by_kind": {k: _load_episode_bible_file(project, k) for k in kinds},
+                "app": appearances(project),
                 "error": None,
             }
         except Exception as exc:
             ep_ctx[ref.id] = {"error": str(exc)}
+    return ep_ctx
 
-    characters: list[dict[str, Any]] = []
-    for cid, s_entry in series_chars.items():
-        row: dict[str, Any] = {
-            "id": cid,
-            "name": s_entry.get("name"),
-            "episodes": [],
-        }
+
+def _asset_continuity_matrix(
+    series: Series, kind: str, config: SeriesConfig, ep_ctx: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Generic present/diverged/appearances matrix for ONE addressable bible
+    kind (``characters``/``scenes``/``props`` — the kinds :mod:`core.
+    appearances` cross-references against shot fields) over ``ep_ctx`` (see
+    :func:`_episode_asset_context`).
+
+    Keyed on the SERIES bible's entries of ``kind``: for each, its per-episode
+    presence (in that episode's own bible copy? diverged from the series
+    entry?) and its per-episode appearances (the ``manju appearances`` walk).
+    Entries present only in an episode's bible (never promoted to the series
+    bible) are returned separately as ``episode_only`` so the view stays honest
+    about drift.
+
+    This is the ONE engine behind :func:`series_characters` (``kind=
+    "characters"``) and :func:`series_continuity`'s scenes/props panels — the
+    present/diverged/appearances logic used to live only inside
+    ``series_characters``; round AA7 (goal item 7) generalized it here because
+    ``appearances()`` already reports scenes and props in the exact same shape,
+    so duplicating the walk per kind would just be copy-paste.
+    """
+    series_entries = _load_series_bible_by_file(series).get(kind, {})
+    ep_ids = [e.id for e in config.episodes]
+
+    rows: list[dict[str, Any]] = []
+    for aid, s_entry in series_entries.items():
+        row: dict[str, Any] = {"id": aid, "name": s_entry.get("name"), "episodes": []}
         for eid in ep_ids:
             ctx = ep_ctx[eid]
             cell: dict[str, Any] = {"id": eid}
             if ctx.get("error"):
                 cell["error"] = ctx["error"]
             else:
-                ep_entry = ctx["chars"].get(cid)
+                ep_entry = ctx["bible_by_kind"].get(kind, {}).get(aid)
                 cell["present"] = ep_entry is not None
                 cell["diverged"] = bool(ep_entry is not None and ep_entry != s_entry)
-                cell["appearances"] = list((ctx["app"].get(cid) or {}).get("shots") or [])
+                cell["appearances"] = list(
+                    (ctx["app"].get(kind, {}).get(aid) or {}).get("shots") or [])
             row["episodes"].append(cell)
-        characters.append(row)
+        rows.append(row)
 
-    # Episode-only characters: in some episode's bible but never in the series one.
+    # Episode-only entries: in some episode's bible but never in the series one.
     episode_only: dict[str, list[str]] = {}
     for eid in ep_ids:
         ctx = ep_ctx[eid]
         if ctx.get("error"):
             continue
-        for cid in ctx["chars"]:
-            if cid not in series_chars:
-                episode_only.setdefault(cid, []).append(eid)
+        for aid in ctx["bible_by_kind"].get(kind, {}):
+            if aid not in series_entries:
+                episode_only.setdefault(aid, []).append(eid)
+
+    return {
+        "episodes": ep_ids,
+        "rows": rows,
+        "episode_only": [{"id": aid, "episodes": eps} for aid, eps in episode_only.items()],
+    }
+
+
+def series_characters(series: Series) -> dict[str, Any]:
+    """The GLOBAL character view (the "global character management" read model).
+
+    A thin wrapper over :func:`_asset_continuity_matrix` (``kind="characters"``)
+    — see that function for the present/diverged/appearances logic itself.
+    """
+    config = series.load_config()
+    ep_ctx = _episode_asset_context(series, config, kinds=("characters",))
+    matrix = _asset_continuity_matrix(series, "characters", config, ep_ctx)
 
     return {
         "series": config.name,
-        "episodes": ep_ids,
-        "characters": characters,
-        "episode_only": [{"id": cid, "episodes": eps} for cid, eps in episode_only.items()],
+        "episodes": matrix["episodes"],
+        "characters": matrix["rows"],
+        "episode_only": matrix["episode_only"],
         "note": (
             "全局角色视图以剧集总 bible 为准;present/diverged 描述每集自有副本,"
             "出场列复用 `manju appearances`。episode_only 为仅存在于分集 bible 的角色。"
@@ -710,6 +761,291 @@ def sync_bible(series: Series, *, apply: bool = False,
             + ("" if stopped_at is None else
                f" 本次同步在分集 {stopped_at} 处停止(该分集正被占用)——之前的分集已同步,"
                "稍后对该分集重跑 sync-bible 即可继续。")
+        ),
+    }
+
+
+# ----------------------------------------------------------- series_continuity
+
+
+# Packaging fields worth a cross-episode consistency glance — intro/outro/cover
+# are the "does this still feel like the same show" knobs (core/models.py's
+# PackagingCard/CoverSpec). Branding overlays (logo/watermark/badge/cta,
+# round-Q) are deliberately excluded: those commonly vary ON PURPOSE per
+# episode (a one-off sponsor badge, …), so flagging them would just be noise.
+_PACKAGING_FIELDS: dict[str, "Callable[[Any], Any]"] = {
+    "intro.enabled": lambda p: p.intro.enabled,
+    "intro.style_preset": lambda p: p.intro.style_preset,
+    "intro.template": lambda p: p.intro.template,
+    "outro.enabled": lambda p: p.outro.enabled,
+    "outro.style_preset": lambda p: p.outro.style_preset,
+    "outro.template": lambda p: p.outro.template,
+    "cover.mode": lambda p: p.cover.mode,
+    "cover.template": lambda p: p.cover.template,
+}
+
+
+def _packaging_outliers(pkg_by_episode: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mode-vs-outliers over each readable episode's ``timeline/packaging.yaml``
+    (intro/outro/cover knobs only — see :data:`_PACKAGING_FIELDS`).
+
+    PURELY REFERENTIAL (参考性提示, never a verdict input): a series is free to
+    vary its packaging per episode on purpose (a finale's extra-long outro, a
+    pilot's different intro card, …). This only surfaces "most episodes use X,
+    these N don't" for a human to glance at — nothing here is "wrong" by
+    construction.
+    """
+    from collections import Counter
+
+    out: list[dict[str, Any]] = []
+    if len(pkg_by_episode) < 2:
+        return out
+    for field, getter in _PACKAGING_FIELDS.items():
+        values = {eid: getter(pkg) for eid, pkg in pkg_by_episode.items()}
+        counts = Counter(values.values())
+        if len(counts) <= 1:
+            continue  # every episode agrees — nothing to flag
+        majority_value, _ = counts.most_common(1)[0]
+        outliers = [{"episode": eid, "value": v} for eid, v in values.items()
+                   if v != majority_value]
+        out.append({"field": field, "majority": majority_value, "outliers": outliers})
+    return out
+
+
+def _voice_divergence(series: Series, config: SeriesConfig) -> list[dict[str, Any]]:
+    """Which VOICE-SHAPING bible fields (``core.spec.VOICE_BIBLE_KEYS`` —
+    voice/voice_ref/voice_sample/voice_id/tone, exactly the fields
+    ``core.spec.voice_payload`` hashes into TTS staleness) differ between the
+    series bible and an episode's own copy, for every character present in
+    both.
+
+    A generic ``diverged`` flag (as :func:`sync_bible`/:func:`series_characters`
+    report it) only says SOMETHING about the entry differs — it could be an
+    unrelated note field. Series continuity cares specifically about voice: a
+    character whose ``voice_id`` silently drifts between episodes is exactly
+    the kind of thing that makes a series sound inconsistent, so it gets its
+    own report (round AA7, goal item 7).
+    """
+    from .spec import VOICE_BIBLE_KEYS
+
+    series_chars = _load_series_bible_by_file(series).get("characters", {})
+    out: list[dict[str, Any]] = []
+    for ref in config.episodes:
+        try:
+            project = series.open_episode(ref.id)
+        except Exception:
+            continue  # already reported as a broken episode by series_continuity
+        ep_chars = _load_episode_bible_file(project, "characters")
+        for cid, s_entry in series_chars.items():
+            ep_entry = ep_chars.get(cid)
+            if not isinstance(ep_entry, dict):
+                continue
+            changed = [k for k in VOICE_BIBLE_KEYS if s_entry.get(k) != ep_entry.get(k)]
+            if changed:
+                out.append({"id": cid, "episode": ref.id, "fields": changed})
+    return out
+
+
+_VERDICT_TOTALS_KEY = {
+    "完整": "complete", "缺素材": "missing_assets",
+    "有问题": "problem", "待同步": "needs_sync",
+}
+
+
+def series_continuity(series: Series) -> dict[str, Any]:
+    """The GLOBAL continuity dashboard (round AA, goal item 7) — everything
+    below is DERIVED from existing truth in one aggregation pass; nothing new
+    is stored.
+
+    Per episode:
+
+    - shot totals/selected/built — :func:`_episode_build_summary`, the SAME
+      probing :func:`series_status` already does (``selected`` = a take is
+      chosen — states fresh/stale/manual/broken; ``built`` = that take is
+      actually usable — states fresh/stale/manual, mirrors ``build.stale.
+      ShotBuildStatus.usable``);
+    - check error/warning counts — ``core.check.run_check`` verbatim;
+    - bible-sync state against the series bible — ONE :func:`sync_bible`
+      (``apply=False``) call up front, redistributed per episode from its
+      report (never re-implements the diff);
+    - reference orphan/missing counts — ``core.refs.refs_report`` verbatim;
+    - a derived VERDICT (see precedence below).
+
+    Cross-episode:
+
+    - a characters/scenes/props continuity matrix — :func:`_asset_continuity_matrix`,
+      the SAME engine :func:`series_characters` is built on, generalized because
+      ``appearances()`` already reports scenes/props in the identical shape;
+    - voice-field divergence — :func:`_voice_divergence`, narrowed to
+      ``core.spec.VOICE_BIBLE_KEYS`` (the fields that actually drive TTS
+      staleness), surfaced both as a flat list AND stamped onto the matching
+      characters-matrix cell (``voice_diverged``) so a diverged cell can say
+      WHETHER the divergence is voice-shaped or something else;
+    - a REFERENTIAL intro/outro/cover packaging-outlier report —
+      :func:`_packaging_outliers` (majority vs minority value per field);
+      honestly labelled 参考性提示 — it is never a verdict input, a series may
+      vary packaging per episode on purpose.
+
+    VERDICT PRECEDENCE (documented here — the ONE place it is decided). For a
+    readable episode, in order, the FIRST condition that applies wins:
+
+      1. 有问题 (problem)  — ``run_check`` reports at least one ERROR, or a
+         shot is in the ``broken`` state (selected take has no media on disk —
+         in practice already flagged by ``check`` too; kept here as an
+         explicit belt-and-braces signal in case a future check regresses).
+         The project's own truth is internally inconsistent — worse than
+         merely incomplete, so it outranks everything below.
+      2. 缺素材 (missing assets) — no errors, but a shot has no take at all
+         (state ``missing``), has takes but none SELECTED (state
+         ``needs_selection``), or a bible entry's ``ref_image``/``ref_video``
+         points at a file that no longer exists (``refs_report``'s
+         ``missing``). The episode is incomplete but not internally broken.
+      3. 待同步 (needs sync) — no errors and nothing missing, but the
+         episode's bible has a candidate ADD or a DIVERGED entry against the
+         series bible.
+      4. 完整 (complete) — none of the above.
+
+    ``check`` WARNINGS and ``refs_report``'s ORPHAN count (an unowned file
+    under media/refs) are reported as data but never move the verdict — they
+    are hygiene notes, not "this episode is unfinished or wrong".
+
+    An episode whose project cannot even be opened degrades to
+    ``{"id", "title", "error": …}`` exactly like :func:`series_status` — it
+    carries no verdict, and the cross-episode matrices surface the SAME error
+    string on its column rather than a silent gap (see
+    :func:`_asset_continuity_matrix`).
+
+    Read-only, no lock, no job: this walks each episode once (a few cheap
+    reads + one already-existing report function each) — over the round's
+    test fixtures (a handful of episodes) this is sub-second, so unlike
+    ``sync_bible``'s ``apply=True`` write path it is never routed through the
+    GUI job runner.
+    """
+    from .check import run_check
+    from .refs import refs_report
+
+    config = series.load_config()
+    sync_report = sync_bible(series, apply=False)
+    sync_by_ep = {e["id"]: e for e in sync_report["episodes"]}
+
+    episodes: list[dict[str, Any]] = []
+    totals = {
+        "episodes": 0, "ok": 0, "errors": 0,
+        "complete": 0, "missing_assets": 0, "problem": 0, "needs_sync": 0,
+        "check_errors": 0, "check_warnings": 0,
+        "ref_orphans": 0, "ref_missing": 0,
+        "bible_added": 0, "bible_diverged": 0,
+    }
+    needs_sync: list[str] = []
+    pkg_by_episode: dict[str, Any] = {}
+
+    for ref in config.episodes:
+        entry: dict[str, Any] = {"id": ref.id, "title": ref.title}
+        totals["episodes"] += 1
+        try:
+            project = series.open_episode(ref.id)
+            build = _episode_build_summary(project)
+            check = run_check(project)
+            refs = refs_report(project)
+            sync_ep = sync_by_ep.get(ref.id) or {}
+
+            by_state = build["shots_by_state"]
+            shots_missing = by_state.get("missing", 0)
+            shots_needs_selection = by_state.get("needs_selection", 0)
+            shots_broken = by_state.get("broken", 0)
+            check_errors = len(check.errors)
+            check_warnings = len(check.warnings)
+            ref_missing = len(refs["missing"])
+            ref_orphans = refs["orphan_count"]
+            bible_added = len(sync_ep.get("added") or [])
+            bible_diverged = len(sync_ep.get("diverged") or [])
+
+            if check_errors or shots_broken:
+                verdict = "有问题"
+            elif shots_missing or shots_needs_selection or ref_missing:
+                verdict = "缺素材"
+            elif bible_added or bible_diverged:
+                verdict = "待同步"
+            else:
+                verdict = "完整"
+
+            entry.update({
+                "shots_total": build["shots_total"],
+                "shots_by_state": by_state,
+                "shots_selected": (by_state.get("fresh", 0) + by_state.get("stale", 0)
+                                   + by_state.get("manual", 0) + shots_broken),
+                "shots_built": (by_state.get("fresh", 0) + by_state.get("stale", 0)
+                               + by_state.get("manual", 0)),
+                "latest_final": build["latest_final"],
+                "check_errors": check_errors,
+                "check_warnings": check_warnings,
+                "refs": {"total": refs["total"], "orphan": ref_orphans, "missing": ref_missing},
+                "bible_sync": {"added": bible_added, "diverged": bible_diverged,
+                               "refused": len(sync_ep.get("refused") or []),
+                               "in_sync": sync_ep.get("in_sync") or 0},
+                "verdict": verdict,
+            })
+            try:
+                pkg_by_episode[ref.id] = project.load_packaging()
+            except Exception:
+                pass  # a malformed packaging.yaml is already a check error above
+
+            totals["ok"] += 1
+            totals[_VERDICT_TOTALS_KEY[verdict]] += 1
+            totals["check_errors"] += check_errors
+            totals["check_warnings"] += check_warnings
+            totals["ref_orphans"] += ref_orphans
+            totals["ref_missing"] += ref_missing
+            totals["bible_added"] += bible_added
+            totals["bible_diverged"] += bible_diverged
+            if bible_added or bible_diverged:
+                needs_sync.append(ref.id)
+        except Exception as exc:  # degrade per-episode, never kill the table
+            entry["error"] = str(exc)
+            totals["errors"] += 1
+        episodes.append(entry)
+
+    # cross-episode continuity — the SAME asset-continuity engine
+    # series_characters is built on, generalized to scenes/props.
+    ep_ctx = _episode_asset_context(series, config)
+    char_matrix = _asset_continuity_matrix(series, "characters", config, ep_ctx)
+    scene_matrix = _asset_continuity_matrix(series, "scenes", config, ep_ctx)
+    prop_matrix = _asset_continuity_matrix(series, "props", config, ep_ctx)
+
+    voice_divergences = _voice_divergence(series, config)
+    voice_map: dict[tuple[str, str], list[str]] = {
+        (v["id"], v["episode"]): v["fields"] for v in voice_divergences
+    }
+    for row in char_matrix["rows"]:
+        for cell in row["episodes"]:
+            fields = voice_map.get((row["id"], cell["id"]))
+            if fields:
+                cell["voice_diverged"] = fields
+
+    packaging_outliers = _packaging_outliers(pkg_by_episode)
+
+    return {
+        "series": config.name,
+        "episodes": episodes,
+        "totals": totals,
+        "needs_sync": needs_sync,
+        "characters": char_matrix["rows"],
+        "scenes": scene_matrix["rows"],
+        "props": prop_matrix["rows"],
+        "episode_only": {
+            "characters": char_matrix["episode_only"],
+            "scenes": scene_matrix["episode_only"],
+            "props": prop_matrix["episode_only"],
+        },
+        "voice_divergences": voice_divergences,
+        "packaging_outliers": packaging_outliers,
+        "note": (
+            "跨集连续性看板:每集结论按 有问题(检查错误/镜头 broken)> 缺素材(镜头缺失/未选定,"
+            "或 bible 引用文件缺失)> 待同步(bible 有新增/分歧待同步)> 完整 的优先级推导"
+            "(详见函数 docstring);角色/场景/道具矩阵复用 series_characters 的同一引擎;"
+            "语音字段(voice/voice_ref/voice_sample/voice_id/tone)分歧单独标出(TTS 一致性"
+            "关键字段);片头/片尾/封面偏差(packaging_outliers)只是多数-少数参考性提示,"
+            "不同分集完全可以有意使用不同包装,不作为结论依据。"
         ),
     }
 

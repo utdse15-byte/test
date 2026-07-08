@@ -5325,6 +5325,19 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_text(series_page.render_series_js(),
                             "application/javascript; charset=utf-8")
             return True
+        if path == "/api/series/continuity":
+            # round AA7 (goal item 7): read-only aggregation, sub-second over
+            # this round's fixtures (see core.series.series_continuity's
+            # docstring) — a plain synchronous GET, no job runner needed,
+            # unlike sync-bible's apply=True write path below.
+            from ..core.series import Series, series_continuity
+
+            series = Series.find_or_none(self.server.project.root)
+            if series is None:
+                self._send_error_json("当前项目不属于任何剧集 (not part of a series)", 400)
+                return True
+            self._send_json(series_continuity(series))
+            return True
         if path in series_page.PAGE_PATHS_SERIES:
             html_doc = series_page.render(self.server.project, self.server.token)
             self._send_text(html_doc, "text/html; charset=utf-8",
