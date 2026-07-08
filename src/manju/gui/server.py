@@ -41,7 +41,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..core.container import Project, ProjectError
 from ..core.events import append_event, tail_events
-from ..core.idents import SAFE_SEGMENT_PATTERN
+from ..core.idents import SAFE_SEGMENT_PATTERN, is_safe_segment
 from .jobs import JobRunner
 from .state import build_state
 
@@ -490,6 +490,8 @@ class _Handler(BaseHTTPRequestHandler):
                 pass  # round-U 镜头实验室 shot lab — see _lab_get
             elif self._create_get(path, url):
                 pass  # round-V 创作 creation funnel workspace — see _create_get
+            elif self._ingest_get(path, url):
+                pass  # round-X 批量入库 batch ingest — see _ingest_get
             else:
                 self._send_error_json("not found", 404)
         except BrokenPipeError:
@@ -519,6 +521,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/lib/upload":  # round-S: stream upload straight into the library (S8b)
                 self._act_lib_upload(parse_qs(url.query))
+                return
+            if path == "/api/ingest/upload":  # round-X: stream upload into the ingest staging dir
+                self._act_ingest_upload(parse_qs(url.query))
                 return
             body = self._read_body()
             if body is None:
@@ -569,6 +574,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if self._lab_post(path, body):  # round-U 镜头实验室 shot lab actions
                     return
                 if self._create_post(path, body):  # round-V 创作 funnel actions
+                    return
+                if self._ingest_post(path, body):  # round-X 批量入库 batch ingest actions
                     return
                 self._send_error_json("not found", 404)
                 return
@@ -4116,3 +4123,199 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(" ".join(str(exc).split()), 400)
             return
         self._send_json({"ok": True, **result})
+
+    # =================================================================
+    # round-X 批量入库 BATCH INGEST (workflow smoothness goal #1): drop a batch
+    # of externally-produced files, classify them by filename convention onto
+    # specific project steps (take/voice/ref/import), review, confirm. Own
+    # dispatch region — the page + its static assets, a raw-byte upload route
+    # (mirrors /api/upload's streaming discipline, landing in a disposable
+    # per-batch staging dir since a browser cannot hand the engine a real
+    # directory path), and the plan/apply actions. Every mutating action runs
+    # through build/ingest.py — the SAME plan_ingest/apply_ingest `manju
+    # ingest` uses, so the CLI and the GUI can never disagree on a
+    # classification. apply runs on the jobs runner (serialized against
+    # builds) since it can touch ffmpeg previews.
+    # =================================================================
+
+    def _ingest_stage_dir(self, batch: str) -> Path:
+        return self.server.project.runtime_dir / "ingest-tmp" / batch
+
+    def _ingest_get(self, path: str, url: Any) -> bool:
+        """GET dispatch for the 批量入库 page + its static assets. Returns True
+        when handled (response already sent), False so do_GET falls through."""
+        from . import ingest_page
+
+        if path == "/ingest.css":
+            self._send_text(ingest_page.render_ingest_css(), "text/css; charset=utf-8")
+            return True
+        if path == "/ingest.js":
+            self._send_text(ingest_page.render_ingest_js(),
+                            "application/javascript; charset=utf-8")
+            return True
+        if path == ingest_page.PAGE_PATH:
+            html_doc = ingest_page.render(self.server.project, self.server.token)
+            self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
+            return True
+        return False
+
+    def _ingest_post(self, path: str, body: dict[str, Any]) -> bool:
+        """POST dispatch for the 批量入库 plan/apply actions. Same token/readonly
+        gates as every other mutating POST (checked in do_POST before us) — the
+        plan step is read-only on the PROJECT (it only reads the disposable
+        staging dir) but stays behind the same gate as everything else here."""
+        handler = {
+            "/api/ingest/plan": self._act_ingest_plan,
+            "/api/ingest/apply": self._act_ingest_apply,
+        }.get(path)
+        if handler is None:
+            return False
+        handler(body)
+        return True
+
+    def _act_ingest_upload(self, query: dict[str, list[str]]) -> None:
+        """Stream a browser upload into ``batch``'s disposable staging dir —
+        the ingest twin of ``_act_upload``/``_act_lib_upload``. Landed files
+        are NOT project truth (nothing under media/ or bible/ moves here);
+        they only become an ``IngestRow``'s source once ``/api/ingest/plan``
+        classifies them, and only land for real on ``/api/ingest/apply``."""
+        import uuid as _uuid
+
+        batch = (query.get("batch", [""])[0] or "").strip()
+        if not is_safe_segment(batch):
+            self._send_error_json("upload needs a valid ?batch=<id>", 400)
+            return
+        raw_name = (query.get("name", [""])[0] or "").strip()
+        raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
+        if not raw_name or raw_name.startswith("."):
+            self._send_error_json("upload needs ?name=<filename>", 400)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self._send_error_json("Content-Length required", 411)
+            return
+        if length > self._UPLOAD_MAX:
+            self._send_error_json("file too large (max 4 GiB)", 413)
+            return
+
+        stage = self._ingest_stage_dir(batch)
+        stage.mkdir(parents=True, exist_ok=True)
+        dest = stage / raw_name  # staging is disposable scratch — re-selecting a
+                                  # file just replaces its own staged copy
+        tmp = stage / f".up-{_uuid.uuid4().hex}"
+        received = 0
+        try:
+            with open(tmp, "wb") as f:
+                while received < length:
+                    chunk = self.rfile.read(min(1 << 20, length - received))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    received += len(chunk)
+            if received != length:
+                self._send_error_json("upload truncated", 400)
+                return
+            os.replace(tmp, dest)
+            self._send_json({"ok": True, "batch": batch, "name": raw_name})
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _act_ingest_plan(self, body: dict[str, Any]) -> None:
+        """Classify every file staged under ``batch`` — READ-ONLY, exactly
+        ``build.ingest.plan_ingest`` run against the staging dir as its one
+        directory argument (the same shape a CLI ``manju ingest <dir>`` call
+        takes). Nothing moves; this only returns the plan."""
+        from ..build.ingest import IngestError, plan_ingest
+
+        project = self.server.project
+        batch = str(body.get("batch") or "")
+        if not is_safe_segment(batch):
+            self._send_error_json("batch 不合法(仅字母数字下划线连字符)", 400)
+            return
+        stage = self._ingest_stage_dir(batch)
+        if not stage.exists() or not any(stage.iterdir()):
+            self._send_error_json("还没有已上传的文件 (batch 为空或不存在)", 400)
+            return
+        role = str(body.get("role") or "auto")
+        shot = body.get("shot") or None
+        try:
+            plan = plan_ingest(project, [stage], role=role, shot=str(shot) if shot else None)
+        except IngestError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        self._send_json({"batch": batch, **plan.to_dict()})
+
+    @staticmethod
+    def _ingest_overrides_from_body(raw: Any, rows: list[Any]) -> dict[int, dict[str, Any]]:
+        """``{"<row index>": {"action": "...", "id": "..."}}`` (the shape the
+        per-row dropdown + id text box in ``/ingest.js`` posts) -> the
+        ``build.ingest.apply_ingest`` override shape (``shot_id``/``asset_id``
+        split by the EFFECTIVE action, so one text box works for both)."""
+        overrides: dict[int, dict[str, Any]] = {}
+        if not isinstance(raw, dict):
+            return overrides
+        for k, v in raw.items():
+            try:
+                idx = int(k)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(v, dict) or not (0 <= idx < len(rows)):
+                continue
+            ov: dict[str, Any] = {}
+            action = str(v["action"]) if v.get("action") else rows[idx].action
+            if v.get("action"):
+                ov["action"] = action
+            row_id = v.get("id")
+            if row_id:
+                if action == "bible_ref":
+                    ov["asset_id"] = str(row_id)
+                elif action in ("take", "voice", "shot_ref"):
+                    ov["shot_id"] = str(row_id)
+            if ov:
+                overrides[idx] = ov
+        return overrides
+
+    def _act_ingest_apply(self, body: dict[str, Any]) -> None:
+        """Re-derive the plan from ``batch``'s staging dir (unchanged since
+        ``/api/ingest/plan`` — planning is read-only), apply any per-row
+        overrides from the reviewer, then execute through
+        ``build.ingest.apply_ingest`` on the jobs runner (serialized against
+        builds; an import row's preview generation shells out to ffmpeg).
+        The staging dir is removed once the job finishes — its bytes are
+        only ever a copy source, never itself project truth."""
+        import shutil
+
+        from ..build.ingest import IngestError, apply_ingest, plan_ingest
+
+        project, actor = self.server.project, self.server.actor
+        batch = str(body.get("batch") or "")
+        if not is_safe_segment(batch):
+            self._send_error_json("batch 不合法(仅字母数字下划线连字符)", 400)
+            return
+        stage = self._ingest_stage_dir(batch)
+        if not stage.exists() or not any(stage.iterdir()):
+            self._send_error_json("还没有已上传的文件 (batch 为空或不存在)", 400)
+            return
+        role = str(body.get("role") or "auto")
+        shot = body.get("shot") or None
+        raw_overrides = body.get("overrides")
+        if raw_overrides is not None and not isinstance(raw_overrides, dict):
+            self._send_error_json("overrides must be an object", 400)
+            return
+        try:
+            plan = plan_ingest(project, [stage], role=role, shot=str(shot) if shot else None)
+        except IngestError as exc:
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
+        overrides = self._ingest_overrides_from_body(raw_overrides, plan.rows)
+
+        def fn(job) -> dict[str, Any]:
+            result = apply_ingest(project, plan, actor=actor, overrides=overrides)
+            shutil.rmtree(stage, ignore_errors=True)
+            return {**plan.to_dict(), **result.to_dict()}
+
+        job = self.server.runner.submit("ingest", {"batch": batch, "rows": len(plan.rows)}, fn)
+        self._send_json({"job": job.to_dict()}, 202)

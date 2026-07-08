@@ -449,6 +449,106 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
                         fg=typer.colors.BRIGHT_BLACK)
 
 
+# ------------------------------------------------------------------ ingest
+# 批量入库 batch ingest (round X): the door for "a batch of assets processed
+# externally, mapped back onto specific project steps in one reviewed move".
+# `manju import` is one file -> media/imports; `ingest` is a directory/file
+# list -> per-file classification (take/voice/ref/import) by filename
+# convention, dry-run by default, `--apply` to execute. Same trusted
+# machine-level door as `import` (absolute paths allowed) — excluded from
+# MCP for the same reason (build/ingest.py's docstring).
+
+_INGEST_ACTION_ZH = {
+    "take": "新 take", "voice": "新配音 take", "shot_ref": "镜头参考图",
+    "bible_ref": "角色/场景/道具参考图", "import": "普通导入", "skip_duplicate": "跳过(重复)",
+}
+
+
+def _print_ingest_table(plan, result=None) -> None:
+    from .presets import display_width, pad
+
+    rows = plan.rows
+    if not rows:
+        typer.secho("没有匹配的文件 (no files matched)", fg=typer.colors.BRIGHT_BLACK)
+        return
+    name_w = max(display_width(r.name) for r in rows)
+    action_w = max(display_width(_INGEST_ACTION_ZH.get(r.action, r.action)) for r in rows)
+    target_w = max(display_width(r.target) for r in rows)
+    for i, row in enumerate(rows):
+        action_zh = _INGEST_ACTION_ZH.get(row.action, row.action)
+        color = typer.colors.YELLOW if row.action == "skip_duplicate" else (
+            typer.colors.BRIGHT_BLACK if row.action == "import" else typer.colors.CYAN)
+        status = ""
+        if result is not None:
+            r = result.results[i] if i < len(result.results) else None
+            if r is None:
+                status = "  [未执行]"
+            elif r.ok:
+                status = "  ✓"
+            else:
+                status = f"  ✗ {r.error}"
+        typer.secho(
+            f"{pad(row.name, name_w)}  {pad(action_zh, action_w)}  "
+            f"{pad(row.target, target_w)}  {row.reason}{status}",
+            fg=color,
+        )
+
+
+@app.command()
+def ingest(
+    paths: list[Path] = typer.Argument(..., help="目录或文件列表(外部产出的一批素材)"),
+    role: str = typer.Option("auto", "--role", help="auto | take | voice | ref"),
+    shot: Optional[str] = typer.Option(
+        None, "--shot", help="强制把这批文件都归到这一个镜头(如外部重生成了几条候选)"),
+    apply: bool = typer.Option(
+        False, "--apply", help="执行计划;默认只预演(dry-run),不改动任何文件"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """批量入库 batch ingest — 把外部产出的一批素材(目录或文件列表),按文件名约定
+    映射到具体的镜头/步骤(take/配音 take/参考图/普通导入),一次审阅后落地(§11)。
+
+    命名约定(锚定在文件名开头):``S001.mp4``/``S001_take.mp4``/``S001_v2.mov`` →
+    S001 的新 take;``S001.wav``/``S001_voice.mp3`` → S001 的新配音;
+    ``S001_ref.png``/``S001_ref2.png`` → S001 的参考图;``linxia_ref.png`` →
+    bible 角色/场景/道具 linxia 的参考图;其余按普通素材导入 media/imports,并注明原因。
+    内容已存在的文件会被跳过(素材只增不改,§3)。
+
+    默认只打印计划(dry-run,不改动任何文件);加 --apply 才真正执行,一行失败即停止,
+    并如实报告已经落地的部分。"""
+    from .build.ingest import IngestError, apply_ingest, plan_ingest
+
+    project = _project()
+    try:
+        plan = plan_ingest(project, paths, role=role, shot=shot)
+    except IngestError as exc:
+        _fail(str(exc), code="ingest_invalid")
+        raise  # unreachable
+
+    if not apply:
+        if as_json:
+            _emit(plan.to_dict(), True)
+        else:
+            _print_ingest_table(plan)
+            typer.secho("(dry-run — 加 --apply 才会真正写入;未改动任何文件)",
+                       fg=typer.colors.BRIGHT_BLACK)
+        return
+
+    with _write_lock(project):
+        result = apply_ingest(project, plan, actor=ACTOR)
+
+    if as_json:
+        _emit({**plan.to_dict(), **result.to_dict()}, True)
+    else:
+        _print_ingest_table(plan, result=result)
+    if result.stopped_at is not None:
+        _fail(
+            f"批量入库在第 {result.stopped_at + 1}/{len(plan.rows)} 行失败并停止 — "
+            "此前的行已经落地,不受影响(见上方 ✓);修正后重新运行 "
+            "`manju ingest ... --apply`,已落地的内容会被去重跳过",
+            code="ingest_partial_failure",
+        )
+
+
 # ------------------------------------------------------------------- build
 
 
