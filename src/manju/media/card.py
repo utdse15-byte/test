@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .ffmpeg import run_ffmpeg
 from .normalize import ANULLSRC
@@ -21,6 +22,23 @@ from .normalize import ANULLSRC
 Log = Callable[[str], None] | None
 
 FONT_ROOTS = (Path("/usr/share/fonts"),)
+
+# Round X (agent XG): card style presets for the drawtext floor (§8.4) — the
+# SAME preset names as media/html_card.py:CARD_STYLE_PRESETS (kept as two
+# separate tables on purpose: drawtext only understands solid colours, never
+# CSS gradients, so the "warm_gradient"/"neon" entries here are the closest
+# solid-colour approximation of the html_card look). "" (classic/no preset,
+# core/models.py:PACKAGING_CARD_PRESETS[0]) is intentionally ABSENT — callers
+# treat a miss as "keep caption_card's own defaults" (bg="black",
+# fontcolor="white", font_scale=1.0), which is exactly what caption_card
+# already did before this table existed, so a card without a preset renders
+# BYTE-IDENTICAL video bytes to before.
+CARD_STYLE_PRESETS: dict[str, dict[str, Any]] = {
+    "mono_black": {"bg": "black", "fontcolor": "white", "font_scale": 1.0},
+    "white_big": {"bg": "white", "fontcolor": "0x14161b", "font_scale": 1.3},
+    "warm_gradient": {"bg": "0xb5502e", "fontcolor": "white", "font_scale": 1.0},
+    "neon": {"bg": "0x05010c", "fontcolor": "0x39ff9c", "font_scale": 1.05},
+}
 
 
 def _escape(path: Path | str) -> str:
@@ -129,6 +147,8 @@ def caption_card(
     fps: int,
     duration_ms: int,
     bg: str = "black",
+    fontcolor: str = "white",
+    font_scale: float = 1.0,
     log: Log = None,
 ) -> Path:
     dest = Path(dest)
@@ -137,7 +157,9 @@ def caption_card(
     dur_s = duration_ms / 1000.0
     # Base the size on the SHORT edge so landscape cards don't blow the text
     # up relative to frame height (identical to before on portrait frames).
-    fontsize = max(12, min(width, height) // 12)
+    # font_scale defaults to 1.0 (round X, agent XG — CARD_STYLE_PRESETS), so
+    # an untouched caller computes the EXACT same fontsize as before.
+    fontsize = max(12, int(min(width, height) // 12 * font_scale))
     chars_per_line = max(1, width // fontsize - 1)
     wrapped = "\n".join(_wrap(text, chars_per_line))
 
@@ -151,7 +173,7 @@ def caption_card(
 
         draw_opts = [
             f"textfile={_escape(tmp_txt)}",
-            "fontcolor=white",
+            f"fontcolor={fontcolor}",
             f"fontsize={fontsize}",
             "x=(w-text_w)/2",
             "y=(h-text_h)/2",

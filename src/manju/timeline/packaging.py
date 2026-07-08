@@ -19,9 +19,22 @@ PACKAGING_ASSET_DIR = "media/generated/_packaging"
 
 
 def packaging_card_hash(card: PackagingCard, width: int, height: int, fps: int) -> str:
-    """Canonical hash of everything that shapes the rendered card asset."""
+    """Canonical hash of everything that shapes the rendered card asset.
+
+    Round X (agent XG): ``style_preset`` at its default ("") is stripped from
+    the payload before hashing — the same "additive field, omitted from the
+    key when at its byte-identical default" discipline as
+    ``VideoClip.source_in_ms`` (core/models.py). Without this, simply
+    DECLARING the new field would change every existing project's card hash
+    (and therefore its content-addressed path) even though nothing about the
+    rendered asset changed — a spurious re-key this module's own docstring
+    promises never happens for "same spec".
+    """
+    payload = card.model_dump()
+    if not payload.get("style_preset"):
+        payload.pop("style_preset", None)
     return hash_value(
-        {"card": card.model_dump(), "width": width, "height": height, "fps": fps}
+        {"card": payload, "width": width, "height": height, "fps": fps}
     )
 
 

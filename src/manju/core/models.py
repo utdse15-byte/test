@@ -603,6 +603,23 @@ class CaptionRules(ManjuModel):
     # burned ASS is recompiled FROM the human SRT (same takeover shape as §6)
     mode: Literal["compiled", "manual"] = "compiled"
 
+    # Round X (agent XG): explicit ASS burn-in style knobs
+    # (exporters/srt_ass.py's `_resolve_style` / `compile_ass` already read
+    # font/size/margin_v/primary_colour off `captions.model_dump()` — they were
+    # only reachable via ManjuModel's `extra="allow"` (a hand-edited
+    # rules.yaml), untyped and unbounded. Declaring them here makes the same
+    # knobs (plus outline/alignment, which the ASS writer used to hardcode)
+    # typed, bounded and GUI-writable. Every field defaults to None, which
+    # `_resolve_style` treats exactly like an absent key — an unset project
+    # renders BYTE-IDENTICAL ASS/SRT output (pinned in
+    # tests/test_edit_v3.py::test_caption_style_default_is_byte_identical).
+    font: str | None = None
+    size: int | None = None
+    primary_colour: str | None = None
+    margin_v: int | None = None
+    outline: int | None = None
+    alignment: int | None = None
+
     # Round W (issue #2/#6): the caption splitter's per-cue budget is
     # ``max_chars_per_line * max_lines`` — at 0 the budget is 0, and the split
     # loop used to advance by 0 characters per iteration (a non-advancing loop).
@@ -617,6 +634,42 @@ class CaptionRules(ManjuModel):
                 f"captions.{info.field_name} 必须 >= 1(实际 {v!r})— 为 0 时字幕拆分算法"
                 "每轮消耗 0 个字符,可能陷入不推进的死循环;请改成 >= 1 的整数"
             )
+        return v
+
+    # Round X (agent XG): bound the new style knobs — these are GUI-edited
+    # values (字幕样式 panel), so a bad one should fail fast at the model
+    # rather than silently corrupt the burned ASS. None (unset) always passes.
+    @field_validator("size", "outline")
+    @classmethod
+    def _nonneg_optional(cls, v: int | None, info) -> int | None:
+        if v is not None and v < 0:
+            raise ValueError(
+                f"captions.{info.field_name} 不能为负数(实际 {v!r})")
+        return v
+
+    @field_validator("margin_v")
+    @classmethod
+    def _nonneg_margin_v(cls, v: int | None) -> int | None:
+        if v is not None and v < 0:
+            raise ValueError(f"captions.margin_v 不能为负数(实际 {v!r})— 底部安全区边距 >= 0")
+        return v
+
+    @field_validator("alignment")
+    @classmethod
+    def _valid_alignment(cls, v: int | None) -> int | None:
+        if v is not None and not (1 <= v <= 9):
+            raise ValueError(
+                f"captions.alignment 必须在 1-9 之间(ASS numpad 布局,实际 {v!r})")
+        return v
+
+    @field_validator("primary_colour")
+    @classmethod
+    def _valid_primary_colour(cls, v: str | None) -> str | None:
+        import re as _re
+
+        if v is not None and not _re.fullmatch(r"&H[0-9A-Fa-f]{6,8}", v):
+            raise ValueError(
+                f"captions.primary_colour 必须是 ASS 颜色格式 &HAABBGGRR(实际 {v!r})")
         return v
 
 
@@ -647,6 +700,16 @@ class TimelineRules(ManjuModel):
 # ----------------------------------------------------------- packaging.yaml
 
 
+# Round X (agent XG): named style-preset combos for intro/outro cards
+# (media/card.py + media/html_card.py render the actual look; "" is the
+# historical hard-coded look, kept first so it is always the byte-identical
+# default). 简约黑 mono_black, 白底大字 white_big, 暖色渐变 warm_gradient,
+# 霓虹 neon — see media/card.py:CARD_STYLE_PRESETS / media/html_card.py:
+# CARD_STYLE_PRESETS for the actual font-scale / background / text-position
+# knobs each name maps to.
+PACKAGING_CARD_PRESETS = ("", "mono_black", "white_big", "warm_gradient", "neon")
+
+
 class PackagingCard(ManjuModel):
     """An intro/outro card that becomes a real segment in the timeline."""
 
@@ -655,6 +718,22 @@ class PackagingCard(ManjuModel):
     text: str = ""
     subtext: str = ""
     duration_ms: int = 2000
+    # Round X (agent XG): a named preset combo layered on top of `template`
+    # (font scale / bg colour-or-gradient / text position). "" (default) is a
+    # strict no-op — the renderer's historical hard-coded look, so an untouched
+    # packaging.yaml renders BYTE-IDENTICAL card assets (pinned in
+    # tests/test_edit_v3.py) and — because timeline/packaging.py's
+    # packaging_card_hash strips this key at its default — keeps the SAME
+    # content-addressed asset path too (no spurious re-key).
+    style_preset: str = ""
+
+    @field_validator("style_preset")
+    @classmethod
+    def _known_style_preset(cls, v: str) -> str:
+        if v not in PACKAGING_CARD_PRESETS:
+            raise ValueError(
+                f"packaging card.style_preset must be one of {PACKAGING_CARD_PRESETS}, got {v!r}")
+        return v
 
 
 class CoverSpec(ManjuModel):

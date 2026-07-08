@@ -2147,6 +2147,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/edit/wave":
             self._edit_wave(parse_qs(url.query))
             return True
+        if path == "/edit/caption-style-preview":
+            self._edit_caption_style_preview(parse_qs(url.query))
+            return True
         if path == "/api/edit/synchints":
             self._edit_synchints()
             return True
@@ -2154,6 +2157,9 @@ class _Handler(BaseHTTPRequestHandler):
             from . import edit
 
             self._send_json(edit.playback_source(self.server.project))
+            return True
+        if path == "/api/edit/playback-manifest":
+            self._edit_playback_manifest()
             return True
         if path == "/api/edit/snap":
             from .userstate import is_snap_enabled
@@ -2273,6 +2279,88 @@ class _Handler(BaseHTTPRequestHandler):
             timeline = None
         self._send_json(sync_hints_data(project, timeline))
 
+    # -------------------------------------------------- round X: Tier-2 preview
+
+    # Batch job kind for the missing-webpreview backfill a manifest GET
+    # enqueues — a stable string so we can dedupe against an already-in-flight
+    # batch instead of spamming the job history on every client poll.
+    _EDIT_PREVIEW_JOB_KIND = "edit_preview_batch"
+
+    def _edit_playback_manifest(self) -> None:
+        """Tier-2 timeline-preview manifest (round X §A): the ordered per-clip
+        rows :func:`edit.playback_manifest` computes (pure, stat-only — never
+        shells to ffmpeg), PLUS lazy generation: any source still missing its
+        webpreview is handed to the jobs runner as ONE batch job so the client
+        can poll it and re-fetch the manifest. Never resubmits while an
+        identical-kind batch is already in flight (a client polling this
+        endpoint every second while waiting must not spawn a job per poll)."""
+        from . import edit
+
+        project = self.server.project
+        manifest = edit.playback_manifest(project)
+        pending = manifest.get("pending_sources") or []
+        job_info = None
+        if pending:
+            active = [j for j in self.server.runner.list()
+                     if j.kind == self._EDIT_PREVIEW_JOB_KIND and j.active]
+            if active:
+                job_info = active[0].to_dict()
+            else:
+                sources = list(pending)
+
+                def fn(job: Any, _sources: list[str] = sources) -> dict[str, Any]:
+                    from ..media.webpreview import ensure_preview
+
+                    made = 0
+                    for rel in _sources:
+                        try:
+                            abspath = project.resolve(rel)
+                        except Exception:
+                            continue
+                        if abspath.is_file() and ensure_preview(project.root, abspath) is not None:
+                            made += 1
+                    return {"requested": len(_sources), "made": made}
+
+                job = self.server.runner.submit(
+                    self._EDIT_PREVIEW_JOB_KIND, {"sources": sources}, fn)
+                job_info = job.to_dict()
+        manifest["job"] = job_info
+        self._send_json(manifest)
+
+    def _edit_caption_style_preview(self, query: dict[str, list[str]]) -> None:
+        """Server-side burn of ONE sample cue with the PENDING (not-yet-saved)
+        字幕样式 form values (round X §B) — the ``look_preview_frame`` pattern
+        applied to captions. Query params mirror ``CaptionRules``'s new style
+        fields; an absent/blank one means "use the computed default", exactly
+        like leaving the form field empty. Always degrades to a 404 (never a
+        500) when ffmpeg is unavailable — a broken ``<img>``, not a page error."""
+        from .edit import caption_style_preview_frame
+
+        def _text(key: str) -> str | None:
+            v = (query.get(key, [""])[0] or "").strip()
+            return v or None
+
+        style: dict[str, Any] = {}
+        font = _text("font")
+        if font:
+            style["font"] = font
+        primary = _text("primary_colour")
+        if primary:
+            style["primary_colour"] = primary
+        for key in ("size", "margin_v", "outline", "alignment"):
+            raw = _text(key)
+            if raw is not None:
+                try:
+                    style[key] = int(raw)
+                except ValueError:
+                    pass
+        try:
+            frame = caption_style_preview_frame(self.server.project, style)
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split()), 404)
+            return
+        self._serve_file(frame)
+
     def _edit_post(self, path: str, body: dict[str, Any]) -> bool:
         """POST dispatch for the 剪辑 EDIT actions. Same token/readonly gates as
         every other mutating POST (checked in do_POST before us)."""
@@ -2287,6 +2375,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/edit/handle-rebuild": self._act_edit_handle_rebuild,
             "/api/edit/snap": self._act_edit_snap,
             "/api/edit/revert": self._act_edit_revert,
+            "/api/edit/caption-style": self._act_edit_caption_style,
         }.get(path)
         if handler is None:
             return False
@@ -3500,6 +3589,42 @@ class _Handler(BaseHTTPRequestHandler):
                               "via": "gui"})
         self._send_json(payload, status)
 
+    _CAPTION_STYLE_KEYS = ("font", "size", "primary_colour", "margin_v", "outline", "alignment")
+
+    def _act_edit_caption_style(self, body: dict[str, Any]) -> None:
+        """字幕样式面板 (round X §B) → ``rules.captions`` additive ASS style
+        knobs. Validate-on-save through CaptionRules' own bounds (rejects a
+        bad colour / out-of-range alignment etc.), check-gated write (the
+        rules-editor discipline), reverted if the save regresses `manju
+        check`. A key OMITTED from the body is left as-is; a key sent as
+        ``null`` explicitly CLEARS the override back to "let the ASS writer
+        compute its historical default" (byte-identical output — the panel's
+        恢复默认 button sends every key as null)."""
+        from ..core.models import CaptionRules
+        from ..core.yamlio import dump_yaml
+
+        project = self.server.project
+        with self.server.quick_mutex:
+            rules = project.load_rules()
+            current = rules.captions.model_dump()
+            for key in self._CAPTION_STYLE_KEYS:
+                if key in body:
+                    current[key] = body[key]
+            try:
+                rules.captions = CaptionRules.model_validate(current)
+            except Exception as exc:
+                self._send_error_json(
+                    "字幕样式无效 (invalid caption style): " + " ".join(str(exc).split()), 400)
+                return
+            ok, payload, status = self._gated_save(
+                project.rules_path, dump_yaml(rules.model_dump()),
+                label="timeline/rules.yaml")
+            if ok:
+                append_event(project.root, self.server.actor, "edit_rules",
+                             {"caption_style": {k: current.get(k) for k in
+                              self._CAPTION_STYLE_KEYS}, "via": "gui"})
+        self._send_json(payload, status)
+
     def _act_edit_snap(self, body: dict[str, Any]) -> None:
         """Persist the /edit snapping (magnet) toggle — a per-USER preference in
         gui_state.json (Native Cut v2 §B, additive key). No project write, no
@@ -3707,7 +3832,13 @@ class _Handler(BaseHTTPRequestHandler):
     def _t_card_preview(self, query: dict[str, list[str]]) -> None:
         """Live card-preview PNG through the real card chain (cardprev.render_card_preview),
         cached in .manju/frames. Always 200s: a placeholder SVG when NEITHER
-        renderer (Chromium / ffmpeg) is available."""
+        renderer (Chromium / ffmpeg) is available.
+
+        ``preset`` (round X, agent XG §C): one of core.models.
+        PACKAGING_CARD_PRESETS; an unknown/absent value falls back to ""
+        (classic — the historical look), same degrade-quietly stance as the
+        template allowlist below."""
+        from ..core.models import PACKAGING_CARD_PRESETS
         from .cardprev import render_card_preview
 
         project = self.server.project
@@ -3716,8 +3847,11 @@ class _Handler(BaseHTTPRequestHandler):
         template = query.get("template", ["chapter"])[0]
         if template not in ("chapter", "caption"):
             template = "chapter"
+        preset = query.get("preset", [""])[0] or ""
+        if preset not in PACKAGING_CARD_PRESETS:
+            preset = ""
         dest, _hit = render_card_preview(project, text=text, subtext=subtext,
-                                         template=template)
+                                         template=template, preset=preset)
         if dest is None:
             import html as _html
 

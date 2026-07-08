@@ -343,6 +343,19 @@ def _sfx_row(s: dict[str, Any], opts: list[dict[str, str]]) -> str:
 # ============================================================ 打包 packaging
 
 
+# Round X (agent XG §C): 4 named preset combos on top of `template` (font
+# scale / bg colour-or-gradient / text position — see media/card.py +
+# media/html_card.py:CARD_STYLE_PRESETS for the actual knobs). "" is the
+# classic/no-preset look, kept first so it is always the pre-selected default.
+_CARD_PRESET_OPTS = (
+    ("", "经典 classic"),
+    ("mono_black", "简约黑"),
+    ("white_big", "白底大字"),
+    ("warm_gradient", "暖色渐变"),
+    ("neon", "霓虹"),
+)
+
+
 def _card_form(kind: str, label: str, card: dict[str, Any]) -> str:
     tpl = card.get("template", "chapter")
     return (
@@ -351,6 +364,8 @@ def _card_form(kind: str, label: str, card: dict[str, Any]) -> str:
         + (" checked" if card.get("enabled") else "") + '> 启用 enabled</label>'
         '<div class="mx-row"><label>模板 template</label>'
         f'<select class="pk-template">{_tpl_opts(tpl)}</select></div>'
+        '<div class="mx-row"><label>预设样式 preset</label>'
+        f'<select class="pk-preset">{_preset_opts(card.get("style_preset", ""))}</select></div>'
         f'<div class="mx-row"><label>标题 text</label>'
         f'<input class="pk-text" type="text" value="{_e(card.get("text", ""))}"></div>'
         f'<div class="mx-row"><label>副标题 subtext</label>'
@@ -366,6 +381,14 @@ def _tpl_opts(current: str) -> str:
     out = []
     for v, lbl in (("chapter", "chapter 章节"), ("caption", "caption 字幕")):
         out.append(f'<option value="{v}"{" selected" if v == current else ""}>{lbl}</option>')
+    return "".join(out)
+
+
+def _preset_opts(current: str) -> str:
+    out = []
+    for v, lbl in _CARD_PRESET_OPTS:
+        out.append(f'<option value="{_e(v)}"{" selected" if v == (current or "") else ""}>'
+                   f'{_e(lbl)}</option>')
     return "".join(out)
 
 
@@ -918,7 +941,8 @@ _PAGES_T_JS = r"""
       var img = card.querySelector(".pk-prev-img");
       var q = "text=" + encodeURIComponent(elv(card, ".pk-text")) +
         "&subtext=" + encodeURIComponent(elv(card, ".pk-subtext")) +
-        "&template=" + encodeURIComponent(elv(card, ".pk-template"));
+        "&template=" + encodeURIComponent(elv(card, ".pk-template")) +
+        "&preset=" + encodeURIComponent(elv(card, ".pk-preset"));
       img.hidden = false; img.src = "/api/card-preview?" + q;
     }
     function coverCardPreview() {
@@ -992,6 +1016,7 @@ _PAGES_T_JS = r"""
     function cardPatch(sel) {
       var card = document.querySelector(sel);
       return { enabled: chk(card, ".pk-enabled"), template: elv(card, ".pk-template"),
+        style_preset: elv(card, ".pk-preset"),
         text: elv(card, ".pk-text"), subtext: elv(card, ".pk-subtext"),
         duration_ms: intv(card, ".pk-duration", 2000) };
     }

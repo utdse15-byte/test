@@ -167,6 +167,23 @@ def thumb_path_for(project_root: Path, source: Path) -> Path:
     )
 
 
+def preview_ready(project_root: Path, source: Path) -> bool:
+    """Is a browser-safe preview of ``source`` ALREADY cached — a pure,
+    stat-only check (round X, agent XG: the Tier-2 timeline-preview manifest
+    reads this so a plain manifest GET never shells to ffmpeg; see
+    :mod:`manju.gui.edit`'s ``playback_manifest``). ``True`` when ``source``
+    itself needs no transcode (already browser-safe) or its cache entry
+    exists; ``False`` on a cache miss OR when the source cannot be stat'ed/
+    hashed (unreadable, vanished, escaped the project) — never raises."""
+    source = Path(source)
+    try:
+        if not needs_preview(source):
+            return True
+        return preview_path_for(project_root, source).exists()
+    except OSError:
+        return False
+
+
 def ensure_preview(project_root: Path, source: Path, *, timeout_s: float = 600.0) -> Path | None:
     """Return a browser-safe preview of ``source``, transcoding on first request.
 

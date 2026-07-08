@@ -54,22 +54,33 @@ def render_packaging_card(
 ) -> Path:
     """Render one intro/outro card to ``dest`` (MP4). html_card preferred,
     drawtext floor — the caption_card fallback shape (§8.4). Duration is snapped
-    to the frame grid the way the compiler snaps clip durations (FIX-B)."""
+    to the frame grid the way the compiler snaps clip durations (FIX-B).
+
+    Round X (agent XG): ``card.style_preset`` (default ``""``) forwards to
+    both renderers — "" reproduces each renderer's historical hard-coded look
+    byte-for-byte (html_card.CARD_TEMPLATES / _TEMPLATE_DEFAULTS, card.py's
+    own caption_card defaults), so an untouched card is unaffected."""
     duration_ms = snap_to_frame_grid(card.duration_ms, fps)
     text = _card_text(card)
+    preset = getattr(card, "style_preset", "") or ""
     try:
         from .html_card import html_card_video
 
         return html_card_video(
             text, dest, width=width, height=height, fps=fps,
-            duration_ms=duration_ms, template=card.template, log=log,
+            duration_ms=duration_ms, template=card.template, preset=preset, log=log,
         )
     except Exception:  # adapter wall (§2.5): no/failed Chromium → drawtext floor
-        from .card import caption_card
+        from .card import CARD_STYLE_PRESETS, caption_card
 
+        floor_style = CARD_STYLE_PRESETS.get(preset, {})
         return caption_card(
             text, dest, width=width, height=height, fps=fps,
-            duration_ms=duration_ms, log=log,
+            duration_ms=duration_ms,
+            bg=floor_style.get("bg", "black"),
+            fontcolor=floor_style.get("fontcolor", "white"),
+            font_scale=floor_style.get("font_scale", 1.0),
+            log=log,
         )
 
 

@@ -39,16 +39,23 @@ def _preview_dims(project: Project) -> tuple[int, int]:
 
 def render_card_preview(
     project: Project, *, text: str, subtext: str = "", template: str = "chapter",
+    preset: str = "",
 ) -> tuple[Path | None, bool]:
     """Render (or reuse) a card-preview PNG. Returns ``(path, cache_hit)``.
 
     ``path`` is ``None`` only when NEITHER renderer is available (no Chromium and
     no working ffmpeg) — the caller then serves a placeholder. The write is
     atomic (temp + ``os.replace``) so a cached entry is always a complete PNG.
+
+    ``preset`` (round X, agent XG §C) is one of core.models.
+    PACKAGING_CARD_PRESETS — forwarded to both renderers so the live preview
+    matches ``media.packaging.render_packaging_card`` exactly. This cache is
+    ``.manju/frames`` (disposable, §3) so folding ``preset`` into the key is a
+    free re-key, never a byte-identity concern.
     """
     pw, ph = _preview_dims(project)
     body = f"{text}\n{subtext}".strip() if subtext else (text or "")
-    key = short_hash(cache_key(body, template, pw, ph, "cardpreview"))
+    key = short_hash(cache_key(body, template, pw, ph, "cardpreview", preset))
     cache = frames_cache_dir(project.root)
     dest = cache / f"card_{key}.png"
     if dest.exists():
@@ -63,7 +70,8 @@ def render_card_preview(
         with tempfile.NamedTemporaryFile(dir=cache, suffix=".png", delete=False) as tf:
             staged = Path(tf.name)
         try:
-            render_card_png(render_text, staged, width=pw, height=ph, template=template)
+            render_card_png(render_text, staged, width=pw, height=ph,
+                            template=template, preset=preset)
             os.replace(staged, dest)
             return dest, False
         finally:
@@ -73,7 +81,7 @@ def render_card_preview(
 
     # 2) floor: a drawtext card's first frame (§8.4).
     try:
-        from ..media.card import caption_card
+        from ..media.card import CARD_STYLE_PRESETS, caption_card
         from ..media.ffmpeg import run_ffmpeg
 
         config_fps = 24
@@ -81,10 +89,14 @@ def render_card_preview(
             config_fps = int(project.load_config().fps)
         except Exception:
             pass
+        floor_style = CARD_STYLE_PRESETS.get(preset, {})
         with tempfile.TemporaryDirectory(dir=cache) as tmp:
             mp4 = Path(tmp) / "card.mp4"
             caption_card(render_text, mp4, width=pw, height=ph, fps=config_fps,
-                         duration_ms=400)
+                         duration_ms=400,
+                         bg=floor_style.get("bg", "black"),
+                         fontcolor=floor_style.get("fontcolor", "white"),
+                         font_scale=floor_style.get("font_scale", 1.0))
             staged = Path(tmp) / "card.png"
             run_ffmpeg(["-i", str(mp4), "-frames:v", "1", str(staged)])
             if staged.is_file() and staged.stat().st_size > 0:

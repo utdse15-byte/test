@@ -166,7 +166,16 @@ def _resolve_style(
     margin_v = style.get("margin_v")
     margin_v = int(margin_v) if margin_v else max(1, height // 12)  # safe area §7④
     primary = str(style.get("primary_colour") or WHITE)
-    return {"font": font, "size": size, "margin_v": margin_v, "primary": primary}
+    # Round X (agent XG): outline width + alignment were hard-coded (3 / 2,
+    # bottom-centre) — now an explicit style key overrides them, an ABSENT key
+    # keeps the exact same historical constant, so an untouched project's ASS
+    # output stays byte-identical (pinned in tests/test_edit_v3.py).
+    outline = style.get("outline")
+    outline = int(outline) if outline not in (None, "") else 3
+    alignment = style.get("alignment")
+    alignment = int(alignment) if alignment not in (None, "") else 2
+    return {"font": font, "size": size, "margin_v": margin_v, "primary": primary,
+            "outline": outline, "alignment": alignment}
 
 
 def compile_ass(
@@ -202,11 +211,13 @@ def compile_ass(
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding"
     )
-    # BorderStyle 1 (outline+shadow), Outline=3, Shadow=0, Alignment=2 (bottom-centre).
+    # BorderStyle 1 (outline+shadow), Shadow=0. Outline/Alignment default to
+    # the historical 3 / 2 (bottom-centre) — see _resolve_style.
     style_line = (
         "Style: Default,"
         f"{st['font']},{st['size']},{st['primary']},{SECONDARY},{BLACK},{BLACK},"
-        f"0,0,0,0,100,100,0,0,1,3,0,2,{h_margin},{h_margin},{st['margin_v']},1"
+        f"0,0,0,0,100,100,0,0,1,{st['outline']},0,{st['alignment']},"
+        f"{h_margin},{h_margin},{st['margin_v']},1"
     )
     styles = "\n".join(["[V4+ Styles]", style_format, style_line])
 
@@ -254,7 +265,7 @@ def _caption_style(project: "Project") -> dict[str, Any]:
     try:
         extra = project.load_rules().captions.model_dump()
         for key in ("font", "size", "margin_v", "primary_colour",
-                    "max_chars_per_line"):
+                    "max_chars_per_line", "outline", "alignment"):
             if extra.get(key) is not None:
                 style[key] = extra[key]
     except Exception:

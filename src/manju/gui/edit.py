@@ -40,6 +40,28 @@ Round U deepens this into a real native-editing layer:
 
 Lanes only VISUALIZE — every mutation still goes through the inspector actions
 and the seam picker, never the lanes themselves.
+
+Round X (agent XG) closes three of the remaining "still need an external NLE"
+gaps (REPORTS/ROUND-V-REFERENCES-2.md §1's deferred Tier-2 plan):
+
+  * **Tier-2 timeline preview** — play the COMPILED timeline (order/trims)
+    BEFORE any final exists, by sequencing per-clip webpreviews through a
+    small pool of ``<video>`` elements (the Chromium 75-``WebMediaPlayer``-
+    per-frame cap, §1d) driven by ``/api/edit/playback-manifest``. Tier-1
+    (play the render) stays the default the moment a final/proxy exists; a
+    toggle switches to Tier-2. No mixed audio (voice/BGM) — the UI says so;
+    honest pending/unavailable rows per clip when a preview cannot be built.
+  * **字幕样式 caption style panel** — exposes the ASS burn-in knobs
+    ``exporters/srt_ass.py`` already reads (font/size/primary colour/outline/
+    margin-v/alignment) as an editor writing ``rules.captions``, with a
+    server-side one-cue burn preview (the ``look_preview_frame`` pattern).
+  * **卡片预设 card presets** — 4 named style combos for packaging intro/outro
+    cards (``media/card.py`` / ``media/html_card.py``), selectable in
+    ``/packaging``.
+
+All three are additive: every new model field defaults to a value that
+renders byte-identically to before it existed (pinned in
+``tests/test_edit_v3.py``).
 """
 
 from __future__ import annotations
@@ -64,6 +86,9 @@ __all__ = [
     "plan_revert",
     "UNDO_PANEL_NOTE",
     "STRIP_COUNT",
+    "playback_manifest",
+    "caption_style_preview_frame",
+    "TIER2_NOTE",
 ]
 
 # The routes this module owns (server.py delegates GET here).
@@ -88,6 +113,27 @@ _LOOK_LABELS = {
     "film": "胶片",
     "vivid": "浓郁",
 }
+
+# Round X (agent XG): Tier-2 timeline preview — no voice/BGM mix, so the UI
+# says so up front rather than letting a silent gap read as a bug.
+TIER2_NOTE = "时间线预览:无混音,粗剪画面为准"
+
+# Tier-2 <video> pool size (REPORTS §1d: Chromium caps ~75 WebMediaPlayers per
+# frame — never one <video> per clip; a small pool with the current clip
+# playing + the next one or two preloading is the whole discipline).
+TIER2_POOL_SIZE = 3
+
+# ASS numpad-layout alignment values worth exposing (skip the rarely-used
+# middle row 4/5/6 to keep the picker short); 2 (下中) is the historical
+# hard-coded default.
+_ALIGN_LABELS: tuple[tuple[int, str], ...] = (
+    (1, "左下 bottom-left"),
+    (2, "下中 bottom-center (默认)"),
+    (3, "右下 bottom-right"),
+    (7, "左上 top-left"),
+    (8, "上中 top-center"),
+    (9, "右上 top-right"),
+)
 
 
 def _e(x: Any) -> str:
@@ -257,6 +303,185 @@ def playback_source(project: Any) -> dict[str, Any]:
     except Exception:
         pass
     return {"kind": None, "rel": None, "url": None, "label": None, "stale": False}
+
+
+# ------------------------------------------------ Tier-2 timeline preview (§A)
+
+
+def playback_manifest(project: Any) -> dict[str, Any]:
+    """The Tier-2 playback manifest: the COMPILED timeline's 主轨道 as an
+    ORDERED list of ``{shot, start_ms, duration_ms, source_in_ms, source,
+    preview_url, status, reason}`` rows, so the client can sequence a small
+    pool of ``<video>`` elements over the UN-rendered edit (REPORTS
+    ROUND-V-REFERENCES-2.md §1d Tier 2 — before any final exists, or after an
+    edit a stale final no longer reflects).
+
+    Pure/read-only and NEVER shells to ffmpeg itself — readiness is a stat-only
+    check (:func:`media.webpreview.preview_ready`); a row whose preview is
+    missing is marked ``status: "pending"`` (never a URL that would 404), and
+    its source is also listed in the top-level ``pending_sources`` for the
+    caller to hand to the jobs runner (server.py's
+    ``/api/edit/playback-manifest`` GET does this — the manifest computation
+    itself stays free of any job-runner dependency so it is trivially unit-
+    testable). ``status: "unavailable"`` (with a ``reason``) covers a clip
+    whose source vanished/escaped the project — an honest empty state per
+    clip, never a crash.
+
+    Sources that are ALREADY browser-safe (webpreview.needs_preview is False —
+    most AI-generated takes already are, being H.264/AAC .mp4) skip the
+    /preview indirection entirely and point straight at ``/media/<rel>``, same
+    as Tier 1. ``preview_url`` never needs a source_in_ms/scale correction on
+    the client: webpreview transcodes only ever rescale the FRAME (width), the
+    timing axis is untouched (media/webpreview.py's encode args resize
+    ``-vf scale=...`` but never trim/retime), so ``source_in_ms`` maps straight
+    onto the preview's ``currentTime`` in seconds.
+    """
+    from urllib.parse import quote as _quote
+
+    from ..media.webpreview import needs_preview, preview_ready
+
+    timeline = _load_timeline(project)
+    if timeline is None or not timeline.tracks.video:
+        return {"duration_ms": 0, "clips": [], "pending_sources": [], "note": TIER2_NOTE}
+
+    clips_out: list[dict[str, Any]] = []
+    pending: list[str] = []
+    for vc in timeline.tracks.video:
+        row: dict[str, Any] = {
+            "shot": vc.shot,
+            "start_ms": int(vc.start_ms),
+            "duration_ms": int(vc.duration_ms),
+            "source_in_ms": int(getattr(vc, "source_in_ms", 0) or 0),
+            "source": None,
+            "preview_url": None,
+            "status": "unavailable",
+            "reason": None,
+        }
+        source = getattr(vc, "source", None)
+        if not source:
+            row["reason"] = "片段没有素材路径"
+            clips_out.append(row)
+            continue
+        try:
+            abspath = project.resolve(source)
+        except Exception:
+            row["reason"] = "素材路径无法解析"
+            clips_out.append(row)
+            continue
+        if not abspath.is_file():
+            row["reason"] = "素材文件不存在(可能已被移动或删除)"
+            clips_out.append(row)
+            continue
+        row["source"] = source
+        try:
+            if not needs_preview(abspath):
+                row["status"] = "ready"
+                row["preview_url"] = "/media/" + _quote(source, safe="/")
+            elif preview_ready(project.root, abspath):
+                row["status"] = "ready"
+                row["preview_url"] = "/preview/" + _quote(source, safe="/")
+            else:
+                row["status"] = "pending"
+                pending.append(source)
+        except Exception:
+            row["reason"] = "无法读取素材(权限或已损坏)"
+        clips_out.append(row)
+
+    return {
+        "duration_ms": int(getattr(timeline, "duration_ms", 0) or 0),
+        "clips": clips_out,
+        "pending_sources": pending,
+        "note": TIER2_NOTE,
+    }
+
+
+# ------------------------------------------------- caption style preview (§B)
+
+
+def caption_style_preview_frame(project: Any, style: dict[str, Any], *,
+                                sample_text: str = "示例字幕 Sample caption",
+                                preview_width: int = 360) -> Path:
+    """One frame preview of a pending 字幕样式 change: burns ONE sample cue
+    through the EXACT SAME pipeline the final render uses
+    (``exporters.srt_ass.compile_ass`` + ffmpeg's libass ``ass=`` filter,
+    ``media/render.py``'s own burn-in mechanism) so the preview matches the
+    eventual burned-in look precisely — the :func:`look_preview_frame`
+    precedent, applied to captions instead of a colour look.
+
+    Background = the newest final/proxy's first frame when one exists (real
+    footage — the most honest preview), else a neutral colour field at the
+    project's configured resolution (the ASS ``PlayResX/Y`` still matches the
+    real frame size, so the sample cue's absolute pixel geometry — font size,
+    margin-v safe area — reads exactly as it would in the final; only the
+    OUTPUT raster is downscaled to ``preview_width`` for the panel).
+
+    Content-addressed under ``.manju/frames`` (disposable — free to re-key on
+    every keystroke); raises on any ffmpeg failure (mirrors
+    :func:`look_preview_frame`'s degrade-to-404 contract for the caller).
+    """
+    import os
+    import tempfile
+
+    from ..core.hashing import cache_key, short_hash
+    from ..core.models import CaptionLine, Timeline, TimelineTracks
+    from ..exporters.srt_ass import compile_ass
+    from ..media.ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
+    from ..media.frames import extract_frame, frames_cache_dir
+    from ..media.render import _escape_filter_path
+
+    try:
+        config = project.load_config()
+        cw, ch = max(2, int(config.width)), max(2, int(config.height))
+    except Exception:
+        cw, ch = 1080, 1920
+
+    key = short_hash(cache_key("capstyle", sample_text, cw, ch, preview_width,
+                               sorted(style.items())))
+    cache = frames_cache_dir(project.root)
+    dest = cache / f"capstyle_{key}.jpg"
+    if dest.exists():
+        return dest
+    cache.mkdir(parents=True, exist_ok=True)
+
+    tl = Timeline(width=cw, height=ch, duration_ms=4000,
+                 tracks=TimelineTracks(captions=[
+                     CaptionLine(start_ms=0, end_ms=4000, text=sample_text)]))
+    ass_text = compile_ass(tl, width=cw, height=ch, style=style)
+
+    fd, ass_tmp_name = tempfile.mkstemp(dir=str(cache), prefix=".capstyle_", suffix=".ass")
+    ass_tmp = Path(ass_tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(ass_text)
+
+        bg_frame: Path | None = None
+        src = playback_source(project)
+        if src["kind"] is not None and src["rel"]:
+            try:
+                bg_frame = extract_frame(project, src["rel"], 0, width=cw)
+            except Exception:
+                bg_frame = None
+
+        vf = (f"scale={cw}:{ch},ass={_escape_filter_path(ass_tmp)},"
+              f"scale='min({int(preview_width)},iw)':-2")
+        log = default_log(project.root, "frames")
+        with atomic_output(dest) as tmp:
+            if bg_frame is not None:
+                cmd = ["-i", str(bg_frame), "-vf", vf, "-frames:v", "1",
+                      "-update", "1", "-q:v", "3", str(tmp)]
+            else:
+                cmd = ["-f", "lavfi", "-i", f"color=c=0x1c2733:s={cw}x{ch}",
+                      "-vf", vf, "-frames:v", "1", "-update", "1", "-q:v", "3",
+                      str(tmp)]
+            run_ffmpeg(cmd, log=log)
+            if not Path(tmp).is_file() or Path(tmp).stat().st_size == 0:
+                raise MediaError("no caption-style preview frame produced")
+    finally:
+        try:
+            ass_tmp.unlink()
+        except OSError:
+            pass
+    return dest
 
 
 # ------------------------------------------------------- honest undo (v2 §C)
@@ -692,12 +917,16 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     # ---- honest-undo panel (git-backed; hidden until toggled) — v2 §C
     out.append(_undo_panel())
 
-    # ---- preview player (plays the newest final/proxy) — v2 §D
-    out.append(_playback_section(project))
+    # ---- preview player: Tier 1 (plays the render) + Tier 2 (round X, sequences
+    # per-clip previews of the COMPILED timeline before any final exists) — v2 §D / §A
+    out.append(_playback_section(project, timeline))
 
     # ---- transitions default + look pickers
     out.append(_transitions_panel(td_type, td_dur))
     out.append(_look_panel(look))
+
+    # ---- 字幕样式 caption style panel (round X §B)
+    out.append(_caption_style_panel(project, rules))
 
     # ---- multi-track lanes view (from the COMPILED timeline, read-only)
     out.append(_lanes_section(project, timeline, snap_on))
@@ -1080,6 +1309,69 @@ def _look_panel(look: Any) -> str:
         "</section>")
 
 
+def _caption_style_panel(project: Any, rules: Any) -> str:
+    """字幕样式 caption style panel (round X §B): the ASS burn-in knobs
+    ``exporters/srt_ass.py`` already honors (font/size/primary colour/outline/
+    margin-v/alignment), writing ``rules.captions`` additive style fields.
+    Every input's VALUE is the current override (empty when unset) and its
+    PLACEHOLDER is the computed fallback the ASS writer uses when unset — so
+    leaving a field blank visibly means "使用系统默认值", never a silent
+    guess. Hints beside the controls are the subtitle-standards skill's
+    numbers (CJK ≤16 横屏 / ~9–10 竖屏 per line, 竖屏安全区 顶150/底300px)."""
+    from ..exporters.srt_ass import DEFAULT_FONT
+
+    cap = getattr(rules, "captions", None)
+    try:
+        config = project.load_config()
+        cw, ch = int(config.width), int(config.height)
+    except Exception:
+        cw, ch = 1080, 1920
+    default_size = max(36, ch // 22)
+    default_margin = max(1, ch // 12)
+    font = (getattr(cap, "font", None) or "") if cap else ""
+    size = getattr(cap, "size", None) if cap else None
+    primary = (getattr(cap, "primary_colour", None) or "") if cap else ""
+    margin_v = getattr(cap, "margin_v", None) if cap else None
+    outline = getattr(cap, "outline", None) if cap else None
+    alignment = (getattr(cap, "alignment", None) if cap else None) or 2
+    align_opts = "".join(
+        f'<option value="{v}"{" selected" if v == alignment else ""}>{_e(lbl)}</option>'
+        for v, lbl in _ALIGN_LABELS)
+    portrait = ch >= cw
+    line_hint = ("竖屏建议每行 ≤ 9–10 个 CJK 字" if portrait else "横屏建议每行 ≤ 16 个 CJK 字")
+    safe_hint = "竖屏安全区:顶部 ~150px、底部 ~300px(字幕带需在其上方)" if portrait else ""
+    return (
+        '<section class="panel ed-capstyle-panel mj-pro-only"><h2>字幕样式 Caption style</h2>'
+        f'<p class="muted ed-hint">{_e(line_hint)}'
+        + (f' · {_e(safe_hint)}' if safe_hint else '')
+        + ' · 留空 = 使用系统默认值(不改变现有输出)。</p>'
+        '<div class="ed-cs-row">'
+        f'<label>字体 font <input id="ed-cs-font" type="text" value="{_e(font)}" '
+        f'placeholder="{_e(DEFAULT_FONT)}"></label>'
+        f'<label>字号 size <input id="ed-cs-size" class="ed-num" type="number" min="12" max="200" '
+        f'value="{_e("" if size is None else size)}" placeholder="{default_size}"></label>'
+        f'<label>主色 primary <input id="ed-cs-primary" type="text" value="{_e(primary)}" '
+        'placeholder="&H00FFFFFF" title="ASS 颜色格式 &amp;HAABBGGRR"></label>'
+        "</div>"
+        '<div class="ed-cs-row">'
+        f'<label>描边 outline <input id="ed-cs-outline" class="ed-num" type="number" min="0" max="10" '
+        f'value="{_e("" if outline is None else outline)}" placeholder="3"></label>'
+        f'<label>底部安全区 margin-v (px) <input id="ed-cs-marginv" class="ed-num" type="number" '
+        f'min="0" max="600" value="{_e("" if margin_v is None else margin_v)}" '
+        f'placeholder="{default_margin}"></label>'
+        f'<label>对齐 alignment <select id="ed-cs-align">{align_opts}</select></label>'
+        "</div>"
+        '<div class="btnrow">'
+        '<button class="btn" id="ed-cs-apply">保存字幕样式</button>'
+        '<button class="btn ghost" id="ed-cs-reset">恢复默认(清空覆盖)</button>'
+        "</div>"
+        '<figure class="ed-cs-preview" id="ed-cs-preview">'
+        '<img alt="" id="ed-cs-preview-img" loading="lazy">'
+        '<figcaption class="muted ed-hint">样式预览(服务端用示例字幕真实烧录一帧)</figcaption>'
+        "</figure>"
+        "</section>")
+
+
 def _undo_panel() -> str:
     """The honest-undo surface (v2 §C): a collapsible toolbar panel the JS fills
     from ``/api/edit/undo``. Hidden until the 撤销 button toggles it. Server-
@@ -1097,34 +1389,89 @@ def _undo_panel() -> str:
         "</section>")
 
 
-def _playback_section(project: Any) -> str:
-    """The preview player above the lanes (v2 §D, Tier 1): one ``<video>`` over
-    the newest final/proxy served by the Range-capable ``/media`` endpoint, with
-    an honest empty state (先构建) when neither exists. The playhead syncs both
-    ways in ``/edit.js`` (timeupdate → playhead; ruler click/step → seek)."""
+def _playback_section(project: Any, timeline: Any) -> str:
+    """The preview player above the lanes: Tier 1 (v2 §D — play the render,
+    the default the moment a final/proxy exists) and Tier 2 (round X §A —
+    sequence per-clip webpreviews of the COMPILED timeline, so an edit can be
+    scrubbed BEFORE any final exists, or after further edits a stale final no
+    longer reflects). A toggle switches tiers when both are genuinely
+    available; when only one is, that one renders directly with no pointless
+    toggle-to-nothing. Neither → one honest combined empty state (unchanged
+    from before this round). The playhead syncs both ways in ``/edit.js``
+    regardless of which tier is active (timeupdate → playhead; ruler
+    click/step → seek; Space/←→ dispatch to whichever tier is active)."""
     src = playback_source(project)
-    if src["kind"] is None:
+    has_t1 = src["kind"] is not None
+    has_t2 = timeline is not None and bool(timeline.tracks.video)
+    default_tier = 1 if has_t1 else (2 if has_t2 else 0)
+
+    if not has_t1 and not has_t2:
         return (
-            '<section class="panel ed-play-panel" id="ed-play-panel" data-kind="">'
+            '<section class="panel ed-play-panel" id="ed-play-panel" data-kind="" '
+            'data-default-tier="0">'
             '<h2>预览播放 Preview</h2>'
             '<p class="muted ed-hint" id="ed-play-empty">还没有成片或预览版可播放 —— '
             '先构建(点上方“重新构建”),这里就能按空格播放整条时间线,播放头与多轨道联动。'
             '(在此之前,点击标尺仍显示定格预览。)</p></section>')
-    kind_label = "成片 final" if src["kind"] == "final" else "预览版 proxy"
-    stale = ('<span class="chip ed-dirty" id="ed-play-stale" '
-             'title="有未构建的修改,成片可能已过期">成片可能已过期</span>'
-             if src["stale"] else "")
-    return (
+
+    parts: list[str] = [
         '<section class="panel ed-play-panel" id="ed-play-panel" '
-        f'data-kind="{_e(src["kind"])}" data-src="{_e(src["url"])}">'
-        '<div class="ed-play-head"><h2>预览播放 Preview</h2>'
-        f'<span class="chip ed-play-kind">{_e(kind_label)} · {_e(src["label"])}</span>'
-        f'{stale}</div>'
-        '<video class="ed-play-video" id="ed-preview-video" preload="metadata" '
-        f'playsinline controls src="{_e(src["url"])}"></video>'
-        '<p class="muted ed-hint">空格 播放/暂停 · ←/→ 逐帧(Shift=1 秒) · '
-        '点击下方标尺跳转 —— 播放头与多轨道联动。</p>'
-        "</section>")
+        f'data-kind="{_e(src["kind"] or "")}" data-src="{_e(src["url"] or "")}" '
+        f'data-default-tier="{default_tier}">',
+        '<div class="ed-play-head"><h2>预览播放 Preview</h2>',
+    ]
+    if has_t1 and has_t2:
+        parts.append(
+            '<button class="btn ghost mini" id="ed-play-tier-toggle" type="button" '
+            'aria-pressed="false" title="在“成片/预览版”与“时间线预览(粗剪)”之间切换">'
+            '切到时间线预览 Tier 2</button>')
+    parts.append("</div>")
+
+    # ---- Tier 1: play the render (v2 §D) ----
+    t1_hidden = "" if default_tier == 1 else " hidden"
+    parts.append(f'<div class="ed-tier1" id="ed-tier1"{t1_hidden}>')
+    if has_t1:
+        kind_label = "成片 final" if src["kind"] == "final" else "预览版 proxy"
+        stale = ('<span class="chip ed-dirty" id="ed-play-stale" '
+                 'title="有未构建的修改,成片可能已过期">成片可能已过期</span>'
+                 if src["stale"] else "")
+        parts.append(
+            f'<span class="chip ed-play-kind">{_e(kind_label)} · {_e(src["label"])}</span>'
+            f'{stale}'
+            '<video class="ed-play-video" id="ed-preview-video" preload="metadata" '
+            f'playsinline controls src="{_e(src["url"])}"></video>'
+            '<p class="muted ed-hint">空格 播放/暂停 · ←/→ 逐帧(Shift=1 秒) · '
+            '点击下方标尺跳转 —— 播放头与多轨道联动。</p>')
+    else:
+        parts.append('<p class="muted ed-hint">还没有成片或预览版 —— 构建后在此播放最终画面'
+                     '(转场/调色/混音全部生效)。</p>')
+    parts.append("</div>")
+
+    # ---- Tier 2 (round X §A): sequence per-clip previews of the timeline ----
+    t2_hidden = "" if default_tier == 2 else " hidden"
+    parts.append(f'<div class="ed-tier2" id="ed-tier2"{t2_hidden}>')
+    if has_t2:
+        pool = "".join(
+            f'<video class="ed-t2-video" data-slot="{i}" playsinline preload="auto"></video>'
+            for i in range(TIER2_POOL_SIZE))
+        parts.append(
+            f'<div class="ed-t2-pool" id="ed-t2-pool" data-pool-size="{TIER2_POOL_SIZE}">'
+            f'{pool}</div>'
+            '<div class="ed-t2-controls">'
+            '<button class="btn ghost mini" id="ed-t2-play" type="button">'
+            '▶ 播放时间线预览</button>'
+            '<span class="muted ed-hint" id="ed-t2-status"></span></div>'
+            f'<p class="muted ed-hint">{_e(TIER2_NOTE)} —— 按片段依次播放各自的 proxy/预览版,'
+            '不做转场特效;空格/←→/标尺与 Tier 1 共用。'
+            '<a href="#" id="ed-t2-clip-toggle">哪些片段还没生成预览?</a></p>'
+            '<div class="ed-t2-clip-status muted ed-hint hidden" id="ed-t2-clip-status"></div>')
+    else:
+        parts.append('<p class="muted ed-hint">还没有编译的时间线 —— 构建一次后即可在渲染成片前'
+                     '按剪辑顺序/裁剪预览(粗剪,无转场无混音)。</p>')
+    parts.append("</div>")
+
+    parts.append("</section>")
+    return "".join(parts)
 
 
 # ------------------------------------------------------------------ tiny reads
@@ -1361,6 +1708,33 @@ kbd { font-family: var(--mono); font-size: .8rem; background: var(--panel2);
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .ed-play-video:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* -------- round X: Tier-1/Tier-2 toggle + pooled Tier-2 preview (§A) -------- */
+.ed-tier1.hidden, .ed-tier2.hidden { display: none; }
+.ed-t2-pool { position: relative; width: 100%; max-width: 640px; margin-top: .6rem; }
+.ed-t2-video { width: 100%; border-radius: 8px; border: 1px solid var(--line);
+  background: #000; display: none; }
+.ed-t2-video.active { display: block; }
+.ed-t2-controls { display: flex; align-items: center; gap: .7rem; margin-top: .5rem; }
+.ed-t2-clip-status.hidden { display: none; }
+.ed-t2-clip-status { margin-top: .4rem; }
+.ed-t2-clip-row { display: flex; gap: .5rem; align-items: baseline; }
+.ed-t2-clip-row .bad { color: var(--err); }
+.ed-t2-clip-row .warn { color: var(--warn); }
+#ed-play-tier-toggle:focus-visible, #ed-t2-play:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* -------- round X: 字幕样式 caption style panel (§B) -------- */
+.ed-cs-row { display: flex; flex-wrap: wrap; gap: .9rem; align-items: center; margin: .5rem 0; }
+.ed-cs-row input, .ed-cs-row select {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .25rem .45rem; font: inherit;
+}
+.ed-cs-row input[type="text"] { width: 11rem; }
+.ed-cs-preview { margin-top: .8rem; max-width: 360px; }
+.ed-cs-preview img { width: 100%; border-radius: 8px; border: 1px solid var(--line);
+  background: #000; display: block; }
 """
 
 
@@ -1751,6 +2125,11 @@ _EDIT_JS = r"""
   var snapOn = lanes ? lanes.getAttribute("data-snap") === "1" : true;
   var playheadMs = 0;
   var video = document.getElementById("ed-preview-video");
+  // round X §A: which playback tier is currently driving Space/←→/the ruler —
+  // 1 = play the render (Tier 1), 2 = pooled per-clip preview (Tier 2). Baked
+  // server-side (data-default-tier) so the FIRST keypress is already correct.
+  var playPanel = document.getElementById("ed-play-panel");
+  var activeTier = playPanel ? (parseInt(playPanel.getAttribute("data-default-tier"), 10) || 0) : 0;
 
   function snapTargets() {
     // clip boundaries + caption cue edges + whole seconds (Native Cut v2 §B)
@@ -1816,12 +2195,15 @@ _EDIT_JS = r"""
   // seekTo: move the playhead (snapping unless bypassed), seek the <video>, and
   // show a still frame while paused. opts.fromVideo = driven by timeupdate (no
   // re-seek, no still); opts.bypass = Alt held / frame-step (skip snapping).
+  // round X §A: when Tier 2 is active, the "video" driven is whichever pool
+  // slot is playing the covering clip — t2SeekAndPlay owns that.
   function seekTo(ms, opts) {
     opts = opts || {};
     ms = Math.max(0, Math.min(lanesTotal, Math.round(ms)));
     if (!opts.fromVideo && !opts.bypass) ms = applySnap(ms);
     playheadMs = ms;
     paintPlayhead(ms);
+    if (activeTier === 2) { t2SeekAndPlay(ms, t2Playing); return; }
     if (video && !opts.fromVideo) { try { video.currentTime = ms / 1000; } catch (e) {} }
     if (!video || video.paused) stillFrameAt(ms);
   }
@@ -1832,11 +2214,209 @@ _EDIT_JS = r"""
     });
   }
   function togglePlay() {
+    if (activeTier === 2) {
+      if (t2Playing) { t2Playing = false; t2PauseActive(); }
+      else { t2Playing = true; t2SeekAndPlay(playheadMs, true); }
+      return;
+    }
     if (!video) { toast("先构建成片或预览版再播放", false); return; }
     if (video.paused) { video.play().catch(function () {}); }
     else { video.pause(); }
   }
   function stepFrame(dir, big) { seekTo(playheadMs + dir * (big ? 1000 : frameMs), { bypass: true }); }
+
+  // ======================================================= round X §A: Tier 2
+  // pooled per-clip timeline preview (REPORTS ROUND-V-REFERENCES-2.md §1d —
+  // the Chromium ~75-WebMediaPlayer-per-frame cap: never one <video> per clip,
+  // a small pool with the current clip playing + the next preloading).
+  var t2Pool = Array.prototype.slice.call(document.querySelectorAll(".ed-t2-video"));
+  var T2_POOL_SIZE = t2Pool.length;  // server-rendered pool size (edit.py TIER2_POOL_SIZE)
+  var t2ActiveSlot = 0;
+  var t2CurrentClip = -1;
+  var t2Playing = false;
+  var t2Manifest = null;
+  var t2PollTimer = null;
+
+  function t2ShowSlot(slot) {
+    for (var i = 0; i < t2Pool.length; i++) t2Pool[i].classList.toggle("active", i === slot);
+  }
+  function t2StatusNote(text) {
+    var el = document.getElementById("ed-t2-status");
+    if (el) el.textContent = text || "";
+  }
+  function t2PauseActive() {
+    var v = t2Pool[t2ActiveSlot];
+    if (v) v.pause();
+  }
+  function t2RenderClipStatus() {
+    var host = document.getElementById("ed-t2-clip-status");
+    if (!host || !t2Manifest) return;
+    host.textContent = "";
+    var clips = t2Manifest.clips || [];
+    var problems = clips.filter(function (c) { return c.status !== "ready"; });
+    if (!problems.length) {
+      var ok = document.createElement("p");
+      ok.textContent = "全部 " + clips.length + " 个片段的预览已就绪。";
+      host.appendChild(ok);
+      return;
+    }
+    problems.forEach(function (c) {
+      var row = document.createElement("div");
+      row.className = "ed-t2-clip-row";
+      var tag = document.createElement("span");
+      tag.className = c.status === "pending" ? "warn" : "bad";
+      tag.textContent = c.shot + "：" + (c.status === "pending" ? "生成中…" : (c.reason || "不可用"));
+      row.appendChild(tag);
+      host.appendChild(row);
+    });
+  }
+  function t2LoadManifest(cb) {
+    fetch("/api/edit/playback-manifest").then(function (r) { return r.json(); })
+      .then(function (d) {
+        t2Manifest = d;
+        t2RenderClipStatus();
+        var pendingN = (d.clips || []).filter(function (c) { return c.status === "pending"; }).length;
+        if (pendingN) {
+          t2StatusNote(pendingN + " 个片段的预览正在生成…");
+          if (d.job && d.job.id && d.job.state !== "done" && d.job.state !== "failed") {
+            pollJob(d.job.id, function () { t2LoadManifest(cb); });
+          }
+        } else if (t2Manifest.clips && t2Manifest.clips.length) {
+          t2StatusNote("");
+        } else {
+          t2StatusNote("时间线里还没有主轨道片段");
+        }
+        if (cb) cb(d);
+      }).catch(function () { t2StatusNote("预览清单加载失败"); });
+  }
+  function t2ClipAt(ms) {
+    if (!t2Manifest) return null;
+    var clips = t2Manifest.clips || [];
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i];
+      if (ms >= c.start_ms && ms < c.start_ms + c.duration_ms) return { clip: c, index: i };
+    }
+    if (clips.length && ms >= clips[clips.length - 1].start_ms + clips[clips.length - 1].duration_ms) {
+      return null;  // past the last clip — nothing covers the playhead
+    }
+    return clips.length ? { clip: clips[0], index: 0 } : null;
+  }
+  // Preload the NEXT ready clip into the pool slot that will become active
+  // next — the "second hidden <video> pre-seeked to the next clip" the 75-
+  // player-cap discipline recommends (REPORTS §1d), without ever exceeding
+  // T2_POOL_SIZE live elements.
+  function t2PreloadNext(index) {
+    if (T2_POOL_SIZE < 2) return;
+    var clips = (t2Manifest && t2Manifest.clips) || [];
+    var next = clips[index + 1];
+    if (!next || next.status !== "ready") return;
+    var slot = t2Pool[(t2ActiveSlot + 1) % T2_POOL_SIZE];
+    if (slot.getAttribute("data-source") !== next.source) {
+      slot.src = next.preview_url;
+      slot.setAttribute("data-source", next.source);
+      try { slot.currentTime = (next.source_in_ms || 0) / 1000; } catch (e) {}
+    }
+  }
+  function t2ActivateClip(entry, atMs, autoplay) {
+    var c = entry.clip;
+    if (c.status !== "ready") {
+      t2PauseActive();
+      t2StatusNote(c.status === "pending"
+        ? ("『" + c.shot + "』的预览尚未生成,正在生成…")
+        : ("『" + c.shot + "』不可预览:" + (c.reason || "未知原因")));
+      return;
+    }
+    var slot = t2Pool[t2ActiveSlot];
+    var withinMs = Math.max(0, atMs - c.start_ms);
+    // previews are same-duration scaled copies (only the FRAME is rescaled,
+    // never the timing axis — media/webpreview.py never retimes), so
+    // source_in_ms maps straight onto currentTime with no scale correction.
+    var target = ((c.source_in_ms || 0) + withinMs) / 1000;
+    if (slot.getAttribute("data-source") !== c.source) {
+      slot.src = c.preview_url;
+      slot.setAttribute("data-source", c.source);
+    }
+    var apply = function () {
+      try { slot.currentTime = target; } catch (e) {}
+      if (autoplay) slot.play().catch(function () {});
+    };
+    if (slot.readyState >= 1) apply();
+    else slot.addEventListener("loadedmetadata", apply, { once: true });
+    t2ShowSlot(t2ActiveSlot);
+    t2CurrentClip = entry.index;
+    t2StatusNote("");
+    t2PreloadNext(entry.index);
+  }
+  function t2SeekAndPlay(ms, autoplay) {
+    if (!t2Manifest) { t2LoadManifest(function () { t2SeekAndPlay(ms, autoplay); }); return; }
+    var entry = t2ClipAt(ms);
+    if (!entry) { t2PauseActive(); t2StatusNote("播放头不在任何已编译片段上"); return; }
+    t2ActivateClip(entry, ms, autoplay !== false && t2Playing);
+  }
+  // on the ACTIVE slot's timeupdate: advance the global playhead, and swap the
+  // active pool slot to the next clip once playback crosses its boundary —
+  // "current clip plays, next preloads; on clip end swap to the next pool
+  // element" (the contract this whole block implements).
+  t2Pool.forEach(function (v, slot) {
+    v.addEventListener("timeupdate", function () {
+      if (activeTier !== 2 || slot !== t2ActiveSlot || v.paused || !t2Manifest) return;
+      var clips = t2Manifest.clips || [];
+      var c = clips[t2CurrentClip];
+      if (!c) return;
+      var globalMs = c.start_ms + Math.max(0, v.currentTime * 1000 - (c.source_in_ms || 0));
+      playheadMs = Math.min(lanesTotal, globalMs);
+      paintPlayhead(playheadMs);
+      if (globalMs >= c.start_ms + c.duration_ms - 20) {
+        var next = clips[t2CurrentClip + 1];
+        if (next) {
+          v.pause();
+          t2ActiveSlot = (t2ActiveSlot + 1) % T2_POOL_SIZE;
+          t2ActivateClip({ clip: next, index: t2CurrentClip + 1 }, next.start_ms, true);
+        } else {
+          v.pause();
+          t2Playing = false;
+          t2StatusNote("时间线预览播放完毕");
+        }
+      }
+    });
+  });
+  var t2PlayBtn = document.getElementById("ed-t2-play");
+  if (t2PlayBtn) t2PlayBtn.addEventListener("click", function () {
+    if (activeTier !== 2) setTier(2);
+    togglePlay();
+  });
+  var t2ClipToggle = document.getElementById("ed-t2-clip-toggle");
+  if (t2ClipToggle) t2ClipToggle.addEventListener("click", function (e) {
+    e.preventDefault();
+    var host = document.getElementById("ed-t2-clip-status");
+    if (!host) return;
+    var willShow = host.classList.contains("hidden");
+    host.classList.toggle("hidden", !willShow);
+    if (willShow && !t2Manifest) t2LoadManifest();
+  });
+
+  // -- Tier-1 / Tier-2 toggle (only rendered when BOTH are genuinely available) --
+  function setTier(n) {
+    if (n === activeTier) return;
+    if (activeTier === 2) { t2Playing = false; t2PauseActive(); }
+    else if (video) video.pause();
+    activeTier = n;
+    var t1 = document.getElementById("ed-tier1"), t2 = document.getElementById("ed-tier2");
+    if (t1) t1.classList.toggle("hidden", n !== 1);
+    if (t2) t2.classList.toggle("hidden", n !== 2);
+    var btn = document.getElementById("ed-play-tier-toggle");
+    if (btn) {
+      btn.setAttribute("aria-pressed", n === 2 ? "true" : "false");
+      btn.textContent = n === 1 ? "切到时间线预览 Tier 2" : "切到成片/预览版 Tier 1";
+    }
+    if (n === 2 && !t2Manifest) t2LoadManifest();
+    seekTo(playheadMs, { bypass: true });
+  }
+  var tierToggle = document.getElementById("ed-play-tier-toggle");
+  if (tierToggle) tierToggle.addEventListener("click", function () {
+    setTier(activeTier === 1 ? 2 : 1);
+  });
+  if (activeTier === 2) t2LoadManifest();
 
   var ruler = document.getElementById("ed-ruler");
   if (ruler) ruler.addEventListener("click", function (e) {
@@ -2209,5 +2789,65 @@ _EDIT_JS = r"""
 
   // preview once on load if a look is set beyond none
   if (lookPreset && lookPreset.getAttribute("data-preset") !== "none") refreshLookPreview();
+
+  // ==================================================== round X §B: 字幕样式
+  var csPanel = document.querySelector(".ed-capstyle-panel");
+  if (csPanel) {
+    var csFields = { font: "ed-cs-font", size: "ed-cs-size", primary_colour: "ed-cs-primary",
+      outline: "ed-cs-outline", margin_v: "ed-cs-marginv", alignment: "ed-cs-align" };
+    function csValue(key) {
+      var el = document.getElementById(csFields[key]);
+      if (!el) return null;
+      var v = el.value;
+      if (v === "" || v === null) return null;
+      if (key === "font" || key === "primary_colour") return v;
+      var n = parseInt(v, 10);
+      return isNaN(n) ? null : n;
+    }
+    function csBody() {
+      var body = {};
+      Object.keys(csFields).forEach(function (k) { body[k] = csValue(k); });
+      return body;
+    }
+    function csPreviewSrc() {
+      var q = Object.keys(csFields).map(function (k) {
+        var v = csValue(k);
+        return v === null ? "" : (k + "=" + encodeURIComponent(v));
+      }).filter(Boolean).join("&");
+      return "/edit/caption-style-preview" + (q ? ("?" + q) : "");
+    }
+    var csDebounce = null;
+    function csRefreshPreview() {
+      if (csDebounce) clearTimeout(csDebounce);
+      csDebounce = setTimeout(function () {
+        var img = document.getElementById("ed-cs-preview-img");
+        if (img) img.src = csPreviewSrc();
+      }, 250);
+    }
+    csPanel.addEventListener("input", csRefreshPreview);
+    var csApply = document.getElementById("ed-cs-apply");
+    if (csApply) csApply.addEventListener("click", function () {
+      post("/api/edit/caption-style", csBody()).then(function (res) {
+        if (res.status === 200) toast("字幕样式已保存", true);
+        else toast(errText(res), false);
+      });
+    });
+    var csReset = document.getElementById("ed-cs-reset");
+    if (csReset) csReset.addEventListener("click", function () {
+      Object.keys(csFields).forEach(function (k) {
+        var el = document.getElementById(csFields[k]);
+        if (el && k !== "alignment") el.value = "";
+      });
+      var alignEl = document.getElementById(csFields.alignment);
+      if (alignEl) alignEl.value = "2";
+      post("/api/edit/caption-style",
+        { font: null, size: null, primary_colour: null, outline: null,
+          margin_v: null, alignment: null }).then(function (res) {
+        if (res.status === 200) { toast("字幕样式已恢复默认", true); csRefreshPreview(); }
+        else toast(errText(res), false);
+      });
+    });
+    csRefreshPreview();
+  }
 })();
 """
