@@ -161,25 +161,58 @@ def _storyboard_done(project: Project) -> tuple[bool, str]:
 
 def _plan_done(project: Project) -> tuple[bool, str]:
     """The approve-before-spend gate: done when a director proposal reached a
-    confirmed/executing/done state OR a final already exists (the plan landed)."""
+    confirmed/executing/done state OR a final already exists (the plan landed).
+
+    Round-W #66: a proposal sitting on disk with ``state="confirmed"`` is only
+    HONESTLY confirmed while it is still CURRENT — ``director.confirm``/
+    ``execute`` lazily flip a stale one to ``expired`` the next time someone
+    tries to act on it, but nothing re-checks a merely-READ ``confirmed``
+    proposal, so the funnel used to keep reporting "已过审" long after the
+    project moved underneath it. Reuses the director's own fingerprint check
+    (:func:`..build.director.state_fingerprint`) — never a parallel one.
+    ``executing``/``done`` proposals are past tense: they already passed this
+    exact check at the moment they transitioned, so they are NOT re-checked
+    here (a completed plan does not need to remain "current" forever)."""
     final = project.newest_final_path()
     if final is not None:
         return True, f"已有成片 {project.relpath(final)}(生成计划已落地)"
-    from .director import list_proposals
+    from .director import list_proposals, state_fingerprint
 
     approved = [p for p in list_proposals(project)
                 if p.state in ("confirmed", "executing", "done")]
     if approved:
         p = approved[0]
+        if p.state == "confirmed" and p.fingerprint != state_fingerprint(project):
+            return False, (
+                f"过审提案 {p.id} 已待更新(项目状态已变,指纹不匹配)— 需重新 "
+                "manju director propose 再 confirm(approve-before-spend)"
+            )
         return True, f"已有过审的生成计划提案 {p.id}({p.state})"
     return False, "还没有过审的生成计划:manju director propose 起草再 confirm(approve-before-spend)"
 
 
 def _produce_done(project: Project) -> tuple[bool, str]:
+    """Round-W #66: produce done requires the newest final to be UP_TO_DATE
+    per the existing export-center freshness verdict (:mod:`..build.
+    exportstatus`), not merely "a final file exists on disk" — a stale final
+    (specs moved on since the render) is honestly reported as still current
+    work, with the SAME evidence the export center itself shows, never a
+    parallel staleness path."""
     final = project.newest_final_path()
-    if final is not None:
+    if final is None:
+        return False, "还没有成片:manju build 生成 final"
+    from .exportstatus import Freshness, deliverables
+
+    try:
+        rows = deliverables(project)
+        final_row = next((r for r in rows if r.kind == "final"), None)
+    except Exception:
+        final_row = None
+    if final_row is None:  # the freshness engine itself errored — degrade honestly
         return True, f"已有成片:{project.relpath(final)}"
-    return False, "还没有成片:manju build 生成 final"
+    if final_row.freshness is Freshness.UP_TO_DATE:
+        return True, f"已有成片:{project.relpath(final)}({final_row.basis})"
+    return False, f"成片已过期:{final_row.basis} — manju build 重新生成"
 
 
 # ------------------------------------------------------------------- stages

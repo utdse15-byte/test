@@ -216,6 +216,64 @@ def test_caption_manual_mode_is_truth(tmp_project):
     assert "真相" in srt.basis
 
 
+def test_manual_ass_up_to_date_when_it_matches_current_srt_and_style(tmp_project):
+    """round-W #62: manual-mode ASS reads up_to_date ONLY when it matches a
+    recompile of the CURRENT captions.srt + CURRENT style — this is the
+    honest-positive case: a real `export_captions` run just happened, so it
+    IS what re-burning the current SRT/style produces (byte for byte)."""
+    from manju.exporters.srt_ass import export_captions
+
+    rules = TimelineRules()
+    rules.captions.mode = "manual"
+    write_yaml(tmp_project.rules_path, rules.model_dump())
+    tmp_project.captions_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.captions_dir / "captions.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n人工字幕\n\n", encoding="utf-8")
+
+    config = tmp_project.load_config()
+    export_captions(tmp_project, Timeline(width=config.width, height=config.height))
+
+    ass = _rows(tmp_project)["ass"]
+    assert ass.freshness is Freshness.UP_TO_DATE
+    assert "重烧" in ass.basis
+
+
+def test_manual_ass_stale_when_srt_edited_without_reexport(tmp_project):
+    """round-W #62: this is the bug the fix closes — manual mode used to mark
+    ASS unconditionally up_to_date. Editing captions.srt WITHOUT a re-export
+    must move the ASS row to 待更新, not leave it showing 上新."""
+    rules = TimelineRules()
+    rules.captions.mode = "manual"
+    write_yaml(tmp_project.rules_path, rules.model_dump())
+    tmp_project.captions_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.captions_dir / "captions.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n旧字幕\n\n", encoding="utf-8")
+    # a stand-in ASS that does NOT match a recompile of the (edited) SRT below
+    (tmp_project.captions_dir / "captions.ass").write_text(
+        "[Script Info]\nold burn, never matches\n", encoding="utf-8")
+
+    ass = _rows(tmp_project)["ass"]
+    assert ass.freshness is Freshness.STALE
+    assert "不一致" in ass.basis
+
+    # SRT row is unaffected — it's still human truth, trivially up to date.
+    srt = _rows(tmp_project)["srt"]
+    assert srt.freshness is Freshness.UP_TO_DATE
+
+
+def test_manual_ass_needs_manual_when_srt_missing(tmp_project):
+    """No captions.srt to compare against (e.g. the ASS survived a manual
+    SRT deletion) — honestly needs_manual, never a blind pass."""
+    rules = TimelineRules()
+    rules.captions.mode = "manual"
+    write_yaml(tmp_project.rules_path, rules.model_dump())
+    tmp_project.captions_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.captions_dir / "captions.ass").write_text("[Script Info]\n", encoding="utf-8")
+
+    ass = _rows(tmp_project)["ass"]
+    assert ass.freshness is Freshness.NEEDS_MANUAL
+
+
 def test_otio_mtime_freshness(tmp_project):
     from manju.exporters.otio import export_otio
 
@@ -299,6 +357,41 @@ def test_draft_needs_manual_then_verified_roundtrip(tmp_project):
     row = _rows(tmp_project)["jianying"]
     assert row.freshness is Freshness.NEEDS_MANUAL
     assert "重生成" in row.basis and row.verifiable
+
+
+def test_verified_flips_back_when_referenced_media_replaced(tmp_project, tmp_path):
+    """round-W #65: the verification hash covers the draft JSON AND the
+    referenced media files' fingerprint — a human's "yes, this opens
+    correctly" must not survive a referenced take/proxy file being replaced
+    IN PLACE while the draft JSON text stays byte-identical (the old bug: the
+    verified hash was `hash_file(draft_json)` only)."""
+    name = tmp_project.load_config().name
+    media = tmp_path / "take_01.mp4"
+    media.write_bytes(b"original-take-bytes")
+
+    draft = tmp_project.exports_dir / "jianying" / name / "draft_content.json"
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text(json.dumps({
+        "materials": {"videos": [{"id": "v0", "path": str(media)}], "audios": []},
+        "tracks": [], "duration": 0,
+    }), encoding="utf-8")
+
+    row = _rows(tmp_project)["jianying"]
+    assert row.freshness is Freshness.NEEDS_MANUAL
+
+    mark_verified(tmp_project, "jianying", "human", "在剪映里打开正常,画面对得上")
+    row = _rows(tmp_project)["jianying"]
+    assert row.freshness is Freshness.VERIFIED
+
+    # the draft JSON text is UNTOUCHED — only the referenced media's bytes
+    # (and therefore its size/mtime) change, exactly the round-W #65 scenario.
+    import time
+    time.sleep(0.01)
+    media.write_bytes(b"REPLACED take bytes - a completely different clip now")
+
+    row = _rows(tmp_project)["jianying"]
+    assert row.freshness is Freshness.NEEDS_MANUAL
+    assert "引用媒体已变" in row.basis
 
 
 def test_draft_problematic_on_missing_media(tmp_project):

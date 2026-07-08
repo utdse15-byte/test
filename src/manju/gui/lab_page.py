@@ -155,7 +155,11 @@ def _candidates(project: Any, shot: Any) -> list[dict[str, Any]]:
     lazy frame thumb (video only), seed for recipe-reuse. Read-only."""
     selected = shot.status.selected_take
     out: list[dict[str, Any]] = []
-    for t in project.takes(shot.id):
+    # round-W #35: a media-less "ghost" sidecar has nothing to show as a
+    # candidate card (no media, no thumb) — the gallery is a listing, so it
+    # skips them defensively (gc --hard now also removes the sidecar itself,
+    # but an older project or an interrupted write can still leave one).
+    for t in project.takes(shot.id, skip_ghosts=True):
         sc = t.sidecar
         rel = project.relpath(t.media_path) if t.media_path is not None else None
         thumb = None

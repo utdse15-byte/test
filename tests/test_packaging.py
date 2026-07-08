@@ -245,23 +245,29 @@ def test_package_requires_a_final(tmp_project):
         make_package(tmp_project)  # no final on disk → clean failure (no ffmpeg)
 
 
-# ---- staleness advisory (round-O): degrade-silently paths (no ffmpeg)
+# ---- staleness (round-O advisory; round-W #56 gate): degrade-honestly paths
+# (no ffmpeg). round-W: the bare advisory became `_stale_final_status`,
+# returning (is_stale, message) — `is_stale=None` (unknown) never gates, but
+# it no longer degrades to a silent `None` message either (§32's "never
+# conflate 'cannot tell' with 'no problem'" ethos, applied here too).
 
 
-def test_stale_advisory_silent_when_no_timeline(tmp_project):
-    """No compiled timeline on disk → the advisory says nothing (and never
-    crashes) even if handed a final path."""
-    from manju.media.packaging import _stale_final_warning
+def test_stale_status_unknown_when_no_timeline(tmp_project):
+    """No compiled timeline on disk → honestly UNKNOWN (never crashes, never
+    gates) even if handed a final path."""
+    from manju.media.packaging import _stale_final_status
 
     assert tmp_project.load_timeline() is None
     fake_final = tmp_project.final_dir / "final_v1.mp4"
-    assert _stale_final_warning(tmp_project, fake_final) is None
+    is_stale, message = _stale_final_status(tmp_project, fake_final)
+    assert is_stale is None
+    assert message and "无法判断" in message
 
 
-def test_stale_advisory_silent_when_final_has_no_sidecar(tmp_project):
-    """A timeline exists but the final carries no .key.json → cannot judge, so
-    the advisory degrades to silence (never a false positive, never a crash)."""
-    from manju.media.packaging import _stale_final_warning
+def test_stale_status_unknown_when_final_has_no_sidecar(tmp_project):
+    """A timeline exists but the final carries no .key.json → cannot judge —
+    honestly UNKNOWN (never a false positive, never a crash, never a gate)."""
+    from manju.media.packaging import _stale_final_status
 
     tmp_project.save_timeline(Timeline(tracks=TimelineTracks(video=[
         VideoClip(shot="S001", take="take_01", source="media/gen/S001/take_01.mp4",
@@ -270,7 +276,32 @@ def test_stale_advisory_silent_when_final_has_no_sidecar(tmp_project):
     final = tmp_project.final_dir / "final_v1.mp4"
     final.parent.mkdir(parents=True, exist_ok=True)
     final.write_bytes(b"not a real video, and no key sidecar next to it")
-    assert _stale_final_warning(tmp_project, final) is None
+    is_stale, message = _stale_final_status(tmp_project, final)
+    assert is_stale is None
+    assert message and "无法判断" in message
+
+
+def test_make_package_never_gates_on_unknown_staleness(tmp_project, monkeypatch):
+    """round-W #56: an UNKNOWN staleness verdict must never refuse — only a
+    PROVABLY stale final gates. This drives `make_package` far enough to reach
+    the staleness check without needing a real ffmpeg build (the cover render
+    is monkeypatched to a no-op)."""
+    from manju.media import packaging as pkg_mod
+
+    tmp_project.save_timeline(Timeline(tracks=TimelineTracks(video=[
+        VideoClip(shot="S001", take="take_01", source="media/gen/S001/take_01.mp4",
+                  start_ms=0, duration_ms=2000),
+    ])))
+    final = tmp_project.final_dir / "final_v1.mp4"
+    final.parent.mkdir(parents=True, exist_ok=True)
+    final.write_bytes(b"not a real video, and no key sidecar next to it")
+
+    def _fake_cover(final, dest, *, frame_ms, width, height, fps, log):
+        dest.write_bytes(b"fake-cover")  # default cover.mode == "frame"
+
+    monkeypatch.setattr(pkg_mod, "_extract_cover_frame", _fake_cover)
+    result = pkg_mod.make_package(tmp_project)  # force=False — must NOT raise
+    assert result["cover"] is not None
 
 
 # =========================================================== (b) end-to-end
@@ -466,7 +497,8 @@ def test_package_no_stale_warning_right_after_build(stale_project):
 @pytestmark_ffmpeg
 def test_package_warns_when_final_is_stale_after_rule_edit(stale_project):
     """Bump a caption rule WITHOUT rebuilding: the newest final now predates the
-    current specs (its caption cues re-chunk), so package advises a rebuild."""
+    current specs (its caption cues re-chunk), so package advises a rebuild.
+    --force keeps working exactly as before (bypasses the round-W #56 gate)."""
     from manju.media.packaging import make_package
 
     rules = stale_project.load_rules()
@@ -476,3 +508,20 @@ def test_package_warns_when_final_is_stale_after_rule_edit(stale_project):
     result = make_package(stale_project, force=True)
     assert any("stale" in w and "manju build" in w for w in result["warnings"]), (
         result["warnings"])
+
+
+@pytestmark_ffmpeg
+def test_package_refuses_provably_stale_final_by_default(stale_project):
+    """round-W #56: without --force, a PROVABLY stale final now REFUSES —
+    package no longer silently cuts cover/teaser from an old build."""
+    from manju.media.packaging import PackagingError, make_package
+
+    rules = stale_project.load_rules()
+    rules.captions.max_chars_per_line = 5  # re-chunks the caption track → new key
+    stale_project.save_rules(rules)
+    with pytest.raises(PackagingError) as exc:
+        make_package(stale_project)  # force=False (default) — must refuse
+    assert "manju build" in str(exc.value)
+    # --force still works (the escape hatch is unchanged)
+    result = make_package(stale_project, force=True)
+    assert result["cover"] is not None

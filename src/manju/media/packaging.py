@@ -112,8 +112,8 @@ def newest_final(project: Project) -> Path | None:
     return project.newest_final_path()  # the one numeric resolver
 
 
-def _stale_final_warning(project: Project, final: Path) -> str | None:
-    """Advisory: is the newest final stale relative to the CURRENT specs?
+def _stale_final_status(project: Project, final: Path) -> tuple[bool | None, str | None]:
+    """Is the newest final stale relative to the CURRENT specs?
 
     `manju package` cuts the cover/teaser from whatever final is newest, even
     when the specs have moved on since that render — so the exports would show
@@ -123,19 +123,28 @@ def _stale_final_warning(project: Project, final: Path) -> str | None:
     current captions.ass — and compare it to the final's own .key.json sidecar.
     A mismatch means the specs changed since the final was rendered.
 
-    Pure advisory: it degrades silently to None (no warning, never a crash)
-    when there is no compiled timeline, no sidecar on the final, the specs
-    cannot be compiled, or key computation fails for any reason — it must
-    never gate packaging."""
+    Returns ``(is_stale, message)``:
+      - ``(False, None)`` — provably fresh, nothing to say.
+      - ``(True, message)`` — PROVABLY stale (both keys computed and differ).
+        Round-W (#56): this is the one case ``make_package`` now GATES on —
+        the existing advisory computation becomes the refusal, not a second
+        parallel check.
+      - ``(None, None)`` — unknown (no compiled timeline, no sidecar on the
+        final predating the key discipline, specs cannot be compiled, or key
+        computation raised). Unknown NEVER gates — it stays advisory, same as
+        before this round."""
     try:
         # Guard: only advise for a project that HAS a committed compiled
         # timeline (a real, built project); otherwise there is nothing to
-        # call stale against.
+        # call stale against — honestly unknown, not "fresh" (round-W #56:
+        # unknown never gates, but it stays visible as a warning, not silence).
         if project.load_timeline() is None:
-            return None
+            return None, "无法判断 final 是否过期:项目没有 timeline.json(未 build 过?)"
         sidecar_key = _read_key_sidecar(final)
         if sidecar_key is None:  # final predates the key discipline → cannot judge
-            return None
+            return None, (
+                "无法判断 final 是否过期:该 final 缺内容键 sidecar(在引入内容键校验之前渲染的)"
+            )
 
         rules = project.load_rules()
         if rules.mode == "manual":
@@ -148,20 +157,21 @@ def _stale_final_warning(project: Project, final: Path) -> str | None:
 
             effective = compile_timeline(gather_compile_input(project, probe_duration_ms))
         if effective is None:
-            return None
+            return None, "无法判断 final 是否过期:当前规格暂时编译不出时间线"
 
         ass = project.captions_dir / "captions.ass"
         current_key = final_content_key(
             project, effective, ass_file=ass if ass.exists() else None, target="final"
         )
         if current_key == sidecar_key:
-            return None
-        return (
-            "the newest final is stale relative to current specs — cover/teaser "
-            "reflect the OLD build; run `manju build` first"
+            return False, None
+        return True, (
+            "newest final 相对当前规格已过期(stale,内容键不一致)— cover/teaser 会反映旧成片;"
+            "请先 `manju build` 更新 final,或用 --force 明确跳过检查、用旧成片继续出封面/预告"
         )
-    except Exception:
-        return None  # advisory only: never let key computation break packaging
+    except Exception as exc:
+        # unknown: never let key computation break packaging, but say WHY.
+        return None, f"无法判断 final 是否过期:{' '.join(str(exc).split())[:200]}"
 
 
 # ----------------------------------------------------------- key sidecars
@@ -364,11 +374,20 @@ def make_package(project: Project, *, force: bool = False, log: Log = None) -> d
                 f"intro card (0–{intro_ms}ms); raise from_ms if unintended"
             )
 
-    # Staleness advisory: the newest final may predate the current specs, in
-    # which case the cover/teaser we are about to cut reflect the OLD build.
-    stale_warning = _stale_final_warning(project, final)
-    if stale_warning:
-        result["warnings"].append(stale_warning)
+    # Staleness gate (round-W #56): the newest final may predate the current
+    # specs, in which case the cover/teaser we are about to cut reflect the OLD
+    # build. A PROVABLY stale final now refuses by default — the same
+    # computation that used to be advisory-only becomes the gate; --force
+    # keeps working exactly as before (bypasses the refusal, still notes it as
+    # a warning). An UNKNOWN verdict (key computation could not run) is never
+    # able to gate — it stays advisory, same as before this round.
+    is_stale, stale_message = _stale_final_status(project, final)
+    if is_stale is True:
+        if not force:
+            raise PackagingError(stale_message)
+        result["warnings"].append(stale_message)
+    elif is_stale is None and stale_message:
+        result["warnings"].append(stale_message)
 
     cover_path, cover_skipped = _make_cover(
         project, final, packaging.cover, final_hash, force=force, log=log

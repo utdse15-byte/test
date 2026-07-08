@@ -199,6 +199,27 @@ def test_extract_frame_clamps_past_end(inout_project):
 
 
 @ffmpeg_only
+def test_extract_frame_past_end_requests_share_one_cache_entry(inout_project):
+    """round-W #36: the cache key must be derived from the CLAMPED seek time,
+    not the raw requested at_ms — two different too-late requests that both
+    clamp to the same last frame must mint exactly ONE cache file, not two
+    content-identical ones (a GUI scrubber/cover picker dragging past the end
+    is exactly the high-frequency case that used to bloat the cache)."""
+    from manju.media.frames import extract_frame, frames_cache_dir
+
+    project, take = inout_project  # 2000ms source
+    rel = project.relpath(take.media_path)
+    before = set(frames_cache_dir(project.root).glob("*.jpg"))
+
+    a = extract_frame(project, rel, 5_000)   # both clamp to the same last frame
+    b = extract_frame(project, rel, 999_999)
+
+    assert a == b  # SAME cache path — one entry, not two
+    after = set(frames_cache_dir(project.root).glob("*.jpg"))
+    assert after - before == {a}  # exactly one new file landed in the cache
+
+
+@ffmpeg_only
 def test_extract_frame_width_resize(inout_project):
     from manju.media.frames import extract_frame
 

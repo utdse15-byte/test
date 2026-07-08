@@ -606,7 +606,11 @@ def select(
               f"传 take 名(`manju select {shot_id} <take>`),"
               "或用 --file 把一个人工文件登记成 take 再选。")
     if project.get_take(shot_id, take) is None:
-        have = [t.name for t in project.takes(shot_id)]
+        # round-W #35: a media-less "ghost" sidecar (e.g. left by an older
+        # `gc --hard` run before that command cleaned up its own sidecars) is
+        # not a pickable take — skip it here so the listing only ever offers
+        # names `select` could actually accept.
+        have = [t.name for t in project.takes(shot_id, skip_ghosts=True)]
         avail = ("现有 takes:" + ", ".join(have)) if have else \
             "该镜头还没有任何 take,先 `manju build` 或 `manju redo` 生成。"
         _fail(f"{shot_id} has no take '{take}' — {avail}")
@@ -2784,6 +2788,7 @@ def gc(hard: bool = typer.Option(False, "--hard"),
             if f.is_file():
                 freed += f.stat().st_size
                 f.unlink()
+    ghost_sidecars = 0
     if hard:
         if not _interactive():
             _fail("gc --hard is interactive-only")
@@ -2794,11 +2799,23 @@ def gc(hard: bool = typer.Option(False, "--hard"),
                     if take.name != shot.status.selected_take and take.media_path:
                         freed += take.media_path.stat().st_size
                         take.media_path.unlink()
-    append_event(project.root, ACTOR, "gc", {"freed_bytes": freed, "hard": hard})
+                        # round-W #35: the sidecar (which also carries the
+                        # take's virtual-trim / timing fields) rides along —
+                        # otherwise a media-less "ghost take" sidecar lingers
+                        # forever, still showing up in candidate listings,
+                        # numbering (next_take_name), and stats.
+                        if take.sidecar_path.exists():
+                            take.sidecar_path.unlink()
+                            ghost_sidecars += 1
+    append_event(project.root, ACTOR, "gc",
+                 {"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars})
     if as_json:
-        _emit({"freed_bytes": freed, "hard": hard}, True)
+        _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars}, True)
     else:
         typer.secho(f"freed {freed / 1e6:.1f} MB", fg=typer.colors.GREEN)
+        if ghost_sidecars:
+            typer.secho(f"  同步删除 {ghost_sidecars} 个 take sidecar(避免残留 ghost take)",
+                        fg=typer.colors.BRIGHT_BLACK)
 
 
 @app.command("rebuild-index")
@@ -3049,15 +3066,40 @@ app.add_typer(providers_app, name="providers")
 
 _MASK = "***"
 # key names whose VALUE must never be shown (key_env holds an env-var NAME, not
-# a secret, so it is excluded).
+# a secret, so it is excluded). round-W #73: widened to cover common secret
+# HEADER names (authorization/cookie/bearer) and signed-URL vocabulary
+# (signature) that a manifest field might carry even outside an "auth:" block
+# — e.g. a raw header map for a custom provider.
 _SECRET_KEY_RE = re.compile(
-    r"(secret|token|password|passwd|credential|api[_-]?key|apikey|access[_-]?key|\bkey\b)",
+    r"(secret|token|password|passwd|credential|api[_-]?key|apikey|access[_-]?key|"
+    r"authorization|cookie|signature|bearer|\bkey\b)",
     re.IGNORECASE,
 )
 
+# round-W #73: query-param NAMES inside a URL-shaped string value that leak a
+# credential even when the surrounding field name looks innocuous (an
+# `endpoint`/`webhook_url`/`poll.url` string that happens to embed a signed
+# URL's `?token=...`/`?signature=...`). Only the VALUE is masked — the param
+# name and the rest of the URL stay visible so the shape is still legible.
+_SECRET_QUERY_RE = re.compile(
+    r"(?i)([?&](?:token|signature|sig|key|api[_-]?key|apikey|access[_-]?key|"
+    r"password|secret|bearer)=)[^&#\s]+"
+)
+
+
+def _scrub_url_query(value: str) -> str:
+    """Mask sensitive query-param VALUES inside a URL-shaped string, keeping
+    the param name and everything else — most string values are plain text,
+    not URLs, so this is a cheap no-op for those (round-W #73)."""
+    if "://" not in value or "?" not in value:
+        return value
+    return _SECRET_QUERY_RE.sub(lambda m: m.group(1) + _MASK, value)
+
 
 def _mask_secrets(obj):
-    """Recursively mask any value whose KEY looks secret-ish (never print keys)."""
+    """Recursively mask any value whose KEY looks secret-ish (never print
+    keys), and scrub credential-shaped query params inside URL-shaped string
+    VALUES even under an innocuous-looking key (round-W #73)."""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
@@ -3068,6 +3110,8 @@ def _mask_secrets(obj):
         return out
     if isinstance(obj, list):
         return [_mask_secrets(v) for v in obj]
+    if isinstance(obj, str):
+        return _scrub_url_query(obj)
     return obj
 
 
@@ -3916,14 +3960,18 @@ def series_characters_cmd(as_json: bool = typer.Option(False, "--json")):
 def series_split_script_cmd(
     file: Path,
     apply: bool = typer.Option(False, "--apply", help="create missing episodes + write scripts"),
+    force: list[str] = typer.Option(
+        [], "--force", help="overwrite an episode's edited/diverged script.md "
+        "explicitly: episode id (repeatable)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
-    """按显式标记(# E01 <标题> / ## E01)确定性地把长稿拆到各分集 story/script.md。"""
+    """按显式标记(# E01 <标题> / ## E01)确定性地把长稿拆到各分集 story/script.md。
+    已存在且内容不同的分集脚本不会被覆盖(可能是人工改过),需 --force <eid>。"""
     from .core.series import SeriesError, split_script
 
     series = _series()
     try:
-        report = split_script(series, file, apply=apply, actor=ACTOR)
+        report = split_script(series, file, apply=apply, force=list(force), actor=ACTOR)
     except SeriesError as exc:
         _fail(str(exc))
     if as_json:
@@ -3933,12 +3981,20 @@ def series_split_script_cmd(
     typer.secho(f"长稿拆分 / split-script  [{mode}]  ← {report['source']}",
                 fg=typer.colors.CYAN)
     for e in report["episodes"]:
+        if e.get("refused"):
+            typer.secho(f"  {e['eid']}  {e['title'] or ''}  [拒绝 refused,未写入]  "
+                        f"→ {e['script_path']}", fg=typer.colors.RED)
+            typer.secho(f"    {e.get('note', '')}", fg=typer.colors.RED)
+            continue
         state = ("新建 created" if e["created"] else
                  ("已存在 exists" if e["exists"] else "将新建 would-create"))
         typer.echo(f"  {e['eid']}  {e['title'] or ''}  [{state}]  → {e['script_path']}  "
                    f"({e['chars']} 字)")
     if not report["apply"]:
         typer.secho("  加 --apply 才会创建分集并写入脚本", fg=typer.colors.BRIGHT_BLACK)
+    if report.get("unused_force"):
+        typer.secho(f"  ⚠ 未命中的 --force: {', '.join(report['unused_force'])}",
+                    fg=typer.colors.YELLOW)
 
 
 if __name__ == "__main__":

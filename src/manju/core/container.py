@@ -378,7 +378,21 @@ class Project:
     def takes_dir(self, shot_id: str) -> Path:
         return self.gen_dir / self._safe_shot_id(shot_id)
 
-    def takes(self, shot_id: str) -> list[TakeInfo]:
+    def takes(self, shot_id: str, *, skip_ghosts: bool = False) -> list[TakeInfo]:
+        """Every take sidecar under this shot's take dir, media resolved by
+        matching extension (``media_path`` is ``None`` when the sidecar exists
+        but no media file does).
+
+        ``skip_ghosts=True`` (round-W #35) additionally drops any sidecar with
+        no matching media at all from the returned list — for a human-facing
+        LISTING (candidate galleries, "pick a take" prompts, numbering) a
+        media-less sidecar is noise, typically left behind by an interrupted
+        write or (before this round) ``gc --hard`` deleting a take's media but
+        not its sidecar. The DEFAULT stays ``False`` because several existing
+        callers need to see a media-less entry to correctly report it (build
+        staleness marks the SELECTED take BROKEN when its media is gone, spend
+        accounting still owes money already spent on a take whose media was
+        later reclaimed, ...) — this is purely an additive, opt-in filter."""
         tdir = self.takes_dir(shot_id)
         if not tdir.exists():
             return []
@@ -390,6 +404,8 @@ class Project:
                 (tdir / (name + ext) for ext in MEDIA_EXTS if (tdir / (name + ext)).exists()),
                 None,
             )
+            if skip_ghosts and media is None:
+                continue
             infos.append(TakeInfo(shot_id, name, media, sidecar_path, sidecar))
         return infos
 

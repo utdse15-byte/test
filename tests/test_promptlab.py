@@ -262,6 +262,50 @@ def test_two_actions_is_not_too_many(providers_dir, tmp_project, add_shot):
     assert not any(f["code"] == CODE_TOO_MANY_ACTIONS for f in findings)
 
 
+def test_check_reads_prompt_override_when_both_are_set(providers_dir, tmp_project, add_shot):
+    """round-W #71: compile_prompt returns generation.prompt_override VERBATIM
+    and UNCONDITIONALLY when non-empty — action.main is only its fallback.
+    The single-action linter must scrutinize the SAME text the provider
+    actually receives, not action.main, whenever an override is set."""
+    add_shot(
+        tmp_project, "S001", duration=6.0,
+        action={"main": "一个安全的单一动作,完全不会触发任何检查"},
+        generation={"prompt_override": "她走进房间然后转身再坐下"},  # the REAL sent prompt
+    )
+    shot = tmp_project.load_shot("S001")
+    # the real, provider-bound text must be what compile_prompt sends...
+    assert compile_prompt(shot, tmp_project.load_bible()) == "她走进房间然后转身再坐下"
+    # ...and the SAME text the linter checks (not action.main).
+    findings = check_shot(tmp_project, shot)
+    tma = [f for f in findings if f["code"] == CODE_TOO_MANY_ACTIONS]
+    assert tma, "the linter checked action.main instead of the real prompt_override"
+    assert [s["text"] for s in tma[0]["split"]["sub_shots"]] == ["她走进房间", "转身", "坐下"]
+
+
+def test_check_falls_back_to_action_main_when_no_override(providers_dir, tmp_project, add_shot):
+    """No prompt_override set → action.main is the fallback the compiler
+    itself uses, so the linter reads it exactly as before."""
+    add_shot(tmp_project, "S001", duration=6.0,
+             action={"main": "她走进房间然后转身再坐下"})
+    shot = tmp_project.load_shot("S001")
+    findings = check_shot(tmp_project, shot)
+    tma = [f for f in findings if f["code"] == CODE_TOO_MANY_ACTIONS]
+    assert tma
+
+
+def test_check_ignores_whitespace_only_override(providers_dir, tmp_project, add_shot):
+    """A whitespace-only prompt_override is not a real override (mirrors
+    compile_prompt's ``override.strip()`` truthiness check) — the linter
+    still falls back to action.main."""
+    add_shot(tmp_project, "S001", duration=6.0,
+             action={"main": "她走进房间然后转身再坐下"},
+             generation={"prompt_override": "   "})
+    shot = tmp_project.load_shot("S001")
+    findings = check_shot(tmp_project, shot)
+    tma = [f for f in findings if f["code"] == CODE_TOO_MANY_ACTIONS]
+    assert tma  # still reads action.main, not the blank override
+
+
 def test_motion_path_counting_and_warning(providers_dir, tmp_project, add_shot):
     # 从…到… (1) + 走向 (1) in text, plus a non-static camera movement (1) = 3.
     assert count_motion_paths("镜头从左到右移动,主体走向门口", "pan") == 3

@@ -13,12 +13,28 @@ previews are derived, disposable artifacts. ``.manju/`` is never truth, may be
 deleted or ``manju gc``-ed at any moment, and every entry here is rebuildable
 from its source on the next request.
 
-Cache entries are content-addressed by ``sha256(identity:mtime_ns:size)``,
+Cache entries are content-addressed by ``sha256(identity:content_hash)``,
 where *identity* is the project-relative POSIX path when the source lives
-inside the project root and the absolute POSIX path otherwise. The rationale:
-a re-rendered ``proxy.mp4`` overwritten in place gets a new mtime/size, hence
-a NEW cache name — no invalidation protocol, no stale playback. The orphaned
-old entry is just garbage that :func:`gc_previews` sweeps.
+inside the project root and the absolute POSIX path otherwise, and
+*content_hash* is the source file's own sha256 (round-W #68). A re-rendered
+``proxy.mp4`` overwritten in place gets a new hash, hence a NEW cache name —
+no invalidation protocol, no stale playback. The orphaned old entry is just
+garbage that :func:`gc_previews` sweeps.
+
+Earlier this key was ``sha256(identity:mtime_ns:size)`` — mtime/size, not
+bytes. That is a correctness bug, not just an optimization choice: an
+in-place rewrite that happens to keep the same size (common for fixed-format
+test clips, or any tool that pads/truncates to a known length) — combined
+with a filesystem's coarse mtime resolution, or a rewrite that explicitly
+restores the original mtime (a git checkout, a container remount) — could
+keep the OLD stat triple, silently serving a STALE preview forever. There is
+no mtime/size fast-path pre-check here: every call streams the file once.
+This is deliberate, not an oversight — a memoized (path, mtime_ns, size) ->
+hash cache would reintroduce exactly this bug in miniature (the one case it
+would skip re-hashing for is the one case that must NOT be trusted). Callers
+already only pay the ffmpeg transcode cost on a cache MISS; if profiling ever
+shows the hashing itself dominates, add a memo layer then, deliberately left
+out now rather than ship an unproven fast path that could reintroduce this.
 
 The same cache also holds tiny poster thumbnails (``<digest>_thumb.jpg``,
 JPEG, ≤320px wide) so the GUI's take wall can show every take at a glance,
@@ -84,14 +100,29 @@ def preview_cache_dir(project_root: Path) -> Path:
     return Path(project_root) / ".manju" / "webpreview"
 
 
+def _content_hash(source: Path) -> str:
+    """Streamed sha256 of ``source``'s bytes — a LOCAL copy of core.hashing.
+    hash_file's algorithm. Never imported from manju.core (see the module
+    docstring: this module stays engine-core-free so the HTTP layer can use
+    it without dragging in project machinery) — the same "duplicate the tiny
+    pure helper" call this file already makes for MEDIA_EXTS."""
+    h = hashlib.sha256()
+    with open(source, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _source_digest(project_root: Path, source: Path) -> str:
-    """The shared cache key: ``sha256(identity:mtime_ns:size)`` hex prefix.
+    """The shared cache key: ``sha256(identity:content_hash)`` hex prefix.
 
     Identity is the project-relative POSIX path when the source is inside
-    ``project_root``, else its absolute POSIX path. Raises ``OSError`` when
-    the source cannot be stat'ed — the ``ensure_*`` wrappers stay total.
+    ``project_root``, else its absolute POSIX path. The digest is keyed on the
+    source's actual BYTES (round-W #68 — see the module docstring for why
+    mtime/size alone was a correctness bug, and why there is no mtime/size
+    fast-path here). Raises ``OSError`` when the source cannot be opened/read
+    — the ``ensure_*`` wrappers stay total.
     """
-    st = source.stat()
     root = Path(project_root).resolve()
     resolved = source.resolve()
     identity = (
@@ -99,7 +130,7 @@ def _source_digest(project_root: Path, source: Path) -> str:
         if resolved.is_relative_to(root)
         else resolved.as_posix()
     )
-    key = f"{identity}:{st.st_mtime_ns}:{st.st_size}"
+    key = f"{identity}:{_content_hash(source)}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]
 
 

@@ -28,6 +28,7 @@ vision model (§0); it builds the deterministic PIPE around the agent's eyes:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -81,7 +82,7 @@ def verdict_contract() -> dict:
                 {
                     "shot": "镜头 id(必填,须为本项目镜头)",
                     "take": "take 名(来自本 brief;省略则绑定当前已选 take)",
-                    "criterion": "A–J 判读标准代码或自由文本(如 A1 / 穿帮 / 手部)",
+                    "criterion": "A–J 判读标准代码或自由文本(如 A1 / 穿帮 / 手部;必填)",
                     "level": "blocker | issue | fyi",
                     "message": "中文结论(必填)",
                     "evidence": "帧路径或文字佐证",
@@ -295,6 +296,17 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
             raise VerdictError(
                 f"verdict #{i}: level 必须是 blocker|issue|fyi 之一,收到 {v.get('level')!r}"
             )
+        # round-W #33: criterion AND message are required non-empty — an empty
+        # criterion/message verdict has no actionable meaning (which A–J
+        # standard? what's the finding?), and — before this validation existed
+        # — several empty-criterion verdicts on the same shot would silently
+        # overwrite each other on merge (see the aggregation key below).
+        criterion = str(v.get("criterion") or "").strip()
+        if not criterion:
+            raise VerdictError(f"verdict #{i} 缺少 'criterion'(判读标准代码或简述,不能为空)")
+        message = str(v.get("message") or "").strip()
+        if not message:
+            raise VerdictError(f"verdict #{i} 缺少 'message'(中文结论,不能为空)")
         take_name, take_hash = _resolve_take(project, shot, str(v.get("take") or "").strip())
         rec: dict[str, Any] = {
             "ts": _now_iso(),
@@ -302,9 +314,9 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
             "shot": shot,
             "take": take_name,
             "take_hash": take_hash,
-            "criterion": str(v.get("criterion") or "").strip(),
+            "criterion": criterion,
             "level": level,
-            "message": str(v.get("message") or "").strip(),
+            "message": message,
             "evidence": str(v.get("evidence") or "").strip(),
         }
         fm = v.get("frame_ms")
@@ -393,10 +405,20 @@ def agent_verdict_items(project: "Project") -> list[QCItem]:
     records, malformed = _read_records(project)
     items: list[QCItem] = []
 
-    # latest verdict per (shot, criterion) — append-only log, so last line wins.
-    latest: dict[tuple[str, str], dict] = {}
+    # Latest verdict per (shot, criterion, message-hash) — append-only log, so
+    # the last line for a given key wins. round-W #33: keying on (shot,
+    # criterion) alone let multiple DISTINCT findings that happened to share an
+    # empty criterion (legacy files written before criterion/message became
+    # required — see record_verdicts) silently overwrite each other, leaving
+    # only the last one visible. record_verdicts now REJECTS an empty
+    # criterion/message outright, so this collision is impossible for new
+    # records; the wider key is kept so an old jsonl file from before this fix
+    # still surfaces every distinct legacy finding instead of losing them.
+    latest: dict[tuple[str, str, str], dict] = {}
     for rec in records:
-        latest[(str(rec.get("shot")), str(rec.get("criterion") or ""))] = rec
+        crit = str(rec.get("criterion") or "")
+        msg_hash = hashlib.sha1(str(rec.get("message") or "").encode("utf-8")).hexdigest()[:12]
+        latest[(str(rec.get("shot")), crit, msg_hash)] = rec
 
     known = set(project.shot_ids())
     hash_cache: dict[str, str | None] = {}
@@ -407,7 +429,7 @@ def agent_verdict_items(project: "Project") -> list[QCItem]:
         return hash_cache[shot_id]
 
     stale_shots: set[str] = set()
-    for (shot, crit), rec in sorted(latest.items()):
+    for (shot, crit, _msg_hash), rec in sorted(latest.items()):
         if shot not in known:
             continue  # shot no longer exists — nothing to review
         chash = current_hash(shot)

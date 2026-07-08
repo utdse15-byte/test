@@ -12,7 +12,7 @@ review finding that max_chars_per_line relied on the renderer's auto-wrap).
 from __future__ import annotations
 
 from manju.core.models import CaptionLine, Timeline, TimelineTracks
-from manju.exporters.srt_ass import break_lines, compile_ass, compile_srt
+from manju.exporters.srt_ass import break_lines, compile_ass, compile_srt, escape_ass_text
 
 
 def _tl(text: str) -> Timeline:
@@ -83,3 +83,56 @@ def test_compile_ass_manual_mode_passthrough():
                       style={"max_chars_per_line": 10}, apply_line_breaks=False)
     dialogue = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
     assert "\\N" not in dialogue and "一" * 20 in dialogue
+
+
+# --------------------------------------------------- round-W #31: ASS injection
+
+
+def test_escape_ass_text_defeats_override_block():
+    text = "普通字幕{\\pos(0,0)}被劫持位置"
+    out = escape_ass_text(text)
+    assert "{" not in out and "}" not in out and "\\" not in out
+    assert "｛＼pos(0,0)｝" in out  # visually near-identical, no longer parseable
+
+
+def test_escape_ass_text_defeats_bare_hard_break_and_alpha():
+    text = r"藏起来的\alpha 标签 {\alpha&HFF&}隐身字幕"
+    out = escape_ass_text(text)
+    assert "\\" not in out
+    assert "{" not in out and "}" not in out
+
+
+def test_escape_ass_text_noop_on_plain_text():
+    text = "一句普通的中文字幕,没有任何花括号或反斜杠。"
+    assert escape_ass_text(text) == text
+
+
+def test_compile_ass_neutralizes_override_tag_in_cue():
+    """round-W #31: a cue carrying an ASS override block (from ASR, manual SRT,
+    or dialogue text) must not be able to control the burned subtitle's
+    position/alpha/style — the override syntax is defeated, not preserved."""
+    ass = compile_ass(_tl("台词{\\pos(0,0)\\alpha&HFF&}被注入"),
+                      width=1080, height=1920, style={})
+    dialogue = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+    # no live ASS override syntax reaches the Dialogue Text field
+    assert "{\\pos" not in dialogue and "{\\alpha" not in dialogue
+    # the text is still legible (full-width lookalikes stand in for the guard)
+    assert "台词" in dialogue and "被注入" in dialogue
+    assert "｛" in dialogue and "｝" in dialogue
+
+
+def test_compile_ass_injection_guard_survives_manual_passthrough():
+    """The manual-captions re-burn path (apply_line_breaks=False) must also be
+    guarded — a hand-typed or ASR-sourced SRT cue is exactly the untrusted
+    text §31 is about."""
+    ass = compile_ass(_tl("危险字幕{\\pos(0,0)}"), width=1080, height=1920,
+                      style={}, apply_line_breaks=False)
+    dialogue = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+    assert "{\\pos" not in dialogue
+
+
+def test_compile_srt_is_unaffected_by_injection_guard():
+    """SRT has no override-tag grammar to defeat — the raw text (braces and
+    all) is preserved verbatim, unlike the ASS path."""
+    srt = compile_srt(_tl("台词{\\pos(0,0)}原样"))
+    assert "{\\pos(0,0)}" in srt

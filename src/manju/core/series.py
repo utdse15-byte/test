@@ -581,7 +581,17 @@ def sync_bible(series: Series, *, apply: bool = False,
 # -------------------------------------------------------------- split_script
 
 
+# The EXACT scaffold `Project.create` writes into a fresh episode's
+# story/script.md (core/container.py, ``story_templates["script.md"]``) — a
+# script.md still holding this text has never been split into OR hand-edited,
+# so overwriting it needs no --force (round-W #75). Duplicated here on
+# purpose (not imported) the same way this module already avoids reaching
+# into container.py internals for a one-line literal.
+_SCRIPT_SCAFFOLD = "# 剧本\n\n<!-- 分场与对白;对白会成为 shots/*.yaml 的 dialogue.text -->\n"
+
+
 def split_script(series: Series, script_path: Path | str, *, apply: bool = False,
+                 force: list[str] | set[str] | None = None,
                  actor: str = "human") -> dict[str, Any]:
     """DETERMINISTIC long-script splitting at EXPLICIT markers only.
 
@@ -592,7 +602,18 @@ def split_script(series: Series, script_path: Path | str, *, apply: bool = False
     ``apply=False`` the report lists what WOULD be created/written; nothing is
     touched. No heading markers → :class:`SeriesError` — creative splitting is the
     AI's job, the engine only cuts on explicit markers (see the skills library).
+
+    Round-W (#75): an episode's ``story/script.md`` that ALREADY holds content
+    — and that content is neither the untouched scaffold NOR an exact repeat
+    of this split's own output — is refused, per episode, unless that
+    episode's id is named in ``force``. There is no marker/hash-sidecar to
+    distinguish "an earlier, now-superseded split" from "a human's hand-edit"
+    — the simplest honest rule treats them the same: something already lives
+    there that this run would silently replace, so it requires an explicit
+    ``--force <eid>``.
     """
+    force_set = {str(f).strip() for f in (force or []) if str(f).strip()}
+    forced_used: set[str] = set()
     path = Path(script_path)
     if not path.exists():
         raise SeriesError(f"script not found: {path}")
@@ -636,6 +657,8 @@ def split_script(series: Series, script_path: Path | str, *, apply: bool = False
             "title": title,
             "exists": exists,
             "created": False,
+            "written": False,
+            "refused": False,
             "script_path": series.relpath(ep_dir / "story" / "script.md"),
             "chars": len(content),
         }
@@ -649,18 +672,38 @@ def split_script(series: Series, script_path: Path | str, *, apply: bool = False
 
             script_dest = project.root / "story" / "script.md"
             script_dest.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(script_dest, content)
-            append_event(series.root, actor, "series_split_script",
-                         {"episode": eid, "created": item["created"],
-                          "chars": item["chars"]})
+            on_disk = script_dest.read_text(encoding="utf-8") if script_dest.exists() else None
+            # round-W #75: something already there, and it is neither the
+            # untouched scaffold nor an exact repeat of THIS split's output →
+            # refuse without an explicit --force <eid>.
+            edited = (on_disk is not None and on_disk != content
+                     and on_disk != _SCRIPT_SCAFFOLD)
+            if edited and eid not in force_set:
+                item["refused"] = True
+                item["note"] = (
+                    f"{eid} 的 story/script.md 已存在且内容与本次拆分结果不同"
+                    "(可能已人工改过,或来自不同版本的原稿)—— 为避免覆盖人工精修,"
+                    f"已跳过,未写入。确要用本次拆分结果覆盖,加 --force {eid}。"
+                )
+            else:
+                if edited:
+                    forced_used.add(eid)
+                atomic_write_text(script_dest, content)
+                item["written"] = True
+                append_event(series.root, actor, "series_split_script",
+                             {"episode": eid, "created": item["created"],
+                              "chars": item["chars"], "forced": edited})
         results.append(item)
 
     return {
         "apply": apply,
         "source": str(path),
         "episodes": results,
+        "unused_force": sorted(force_set - forced_used),
         "note": (
             "确定性拆分:只按 # E0N / ## E0N 显式标记切分(创作性拆分是 AI 的活)。"
-            "--apply 会创建缺失的分集并写入 story/script.md(覆盖脚手架占位)。"
+            "--apply 会创建缺失的分集并写入 story/script.md(覆盖脚手架占位);"
+            "已存在且内容不同(人工改过或来自不同原稿)的分集脚本不会被覆盖,"
+            "需 --force <eid> 显式确认。"
         ),
     }

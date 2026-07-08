@@ -68,12 +68,54 @@ def _current(project) -> str | None:
 
 
 def _fake_final(project) -> Path:
+    """A fake final byte-file whose ``.key.json`` carries the REAL content key
+    for the project's current (compilable) specs — round-W #66 made `produce`
+    done require the export center's genuine UP_TO_DATE freshness verdict, so
+    a final with an arbitrary/mismatched key sidecar no longer counts (that
+    was the very bug being fixed). Requires the shot(s) to already have a
+    selected, probeable take (see ``_ready_for_final``)."""
+    from manju.media.probe import probe_duration_ms
+    from manju.media.render import final_content_key
+    from manju.timeline.compiler import compile_timeline, gather_compile_input
+
+    tl = compile_timeline(gather_compile_input(project, probe_duration_ms))
+    key = final_content_key(project, tl, ass_file=None, target="final")
     project.final_dir.mkdir(parents=True, exist_ok=True)
     final = project.final_dir / "final_v1.mp4"
     final.write_bytes(b"fake-final")
     (project.final_dir / "final_v1.key.json").write_text(
-        json.dumps({"final_key": "sha256:deadbeef"}), encoding="utf-8")
+        json.dumps({"final_key": key, "target": "final"}), encoding="utf-8")
     return final
+
+
+def _ready_for_final(project, shot_id: str) -> None:
+    """Register + select a real, probeable take for ``shot_id`` so the
+    timeline actually compiles (needed for :func:`_fake_final`'s real content
+    key, and for a realistic "produce" stage — a fake final over an
+    unresolved/no-take shot could never come from a real `manju build`)."""
+    import subprocess
+    import shutil
+
+    from manju.core.models import TakeSidecar
+
+    tmp = project.root / f"_{shot_id}_src.mp4"
+    if shutil.which("ffmpeg"):
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+             "-i", "color=c=blue:s=160x120:d=1:r=24", "-pix_fmt", "yuv420p", str(tmp)],
+            check=True, capture_output=True,
+        )
+    else:  # no ffmpeg on this box — a manual take with an explicit duration
+        tmp.write_bytes(b"fake-take-bytes")
+    take = project.register_take(shot_id, tmp, TakeSidecar(provider="manual_import",
+                                                            spec_hash="manual"))
+    tmp.unlink(missing_ok=True)
+    project.update_shot_raw(
+        shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name)
+    )
+    if not shutil.which("ffmpeg"):
+        # duration="auto" needs a probe; without ffmpeg give it a fixed one.
+        project.update_shot_raw(shot_id, lambda d: d.__setitem__("duration", 1.5))
 
 
 # --------------------------------------------------------- stage-detection walk
@@ -106,7 +148,9 @@ def test_walk_empty_to_produce(tmp_project, add_shot):
     d.confirm(p, prop.id, actor="human")
     assert _current(p) == "produce"
 
-    # newest final exists → produce done → funnel complete
+    # newest final exists AND is up to date per the export-center freshness
+    # verdict (round-W #66) → produce done → funnel complete
+    _ready_for_final(p, "S001")
     _fake_final(p)
     status = funnel.funnel_status(p)
     assert status["current"] is None
@@ -194,6 +238,91 @@ def test_plan_gate_confirmed_proposal_or_final(tmp_project, add_shot):
 
     d.confirm(p, prop.id, actor="human")
     assert _current(p) == "produce"
+
+
+def test_plan_not_done_when_confirmed_proposal_has_expired(tmp_project, add_shot):
+    """round-W #66: a `state="confirmed"` proposal on disk is only HONESTLY
+    confirmed while it is still CURRENT — the funnel reuses the director's own
+    fingerprint check (never a parallel one) so a project that moved
+    underneath a confirmed-but-now-stale proposal does not keep reporting
+    "过审" (approved) forever."""
+    p = tmp_project
+    for rel, body in (("story/brief.md", BRIEF_BODY), ("story/synopsis.md", SYNOPSIS_BODY),
+                      ("story/beats.md", BEATS_BODY), ("story/script.md", SCRIPT_BODY)):
+        _write(p, rel, body)
+    add_shot(p, "S001")
+
+    prop = d.propose(p, [{"type": "snapshot"}], actor="human")
+    d.confirm(p, prop.id, actor="human")
+    assert _current(p) == "produce"  # plan done: freshly confirmed, fingerprint matches
+
+    # the project moves underneath the confirmed proposal: a NEW shot changes
+    # state_fingerprint's per-shot spec-hash input, without anyone re-proposing.
+    add_shot(p, "S002")
+    status = funnel.funnel_status(p)
+    plan_stage = next(s for s in status["stages"] if s["id"] == "plan")
+    assert plan_stage["state"] == "current"  # no longer "done"
+    assert "待更新" in plan_stage["evidence"]
+    assert _current(p) == "plan"
+
+
+def test_plan_stays_done_for_executing_or_done_proposal_even_if_stale_now(
+    tmp_project, add_shot
+):
+    """round-W #66: only a merely-`confirmed` (not yet executed) proposal is
+    re-checked for currency — `executing`/`done` are past tense and already
+    passed this exact check at the moment they transitioned, so a project
+    change AFTER a plan executed must not retroactively un-complete the plan
+    stage."""
+    p = tmp_project
+    for rel, body in (("story/brief.md", BRIEF_BODY), ("story/synopsis.md", SYNOPSIS_BODY),
+                      ("story/beats.md", BEATS_BODY), ("story/script.md", SCRIPT_BODY)):
+        _write(p, rel, body)
+    add_shot(p, "S001")
+
+    # a git-independent action (this fixture's project has no .git) so
+    # execute() can actually reach the "done" state.
+    action = {"type": "packaging", "op": "apply", "patch": {"cover": {"frame_ms": 500}}}
+    prop = d.propose(p, [action], actor="human")
+    d.confirm(p, prop.id, actor="human")
+    d.execute(p, prop.id, actor="human")
+    from manju.build.director import load_proposal
+    assert load_proposal(p, prop.id).state == "done"
+
+    add_shot(p, "S002")  # the project moves on AFTER execution
+    status = funnel.funnel_status(p)
+    plan_stage = next(s for s in status["stages"] if s["id"] == "plan")
+    assert plan_stage["state"] == "done"
+
+
+def test_produce_not_done_when_final_is_stale(tmp_project, add_shot):
+    """round-W #66: produce done requires the newest final to be up_to_date
+    per the export-center freshness verdict, not merely "a final file
+    exists" — the exact bug being fixed."""
+    p = tmp_project
+    for rel, body in (("story/brief.md", BRIEF_BODY), ("story/synopsis.md", SYNOPSIS_BODY),
+                      ("story/beats.md", BEATS_BODY), ("story/script.md", SCRIPT_BODY)):
+        _write(p, rel, body)
+    add_shot(p, "S001")
+    prop = d.propose(p, [{"type": "snapshot", "label": "cp"}], actor="human")
+    d.confirm(p, prop.id, actor="human")
+    assert _current(p) == "produce"
+
+    _ready_for_final(p, "S001")
+    _fake_final(p)  # a REAL, matching content key
+    assert funnel.funnel_status(p)["complete"] is True
+
+    # the spec moves on WITHOUT a rebuild: the final now predates current specs.
+    p.update_shot_raw(
+        "S001", lambda d: d.setdefault("dialogue", {}).__setitem__(
+            "text", "完全不同的一句新台词,足以改变编译结果与内容键。"
+        ),
+    )
+    status = funnel.funnel_status(p)
+    produce_stage = next(s for s in status["stages"] if s["id"] == "produce")
+    assert produce_stage["state"] == "current"  # no longer "done"
+    assert "成片已过期" in produce_stage["evidence"]
+    assert status["complete"] is False
 
 
 # ------------------------------------------------------------------ scaffolds

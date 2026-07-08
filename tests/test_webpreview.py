@@ -2,9 +2,10 @@
 
 Three layers:
   (a) pure functions — no ffmpeg: the needs_preview truth table, the
-      deterministic (path, mtime, size)-keyed cache naming for previews and
-      thumbs (same digest, ``_thumb.jpg`` suffix), gc (one sweep covers both
-      — they share a directory), and the audio-has-no-thumb policy.
+      deterministic content-hash-keyed cache naming for previews and thumbs
+      (round-W #68 — same digest, ``_thumb.jpg`` suffix; stable across a
+      stat-only touch, moves only when the BYTES move), gc (one sweep covers
+      both — they share a directory), and the audio-has-no-thumb policy.
   (b) end-to-end (ffmpeg required): a real tiny lavfi source transcodes to a
       playable .mp4/.m4a, real .mp4/.png sources grab ≤320px JPEG thumbs
       (clips shorter than the 0.5s seek fall back to the first frame), second
@@ -88,7 +89,11 @@ def test_preview_path_for_is_deterministic(tmp_path: Path):
     assert len(p1.stem) == 20  # sha256 hex prefix
 
 
-def test_preview_path_for_changes_when_mtime_changes(tmp_path: Path):
+def test_preview_path_for_stable_across_mtime_only_touch(tmp_path: Path):
+    """round-W #68: the digest is content-hash-based — touching mtime alone
+    (no byte change) must NOT mint a new cache entry (that would be needless
+    cache churn on e.g. a git checkout restoring old mtimes); only the BYTES
+    actually moving does (see the next test)."""
     root = tmp_path / "proj"
     (root / "media").mkdir(parents=True)
     src = root / "media" / "proxy.mkv"
@@ -99,8 +104,28 @@ def test_preview_path_for_changes_when_mtime_changes(tmp_path: Path):
     os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
     after = preview_path_for(root, src)
 
-    assert after != before  # overwritten source → fresh cache entry
-    assert after.parent == before.parent
+    assert after == before  # same bytes → same content hash → same entry
+
+
+def test_preview_path_for_changes_when_content_changes_even_at_same_mtime(tmp_path: Path):
+    """round-W #68: this is the bug the content-hash key fixes — a rewrite
+    that happens to land at the exact same mtime (a git checkout, a coarse
+    filesystem clock, an explicit mtime restore) used to serve a STALE
+    preview forever under the old mtime/size key. The digest must move
+    whenever the BYTES move, regardless of stat."""
+    root = tmp_path / "proj"
+    (root / "media").mkdir(parents=True)
+    src = root / "media" / "proxy.mkv"
+    src.write_bytes(b"take one")
+    before = preview_path_for(root, src)
+    st_before = src.stat()
+
+    src.write_bytes(b"take two")  # same size (8 bytes), different bytes
+    os.utime(src, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))  # force same mtime
+    after = preview_path_for(root, src)
+
+    assert src.stat().st_size == st_before.st_size  # same size, proving stat alone lies
+    assert after != before  # content hash still catches the change
 
 
 def test_preview_path_for_audio_gets_m4a(tmp_path: Path):
@@ -148,7 +173,8 @@ def test_thumb_path_for_is_deterministic_and_shares_preview_key(tmp_path: Path):
     assert t1.name == preview_path_for(root, src).stem + "_thumb.jpg"
 
 
-def test_thumb_path_for_changes_when_mtime_changes(tmp_path: Path):
+def test_thumb_path_for_stable_across_mtime_only_touch(tmp_path: Path):
+    """round-W #68: same content-hash-key stance as preview_path_for."""
     root = tmp_path / "proj"
     (root / "media").mkdir(parents=True)
     src = root / "media" / "proxy.mp4"
@@ -157,6 +183,19 @@ def test_thumb_path_for_changes_when_mtime_changes(tmp_path: Path):
     before = thumb_path_for(root, src)
     st = src.stat()
     os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    after = thumb_path_for(root, src)
+
+    assert after == before  # same bytes → same content hash → same entry
+
+
+def test_thumb_path_for_changes_when_content_changes(tmp_path: Path):
+    root = tmp_path / "proj"
+    (root / "media").mkdir(parents=True)
+    src = root / "media" / "proxy.mp4"
+    src.write_bytes(b"take one")
+    before = thumb_path_for(root, src)
+
+    src.write_bytes(b"take TWO, a different clip now")
     after = thumb_path_for(root, src)
 
     assert after != before  # overwritten source → fresh thumb entry

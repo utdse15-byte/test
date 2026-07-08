@@ -156,14 +156,21 @@ def _suggest_split(clauses: list[str], duration_ms: int, *, reason: str,
 
 
 def _action_text(shot) -> str:
-    """The text the checks read: the authored action beat, falling back to a
-    prompt_override when the action field is empty (the override IS the video
-    prompt the model receives)."""
-    text = (getattr(shot.action, "main", "") or "").strip()
-    if text:
-        return text
+    """The text the checks read — MUST mirror ``providers.prompt.compile_prompt``'s
+    EXACT precedence (round-W #71): ``generation.prompt_override``, when
+    non-empty, wins VERBATIM and UNCONDITIONALLY — ``compile_prompt`` returns
+    it before even looking at ``action.main``. ``action.main`` is only the
+    FALLBACK the compiler itself falls back to when no override is set.
+
+    The old code checked ``action.main`` first, falling back to
+    ``prompt_override`` only when ``action.main`` was empty — the OPPOSITE
+    precedence. A shot with BOTH fields set would have its real, provider-
+    bound prompt (``prompt_override``) go completely unchecked while this
+    linter scrutinized text that was never actually sent."""
     override = getattr(shot.generation, "prompt_override", None)
-    return (override or "").strip() if isinstance(override, str) else ""
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+    return (getattr(shot.action, "main", "") or "").strip()
 
 
 def _routed_max_duration_ms(project, shot) -> tuple[int | None, str | None]:

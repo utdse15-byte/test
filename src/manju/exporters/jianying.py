@@ -113,13 +113,20 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
         mat_id = _uid("video-material", clip.shot, clip.take)
         seg_id = _uid("video-segment", clip.shot, clip.take, clip.start_ms)
         dur_us = _us(clip.duration_ms)
+        # Round-W (#10): a virtual trim's source_in_ms is where the internal
+        # render actually seeks to — the draft's source_timerange must start
+        # there too (default 0 keeps every untouched clip byte-identical), and
+        # the material's own declared duration is widened to cover in-point +
+        # window so JianYing does not think the file is shorter than what the
+        # segment reads.
+        in_us = _us(clip.source_in_ms)
         video_materials.append(
             {
                 "id": mat_id,
                 "type": "video",
                 "material_name": f"{clip.shot}/{clip.take}",
                 "path": _abs_path(project, clip.source, label=f"{clip.shot}/{clip.take}"),
-                "duration": dur_us,
+                "duration": in_us + dur_us,
                 "width": width,
                 "height": height,
             }
@@ -128,7 +135,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
             "id": seg_id,
             "material_id": mat_id,
             "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
-            "source_timerange": {"start": 0, "duration": dur_us},
+            "source_timerange": {"start": in_us, "duration": dur_us},
         }
         # Round-T: the footage's OWN audio level/mute rides the video segment,
         # emitted ONLY when non-default so a project that never touches it exports

@@ -172,6 +172,45 @@ def test_capcut_native_draft(draft_project):
     assert any(t.get("type") == "video" for t in data["tracks"])
 
 
+@pytest.mark.skipif(not has_pyjyd, reason="pyJianYingDraft not installed")
+def test_jianying_native_source_timerange_honors_source_in_ms(draft_project):
+    """Round-W #10: the native pyJianYingDraft path must seek to source_in_ms
+    too, the same virtual-trim honesty the OTIO/skeleton exporters now carry —
+    otherwise the desktop app opens a different picture than media/render.py
+    actually rendered."""
+    project, timeline = draft_project
+    clip = timeline.tracks.video[0]
+    trimmed_clip = clip.model_copy(update={"source_in_ms": 100})
+    trimmed_tracks = timeline.tracks.model_copy(
+        update={"video": [trimmed_clip, *timeline.tracks.video[1:]]}
+    )
+    trimmed_timeline = timeline.model_copy(update={"tracks": trimmed_tracks})
+
+    draft = export_jianying_native(project, trimmed_timeline)
+    data = json.loads(draft.read_text(encoding="utf-8"))
+    video_track = next(t for t in data["tracks"] if t.get("type") == "video")
+    seg0 = video_track["segments"][0]
+    assert seg0["source_timerange"]["start"] == 100_000  # µs
+
+
+@pytest.mark.skipif(not has_pycapcut, reason="pycapcut not installed")
+def test_capcut_native_source_timerange_honors_source_in_ms(draft_project):
+    """Same fix, same-family pycapcut path (§2.5)."""
+    project, timeline = draft_project
+    clip = timeline.tracks.video[0]
+    trimmed_clip = clip.model_copy(update={"source_in_ms": 100})
+    trimmed_tracks = timeline.tracks.model_copy(
+        update={"video": [trimmed_clip, *timeline.tracks.video[1:]]}
+    )
+    trimmed_timeline = timeline.model_copy(update={"tracks": trimmed_tracks})
+
+    draft = export_capcut_native(project, trimmed_timeline)
+    data = json.loads(draft.read_text(encoding="utf-8"))
+    video_track = next(t for t in data["tracks"] if t.get("type") == "video")
+    seg0 = video_track["segments"][0]
+    assert seg0["source_timerange"]["start"] == 100_000  # µs
+
+
 def test_unavailable_lib_is_actionable(monkeypatch, tmp_project):
     """Adapter wall: a missing library degrades with instructions, not a crash."""
     import sys

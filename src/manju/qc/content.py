@@ -234,23 +234,49 @@ def content_checks(project: Project, shot: ShotSpec, take: TakeInfo, *,
                     agent_tier.append(assertion.raw)
 
     if deep and take.sidecar.provider not in SYNTHETIC_PROVIDERS:
-        if black_detected(media):
+        # Every deep-QC detector below is tri-state: a positive finding is a
+        # "warn", but UNKNOWN (the probe itself could not run — a missing tool,
+        # a failed ffmpeg filter invocation, an absent adapter) must ALSO
+        # surface, as an "info" item — never silently read as "no problem
+        # found" (round-W #32: a detector that didn't run is not the same
+        # fact as a detector that ran and found nothing).
+        black = black_detected(media)
+        if black is True:
             items.append(QCItem(
                 "warn", "content", shot.id,
                 f"{take.name}: 检出 ≥1s 黑屏片段(blackdetect)",
                 suggestion="redo 或人工确认是否有意为之",
             ))
-        if freeze_detected(media):
+        elif black is None:
+            items.append(QCItem(
+                "info", "content", shot.id,
+                f"{take.name}: 检测未运行:黑屏探测失败(blackdetect,ffmpeg 或媒体异常)",
+                suggestion="deep QC 本项未完成判断;可重跑 `manju qc --deep` 或人工检查该片段",
+            ))
+        freeze = freeze_detected(media)
+        if freeze is True:
             items.append(QCItem(
                 "warn", "content", shot.id,
                 f"{take.name}: 检出 ≥2s 画面冻结(freezedetect)",
                 suggestion="redo 或人工确认是否有意为之",
+            ))
+        elif freeze is None:
+            items.append(QCItem(
+                "info", "content", shot.id,
+                f"{take.name}: 检测未运行:冻结探测失败(freezedetect,ffmpeg 或媒体异常)",
+                suggestion="deep QC 本项未完成判断;可重跑 `manju qc --deep` 或人工检查该片段",
             ))
         verdict, note = mcp_video_gate(media)
         if verdict is Verdict.FAIL:
             items.append(QCItem(
                 "warn", "content", shot.id, f"{take.name}: {note}",
                 suggestion="mcp-video 质量门未过;redo 或人工复核",
+            ))
+        elif verdict is Verdict.UNKNOWN:
+            items.append(QCItem(
+                "info", "content", shot.id,
+                f"{take.name}: 检测未运行:缺少 mcp_video({note})",
+                suggestion="deep QC 本项未完成判断;pip install mcp_video 或人工复核该片段",
             ))
 
     if agent_tier:

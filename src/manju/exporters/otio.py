@@ -94,11 +94,20 @@ def _video_clip(project: "Project", clip: VideoClip, fps: float) -> dict[str, An
         meta["source_mute"] = True
     elif clip.source_gain_db:
         meta["source_gain_db"] = clip.source_gain_db
+    # Round-W (#10): a virtual trim's source_in_ms is the render's real seek —
+    # the OTIO source_range must start there too, not always at 0, or the NLE
+    # opens a different picture than the one Manju rendered. Default 0 keeps
+    # this byte-identical to before. available_range is widened to cover the
+    # in-point + the window (still just 0..duration_ms when in_ms is 0), so the
+    # two ranges stay internally self-consistent per the module's own contract.
+    in_ms = clip.source_in_ms or 0
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": clip.shot,
-        "source_range": _time_range(0, clip.duration_ms, fps),
-        "media_reference": _external_reference(clip.source, clip.duration_ms, fps),
+        "source_range": _time_range(in_ms, clip.duration_ms, fps),
+        "media_reference": _external_reference(
+            clip.source, in_ms + clip.duration_ms, fps
+        ),
         "metadata": {"manju": meta},
     }
 

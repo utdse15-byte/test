@@ -92,6 +92,125 @@ def test_max_ticks_bounds_the_generator(tmp_project, add_shot):
     assert ticks[0].check_ok is True
 
 
+# -------------------------------------------------- round-W #59/#77 coverage
+
+
+def test_fingerprint_moves_when_caption_file_touched(tmp_project, add_shot):
+    """§59: captions/*.srt|.ass are covered — a size-changing edit moves the
+    fingerprint even though it is not one of the CompileInput truth files."""
+    from manju.build.watchloop import project_fingerprint
+
+    add_shot(tmp_project, "S001")
+    tmp_project.captions_dir.mkdir(parents=True, exist_ok=True)
+    srt = tmp_project.captions_dir / "captions.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字幕\n\n", encoding="utf-8")
+    before = project_fingerprint(tmp_project)
+
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n换成一句明显更长的新字幕内容\n\n",
+                   encoding="utf-8")
+    after = project_fingerprint(tmp_project)
+    assert after != before
+
+
+def test_fingerprint_moves_when_take_media_replaced_in_place(
+    tmp_project, add_shot, make_take
+):
+    """§77: replacing a take's media file IN PLACE (same path, new bytes) used
+    to be invisible — the old scan only recorded the take DIRECTORY's own
+    mtime, which does not move on an in-place file rewrite (only on add/
+    remove). The fingerprint must now recurse into the take dir."""
+    from manju.build.watchloop import project_fingerprint
+    from manju.core.spec import compute_spec_hash
+
+    shot = add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", compute_spec_hash(shot, tmp_project.load_bible()))
+    before = project_fingerprint(tmp_project)
+
+    take.media_path.write_bytes(b"externally-replaced-media-bytes-different-size")
+    after = project_fingerprint(tmp_project)
+    assert after != before
+
+
+def test_fingerprint_moves_when_take_sidecar_replaced_in_place(
+    tmp_project, add_shot, make_take
+):
+    """§77, sidecar half of the same fix: an externally-edited take sidecar
+    (e.g. a timing/virtual-trim field hand-patched) must move the fingerprint
+    too, not just the media file."""
+    from manju.build.watchloop import project_fingerprint
+    from manju.core.spec import compute_spec_hash
+
+    shot = add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", compute_spec_hash(shot, tmp_project.load_bible()))
+    before = project_fingerprint(tmp_project)
+
+    take.sidecar_path.write_text(
+        take.sidecar_path.read_text(encoding="utf-8") + "note: 手工改过的 sidecar\n",
+        encoding="utf-8",
+    )
+    after = project_fingerprint(tmp_project)
+    assert after != before
+
+
+def test_fingerprint_moves_when_ref_media_replaced(tmp_project, add_shot):
+    """§59: media/refs/** is covered recursively — a reference image a shot's
+    cloud prompt/keyframe can point at moves the fingerprint on an in-place
+    rewrite, even though no truth TEXT file changed."""
+    from manju.build.watchloop import project_fingerprint
+
+    add_shot(tmp_project, "S001")
+    tmp_project.refs_dir.mkdir(parents=True, exist_ok=True)
+    ref = tmp_project.refs_dir / "linxia_front.png"
+    ref.write_bytes(b"old-ref-bytes")
+    before = project_fingerprint(tmp_project)
+
+    ref.write_bytes(b"new-ref-bytes-of-a-different-size")
+    after = project_fingerprint(tmp_project)
+    assert after != before
+
+
+def test_fingerprint_moves_when_keyframe_referenced_image_replaced(tmp_project, add_shot):
+    """§59: a keyframe's `image` path is resolved and stat'ed even OUTSIDE the
+    media/refs/ convention — the fingerprint reads each shot's raw keyframes
+    list specifically to find files like this one, under media/imports/."""
+    from manju.build.watchloop import project_fingerprint
+
+    kf_path = tmp_project.root / "media" / "imports" / "kf_custom.png"
+    kf_path.parent.mkdir(parents=True, exist_ok=True)
+    kf_path.write_bytes(b"old-keyframe-bytes")
+    add_shot(tmp_project, "S001",
+             keyframes=[{"position": "start", "image": "media/imports/kf_custom.png"}])
+    before = project_fingerprint(tmp_project)
+
+    kf_path.write_bytes(b"new-keyframe-bytes-of-a-different-size")
+    after = project_fingerprint(tmp_project)
+    assert after != before
+
+
+def test_touching_take_media_in_place_triggers_a_watch_tick(
+    tmp_project, add_shot, make_take
+):
+    """End-to-end (§77): the actual `watch_ticks` generator — not just the raw
+    fingerprint — reports a change when a take's media is replaced in place."""
+    from manju.core.spec import compute_spec_hash
+
+    shot = add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", compute_spec_hash(shot, tmp_project.load_bible()))
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name)
+    )
+
+    gen = watch_ticks(tmp_project, interval_s=0.05)
+    first = next(gen)
+
+    take.media_path.write_bytes(b"replaced-in-place-different-size-bytes")
+    second = next(gen)
+    gen.close()
+
+    assert second.changed is True
+    assert second.fingerprint != first.fingerprint
+
+
 def test_torn_write_is_caught_and_the_generator_survives(tmp_project, add_shot):
     """A half-written (invalid YAML) shot file must not kill the watcher: the
     tick reports check_ok False (a finding) or None (a caught crash), and the

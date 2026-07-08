@@ -66,27 +66,37 @@ def extract_frame(
 ) -> Path:
     """Grab one frame of ``source_relpath`` at ``at_ms`` as a cached JPEG.
 
-    The cache name is ``sha256(source content hash, at_ms, width)`` under
-    ``.manju/frames`` — a cache hit returns the existing file untouched (no
-    probe, no ffmpeg). On a miss the seek is clamped inside the clip (a too-late
-    ``at_ms`` still yields the last whole frame, never an empty extract) and a
-    fast input seek (``-ss`` before ``-i``) pulls a single frame. ``width``
-    scales to that pixel width (aspect kept, height rounded even); ``None`` keeps
-    native size. The write is atomic (temp + ``os.replace``).
+    The cache name is ``sha256(source content hash, CLAMPED at_ms, width)``
+    under ``.manju/frames``: the seek is clamped inside the clip (a too-late
+    ``at_ms`` still yields the last whole frame, never an empty extract) BEFORE
+    the key is derived from it (round-W #36) — otherwise several different
+    too-late ``at_ms`` values that all clamp to the same last frame would each
+    mint their own cache file for byte-identical JPEGs (a GUI scrubber/cover
+    picker dragging past the end is exactly the high-frequency case that hits
+    this). A cache hit returns the existing file untouched — no ffmpeg
+    extraction — but computing the key itself always costs one cheap ffprobe
+    (duration) either way, same as the content-hash it was already paying.
+    ``width`` scales to that pixel width (aspect kept, height rounded even);
+    ``None`` keeps native size. The write is atomic (temp + ``os.replace``).
     """
     abspath = _resolve_source(project, source_relpath)
     at_ms = max(0, int(at_ms))
-    key = short_hash(cache_key(hash_file(abspath), at_ms, width))
-    cache = frames_cache_dir(project.root)
-    dest = cache / f"{key}.jpg"
-    if dest.exists():
-        return dest  # content-addressed hit: no re-encode
-
-    # Miss: probe once to clamp the seek inside the film.
+    # round-W #36: probe FIRST and clamp at_ms to the media's real duration
+    # BEFORE the cache key is derived from it — the old order hashed the raw
+    # (possibly past-EOF) request time, so N different too-late at_ms values
+    # that all clamp to the same last frame minted N distinct cache files for
+    # byte-identical JPEGs (a GUI scrubber/cover-picker dragging past the end
+    # is exactly the high-frequency case that hits this). Clamping first means
+    # every request that resolves to the same actual frame shares one entry.
     info = probe(abspath)
     seek_ms = at_ms
     if info.duration_ms:
         seek_ms = min(at_ms, max(0, info.duration_ms - _frame_len_ms(info.fps)))
+    key = short_hash(cache_key(hash_file(abspath), seek_ms, width))
+    cache = frames_cache_dir(project.root)
+    dest = cache / f"{key}.jpg"
+    if dest.exists():
+        return dest  # content-addressed hit: no re-encode
 
     vf = f"scale={int(width)}:-2" if width else None
     log = default_log(project.root, "frames")

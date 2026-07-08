@@ -43,6 +43,7 @@ provider. Precedence within each kind is most-specific-first:
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -60,6 +61,11 @@ from .base import (
     record_provider_failure,
 )
 from .manifest import ProviderManifest
+
+# `{identifier}` placeholders in a local_cmd template word — matched once per
+# template scan (round-W #58's single-pass substitution relies on this being
+# applied to the ORIGINAL word, never to already-substituted text).
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
 class LocalCommandProvider(Provider):
@@ -228,11 +234,25 @@ class LocalCommandProvider(Provider):
 
     @staticmethod
     def _sub(word: str, values: dict) -> str:
-        for key, val in values.items():
-            token = "{" + key + "}"
-            if token in word:
-                word = word.replace(token, str(val))
-        return word
+        """Single-pass substitution: ONE regex scan over the ORIGINAL template
+        word, each ``{key}`` replaced via a lookup callback (round-W #58).
+
+        The old implementation looped ``key in values`` and called
+        ``word.replace(token, str(val))`` once per key, mutating ``word`` on
+        every iteration — so a substituted VALUE that happened to contain a
+        literal ``{out}`` or ``{seed}`` (a compiled PROMPT can contain
+        anything the shot's dialogue/action text does) got RE-SCANNED by a
+        later key's replace call and silently replaced again, corrupting the
+        prompt. ``re.sub`` with a replacement function scans the template
+        ONCE, left to right, and never re-examines text it just inserted — an
+        unknown ``{...}`` token (no matching key) is left untouched, matching
+        the agent shell's stance."""
+
+        def _repl(m: "re.Match[str]") -> str:
+            key = m.group(1)
+            return str(values[key]) if key in values else m.group(0)
+
+        return _PLACEHOLDER_RE.sub(_repl, word)
 
     def _env(self, req: GenerationRequest, values: dict) -> dict[str, str]:
         env = dict(os.environ)  # parent passthrough

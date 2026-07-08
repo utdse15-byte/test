@@ -185,6 +185,45 @@ def test_show_masks_secret_values_keeps_env_name(providers_dir):
     assert "CC_KEY" in res.output  # key_env is a NAME, not a secret — stays visible
 
 
+def test_show_masks_common_header_names_case_insensitively(providers_dir):
+    """round-W #73: Authorization/Cookie/Signature/Bearer key names must mask
+    their value too, not just secret/token/password/api_key — and the match
+    is case-insensitive (a manifest may spell a header any which way)."""
+    data = _cloud_manifest("cc", ["image_to_video"])
+    data["headers"] = {
+        "Authorization": "Bearer abc.def.ghi",
+        "Cookie": "session=super-secret-session-value",
+        "X-Signature": "deadbeefcafef00d",
+        "bearer_token": "another-real-secret",
+    }
+    _write(providers_dir, "cc", data)
+    res = runner.invoke(app, ["providers", "show", "cc"])
+    assert res.exit_code == 0, res.output
+    assert "Bearer abc.def.ghi" not in res.output
+    assert "super-secret-session-value" not in res.output
+    assert "deadbeefcafef00d" not in res.output
+    assert "another-real-secret" not in res.output
+    assert res.output.count("***") >= 4
+
+
+def test_show_scrubs_secret_query_params_inside_url_values(providers_dir):
+    """round-W #73: a URL VALUE under an innocuous-looking key (submit.url)
+    that embeds a signed URL's token/signature query param must have that
+    param's VALUE masked too — key-name masking alone misses this."""
+    data = _cloud_manifest("cc", ["image_to_video"])
+    data["submit"]["url"] = (
+        "https://api.example.com/v1/generate?token=leak-me-12345&region=cn"
+    )
+    _write(providers_dir, "cc", data)
+    res = runner.invoke(app, ["providers", "show", "cc"])
+    assert res.exit_code == 0, res.output
+    assert "leak-me-12345" not in res.output
+    assert "token=***" in res.output
+    # the rest of the URL (host, path, other params) stays legible
+    assert "api.example.com" in res.output
+    assert "region=cn" in res.output
+
+
 # ============================================================= enable / disable
 
 

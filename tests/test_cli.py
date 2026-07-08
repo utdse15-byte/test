@@ -124,6 +124,62 @@ def test_gc_json_reports_freed_bytes(in_project):
     assert data["hard"] is False
 
 
+def test_gc_hard_removes_sidecar_too_no_ghost_takes(in_project, add_shot, make_take, monkeypatch):
+    """round-W #35: `gc --hard` deleting an unselected take's media must also
+    remove its sidecar — otherwise a media-less "ghost take" lingers and keeps
+    showing up in listings/numbering/stats."""
+    import typer
+
+    from manju.core.spec import compute_spec_hash
+    import manju.cli as cli_mod
+
+    shot = add_shot(in_project, "S001")
+    spec_hash = compute_spec_hash(shot, in_project.load_bible())
+    selected = make_take(in_project, "S001", spec_hash)
+    unselected = make_take(in_project, "S001", spec_hash)
+    in_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", selected.name)
+    )
+
+    monkeypatch.setattr(cli_mod, "_interactive", lambda: True)
+    monkeypatch.setattr(typer, "confirm", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["gc", "--hard", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["hard"] is True
+    assert data["sidecars_removed"] == 1
+
+    # the unselected take's media AND sidecar are both gone — no ghost.
+    assert not unselected.media_path.exists()
+    assert not unselected.sidecar_path.exists()
+    # the selected take is completely untouched.
+    assert selected.media_path.exists() and selected.sidecar_path.exists()
+
+    # default takes() (accounting callers) still enumerates 1 entry (selected);
+    # the ghost sidecar is gone entirely now, not merely filtered.
+    remaining = [t.name for t in in_project.takes("S001")]
+    assert remaining == [selected.name]
+
+
+def test_takes_skip_ghosts_filters_media_less_sidecar(in_project, add_shot, make_take):
+    """Direct unit coverage of the `skip_ghosts` listing filter (round-W #35),
+    independent of gc: a sidecar whose media vanished by any means (manual
+    delete, a crash mid-write, a project from before this round's gc fix) is
+    excluded from a `skip_ghosts=True` read, but still enumerated by default —
+    accounting/staleness callers need to know about it."""
+    from manju.core.spec import compute_spec_hash
+
+    shot = add_shot(in_project, "S001")
+    spec_hash = compute_spec_hash(shot, in_project.load_bible())
+    ghost = make_take(in_project, "S001", spec_hash)
+    live = make_take(in_project, "S001", spec_hash)
+    ghost.media_path.unlink()  # simulate a pre-existing ghost (no sidecar removal)
+
+    assert {t.name for t in in_project.takes("S001")} == {ghost.name, live.name}
+    assert {t.name for t in in_project.takes("S001", skip_ghosts=True)} == {live.name}
+
+
 def test_doctor_json_has_checks_list(in_project):
     result = runner.invoke(app, ["doctor", "--json"])
     data = json.loads(result.output)

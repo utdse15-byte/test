@@ -8,7 +8,11 @@ imports/ — it only finds an existing identical file so the CLI can warn
 
 from __future__ import annotations
 
-from manju.media.preview import find_duplicate_import
+import shutil
+
+import pytest
+
+from manju.media.preview import find_duplicate_import, make_preview
 
 
 def test_same_content_different_name_is_found(tmp_project, tmp_path):
@@ -54,3 +58,64 @@ def test_first_duplicate_in_sorted_order_wins(tmp_project, tmp_path):
     candidate.write_bytes(b"dup-bytes")
     found = find_duplicate_import(tmp_project.imports_dir, candidate)
     assert found == tmp_project.imports_dir / "a_copy.mp4"  # deterministic
+
+
+# --------------------------------------------------- round-W #68: make_preview
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+
+
+def _clip(dest, seconds=1.0, size="64x64"):
+    import subprocess
+
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+         "-i", f"testsrc=duration={seconds}:size={size}:rate=10",
+         "-pix_fmt", "yuv420p", str(dest)],
+        check=True, capture_output=True,
+    )
+
+
+@needs_ffmpeg
+def test_make_preview_is_keyed_by_content_not_stem(tmp_path):
+    """round-W #68: two DIFFERENT source files that happen to share a
+    basename in different directories must NOT collide on the same thumb —
+    the destination name is the source's content hash, not `src.stem`."""
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    clip_a = dir_a / "take.mp4"
+    clip_b = dir_b / "take.mp4"  # SAME basename, DIFFERENT content
+    _clip(clip_a, size="64x64")
+    _clip(clip_b, size="96x96")
+
+    thumbs_dir = tmp_path / "thumbs"
+    out_a = make_preview(clip_a, thumbs_dir)
+    out_b = make_preview(clip_b, thumbs_dir)
+
+    assert out_a is not None and out_b is not None
+    assert out_a != out_b  # distinct cache entries, not a collision
+    assert out_a.name != "take.jpg"  # no longer stem-keyed
+    assert out_a.exists() and out_b.exists()
+    assert out_a.read_bytes() != out_b.read_bytes()  # genuinely different thumbs
+
+
+@needs_ffmpeg
+def test_make_preview_same_content_reuses_the_same_name(tmp_path):
+    """Content-addressing cuts both ways: identical bytes at two different
+    paths/names produce the SAME thumb entry (a legitimate cache hit, not a
+    collision — the two files really do have the same picture)."""
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    clip_a = dir_a / "one.mp4"
+    clip_b = dir_b / "two.mp4"
+    _clip(clip_a)
+    shutil.copyfile(clip_a, clip_b)  # byte-identical, different name/dir
+
+    thumbs_dir = tmp_path / "thumbs"
+    out_a = make_preview(clip_a, thumbs_dir)
+    out_b = make_preview(clip_b, thumbs_dir)
+    assert out_a == out_b

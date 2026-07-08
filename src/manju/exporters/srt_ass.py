@@ -25,6 +25,7 @@ if TYPE_CHECKING:  # avoid an import cycle at module load; Project only needed f
 __all__ = [
     "ms_to_srt",
     "ms_to_ass",
+    "escape_ass_text",
     "compile_srt",
     "compile_ass",
     "export_captions",
@@ -62,6 +63,34 @@ def ms_to_ass(ms: int) -> str:
 
 def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+# ---------------------------------------------------------- ASS injection guard
+#
+# ASS override blocks (``{\pos(0,0)}``, ``{\alpha&HFF&}``, ...) and the three
+# hard-coded control codes libass recognizes even OUTSIDE braces (``\N`` hard
+# break, ``\n`` soft break, ``\h`` hard space) are parsed straight out of the
+# Dialogue Text field — there is no backslash-escape for them in the ASS spec
+# itself (a literal ``\{`` is not an escape; libass still sees the ``{`` and
+# opens an override block, it just also renders a stray backslash next to it).
+# The one neutralization every ASS/libass-based renderer actually respects is
+# swapping the ASCII trigger characters for full-width lookalikes — visually
+# almost identical, never parsed as control syntax. This is intentionally a
+# DIFFERENT choice from SRT: SRT has no override-tag grammar to defeat, so
+# ``compile_srt`` never touches the text.
+_ASS_INJECTION_MAP = str.maketrans({
+    "{": "｛",   # fullwidth left curly bracket — defeats override-block open
+    "}": "｝",   # fullwidth right curly bracket — defeats override-block close
+    "\\": "＼",  # fullwidth backslash — defeats bare \N/\n/\h control codes
+})
+
+
+def escape_ass_text(text: str) -> str:
+    """Neutralize ASS override-tag syntax in free text before it is burned into
+    a Dialogue line (round-W #31). Applied to the CUE'S OWN text only — never
+    to the ``\\N`` breaks :func:`compile_ass` inserts itself for line-wrapping,
+    which are real control codes and must stay literal backslash-N."""
+    return text.translate(_ASS_INJECTION_MAP)
 
 
 # Break preferentially after these (CJK + ASCII clause enders and space).
@@ -189,8 +218,13 @@ def compile_ass(
     max_chars = (style or {}).get("max_chars_per_line") if apply_line_breaks else None
     for cap in timeline.tracks.captions:
         # Newlines -> hard \\N break; commas in the text are safe here because
-        # Text is the final field and never gets split on commas.
-        text = _normalize_newlines(cap.text).strip("\n")
+        # Text is the final field and never gets split on commas. The cue's OWN
+        # text is neutralized against ASS override-tag injection (round-W #31)
+        # BEFORE the line-break pass, so a literal "{" / "}" / "\" a human,
+        # ASR pass, or dialogue string ever contains never reaches libass as
+        # control syntax; the "\N" this function inserts right after stays a
+        # real break — it is added AFTER escaping runs.
+        text = escape_ass_text(_normalize_newlines(cap.text).strip("\n"))
         text = break_lines(text, max_chars).replace("\n", "\\N")
         prefix = (
             f"Dialogue: 0,{ms_to_ass(cap.start_ms)},{ms_to_ass(cap.end_ms)},"

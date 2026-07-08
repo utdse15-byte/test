@@ -218,6 +218,69 @@ def test_bad_level_rejected(tmp_project, add_shot):
         ]})
 
 
+# --------------------------------------------------- round-W #33: intake + agg
+
+
+def test_empty_criterion_rejected(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    with pytest.raises(VerdictError) as exc:
+        record_verdicts(tmp_project, {"verdicts": [
+            {"shot": "S001", "level": "issue", "criterion": "  ", "message": "有结论没标准"},
+        ]})
+    assert "criterion" in str(exc.value)
+    assert not agent_log_path(tmp_project).exists()  # all-or-nothing
+
+
+def test_empty_message_rejected(tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    with pytest.raises(VerdictError) as exc:
+        record_verdicts(tmp_project, {"verdicts": [
+            {"shot": "S001", "level": "issue", "criterion": "A1", "message": ""},
+        ]})
+    assert "message" in str(exc.value)
+
+
+def test_legacy_empty_criterion_findings_do_not_overwrite_each_other(tmp_project, add_shot):
+    """round-W #33: record_verdicts now refuses an empty criterion/message, so
+    this collision is impossible for anything written going forward — but a
+    jsonl file from BEFORE this fix could still hold several distinct findings
+    that all share an empty criterion string. The merge must surface every one
+    of them, not just the last line for that shot."""
+    shot = add_shot(tmp_project, "S001")
+    take = _fake_take(tmp_project, "S001", compute_spec_hash(shot, tmp_project.load_bible()))
+    _select(tmp_project, "S001", take.name)
+
+    # simulate a pre-fix jsonl: two DISTINCT findings, both criterion="".
+    legacy_lines = [
+        {"ts": "2024-01-01T00:00:00", "actor": "ai", "shot": "S001", "take": take.name,
+         "take_hash": None, "criterion": "", "level": "blocker",
+         "message": "手部穿模", "evidence": ""},
+        {"ts": "2024-01-01T00:00:01", "actor": "ai", "shot": "S001", "take": take.name,
+         "take_hash": None, "criterion": "", "level": "issue",
+         "message": "背景灯光跳变", "evidence": ""},
+    ]
+    # bind take_hash to the REAL current take bytes so both records are live.
+    from manju.core.hashing import hash_file
+
+    real_hash = hash_file(take.media_path)
+    for line in legacy_lines:
+        line["take_hash"] = real_hash
+
+    path = agent_log_path(tmp_project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for line in legacy_lines:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+    items = agent_verdict_items(tmp_project)
+    ai_items = [i for i in items if "[AI判读]" in i.message]
+    bodies = " | ".join(i.message for i in ai_items)
+    # BOTH legacy findings survive the merge — neither overwrote the other.
+    assert "手部穿模" in bodies
+    assert "背景灯光跳变" in bodies
+    assert len(ai_items) == 2
+
+
 # ----------------------------------------------------------------- CLI
 
 

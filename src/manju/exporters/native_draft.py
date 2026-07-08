@@ -47,11 +47,18 @@ def _build_script(lib, project: "Project", timeline: Timeline):
     for clip in timeline.tracks.video:
         material = lib.VideoMaterial(str(project.resolve(clip.source)))
         target_us = clip.duration_ms * ms
+        # Round-W (#10): a virtual trim's source_in_ms is where the internal
+        # render actually seeks to — the draft's source_timerange must start
+        # there too, or the desktop app opens a different picture than the one
+        # Manju rendered. Default 0 keeps every untouched clip byte-identical.
+        in_us = max(0, clip.source_in_ms * ms)
         # Our render pipeline pads short takes to the timeline duration (§7 ①,
         # tpad clone); drafts express the same intent as a mild slow-down:
-        # source shorter than target -> speed = source/target automatically.
-        source_us = min(material.duration, target_us)
-        vseg_kwargs: dict = {"source_timerange": trange(0, source_us)}
+        # source (from the in-point) shorter than target -> speed =
+        # source/target automatically.
+        avail_us = max(0, material.duration - in_us) if material.duration else target_us
+        source_us = min(avail_us, target_us)
+        vseg_kwargs: dict = {"source_timerange": trange(in_us, source_us)}
         # Round-T: the footage's OWN audio level/mute — carried as the segment
         # volume when non-default (mute -> 0). Guarded: older library builds
         # without a VideoSegment ``volume`` kwarg keep today's behaviour.
@@ -64,7 +71,7 @@ def _build_script(lib, project: "Project", timeline: Timeline):
                                        **vseg_kwargs)
         except TypeError:  # library build without a volume kwarg
             segment = lib.VideoSegment(material, trange(clip.start_ms * ms, target_us),
-                                       source_timerange=trange(0, source_us))
+                                       source_timerange=trange(in_us, source_us))
         script.add_segment(segment, "main")
 
     def _audio_segment(a):

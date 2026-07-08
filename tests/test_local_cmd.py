@@ -86,6 +86,26 @@ def test_placeholder_substitution_types(tmp_path, request_for):
     assert argv[argv.index("--seed") + 1] == "7"
 
 
+def test_placeholder_substitution_is_single_pass(tmp_path, request_for):
+    """round-W #58: a compiled prompt that happens to CONTAIN literal
+    "{seed}"/"{out}" text must never be re-scanned by a later placeholder's
+    substitution — the template is scanned ONCE, left to right; only real
+    placeholders from the ORIGINAL template are replaced."""
+    script = _script(tmp_path, "gen.sh", 'echo ok > "$6"\n')
+    provider = LocalCommandProvider(
+        _manifest(f"sh {script} --prompt {{prompt}} --seed {{seed}} --out {{out}}")
+    )
+    # the prompt LITERALLY contains "{seed}" and "{out}" as text — these must
+    # survive verbatim in the prompt argv element, never turn into the real
+    # seed value or output path.
+    prompt_text = "一个装着{seed}和{out}字样的场景描述"
+    takes = provider.generate(request_for("S005", prompt_override=prompt_text))
+    argv = takes[0].sidecar.params["argv"]
+    assert prompt_text in argv  # the whole compiled prompt survives untouched
+    # the REAL --seed argv element (a separate word) is still substituted
+    assert argv[argv.index("--seed") + 1] == "7"
+
+
 def test_nonzero_exit_surfaces_stderr_tail(tmp_path, request_for):
     script = _script(tmp_path, "fail.sh", 'echo "kaboom detail" >&2\nexit 3\n')
     provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}"))

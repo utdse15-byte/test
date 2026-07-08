@@ -187,3 +187,65 @@ def test_jianying_skeleton_without_sfx_ambient_is_unchanged(tmp_project):
 
     # deterministic uuid5 ids → byte-identical re-export
     assert export_jianying(tmp_project, _voice_music_only_timeline()).read_text(encoding="utf-8") == raw
+
+
+# --------------------------------------------------- round-W #10: source_in_ms
+
+
+def _trimmed_video_timeline(source_in_ms: int) -> Timeline:
+    """A single virtually-trimmed video clip — the internal render (media/
+    render.py) seeks to ``source_in_ms``; every exporter must honour the same
+    seek or the NLE opens a different picture than the one Manju rendered."""
+    return Timeline(
+        duration_ms=1000,
+        tracks=TimelineTracks(video=[
+            VideoClip(shot="S001", take="take_01",
+                      source="media/gen/S001/take_01.mp4", start_ms=0,
+                      duration_ms=1000, source_in_ms=source_in_ms),
+        ]),
+    )
+
+
+def test_otio_source_range_honors_source_in_ms(tmp_project):
+    fps = float(tmp_project.load_config().fps)
+    out = export_otio(tmp_project, _trimmed_video_timeline(400))
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    clip = doc["tracks"]["children"][0]["children"][0]
+    assert clip["source_range"]["start_time"]["value"] == round(400 * fps / 1000.0, 6)
+    assert clip["source_range"]["duration"]["value"] == round(1000 * fps / 1000.0, 6)
+    # available_range widens to cover in-point + window (self-consistency, per
+    # the module's own contract: "available_range covers the used source_range")
+    avail = clip["media_reference"]["available_range"]["duration"]["value"]
+    assert avail == round((400 + 1000) * fps / 1000.0, 6)
+
+
+def test_otio_zero_source_in_ms_is_byte_identical(tmp_project):
+    """No regression: source_in_ms=0 (the default, untrimmed) exports exactly
+    as before this fix — source_range starts at 0, available_range == duration."""
+    out = export_otio(tmp_project, _trimmed_video_timeline(0))
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    clip = doc["tracks"]["children"][0]["children"][0]
+    assert clip["source_range"]["start_time"]["value"] == 0.0
+    avail = clip["media_reference"]["available_range"]["duration"]["value"]
+    assert avail == clip["source_range"]["duration"]["value"]
+
+
+def test_jianying_skeleton_source_timerange_honors_source_in_ms(tmp_project):
+    draft_path = export_jianying(tmp_project, _trimmed_video_timeline(400))
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    video_track = next(t for t in draft["tracks"] if t["type"] == "video")
+    seg = video_track["segments"][0]
+    assert seg["source_timerange"] == {"start": 400_000, "duration": 1_000_000}  # µs
+    # the material's own declared duration widens to cover in-point + window
+    mat = draft["materials"]["videos"][0]
+    assert mat["duration"] == 400_000 + 1_000_000
+
+
+def test_jianying_skeleton_zero_source_in_ms_is_byte_identical(tmp_project):
+    draft_path = export_jianying(tmp_project, _trimmed_video_timeline(0))
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    video_track = next(t for t in draft["tracks"] if t["type"] == "video")
+    seg = video_track["segments"][0]
+    assert seg["source_timerange"] == {"start": 0, "duration": 1_000_000}
+    mat = draft["materials"]["videos"][0]
+    assert mat["duration"] == 1_000_000

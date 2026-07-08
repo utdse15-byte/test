@@ -438,6 +438,72 @@ def test_split_apply_writes_into_existing_episode(tmp_series: Series, tmp_path: 
     assert "这是新剧本" in body
 
 
+def test_split_apply_refuses_to_overwrite_edited_episode_script(
+    tmp_series: Series, tmp_path: Path
+):
+    """round-W #75: an episode's story/script.md that already holds content
+    DIFFERENT from this split's output (e.g. a human polished it after an
+    earlier split) must not be silently overwritten."""
+    new_episode(tmp_series, "E01", title="预先存在")
+    script_path = tmp_series.open_episode("E01").root / "story" / "script.md"
+    script_path.write_text("# 人工精修过的剧本\n\n这是编辑精心打磨的对白版本。\n",
+                           encoding="utf-8")
+
+    script = tmp_path / "long.md"
+    script.write_text("# E01 新原稿\n这是一个不同版本的原稿内容。\n", encoding="utf-8")
+    report = split_script(tmp_series, script, apply=True)
+
+    ep = report["episodes"][0]
+    assert ep["refused"] is True and ep["written"] is False
+    assert "E01" in ep["note"] and "--force E01" in ep["note"]
+    # the human's edit is UNTOUCHED
+    assert "人工精修过的剧本" in script_path.read_text(encoding="utf-8")
+
+
+def test_split_apply_force_overwrites_edited_episode_script(
+    tmp_series: Series, tmp_path: Path
+):
+    """--force <eid> is the explicit escape hatch."""
+    new_episode(tmp_series, "E01", title="预先存在")
+    script_path = tmp_series.open_episode("E01").root / "story" / "script.md"
+    script_path.write_text("# 人工精修过的剧本\n\n这是编辑精心打磨的对白版本。\n",
+                           encoding="utf-8")
+
+    script = tmp_path / "long.md"
+    script.write_text("# E01 新原稿\n这是一个不同版本的原稿内容。\n", encoding="utf-8")
+    report = split_script(tmp_series, script, apply=True, force=["E01"])
+
+    ep = report["episodes"][0]
+    assert ep["refused"] is False and ep["written"] is True
+    assert report["unused_force"] == []
+    assert "新原稿" in script_path.read_text(encoding="utf-8")
+    events = tail_events(tmp_series.root, 20)
+    forced_events = [e for e in events if e["action"] == "series_split_script"
+                     and e["detail"].get("forced")]
+    assert forced_events
+
+
+def test_split_apply_never_refuses_a_scaffold_or_identical_repeat(
+    tmp_series: Series, tmp_path: Path
+):
+    """The untouched `Project.create` scaffold is safe to overwrite with no
+    --force (nobody split or edited it yet); re-running an UNCHANGED split
+    (idempotent re-apply) is also safe — nothing to protect against itself."""
+    new_episode(tmp_series, "E01")  # story/script.md is still the bare scaffold
+
+    script = tmp_path / "long.md"
+    script.write_text("# E01 首次拆分\n第一次的内容。\n", encoding="utf-8")
+
+    first = split_script(tmp_series, script, apply=True)
+    assert first["episodes"][0]["refused"] is False
+    assert first["episodes"][0]["written"] is True
+
+    # re-run the SAME split again — identical output, no --force needed.
+    second = split_script(tmp_series, script, apply=True)
+    assert second["episodes"][0]["refused"] is False
+    assert second["episodes"][0]["written"] is True
+
+
 def test_split_rejects_duplicate_marker(tmp_series: Series, tmp_path: Path):
     script = tmp_path / "dup.md"
     script.write_text("# E01 一\n甲\n# E01 又一\n乙\n", encoding="utf-8")
@@ -497,6 +563,29 @@ def test_cli_characters_json(cli_series: Series):
     assert res.exit_code == 0, res.output
     ids = [c["id"] for c in json.loads(res.output)["characters"]]
     assert "linxia" in ids
+
+
+def test_cli_split_script_force_flag_overwrites_edited_script(
+    cli_series: Series, tmp_path: Path
+):
+    """round-W #75: the CLI --force <eid> flag reaches split_script."""
+    new_episode(cli_series, "E01", title="预先存在")
+    script_path = cli_series.open_episode("E01").root / "story" / "script.md"
+    script_path.write_text("# 人工精修\n\n编辑打磨过的对白。\n", encoding="utf-8")
+    long_script = tmp_path / "long.md"
+    long_script.write_text("# E01 新原稿\n不同的新内容。\n", encoding="utf-8")
+
+    refused = runner.invoke(app, ["series", "split-script", str(long_script),
+                                  "--apply", "--json"])
+    assert refused.exit_code == 0, refused.output
+    assert json.loads(refused.output)["episodes"][0]["refused"] is True
+    assert "人工精修" in script_path.read_text(encoding="utf-8")  # untouched
+
+    forced = runner.invoke(app, ["series", "split-script", str(long_script),
+                                 "--apply", "--force", "E01", "--json"])
+    assert forced.exit_code == 0, forced.output
+    assert json.loads(forced.output)["episodes"][0]["written"] is True
+    assert "新原稿" in script_path.read_text(encoding="utf-8")
 
 
 def test_cli_split_script_json_and_error(cli_series: Series, tmp_path: Path):

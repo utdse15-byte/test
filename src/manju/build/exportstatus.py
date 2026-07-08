@@ -24,7 +24,7 @@ draft), CapCut 草稿, cover, teaser.
 This is pure vocabulary/presentation over machinery that already exists — it
 reuses the SAME content keys the render skip writes (media.render.final_content_key
 + the ``.key.json`` sidecars), the SAME staleness recompile ``manju explain`` /
-``media.packaging._stale_final_warning`` run, the SAME caption compile the
+``media.packaging._stale_final_status`` run, the SAME caption compile the
 exporter runs, and the SAME cover/teaser cache-key formula ``manju package``
 writes. It never invents a second staleness path.
 
@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.container import Project
-from ..core.hashing import hash_file
+from ..core.hashing import hash_file, hash_value
 
 # ------------------------------------------------------------- freshness axis
 
@@ -161,7 +161,7 @@ def _gather(project: Project) -> _Ctx:
     try:
         # The effective timeline is what a build would render: the recompiled
         # one (auto mode) or the human timeline.json (manual mode) — exactly the
-        # stance `manju explain` and media.packaging._stale_final_warning take.
+        # stance `manju explain` and media.packaging._stale_final_status take.
         if rules is not None and getattr(rules, "mode", None) == "manual":
             timeline = project.load_timeline()
             if timeline is None:
@@ -259,6 +259,75 @@ def _latest_verification(project: Project, kind: str) -> dict[str, Any] | None:
     return latest
 
 
+# round-W #65: a bounded fingerprint of every media file a draft references —
+# a local copy of the media-extension notion `media/webpreview.py` already
+# duplicates for the same "stay decoupled from the engine's full MEDIA_EXTS
+# list" reason.
+_DRAFT_MEDIA_EXTS = {
+    ".mp4", ".mov", ".mkv", ".webm", ".m4v",
+    ".png", ".jpg", ".jpeg",
+    ".wav", ".mp3", ".m4a", ".flac",
+}
+
+
+def _referenced_media_paths(node: Any, found: set[str] | None = None) -> list[str]:
+    """Every absolute, existing, media-extension file path found anywhere in a
+    parsed draft JSON tree (round-W #65).
+
+    Schema-agnostic ON PURPOSE: the skeleton draft (``jianying.py``) and the
+    native pyJianYingDraft/pycapcut schema both embed absolute source paths as
+    plain strings (``materials[].path`` in the skeleton; a differently-shaped
+    but equally string-valued field in the native schema) — walking every
+    string leaf finds either without hand-parsing two different, and
+    partially undocumented, schemas. Sorted + deduped for a deterministic
+    basis."""
+    if found is None:
+        found = set()
+    if isinstance(node, dict):
+        for v in node.values():
+            _referenced_media_paths(v, found)
+    elif isinstance(node, list):
+        for v in node:
+            _referenced_media_paths(v, found)
+    elif isinstance(node, str) and Path(node).suffix.lower() in _DRAFT_MEDIA_EXTS:
+        try:
+            p = Path(node)
+            if p.is_absolute() and p.is_file():
+                found.add(node)
+        except OSError:
+            pass
+    return sorted(found)
+
+
+def _verification_basis(path: Path) -> str | None:
+    """The hash :func:`mark_verified` records and :func:`_draft_row` compares
+    against — the draft JSON's own bytes PLUS a bounded fingerprint of every
+    media file it references (round-W #65).
+
+    Full content-hashing every referenced media file on every export-status
+    read would be expensive for a multi-take project (renders/proxies can run
+    hundreds of MB) with no real upside over a (size, mtime) fingerprint for
+    THIS purpose — a human confirming "yes, this draft opens correctly in
+    JianYing" is attesting to bytes existing in a certain shape, not defending
+    against a hostile substitution, so (size, mtime_ns) is the documented,
+    bounded choice the review's own "if full hashing is too slow" escape
+    hatch offers. Replacing a referenced media file (new size or mtime, even
+    at the same path) therefore moves this basis and flips 已确认 back to
+    待人工确认. Returns ``None`` when the draft itself cannot be read."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    fingerprint: list[Any] = []
+    for media in _referenced_media_paths(data):
+        try:
+            st = Path(media).stat()
+            fingerprint.append([media, st.st_size, st.st_mtime_ns])
+        except OSError:
+            fingerprint.append([media, None, None])
+    return hash_value({"draft": hash_file(path), "media": fingerprint})
+
+
 def _draft_path(project: Project, kind: str, name: str) -> Path | None:
     """On-disk path of a draft kind's artifact.
 
@@ -281,10 +350,16 @@ class ExportStatusError(RuntimeError):
 def mark_verified(project: Project, kind: str, actor: str, note: str = "") -> dict[str, Any]:
     """Append a human verification for a desktop draft (truth-is-text, §3).
 
-    A draft shows 已人工确认 only while its content hash still equals the one
-    recorded here; regenerating the draft moves the hash and the row falls back
-    to 待人工确认. Raises :class:`ExportStatusError` for a non-draft kind or a
-    missing artifact (you cannot verify a draft that does not exist)."""
+    A draft shows 已人工确认 only while its verification basis still equals the
+    one recorded here — the draft JSON's own bytes PLUS a bounded fingerprint
+    of every media file it references (round-W #65: :func:`_verification_basis`
+    — binding verified-ness to the JSON alone let a human's "yes, this opens
+    correctly" survive a referenced take/proxy file being silently replaced,
+    since the draft JSON text never changes when only the MEDIA it points at
+    does). Regenerating the draft OR replacing a referenced media file moves
+    the basis and the row falls back to 待人工确认. Raises
+    :class:`ExportStatusError` for a non-draft kind, a missing artifact, or an
+    unreadable one (you cannot verify a draft that cannot even be read)."""
     if kind not in DRAFT_KINDS:
         raise ExportStatusError(
             f"only desktop drafts are human-verifiable: {DRAFT_KINDS} (got {kind!r})")
@@ -293,10 +368,13 @@ def mark_verified(project: Project, kind: str, actor: str, note: str = "") -> di
     if path is None or not path.exists():
         raise ExportStatusError(
             f"no {kind} draft to verify — run `manju export --{kind}` first")
+    basis = _verification_basis(path)
+    if basis is None:
+        raise ExportStatusError(f"{kind} draft could not be read — cannot verify: {path}")
     record = {
         "ts": _now_iso(),
         "kind": kind,
-        "path_hash": hash_file(path),
+        "path_hash": basis,
         "actor": actor,
         "note": note or "",
     }
@@ -369,6 +447,58 @@ def _proxy_row(ctx: _Ctx) -> DeliverableRow:
                           "内容键不一致:规格已改,重新 build 预览版", openable=True, open_hint=hint)
 
 
+def _manual_ass_row(ctx: _Ctx, kind: str, label: str, path, rel: str,
+                    hint: str) -> "DeliverableRow":
+    """manual-mode ASS freshness (round-W #62): recompile the burn from the
+    CURRENT captions.srt + CURRENT style — exactly what `export_captions`
+    does on every export in manual mode — and compare byte-for-byte to the
+    on-disk ASS. up_to_date only when it's an exact match (i.e. it is both
+    newer in CONTENT terms than whatever SRT/style produced it AND consistent
+    with the current style inputs); any mismatch (including a missing SRT to
+    compare against) is honestly 待更新/待人工确认, never a blind pass."""
+    project = ctx.project
+    srt_path = project.captions_dir / "captions.srt"
+    if not srt_path.exists():
+        return DeliverableRow(
+            kind, label, rel, Freshness.NEEDS_MANUAL,
+            "manual 模式但 captions.srt 缺失,无法比对 ASS 是否为最新烧录,请人工确认",
+            openable=True, open_hint=hint)
+    try:
+        from ..core.models import CaptionLine, Timeline as _Timeline, TimelineTracks
+        from ..exporters.srt_ass import _caption_style, compile_ass
+        from ..providers.asr import parse_srt
+
+        style = _caption_style(project)
+        human = parse_srt(srt_path.read_text(encoding="utf-8"))
+        width = ctx.timeline.width if ctx.timeline is not None else (
+            ctx.config.width if ctx.config is not None else 1080)
+        height = ctx.timeline.height if ctx.timeline is not None else (
+            ctx.config.height if ctx.config is not None else 1920)
+        human_timeline = _Timeline(
+            width=width, height=height,
+            tracks=TimelineTracks(captions=[
+                CaptionLine(start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
+                for s in human
+            ]),
+        )
+        expected = compile_ass(human_timeline, width=width, height=height,
+                               style=style, apply_line_breaks=False)
+        on_disk = path.read_text(encoding="utf-8")
+    except Exception:
+        return DeliverableRow(kind, label, rel, Freshness.NEEDS_MANUAL,
+                              "ASS 重新烧录比对失败,请人工确认", openable=True, open_hint=hint)
+    if on_disk == expected:
+        return DeliverableRow(
+            kind, label, rel, Freshness.UP_TO_DATE,
+            "manual 模式:与当前 captions.srt + 样式重烧逐字一致",
+            openable=True, open_hint=hint)
+    return DeliverableRow(
+        kind, label, rel, Freshness.STALE,
+        "manual 模式:ASS 与当前 captions.srt/样式重烧不一致(SRT 或样式改过未重新 "
+        "export)— 重新 manju build / export 更新",
+        openable=True, open_hint=hint)
+
+
 def _caption_row(ctx: _Ctx, kind: str) -> DeliverableRow:
     project = ctx.project
     label = "SRT 字幕 外挂" if kind == "srt" else "ASS 字幕 烧录样式"
@@ -384,12 +514,22 @@ def _caption_row(ctx: _Ctx, kind: str) -> DeliverableRow:
 
     manual = ctx.rules is not None and getattr(ctx.rules.captions, "mode", None) == "manual"
     if manual:
-        # In manual mode the human SRT IS the truth that renders, and the ASS is
-        # re-burned from it — neither can be "stale" against the auto-compiler.
-        basis = ("manual 人工字幕:captions.srt 即所用真相(§3)" if kind == "srt"
-                 else "manual 模式:ASS 由人工 SRT 逐字重烧(§3)")
-        return DeliverableRow(kind, label, rel, Freshness.UP_TO_DATE, basis,
-                              openable=True, open_hint=hint)
+        if kind == "srt":
+            # In manual mode the human SRT IS the truth that renders — it is
+            # definitionally up to date with itself.
+            return DeliverableRow(
+                kind, label, rel, Freshness.UP_TO_DATE,
+                "manual 人工字幕:captions.srt 即所用真相(§3)",
+                openable=True, open_hint=hint)
+        # round-W #62: the ASS burn is NOT automatically in sync just because
+        # manual mode is on — `export_captions` re-burns it from the CURRENT
+        # captions.srt + CURRENT style EVERY export, so it only reads
+        # up_to_date when the on-disk ASS still matches THAT recompile (the
+        # same content-compare basis the non-manual branch below already
+        # uses, aimed at the human SRT instead of the compiled timeline). A
+        # hand-edited SRT with no re-export since would otherwise show 上新
+        # while the burned ASS the human never actually saw goes stale.
+        return _manual_ass_row(ctx, kind, label, path, rel, hint)
 
     if ctx.timeline is None:
         return DeliverableRow(kind, label, rel, Freshness.NEEDS_MANUAL,
@@ -477,24 +617,24 @@ def _draft_row(ctx: _Ctx, kind: str) -> DeliverableRow:
 
     # Desktop drafts can never be better than 待人工确认 until a human confirms
     # they open — Manju has no desktop app to prove it (§14). 已人工确认 holds
-    # only while the current hash still equals the verified one.
+    # only while the current verification BASIS still equals the verified one
+    # — the draft JSON's own bytes PLUS the referenced media files' (size,
+    # mtime) fingerprint (round-W #65: replacing a referenced take/proxy file
+    # in place, with the draft JSON text untouched, now also un-verifies).
     verify = _latest_verification(project, kind)
     if verify is not None:
-        try:
-            current = hash_file(path)
-        except OSError:
-            current = None
+        current = _verification_basis(path)
         if current is not None and verify.get("path_hash") == current:
             return DeliverableRow(
                 kind, label, rel, Freshness.VERIFIED,
-                f"人工已确认可在桌面 App 打开(hash 未变) · {verify.get('actor', '?')}"
+                f"人工已确认可在桌面 App 打开(draft+引用媒体均未变)· {verify.get('actor', '?')}"
                 f" @ {str(verify.get('ts', ''))[:19]}",
                 openable=True, open_hint=open_hint, verifiable=True,
                 verified_by=verify.get("actor"), verified_at=verify.get("ts"),
                 verified_note=verify.get("note") or None)
         return DeliverableRow(
             kind, label, rel, Freshness.NEEDS_MANUAL,
-            "桌面草稿已重生成:上次人工确认对应的 hash 已失效,需重新确认(§14)",
+            "桌面草稿已重生成或引用媒体已变:上次人工确认已失效,需重新确认(§14)",
             openable=True, open_hint=open_hint, verifiable=True)
     app = "剪映" if kind == "jianying" else "CapCut"
     return DeliverableRow(
