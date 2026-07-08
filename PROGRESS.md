@@ -1205,3 +1205,47 @@ zero not-real** — the review was accurate throughout.
 **Verified:** 1716 tests green consolidated (was 1456; +260, including real
 multi-process racing tests and attack-shaped path-escape repros); CI green at
 every integration push.
+
+## 2026-07-08 — round X: workflow smoothness — 入库/一致性/取消/剧集GUI/剪辑v3/工作区/素材库
+
+Seven Sonnet packages under the new cost policy (targeted tests in worktrees,
+ONE consolidated suite at integration; agents ran ~2× cheaper than round W).
+All eight user pains addressed:
+
+- **批量入库 (pain 1):** manju ingest + /ingest — a folder of externally-
+  processed assets classified by naming convention (S001*.mp4→take,
+  S001*.wav→voice, S001_ref→shot ref, <bible-id>_ref→bible ref) into a
+  dry-run plan with content-hash dedup; apply lands through the existing
+  append-only registration paths; GUI per-row action dropdowns before commit.
+- **一致性质检 v2 (pain 2):** qc brief --mode consistency — per-character
+  contact sheets (bible refs × every appearance frame), adjacent-pair boards,
+  scene sheets; verdicts bind to whole units and stale when ANY member
+  regenerates; qc coverage (reviewed/stale/never) in CLI/MCP/run_qc + the
+  /review consistency section where humans file verdicts too.
+- **任务管理 (pain 3):** cooperative cancel — checkpoints between phases/
+  submissions, cancel_scope makes every ffmpeg call killable (SIGTERM→KILL),
+  provider-poll cancel stops waiting honestly (remote may still bill; job id
+  already persisted for resume); retry with lineage for build/redo/voice
+  kinds; queue 取消/重试 buttons; CLI tasks retry (cancel honestly refuses —
+  the ledger is not a live registry).
+- **剧集 GUI (pain 4):** /series 剧集工作台 — episodes table, 新建集,
+  sync-bible report+diff with SAFE apply only (--force stays CLI, like
+  unlock), global characters, split-script preview; series banner in chrome.
+- **剪辑 v3 (pain 5):** Tier-2 timeline preview — pooled <video> sequencing
+  of per-take proxies plays the COMPILED TIMELINE before any final exists
+  (honest 无混音 note; Tier-1 default the moment a render exists); 字幕样式
+  panel (font/size/colour/outline/margin/alignment wired into the real ASS
+  writer, defaults byte-identical); intro/outro card style presets.
+- **工作区 (pain 6):** ~/.manju/recents (flock-safe, capped, dead-path
+  pruning) touched from CLI/GUI/MCP; manju gui outside a project = workspace
+  picker (recents + status chips + open/new) with true server REBIND; 项目 ▾
+  switcher in every page's chrome, series-grouped.
+- **素材库/预览/批量审 (pains 7+8):** import/ingest dedup vs the private
+  library (--on-duplicate skip|import|link); deterministic 素材库建议 in
+  /lab and /library; lazy per-take playable previews in storyboard drawer +
+  review cards; /review queue mode — state filter chips (待选/待审/已通过/
+  待更新), one-at-a-time flow with j/k, approve/换一条/redo/note through the
+  existing checked paths.
+
+**Verified:** 1931 tests green consolidated (was 1716; +215); CI green at
+every integration push.
