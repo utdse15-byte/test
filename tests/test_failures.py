@@ -241,7 +241,12 @@ def _cloud_manifest(**overrides):
             "result_url_path": "$.data.video_url",
         },
         "failure": {"content_rejected_when": ["contentPolicy", "risk_control"]},
-        "limits": {"rate_limit_per_min": 0},
+        # round W: rate_limit_per_min must be >= 1 (core/manifest.py). These
+        # tests build one provider instance and submit exactly once, so
+        # _throttle's wait branch never fires (self._last_submit starts None)
+        # regardless of the value — a high number just documents "not testing
+        # throttling here" without smuggling in the old (now-illegal) 0.
+        "limits": {"rate_limit_per_min": 6000},
         "cost": {"per_call": 0.5, "currency": "CNY"},
     }
     base.update(overrides)

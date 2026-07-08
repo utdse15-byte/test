@@ -1930,7 +1930,13 @@ _EDIT_JS = r"""
   function seamSave(body) {
     body.shot = seamState.out;
     post("/api/edit/transition-override", body).then(function (res) {
-      if (res.status === 200) { toast("切换点转场已更新", true); reloadSoon(); }
+      if (res.status === 200) {
+        // issue #69: a write on the true last segment (no out-edge) is
+        // accepted but inert — the server says so in res.data.warnings.
+        var warn = res.data && res.data.warnings && res.data.warnings[0];
+        toast(warn ? ("已更新,但 " + warn) : "切换点转场已更新", true);
+        reloadSoon();
+      }
       else toast(errText(res), false);
     });
   }

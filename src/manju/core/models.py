@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .idents import validate_safe_segment
 
@@ -86,6 +86,24 @@ class ProjectConfig(ManjuModel):
     # PATH probe over the known agents (src/manju/agents.py).
     agent: str | None = None
 
+    # Round W (issue #2/#6): fps/width/height are load-bearing for frame math —
+    # fps=0 divides-by-zero in the timeline compiler's frame-grid snap
+    # (snap_to_frame_grid), and a non-positive width/height is not a real
+    # resolution. `manju check` now rejects these at project.yaml load instead
+    # of letting a bad config pass check and crash build/compile. Every real
+    # project already has fps/width/height > 0 (the scaffolded defaults are
+    # 1080x1920@24), so this is byte-identical for every healthy project.
+    @field_validator("width", "height", "fps")
+    @classmethod
+    def _positive_dims(cls, v: int, info) -> int:
+        if v <= 0:
+            raise ValueError(
+                f"project.{info.field_name} 必须是正整数(实际 {v!r})— fps/width/height "
+                "为 0 或负数时,时间线编译的逐帧对齐(frame-grid snap)会除零崩溃,分辨率"
+                "也不合法;请把 project.yaml 里的这个字段改成大于 0 的整数"
+            )
+        return v
+
 
 # ------------------------------------------------------------------- ShotSpec
 
@@ -132,6 +150,19 @@ class Generation(ManjuModel):
     prompt_override: str | None = None
     provider: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+
+    # Round W (issue #2): a negative/zero candidate count is meaningless (the
+    # provider is asked to generate 0 or a negative number of takes) and used
+    # to pass through silently into cost estimation and provider requests.
+    @field_validator("candidates")
+    @classmethod
+    def _positive_candidates(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"generation.candidates 必须 >= 1(实际 {v!r})— 0 或负数没有意义"
+                "(相当于让 provider 生成 0 个或负数个候选);请改成 >= 1 的整数"
+            )
+        return v
 
 
 REVIEW_STATES = ("needs_review", "in_progress", "approved")
@@ -238,6 +269,22 @@ class ShotSpec(ManjuModel):
             return {str(path): "" for path in v}
         return v
 
+    # Round W (issue #2/#6): a numeric duration <= 0 is not a real shot length —
+    # it can make the compiled clip non-advancing (captions/cursor arithmetic
+    # assumes forward progress) or outright negative. "auto" (the Literal
+    # branch) is untouched — this only bounds the EXPLICIT numeric-seconds form.
+    @field_validator("duration")
+    @classmethod
+    def _positive_duration(cls, v: float | str) -> float | str:
+        if isinstance(v, str):
+            return v  # "auto" — Literal already rejects any other string
+        if v <= 0:
+            raise ValueError(
+                f"shot.duration 必须大于 0 秒(实际 {v!r})— 0 或负数时长的镜头无法放上"
+                "时间线;请改成正数秒数,或删掉该字段/写 \"auto\" 交给引擎按配音+padding 计算"
+            )
+        return v
+
 
 class ShotIndex(ManjuModel):
     """shots/index.yaml — shot order plus global defaults."""
@@ -311,6 +358,29 @@ class TakeSidecar(ManjuModel):
     # no mass restage). The generation path (providers/base.py Provider.
     # _register) stamps every NEW take with the current SPEC_VERSION.
     spec_version: int | None = None
+
+    # Round W (issue #22): a negative in-point or a reversed/zero-length window
+    # (out <= in) is not a legal trim — ``set_inout_take`` (media/repair_ops.py)
+    # already enforces exactly this rule before it ever writes a sidecar, so
+    # every engine-written take already satisfies it (byte-identical for real
+    # projects). This closes the loophole where a hand-edited take_NN.yaml could
+    # carry a reversed window that the compiler used to silently squash to 1ms
+    # instead of surfacing as an error (core/container.Project.takes degrades a
+    # sidecar that fails this to a safe whole-file window + a visible .error).
+    @model_validator(mode="after")
+    def _check_source_window(self) -> "TakeSidecar":
+        if self.source_in_ms < 0:
+            raise ValueError(
+                f"source_in_ms 不能为负数(实际 {self.source_in_ms})— 裁剪窗口的起点必须 "
+                ">= 0;用 manju repair --op inout 重新设置窗口,或修正该 take 的 sidecar 文件"
+            )
+        if self.source_out_ms is not None and self.source_out_ms <= self.source_in_ms:
+            raise ValueError(
+                f"source_out_ms({self.source_out_ms})必须大于 source_in_ms"
+                f"({self.source_in_ms})— 反向或零长度的裁剪窗口不合法,不能被静默压成 1ms;"
+                "用 manju repair --op inout 重新设置窗口,或修正该 take 的 sidecar 文件"
+            )
+        return self
 
 
 class VoiceTakeSidecar(ManjuModel):
@@ -391,6 +461,21 @@ class TransitionSpec(ManjuModel):
 
     type: str = "fade"
     duration_ms: int = 300
+
+    # Round W (issue #2/#6): ``type`` stays lenient (see the module comment
+    # above — an unknown type is a harmless render-time degrade to dip-to-
+    # black), but a NEGATIVE duration is not a typo the render can shrug off —
+    # it has no physical meaning. 0 stays legal (an instant/no-op transition,
+    # already exercised by the GUI's "cut" picker).
+    @field_validator("duration_ms")
+    @classmethod
+    def _nonneg_duration_ms(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(
+                f"transition.duration_ms 不能为负数(实际 {v!r})— 负的转场时长没有物理"
+                "意义;改成 >= 0 的整数(0 表示瞬时切,等价硬切)"
+            )
+        return v
 
 
 # ------------------------------------------------------------------ color look
@@ -517,6 +602,22 @@ class CaptionRules(ManjuModel):
     # truth: the compiler's output goes to captions.generated.srt and the
     # burned ASS is recompiled FROM the human SRT (same takeover shape as §6)
     mode: Literal["compiled", "manual"] = "compiled"
+
+    # Round W (issue #2/#6): the caption splitter's per-cue budget is
+    # ``max_chars_per_line * max_lines`` — at 0 the budget is 0, and the split
+    # loop used to advance by 0 characters per iteration (a non-advancing loop).
+    # The compiler now also floors the budget defensively (timeline/compiler.py
+    # _split_caption/_timed_captions), but a value that can never produce a
+    # sane caption is a config error, not something to silently tolerate.
+    @field_validator("max_chars_per_line", "max_lines")
+    @classmethod
+    def _positive_caption_bounds(cls, v: int, info) -> int:
+        if v < 1:
+            raise ValueError(
+                f"captions.{info.field_name} 必须 >= 1(实际 {v!r})— 为 0 时字幕拆分算法"
+                "每轮消耗 0 个字符,可能陷入不推进的死循环;请改成 >= 1 的整数"
+            )
+        return v
 
 
 class TitleCardRules(ManjuModel):
@@ -717,6 +818,16 @@ class VideoClip(ManjuModel):
     # future `set_inout` will); it is carried here so the render can honour it.
     source_in_ms: int = 0
 
+    # Round W (issue #2/#6): NOT bounded here on purpose. Timeline/VideoClip
+    # stays lenient at the model layer — same stance as TRANSITION_TYPES above
+    # — because timeline.json is compiled AND hand-editable (mode: manual, §6)
+    # and a bad value must load into a real, itemized QC finding (shot id +
+    # suggestion, qc.json/qc.md) rather than a raw parse-time crash that stops
+    # at the FIRST bad field with no report at all. A non-positive duration_ms
+    # is already a hard QC error naming the shot — see
+    # qc/checks.py:_technical_timeline_conflicts (pinned by
+    # tests/test_round_q.py::test_conflict_zero_duration_clip).
+
 
 class OverlayClip(ManjuModel):
     kind: str = "title_card"
@@ -759,6 +870,11 @@ class AudioClip(ManjuModel):
     duck_attack_ms: int = 5
     duck_release_ms: int = 250
 
+    # Round W (issue #2/#6): NOT bounded here — same "compiled + hand-editable,
+    # QC catches it" stance as VideoClip.duration_ms above. A negative
+    # duration_ms is flagged by qc/checks.py:_technical_timeline_conflicts
+    # (added round W) instead of a raw parse-time crash on load.
+
 
 class CaptionLine(ManjuModel):
     start_ms: int
@@ -789,6 +905,15 @@ class Timeline(ManjuModel):
     height: int = 1920
     duration_ms: int = 0
     tracks: TimelineTracks = Field(default_factory=TimelineTracks)
+
+    # Round W (issue #2/#6): fps/width/height NOT bounded here — same
+    # lenient-at-model stance as VideoClip.duration_ms above (timeline.json is
+    # compiled AND hand-editable, §6 manual mode). A hand-corrupted fps<=0
+    # would ZeroDivisionError the moment anything called
+    # timeline/compiler.snap_to_frame_grid on it; that helper now floors fps
+    # defensively (never raises), and qc/checks.py:_technical_timeline_conflicts
+    # reports a non-positive fps/width/height as a named QC error instead of a
+    # raw parse-time crash on load.
 
 
 def export_json_schemas() -> dict[str, dict[str, Any]]:

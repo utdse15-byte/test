@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .container import BIBLE_FILES, PROJECT_FILE, Project, ProjectError
 from .events import append_event
@@ -105,6 +105,26 @@ class EpisodeRef(BaseModel):
 
     id: str
     title: str = ""
+
+    # Round W (issue #48): ``new_episode`` already checks a FRESH id against
+    # this same ``_EID_RE`` before scaffolding (kept below, unchanged — it
+    # still fails fast before any directory is created). But LOADING an
+    # existing series.yaml never re-checked it, so a hand-edited id could
+    # smuggle a path-escaping value (e.g. ``../../etc``) past `manju check` and
+    # into ``Series.episode_project_dir`` (``episodes/<eid>.manju``) and every
+    # downstream path built from it. Validating here closes that gap: every
+    # episode id — new or loaded — now satisfies the same E01/E02… or
+    # lowercase-slug rule. Every id ever accepted by ``new_episode`` already
+    # matches, so this is byte-identical for every existing series.yaml.
+    @field_validator("id")
+    @classmethod
+    def _known_id_shape(cls, v: str) -> str:
+        if not _EID_RE.match(v):
+            raise ValueError(
+                f"episode id {v!r} 不合法 — 必须是 E01/E02… 或小写 slug(a-z0-9_-);"
+                "非法 id(比如带 / 或 ..)可能拼出越出 series 目录的路径"
+            )
+        return v
 
 
 class SeriesConfig(BaseModel):
@@ -210,7 +230,20 @@ class Series:
     # ---------------------------------------------------------------- config
 
     def load_config(self) -> SeriesConfig:
-        return SeriesConfig.model_validate(read_yaml(self.root / SERIES_FILE) or {})
+        """Round W (issue #48): a hand-edited series.yaml with an illegal
+        episode id (EpisodeRef._known_id_shape) now fails HERE, as a clean
+        :class:`SeriesError` — the one exception type every series CLI command
+        already knows how to catch and report — instead of a raw pydantic
+        ValidationError bubbling out of whichever read-only command happened
+        to call this first (status/episodes/characters/sync-bible all funnel
+        through here)."""
+        try:
+            return SeriesConfig.model_validate(read_yaml(self.root / SERIES_FILE) or {})
+        except ValidationError as exc:
+            issues = "; ".join(
+                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()[:5]
+            )
+            raise SeriesError(f"series.yaml: schema invalid — {issues}") from exc
 
     def save_config(self, config: SeriesConfig) -> None:
         write_yaml(self.root / SERIES_FILE, config.model_dump(exclude_none=True))

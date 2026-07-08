@@ -538,6 +538,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["proxy", "final", "exports", "qc"],
                     "default": "final",
+                    "description": "qc does NOT render first — it QCs the "
+                    "newest EXISTING renders/final/*.mp4 against a freshly "
+                    "recompiled timeline; use target=final beforehand for QC "
+                    "on a fresh render. The result names the checked artifact "
+                    "as qc_final.",
                 },
                 "gen": {
                     "type": "string",

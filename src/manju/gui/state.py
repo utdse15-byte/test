@@ -11,6 +11,7 @@ the project must never mutate it or make it slower.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -248,9 +249,18 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
         latest_final = {"path": status["latest_final"],
                         "url": media_url(status["latest_final"])}
 
-    # version stack (Frame.io pattern): newest first, append-only lineage
+    # version stack (Frame.io pattern): newest first, append-only lineage.
+    # Round W (issue #70): sort NUMERICALLY (final_v10 beats final_v9) — a
+    # lexicographic sort put final_v9 ahead of final_v10 once a project passed
+    # 9 renders, both misordering the list and (with the [:10] cap below)
+    # potentially dropping the true newest finals off the end entirely.
+    def _final_version(p) -> int:
+        m = re.fullmatch(r"final_v(\d+)", p.stem)
+        return int(m.group(1)) if m else -1
+
     finals = []
-    for p in sorted(project.final_dir.glob("final_v*.mp4"), reverse=True)[:10]:
+    for p in sorted(project.final_dir.glob("final_v*.mp4"),
+                    key=_final_version, reverse=True)[:10]:
         try:
             st = p.stat()
         except OSError:

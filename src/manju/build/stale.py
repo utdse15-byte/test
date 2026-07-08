@@ -77,6 +77,16 @@ def evaluate_shot(project: Project, shot: ShotSpec,
             shot.id, ShotState.BROKEN, current_hash, selected, take,
             note=f"selected take '{selected}' has no media on disk",
         )
+    # Round W (issue #22): a sidecar that failed TakeSidecar's window
+    # validation was degraded to a SAFE stand-in by Project.takes() (never a
+    # crash), but a build must not silently proceed as if the (bogus) window
+    # were fine — treat it as BROKEN, same as missing media, with the real
+    # reason so `manju status`/`manju check` name it precisely.
+    if take.error:
+        return ShotBuildStatus(
+            shot.id, ShotState.BROKEN, current_hash, selected, take,
+            note=f"selected take '{selected}' sidecar 非法: {take.error}",
+        )
 
     if take.sidecar.spec_hash == MANUAL_HASH:
         return ShotBuildStatus(shot.id, ShotState.MANUAL, current_hash, selected, take)

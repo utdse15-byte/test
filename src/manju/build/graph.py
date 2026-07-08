@@ -26,6 +26,13 @@ class BuildError(RuntimeError):
     pass
 
 
+# Round W (issue #3): the single source of truth for --gen's three legal
+# values. CLI/MCP/GUI/director all validate against THIS tuple (import it —
+# don't repeat the literal) so a typo like "--gen offf" can never drift
+# between call sites into "not off, so proceed" (the review's concrete bug).
+GEN_MODES = ("missing", "auto", "off")
+
+
 class WaitingUser(RuntimeError):
     """§8.3 ask_before gate for commands WITHOUT a result envelope
     (redo/voice): raised instead of spending; carries the estimate so the
@@ -243,6 +250,14 @@ class BuildResult:
     exports: dict[str, str] = field(default_factory=dict)
     qc_ok: bool | None = None
     qc_reports: dict[str, str] = field(default_factory=dict)
+    # Round W (issue #81): the render `target in (proxy, final, qc)` actually
+    # QC'd. ``target=qc`` deliberately does NOT render first (see
+    # _run_build_phases §6 below) — it QCs the newest EXISTING final on disk
+    # against the freshly recompiled timeline, so a stale render is a real
+    # possibility. This names exactly which artifact that was (or None when
+    # there is no final yet), so the CLI/MCP/GUI can say so instead of leaving
+    # the user to assume QC ran against a fresh render.
+    qc_final: str | None = None
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     estimated_cost: float = 0.0
@@ -472,6 +487,21 @@ def run_build(
     from datetime import datetime, timezone
 
     from ..runtime.buildlock import BuildLocked, build_lock
+
+    # Round W (issue #3): validate --gen HERE — the one entry point every
+    # caller (CLI, MCP tool, GUI plan/server, director) ultimately funnels
+    # through — so a typo like "offf" can never be treated as "not off" and
+    # silently proceed to spend money on generation. Some callers already
+    # pre-validate (defense in depth, harmless); this closes the gap for the
+    # ones that did not (plain CLI `manju build`, the MCP `build` tool).
+    if gen not in GEN_MODES:
+        result = BuildResult()
+        result.ok = False
+        result.errors.append(
+            f"--gen 必须是 {'/'.join(GEN_MODES)} 之一(实际 {gen!r})— 未知值不会被当成 "
+            "off,为避免在没打算生成时误触发付费生成,构建已直接停止;检查拼写"
+        )
+        return result
 
     # Boundary for "failures recorded during THIS build": every structured
     # record carries a UTC iso-seconds ts in the same format, so a string >= is a
@@ -1018,6 +1048,19 @@ def _run_build_phases(
         from ..qc.checks import run_qc
         from ..qc.report import write_reports
 
+        # Round W (issue #81): target=qc deliberately skips step 5 above (no
+        # render) — it is a cheap "check what's already there" pass, exactly
+        # like the standalone `manju qc` command, NOT "render then check".
+        # Making it imply a render would contradict that (and `target=exports`
+        # skips render for the same reason: its exporters read the timeline,
+        # not the composited video) — see the CLI help text for the option
+        # this round took instead: name the artifact QC'd, honestly.
+        if target in ("proxy", "final"):
+            qc_final = result.render_path  # the render this exact call just made
+        else:
+            final_path = project.newest_final_path()
+            qc_final = project.relpath(final_path) if final_path else None
+        result.qc_final = qc_final
         qc = run_qc(project, timeline)
         result.qc_ok = qc.ok
         result.qc_reports = {k: project.relpath(v) for k, v in write_reports(project, qc).items()}

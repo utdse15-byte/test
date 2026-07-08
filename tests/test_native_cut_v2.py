@@ -374,3 +374,80 @@ def test_v2_readonly_blocks_snap_and_revert_but_keeps_reads(tmp_project, add_sho
     finally:
         server.shutdown()
         server.close()
+
+
+# ================================================ F. round W (issue #69):
+# transition-override boundary validation — unknown keys 404, the true last
+# segment (no out-edge) still writes but warns.
+
+
+def test_transition_override_rejects_unknown_shot_id(gui, tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    status, _, data = _post(gui, "/api/edit/transition-override",
+                            {"shot": "S999_no_such_shot", "type": "xfade_fade",
+                             "duration_ms": 300})
+    assert status == 404
+    assert "S999_no_such_shot" in data["error"]
+    # nothing was written
+    assert "S999_no_such_shot" not in tmp_project.load_rules().transition_overrides
+
+
+def test_transition_override_rejects_unknown_key_on_cut_and_reset(gui, tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    # a hard-cut write on a bogus key is rejected the same way
+    status, _, _data = _post(gui, "/api/edit/transition-override",
+                             {"shot": "not_a_real_id", "cut": True})
+    assert status == 404
+    # reset on a bogus key too
+    status, _, _data = _post(gui, "/api/edit/transition-override",
+                             {"shot": "not_a_real_id", "action": "reset"})
+    assert status == 404
+
+
+def test_transition_override_accepts_intro_outro_sentinels(gui, tmp_project, add_shot):
+    """__intro__/__outro__ are legal keys even though they are never real shot
+    ids (packaging cards) — the QC advisory (`_transition_override_advisories`)
+    already treats them as known; the GUI endpoint must agree."""
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    status, _, _data = _post(gui, "/api/edit/transition-override",
+                             {"shot": "__intro__", "type": "fade", "duration_ms": 200})
+    assert status == 200
+    assert "__intro__" in tmp_project.load_rules().transition_overrides
+
+
+def test_transition_override_warns_on_last_segment_no_out_edge(gui, tmp_project, add_shot):
+    """A single-shot project: S001 IS the true last segment (no out-edge) —
+    the write is accepted (S001 is a real, known shot) but inert, and the
+    response must say so instead of pretending the transition will render."""
+    add_shot(tmp_project, "S001")
+    status, _, data = _post(gui, "/api/edit/transition-override",
+                            {"shot": "S001", "type": "xfade_fade", "duration_ms": 300})
+    assert status == 200
+    assert "S001" in tmp_project.load_rules().transition_overrides  # still written
+    warnings = data.get("warnings") or []
+    assert any("没有出边" in w or "out-edge" in w.lower() for w in warnings), data
+
+
+def test_transition_override_no_warning_on_interior_boundary(gui, tmp_project, add_shot):
+    """S001 → S002: S001's out-edge is real, so no spurious warning."""
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    status, _, data = _post(gui, "/api/edit/transition-override",
+                            {"shot": "S001", "type": "xfade_fade", "duration_ms": 300})
+    assert status == 200
+    assert not (data.get("warnings") or [])
+
+
+def test_transition_override_reset_on_last_segment_no_spurious_warning(gui, tmp_project, add_shot):
+    """A reset (removal) is never "inert config written" — no warning even on
+    the last segment, since nothing new was added."""
+    add_shot(tmp_project, "S001")
+    # first cut it in (accepted, with the last-segment warning)
+    assert _post(gui, "/api/edit/transition-override",
+                {"shot": "S001", "cut": True})[0] == 200
+    status, _, data = _post(gui, "/api/edit/transition-override",
+                            {"shot": "S001", "action": "reset"})
+    assert status == 200
+    assert not (data.get("warnings") or [])
+    assert "S001" not in tmp_project.load_rules().transition_overrides

@@ -708,10 +708,30 @@ def _technical_timeline_conflicts(project, report, timeline: Timeline) -> None:
     """Pure timeline math (§9): things that make the film play wrong regardless
     of the media — zero/negative-duration clips, video clips that overlap on the
     single video track beyond their transition, and captions that truly share
-    the screen. All errors: a conflicting timeline is definitely broken."""
+    the screen. All errors: a conflicting timeline is definitely broken.
+
+    Round W (issue #2/#6): Timeline/VideoClip/AudioClip stay LENIENT at the
+    model layer on purpose — timeline.json is compiled AND hand-editable
+    (§6 manual mode) — so a bad numeric value must load into a real, named
+    finding here instead of a raw parse-time crash that stops at the first
+    bad field with no report at all (same stance as TRANSITION_TYPES).
+    """
     fps = timeline.fps or 24
     frame_ms = 1000.0 / fps if fps else 0.0
     clips = list(timeline.tracks.video)
+
+    if timeline.fps <= 0:
+        report.add(
+            "error", "technical", "timeline",
+            f"timeline.fps 是非正数({timeline.fps})— 逐帧对齐(frame-grid snap)会除零",
+            suggestion="修正 timeline.json 的 fps,或用 manju build 重新编译",
+        )
+    if timeline.width <= 0 or timeline.height <= 0:
+        report.add(
+            "error", "technical", "timeline",
+            f"timeline 分辨率非法({timeline.width}x{timeline.height})",
+            suggestion="修正 timeline.json 的 width/height,或用 manju build 重新编译",
+        )
 
     for clip in clips:
         if clip.duration_ms <= 0:
@@ -720,6 +740,22 @@ def _technical_timeline_conflicts(project, report, timeline: Timeline) -> None:
                 f"video clip has non-positive duration ({clip.duration_ms}ms)",
                 suggestion="remove the clip or give it a positive, frame-aligned duration",
             )
+
+    # Audio clips (voice/music/sfx/ambient): a negative duration_ms is not a
+    # real length (None stays legal — it means "play to the source's end").
+    for track_name, audio_clips in (
+        ("voice", timeline.tracks.voice), ("music", timeline.tracks.music),
+        ("sfx", timeline.tracks.sfx), ("ambient", timeline.tracks.ambient),
+    ):
+        for ac in audio_clips:
+            if ac.duration_ms is not None and ac.duration_ms < 0:
+                report.add(
+                    "error", "technical", track_name,
+                    f"{track_name} clip {ac.source!r} has a negative duration "
+                    f"({ac.duration_ms}ms)",
+                    suggestion="fix the duration_ms in timeline.json (>= 0, or "
+                               "remove it to play to the source's natural end)",
+                )
 
     # Overlap on the single video track. The compiler lays clips end-to-end
     # (overlap 0); a crossfade legitimately overlaps by its transition length,

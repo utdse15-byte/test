@@ -285,6 +285,19 @@ def run_check(project: Project) -> CheckReport:
                     f"{label}: selected_take '{shot.status.selected_take}' has no media file"
                 )
 
+        # ---- take sidecars (issue #22): a hand-edited take_NN.yaml whose
+        # source_in_ms/source_out_ms window failed TakeSidecar's model
+        # validation (negative in-point, reversed/zero-length window) is
+        # degraded to a safe stand-in by Project.takes() so it never crashes a
+        # caller — but `manju check` must still name it as a real error,
+        # whether or not that take is currently selected.
+        for take in project.takes(sid):
+            if take.error:
+                report.errors.append(
+                    f"{label}: take '{take.name}' sidecar 非法(source_in_ms/"
+                    f"source_out_ms)— {take.error}"
+                )
+
         for violation in verify_locks(raw, shot.locked, label):
             report.errors.append(str(violation))
 

@@ -454,7 +454,14 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
 
 @app.command()
 def build(
-    target: str = typer.Option("final", help="proxy | final | exports | qc"),
+    target: str = typer.Option(
+        "final",
+        help="proxy | final | exports | qc — qc does NOT render first: it "
+             "checks the newest EXISTING final on disk against a freshly "
+             "recompiled timeline (same as the standalone `manju qc`, plus "
+             "gap-filling generation). Run --target final beforehand for QC "
+             "on a fresh render; the output/--json names which artifact it "
+             "checked (qc_final)."),
     gen: str = typer.Option("missing", help="missing | auto | off"),
     regen_stale: bool = typer.Option(False, "--regen-stale"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -479,6 +486,12 @@ def build(
     A plan that spends real money stops as waiting_user unless --yes (the §8.3
     ask_before gate); `--dry-run` shows the plan and estimate without spending.
     See `manju spend` for where the money actually went.
+
+    --target qc does NOT render first — it is "check what's already there",
+    exactly like the standalone `manju qc` (plus gap-filling generation and a
+    fresh timeline compile). It QCs the newest EXISTING renders/final/*.mp4;
+    run `manju build --target final` first for QC against a fresh render.
+    The output (and result.qc_final in --json) names the exact artifact.
 
     --mode quality|balanced|speed (goal 14) turns one knob for provider strategy
     bias + retry budget + generation concurrency; explicit per-shot providers and
@@ -529,6 +542,14 @@ def build(
             typer.echo(f"渲染: {result.render_path}")
         if result.qc_ok is not None:
             typer.echo(f"QC: {'通过' if result.qc_ok else '有错误,见 reports/qc.md'}")
+            # issue #81: --target qc never renders — say exactly which
+            # on-disk artifact QC checked, so "旧产物" is never a surprise.
+            if target == "qc":
+                if result.qc_final:
+                    typer.echo(f"  QC 对象(未重新渲染,检查的是现有产物):{result.qc_final}")
+                else:
+                    typer.echo("  QC 对象:尚无已渲染成片(renders/final 为空)"
+                               "— 先运行 manju build --target final/proxy")
         for k, v in result.exports.items():
             typer.echo(f"导出[{k}]: {v}")
         typer.secho("build ok" if result.ok else "build failed",
@@ -1971,7 +1992,8 @@ PACK_CACHE = ("renders/segments/", "renders/proxy/")
 @app.command()
 def pack(out: Optional[Path] = typer.Option(None),
          full: bool = typer.Option(False, "--full",
-                                   help="include the rebuildable render caches too")):
+                                   help="include the rebuildable render caches too"),
+         as_json: bool = typer.Option(False, "--json")):
     """Archive the project into a single .manjupkg (zip) for backup/migration.
 
     FIX-E: the original project directory name rides in the zip comment, so
@@ -1989,6 +2011,7 @@ def pack(out: Optional[Path] = typer.Option(None),
     out = out or project.root.parent / (project.root.stem + ".manjupkg")
     excluded_cache = 0
     skipped_symlinks: list[str] = []
+    files_packed = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
@@ -2007,6 +2030,16 @@ def pack(out: Optional[Path] = typer.Option(None),
                 excluded_cache += path.stat().st_size
                 continue
             zf.write(path, rel)
+            files_packed += 1
+    if as_json:
+        _emit({
+            "packed": str(out),
+            "name": project.root.name,
+            "files": files_packed,
+            "full": full,
+            "excluded_cache_bytes": excluded_cache,
+        }, True)
+        return
     typer.secho(f"packed → {out}", fg=typer.colors.GREEN)
     if excluded_cache:
         typer.echo(f"  跳过可重建缓存 {excluded_cache / 1e6:.1f} MB "
@@ -2035,7 +2068,8 @@ def _sanitize_archive_stem(stem: str) -> str:
 
 @app.command()
 def unpack(archive: Path, dest: Optional[Path] = typer.Option(
-        None, "--dest", help="override the restored directory (default: from the archive filename)")):
+        None, "--dest", help="override the restored directory (default: from the archive filename)"),
+        as_json: bool = typer.Option(False, "--json")):
     """Restore a .manjupkg.
 
     goal item 20: the default restore directory comes from the ARCHIVE's OWN
@@ -2066,8 +2100,17 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
                 )
         if dest.exists():
             _fail(f"destination exists, refusing to overwrite: {dest}")
+        names = zf.namelist()
         zf.extractall(dest)
     (dest / ".manju").mkdir(exist_ok=True)
+    if as_json:
+        _emit({
+            "unpacked": str(dest),
+            "archive": str(archive),
+            "name": original_name,
+            "files": len(names),
+        }, True)
+        return
     typer.secho(f"unpacked → {dest}", fg=typer.colors.GREEN)
 
 
@@ -3906,10 +3949,13 @@ def series_new(
 @series_app.command("status")
 def series_status_cmd(as_json: bool = typer.Option(False, "--json")):
     """跨集状态汇总:每集镜头分布 / 成片 / 花费,加合计行(复用单项目机制,只读)。"""
-    from .core.series import series_status
+    from .core.series import SeriesError, series_status
 
     series = _series()
-    info = series_status(series)
+    try:
+        info = series_status(series)
+    except SeriesError as exc:
+        _fail(str(exc))
     if as_json:
         _emit(info, True)
         return
@@ -3936,10 +3982,13 @@ def series_status_cmd(as_json: bool = typer.Option(False, "--json")):
 @series_app.command("episodes")
 def series_episodes_cmd(as_json: bool = typer.Option(False, "--json")):
     """列出已登记的分集(id / 标题 / 是否已在磁盘上)。"""
-    from .core.series import Series
+    from .core.series import SeriesError
 
     series = _series()
-    cfg = series.load_config()
+    try:
+        cfg = series.load_config()
+    except SeriesError as exc:
+        _fail(str(exc))
     rows = []
     for e in cfg.episodes:
         exists = (series.episode_project_dir(e.id) / "project.yaml").exists()
@@ -3991,10 +4040,13 @@ def series_sync_bible_cmd(
     as_json: bool = typer.Option(False, "--json"),
 ):
     """把剧集 bible 保守同步到各分集:缺失→可新增,不同→只报告(除非 --force kind:id)。"""
-    from .core.series import sync_bible
+    from .core.series import SeriesError, sync_bible
 
     series = _series()
-    report = sync_bible(series, apply=apply, force=list(force), actor=ACTOR)
+    try:
+        report = sync_bible(series, apply=apply, force=list(force), actor=ACTOR)
+    except SeriesError as exc:
+        _fail(str(exc))
     if as_json:
         _emit(report, True)
         return
@@ -4026,10 +4078,13 @@ def series_sync_bible_cmd(
 @series_app.command("characters")
 def series_characters_cmd(as_json: bool = typer.Option(False, "--json")):
     """全局角色视图:每个角色的分集在场/分歧/出场(复用 manju appearances)。"""
-    from .core.series import series_characters
+    from .core.series import SeriesError, series_characters
 
     series = _series()
-    view = series_characters(series)
+    try:
+        view = series_characters(series)
+    except SeriesError as exc:
+        _fail(str(exc))
     if as_json:
         _emit(view, True)
         return

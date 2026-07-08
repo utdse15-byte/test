@@ -333,12 +333,14 @@ def _validate_action(project: Project, action: Any) -> dict[str, Any]:
             f"unknown action type {atype!r}; the whitelist is {list(ACTION_TYPES)}")
 
     if atype == "build":
+        from .graph import GEN_MODES  # round W (issue #3): single source of truth
+
         target = action.get("target", "final")
         gen = action.get("gen", "missing")
         if target not in ("proxy", "final", "exports", "qc"):
             raise DirectorError(f"build.target must be proxy|final|exports|qc (got {target!r})")
-        if gen not in ("missing", "auto", "off"):
-            raise DirectorError(f"build.gen must be missing|auto|off (got {gen!r})")
+        if gen not in GEN_MODES:
+            raise DirectorError(f"build.gen must be {'|'.join(GEN_MODES)} (got {gen!r})")
         return {"type": "build", "target": target, "gen": gen,
                 "regen_stale": bool(action.get("regen_stale")),
                 "force": bool(action.get("force"))}

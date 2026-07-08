@@ -15,11 +15,6 @@ from ..core.events import tail_events
 from .stale import evaluate_all
 
 
-def _latest_final(project: Project):
-    finals = sorted(project.final_dir.glob("final_v*.mp4"))
-    return finals[-1] if finals else None
-
-
 def project_status(project: Project) -> dict[str, Any]:
     config = project.load_config()
     statuses = evaluate_all(project)
@@ -115,7 +110,10 @@ def project_status(project: Project) -> dict[str, Any]:
             build_lock_info = {"note": "lock file unreadable"}
 
     timeline = project.load_timeline()
-    final = _latest_final(project)
+    # Round W (issue #70): use the ONE numeric final resolver (final_v10 beats
+    # final_v9) instead of a lexicographic sorted-glob, which used to pick
+    # final_v9 as "latest" once a project passed 9 renders.
+    final = project.newest_final_path()
 
     # FIX-A writes the .key.json sidecar only at render completion, so a latest
     # final lacking one is likely crash-truncated — say so instead of presenting

@@ -868,12 +868,14 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "shot": shot_id, "field": fieldpath, "hash": digest})
 
     def _act_build(self, body: dict[str, Any]) -> None:
+        from ..build.graph import GEN_MODES  # round W (issue #3): shared enum
+
         target = str(body.get("target") or "final")
         gen = str(body.get("gen") or "missing")
         if target not in ("proxy", "final", "exports", "qc"):
             self._send_error_json(f"unknown target: {target}", 400)
             return
-        if gen not in ("missing", "auto", "off"):
+        if gen not in GEN_MODES:
             self._send_error_json(f"unknown gen mode: {gen}", 400)
             return
         regen_stale = bool(body.get("regen_stale"))
@@ -3236,16 +3238,36 @@ class _Handler(BaseHTTPRequestHandler):
           otherwise;
         - ``{shot, cut: true}`` writes ``null`` (硬切);
         - ``{shot, action: "reset"}`` removes the key (恢复默认).
+
+        Round W (issue #69): ``shot`` is used verbatim as a rules key, so it is
+        now checked against the same ``known`` set `qc/checks.py
+        _transition_override_advisories` uses (every real shot id, plus the
+        ``__intro__``/``__outro__`` packaging sentinels) — an unknown key is a
+        404 with a 中文 reason instead of silently writing an inert override.
+        A KNOWN key that is the film's true last segment (no out-edge — the
+        override could never fire) still writes, but the response carries a
+        warning explaining why, mirroring the QC advisory's wording.
         Records an ``edit_rules`` event with the change."""
         from ..core.models import TRANSITION_TYPES, TransitionSpec
         from ..core.yamlio import dump_yaml
-        from .edit_engine import max_override_duration_ms
+        from .edit_engine import max_override_duration_ms, neighbour_durations
 
         project = self.server.project
         shot_id = str(body.get("shot") or "")
         if not shot_id:
             self._send_error_json("shot (out-edge id) is required", 400)
             return
+        known = set(project.shot_ids()) | {"__intro__", "__outro__"}
+        if shot_id not in known:
+            self._send_error_json(
+                f"未知镜头/边界键 \"{shot_id}\":不是任何镜头 id,也不是 __intro__/__outro__"
+                "(transition_overrides 的键必须是镜头 id 或 __intro__/__outro__)", 404)
+            return
+        try:
+            timeline = project.load_timeline()
+        except Exception:
+            timeline = None
+        no_out_edge = neighbour_durations(project, timeline, shot_id) is None
         action = str(body.get("action") or "")
         cut = bool(body.get("cut"))
         detail: dict[str, Any]
@@ -3272,10 +3294,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error_json("duration_ms must be in [0, 5000]", 400)
                 return
             # REPORTS §1 validity: ≤ half the shorter neighbour clip.
-            try:
-                timeline = project.load_timeline()
-            except Exception:
-                timeline = None
             cap = max_override_duration_ms(project, timeline, shot_id)
             if cap is not None and dur > cap:
                 self._send_error_json(
@@ -3309,6 +3327,15 @@ class _Handler(BaseHTTPRequestHandler):
             if ok:
                 append_event(project.root, self.server.actor, "edit_rules",
                              {**detail, "via": "gui"})
+                # issue #69: writing an override on the true last segment is
+                # legal (the key is real) but inert (there is no out-edge for
+                # it to render on) — warn instead of pretending it will fire.
+                if no_out_edge and action != "reset":
+                    payload.setdefault("warnings", [])
+                    payload["warnings"].append(
+                        f"\"{shot_id}\" 是当前时间线的最后一段,没有出边(out-edge),"
+                        "这个转场覆盖不会生效"
+                    )
         self._send_json(payload, status)
 
     def _act_edit_handle_rebuild_plan(self, body: dict[str, Any]) -> None:

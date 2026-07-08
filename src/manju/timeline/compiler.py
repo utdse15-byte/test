@@ -173,7 +173,16 @@ def snap_to_frame_grid(duration_ms: int, fps: int) -> int:
     29-frame/1216ms segments and a 143/6 final frame rate). Snapping to the
     nearest whole frame count (never below one frame) keeps timeline math,
     captions, audio offsets and the encoder all on the same grid.
+
+    Round W (issue #2/#6, defensive): ``fps`` is now validated > 0 at every
+    model boundary that produces one (ProjectConfig, Timeline), so a healthy
+    caller never reaches this with fps<=0. This is the last line of defence
+    for a caller that still manages to (a raw int from a hand-rolled caller, a
+    ``model_construct``-ed object, or a future call site) — floor it to 1fps
+    instead of raising ZeroDivisionError, so a corrupt/degenerate input
+    degrades to a wrong-but-finite number rather than crashing/hanging.
     """
+    fps = fps if fps and fps > 0 else 1
     frames = max(1, round(duration_ms * fps / 1000))
     return max(1, round(frames * 1000 / fps))
 
@@ -199,7 +208,14 @@ def _split_caption(text: str, max_chars: int, max_lines: int) -> list[str]:
     text = text.strip()
     if not text:
         return []
-    budget = max_chars * max_lines
+    # Round W (issue #2/#6, defensive): CaptionRules.max_chars_per_line/
+    # max_lines are now validated >= 1 at the model boundary, so a healthy
+    # rules.yaml always yields budget >= 1. This floor is the last line of
+    # defence for a caller passing raw ints (or a hand-rolled/legacy timeline
+    # rules payload that bypassed the model) — at budget=0 the loop below cuts
+    # 0 characters per iteration and never terminates (mirrors the floor
+    # ``_timed_captions`` already applies a few lines down).
+    budget = max(1, max_chars * max_lines)
     if len(text) <= budget:
         return [text]
     chunks: list[str] = []
@@ -676,8 +692,23 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
         # take_dur exactly as before, so whole-file takes are byte-identical.
         in_ms = take.sidecar.source_in_ms or 0
         out_ms = take.sidecar.source_out_ms
+        # Round W (issue #22): TakeSidecar's model validator already rejects
+        # in<0 / out<=in at LOAD time (core/models.py), and container.Project
+        # .takes() degrades a sidecar that fails it to a safe whole-file window
+        # + take.error (surfaced by manju check/QC — see core/check.py and
+        # qc/checks.py). This is the last line of defence: a reversed/zero-
+        # length window used to be silently squashed to 1ms here instead of
+        # ever being reported (the review's concrete complaint) — it is now a
+        # named compile problem instead, exactly like a missing/unselected take.
+        if in_ms < 0 or (out_ms is not None and out_ms <= in_ms):
+            problems.append(
+                f"{status.shot_id}: take '{take.name}' 的裁剪窗口非法 "
+                f"(source_in_ms={in_ms}, source_out_ms={out_ms})— 应满足 in>=0 且 "
+                "out>in;用 manju repair --op inout 重新设置窗口,或修正该 take 的 sidecar 文件"
+            )
+            continue
         if out_ms is not None:
-            take_dur = max(1, out_ms - in_ms)
+            take_dur = out_ms - in_ms
         elif in_ms and take_dur is not None:
             take_dur = max(1, take_dur - in_ms)
         shots.append(

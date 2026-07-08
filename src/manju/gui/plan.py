@@ -106,13 +106,13 @@ def action_plan(project: Any, action: str, params: dict[str, Any]) -> dict[str, 
 
 
 def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[str, Any]:
-    from ..build.graph import run_build
+    from ..build.graph import GEN_MODES, run_build  # round W (issue #3): shared enum
 
     target = str(params.get("target") or "final")
     gen = str(params.get("gen") or "missing")
     if target not in ("proxy", "final", "exports", "qc"):
         raise ValueError(f"unknown target: {target}")
-    if gen not in ("missing", "auto", "off"):
+    if gen not in GEN_MODES:
         raise ValueError(f"unknown gen mode: {gen}")
     from ..build.modes import mode_else_bias
 

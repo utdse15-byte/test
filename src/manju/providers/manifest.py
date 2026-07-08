@@ -17,7 +17,7 @@ import shlex
 import shutil
 from pathlib import Path
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from ..core.idents import UnsafeIdentifierError, validate_safe_segment
 from ..core.models import ManjuModel
@@ -79,11 +79,51 @@ class LimitsConfig(ManjuModel):
     max_ref_images: int | None = None
     max_ref_videos: int | None = None
 
+    # Round W (issue #25): ``max_concurrent`` <= 0 is not a real concurrency
+    # cap, and generic_cloud._throttle() already treats
+    # ``rate_limit_per_min <= 0`` as "no throttling" — i.e. an unvalidated 0
+    # (or negative) silently disables the engine-side rate limit the docstring
+    # above says exists (§8.2). Both are load-bearing spend/throughput knobs,
+    # so a broken manifest must fail load/probe (`manju doctor` /
+    # `manju providers check`), not silently under-throttle.
+    @field_validator("max_concurrent")
+    @classmethod
+    def _positive_max_concurrent(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"limits.max_concurrent 必须 >= 1(实际 {v!r})— 并发上限为 0 或负数会让"
+                "该 provider 的所有请求都排不上队;改为 >= 1 的整数"
+            )
+        return v
+
+    @field_validator("rate_limit_per_min")
+    @classmethod
+    def _positive_rate_limit(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"limits.rate_limit_per_min 必须 >= 1(实际 {v!r})— 引擎把 <= 0 当成"
+                "\"不限流\",会绕过 §8.2 的限流保护;改为 >= 1 的整数"
+            )
+        return v
+
 
 class CostConfig(ManjuModel):
     per_second: float = 0.0
     per_call: float = 0.0
     currency: str = "CNY"
+
+    # Round W (issue #25): a negative cost would make budget estimation and
+    # the ask_before spend confirmation UNDER-count real spend (or even net
+    # negative), defeating both. 0 stays legal (free/local-style providers).
+    @field_validator("per_second", "per_call")
+    @classmethod
+    def _nonneg_cost(cls, v: float, info) -> float:
+        if v < 0:
+            raise ValueError(
+                f"cost.{info.field_name} 不能为负数(实际 {v!r})— 负成本会让预算估算和"
+                "花费确认失真;改为 >= 0 的数字"
+            )
+        return v
 
 
 class TtsConfig(ManjuModel):

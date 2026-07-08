@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from .idents import UnsafeIdentifierError, validate_safe_segment
 from .models import (
     PackagingSpec,
@@ -84,6 +86,15 @@ class TakeInfo:
     media_path: Path | None  # None if sidecar exists but media is missing
     sidecar_path: Path
     sidecar: TakeSidecar
+    # Round W (issue #22): set when the on-disk sidecar failed TakeSidecar's
+    # model validation (e.g. a hand-edited reversed/negative source_in_ms /
+    # source_out_ms window) — ``sidecar`` above is then a SAFE degraded stand-
+    # in (the illegal window dropped back to whole-file 0/None) so numeric
+    # code never sees the bad values, while this field keeps the reason
+    # visible for `manju check` / QC to surface as a real finding instead of
+    # silently tolerating it. ``None`` for every take before this landed and
+    # for every take whose sidecar parses cleanly (the overwhelming majority).
+    error: str | None = None
 
 
 class ProjectError(RuntimeError):
@@ -408,14 +419,34 @@ class Project:
         infos: list[TakeInfo] = []
         for sidecar_path in sorted(tdir.glob("take_*.yaml")):
             name = sidecar_path.stem
-            sidecar = TakeSidecar.model_validate(read_yaml(sidecar_path) or {})
+            raw = read_yaml(sidecar_path) or {}
+            error: str | None = None
+            try:
+                sidecar = TakeSidecar.model_validate(raw)
+            except ValidationError as exc:
+                # Round W (issue #22): TakeSidecar's model validator rejects an
+                # illegal source_in_ms/source_out_ms window (negative in-point,
+                # reversed/zero-length window). Re-validate WITHOUT those two
+                # fields — everything else on TakeSidecar is unconstrained, so
+                # this always succeeds — to get a SAFE (whole-file) sidecar
+                # instead of dropping the take or crashing every caller of
+                # Project.takes()/get_take() (build/status/GUI polling all
+                # call this). The reason rides on TakeInfo.error for `manju
+                # check` / QC to surface as a real finding (core/check.py,
+                # qc/checks.py) instead of silently tolerating the bad data.
+                error = " ".join(str(exc).split())
+                safe_raw = {
+                    k: v for k, v in raw.items()
+                    if k not in ("source_in_ms", "source_out_ms")
+                }
+                sidecar = TakeSidecar.model_validate(safe_raw)
             media = next(
                 (tdir / (name + ext) for ext in MEDIA_EXTS if (tdir / (name + ext)).exists()),
                 None,
             )
             if skip_ghosts and media is None:
                 continue
-            infos.append(TakeInfo(shot_id, name, media, sidecar_path, sidecar))
+            infos.append(TakeInfo(shot_id, name, media, sidecar_path, sidecar, error=error))
         return infos
 
     def get_take(self, shot_id: str, take_name: str) -> TakeInfo | None:
