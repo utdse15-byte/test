@@ -330,7 +330,19 @@ class GenericCloudProvider(CloudProvider):
         concurrent build) cannot race two near-simultaneous reads of
         ``_last_submit`` into a burst that exceeds ``rate_limit_per_min`` — a
         thread waiting on the lock is itself correctly spaced from whoever
-        holds it."""
+        holds it.
+
+        SCOPE (honest, review #6): ``rate_limit_per_min`` is a BEST-EFFORT
+        PER-PROCESS throttle, NOT a hard cross-process quota. Two separate
+        ``manju`` processes each throttle independently, so their combined
+        submit rate can exceed the per-minute figure. That is a deliberate
+        design choice for a single-user local tool — a true distributed token
+        bucket (shared persistent state + a cross-process lock on every submit)
+        is not worth the machinery here. The real backstop against exceeding a
+        provider's quota is the remote 429, which we catch as
+        ``FailureKind.rate_limited`` and retry with backoff (see ``poll`` /
+        ``submit`` and providers/base.py). ``max_concurrent`` IS hard-enforced
+        (a semaphore); the per-minute rate is the soft one."""
         per_min = self.manifest.limits.rate_limit_per_min
         if per_min <= 0:
             return
