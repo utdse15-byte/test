@@ -1142,3 +1142,66 @@ skills index (14) + visual-qc-review resolution, series new/new-episode/
 status, funnel walk + /create rail + stage save landing on disk, cockpit
 /api blocks, /edit keymap + snap attr + synchints; CI green at every
 integration push.
+
+## 2026-07-08 — round W: the 85-issue external review — verify-and-fix
+
+Six Sonnet-5 fix packages (per the user's model directive) + inline meta
+fixes, every issue VERIFIED against the code before touching it, integrated
+one cherry-pick at a time. Verdict: **84 of 85 fixed; 1 explicit design call;
+zero not-real** — the review was accurate throughout.
+
+- **WA core truth/check/spec (#1,5,18,26,34,57,74 + #16/37/60):** bible
+  cross-file duplicate ids = check error; unindexed shots EXCLUDED from
+  build/timeline (--include-unindexed escape); timeline/packaging asset refs
+  + routing.yaml + style look + prop: locks enter check; rollback_file
+  refuses compiled timeline artifacts. The hash-coverage trio landed as the
+  VERSIONED formula design: SPEC_VERSION/VOICE_VERSION 2 fold dialogue,
+  keyframes, and the resolved TTS provider; sidecars record their version and
+  old takes stay judged by v1 forever (no mass restage) — plus a real
+  inconsistency bug found in redo's hash stamping.
+- **WB validation bounds (#2,3,6,22,23,25,48,69,70,81):** fps/width/height/
+  duration/candidates/caption budgets/manifest cost-rate-concurrency all
+  bounded with 中文 errors; --gen strictly missing|auto|off (a typo now
+  STOPS the build instead of maybe spending); reversed trim windows surface
+  instead of clamping; pack/unpack --json; status/GUI newest-final numeric;
+  #81 resolved as transparency (qc names the artifact it checked — consistent
+  with exports' render-free semantics).
+- **WC path/file boundaries (#11,13,14,17,20,21,38,40,46,49,72,78):** one
+  canonical safe-segment validator at every id→path choke point; refs AND
+  keyframes share one containment guard (absolute/outside-project refused
+  before any upload); pack skips symlinks; unpack ignores the zip comment;
+  secret scan covers media/ text; board /media allowlisted; the core protocol
+  skill can no longer be shadowed by a project; auto logs prompt hash not text.
+- **WD spend/provider/network (#7,8,27,29,30,43,44,52,53,54,55,61,63,67,79,80):**
+  estimates price the ROUTED provider; per-provider max_concurrent semaphores;
+  pre-submit intent records close the double-charge window; candidates priced
+  as produced; cheapest = per_call + per_second×duration; streamed downloads
+  with scheme/size/content-type caps + multipart filename sanitization across
+  generic_cloud/TTS/ASR/ComfyUI; ffmpeg/ffprobe timeouts; transcribe + GUI
+  voice ride the spend gate; handle-rebuild pins the priced provider;
+  currency never mixed; budget trip message states in-flight tasks continue.
+- **WE concurrency/atomicity (#9,24,28,39,41,42,47,50,51,64,76):** ONE
+  checked selected_take write path for CLI/MCP/board/GUI/build-auto-select
+  (lock guard + post-check + revert + event); mutating CLI commands take the
+  project write lock; parent-dir fsync; library/proposal/failure-ledger races
+  fixed with real multi-process tests; jobs keyed (provider, job_id); mixer
+  apply transactional; cover/teaser keys written only after verified output.
+  Honest audit note: most GUI/MCP mutating handlers still rely on in-process
+  mutexes only — recorded as follow-up debt.
+- **WF export/QC/GUI (#10,31,32,33,35,36,56,58,59,62,65,66,68,71,73,75,77):**
+  exporters honor source_in_ms (OTIO/剪映/CapCut match the render); ASS
+  override-tag injection neutralized; deep-QC "detector didn't run" visible;
+  verdicts require criterion+message; gc --hard removes ghost sidecars;
+  stale finals BLOCK packaging by default; watch fingerprints cover captions/
+  refs/keyframes/take files; manual-mode ASS staleness real; draft verify
+  binds referenced media; funnel plan/produce staleness-aware; caches keyed
+  by content; prompt-check checks prompt_override; masking covers
+  Authorization/Cookie/URL tokens; split-script refuses to clobber edits.
+- **Inline meta (#82,83,84,85):** project.yaml:agent restricted to known
+  names (templates = machine-level only); constraints.txt + CI -c install;
+  --json argv fallback under _fail; big-file refactor recorded in DECISIONS
+  as deliberate standing debt.
+
+**Verified:** 1716 tests green consolidated (was 1456; +260, including real
+multi-process racing tests and attack-shaped path-escape repros); CI green at
+every integration push.
