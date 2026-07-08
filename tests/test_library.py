@@ -182,3 +182,104 @@ def test_cli_rm_requires_yes(lib_root, src_file):
     assert ok.exit_code == 0, ok.output
     assert json.loads(ok.output)["name"] == "temp.mp4"
     assert Library().assets() == []
+
+
+# --------------------------------------------------------- #42: cross-process lock
+
+
+def _mp_add_worker(root: str, src: str, tag: str) -> None:
+    """Top-level (picklable) worker for the multiprocessing race test below:
+    each OS process adds ONE distinct-content file to the SAME library root,
+    all timed to fire together (round W, #42)."""
+    import manju.core.library as library_mod
+
+    library_mod.Library(root).add(src, tags=[tag])
+
+
+def test_add_concurrent_processes_no_lost_update(lib_root, tmp_path):
+    """Real OS processes (not threads) racing `Library.add` on the SAME
+    index.json must not lose an entry to a last-writer-wins read-modify-write
+    (round W, #42 — library index lost update). Six distinct-content files
+    (so every add is a genuinely NEW row, never a dedup no-op) are added by
+    six separate processes launched together; without the fcntl.flock guard
+    around load→mutate→save, at least one process's snapshot of the index
+    predates another's write and its row is silently dropped on save.
+    With the lock, every add is serialized and all six rows must survive."""
+    import multiprocessing
+
+    n = 6
+    files = []
+    for i in range(n):
+        p = tmp_path / f"clip_{i}.bin"
+        p.write_bytes(f"library-race-content-{i}-".encode() * 200)
+        files.append(p)
+
+    ctx = multiprocessing.get_context("spawn")
+    procs = [
+        ctx.Process(target=_mp_add_worker, args=(str(lib_root), str(f), f"tag{i}"))
+        for i, f in enumerate(files)
+    ]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=60)
+        assert p.exitcode == 0, f"worker process failed (exitcode={p.exitcode})"
+
+    from manju.core.hashing import hash_file
+
+    lib = Library(lib_root)
+    assets = lib.assets()
+    assert len(assets) == n, (
+        f"expected {n} distinct library rows, got {len(assets)} — "
+        "a lost update dropped a concurrent add()"
+    )
+    expected_hashes = {hash_file(f) for f in files}
+    assert {e["hash"] for e in assets} == expected_hashes
+
+
+def test_index_lock_serializes_two_threads(lib_root, tmp_path, monkeypatch):
+    """A lower-level, same-process check of the lock primitive itself: force
+    two threads to interleave load→save around `Library.add` (a delay
+    injected into `_save_index`) and confirm both rows still land — the
+    thread-local proof that `_index_lock` actually blocks a second acquirer
+    rather than being a no-op (round W, #42)."""
+    import threading
+    import time as _time
+
+    import manju.core.library as library_mod
+
+    lib = Library(lib_root)
+    orig_save = lib._save_index
+    barrier_hits = []
+
+    def slow_save(index):
+        barrier_hits.append(1)
+        _time.sleep(0.05)  # widen the race window a lock must close
+        orig_save(index)
+
+    monkeypatch.setattr(lib, "_save_index", slow_save)
+
+    f1 = tmp_path / "a.bin"
+    f1.write_bytes(b"thread-race-a")
+    f2 = tmp_path / "b.bin"
+    f2.write_bytes(b"thread-race-b")
+
+    results: dict[str, Exception | None] = {}
+
+    def run(name, f, tag):
+        try:
+            lib.add(f, tags=[tag])
+            results[name] = None
+        except Exception as exc:  # pragma: no cover - surfaced via assert below
+            results[name] = exc
+
+    t1 = threading.Thread(target=run, args=("t1", f1, "x"))
+    t2 = threading.Thread(target=run, args=("t2", f2, "y"))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert results == {"t1": None, "t2": None}
+    assert len(barrier_hits) == 2
+    assert len(Library(lib_root).assets()) == 2

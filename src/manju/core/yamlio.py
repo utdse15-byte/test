@@ -28,6 +28,36 @@ def _str_representer(dumper: yaml.Dumper, value: str):  # keep multiline blocks 
 _ManjuDumper.add_representer(str, _str_representer)
 
 
+def _fsync_dir(path: Path) -> None:
+    """Best-effort directory-entry fsync (round W, #24 — crash safety).
+
+    Fsync-ing the FILE (already done below) guarantees the file's own bytes
+    are durable, but the directory ENTRY ``os.replace`` just repointed is a
+    separate piece of filesystem metadata — on a crash/power-loss right
+    after the rename, a directory that was never fsynced can still forget
+    the entry ever moved, leaving "crash-safe" a claim the write did not
+    fully back up. This closes that gap.
+
+    POSIX-only in practice and deliberately narrow: opening a directory as a
+    file (to get an fd to fsync) is a POSIX idiom Windows has no equivalent
+    for, and a few filesystems (some network mounts) reject it outright.
+    Either failure degrades SILENTLY — the file itself is already safely on
+    disk by this point; losing the directory-fsync guarantee on an
+    unsupported platform must never turn a successful write into an error.
+    """
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        fd = os.open(path, flags)
+    except OSError:
+        return  # platform/filesystem cannot open a directory fd — degrade
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass  # dir fsync unsupported here (e.g. some network mounts) — degrade
+    finally:
+        os.close(fd)
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,6 +68,7 @@ def atomic_write_text(path: Path, text: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        _fsync_dir(path.parent)  # #24: the rename's directory entry, not just the bytes
     except BaseException:
         try:
             os.unlink(tmp)

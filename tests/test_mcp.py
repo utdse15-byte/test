@@ -374,3 +374,59 @@ def test_mcp_qc_respects_build_lock(tmp_project, add_shot):
         lock.release()
     result = handler(tmp_project, {})  # released -> runs normally
     assert "ok" in result and "reports" in result
+
+
+# ============================================================ round W (#39/#9)
+
+
+def test_mcp_select_take_respects_build_lock(tmp_project, add_shot, make_take):
+    """select_take is one of the entrances round W (#9) adds process-lock
+    coverage to — a held lock must refuse it, not race a concurrent build."""
+    import pytest as _pytest
+
+    from manju.mcp.tools import TOOL_DEFS
+    from manju.runtime.buildlock import BuildLock, BuildLocked
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+    handler = next(t["handler"] for t in TOOL_DEFS if t["name"] == "select_take")
+    lock = BuildLock(tmp_project.root, actor="human").acquire()
+    try:
+        with _pytest.raises(BuildLocked):
+            handler(tmp_project, {"shot_id": "S001", "take": take.name})
+    finally:
+        lock.release()
+    assert tmp_project.load_shot("S001").status.selected_take is None
+    result = handler(tmp_project, {"shot_id": "S001", "take": take.name})
+    assert result["ok"] is True
+    assert tmp_project.load_shot("S001").status.selected_take == take.name
+
+
+def test_mcp_select_take_refuses_when_selected_take_locked(tmp_project, add_shot, make_take):
+    """Round W (#39/#19): MCP select_take used to write status.selected_take
+    directly, bypassing the SAME value-hash lock check `update_shot` honors.
+    A shot whose status.selected_take is sealed must refuse here too."""
+    from manju.mcp.tools import TOOL_DEFS, ToolError
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+
+    def ensure_field(d):
+        status = d.get("status")
+        if not isinstance(status, dict):
+            status = {}
+        status.setdefault("selected_take", None)
+        d["status"] = status
+
+    tmp_project.update_shot_raw("S001", ensure_field)
+    raw = tmp_project.load_shot_raw("S001")
+    digest = seal_lock(raw, "status.selected_take")
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("locked", {}).__setitem__(
+            "status.selected_take", digest)
+    )
+
+    handler = next(t["handler"] for t in TOOL_DEFS if t["name"] == "select_take")
+    with pytest.raises(ToolError):
+        handler(tmp_project, {"shot_id": "S001", "take": take.name})
+    assert tmp_project.load_shot("S001").status.selected_take is None

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -59,13 +60,14 @@ CREATE TABLE IF NOT EXISTS runs (
     failure_id    TEXT
 );
 CREATE TABLE IF NOT EXISTS jobs (
-    remote_job_id TEXT PRIMARY KEY,
     provider      TEXT NOT NULL,
+    remote_job_id TEXT NOT NULL,
     shot          TEXT NOT NULL,
     params        TEXT,
     status        TEXT NOT NULL,
     submitted_at  TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (provider, remote_job_id)
 );
 """
 
@@ -109,6 +111,7 @@ class RuntimeState:
     # ---------------------------------------------------------- lifecycle
 
     def _create_schema(self) -> None:
+        self._migrate_legacy_jobs_table()  # #47: must run BEFORE CREATE TABLE IF NOT EXISTS
         with self._conn:  # idempotent: CREATE TABLE IF NOT EXISTS
             self._conn.executescript(_SCHEMA)
         # Forward-upgrade a ledger created before ``estimated_cost`` existed
@@ -122,6 +125,43 @@ class RuntimeState:
                     self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {coltype}")
             except sqlite3.Error:
                 pass
+
+    def _migrate_legacy_jobs_table(self) -> None:
+        """#47: ``jobs`` used to key on ``remote_job_id`` ALONE. Two providers
+        that happen to return the same job id (both are free to mint their own
+        id namespace) would silently replace each other's pending row —
+        ``INSERT OR REPLACE`` on a single-column PK cannot tell them apart.
+        The fix is a compound PRIMARY KEY ``(provider, remote_job_id)``.
+
+        SQLite cannot ALTER a PRIMARY KEY in place, so a legacy table (created
+        by code before this round) is renamed aside — never dropped outright,
+        so the raw rows are inspectable — and ``CREATE TABLE IF NOT EXISTS``
+        (right after this call) mints a fresh, empty, correctly-keyed table.
+        This is the SAME accepted worst case the module docstring already
+        names for any ``.manju/`` loss: at most one resubmission of a job that
+        was genuinely in flight at migration time — never silently-wrong
+        provider attribution, which is what the old schema risked. The §3
+        rebuild path (``manju rebuild-index`` / :meth:`rebuild`) is exactly
+        the recovery a user runs after this — it re-derives ``runs`` from take
+        sidecars and prunes/reports ``jobs`` against the fresh table, so a
+        legacy DB comes back to a consistent (if pending-jobs-emptied) state
+        with no manual SQL required."""
+        try:
+            cols = self._conn.execute("PRAGMA table_info(jobs)").fetchall()
+        except sqlite3.Error:
+            return
+        if not cols:
+            return  # no jobs table yet (fresh DB) — CREATE TABLE below mints it
+        pk_cols = {c["name"] for c in cols if c["pk"]}
+        if pk_cols == {"provider", "remote_job_id"}:
+            return  # already the round-W shape
+        try:
+            with self._conn:
+                self._conn.execute(
+                    f"ALTER TABLE jobs RENAME TO jobs_legacy_{int(time.time())}"
+                )
+        except sqlite3.Error:
+            pass  # disposable state (§3): a failed migration must never raise
 
     def _ts(self) -> str:
         return self._now().isoformat()
@@ -269,23 +309,30 @@ class RuntimeState:
     ) -> None:
         """Persist a submitted job as ``pending`` (§8.1 "提交成功即写入").
 
-        ``INSERT OR REPLACE`` so a re-submit of the same id is idempotent."""
+        ``INSERT OR REPLACE`` so a re-submit of the same id is idempotent —
+        keyed on ``(provider, remote_job_id)`` (#47), so two providers that
+        happen to mint the same job id string never collide."""
         ts = self._ts()
         with self._conn:
             self._conn.execute(
                 "INSERT OR REPLACE INTO jobs "
-                "(remote_job_id, provider, shot, params, status, submitted_at, updated_at) "
+                "(provider, remote_job_id, shot, params, status, submitted_at, updated_at) "
                 "VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-                (remote_job_id, provider, shot, _dumps(params), ts, ts),
+                (provider, remote_job_id, shot, _dumps(params), ts, ts),
             )
 
-    def close_job(self, remote_job_id: str, status: str) -> None:
+    def close_job(self, remote_job_id: str, status: str, *, provider: str) -> None:
         """Mark a job terminal (``"succeeded"`` | ``"failed"``); it drops out of
-        :meth:`pending_jobs` but the row is kept for the record."""
+        :meth:`pending_jobs` but the row is kept for the record.
+
+        ``provider`` is required (#47): closing by ``remote_job_id`` alone
+        cannot tell two providers' same-string job ids apart, exactly the
+        cross-provider collision the compound primary key exists to prevent."""
         with self._conn:
             self._conn.execute(
-                "UPDATE jobs SET status = ?, updated_at = ? WHERE remote_job_id = ?",
-                (status, self._ts(), remote_job_id),
+                "UPDATE jobs SET status = ?, updated_at = ? "
+                "WHERE provider = ? AND remote_job_id = ?",
+                (status, self._ts(), provider, remote_job_id),
             )
 
     def pending_jobs(

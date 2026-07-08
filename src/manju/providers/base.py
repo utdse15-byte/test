@@ -433,7 +433,7 @@ class CloudProvider(Provider):
         # record the params actually archived on the take (incl. compiled_prompt)
         params = dict(takes[0].sidecar.params) if takes else dict(req.params)
         try:
-            state.close_job(job_id, "succeeded")
+            state.close_job(job_id, "succeeded", provider=self.id)
             # Attribute-once: a cloud generate() self-records exactly ONE run row
             # per call — every produced take is folded into this single row
             # (take=",".join(...)), unlike _record_local_runs which writes one row
@@ -466,7 +466,7 @@ class CloudProvider(Provider):
             return
         try:
             if job_id:
-                state.close_job(job_id, "failed")
+                state.close_job(job_id, "failed", provider=self.id)
             state.record_run(
                 shot=req.shot.id,
                 provider=self.id,

@@ -405,6 +405,56 @@ def test_package_cover_frame_and_teaser(built):
 
 
 @pytestmark_ffmpeg
+def test_cover_crash_mid_write_leaves_old_file_and_key_intact(built, monkeypatch):
+    """Round W (#76): a crash mid-ffmpeg-write must not corrupt the trusted
+    cover.png IN PLACE, nor leave a key.json that matches a half-written
+    file. Before this round ffmpeg wrote directly to cover.png; now it lands
+    via atomic_output (temp sibling + verified swap), so a "crash" that
+    manages to write garbage only ever touches the temp file — the last
+    KNOWN-GOOD cover and its key must survive byte-for-byte."""
+    import manju.media.packaging as pkg_mod
+    from manju.media.ffmpeg import MediaError
+    from manju.media.packaging import make_package
+
+    pkg = built.load_packaging()
+    pkg.cover = CoverSpec(mode="frame", frame_ms=0)
+    built.save_packaging(pkg)
+
+    # establish a known-good cover + key first
+    result = make_package(built, force=True)
+    cover_path = built.resolve(result["cover"])
+    good_bytes = cover_path.read_bytes()
+    key_path = cover_path.with_suffix(".key.json")
+    good_key = key_path.read_text(encoding="utf-8")
+
+    # a different spec so the next call must actually re-render, not skip
+    pkg2 = built.load_packaging()
+    pkg2.cover = CoverSpec(mode="frame", frame_ms=200)
+    built.save_packaging(pkg2)
+
+    def crashing_run_ffmpeg(args, **kw):
+        # simulate ffmpeg having written SOME garbage bytes to its declared
+        # output before the process is killed / errors out.
+        Path(str(args[-1])).write_bytes(b"GARBAGE-NOT-A-REAL-PNG")
+        raise MediaError("simulated crash mid-encode")
+
+    monkeypatch.setattr(pkg_mod, "run_ffmpeg", crashing_run_ffmpeg)
+    with pytest.raises(MediaError):
+        make_package(built, force=True)
+    monkeypatch.undo()
+
+    # the OLD file and key are untouched — never corrupted in place
+    assert cover_path.read_bytes() == good_bytes
+    assert key_path.read_text(encoding="utf-8") == good_key
+    # and no stray temp file leaked into the packaging dir
+    assert list(cover_path.parent.glob(".cover.png.tmp-*")) == []
+
+    # a real (non-crashing) retry succeeds and produces a NEW, different key
+    retried = make_package(built, force=True)
+    assert built.resolve(retried["cover"]).read_bytes() != good_bytes
+
+
+@pytestmark_ffmpeg
 def test_package_cover_card_mode(built):
     from manju.media.packaging import make_package
     from manju.media.probe import probe

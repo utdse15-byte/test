@@ -237,6 +237,18 @@ def apply_to_shot(
     empty (a shot already anchored to a different scene is left as truth and the
     mention is skipped, first-mention-wins among several). Deterministic; writes
     at most once. Returns what was added/set/skipped/unresolved.
+
+    Round W (#41): the actual write goes through
+    ``core.writes.checked_shot_write`` — the SAME lock-guard + post-write
+    check + revert-on-regression pipeline ``select_take_checked`` uses, so
+    this independent write path (the review's #41 finding: mentions --apply
+    "只做有限的顶层 lock 检查,没有统一写后 check、回滚或事件语义") no longer
+    diverges. The pre-filtering above (locked_paths) already keeps a locked
+    field out of ``mutate`` entirely — ``guard_paths`` below is a second,
+    cheap belt-and-suspenders check against the SAME two fields, so a lock
+    added between the read at the top of this function and the write below
+    (another actor racing a `manju lock` in between) still refuses, loudly,
+    instead of writing under a lock that appeared mid-flight.
     """
     shot = project.load_shot(shot_id)
     resolved, unresolved = resolve_mentions(shot_mention_text(shot), matrix)
@@ -276,6 +288,8 @@ def apply_to_shot(
 
     changed = bool(to_add_chars) or set_scene is not None
     if changed:
+        from .writes import checked_shot_write
+
         def mutate(d: dict[str, Any]) -> None:
             if to_add_chars:
                 chars = d.get("characters")
@@ -288,7 +302,16 @@ def apply_to_shot(
             if set_scene is not None:
                 d["scene"] = set_scene
 
-        project.update_shot_raw(shot_id, mutate)
+        guard_paths = tuple(f for f in ("characters", "scene")
+                            if (f == "characters" and to_add_chars)
+                            or (f == "scene" and set_scene is not None))
+        checked_shot_write(
+            project, shot_id, mutate, guard_paths=guard_paths,
+            on_locked=(
+                f"{shot_id}: characters/scene became locked before this write "
+                "landed — 未写入,改走 proposals/"
+            ),
+        )
 
     return {
         "shot": shot_id,

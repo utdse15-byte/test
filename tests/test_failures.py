@@ -76,8 +76,22 @@ def test_record_failure_is_wellformed_and_mirrored_to_events(tmp_project):
 def test_unknown_step_normalises_and_info_level_kept(tmp_project):
     rec = record_failure(tmp_project, Failure(step="bogus", subject="x",
                                               cause="c", level="info"))
-    assert rec["step"] == "generate"  # unknown step normalises, never crashes
+    # round W (#50): an unrecognized step reads as "unknown" — never silently
+    # coerced to "generate" (a typo in a caller must not misattribute).
+    assert rec["step"] == "unknown"
     assert rec["level"] == "info"
+
+
+def test_unknown_step_is_a_real_step_not_a_crash(tmp_project):
+    """A caller typo ("reneder", "qcc", ...) — or a bare empty string — must
+    normalize to "unknown", stay queryable (read_failures/by-step filters),
+    and never be attributed to a step that did not actually run (#50)."""
+    for bad in ("reneder", "qcc", "", "  ", "GENERATE_TYPO"):
+        rec = record_failure(tmp_project, Failure(step=bad, subject="x", cause="c"))
+        assert rec["step"] == "unknown"
+    recent = read_failures(tmp_project, n=10)
+    assert all(r["step"] == "unknown" for r in recent)
+    assert len(recent) == 5
 
 
 def test_record_failure_rotates_at_threshold(tmp_project, monkeypatch):
@@ -98,6 +112,44 @@ def test_record_failure_rotates_at_threshold(tmp_project, monkeypatch):
         seen |= {json.loads(ln)["subject"]
                  for ln in rf.read_text(encoding="utf-8").splitlines() if ln.strip()}
     assert seen == {f"S{i:03d}" for i in range(6)}
+
+
+# --------------------------------------------------------- #50: cross-process append
+
+
+def _mp_failure_worker(root: str, subject: str) -> None:
+    """Top-level (picklable) worker for the multiprocessing race test below:
+    each OS process appends ONE failure record to the SAME project's ledger,
+    all fired together (round W, #50)."""
+    from manju.core.failures import Failure, record_failure
+
+    record_failure(root, Failure(step="render", subject=subject, cause="race"))
+
+
+def test_record_failure_concurrent_processes_no_interleaved_or_lost_lines(tmp_project):
+    """Real OS processes (not threads) racing `record_failure` on the SAME
+    reports/failures.jsonl must not lose a line or interleave two lines into
+    one unparseable one (round W, #50). Without the cross-process lock around
+    rotate-check + append, two processes' writes can interleave at the OS
+    buffer level or race the rotation boundary; with it, every line must be
+    present, distinct, and independently valid JSON."""
+    import multiprocessing
+
+    n = 12
+    ctx = multiprocessing.get_context("spawn")
+    procs = [
+        ctx.Process(target=_mp_failure_worker, args=(str(tmp_project.root), f"S{i:03d}"))
+        for i in range(n)
+    ]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=60)
+        assert p.exitcode == 0, f"worker process failed (exitcode={p.exitcode})"
+
+    lines = _read_lines(tmp_project)  # raises on any torn/interleaved JSON line
+    assert len(lines) == n
+    assert {r["subject"] for r in lines} == {f"S{i:03d}" for i in range(n)}
 
 
 def test_read_failures_newest_first_and_level_filter(tmp_project):

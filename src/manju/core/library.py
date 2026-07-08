@@ -30,14 +30,21 @@ truth file (temp + rename). It is also the schema the GUI asset page reads.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .hashing import hash_file
 from .yamlio import atomic_write_text, read_json
+
+try:
+    import fcntl
+except ImportError:  # Windows: no fcntl — the lock degrades to a no-op below
+    fcntl = None  # type: ignore[assignment]
 
 # Kind classification by suffix — the same buckets media/preview uses, so a
 # library asset and an imported one agree on what "video/image/audio" mean.
@@ -81,6 +88,56 @@ def _now() -> str:
 def _hex(content_hash: str) -> str:
     """The bare hex of a ``sha256:...`` hash (blob filenames + hash8 handles)."""
     return content_hash.removeprefix("sha256:")
+
+
+_INDEX_LOCK_TIMEOUT_S = 30.0
+
+
+@contextlib.contextmanager
+def _index_lock(root: Path, *, timeout_s: float = _INDEX_LOCK_TIMEOUT_S) -> Iterator[None]:
+    """Cross-process mutex around the index read-modify-write (round W, #42).
+
+    ``add``/``remove`` (and any future ``tag``) are read-whole-index → mutate
+    → write-whole-index; two processes (two `manju lib add` invocations, or a
+    CLI run racing a GUI asset-page action) doing that concurrently can lose
+    one side's update — the later writer's snapshot never saw the earlier
+    writer's row. ``fcntl.flock`` on a sibling ``index.lock`` serializes the
+    whole read-modify-write, so no add/remove/tag is ever computed against a
+    stale snapshot.
+
+    Advisory + POSIX-only: on a platform without ``fcntl`` (Windows) this
+    degrades to a no-op rather than blocking forever — the same "a missing OS
+    primitive degrades, never hangs" stance as the rest of this project
+    (§14). ``timeout_s`` bounds the wait so a crashed holder cannot wedge
+    every future library command; a timeout is a clear `LibraryError`, not a
+    hang.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:
+        yield
+        return
+    lock_path = root / "index.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise LibraryError(
+                        f"library index busy (another process holds {lock_path}) — "
+                        f"timed out after {timeout_s:.0f}s; retry once it finishes"
+                    )
+                time.sleep(0.05)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 class Library:
@@ -188,60 +245,68 @@ class Library:
         if not src.is_file():
             raise LibraryError(f"not a file: {src}")
         tags = _clean_tags(tags)
-        content_hash = hash_file(src)
-        index = self.load_index()
+        content_hash = hash_file(src)  # pure read of the SOURCE — no index lock needed yet
 
-        existing = next(
-            (e for e in index["assets"] if e["hash"] == content_hash), None
-        )
-        if existing is not None:
-            merged = list(existing.get("tags") or [])
-            for t in tags:
-                if t not in merged:
-                    merged.append(t)
-            existing["tags"] = merged
-            if note and not existing.get("note"):
-                existing["note"] = note
+        # #42: load → dedup-check → mutate → save is ONE critical section —
+        # the whole thing (not just the final write) must run under the
+        # index lock, or a concurrent add of the SAME content between our
+        # read and our write would race two "new entry" branches into two
+        # rows for one asset instead of a dedup merge.
+        with _index_lock(self.root):
+            index = self.load_index()
+
+            existing = next(
+                (e for e in index["assets"] if e["hash"] == content_hash), None
+            )
+            if existing is not None:
+                merged = list(existing.get("tags") or [])
+                for t in tags:
+                    if t not in merged:
+                        merged.append(t)
+                existing["tags"] = merged
+                if note and not existing.get("note"):
+                    existing["note"] = note
+                self._save_index(index)
+                return {"entry": existing, "deduped": True}
+
+            self.root.mkdir(parents=True, exist_ok=True)
+            ext = src.suffix.lower()
+            blob_name = _hex(content_hash) + ext
+            blob = self.root / blob_name
+            if not blob.exists():  # content-addressed: identical bytes, identical name
+                shutil.copy2(src, blob)
+            entry: dict[str, Any] = {
+                "hash": content_hash,
+                "blob": blob_name,
+                "name": src.name,
+                "kind": kind_of(ext),
+                "size": blob.stat().st_size,
+                "tags": tags,
+                "note": note or "",
+                "added": _now(),
+                "thumb": self._make_thumb(blob),
+            }
+            index["assets"].append(entry)
             self._save_index(index)
-            return {"entry": existing, "deduped": True}
-
-        self.root.mkdir(parents=True, exist_ok=True)
-        ext = src.suffix.lower()
-        blob_name = _hex(content_hash) + ext
-        blob = self.root / blob_name
-        if not blob.exists():  # content-addressed: identical bytes, identical name
-            shutil.copy2(src, blob)
-        entry: dict[str, Any] = {
-            "hash": content_hash,
-            "blob": blob_name,
-            "name": src.name,
-            "kind": kind_of(ext),
-            "size": blob.stat().st_size,
-            "tags": tags,
-            "note": note or "",
-            "added": _now(),
-            "thumb": self._make_thumb(blob),
-        }
-        index["assets"].append(entry)
-        self._save_index(index)
-        return {"entry": entry, "deduped": False}
+            return {"entry": entry, "deduped": False}
 
     # --------------------------------------------------------------- remove
 
     def remove(self, hash8: str) -> dict[str, Any]:
         """Delete one asset from the library (blob + thumbnail + index row).
         Library-side only — no project is ever touched."""
-        index = self.load_index()
-        entry = self.find(hash8)
-        if entry is None:
-            raise LibraryError(f"no asset with hash {hash8!r} in the library")
-        blob = self.root / entry["blob"]
-        blob.unlink(missing_ok=True)
-        if entry.get("thumb"):
-            (self.root / entry["thumb"]).unlink(missing_ok=True)
-        index["assets"] = [e for e in index["assets"] if e["hash"] != entry["hash"]]
-        self._save_index(index)
-        return entry
+        with _index_lock(self.root):  # #42: same read-modify-write discipline as add()
+            index = self.load_index()
+            entry = self.find(hash8)
+            if entry is None:
+                raise LibraryError(f"no asset with hash {hash8!r} in the library")
+            blob = self.root / entry["blob"]
+            blob.unlink(missing_ok=True)
+            if entry.get("thumb"):
+                (self.root / entry["thumb"]).unlink(missing_ok=True)
+            index["assets"] = [e for e in index["assets"] if e["hash"] != entry["hash"]]
+            self._save_index(index)
+            return entry
 
 
 def _clean_tags(tags: list[str] | None) -> list[str]:

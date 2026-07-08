@@ -18,6 +18,7 @@ All paths returned to the client are project-relative (never absolute).
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -80,6 +81,41 @@ def _next_proposal_number(proposals_dir: Path) -> int:
             if m:
                 highest = max(highest, int(m.group(1)))
     return highest + 1
+
+
+def _claim_proposal_path(proposals_dir: Path, slug: str) -> tuple[int, Path]:
+    """Atomically claim ``proposals/NNNN_<slug>.md`` (round W, #51).
+
+    :func:`_next_proposal_number` is only a STARTING guess from a directory
+    listing — two concurrent proposers (two agent sessions, or an agent
+    racing a human's ``manju propose``) can compute the SAME "next" number
+    from the same snapshot and then both write, one silently clobbering the
+    other (worst case: same title → same slug → the identical path, a lost
+    proposal; best case: same number, different slug → two files claiming
+    one sequence number).
+
+    The actual claim is an ``O_CREAT | O_EXCL`` create loop: whichever
+    process wins the exclusive create for a given ``(number, slug)`` keeps
+    it; every loser sees ``FileExistsError`` and retries at ``number + 1`` —
+    so two concurrent proposers always end up on DISTINCT numbers, never a
+    silent overwrite.
+
+    Returns ``(number, path)`` with ``path`` already created as an EMPTY
+    file that only WE just created — the caller fills it via
+    :func:`~manju.core.yamlio.atomic_write_text`, an ``os.replace`` onto a
+    path no concurrent claimant can also be holding.
+    """
+    proposals_dir.mkdir(parents=True, exist_ok=True)
+    number = _next_proposal_number(proposals_dir)
+    while True:
+        path = proposals_dir / f"{number:04d}_{slug}.md"
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            number += 1
+            continue
+        os.close(fd)
+        return number, path
 
 
 # ------------------------------------------------------------- handlers
@@ -193,16 +229,24 @@ def _h_update_shot(project: Project, args: dict) -> dict:
 
 
 def _h_select_take(project: Project, args: dict) -> dict:
+    """The checked selected_take write (round W, #39/#19): same pipeline as
+    the CLI/board/GUI select — lock guard, post-write check scoped to this
+    shot, revert on regression — through the ONE shared engine function so
+    MCP can no longer write a project into a state the next `check` fails
+    (round-V review finding #19). Takes the process build lock itself (the
+    same shape as `_h_qc`): `select_take_checked` does not, so build's own
+    auto-select (already inside its build_lock) never self-deadlocks."""
+    from ..core.writes import WriteRejected, select_take_checked
+    from ..runtime.buildlock import build_lock
+
     shot_id = args["shot_id"]
     take = args["take"]
-    if project.get_take(shot_id, take) is None:
-        raise ToolError(f"{shot_id} has no take '{take}'")
-    project.update_shot_raw(
-        shot_id,
-        lambda d: d.setdefault("status", {}).__setitem__("selected_take", take),
-    )
-    append_event(project.root, "ai", "select", {"shot": shot_id, "take": take})
-    return {"ok": True}
+    try:
+        with build_lock(project.root, actor="ai"):
+            result = select_take_checked(project, shot_id, take, actor="ai", via="mcp")
+    except WriteRejected as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "shot": result["shot"], "take": result["take"]}
 
 
 def _h_build(project: Project, args: dict) -> dict:
@@ -316,12 +360,12 @@ def _h_board(project: Project, args: dict) -> dict:
 
 
 def _h_propose(project: Project, args: dict) -> dict:
-    """The agent's legitimate channel for locked-content change requests (§5)."""
+    """The agent's legitimate channel for locked-content change requests (§5).
+    Numbering is an atomic claim (#51) — two concurrent proposers never
+    collide on the same file."""
     title = args["title"]
     body = args["body"]
-    project.proposals_dir.mkdir(parents=True, exist_ok=True)
-    number = _next_proposal_number(project.proposals_dir)
-    path = project.proposals_dir / f"{number:04d}_{_slugify(title)}.md"
+    _number, path = _claim_proposal_path(project.proposals_dir, _slugify(title))
     atomic_write_text(path, f"# {title}\n\n{body}")
     rel = project.relpath(path)
     append_event(project.root, "ai", "propose", {"path": rel, "title": title})

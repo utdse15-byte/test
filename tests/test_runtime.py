@@ -91,7 +91,7 @@ def test_pending_jobs_filtering_and_close(tmp_project):
         assert len(got) == 1 and got[0]["remote_job_id"] == "j1"
         assert got[0]["status"] == "pending"
 
-        st.close_job("j1", "succeeded")
+        st.close_job("j1", "succeeded", provider="cloud_a")
         remaining = {j["remote_job_id"] for j in st.pending_jobs()}
         assert remaining == {"j2", "j3"}
 
@@ -101,6 +101,104 @@ def test_open_job_insert_or_replace_is_idempotent(tmp_project):
         st.open_job("dup", provider="c", shot="S001")
         st.open_job("dup", provider="c", shot="S001")
         assert len(st.pending_jobs()) == 1
+
+
+def test_jobs_pk_is_provider_plus_remote_job_id(tmp_project):
+    """#47: the jobs table used to key on remote_job_id ALONE — two DIFFERENT
+    providers returning the SAME job id string would silently replace each
+    other's pending row. The compound (provider, remote_job_id) PK must let
+    both survive, and close_job must require provider so it closes the RIGHT
+    one instead of guessing."""
+    with RuntimeState(tmp_project.root) as st:
+        st.open_job("job_123", provider="cloud_a", shot="S001")
+        st.open_job("job_123", provider="cloud_b", shot="S002")  # same id, other provider
+
+        pending = st.pending_jobs()
+        assert len(pending) == 2, "cross-provider same-id collision lost a row"
+        by_provider = {j["provider"]: j for j in pending}
+        assert by_provider["cloud_a"]["shot"] == "S001"
+        assert by_provider["cloud_b"]["shot"] == "S002"
+
+        # closing cloud_a's job must not touch cloud_b's same-id job
+        st.close_job("job_123", "succeeded", provider="cloud_a")
+        remaining = st.pending_jobs()
+        assert len(remaining) == 1
+        assert remaining[0]["provider"] == "cloud_b"
+        assert remaining[0]["status"] == "pending"
+
+
+def test_legacy_single_column_jobs_table_migrates_cleanly(tmp_project):
+    """#47: a DB created by pre-round-W code has ``jobs(remote_job_id TEXT
+    PRIMARY KEY, ...)`` — opening it must not raise, must not silently keep
+    the collision-prone shape, and the §3 rebuild path must still work
+    afterward (rebuild-index's ledger rebuild touches this same table)."""
+    import sqlite3
+
+    db_path = tmp_project.root / ".manju" / "state.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = sqlite3.connect(str(db_path))
+    try:
+        legacy.executescript(
+            """
+            CREATE TABLE runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, shot TEXT,
+                provider TEXT, params TEXT, status TEXT NOT NULL, failure_kind TEXT,
+                cost REAL NOT NULL DEFAULT 0, currency TEXT, remote_job_id TEXT,
+                take TEXT, error TEXT
+            );
+            CREATE TABLE jobs (
+                remote_job_id TEXT PRIMARY KEY,
+                provider      TEXT NOT NULL,
+                shot          TEXT NOT NULL,
+                params        TEXT,
+                status        TEXT NOT NULL,
+                submitted_at  TEXT NOT NULL,
+                updated_at    TEXT NOT NULL
+            );
+            """
+        )
+        legacy.execute(
+            "INSERT INTO jobs VALUES ('legacy_job', 'cloud_old', 'S001', NULL, "
+            "'pending', '2020-01-01T00:00:00', '2020-01-01T00:00:00')"
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    # opening RuntimeState must migrate, not raise
+    with RuntimeState(tmp_project.root) as st:
+        cols = st._conn.execute("PRAGMA table_info(jobs)").fetchall()
+        pk_cols = {c["name"] for c in cols if c["pk"]}
+        assert pk_cols == {"provider", "remote_job_id"}
+        # the fresh table is empty (legacy pending jobs are the accepted
+        # worst case, same as any .manju/ loss — never silently mis-keyed)
+        assert st.pending_jobs() == []
+        # the old data is preserved, just renamed aside, not destroyed
+        legacy_tables = [
+            r[0] for r in st._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name LIKE 'jobs_legacy_%'"
+            ).fetchall()
+        ]
+        assert len(legacy_tables) == 1
+
+        # new jobs work normally post-migration
+        st.open_job("new_job", provider="cloud_new", shot="S002")
+        assert len(st.pending_jobs()) == 1
+
+        # §3 rebuild path (rebuild-index) must still work against the migrated DB
+        result = st.rebuild(tmp_project)
+        assert isinstance(result["pending_jobs"], int)
+
+    # reopening again must be a no-op migration (idempotent, no re-rename)
+    with RuntimeState(tmp_project.root) as st2:
+        legacy_tables2 = [
+            r[0] for r in st2._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name LIKE 'jobs_legacy_%'"
+            ).fetchall()
+        ]
+        assert len(legacy_tables2) == 1  # unchanged — already migrated
 
 
 # ----------------------------------------------------------- delete + rebuild

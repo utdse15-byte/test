@@ -28,7 +28,7 @@ from ..core.hashing import cache_key, hash_file
 from ..core.models import CoverSpec, PackagingCard, PackagingSpec, ProjectConfig, TeaserSpec
 from ..timeline.compiler import snap_to_frame_grid
 from ..timeline.packaging import packaging_card_relpath
-from .ffmpeg import MediaError, default_log, run_ffmpeg
+from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
 from .render import _enc_params, _read_key_sidecar, final_content_key
 
 Log = Callable[[str], None] | None
@@ -188,13 +188,20 @@ def _read_key(media_path: Path) -> str | None:
 
 
 def _write_key(media_path: Path, key: str, kind: str) -> None:
-    media_path.with_suffix(".key.json").write_text(
+    """Write the ``.key.json`` sidecar (round W #76: atomic temp+replace, same
+    discipline as every other truth file — a crash mid-write must leave the
+    PREVIOUS valid key in place, never a torn JSON fragment). Callers must
+    only reach this AFTER the media file it describes has been verified —
+    see :func:`_make_cover` / :func:`_make_teaser`."""
+    from ..core.yamlio import atomic_write_text
+
+    atomic_write_text(
+        media_path.with_suffix(".key.json"),
         json.dumps(
             {"key": key, "kind": kind,
              "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             ensure_ascii=False, indent=2,
         ) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -236,7 +243,7 @@ def _extract_cover_frame(
          "-vf", f"scale={width}:{height}:flags=bicubic,setsar=1", str(dest)],
         log=log,
     )
-    if not dest.exists():  # a silent zero-frame extract must not be cached
+    if not dest.exists() or dest.stat().st_size == 0:  # a silent zero-frame extract must not be cached
         raise PackagingError(
             f"cover frame extraction produced no image at {frame_ms}ms — "
             "check packaging.yaml cover.frame_ms against the final's length"
@@ -268,20 +275,37 @@ def _make_cover(
     project: Project, final: Path, cover: CoverSpec, final_hash: str, *,
     force: bool, log: Log,
 ) -> tuple[Path, bool]:
-    """Return (cover_path, skipped). Idempotent via cover.key.json."""
+    """Return (cover_path, skipped). Idempotent via cover.key.json.
+
+    Round W (#76): the PNG lands via :func:`atomic_output` (temp + replace,
+    the same durability primitive ``media/render.py`` uses for every other
+    ffmpeg output) — a crash mid-render can never leave a half-written file
+    at the trusted ``cover.png`` path. The key sidecar is written ONLY after
+    the freshly-produced file is verified to exist and be non-empty; before
+    this round the render wrote DIRECTLY to ``cover.png``, so a crash between
+    "ffmpeg/Chromium finished" and "key written" (or a torn write mid-render)
+    could leave a corrupt file that an unchanged OLD key.json still matched
+    on the next run's cache check — a "fresh" cover that was actually broken.
+    """
     config = project.load_config()
     dest = project.exports_dir / "packaging" / "cover.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     key = cover_cache_key(config, final_hash, cover)
     if not force and dest.exists() and _read_key(dest) == key:
         return dest, True
-    if cover.mode == "card":
-        _render_cover_card(cover, dest, width=config.width, height=config.height,
-                           fps=config.fps, log=log)
-    else:
-        _extract_cover_frame(final, dest, frame_ms=cover.frame_ms,
-                             width=config.width, height=config.height,
-                             fps=config.fps, log=log)
+    with atomic_output(dest) as tmp:
+        if cover.mode == "card":
+            _render_cover_card(cover, tmp, width=config.width, height=config.height,
+                               fps=config.fps, log=log)
+        else:
+            _extract_cover_frame(final, tmp, frame_ms=cover.frame_ms,
+                                 width=config.width, height=config.height,
+                                 fps=config.fps, log=log)
+        if not tmp.exists() or tmp.stat().st_size == 0:
+            raise PackagingError(
+                "cover render produced no image — check packaging.yaml cover spec"
+            )
+    # `dest` now holds the verified, durably-written file — safe to key.
     _write_key(dest, key, "cover")
     return dest, False
 
@@ -324,16 +348,22 @@ def _make_teaser(
                 f"teaser window overran the final ({final_ms}ms); "
                 f"clamped to {dur_ms}ms from {from_ms}ms"
             )
-    run_ffmpeg(
-        ["-ss", f"{from_ms / 1000.0:.3f}", "-i", str(final),
-         "-t", f"{dur_ms / 1000.0:.3f}", *enc, str(dest)],
-        log=log,
-    )
-    if not dest.exists() or (probe_duration_ms(dest) or 0) <= 0:
-        raise PackagingError(
-            "teaser cut produced no playable output — check packaging.yaml "
-            "teaser.from_ms/duration_ms against the final's length"
+    # Round W (#76): ffmpeg writes to a TEMP sibling (atomic_output), verified
+    # (exists, non-zero, ffprobe-readable via probe_duration_ms) BEFORE the
+    # swap onto `dest` — the same gap this closes as `_make_cover` (a crash
+    # mid-cut could otherwise leave a corrupt teaser.mp4 that an unchanged
+    # OLD key.json still matched next run).
+    with atomic_output(dest) as tmp:
+        run_ffmpeg(
+            ["-ss", f"{from_ms / 1000.0:.3f}", "-i", str(final),
+             "-t", f"{dur_ms / 1000.0:.3f}", *enc, str(tmp)],
+            log=log,
         )
+        if not tmp.exists() or tmp.stat().st_size == 0 or (probe_duration_ms(tmp) or 0) <= 0:
+            raise PackagingError(
+                "teaser cut produced no playable output — check packaging.yaml "
+                "teaser.from_ms/duration_ms against the final's length"
+            )
     _write_key(dest, key, "teaser")
     return dest, False, warning
 

@@ -158,7 +158,20 @@ def history(project: Project, n: int = 30) -> list[dict[str, Any]]:
 def rollback_shot(project: Project, shot_id: str) -> dict[str, Any]:
     """Re-select the take that was selected before the current one, using the
     select/rollback_shot events as the record. Append-only: the newer take
-    stays on disk for compare; the change is one line of text plus an event."""
+    stays on disk for compare; the change is one line of text plus an event.
+
+    Round W (#39): every OTHER selected_take writer (CLI select, MCP
+    select_take, board/GUI select, build auto-select) now goes through
+    ``core/writes.select_take_checked`` — this one deliberately does not.
+    Rollback restores a PREVIOUSLY recorded human decision read straight off
+    events.jsonl, not a fresh one; it is history's own recovery path,
+    parallel to (not layered on top of) the lock-verification pipeline. If a
+    forward `select` mistakenly moved a value out from under a lock the lock
+    itself already refuses that (see ``select_take_checked``) — rollback
+    existing to reach the SAME lock check would mean the one tool built to
+    undo a mistake could itself be blocked by whatever caused the mistake,
+    which defeats its purpose. history/rollback stays git-and-ledger based,
+    same as ``rollback_file`` (a guarded ``git checkout``), by design."""
     if shot_id not in project.shot_ids():
         raise HistoryError(f"unknown shot '{shot_id}'")
     shot = project.load_shot(shot_id)

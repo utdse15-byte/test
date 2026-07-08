@@ -735,6 +735,15 @@ class _Handler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------- actions
 
     def _act_select(self, body: dict[str, Any]) -> None:
+        """Same checked write every other select entrance uses (round W,
+        #39): lock guard, post-write check scoped to the shot, revert on
+        regression, plus the process build lock (in-process quick_mutex AND
+        the cross-process build_lock — the GUI job runner is its own
+        process, so an in-process mutex alone does not stop a concurrent CLI
+        `select`)."""
+        from ..core.writes import WriteRejected, select_take_checked
+        from ..runtime.buildlock import BuildLocked
+
         project = self.server.project
         shot_id, take = str(body.get("shot") or ""), str(body.get("take") or "")
         if not shot_id or not take:
@@ -744,13 +753,15 @@ class _Handler(BaseHTTPRequestHandler):
             if project.get_take(shot_id, take) is None:
                 self._send_error_json(f"{shot_id} has no take '{take}'", 404)
                 return
-            project.update_shot_raw(
-                shot_id,
-                lambda d: d.setdefault("status", {}).__setitem__("selected_take", take),
-            )
-            append_event(project.root, self.server.actor, "select",
-                         {"shot": shot_id, "take": take, "via": "gui"})
-        self._send_json({"ok": True, "shot": shot_id, "take": take})
+            try:
+                with _optional_build_lock(project.root, self.server.actor):
+                    result = select_take_checked(
+                        project, shot_id, take, actor=self.server.actor, via="gui"
+                    )
+            except (WriteRejected, BuildLocked) as exc:
+                self._send_error_json(str(exc), 409)
+                return
+        self._send_json({"ok": True, "shot": result["shot"], "take": result["take"]})
 
     def _act_validate(self, body: dict[str, Any]) -> None:
         """Keystroke-time validation for the editors (VS Code settings.json

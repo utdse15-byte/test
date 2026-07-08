@@ -682,22 +682,38 @@ def _run_build_phases(
         pass  # voice bookkeeping never blocks a build
 
     # ---- 2b. auto-select where no human decision exists yet (filling a gap
-    # is allowed; overturning a selection never is)
+    # is allowed; overturning a selection never is). Round W (#28/#39): goes
+    # through the SAME checked write every other select entrance uses — a
+    # value-hash lock on status/selected_take (sealed empty, before any take
+    # existed) must skip auto-select too, loudly, not just a silent pass.
+    # No build_lock here on purpose: this whole phase already runs inside
+    # run_build's build_lock (not reentrant) — see core/writes.py.
+    from ..core.writes import WriteRejected, select_take_checked
+
     for st in evaluate_all(project, indexed_only=not include_unindexed):
         if st.state == ShotState.NEEDS_SELECTION:
             takes = project.takes(st.shot_id)
             usable = [t for t in takes if t.media_path is not None]
             if usable:
                 choice = usable[-1].name
-                project.update_shot_raw(
-                    st.shot_id,
-                    lambda d, c=choice: d.setdefault("status", {}).__setitem__("selected_take", c),
-                )
+                try:
+                    select_take_checked(
+                        project, st.shot_id, choice, actor=actor,
+                        via="build_auto_select", action="auto_select",
+                    )
+                except WriteRejected as exc:
+                    result.warnings.append(
+                        f"{st.shot_id}: auto-select SKIPPED (locked/rejected) — {exc}"
+                    )
+                    _record(project, "check", st.shot_id,
+                            "auto-select 跳过(selected_take 已锁定或写后校验失败)",
+                            evidence=str(exc), hint=f"人工确认后 `manju select {st.shot_id} "
+                            f"{choice}`,或 `manju unlock {st.shot_id} status.selected_take`",
+                            level="info", actor=actor)
+                    continue
                 result.warnings.append(
                     f"{st.shot_id}: auto-selected {choice} (no human selection existed)"
                 )
-                append_event(project.root, actor, "auto_select",
-                             {"shot": st.shot_id, "take": choice})
 
     # ---- 2p. packaging card assets (§13-14): render missing intro/outro cards
     # BEFORE the compile/render so the content-addressed segments the compiler
@@ -978,9 +994,26 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
     takes = generate_with_fallback(req, fallback_chain(shot))
     if not shot.status.selected_take and takes:
         choice = takes[-1].name
-        project.update_shot_raw(
-            shot.id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
-        )
+        # Round W (#28/#39): a value-hash lock can seal status/selected_take
+        # even while it is still empty (locked BEFORE a first take existed);
+        # this auto-fill must not silently overturn that. A lightweight
+        # guard (not the full select_take_checked pipeline — this already
+        # runs inside redo_shot's own build_lock, and one extra `manju
+        # check` pass per redo is not free) — loud skip, never silent.
+        from ..core.writes import selected_take_lock_block
+
+        blocking = selected_take_lock_block(project, shot.id)
+        if blocking is not None:
+            _record(project, "check", shot.id,
+                    "redo 自动填选 selected_take 被跳过(已锁定)",
+                    evidence=f"locked path: {blocking}",
+                    hint=f"人工确认后 `manju select {shot.id} {choice}`,或 "
+                    f"`manju unlock {shot.id} {blocking}`",
+                    level="info", actor=actor)
+        else:
+            project.update_shot_raw(
+                shot.id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
+            )
     _record_local_runs(project, takes, {"redo": True}, {shot.id: plan.cost})
     append_event(project.root, actor, "redo", {"shot": shot.id, "takes": [t.name for t in takes]})
     return [t.name for t in takes]

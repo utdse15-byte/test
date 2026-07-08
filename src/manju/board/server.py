@@ -81,17 +81,24 @@ class _ApiError(Exception):
 
 
 def _api_select(project: Project, body: dict) -> dict:
+    """Same checked write every other select entrance uses (round W, #39):
+    lock guard, post-write check scoped to the shot, revert on regression.
+    Takes the process build lock itself — `select_take_checked` deliberately
+    does not (see its docstring), so build's own auto-select never
+    self-deadlocks on its own already-held lock."""
+    from ..core.writes import WriteRejected, select_take_checked
+    from ..runtime.buildlock import BuildLocked, build_lock
+
     shot = body.get("shot")
     take = body.get("take")
     if not shot or not take:
         raise _ApiError("shot and take are required")
-    if project.get_take(shot, take) is None:
-        raise _ApiError(f"{shot} has no take '{take}'")
-    project.update_shot_raw(
-        shot, lambda d: d.setdefault("status", {}).__setitem__("selected_take", take)
-    )
-    append_event(project.root, _actor(), "select", {"shot": shot, "take": take})
-    return {"shot": shot, "take": take}
+    try:
+        with build_lock(project.root, actor=_actor()):
+            result = select_take_checked(project, shot, take, actor=_actor(), via="board")
+    except (WriteRejected, BuildLocked) as exc:
+        raise _ApiError(str(exc)) from exc
+    return {"shot": result["shot"], "take": result["take"]}
 
 
 def _api_rollback_shot(project: Project, body: dict) -> dict:

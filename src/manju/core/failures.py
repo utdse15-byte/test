@@ -30,20 +30,70 @@ Stdlib only; the record schema is frozen truth the GUI (wave-2) renders from.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+try:
+    import fcntl
+except ImportError:  # Windows: no fcntl — the lock degrades to a no-op below
+    fcntl = None  # type: ignore[assignment]
 
 # reports/ is the project's report surface (qc.md/json live here too); failures
 # ride alongside as an append-only jsonl.
 FAILURES_FILE = "reports/failures.jsonl"
 ROTATE_BYTES = 1_000_000  # ~1MB: rename the active log aside, start a fresh one
+_LOCK_TIMEOUT_S = 15.0
 
-# The nine build steps a failure can be pinned to (goal 10). "check" is the hard
+
+@contextlib.contextmanager
+def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[None]:
+    """Cross-process mutex around the rotate-then-append sequence (round W,
+    #50). A single ``write()`` of one short JSON line is already POSIX-atomic
+    (append-mode, under PIPE_BUF) on a local filesystem, but the ROTATE check
+    (stat size → maybe ``os.replace`` the active file aside) is NOT: two
+    processes racing the same rotation boundary can both decide to rotate,
+    or one can append to a file the other is mid-rename on. ``fcntl.flock``
+    on a sibling ``failures.lock`` serializes the whole thing, so a
+    multi-process build (CLI + MCP + a GUI job) never interleaves or drops a
+    line. Same degrade-not-hang stance as ``core/library.py``'s index lock:
+    a platform without ``fcntl`` (Windows) no-ops rather than blocking
+    forever, and a stuck holder times out to a clear error instead of a wedge.
+    """
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:
+        yield
+        return
+    lock_path = reports_dir / "failures.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    # Best-effort: a wedged lock must never lose the failure
+                    # record itself — proceed unlocked rather than drop it.
+                    break
+                time.sleep(0.02)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
+
+
+# The build steps a failure can be pinned to (goal 10). "check" is the hard
 # gate; the rest track the build graph (§0, §11). Kept as a frozenset so a typo
 # in a caller is caught by _norm_step rather than silently accepted.
 STEPS = frozenset(
@@ -58,6 +108,12 @@ STEPS = frozenset(
         "export",
         "package",
         "repair",
+        # round W (#50): a step string that matches none of the above (a
+        # typo in a caller — "reneder", "qcc", ...) must never be silently
+        # attributed to "generate", the busiest/most-expected step. It reads
+        # as "unknown" instead — loud, greppable, and never miscounted
+        # against a step that did not actually fail.
+        "unknown",
     }
 )
 
@@ -75,8 +131,12 @@ def _new_id() -> str:
 
 
 def _norm_step(step: str) -> str:
+    """Normalize a step string, never inventing a wrong attribution (#50): an
+    empty/unrecognized value reads as ``"unknown"`` — never silently coerced
+    to ``"generate"``, which would misattribute a render/qc/export typo to
+    the busiest step and make it invisible in a by-step failure count."""
     step = str(step or "").strip().lower()
-    return step if step in STEPS else "generate"
+    return step if step in STEPS else "unknown"
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -101,7 +161,7 @@ class Failure:
     meaningful fields.
     """
 
-    step: str  # one of STEPS: check|generate|voice|compile|captions|render|qc|export|package|repair
+    step: str  # one of STEPS: check|generate|voice|compile|captions|render|qc|export|package|repair|unknown
     subject: str  # shot id / take / "final" / provider id / "timeline" — what the failure is ABOUT
     cause: str  # ONE human line: the root cause, no stack, no jargon
     evidence: str = ""  # short verbatim tail: ffmpeg stderr+argv / HTTP status+body head / last frame
@@ -171,26 +231,33 @@ def record_failure(project: Any, failure: Failure) -> dict[str, Any]:
     path = root / FAILURES_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Rotate BEFORE appending so the active file never grows unbounded. A rename
-    # is atomic on the same filesystem; a same-second second rotation gets a
-    # numeric suffix so we never clobber an already-rotated slice.
-    try:
-        if path.exists() and path.stat().st_size >= ROTATE_BYTES:
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-            rotated = path.with_name(f"failures.{stamp}.jsonl")
-            n = 1
-            while rotated.exists():
-                rotated = path.with_name(f"failures.{stamp}.{n}.jsonl")
-                n += 1
-            os.replace(path, rotated)
-    except OSError:
-        pass  # a rotation hiccup must never lose the failure we came to record
+    # #50: rotate-check + rotate + append is ONE critical section across
+    # processes — an exclusive lock on a sibling failures.lock (best-effort,
+    # times out to unlocked rather than ever dropping the record; see
+    # _ledger_lock) so two processes never both decide to rotate the same
+    # boundary or interleave a line mid-rotate.
+    with _ledger_lock(path.parent):
+        # Rotate BEFORE appending so the active file never grows unbounded. A
+        # rename is atomic on the same filesystem; a same-second second
+        # rotation gets a numeric suffix so we never clobber an
+        # already-rotated slice.
+        try:
+            if path.exists() and path.stat().st_size >= ROTATE_BYTES:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                rotated = path.with_name(f"failures.{stamp}.jsonl")
+                n = 1
+                while rotated.exists():
+                    rotated = path.with_name(f"failures.{stamp}.{n}.jsonl")
+                    n += 1
+                os.replace(path, rotated)
+        except OSError:
+            pass  # a rotation hiccup must never lose the failure we came to record
 
-    line = json.dumps(record, ensure_ascii=False)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+        line = json.dumps(record, ensure_ascii=False)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     # Mirror to the collaboration log — best-effort, never fatal.
     try:

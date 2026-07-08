@@ -362,6 +362,50 @@ def test_apply_respects_locked_characters(tmp_project, add_shot):
     assert tmp_project.load_shot("S001").characters == []
 
 
+def test_apply_to_shot_guard_blocks_lock_added_between_read_and_write(
+    tmp_project, add_shot, monkeypatch
+):
+    """Round W (#41): mentions --apply used to have only the TOP-level
+    pre-filter (locked_paths from ONE snapshot of shot.locked) protecting it —
+    no write-time re-check. checked_shot_write's guard_paths re-reads the raw
+    file immediately before writing, so a lock sealed in the race window
+    AFTER apply_to_shot's initial read (another actor's `manju lock` landing
+    concurrently) is still refused, loudly, instead of writing straight over
+    it — exactly the gap #41 named ("只做有限的顶层 lock 检查")."""
+    from manju.core.container import Project
+    from manju.core.locks import seal_lock
+    from manju.core.writes import WriteRejected
+
+    _rich_bible(tmp_project)
+    add_shot(tmp_project, "S001", characters=[], action={"main": "@阿夏 独白"})
+
+    orig_load_shot = Project.load_shot
+
+    def racy_load_shot(self, shot_id):
+        shot = orig_load_shot(self, shot_id)
+        if shot_id == "S001":
+            # Simulate a concurrent `manju lock` landing on disk RIGHT as
+            # apply_to_shot finishes reading (its own `shot` snapshot is
+            # already unlocked — matches the pre-fix single-read pre-filter).
+            raw = self.load_shot_raw(shot_id)
+            digest = seal_lock(raw, "characters")
+            self.update_shot_raw(
+                shot_id, lambda d: d.__setitem__("locked", {"characters": digest})
+            )
+        return shot
+
+    monkeypatch.setattr(Project, "load_shot", racy_load_shot)
+    try:
+        with pytest.raises(WriteRejected):
+            apply_to_shot(tmp_project, "S001", asset_matrix(tmp_project))
+    finally:
+        monkeypatch.undo()
+
+    # the race-sealed lock held: characters was NOT written despite the
+    # pre-filter (working from a stale snapshot) having seen it as open
+    assert tmp_project.load_shot("S001").characters == []
+
+
 def test_apply_mentions_batch_isolates_and_reports(tmp_project, add_shot):
     _rich_bible(tmp_project)
     add_shot(tmp_project, "S001", characters=[], action={"main": "@阿夏"})

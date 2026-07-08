@@ -231,6 +231,47 @@ def test_propose_shares_counter_with_mcp_tool(in_project):
     assert numbers == [1, 2]
 
 
+def _mp_propose_worker(root: str, title: str) -> None:
+    """Top-level (picklable) worker for the multiprocessing race test below:
+    each OS process proposes with the SAME title (so same slug — the worst
+    case) against the SAME project, all fired together (round W, #51)."""
+    from manju.core.container import Project
+    from manju.mcp import tools as mcp_tools
+
+    mcp_tools.call_tool(Project(root), "propose", {"title": title, "body": "race"})
+
+
+def test_propose_concurrent_processes_get_distinct_numbers(in_project):
+    """Real OS processes (not threads) racing `propose` with the SAME title
+    (same slug — the collision-prone worst case: two writers would target the
+    literal same path under the old scan-then-write scheme) must each land a
+    DISTINCT proposals/NNNN_<slug>.md — no lost proposal, no overwrite
+    (round W, #51 — atomic O_EXCL claim loop)."""
+    import multiprocessing
+
+    n = 8
+    ctx = multiprocessing.get_context("spawn")
+    procs = [
+        ctx.Process(target=_mp_propose_worker, args=(str(in_project.root), "撞号提案"))
+        for _ in range(n)
+    ]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=60)
+        assert p.exitcode == 0, f"worker process failed (exitcode={p.exitcode})"
+
+    props = sorted(in_project.proposals_dir.glob("*.md"))
+    assert len(props) == n, (
+        f"expected {n} distinct proposal files, got {len(props)} — "
+        "a collision silently overwrote a concurrent propose()"
+    )
+    numbers = sorted(int(p.name[:4]) for p in props)
+    assert numbers == list(range(1, n + 1))  # every claimed slot is unique
+    for p in props:
+        assert p.read_text(encoding="utf-8").strip() == "# 撞号提案\n\nrace".strip()
+
+
 # ------------------------------------------------------------------------ auto
 
 

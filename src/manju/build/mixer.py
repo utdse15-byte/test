@@ -20,6 +20,7 @@ Purely engine-side: NO GUI code lives here.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -33,6 +34,7 @@ from ..core.models import (
     SfxClipSpec,
     SourceAudio,
 )
+from ..core.yamlio import atomic_write_text, dump_yaml
 
 
 class MixerError(ValueError):
@@ -133,70 +135,119 @@ def apply_mixer(project: Project, changes: dict[str, Any], *, actor: str = "huma
 
     All validation happens BEFORE any write: an invalid value (or an unknown
     shot id) raises :class:`MixerError` and the project is left untouched.
+
+    Round W (#9/#64): the whole call runs under the project write lock (the
+    same ``.manju/build.lock`` every other mutating entrance shares), and the
+    commit itself is transactional-by-manifest — every target file's FULL new
+    content is computed FIRST, then written in order; if a write partway
+    through fails, everything already written this call is rolled back
+    best-effort and the failure names exactly what may still be inconsistent
+    (never silent, never a guess).
     """
+    from ..runtime.buildlock import build_lock
+
     changes = changes or {}
-    rules = project.load_rules()
-    music_dump = rules.music.model_dump()
-    audio_dump = rules.audio.model_dump()  # holds ambient + sfx + voice_gain + transition
-    rule_changes: list[str] = []
+    with build_lock(project.root, actor=actor, name="build"):
+        rules = project.load_rules()
+        music_dump = rules.music.model_dump()
+        audio_dump = rules.audio.model_dump()  # holds ambient + sfx + voice_gain + transition
+        rule_changes: list[str] = []
 
-    if "voice_gain_db" in changes:
-        audio_dump["voice_gain_db"] = changes["voice_gain_db"]
-        rule_changes.append("voice_gain_db")
-    if "music" in changes:
-        _merge_bed(music_dump, changes["music"] or {})
-        rule_changes.append("music")
-    if "ambient" in changes:
-        _merge_bed(audio_dump["ambient"], changes["ambient"] or {})
-        rule_changes.append("ambient")
-    if "sfx" in changes:
-        audio_dump["sfx"] = list(changes["sfx"] or [])
-        rule_changes.append("sfx")
-    if "transition" in changes:
-        t = changes["transition"] or {}
-        if "source" in t:
-            audio_dump["transition_sound"] = t["source"]
-        if "gain_db" in t:
-            audio_dump["transition_gain_db"] = t["gain_db"]
-        rule_changes.append("transition")
+        if "voice_gain_db" in changes:
+            audio_dump["voice_gain_db"] = changes["voice_gain_db"]
+            rule_changes.append("voice_gain_db")
+        if "music" in changes:
+            _merge_bed(music_dump, changes["music"] or {})
+            rule_changes.append("music")
+        if "ambient" in changes:
+            _merge_bed(audio_dump["ambient"], changes["ambient"] or {})
+            rule_changes.append("ambient")
+        if "sfx" in changes:
+            audio_dump["sfx"] = list(changes["sfx"] or [])
+            rule_changes.append("sfx")
+        if "transition" in changes:
+            t = changes["transition"] or {}
+            if "source" in t:
+                audio_dump["transition_sound"] = t["source"]
+            if "gain_db" in t:
+                audio_dump["transition_gain_db"] = t["gain_db"]
+            rule_changes.append("transition")
 
-    # Validate the rules side by (re)constructing the models — the single gate.
-    try:
-        new_music = MusicRules.model_validate(music_dump)
-        # sfx entries validated individually so the error names the bad clip
-        audio_dump["sfx"] = [SfxClipSpec.model_validate(s).model_dump() for s in audio_dump["sfx"]]
-        new_audio = AudioMixRules.model_validate(audio_dump)
-    except ValidationError as exc:
-        raise MixerError(f"invalid mixer change: {_one_line(exc)}") from exc
-
-    # Validate the per-shot side and confirm each shot exists — still no writes.
-    shot_updates: dict[str, dict[str, Any]] = {}
-    for sc in changes.get("shots", []) or []:
-        if not isinstance(sc, dict) or "shot" not in sc:
-            raise MixerError("each shots[] entry needs a 'shot' id")
-        sid = sc["shot"]
+        # Validate the rules side by (re)constructing the models — the single gate.
         try:
-            sa = SourceAudio.model_validate({k: sc[k] for k in ("gain_db", "mute") if k in sc})
+            new_music = MusicRules.model_validate(music_dump)
+            # sfx entries validated individually so the error names the bad clip
+            audio_dump["sfx"] = [SfxClipSpec.model_validate(s).model_dump()
+                                 for s in audio_dump["sfx"]]
+            new_audio = AudioMixRules.model_validate(audio_dump)
         except ValidationError as exc:
-            raise MixerError(f"invalid source_audio for {sid}: {_one_line(exc)}") from exc
+            raise MixerError(f"invalid mixer change: {_one_line(exc)}") from exc
+
+        # Validate the per-shot side and confirm each shot exists — still no writes.
+        shot_updates: dict[str, dict[str, Any]] = {}
+        for sc in changes.get("shots", []) or []:
+            if not isinstance(sc, dict) or "shot" not in sc:
+                raise MixerError("each shots[] entry needs a 'shot' id")
+            sid = sc["shot"]
+            try:
+                sa = SourceAudio.model_validate({k: sc[k] for k in ("gain_db", "mute") if k in sc})
+            except ValidationError as exc:
+                raise MixerError(f"invalid source_audio for {sid}: {_one_line(exc)}") from exc
+            try:
+                project.load_shot_raw(sid)  # confirm the shot exists — still no writes
+            except ProjectError as exc:
+                raise MixerError(f"no such shot to mix: {sid}") from exc
+            shot_updates[sid] = sa.model_dump()
+
+        # ---- validation passed: compute EVERY target file's full new content
+        # before any write lands (#64) — rules.yaml first (matches the
+        # pre-existing write order), then shots in the order they were given.
+        write_plan: list[tuple[Path, str]] = []
+        if rule_changes:
+            rules.music = new_music
+            rules.audio = new_audio
+            write_plan.append((project.rules_path, dump_yaml(rules.model_dump())))
+        for sid, sa_dump in shot_updates.items():
+            raw = project.load_shot_raw(sid)
+            raw["source_audio"] = sa_dump
+            write_plan.append((project.shot_path(sid), dump_yaml(raw)))
+
+        # Manifest of PRIOR bytes, captured immediately before writing, so a
+        # mid-batch failure can be rolled back best-effort.
+        manifest = [
+            (path, path.read_text(encoding="utf-8") if path.exists() else None)
+            for path, _ in write_plan
+        ]
+        written: list[Path] = []
         try:
-            project.load_shot_raw(sid)  # confirm the shot exists — still no writes
-        except ProjectError as exc:
-            raise MixerError(f"no such shot to mix: {sid}") from exc
-        shot_updates[sid] = sa.model_dump()
+            for path, text in write_plan:
+                atomic_write_text(path, text)
+                written.append(path)
+        except Exception as exc:
+            restored: list[str] = []
+            failed: list[str] = []
+            for path, prior in manifest:
+                if path not in written:
+                    continue
+                try:
+                    if prior is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write_text(path, prior)
+                    restored.append(project.relpath(path))
+                except OSError:
+                    failed.append(project.relpath(path))
+            msg = (f"mixer apply failed mid-write ({exc}); rolled back: "
+                   + (", ".join(restored) or "none"))
+            if failed:
+                msg += ("; COULD NOT ROLL BACK, inspect/restore manually: "
+                        + ", ".join(failed))
+            raise MixerError(msg) from exc
 
-    # ---- validation passed: commit atomically through the existing save paths.
-    if rule_changes:
-        rules.music = new_music
-        rules.audio = new_audio
-        project.save_rules(rules)
-    for sid, sa_dump in shot_updates.items():
-        project.update_shot_raw(sid, lambda d, v=sa_dump: d.__setitem__("source_audio", v))
-
-    changed = list(rule_changes) + (["shots"] if shot_updates else [])
-    # ONE event for the whole mix edit (§3, §10 handover surface).
-    append_event(project.root, actor, "mixer",
-                 {"changed": changed, "shots": sorted(shot_updates)})
+        changed = list(rule_changes) + (["shots"] if shot_updates else [])
+        # ONE event for the whole mix edit (§3, §10 handover surface).
+        append_event(project.root, actor, "mixer",
+                     {"changed": changed, "shots": sorted(shot_updates)})
 
     return {
         "changed": changed,

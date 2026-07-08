@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -102,6 +103,40 @@ def _interactive() -> bool:
     """Single choke point for the interactive-terminal-only gate (§5):
     unlock and gc --hard refuse to run without a human at a tty."""
     return sys.stdin.isatty()
+
+
+@contextmanager
+def _write_lock(project: Project):
+    """The project write lock (§9 round W) for mutating CLI commands that do
+    NOT already route through build/graph.py's own ``build_lock`` (build,
+    redo, voice, qc already acquire it inside the engine call). select,
+    import, gc, lock/unlock, rollback, snapshot and the explicit repair ops
+    take it here so two processes never interleave writes to the same
+    project. Read commands (status/check/explain/...) stay lock-free.
+
+    BuildLock never blocks/waits — ``acquire()`` either succeeds immediately
+    or raises :class:`BuildLocked` immediately (a stale lock is stolen once,
+    then it is the same immediate success/fail) — so there is no hang to
+    time out; contention is always a clear, fast, one-line error naming the
+    holder (pid/actor/started), never a wedged terminal."""
+    from .runtime.buildlock import BuildLock, BuildLocked
+
+    lock = BuildLock(project.root, actor=ACTOR)
+    try:
+        lock.acquire()
+    except BuildLocked as exc:
+        holder = exc.holder
+        _fail(
+            f"项目正被占用 (project busy): pid={holder.get('pid', '?')} "
+            f"actor={holder.get('actor', '?')} started={holder.get('started', '?')} "
+            "— 另一个 manju 进程正在写这个项目,请稍后重试;若确认没有进程在跑,"
+            f"删除 {exc.lock_path} 后重试。",
+            code="build_locked",
+        )
+    try:
+        yield lock
+    finally:
+        lock.release()
 
 
 # --------------------------------------------------------------------- new
@@ -335,60 +370,61 @@ def import_(files: list[Path], as_json: bool = typer.Option(False, "--json")):
     registered: list[str] = []
     story_imports: list[str] = []  # the text drops, for the adapt-me hint
     dup_notes: list[str] = []      # duplicate-content advisories (media only)
-    for f in files:
-        if not f.exists():
-            _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"
-                  "(路径相对你运行命令的位置),再 `manju import <文件>` 重试。")
-        if f.suffix.lower() in TEXT_IMPORT_SUFFIXES:
-            # story/imports/<stem>.md — a text drop the agent adapts, not media.
-            project.story_imports_dir.mkdir(parents=True, exist_ok=True)
-            dest = project.story_imports_dir / f"{f.stem}.md"
+    with _write_lock(project):
+        for f in files:
+            if not f.exists():
+                _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"
+                      "(路径相对你运行命令的位置),再 `manju import <文件>` 重试。")
+            if f.suffix.lower() in TEXT_IMPORT_SUFFIXES:
+                # story/imports/<stem>.md — a text drop the agent adapts, not media.
+                project.story_imports_dir.mkdir(parents=True, exist_ok=True)
+                dest = project.story_imports_dir / f"{f.stem}.md"
+                n = 2
+                while dest.exists():  # never overwritten, same as media imports
+                    dest = project.story_imports_dir / f"{f.stem}_{n}.md"
+                    n += 1
+                shutil.copy2(f, dest)
+                rel = project.relpath(dest)
+                registered.append(rel)
+                story_imports.append(rel)
+                continue
+            # duplicate-content advisory (§3: imports are sacred, dedup is never
+            # destructive — we import anyway and say so). Media path only; text
+            # drops above are adapted, not deduped.
+            try:
+                from .media.preview import find_duplicate_import
+
+                dup = find_duplicate_import(project.imports_dir, f)
+                if dup is not None:
+                    dup_notes.append(
+                        f"{f.name}: 内容与 {project.relpath(dup)} 完全相同 (duplicate content)"
+                    )
+            except Exception:
+                pass
+            dest = project.imports_dir / f.name
             n = 2
-            while dest.exists():  # never overwritten, same as media imports
-                dest = project.story_imports_dir / f"{f.stem}_{n}.md"
+            while dest.exists():  # imports are never overwritten either
+                dest = project.imports_dir / f"{f.stem}_{n}{f.suffix}"
                 n += 1
             shutil.copy2(f, dest)
-            rel = project.relpath(dest)
-            registered.append(rel)
-            story_imports.append(rel)
-            continue
-        # duplicate-content advisory (§3: imports are sacred, dedup is never
-        # destructive — we import anyway and say so). Media path only; text
-        # drops above are adapted, not deduped.
+            registered.append(project.relpath(dest))
+        # §11: derived previews (thumbnail/waveform) into the disposable runtime
+        # dir; the segment cache is the lazy proxy (§7 ①). Best-effort only. Text
+        # drops have no preview — only the media imports get one.
+        previews: dict[str, str] = {}
         try:
-            from .media.preview import find_duplicate_import
+            from .media.preview import make_preview
 
-            dup = find_duplicate_import(project.imports_dir, f)
-            if dup is not None:
-                dup_notes.append(
-                    f"{f.name}: 内容与 {project.relpath(dup)} 完全相同 (duplicate content)"
-                )
-        except Exception:
+            for rel in registered:
+                if rel in story_imports:
+                    continue
+                preview = make_preview(project.resolve(rel), project.runtime_dir / "thumbs")
+                if preview is not None:
+                    previews[rel] = project.relpath(preview)
+        except ImportError:
             pass
-        dest = project.imports_dir / f.name
-        n = 2
-        while dest.exists():  # imports are never overwritten either
-            dest = project.imports_dir / f"{f.stem}_{n}{f.suffix}"
-            n += 1
-        shutil.copy2(f, dest)
-        registered.append(project.relpath(dest))
-    # §11: derived previews (thumbnail/waveform) into the disposable runtime
-    # dir; the segment cache is the lazy proxy (§7 ①). Best-effort only. Text
-    # drops have no preview — only the media imports get one.
-    previews: dict[str, str] = {}
-    try:
-        from .media.preview import make_preview
-
-        for rel in registered:
-            if rel in story_imports:
-                continue
-            preview = make_preview(project.resolve(rel), project.runtime_dir / "thumbs")
-            if preview is not None:
-                previews[rel] = project.relpath(preview)
-    except ImportError:
-        pass
-    append_event(project.root, ACTOR, "import",
-                 {"files": registered, "story_imports": story_imports, "previews": previews})
+        append_event(project.root, ACTOR, "import",
+                     {"files": registered, "story_imports": story_imports, "previews": previews})
     if as_json:
         _emit({"imported": registered, "story_imports": story_imports,
                "previews": previews, "duplicates": dup_notes}, True)
@@ -596,34 +632,34 @@ def select(
 ):
     """Pick a take (the decision is one line of text — §3)."""
     from .core.idents import UnsafeIdentifierError, validate_safe_segment
+    from .core.writes import WriteRejected, select_take_checked
 
     project = _project()
     try:
         validate_safe_segment(shot_id, label="shot_id")  # goal item 11
     except UnsafeIdentifierError as exc:
         _fail(str(exc))
-    if file:
-        from .providers.manual import register_manual_take
+    with _write_lock(project):
+        if file:
+            from .providers.manual import register_manual_take
 
-        info = register_manual_take(project, shot_id, file)
-        take = info.name
-    if not take:
-        _fail(f"select: 没提供 take。{shot_id} 要选哪一条生成结果?"
-              f"传 take 名(`manju select {shot_id} <take>`),"
-              "或用 --file 把一个人工文件登记成 take 再选。")
-    if project.get_take(shot_id, take) is None:
-        # round-W #35: a media-less "ghost" sidecar (e.g. left by an older
-        # `gc --hard` run before that command cleaned up its own sidecars) is
-        # not a pickable take — skip it here so the listing only ever offers
-        # names `select` could actually accept.
-        have = [t.name for t in project.takes(shot_id, skip_ghosts=True)]
-        avail = ("现有 takes:" + ", ".join(have)) if have else \
-            "该镜头还没有任何 take,先 `manju build` 或 `manju redo` 生成。"
-        _fail(f"{shot_id} has no take '{take}' — {avail}")
-    project.update_shot_raw(
-        shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", take)
-    )
-    append_event(project.root, ACTOR, "select", {"shot": shot_id, "take": take})
+            info = register_manual_take(project, shot_id, file)
+            take = info.name
+        if not take:
+            _fail(f"select: 没提供 take。{shot_id} 要选哪一条生成结果?"
+                  f"传 take 名(`manju select {shot_id} <take>`),"
+                  "或用 --file 把一个人工文件登记成 take 再选。")
+        if project.get_take(shot_id, take) is None:
+            # round-W #35: a media-less "ghost" sidecar is not a pickable take —
+            # the listing only offers names `select` could actually accept.
+            have = [t.name for t in project.takes(shot_id, skip_ghosts=True)]
+            avail = ("现有 takes:" + ", ".join(have)) if have else \
+                "该镜头还没有任何 take,先 `manju build` 或 `manju redo` 生成。"
+            _fail(f"{shot_id} has no take '{take}' — {avail}")
+        try:
+            select_take_checked(project, shot_id, take, actor=ACTOR, via="cli")
+        except WriteRejected as exc:
+            _fail(str(exc))
     if as_json:
         _emit({"shot": shot_id, "take": take, "ok": True}, True)
     else:
@@ -637,21 +673,22 @@ def select(
 def lock(shot_id: str, field: str, as_json: bool = typer.Option(False, "--json")):
     """Seal a field's current value with a hash (§5). Build enforces it."""
     project = _project()
-    raw = project.load_shot_raw(shot_id)
-    try:
-        digest = seal_lock(raw, field)
-    except (KeyError, IndexError) as exc:
-        _fail(f"cannot lock: {exc}")
+    with _write_lock(project):
+        raw = project.load_shot_raw(shot_id)
+        try:
+            digest = seal_lock(raw, field)
+        except (KeyError, IndexError) as exc:
+            _fail(f"cannot lock: {exc}")
 
-    def mutate(d):
-        locked = d.get("locked")
-        if not isinstance(locked, dict):
-            locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
-        locked[field] = digest
-        d["locked"] = locked
+        def mutate(d):
+            locked = d.get("locked")
+            if not isinstance(locked, dict):
+                locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
+            locked[field] = digest
+            d["locked"] = locked
 
-    project.update_shot_raw(shot_id, mutate)
-    append_event(project.root, ACTOR, "lock", {"shot": shot_id, "field": field})
+        project.update_shot_raw(shot_id, mutate)
+        append_event(project.root, ACTOR, "lock", {"shot": shot_id, "field": field})
     if as_json:
         _emit({"shot": shot_id, "field": field, "hash": digest}, True)
     else:
@@ -675,8 +712,9 @@ def unlock(shot_id: str, field: str):
         locked.pop(field, None)
         d["locked"] = locked
 
-    project.update_shot_raw(shot_id, mutate)
-    append_event(project.root, ACTOR, "unlock", {"shot": shot_id, "field": field})
+    with _write_lock(project):
+        project.update_shot_raw(shot_id, mutate)
+        append_event(project.root, ACTOR, "unlock", {"shot": shot_id, "field": field})
     typer.secho(f"{shot_id}: unlocked {field}", fg=typer.colors.YELLOW)
 
 
@@ -691,18 +729,19 @@ def propose(
 ):
     """Write proposals/NNNN_<slug>.md — the legitimate channel to request a
     locked-content change (§5). Twin of the MCP `propose` tool; the numbering
-    and slug scheme are REUSED from manju.mcp.tools so the two share one counter.
+    and slug scheme are REUSED from manju.mcp.tools so the two share one
+    claim path — an atomic O_EXCL create loop (#51 round W): two concurrent
+    proposers (an agent session racing a human terminal, two agent sessions)
+    never collide on the same file.
     With no --body on a pipe, the body is read from stdin; otherwise it may be
     empty."""
     from .core.yamlio import atomic_write_text
-    from .mcp.tools import _next_proposal_number, _slugify  # shared numbering/slug
+    from .mcp.tools import _claim_proposal_path, _slugify  # shared numbering/slug
 
     project = _project()
     if body is None:
         body = "" if sys.stdin.isatty() else sys.stdin.read()
-    project.proposals_dir.mkdir(parents=True, exist_ok=True)
-    number = _next_proposal_number(project.proposals_dir)
-    path = project.proposals_dir / f"{number:04d}_{_slugify(title)}.md"
+    _number, path = _claim_proposal_path(project.proposals_dir, _slugify(title))
     atomic_write_text(path, f"# {title}\n\n{body}\n")
     rel = project.relpath(path)
     append_event(project.root, ACTOR, "propose", {"title": title, "path": rel})
@@ -990,33 +1029,34 @@ def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[st
     if not src_take:
         _fail(f"{shot} has no selected take — pass --take <name> explicitly")
 
-    try:
-        if op == "retime":
-            new = retime_take(project, shot, src_take, factor)
-        elif op == "extend":
-            if ms <= 0:
-                _fail("--op extend requires --ms > 0")
-            new = extend_take(project, shot, src_take, ms, mode=mode or "freeze")
-        elif op == "trim":
-            if ms <= 0:
-                _fail("--op trim requires --ms > 0")
-            new = trim_take(project, shot, src_take, ms)
-        elif op == "inout":
-            if in_ms is None or out_ms is None:
-                _fail("--op inout requires --in-ms and --out-ms")
-            # Virtual is the default (leaves handles for a real cross-dissolve);
-            # --mode reencode bakes the region into new bytes (no handles).
-            new = set_inout_take(project, shot, src_take, in_ms, out_ms,
-                                 mode=mode or "virtual")
-        elif op == "croppad":
-            new = crop_pad_take(project, shot, src_take, mode=mode or "center_crop")
-        else:
-            _fail(f"unknown --op {op!r} (choose retime|extend|trim|inout|croppad)")
-    except (MediaError, ProjectError) as exc:
-        _fail(f"repair failed: {exc}")
+    with _write_lock(project):
+        try:
+            if op == "retime":
+                new = retime_take(project, shot, src_take, factor)
+            elif op == "extend":
+                if ms <= 0:
+                    _fail("--op extend requires --ms > 0")
+                new = extend_take(project, shot, src_take, ms, mode=mode or "freeze")
+            elif op == "trim":
+                if ms <= 0:
+                    _fail("--op trim requires --ms > 0")
+                new = trim_take(project, shot, src_take, ms)
+            elif op == "inout":
+                if in_ms is None or out_ms is None:
+                    _fail("--op inout requires --in-ms and --out-ms")
+                # Virtual is the default (leaves handles for a real cross-dissolve);
+                # --mode reencode bakes the region into new bytes (no handles).
+                new = set_inout_take(project, shot, src_take, in_ms, out_ms,
+                                     mode=mode or "virtual")
+            elif op == "croppad":
+                new = crop_pad_take(project, shot, src_take, mode=mode or "center_crop")
+            else:
+                _fail(f"unknown --op {op!r} (choose retime|extend|trim|inout|croppad)")
+        except (MediaError, ProjectError) as exc:
+            _fail(f"repair failed: {exc}")
 
-    append_event(project.root, ACTOR, "repair",
-                 {"shot": shot, "op": op, "source_take": src_take, "new_take": new.name})
+        append_event(project.root, ACTOR, "repair",
+                     {"shot": shot, "op": op, "source_take": src_take, "new_take": new.name})
     if as_json:
         _emit({"shot": shot, "op": op, "source_take": src_take,
                "new_take": new.name, "params": new.sidecar.params}, True)
@@ -1039,7 +1079,13 @@ def _repair_voice_cli(project: Project, shot: Optional[str], provider: Optional[
     if not shot:
         _fail("--op voice requires --shot <id>")
 
-    result = repair_voice(project, shot, dry_run=dry_run, provider=provider, actor=ACTOR)
+    # dry-run is read-only (prints the plan, touches nothing) — lockless,
+    # same stance as `build --dry-run` (§9 round W).
+    if dry_run:
+        result = repair_voice(project, shot, dry_run=True, provider=provider, actor=ACTOR)
+    else:
+        with _write_lock(project):
+            result = repair_voice(project, shot, dry_run=False, provider=provider, actor=ACTOR)
 
     if as_json:
         _emit(result.to_dict(), True)
@@ -2622,8 +2668,10 @@ def snapshot(label: str = typer.Argument("", help="checkpoint label")):
     `manju rollback file --to <sha>` returns to it. A clean tree is a no-op."""
     from .core.history import HistoryError, snapshot as _snapshot
 
+    project = _project()
     try:
-        result = _snapshot(_project(), label)
+        with _write_lock(project):
+            result = _snapshot(project, label)
     except HistoryError as exc:
         _fail(str(exc))
     if result["clean"]:
@@ -2652,18 +2700,19 @@ def rollback(
 
     project = _project()
     try:
-        if what == "shot":
-            result = rollback_shot(project, target)
-            human = f"{result['shot']}: back to {result['take']} (was {result['was'] or '—'})"
-        elif what == "file":
-            result = rollback_file(project, target, ref=to)
-            findings = run_check(project)
-            result["check_errors"] = len(findings.errors)
-            human = f"restored {result['path']} from {result['ref']}"
-            if findings.errors:
-                human += f"  (⚠ check now reports {len(findings.errors)} error(s))"
-        else:
-            _fail("rollback what? use: rollback shot <id> | rollback file <path> [--to <ref>]")
+        with _write_lock(project):
+            if what == "shot":
+                result = rollback_shot(project, target)
+                human = f"{result['shot']}: back to {result['take']} (was {result['was'] or '—'})"
+            elif what == "file":
+                result = rollback_file(project, target, ref=to)
+                findings = run_check(project)
+                result["check_errors"] = len(findings.errors)
+                human = f"restored {result['path']} from {result['ref']}"
+                if findings.errors:
+                    human += f"  (⚠ check now reports {len(findings.errors)} error(s))"
+            else:
+                _fail("rollback what? use: rollback shot <id> | rollback file <path> [--to <ref>]")
     except HistoryError as exc:
         _fail(str(exc))
     if as_json:
@@ -2788,17 +2837,20 @@ def gc(hard: bool = typer.Option(False, "--hard"),
     """Reclaim space: segment cache and proxies. --hard (interactive) also
     removes unselected takes. imports/ and final/ are NEVER touched (§14)."""
     project = _project()
+    if hard and not _interactive():
+        _fail("gc --hard is interactive-only")
+    do_hard = hard and typer.confirm(
+        "删除所有未选中的 take 媒体本体?(选中、imports、final 不受影响)"
+    )
     freed = 0
-    for d in (project.segments_dir, project.proxy_dir):
-        for f in d.glob("*"):
-            if f.is_file():
-                freed += f.stat().st_size
-                f.unlink()
     ghost_sidecars = 0
-    if hard:
-        if not _interactive():
-            _fail("gc --hard is interactive-only")
-        if typer.confirm("删除所有未选中的 take 媒体本体?(选中、imports、final 不受影响)"):
+    with _write_lock(project):
+        for d in (project.segments_dir, project.proxy_dir):
+            for f in d.glob("*"):
+                if f.is_file():
+                    freed += f.stat().st_size
+                    f.unlink()
+        if do_hard:
             for sid in project.shot_ids():
                 shot = project.load_shot(sid)
                 for take in project.takes(sid):
@@ -2813,8 +2865,8 @@ def gc(hard: bool = typer.Option(False, "--hard"),
                         if take.sidecar_path.exists():
                             take.sidecar_path.unlink()
                             ghost_sidecars += 1
-    append_event(project.root, ACTOR, "gc",
-                 {"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars})
+        append_event(project.root, ACTOR, "gc",
+                     {"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars})
     if as_json:
         _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars}, True)
     else:

@@ -189,7 +189,9 @@ def test_select_flips_selection_and_records_event(one_shot_project, monkeypatch)
     last = tail_events(one_shot_project.root, n=1)[0]
     assert last["action"] == "select"
     assert last["actor"] == "director"
-    assert last["detail"] == {"shot": "S001", "take": "take_02"}
+    # round W (#39): every select entrance now records "via" so the ledger
+    # can tell them apart (cli|mcp|board|gui|build_auto_select).
+    assert last["detail"] == {"shot": "S001", "take": "take_02", "via": "board"}
 
 
 def test_select_bad_take_is_clean_error(one_shot_project):
@@ -198,6 +200,55 @@ def test_select_bad_take_is_clean_error(one_shot_project):
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False and "nope" in body["error"]
+
+
+def test_select_refuses_when_selected_take_locked(one_shot_project):
+    """Round W (#39): board select now goes through the SAME checked write
+    (select_take_checked) as CLI/MCP/GUI — a value-hash lock on
+    status.selected_take must refuse it, not just get bypassed here."""
+    from manju.core.locks import seal_lock
+
+    def ensure_field(d):
+        status = d.get("status")
+        if not isinstance(status, dict):
+            status = {}
+        status.setdefault("selected_take", None)
+        d["status"] = status
+
+    one_shot_project.update_shot_raw("S001", ensure_field)
+    raw = one_shot_project.load_shot_raw("S001")
+    digest = seal_lock(raw, "status.selected_take")
+    one_shot_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("locked", {}).__setitem__(
+            "status.selected_take", digest)
+    )
+
+    before = one_shot_project.load_shot("S001").status.selected_take
+    with running(one_shot_project) as (base, _):
+        r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert one_shot_project.load_shot("S001").status.selected_take == before  # unchanged
+
+
+def test_select_refuses_when_build_locked(one_shot_project):
+    """Round W (#9): board select takes the cross-process build lock too —
+    a held lock (a concurrent CLI/MCP/GUI process) refuses it, distinct from
+    the board's own in-process mutation_lock (test_busy_lock_returns_409)."""
+    from manju.runtime.buildlock import BuildLock
+
+    before = one_shot_project.load_shot("S001").status.selected_take
+    lock = BuildLock(one_shot_project.root, actor="human").acquire()
+    try:
+        with running(one_shot_project) as (base, _):
+            r = httpx.post(base + "/api/select", json={"shot": "S001", "take": "take_02"})
+    finally:
+        lock.release()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert one_shot_project.load_shot("S001").status.selected_take == before  # unchanged
 
 
 def test_rollback_shot_round_trips(one_shot_project):

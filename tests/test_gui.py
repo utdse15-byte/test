@@ -145,6 +145,53 @@ def test_select_writes_truth_and_event(gui, tmp_project, add_shot, make_take):
     assert status == 404 and "take_99" in data["error"]
 
 
+def test_select_refuses_when_selected_take_locked(gui, tmp_project, add_shot, make_take):
+    """Round W (#39): GUI select now goes through the SAME checked write
+    (select_take_checked) as CLI/MCP/board — a value-hash lock on
+    status.selected_take must refuse it too, not just get bypassed here."""
+    from manju.core.locks import seal_lock
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+
+    def ensure_field(d):
+        status = d.get("status")
+        if not isinstance(status, dict):
+            status = {}
+        status.setdefault("selected_take", None)
+        d["status"] = status
+
+    tmp_project.update_shot_raw("S001", ensure_field)
+    raw = tmp_project.load_shot_raw("S001")
+    digest = seal_lock(raw, "status.selected_take")
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("locked", {}).__setitem__(
+            "status.selected_take", digest)
+    )
+
+    status, _, data = _post(gui, "/api/select", {"shot": "S001", "take": take.name})
+    assert status == 409
+    assert "error" in data
+    assert tmp_project.load_shot("S001").status.selected_take is None
+
+
+def test_select_refuses_when_build_locked(gui, tmp_project, add_shot, make_take):
+    """Round W (#9): GUI select takes the process build lock too — a held
+    lock (another CLI/MCP process mutating the same project) refuses."""
+    from manju.runtime.buildlock import BuildLock
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+    lock = BuildLock(tmp_project.root, actor="human").acquire()
+    try:
+        status, _, data = _post(gui, "/api/select", {"shot": "S001", "take": take.name})
+        assert status == 409
+        assert "error" in data
+    finally:
+        lock.release()
+    assert tmp_project.load_shot("S001").status.selected_take is None
+
+
 def test_lock_via_api(gui, tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     status, _, data = _post(gui, "/api/lock", {"shot": "S001", "field": "dialogue.text"})
