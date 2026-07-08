@@ -546,7 +546,10 @@ def test_apply_import_fallback_makes_a_plain_import(tmp_project, tmp_path):
 
 def test_apply_skip_duplicate_is_a_pure_noop(tmp_project, tmp_path):
     """A skip_duplicate row moves no media/truth file — it only ever adds the
-    audit-trail events (§10) every apply row gets, skip or not."""
+    audit-trail events (§10) every apply row gets, skip or not (round AA:
+    the persisted reports/ingest_batches/<id>.yaml record is part of that
+    same audit trail now, so it's excluded from the diff exactly like
+    events.jsonl already was)."""
     tmp_project.imports_dir.mkdir(parents=True, exist_ok=True)
     (tmp_project.imports_dir / "existing.mp4").write_bytes(b"same-bytes")
     batch = tmp_path / "batch"
@@ -556,8 +559,12 @@ def test_apply_skip_duplicate_is_a_pure_noop(tmp_project, tmp_path):
     before = _snapshot(tmp_project.root)
     result = apply_ingest(tmp_project, plan, actor="test")
     assert result.results[0].ok and result.results[0].detail == {"skipped": True}
-    after = {p: sz for p, sz in _snapshot(tmp_project.root) if p != "events.jsonl"}
-    before = {p: sz for p, sz in before if p != "events.jsonl"}
+
+    def _is_audit_trail(relpath: str) -> bool:
+        return relpath == "events.jsonl" or relpath.startswith("reports/ingest_batches/")
+
+    after = {p: sz for p, sz in _snapshot(tmp_project.root) if not _is_audit_trail(p)}
+    before = {p: sz for p, sz in before if not _is_audit_trail(p)}
     assert after == before
 
 
@@ -745,7 +752,10 @@ def test_cli_partial_failure_reports_nonzero_exit(in_project, add_shot, tmp_path
     batch.mkdir()
     _drop(batch, "S001.mp4", b"v1")
 
-    def fake_apply(project, plan, *, actor, overrides=None):
+    def fake_apply(project, plan, *, actor, overrides=None, **_kwargs):
+        # **_kwargs swallows round-AA's new batch_id/clock/source — this
+        # fake only needs to prove the CLI's stopped_at handling, not
+        # exercise batch persistence.
         row = plan.rows[0]
         return IngestApplyResult(
             results=[IngestRowResult(row=row, ok=False, error="模拟失败 simulated failure")],

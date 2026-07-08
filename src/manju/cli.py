@@ -638,12 +638,16 @@ def ingest(
         return
 
     with _write_lock(project):
-        result = apply_ingest(project, plan, actor=ACTOR)
+        result = apply_ingest(project, plan, actor=ACTOR,
+                              source=", ".join(str(p) for p in paths))
 
     if as_json:
         _emit({**plan.to_dict(), **result.to_dict()}, True)
     else:
         _print_ingest_table(plan, result=result)
+        typer.secho(f"批次已记录 / batch recorded: {result.batch_id}"
+                    f"(manju ingest-review {result.batch_id} 查看/评审)",
+                    fg=typer.colors.BRIGHT_BLACK)
     if result.stopped_at is not None:
         _fail(
             f"批量入库在第 {result.stopped_at + 1}/{len(plan.rows)} 行失败并停止 — "
@@ -651,6 +655,188 @@ def ingest(
             "`manju ingest ... --apply`,已落地的内容会被去重跳过",
             code="ingest_partial_failure",
         )
+
+
+# ------------------------------------------------------------ ingest review
+# 批量入库评审 (round AA, goal items 1+2): every `ingest --apply` run persists a
+# reviewable batch record (reports/ingest_batches/<id>.yaml, build/batches.py)
+# with a per-row match confidence (matched/pending/unmatched/conflict/manual).
+#
+# These live as their OWN top-level `ingest-*` commands rather than as
+# `manju ingest batches`/`manju ingest review` subcommands: `ingest` already
+# declares a REQUIRED variadic `paths` argument, and Click's MultiCommand
+# parser consumes ALL leftover positional tokens into a group's own variadic
+# argument before it ever looks for a subcommand name — so `manju ingest
+# batches` would silently become `paths=["batches"]`, never dispatching (see
+# `manju qc`/`manju skills`/... which all keep their bare-invocation
+# callback argument-free for exactly this reason). Distinct top-level names
+# sidestep the ambiguity entirely, same as this codebase already keeps
+# `route`/`routing` as separate commands instead of nesting one under the
+# other.
+
+
+def _print_batches_table(batches: list[dict]) -> None:
+    from .presets import display_width, pad
+
+    if not batches:
+        typer.secho("没有已入库的批次 (no ingest batches yet)", fg=typer.colors.BRIGHT_BLACK)
+        return
+    id_w = max(display_width(b["batch"]) for b in batches)
+    for b in batches:
+        counts = ", ".join(f"{k}={v}" for k, v in sorted(b["counts"].items())) or "(空)"
+        typer.echo(f"{pad(b['batch'], id_w)}  {b['created']}  actor={b['actor']}  "
+                   f"{b['items']} 项  [{counts}]")
+
+
+@app.command("ingest-batches")
+def ingest_batches_cmd(as_json: bool = typer.Option(False, "--json")):
+    """列出已入库批次(新→旧),每个批次附评审状态计数(round AA,goal item 2)。"""
+    from .build.batches import list_batches
+
+    project = _project()
+    batches = list_batches(project)
+    if as_json:
+        _emit({"batches": batches}, True)
+        return
+    _print_batches_table(batches)
+
+
+_REVIEW_ZH = {
+    "pending": "待评审", "confirmed": "已确认", "flagged": "已标记",
+    "discarded": "已撤销", "auto": "自动(去重)",
+}
+
+
+def _print_batch_review_table(batch_data: dict) -> None:
+    from .presets import display_width, pad
+
+    items = batch_data.get("items") or []
+    if not items:
+        typer.secho("这个批次没有条目 (batch has no items)", fg=typer.colors.BRIGHT_BLACK)
+        return
+    name_w = max(display_width(it["name"]) for it in items)
+    action_w = max(display_width(_INGEST_ACTION_ZH.get(it["action"], it["action"])) for it in items)
+    target_w = max(display_width(it["target"]) for it in items)
+    for it in items:
+        action_zh = _INGEST_ACTION_ZH.get(it["action"], it["action"])
+        review_zh = _REVIEW_ZH.get(it["review"], it["review"])
+        staged = "  [已自动选用 take]" if it.get("staged") else ""
+        typer.echo(
+            f"[{it['index']:>3}] {pad(it['name'], name_w)}  {pad(action_zh, action_w)}  "
+            f"{pad(it['target'], target_w)}  match={it['match']}  {review_zh}{staged}"
+        )
+        if it.get("note"):
+            typer.secho(f"       备注 note: {it['note']}", fg=typer.colors.BRIGHT_BLACK)
+
+
+@app.command("ingest-review")
+def ingest_review_cmd(
+    batch: str = typer.Argument(..., help="批次 id,见 `manju ingest-batches`"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """查看一个入库批次的逐项评审状态(index/name/action/target/match/staged/review/note)。"""
+    from .build.batches import BatchError, load_batch
+
+    project = _project()
+    try:
+        data = load_batch(project, batch)
+    except BatchError as exc:
+        _fail(str(exc), code="batch_not_found")
+        raise  # unreachable
+    if as_json:
+        _emit(data, True)
+        return
+    typer.secho(
+        f"批次 {data.get('batch')}  created={data.get('created')}  "
+        f"actor={data.get('actor')}  source={data.get('source') or '(无)'}",
+        fg=typer.colors.CYAN,
+    )
+    _print_batch_review_table(data)
+
+
+def _matched_pending_indices(data: dict) -> list[int]:
+    """Every item in *data* that is a clean single-candidate hit AND has not
+    already been auto-reviewed (skip_duplicate rows) — what `--all-matched`
+    bulk-confirms."""
+    return [
+        it["index"] for it in (data.get("items") or [])
+        if it.get("match") == "matched" and it.get("review") != "auto"
+    ]
+
+
+def _run_batch_review(batch: str, items: list[int], *, decision: str, note: str, as_json: bool) -> None:
+    from .build.batches import BatchError, review_item
+
+    project = _project()
+    if not items:
+        _fail("至少指定一个 --item(confirm 也可以用 --all-matched)", code="ingest_review_no_items")
+        raise  # unreachable
+
+    results = []
+    with _write_lock(project):
+        for idx in sorted(set(items)):
+            try:
+                results.append(
+                    review_item(project, batch, idx, decision=decision, note=note, actor=ACTOR)
+                )
+            except BatchError as exc:
+                _fail(str(exc), code="batch_review_invalid")
+                raise  # unreachable
+
+    if as_json:
+        _emit({"batch": batch, "decision": decision, "results": results}, True)
+    else:
+        for r in results:
+            undo = f"  ({r['undo']})" if r.get("undo") else ""
+            typer.secho(f"[{r['index']}] {decision} ✓{undo}", fg=typer.colors.GREEN)
+
+
+@app.command("ingest-confirm")
+def ingest_confirm_cmd(
+    batch: str = typer.Argument(..., help="批次 id"),
+    item: list[int] = typer.Option([], "--item", help="要确认的条目 index(可重复指定多次)"),
+    all_matched: bool = typer.Option(
+        False, "--all-matched", help="确认这个批次里所有 match=matched 且尚未评审的条目"),
+    note: str = typer.Option("", "--note"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """确认(confirm)一个/多个批次条目 —— 标记为人工已核实无误。"""
+    from .build.batches import BatchError, load_batch
+
+    project = _project()
+    items = list(item)
+    if all_matched:
+        try:
+            data = load_batch(project, batch)
+        except BatchError as exc:
+            _fail(str(exc), code="batch_not_found")
+            raise  # unreachable
+        items = sorted(set(items) | set(_matched_pending_indices(data)))
+    _run_batch_review(batch, items, decision="confirm", note=note, as_json=as_json)
+
+
+@app.command("ingest-flag")
+def ingest_flag_cmd(
+    batch: str = typer.Argument(..., help="批次 id"),
+    item: list[int] = typer.Option([], "--item", help="要标记的条目 index(可重复指定多次)"),
+    note: str = typer.Option("", "--note"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """标记(flag)一个/多个批次条目为需要人工再看(不改动任何已落地的文件)。"""
+    _run_batch_review(batch, list(item), decision="flag", note=note, as_json=as_json)
+
+
+@app.command("ingest-discard")
+def ingest_discard_cmd(
+    batch: str = typer.Argument(..., help="批次 id"),
+    item: list[int] = typer.Option([], "--item", help="要撤销的条目 index(可重复指定多次)"),
+    note: str = typer.Option("", "--note"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """撤销(discard)一个/多个批次条目的评审状态 —— 若该条目自动选用了 take(空镜头,
+    goal item 2 的自动选用),且镜头此后没有被重新选择,一并撤销该次自动选用
+    (不会删除已落地的素材本身,§3 素材只增不改)。"""
+    _run_batch_review(batch, list(item), decision="discard", note=note, as_json=as_json)
 
 
 # ------------------------------------------------------------------- build

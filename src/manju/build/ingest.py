@@ -63,20 +63,51 @@ the row; ``link`` does the same but additionally sources the copy from the
 LIBRARY'S OWN blob instead of the dropped file (byte-identical either way —
 this only changes provenance, recorded in the hint). A project-internal hit
 (the dedup above) always wins over a library hit — this section only runs
-for files that were NOT already found inside the project."""
+for files that were NOT already found inside the project.
+
+POST-IMPORT CONFIRMATION (round AA, goal items 1+2): a batch lands through
+the SAME classification/registration paths above, but nothing used to say
+HOW CONFIDENT that landing was, nor leave a reviewable trail behind. Two
+additions, layered on top without changing what lands where:
+
+- **match states** — every :class:`IngestRow` now carries ``match`` (one of
+  ``matched``/``pending``/``unmatched``/``conflict``/``manual``) and
+  ``candidates`` (the ids that were plausible). ``matched`` is an exact hit —
+  ``--shot`` forced, or the filename's UNTRANSFORMED stem (or a documented
+  suffix marker: ``_take``/``_voice``/``_refN``) resolves to exactly one id.
+  ``pending`` is a hit that only resolved via the generic "ignore everything
+  after the first underscore" fallback (e.g. ``S001_v2_final.mov`` when only
+  the leading token is a real id) — it still lands exactly as before, just
+  flagged for a human/agent to eyeball. ``conflict`` is what today's
+  first-match-wins candidate search would have silently picked between: MORE
+  THAN ONE distinct id genuinely resolves (two shots, two bible assets, or a
+  shot AND a bible asset on different ids) — a conflict row is NEVER landed
+  on a guess, it downgrades to ``import`` with every candidate id recorded
+  and a 中文 reason explaining the ambiguity. ``manual`` is set at
+  :func:`apply_ingest` time on any row a caller corrected via ``overrides``.
+  ``skip_duplicate`` rows stay ``matched`` (exact by content hash).
+- **persisted batch record + empty-shot staging** — every :func:`apply_ingest`
+  run is written to ``reports/ingest_batches/<batch_id>.yaml`` (see
+  :mod:`build.batches`) so it can be reviewed (confirm/flag/discard) after
+  the fact, and a ``take`` that lands on a shot with NO ``selected_take`` yet
+  is auto-selected (never overwriting an existing pick) so an externally
+  produced take doesn't need a separate manual `manju select` — see
+  :mod:`build.batches` and :func:`apply_ingest` for both."""
 
 from __future__ import annotations
 
 import re
 import shutil
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..core.container import Project
 from ..core.events import append_event
 from ..core.hashing import hash_file
 from ..core.idents import is_safe_segment
+from ..core.writes import WriteRejected, select_take_checked, selected_take_lock_block
 from ..core.yamlio import read_yaml, write_yaml
 from ..media.preview import make_preview
 from ..providers.manual import register_manual_take
@@ -87,6 +118,7 @@ __all__ = [
     "IngestPlan",
     "IngestRowResult",
     "IngestApplyResult",
+    "MATCH_STATES",
     "plan_ingest",
     "apply_ingest",
 ]
@@ -106,6 +138,10 @@ _BIBLE_REF_FILES = ("characters", "scenes", "props")
 
 ROLES = ("auto", "take", "voice", "ref")
 ON_DUPLICATE_STRATEGIES = ("skip", "import", "link")
+
+# round AA (goal items 1+2): per-row classification confidence — see the
+# module docstring's "POST-IMPORT CONFIRMATION" section for the full semantics.
+MATCH_STATES = ("matched", "pending", "unmatched", "conflict", "manual")
 
 
 class IngestError(ValueError):
@@ -136,6 +172,13 @@ class IngestRow:
     # proceeds as a normal action (--on-duplicate import/link). None when no
     # library hit was found (or the library is unavailable).
     library_hint: str | None = None
+    # round AA (goal items 1+2): classification confidence — one of
+    # MATCH_STATES — and the id(s) that were plausible when it is anything
+    # other than a clean single hit (see module docstring). "unmatched" is
+    # the safe default: any construction path that forgets to set this
+    # explicitly reads as "needs a look", never as a false "matched".
+    match: str = "unmatched"
+    candidates: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -143,6 +186,7 @@ class IngestRow:
             "action": self.action, "target": self.target, "reason": self.reason,
             "shot_id": self.shot_id, "asset_id": self.asset_id,
             "asset_kind": self.asset_kind, "library_hint": self.library_hint,
+            "match": self.match, "candidates": list(self.candidates),
         }
 
 
@@ -172,9 +216,16 @@ class IngestRowResult:
 class IngestApplyResult:
     results: list[IngestRowResult] = field(default_factory=list)
     stopped_at: int | None = None  # row index where a failure stopped the run
+    # round AA (goal item 2): the persisted batch record's id — always set
+    # (either caller-supplied or generated) once apply_ingest returns; see
+    # build.batches for reports/ingest_batches/<batch_id>.yaml.
+    batch_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"results": [r.to_dict() for r in self.results], "stopped_at": self.stopped_at}
+        return {
+            "results": [r.to_dict() for r in self.results],
+            "stopped_at": self.stopped_at, "batch_id": self.batch_id,
+        }
 
 
 # ------------------------------------------------------------------- plan
@@ -229,6 +280,7 @@ def plan_ingest(
                 file=str(f), name=f.name, hash=h, action="skip_duplicate",
                 target=existing_index[h],
                 reason=f"内容已存在于 {existing_index[h]},跳过(素材只增不改,§3)",
+                match="matched",  # exact by content hash (round AA, #1)
             ))
             continue
         if h in seen_in_batch:
@@ -236,6 +288,7 @@ def plan_ingest(
                 file=str(f), name=f.name, hash=h, action="skip_duplicate",
                 target=seen_in_batch[h],
                 reason=f"与本批次中的 {seen_in_batch[h]} 内容相同,跳过重复项",
+                match="matched",
             ))
             continue
         seen_in_batch[h] = f.name
@@ -250,7 +303,7 @@ def plan_ingest(
                     file=str(f), name=f.name, hash=h, action="skip_duplicate",
                     target=f"素材库 library:{hash8}",
                     reason=f"内容已存在于素材库(标签: {tags_str}),跳过(--on-duplicate=skip)",
-                    library_hint=hint,
+                    library_hint=hint, match="matched",
                 ))
                 continue
             row = _classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
@@ -356,49 +409,95 @@ def _bible_owner_map(project: Project) -> dict[str, str]:
 # -------------------------------------------------------------- classify
 
 
-def _candidates(stem: str, *, suffix_markers: tuple[str, ...]) -> list[str]:
-    """Ordered, de-duplicated id candidates extracted from a filename stem:
-    an explicit role suffix (``_take``/``_voice``) stripped first, then the
-    whole stem, then the leading token before the first ``_`` — covering
-    ``S001.mp4``, ``S001_take.mp4`` and ``S001_v2.mov`` alike."""
+def _dedup(items: list[str]) -> list[str]:
+    """Order-preserving de-dup — shared by every candidate list below."""
+    seen: set[str] = set()
     out: list[str] = []
+    for x in items:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def _split_candidates(stem: str, *, suffix_markers: tuple[str, ...]) -> tuple[list[str], list[str]]:
+    """(exact, fuzzy) id candidates extracted from a filename stem (round AA,
+    goal item 1 — used to be one flat, priority-ordered list; now split so a
+    caller can tell an EXACT hit from an INFERRED one).
+
+    ``exact`` covers the documented conventions with zero guessing: an
+    explicit role suffix (``_take``/``_voice``) stripped, or the stem taken
+    verbatim (``S001.mp4``). ``fuzzy`` is the one generic fallback — the
+    leading token before the first ``_``, which lets an arbitrary trailing
+    token still resolve (``S001_v2_final.mov``) but is an inference, not a
+    literal convention hit, hence lower confidence."""
+    exact: list[str] = []
     for marker in suffix_markers:
         if stem.endswith(marker) and len(stem) > len(marker):
-            out.append(stem[: -len(marker)])
-    out.append(stem)
+            exact.append(stem[: -len(marker)])
+    exact.append(stem)
+    fuzzy: list[str] = []
     if "_" in stem:
-        out.append(stem.split("_", 1)[0])
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for c in out:
-        if c and c not in seen:
-            seen.add(c)
-            uniq.append(c)
-    return uniq
+        fuzzy.append(stem.split("_", 1)[0])
+    exact = _dedup(exact)
+    fuzzy = [c for c in _dedup(fuzzy) if c not in exact]
+    return exact, fuzzy
 
 
-def _ref_candidates(stem: str) -> list[str]:
-    out: list[str] = []
+def _ref_split_candidates(stem: str) -> tuple[list[str], list[str]]:
+    """Same (exact, fuzzy) split as :func:`_split_candidates`, for the ref
+    naming convention (``_ref``/``_refN`` suffix instead of ``_take``/``_voice``)."""
+    exact: list[str] = []
     m = _REF_SUFFIX_RE.match(stem)
     if m:
-        out.append(m.group("base"))
-    out.append(stem)
+        exact.append(m.group("base"))
+    exact.append(stem)
+    fuzzy: list[str] = []
     if "_" in stem:
-        out.append(stem.split("_", 1)[0])
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for c in out:
-        if c and c not in seen:
-            seen.add(c)
-            uniq.append(c)
-    return uniq
+        fuzzy.append(stem.split("_", 1)[0])
+    exact = _dedup(exact)
+    fuzzy = [c for c in _dedup(fuzzy) if c not in exact]
+    return exact, fuzzy
 
 
-def _match_shot(stem: str, suffix_markers: tuple[str, ...], shot_ids: set[str]) -> str | None:
-    for c in _candidates(stem, suffix_markers=suffix_markers):
-        if is_safe_segment(c) and c in shot_ids:
-            return c
-    return None
+def _resolve_match(exact: list[str], fuzzy: list[str], valid: set[str]) -> tuple[str | None, str, list[str]]:
+    """(winning id, match state, candidates) — the core round-AA decision.
+
+    More than one DISTINCT id resolving across ``exact``+``fuzzy`` is a
+    genuine conflict: today's candidate search would have silently picked
+    the first one, which is exactly the "resolved deterministically but
+    could have been wrong" gap this closes (module docstring). A single hit
+    from ``exact`` is ``matched`` (candidates left empty — nothing to
+    review); a single hit that only came from ``fuzzy`` is ``pending``
+    (candidates=[winner], flagged for a human/agent to confirm); no hit at
+    all is ``unmatched``."""
+    exact_hits = _dedup([c for c in exact if is_safe_segment(c) and c in valid])
+    fuzzy_hits = [c for c in _dedup(fuzzy) if is_safe_segment(c) and c in valid and c not in exact_hits]
+    all_hits = _dedup(exact_hits + fuzzy_hits)
+    if not all_hits:
+        return None, "unmatched", []
+    if len(all_hits) > 1:
+        return None, "conflict", all_hits
+    winner = all_hits[0]
+    if winner in exact_hits:
+        return winner, "matched", []
+    return winner, "pending", [winner]
+
+
+def _resolve_shot_match(stem: str, suffix_markers: tuple[str, ...], shot_ids: set[str]) -> tuple[str | None, str, list[str]]:
+    exact, fuzzy = _split_candidates(stem, suffix_markers=suffix_markers)
+    return _resolve_match(exact, fuzzy, shot_ids)
+
+
+def _conflict_import_row(f: Path, h: str, name: str, candidates: list[str], *, kind: str) -> IngestRow:
+    """A row whose filename genuinely matches MORE THAN ONE owner — never
+    landed on a guess (module docstring): downgraded to a plain import with
+    every candidate id recorded and a 中文 reason naming them."""
+    owners = "、".join(candidates)
+    return _import_row(f, h, reason=(
+        f"{name}: 文件名可能同时匹配多个{kind} id({owners}),无法确定,按普通素材导入"
+        "(可用 --shot 强制指定,或给文件改名消歧)"
+    ), match="conflict", candidates=list(candidates))
 
 
 def _classify(
@@ -411,13 +510,14 @@ def _classify(
 
     if shot is not None:
         # --shot forces every file onto ONE shot ("regenerated three
-        # candidates externally") — filename id extraction is skipped.
+        # candidates externally") — filename id extraction is skipped, so
+        # every row that actually lands here is an exact hit by definition.
         if role in ("auto", "take") and ext in TAKE_VIDEO_EXTS:
-            return _take_row(f, h, shot)
+            return _take_row(f, h, shot, match="matched")
         if role in ("auto", "voice") and ext in VOICE_AUDIO_EXTS:
-            return _voice_row(f, h, shot)
+            return _voice_row(f, h, shot, match="matched")
         if role in ("auto", "ref") and ext in REF_IMAGE_EXTS:
-            return _shot_ref_row(f, h, shot)
+            return _shot_ref_row(f, h, shot, match="matched")
         return _import_row(f, h, reason=(
             f"{name}: --shot {shot} 与 --role {role}/扩展名 {ext or '(无)'} 不匹配,"
             "按普通素材导入"
@@ -426,17 +526,21 @@ def _classify(
     if role == "take":
         if ext not in TAKE_VIDEO_EXTS:
             return _import_row(f, h, reason=f"{name}: --role take 需要视频扩展名,按普通素材导入")
-        sid = _match_shot(stem, ("_take",), shot_ids)
-        if sid:
-            return _take_row(f, h, sid)
+        winner, state, cands = _resolve_shot_match(stem, ("_take",), shot_ids)
+        if state == "conflict":
+            return _conflict_import_row(f, h, name, cands, kind="镜头")
+        if winner:
+            return _take_row(f, h, winner, match=state, candidates=cands)
         return _import_row(f, h, reason=f"{name}: 文件名未匹配到已存在的镜头 id,按普通素材导入")
 
     if role == "voice":
         if ext not in VOICE_AUDIO_EXTS:
             return _import_row(f, h, reason=f"{name}: --role voice 需要音频扩展名,按普通素材导入")
-        sid = _match_shot(stem, ("_voice",), shot_ids)
-        if sid:
-            return _voice_row(f, h, sid)
+        winner, state, cands = _resolve_shot_match(stem, ("_voice",), shot_ids)
+        if state == "conflict":
+            return _conflict_import_row(f, h, name, cands, kind="镜头")
+        if winner:
+            return _voice_row(f, h, winner, match=state, candidates=cands)
         return _import_row(f, h, reason=f"{name}: 文件名未匹配到已存在的镜头 id,按普通素材导入")
 
     if role == "ref":
@@ -446,16 +550,20 @@ def _classify(
 
     # role == "auto"
     if ext in TAKE_VIDEO_EXTS:
-        sid = _match_shot(stem, ("_take",), shot_ids)
-        if sid:
-            return _take_row(f, h, sid)
+        winner, state, cands = _resolve_shot_match(stem, ("_take",), shot_ids)
+        if state == "conflict":
+            return _conflict_import_row(f, h, name, cands, kind="镜头")
+        if winner:
+            return _take_row(f, h, winner, match=state, candidates=cands)
         return _import_row(f, h, reason=(
             f"{name}: 看起来是视频素材,但文件名开头未匹配到已存在的镜头 id,按普通素材导入"
         ))
     if ext in VOICE_AUDIO_EXTS:
-        sid = _match_shot(stem, ("_voice",), shot_ids)
-        if sid:
-            return _voice_row(f, h, sid)
+        winner, state, cands = _resolve_shot_match(stem, ("_voice",), shot_ids)
+        if state == "conflict":
+            return _conflict_import_row(f, h, name, cands, kind="镜头")
+        if winner:
+            return _voice_row(f, h, winner, match=state, candidates=cands)
         return _import_row(f, h, reason=(
             f"{name}: 看起来是音频素材,但文件名开头未匹配到已存在的镜头 id,按普通素材导入"
         ))
@@ -467,62 +575,95 @@ def _classify(
 def _classify_ref(
     f: Path, h: str, stem: str, name: str, shot_ids: set[str], bible_owner: dict[str, str],
 ) -> IngestRow:
-    candidates = _ref_candidates(stem)
-    shot_hit = next((c for c in candidates if is_safe_segment(c) and c in shot_ids), None)
-    bible_hit = next((c for c in candidates if is_safe_segment(c) and c in bible_owner), None)
-    if shot_hit and bible_hit and shot_hit != bible_hit:
-        return _import_row(f, h, reason=(
-            f"{name}: id 有歧义 — 既可能是镜头 {shot_hit} 也可能是 bible 资产 {bible_hit},"
-            "无法确定,按普通素材导入(可用 --shot 强制指定,或给文件改名消歧)"
-        ))
-    if shot_hit:
-        note = "(该 id 同时也是 bible 资产,已优先按镜头参考图处理)" if bible_hit else ""
-        return _shot_ref_row(f, h, shot_hit, extra=note)
-    if bible_hit:
-        return _bible_ref_row(f, h, bible_hit, bible_owner[bible_hit])
+    exact, fuzzy = _ref_split_candidates(stem)
+    shot_win, shot_state, shot_cands = _resolve_match(exact, fuzzy, shot_ids)
+    bible_win, bible_state, bible_cands = _resolve_match(exact, fuzzy, set(bible_owner))
+
+    # Multiple distinct owners WITHIN one namespace (two shots, or two bible
+    # assets) are exactly as ambiguous as the cross-namespace case below —
+    # never landed on a guess (round AA, module docstring).
+    if shot_state == "conflict" or bible_state == "conflict":
+        owners = _dedup(
+            (shot_cands if shot_state == "conflict" else []) +
+            (bible_cands if bible_state == "conflict" else [])
+        )
+        if shot_state == "conflict" and bible_state != "conflict":
+            kind = "镜头"
+        elif bible_state == "conflict" and shot_state != "conflict":
+            kind = "bible 资产"
+        else:
+            kind = "镜头/bible 资产"
+        return _conflict_import_row(f, h, name, owners, kind=kind)
+
+    if shot_win and bible_win and shot_win != bible_win:
+        return IngestRow(
+            file=str(f), name=f.name, hash=h, action="import", target="media/imports",
+            match="conflict", candidates=[shot_win, bible_win],
+            reason=(
+                f"{name}: id 有歧义 — 既可能是镜头 {shot_win} 也可能是 bible 资产 {bible_win},"
+                "无法确定,按普通素材导入(可用 --shot 强制指定,或给文件改名消歧)"
+            ),
+        )
+    if shot_win:
+        note = "(该 id 同时也是 bible 资产,已优先按镜头参考图处理)" if bible_win else ""
+        return _shot_ref_row(f, h, shot_win, extra=note, match=shot_state, candidates=shot_cands)
+    if bible_win:
+        return _bible_ref_row(f, h, bible_win, bible_owner[bible_win],
+                              match=bible_state, candidates=bible_cands)
     return _import_row(f, h, reason=(
         f"{name}: 未找到匹配的镜头/角色/场景/道具 id,按普通素材导入"
     ))
 
 
-def _take_row(f: Path, h: str, shot_id: str) -> IngestRow:
+def _take_row(f: Path, h: str, shot_id: str, *, match: str = "matched", candidates: list[str] | None = None) -> IngestRow:
     return IngestRow(
         file=str(f), name=f.name, hash=h, action="take", shot_id=shot_id,
         target=f"{shot_id}: 新 take",
         reason=f"文件名匹配镜头 {shot_id},登记为新 take(追加,不覆盖已有 take,§3)",
+        match=match, candidates=list(candidates or []),
     )
 
 
-def _voice_row(f: Path, h: str, shot_id: str) -> IngestRow:
+def _voice_row(f: Path, h: str, shot_id: str, *, match: str = "matched", candidates: list[str] | None = None) -> IngestRow:
     return IngestRow(
         file=str(f), name=f.name, hash=h, action="voice", shot_id=shot_id,
         target=f"{shot_id}: 新配音 take",
         reason=f"文件名匹配镜头 {shot_id},登记为人工配音(追加,永不自动失效,§4.3)",
+        match=match, candidates=list(candidates or []),
     )
 
 
-def _shot_ref_row(f: Path, h: str, shot_id: str, *, extra: str = "") -> IngestRow:
+def _shot_ref_row(
+    f: Path, h: str, shot_id: str, *, extra: str = "",
+    match: str = "matched", candidates: list[str] | None = None,
+) -> IngestRow:
     return IngestRow(
         file=str(f), name=f.name, hash=h, action="shot_ref", shot_id=shot_id,
         target=f"media/refs → 镜头 {shot_id} 参考图",
         reason=(f"文件名匹配镜头 {shot_id} 的参考图约定(_ref);复制到 media/refs,"
                 f"如需绑定到该镜头,请在 generation.params.refs 中加入生成的路径{extra}"),
+        match=match, candidates=list(candidates or []),
     )
 
 
-def _bible_ref_row(f: Path, h: str, asset_id: str, asset_kind: str) -> IngestRow:
+def _bible_ref_row(
+    f: Path, h: str, asset_id: str, asset_kind: str, *,
+    match: str = "matched", candidates: list[str] | None = None,
+) -> IngestRow:
     return IngestRow(
         file=str(f), name=f.name, hash=h, action="bible_ref",
         asset_id=asset_id, asset_kind=asset_kind,
         target=f"media/refs → bible/{asset_kind}.yaml:{asset_id}",
         reason=f"文件名匹配 bible 资产 {asset_id}({asset_kind}),复制到 media/refs 并登记为其 ref_image",
+        match=match, candidates=list(candidates or []),
     )
 
 
-def _import_row(f: Path, h: str, *, reason: str) -> IngestRow:
+def _import_row(f: Path, h: str, *, reason: str, match: str = "unmatched", candidates: list[str] | None = None) -> IngestRow:
     return IngestRow(
         file=str(f), name=f.name, hash=h, action="import",
         target="media/imports", reason=reason,
+        match=match, candidates=list(candidates or []),
     )
 
 
@@ -582,7 +723,45 @@ def _set_bible_ref_image(project: Project, asset_kind: str, asset_id: str, ref_r
     write_yaml(path, data)
 
 
-def _execute_row(project: Project, row: IngestRow) -> dict[str, Any]:
+def _maybe_auto_select(project: Project, shot_id: str, take: str, *, actor: str) -> dict[str, Any]:
+    """After a ``take`` row lands on a shot with NO ``selected_take`` yet,
+    auto-select it (round AA, goal item 2) — an empty shot that just got its
+    first externally-produced take otherwise still needs a separate manual
+    `manju select` before `manju build` will use it; this closes that one
+    extra step. NEVER overwrites an existing selection (checked first,
+    read-only) and NEVER lands past a lock — ``via="ingest"`` lets
+    events.jsonl tell this apart from every other ``selected_take`` writer
+    (core/writes.py, #39). Reversible: the batch-review ``discard`` decision
+    (build.batches.review_item) undoes exactly this write, IF nobody picked
+    a different take since (see its docstring).
+
+    Never raises: by the time this runs the take file itself is already
+    safely on disk (``register_manual_take`` succeeded), so a rejection here
+    — locked field, a `manju check` regression, or any other surprise — only
+    ever downgrades to ``staged=False`` with the reason recorded. It must
+    never turn a successful ingest row into a failed one."""
+    try:
+        shot = project.load_shot(shot_id)
+        if shot.status and shot.status.selected_take:
+            return {"staged": False, "staged_note": "已有选定 take,未自动切换"}
+        blocking = selected_take_lock_block(project, shot_id)
+        if blocking is not None:
+            return {"staged": False, "staged_note": (
+                f"{shot_id}.status.selected_take 已锁定,未自动选用"
+                "(人工 `manju select` 或先 `manju unlock` 解锁)"
+            )}
+        try:
+            select_take_checked(project, shot_id, take, actor=actor, via="ingest", action="auto_select")
+        except WriteRejected as exc:
+            return {"staged": False, "staged_note": f"自动选用被拒绝,未选用: {exc}"}
+        return {"staged": True, "staged_note": "空镜头,已自动选用该 take,可在批次评审中撤销"}
+    except Exception as exc:
+        # Defensive catch-all (see docstring): the take already landed, this
+        # step is advisory only.
+        return {"staged": False, "staged_note": f"自动选用检查出错,未选用: {exc}"}
+
+
+def _execute_row(project: Project, row: IngestRow, *, actor: str) -> dict[str, Any]:
     src = Path(row.file)
     if not src.is_file():
         raise IngestError(f"源文件不存在或不是文件: {row.file}")
@@ -594,7 +773,9 @@ def _execute_row(project: Project, row: IngestRow) -> dict[str, Any]:
             raise IngestError(f"镜头不存在: {row.shot_id}")
         take = register_manual_take(project, row.shot_id, src)
         media_rel = project.relpath(take.media_path) if take.media_path else None
-        return {"shot": row.shot_id, "take": take.name, "media": media_rel}
+        detail: dict[str, Any] = {"shot": row.shot_id, "take": take.name, "media": media_rel}
+        detail.update(_maybe_auto_select(project, row.shot_id, take.name, actor=actor))
+        return detail
 
     if row.action == "voice":
         if not row.shot_id:
@@ -648,7 +829,10 @@ def _apply_override(row: IngestRow, override: dict[str, Any] | None) -> IngestRo
     shot_id = override.get("shot_id", row.shot_id)
     asset_id = override.get("asset_id", row.asset_id)
     asset_kind = row.asset_kind if asset_id == row.asset_id else None
-    return replace(row, action=action, shot_id=shot_id, asset_id=asset_id, asset_kind=asset_kind)
+    # round AA (goal item 1): a human/agent corrected the classification at
+    # apply time — the row's own inferred match/candidates no longer apply.
+    return replace(row, action=action, shot_id=shot_id, asset_id=asset_id, asset_kind=asset_kind,
+                   match="manual", candidates=[])
 
 
 def apply_ingest(
@@ -657,6 +841,9 @@ def apply_ingest(
     *,
     actor: str,
     overrides: dict[int, dict[str, Any]] | None = None,
+    batch_id: str | None = None,
+    clock: Callable[[], datetime] | None = None,
+    source: str = "",
 ) -> IngestApplyResult:
     """Execute a (possibly hand-edited) plan through the existing
     registration paths. Runs rows IN ORDER; a row that raises stops the
@@ -664,8 +851,31 @@ def apply_ingest(
     already landed and is reported truthfully, nothing after it was
     attempted. ``overrides`` (row index -> {"action"/"shot_id"/"asset_id"})
     lets a reviewer (CLI re-run with different flags, or the GUI's per-row
-    dropdown) correct a classification before it executes."""
+    dropdown) correct a classification before it executes.
+
+    Round AA (goal items 1+2): every run is ALSO persisted as a reviewable
+    batch record (``reports/ingest_batches/<batch_id>.yaml`` —
+    :mod:`build.batches`) once the loop below finishes, one item per row
+    carrying its match-state/candidates plus exactly what landed, so a
+    human/agent can come back later and confirm/flag/discard individual rows
+    without re-deriving anything from events.jsonl. ``batch_id`` defaults to
+    a ``clock``-derived ``bYYYYMMDD-HHMMSS`` id when the caller does not
+    supply one (a caller-supplied id is validated via ``core.idents`` before
+    it is ever used as a path segment, exactly like every other id this
+    engine turns into a path); ``clock`` exists purely so callers/tests can
+    pin the timestamp instead of reaching for ``datetime.now()`` here
+    directly. ``source`` is a free-text, purely informational note (usually
+    the paths handed to :func:`plan_ingest`) recorded on the batch record."""
+    from .batches import new_batch_id, write_batch_record
+
     overrides = overrides or {}
+    if batch_id is not None and not is_safe_segment(batch_id):
+        raise IngestError(
+            f"batch_id 不合法: {batch_id!r} — 只能包含字母、数字、下划线、连字符,长度 1-64"
+        )
+    now = (clock or (lambda: datetime.now(timezone.utc)))()
+    resolved_batch_id = batch_id or new_batch_id(now)
+
     results: list[IngestRowResult] = []
     stopped_at: int | None = None
     landed = 0
@@ -680,7 +890,7 @@ def apply_ingest(
             })
             continue
         try:
-            detail = _execute_row(project, eff)
+            detail = _execute_row(project, eff, actor=actor)
         except Exception as exc:
             err = " ".join(str(exc).split()) or exc.__class__.__name__
             results.append(IngestRowResult(row=eff, ok=False, error=err))
@@ -699,4 +909,10 @@ def apply_ingest(
         "rows": len(plan.rows), "attempted": len(results), "landed": landed,
         "stopped_at": stopped_at,
     })
-    return IngestApplyResult(results=results, stopped_at=stopped_at)
+
+    write_batch_record(
+        project, batch_id=resolved_batch_id, created=now, actor=actor,
+        source=source, results=results,
+    )
+
+    return IngestApplyResult(results=results, stopped_at=stopped_at, batch_id=resolved_batch_id)
