@@ -1385,3 +1385,34 @@ landing and the self-check FAIL→PASS fixes.
 
 **Still partial (honest):** full ffmpeg e2e locale final with live Edge TTS;
 volume/transition mixer apply classes; full 2090 suite on hosts without ffmpeg.
+﻿
+---
+
+## 2026-07-09 — Full close of ai.txt review findings (P0–P2)
+
+**Done:** Implemented every actionable item from the external analysis:
+
+### P0 (misleading / data loss)
+1. **Roundtrip captions:** full cue list patched by selected indices; never
+   rebuild SRT from only changed rows.
+2. **`voice --preview`:** `WaitingUser` → `code=waiting_user` (not tts_unavailable).
+3. **GUI media allowlist:** `.manju/webpreview/` read-only (试听 playable).
+4. **Plan parity:** `action_plan` / dry-run `--json` threads `lang` +
+   `include_unindexed` into `run_build`.
+
+### P1 (acceptance gaps)
+5. **JianYing text materials/segments** stamp `manju:{kind:caption,shot,cue_index}`;
+   plan_roundtrip diffs JY captions (not OTIO-only).
+6. **`locale status`:** per-shot voice state + captions/final freshness.
+7. **Multi-shot ASR:** honest CLI help + exception (transcribe → --from-srt).
+8. **Roundtrip GUI:** `POST /api/roundtrip/plan|apply`; ingest batches list
+   merges `reports/roundtrip_batches/`.
+
+### P2 (product close)
+9. **voices.yaml:** `overlay_shot_for_voice` injects `locale_voice_id`;
+   Edge TTS honors it.
+10. **Checked index writer:** `core.writes.permute_index` shared by GUI
+    `/api/index` and roundtrip reorder apply.
+
+**Verified:** `tests/test_ai_review_fixes.py` + interconnection suite green
+(62 related tests).

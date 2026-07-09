@@ -1,0 +1,423 @@
+这是另一个ai的分析，你看看：
+
+我的判断：
+
+
+
+| 模块               |    实现度 | 判断                           |
+
+| ---------------- | -----: | ---------------------------- |
+
+| WP1 impact       | 85–90% | 主干完成，已经可用                    |
+
+| WP2 audio-first  | 75–85% | CLI/后端基本完成，GUI 试听路径有疑似 bug   |
+
+| WP3 align        | 70–80% | 单镜头可用，多镜头/ASR 还有不足           |
+
+| WP4 locales      | 65–75% | 结构有了，状态报告和真实端到端还不够           |
+
+| WP5 transparency | 75–85% | 大部分统一了，但 dry-run/lang 有不一致风险 |
+
+| WP6 roundtrip    | 45–60% | 最大风险区，尤其 captions 回写和 GUI 缺口 |
+
+| WP7 consistency  | 60–70% | 轻量 advisory 已有，但闭环偏浅         |
+
+
+
+## 已经实现得比较扎实的部分
+
+
+
+**WP1 impact spine 基本落地。**
+
+代码里 `CaptionLine` 已经有 `shot: str = ""` 字段，compiler 的 timed captions 和 weighted split fallback 都会把 shot id 写进 caption cue；同时也有 `timeline/cuemap.py`，会优先用 stamped `shot` 字段，旧 timeline 则 fallback 到时间窗推断。([GitHub][2]) 这正对应指南里要求给字幕 cue 加 shot identity、抽出 cue↔shot 共享 helper 的 WP1 设计。
+
+
+
+`build/impact.py` 也确实存在，而且返回 `video / voice / captions / timeline / renders / exports / cost / locales` 这些字段；CLI、MCP、GUI API 也都有对应入口：`manju impact`、MCP `impact` tool、`POST /api/impact`。([GitHub][3]) 这块我认为已经是“可继续打磨”而不是“没实现”。
+
+
+
+**WP5 transparency 也实现了很多。**
+
+`final_export` 和 `lock_change` 不再是 inert token：`manju export/package` 遇到 `ask_before: final_export` 会要求 `--yes`，`manju lock` 遇到 `lock_change` 也会要求确认。([GitHub][4]) `core/failures.py` 里也有 `next_options_for()`，会对 generate/voice 失败写入 retry、rewrite_prompt、fallback_provider、manual_import、doctor 等下一步选项。([GitHub][5]) 这符合指南里“失败后给用户 what now”的要求。
+
+
+
+**WP7 consistency preflight 已经接进 plan。**
+
+`gui/plan.py` 的 `_attach_consistency()` 会给生成计划里的非 voice row 加 `consistency` warnings，比如角色没有 `ref_image` 时提示生成前建议 `manju refs assign`；这是 advisory-only，不阻断。([GitHub][6]) 这基本符合 WP7 要求的“生成前提醒，但不阻塞”。
+
+
+
+## 我认为比较明确的 bug / 不足
+
+
+
+### 1. GUI 试听文件可能播不了：`.manju/webpreview` 不在媒体 allowlist 里
+
+
+
+WP2 要求试听文件放到 `.manju/webpreview/tts/`，而且 GUI 里要能通过 existing webpreview media route 播放。 实现里 `ttspreview.py` 确实把试听文件写到 `.manju/webpreview/tts/`，并且声明 never a take、cache-keyed。([GitHub][7])
+
+
+
+但 GUI server 的 `MEDIA_PREFIXES` 只有：
+
+
+
+```text
+
+media/
+
+renders/
+
+reports/
+
+exports/
+
+captions/
+
+```
+
+
+
+没有 `.manju/webpreview/`。`_resolve_served()` 又会拒绝不在 allowlist 里的路径。([GitHub][8]) 所以如果前端拿到 `.manju/webpreview/tts/xxx.mp3` 直接给 audio 播放，大概率会 403/404。
+
+**修法：**不要把整个 `.manju/` 开出来，单独加一个严格 containment 的 `/webpreview/tts/<file>` route，或者把 `.manju/webpreview/` 加入只读 allowlist，并限制后缀为音视频/图片预览格式。
+
+
+
+### 2. `manju voice --preview` 把 spend gate 的 WaitingUser 当成 TTS 不可用
+
+
+
+CLI 里 `voice --preview` 捕获 `(PreviewUnavailable, WaitingUser)` 后统一 `_fail(..., code="tts_unavailable")`。([GitHub][4]) 这会导致一个 priced TTS 正常触发 spend gate 时，JSON/错误码变成 “TTS 不可用”，语义错了。
+
+
+
+**修法：**
+
+
+
+```python
+
+except WaitingUser as exc:
+
+    _fail(str(exc), code="waiting_user")
+
+except PreviewUnavailable as exc:
+
+    _fail(str(exc), code="tts_unavailable")
+
+```
+
+
+
+这属于信任体验 bug，不是小问题，因为 WP5 的核心就是 spend 前诚实。
+
+
+
+### 3. `build --dry-run --json --lang en` 的 plan 可能不是真正的 locale plan
+
+
+
+CLI 的 `run_build()` 调用传了 `include_unindexed=...` 和 `lang=lang`，但随后 `dry_run --json` 又调用 `action_plan(project, "build", {...})`，传给 action_plan 的 params 里没有 `lang`，也没有 `include_unindexed`。([GitHub][4]) 同时 `gui/plan.py` 的 `_build_plan()` 内部调用 `run_build(... dry_run=True ...)` 也没有 `lang` 参数。([GitHub][6])
+
+
+
+这意味着普通 build 的结果可能是 locale-aware 的，但 `--dry-run --json` 输出的 envelope 可能退回 base-language 计划。这个直接违背 WP5“CLI dry-run 和 GUI plan modal 同一 shape、同一内容”的验收标准。
+
+
+
+**修法：**把 `lang`、`include_unindexed`、`assume_yes` 等 build 参数完整塞进 `action_plan`，并让 `gui/plan.py::_build_plan()` 也 thread 到 `run_build()`。
+
+
+
+### 4. `locale status` 太薄：没有 per-shot voice/caption/final freshness
+
+
+
+指南要求 `manju locale status` 不只是翻译文本状态，还要包括 per-shot voice state、caption/final freshness。 当前 `core/locale.py::locale_status()` 只遍历 shots 做 `line_status`，统计 `ok/missing/翻译过期`，没有看到 voice/caption/final freshness。CLI 也只打印这些 counts 和非 ok line。([GitHub][9])
+
+
+
+这会导致用户看到“翻译 ok”，但不知道英文配音是不是 stale、英文 captions/final 是否需要重建。
+
+
+
+**修法：**`locale_status()` 增加：
+
+
+
+```json
+
+{
+
+  "voice": {"S001": "missing|fresh|stale|manual"},
+
+  "captions": {"freshness": "...", "path": "..."},
+
+  "final": {"freshness": "...", "path": "...", "content_key": "..."}
+
+}
+
+```
+
+
+
+并复用 `evaluate_voice(..., lang=)`、locale caption key、locale final `.key.json`。
+
+
+
+### 5. `voices.yaml` 看起来 scaffold 了，但未真正参与 locale voice 选择
+
+
+
+指南设计里 `locales/en/voices.yaml` 是 optional locale voice override。 当前 `core/locale.py` 有 `load_voices()`，`check_locales()` 也会检查 `voices.yaml` 是否可解析，但 `overlay_shot_for_voice()` 只覆盖 dialogue.text，没有看到 voice override 被注入到 TTS provider resolution；`locale_build.py` 里也主要是找 `project.voice_takes(shot, lang=lang)` 和用 locale lines 重建 captions。([GitHub][9])
+
+
+
+这不是立刻崩的 bug，但会让 `voices.yaml` 变成“看起来支持，实际上未生效”的半成品。
+
+
+
+### 6. WP6 roundtrip 的 caption 回写有严重数据丢失风险
+
+
+
+这是我看到最危险的点。
+
+
+
+指南要求 caption edit 进入 manual captions takeover：更新 `captions/captions.srt`，同时保留完整字幕结构，只改用户改过的 cue。 当前 `apply_roundtrip()` 遇到 `manual_captions` 时，收集的是：
+
+
+
+```python
+
+caption_rows = [r for r in all_rows if r.get("action") == "manual_captions"]
+
+```
+
+
+
+然后只把这些 changed rows 写成新的 `captions/captions.srt`。([GitHub][10]) 这意味着如果外部只改了第 7 条字幕，回写后 SRT 可能只剩这一条，其他 cue 全丢。
+
+
+
+**修法：**基于 baseline/current 完整 captions 生成完整 cue list，再 patch changed indices，最后写全量 SRT。不要用 changed rows 直接生成完整 SRT。
+
+
+
+### 7. JianYing skeleton 的 caption edit 验收大概率没过
+
+
+
+WP6 验收明确写：导出 skeleton，程序化 reorder 两个 segment + 改一个 caption text，`manju roundtrip` plan 应该正好显示 2 rows。 但 `plan_roundtrip()` 里 caption text edits 只在 `if kind == "otio"` 分支里处理；JianYing 分支目前主要看 shot order。([GitHub][10])
+
+
+
+而 JianYing exporter 的 text materials/segments 里也没有看到像 video segment 那样写 `manju: {shot, take, kind}` 的 metadata；video material/segment 有 manju metadata，text track 没有。([GitHub][11]) 所以 skeleton caption edit 回流基本不完整。
+
+
+
+**修法：**给 JianYing text material/segment 加 deterministic `manju` metadata，例如 `{kind:"caption", shot, cue_index, start_ms}`，然后在 roundtrip 里实现 JY captions diff。
+
+
+
+### 8. roundtrip GUI 没接上
+
+
+
+指南要求 `manju roundtrip` 的 batch 进入现有 `/ingest` review panel，而不是另建页面。 代码里 CLI `roundtrip` 有，`build/roundtrip.py` 有，但我在 `gui/server.py` 里找不到 `roundtrip` route。([GitHub][8]) 仓库 `PROGRESS.md` 也说 GUI chrome 仍 partial，roundtrip ingest panel wiring 是 follow-up；completion round 只写了 GUI 试听和先听后看按钮，没有说 roundtrip GUI 补齐。([GitHub][1])
+
+
+
+这说明 WP6 目前更像 CLI feature，还不是完整产品闭环。
+
+
+
+### 9. roundtrip apply 没完全走“checked write path”
+
+
+
+指南强调 roundtrip apply 要在一个 `build_lock` 下，并且 rows through checked write paths。 当前 reorder apply 是直接：
+
+
+
+```python
+
+index = project.load_index()
+
+index.order = ...
+
+project.save_index(index)
+
+```
+
+
+
+然后 append event。([GitHub][10]) 这有 lock，但不像指南说的“抽出 `/api/index` permutation-validated writer / checked path”。这不一定马上出错，但会绕过你之前花很多力气建立的写入一致性模型。
+
+
+
+**修法：**把 GUI `/api/index` 的 permutation validation 抽成 `core/writes.py` 或 `build/index_ops.py`，CLI/GUI/roundtrip 共用。
+
+
+
+### 10. WP3 multi-shot align 的 `--asr` 路径不完整
+
+
+
+指南要求 per-take alignment 和 multi-shot VO splitting 都有三种入口：ASR、from-srt、默认 deterministic text anchoring。 当前 `media/align.py` 确实有 `--from-srt`、默认 text-anchor、单镜头 ASR 等；但是 multi-shot plan 里如果传 `asr_provider`，实现是提示“请先 manju transcribe ...”，并没有真的在 multi-shot plan 内跑 ASR。([GitHub][12])
+
+
+
+这可以接受为 v1 降级，但文档/验收不能说“multi-shot ASR 已实现”。
+
+
+
+## 分 WP 评估
+
+
+
+### WP1 — Impact tracing
+
+
+
+**状态：基本完成。**
+
+模型字段、compiler stamping、cuemap、CLI/MCP/API 都有。`impact_report()` 也加了 locale affected section，能说明 base dialogue 变更会让哪些 locale line 变成 翻译过期。([GitHub][3])
+
+
+
+**不足：**impact 的 render verdict 是偏保守的字符串判断，不等于真的算 hypothetical final content key；这符合指南里“deterministic mapping，不要对 hypothetical state 调 exportstatus”的精神，但用户可能会把它理解成精确 render diff。
+
+
+
+### WP2 — Audio-first
+
+
+
+**状态：后端大体完成。**
+
+`ttspreview.py`、`manju voice --preview`、GUI `/api/voice/preview`、`build --target audition`、`allow_missing_takes`、audition render helper 都有。([GitHub][7])
+
+
+
+**主要 bug：**GUI 播放 `.manju/webpreview` 路径疑似被 allowlist 卡住；priced TTS preview 的 waiting_user 错误码被打成 tts_unavailable。
+
+
+
+### WP3 — Align imported VO
+
+
+
+**状态：单镜头可用，多镜头可用但偏 v1。**
+
+`media/align.py` 存在，能写 Edge schema 的 `.timing.json`，multi-shot apply 会切片、写 manual takes 和 timing sidecars。([GitHub][12])
+
+
+
+**不足：**multi-shot 的 ASR on-ramp 不是真的内置执行；apply 里是手工 copy/slice 成 manual voice take，而不是严格复用 `register_voice_take` 路径，这个选择符合 MANUAL 语义，但和指南措辞不完全一致。
+
+
+
+### WP4 — Locales
+
+
+
+**状态：结构落地，但报告和真实端到端还不够。**
+
+`locales/<lang>/lines.yaml`、`base_hash`、`locale add/status`、`build --lang`、`voice --missing --lang`、per-locale captions/finals 都有代码。([GitHub][9])
+
+
+
+**不足：**`locale status` 太薄；`voices.yaml` 未看到实际参与 voice resolution；`build --dry-run --json --lang` 可能输出 base plan；PROGRESS 仍承认 live Edge TTS 的 full ffmpeg e2e locale final 没完全验证。([GitHub][9])
+
+
+
+### WP5 — Transparency
+
+
+
+**状态：大部分完成。**
+
+`explain --cost`、final_export/lock_change gate、plan envelope、render verdict、failure next_options、voice cost note 都能在代码里找到。([GitHub][5])
+
+
+
+**不足：**dry-run plan 的 single source 还不够干净。CLI 先跑 `run_build(... lang=lang ...)`，但 JSON 时又调 GUI `action_plan()` 且丢了部分参数，这会制造 CLI/GUI/env 差异。([GitHub][4])
+
+
+
+### WP6 — Roundtrip
+
+
+
+**状态：有骨架，有 CLI，有 baseline，有 OTIO/JY 支持，但离可靠还差一截。**
+
+exporters 确实写 baseline；OTIO clip metadata 有 `metadata.manju`，JianYing video material/segment 有 `manju` metadata；`roundtrip.py` 能 detect carrier、diff baseline、plan/apply reorder/caption/trim/unmatched。([GitHub][13])
+
+
+
+**主要问题：**caption 回写可能丢全量字幕；JianYing caption edit 没实现；GUI panel 没接；volume/transition apply classes 仍 partial。仓库自己也承认 volume/transition mixer apply classes 仍未完成。([GitHub][10])
+
+
+
+### WP7 — Consistency
+
+
+
+**状态：轻量完成。**
+
+生成 plan row 有 consistency warnings，符合“不阻断，只提醒”。([GitHub][6])
+
+
+
+**不足：**这只是 preflight warning，不是完整一致性闭环。promotion suggestion / coverage nudge 是否完整出现在所有 CLI/GUI summary，我没有足够证据确认。
+
+
+
+## 我建议你优先修的顺序
+
+
+
+第一优先级，修 **会误导用户或丢数据** 的：
+
+
+
+1. **roundtrip manual captions 写全量 SRT，不要只写 changed rows。**
+
+2. **`voice --preview` 的 WaitingUser 错误码修成 `waiting_user`。**
+
+3. **GUI 增加 `.manju/webpreview/tts` 的安全只读 route。**
+
+4. **`build --dry-run --json` 和 `/api/plan` 全量 thread `lang/include_unindexed`。**
+
+
+
+第二优先级，补 **验收不一致** 的：
+
+
+
+5. JianYing text/caption segments 加 `manju` metadata，实现 skeleton caption diff。
+
+6. `locale status` 增加 per-shot voice/caption/final freshness。
+
+7. roundtrip GUI 接入 `/ingest` batch review panel。
+
+8. multi-shot align 的 `--asr` 要么真实现，要么把文档/CLI help 改成“先 transcribe，再 --from-srt”。
+
+
+
+第三优先级，做 **产品收口**：
+
+
+
+9. README/GUI 首页别把 WP1–WP7 都暴露给用户，收成三条主链路：
+
+   “改台词看影响”、“先听后看”、“外部剪辑回流”。
+
+10. 给每个 WP 做一个端到端 smoke fixture，而不是只测 helper。

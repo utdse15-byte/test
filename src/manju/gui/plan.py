@@ -118,9 +118,16 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
 
     mode = params.get("mode") or None
     else_bias = mode_else_bias(mode)  # None when no mode / no bias
-    result = run_build(project, target=target, gen=gen,
-                       regen_stale=bool(params.get("regen_stale")),
-                       dry_run=True, force=bool(params.get("force")), mode=mode)
+    # WP5: thread the same build knobs CLI uses (lang / include_unindexed)
+    # so dry-run --json and /api/plan never disagree with run_build.
+    lang = params.get("lang") or None
+    include_unindexed = bool(params.get("include_unindexed"))
+    result = run_build(
+        project, target=target, gen=gen,
+        regen_stale=bool(params.get("regen_stale")),
+        dry_run=True, force=bool(params.get("force")), mode=mode,
+        include_unindexed=include_unindexed, lang=lang,
+    )
     rows: list[dict[str, Any]] = []
     for it in (result.plan or []):
         kind = it.get("kind") or "video"

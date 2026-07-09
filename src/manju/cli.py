@@ -912,6 +912,8 @@ def build(
                 envelope = action_plan(project, "build", {
                     "target": target, "gen": gen,
                     "regen_stale": regen_stale, "force": force, "mode": mode,
+                    "include_unindexed": include_unindexed,
+                    "lang": lang,
                 })
             except Exception:
                 envelope = result.to_dict()
@@ -2083,8 +2085,21 @@ def locale(
                         f"翻译过期={counts.get('翻译过期', 0)}"
                     )
                     for row in body.get("lines") or []:
-                        if row["state"] != "ok":
-                            typer.echo(f"  {row['shot']}: {row['state']}")
+                        vs = (body.get("voice") or {}).get(row["shot"], "")
+                        if row["state"] != "ok" or vs not in ("", "fresh", "not_needed"):
+                            typer.echo(
+                                f"  {row['shot']}: 译={row['state']}  配音={vs or '—'}"
+                            )
+                    caps = body.get("captions") or {}
+                    fin = body.get("final") or {}
+                    typer.echo(
+                        f"  captions: {caps.get('freshness')}  "
+                        f"{caps.get('path') or '—'}"
+                    )
+                    typer.echo(
+                        f"  final: {fin.get('freshness')}  "
+                        f"{fin.get('path') or '—'}"
+                    )
         else:
             _fail(f"locale: unknown action {action!r} (add|status)")
     except ProjectError as exc:
@@ -2386,7 +2401,10 @@ def voice(
             info = preview_voice(
                 project, shot_id, text=text, provider=provider, assume_yes=yes,
             )
-        except (PreviewUnavailable, WaitingUser) as exc:
+        except WaitingUser as exc:
+            _fail(str(exc), code="waiting_user")
+            return
+        except PreviewUnavailable as exc:
             _fail(str(exc), code="tts_unavailable")
             return
         if as_json:
@@ -2518,7 +2536,9 @@ def align(
     from_srt: Optional[Path] = typer.Option(
         None, "--from-srt", help="cue timings from a hand-made SRT"),
     asr: Optional[str] = typer.Option(
-        None, "--asr", help="ASR provider id (or bare --asr for default); spend-gated"),
+        None, "--asr",
+        help="single-shot only: ASR provider id (spend-gated). "
+             "Multi-shot: use manju transcribe first, then --from-srt"),
     media: Optional[Path] = typer.Option(
         None, "--media", help="multi-shot: long VO file to split"),
     shots: Optional[str] = typer.Option(
@@ -2538,7 +2558,11 @@ def align(
 
     Multi-shot: ``manju align --media vo.wav --shots S001-S012 [--from-srt x.srt]``
     plans windows; ``--apply`` slices + registers MANUAL voice takes + batch
-    record under reports/ingest_batches/."""
+    record under reports/ingest_batches/.
+
+    Multi-shot ``--asr`` is intentionally NOT inlined (reproducibility):
+    run ``manju transcribe`` first, then pass the SRT via ``--from-srt``.
+    Single-shot ``manju align S001 --asr`` still runs ASR directly."""
     from .core.container import ProjectError
     from .media.align import align_shot, apply_multi_shot, plan_multi_shot
 

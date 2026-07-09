@@ -240,3 +240,29 @@ def shot_text_hash(project: Project, shot_id: str) -> str:
     if not path.exists():
         return ""
     return hash_text(path.read_text(encoding="utf-8"))
+
+
+def permute_index(project: Project, new_order: list[str], *,
+                  actor: str = "engine", via: str = "engine") -> list[str]:
+    """WP6 shared write path for shot-order permutation (GUI ``/api/index``,
+    CLI roundtrip, etc.).
+
+    ``new_order`` must be a permutation of the CURRENT visible shot set
+    (``project.shot_ids()``: index + on-disk extras). Raises
+    :class:`WriteRejected` on mismatch. Returns the applied order.
+    Caller holds ``build_lock`` when required (roundtrip/GUI already do).
+    """
+    if not isinstance(new_order, list) or not all(isinstance(s, str) for s in new_order):
+        raise WriteRejected("order must be a list of shot ids")
+    current = project.shot_ids()
+    if sorted(new_order) != sorted(current):
+        raise WriteRejected(
+            "order must be a permutation of the current shots "
+            f"(expected {len(current)} ids: {', '.join(current)})"
+        )
+    index = project.load_index()
+    index.order = list(new_order)
+    project.save_index(index)
+    append_event(project.root, actor, "reorder",
+                 {"order": list(new_order), "via": via})
+    return list(new_order)

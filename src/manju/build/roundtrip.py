@@ -201,6 +201,98 @@ def _captions_from_otio(data: dict) -> list[dict[str, Any]] | None:
     return cues or None
 
 
+def _cues_to_srt(cues: list[dict[str, Any]]) -> str:
+    def _ts(ms: int) -> str:
+        h, rem = divmod(max(0, int(ms)), 3600000)
+        m, rem = divmod(rem, 60000)
+        s, milli = divmod(rem, 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{milli:03d}"
+
+    lines: list[str] = []
+    for n, c in enumerate(cues, 1):
+        start = int(c.get("start_ms", 0))
+        end = int(c.get("end_ms", start + 1000))
+        text = str(c.get("text", ""))
+        lines.append(f"{n}\n{_ts(start)} --> {_ts(end)}\n{text}\n")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _full_caption_baseline(
+    project: Project,
+    plan: dict[str, Any],
+    *,
+    baseline_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Full cue list to patch against: prefer current human SRT, else baseline
+    export captions, else compiled timeline captions."""
+    srt_path = project.captions_dir / "captions.srt"
+    if srt_path.exists():
+        try:
+            from ..providers.asr import parse_srt
+            segs = parse_srt(srt_path.read_text(encoding="utf-8"))
+            return [
+                {"start_ms": s.start_ms, "end_ms": s.end_ms, "text": s.text, "speaker": ""}
+                for s in segs
+            ]
+        except Exception:
+            pass
+    # Baseline document captions
+    if baseline_path and Path(baseline_path).exists():
+        try:
+            b = _load_json(baseline_path)
+            doc = b.get("document", b)
+            if isinstance(doc, dict):
+                cues = _captions_from_otio(doc) or _captions_from_jianying(doc)
+                if cues:
+                    return [
+                        {"start_ms": c["start_ms"], "end_ms": c["end_ms"],
+                         "text": c["text"], "speaker": c.get("speaker", "")}
+                        for c in cues
+                    ]
+        except Exception:
+            pass
+    tl = project.load_timeline()
+    if tl is not None:
+        return [
+            {"start_ms": c.start_ms, "end_ms": c.end_ms, "text": c.text,
+             "speaker": c.speaker}
+            for c in tl.tracks.captions
+        ]
+    return []
+
+
+def _captions_from_jianying(data: dict) -> list[dict[str, Any]] | None:
+    """Caption cues from skeleton materials.texts + text track segments."""
+    mats = (data.get("materials") or {}).get("texts") or []
+    by_id = {m.get("id"): m for m in mats if isinstance(m, dict)}
+    cues: list[dict[str, Any]] = []
+    for track in data.get("tracks") or []:
+        if not isinstance(track, dict):
+            continue
+        if str(track.get("type") or "") != "text":
+            continue
+        for seg in track.get("segments") or []:
+            if not isinstance(seg, dict):
+                continue
+            mat = by_id.get(seg.get("material_id")) or {}
+            manju = seg.get("manju") or mat.get("manju") or {}
+            tr = seg.get("target_timerange") or {}
+            start_us = int(tr.get("start") or 0)
+            dur_us = int(tr.get("duration") or 0)
+            start_ms = start_us // 1000
+            end_ms = (start_us + dur_us) // 1000
+            text = str(mat.get("content") or manju.get("text") or "")
+            cues.append({
+                "start_ms": start_ms,
+                "end_ms": max(end_ms, start_ms + 1),
+                "text": text,
+                "speaker": str(mat.get("speaker") or ""),
+                "shot": manju.get("shot", "") if isinstance(manju, dict) else "",
+                "cue_index": manju.get("cue_index") if isinstance(manju, dict) else None,
+            })
+    return cues or None
+
+
 def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
     edited_path = Path(edited_path)
     if not edited_path.exists():
@@ -254,13 +346,19 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                 "action": "permute_index",
             })
 
-    # Caption text edits (OTIO caption track / JY texts)
-    if kind == "otio":
-        cues = _captions_from_otio(data)
-        if cues and baseline_doc:
-            base_cues = _captions_from_otio(baseline_doc) or []
+    # Caption text edits (OTIO + JianYing skeleton)
+    if kind in ("otio", "jianying"):
+        if kind == "otio":
+            cues = _captions_from_otio(data)
+            base_cues = _captions_from_otio(baseline_doc) if baseline_doc else None
+        else:
+            cues = _captions_from_jianying(data)
+            base_cues = _captions_from_jianying(baseline_doc) if baseline_doc else None
+        if cues and base_cues:
             for i, (c, b) in enumerate(zip(cues, base_cues)):
-                if c.get("text") != b.get("text") or c.get("start_ms") != b.get("start_ms"):
+                if (c.get("text") != b.get("text")
+                        or c.get("start_ms") != b.get("start_ms")
+                        or c.get("end_ms") != b.get("end_ms")):
                     rows.append({
                         "class": "caption_edit",
                         "state": "conflict" if truth_moved else "ok",
@@ -268,7 +366,9 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                         "target": "captions/captions.srt",
                         "action": "manual_captions",
                     })
-        # OTIO trim: video clip source_range in-point / duration change
+
+    # OTIO trim: video clip source_range in-point / duration change
+    if kind == "otio":
         def _ms(rt: Any) -> int:
             if not isinstance(rt, dict):
                 return 0
@@ -385,45 +485,79 @@ def apply_roundtrip(
                 continue
             try:
                 if row["action"] == "permute_index":
-                    new_order = row["evidence"]["to"]
-                    index = project.load_index()
+                    from ..core.writes import WriteRejected, permute_index
+
+                    new_order = list(row["evidence"]["to"])
                     # Keep any shots not in the permutation at the end
-                    rest = [s for s in index.order if s not in new_order]
-                    index.order = list(new_order) + rest
-                    project.save_index(index)
+                    current = project.shot_ids()
+                    rest = [s for s in current if s not in new_order]
+                    full = new_order + rest
+                    try:
+                        permute_index(project, full, actor=actor, via="roundtrip")
+                    except WriteRejected as exc:
+                        skipped.append({"index": i, "reason": str(exc)[:200]})
+                        continue
                     applied.append({"index": i, "class": "reorder"})
                     append_event(project.root, actor, "roundtrip",
-                                 {"class": "reorder", "order": new_order})
+                                 {"class": "reorder", "order": full})
                 elif row["action"] == "manual_captions":
-                    # Takeover: write captions.srt + set mode manual
+                    # Takeover once: FULL cue list patched by SELECTED changed
+                    # indices — never rebuild SRT from only the changed rows.
+                    if any(a.get("class") == "caption_edit" for a in applied):
+                        applied.append({"index": i, "class": "caption_edit",
+                                        "note": "batched with prior caption_edit"})
+                        continue
                     srt_path = project.captions_dir / "captions.srt"
                     project.captions_dir.mkdir(parents=True, exist_ok=True)
-                    caption_rows = [
-                        r for r in all_rows if r.get("action") == "manual_captions"
+                    edited_p = Path(plan.get("edited") or "")
+                    bl = find_baseline(project, edited_p) if edited_p.name else None
+                    base_cues = _full_caption_baseline(
+                        project, plan, baseline_path=bl,
+                    )
+                    selected_caps = [
+                        (j, r) for j, r in enumerate(all_rows)
+                        if j in indices
+                        and r.get("action") == "manual_captions"
+                        and r.get("state") == "ok"
                     ]
-                    lines = []
-                    for n, cr in enumerate(caption_rows, 1):
-                        c = cr["evidence"].get("to") or {}
-                        start = int(c.get("start_ms", 0))
-                        end = int(c.get("end_ms", start + 1000))
-
-                        def _ts(ms: int) -> str:
-                            h, rem = divmod(ms, 3600000)
-                            m, rem = divmod(rem, 60000)
-                            s, milli = divmod(rem, 1000)
-                            return f"{h:02d}:{m:02d}:{s:02d},{milli:03d}"
-
-                        lines.append(
-                            f"{n}\n{_ts(start)} --> {_ts(end)}\n{c.get('text', '')}\n"
-                        )
-                    atomic_write_text(srt_path, "\n".join(lines) + "\n")
+                    for _j, cr in selected_caps:
+                        ev = cr.get("evidence") or {}
+                        idx = int(ev.get("index", -1))
+                        to = ev.get("to") or {}
+                        if 0 <= idx < len(base_cues):
+                            base_cues[idx] = {
+                                "start_ms": int(to.get(
+                                    "start_ms", base_cues[idx]["start_ms"])),
+                                "end_ms": int(to.get(
+                                    "end_ms", base_cues[idx]["end_ms"])),
+                                "text": str(to.get(
+                                    "text", base_cues[idx]["text"])),
+                                "speaker": str(to.get(
+                                    "speaker",
+                                    base_cues[idx].get("speaker", ""))),
+                            }
+                        elif idx >= len(base_cues) and to.get("text"):
+                            base_cues.append({
+                                "start_ms": int(to.get("start_ms", 0)),
+                                "end_ms": int(to.get("end_ms", 1000)),
+                                "text": str(to.get("text", "")),
+                                "speaker": str(to.get("speaker", "")),
+                            })
+                    atomic_write_text(srt_path, _cues_to_srt(base_cues))
                     rules = project.load_rules()
                     if rules.captions.mode != "manual":
                         rules.captions.mode = "manual"
                         project.save_rules(rules)
-                    applied.append({"index": i, "class": "caption_edit"})
-                    append_event(project.root, actor, "roundtrip",
-                                 {"class": "caption_edit", "cues": len(caption_rows)})
+                    applied.append({
+                        "index": i, "class": "caption_edit",
+                        "cues_total": len(base_cues),
+                        "cues_patched": len(selected_caps),
+                    })
+                    append_event(project.root, actor, "roundtrip", {
+                        "class": "caption_edit",
+                        "cues_total": len(base_cues),
+                        "cues_patched": len(selected_caps),
+                    })
                 elif row["action"] == "set_inout":
                     from ..media.repair_ops import set_inout_take
 

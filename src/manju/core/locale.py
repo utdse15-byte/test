@@ -123,7 +123,73 @@ def line_status(project: Project, lang: str, shot_id: str) -> dict[str, Any]:
             "base_hash": current_hash, "stored_base_hash": stored}
 
 
+def _locale_voice_state(project: Project, lang: str, shot_id: str,
+                        line: dict[str, Any]) -> str:
+    """missing / fresh / stale / manual / not_needed for a locale voice take."""
+    text = str(line.get("text") or "").strip()
+    if line.get("state") == "missing" and not text:
+        return "not_needed"
+    voices = project.voice_takes(shot_id, lang=lang)
+    if not voices:
+        return "missing" if text or line.get("state") != "missing" else "not_needed"
+    media, sc = voices[-1]
+    if sc is None:
+        return "manual"
+    # Compare voice_hash against overlay shot text
+    try:
+        from ..core.spec import VOICE_VERSION, compute_voice_hash
+        shot = overlay_shot_for_voice(project, project.load_shot(shot_id), lang)
+        bible = project.load_bible()
+        take_version = sc.voice_hash_version or 1
+        current = compute_voice_hash(
+            shot, bible, version=take_version, provider=None,
+        )
+        if sc.voice_hash == current:
+            return "fresh"
+        return "stale"
+    except Exception:
+        return "fresh" if sc else "manual"
+
+
+def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
+    """Caption/final path + presence for a locale."""
+    cap_dir = project.captions_dir / "locales" / lang
+    srt = cap_dir / "captions.srt"
+    ass = cap_dir / "captions.ass"
+    final_dir = project.final_dir / "locales" / lang
+    finals = sorted(final_dir.glob("final_v*.mp4")) if final_dir.exists() else []
+    newest = None
+    if finals:
+        import re
+        versions = [
+            (int(m.group(1)), p)
+            for p in finals
+            if (m := re.match(r"final_v(\d+)$", p.stem))
+        ]
+        newest = max(versions, key=lambda t: t[0])[1] if versions else None
+    key_ok = False
+    if newest is not None:
+        key_path = newest.with_suffix(".key.json")
+        key_ok = key_path.exists()
+    return {
+        "captions": {
+            "path": project.relpath(srt) if srt.exists() else None,
+            "ass": project.relpath(ass) if ass.exists() else None,
+            "freshness": "ok" if srt.exists() and ass.exists() else "missing",
+        },
+        "final": {
+            "path": project.relpath(newest) if newest else None,
+            "freshness": (
+                "ok" if newest and key_ok
+                else "missing" if newest is None
+                else "有问题"
+            ),
+        },
+    }
+
+
 def locale_status(project: Project, lang: str | None = None) -> dict[str, Any]:
+    """Per-locale structure report: lines + per-shot voice + caption/final."""
     langs = [lang] if lang else list_locales(project)
     if lang and lang not in list_locales(project) and not locale_dir(project, lang).exists():
         raise ProjectError(f"locale 不存在: {lang} — manju locale add {lang}")
@@ -132,29 +198,72 @@ def locale_status(project: Project, lang: str | None = None) -> dict[str, Any]:
         if not lg:
             continue
         rows = []
+        voice_by: dict[str, str] = {}
         for sid in project.shot_ids():
-            rows.append(line_status(project, lg, sid))
+            ls = line_status(project, lg, sid)
+            rows.append(ls)
+            voice_by[sid] = _locale_voice_state(project, lg, sid, ls)
         counts = {"ok": 0, "missing": 0, "翻译过期": 0}
         for r in rows:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
-        out["locales"][lg] = {"lines": rows, "counts": counts}
+        artifacts = _locale_artifact_freshness(project, lg)
+        out["locales"][lg] = {
+            "lines": rows,
+            "counts": counts,
+            "voice": voice_by,
+            "captions": artifacts["captions"],
+            "final": artifacts["final"],
+            "voices_yaml": load_voices(project, lg),
+        }
     return out
 
 
 def overlay_shot_for_voice(project: Project, shot, lang: str | None):
     """Return a shot copy whose dialogue.text is the locale overlay when
-    present and non-empty. Picture fields untouched. lang=None → original."""
+    present and non-empty. Also folds optional ``locales/<lang>/voices.yaml``
+    voice_id onto the speaker bible path via dialogue-side params used by
+    Edge ``_voice_for`` (bible voice_id still wins if set; locale override
+    is applied as a generation-style hint on the speaker entry when the
+    shot's speaker is listed). Picture fields untouched. lang=None → original.
+    """
     if not lang:
         return shot
     lines = load_lines(project, lang)
     entry = lines.get(shot.id) or {}
     text = str(entry.get("text") or "").strip()
-    if not text:
-        return shot
     data = shot.model_dump()
-    data["dialogue"] = {**(data.get("dialogue") or {}), "text": text}
+    if text:
+        data["dialogue"] = {**(data.get("dialogue") or {}), "text": text}
+    # voices.yaml: {speaker_id: {voice_id: "en-US-JennyNeural"}}
+    # Stash on generation.params so providers that read voice_id from bible
+    # can be overridden by resolving through resolve_locale_voice_id.
+    voices = load_voices(project, lang)
+    speaker = (data.get("dialogue") or {}).get("speaker") or shot.dialogue.speaker
+    ventry = voices.get(speaker) if isinstance(voices, dict) else None
+    if isinstance(ventry, dict) and ventry.get("voice_id"):
+        params = dict((data.get("generation") or {}).get("params") or {})
+        params["locale_voice_id"] = str(ventry["voice_id"])
+        params["locale_lang"] = lang
+        gen = dict(data.get("generation") or {})
+        gen["params"] = params
+        data["generation"] = gen
     from ..core.models import ShotSpec
     return ShotSpec.model_validate(data)
+
+
+def resolve_locale_voice_id(project: Project, shot, lang: str | None) -> str | None:
+    """Explicit locale voice_id from voices.yaml or generation.params."""
+    if not lang:
+        return None
+    params = getattr(getattr(shot, "generation", None), "params", None) or {}
+    if params.get("locale_voice_id"):
+        return str(params["locale_voice_id"])
+    speaker = shot.dialogue.speaker
+    voices = load_voices(project, lang)
+    ventry = voices.get(speaker) if isinstance(voices, dict) else None
+    if isinstance(ventry, dict) and ventry.get("voice_id"):
+        return str(ventry["voice_id"])
+    return None
 
 
 def check_locales(project: Project) -> list[str]:

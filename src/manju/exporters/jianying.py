@@ -207,12 +207,22 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
         mat_id = _uid("text-material", idx, cap.start_ms)
         seg_id = _uid("text-segment", idx, cap.start_ms)
         dur_us = _us(max(0, cap.end_ms - cap.start_ms))
+        # WP6: deterministic manju stamp for caption round-trip identity
+        cap_manju = {
+            "kind": "caption",
+            "shot": cap.shot or "",
+            "cue_index": idx,
+            "start_ms": cap.start_ms,
+            "end_ms": cap.end_ms,
+            "text": cap.text,
+        }
         text_materials.append(
             {
                 "id": mat_id,
                 "type": "text",
                 "content": cap.text,
                 "speaker": cap.speaker,
+                "manju": cap_manju,
             }
         )
         text_segments.append(
@@ -220,6 +230,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "id": seg_id,
                 "material_id": mat_id,
                 "target_timerange": {"start": _us(cap.start_ms), "duration": dur_us},
+                "manju": cap_manju,
             }
         )
 

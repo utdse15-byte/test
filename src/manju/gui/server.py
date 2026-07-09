@@ -48,7 +48,13 @@ from .state import build_state
 __all__ = ["GuiServer", "create_server", "serve"]
 
 # Only these project subtrees are ever served over HTTP (read-only).
-MEDIA_PREFIXES = ("media/", "renders/", "reports/", "exports/", "captions/")
+# WP2: `.manju/webpreview/` is disposable preview cache (tts 试听 + browser
+# transcodes) — allowlisted read-only; never the rest of `.manju/` (locks,
+# sqlite, secrets).
+MEDIA_PREFIXES = (
+    "media/", "renders/", "reports/", "exports/", "captions/",
+    ".manju/webpreview/",
+)
 
 _CONTENT_TYPES = {
     ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
@@ -2015,8 +2021,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _act_index(self, body: dict[str, Any]) -> None:
         """Reorder shots — the cut order is one reviewable line of YAML (§3).
-        The incoming order must be a permutation of the CURRENT visible order
-        (index + on-disk extras); previously-unindexed shots become indexed."""
+        Shared writer: :func:`core.writes.permute_index` (also used by
+        roundtrip apply)."""
+        from ..core.writes import WriteRejected, permute_index
         from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
@@ -2025,22 +2032,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("order must be a list of shot ids", 400)
             return
         with self.server.quick_mutex:
-            current = project.shot_ids()
-            if sorted(order) != sorted(current):
-                self._send_error_json(
-                    "order must be a permutation of the current shots "
-                    f"(expected {len(current)} ids: {', '.join(current)})", 400)
-                return
-            index = project.load_index()
-            index.order = list(order)
             try:
                 with _optional_build_lock(project.root, self.server.actor):
-                    project.save_index(index)
+                    permute_index(
+                        project, list(order),
+                        actor=self.server.actor, via="gui",
+                    )
+            except WriteRejected as exc:
+                self._send_error_json(str(exc), 400)
+                return
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
                 return
-            append_event(project.root, self.server.actor, "reorder",
-                         {"order": order, "via": "gui"})
         self._send_json({"ok": True, "order": order})
 
     # ---------------------------------------------------------- shot editor
@@ -5099,10 +5102,84 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_ingest_batches_list(self) -> None:
         """GET /api/ingest/batches — every persisted batch (newest first),
         each with a per-review-state item count (round AA6, goal item 4's
-        batch selector). Same shape ``manju ingest-batches --json`` emits."""
+        batch selector). Same shape ``manju ingest-batches --json`` emits.
+        WP6: also surfaces ``reports/roundtrip_batches/`` so the ingest
+        panel can review external-edit apply batches without a new page."""
         from ..build.batches import list_batches
 
-        self._send_json({"batches": list_batches(self.server.project)})
+        batches = list(list_batches(self.server.project))
+        # Merge roundtrip batch records (same shelf shape, different dir)
+        try:
+            from ..core.yamlio import read_yaml
+
+            rt_dir = self.server.project.root / "reports" / "roundtrip_batches"
+            if rt_dir.exists():
+                for p in sorted(rt_dir.glob("*.yaml"), reverse=True):
+                    try:
+                        data = read_yaml(p) or {}
+                        batches.append({
+                            "id": data.get("id") or p.stem,
+                            "kind": "roundtrip",
+                            "created": data.get("created_at"),
+                            "items": len(data.get("applied") or [])
+                            + len(data.get("skipped") or []),
+                            "applied": len(data.get("applied") or []),
+                            "skipped": len(data.get("skipped") or []),
+                            "source": "roundtrip",
+                        })
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        self._send_json({"batches": batches})
+
+    def _act_roundtrip_plan(self, body: dict[str, Any]) -> None:
+        """POST /api/roundtrip/plan — pure read: plan external-edit diffs."""
+        from ..build.roundtrip import plan_roundtrip
+        from ..core.container import ProjectError
+
+        path = str(body.get("path") or body.get("edited") or "").strip()
+        if not path:
+            self._send_error_json("path is required (edited skeleton/OTIO)", 400)
+            return
+        try:
+            plan = plan_roundtrip(self.server.project, path)
+        except ProjectError as exc:
+            self._send_error_json(str(exc), 400)
+            return
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split())[:400], 400)
+            return
+        self._send_json(plan)
+
+    def _act_roundtrip_apply(self, body: dict[str, Any]) -> None:
+        """POST /api/roundtrip/apply — apply selected plan rows (job-borne)."""
+        from ..build.roundtrip import apply_roundtrip, plan_roundtrip
+        from ..core.container import ProjectError
+
+        path = str(body.get("path") or body.get("edited") or "").strip()
+        if not path:
+            self._send_error_json("path is required", 400)
+            return
+        rows = body.get("rows")
+        if rows is not None and not isinstance(rows, list):
+            self._send_error_json("rows must be a list of 0-based indices", 400)
+            return
+        project, actor = self.server.project, self.server.actor
+
+        def fn(job) -> dict[str, Any]:
+            plan = plan_roundtrip(project, path)
+            result = apply_roundtrip(
+                project, plan,
+                rows=[int(r) for r in rows] if rows is not None else None,
+                actor=actor,
+            )
+            return {"plan": plan, "apply": result}
+
+        job = self.server.runner.submit(
+            "roundtrip", {"path": path, "rows": rows}, fn,
+        )
+        self._send_json({"job": job.to_dict()}, 202)
 
     @staticmethod
     def _ingest_enrich_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -5168,6 +5245,9 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/ingest/apply": self._act_ingest_apply,
             "/api/ingest/batch/review": self._act_ingest_batch_review,
             "/api/ingest/batch/confirm-matched": self._act_ingest_confirm_matched,
+            # WP6: roundtrip batches share the ingest review surface
+            "/api/roundtrip/plan": self._act_roundtrip_plan,
+            "/api/roundtrip/apply": self._act_roundtrip_apply,
         }.get(path)
         if handler is None:
             return False

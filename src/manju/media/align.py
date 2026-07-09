@@ -238,10 +238,14 @@ def plan_multi_shot(
             for s in segs
         ]
     elif asr is not None:
-        # Reuse single-file ASR via temporary align path
+        # Honest v1: multi-shot ASR is NOT inlined (reproducibility + spend
+        # control). Force the two-step path the guide recommends.
         raise ProjectError(
-            "multi-shot --asr: 请先 manju transcribe 得到 SRT,再用 --from-srt "
-            "(推荐路径;保证可复现)"
+            "multi-shot --asr 未内置执行 — 请先: "
+            "manju transcribe <media> --asr <provider> [--yes] "
+            "得到 captions/transcripts/<name>.srt, 再: "
+            "manju align --media <media> --shots … --from-srt <that.srt> "
+            "[--apply]. 单镜头 ASR 仍可用: manju align S001 --asr"
         )
     else:
         # No transcript: length-weighted windows by dialogue length
