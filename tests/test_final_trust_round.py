@@ -212,6 +212,110 @@ def test_roundtrip_volume_and_transition_plan_apply(tmp_project, add_shot):
     assert ov.type == "cut"
 
 
+def _jy_two_shot_doc(
+    *,
+    g1: float = 0.0, g2: float = -3.0,
+    tr1: dict | None = None, tr2: dict | None = None,
+    order: tuple[str, str] = ("S001", "S002"),
+) -> dict:
+    """Minimal JY skeleton with two video segs + distinct gain/transition."""
+    tr1 = tr1 or {"type": "fade", "duration_ms": 300}
+    tr2 = tr2 or {"type": "cut", "duration_ms": 0}
+    by_shot = {
+        "S001": {
+            "id": "v0", "gain": g1, "tr": tr1, "take": "take_01",
+        },
+        "S002": {
+            "id": "v1", "gain": g2, "tr": tr2, "take": "take_01",
+        },
+    }
+    segs = []
+    mats = []
+    for sid in order:
+        info = by_shot[sid]
+        manju = {
+            "shot": sid, "take": info["take"], "kind": "video",
+            "source_gain_db": info["gain"],
+            "transition_out": info["tr"],
+        }
+        mats.append({
+            "id": info["id"], "type": "video",
+            "material_name": f"{sid}/{info['take']}",
+            "manju": manju,
+        })
+        segs.append({
+            "material_id": info["id"],
+            "target_timerange": {"start": 0, "duration": 1_000_000},
+            "manju": dict(manju),
+        })
+    return {
+        "materials": {"videos": mats, "texts": []},
+        "tracks": [{"type": "video", "segments": segs}],
+        "canvas_config": {}, "duration": 2_000_000, "fps": 24,
+    }
+
+
+def test_jy_reorder_only_no_false_volume_transition(tmp_project, add_shot):
+    """Reorder segments only — plan must be exactly reorder, not volume/transition."""
+    from manju.build.roundtrip import plan_roundtrip
+
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    base = _jy_two_shot_doc(g1=0.0, g2=-6.0,
+                            tr1={"type": "fade", "duration_ms": 300},
+                            tr2={"type": "cut", "duration_ms": 0},
+                            order=("S001", "S002"))
+    # edited: only swap segment order; gain/transition stamps stay with each shot
+    edited = _jy_two_shot_doc(g1=0.0, g2=-6.0,
+                              tr1={"type": "fade", "duration_ms": 300},
+                              tr2={"type": "cut", "duration_ms": 0},
+                              order=("S002", "S001"))
+    path = tmp_project.root / "exports" / "jianying" / "draft_content.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    base_dir = path.parent / ".baseline"
+    base_dir.mkdir(exist_ok=True)
+    (base_dir / "draft_content.json").write_text(
+        json.dumps({"document": base, "compiled_from": ""}),
+        encoding="utf-8",
+    )
+    plan = plan_roundtrip(tmp_project, path)
+    classes = [r["class"] for r in plan["rows"] if r.get("class") != "no_changes"]
+    assert classes == ["reorder"], f"expected only reorder, got {plan['rows']}"
+    assert not any(r["class"] in ("volume", "transition") for r in plan["rows"])
+
+
+def test_jy_reorder_plus_s002_volume_identity(tmp_project, add_shot):
+    """Reorder + change only S002 gain — volume evidence.shot must be S002."""
+    from manju.build.roundtrip import plan_roundtrip
+
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    base = _jy_two_shot_doc(g1=0.0, g2=-3.0, order=("S001", "S002"))
+    # edited: reverse order, only S002 gain changes (-3 → -12)
+    edited = _jy_two_shot_doc(g1=0.0, g2=-12.0, order=("S002", "S001"))
+    path = tmp_project.root / "exports" / "jianying" / "draft_content.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    base_dir = path.parent / ".baseline"
+    base_dir.mkdir(exist_ok=True)
+    (base_dir / "draft_content.json").write_text(
+        json.dumps({"document": base, "compiled_from": ""}),
+        encoding="utf-8",
+    )
+    plan = plan_roundtrip(tmp_project, path)
+    classes = sorted(r["class"] for r in plan["rows"] if r.get("class") != "no_changes")
+    assert "reorder" in classes
+    assert "volume" in classes
+    assert "transition" not in classes, plan["rows"]
+    vol_rows = [r for r in plan["rows"] if r.get("class") == "volume"]
+    assert len(vol_rows) == 1
+    assert vol_rows[0]["evidence"]["shot"] == "S002"
+    assert abs(float(vol_rows[0]["evidence"]["to"]["gain_db"]) - (-12.0)) < 1e-6
+    # must NOT claim S001 volume changed
+    assert all(r["evidence"]["shot"] != "S001" for r in vol_rows)
+
+
 # ------------------------------------------------------------------ 4 smokes
 
 
@@ -303,9 +407,12 @@ def test_smoke_jianying_roundtrip_reorder_caption(tmp_project, add_shot, make_ta
         encoding="utf-8",
     )
     plan = plan_roundtrip(tmp_project, edited)
-    classes = [r["class"] for r in plan["rows"] if r.get("class") != "no_changes"]
-    assert "reorder" in classes
-    assert "caption_edit" in classes
+    classes = sorted(
+        r["class"] for r in plan["rows"] if r.get("class") != "no_changes"
+    )
+    # Exactly the two WP6 acceptance rows — no volume/transition false positives
+    assert classes == ["caption_edit", "reorder"], plan["rows"]
+    assert len([r for r in plan["rows"] if r.get("class") != "no_changes"]) == 2
 
 
 @pytest.mark.skipif(not has_ffmpeg, reason="ffmpeg not on PATH")

@@ -322,6 +322,68 @@ def _captions_from_jianying(data: dict) -> list[dict[str, Any]] | None:
     return cues or None
 
 
+def _seg_identity(meta: dict[str, Any] | None) -> tuple[str, str, str] | None:
+    """Stable identity for baseline alignment: (shot, take, kind).
+
+    Prefer full manju stamp; fall back to shot-only (take/kind empty) when
+    partial. Returns None when even shot is missing.
+    """
+    if not isinstance(meta, dict):
+        return None
+    shot = _normalize_shot_id(meta.get("shot"))
+    if not shot:
+        return None
+    take = str(meta.get("take") or "")
+    kind = str(meta.get("kind") or "video")
+    return (shot, take, kind)
+
+
+def _index_baseline_segs(
+    segs: list[dict],
+    *,
+    meta_from,
+) -> tuple[dict[tuple[str, str, str], dict], list[dict]]:
+    """Build identity→seg map + ordered list for idx fallback.
+
+    ``meta_from(seg) -> manju dict`` extracts metadata per carrier.
+    """
+    by_id: dict[tuple[str, str, str], dict] = {}
+    ordered: list[dict] = []
+    for seg in segs:
+        if not isinstance(seg, dict):
+            continue
+        ordered.append(seg)
+        meta = meta_from(seg) or {}
+        ident = _seg_identity(meta if isinstance(meta, dict) else {})
+        if ident and ident not in by_id:
+            by_id[ident] = seg
+        # also index shot-only fallback key for partial stamps
+        if ident:
+            shot_only = (ident[0], "", "")
+            if shot_only not in by_id:
+                by_id[shot_only] = seg
+    return by_id, ordered
+
+
+def _lookup_baseline_seg(
+    by_id: dict[tuple[str, str, str], dict],
+    ordered: list[dict],
+    meta: dict[str, Any],
+    idx: int,
+) -> dict:
+    """Prefer manju identity match; only then fall back to segment idx."""
+    ident = _seg_identity(meta)
+    if ident:
+        if ident in by_id:
+            return by_id[ident]
+        shot_only = (ident[0], "", "")
+        if shot_only in by_id:
+            return by_id[shot_only]
+    if 0 <= idx < len(ordered):
+        return ordered[idx]
+    return {}
+
+
 def _volume_transition_rows(
     shot: str,
     meta: dict[str, Any],
@@ -478,15 +540,19 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
             except Exception:
                 return 0
 
-        base_video_children: list[dict] = []
+        base_otio: list[dict] = []
         if baseline_doc:
             for btr in _otio_track_list(baseline_doc):
                 bn = str(btr.get("kind") or btr.get("name") or "")
                 if "Video" in bn or "video" in bn.lower():
-                    base_video_children = [
+                    base_otio = [
                         c for c in (btr.get("children") or []) if isinstance(c, dict)
                     ]
                     break
+        otio_by_id, otio_ordered = _index_baseline_segs(
+            base_otio,
+            meta_from=lambda c: (c.get("metadata") or {}).get("manju") or {},
+        )
         for tr in _otio_track_list(data):
             kind_name = str(tr.get("kind") or tr.get("name") or "")
             if "Video" not in kind_name and "video" not in kind_name.lower():
@@ -494,11 +560,10 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
             children = [c for c in (tr.get("children") or []) if isinstance(c, dict)]
             for idx, clip in enumerate(children):
                 meta = (clip.get("metadata") or {}).get("manju") or {}
-                shot = _normalize_shot_id(
-                    (meta.get("shot") if isinstance(meta, dict) else None)
-                    or clip.get("name")
-                )
-                take = meta.get("take") if isinstance(meta, dict) else None
+                if not isinstance(meta, dict):
+                    meta = {}
+                shot = _normalize_shot_id(meta.get("shot") or clip.get("name"))
+                take = meta.get("take") if meta else None
                 if not shot:
                     rows.append({
                         "class": "unmatched",
@@ -508,7 +573,7 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                         "action": None,
                     })
                     continue
-                bclip = base_video_children[idx] if idx < len(base_video_children) else {}
+                bclip = _lookup_baseline_seg(otio_by_id, otio_ordered, meta, idx)
                 sr = clip.get("source_range") or {}
                 bsr = bclip.get("source_range") or {} if isinstance(bclip, dict) else {}
                 in_ms = _ms(sr.get("start_time") or {})
@@ -528,16 +593,15 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                         "target": f"media/gen/{shot}/{take}",
                         "action": "set_inout",
                     })
-                # volume / mute / transition (OTIO manju metadata)
                 bmeta = ((bclip.get("metadata") or {}).get("manju")
                          if isinstance(bclip, dict) else {}) or {}
                 rows.extend(_volume_transition_rows(
-                    shot, meta if isinstance(meta, dict) else {},
+                    shot, meta,
                     bmeta if isinstance(bmeta, dict) else {},
                     truth_moved=truth_moved,
                 ))
 
-    # JianYing: volume/mute/transition on video track segments
+    # JianYing: volume/mute/transition — align baseline by manju identity
     if kind == "jianying":
         base_segs: list[dict] = []
         if baseline_doc:
@@ -546,6 +610,10 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                     base_segs = [s for s in (tr.get("segments") or [])
                                  if isinstance(s, dict)]
                     break
+        jy_by_id, jy_ordered = _index_baseline_segs(
+            base_segs,
+            meta_from=lambda s: s.get("manju") or {},
+        )
         for tr in (data.get("tracks") or []):
             if not isinstance(tr, dict) or str(tr.get("type") or "") != "video":
                 continue
@@ -559,7 +627,6 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                 if "source_mute" not in meta and seg.get("muted"):
                     meta = {**meta, "source_mute": True}
                 if "source_gain_db" not in meta and "volume" in seg and not seg.get("muted"):
-                    # reverse approx: dB ≈ 20*log10(vol) for vol>0
                     try:
                         vol = float(seg["volume"])
                         if vol > 0:
@@ -570,7 +637,7 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                 shot = _normalize_shot_id(meta.get("shot"))
                 if not shot:
                     continue
-                bseg = base_segs[idx] if idx < len(base_segs) else {}
+                bseg = _lookup_baseline_seg(jy_by_id, jy_ordered, meta, idx)
                 bmeta = (bseg.get("manju") if isinstance(bseg, dict) else {}) or {}
                 if not isinstance(bmeta, dict):
                     bmeta = {}
