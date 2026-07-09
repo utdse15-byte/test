@@ -210,6 +210,12 @@ def export_locale_captions(
         ass_path,
         compile_ass(timeline, width=timeline.width, height=timeline.height, style=style),
     )
+    # Hash-based freshness for locale status (not mere presence)
+    try:
+        from ..core.locale import write_locale_captions_key
+        write_locale_captions_key(project, lang)
+    except Exception:
+        pass
     return {"srt": srt_path, "ass": ass_path}
 
 

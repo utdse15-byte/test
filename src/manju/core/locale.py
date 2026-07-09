@@ -15,13 +15,14 @@ translation time. Base moved → 翻译过期 (advisory; engine never auto-trans
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
 
 from ..core.container import Project, ProjectError
 from ..core.hashing import hash_value
-from ..core.yamlio import read_yaml, write_yaml
+from ..core.yamlio import atomic_write_text, read_yaml, write_yaml
 
 _LANG_RE = re.compile(r"^[a-z]{2,8}(-[A-Za-z0-9]+)*$")
 
@@ -123,9 +124,23 @@ def line_status(project: Project, lang: str, shot_id: str) -> dict[str, Any]:
             "base_hash": current_hash, "stored_base_hash": stored}
 
 
+def _current_tts_descriptor() -> dict | None:
+    """Same best-effort provider descriptor evaluate_voice / synthesis use."""
+    try:
+        from ..providers.tts import get_tts_provider, voice_provider_descriptor
+        return voice_provider_descriptor(get_tts_provider(None))
+    except Exception:
+        return None
+
+
 def _locale_voice_state(project: Project, lang: str, shot_id: str,
                         line: dict[str, Any]) -> str:
-    """missing / fresh / stale / manual / not_needed for a locale voice take."""
+    """missing / fresh / stale / manual / not_needed for a locale voice take.
+
+    Hash comparison must use the SAME provider descriptor + effective
+    locale_voice_id that synthesis recorded — otherwise Edge takes always
+    look stale under VOICE_VERSION=2.
+    """
     text = str(line.get("text") or "").strip()
     if line.get("state") == "missing" and not text:
         return "not_needed"
@@ -135,14 +150,14 @@ def _locale_voice_state(project: Project, lang: str, shot_id: str,
     media, sc = voices[-1]
     if sc is None:
         return "manual"
-    # Compare voice_hash against overlay shot text
     try:
-        from ..core.spec import VOICE_VERSION, compute_voice_hash
+        from ..core.spec import compute_voice_hash
         shot = overlay_shot_for_voice(project, project.load_shot(shot_id), lang)
         bible = project.load_bible()
         take_version = sc.voice_hash_version or 1
+        descriptor = _current_tts_descriptor() if take_version >= 2 else None
         current = compute_voice_hash(
-            shot, bible, version=take_version, provider=None,
+            shot, bible, version=take_version, provider=descriptor,
         )
         if sc.voice_hash == current:
             return "fresh"
@@ -151,13 +166,50 @@ def _locale_voice_state(project: Project, lang: str, shot_id: str,
         return "fresh" if sc else "manual"
 
 
+def _locale_lines_content_key(project: Project, lang: str) -> str:
+    """Hash of lines.yaml + caption rules — moves when translation or style moves."""
+    from ..core.hashing import hash_value
+    try:
+        rules = project.load_rules().captions.model_dump()
+    except Exception:
+        rules = {}
+    return hash_value({
+        "lines": load_lines(project, lang),
+        "captions_rules": rules,
+        "voices": load_voices(project, lang),
+    })
+
+
 def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
-    """Caption/final path + presence for a locale."""
+    """Caption/final freshness via content keys when possible, else presence.
+
+    - captions: compare sidecar ``captions.key.json`` (written at locale
+      caption export) to current lines/rules/voices hash.
+    - final: compare newest final's ``.key.json`` to a recomputed locale
+      content key when a base timeline exists; else presence only.
+    """
+    from ..core.hashing import hash_value
+    from ..media.render import _read_key_sidecar
+
     cap_dir = project.captions_dir / "locales" / lang
     srt = cap_dir / "captions.srt"
     ass = cap_dir / "captions.ass"
+    cap_key_path = cap_dir / "captions.key.json"
+    expected_cap = _locale_lines_content_key(project, lang)
+    if not srt.exists():
+        cap_fresh = "missing"
+    elif cap_key_path.exists():
+        try:
+            stored = json_loads_key(cap_key_path)
+            cap_fresh = "ok" if stored == expected_cap else "stale"
+        except Exception:
+            cap_fresh = "ok" if ass.exists() else "有问题"
+    else:
+        # No sidecar yet (pre-key exports): presence only, labeled honestly
+        cap_fresh = "ok" if ass.exists() else "missing"
+
     final_dir = project.final_dir / "locales" / lang
-    finals = sorted(final_dir.glob("final_v*.mp4")) if final_dir.exists() else []
+    finals = list(final_dir.glob("final_v*.mp4")) if final_dir.exists() else []
     newest = None
     if finals:
         import re
@@ -167,25 +219,62 @@ def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
             if (m := re.match(r"final_v(\d+)$", p.stem))
         ]
         newest = max(versions, key=lambda t: t[0])[1] if versions else None
-    key_ok = False
+    final_fresh = "missing"
     if newest is not None:
-        key_path = newest.with_suffix(".key.json")
-        key_ok = key_path.exists()
+        existing = _read_key_sidecar(newest)
+        if existing is None:
+            final_fresh = "有问题"
+        else:
+            # Recompute locale final key when possible
+            try:
+                from ..build.locale_build import apply_locale_overlay
+                from ..core.hashing import cache_key
+                from ..media.render import final_content_key
+                tl = project.load_timeline()
+                if tl is not None:
+                    over = apply_locale_overlay(project, tl, lang)
+                    ass_p = ass if ass.exists() else None
+                    base_key = final_content_key(
+                        project, over, ass_file=ass_p, target="final",
+                    )
+                    want = cache_key({"locale": lang, "base_key": base_key})
+                    final_fresh = "ok" if existing == want else "stale"
+                else:
+                    final_fresh = "ok"  # presence + key file, no timeline to recompute
+            except Exception:
+                final_fresh = "ok"  # degrade to presence
+
     return {
         "captions": {
             "path": project.relpath(srt) if srt.exists() else None,
             "ass": project.relpath(ass) if ass.exists() else None,
-            "freshness": "ok" if srt.exists() and ass.exists() else "missing",
+            "freshness": cap_fresh,
+            "content_key": expected_cap,
         },
         "final": {
             "path": project.relpath(newest) if newest else None,
-            "freshness": (
-                "ok" if newest and key_ok
-                else "missing" if newest is None
-                else "有问题"
-            ),
+            "freshness": final_fresh,
         },
     }
+
+
+def json_loads_key(path) -> str:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return str(data.get("content_key") or data.get("final_key") or "")
+
+
+def write_locale_captions_key(project: Project, lang: str) -> Path:
+    """Persist the content key next to locale captions (for status freshness)."""
+    d = project.captions_dir / "locales" / lang
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "captions.key.json"
+    key = _locale_lines_content_key(project, lang)
+    atomic_write_text(
+        path,
+        json.dumps({"content_key": key, "lang": lang}, ensure_ascii=False, indent=2)
+        + "\n",
+    )
+    return path
 
 
 def locale_status(project: Project, lang: str | None = None) -> dict[str, Any]:
@@ -221,10 +310,9 @@ def locale_status(project: Project, lang: str | None = None) -> dict[str, Any]:
 def overlay_shot_for_voice(project: Project, shot, lang: str | None):
     """Return a shot copy whose dialogue.text is the locale overlay when
     present and non-empty. Also folds optional ``locales/<lang>/voices.yaml``
-    voice_id onto the speaker bible path via dialogue-side params used by
-    Edge ``_voice_for`` (bible voice_id still wins if set; locale override
-    is applied as a generation-style hint on the speaker entry when the
-    shot's speaker is listed). Picture fields untouched. lang=None → original.
+    into ``generation.params.locale_voice_id`` — the **effective** voice id
+    for Edge TTS and for ``voice_payload`` hashing (locale beats base bible
+    ``voice_id``). Picture fields untouched. lang=None → original.
     """
     if not lang:
         return shot

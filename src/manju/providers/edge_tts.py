@@ -45,14 +45,15 @@ class EdgeTtsProvider:
         self.id = manifest.id
 
     def _voice_for(self, shot: ShotSpec, bible: dict) -> str:
+        # WP4: locale voices.yaml is the EFFECTIVE voice for this synthesis —
+        # must beat base bible voice_id, otherwise en-US never overrides zh-CN.
+        params = getattr(shot.generation, "params", None) or {}
+        if params.get("locale_voice_id"):
+            return str(params["locale_voice_id"])
         payload = voice_payload(shot, bible)
         explicit = payload["voice_ref"].get("voice_id")
         if explicit:
             return str(explicit)
-        # WP4: locales/<lang>/voices.yaml override (via generation.params)
-        params = getattr(shot.generation, "params", None) or {}
-        if params.get("locale_voice_id"):
-            return str(params["locale_voice_id"])
         default = getattr(self.manifest.tts, "default_voice", None)
         return str(default) if default else "zh-CN-XiaoxiaoNeural"
 

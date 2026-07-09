@@ -74,15 +74,33 @@ def find_baseline(project: Project, edited: Path) -> Path | None:
     return None
 
 
+def _captions_file_hash(project: Project) -> str | None:
+    """sha256 of human captions.srt when present (for export-time baseline)."""
+    from ..core.hashing import hash_text
+    srt = project.captions_dir / "captions.srt"
+    if not srt.exists():
+        return None
+    try:
+        return hash_text(srt.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
 def write_baseline(project: Project, kind: str, name: str, document: dict,
                    *, compiled_from: str = "") -> Path:
-    """Write exports/<kind>/.baseline/<name>.json (derived, regenerable)."""
+    """Write exports/<kind>/.baseline/<name>.json (derived, regenerable).
+
+    Also records ``captions_hash`` of captions/captions.srt at export time so
+    roundtrip caption apply can conflict when human SRT moved since export
+    (not only when timeline fingerprint moved).
+    """
     d = project.root / "exports" / kind / ".baseline"
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{name}.json"
     payload = {
         "document": document,
         "compiled_from": compiled_from,
+        "captions_hash": _captions_file_hash(project),
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "kind": kind,
         "name": name,
@@ -106,9 +124,34 @@ def _normalize_shot_id(raw: Any) -> str | None:
 
 
 def _shot_order_from_jianying(data: dict) -> list[str]:
-    """Best-effort shot order from skeleton materials/tracks metadata."""
+    """Shot order for JianYing skeleton — **track segments first**.
+
+    Reordering in an NLE changes track segment order, NOT the materials
+    library order. Preferring materials.videos first would miss every
+    segment-only reorder (WP6 AC: reorder two segments → plan sees reorder).
+    Fallback to materials only when no video-track segment carries manju.shot.
+    """
     order: list[str] = []
-    # materials.videos often carry name/path with shot id
+    # 1) Primary: video track segments (edit order)
+    for track in (data.get("tracks") or []):
+        if not isinstance(track, dict):
+            continue
+        ttype = str(track.get("type") or "video")
+        if ttype in ("audio", "text"):
+            continue
+        for seg in track.get("segments") or []:
+            if not isinstance(seg, dict):
+                continue
+            meta = seg.get("manju") or {}
+            shot = _normalize_shot_id(
+                (meta.get("shot") if isinstance(meta, dict) else None)
+                or seg.get("shot")
+            )
+            if shot and shot not in order:
+                order.append(shot)
+    if order:
+        return order
+    # 2) Fallback: materials.videos (legacy / missing segment stamps)
     mats = data.get("materials") or {}
     videos = mats.get("videos") or mats.get("speeds") or []
     if isinstance(videos, list):
@@ -122,20 +165,6 @@ def _shot_order_from_jianying(data: dict) -> list[str]:
             if not shot:
                 shot = v.get("shot") or v.get("material_name") or v.get("name")
             shot = _normalize_shot_id(shot)
-            if shot and shot not in order:
-                order.append(shot)
-    # Also walk video track segments when materials lack manju stamps
-    for track in (data.get("tracks") or []):
-        if not isinstance(track, dict):
-            continue
-        for seg in track.get("segments") or []:
-            if not isinstance(seg, dict):
-                continue
-            meta = seg.get("manju") or {}
-            shot = _normalize_shot_id(
-                (meta.get("shot") if isinstance(meta, dict) else None)
-                or seg.get("shot")
-            )
             if shot and shot not in order:
                 order.append(shot)
     return order
@@ -319,6 +348,19 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
     if tl is not None and compiled_from and tl.meta.compiled_from:
         if compiled_from != tl.meta.compiled_from:
             truth_moved = True
+    # Captions truth moved since export? (manual SRT edited in Manju after T0)
+    captions_conflict = False
+    baseline_cap_hash = None
+    if baseline_path and Path(baseline_path).exists():
+        try:
+            braw = _load_json(baseline_path)
+            baseline_cap_hash = braw.get("captions_hash")
+        except Exception:
+            baseline_cap_hash = None
+    if baseline_cap_hash:
+        now_hash = _captions_file_hash(project)
+        if now_hash and now_hash != baseline_cap_hash:
+            captions_conflict = True
 
     rows: list[dict[str, Any]] = []
 
@@ -359,10 +401,18 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                 if (c.get("text") != b.get("text")
                         or c.get("start_ms") != b.get("start_ms")
                         or c.get("end_ms") != b.get("end_ms")):
+                    # conflict if timeline moved OR human SRT moved since export
+                    state = (
+                        "conflict" if (truth_moved or captions_conflict) else "ok"
+                    )
                     rows.append({
                         "class": "caption_edit",
-                        "state": "conflict" if truth_moved else "ok",
-                        "evidence": {"index": i, "from": b, "to": c},
+                        "state": state,
+                        "evidence": {
+                            "index": i, "from": b, "to": c,
+                            **({"why": "captions.srt moved since export"}
+                               if captions_conflict and not truth_moved else {}),
+                        },
                         "target": "captions/captions.srt",
                         "action": "manual_captions",
                     })

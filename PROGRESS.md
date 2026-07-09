@@ -1416,3 +1416,21 @@ volume/transition mixer apply classes; full 2090 suite on hosts without ffmpeg.
 
 **Verified:** `tests/test_ai_review_fixes.py` + interconnection suite green
 (62 related tests).
+﻿
+---
+
+## 2026-07-09 — Second-pass review: 6 remaining trust bugs
+
+Addressed the follow-up analysis after the ai.txt full close:
+
+1. **JY reorder:** `_shot_order_from_jianying` now prefers **video track
+   segments** (edit order), materials only as fallback. Test swaps segments
+   only and asserts reorder + caption_edit rows.
+2. **voices.yaml override:** Edge `_voice_for` + `voice_payload` give locale
+   `voice_id` priority over bible; effective id folds into voice_hash.
+3. **locale caption/final freshness:** content-key based (captions.key.json +
+   final key recompute), not mere file presence.
+4. **locale voice status:** uses provider descriptor for v2 hash compare.
+5. **multi-shot ASR test:** actually calls `plan_multi_shot(..., asr=...)`.
+6. **caption baseline conflict:** export baseline stores `captions_hash`;
+   roundtrip marks caption_edit conflict when human SRT moved since export.

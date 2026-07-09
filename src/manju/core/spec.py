@@ -189,6 +189,14 @@ def voice_payload(
     bible = bible or {}
     speaker_entry = bible.get(shot.dialogue.speaker) or {}
     voice_ref = {k: speaker_entry[k] for k in VOICE_BIBLE_KEYS if k in speaker_entry}
+    # WP4: locale voices.yaml effective voice_id (via generation.params) must
+    # win over bible voice_id for hashing — otherwise English voice overrides
+    # never restage locale takes. Absent locale_voice_id → payload shape
+    # byte-identical to pre-locale projects.
+    params = getattr(getattr(shot, "generation", None), "params", None) or {}
+    locale_vid = params.get("locale_voice_id")
+    if locale_vid:
+        voice_ref = {**voice_ref, "voice_id": str(locale_vid)}
     payload: dict[str, Any] = {
         "text": shot.dialogue.text,
         "speaker": shot.dialogue.speaker,
