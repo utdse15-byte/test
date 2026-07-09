@@ -114,10 +114,58 @@ def _render_explanation(project: Project, timeline) -> dict[str, Any]:
         return {"verdict": f"cannot compute keys: {' '.join(str(exc).split())}"}
 
 
-def explain(project: Project) -> dict[str, Any]:
+def explain(project: Project, *, with_cost: bool = False) -> dict[str, Any]:
+    """Read-only build explanation. ``with_cost=True`` (WP5 ``--cost``) adds
+    per-shot ``est_cost`` and a top-level ``cost`` total using the same
+    estimators as dry-run; default shape stays backward-compatible."""
     timeline_info, effective_timeline = _timeline_explanation(project)
-    return {
-        "shots": _shot_explanations(project),
+    shots = _shot_explanations(project)
+    out: dict[str, Any] = {
+        "shots": shots,
         "timeline": timeline_info,
         "renders": _render_explanation(project, effective_timeline),
     }
+    if with_cost:
+        from .graph import (
+            _estimate_shot_cost,
+            _plan_voice,
+            _routed_shot_for_pricing,
+            _target_duration_ms,
+        )
+        from .stale import ShotState, evaluate_all
+
+        rules = project.load_rules()
+        total = 0.0
+        currency = None
+        voice_by = {p["shot"]: p for p in _plan_voice(project, gen="missing")}
+        statuses = {s.shot_id: s for s in evaluate_all(project)}
+        for entry in shots:
+            sid = entry["shot"]
+            est = 0.0
+            cur = None
+            st = statuses.get(sid)
+            if st is not None and st.state == ShotState.MISSING:
+                try:
+                    shot = project.load_shot(sid)
+                    priced = _routed_shot_for_pricing(project, shot)
+                    est, cur = _estimate_shot_cost(
+                        priced, _target_duration_ms(project, shot, rules)
+                    )
+                except Exception:
+                    est, cur = 0.0, None
+            vplan = voice_by.get(sid)
+            if vplan:
+                est = float(est or 0) + float(vplan.get("estimated_cost") or 0)
+                cur = cur or vplan.get("currency")
+            entry["est_cost"] = round(float(est or 0), 6)
+            if cur:
+                entry["currency"] = cur
+            total += float(est or 0)
+            if cur and not currency:
+                currency = cur
+        out["cost"] = {
+            "total": round(total, 6),
+            "currency": currency,
+            "note": "voice per_call only — speech duration unknown pre-synthesis",
+        }
+    return out

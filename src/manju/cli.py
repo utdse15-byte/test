@@ -846,12 +846,13 @@ def ingest_discard_cmd(
 def build(
     target: str = typer.Option(
         "final",
-        help="proxy | final | exports | qc — qc does NOT render first: it "
+        help="proxy | final | exports | qc | audition — qc does NOT render first: it "
              "checks the newest EXISTING final on disk against a freshly "
              "recompiled timeline (same as the standalone `manju qc`, plus "
              "gap-filling generation). Run --target final beforehand for QC "
              "on a fresh render; the output/--json names which artifact it "
-             "checked (qc_final)."),
+             "checked (qc_final). audition = 先听后看: voice+captions+music "
+             "on slate video, no picture generation (WP2)."),
     gen: str = typer.Option("missing", help="missing | auto | off"),
     regen_stale: bool = typer.Option(False, "--regen-stale"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -889,16 +890,46 @@ def build(
     from .build.graph import run_build
     from .core.models import BUILD_MODE_NAMES
 
-    if target not in ("proxy", "final", "exports", "qc"):
+    if target not in ("proxy", "final", "exports", "qc", "audition"):
         _fail(f"unknown target: {target}")
     if mode is not None and mode not in BUILD_MODE_NAMES:
         _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
-    result = run_build(_project(), target=target, gen=gen,
+    project = _project()
+    result = run_build(project, target=target, gen=gen,
                        regen_stale=regen_stale, dry_run=dry_run, force=force,
                        actor=ACTOR, assume_yes=yes, mode=mode,
                        include_unindexed=include_unindexed)
     if as_json:
-        _emit(result.to_dict(), True)
+        # WP5: dry-run --json emits the same plan envelope as GUI /api/plan
+        if dry_run:
+            from .gui.plan import action_plan
+
+            try:
+                envelope = action_plan(project, "build", {
+                    "target": target, "gen": gen,
+                    "regen_stale": regen_stale, "force": force, "mode": mode,
+                })
+            except Exception:
+                envelope = result.to_dict()
+            else:
+                # Cache-reuse visibility from explain
+                try:
+                    from .build.explain import explain as _explain
+                    exp = _explain(project)
+                    envelope["renders"] = {
+                        t: (exp.get("renders") or {}).get(t, {}).get("verdict")
+                        for t in ("final", "proxy")
+                    }
+                except Exception:
+                    pass
+                # Voice cost honesty note
+                if any(r.get("kind") == "voice" for r in envelope.get("rows") or []):
+                    envelope["note"] = (
+                        "voice per_call only — speech duration unknown pre-synthesis"
+                    )
+            _emit(envelope, True)
+        else:
+            _emit(result.to_dict(), True)
     else:
         if dry_run:
             typer.echo(f"计划任务 {len(result.plan)} 项,预估成本 {result.estimated_cost}")
@@ -1089,9 +1120,23 @@ def select(
 
 
 @app.command()
-def lock(shot_id: str, field: str, as_json: bool = typer.Option(False, "--json")):
+def lock(
+    shot_id: str,
+    field: str,
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before=lock_change when present"),
+    as_json: bool = typer.Option(False, "--json"),
+):
     """Seal a field's current value with a hash (§5). Build enforces it."""
     project = _project()
+    # WP5: make lock_change honest — when the token is in ask_before, require --yes
+    config = project.load_config()
+    if "lock_change" in (config.ask_before or []) and not yes:
+        _fail(
+            "waiting_user: lock_change 在 ask_before 中 — 锁定会改变协作契约"
+            f"(外向制品/权限,非金钱)。确认后重试: manju lock {shot_id} {field} --yes",
+            code="waiting_user",
+        )
     with _write_lock(project):
         raw = project.load_shot_raw(shot_id)
         try:
@@ -1744,6 +1789,8 @@ def export(
     capcut: bool = typer.Option(False, "--capcut", help="international CapCut draft (pycapcut)"),
     srt: bool = typer.Option(False, "--srt"),
     otio: bool = typer.Option(False, "--otio"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before=final_export when present"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Export drafts/captions from the compiled timeline (§11).
@@ -1753,6 +1800,14 @@ def export(
     lints the result when installed. final.mp4/SRT/OTIO always remain the
     fallback exits (§14)."""
     project = _project()
+    # WP5: final_export gate — free, but outward-facing; require --yes when token present
+    config = project.load_config()
+    if "final_export" in (config.ask_before or []) and not yes:
+        _fail(
+            "waiting_user: final_export 在 ask_before 中 — 导出是外向制品确认"
+            "(非金钱花费)。确认后重试: manju export --yes …",
+            code="waiting_user",
+        )
     timeline = project.load_timeline()
     if timeline is None:
         _fail("no timeline.json — run `manju build` first")
@@ -1829,6 +1884,8 @@ def export(
 def package(
     force: bool = typer.Option(False, "--force",
                                help="re-cut even if the content key matches"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before=final_export when present"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Cut the cover (+ teaser) out of the current final (§13-14).
@@ -1839,6 +1896,14 @@ def package(
     re-encoded with the final params → exports/packaging/teaser.mp4. Both are
     idempotent via .key.json sidecars; --force bypasses. Needs a final —
     without one it points you at `manju build`."""
+    # WP5: same final_export gate as `manju export` (outward-facing, free)
+    _pkg_project = _project()
+    if "final_export" in (_pkg_project.load_config().ask_before or []) and not yes:
+        _fail(
+            "waiting_user: final_export 在 ask_before 中 — 包装导出是外向制品确认"
+            "(非金钱花费)。确认后重试: manju package --yes",
+            code="waiting_user",
+        )
     from pydantic import ValidationError
 
     from .media.ffmpeg import MediaError
@@ -1928,13 +1993,18 @@ def exports(as_json: bool = typer.Option(False, "--json")):
 
 
 @app.command()
-def explain(as_json: bool = typer.Option(False, "--json")):
+def explain(
+    as_json: bool = typer.Option(False, "--json"),
+    cost: bool = typer.Option(
+        False, "--cost",
+        help="WP5: add per-shot est_cost + total (same estimators as build --dry-run)"),
+):
     """Why will the next build do what it will do? Read-only: per-shot
     picture/voice states with hash evidence, timeline fingerprint diff, and
     final/proxy content-key verdicts. Never mutates, never spends."""
     from .build.explain import explain as _explain
 
-    info = _explain(_project())
+    info = _explain(_project(), with_cost=cost)
     if as_json:
         _emit(info, True)
         return
@@ -1949,6 +2019,8 @@ def explain(as_json: bool = typer.Option(False, "--json")):
             line += f"  配音={entry['voice']['state']}"
             if entry["voice"].get("why"):
                 line += f" — {entry['voice']['why']}"
+        if cost and "est_cost" in entry:
+            line += f"  ≈{entry['est_cost']}"
         typer.echo(line)
     tl = info["timeline"]
     typer.echo(f"时间线  mode={tl['mode']} captions={tl['captions_mode']} → {tl['verdict']}")
@@ -1957,6 +2029,188 @@ def explain(as_json: bool = typer.Option(False, "--json")):
         if target in renders:
             r = renders[target]
             typer.echo(f"{target:5}  {r.get('latest') or '—'} → {r['verdict']}")
+    if cost and "cost" in info:
+        c = info["cost"]
+        typer.echo(f"成本合计  {c.get('total')} {c.get('currency') or ''}  ({c.get('note') or ''})")
+
+
+# ------------------------------------------------------------------ locale
+
+
+@app.command()
+def locale(
+    action: str = typer.Argument(..., help="add | status"),
+    lang: Optional[str] = typer.Argument(None, help="locale id e.g. en"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Multilingual locale overlays (WP4). Locale text never enters picture
+    hashes — video segments are shared; only voice/captions differ."""
+    from .core.container import ProjectError
+    from .core.locale import add_locale, list_locales, locale_status
+
+    project = _project()
+    action = (action or "").strip().lower()
+    try:
+        if action == "add":
+            if not lang:
+                _fail("locale add 需要语言 id: manju locale add en")
+            result = add_locale(project, lang)
+            if as_json:
+                _emit(result, True)
+            else:
+                typer.secho(
+                    f"locale {result['lang']}: {result['path']}  "
+                    f"(+{len(result['added'])} lines, total={result['total']})",
+                    fg=typer.colors.GREEN,
+                )
+        elif action == "status":
+            info = locale_status(project, lang)
+            if as_json:
+                _emit(info, True)
+            else:
+                if not info.get("locales"):
+                    typer.echo("no locales — manju locale add en")
+                    return
+                for lg, body in info["locales"].items():
+                    counts = body.get("counts") or {}
+                    typer.echo(
+                        f"{lg}: ok={counts.get('ok', 0)}  "
+                        f"missing={counts.get('missing', 0)}  "
+                        f"翻译过期={counts.get('翻译过期', 0)}"
+                    )
+                    for row in body.get("lines") or []:
+                        if row["state"] != "ok":
+                            typer.echo(f"  {row['shot']}: {row['state']}")
+        else:
+            _fail(f"locale: unknown action {action!r} (add|status)")
+    except ProjectError as exc:
+        _fail(str(exc))
+
+
+# ---------------------------------------------------------------- roundtrip
+
+
+@app.command()
+def roundtrip(
+    edited: Path = typer.Argument(..., help="edited skeleton draft_content.json or OTIO"),
+    apply: bool = typer.Option(False, "--apply", help="apply accepted rows"),
+    rows: Optional[str] = typer.Option(
+        None, "--rows", help="1-based row indices e.g. 1,3-5"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Flow external editor edits back as reviewable truth changes (WP6).
+
+    Carriers: JianYing diff-stable skeleton + OTIO only. Plan by default;
+    ``--apply`` under one build_lock."""
+    from .build.roundtrip import apply_roundtrip, plan_roundtrip
+    from .core.container import ProjectError
+
+    project = _project()
+    try:
+        plan = plan_roundtrip(project, edited)
+    except ProjectError as exc:
+        _fail(str(exc))
+        return
+    if apply:
+        sel = None
+        if rows:
+            sel = []
+            for part in rows.split(","):
+                part = part.strip()
+                if "-" in part:
+                    a, b = part.split("-", 1)
+                    sel.extend(range(int(a) - 1, int(b)))
+                else:
+                    sel.append(int(part) - 1)
+        result = apply_roundtrip(project, plan, rows=sel, actor=ACTOR)
+        if as_json:
+            _emit({"plan": plan, "apply": result}, True)
+        else:
+            typer.secho(
+                f"roundtrip apply: {len(result['applied'])} 条, "
+                f"跳过 {len(result['skipped'])}, batch={result['batch']}",
+                fg=typer.colors.GREEN,
+            )
+        return
+    if as_json:
+        _emit(plan, True)
+    else:
+        typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
+                   f"truth_moved={plan.get('truth_moved')}")
+        typer.echo(f"  {plan.get('carrier_note')}")
+        for i, r in enumerate(plan.get("rows") or [], 1):
+            typer.echo(
+                f"  {i}. [{r.get('state')}] {r.get('class')} → {r.get('target')}  "
+                f"action={r.get('action')}"
+            )
+
+
+# ------------------------------------------------------------------- impact
+
+
+@app.command()
+def impact(
+    shot_id: str = typer.Argument(..., metavar="SHOT"),
+    field: Optional[str] = typer.Option(
+        None, "--field", help="dotted path to edit hypothetically, e.g. dialogue.text"),
+    value: Optional[str] = typer.Option(
+        None, "--value", help="new value for --field (hypothetical; nothing written)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """If I change this shot, what happens? Read-only interconnection report.
+
+    With ``--field`` + ``--value``: hypothetical impact of that edit (voice/
+    video staleness, caption cues, timeline recompile, final re-render,
+    export deliverables, catch-up cost). Without: current staleness impact.
+    Never mutates, never spends, no lock."""
+    from .build.impact import impact_report, impact_summary_zh
+    from .core.container import ProjectError
+
+    project = _project()
+    try:
+        report = impact_report(project, shot_id, field=field, new_value=value)
+    except (ProjectError, ValueError, KeyError) as exc:
+        _fail(" ".join(str(exc).split())[:500], code="impact_error")
+        return
+    except Exception as exc:  # pydantic ValidationError etc.
+        _fail(" ".join(str(exc).split())[:500], code="impact_error")
+        return
+    if as_json:
+        _emit(report, True)
+        return
+    typer.echo(impact_summary_zh(report))
+    v, vo = report["video"], report["voice"]
+    typer.echo(
+        f"  画面: {v['state']} → {v['would_become']}"
+        + (f"  fields={','.join(v['changed_fields'])}" if v.get("changed_fields") else "")
+        + (f"  take={v['selected_take']}" if v.get("selected_take") else "")
+    )
+    typer.echo(
+        f"  配音: {vo['state']} → {vo['would_become']}"
+        + ("  (manual)" if vo.get("manual") else "")
+        + (f"  take={vo['newest_take']}" if vo.get("newest_take") else "")
+    )
+    caps = report["captions"]
+    n = len(caps.get("cues") or [])
+    typer.echo(f"  字幕: {n} 条  mode={caps.get('mode')}")
+    if caps.get("manual_note"):
+        typer.secho(f"    {caps['manual_note']}", fg=typer.colors.YELLOW)
+    for c in (caps.get("cues") or [])[:6]:
+        typer.echo(f"    [{c['index']}] {c['start_ms']}-{c['end_ms']}ms  {c['text'][:40]}")
+    typer.echo(f"  时间线: {report['timeline'].get('verdict')}")
+    typer.echo(
+        f"  成片: final={report['renders'].get('final')}  "
+        f"proxy={report['renders'].get('proxy')}"
+    )
+    stale_ex = (report.get("exports") or {}).get("stale_after") or []
+    if stale_ex:
+        typer.echo(f"  导出将待更新: {', '.join(stale_ex)}")
+    cost = report.get("cost") or {}
+    typer.echo(
+        f"  成本: video={cost.get('regen_video')}  voice={cost.get('regen_voice')} "
+        f"{cost.get('currency') or ''}"
+        + (f"  ({cost['note']})" if cost.get("note") else "")
+    )
 
 
 # ------------------------------------------------------------------- prompt
@@ -2082,6 +2336,12 @@ def voice(
     missing: bool = typer.Option(
         False, "--missing", help="batch: voice every shot with dialogue but no voice take"),
     provider: Optional[str] = typer.Option(None, help="tts manifest id (default: first configured)"),
+    preview: bool = typer.Option(
+        False, "--preview",
+        help="试听: synthesize a disposable sample into .manju/webpreview/tts/ "
+             "(never a take; cache-keyed by text+voice — WP2/R19)"),
+    text: Optional[str] = typer.Option(
+        None, "--text", help="--preview: override the dialogue text for this sample"),
     yes: bool = typer.Option(False, "--yes", "-y",
                              help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
@@ -2095,12 +2355,37 @@ def voice(
     line), `--all` (every dialogued shot, but only the MISSING ones run; stale
     voices stay advisory-only, §4.3). One build lock + one aggregated spend gate.
 
+    `--preview` (WP2): 试听 — write a throwaway sample under
+    ``.manju/webpreview/tts/``; second call is a cache hit. Never creates a
+    file under ``media/gen/``.
+
     A priced TTS synthesis stops as waiting_user unless --yes — the same §8.3
     ask_before gate build and redo enforce (R7 spend-gate hole closure)."""
     from .build.graph import BuildError, WaitingUser, spend_gate, voice_batch
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
+
+    if preview:
+        if shot_id is None:
+            _fail("voice --preview: 要试听哪个镜头?给一个镜头 id")
+        from .media.ttspreview import PreviewUnavailable, preview_voice
+
+        try:
+            info = preview_voice(
+                project, shot_id, text=text, provider=provider, assume_yes=yes,
+            )
+        except (PreviewUnavailable, WaitingUser) as exc:
+            _fail(str(exc), code="tts_unavailable")
+            return
+        if as_json:
+            _emit({"preview": info["preview"], "cached": info["cached"],
+                   "provider": info.get("provider")}, True)
+        else:
+            tag = "缓存命中" if info["cached"] else "新合成"
+            typer.secho(f"{shot_id}: 试听 {info['preview']} ({tag})",
+                        fg=typer.colors.GREEN)
+        return
 
     batch_flags = [bool(shots), all_shots, missing]
     if any(batch_flags):
@@ -2145,6 +2430,143 @@ def voice(
                "media": project.relpath(media)}, True)
     else:
         typer.secho(f"{shot_id}: 新配音 {media.stem} ({tts.id})", fg=typer.colors.GREEN)
+
+
+# ------------------------------------------------------------------- align
+
+
+@app.command()
+def align(
+    shot_id: Optional[str] = typer.Argument(
+        None, metavar="SHOT",
+        help="single-shot: align this shot's newest voice take"),
+    take: Optional[str] = typer.Option(
+        None, "--take", help="voice take stem (default: newest)"),
+    from_srt: Optional[Path] = typer.Option(
+        None, "--from-srt", help="cue timings from a hand-made SRT"),
+    asr: Optional[str] = typer.Option(
+        None, "--asr", help="ASR provider id (or bare --asr for default); spend-gated"),
+    media: Optional[Path] = typer.Option(
+        None, "--media", help="multi-shot: long VO file to split"),
+    shots: Optional[str] = typer.Option(
+        None, "--shots", help="multi-shot: S001-S012 or S001,S002,S003"),
+    apply: bool = typer.Option(
+        False, "--apply", help="multi-shot: apply the plan (default is plan-only)"),
+    rows: Optional[str] = typer.Option(
+        None, "--rows", help="multi-shot apply: 1-based row indices e.g. 1,3-5"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ASR spend gate (§8.3)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Align imported human voiceover to script (WP3).
+
+    Single shot: ``manju align S001`` writes ``<take>.timing.json`` (regenerable)
+    via free text-anchoring; ``--from-srt`` / ``--asr`` for real timings.
+
+    Multi-shot: ``manju align --media vo.wav --shots S001-S012 [--from-srt x.srt]``
+    plans windows; ``--apply`` slices + registers MANUAL voice takes + batch
+    record under reports/ingest_batches/."""
+    from .core.container import ProjectError
+    from .media.align import align_shot, apply_multi_shot, plan_multi_shot
+
+    project = _project()
+
+    def _expand_shots(spec: str) -> list[str]:
+        out: list[str] = []
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            m = re.match(r"([A-Za-z]*)(\d+)\s*-\s*([A-Za-z]*)(\d+)$", part)
+            if m:
+                pre, a, pre2, b = m.group(1), int(m.group(2)), m.group(3), int(m.group(4))
+                prefix = pre or pre2 or "S"
+                width = max(len(m.group(2)), len(m.group(4)))
+                for n in range(min(a, b), max(a, b) + 1):
+                    out.append(f"{prefix}{n:0{width}d}")
+            else:
+                out.append(part)
+        return out
+
+    if media is not None:
+        if not shots:
+            _fail("align --media 需要 --shots S001-S012")
+        ids = _expand_shots(shots)
+        try:
+            plan = plan_multi_shot(
+                project, media, ids,
+                from_srt=from_srt,
+                asr=asr if asr is not None else None,
+                assume_yes=yes,
+            )
+        except ProjectError as exc:
+            _fail(str(exc))
+            return
+        if apply:
+            sel = None
+            if rows:
+                sel = []
+                for part in rows.split(","):
+                    part = part.strip()
+                    if "-" in part:
+                        a, b = part.split("-", 1)
+                        sel.extend(range(int(a) - 1, int(b)))
+                    else:
+                        sel.append(int(part) - 1)
+            try:
+                result = apply_multi_shot(project, plan, rows=sel, actor=ACTOR)
+            except Exception as exc:
+                _fail(" ".join(str(exc).split())[:500])
+                return
+            if as_json:
+                _emit({"plan": plan, "apply": result}, True)
+            else:
+                typer.secho(
+                    f"align apply: {len(result['applied'])} 条, "
+                    f"跳过 {len(result['skipped'])}, batch={result['batch']}",
+                    fg=typer.colors.GREEN,
+                )
+            return
+        if as_json:
+            _emit(plan, True)
+        else:
+            typer.echo(f"align plan  media={plan.get('media')}  "
+                       f"duration={plan.get('duration_ms')}ms  source={plan.get('source')}")
+            for i, r in enumerate(plan.get("rows") or [], 1):
+                typer.echo(
+                    f"  {i}. {r['shot']}  [{r.get('start_ms')}-{r.get('end_ms')}]ms  "
+                    f"conf={r.get('confidence')}  state={r.get('state')}  "
+                    f"{(r.get('matched_text') or '')[:30]}"
+                )
+            if plan.get("unmatched"):
+                typer.secho(f"  unmatched: {', '.join(plan['unmatched'])}",
+                            fg=typer.colors.YELLOW)
+        return
+
+    if shot_id is None:
+        _fail("align: 给一个镜头 id,或用 --media + --shots 做多镜头切分")
+    asr_flag = asr
+    # bare `--asr` without value may come through as empty string from typer
+    if asr is not None and asr == "":
+        asr_flag = "default"
+    try:
+        report = align_shot(
+            project, shot_id, take=take, from_srt=from_srt,
+            asr=asr_flag, assume_yes=yes,
+        )
+    except ProjectError as exc:
+        _fail(str(exc))
+        return
+    if as_json:
+        _emit(report, True)
+    else:
+        typer.secho(
+            f"{report['shot']}: timing → {report['timing']}  "
+            f"({report['cues']} cues, source={report['source']})",
+            fg=typer.colors.GREEN,
+        )
+        for a in report.get("advisories") or []:
+            typer.secho(f"  ⚠ {a}", fg=typer.colors.YELLOW)
 
 
 # -------------------------------------------------------------- transcribe

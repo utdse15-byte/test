@@ -259,12 +259,17 @@ def _align_words_to_text(words: list[dict], text: str) -> list[dict]:
 
 def _timed_captions(words: list[dict], offset_ms: int, max_chars: int,
                     max_lines: int, *, speaker: str,
-                    original_text: str = "") -> list[CaptionLine]:
+                    original_text: str = "",
+                    shot_id: str = "") -> list[CaptionLine]:
     """Group TTS word boundaries into caption cues (round M).
 
     Greedy fill up to the line budget, breaking eagerly after CJK sentence
     enders; each cue's start/end come from the FIRST/LAST word's real times
-    (voice-relative), shifted by the voice clip's timeline offset."""
+    (voice-relative), shifted by the voice clip's timeline offset.
+
+    ``shot_id`` (WP1) is stamped onto every cue so impact / voice-repair can
+    attribute cues without temporal reconstruction.
+    """
     if original_text:
         words = _align_words_to_text(words, original_text)
     budget = max(1, max_chars * max_lines)
@@ -281,6 +286,7 @@ def _timed_captions(words: list[dict], offset_ms: int, max_chars: int,
                            offset_ms + group[0]["start_ms"] + 1),
                 text="".join(w["text"] for w in group).strip(),
                 speaker=speaker,
+                shot=shot_id,
             ))
         group, length = [], 0
 
@@ -461,6 +467,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                         rules.captions.max_chars_per_line, rules.captions.max_lines,
                         speaker=s.shot.dialogue.speaker,
                         original_text=text,
+                        shot_id=s.shot.id,
                     )
                 )
             else:
@@ -480,6 +487,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                                 end_ms=max(end, t + 1),
                                 text=piece,
                                 speaker=s.shot.dialogue.speaker,
+                                shot=s.shot.id,
                             )
                         )
                         t = end
@@ -657,7 +665,8 @@ def _load_voice_timing(voice: Path) -> list[dict] | None:
 
 
 def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
-                          include_unindexed: bool = False) -> CompileInput:
+                          include_unindexed: bool = False,
+                          allow_missing_takes: bool = False) -> CompileInput:
     """Assemble the compiler's input from the project. Raises CompileError
     listing every shot that cannot go on the timeline (missing/unselected).
 
@@ -666,7 +675,13 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
     order authority, so a draft shot that exists on disk but was never added
     to the index can never silently affect the compiled film. Pass
     ``include_unindexed=True`` (``manju build --include-unindexed``) to opt
-    back into the old behaviour for one call."""
+    back into the old behaviour for one call.
+
+    ``allow_missing_takes=False`` (default): missing/unselected shots are
+    hard errors. ``True`` (WP2 audition only) inserts slate placeholders
+    (``take_name='__slate__'``) so voice-driven durations still compile;
+    the real ``timeline.json`` path must never pass this flag.
+    """
     from ..build.stale import evaluate_all  # local import: build depends on timeline too
 
     config = project.load_config()
@@ -676,6 +691,30 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
 
     for status in evaluate_all(project, indexed_only=not include_unindexed):
         if not status.usable:
+            if allow_missing_takes:
+                shot = project.load_shot(status.shot_id)
+                voice = _find_voice(project, status.shot_id)
+                voice_dur = probe_fn(voice) if voice else None
+                # Duration driven by voice + padding when present, else default
+                slate_dur = voice_dur or rules.timing.default_shot_ms
+                if voice_dur:
+                    slate_dur = (
+                        voice_dur
+                        + rules.timing.padding_before_ms
+                        + rules.timing.padding_after_ms
+                    )
+                shots.append(
+                    ShotInput(
+                        shot=shot,
+                        take_name="__slate__",
+                        take_source=f"__slate__/{status.shot_id}",
+                        take_duration_ms=slate_dur,
+                        voice_source=project.relpath(voice) if voice else None,
+                        voice_duration_ms=voice_dur,
+                        voice_timing=_load_voice_timing(voice) if voice else None,
+                    )
+                )
+                continue
             problems.append(f"{status.shot_id}: {status.state.value}"
                             + (f" ({status.note})" if status.note else ""))
             continue
@@ -729,6 +768,8 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
         raise CompileError(
             "cannot compile timeline, unresolved shots:\n  " + "\n  ".join(problems)
         )
+    if not shots:
+        raise CompileError("nothing to compile: no shots with a usable selected take")
     # Packaging is loaded here (defaults to an all-disabled spec when absent),
     # so every compile call site — build graph, cli, tests — gets it for free
     # while the CompileInput field itself stays optional (§13-14).

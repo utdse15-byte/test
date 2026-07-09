@@ -605,8 +605,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_allowed():
             self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
             return
-        if self.server.readonly and urlsplit(self.path).path != "/api/validate":
-            # /api/validate is pure (no write) — readonly editors keep live checks
+        _readonly_ok = {"/api/validate", "/api/impact"}
+        if self.server.readonly and urlsplit(self.path).path not in _readonly_ok:
+            # /api/validate and /api/impact are pure (no write) — readonly
+            # editors keep live checks and impact previews (WP1, R22 precedent)
             self._send_error_json("readonly mode — 只读工作台,操作请回到项目机器", 403)
             return
         if self.headers.get("X-Manju-Token") != self.server.token:
@@ -648,6 +650,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/build": self._act_build,
                 "/api/redo": self._act_redo,
                 "/api/voice": self._act_voice,
+                "/api/voice/preview": self._act_voice_preview,
                 "/api/redo-batch": self._act_redo_batch,
                 "/api/voice-batch": self._act_voice_batch,
                 "/api/jobs/cancel": self._act_jobs_cancel,
@@ -666,6 +669,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/onboarding/dismiss": self._act_onboarding_dismiss,
                 "/api/take-note": self._act_take_note,
                 "/api/validate": self._act_validate,
+                "/api/impact": self._act_impact,
                 "/api/refs/assign": self._act_refs_assign,
             }.get(path)
             if handler is None:
@@ -931,6 +935,37 @@ class _Handler(BaseHTTPRequestHandler):
             errors = [" ".join(str(exc).split())[:500]]
         self._send_json({"ok": not errors, "errors": errors})
 
+    def _act_impact(self, body: dict[str, Any]) -> None:
+        """WP1 interconnection spine: pure read — what a shot edit would
+        touch (voice/captions/timeline/final/exports/cost). Exempt from the
+        readonly gate like /api/validate. Never mutates, never spends."""
+        from ..build.impact import impact_report, impact_summary_zh
+        from ..core.container import ProjectError
+
+        shot_id = str(body.get("shot") or body.get("shot_id") or "").strip()
+        if not shot_id:
+            self._send_error_json("impact requires shot", 400)
+            return
+        field = body.get("field")
+        value = body.get("value")
+        if field is not None:
+            field = str(field)
+        if value is not None:
+            value = str(value)
+        try:
+            report = impact_report(
+                self.server.project, shot_id, field=field, new_value=value
+            )
+        except (ProjectError, ValueError, KeyError) as exc:
+            self._send_error_json(" ".join(str(exc).split())[:500], 400)
+            return
+        except Exception as exc:
+            self._send_error_json(" ".join(str(exc).split())[:500], 400)
+            return
+        report = dict(report)
+        report["summary_zh"] = impact_summary_zh(report)
+        self._send_json(report)
+
     def _act_take_note(self, body: dict[str, Any]) -> None:
         """Director note on a take (review annotation, Frame.io-inspired):
         one line of YAML under status.take_notes — reviewable, revertible,
@@ -1162,6 +1197,44 @@ class _Handler(BaseHTTPRequestHandler):
             return {"shot": shot_id, "takes": takes}
 
         job = self.server.runner.submit("redo", params, fn)
+        self._send_json({"job": job.to_dict()}, 202)
+
+    def _act_voice_preview(self, body: dict[str, Any]) -> None:
+        """WP2 试听: disposable TTS sample into .manju/webpreview/tts/ —
+        never a take. Job-borne; graceful 「TTS 不可用」 on provider miss."""
+        project = self.server.project
+        shot_id = str(body.get("shot") or "")
+        text = body.get("text")
+        provider = body.get("provider") or None
+        assume_yes = bool(body.get("assume_yes"))
+        if not shot_id:
+            self._send_error_json("shot is required", 400)
+            return
+
+        def fn(job) -> dict[str, Any]:
+            from ..media.ttspreview import PreviewUnavailable, preview_voice
+
+            try:
+                info = preview_voice(
+                    project, shot_id,
+                    text=str(text) if text is not None else None,
+                    provider=str(provider) if provider else None,
+                    assume_yes=assume_yes,
+                )
+            except PreviewUnavailable as exc:
+                return {"ok": False, "error": str(exc), "code": "tts_unavailable"}
+            return {
+                "ok": True,
+                "preview": info["preview"],
+                "cached": info["cached"],
+                "provider": info.get("provider"),
+            }
+
+        job = self.server.runner.submit(
+            "voice_preview",
+            {"shot": shot_id, "text": text, "provider": provider},
+            fn,
+        )
         self._send_json({"job": job.to_dict()}, 202)
 
     def _act_voice(self, body: dict[str, Any]) -> None:

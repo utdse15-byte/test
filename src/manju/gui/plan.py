@@ -110,7 +110,7 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
 
     target = str(params.get("target") or "final")
     gen = str(params.get("gen") or "missing")
-    if target not in ("proxy", "final", "exports", "qc"):
+    if target not in ("proxy", "final", "exports", "qc", "audition"):
         raise ValueError(f"unknown target: {target}")
     if gen not in GEN_MODES:
         raise ValueError(f"unknown gen mode: {gen}")
@@ -139,7 +139,62 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
             "estimated_cost": float(it.get("estimated_cost") or 0),
             "currency": it.get("currency"),
         })
-    return _envelope("build", rows, [], saved_cost=result.saved_cost, routing=routing_on)
+    env = _envelope("build", rows, [], saved_cost=result.saved_cost, routing=routing_on)
+    # WP5: cache-reuse visibility — final/proxy verdict from explain
+    try:
+        from ..build.explain import explain as _explain
+
+        exp = _explain(project)
+        env["renders"] = {
+            t: (exp.get("renders") or {}).get(t, {}).get("verdict")
+            for t in ("final", "proxy")
+        }
+    except Exception:
+        env["renders"] = {}
+    if any(r.get("kind") == "voice" for r in rows):
+        env["note"] = "voice per_call only — speech duration unknown pre-synthesis"
+    # WP7: consistency preflight — advisory warnings per row (never blocks)
+    try:
+        env = _attach_consistency(project, env)
+    except Exception:
+        pass
+    return env
+
+
+def _attach_consistency(project: Any, env: dict[str, Any]) -> dict[str, Any]:
+    """WP7: per-row consistency warnings (missing refs). Advisory only."""
+    from ..providers.refs import resolve_refs
+
+    for row in env.get("rows") or []:
+        if row.get("kind") == "voice":
+            continue
+        sid = row.get("shot")
+        if not sid:
+            continue
+        warnings: list[str] = []
+        try:
+            shot = project.load_shot(sid)
+            bible = project.load_bible()
+            refset = resolve_refs(project, shot, bible)
+            # Characters declared without any ref_image
+            for cid in shot.characters or []:
+                entry = bible.get(cid) or {}
+                has_ref = bool(
+                    entry.get("ref_image") or entry.get("ref_images")
+                    or entry.get("ref_video") or entry.get("ref_videos")
+                )
+                if not has_ref:
+                    warnings.append(
+                        f"角色 {cid} 无参考图(ref_image) — 生成前建议 manju refs assign"
+                    )
+            if hasattr(refset, "has_declared_refs") and not refset.has_declared_refs():
+                if shot.characters:
+                    # already covered per character above
+                    pass
+        except Exception:
+            pass
+        row["consistency"] = warnings
+    return env
 
 
 def _priced_shot_for_row(project: Any, shot: Any, explicit: str | None, *,

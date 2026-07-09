@@ -443,4 +443,13 @@ def run_check(project: Project) -> CheckReport:
                 )
                 break
 
+    # WP4: locale overlay validation (unknown shot ids, malformed YAML)
+    try:
+        from .locale import check_locales
+
+        for finding in check_locales(project):
+            report.errors.append(finding)
+    except Exception as exc:
+        report.warnings.append(f"locales: 校验跳过 — {' '.join(str(exc).split())[:200]}")
+
     return report

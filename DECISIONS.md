@@ -222,3 +222,35 @@ impossible; the UI says so instead of pretending. Cross-process job control
 `gui/jobs.py`. `manju evaluate` reports usage/rework/QC correlations ONLY and
 renders its honesty section (what the data cannot claim) as part of the
 output, not as fine print.
+
+
+## 11. Interconnection & Trust (GUIDEINTERCONNECTION, 2026-07-09)
+
+### 11a. CaptionLine.shot (WP1)
+`CaptionLine` gains optional `shot: str = ""` (default empty = legacy).
+Compiler stamps it on every generated cue. SRT/ASS exporters ignore it
+(internal only). First recompile moves the timeline fingerprint once —
+same byte-identity exception class as round-O transition overrides.
+Cue↔shot resolution lives in `timeline/cuemap.py` (stamped preferred,
+temporal window fallback).
+
+### 11b. Timing-sidecar regenerability (WP3)
+`<voice_take>.timing.json` is derived metadata, not a take. Re-running
+`manju align` overwrites it (mirrors `.key.json` / webpreview stance).
+Documented in `media/align.py` module docstring. Append-only still holds
+for media takes themselves; MANUAL (sidecar-less) voice is never
+invalidated by alignment.
+
+### 11c. Locale overlay model (WP4)
+A locale is `locales/<lang>/{lines,voices}.yaml`, never a project fork.
+Locale text is excluded from `spec_payload` (picture pipeline shared);
+only voice_payload consumers / caption compilation see the overlay.
+`base_hash` tracks base dialogue.text; drift → 翻译过期 advisory only
+(§4.3 / engine calls no LLM — no auto-translate).
+
+### 11d. Roundtrip carrier scope (WP6)
+v1 parses only our deterministic carriers: JianYing diff-stable skeleton
+and OTIO. Native pyJianYingDraft / pycapcut / CapCut cloud drafts are
+explicitly not parsed back (format drift risk). Export report / docs tell
+users to edit the skeleton/OTIO copy for round-trip. Baseline written to
+`exports/<kind>/.baseline/`.

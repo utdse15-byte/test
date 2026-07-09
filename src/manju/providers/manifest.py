@@ -141,7 +141,12 @@ class AsrConfig(ManjuModel):
     """How to read transcript segments out of an ASR response (M4 plugin slot,
     Niren-CASR-style: 导入真人素材 → 转录字幕). The audio goes into the
     body_template via the ``{audio_b64}`` placeholder; APIs needing multipart
-    or presigned uploads take the dedicated-adapter escape hatch."""
+    or presigned uploads take the dedicated-adapter escape hatch.
+
+    WP3 optional word-level keys: when the vendor returns word timestamps,
+    set ``words_path`` + ``word_*_key``; ``manju align --asr`` prefers them
+    for finer ``.timing.json``. Absent → segment-level only (byte-identical).
+    """
 
     segments_path: str = "$.data.segments"  # ★ mini-JSONPath to the segment list
     text_key: str = "text"  # ★ keys within one segment object
@@ -149,6 +154,11 @@ class AsrConfig(ManjuModel):
     end_key: str = "end"
     time_unit: str = "ms"  # "ms" | "s" — remote timestamps are converted to ms
     language: str = "zh"
+    # WP3: optional word-level timestamps (default None = unused)
+    words_path: str | None = None
+    word_text_key: str = "text"
+    word_start_key: str = "start"
+    word_end_key: str = "end"
 
 
 class ComfyConfig(ManjuModel):

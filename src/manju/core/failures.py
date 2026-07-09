@@ -207,8 +207,106 @@ def _root(project: Any) -> Path:
     return Path(root)
 
 
+def next_options_for(failure: Failure) -> list[dict[str, str]]:
+    """WP5: deterministic "what now" choices after a generation/voice failure.
+
+    Returns ``[{action, label_zh, why}, …]``. Computed at record time for
+    ``step in {generate, voice}``; empty for other steps.
+    """
+    step = _norm_step(failure.step)
+    if step not in ("generate", "voice"):
+        return []
+    detail = failure.detail or {}
+    kind = str(detail.get("kind") or detail.get("failure_kind") or "").lower()
+    cause = (failure.cause or "").lower()
+    # Infer kind from cause text when detail is sparse
+    if not kind:
+        if "rate" in cause or "429" in cause or "限流" in cause:
+            kind = "rate_limited"
+        elif "timeout" in cause or "超时" in cause:
+            kind = "timeout"
+        elif "content" in cause or "rejected" in cause or "审核" in cause or "nsfw" in cause:
+            kind = "content_rejected"
+        else:
+            kind = "provider_error"
+
+    opts: list[dict[str, str]] = []
+    subject = failure.subject or ""
+    fid = failure.id or ""
+
+    if kind in ("rate_limited", "timeout"):
+        opts.append({
+            "action": "retry",
+            "label_zh": "重试",
+            "why": f"manju tasks retry {fid}" if fid else "稍后重试同一任务",
+        })
+    if kind == "content_rejected":
+        if subject:
+            opts.append({
+                "action": "rewrite_prompt",
+                "label_zh": "改写提示词",
+                "why": f"manju prompt {subject}",
+            })
+        # Name the next fallback provider when known
+        chain = detail.get("fallback_chain") or detail.get("chain") or []
+        if isinstance(chain, list) and len(chain) > 1:
+            # current is [0]; next is [1]
+            nxt = str(chain[1])
+            opts.append({
+                "action": "fallback_provider",
+                "label_zh": f"换供应商 {nxt}",
+                "why": f"下一回退供应商: {nxt}",
+            })
+        elif detail.get("next_provider"):
+            nxt = str(detail["next_provider"])
+            opts.append({
+                "action": "fallback_provider",
+                "label_zh": f"换供应商 {nxt}",
+                "why": f"下一回退供应商: {nxt}",
+            })
+        if subject:
+            opts.append({
+                "action": "manual_import",
+                "label_zh": "手动导入素材",
+                "why": f"manju select {subject} --file …",
+            })
+    if kind == "provider_error":
+        chain = detail.get("fallback_chain") or detail.get("chain") or []
+        if isinstance(chain, list) and len(chain) > 1:
+            nxt = str(chain[1])
+            opts.append({
+                "action": "fallback_provider",
+                "label_zh": f"换供应商 {nxt}",
+                "why": f"下一回退供应商: {nxt}",
+            })
+        elif detail.get("next_provider"):
+            nxt = str(detail["next_provider"])
+            opts.append({
+                "action": "fallback_provider",
+                "label_zh": f"换供应商 {nxt}",
+                "why": f"下一回退供应商: {nxt}",
+            })
+        opts.append({
+            "action": "doctor",
+            "label_zh": "检查环境",
+            "why": "manju doctor",
+        })
+    # Always offer retry as a soft last option when nothing more specific
+    if not opts:
+        opts.append({
+            "action": "retry",
+            "label_zh": "重试",
+            "why": f"manju tasks retry {fid}" if fid else "稍后重试",
+        })
+    return opts
+
+
 def record_failure(project: Any, failure: Failure) -> dict[str, Any]:
     """Persist one :class:`Failure` and return its on-disk record.
+
+    WP5: for generate/voice steps, attach deterministic ``next_options`` into
+    ``detail`` at record time so ``manju failures`` and the GUI failure cards
+    show the same "what now" choices.
 
     Two sinks, both append-only:
 
@@ -225,6 +323,12 @@ def record_failure(project: Any, failure: Failure) -> dict[str, Any]:
     """
     failure.ts = failure.ts or _now_iso()
     failure.id = failure.id or _new_id()
+    # WP5: attach next_options for generate/voice before the on-disk write
+    if _norm_step(failure.step) in ("generate", "voice"):
+        if not isinstance(failure.detail, dict):
+            failure.detail = {}
+        if "next_options" not in failure.detail:
+            failure.detail["next_options"] = next_options_for(failure)
     record = failure.to_record()
 
     root = _root(project)

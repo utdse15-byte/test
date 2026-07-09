@@ -960,6 +960,11 @@ class CaptionLine(ManjuModel):
     end_ms: int
     text: str
     speaker: str = ""
+    # Owning shot id (WP1 impact spine). Stamped by the compiler; empty on
+    # legacy timelines / human SRT cues. Internal only — SRT/ASS exporters
+    # ignore it. First recompile with this field moves the timeline
+    # fingerprint once (byte-identity rule §1.5, round-O precedent).
+    shot: str = ""
 
 
 class TimelineTracks(ManjuModel):

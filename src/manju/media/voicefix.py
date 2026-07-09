@@ -151,24 +151,18 @@ def _shot_cues(project: Project, timeline: Timeline | None, shot_id: str,
                rules: TimelineRules, manual_locked: bool
                ) -> tuple[list[dict[str, Any]], int | None]:
     """The cues that belong to ``shot_id`` plus the shot's caption anchor
-    (``cap_start``). Cues are mapped to the shot by the compiled VIDEO clip's
-    timeline window ``[clip.start, clip.start + clip.duration)`` — the caption
-    track carries no shot id, but every cue for a shot lands inside that window
-    (compiler §6). ``cap_start`` is where the voiced caption region begins
-    (``clip.start + padding_before``), the fixed point the proportional retime
-    scales around. Returns ``([], None)`` when there is no timeline to place the
-    shot against (the cues will simply be regenerated on the next build)."""
-    if timeline is None:
-        return [], None
-    clip = next((c for c in timeline.tracks.video if c.shot == shot_id), None)
-    if clip is None:
-        return [], None
-    win_start = clip.start_ms
-    win_end = clip.start_ms + clip.duration_ms
-    cap_start = clip.start_ms + rules.timing.padding_before_ms
+    (``cap_start``). Delegates to :func:`manju.timeline.cuemap.shot_cues_with_anchor`
+    (WP1): prefers the compiler-stamped ``CaptionLine.shot`` field, falls back
+    to the video-clip time-window for legacy timelines. ``cap_start`` is where
+    the voiced caption region begins (``clip.start + padding_before``), the
+    fixed point the proportional retime scales around. Returns ``([], None)``
+    when there is no timeline to place the shot against."""
+    from ..timeline.cuemap import shot_cues_with_anchor
+
     cues = _current_cues(project, timeline, manual_locked)
-    shot_cues = [c for c in cues if win_start <= c["start_ms"] < win_end]
-    return shot_cues, cap_start
+    return shot_cues_with_anchor(
+        timeline, shot_id, rules, cues=cues,
+    )
 
 
 # --------------------------------------------------------------------- the loop

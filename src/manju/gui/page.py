@@ -401,6 +401,11 @@ dialog.editor::backdrop { background: rgba(8, 9, 12, .72); }
 .ed-valid-err { color: var(--err); margin: .15rem 0; white-space: pre-wrap; }
 .ed-valid-wait { color: var(--muted); }
 .ed-valid-na { color: var(--muted); }
+/* WP1 impact strip (debounced /api/impact): advisory chain-reaction preview */
+.ed-impact { margin-top: .4rem; font-size: .84rem; color: var(--warn);
+             background: #3a3010; border-radius: 4px; padding: .35rem .55rem; }
+.ed-impact:empty { display: none; }
+.ed-impact-ok { color: #77b596; background: transparent; padding: 0; }
 
 /* ----------------------------------------------------------- QC panel -- */
 .qc-err  { background: #4d1f22; color: #ff8a90; }
@@ -3187,6 +3192,7 @@ _JS = r"""
       chips,
       hints,
       validate: { kind: "shot", id },   /* live keystroke validation for this shot */
+      impact: { shot: id },   /* WP1: debounced chain-reaction preview on dialogue */
       rev,   /* round AA item 5 (#1): CAS token, echoed back on Save below */
     });
   }
@@ -3370,6 +3376,84 @@ _JS = r"""
     if (vspec) {
       ta.addEventListener("input", scheduleValidate);
       try { runValidate(); } catch (e) { /* prime once on open */ }
+    }
+
+    /* ---- WP1 impact strip (debounced /api/impact, 600 ms) ----
+     * On dialogue (or any shot field) edit pause, show what the change would
+     * stale/recompile/re-render and roughly cost. Pure read; advisory only. */
+    const ispec = (opts.impact && opts.impact.shot) ? opts.impact : null;
+    const impactStrip = el("div", "ed-impact");
+    if (ispec) dlg.appendChild(impactStrip);
+    let impactSeq = 0;
+    let impactTimer = null;
+
+    const parseDialogueText = (yamlText) => {
+      /* Minimal extract of dialogue.text from the buffer — no full YAML parse
+       * in the browser. Looks for `text:` under a dialogue: block, or a flat
+       * `dialogue.text:` key. Best-effort; a miss just skips the field/value. */
+      try {
+        const lines = String(yamlText || "").split("\n");
+        let inDialogue = false;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (/^\s*dialogue\s*:/.test(line)) { inDialogue = true; continue; }
+          if (inDialogue && /^\S/.test(line) && !/^\s*dialogue\s*:/.test(line)) {
+            inDialogue = false;
+          }
+          const m = line.match(/^\s*text\s*:\s*(.*)$/);
+          if (m && inDialogue) {
+            let v = m[1].trim();
+            if ((v.startsWith('"') && v.endsWith('"')) ||
+                (v.startsWith("'") && v.endsWith("'"))) {
+              v = v.slice(1, -1);
+            }
+            return v;
+          }
+        }
+      } catch (e) { /* never break typing */ }
+      return null;
+    };
+
+    const runImpact = async () => {
+      if (!ispec || !impactStrip.isConnected) return;
+      const seq = ++impactSeq;
+      const text = parseDialogueText(ta.value);
+      const body = { shot: ispec.shot };
+      if (text !== null) {
+        body.field = "dialogue.text";
+        body.value = text;
+      }
+      let r = null;
+      try {
+        r = await apiRaw("POST", "/api/impact", body);
+      } catch (err) {
+        r = null;
+      }
+      if (seq !== impactSeq || !impactStrip.isConnected) return;
+      try {
+        clear(impactStrip);
+        if (!r || !r.ok || !r.data) {
+          impactStrip.appendChild(el("span", "ed-valid-na", "影响预览不可用"));
+          return;
+        }
+        const summary = r.data.summary_zh || "此修改无明显连锁影响";
+        const cls = (summary.indexOf("无明显") >= 0) ? "ed-impact-ok" : "";
+        impactStrip.appendChild(el("span", cls, summary));
+      } catch (e) { /* never break typing */ }
+    };
+
+    const scheduleImpact = () => {
+      if (!ispec) return;
+      try {
+        if (impactTimer) clearTimeout(impactTimer);
+        impactTimer = setTimeout(() => {
+          if (impactStrip.isConnected) runImpact();
+        }, 600);
+      } catch (e) { /* keystroke path must never throw */ }
+    };
+    if (ispec) {
+      ta.addEventListener("input", scheduleImpact);
+      try { runImpact(); } catch (e) { /* prime once on open */ }
     }
 
     const errBox = el("div", "ed-errors");

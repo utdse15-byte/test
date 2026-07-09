@@ -758,9 +758,13 @@ def _run_build_phases(
     # priced via the SAME routing.resolve() (incl. tier/mode bias) the generate
     # phase below will use, so the estimate and the ask_before/budget gates see
     # the provider that will actually run first (#7).
-    result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale,
-                                   else_bias=else_bias)
-    result.plan += _plan_voice(project, gen=gen)
+    # WP2 audition: voice only — never plan/spend video generation.
+    if target == "audition":
+        result.plan = _plan_voice(project, gen=gen)
+    else:
+        result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale,
+                                       else_bias=else_bias)
+        result.plan += _plan_voice(project, gen=gen)
     result.estimated_cost = sum(p["estimated_cost"] for p in result.plan)
 
     budget = config.budget.limit
@@ -1127,41 +1131,67 @@ def _run_build_phases(
     # ---- 3. compile timeline (pure function, §6)
     from ..media.probe import probe_duration_ms
 
-    try:
-        timeline, tl_path, overwrote = build_timeline(
-            project, probe_duration_ms, include_unindexed=include_unindexed
-        )
-    except CompileError as exc:
-        result.ok = False
-        result.errors.append(str(exc))
-        _record(project, "compile", "timeline", "时间线编译失败",
-                evidence=" ".join(str(exc).split())[:800],
-                hint="按报错定位镜头/时长/字幕规则(§6);见 timeline/rules.yaml",
-                actor=actor)
-        return result
-    result.timeline_path = project.relpath(tl_path)
-    if not overwrote:
-        result.warnings.append(
-            "rules.mode=manual: timeline.json is human truth; wrote timeline.generated.json (§6)"
-        )
-        # FIX-D: a hand-edited timeline.json that fails to parse is a clean,
-        # actionable build error — never a JSONDecodeError traceback.
+    # WP2 audition: compile in-memory with slate placeholders for missing
+    # takes; NEVER write timeline.json (the real timeline stays gated).
+    if target == "audition":
+        from ..timeline.compiler import compile_timeline, gather_compile_input
+
         try:
-            timeline = project.load_timeline() or timeline  # render what the human made
-        except Exception as exc:
-            result.ok = False
-            result.errors.append(
-                f"timeline/timeline.json: 手工时间线无法解析 — {' '.join(str(exc).split())} "
-                "(建议:修复该 JSON,或把 rules.yaml 的 mode 改回 compiled;"
-                "对照 timeline.generated.json 排查)"
+            cinp = gather_compile_input(
+                project, probe_duration_ms,
+                include_unindexed=include_unindexed,
+                allow_missing_takes=True,
             )
-            _record(project, "compile", "timeline",
-                    "手工 timeline.json 无法解析",
-                    evidence=" ".join(str(exc).split())[:600],
-                    hint="修复该 JSON,或把 rules.yaml mode 改回 compiled;"
-                         "对照 timeline.generated.json",
-                    log_path="timeline/timeline.json", actor=actor)
+            timeline = compile_timeline(cinp)
+        except CompileError as exc:
+            result.ok = False
+            result.errors.append(str(exc))
+            _record(project, "compile", "timeline", "试听时间线编译失败",
+                    evidence=" ".join(str(exc).split())[:800],
+                    hint="先 manju voice --missing 合成配音;试听不需要画面 takes",
+                    actor=actor)
             return result
+        result.timeline_path = None  # not written
+        result.warnings.append(
+            "audition: in-memory timeline (timeline.json untouched); "
+            "missing picture takes use slate placeholders"
+        )
+    else:
+        try:
+            timeline, tl_path, overwrote = build_timeline(
+                project, probe_duration_ms, include_unindexed=include_unindexed
+            )
+        except CompileError as exc:
+            result.ok = False
+            result.errors.append(str(exc))
+            _record(project, "compile", "timeline", "时间线编译失败",
+                    evidence=" ".join(str(exc).split())[:800],
+                    hint="按报错定位镜头/时长/字幕规则(§6);见 timeline/rules.yaml",
+                    actor=actor)
+            return result
+        result.timeline_path = project.relpath(tl_path)
+        if not overwrote:
+            result.warnings.append(
+                "rules.mode=manual: timeline.json is human truth; wrote timeline.generated.json (§6)"
+            )
+            # FIX-D: a hand-edited timeline.json that fails to parse is a clean,
+            # actionable build error — never a JSONDecodeError traceback.
+            try:
+                timeline = project.load_timeline() or timeline  # render what the human made
+            except Exception as exc:
+                result.ok = False
+                result.errors.append(
+                    f"timeline/timeline.json: 手工时间线无法解析 — {' '.join(str(exc).split())} "
+                    "(建议:修复该 JSON,或把 rules.yaml 的 mode 改回 compiled;"
+                    "对照 timeline.generated.json 排查)"
+                )
+                _record(project, "compile", "timeline",
+                        "手工 timeline.json 无法解析",
+                        evidence=" ".join(str(exc).split())[:600],
+                        hint="修复该 JSON,或把 rules.yaml mode 改回 compiled;"
+                             "对照 timeline.generated.json",
+                        log_path="timeline/timeline.json", actor=actor)
+                return result
 
     # ---- 4. captions
     rules = project.load_rules()
@@ -1175,7 +1205,30 @@ def _run_build_phases(
         ass_path = paths.get("ass")
 
     # ---- 5. render
-    if target in ("proxy", "final"):
+    if target == "audition":
+        _phase("render:audition")
+        from ..media.audition import render_audition
+        from ..media.ffmpeg import MediaError as _MediaError
+
+        try:
+            out = render_audition(
+                project, timeline, ass_file=ass_path, force=force,
+            )
+        except _MediaError as exc:
+            result.ok = False
+            result.errors.append(
+                f"audition: {' '.join(str(exc).split())} "
+                "(建议:查看 .manju/logs/audition.log / render.log)"
+            )
+            _record(project, "render", "audition", "试听片渲染失败",
+                    evidence=str(exc)[-1200:],
+                    hint="查看 .manju/logs/audition.log;确认 ffmpeg 可用",
+                    log_path=".manju/logs/audition.log", actor=actor)
+            return result
+        result.render_path = project.relpath(out)
+        append_event(project.root, actor, "render",
+                     {"target": "audition", "output": result.render_path})
+    elif target in ("proxy", "final"):
         _phase(f"render:{target}")
         from ..media.render import render_timeline
         # goal: honest job cancellation — media/render.py itself is a

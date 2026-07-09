@@ -131,6 +131,25 @@ def _h_explain(project: Project, args: dict) -> dict:
     return explain(project)
 
 
+def _h_impact(project: Project, args: dict) -> dict:
+    """Read-only interconnection report (WP1). Mirrors ``manju impact``."""
+    from ..build.impact import impact_report
+
+    shot_id = str(args.get("shot_id") or args.get("shot") or "").strip()
+    if not shot_id:
+        raise ToolError("impact requires shot_id")
+    field = args.get("field")
+    value = args.get("value")
+    if field is not None:
+        field = str(field)
+    if value is not None:
+        value = str(value)
+    try:
+        return impact_report(project, shot_id, field=field, new_value=value)
+    except Exception as exc:
+        raise ToolError(" ".join(str(exc).split())[:500]) from exc
+
+
 def _h_check(project: Project, args: dict) -> dict:
     return run_check(project).to_dict()
 
@@ -539,6 +558,28 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "diff, final/proxy content-key verdicts. Never mutates, never spends.",
         "inputSchema": _EMPTY_SCHEMA,
         "handler": _h_explain,
+    },
+    {
+        "name": "impact",
+        "description": "If this shot (or a hypothetical field edit) changes, what "
+        "happens? Read-only: video/voice would-become, caption cues, timeline "
+        "recompile, final re-render, export deliverables, catch-up cost. "
+        "Never mutates, never spends.",
+        "inputSchema": _schema(
+            {
+                "shot_id": {"type": "string", "description": "e.g. S002"},
+                "field": {
+                    "type": "string",
+                    "description": "optional dotted path, e.g. dialogue.text",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "optional new value for field (hypothetical)",
+                },
+            },
+            ["shot_id"],
+        ),
+        "handler": _h_impact,
     },
     {
         "name": "check",

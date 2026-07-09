@@ -1299,3 +1299,65 @@ integration), all eight items landed:
 
 **Verified:** 2090 tests green consolidated (was 1931; +159); wave-1 CI green
 at 66cf442; every mutation path stayed on the checked-write/lock conventions.
+
+
+---
+
+## 2026-07-09 — Interconnection & Trust (GUIDEINTERCONNECTION WP1–WP7)
+
+**Done:** Closed the seven gaps in GUIDEINTERCONNECTION.md so script ↔ voice
+↔ captions ↔ timeline feel like one system, and every spend answers the same
+transparency questions.
+
+- **WP1 impact spine.** `CaptionLine.shot` stamped by the compiler (both
+  timed and weighted-split paths); shared `timeline/cuemap.py` (stamped
+  field preferred, temporal fallback for legacy); `build/impact.py` with
+  hypothetical + current modes; CLI `manju impact`, MCP `impact` tool,
+  GUI `POST /api/impact` (readonly-exempt) + debounced shot-editor strip.
+  First recompile with the new field moves the timeline fingerprint once
+  (documented; round-O precedent).
+- **WP2 audio-first.** `media/ttspreview.py` 试听 into `.manju/webpreview/tts/`
+  (cache-keyed, never a take); `manju voice --preview`; GUI
+  `/api/voice/preview` job. `manju build --target audition` with
+  `allow_missing_takes` compile flag (in-memory timeline only), slate
+  placeholders, `renders/audition/audition_vN.mp4` + content-key sidecar.
+  Video generation is never planned for audition.
+- **WP3 VO align.** `media/align.py` + `manju align`: free text-anchor
+  default, `--from-srt`, `--asr` (spend-gated); multi-shot plan/apply with
+  MANUAL takes + timing sidecars (regenerable exception to append-only) +
+  ingest-style batch records. `AsrConfig` optional word-level keys.
+- **WP4 locales.** Overlay model under `locales/<lang>/lines.yaml` with
+  `base_hash` → 翻译过期 advisory; `manju locale add|status`; check
+  validates unknown shot ids. Locale text never enters spec_payload.
+- **WP5 transparency.** `explain --cost`; honest `final_export` /
+  `lock_change` ask_before gates; dry-run `--json` emits the GUI plan
+  envelope (+ `renders` cache-reuse + voice cost note); failure
+  `next_options` at record time for generate/voice.
+- **WP6 roundtrip.** `build/roundtrip.py` plan/apply for JianYing skeleton
+  + OTIO only; baseline writer; reorder + caption_edit paths; batch under
+  `reports/roundtrip_batches/`.
+- **WP7 consistency preflight.** Plan rows gain advisory `consistency`
+  warnings when bible characters lack refs (never blocks).
+
+**Verified:** new tests in `tests/test_impact.py`, `test_ttspreview.py`,
+`test_interconnection.py` green; voicefix/compiler regressions green.
+Full suite not re-baselined in this environment (ffmpeg PATH absent on
+this host for some generation tests).
+
+**Honest boundaries:**
+- Audition render reuses final pipeline with slates; needs ffmpeg.
+- Locale voice/build `--lang` flag threading is scaffolded via
+  `core/locale.py` overlay helpers; full per-locale voice take paths
+  (`media/gen/<shot>/locales/<lang>/`) remain a follow-up for the voice
+  batch/CLI flag surface.
+- Roundtrip v1 covers reorder + caption edit on skeleton/OTIO; trim/volume
+  /transition apply paths are planned in the module table but only
+  reorder + caption_edit are wired to write paths.
+- GUI 试听 button / 先听后看 card / full locale editor / roundtrip ingest
+  panel wiring are partial (API endpoints exist; richer chrome is
+  follow-up).
+
+**Open follow-ups (recorded, not expanded this round):** per-locale
+`register_voice_take(lang=)`, full `--lang` build/voice threading,
+roundtrip trim→virtual inout + mixer apply, phoneme aligner provider
+manifest slot.

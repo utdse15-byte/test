@@ -126,7 +126,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju status [--json]` | M0 | takeover entry: stage, gaps, next step, spend |
 | `manju check` | M0 | schema + referential + lock + secret validation |
 | `manju import <files…>` | M0 | register into `imports/` (proxy/thumb/waveform) |
-| `manju build [--target …] [--gen …] [--regen-stale] [--dry-run]` | M0 | the one-command build |
+| `manju build [--target proxy\|final\|exports\|qc\|audition] [--gen …] [--regen-stale] [--dry-run]` | M0/WP2 | the one-command build; `audition` = audio-first (no video gen) |
 | `manju redo S002 [--candidates N] [--provider X] [--seed N]` | M0 | explicitly remake a shot |
 | `manju select S002 take_03 [--file …]` | M0 | pick a take (or a manual clip) |
 | `manju lock / unlock <shot> <field>` | M0 | value-hash locks (unlock is interactive-only) |
@@ -174,7 +174,14 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju propose <title> --body …` | M2 | file a proposal — the agent's channel for locked-content changes |
 | `manju transcribe <media> [--from-srt / --text]` | M4 | ASR slot: cloud manifest or manual input → SRT |
 | `manju voice <shot>` | M3 | synthesize a new voice take (append-only; newest wins) |
-| `manju explain [--json]` | M4 | why will the next build do what it will do (read-only) |
+| `manju voice <shot> --preview [--text …]` | WP2 | 试听: disposable TTS sample under `.manju/webpreview/tts/` (never a take; cache-keyed) |
+| `manju build --target audition` | WP2 | 先听后看: voice+captions+music on slate video; no picture generation; missing takes allowed |
+| `manju explain [--json] [--cost]` | M4/WP5 | why will the next build do what it will do (read-only); `--cost` adds est_cost totals |
+| `manju impact <shot> [--field … --value …] [--json]` | WP1 | interconnection spine: what a dialogue/field edit stales, recompiles, costs |
+| `manju align <shot> [--from-srt\|--asr]` | WP3 | align imported VO → `<take>.timing.json` (regenerable; free text-anchor default) |
+| `manju align --media VO --shots S001-S012 [--apply]` | WP3 | multi-shot VO split plan/apply (manual takes + batch record) |
+| `manju locale add\|status <lang>` | WP4 | multilingual overlay (lines.yaml + base_hash; picture pipeline shared) |
+| `manju roundtrip <edited.json> [--apply]` | WP6 | flow JianYing skeleton / OTIO edits back as reviewable truth changes |
 | `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
 | `manju auto "一句话" [--agent …]` | M2 | autopilot shell over ANY one-shot agent CLI (claude/codex/gemini/qwen/aider or a custom template) |
 
