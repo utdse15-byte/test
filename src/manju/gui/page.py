@@ -2120,6 +2120,21 @@ _JS = r"""
         },
       });
     });
+    /* WP2 先听后看: audition target — voice+captions on slate, no picture gen */
+    mkBtn("先听后看 (Audition)", "ghost", (btn) => {
+      showPlanModal("build", { target: "audition", gen: "missing" }, {
+        title: "先听后看 — 配音+字幕试听片 (no picture generation)",
+        onConfirm: async () => {
+          const body = { target: "audition", gen: "missing", assume_yes: true };
+          const data = await post(btn, "/api/build", body, "试听片任务已入队");
+          const gate = spendGateOf(data);
+          if (gate) {
+            spendSig = "sync:" + Date.now();
+            showSpendBanner(spendText(gate), body, spendSig);
+          }
+        },
+      });
+    });
     qcBtn = mkBtn("QC", "ghost", (btn) =>
       post(btn, "/api/qc", {}, "QC 任务已入队 (qc queued)"));
     mkBtn("检查 (Check)", "ghost", async (btn) => {
@@ -3454,6 +3469,73 @@ _JS = r"""
     if (ispec) {
       ta.addEventListener("input", scheduleImpact);
       try { runImpact(); } catch (e) { /* prime once on open */ }
+    }
+
+    /* WP2 试听 ▶ — disposable TTS sample via /api/voice/preview (job-borne) */
+    if (ispec && ispec.shot) {
+      const previewRow = el("div", "btnrow");
+      previewRow.style.marginTop = ".35rem";
+      const prevBtn = el("button", "btn ghost", "试听 ▶ (Preview voice)");
+      prevBtn.type = "button";
+      const aud = document.createElement("audio");
+      aud.controls = true;
+      aud.style.display = "none";
+      aud.style.maxWidth = "100%";
+      aud.style.marginTop = ".3rem";
+      prevBtn.addEventListener("click", async () => {
+        prevBtn.disabled = true;
+        try {
+          const text = parseDialogueText(ta.value);
+          const body = { shot: ispec.shot, assume_yes: true };
+          if (text !== null) body.text = text;
+          const r = await apiRaw("POST", "/api/voice/preview", body);
+          if (!r || !r.ok) {
+            toast((r && r.data && r.data.error) || "TTS 不可用", "err");
+            return;
+          }
+          /* job-borne: wait a few polls for done */
+          let job = r.data && r.data.job;
+          const jid = job && job.id;
+          if (jid) {
+            for (let n = 0; n < 40; n++) {
+              await new Promise((res) => setTimeout(res, 400));
+              const st = await api("GET", "/api/jobs");
+              const list = (st && st.jobs) || st || [];
+              const found = (Array.isArray(list) ? list : []).find((j) => j.id === jid);
+              if (found && found.state === "done") {
+                job = found;
+                break;
+              }
+              if (found && (found.state === "failed" || found.state === "error")) {
+                const err = (found.result && found.result.error) || "TTS 不可用";
+                toast(err, "err");
+                return;
+              }
+            }
+          }
+          const res = (job && job.result) || {};
+          if (res.ok === false || res.code === "tts_unavailable") {
+            toast(res.error || "TTS 不可用", "err");
+            return;
+          }
+          const path = res.preview;
+          if (!path) {
+            toast("TTS 不可用", "err");
+            return;
+          }
+          aud.src = "/preview/" + encodeURI(path);
+          aud.style.display = "block";
+          try { await aud.play(); } catch (e) { /* autoplay may block */ }
+          toast(res.cached ? "试听(缓存)" : "试听已合成", "ok");
+        } catch (err) {
+          toast("TTS 不可用", "err");
+        } finally {
+          prevBtn.disabled = false;
+        }
+      });
+      previewRow.appendChild(prevBtn);
+      dlg.appendChild(previewRow);
+      dlg.appendChild(aud);
     }
 
     const errBox = el("div", "ed-errors");

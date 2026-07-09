@@ -504,7 +504,7 @@ def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
 def run_build(
     project: Project,
     *,
-    target: str = "final",  # proxy | final | exports | qc
+    target: str = "final",  # proxy | final | exports | qc | audition
     gen: str = "missing",  # missing | auto | off
     regen_stale: bool = False,
     dry_run: bool = False,
@@ -515,6 +515,7 @@ def run_build(
     on_phase=None,  # Callable[[str], None] — coarse progress ("check"/"render"…)
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
+    lang: str | None = None,  # WP4: locale overlay (None = base, byte-identical)
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
     *content*; this process lock guards the dual-actor scenario — a human
@@ -575,7 +576,7 @@ def run_build(
             project, target=target, gen=gen, regen_stale=regen_stale,
             dry_run=True, force=force, actor=actor,
             assume_yes=assume_yes, mode=mode, on_phase=on_phase,
-            include_unindexed=include_unindexed,
+            include_unindexed=include_unindexed, lang=lang,
         )
     try:
         with build_lock(project.root, actor=actor):
@@ -584,6 +585,7 @@ def run_build(
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, mode=mode, on_phase=on_phase,
                 include_unindexed=include_unindexed, should_cancel=should_cancel,
+                lang=lang,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -636,7 +638,7 @@ def _attach_failures(project: Project, result: BuildResult, since_ts: str) -> No
 def _run_build_phases(
     project: Project,
     *,
-    target: str = "final",  # proxy | final | exports | qc
+    target: str = "final",  # proxy | final | exports | qc | audition
     gen: str = "missing",  # missing | auto | off
     regen_stale: bool = False,
     dry_run: bool = False,
@@ -647,6 +649,7 @@ def _run_build_phases(
     on_phase=None,  # advisory coarse-progress callback (spend cluster)
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
+    lang: str | None = None,  # WP4 locale
 ) -> BuildResult:
     result = BuildResult()
     # goal: honest job cancellation — running total of what THIS build has
@@ -759,8 +762,16 @@ def _run_build_phases(
     # phase below will use, so the estimate and the ask_before/budget gates see
     # the provider that will actually run first (#7).
     # WP2 audition: voice only — never plan/spend video generation.
+    # WP4 lang: video plan empty (shared segments); locale voice only.
     if target == "audition":
         result.plan = _plan_voice(project, gen=gen)
+    elif lang:
+        from .locale_build import plan_locale_voice
+        result.plan = plan_locale_voice(project, lang, gen=gen)
+        result.warnings.append(
+            f"locale build --lang {lang}: picture generation skipped "
+            "(shared segment cache); only locale voice planned"
+        )
     else:
         result.plan = _plan_generation(project, statuses, gen=gen, regen_stale=regen_stale,
                                        else_bias=else_bias)
@@ -1032,33 +1043,49 @@ def _run_build_phases(
     # ---- 2v. voice synthesis (M3): fill MISSING voices via the configured
     # TTS manifest; stale voices are flagged, never redone (§4.3). Synthesis
     # happens BEFORE the timeline compile so fresh voices drive durations (§6)
-    # within the same build.
+    # within the same build. WP4: locale plan rows register under locales/<lang>/.
     if voice_plan:
         _phase("voice")
-        from ..providers.base import ProviderFailure as _PF
-        from ..providers.tts import get_tts_provider
-
-        bible = project.load_bible()
-        for item in voice_plan:
-            # goal: honest job cancellation — same "between per-shot
-            # submissions" checkpoint as the video generation loop above;
-            # should_cancel=None (default) makes this a no-op.
-            _cancel_check(f"配音:{item['shot']}(尚未开始)")
-            shot = project.load_shot(item["shot"])
+        if lang:
+            from .locale_build import synthesize_locale_voices
             try:
-                tts = get_tts_provider(item["provider"])
-                media = tts.synthesize(project, shot, bible)
-            except (_PF, Exception) as exc:
-                result.warnings.append(f"{shot.id}: voice synthesis failed — {exc}")
-                _record(project, "voice", shot.id,
-                        f"配音合成失败({item['provider']})",
+                gen_paths = synthesize_locale_voices(
+                    project, voice_plan, lang=lang, actor=actor,
+                )
+                result.generated.extend(gen_paths)
+            except Exception as exc:
+                result.warnings.append(f"locale voice batch failed — {exc}")
+                _record(project, "voice", lang or "locale",
+                        f"locale 配音失败({lang})",
                         evidence=" ".join(str(exc).split())[:800],
-                        hint="确认 TTS manifest/密钥;或用 manju voice 手动补配音",
-                        actor=actor, detail={"provider": item["provider"]})
-                continue
-            result.generated.append(f"{shot.id}/{media.stem}")
-            append_event(project.root, actor, "voice",
-                         {"shot": shot.id, "take": media.stem, "provider": item["provider"]})
+                        hint=f"manju voice <shot> --lang {lang} --yes",
+                        actor=actor)
+        else:
+            from ..providers.base import ProviderFailure as _PF
+            from ..providers.tts import get_tts_provider
+
+            bible = project.load_bible()
+            for item in voice_plan:
+                # goal: honest job cancellation — same "between per-shot
+                # submissions" checkpoint as the video generation loop above;
+                # should_cancel=None (default) makes this a no-op.
+                _cancel_check(f"配音:{item['shot']}(尚未开始)")
+                shot = project.load_shot(item["shot"])
+                try:
+                    tts = get_tts_provider(item["provider"])
+                    media = tts.synthesize(project, shot, bible)
+                except (_PF, Exception) as exc:
+                    result.warnings.append(f"{shot.id}: voice synthesis failed — {exc}")
+                    _record(project, "voice", shot.id,
+                            f"配音合成失败({item['provider']})",
+                            evidence=" ".join(str(exc).split())[:800],
+                            hint="确认 TTS manifest/密钥;或用 manju voice 手动补配音",
+                            actor=actor, detail={"provider": item["provider"]})
+                    continue
+                result.generated.append(f"{shot.id}/{media.stem}")
+                append_event(project.root, actor, "voice",
+                             {"shot": shot.id, "take": media.stem,
+                              "provider": item["provider"]})
     try:
         from .voice import VoiceState, evaluate_all_voices
 
@@ -1133,6 +1160,8 @@ def _run_build_phases(
 
     # WP2 audition: compile in-memory with slate placeholders for missing
     # takes; NEVER write timeline.json (the real timeline stays gated).
+    # WP4 lang: in-memory locale overlay on base structure; never write base
+    # timeline.json.
     if target == "audition":
         from ..timeline.compiler import compile_timeline, gather_compile_input
 
@@ -1141,6 +1170,7 @@ def _run_build_phases(
                 project, probe_duration_ms,
                 include_unindexed=include_unindexed,
                 allow_missing_takes=True,
+                lang=lang,
             )
             timeline = compile_timeline(cinp)
         except CompileError as exc:
@@ -1155,6 +1185,40 @@ def _run_build_phases(
         result.warnings.append(
             "audition: in-memory timeline (timeline.json untouched); "
             "missing picture takes use slate placeholders"
+        )
+    elif lang:
+        from ..timeline.compiler import compile_timeline, gather_compile_input
+        from .locale_build import apply_locale_overlay
+
+        try:
+            # Prefer existing base timeline (picture windows fixed); else compile
+            base_tl = project.load_timeline()
+            if base_tl is None:
+                cinp = gather_compile_input(
+                    project, probe_duration_ms,
+                    include_unindexed=include_unindexed, lang=None,
+                )
+                base_tl = compile_timeline(cinp)
+            timeline = apply_locale_overlay(project, base_tl, lang)
+            # Also recompile with lang for caption text if base had no captions
+            if not timeline.tracks.captions:
+                cinp = gather_compile_input(
+                    project, probe_duration_ms,
+                    include_unindexed=include_unindexed, lang=lang,
+                )
+                timeline = compile_timeline(cinp)
+        except CompileError as exc:
+            result.ok = False
+            result.errors.append(str(exc))
+            _record(project, "compile", "timeline", f"locale({lang}) 编译失败",
+                    evidence=" ".join(str(exc).split())[:800],
+                    hint=f"确认 locales/{lang}/lines.yaml 与 locale 配音",
+                    actor=actor)
+            return result
+        result.timeline_path = None
+        result.warnings.append(
+            f"locale --lang {lang}: in-memory overlay (base timeline.json untouched); "
+            "video segments reused from shared cache"
         )
     else:
         try:
@@ -1198,9 +1262,14 @@ def _run_build_phases(
     ass_path = None
     if rules.captions.enabled and timeline.tracks.captions:
         _phase("captions")
-        from ..exporters.srt_ass import export_captions
+        if lang:
+            from .locale_build import export_locale_captions
 
-        paths = export_captions(project, timeline)
+            paths = export_locale_captions(project, timeline, lang)
+        else:
+            from ..exporters.srt_ass import export_captions
+
+            paths = export_captions(project, timeline)
         result.captions = {k: project.relpath(v) for k, v in paths.items()}
         ass_path = paths.get("ass")
 
@@ -1228,6 +1297,50 @@ def _run_build_phases(
         result.render_path = project.relpath(out)
         append_event(project.root, actor, "render",
                      {"target": "audition", "output": result.render_path})
+    elif target in ("proxy", "final") and lang and target == "final":
+        _phase("render:final:locale")
+        from ..media.ffmpeg import MediaError as _MediaError
+        from ..media.render import (
+            _read_key_sidecar, _write_key_sidecar, final_content_key, render_timeline,
+        )
+        from .locale_build import newest_locale_final, next_locale_final_path
+
+        try:
+            key = final_content_key(
+                project, timeline, ass_file=ass_path, target="final",
+            )
+            # Fold lang into key so base/locale finals never collide
+            from ..core.hashing import cache_key
+            key = cache_key({"locale": lang, "base_key": key})
+            newest = newest_locale_final(project, lang)
+            if not force and newest is not None and _read_key_sidecar(newest) == key:
+                out = newest
+                result.warnings.append(
+                    f"locale final up-to-date (content key match) — reused {out.name}; "
+                    "video segments shared with base"
+                )
+            else:
+                out_path = next_locale_final_path(project, lang)
+                out = render_timeline(
+                    project, timeline, target="final", out_path=out_path,
+                    ass_file=ass_path, force=True,
+                )
+                _write_key_sidecar(out, key, f"final:{lang}")
+                result.warnings.append(
+                    f"locale --lang {lang}: rendered {project.relpath(out)}; "
+                    "video segment cache shared with base (only ASS+audio differ)"
+                )
+        except _MediaError as exc:
+            result.ok = False
+            result.errors.append(f"locale render: {' '.join(str(exc).split())}")
+            _record(project, "render", f"final:{lang}", "locale 成片渲染失败",
+                    evidence=str(exc)[-1200:],
+                    hint="查看 .manju/logs/render.log",
+                    log_path=".manju/logs/render.log", actor=actor)
+            return result
+        result.render_path = project.relpath(out)
+        append_event(project.root, actor, "render",
+                     {"target": "final", "lang": lang, "output": result.render_path})
     elif target in ("proxy", "final"):
         _phase(f"render:{target}")
         from ..media.render import render_timeline

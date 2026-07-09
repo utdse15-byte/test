@@ -640,10 +640,20 @@ def compile_timeline(inp: CompileInput) -> Timeline:
 # --------------------------------------------------------- project plumbing
 
 
-def _find_voice(project: Project, shot_id: str) -> Path | None:
+def _find_voice(project: Project, shot_id: str, *,
+                lang: str | None = None) -> Path | None:
     """The NEWEST voice take wins: media is append-only (§3), so the highest
     voice_take_NN is the latest decision. (Pre-round-B this picked the oldest
-    — sorted-first — which contradicted the append-only semantics.)"""
+    — sorted-first — which contradicted the append-only semantics.)
+
+    ``lang`` (WP4): look under ``media/gen/<shot>/locales/<lang>/`` first;
+    if empty, fall back to the base voice dir (so a partial locale still
+    compiles). ``lang=None`` is the pre-WP4 path (byte-identical).
+    """
+    if lang:
+        voices = project.voice_takes(shot_id, lang=lang)
+        if voices:
+            return voices[-1][0]
     voices = project.voice_takes(shot_id)
     return voices[-1][0] if voices else None
 
@@ -666,7 +676,8 @@ def _load_voice_timing(voice: Path) -> list[dict] | None:
 
 def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
                           include_unindexed: bool = False,
-                          allow_missing_takes: bool = False) -> CompileInput:
+                          allow_missing_takes: bool = False,
+                          lang: str | None = None) -> CompileInput:
     """Assemble the compiler's input from the project. Raises CompileError
     listing every shot that cannot go on the timeline (missing/unselected).
 
@@ -681,6 +692,9 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
     hard errors. ``True`` (WP2 audition only) inserts slate placeholders
     (``take_name='__slate__'``) so voice-driven durations still compile;
     the real ``timeline.json`` path must never pass this flag.
+
+    ``lang`` (WP4, default None): use locale voice takes + overlay dialogue
+    text for captions. Video takes stay shared. ``None`` is byte-identical.
     """
     from ..build.stale import evaluate_all  # local import: build depends on timeline too
 
@@ -689,11 +703,21 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
     shots: list[ShotInput] = []
     problems: list[str] = []
 
+    def _shot_for_compile(sid: str):
+        shot = project.load_shot(sid)
+        if lang:
+            try:
+                from ..core.locale import overlay_shot_for_voice
+                return overlay_shot_for_voice(project, shot, lang)
+            except Exception:
+                return shot
+        return shot
+
     for status in evaluate_all(project, indexed_only=not include_unindexed):
         if not status.usable:
             if allow_missing_takes:
-                shot = project.load_shot(status.shot_id)
-                voice = _find_voice(project, status.shot_id)
+                shot = _shot_for_compile(status.shot_id)
+                voice = _find_voice(project, status.shot_id, lang=lang)
                 voice_dur = probe_fn(voice) if voice else None
                 # Duration driven by voice + padding when present, else default
                 slate_dur = voice_dur or rules.timing.default_shot_ms
@@ -720,7 +744,7 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
             continue
         take = status.take
         assert take is not None and take.media_path is not None
-        voice = _find_voice(project, status.shot_id)
+        voice = _find_voice(project, status.shot_id, lang=lang)
         take_dur = take.sidecar.probe.duration_ms if take.sidecar.probe else None
         if take_dur is None:
             take_dur = probe_fn(take.media_path)
@@ -750,14 +774,25 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
             take_dur = out_ms - in_ms
         elif in_ms and take_dur is not None:
             take_dur = max(1, take_dur - in_ms)
+        # WP4 duration policy: when a base voice exists, prefer its duration
+        # for the VIDEO slot so locale builds keep segment-cache geometry;
+        # locale voice still drives the voice track source/timing below.
+        voice_for_duration = voice
+        if lang:
+            base_voice = _find_voice(project, status.shot_id, lang=None)
+            if base_voice is not None:
+                voice_for_duration = base_voice
         shots.append(
             ShotInput(
-                shot=project.load_shot(status.shot_id),
+                shot=_shot_for_compile(status.shot_id),
                 take_name=take.name,
                 take_source=project.relpath(take.media_path),
                 take_duration_ms=take_dur,
                 voice_source=project.relpath(voice) if voice else None,
-                voice_duration_ms=probe_fn(voice) if voice else None,
+                voice_duration_ms=(
+                    probe_fn(voice_for_duration) if voice_for_duration else None
+                ),
+                # Locale timing from locale take when present
                 voice_timing=_load_voice_timing(voice) if voice else None,
                 source_in_ms=in_ms,
                 source_out_ms=out_ms,

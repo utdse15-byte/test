@@ -1362,3 +1362,26 @@ this host for some generation tests).
 `register_voice_take(lang=)`, full `--lang` build/voice threading,
 roundtrip trim→virtual inout + mixer apply, phoneme aligner provider
 manifest slot.
+﻿
+---
+
+## 2026-07-09 — Interconnection completion round (post self-check)
+
+**Done:** Closed the honest-boundary gaps left after the first GUIDEINTERCONNECTION
+landing and the self-check FAIL→PASS fixes.
+
+- **WP4 build --lang:** `run_build(..., lang=)`, CLI `manju build --lang en`,
+  `manju voice --missing --lang en`; `locale_build.py` plan/synthesize overlay,
+  captions under `captions/locales/<lang>/`, finals under
+  `renders/final/locales/<lang>/` with content keys that share video segment
+  cache; base `timeline.json` never written by locale builds.
+- **WP6 apply depth:** OTIO Stack-shaped tracks normalized; trim rows →
+  `set_inout` virtual apply; unmatched foreign clips reported; export baselines
+  already on jianying/otio from prior fix.
+- **GUI chrome:** 试听 ▶ in shot editor (`/api/voice/preview`); 「先听后看」
+  button on home (build target=audition); server allowlist includes audition.
+
+**Verified:** `test_locale_roundtrip_gui.py` + interconnection suite green.
+
+**Still partial (honest):** full ffmpeg e2e locale final with live Edge TTS;
+volume/transition mixer apply classes; full 2090 suite on hosts without ffmpeg.

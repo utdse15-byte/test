@@ -141,16 +141,23 @@ def _shot_order_from_jianying(data: dict) -> list[str]:
     return order
 
 
+def _otio_track_list(data: dict) -> list[dict]:
+    """Normalize OTIO tracks: Timeline.tracks may be a Stack (with children)
+    or a bare list of Track objects."""
+    tracks = data.get("tracks")
+    if tracks is None:
+        return []
+    if isinstance(tracks, list):
+        return [t for t in tracks if isinstance(t, dict)]
+    if isinstance(tracks, dict):
+        children = tracks.get("children") or []
+        return [t for t in children if isinstance(t, dict)]
+    return []
+
+
 def _shot_order_from_otio(data: dict) -> list[str]:
     order: list[str] = []
-    tracks = data.get("tracks") or []
-    for tr in tracks:
-        if not isinstance(tr, dict):
-            continue
-        kind = str(tr.get("kind") or tr.get("name") or "").lower()
-        if kind and "video" not in kind and "Video" not in str(tr.get("OTIO_SCHEMA", "")):
-            # still scan children
-            pass
+    for tr in _otio_track_list(data):
         for clip in tr.get("children") or tr.get("clips") or []:
             if not isinstance(clip, dict):
                 continue
@@ -159,15 +166,15 @@ def _shot_order_from_otio(data: dict) -> list[str]:
             shot = None
             if isinstance(manju, dict):
                 shot = manju.get("shot")
-            shot = shot or clip.get("name")
-            if shot and str(shot) not in order and not str(shot).startswith("__"):
-                order.append(str(shot))
+            shot = _normalize_shot_id(shot or clip.get("name"))
+            if shot and shot not in order:
+                order.append(shot)
     return order
 
 
 def _captions_from_otio(data: dict) -> list[dict[str, Any]] | None:
     cues = []
-    for tr in data.get("tracks") or []:
+    for tr in _otio_track_list(data):
         if not isinstance(tr, dict):
             continue
         name = str(tr.get("name") or "").lower()
@@ -261,9 +268,69 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                         "target": "captions/captions.srt",
                         "action": "manual_captions",
                     })
+        # OTIO trim: video clip source_range in-point / duration change
+        def _ms(rt: Any) -> int:
+            if not isinstance(rt, dict):
+                return 0
+            try:
+                return int(
+                    float(rt.get("value", 0)) / float(rt.get("rate", 1) or 1) * 1000
+                )
+            except Exception:
+                return 0
 
-    # Unmatched foreign media — not in our metadata
-    # (simplified: if edited has more video materials than baseline)
+        base_video_children: list[dict] = []
+        if baseline_doc:
+            for btr in _otio_track_list(baseline_doc):
+                bn = str(btr.get("kind") or btr.get("name") or "")
+                if "Video" in bn or "video" in bn.lower():
+                    base_video_children = [
+                        c for c in (btr.get("children") or []) if isinstance(c, dict)
+                    ]
+                    break
+        for tr in _otio_track_list(data):
+            kind_name = str(tr.get("kind") or tr.get("name") or "")
+            if "Video" not in kind_name and "video" not in kind_name.lower():
+                continue
+            children = [c for c in (tr.get("children") or []) if isinstance(c, dict)]
+            for idx, clip in enumerate(children):
+                meta = (clip.get("metadata") or {}).get("manju") or {}
+                shot = _normalize_shot_id(
+                    (meta.get("shot") if isinstance(meta, dict) else None)
+                    or clip.get("name")
+                )
+                take = meta.get("take") if isinstance(meta, dict) else None
+                if not shot:
+                    rows.append({
+                        "class": "unmatched",
+                        "state": "unmatched",
+                        "evidence": {"name": clip.get("name"), "hint": "manju ingest"},
+                        "target": None,
+                        "action": None,
+                    })
+                    continue
+                bclip = base_video_children[idx] if idx < len(base_video_children) else {}
+                sr = clip.get("source_range") or {}
+                bsr = bclip.get("source_range") or {} if isinstance(bclip, dict) else {}
+                in_ms = _ms(sr.get("start_time") or {})
+                dur_ms = _ms(sr.get("duration") or {})
+                bin_ms = _ms(bsr.get("start_time") or {})
+                bdur_ms = _ms(bsr.get("duration") or {})
+                if in_ms != bin_ms or (dur_ms and bdur_ms and dur_ms != bdur_ms):
+                    rows.append({
+                        "class": "trim",
+                        "state": "conflict" if truth_moved else "ok",
+                        "evidence": {
+                            "shot": shot, "take": take,
+                            "from": {"in_ms": bin_ms, "duration_ms": bdur_ms},
+                            "to": {"in_ms": in_ms, "duration_ms": dur_ms,
+                                   "out_ms": in_ms + max(dur_ms, 1)},
+                        },
+                        "target": f"media/gen/{shot}/{take}",
+                        "action": "set_inout",
+                    })
+
+    # Filter no_changes if we only have empty
     if not rows:
         rows.append({
             "class": "no_changes",
@@ -329,16 +396,8 @@ def apply_roundtrip(
                                  {"class": "reorder", "order": new_order})
                 elif row["action"] == "manual_captions":
                     # Takeover: write captions.srt + set mode manual
-                    from ..providers.asr import parse_srt  # noqa: F401
-
-                    cues = []
-                    # Rebuild SRT from all caption_edit rows of this plan
-                    # For simplicity apply this single cue change onto existing
                     srt_path = project.captions_dir / "captions.srt"
                     project.captions_dir.mkdir(parents=True, exist_ok=True)
-                    ev = row["evidence"]
-                    to = ev.get("to") or {}
-                    # Minimal: append/replace one cue file from plan caption rows
                     caption_rows = [
                         r for r in all_rows if r.get("action") == "manual_captions"
                     ]
@@ -347,12 +406,16 @@ def apply_roundtrip(
                         c = cr["evidence"].get("to") or {}
                         start = int(c.get("start_ms", 0))
                         end = int(c.get("end_ms", start + 1000))
+
                         def _ts(ms: int) -> str:
                             h, rem = divmod(ms, 3600000)
                             m, rem = divmod(rem, 60000)
                             s, milli = divmod(rem, 1000)
                             return f"{h:02d}:{m:02d}:{s:02d},{milli:03d}"
-                        lines.append(f"{n}\n{_ts(start)} --> {_ts(end)}\n{c.get('text','')}\n")
+
+                        lines.append(
+                            f"{n}\n{_ts(start)} --> {_ts(end)}\n{c.get('text', '')}\n"
+                        )
                     atomic_write_text(srt_path, "\n".join(lines) + "\n")
                     rules = project.load_rules()
                     if rules.captions.mode != "manual":
@@ -361,6 +424,39 @@ def apply_roundtrip(
                     applied.append({"index": i, "class": "caption_edit"})
                     append_event(project.root, actor, "roundtrip",
                                  {"class": "caption_edit", "cues": len(caption_rows)})
+                elif row["action"] == "set_inout":
+                    from ..media.repair_ops import set_inout_take
+
+                    ev = row.get("evidence") or {}
+                    shot = ev.get("shot")
+                    take = ev.get("take")
+                    to = ev.get("to") or {}
+                    in_ms = int(to.get("in_ms", 0))
+                    out_ms = int(to.get("out_ms") or (in_ms + int(to.get("duration_ms") or 1)))
+                    if not shot or not take:
+                        skipped.append({"index": i, "reason": "trim missing shot/take"})
+                        continue
+                    info = set_inout_take(
+                        project, shot, take, in_ms, out_ms, mode="virtual",
+                    )
+                    # Select the new take
+                    from ..core.writes import select_take_checked
+                    try:
+                        select_take_checked(
+                            project, shot, info.name, actor=actor,
+                            via="roundtrip", action="set_inout",
+                        )
+                    except Exception:
+                        # still applied take; selection may be locked
+                        pass
+                    applied.append({
+                        "index": i, "class": "trim",
+                        "shot": shot, "take": info.name,
+                    })
+                    append_event(project.root, actor, "roundtrip", {
+                        "class": "trim", "shot": shot, "take": info.name,
+                        "in_ms": in_ms, "out_ms": out_ms,
+                    })
                 else:
                     skipped.append({"index": i, "reason": f"unsupported action {row['action']}"})
             except Exception as exc:

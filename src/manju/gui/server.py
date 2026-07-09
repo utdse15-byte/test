@@ -1112,7 +1112,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         target = str(body.get("target") or "final")
         gen = str(body.get("gen") or "missing")
-        if target not in ("proxy", "final", "exports", "qc"):
+        if target not in ("proxy", "final", "exports", "qc", "audition"):
             self._send_error_json(f"unknown target: {target}", 400)
             return
         if gen not in GEN_MODES:

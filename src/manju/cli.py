@@ -870,6 +870,10 @@ def build(
         help="also build shots that exist on disk but are not in "
              "shots/index.yaml order (default: excluded — index order is the "
              "order authority, §5 review #5). `manju check` still warns about them."),
+    lang: Optional[str] = typer.Option(
+        None, "--lang",
+        help="WP4 locale overlay: voice+captions+final under locales/<lang>; "
+             "video segments shared with base (no picture regeneration)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """One-command build: fill gaps → timeline → render → QC → exports (§11).
@@ -898,7 +902,7 @@ def build(
     result = run_build(project, target=target, gen=gen,
                        regen_stale=regen_stale, dry_run=dry_run, force=force,
                        actor=ACTOR, assume_yes=yes, mode=mode,
-                       include_unindexed=include_unindexed)
+                       include_unindexed=include_unindexed, lang=lang)
     if as_json:
         # WP5: dry-run --json emits the same plan envelope as GUI /api/plan
         if dry_run:
@@ -2401,8 +2405,43 @@ def voice(
         if sum(batch_flags) > 1:
             _fail("voice: --shots/--all/--missing are mutually exclusive")
         if lang:
-            _fail("voice: --lang 暂仅支持单镜头 `manju voice S001 --lang en` "
-                  "(batch locale 为 follow-up)")
+            # WP4: locale batch = plan_locale_voice + synthesize_locale_voices
+            from .build.graph import WaitingUser as _WU, spend_gate as _sg
+            from .build.locale_build import plan_locale_voice, synthesize_locale_voices
+
+            plan = plan_locale_voice(project, lang, gen="missing")
+            if shots:
+                want = {s.strip() for s in shots.split(",") if s.strip()}
+                plan = [p for p in plan if p["shot"] in want]
+            if not plan:
+                if as_json:
+                    _emit({"lang": lang, "ran": [], "note": "nothing missing"}, True)
+                else:
+                    typer.echo(f"locale {lang}: 没有缺失的配音")
+                return
+            total = sum(float(p.get("estimated_cost") or 0) for p in plan)
+            cur = next((p.get("currency") for p in plan if p.get("currency")), "CNY")
+            try:
+                if total > 0:
+                    _sg(project, total, cur, assume_yes=yes,
+                        hint=f"确认后重试: manju voice --missing --lang {lang} --yes")
+                gen = synthesize_locale_voices(
+                    project, plan, lang=lang, actor=ACTOR,
+                )
+            except _WU as exc:
+                _fail(str(exc))
+                return
+            except Exception as exc:
+                _fail(" ".join(str(exc).split())[:500])
+                return
+            if as_json:
+                _emit({"lang": lang, "ran": gen, "plan": plan}, True)
+            else:
+                typer.secho(
+                    f"locale {lang}: 合成 {len(gen)} 条 — {', '.join(gen) or '(none)'}",
+                    fg=typer.colors.GREEN,
+                )
+            return
         shot_ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
         try:
             result = voice_batch(project, shots=shot_ids, all_shots=all_shots,
