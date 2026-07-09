@@ -1434,3 +1434,18 @@ Addressed the follow-up analysis after the ai.txt full close:
 5. **multi-shot ASR test:** actually calls `plan_multi_shot(..., asr=...)`.
 6. **caption baseline conflict:** export baseline stores `captions_hash`;
    roundtrip marks caption_edit conflict when human SRT moved since export.
+﻿
+---
+
+## 2026-07-09 — Final trust bar (no scope expand)
+
+1. **Locale captions freshness:** content key now includes base timeline
+   fingerprint, shot order, and cue timing structure — reordering shots or
+   moving cue windows marks locale captions stale.
+2. **Locale final freshness:** recompute failures → `有问题`/`unknown` +
+   `reason` in JSON; never silent `ok`.
+3. **Roundtrip volume/transition v1:** plan+apply for per-clip volume/mute
+   (`source_audio`) and transition_out → `rules.transition_overrides`;
+   unsupported effects stay as skipped with 中文 reason.
+4. **ffmpeg smokes:** audition, JY skeleton reorder+caption, locale final
+   path — `pytest.mark.skipif(not ffmpeg)` so no false "2 failed unrelated".

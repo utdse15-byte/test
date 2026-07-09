@@ -94,6 +94,9 @@ def _video_clip(project: "Project", clip: VideoClip, fps: float) -> dict[str, An
         meta["source_mute"] = True
     elif clip.source_gain_db:
         meta["source_gain_db"] = clip.source_gain_db
+    # WP6: transition_out for roundtrip → rules.transition_overrides
+    if clip.transition_out is not None:
+        meta["transition_out"] = clip.transition_out.model_dump()
     # Round-W (#10): a virtual trim's source_in_ms is the render's real seek —
     # the OTIO source_range must start there too, not always at 0, or the NLE
     # opens a different picture than the one Manju rendered. Default 0 keeps

@@ -322,6 +322,55 @@ def _captions_from_jianying(data: dict) -> list[dict[str, Any]] | None:
     return cues or None
 
 
+def _volume_transition_rows(
+    shot: str,
+    meta: dict[str, Any],
+    bmeta: dict[str, Any],
+    *,
+    truth_moved: bool,
+) -> list[dict[str, Any]]:
+    """Diff per-clip volume/mute and transition_out → plan rows.
+
+    Unsupported rich effects are not invented here; only gain/mute and
+    transition type/duration map to existing truth writers.
+    """
+    out: list[dict[str, Any]] = []
+    state = "conflict" if truth_moved else "ok"
+    # volume / mute
+    new_mute = bool(meta.get("source_mute"))
+    old_mute = bool(bmeta.get("source_mute"))
+    new_gain = float(meta.get("source_gain_db") or 0.0)
+    old_gain = float(bmeta.get("source_gain_db") or 0.0)
+    if new_mute != old_mute or abs(new_gain - old_gain) > 1e-6:
+        out.append({
+            "class": "volume",
+            "state": state,
+            "evidence": {
+                "shot": shot,
+                "from": {"gain_db": old_gain, "mute": old_mute},
+                "to": {"gain_db": new_gain, "mute": new_mute},
+            },
+            "target": f"shots/{shot}.yaml#source_audio",
+            "action": "set_source_audio",
+        })
+    # transition_out → rules.transition_overrides[shot]
+    new_tr = meta.get("transition_out")
+    old_tr = bmeta.get("transition_out")
+    if new_tr != old_tr:
+        out.append({
+            "class": "transition",
+            "state": state,
+            "evidence": {
+                "shot": shot,
+                "from": old_tr,
+                "to": new_tr,
+            },
+            "target": "timeline/rules.yaml#transition_overrides",
+            "action": "set_transition_override",
+        })
+    return out
+
+
 def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
     edited_path = Path(edited_path)
     if not edited_path.exists():
@@ -479,6 +528,55 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                         "target": f"media/gen/{shot}/{take}",
                         "action": "set_inout",
                     })
+                # volume / mute / transition (OTIO manju metadata)
+                bmeta = ((bclip.get("metadata") or {}).get("manju")
+                         if isinstance(bclip, dict) else {}) or {}
+                rows.extend(_volume_transition_rows(
+                    shot, meta if isinstance(meta, dict) else {},
+                    bmeta if isinstance(bmeta, dict) else {},
+                    truth_moved=truth_moved,
+                ))
+
+    # JianYing: volume/mute/transition on video track segments
+    if kind == "jianying":
+        base_segs: list[dict] = []
+        if baseline_doc:
+            for tr in (baseline_doc.get("tracks") or []):
+                if isinstance(tr, dict) and str(tr.get("type") or "") == "video":
+                    base_segs = [s for s in (tr.get("segments") or [])
+                                 if isinstance(s, dict)]
+                    break
+        for tr in (data.get("tracks") or []):
+            if not isinstance(tr, dict) or str(tr.get("type") or "") != "video":
+                continue
+            for idx, seg in enumerate(tr.get("segments") or []):
+                if not isinstance(seg, dict):
+                    continue
+                meta = seg.get("manju") or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                # Also derive mute/gain from JianYing volume field if manju absent
+                if "source_mute" not in meta and seg.get("muted"):
+                    meta = {**meta, "source_mute": True}
+                if "source_gain_db" not in meta and "volume" in seg and not seg.get("muted"):
+                    # reverse approx: dB ≈ 20*log10(vol) for vol>0
+                    try:
+                        vol = float(seg["volume"])
+                        if vol > 0:
+                            import math
+                            meta = {**meta, "source_gain_db": round(20 * math.log10(vol), 2)}
+                    except Exception:
+                        pass
+                shot = _normalize_shot_id(meta.get("shot"))
+                if not shot:
+                    continue
+                bseg = base_segs[idx] if idx < len(base_segs) else {}
+                bmeta = (bseg.get("manju") if isinstance(bseg, dict) else {}) or {}
+                if not isinstance(bmeta, dict):
+                    bmeta = {}
+                rows.extend(_volume_transition_rows(
+                    shot, meta, bmeta, truth_moved=truth_moved,
+                ))
 
     # Filter no_changes if we only have empty
     if not rows:
@@ -641,8 +739,65 @@ def apply_roundtrip(
                         "class": "trim", "shot": shot, "take": info.name,
                         "in_ms": in_ms, "out_ms": out_ms,
                     })
+                elif row["action"] == "set_source_audio":
+                    # Direct shot write (already under build_lock — avoid
+                    # apply_mixer's nested lock). Same truth field mixer uses.
+                    from ..core.models import SourceAudio
+
+                    ev = row.get("evidence") or {}
+                    shot = ev.get("shot")
+                    to = ev.get("to") or {}
+                    if not shot:
+                        skipped.append({"index": i, "reason": "volume missing shot"})
+                        continue
+                    sa = SourceAudio.model_validate({
+                        "gain_db": float(to.get("gain_db") or 0.0),
+                        "mute": bool(to.get("mute")),
+                    })
+
+                    def _set_sa(d, _sa=sa.model_dump()):
+                        d["source_audio"] = _sa
+
+                    project.update_shot_raw(shot, _set_sa)
+                    applied.append({"index": i, "class": "volume", "shot": shot})
+                    append_event(project.root, actor, "roundtrip", {
+                        "class": "volume", "shot": shot, "to": to,
+                    })
+                elif row["action"] == "set_transition_override":
+                    from ..core.models import TransitionSpec
+
+                    ev = row.get("evidence") or {}
+                    shot = ev.get("shot")
+                    to = ev.get("to")
+                    if not shot:
+                        skipped.append({"index": i, "reason": "transition missing shot"})
+                        continue
+                    rules = project.load_rules()
+                    overrides = dict(rules.transition_overrides or {})
+                    if to is None:
+                        overrides[shot] = None  # explicit hard cut
+                    elif isinstance(to, dict):
+                        overrides[shot] = TransitionSpec.model_validate(to)
+                    else:
+                        skipped.append({
+                            "index": i,
+                            "reason": "unsupported transition payload",
+                        })
+                        continue
+                    rules.transition_overrides = overrides
+                    project.save_rules(rules)
+                    applied.append({
+                        "index": i, "class": "transition", "shot": shot,
+                    })
+                    append_event(project.root, actor, "roundtrip", {
+                        "class": "transition", "shot": shot, "to": to,
+                    })
                 else:
-                    skipped.append({"index": i, "reason": f"unsupported action {row['action']}"})
+                    skipped.append({
+                        "index": i,
+                        "reason": f"unsupported action {row['action']} "
+                                  f"(effects/keyframes/speed not in v1)",
+                    })
             except Exception as exc:
                 skipped.append({"index": i, "reason": str(exc)[:200]})
 

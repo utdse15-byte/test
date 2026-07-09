@@ -120,6 +120,16 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
         # window so JianYing does not think the file is shorter than what the
         # segment reads.
         in_us = _us(clip.source_in_ms)
+        # WP6: deterministic round-trip identity (+ volume/transition stamps)
+        manju_v: dict[str, Any] = {
+            "shot": clip.shot, "take": clip.take, "kind": "video",
+        }
+        if clip.source_mute:
+            manju_v["source_mute"] = True
+        elif clip.source_gain_db:
+            manju_v["source_gain_db"] = float(clip.source_gain_db)
+        if clip.transition_out is not None:
+            manju_v["transition_out"] = clip.transition_out.model_dump()
         video_materials.append(
             {
                 "id": mat_id,
@@ -129,8 +139,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "duration": in_us + dur_us,
                 "width": width,
                 "height": height,
-                # WP6: deterministic round-trip identity (uuid5 unaffected)
-                "manju": {"shot": clip.shot, "take": clip.take, "kind": "video"},
+                "manju": manju_v,
             }
         )
         seg: dict[str, Any] = {
@@ -138,7 +147,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
             "material_id": mat_id,
             "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
             "source_timerange": {"start": in_us, "duration": dur_us},
-            "manju": {"shot": clip.shot, "take": clip.take, "kind": "video"},
+            "manju": dict(manju_v),
         }
         # Round-T: the footage's OWN audio level/mute rides the video segment,
         # emitted ONLY when non-default so a project that never touches it exports

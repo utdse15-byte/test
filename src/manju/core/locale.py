@@ -166,9 +166,41 @@ def _locale_voice_state(project: Project, lang: str, shot_id: str,
         return "fresh" if sc else "manual"
 
 
+def _base_timeline_caption_structure(project: Project) -> dict[str, Any]:
+    """Structure that shapes locale caption timing: fingerprint, shot order,
+    and per-cue windows from the BASE timeline (not locale text)."""
+    out: dict[str, Any] = {
+        "shot_order": list(project.shot_ids()),
+        "compiled_from": None,
+        "cues": [],
+    }
+    try:
+        tl = project.load_timeline()
+    except Exception:
+        tl = None
+    if tl is None:
+        return out
+    out["compiled_from"] = tl.meta.compiled_from or None
+    out["cues"] = [
+        {
+            "shot": c.shot or "",
+            "start_ms": c.start_ms,
+            "end_ms": c.end_ms,
+            "speaker": c.speaker or "",
+        }
+        for c in (tl.tracks.captions or [])
+    ]
+    return out
+
+
 def _locale_lines_content_key(project: Project, lang: str) -> str:
-    """Hash of lines.yaml + caption rules — moves when translation or style moves."""
-    from ..core.hashing import hash_value
+    """Hash for locale caption freshness.
+
+    Includes translation lines + caption rules + voices.yaml AND the base
+    timeline fingerprint / shot order / cue timing structure — so reordering
+    shots or changing cue windows marks locale captions stale even when
+    English text is unchanged.
+    """
     try:
         rules = project.load_rules().captions.model_dump()
     except Exception:
@@ -177,18 +209,19 @@ def _locale_lines_content_key(project: Project, lang: str) -> str:
         "lines": load_lines(project, lang),
         "captions_rules": rules,
         "voices": load_voices(project, lang),
+        "base_timeline": _base_timeline_caption_structure(project),
     })
 
 
 def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
-    """Caption/final freshness via content keys when possible, else presence.
+    """Caption/final freshness via content keys when possible.
 
-    - captions: compare sidecar ``captions.key.json`` (written at locale
-      caption export) to current lines/rules/voices hash.
-    - final: compare newest final's ``.key.json`` to a recomputed locale
-      content key when a base timeline exists; else presence only.
+    - captions: sidecar ``captions.key.json`` vs current full key (lines +
+      base timeline structure + rules).
+    - final: newest final ``.key.json`` vs recomputed locale content key.
+      On recompute failure → ``有问题`` / ``unknown`` with ``reason`` — never
+      silently ``ok``.
     """
-    from ..core.hashing import hash_value
     from ..media.render import _read_key_sidecar
 
     cap_dir = project.captions_dir / "locales" / lang
@@ -196,17 +229,29 @@ def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
     ass = cap_dir / "captions.ass"
     cap_key_path = cap_dir / "captions.key.json"
     expected_cap = _locale_lines_content_key(project, lang)
+    cap_reason: str | None = None
     if not srt.exists():
         cap_fresh = "missing"
+        cap_reason = "captions.srt absent"
     elif cap_key_path.exists():
         try:
             stored = json_loads_key(cap_key_path)
-            cap_fresh = "ok" if stored == expected_cap else "stale"
-        except Exception:
-            cap_fresh = "ok" if ass.exists() else "有问题"
+            if stored == expected_cap:
+                cap_fresh = "ok"
+            else:
+                cap_fresh = "stale"
+                cap_reason = "content key differs (lines/timeline/rules moved)"
+        except Exception as exc:
+            cap_fresh = "有问题"
+            cap_reason = f"captions.key.json unreadable: {' '.join(str(exc).split())[:120]}"
     else:
-        # No sidecar yet (pre-key exports): presence only, labeled honestly
-        cap_fresh = "ok" if ass.exists() else "missing"
+        # No sidecar: presence-only, labeled honestly as unknown key
+        if ass.exists():
+            cap_fresh = "unknown"
+            cap_reason = "no captions.key.json — presence only, re-export locale captions"
+        else:
+            cap_fresh = "missing"
+            cap_reason = "captions.ass absent"
 
     final_dir = project.final_dir / "locales" / lang
     finals = list(final_dir.glob("final_v*.mp4")) if final_dir.exists() else []
@@ -220,29 +265,40 @@ def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
         ]
         newest = max(versions, key=lambda t: t[0])[1] if versions else None
     final_fresh = "missing"
+    final_reason: str | None = "no locale final" if newest is None else None
     if newest is not None:
         existing = _read_key_sidecar(newest)
         if existing is None:
             final_fresh = "有问题"
+            final_reason = "final exists but .key.json missing"
         else:
-            # Recompute locale final key when possible
             try:
                 from ..build.locale_build import apply_locale_overlay
                 from ..core.hashing import cache_key
                 from ..media.render import final_content_key
                 tl = project.load_timeline()
-                if tl is not None:
+                if tl is None:
+                    final_fresh = "unknown"
+                    final_reason = "no base timeline.json to recompute final key"
+                else:
                     over = apply_locale_overlay(project, tl, lang)
                     ass_p = ass if ass.exists() else None
                     base_key = final_content_key(
                         project, over, ass_file=ass_p, target="final",
                     )
                     want = cache_key({"locale": lang, "base_key": base_key})
-                    final_fresh = "ok" if existing == want else "stale"
-                else:
-                    final_fresh = "ok"  # presence + key file, no timeline to recompute
-            except Exception:
-                final_fresh = "ok"  # degrade to presence
+                    if existing == want:
+                        final_fresh = "ok"
+                        final_reason = None
+                    else:
+                        final_fresh = "stale"
+                        final_reason = "final content key differs"
+            except Exception as exc:
+                final_fresh = "有问题"
+                final_reason = (
+                    f"cannot recompute final key: "
+                    f"{' '.join(str(exc).split())[:160]}"
+                )
 
     return {
         "captions": {
@@ -250,10 +306,12 @@ def _locale_artifact_freshness(project: Project, lang: str) -> dict[str, Any]:
             "ass": project.relpath(ass) if ass.exists() else None,
             "freshness": cap_fresh,
             "content_key": expected_cap,
+            **({"reason": cap_reason} if cap_reason else {}),
         },
         "final": {
             "path": project.relpath(newest) if newest else None,
             "freshness": final_fresh,
+            **({"reason": final_reason} if final_reason else {}),
         },
     }
 
