@@ -129,6 +129,8 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "duration": in_us + dur_us,
                 "width": width,
                 "height": height,
+                # WP6: deterministic round-trip identity (uuid5 unaffected)
+                "manju": {"shot": clip.shot, "take": clip.take, "kind": "video"},
             }
         )
         seg: dict[str, Any] = {
@@ -136,6 +138,7 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
             "material_id": mat_id,
             "target_timerange": {"start": _us(clip.start_ms), "duration": dur_us},
             "source_timerange": {"start": in_us, "duration": dur_us},
+            "manju": {"shot": clip.shot, "take": clip.take, "kind": "video"},
         }
         # Round-T: the footage's OWN audio level/mute rides the video segment,
         # emitted ONLY when non-default so a project that never touches it exports
@@ -381,5 +384,19 @@ def export_jianying(project: "Project", timeline: Timeline) -> Path:
     write_json(draft_path, draft)
 
     problems = lint_draft(draft_path, project)
-    atomic_write_text(draft_dir / "export_report.md", _render_report(draft_path, problems))
+    report = _render_report(draft_path, problems)
+    # WP6: name the skeleton as the round-trip carrier
+    report = (report.rstrip() + "\n\n## Round-trip\n"
+              "编辑本 skeleton (`draft_content.json`) 后可用 "
+              "`manju roundtrip <path>` 回写;原生草稿不可回环。\n")
+    atomic_write_text(draft_dir / "export_report.md", report)
+    # WP6: baseline next to export for diff isolation
+    try:
+        from ..build.roundtrip import write_baseline
+        write_baseline(
+            project, "jianying", config.name, draft,
+            compiled_from=timeline.meta.compiled_from or "",
+        )
+    except Exception:
+        pass  # baseline is derived; never fail export
     return draft_path

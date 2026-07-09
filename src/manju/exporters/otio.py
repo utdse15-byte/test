@@ -187,4 +187,13 @@ def export_otio(project: "Project", timeline: Timeline) -> Path:
 
     out = project.exports_dir / "otio" / f"{config.name}.otio"
     write_json(out, doc)
+    # WP6: baseline for round-trip (derived, never fails export)
+    try:
+        from ..build.roundtrip import write_baseline
+        write_baseline(
+            project, "otio", out.stem, doc,
+            compiled_from=str(timeline.meta.compiled_from or ""),
+        )
+    except Exception:
+        pass
     return out

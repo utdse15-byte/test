@@ -146,7 +146,9 @@ def test_cli_lock_refuses_when_build_locked(tmp_project, add_shot, monkeypatch):
     monkeypatch.chdir(tmp_project.root)
     lock = _held(tmp_project)
     try:
-        result = runner.invoke(app, ["lock", "S001", "duration"])
+        # --yes clears WP5 lock_change ask_before so the refusal we assert
+        # is the build_lock contention, not the honesty gate.
+        result = runner.invoke(app, ["lock", "S001", "duration", "--yes"])
         assert result.exit_code != 0
         assert _busy(result.output)
     finally:

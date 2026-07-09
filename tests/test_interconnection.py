@@ -218,3 +218,67 @@ def test_roundtrip_plan_no_changes(tmp_project, add_shot, tmp_path):
     plan = plan_roundtrip(tmp_project, edited)
     assert plan["kind"] == "otio"
     assert any(r.get("class") == "no_changes" for r in plan["rows"])
+
+
+def test_jianying_shot_normalize_and_export_baseline(tmp_project, add_shot, make_take):
+    from manju.build.roundtrip import _shot_order_from_jianying
+    from manju.core.models import (
+        Timeline, TimelineMeta, TimelineTracks, VideoClip,
+    )
+    from manju.core.spec import compute_spec_hash
+    from manju.exporters.jianying import export_jianying
+
+    assert _shot_order_from_jianying({
+        "materials": {"videos": [
+            {"material_name": "S001/take_01"},
+            {"manju": {"shot": "S002", "take": "take_01"}},
+        ]}
+    }) == ["S001", "S002"]
+
+    shot = add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001",
+                     compute_spec_hash(shot, tmp_project.load_bible()))
+    tl = Timeline(
+        meta=TimelineMeta(compiled_from="fp1"),
+        fps=24, width=1080, height=1920, duration_ms=1000,
+        tracks=TimelineTracks(video=[
+            VideoClip(shot="S001", take=take.name, source=f"media/gen/S001/{take.name}.mp4",
+                      start_ms=0, duration_ms=1000),
+        ]),
+    )
+    # material path must resolve inside project
+    media = tmp_project.root / "media" / "gen" / "S001" / f"{take.name}.mp4"
+    media.parent.mkdir(parents=True, exist_ok=True)
+    if not media.exists():
+        media.write_bytes(b"fake")
+    path = export_jianying(tmp_project, tl)
+    assert path.exists()
+    baseline = tmp_project.root / "exports" / "jianying" / ".baseline" / f"{tmp_project.load_config().name}.json"
+    assert baseline.exists(), "export must write WP6 baseline"
+    draft = json.loads(path.read_text(encoding="utf-8"))
+    mats = (draft.get("materials") or {}).get("videos") or []
+    assert mats and mats[0].get("manju", {}).get("shot") == "S001"
+
+
+def test_locale_register_voice_lang_path(tmp_project, add_shot, tmp_path):
+    from manju.core.models import VoiceTakeSidecar
+    from manju.core.locale import add_locale, load_lines
+    from manju.core.yamlio import write_yaml
+
+    add_shot(tmp_project, "S001")
+    add_locale(tmp_project, "en")
+    lines = load_lines(tmp_project, "en")
+    lines["S001"]["text"] = "Hello"
+    write_yaml(tmp_project.root / "locales" / "en" / "lines.yaml", lines)
+
+    media = tmp_path / "v.wav"
+    media.write_bytes(b"RIFF" + b"\x00" * 20)
+    dest = tmp_project.register_voice_take(
+        "S001", media,
+        VoiceTakeSidecar(provider="test", voice_hash="sha256:x"),
+        lang="en",
+    )
+    assert "locales" in dest.parts and "en" in dest.parts
+    # base voice_takes still empty
+    assert tmp_project.voice_takes("S001") == []
+    assert len(tmp_project.voice_takes("S001", lang="en")) == 1

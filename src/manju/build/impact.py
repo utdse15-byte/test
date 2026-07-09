@@ -449,6 +449,27 @@ def impact_report(
         project, cost_shot, need_video=need_video, need_voice=need_voice
     )
 
+    # WP4: which locale lines would flip to 翻译过期 if base dialogue moves
+    locales_section: dict[str, Any] = {"affected": []}
+    if field is not None and str(field).startswith("dialogue."):
+        try:
+            from ..core.locale import line_status, list_locales
+
+            for lg in list_locales(project):
+                st = line_status(project, lg, shot_id)
+                # After base dialogue change, any non-missing line becomes 翻译过期
+                if st.get("state") in ("ok", "翻译过期") and st.get("text"):
+                    locales_section["affected"].append({
+                        "lang": lg, "would_become": "翻译过期",
+                        "text": st.get("text"),
+                    })
+                elif st.get("state") == "missing":
+                    locales_section["affected"].append({
+                        "lang": lg, "would_become": "missing",
+                    })
+        except Exception:
+            pass
+
     return {
         "shot": shot_id,
         "field": field,
@@ -459,6 +480,7 @@ def impact_report(
         "renders": renders_out,
         "exports": {"stale_after": export_stale},
         "cost": cost,
+        "locales": locales_section,
     }
 
 

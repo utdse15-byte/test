@@ -91,6 +91,20 @@ def write_baseline(project: Project, kind: str, name: str, document: dict,
     return path
 
 
+def _normalize_shot_id(raw: Any) -> str | None:
+    """Extract a bare shot id from exporter labels like ``S001/take_01`` or
+    stamped ``manju.shot`` fields."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.startswith("__"):
+        return None
+    # material_name / path style: "S001/take_01" or "S001\\take_01"
+    if "/" in s or "\\" in s:
+        s = s.replace("\\", "/").split("/")[0].strip()
+    return s or None
+
+
 def _shot_order_from_jianying(data: dict) -> list[str]:
     """Best-effort shot order from skeleton materials/tracks metadata."""
     order: list[str] = []
@@ -105,9 +119,25 @@ def _shot_order_from_jianying(data: dict) -> list[str]:
             shot = None
             if isinstance(meta, dict):
                 shot = meta.get("shot") or meta.get("shot_id")
-            shot = shot or v.get("shot") or v.get("material_name") or v.get("name")
-            if shot and str(shot) not in order and not str(shot).startswith("__"):
-                order.append(str(shot))
+            if not shot:
+                shot = v.get("shot") or v.get("material_name") or v.get("name")
+            shot = _normalize_shot_id(shot)
+            if shot and shot not in order:
+                order.append(shot)
+    # Also walk video track segments when materials lack manju stamps
+    for track in (data.get("tracks") or []):
+        if not isinstance(track, dict):
+            continue
+        for seg in track.get("segments") or []:
+            if not isinstance(seg, dict):
+                continue
+            meta = seg.get("manju") or {}
+            shot = _normalize_shot_id(
+                (meta.get("shot") if isinstance(meta, dict) else None)
+                or seg.get("shot")
+            )
+            if shot and shot not in order:
+                order.append(shot)
     return order
 
 

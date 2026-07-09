@@ -2342,6 +2342,10 @@ def voice(
              "(never a take; cache-keyed by text+voice — WP2/R19)"),
     text: Optional[str] = typer.Option(
         None, "--text", help="--preview: override the dialogue text for this sample"),
+    lang: Optional[str] = typer.Option(
+        None, "--lang",
+        help="WP4 locale overlay: synthesize into media/gen/<shot>/locales/<lang>/ "
+             "using locales/<lang>/lines.yaml text (picture pipeline shared)"),
     yes: bool = typer.Option(False, "--yes", "-y",
                              help="approve ask_before-gated spend (§8.3)"),
     as_json: bool = typer.Option(False, "--json"),
@@ -2358,6 +2362,9 @@ def voice(
     `--preview` (WP2): 试听 — write a throwaway sample under
     ``.manju/webpreview/tts/``; second call is a cache hit. Never creates a
     file under ``media/gen/``.
+
+    `--lang en` (WP4): voice the locale overlay text into a per-locale take
+    directory; base project picture/takes stay untouched.
 
     A priced TTS synthesis stops as waiting_user unless --yes — the same §8.3
     ask_before gate build and redo enforce (R7 spend-gate hole closure)."""
@@ -2393,6 +2400,9 @@ def voice(
             _fail("voice: a positional shot id is mutually exclusive with --shots/--all/--missing")
         if sum(batch_flags) > 1:
             _fail("voice: --shots/--all/--missing are mutually exclusive")
+        if lang:
+            _fail("voice: --lang 暂仅支持单镜头 `manju voice S001 --lang en` "
+                  "(batch locale 为 follow-up)")
         shot_ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
         try:
             result = voice_batch(project, shots=shot_ids, all_shots=all_shots,
@@ -2410,6 +2420,15 @@ def voice(
         _fail("voice: 要给哪个镜头配音?给一个镜头 id(`manju voice S002`),"
               "或用批量选择器 (--missing / --all / --shots S001,S003)。")
     shot = project.load_shot(shot_id)
+    if lang:
+        from .core.locale import load_lines, overlay_shot_for_voice
+
+        lines = load_lines(project, lang)
+        entry = lines.get(shot_id) or {}
+        if not str(entry.get("text") or "").strip():
+            _fail(f"{shot_id}: locale {lang} 无译文 — 先填 "
+                  f"locales/{lang}/lines.yaml 的 text,或 manju locale status {lang}")
+        shot = overlay_shot_for_voice(project, shot, lang)
     if not shot.dialogue.text:
         _fail(f"{shot_id} has no dialogue.text to voice — 该镜头没有台词,配音无从下手。"
               f"在 shots/{shot_id}.yaml 里写 dialogue.text,再运行 `manju voice {shot_id}`。")
@@ -2419,8 +2438,23 @@ def voice(
         cost = getattr(manifest, "cost", None) if manifest is not None else None
         if cost is not None:
             spend_gate(project, cost.per_call, cost.currency, assume_yes=yes,
-                       hint=f"确认后重试:manju voice {shot_id} --yes")
-        media = tts.synthesize(project, shot, project.load_bible())
+                       hint=f"确认后重试:manju voice {shot_id} --yes"
+                            + (f" --lang {lang}" if lang else ""))
+        # WP4: inject lang into register_voice_take without forking providers
+        if lang:
+            _orig_reg = project.register_voice_take
+
+            def _reg_lang(sid, media_file, sidecar, **kw):
+                kw.setdefault("lang", lang)
+                return _orig_reg(sid, media_file, sidecar, **kw)
+
+            project.register_voice_take = _reg_lang  # type: ignore[method-assign]
+            try:
+                media = tts.synthesize(project, shot, project.load_bible())
+            finally:
+                project.register_voice_take = _orig_reg  # type: ignore[method-assign]
+        else:
+            media = tts.synthesize(project, shot, project.load_bible())
     except (TtsUnavailable, WaitingUser) as exc:
         _fail(str(exc))
     append_event(project.root, ACTOR, "voice",

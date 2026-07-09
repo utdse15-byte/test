@@ -83,7 +83,8 @@ def test_select_refuses_traversal_shot_id_cleanly(in_project, tmp_path):
 def test_lock_json_returns_hash_and_tamper_fails_check(in_project, add_shot):
     add_shot(in_project, "S001")
 
-    result = runner.invoke(app, ["lock", "S001", "dialogue.text", "--json"])
+    # WP5: default ask_before includes lock_change — honest gate needs --yes
+    result = runner.invoke(app, ["lock", "S001", "dialogue.text", "--yes", "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["shot"] == "S001" and data["field"] == "dialogue.text"
@@ -98,6 +99,15 @@ def test_lock_json_returns_hash_and_tamper_fails_check(in_project, add_shot):
     )
     tampered = runner.invoke(app, ["check"])
     assert tampered.exit_code != 0
+
+
+def test_lock_change_gate_requires_yes(in_project, add_shot):
+    """WP5: lock_change in default ask_before is no longer inert."""
+    add_shot(in_project, "S001")
+    blocked = runner.invoke(app, ["lock", "S001", "dialogue.text", "--json"])
+    assert blocked.exit_code != 0
+    out = blocked.output or ""
+    assert "waiting_user" in out or "lock_change" in out
 
 
 def test_import_json_copies_and_never_overwrites(in_project, tmp_path):

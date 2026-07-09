@@ -1305,9 +1305,10 @@ at 66cf442; every mutation path stayed on the checked-write/lock conventions.
 
 ## 2026-07-09 — Interconnection & Trust (GUIDEINTERCONNECTION WP1–WP7)
 
-**Done:** Closed the seven gaps in GUIDEINTERCONNECTION.md so script ↔ voice
-↔ captions ↔ timeline feel like one system, and every spend answers the same
-transparency questions.
+**Done:** Landed GUIDEINTERCONNECTION.md WP1–WP7 machinery so script ↔ voice
+↔ captions ↔ timeline share one impact spine and spend answers one plan shape.
+Not every guide acceptance line is green end-to-end yet — see honest
+boundaries below (WP4/WP6/GUI chrome remain partial).
 
 - **WP1 impact spine.** `CaptionLine.shot` stamped by the compiler (both
   timed and weighted-split paths); shared `timeline/cuemap.py` (stamped

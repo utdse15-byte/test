@@ -500,19 +500,38 @@ class Project:
 
     # ----------------------------------------------------------- voice takes
 
-    def voice_takes(self, shot_id: str) -> list[tuple[Path, "VoiceTakeSidecar | None"]]:
+    def _voice_takes_dir(self, shot_id: str, lang: str | None = None) -> Path:
+        """Base voice dir is ``media/gen/<shot>/`` (byte-identical default).
+        Locale overlay: ``media/gen/<shot>/locales/<lang>/`` (WP4)."""
+        base = self.takes_dir(shot_id)
+        if not lang:
+            return base
+        # Safe segment only (reuse shot id validation spirit)
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(lang))
+        return base / "locales" / safe
+
+    def voice_takes(self, shot_id: str, *,
+                    lang: str | None = None
+                    ) -> list[tuple[Path, "VoiceTakeSidecar | None"]]:
         """Voice takes for a shot, OLDEST FIRST (append-only numbering); the
         newest one is what the compiler uses. A media file without a sidecar
-        (hand-dropped) pairs with None — manual voice, never auto-invalidated."""
+        (hand-dropped) pairs with None — manual voice, never auto-invalidated.
+
+        ``lang=None`` (default) scans the base take dir only — projects with
+        no locales stay byte-identical. ``lang=<code>`` scans the per-locale
+        overlay directory (WP4)."""
         from .models import VoiceTakeSidecar
 
-        tdir = self.takes_dir(shot_id)
+        tdir = self._voice_takes_dir(shot_id, lang)
         if not tdir.exists():
             return []
         results: list[tuple[Path, VoiceTakeSidecar | None]] = []
         audio_exts = (".wav", ".mp3", ".m4a", ".flac")
         for media in sorted(tdir.glob("voice_take_*.*")) + sorted(tdir.glob("voice.*")):
             if media.suffix.lower() not in audio_exts:
+                continue
+            # Skip nested locales/* when scanning base (lang=None)
+            if lang is None and "locales" in media.parts:
                 continue
             sidecar_path = tdir / f"{media.stem}.sidecar.yaml"
             sidecar = None
@@ -524,27 +543,33 @@ class Project:
             results.append((media, sidecar))
         return results
 
-    def next_voice_take_name(self, shot_id: str) -> str:
+    def next_voice_take_name(self, shot_id: str, *, lang: str | None = None) -> str:
         nums = [
             int(m.group(1))
-            for media, _ in self.voice_takes(shot_id)
+            for media, _ in self.voice_takes(shot_id, lang=lang)
             if (m := re.match(r"voice_take_(\d+)$", media.stem))
         ]
         return f"voice_take_{(max(nums, default=0) + 1):02d}"
 
     def register_voice_take(self, shot_id: str, media_file: Path,
-                            sidecar: "VoiceTakeSidecar") -> Path:
+                            sidecar: "VoiceTakeSidecar", *,
+                            lang: str | None = None) -> Path:
         """Append-only registration of a generated voice take. The sidecar
         file is <name>.sidecar.yaml (NOT <name>.yaml, which would collide with
-        the video-take sidecar namespace scanned by takes())."""
+        the video-take sidecar namespace scanned by takes()).
+
+        ``lang`` (WP4, default None): register under
+        ``media/gen/<shot>/locales/<lang>/`` so base and locale voices never
+        clobber each other. ``lang=None`` keeps existing paths byte-identical.
+        """
         from datetime import datetime, timezone
 
         media_file = Path(media_file)
         if not media_file.exists():
             raise ProjectError(f"voice media not found: {media_file}")
-        tdir = self.takes_dir(shot_id)
+        tdir = self._voice_takes_dir(shot_id, lang)
         tdir.mkdir(parents=True, exist_ok=True)
-        name = self.next_voice_take_name(shot_id)
+        name = self.next_voice_take_name(shot_id, lang=lang)
         dest = tdir / (name + media_file.suffix.lower())
         if dest.exists():
             raise ProjectError(f"refusing to overwrite existing voice take: {dest}")
