@@ -146,7 +146,13 @@ class RuntimeState:
         # on a fresh/already-upgraded DB the column is present and sqlite raises
         # "duplicate column name", which we swallow. The ledger is §3-disposable,
         # so a failed upgrade degrades (no estimates) but never raises.
-        for column, coltype in (("estimated_cost", "REAL"), ("failure_id", "TEXT")):
+        # DR03C: ``attempt_id`` cross-references the stage_attempt event that
+        # produced this take (events.jsonl is the attempt HISTORY; this column is
+        # only a convenience index into it). Same idempotent additive migration
+        # precedent as #47 / estimated_cost above — a fresh/upgraded DB already
+        # has the column and sqlite raises "duplicate column name", swallowed.
+        for column, coltype in (("estimated_cost", "REAL"), ("failure_id", "TEXT"),
+                                ("attempt_id", "TEXT")):
             try:
                 with self._conn:
                     self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {coltype}")
@@ -220,6 +226,7 @@ class RuntimeState:
         error: str | None = None,
         estimated_cost: float | None = None,
         failure_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> int:
         """Append one ledger row (§8.3); return its autoincrement id.
 
@@ -230,13 +237,19 @@ class RuntimeState:
         ``failure_id`` cross-references the structured record in
         ``reports/failures.jsonl`` (goal 10) so the ledger's one-line ``error``
         (what ``manju tasks`` shows) and the full failure evidence never drift —
-        the reason surfaced in the JOB view matches the failure record exactly."""
+        the reason surfaced in the JOB view matches the failure record exactly.
+
+        ``attempt_id`` (DR03C) cross-references the ``stage_attempt`` event in
+        events.jsonl that produced this take, so ``manju tasks`` can surface the
+        same attempt identity the evidence stream carries. ``None`` for legacy
+        rows and for any run recorded outside a build's evidence context."""
         with self._conn:
             cur = self._conn.execute(
                 "INSERT INTO runs "
                 "(ts, shot, provider, params, status, failure_kind, cost, "
-                " currency, remote_job_id, take, error, estimated_cost, failure_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " currency, remote_job_id, take, error, estimated_cost, failure_id, "
+                " attempt_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     self._ts(),
                     shot,
@@ -251,6 +264,7 @@ class RuntimeState:
                     error,
                     None if estimated_cost is None else float(estimated_cost),
                     failure_id,
+                    attempt_id,
                 ),
             )
         return int(cur.lastrowid)

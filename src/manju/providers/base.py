@@ -29,7 +29,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..core.container import Project, TakeInfo
 from ..core.models import ProbeInfo, RemoteJobInfo, ShotSpec, TakeSidecar
@@ -198,6 +198,21 @@ class GenerationRequest:
     # default-absent — a request built the old way never observes it, so the
     # default path (no GUI job cancel wired) is byte-identical.
     should_cancel: Callable[[], bool] | None = None
+    # DR03C run-evidence (additive, evidence-only, default-absent): the per-run
+    # attempt context ``providers.registry.generate_with_fallback`` emits ONE
+    # ``stage_attempt`` event per provider try into when it is present. Set ONLY
+    # by graph's build call sites (``_gen_one``); ``None`` for every direct
+    # provider test / redo-outside-a-run, so the registry emits nothing and the
+    # existing callers/tests are byte-identical. Typed loosely to avoid importing
+    # build/ from providers/ (layering) — it is a ``build.attempts.RunEvidence``.
+    evidence: Any = None
+    # The CURRENT provider try's attempt id, stamped by the registry's evidence
+    # chain just before each ``provider.generate`` call (the handle is pre-minted,
+    # its terminal event lands after). Cloud providers self-record their ledger
+    # row INSIDE generate() — before the registry can note anything — so this is
+    # how ``_on_success``/``_on_failure`` thread the SAME attempt_id onto the
+    # runs row (tasks --json parity for the expensive path, not just local).
+    evidence_attempt_id: str | None = None
 
     def refset(self) -> "RefSet":
         """The resolved :class:`~manju.providers.refs.RefSet` for this shot.
@@ -610,6 +625,7 @@ class CloudProvider(Provider):
                 remote_job_id=job_id,
                 take=",".join(t.name for t in takes) or None,
                 estimated_cost=req.estimated_cost,
+                attempt_id=getattr(req, "evidence_attempt_id", None),
             )
         except (OSError, sqlite3.Error):
             pass
@@ -635,6 +651,7 @@ class CloudProvider(Provider):
                 remote_job_id=job_id,
                 error=exc.message,
                 failure_id=failure_id,
+                attempt_id=getattr(req, "evidence_attempt_id", None),
             )
         except (OSError, sqlite3.Error):
             pass

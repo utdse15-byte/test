@@ -3942,6 +3942,9 @@ def tasks(ctx: typer.Context,
                 # goal 10: link the ledger row to its full failure record — the
                 # one-line reason here matches reports/failures.jsonl exactly.
                 "failure_id": r.get("failure_id"),
+                # DR03C: the stage_attempt id in events.jsonl that produced this
+                # take (null for legacy rows / rebuilt-from-sidecar rows).
+                "attempt_id": r.get("attempt_id"),
             })
         for j in pending:
             pending_out.append({
@@ -4083,6 +4086,52 @@ def tasks_retry(
     if not as_json:
         typer.secho(f"已重试 #{run_id} → {shot_id}: {', '.join(takes)}",
                     fg=typer.colors.GREEN)
+
+
+@tasks_app.command("manifest")
+def tasks_manifest(
+    run_id: str = typer.Argument(..., help="build run id (see `manju build --json`)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Re-materialize + print a run's RunManifest (DR03C).
+
+    The RunManifest (`reports/runs/<run_id>/run.json`) is a DERIVED, deletable
+    projection of the run's attempt evidence in events.jsonl — it is NEVER read
+    by build/resume/cache/rebuild-index, so deleting it costs nothing. This is
+    the user path to rebuild one: it re-derives the manifest from the single
+    events.jsonl attempt stream and prints its path (and, with `--json`, the
+    full document). A run id with no attempt events yields an empty-but-valid
+    manifest — the projection never invents facts from files on disk."""
+    project = _project()
+    from .build.attempts import materialize_run_manifest, read_attempts
+
+    _records, _malformed = read_attempts(project, run_id)
+    path = materialize_run_manifest(project, run_id)
+    rel = project.relpath(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if as_json:
+        _emit({"run_id": run_id, "path": rel, "manifest": data}, True)
+        return
+    typer.secho(f"RunManifest → {rel}", fg=typer.colors.CYAN)
+    typer.echo(f"  terminal_status : {data.get('terminal_status')}")
+    typer.echo(f"  attempts        : {data.get('attempt_count')}"
+               + (f"  (malformed lines: {_malformed})" if _malformed else ""))
+    stages = data.get("stages") or {}
+    for stage, states in stages.items():
+        rollup = ", ".join(f"{st}×{n}" for st, n in states.items())
+        typer.echo(f"    {stage:<10} {rollup}")
+    costs = data.get("costs") or []
+    if costs:
+        typer.echo("  costs           : "
+                   + ", ".join(f"{c['amount']:g} {c['currency']}" for c in costs))
+    finals = [o.get("path") for o in (data.get("final_output_refs") or [])]
+    if finals:
+        typer.echo(f"  final outputs   : {', '.join(str(f) for f in finals)}")
+    if data.get("qc_report_refs"):
+        typer.echo(f"  qc reports      : {', '.join(data['qc_report_refs'])}")
+    if data.get("failures"):
+        typer.secho(f"  failures        : {len(data['failures'])}", fg=typer.colors.YELLOW)
+    typer.echo(f"  evidence_digest : {data.get('evidence_digest')}")
 
 
 # ------------------------------------------------------------------ spend

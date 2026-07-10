@@ -219,28 +219,59 @@ def generate_with_fallback(
     media_errors = _media_error_types()
     attempts: list[tuple[str, str]] = []
 
-    for name in order:
+    # DR03C run-evidence (evidence-only; None for direct provider tests / redo
+    # outside a run → the whole block below is inert and behaviour is
+    # byte-identical). ONE stage_attempt event per provider TRY in the chain;
+    # parentage per the contract A/B/C example: fallback_root = the first try's
+    # id, parent = the immediately-previous try's id, fallback_index = position.
+    # Imported lazily to keep providers/ free of a build/ import cycle.
+    ev = getattr(req, "evidence", None)
+    _emit_ctx = _EvidenceChain(ev, req) if ev is not None else None
+
+    for idx, name in enumerate(order):
+        handle = _emit_ctx.start(name, idx) if _emit_ctx is not None else None
+        # Stamp the pre-minted attempt id on the request for THIS try: cloud
+        # providers self-record their ledger row inside generate() (base.py
+        # _on_success/_on_failure) — before the chain's terminal event lands —
+        # so this is the only way the runs row and the stage_attempt event
+        # share one attempt_id on the cloud path too (tasks --json parity).
+        req.evidence_attempt_id = handle.attempt_id if handle is not None else None
         try:
             provider = get_provider(name)
         except KeyError as exc:
             attempts.append((name, f"not registered ({exc})"))
+            if handle is not None:
+                _emit_ctx.rejected(handle, "invalid", "not_registered", str(exc))
             continue
         _emit(log, f"provider {name}: generating shot {req.shot.id}")
         try:
             takes = provider.generate(req)
         except NeedsHumanInput as exc:
             attempts.append((name, f"needs human input: {exc}"))
+            if handle is not None:
+                _emit_ctx.rejected(handle, "needs_human_input", "needs_human_input", str(exc))
             continue
         except ProviderFailure as exc:
             attempts.append((name, f"{exc.kind.value}: {exc.message}"))
+            if handle is not None:
+                _emit_ctx.provider_failure(handle, exc)
             continue
         except media_errors as exc:  # media package's MediaError, if importable
             attempts.append((name, f"media error: {exc}"))
+            if handle is not None:
+                _emit_ctx.failed(handle, "media_error", "media_error", str(exc))
             continue
         if takes:
             _emit(log, f"provider {name}: produced {len(takes)} take(s)")
+            if handle is not None:
+                # SUCCEEDED only AFTER register_take already committed media +
+                # sidecar (provider.generate did that) — the outputs re-hash the
+                # bytes now on disk, never before they landed.
+                _emit_ctx.succeeded(handle, name, takes)
             return takes
         attempts.append((name, "produced no takes"))
+        if handle is not None:
+            _emit_ctx.failed(handle, "provider_error", "no_takes", "produced no takes")
 
     summary = "; ".join(f"[{n}] {e}" for n, e in attempts) or "no providers attempted"
     raise ProviderFailure(
@@ -261,3 +292,156 @@ def _media_error_types() -> tuple[type[BaseException], ...]:
 def _emit(log: Callable[[str], None] | None, msg: str) -> None:
     if log is not None:
         log(msg)
+
+
+# ------------------------------------------------------- DR03C attempt evidence
+
+# Retryable failure kinds (safe to retry with backoff, §8.1) — surfaced on the
+# attempt's failure block so the projection can say whether a retry was legal.
+_RETRYABLE_KINDS = frozenset({"rate_limited", "timeout"})
+# invalid-before-submit refusals map to REJECTED_PRECHECK, not FAILED.
+_PRECHECK_KINDS = frozenset({"invalid"})
+
+
+class _EvidenceChain:
+    """Wraps one ``generate_with_fallback`` call's per-provider attempt emission
+    (DR03C). Holds the fallback parentage (root = first try, parent = previous
+    try) so each ``stage_attempt`` event carries the A/B/C lineage. All emission
+    is best-effort via ``build.attempts`` (imported lazily to avoid a build/ ↔
+    providers/ import cycle); a hiccup here never affects generation."""
+
+    def __init__(self, evidence: object, req: object):
+        from ..build import attempts as _attempts  # lazy: avoid import cycle
+
+        self._A = _attempts
+        self.ev = evidence
+        self.req = req
+        self.shot_id = getattr(getattr(req, "shot", None), "id", None)
+        self._first_id: str | None = None
+        self._prev_id: str | None = None
+
+    def _executor(self, name: str) -> dict:
+        executor = {"kind": "provider", "provider_id": name}
+        try:  # model_id/manifest_digest ONLY if cheaply available from a manifest
+            manifest = get_manifest(name)
+            if manifest is not None:
+                executor["provider_type"] = getattr(manifest, "type", None)
+                model = None
+                submit = getattr(manifest, "submit", None)
+                body = getattr(submit, "body_template", None) if submit else None
+                if isinstance(body, dict):
+                    model = body.get("model") or body.get("model_id")
+                if model:
+                    executor["model_id"] = model
+                from ..core.hashing import hash_value
+                executor["provider_manifest_digest"] = hash_value(
+                    manifest.model_dump(mode="json", exclude_none=True))
+        except Exception:
+            pass
+        return executor
+
+    def start(self, name: str, idx: int):
+        """Open a handle for one provider try (before the work runs)."""
+        try:
+            req = self.req
+            params = dict(getattr(req, "params", {}) or {})
+            request = self._A.provider_request_evidence(
+                params, spec_hash=getattr(req, "spec_hash", None),
+                duration_ms=getattr(req, "duration_ms", None),
+                candidate_index=getattr(req, "candidates", None),
+                seed=params.get("seed"))
+            handle = self.ev.attempt(
+                "generate", {"kind": "shot", "shot": self.shot_id}, "generate",
+                parent_attempt_id=self._prev_id, fallback_index=idx,
+                executor=self._executor(name), request=request)
+            handle.fallback_root_attempt_id = self._first_id or handle.attempt_id
+            if self._first_id is None:
+                self._first_id = handle.attempt_id
+            return handle
+        except Exception:
+            return None
+
+    def _decision(self) -> dict:
+        # v1: cloud-internal retries stay internal — the registry loop itself
+        # does not retry a provider, so retry_index is honestly 0 here.
+        return {"retry_index": 0}
+
+    def succeeded(self, handle, name: str, takes: list) -> None:
+        try:
+            from ..core.hashing import hash_file
+
+            outputs = []
+            actual = 0.0
+            currency = None
+            for t in takes:
+                media = getattr(t, "media_path", None)
+                if media is not None and media.exists():
+                    outputs.append(self._A.output_ref(
+                        "take", path=self.req.project.relpath(media),
+                        sha256=hash_file(media), bytes=media.stat().st_size,
+                        take=t.name))
+                remote = getattr(t.sidecar, "remote", None)
+                if remote is not None and getattr(remote, "cost", None):
+                    actual += float(remote.cost)
+                    currency = currency or remote.currency
+            est = getattr(self.req, "estimated_cost", None)
+            cost = {"actual": actual, "estimated": est, "currency": currency}
+            rec = handle.succeeded(outputs=outputs, cost=cost, decision=self._decision())
+            # ledger cross-ref (test 19): note which attempt produced each take so
+            # graph's _record_local_runs threads the SAME id onto the runs row.
+            aid = (rec.get("detail") or {}).get("attempt_id") if rec else handle.attempt_id
+            for t in takes:
+                self.ev.note_take_attempt(getattr(t, "shot_id", self.shot_id), t.name, aid)
+            self._prev_id = handle.attempt_id
+        except Exception:
+            pass
+
+    def failed(self, handle, category: str, code: str, message: str,
+               *, retryable: bool | None = None) -> None:
+        try:
+            failure = {"category": category, "code": code,
+                       "message": _one_line(message)}
+            if retryable is not None:
+                failure["retryable"] = retryable
+            handle.failed(failure=failure, decision=self._decision())
+            self._prev_id = handle.attempt_id
+        except Exception:
+            pass
+
+    def rejected(self, handle, category: str, code: str, message: str) -> None:
+        try:
+            handle.rejected_precheck(
+                failure={"category": category, "code": code, "message": _one_line(message)})
+            self._prev_id = handle.attempt_id
+        except Exception:
+            pass
+
+    def provider_failure(self, handle, exc) -> None:
+        """Classify a ProviderFailure onto the attempt: invalid → precheck,
+        everything else → FAILED with retryable + any provider job id."""
+        try:
+            kind = getattr(getattr(exc, "kind", None), "value", "provider_error")
+            detail = getattr(exc, "detail", None) or {}
+            message = getattr(exc, "message", str(exc))
+            if kind in _PRECHECK_KINDS:
+                self.rejected(handle, kind, kind, message)
+                return
+            failure = {
+                "category": kind, "code": kind, "message": _one_line(message),
+                "retryable": kind in _RETRYABLE_KINDS,
+            }
+            job_id = detail.get("job_id") or detail.get("prompt_id")
+            if job_id:
+                failure["provider_job_id"] = job_id
+                # a cloud job id present on a terminal failure may still be
+                # billing remotely — honest signal for the manifest.
+                failure["remote_may_continue"] = True
+            handle.failed(failure=failure, decision=self._decision())
+            self._prev_id = handle.attempt_id
+        except Exception:
+            pass
+
+
+def _one_line(text: object, limit: int = 400) -> str:
+    s = " ".join(str(text).split())
+    return s if len(s) <= limit else s[:limit] + "…"

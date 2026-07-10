@@ -411,3 +411,36 @@ The batch therefore ships diagnostics, not a scheduler.
   directives and never become an execution input).
 - Surface: `manju explain --graph [--json]` (+ MCP explain parity) — the
   diagnostics doc rides the existing command; no new command family.
+
+## 16. Deep Research 03C — one attempt stream, derived RunManifest (2026-07-10)
+
+External research (03C, ClipForge) audited first: run evidence was split
+across four surfaces (SQLite runs ledger, failures.jsonl, take sidecars,
+coarse events) with no attempt identity, no parentage, no per-attempt
+digests. The batch converges them on ONE stream instead of adding a ledger.
+
+- **events.jsonl is the single attempt stream** (variant A). One terminal
+  `stage_attempt` event per attempt (`manju.stage-attempt-evidence/v1`,
+  11 states — never a `done` bool), appended under a flock because attempt
+  payloads exceed the small-write atomicity that protects legacy events.
+  SQLite gains only an additive `runs.attempt_id` cross-ref and stays
+  sidecar-rebuildable; attempt history is never lost with it.
+- **Emit-around only.** The registry's fallback chain emits one attempt per
+  provider try with A/B/C parentage (fallback_root + parent); failed
+  attempts are never overwritten. The attempt id is pre-minted and stamped
+  on the request so cloud providers' self-recorded ledger rows carry the
+  SAME id (tasks --json parity on the expensive path). With no evidence
+  context, behavior is byte-identical (proven by a toggle-off red test).
+- **SUCCEEDED only after the existing commit points** (media atomically on
+  disk + hashed); evidence-append failure warns and never deletes media.
+  Cache hits bind take identity without re-hashing media; the content-key
+  binding rides the render attempt where hashing is already paid.
+- **RunManifest is a derived report** (`reports/runs/<run_id>/run.json`):
+  projects the run's attempts (command/target/mode from the run terminal's
+  run_context), never guesses success from file existence, is atomic,
+  deletable, re-materializable (`manju tasks manifest <run_id>`), and is
+  never read by build/resume/cache/rebuild-index (pinned).
+- **Systematic redaction**: SECRET_PATTERNS scan + explicit policy (auth/
+  api-key params dropped, signed-URL queries stripped, prompts by digest).
+- Deferred stages recorded honestly: voice/export/repair/package attempts
+  and per-segment render evidence are later wirings, not silent gaps.

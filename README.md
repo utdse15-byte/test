@@ -132,7 +132,8 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju lock / unlock <shot> <field>` | M0 | value-hash locks (unlock is interactive-only) |
 | `manju qc / repair [--auto] [--op retime\|extend\|trim\|croppad]` | M0/Q | quality checks / repairs — auto-safe plan or a targeted clip op (new take, append-only) |
 | `manju appearances [--json]` | Q | who/where map: characters/scenes/props → shots, plus orphans |
-| `manju tasks [--json]` | Q | run-ledger view: jobs, statuses, failures/rejections, spend by provider |
+| `manju tasks [--json]` | Q/DR03C | run-ledger view: jobs, statuses, failures/rejections, spend by provider; rows carry the `attempt_id` of the stage_attempt evidence they cross-reference |
+| `manju tasks manifest <run_id> [--json]` | DR03C | re-materialize + print `reports/runs/<run_id>/run.json` — the derived RunManifest projected from the run's stage_attempt events (command/target/mode, stages, costs, failures, final outputs); deletable, never a build/resume/cache input |
 | `manju export --jianying --srt --otio` | M0/M1 | JianYing draft / captions / OTIO |
 | `manju board [--serve] [--port]` | M0/P2 | review board: static HTML, or a live actionable workspace with --serve |
 | `manju package [--json] [--force]` | M4 | cover + teaser cut from the current final (`exports/packaging/`) |

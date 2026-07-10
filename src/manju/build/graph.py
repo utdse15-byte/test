@@ -39,11 +39,15 @@ class BuildCanceled(BuildError):
     the caller (CLI/GUI/MCP) reports it honestly instead of a bare "canceled"."""
 
     def __init__(self, message: str, *, generated: list[str], spent: float,
-                 currency: str | None):
+                 currency: str | None, run_id: str | None = None):
         super().__init__(message)
         self.generated = generated
         self.spent = spent
         self.currency = currency
+        # DR03C: carry the run id so run_build's handler can set it on the
+        # (freshly minted) canceled BuildResult — the CANCELED run attempt is
+        # emitted inside _run_build_phases, where the RunEvidence lives.
+        self.run_id = run_id
 
 
 # Round W (issue #3): the single source of truth for --gen's three legal
@@ -84,7 +88,8 @@ def spend_gate(project: Project, estimated_cost: float, currency: str | None,
 
 
 def _record_local_runs(project: Project, takes: list, params: dict,
-                       estimates: dict[str, float] | None = None) -> None:
+                       estimates: dict[str, float] | None = None,
+                       evidence: Any = None) -> None:
     """Record generated takes in the run ledger (§8.3).
 
     The cost/run split: cloud providers self-record at poll time
@@ -122,9 +127,56 @@ def _record_local_runs(project: Project, takes: list, params: dict,
                     currency=remote.currency if remote else None,
                     params=params,
                     estimated_cost=remaining.pop(take.shot_id, None),
+                    # DR03C test 19: the ledger row carries the SAME attempt_id
+                    # the events.jsonl SUCCEEDED record carries for this take.
+                    attempt_id=(evidence.attempt_for_take(take.shot_id, take.name)
+                                if evidence is not None else None),
                 )
     except (OSError, sqlite3.Error, Exception):  # disposable state, never fatal
         pass
+
+
+def _emit_render_attempt(evidence, project: Project, out, target: str, *,
+                         reused: bool) -> None:
+    """DR03C: emit the render attempt (SUCCEEDED fresh / SKIPPED_CACHE_HIT
+    reused). The final's ``.key.json`` sidecar already carries ``output_sha256``
+    (DR01) and ``final_key`` — read them (a cheap JSON read), never re-hash the
+    mp4. Best-effort: any read hiccup degrades to an attempt without the sha."""
+    import json as _json
+
+    from .attempts import output_ref
+
+    content_key = None
+    sha = None
+    try:
+        sidecar = out.with_suffix(".key.json")
+        if sidecar.exists():
+            data = _json.loads(sidecar.read_text(encoding="utf-8"))
+            content_key = data.get("final_key")
+            sha = data.get("output_sha256")
+    except Exception:
+        pass
+    ref_kwargs: dict[str, Any] = {"path": project.relpath(out)}
+    if sha:
+        ref_kwargs["sha256"] = sha
+    else:  # sidecar lacked it (older final) — hash once so the output is verifiable
+        try:
+            from ..core.hashing import hash_file
+            ref_kwargs["sha256"] = hash_file(out)
+        except Exception:
+            ref_kwargs["sha256"] = ""
+    if content_key:
+        ref_kwargs["content_key"] = content_key
+    try:
+        ref_kwargs["bytes"] = out.stat().st_size
+    except OSError:
+        pass
+    out_ref = output_ref("final", **ref_kwargs)
+    handle = evidence.attempt("render", {"kind": "render", "target": target}, "render")
+    if reused:
+        handle.skipped_cache_hit(outputs=[out_ref])
+    else:
+        handle.succeeded(outputs=[out_ref])
 
 
 def _resolve_head_provider(project: Project, shot, else_bias: str | None) -> str | None:
@@ -312,6 +364,11 @@ class BuildResult:
     # info-level degradations), newest first — the AI path reads these ids and
     # cross-references reports/failures.jsonl for the full evidence/hint.
     failures: list[dict[str, Any]] = field(default_factory=list)
+    # DR03C: the run-evidence id for THIS build (the same id on the final's key
+    # sidecar and the events.jsonl attempt stream). Additive, default None so
+    # dry-run (a plan, emits no evidence) and any legacy construction stay
+    # unchanged; `build --json`/MCP surface it for free via to_dict().
+    run_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
@@ -604,11 +661,12 @@ def run_build(
         result.ok = False
         result.canceled = True
         result.generated = list(exc.generated)
+        result.run_id = exc.run_id  # DR03C: correlate the canceled result to its run
         result.errors.append(str(exc))
         append_event(project.root, actor, "build",
                      {"target": target, "ok": False, "canceled": True,
                       "generated": exc.generated, "spent": exc.spent,
-                      "currency": exc.currency})
+                      "currency": exc.currency, "run_id": exc.run_id})
         return result
 
     _attach_failures(project, result, build_start)
@@ -660,12 +718,61 @@ def _run_build_phases(
     from datetime import timezone as _tz
     from uuid import uuid4 as _uuid4
     run_id = f"run_{_dt.now(_tz.utc):%Y%m%d_%H%M%S}_" + _uuid4().hex[:6]
+    # DR03C run-evidence: one context per build invocation, created next to the
+    # run_id mint. Evidence-only and default-inert — a DRY RUN is a plan, so it
+    # creates NO context and emits NO attempts (evidence stays None); every
+    # emission point below is guarded on `evidence is not None`. Wraps existing
+    # flow only; when None, behaviour is byte-identical to before DR03C.
+    from .attempts import RunEvidence, materialize_run_manifest
+    evidence = None if dry_run else RunEvidence(
+        project, run_id, actor=actor,
+        # what invocation this run IS — lands on the run-level terminal and
+        # top-level in the manifest, so a run answers "which command/target/
+        # mode produced me" (contract §6.1 command/target/mode).
+        run_context={"command": "build", "target": target, "gen": gen,
+                     "mode": mode or "balanced"})
     # goal: honest job cancellation — running total of what THIS build has
     # actually spent so far, updated as each shot's takes commit (see
     # _commit_one below). Used only to word the cancellation message
     # honestly (已花费 X); advisory, like every other spend figure in this
     # module — a bookkeeping miss must never fail the build.
     spent_so_far: dict[str, Any] = {"total": 0.0, "currency": None}
+
+    def _materialize() -> None:
+        """Derive + write reports/runs/<run_id>/run.json. Best-effort: a
+        materialization failure NEVER breaks the build — it degrades to a
+        warning (the manifest is a derived, deletable projection, §3)."""
+        if evidence is None:
+            return
+        try:
+            materialize_run_manifest(project, run_id)
+        except Exception as exc:
+            result.warnings.append(f"run manifest not materialized: {exc}")
+
+    def _finish_run(res: "BuildResult") -> "BuildResult":
+        """Emit the SINGLE run-level terminal attempt (state derived from the
+        result), materialize the manifest, and stamp result.run_id — then return
+        the result unchanged. Called at every non-dry-run return so exactly one
+        run attempt lands per build; idempotent (RunEvidence guards a second
+        emission), so a canceled build that already emitted CANCELED is not
+        double-counted."""
+        if evidence is None:
+            return res  # dry-run: a plan, no evidence
+        res.run_id = run_id
+        # surface any evidence-append warnings (e.g. test 18: append failed after
+        # a media commit → warn, never delete media)
+        res.warnings.extend(evidence.warnings)
+        evidence.warnings.clear()
+        if res.waiting_user:
+            evidence.run_waiting_user()
+        elif not res.ok:
+            evidence.run_failed()
+        else:
+            evidence.run_succeeded()
+        res.warnings.extend(evidence.warnings)
+        evidence.warnings.clear()
+        _materialize()
+        return res
 
     def _cancel_check(where: str, *, remote_pending: bool = False) -> None:
         """Raise :class:`BuildCanceled` iff ``should_cancel()`` trips. The one
@@ -687,8 +794,19 @@ def _run_build_phases(
                 "该镜头的远程任务可能仍在进行并计费,job id 已记录(§8.1),"
                 "后续构建会恢复轮询而不是重新提交"
             )
+        # DR03C: the CANCELED run attempt is emitted HERE (the RunEvidence lives
+        # in this scope), then the manifest is materialized, before the exception
+        # unwinds to run_build. run_id rides the exception so the freshly minted
+        # canceled BuildResult there can carry it.
+        if evidence is not None:
+            evidence.run_canceled(outputs=[{"role": "generated_count",
+                                            "count": len(result.generated)}],
+                                  decision={"remote_may_continue": bool(remote_pending)})
+            result.warnings.extend(evidence.warnings)
+            evidence.warnings.clear()
+            _materialize()
         raise BuildCanceled("; ".join(parts), generated=list(result.generated),
-                            spent=total, currency=currency)
+                            spent=total, currency=currency, run_id=run_id)
 
     def _phase(name: str) -> None:
         """Coarse progress for watchers, AND the "between phases" cancel
@@ -712,7 +830,7 @@ def _run_build_phases(
                 evidence="\n".join(str(e) for e in report.errors[:8]),
                 hint="逐条修复上面的 check 错误后重跑 manju build", actor=actor,
                 detail={"errors": list(report.errors)})
-        return result
+        return _finish_run(result)
     result.warnings.extend(report.warnings)
 
     # review #5: index order is the order authority — a shot on disk but not
@@ -726,7 +844,7 @@ def _run_build_phases(
             "no shots found — the creative stage (brief → script → shots) is agent/human "
             "work; the engine never invents it (§2)"
         )
-        return result
+        return _finish_run(result)
 
     config = project.load_config()
 
@@ -743,7 +861,7 @@ def _run_build_phases(
     except BuildModeError as exc:
         result.ok = False
         result.errors.append(f"build --mode: {exc}")
-        return result
+        return _finish_run(result)
     else_bias = mode_knobs.else_bias if mode_knobs else None
 
     # ---- 0b. cache hits: FRESH/MANUAL shots skip generation entirely;
@@ -793,7 +911,7 @@ def _run_build_phases(
             f"estimated cost {result.estimated_cost} exceeds budget {budget} — "
             "预算熔断 budget breaker (§8.3): raise project.yaml budget.limit or shrink the plan"
         )
-        return result
+        return _finish_run(result)
 
     if dry_run:
         # WP3 p7: keep the machine output project-relative, mirroring the
@@ -801,7 +919,7 @@ def _run_build_phases(
         # to_dict() (and the MCP build tool that returns it) must not leak an
         # absolute filesystem path.
         result.timeline_path = project.relpath(project.timeline_path)
-        return result
+        return _finish_run(result)
 
     # ---- 1b. ask_before gate (§8.3 第一道闸门,现在由引擎兜底,不再只靠 agent
     # 纪律): a plan that spends real money stops for an explicit yes — uniformly
@@ -818,9 +936,27 @@ def _run_build_phases(
             "命中 ask_before=expensive_generation — 确认后重试:CLI `manju build --yes`,"
             "MCP/GUI 带 assume_yes(先 dry-run 看计划,§8.3)"
         )
-        return result
+        return _finish_run(result)
 
     _phase("generate")
+    # ---- 2c. cache hits (DR03C): a shot whose selected take is already usable
+    # (FRESH cache hit, or a MANUAL human import) skips generation entirely —
+    # record one SKIPPED_CACHE_HIT attempt per such shot so the evidence stream
+    # accounts for EVERY shot, not only the (re)generated ones. This is exactly
+    # the plan's ``result.skipped`` set. Identity is bound by take NAME +
+    # spec_hash only — deliberately NO media re-hash (hashing every fresh take on
+    # every build is unacceptable I/O; the render attempt below carries the
+    # content-key binding for the final). Dry-run / no-evidence → skipped.
+    if evidence is not None:
+        for st in statuses:
+            if st.state not in (ShotState.FRESH, ShotState.MANUAL) or not st.selected_take:
+                continue
+            out = {"role": "take", "take": st.selected_take, "spec_hash": st.spec_hash}
+            if st.take is not None and st.take.media_path is not None:
+                out["path"] = project.relpath(st.take.media_path)
+            evidence.attempt(
+                "generate", {"kind": "shot", "shot": st.shot_id}, "cache_hit",
+            ).skipped_cache_hit(outputs=[out])
     # ---- 2. generate (fill gaps only; stale/manual are respected, §4.3)
     #
     # Concurrency (goal 14): with NO build mode ``mode_knobs`` is None → the loop
@@ -891,6 +1027,10 @@ def _run_build_phases(
                 # ProviderCanceled, caught below like any other terminal
                 # outcome so this function still never raises.
                 should_cancel=should_cancel,
+                # DR03C: the run-evidence context (None on dry-run) so the
+                # registry emits ONE stage_attempt per provider try. Absent →
+                # registry emits nothing (byte-identical).
+                evidence=evidence,
             )
             chain = fallback_chain(shot)
             canceled = False
@@ -976,7 +1116,8 @@ def _run_build_phases(
                     break
             append_event(project.root, actor, "generate",
                          {"shot": shot.id, "takes": [t.name for t in takes]})
-            _record_local_runs(project, takes, {"reason": item["reason"]}, estimates)
+            _record_local_runs(project, takes, {"reason": item["reason"]}, estimates,
+                               evidence=evidence)
             # goal: honest job cancellation — running spend for THIS build, so
             # a checkpoint that trips right after this shot can say exactly
             # what has already been spent (§8.3 honesty, not just §80's).
@@ -1192,7 +1333,7 @@ def _run_build_phases(
                     evidence=" ".join(str(exc).split())[:800],
                     hint="先 manju voice --missing 合成配音;试听不需要画面 takes",
                     actor=actor)
-            return result
+            return _finish_run(result)
         result.timeline_path = None  # not written
         result.warnings.append(
             "audition: in-memory timeline (timeline.json untouched); "
@@ -1226,7 +1367,7 @@ def _run_build_phases(
                     evidence=" ".join(str(exc).split())[:800],
                     hint=f"确认 locales/{lang}/lines.yaml 与 locale 配音",
                     actor=actor)
-            return result
+            return _finish_run(result)
         result.timeline_path = None
         result.warnings.append(
             f"locale --lang {lang}: in-memory overlay (base timeline.json untouched); "
@@ -1244,7 +1385,7 @@ def _run_build_phases(
                     evidence=" ".join(str(exc).split())[:800],
                     hint="按报错定位镜头/时长/字幕规则(§6);见 timeline/rules.yaml",
                     actor=actor)
-            return result
+            return _finish_run(result)
         result.timeline_path = project.relpath(tl_path)
         if not overwrote:
             result.warnings.append(
@@ -1267,7 +1408,7 @@ def _run_build_phases(
                         hint="修复该 JSON,或把 rules.yaml mode 改回 compiled;"
                              "对照 timeline.generated.json",
                         log_path="timeline/timeline.json", actor=actor)
-                return result
+                return _finish_run(result)
 
     # ---- 4. captions
     rules = project.load_rules()
@@ -1305,7 +1446,7 @@ def _run_build_phases(
                     evidence=str(exc)[-1200:],
                     hint="查看 .manju/logs/audition.log;确认 ffmpeg 可用",
                     log_path=".manju/logs/audition.log", actor=actor)
-            return result
+            return _finish_run(result)
         result.render_path = project.relpath(out)
         append_event(project.root, actor, "render",
                      {"target": "audition", "output": result.render_path})
@@ -1349,7 +1490,7 @@ def _run_build_phases(
                     evidence=str(exc)[-1200:],
                     hint="查看 .manju/logs/render.log",
                     log_path=".manju/logs/render.log", actor=actor)
-            return result
+            return _finish_run(result)
         result.render_path = project.relpath(out)
         append_event(project.root, actor, "render",
                      {"target": "final", "lang": lang, "output": result.render_path})
@@ -1397,14 +1538,21 @@ def _run_build_phases(
                     evidence=str(exc)[-1200:],
                     hint="查看 .manju/logs/render.log 复现单条 ffmpeg 命令;核对滤镜/输入",
                     log_path=".manju/logs/render.log", actor=actor)
-            return result
+            return _finish_run(result)
         result.render_path = project.relpath(out)
-        if target == "final" and out in finals_before:
+        reused = target == "final" and out in finals_before
+        if reused:
             result.warnings.append(
                 f"final up-to-date (content key match) — reused {out.name}; "
                 "use --force to re-render (FIX-A)"
             )
         append_event(project.root, actor, "render", {"target": target, "output": result.render_path})
+        # DR03C render attempt: SUCCEEDED for a fresh render, SKIPPED_CACHE_HIT
+        # when the content key matched and the existing final was reused. The
+        # output sha256 + content_key are READ from the DR01 .key.json sidecar
+        # (already computed at render completion) — never re-hashed here.
+        if evidence is not None:
+            _emit_render_attempt(evidence, project, out, target, reused=reused)
 
     # ---- 6. QC (§9)
     if target in ("proxy", "final", "qc"):
@@ -1428,6 +1576,11 @@ def _run_build_phases(
         qc = run_qc(project, timeline)
         result.qc_ok = qc.ok
         result.qc_reports = {k: project.relpath(v) for k, v in write_reports(project, qc).items()}
+        # DR03C: the run ran QC — attach the qc report refs to the run-level
+        # evidence so they surface as the manifest's qc_report_refs.
+        if evidence is not None:
+            for _rel in result.qc_reports.values():
+                evidence.add_evidence_ref(_rel)
         # QC gate (goal 10): a non-passing QC does not abort the build (§9), but
         # the reason should be one click away. Record it in the same shape, level
         # info, pointing at the qc report the human/AI reads next.
@@ -1491,7 +1644,7 @@ def _run_build_phases(
         # posix string, e.g. "renders/final/final_v1.mp4")
         build_detail["final"] = result.render_path.rsplit("/", 1)[-1]
     append_event(project.root, actor, "build", build_detail)
-    return result
+    return _finish_run(result)
 
 
 def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
