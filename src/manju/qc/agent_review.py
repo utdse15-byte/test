@@ -52,10 +52,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from ..core.hashing import cache_key, hash_file, short_hash
+from ..core.hashing import cache_key, hash_file, hash_value, short_hash
 from .checks import QCItem
 
 if TYPE_CHECKING:
@@ -63,6 +64,33 @@ if TYPE_CHECKING:
 
 # reports/qc_agent.jsonl — append-only, one verdict record per line, UTF-8.
 AGENT_LOG = "qc_agent.jsonl"
+
+# DR02 (bound acceptance evidence). v2 packets/verdicts are content-addressed
+# derived evidence layered ON the existing agent-review pipe — NOT a second
+# subsystem. Packets persist under reports/qc_packets/<packet_id>.json; v2
+# verdict records append to the SAME reports/qc_agent.jsonl, self-described by
+# their `schema` field and skipped by the legacy reader (orchestrator ruling #1).
+PACKET_SCHEMA = "manju.qc.packet/v2"
+VERDICT_SCHEMA = "manju.qc.verdict/v2"
+PACKETS_DIR = "qc_packets"
+# any record whose schema starts with this is a DR02 v2 artifact, not a legacy
+# per-shot/unit verdict — the legacy merge path (agent_verdict_items /
+# qc_coverage) skips it; assurance.py's v2 reader conversely keeps only these.
+MANJU_SCHEMA_PREFIX = "manju.qc."
+
+# a reviewer OBSERVES one of these per expectation; the final PASS/FAIL/UNKNOWN
+# is a pure function of observation vs expectation (assurance.py), never a model
+# writing the result. `confidence` is optional metadata, never used to compute.
+OBSERVED_STATES = ("present", "absent", "uncertain", "not_evaluated")
+
+# intake hardening: a verdict file bigger than this is refused (a reviewer echo
+# should be small; an oversized embedded blob is either a mistake or an attack).
+MAX_VERDICT_BYTES = 256_000
+
+# packet_id = "pkt_" + 12 hex; also the on-disk filename stem — this exact shape
+# is required before we touch the filesystem, so a forged/traversing id can
+# never escape reports/qc_packets/.
+_PACKET_ID_RE = re.compile(r"^pkt_[0-9a-f]{12}$")
 
 # The skill that carries the A–J judgment standards (a sibling agent authors it).
 CRITERIA_SKILL = "visual-qc-review"
@@ -105,6 +133,15 @@ def agent_log_path(project: "Project"):
     return project.reports_dir / AGENT_LOG
 
 
+def packets_dir(project: "Project"):
+    """``reports/qc_packets/`` — where issued v2 packets persist, one
+    content-addressed ``<packet_id>.json`` per packet (DR02 ruling #2). Packets
+    are derived, regenerable evidence needed only between brief and intake;
+    deleting this dir only invalidates in-flight reviews (assurance reads the
+    verdict records, which carry all binding fields themselves)."""
+    return project.reports_dir / PACKETS_DIR
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -122,6 +159,7 @@ def verdict_contract(mode: str = "shots") -> dict:
     at once (§ module docstring)."""
     if mode == "consistency":
         return {
+            "v2": _verdict_contract_v2("consistency"),
             "usage": "把每个一致性组合的判读结果写成下面的 JSON,用 "
                      "`manju qc verdict --from-file <路径>`(或 `-` 走 stdin)回填;"
                      "MCP 用 qc_verdict 工具。",
@@ -144,6 +182,7 @@ def verdict_contract(mode: str = "shots") -> dict:
                     "重生成后,该组合的旧判读整体过期。",
         }
     return {
+        "v2": _verdict_contract_v2("shots"),
         "usage": "把判读结果写成下面的 JSON,用 `manju qc verdict --from-file <路径>` "
                  "(或 `-` 走 stdin)回填;MCP 用 qc_verdict 工具。",
         "shape": {
@@ -162,6 +201,42 @@ def verdict_contract(mode: str = "shots") -> dict:
         "levels": {"blocker": "error/阻断(不可上线)", "issue": "warn/需修",
                    "fyi": "info/知悉"},
         "note": "判读结果与所判 take 的字节绑定;该 take 重生成后旧判读自动过期。",
+    }
+
+
+def _verdict_contract_v2(mode: str) -> dict:
+    """The DR02 v2 return shape a reviewer echoes back (ruling #4): the
+    ``packet_id`` from the brief plus per-expectation OBSERVATIONS. Additive —
+    legacy contract fields above are untouched. The final PASS/FAIL/UNKNOWN is a
+    pure function of observation vs expectation (qc/assurance.py); the reviewer
+    NEVER writes the result, and ``confidence`` is metadata that never computes."""
+    subject = ({"kind": "unit", "id": "一致性组合 id(取自本 brief 的 unit 字段)"}
+               if mode == "consistency"
+               else {"kind": "shot", "id": "镜头 id(取自本 brief 的 shot 字段)"})
+    return {
+        "schema": VERDICT_SCHEMA,
+        "usage": "回显 brief 中该镜头/组合的 packet_id,并对每条 expectation 给出观察结论;"
+                 "用 `manju qc verdict --from-file <路径>` 回填(MCP 用 qc_verdict)。",
+        "shape": {
+            "schema": VERDICT_SCHEMA,
+            "packet_id": "pkt_…(必填,回显本 brief 中该镜头/组合的 packet_id)",
+            "subject": subject,
+            "observations": [
+                {
+                    "expectation_id": "exp:…(必填,须为 packet.expectations 中的 id)",
+                    "observed": "present | absent | uncertain | not_evaluated(必填)",
+                    "confidence": "可选,仅元数据,绝不参与 PASS/FAIL 判定",
+                    "evidence_refs": ["frame:12 或帧路径(可选)"],
+                }
+            ],
+            "findings": [
+                {"level": "blocker | issue | fyi", "message": "中文结论",
+                 "evidence": "可选佐证"}
+            ],
+            "reviewer": {"kind": "model_visual | human", "name": "判读者标识"},
+        },
+        "note": "结论由纯函数按 present/absent 逐条比对得出;若当前媒体/spec/expectation "
+                "与 packet 绑定不符,该判读只作为历史保留(binding=stale),不计入当前验收。",
     }
 
 
@@ -290,11 +365,12 @@ def qc_brief(project: "Project", shots: list[str] | None = None, *,
         if shot.dialogue and (shot.dialogue.text or shot.dialogue.speaker):
             dialogue = {"speaker": shot.dialogue.speaker, "text": shot.dialogue.text}
 
-        reviewed.append({
+        frames = _shot_frames(project, take)
+        row = {
             "shot": sid,
             "take": take.name,
             "take_hash": _safe_hash(take.media_path),
-            "frames": _shot_frames(project, take),
+            "frames": frames,
             "context": {
                 "scene": _scene_context(matrix, shot.scene),
                 "characters": characters,
@@ -303,7 +379,28 @@ def qc_brief(project: "Project", shots: list[str] | None = None, *,
                 "continuity_locks": list(shot.continuity.locks),
                 "dialogue": dialogue,
             },
-        })
+        }
+        # DR02 v2: issue a content-addressed packet binding this row to the
+        # CURRENT take bytes + spec_hash + expectation digest, embed its fields
+        # alongside the legacy ones (byte-compatible), and persist the packet as
+        # an issuance record intake later verifies. Best-effort: a packet
+        # failure never breaks the (legacy) brief (module degrade-gracefully
+        # stance) — the row simply lacks its v2 fields.
+        try:
+            packet = _issue_shot_packet(project, sid, take, frames)
+            row.update({
+                "schema": PACKET_SCHEMA,
+                "packet_id": packet["packet_id"],
+                "media": packet["media"],
+                "spec_hash": packet["spec_hash"],
+                "expectation_digest": packet["expectation_digest"],
+                "expectations": packet["expectations"],
+                "evidence_frames": packet["evidence_frames"],
+                "review_skill": packet["review_skill"],
+            })
+        except Exception:
+            pass
+        reviewed.append(row)
 
     try:
         coverage = qc_coverage(project)
@@ -326,6 +423,96 @@ def _safe_hash(path) -> str | None:
         return hash_file(path)
     except Exception:
         return None
+
+
+# ------------------------------------------------------- DR02 v2 packet issuance
+
+
+def _packet_id(packet_body: dict) -> str:
+    """``pkt_`` + first 12 hex of sha256 over the canonical packet payload
+    EXCLUDING ``packet_id`` — content-derived, so re-issuing an identical packet
+    yields the same id (idempotent) and a forged/edited packet no longer hashes
+    to its own filename (intake step 1 catches it)."""
+    body = {k: v for k, v in packet_body.items() if k != "packet_id"}
+    return "pkt_" + short_hash(hash_value(body), 12)
+
+
+def _write_packet(project: "Project", packet: dict) -> None:
+    """Persist a packet to ``reports/qc_packets/<packet_id>.json`` (atomic).
+    Content-addressed => immutable: an identical packet already on disk is left
+    untouched (the write is idempotent, ruling #2)."""
+    from ..core.yamlio import atomic_write_text
+
+    pdir = packets_dir(project)
+    dest = pdir / f"{packet['packet_id']}.json"
+    if dest.exists():
+        return  # same id => same content => nothing to rewrite
+    pdir.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(dest, json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _load_packet(project: "Project", packet_id: str) -> dict | None:
+    """Load a packet by id, or None if absent/unreadable. The id must match the
+    ``pkt_<12 hex>`` shape BEFORE it is used as a filename, so a traversing or
+    malformed id can never escape reports/qc_packets/."""
+    if not (isinstance(packet_id, str) and _PACKET_ID_RE.match(packet_id)):
+        return None
+    dest = packets_dir(project) / f"{packet_id}.json"
+    if not dest.is_file():
+        return None
+    try:
+        data = json.loads(dest.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _issue_shot_packet(project: "Project", shot_id: str, take: "TakeInfo",
+                       frames: dict) -> dict:
+    """Build + persist the v2 packet for one shot row. The media sha256 is
+    computed ONCE here from the CURRENT selected-take file (reusing
+    core.hashing.hash_file) — THAT snapshot is the binding intake later checks a
+    verdict against, which is the whole race fix. spec_hash + expectation digest
+    come from :func:`compile_expectations` (never re-derived)."""
+    from .expectations import compile_expectations
+
+    es = compile_expectations(project, shot_id)
+    evidence_frames = [frames[k] for k in ("first", "mid", "last") if frames.get(k)]
+    body = {
+        "schema": PACKET_SCHEMA,
+        "subject": {"kind": "shot", "id": shot_id},
+        "media": {"project_path": project.relpath(take.media_path),
+                  "sha256": _safe_hash(take.media_path)},
+        "spec_hash": es["spec_hash"],
+        "expectation_digest": es["digest"],
+        "expectations": es["expectations"],
+        "evidence_frames": evidence_frames,
+        "review_skill": CRITERIA_SKILL,
+    }
+    body["packet_id"] = _packet_id(body)
+    _write_packet(project, body)
+    return body
+
+
+def _issue_unit_packet(project: "Project", unit: dict) -> dict:
+    """Build + persist the v2 packet for one consistency UNIT: instead of a
+    single media binding it binds EVERY member's take sha (``media_members`` map
+    {shot: {take, sha256}}), so any one member regenerating stales the unit's
+    evidence (ruling #4/#5). Units carry no per-shot expectations."""
+    members_map = {
+        m["shot"]: {"take": m["take"], "sha256": m["take_hash"]}
+        for m in unit["members"]
+    }
+    body = {
+        "schema": PACKET_SCHEMA,
+        "subject": {"kind": "unit", "id": unit["unit"]},
+        "media_members": members_map,
+        "expectations": [],
+        "review_skill": CRITERIA_SKILL,
+    }
+    body["packet_id"] = _packet_id(body)
+    _write_packet(project, body)
+    return body
 
 
 # ------------------------------------------------ consistency units (round X)
@@ -550,7 +737,7 @@ def _qc_brief_consistency(project: "Project", shots: list[str] | None = None) ->
     out_units: list[dict] = []
     for u in units:
         image = _compose_unit_board(project, u)
-        out_units.append({
+        row = {
             "unit": u["unit"],
             "kind": u["kind"],
             "label": u["label"],
@@ -558,7 +745,17 @@ def _qc_brief_consistency(project: "Project", shots: list[str] | None = None) ->
             "members": [{"shot": m["shot"], "take": m["take"], "take_hash": m["take_hash"]}
                        for m in u["members"]],
             "criteria": u["criteria"],
-        })
+        }
+        # DR02 v2: one packet per unit binding the member media map (best-effort,
+        # never breaks the legacy consistency brief).
+        try:
+            packet = _issue_unit_packet(project, u)
+            row["schema"] = PACKET_SCHEMA
+            row["packet_id"] = packet["packet_id"]
+            row["media_members"] = packet["media_members"]
+        except Exception:
+            pass
+        out_units.append(row)
 
     try:
         coverage = qc_coverage(project)
@@ -615,7 +812,15 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
     to ALL of that unit's CURRENT member take hashes at once (recomputed at
     write time via :func:`_consistency_units`, mirroring the shot path's
     :func:`_resolve_take`); the ``actor`` param already covers "human" filing a
-    verdict from the /review GUI, not only "ai" (§C, review flow)."""
+    verdict from the /review GUI, not only "ai" (§C, review flow).
+
+    DR02: when the payload declares ``schema: "manju.qc.verdict/v2"`` it takes
+    the bound-evidence intake path (:func:`_record_verdicts_v2`) instead — the
+    legacy path below is untouched for every existing (schema-less) caller."""
+    if isinstance(payload, dict) and \
+            str(payload.get("schema") or "").startswith("manju.qc.verdict/"):
+        return _record_verdicts_v2(project, payload, actor=actor)
+
     if not isinstance(payload, dict):
         raise VerdictError("verdict 载荷必须是含 'verdicts' 数组的 JSON 对象")
     verdicts = payload.get("verdicts")
@@ -734,6 +939,358 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
     return {"written": len(records), "levels": counts, "path": project.relpath(path)}
 
 
+# ------------------------------------------------------ DR02 v2 verdict intake
+
+
+def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dict:
+    """Intake bound-acceptance v2 verdicts. Accepts a single v2 verdict object
+    or a batch ``{"schema": …, "verdicts": [obj, …]}``.
+
+    Validation runs in the contract order per verdict. Steps 1/2/7/8 failures
+    mean the PAYLOAD itself is invalid -> the WHOLE batch is rejected with a
+    structured error and ZERO writes (partial-batch illegality never half-writes
+    the log). Steps 3-6 mismatches mean the payload was valid for its packet but
+    the WORLD moved -> the record is still stored (the reviewer's work is
+    history) but marked ``binding: "stale"`` with the exact ``binding_failures``,
+    so assurance never counts it as current evidence. Crucially the stored
+    binding fields come from the PACKET (bytes A), never from re-hashing the
+    current file (bytes B) — that is the race fix."""
+    if isinstance(payload.get("verdicts"), list):
+        raw_verdicts = payload["verdicts"]
+        if not raw_verdicts:
+            raise VerdictError("'verdicts' 必须是非空数组")
+    else:
+        raw_verdicts = [payload]
+
+    prepared: list[dict] = []
+    errors: list[str] = []
+    for i, v in enumerate(raw_verdicts):
+        rec, errs = _prepare_v2_record(project, v, i, actor)
+        if errs:
+            errors.extend(errs)
+        elif rec is not None:
+            prepared.append(rec)
+
+    if errors:
+        # steps 1/2/7/8: reject the whole batch, zero writes, every violation.
+        raise VerdictError("v2 verdict 批次被拒绝(未写入任何记录):" + "; ".join(errors))
+
+    path = agent_log_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for rec in prepared:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+    bindings: dict[str, int] = {}
+    for rec in prepared:
+        bindings[rec["binding"]] = bindings.get(rec["binding"], 0) + 1
+    try:
+        from ..core.events import append_event
+
+        append_event(project.root, actor, "qc_verdict_v2",
+                     {"count": len(prepared), "bindings": bindings})
+    except Exception:
+        pass
+
+    return {"written": len(prepared), "bindings": bindings,
+            "schema": VERDICT_SCHEMA, "path": project.relpath(path)}
+
+
+def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
+                       ) -> tuple[dict | None, list[str]]:
+    """Validate one v2 verdict against its packet + the CURRENT world state.
+    Returns ``(record, [])`` when it may be stored (bound OR binding-stale) or
+    ``(None, [reasons])`` when the payload is invalid (reject the whole batch).
+    """
+    errs: list[str] = []
+    if not isinstance(v, dict):
+        return None, [f"verdict #{idx}: 必须是对象"]
+
+    # ---- step 8 (well-formedness: schema/types/enums/size/traversal/secret) ---
+    vschema = v.get("schema")
+    if vschema is not None and vschema != VERDICT_SCHEMA:
+        errs.append(f"verdict #{idx}: 不支持的 schema {vschema!r}")
+
+    packet_id = v.get("packet_id")
+    if not (isinstance(packet_id, str) and packet_id.strip()):
+        errs.append(f"verdict #{idx}: 缺少 packet_id")
+        packet_id = ""
+    else:
+        packet_id = packet_id.strip()
+
+    try:
+        size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        size = 0
+        errs.append(f"verdict #{idx}: 载荷无法序列化为 JSON")
+    if size > MAX_VERDICT_BYTES:
+        errs.append(f"verdict #{idx}: 载荷过大({size} 字节 > {MAX_VERDICT_BYTES} 上限)")
+
+    observations = v.get("observations")
+    if observations is None:
+        observations = []
+    if not isinstance(observations, list):
+        errs.append(f"verdict #{idx}: observations 必须是数组")
+        observations = []
+    obs_norm: list[dict] = []
+    for j, o in enumerate(observations):
+        if not isinstance(o, dict):
+            errs.append(f"verdict #{idx} observation #{j}: 必须是对象")
+            continue
+        observed = o.get("observed")
+        if observed not in OBSERVED_STATES:
+            errs.append(f"verdict #{idx} observation #{j}: observed 必须是 "
+                        f"{OBSERVED_STATES} 之一,收到 {observed!r}")
+        eid = str(o.get("expectation_id") or "").strip()
+        if not eid:
+            errs.append(f"verdict #{idx} observation #{j}: 缺少 expectation_id")
+        for ref in (o.get("evidence_refs") or []):
+            if _is_unsafe_ref(ref):
+                errs.append(f"verdict #{idx} observation #{j}: 不安全的 evidence_ref {ref!r}")
+        obs_norm.append({
+            "expectation_id": eid,
+            "observed": observed,
+            "confidence": o.get("confidence"),
+            "evidence_refs": list(o.get("evidence_refs") or []),
+        })
+
+    findings = v.get("findings")
+    if findings is None:
+        findings = []
+    if not isinstance(findings, list):
+        errs.append(f"verdict #{idx}: findings 必须是数组")
+        findings = []
+    for j, fnd in enumerate(findings):
+        if not isinstance(fnd, dict):
+            errs.append(f"verdict #{idx} finding #{j}: 必须是对象")
+            continue
+        if fnd.get("level") not in LEVELS:
+            errs.append(f"verdict #{idx} finding #{j}: level 必须是 "
+                        f"blocker|issue|fyi 之一,收到 {fnd.get('level')!r}")
+        if _is_unsafe_ref(fnd.get("evidence")):
+            errs.append(f"verdict #{idx} finding #{j}: 不安全的 evidence 路径")
+
+    if _contains_secret(v):
+        errs.append(f"verdict #{idx}: 载荷疑似包含 API key/密钥,拒绝存储"
+                    "(密钥只应存在于环境变量,§8.2)")
+
+    # ---- step 1: packet exists on disk, schema supported, content-id matches ---
+    packet = _load_packet(project, packet_id) if packet_id else None
+    if packet_id and packet is None:
+        errs.append(f"verdict #{idx}: packet {packet_id!r} 不存在于 reports/qc_packets/"
+                    "(缺失或已删除)")
+    elif packet is not None:
+        if packet.get("schema") != PACKET_SCHEMA:
+            errs.append(f"verdict #{idx}: packet schema 不支持 {packet.get('schema')!r}")
+        elif _packet_id(packet) != packet_id:
+            errs.append(f"verdict #{idx}: packet 内容与其 id 不符(伪造/篡改)")
+
+    # ---- step 2: subject matches the packet's subject (when the verdict names one)
+    subject = packet.get("subject") if isinstance(packet, dict) else None
+    if isinstance(packet, dict) and v.get("subject") is not None \
+            and v.get("subject") != packet.get("subject"):
+        errs.append(f"verdict #{idx}: subject {v.get('subject')!r} 与 packet 的 "
+                    f"{packet.get('subject')!r} 不符")
+
+    # ---- step 7: every observed expectation_id is a member of the packet ----
+    if isinstance(packet, dict):
+        packet_eids = {e.get("id") for e in (packet.get("expectations") or [])}
+        for o in obs_norm:
+            if o["expectation_id"] and o["expectation_id"] not in packet_eids:
+                errs.append(f"verdict #{idx}: 未知 expectation_id "
+                            f"{o['expectation_id']!r}(不在 packet.expectations 内)")
+
+    # ---- step 8 (cont.): a payload that ECHOES binding fields must echo its own
+    # packet's values — an echo contradicting the packet means the reviewer is
+    # confused about WHAT they judged. That is invalid payload (whole-batch
+    # reject), not a world move (which steps 3-6 handle as binding-stale).
+    if isinstance(packet, dict):
+        for field, expected in (
+            ("media_sha256", (packet.get("media") or {}).get("sha256")),
+            ("spec_hash", packet.get("spec_hash")),
+            ("expectation_digest", packet.get("expectation_digest")),
+        ):
+            got = v.get(field)
+            if got is not None and expected is not None and got != expected:
+                errs.append(f"verdict #{idx}: {field} 回显 {got!r} 与 packet 的 "
+                            f"{expected!r} 不符(判读对象混淆)")
+
+    if errs:
+        return None, errs
+
+    # ---- steps 3-6: recompute CURRENT state; a mismatch marks the record stale
+    binding_failures = _binding_failures(project, packet)
+    rec: dict[str, Any] = {
+        "ts": _now_iso(),
+        "actor": actor,
+        "schema": VERDICT_SCHEMA,
+        "binding": "stale" if binding_failures else "bound",
+        "packet_id": packet_id,
+        "subject": subject,
+        # binding fields come from the PACKET (bytes A), NOT from re-hashing the
+        # current file — re-hashing above was only for COMPARISON. This is the
+        # core race fix: intake never stamps the current bytes onto the evidence.
+        "spec_hash": packet.get("spec_hash"),
+        "expectation_digest": packet.get("expectation_digest"),
+        "observations": obs_norm,
+        "findings": findings,
+        "reviewer": v.get("reviewer") if isinstance(v.get("reviewer"), dict) else {},
+    }
+    if "media" in packet:
+        rec["media_sha256"] = (packet.get("media") or {}).get("sha256")
+        rec["media_project_path"] = (packet.get("media") or {}).get("project_path")
+    if "media_members" in packet:
+        rec["media_members"] = packet.get("media_members")
+    if binding_failures:
+        rec["binding_failures"] = binding_failures
+    return rec, []
+
+
+def _binding_failures(project: "Project", packet: dict) -> list[str]:
+    """Steps 3-6: which of the packet's bindings no longer match CURRENT state.
+    Returns a sorted subset of ``["expectations", "media", "spec"]`` (empty ==
+    still bound). For a UNIT packet only the member media map is checked (any
+    member move => ``"media"``); shot packets check current selected-take
+    path+bytes (``"media"``), current spec_hash (``"spec"``) and current
+    recompiled expectation digest (``"expectations"``)."""
+    subject = packet.get("subject") or {}
+    failures: set[str] = set()
+
+    if subject.get("kind") == "unit":
+        current = _current_unit_members(project, subject.get("id"))
+        recorded = {sid: info.get("sha256")
+                    for sid, info in (packet.get("media_members") or {}).items()}
+        if current != recorded:
+            failures.add("media")
+        return sorted(failures)
+
+    sid = subject.get("id")
+    cur_path, cur_sha = _current_selected_media(project, sid)
+    media = packet.get("media") or {}
+    if cur_sha is None or cur_sha != media.get("sha256") \
+            or cur_path != media.get("project_path"):
+        failures.add("media")
+    if _current_spec_hash(project, sid) != packet.get("spec_hash"):
+        failures.add("spec")
+    if _current_expectation_digest(project, sid) != packet.get("expectation_digest"):
+        failures.add("expectations")
+    return sorted(failures)
+
+
+def _current_selected_media(project: "Project", shot_id) -> tuple[str | None, str | None]:
+    """(project-relative path, sha256) of the shot's CURRENT selected take media,
+    hashed NOW purely for comparison. (None, None) when there is none."""
+    try:
+        sel = project.load_shot(shot_id).status.selected_take
+    except Exception:
+        return None, None
+    if not sel:
+        return None, None
+    take = project.get_take(shot_id, sel)
+    if take is None or take.media_path is None or not take.media_path.exists():
+        return None, None
+    try:
+        return project.relpath(take.media_path), _safe_hash(take.media_path)
+    except Exception:
+        return None, None
+
+
+def _current_spec_hash(project: "Project", shot_id) -> str | None:
+    from ..core.spec import SPEC_VERSION, compute_spec_hash
+
+    try:
+        shot = project.load_shot(shot_id)
+        return compute_spec_hash(shot, project.load_bible(),
+                                 version=SPEC_VERSION, project_root=project.root)
+    except Exception:
+        return None
+
+
+def _current_expectation_digest(project: "Project", shot_id) -> str | None:
+    from .expectations import compile_expectations
+
+    try:
+        return compile_expectations(project, shot_id)["digest"]
+    except Exception:
+        return None
+
+
+def _current_unit_members(project: "Project", unit_id) -> dict[str, str | None]:
+    """{shot: current take sha} for a consistency unit's members NOW, or {} when
+    the unit no longer exists — the comparison basis for a unit's step-4 analog."""
+    try:
+        units, _skipped = _consistency_units(project)
+    except Exception:
+        return {}
+    for u in units:
+        if u["unit"] == unit_id:
+            return {m["shot"]: m["take_hash"] for m in u["members"]}
+    return {}
+
+
+def _is_unsafe_ref(ref: Any) -> bool:
+    """A path-ish reference that escapes the project (``..`` component, absolute,
+    home/backslash-rooted, or a NUL byte) — rejected at intake so a verdict can
+    never smuggle a traversal into stored evidence. Plain refs like ``frame:12``
+    are fine (no path separators to escape)."""
+    if not isinstance(ref, str) or not ref:
+        return False
+    if "\x00" in ref:
+        return True
+    if ref.startswith(("/", "~", "\\")):
+        return True
+    return ".." in re.split(r"[\\/]", ref)
+
+
+def _contains_secret(v: Any) -> bool:
+    """Cheap secret scan reusing core.check.SECRET_PATTERNS: a verdict must not
+    carry API keys/tokens into stored evidence (§8.2). Degrades to False if the
+    helper is unavailable."""
+    try:
+        from ..core.check import SECRET_PATTERNS
+    except Exception:
+        return False
+    try:
+        blob = json.dumps(v, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return False
+    return any(p.search(blob) for p in SECRET_PATTERNS)
+
+
+def read_v2_records(project: "Project") -> tuple[list[dict], int]:
+    """Every DR02 v2 verdict record in ``reports/qc_agent.jsonl`` (file order) +
+    the malformed-line count. The COMPLEMENT of the legacy reader: keeps only
+    lines whose ``schema`` is the v2 verdict schema, skips legacy lines. Used by
+    assurance.py (the v2 reader lives there conceptually; this is the shared
+    jsonl-format knowledge kept in one module). Never raises."""
+    path = agent_log_path(project)
+    if not path.exists():
+        return [], 0
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return [], 0
+    records: list[dict] = []
+    malformed = 0
+    for raw in raw_lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except Exception:
+            malformed += 1
+            continue
+        if not isinstance(rec, dict):
+            malformed += 1
+            continue
+        if rec.get("schema") == VERDICT_SCHEMA:
+            records.append(rec)
+    return records, malformed
+
+
 # ----------------------------------------------------------------------- merge
 
 
@@ -752,11 +1309,17 @@ def _current_take_hash(project: "Project", shot_id: str) -> str | None:
 
 
 def _read_records(project: "Project") -> tuple[list[dict], int]:
-    """Parse qc_agent.jsonl → (records in file order, malformed-line count).
-    Never raises: a torn/invalid line is skipped and counted. Round X (agent
-    XB): a record identifies itself by EITHER ``shot`` (the round-V per-shot
-    verdict) OR ``unit`` (a round-X consistency-comparison verdict) — either
-    is sufficient to keep the line."""
+    """Parse qc_agent.jsonl → (LEGACY records in file order, malformed-line
+    count). Never raises: a torn/invalid line is skipped and counted. Round X
+    (agent XB): a record identifies itself by EITHER ``shot`` (the round-V
+    per-shot verdict) OR ``unit`` (a round-X consistency-comparison verdict) —
+    either is sufficient to keep the line.
+
+    DR02 ruling #1: a line carrying a ``schema`` key starting with
+    ``manju.qc.`` is a v2 artifact (bound-evidence verdict) — the legacy merge
+    path SKIPS it (it is neither kept NOR counted malformed here; assurance.py's
+    v2 reader consumes it). Legacy lines have no ``schema`` key and are
+    unaffected, so every existing reader stays byte-identical."""
     path = agent_log_path(project)
     if not path.exists():
         return [], 0
@@ -775,6 +1338,9 @@ def _read_records(project: "Project") -> tuple[list[dict], int]:
         except Exception:
             malformed += 1
             continue
+        if isinstance(rec, dict) and \
+                str(rec.get("schema") or "").startswith(MANJU_SCHEMA_PREFIX):
+            continue  # a DR02 v2 record — not legacy; assurance reads these
         if not isinstance(rec, dict) or not (rec.get("shot") or rec.get("unit")):
             malformed += 1
             continue

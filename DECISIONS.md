@@ -302,3 +302,50 @@ instead of parallel infrastructure.
   Conditional candidates whose gap could not be proven by a failing test
   (core clip_id, resolved-asset view, binding digest, unified mock pack)
   were skipped with recorded evidence — see REPORTS/AI_IDE_01_BASELINE.md.
+
+## 13. Deep Research 02 — bound acceptance evidence & derived assurance (2026-07-10)
+
+External research (DR02, ARIS/aivideo-production-skills) audited against HEAD
+first: the agent-review pipe, spec hashes, QC report, director suggestions and
+both QC skills already existed, so the batch extends that pipe instead of
+building a second QC/runtime. The one confirmed defect: verdict intake bound
+evidence by hashing the CURRENT take file (`_resolve_take`), so a verdict
+formed while viewing media A silently rebound to a same-name replacement B
+(red test recorded; `register_take` never overwrites, so the race needs an
+out-of-band replacement — but intake must still refuse the misbind).
+
+- **Expectations are compiled promises, never inferences.** `qc/expectations.py`
+  compiles ONLY explicit `quality.must_show` (present) / `quality.avoid`
+  (absent) / `continuity.locks` (consistency) into
+  `manju.qc.expectations/v1`; action/dialogue/prompts/model output are
+  forbidden sources. Empty set = "nothing was promised", a valid state.
+  Expectation ids are content-derived (reorder-stable); `source_path` keeps
+  the authored index as provenance. Deterministic machine checks stay in
+  `run_qc` — they gate acceptance separately, not duplicated as expectations.
+- **Packets bind what the reviewer actually saw.** Briefs now issue
+  content-addressed packets (`reports/qc_packets/<pkt_id>.json`,
+  `manju.qc.packet/v2`) binding media sha256 + spec_hash + expectation digest
+  (units: the member map). `pkt_id` re-hashes from content, so a forged or
+  edited packet no longer matches its own id.
+- **v2 intake: payload-invalid rejects, world-moved stores stale.** Missing/
+  forged packet, subject mismatch, unknown expectation id, bad enums,
+  oversized payload, unsafe evidence paths, secret-bearing payloads, or an
+  echo contradicting the packet ⇒ whole batch rejected, zero writes. Media/
+  spec/expectation drift since the packet ⇒ the record is stored as history
+  with `binding: "stale"` + exact `binding_failures`, never current evidence.
+  Stored binding fields always come from the PACKET (the bytes reviewed) —
+  intake re-hashes the current file only to compare, never to stamp. v2
+  records live in the same `reports/qc_agent.jsonl`, schema-tagged; the
+  legacy reader skips them, legacy lines stay byte-identical, legacy verdicts
+  never satisfy v2 acceptance.
+- **Assurance is a pure derived state, separate from done and from human
+  review.** `qc/assurance.py` computes PASS/FAIL/UNKNOWN per expectation from
+  a fixed truth table (a model never writes the result) and derives
+  not_reviewable / no_explicit_expectations / unreviewed / legacy_reviewed /
+  stale / rejected / unknown / accepted — file-only (works with `.manju/`
+  deleted), reading `ShotStatus.review_state` without ever writing it.
+  `accepted` additionally requires no shot-scoped error in deterministic QC.
+- **Repair proposals are advice, never actions.** Rejected/unknown shots get a
+  read-only proposal citing exact expectation ids
+  (`do_not_execute_automatically: true`); surfaces show it, humans/agents
+  turn it into `manju redo`/patches explicitly.
