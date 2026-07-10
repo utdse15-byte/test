@@ -546,3 +546,51 @@ fail-earlier/fail-closed ones.
   OUTCOME_UNKNOWN (was retried/fallback-eligible); a broken/absent runtime DB
   now fail-closes a cloud paid submit (was: proceeded on best-effort state, §3);
   the registry stops the fallback chain on OUTCOME_UNKNOWN.
+
+## 19. Deep Research 05 — declared tool policy, one agent surface, opt-in unattended profile (2026-07-10)
+
+The MCP-collaboration governance batch. Core principle: **the collaborative
+surface changes by not one byte; "unattended" is a stricter opt-in projection
+of the SAME 26 tools, never a second server or a second allowlist.** Policy
+metadata DESCRIBES the engine's real protections (§7.4) — it is honest
+paperwork, not a security boundary; enforcement stays where it always was
+(the tools/call dispatch gate + the engine's own CAS/checked-write/build-lock/
+ask_before guards).
+
+- **`mcp/policy.py` is the one vocabulary + one resolver.** ToolPolicy fields:
+  `effects` (READ/READ_RUNTIME/WRITE_TRUTH/WRITE_PROPOSAL/WRITE_DERIVED/
+  NETWORK/SPEND), `network`/`spend` levels, `gate`, `concurrency`,
+  `unattended` rule, logical `writes` prefixes. `validate_policy` runs at
+  import (load-time gate: unknown values, absolute/traversal write paths,
+  effect/level mismatches all refuse to load). `resolve_agent_surface(defs,
+  profile)` is the SINGLE resolver consumed by tools/list, the tools/call
+  gate and the `agent_surface` manifest — no parallel allowlist to drift.
+- **Two deliberate vocabulary deviations from the contract** (recorded, not
+  hidden): network/spend levels are two-valued `NEVER|POSSIBLE` (the
+  contract's `CONDITIONAL|ALWAYS` split encodes runtime knowledge — regen
+  flags, cache state — that a static declaration cannot honestly claim), and
+  `gate` is a LIST (real tools stack guards: update_shot = CAS+checked-write+
+  build-lock; a single-valued field would force a lie by omission).
+- **Profiles**: `collaborative` (default) admits all 26 tools — byte-identical
+  surface, pinned by characterization. `unattended` (opt-in via `manju
+  serve-mcp --agent-profile unattended`, operator flag ONLY — never project
+  content, never a tool argument) hides exactly `redo` + `director_confirm`
+  from tools/list and refuses their calls with a structured, machine-readable
+  denial `{code: agent_profile_denied, tool, profile, required_path}` that
+  names the collaborative path back. director_propose/director_execute stay
+  admitted: the confirmed-proposal chain IS the unattended spend path.
+- **`agent_surface` tool (the 26th)**: returns AgentSurfaceManifestV1 — every
+  tool with its full policy block, `listed` true/false (denied tools stay IN
+  the manifest with the denial reason — agents can see what exists and why
+  it's closed), plus a stable `digest` over the normalized surface so a
+  policy/profile change is detectable. `raw_filesystem_enforced: false` is
+  stated honestly: MCP-level policy cannot stop an agent's OWN filesystem
+  access; that boundary belongs to the agent harness.
+- **Review fix (Fable)**: `redo`'s declared gate list omitted `SPEND_GATE`
+  even though redo_shot runs the same §8.3 ask_before spend gate as build —
+  metadata under-described a real guard. Fixed + a new invariant test pins
+  it structurally: every `spend: POSSIBLE` tool must declare `SPEND_GATE`.
+- **What did NOT happen** (§2 no-parallel-systems): no second server, no
+  per-project policy file, no runtime capability negotiation, no policy
+  enforcement inside engine functions (they keep their own guards), no
+  hiding of read-only tools in unattended mode.

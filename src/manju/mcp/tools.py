@@ -41,11 +41,24 @@ from ..exporters.otio import export_otio
 from ..exporters.srt_ass import export_captions
 from ..qc.checks import run_qc
 from ..qc.report import write_reports
+from . import policy as _P
 
 
 class ToolError(RuntimeError):
     """A tool-level failure. The server reports it as ``isError: true`` with a
     ``{"error": <message>}`` payload (never a JSON-RPC-level error)."""
+
+
+class AgentProfileDenied(ToolError):
+    """A call refused by the active agent profile (§ DR05 ruling 4). Carries the
+    structured ``agent_profile_denied`` payload so the server renders it as a
+    structured ``isError`` result — never a natural-language-only error, never
+    disguised as unknown-tool. Enforcement is at call dispatch; the engine guards
+    (locks, CAS, build lock, spend gate, director confirm) still apply on top."""
+
+    def __init__(self, payload: dict):
+        super().__init__(payload.get("error", "agent_profile_denied"))
+        self.payload = payload
 
 
 # --------------------------------------------------------------- helpers
@@ -556,6 +569,17 @@ def _h_skill_show(project: Project, args: dict) -> dict:
     return {"skill": info.to_dict(), "text": text}
 
 
+def _h_agent_surface(project: Project, args: dict) -> dict:
+    """Read-only: the AgentSurfaceManifestV1 for the CURRENT profile (§ DR05
+    ruling 6). Derived + rebuildable, never persisted; honest about scope
+    (``raw_filesystem_enforced: false``, ``project_can_override: false``).
+
+    The manifest is a pure function of (registry, profile). :func:`call_tool`
+    routes this tool with the LIVE profile it was called under; this default
+    build (collaborative) keeps the handler valid if invoked directly."""
+    return _P.resolve_agent_surface(TOOL_DEFS, _P.COLLABORATIVE).manifest()
+
+
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
@@ -571,6 +595,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "description": "Project status snapshot — project/preset/mode, per-state shot "
         "counts, timeline, latest final, QC summary, spend, and a suggested next step (§10).",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_status,
     },
     {
@@ -589,6 +614,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
             }
         ),
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_explain,
     },
     {
@@ -611,6 +637,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
             },
             ["shot_id"],
         ),
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_impact,
     },
     {
@@ -618,6 +645,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "description": "Run the safety net: schema + referential integrity + hard "
         "lock verification + secret scan. Returns {ok, errors, warnings} (§4, §5).",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_check,
     },
     {
@@ -625,6 +653,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "description": "List every shot with its build state (missing/fresh/stale/"
         "manual/needs_selection/broken), selected take, and a note.",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_list_shots,
     },
     {
@@ -636,6 +665,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
             {"shot_id": {"type": "string", "description": "e.g. S002"}},
             ["shot_id"],
         ),
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_get_shot,
     },
     {
@@ -661,6 +691,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
             },
             ["shot_id", "yaml_content"],
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_TRUTH],
+            gate=[_P.GATE_CAS, _P.GATE_CHECKED_WRITE, _P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.ALLOW_WITH_CAS,
+            writes=["shots/"],
+        ),
         "handler": _h_update_shot,
     },
     {
@@ -670,6 +707,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"shot_id": {"type": "string"}, "take": {"type": "string"}},
             ["shot_id", "take"],
+        ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_TRUTH],
+            gate=[_P.GATE_CHECKED_WRITE, _P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.ALLOW,
+            writes=["shots/"],
         ),
         "handler": _h_select_take,
     },
@@ -698,6 +742,16 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "dry_run": {"type": "boolean", "default": False},
             }
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_TRUTH, _P.WRITE_DERIVED, _P.NETWORK, _P.SPEND],
+            network=_P.POSSIBLE,
+            spend=_P.POSSIBLE,
+            gate=[_P.GATE_SPEND_GATE, _P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.DRY_RUN_ONLY,
+            writes=["shots/", "renders/", "media/gen/", "timeline.json",
+                    "captions/", "reports/"],
+        ),
         "handler": _h_build,
     },
     {
@@ -713,6 +767,15 @@ TOOL_DEFS: list[dict[str, Any]] = [
             },
             ["shot_id"],
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_DERIVED, _P.NETWORK, _P.SPEND],
+            network=_P.POSSIBLE,
+            spend=_P.POSSIBLE,
+            gate=[_P.GATE_SPEND_GATE, _P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.DENY,
+            writes=["media/gen/", "shots/"],
+        ),
         "handler": _h_redo,
     },
     {
@@ -723,6 +786,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "(accepted/rejected/unknown/stale/…) + read-only repair proposals; a "
         "SEPARATE axis from `ok` (never changes it) (§9).",
         "inputSchema": _schema({"deep": {"type": "boolean", "default": False}}),
+        "policy": _P.policy(
+            effects=[_P.WRITE_DERIVED],
+            gate=[_P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.ALLOW,
+            writes=["reports/"],
+        ),
         "handler": _h_qc,
     },
     {
@@ -753,6 +823,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
                          "consistency = cross-shot comparison units"},
             }
         ),
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_qc_brief,
     },
     {
@@ -765,6 +836,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "recorded). `summary.gaps` is the never-reviewed count `run_qc` also "
         "surfaces as one info item.",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_qc_coverage,
     },
     {
@@ -795,6 +867,12 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
             }
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_DERIVED],
+            concurrency=_P.CONC_ATOMIC_APPEND,
+            unattended=_P.ALLOW,
+            writes=["reports/qc_agent.jsonl"],
+        ),
         "handler": _h_qc_verdict,
     },
     {
@@ -811,18 +889,31 @@ TOOL_DEFS: list[dict[str, Any]] = [
             },
             ["formats"],
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_DERIVED],
+            gate=[_P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.ALLOW,
+            writes=["captions/", "exports/"],
+        ),
         "handler": _h_export,
     },
     {
         "name": "events",
         "description": "Tail the collaboration log (who did what, when — §10).",
         "inputSchema": _schema({"n": {"type": "integer", "default": 20}}),
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_events,
     },
     {
         "name": "board",
         "description": "Generate the static HTML review board and return its path.",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(
+            effects=[_P.WRITE_DERIVED],
+            unattended=_P.ALLOW,
+            writes=["board.html"],
+        ),
         "handler": _h_board,
     },
     {
@@ -832,6 +923,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"title": {"type": "string"}, "body": {"type": "string"}},
             ["title", "body"],
+        ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_PROPOSAL],
+            gate=[_P.GATE_PROPOSAL_APPEND],
+            concurrency=_P.CONC_ATOMIC_APPEND,
+            unattended=_P.ALLOW,
+            writes=["proposals/"],
         ),
         "handler": _h_propose,
     },
@@ -857,6 +955,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
             },
             ["actions"],
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_PROPOSAL],
+            gate=[_P.GATE_PROPOSAL_APPEND],
+            concurrency=_P.CONC_ATOMIC_APPEND,
+            unattended=_P.ALLOW,
+            writes=["reports/proposals/"],
+        ),
         "handler": _h_director_propose,
     },
     {
@@ -869,6 +974,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"id": {"type": "string", "description": "proposal id, e.g. prop_0001"}},
             ["id"],
+        ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_PROPOSAL],
+            gate=[_P.GATE_PROPOSAL_APPEND],
+            concurrency=_P.CONC_ATOMIC_APPEND,
+            unattended=_P.DENY,
+            writes=["reports/proposals/"],
         ),
         "handler": _h_director_confirm,
     },
@@ -885,6 +997,15 @@ TOOL_DEFS: list[dict[str, Any]] = [
             {"id": {"type": "string", "description": "proposal id, e.g. prop_0001"}},
             ["id"],
         ),
+        "policy": _P.policy(
+            effects=[_P.WRITE_TRUTH, _P.WRITE_DERIVED, _P.NETWORK, _P.SPEND],
+            network=_P.POSSIBLE,
+            spend=_P.POSSIBLE,
+            gate=[_P.GATE_CONFIRMED_PROPOSAL, _P.GATE_SPEND_GATE, _P.GATE_BUILD_LOCK],
+            concurrency=_P.CONC_BUILD_LOCK,
+            unattended=_P.CONFIRMED_PROPOSAL_ONLY,
+            writes=["shots/", "renders/", "media/gen/", "reports/proposals/"],
+        ),
         "handler": _h_director_execute,
     },
     {
@@ -896,6 +1017,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "straight to director_propose; some (funnel/select/budget) are "
         "advisory-only with `action: null`. Read-only.",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_director_suggest,
     },
     {
@@ -907,6 +1029,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "detects progress from files on disk, scaffolds nothing and spends "
         "nothing. Use it to know what to write next before generating.",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_funnel_status,
     },
     {
@@ -916,6 +1039,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "this index cheaply, then pull ONE skill's full text via skill_show — "
         "never inline the whole library.",
         "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_skill_list,
     },
     {
@@ -924,25 +1048,70 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "bundled resolution). Load on demand when the index says it applies to "
         "the task at hand.",
         "inputSchema": _schema({"id": {"type": "string"}}, ["id"]),
+        # a pure read; the best-effort skill_used telemetry append to events.jsonl
+        # is not a policy-relevant write (never blocks, never mutates truth).
+        "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_skill_show,
+    },
+    {
+        "name": "agent_surface",
+        "description": "Read-only: the agent-surface manifest for the CURRENT "
+        "profile (manju.agent-surface/v1) — per-tool effects/network/spend/gate/"
+        "concurrency/unattended policy projection, which tools are listed, and a "
+        "stable digest. Honest about scope: raw_filesystem_enforced=false and "
+        "project_can_override=false (MCP policy governs only this server's tool "
+        "calls; it does not sandbox the filesystem and project content cannot "
+        "change it). Never mutates, never spends.",
+        "inputSchema": _EMPTY_SCHEMA,
+        "policy": _P.policy(effects=[_P.READ_RUNTIME]),
+        "handler": _h_agent_surface,
     },
 ]
 
 TOOLS: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOL_DEFS}
 
+# Load-time integrity gate (§7.8): every tool declares a legal policy; the enums
+# and cross-field rules hold. A malformed policy fails the import loudly rather
+# than silently shipping a broken agent surface.
+_P.validate_registry(TOOL_DEFS)
 
-def list_tools() -> list[dict[str, Any]]:
-    """The ``tools/list`` payload: name + description + inputSchema only."""
+
+def list_tools(profile: str = _P.COLLABORATIVE) -> list[dict[str, Any]]:
+    """The ``tools/list`` payload for ``profile``: name + description +
+    inputSchema only (no policy leaks onto the wire). The listed set comes from
+    the ONE resolver — collaborative lists every tool; unattended hides the
+    DENY tools. Order follows the registry."""
+    listed = set(_P.resolve_agent_surface(TOOL_DEFS, profile).listed_names())
     return [
         {"name": t["name"], "description": t["description"], "inputSchema": t["inputSchema"]}
         for t in TOOL_DEFS
+        if t["name"] in listed
     ]
 
 
-def call_tool(project: Project, name: str, arguments: dict | None) -> dict:
-    """Dispatch a ``tools/call``. Raises :class:`ToolError` for an unknown tool
-    (the server turns any raised exception into an ``isError`` result)."""
+def call_tool(
+    project: Project,
+    name: str,
+    arguments: dict | None,
+    profile: str = _P.COLLABORATIVE,
+) -> dict:
+    """Dispatch a ``tools/call`` under ``profile``. Raises :class:`ToolError` for
+    an unknown tool and :class:`AgentProfileDenied` (structured) for a tool the
+    profile refuses — both are turned into ``isError`` results by the server.
+
+    Enforcement is HERE, at call dispatch (the single resolver), plus the engine
+    guards each handler already runs (locks, CAS, build lock, spend gate,
+    director confirm). The policy metadata is never parsed as a permission and is
+    never the security boundary."""
     entry = TOOLS.get(name)
     if entry is None:
-        raise ToolError(f"unknown tool: {name!r}")
-    return entry["handler"](project, arguments or {})
+        raise ToolError(f"unknown tool: {name!r}")  # unknown-tool stays unknown-tool
+    args = arguments or {}
+    surface = _P.resolve_agent_surface(TOOL_DEFS, profile, call_arguments=args)
+    decision = surface.decide(name, args)
+    if not decision.admitted:
+        raise AgentProfileDenied(decision.denial_payload())
+    if name == "agent_surface":
+        # a pure function of (registry, profile) — return THIS profile's manifest
+        return surface.manifest()
+    return entry["handler"](project, args)

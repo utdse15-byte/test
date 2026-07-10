@@ -29,6 +29,7 @@ from typing import Any, TextIO
 import manju
 
 from ..core.container import Project, ProjectError
+from . import policy as _policy
 from . import tools
 
 DEFAULT_PROTOCOL_VERSION = "2024-11-05"
@@ -49,9 +50,18 @@ class _MethodNotFound(Exception):
 
 
 class MCPServer:
-    def __init__(self, project_start: Path):
+    def __init__(self, project_start: Path, agent_profile: str = _policy.COLLABORATIVE):
         self._project_start = project_start
         self._project: Project | None = None
+        # The agent profile is set ONCE, here, from the serve-mcp flag — it can
+        # NEVER come from project.yaml / skills / shots / tool arguments (§ DR05
+        # ruling 3). An unknown value is a hard config error.
+        if agent_profile not in _policy.PROFILES:
+            raise ValueError(
+                f"unknown agent profile {agent_profile!r} "
+                f"(expected one of {sorted(_policy.PROFILES)})"
+            )
+        self._profile = agent_profile
 
     # ---- lazy project resolution (initialize / tools/list need no project)
 
@@ -123,7 +133,7 @@ class MCPServer:
         if method == "ping":
             return {}
         if method == "tools/list":
-            return {"tools": tools.list_tools()}
+            return {"tools": tools.list_tools(self._profile)}
         if method == "tools/call":
             return self._tools_call(params)
         raise _MethodNotFound(method)
@@ -143,9 +153,15 @@ class MCPServer:
         if not isinstance(arguments, dict):
             arguments = {}
         try:
-            result = tools.call_tool(self.project(), name, arguments)
+            result = tools.call_tool(self.project(), name, arguments, self._profile)
             text = json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str)
             return {"content": [{"type": "text", "text": text}], "isError": False}
+        except tools.AgentProfileDenied as denied:
+            # a profile refusal is a STRUCTURED isError result (agent_profile_denied)
+            # — never a JSON-RPC error, never disguised as unknown-tool (§ ruling 4).
+            _log(f"agent_profile_denied [{name}] under {self._profile}")
+            text = json.dumps(denied.payload, ensure_ascii=False, separators=(",", ":"))
+            return {"content": [{"type": "text", "text": text}], "isError": True}
         except Exception as exc:  # tool failure is an isError result, not a protocol error
             _log(f"tool error [{name}]: {exc}")
             text = json.dumps({"error": str(exc)}, ensure_ascii=False, separators=(",", ":"))
@@ -174,6 +190,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="project path (default: discover a .manju project from the cwd upward).",
     )
+    parser.add_argument(
+        "--agent-profile",
+        choices=sorted(_policy.PROFILES),
+        default=_policy.COLLABORATIVE,
+        help="agent surface profile (default: collaborative — byte-identical to "
+        "today). 'unattended' is the opt-in boundary for a self-driving agent: "
+        "reads/proposals stay, self-confirming spend and paid redo are hidden + "
+        "refused, shot writes require an expected_rev CAS token, build is "
+        "dry-run-only. Settable ONLY here — never from project content.",
+    )
     args = parser.parse_args(argv)
 
     # UTF-8 on the wire regardless of locale (§14: Chinese text is first-class).
@@ -186,12 +212,13 @@ def main(argv: list[str] | None = None) -> int:
                 pass
 
     start = args.project if args.project is not None else Path.cwd()
-    server = MCPServer(start)
+    server = MCPServer(start, agent_profile=args.agent_profile)
     try:  # surface a bad path early on stderr; tool calls also report it
         server.project()
     except ProjectError as exc:
         _log(f"warning: {exc}")
-    _log(f"manju MCP server ready (stdio); project start = {start}")
+    _log(f"manju MCP server ready (stdio); project start = {start}; "
+         f"agent profile = {args.agent_profile}")
 
     return server.serve(sys.stdin, sys.stdout)
 

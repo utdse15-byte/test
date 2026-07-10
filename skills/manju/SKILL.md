@@ -53,6 +53,8 @@ user_invocable: false
 
 这三步是"双向接管"的核心,`manju status` + events 尾部让任何一方一条命令进入状态。
 
+改镜头文件前,先 `get_shot` 拿到它的 `rev`,保存时把 `rev` 原样回带为 `update_shot` 的 `expected_rev`(乐观锁/CAS):镜头在你加载后被别的入口改过,写入会被当场拒绝(而非静默覆盖别人的编辑),刷新重取再存。无人值守面(`serve-mcp --agent-profile unattended`)下这一步是**强制**的。
+
 ## 2. 每次编辑后必跑 `manju check`,check 不过不许 build
 
 `manju check` 是你的安全网:它做 schema 校验 + 引用完整性校验(镜头引用的角色/场景存在吗?选中的 take 文件在吗?)+ 硬锁校验 + API key 扫描。

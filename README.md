@@ -188,7 +188,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju roundtrip <edited.json> [--apply]` | WP6 | flow JianYing skeleton / OTIO edits back as reviewable truth changes |
 | `manju openclap inspect/export/import-plan` | DR01 | OpenClap (.clap) 互换适配器: read-only inspect (counts/diagnostics/locators), deterministic export from the compiled timeline (`--yes` honors the final_export gate), and a staged import-plan that writes nothing, downloads nothing and never auto-selects takes |
 | `manju shot-package FILE [--apply]` | DR03A | controlled import of an external ShotDraftPackage (镜头提案包): default = zero-write inspect with a precise plan (mapped fields, omitted soft suggestions, unresolved bible refs, conflicts); `--apply` creates NEW shots + index entries only, CAS-guarded with rollback and a post-apply `check` — soft suggestions never become must_show/avoid/locks, existing shots are conflicts (`manju propose`) |
-| `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
+| `manju serve-mcp [--agent-profile collaborative\|unattended]` | M2/DR05 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface); every tool carries a declared ToolPolicy and the `agent_surface` tool returns the machine-readable manifest+digest; `unattended` (opt-in, operator flag only) hides `redo`/`director_confirm` and answers them with a structured denial naming the collaborative path back — the default surface is byte-identical to before |
 | `manju auto "一句话" [--agent …]` | M2 | autopilot shell over ANY one-shot agent CLI (claude/codex/gemini/qwen/aider or a custom template) |
 
 Dangerous commands (`unlock`, `gc --hard`) are **not** exposed over MCP.

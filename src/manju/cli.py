@@ -5002,14 +5002,28 @@ def lib_rm(
 
 
 @app.command("serve-mcp")
-def serve_mcp():
+def serve_mcp(
+    agent_profile: str = typer.Option(
+        "collaborative", "--agent-profile",
+        help="Agent surface profile: 'collaborative' (default, byte-identical to "
+        "today) or 'unattended' — the opt-in boundary for a self-driving agent "
+        "(reads + proposals stay; self-confirming spend and paid redo are hidden "
+        "and refused; shot writes require an expected_rev CAS token; build is "
+        "dry-run-only). This flag is the ONLY way to select it — project.yaml, "
+        "skills, shots and tool arguments can never escalate the profile."),
+):
     """MCP server over stdio (§11) — a thin wrapper over the same core. Dangerous
     commands (unlock, gc --hard) are never on this surface; Claude Code drives
     everything else here or via files + this CLI, two equivalent paths (§11)."""
     project = _project()
+    from .mcp.policy import PROFILES
     from .mcp.server import main as mcp_main
 
-    raise typer.Exit(mcp_main(["--project", str(project.root)]))
+    if agent_profile not in PROFILES:
+        _fail(f"--agent-profile 必须是 {'/'.join(sorted(PROFILES))} 之一(实际 {agent_profile!r})")
+    raise typer.Exit(mcp_main(
+        ["--project", str(project.root), "--agent-profile", agent_profile]
+    ))
 
 
 # ============================================================ providers group
