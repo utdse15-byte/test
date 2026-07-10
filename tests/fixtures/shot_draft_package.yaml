@@ -1,0 +1,68 @@
+# A REAL external ShotDraftPackage v1 — the two-shot creative proposal the
+# DR03A tests import. CJK text is first-class (§14). Scene/character refs match
+# the tmp_project bible (scene ``convenience_store``, character ``linxia``).
+#
+# This is a PROPOSAL, never truth: creative_suggestions are SOFT (they never
+# auto-become quality.must_show / avoid / continuity locks / routing / locked
+# durations); the visual_prompt / negative_prompt / style_tags / continuity_notes
+# / confidence / duration_budget_ms / provenance / review_notes / source_spans
+# below are ALWAYS omitted from any created shot (the forbidden-mapping table).
+schema: manju.shot-draft-package/v1
+package_id: pkg-rainy-store-001
+created_at: "2026-07-10T09:00:00Z"
+producer:
+  kind: ai_ide
+  name: story-forge
+  version: "1.4.0"
+source:
+  source_id: script/rainy-store.md
+  source_revision: rev-script-20260709
+shots:
+  - draft_id: draft_alley_entry
+    proposed_shot_id: S001
+    source_facts:
+      scene_ref: convenience_store
+      character_refs: [linxia]
+      source_spans:
+        - source_id: script/rainy-store.md
+          element_ids: [beat-3, beat-4]
+    creative_suggestions:
+      duration_ms: 3200
+      camera:
+        shot_size: medium
+        movement: static
+      action: 林夏推开便利店的玻璃门,雨水顺着黑色风衣滴落在地砖上。
+      visual_prompt: cinematic neon rain, 35mm anamorphic, moody teal-orange
+      negative_prompt: blurry, low quality, watermark
+      style_tags: [noir, neon, rain]
+      confidence: 0.82
+      continuity_notes: 左手腕的旧手表必须可见
+    execution_constraints:
+      capability: still_frame_motion
+      duration_budget_ms: 4000
+    review_notes:
+      warnings: [场景光线需与前一镜头衔接]
+    provenance:
+      node_ids: [n-12, n-13]
+      prompt_digest: sha256:0000dead
+  - draft_id: draft_counter_look
+    proposed_shot_id: S002
+    source_facts:
+      scene_ref: convenience_store
+      character_refs: [linxia]
+      source_spans:
+        - source_id: script/rainy-store.md
+          element_ids: [beat-5]
+    creative_suggestions:
+      duration_ms: 2500
+      camera:
+        shot_size: close_up
+        movement: push_in
+      action: 她盯着收银台后空无一人的位置,眉头缓缓皱起。
+      visual_prompt: close up, tense, cold fluorescent light
+      style_tags: [tension]
+      confidence: 0.74
+    execution_constraints:
+      capability: caption_card
+    provenance:
+      node_ids: [n-20]

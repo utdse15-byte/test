@@ -349,3 +349,35 @@ out-of-band replacement — but intake must still refuse the misbind).
   read-only proposal citing exact expectation ids
   (`do_not_execute_automatically: true`); surfaces show it, humans/agents
   turn it into `manju redo`/patches explicitly.
+
+## 14. Deep Research 03A — external ShotDraftPackage, controlled import (2026-07-10)
+
+External research (03A, PenShot) audited first: no existing surface imports a
+structured multi-shot creative package (`create` scaffolds, `director`
+whitelists actions, `ingest` moves media, `roundtrip` edits the timeline,
+`mentions` registers refs) — so one boundary was added, reusing the existing
+controlled-write machinery end to end.
+
+- **A package is a proposal, never truth.** `manju shot-package FILE` is a
+  zero-write inspect producing `manju.shot-import-plan/v1` (precise diff,
+  omitted suggestions, unresolved refs, warnings); only `--apply` writes,
+  under `build_lock`, via `Project.save_shot` + index append, with CAS
+  anchored to the reviewed plan, proposed-text drift guards, compensating
+  rollback, and a post-apply `check` that rolls the batch back on any NEW
+  error.
+- **Soft suggestions never promote.** scene/characters/action/camera/duration
+  map into ordinary editable shot fields (duration frame-snaps at build — a
+  warning, never a lock); visual/negative prompts, style_tags,
+  continuity_notes, confidence and budgets are ALWAYS omitted and listed in
+  `omitted_suggestions` with reasons. `must_show`/`avoid`/`continuity.locks`
+  are authored by humans, not imported.
+- **Create-only.** An op targeting an existing shot id is a conflict pointing
+  at `manju propose`; fragment/draft ids never mint shot identity (empty
+  proposed ids get the next free S###).
+- **Idempotency is enforced, not advisory.** A package's semantic digest
+  (excluding created_at/package_id, key-order independent) is recorded on the
+  apply event; re-applying the same digest is refused as a first-class cause
+  — without this, empty-proposed-id packages would silently duplicate shots.
+- **Not exposed over MCP** — mirroring the existing decision for the
+  roundtrip/ingest command class (none are MCP tools today); CLI and any
+  future MCP path share the same two service functions.

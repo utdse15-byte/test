@@ -2370,6 +2370,91 @@ def roundtrip(
             )
 
 
+# -------------------------------------------------------------- shot-package
+
+
+def _print_shot_package_plan(plan) -> None:
+    s = plan["summary"]
+    typer.secho(
+        f"shot-import-plan  digest={plan['package_digest'][:19]}…  "
+        f"safe_to_apply={plan['safe_to_apply']}", fg=typer.colors.CYAN)
+    typer.echo(f"  create={s['create']}  conflicts={s['conflicts']}  "
+               f"unresolved_refs={s['unresolved_refs']}  (update:{s['update']})")
+    for op in plan["operations"]:
+        if op["kind"] == "conflict":
+            typer.secho(f"  ✗ conflict     {op['target_path']} — {op.get('reason', '')}",
+                        fg=typer.colors.YELLOW)
+        elif op["kind"] == "update_index":
+            typer.echo(f"  · update_index {op['target_path']}  +{op['fields'].get('appends')}")
+        else:
+            typer.echo(f"  + create       {op['target_path']}  (draft {op['draft_id']})")
+            for u in op.get("unresolved_refs") or []:
+                typer.secho(f"      unresolved {u['field']}={u['ref']} — add it to the bible",
+                            fg=typer.colors.YELLOW)
+    for w in plan.get("warnings") or []:
+        typer.secho(f"  ⚠ {w}", fg=typer.colors.BRIGHT_BLACK)
+
+
+@app.command("shot-package")
+def shot_package(
+    file: Path = typer.Argument(..., help="external ShotDraftPackage v1 YAML "
+                                          "(schema manju.shot-draft-package/v1)"),
+    apply: bool = typer.Option(False, "--apply",
+                               help="apply the plan (create NEW shots + append index); "
+                                    "default = inspect/plan only, zero writes"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Validate + inspect an external ShotDraftPackage, or apply it under controlled write.
+
+    The package is a PROPOSAL, never truth: ``creative_suggestions`` stay SOFT
+    (they never become quality.must_show/avoid, continuity locks, routing, or a
+    locked duration), and an op targeting an EXISTING shot id is a CONFLICT
+    (change it via `manju propose`, never a package overwrite). Default =
+    inspect (ZERO writes). ``--apply`` creates the NEW shots + updates
+    ``shots/index.yaml`` under one build_lock, CAS-guarded against the reviewed
+    plan, with a compensating rollback and a post-apply `manju check`; the event
+    it records carries only ids + digest (no prompts, no secrets)."""
+    from .build.shotpackage import (
+        ShotPackageError,
+        apply_shot_import_plan,
+        build_shot_import_plan,
+        load_package,
+    )
+
+    project = _project()
+    try:
+        package = load_package(file)
+        plan = build_shot_import_plan(project, package)
+    except ShotPackageError as exc:
+        _fail(" ".join(str(exc).split())[:600], code="shot_package_invalid")
+        return
+
+    if not apply:
+        if as_json:
+            _emit(plan, True)
+        else:
+            _print_shot_package_plan(plan)
+            typer.secho("(inspect — 加 --apply 才会创建镜头;未改动任何文件)",
+                        fg=typer.colors.BRIGHT_BLACK)
+        return
+
+    # apply acquires its OWN build_lock (like `roundtrip`) — do NOT wrap in _write_lock.
+    result = apply_shot_import_plan(project, package, actor=ACTOR, plan=plan)
+    if as_json:
+        _emit({"plan": plan, "apply": result}, True)
+    elif result["ok"]:
+        typer.secho(
+            f"shot-package apply: created {', '.join(result['created']) or '(none)'} "
+            f"· digest {result['package_digest'][:19]}…", fg=typer.colors.GREEN)
+    else:
+        _print_shot_package_plan(plan)
+        detail = "; ".join(result.get("reasons") or result.get("new_errors")
+                           or [result.get("error", "")])
+        typer.secho(f"apply refused ({result['code']}): {detail}"[:600], fg=typer.colors.RED)
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
 # ------------------------------------------------------------------- impact
 
 
