@@ -1883,6 +1883,169 @@ def export(
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
 
 
+# --------------------------------------------------------------- openclap
+
+openclap_app = typer.Typer(
+    no_args_is_help=True,
+    help="OpenClap (.clap) 互换适配器 —— 一个隔离的可选出口(§8/§14)。"
+         "inspect 只读体检、export 从编译时间线导出、import-plan 只规划不落盘"
+         "(从不下载远端媒体、从不写入项目、从不自动选take)。",
+)
+app.add_typer(openclap_app, name="openclap")
+
+
+def _openclap_read_or_fail(file: Path, as_json: bool):
+    """Read a .clap file, turning a fail-closed parse into the repo's JSON error
+    envelope (with diagnostics) on ``--json`` or colored prose otherwise."""
+    from .exporters.openclap import read_clap
+    from .exporters.openclap.model import ClapReadError
+
+    try:
+        return read_clap(file)
+    except ClapReadError as exc:
+        diags = [d.to_dict() for d in exc.diagnostics]
+        code = next((d["code"] for d in diags if d["severity"] == "error"),
+                    "clap_parse_error")
+        if as_json:
+            typer.echo(json.dumps(
+                {"error": str(exc), "code": code, "diagnostics": diags},
+                ensure_ascii=False, indent=2))
+        else:
+            typer.secho(f"无法解析 .clap: {exc}", fg=typer.colors.RED, err=True)
+            for d in diags:
+                typer.secho(f"  [{d['severity']}] {d['code']}: {d['message']}"
+                            + (f" ({d['path']})" if d['path'] else ""),
+                            fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(1)
+
+
+@openclap_app.command("inspect")
+def openclap_inspect(
+    file: Path = typer.Argument(..., help="path to a .clap file"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Read-only体检:表头/实际计数、meta 摘要、分类直方图、assetUrl 定位符分类、
+    未知字段统计与全部诊断。从不写任何东西;硬解析错误以非零码退出。"""
+    from .exporters.openclap import inspect_clap
+
+    doc = _openclap_read_or_fail(file, as_json)
+    summary = inspect_clap(doc)
+    if as_json:
+        _emit(summary, True)
+        return
+    h = summary["header"]
+    a = summary["actual_counts"]
+    m = summary["meta"]
+    typer.secho(f"OpenClap {h['format']} · {file}", fg=typer.colors.CYAN)
+    typer.echo(f"  表头声明 workflows={h['declared']['workflows']} "
+               f"entities={h['declared']['entities']} scenes={h['declared']['scenes']} "
+               f"segments={h['declared']['segments']}")
+    typer.echo(f"  实际计数 workflows={a['workflows']} entities={a['entities']} "
+               f"scenes={a['scenes']} segments={a['segments']}")
+    typer.echo(f"  meta: title={m['title']!r} {m['width']}x{m['height']} "
+               f"orientation={m['orientation']} durationInMs={m['duration_in_ms']}")
+    if summary["segment_categories"]:
+        typer.echo("  分类: " + ", ".join(f"{k}={v}" for k, v in
+                                          summary["segment_categories"].items()))
+    if summary["locator_histogram"]:
+        typer.echo("  定位符: " + ", ".join(f"{k}={v}" for k, v in
+                                            summary["locator_histogram"].items()))
+    if summary["unknown_categories"]:
+        typer.echo("  未知分类: " + ", ".join(summary["unknown_categories"]))
+    if summary["unknown_fields"]:
+        for section, info in summary["unknown_fields"].items():
+            typer.echo(f"  未知字段[{section}]: {info['items_with_unknown_keys']} 项 · "
+                       + ", ".join(info["distinct_unknown_keys"]))
+    errs = sum(1 for d in summary["diagnostics"] if d["severity"] == "error")
+    warns = sum(1 for d in summary["diagnostics"] if d["severity"] == "warning")
+    typer.secho(f"  诊断: {errs} errors, {warns} warnings",
+                fg=typer.colors.GREEN if errs == 0 else typer.colors.RED)
+    for d in summary["diagnostics"]:
+        if d["severity"] != "info":
+            typer.echo(f"    [{d['severity']}] {d['code']}: {d['message']}")
+
+
+@openclap_app.command("export")
+def openclap_export(
+    output: Optional[Path] = typer.Option(
+        None, "--output", help="输出路径(默认 exports/openclap/<项目名>.clap,项目内)"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="approve ask_before=final_export when present"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """从编译好的 timeline 导出 .clap 快照(确定性、原子写、项目内路径)。
+    需要先 `manju build` 生成 timeline.json。"""
+    from .exporters.openclap import export_openclap
+
+    project = _project()
+    # WP5: same final_export gate as `manju export` (outward-facing, free) —
+    # a .clap is an exchange artifact for other tools, so it confirms like one.
+    if "final_export" in (project.load_config().ask_before or []) and not yes:
+        _fail(
+            "waiting_user: final_export 在 ask_before 中 — 导出是外向制品确认"
+            "(非金钱花费)。确认后重试: manju openclap export --yes …",
+            code="waiting_user",
+        )
+    timeline = project.load_timeline()
+    if timeline is None:
+        _fail("no timeline.json — run `manju build` first")
+    try:
+        out = export_openclap(project, timeline, output=output)
+    except (OSError, RuntimeError) as exc:
+        _record_failure(project, "export", "openclap", "openclap 导出失败",
+                        evidence=" ".join(str(exc).split())[:400],
+                        hint="核对 timeline.json 是否完整;或换 --srt/--otio 兜底出口(§14)")
+        _fail(f"export failed (openclap): {exc}")
+    rel = project.relpath(out)
+    # Re-read our own output for honest counts (cheap; also proves it parses).
+    from .exporters.openclap import read_clap
+
+    counts = read_clap(out).actual_counts
+    append_event(project.root, ACTOR, "export", {"openclap": rel})
+    if as_json:
+        _emit({"output": rel, "counts": counts}, True)
+    else:
+        typer.secho(f"openclap: {rel}", fg=typer.colors.GREEN)
+        typer.echo(f"  entities={counts['entities']} scenes={counts['scenes']} "
+                   f"segments={counts['segments']}")
+
+
+@openclap_app.command("import-plan")
+def openclap_import_plan(
+    file: Path = typer.Argument(..., help="path to a .clap file"),
+    target: Optional[Path] = typer.Option(
+        None, "--target", help="existing project to describe against (never written)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """规划一次 .clap 导入(只规划、零写入):从不下载远端媒体、从不写入项目、
+    从不自动选take。有 --target 时只描述并列出冲突。"""
+    from .core.hashing import hash_file
+    from .exporters.openclap import build_import_plan
+
+    doc = _openclap_read_or_fail(file, as_json)
+    target_project = None
+    if target is not None:
+        try:
+            target_project = Project(target)
+        except ProjectError as exc:
+            _fail(str(exc), code="no_project")
+    plan = build_import_plan(doc, source_sha256=hash_file(file),
+                             target_project=target_project)
+    if as_json:
+        _emit(plan, True)
+        return
+    typer.secho(f"import-plan {plan['schema']} · {file}", fg=typer.colors.CYAN)
+    typer.echo(f"  source_sha256: {plan['source_sha256']}")
+    typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    typer.echo(f"  operations: {len(plan['operations'])} · "
+               f"unmapped: {len(plan['unmapped'])} · conflicts: {len(plan['conflicts'])}")
+    for op in plan["operations"]:
+        extra = f" [{op.get('note')}]" if op.get("note") else ""
+        typer.echo(f"    {op['op']} -> {op['target']} (from {op.get('from_segment')}){extra}")
+    for c in plan["conflicts"]:
+        typer.secho(f"    冲突 {c['target']}: {c['reason']}", fg=typer.colors.YELLOW)
+
+
 # ----------------------------------------------------------------- package
 
 

@@ -182,6 +182,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju align --media VO --shots S001-S012 [--apply]` | WP3 | multi-shot VO split plan/apply (manual takes + batch record) |
 | `manju locale add\|status <lang>` | WP4 | multilingual overlay (lines.yaml + base_hash; picture pipeline shared) |
 | `manju roundtrip <edited.json> [--apply]` | WP6 | flow JianYing skeleton / OTIO edits back as reviewable truth changes |
+| `manju openclap inspect/export/import-plan` | DR01 | OpenClap (.clap) 互换适配器: read-only inspect (counts/diagnostics/locators), deterministic export from the compiled timeline (`--yes` honors the final_export gate), and a staged import-plan that writes nothing, downloads nothing and never auto-selects takes |
 | `manju serve-mcp` | M2 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface) |
 | `manju auto "一句话" [--agent …]` | M2 | autopilot shell over ANY one-shot agent CLI (claude/codex/gemini/qwen/aider or a custom template) |
 

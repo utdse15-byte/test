@@ -652,6 +652,14 @@ def _run_build_phases(
     lang: str | None = None,  # WP4 locale
 ) -> BuildResult:
     result = BuildResult()
+    # WP3 run-evidence: one run id per build invocation, minted before any
+    # phase runs. Evidence-only — it must NEVER enter a content key/hash; it is
+    # threaded to the render's key sidecar (correlating a produced final to its
+    # run) and stamped on this build's events.jsonl "build" record.
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+    from uuid import uuid4 as _uuid4
+    run_id = f"run_{_dt.now(_tz.utc):%Y%m%d_%H%M%S}_" + _uuid4().hex[:6]
     # goal: honest job cancellation — running total of what THIS build has
     # actually spent so far, updated as each shot's takes commit (see
     # _commit_one below). Used only to word the cancellation message
@@ -788,7 +796,11 @@ def _run_build_phases(
         return result
 
     if dry_run:
-        result.timeline_path = str(project.timeline_path)
+        # WP3 p7: keep the machine output project-relative, mirroring the
+        # real-build branch's `project.relpath(tl_path)` below — a dry-run's
+        # to_dict() (and the MCP build tool that returns it) must not leak an
+        # absolute filesystem path.
+        result.timeline_path = project.relpath(project.timeline_path)
         return result
 
     # ---- 1b. ask_before gate (§8.3 第一道闸门,现在由引擎兜底,不再只靠 agent
@@ -1357,7 +1369,7 @@ def _run_build_phases(
         try:
             with cancel_scope(should_cancel):
                 out = render_timeline(project, timeline, target=target, ass_file=ass_path,
-                                      force=force)
+                                      force=force, run_id=run_id)
         except MediaCanceled as exc:
             _cancel_check(f"渲染:{target}(ffmpeg 已终止)")
             # Defensive: should_cancel() is true (that is what raised
@@ -1470,8 +1482,15 @@ def _run_build_phases(
                         hint="安装 pycapcut 可启用;final.mp4/SRT 仍是兜底出口(§14)",
                         level="info", actor=actor)
 
-    append_event(project.root, actor, "build",
-                 {"target": target, "ok": result.ok, "render": result.render_path})
+    build_detail: dict[str, Any] = {
+        "target": target, "ok": result.ok, "render": result.render_path,
+        "run_id": run_id,  # WP3: ties this build to the final's key sidecar (e3)
+    }
+    if target == "final" and result.render_path:
+        # basename of the produced final (render_path is a project-relative
+        # posix string, e.g. "renders/final/final_v1.mp4")
+        build_detail["final"] = result.render_path.rsplit("/", 1)[-1]
+    append_event(project.root, actor, "build", build_detail)
     return result
 
 

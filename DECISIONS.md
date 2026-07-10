@@ -254,3 +254,51 @@ and OTIO. Native pyJianYingDraft / pycapcut / CapCut cloud drafts are
 explicitly not parsed back (format drift risk). Export report / docs tell
 users to edit the skeleton/OTIO copy for round-trip. Baseline written to
 `exports/<kind>/.baseline/`.
+
+## 12. Deep Research 01 — OpenClap adapter + derived-plan/run-evidence stance (2026-07-10)
+
+External research (DR01, Timeline-first runtime & OpenClap format) was
+audited against HEAD before any code: most of its candidate systems already
+exist here, so the batch shipped one new boundary and two small proofs
+instead of parallel infrastructure.
+
+- **Timeline stays compiled truth, not a creation source.** The compiler
+  remains the single place `selected_take` becomes a media path
+  (`VideoClip.source`); renderer and every exporter consume the baked path
+  (pinned by `tests/test_dr01_binding_pins.py`).
+- **The existing provider `GenerationRequest` stays the only one.** It
+  already carries spec hash, refs lineage, routing bias, cost and
+  cancellation; a future acceptance contract must be a *compiled projection*
+  of ShotSpec + technical rules (Deep Research 02 scope), never a second
+  hand-filled truth.
+- **`BuildResult.plan` / `--dry-run` / `explain` / `impact` are the plan
+  surface — derived, never an input.** Six red tests (determinism,
+  evidence-noise independence, targeted invalidation, explainability union,
+  stable node identity, plan/build parity) passed unmodified at HEAD, so no
+  schema/planner/plan-file was added (`tests/test_dr01_plan_projection.py`).
+  One fix: dry-run `timeline_path` is now project-relative like the real
+  build's (machine outputs never leak absolute paths).
+- **OpenClap lives only at the adapter boundary**
+  (`src/manju/exporters/openclap/`): raw-preserving parser (unknown fields,
+  unknown enums and item order survive round-trip; `COMFUI` accepted and
+  normalized in the typed view only), hard resource limits (compressed +
+  streamed-decompressed byte caps, item/nesting caps, strict UTF-8), header
+  counts *verified* fail-closed. `manju openclap export` is a deterministic
+  snapshot (gzip mtime=0) gated by `ask_before=final_export` like every
+  outward-facing export; `import-plan` writes nothing, downloads nothing,
+  never auto-selects takes — the JianYing/OTIO `roundtrip` stance applied to
+  a foreign format. `.clap` never becomes an internal source of truth;
+  locators are never content identity.
+- **Run evidence extends existing artifacts, no new store.** The final's
+  `.key.json` sidecar now also records `run_id`, `output_sha256`, and the
+  exact `inputs` breakdown that hashes to `final_key` (re-hashable, not a
+  parallel account); the `events.jsonl` build record carries the same
+  `run_id`. Content keys are byte-identical to before — the payload was
+  extracted mechanically (`_final_key_payload`), guarded by
+  `test_media_durability`.
+- **Creative QC stays outside the engine.** brief→outline→script→Bible→shot
+  list judgment belongs to Skill/Director (README boundary); the engine only
+  runs deterministic preflight and artifact QC from the shot list on.
+  Conditional candidates whose gap could not be proven by a failing test
+  (core clip_id, resolved-asset view, binding digest, unified mock pack)
+  were skipped with recorded evidence — see REPORTS/AI_IDE_01_BASELINE.md.

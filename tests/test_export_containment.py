@@ -20,9 +20,10 @@ import pytest
 from manju.core.container import ProjectError
 from manju.core.models import AudioClip, Timeline, TimelineTracks, VideoClip
 from manju.exporters.jianying import export_jianying
+from manju.exporters.openclap import export_openclap
 from manju.exporters.otio import export_otio
 
-EXPORTERS = [export_otio, export_jianying]
+EXPORTERS = [export_otio, export_jianying, export_openclap]
 
 
 def _video_timeline(source: str) -> Timeline:

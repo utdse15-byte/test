@@ -999,20 +999,20 @@ def _overlay_image_hashes(project: Project, timeline: Timeline) -> list[str]:
     return hashes
 
 
-def final_content_key(
+def _final_key_payload(
     project: Project,
     timeline: Timeline,
     *,
     ass_file: Path | None,
     target: str,
-) -> str:
-    """FIX-A: the content identity of a would-be final —
+) -> dict:
+    """The EXACT dict :func:`final_content_key` hashes, extracted verbatim.
 
-        hash(normalized timeline JSON + ordered segment cache keys
-             + ASS file hash + audio input hashes + encoding params + target)
-
-    Two builds over identical inputs produce identical keys, so `manju build`
-    can skip the render instead of minting final_vN+1 forever."""
+    Kept as its own function so the key sidecar (WP3 e2) can record the very
+    breakdown that produced the key — the real key input, never a parallel
+    recomputation. CRITICAL: this must stay byte-identical to the historical
+    inline payload; the content-key value of any existing project must not
+    change (the key is derived as ``cache_key(payload)`` below, unchanged)."""
     width, height, fps = timeline.width, timeline.height, timeline.fps
     clips = list(timeline.tracks.video)
     # Round-T: the segment fade params come from the shared boundary plan so a
@@ -1063,7 +1063,50 @@ def final_content_key(
     look = load_look(project)
     if look.active:
         payload["look"] = {"preset": look.preset, "intensity": look.intensity}
-    return cache_key(payload)
+    return payload
+
+
+def final_content_key(
+    project: Project,
+    timeline: Timeline,
+    *,
+    ass_file: Path | None,
+    target: str,
+) -> str:
+    """FIX-A: the content identity of a would-be final —
+
+        hash(normalized timeline JSON + ordered segment cache keys
+             + ASS file hash + audio input hashes + encoding params + target)
+
+    Two builds over identical inputs produce identical keys, so `manju build`
+    can skip the render instead of minting final_vN+1 forever."""
+    return cache_key(_final_key_payload(project, timeline, ass_file=ass_file, target=target))
+
+
+def _key_inputs_breakdown(payload: dict) -> dict:
+    """The final-key payload re-expressed with evidence-friendly field names
+    (WP3 e2). A pure key rename of the SAME values that were hashed — so
+    reconstructing the payload from this and re-hashing reproduces ``final_key``
+    exactly (``cache_key`` sorts keys, so order is irrelevant). All values are
+    already project-relative: segment/audio entries are content hashes or
+    ``missing:<relative source>`` markers, and the timeline dump stores clip
+    sources exactly as the timeline holds them (project-relative).
+
+    ``timeline`` is the normalized timeline dump the key hashes — NOT the
+    compile fingerprint (``meta.compiled_from`` is a different identity)."""
+    inputs = {
+        "timeline": payload["timeline"],
+        "segment_keys": payload["segments"],
+        "ass_sha256": payload["ass"],
+        "audio": payload["audio"],
+        "encoding": payload["encoding"],
+        "target": payload["target"],
+    }
+    if "overlay_images" in payload:
+        inputs["overlay_images"] = payload["overlay_images"]
+    if "look" in payload:
+        inputs["look"] = payload["look"]
+    return inputs
 
 
 def _read_key_sidecar(media_path: Path) -> str | None:
@@ -1077,18 +1120,32 @@ def _read_key_sidecar(media_path: Path) -> str | None:
         return None
 
 
-def _write_key_sidecar(media_path: Path, content_key: str, target: str) -> None:
+def _write_key_sidecar(media_path: Path, content_key: str, target: str, *,
+                       run_id: str | None = None, payload: dict | None = None) -> None:
     from datetime import datetime, timezone
 
+    data = {
+        "final_key": content_key,
+        "target": target,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    # WP3 run-evidence (additive, evidence-only — nothing READS these to drive a
+    # build; _read_key_sidecar consumes only final_key/target, kept intact above).
+    # run_id correlates a final to its run record (e3); output_sha256 vouches for
+    # the bytes actually on disk (e1); inputs exposes the exact key breakdown,
+    # re-hashable straight back to final_key (e2). None run_id / payload → the
+    # field is simply omitted, so other callers (locale, audition) are unchanged.
+    if run_id is not None:
+        data["run_id"] = run_id
+    if payload is not None:
+        if media_path.exists():
+            data["output_sha256"] = hash_file(media_path)
+        data["inputs"] = _key_inputs_breakdown(payload)
     # Atomic like every other truth-adjacent text file (a torn sidecar would
     # only cause a harmless re-render, but the discipline is uniform: §3).
     atomic_write_text(
         media_path.with_suffix(".key.json"),
-        json.dumps(
-            {"final_key": content_key, "target": target,
-             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
-            ensure_ascii=False, indent=2,
-        ) + "\n",
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
     )
 
 
@@ -1125,6 +1182,7 @@ def render_timeline(
     ass_file: Path | None = None,
     force: bool = False,
     log: Callable[[str], None] | None = None,
+    run_id: str | None = None,  # WP3: evidence-only, recorded on the key sidecar
 ) -> Path:
     if target not in ("final", "proxy"):
         raise MediaError(f"unknown render target: {target!r} (expected 'final' or 'proxy')")
@@ -1144,7 +1202,8 @@ def render_timeline(
     # FIX-A: idempotent renders. Identical content key -> reuse instead of
     # re-encoding; --force overrides. Finals compare against the latest
     # final_vN's sidecar; the (overwritable) proxy compares against its own.
-    content_key = final_content_key(project, timeline, ass_file=ass_file, target=target)
+    payload = _final_key_payload(project, timeline, ass_file=ass_file, target=target)
+    content_key = cache_key(payload)
     if not force and out_path is None:
         if target == "final":
             latest = _latest_final_with_key(project)
@@ -1305,7 +1364,7 @@ def render_timeline(
     # it is already up to date (finals: append-only sidecars; proxy: its own).
     # Written strictly AFTER os.replace has the mp4 fully in place — a sidecar
     # existing implies its mp4 is complete (see module design note).
-    _write_key_sidecar(out_path, content_key, target)
+    _write_key_sidecar(out_path, content_key, target, run_id=run_id, payload=payload)
 
     # Round-S: an engine-minted final also carries a snapshot of the timeline it
     # was rendered from, so `manju compare` has per-shot ground truth. Additive
