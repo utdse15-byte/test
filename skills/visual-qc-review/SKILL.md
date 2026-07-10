@@ -31,6 +31,39 @@ Manju 引擎自己不看画面(§0 不含 LLM)——它跑得动的便宜检查�
 - `evidence`:帧时间/帧文件路径/OCR 结果等可核证据。
 无发现的镜头产出 `[]`。整体可另附 `{shot, verdict: pass|blocked, counts:{blocker,issue,fyi}}` 汇总。
 
+## v2 绑定判读(packet + 逐条 expectation · DR02)
+
+`manju qc brief` 的每条镜头行现在多带一组 v2 字段(`packet_id` / `expectations` / `media` / `spec_hash` / `expectation_digest`)。带这些字段时,走**绑定判读**契约,回填更严谨、可验收:
+
+- **回显 `packet_id`**:裁决里原样带回该行的 `packet_id`(如 `pkt_0123456789ab`)——它把你的判读钉死在你所看的那份**字节 + spec + expectation 摘要**上。
+- **逐条 expectation 给观察**:对 `packet.expectations` 里的**每一条** id,给一个 `observed ∈ present | absent | uncertain | not_evaluated`。
+  - **`uncertain` 是被允许且诚实的**:看不清 / 拿不准就写 `uncertain`,**绝不猜 `present`**。宁可 UNKNOWN,也不要假通过。
+  - `confidence` 仅是可选元数据,**绝不参与** PASS/FAIL 计算。
+- **`findings` 只写 expectation 列表之外**的判断(A–J 里那些镜头没显式承诺、但你眼睛抓到的问题,如背景招牌畸变);承诺内的判定一律走 `observations`。
+- **最终 PASS/FAIL/UNKNOWN 由引擎的纯 diff 算出**(`present+present→PASS` / `present+absent→FAIL` / 其余→`UNKNOWN`),**判读者永不自己写结论**——你只报观察。
+- **回退**:若某 brief 行**没有** v2 字段(老项目 / 未编译 expectation),就退回上面的 legacy 契约(逐 finding 的 `shot/criterion/level/message`)。
+
+最小 v2 JSON 示例(形状取自 `verdict_contract()['v2']`):
+
+```json
+{
+  "schema": "manju.qc.verdict/v2",
+  "packet_id": "pkt_0123456789ab",
+  "subject": {"kind": "shot", "id": "S003"},
+  "observations": [
+    {"expectation_id": "exp:S003:must_show:1a2b3c4d", "observed": "present",
+     "confidence": "high", "evidence_refs": ["frame:1200"]},
+    {"expectation_id": "exp:S003:avoid:9f8e7d6c", "observed": "uncertain"}
+  ],
+  "findings": [
+    {"level": "issue", "message": "背景招牌轻微畸变(不在 expectation 列表内)"}
+  ],
+  "reviewer": {"kind": "model_visual", "name": "driving-agent"}
+}
+```
+
+回填仍走 `manju qc verdict --from-file <路径>`(MCP 用 `qc_verdict`);验收状态见 `reports/qc.json` 的 `assurance` 块与 `manju qc` 摘要。若当前媒体/spec/expectation 与 packet 绑定不符,该判读只作历史保留(`binding=stale`),不计入当前验收。
+
 ## 严重度三档(Netflix 口径,按「会员体验影响」而非「是否存在」)
 
 - **blocker** — 内容不可消费 / 不能上线(必须修:如内容审核类、PSE、主体断裂)。

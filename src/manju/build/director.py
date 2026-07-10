@@ -1191,6 +1191,10 @@ def suggest_next(project: Project) -> list[Suggestion]:
     # QC errors/warnings → repair, reading the last qc.json (no mutation)
     out.extend(_qc_suggestions(project))
 
+    # DR02 WP4: derived assurance advisories from qc.json's assurance block
+    # (rejected / unknown / stale) — advisory only, never a spend action.
+    out.extend(_assurance_suggestions(project))
+
     # missing deliverables: final, then cover
     try:
         final = project.newest_final_path()
@@ -1254,6 +1258,58 @@ def _qc_suggestions(project: Project) -> list[Suggestion]:
         out.append(Suggestion(kind="repair",
                               text=f"质检有 {n_err} 处错误 — 见 reports/qc.md 逐条处理",
                               action=None))
+    return out
+
+
+def _assurance_suggestions(project: Project) -> list[Suggestion]:
+    """DR02 WP4: turn the derived assurance block in reports/qc.json into
+    ADVISORY next-steps (read-only, no mutation). Every suggestion is
+    ``action=None`` — a rejected/unknown/stale shot is for a human/agent to
+    triage (see the repair-loop skill), NEVER an auto-executed redo/propose with
+    spend (the do-not-execute contract). Deterministic order (the block's shot
+    order = Project.shot_ids()); an absent/old qc.json without the block yields
+    zero suggestions."""
+    import json
+
+    qc_path = project.reports_dir / "qc.json"
+    if not qc_path.exists():
+        return []
+    try:
+        data = json.loads(qc_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    block = data.get("assurance") if isinstance(data, dict) else None
+    if not isinstance(block, dict):
+        return []
+
+    out: list[Suggestion] = []
+    for a in block.get("shots") or []:
+        if not isinstance(a, dict):
+            continue
+        sid = (a.get("subject") or {}).get("id")
+        state = a.get("assurance_state")
+        if not sid:
+            continue
+        if state == "rejected":
+            failed = a.get("failed_expectation_ids") or []
+            ids = ", ".join(failed) if failed else "(blocker finding 阻断)"
+            out.append(Suggestion(
+                kind="repair", shot=sid,
+                text=f"{sid} 验收未通过(rejected):未满足 expectation {ids} — 见 repair-loop",
+                action=None))
+        elif state == "unknown":
+            unknown = a.get("unknown_expectation_ids") or []
+            ids = ", ".join(unknown) if unknown else "(未观察)"
+            out.append(Suggestion(
+                kind="repair", shot=sid,
+                text=f"{sid} 需要重新判读(uncertain/未观察):{ids} — "
+                     f"manju qc brief --shots {sid}",
+                action=None))
+        elif state == "stale":
+            out.append(Suggestion(
+                kind="repair", shot=sid,
+                text=f"{sid} 判读已过期(stale)— 建议 manju qc brief --shots {sid} 重新判读",
+                action=None))
     return out
 
 

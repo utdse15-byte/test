@@ -1404,21 +1404,64 @@ def qc_main(ctx: typer.Context,
     if ctx.invoked_subcommand is not None:
         return
     from .qc.checks import run_qc as _run_qc
-    from .qc.report import write_reports
+    from .qc.report import build_assurance_block, write_reports
 
     project = _project()
     report = _run_qc(project, project.load_timeline(), deep=deep)
-    paths = write_reports(project, report)
+
+    # DR02 WP4: derive per-shot bound-acceptance assurance (read-only) and thread
+    # it into the reports + envelope. It is a SEPARATE axis from the qc gate — it
+    # never changes the exit code below. Degrade gracefully: any failure omits the
+    # block (a lone warn line off the --json stdout so parsing stays clean).
+    assurance = None
+    try:
+        from .qc.assurance import assurance_for_all
+
+        assurance = assurance_for_all(project, qc_report=report)
+    except Exception as exc:
+        assurance = None
+        if not as_json:
+            typer.secho(f"⚠ 验收(assurance)计算跳过:{exc}", fg=typer.colors.YELLOW, err=True)
+
+    paths = write_reports(project, report, assurance=assurance)
     if as_json:
-        _emit(report.to_dict(), True)
+        envelope = report.to_dict()
+        if assurance is not None:
+            envelope["assurance"] = build_assurance_block(project, assurance)
+        _emit(envelope, True)
     else:
         errors = sum(1 for i in report.items if i.level == "error")
         warns = sum(1 for i in report.items if i.level == "warn")
         typer.echo(f"QC: {errors} errors, {warns} warnings → {project.relpath(paths['qc_md'])}")
         typer.secho("qc ok" if report.ok else "qc found errors",
                     fg=typer.colors.GREEN if report.ok else typer.colors.RED)
+        _echo_assurance_summary(assurance)
     if not report.ok:
         raise typer.Exit(1)
+
+
+def _echo_assurance_summary(assurance: Optional[list]) -> None:
+    """Compact human summary for ``manju qc`` (DR02 WP4): counts per state, then
+    a per-shot line for every rejected/unknown/stale shot with its first reason
+    (stale reasons named). Silent when no assurance was computed."""
+    if not assurance:
+        return
+    from collections import Counter
+
+    counts = Counter(a.get("assurance_state") for a in assurance)
+    summary = ", ".join(f"{state} {n}" for state, n in sorted(counts.items()))
+    typer.echo(f"验收 assurance: {summary}")
+    for a in assurance:
+        state = a.get("assurance_state")
+        if state not in ("rejected", "unknown", "stale"):
+            continue
+        sid = (a.get("subject") or {}).get("id", "?")
+        reasons = a.get("reasons") or []
+        first = f" — {reasons[0]}" if reasons else ""
+        typer.secho(f"  {sid} · {state}{first}", fg=typer.colors.YELLOW)
+        stale = a.get("stale_reasons") or []
+        if stale:
+            typer.echo(f"    stale 原因: {', '.join(stale)}")
 
 
 @qc_app.command("brief")

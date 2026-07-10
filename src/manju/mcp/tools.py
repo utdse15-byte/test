@@ -338,12 +338,27 @@ def _h_qc(project: Project, args: dict) -> dict:
 
 def _h_qc_locked(project: Project, args: dict) -> dict:
     report = run_qc(project, project.load_timeline(), deep=bool(args.get("deep", False)))
-    paths = write_reports(project, report)
-    return {
+    # DR02 WP4: derive the read-only assurance block exactly as the CLI does and
+    # thread it into the reports + result. Separate axis from `ok` (never changes
+    # it); degrade gracefully — any failure simply omits the block.
+    assurance = None
+    try:
+        from ..qc.assurance import assurance_for_all
+
+        assurance = assurance_for_all(project, qc_report=report)
+    except Exception:
+        assurance = None
+    paths = write_reports(project, report, assurance=assurance)
+    result = {
         "ok": report.ok,
         "items": [it.to_dict() for it in report.items],
         "reports": {k: project.relpath(v) for k, v in paths.items()},
     }
+    if assurance is not None:
+        from ..qc.report import build_assurance_block
+
+        result["assurance"] = build_assurance_block(project, assurance)
+    return result
 
 
 def _h_qc_brief(project: Project, args: dict) -> dict:
@@ -686,7 +701,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "qc",
         "description": "Three-layer QC over the compiled timeline; writes qc.json, "
-        "qc.md and repair_plan.yaml. Returns {ok, items, reports} (§9).",
+        "qc.md and repair_plan.yaml. Returns {ok, items, reports, assurance} — "
+        "assurance is the DR02 derived per-shot bound-acceptance block "
+        "(accepted/rejected/unknown/stale/…) + read-only repair proposals; a "
+        "SEPARATE axis from `ok` (never changes it) (§9).",
         "inputSchema": _schema({"deep": {"type": "boolean", "default": False}}),
         "handler": _h_qc,
     },

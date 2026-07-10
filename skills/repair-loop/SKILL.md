@@ -42,6 +42,17 @@ user_invocable: true
 6. `manju check` → `manju build` → **再 `manju qc` 复核闭环**;不过就回步骤 4。
 7. 阶段 `git commit`。
 
+## 从 assurance 出发的修复回路(DR02)
+
+除了 `repair_plan.yaml`(机检层),`reports/qc.json` 现在还带一个 `assurance` 块:每个镜头的**派生验收态**(accepted / rejected / unknown / stale / …)+ 针对 rejected/unknown 镜头的**只读修复提案** `assurance.proposals`。据此修复:
+
+1. 读 `reports/qc.json → assurance.proposals`(或看 `manju qc` 摘要 / `manju director suggest` 的验收建议)。
+2. 对每个 `failed_expectation_id`(该镜头承诺却没满足的一条)→ **修源**:改镜头 YAML(走正常编辑流 / 锁定字段走 `manju propose`)或定点 `manju redo <shot>`(换 seed/provider 重生)再 `manju select`。
+3. `unknown` 的 id(uncertain / 未观察)→ **不是修复,是再判读**:重跑 `manju qc brief --shots <id>` 出题、按 `visual-qc-review` 重新逐条给 observed。
+4. `stale`(判读过期,媒体/spec/expectation 已变)→ 同样重跑 `manju qc brief` 再判。
+
+纪律:**永不直接编辑 expectations / packets / verdicts**——它们都是**派生**产物(源是镜头 YAML 的 `must_show`/`avoid`/`continuity.locks` + 所选 take 的字节);改源,派生自然重算。修复提案带 `do_not_execute_automatically`,**永不自动执行**——由人/你显式把它变成 `manju redo` 或补丁,验收态本身不花钱、不写源。
+
 ## 修复纪律(只增、可回滚)
 
 - 所有修复**只增新 take / 新 final_vN**,带血缘(`_repaired` sidecar / failure 记录);**永不原地覆盖**(gen take、imports、final)。

@@ -22,7 +22,15 @@ from ..core.yamlio import atomic_write_text, write_json, write_yaml
 from .checks import QCItem, QCReport
 
 
-def write_reports(project: Project, qc: QCReport) -> dict[str, Path]:
+def write_reports(project: Project, qc: QCReport,
+                  assurance: list[dict] | None = None) -> dict[str, Path]:
+    """Write the three QC artifacts. ``assurance`` (DR02 WP4) is optional and
+    purely ADDITIVE: when a caller passes the per-shot assurance dicts (from
+    :func:`manju.qc.assurance.assurance_for_all`), qc.json gains an
+    ``"assurance"`` block ({shots, proposals}) and qc.md a short 验收 section.
+    Omitted, every existing key is byte-identical to before. repair_plan.yaml
+    (the machine-tier plan) is UNCHANGED either way — the expectation-driven
+    proposals live only in qc.json's assurance block."""
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     reports_dir = project.reports_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -31,11 +39,39 @@ def write_reports(project: Project, qc: QCReport) -> dict[str, Path]:
     qc_md = reports_dir / "qc.md"
     repair_yaml = reports_dir / "repair_plan.yaml"
 
-    write_json(qc_json, {"ok": qc.ok, "generated_at": generated_at, **qc.to_dict()})
-    atomic_write_text(qc_md, _render_md(qc, generated_at))
+    payload = {"ok": qc.ok, "generated_at": generated_at, **qc.to_dict()}
+    if assurance is not None:
+        payload["assurance"] = build_assurance_block(project, assurance)
+    write_json(qc_json, payload)
+    atomic_write_text(qc_md, _render_md(qc, generated_at, assurance))
     write_yaml(repair_yaml, _repair_plan(project, qc, generated_at))
 
     return {"qc_json": qc_json, "qc_md": qc_md, "repair_plan": repair_yaml}
+
+
+# ------------------------------------------------------ assurance (DR02 WP4)
+
+
+def build_assurance_block(project: Project, assurance: list[dict] | None) -> dict:
+    """The derived assurance block embedded in qc.json (and the ``manju qc
+    --json`` / MCP ``qc`` envelopes so all three agree): the per-shot assurance
+    dicts plus read-only repair PROPOSALS for the rejected/unknown shots. Pure
+    and side-effect-free — proposals never generate, write a source, or spend
+    (each carries ``do_not_execute_automatically``). A malformed shot entry is
+    skipped, never fatal (degrade-gracefully)."""
+    from .assurance import repair_proposal
+
+    shots = list(assurance or [])
+    proposals: list[dict] = []
+    for a in shots:
+        try:
+            sid = (a.get("subject") or {}).get("id")
+            prop = repair_proposal(project, sid, a) if sid else None
+        except Exception:
+            prop = None
+        if prop is not None:
+            proposals.append(prop)
+    return {"shots": shots, "proposals": proposals}
 
 
 # --------------------------------------------------------------- qc.md
@@ -48,7 +84,8 @@ _LEVELS = [
 ]
 
 
-def _render_md(qc: QCReport, generated_at: str) -> str:
+def _render_md(qc: QCReport, generated_at: str,
+               assurance: list[dict] | None = None) -> str:
     status = "✅ ok" if qc.ok else "❌ has errors"
     lines: list[str] = [
         "# QC Report / 质检报告",
@@ -71,9 +108,30 @@ def _render_md(qc: QCReport, generated_at: str) -> str:
             if it.auto_safe:
                 lines.append("  - auto-safe: 可由 `manju repair --auto` 自动修复")
         lines.append("")
+    lines.extend(_render_assurance_md(assurance))
     if len(lines) and lines[-1] == "":
         lines.pop()
     return "\n".join(lines) + "\n"
+
+
+def _render_assurance_md(assurance: list[dict] | None) -> list[str]:
+    """The short 验收 (assurance) section — one line per shot
+    ``S001 · <state> — <first reason>``, plus the named stale reasons where
+    present. Empty (no section) when no assurance was passed (additive)."""
+    if not assurance:
+        return []
+    out = ["## 🔖 验收 (assurance)", ""]
+    for a in assurance:
+        sid = (a.get("subject") or {}).get("id", "?")
+        state = a.get("assurance_state", "?")
+        reasons = a.get("reasons") or []
+        first = f" — {reasons[0]}" if reasons else ""
+        out.append(f"- {sid} · {state}{first}")
+        stale = a.get("stale_reasons") or []
+        if stale:
+            out.append(f"  - stale 原因: {', '.join(stale)}")
+    out.append("")
+    return out
 
 
 # ------------------------------------------------------- repair_plan.yaml
