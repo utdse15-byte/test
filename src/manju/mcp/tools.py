@@ -128,7 +128,14 @@ def _h_status(project: Project, args: dict) -> dict:
 def _h_explain(project: Project, args: dict) -> dict:
     from ..build.explain import explain
 
-    return explain(project)
+    info = explain(project)
+    # DR03B parity: the CLI `explain --graph` flag has a shared service twin here
+    # (same diagnose_project()); default (no arg) is byte-identical to before.
+    if args.get("graph"):
+        from ..build.graphdiag import diagnose_project
+
+        info["graph"] = diagnose_project(project)
+    return info
 
 
 def _h_impact(project: Project, args: dict) -> dict:
@@ -570,8 +577,18 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "name": "explain",
         "description": "Why will the next build do what it will do? Read-only: "
         "per-shot picture/voice states with hash evidence, timeline fingerprint "
-        "diff, final/proxy content-key verdicts. Never mutates, never spends.",
-        "inputSchema": _EMPTY_SCHEMA,
+        "diff, final/proxy content-key verdicts. Never mutates, never spends. "
+        "graph=true (DR03B) appends the derived explicit-DAG diagnostics VIEW.",
+        "inputSchema": _schema(
+            {
+                "graph": {
+                    "type": "boolean",
+                    "description": "append explicit-DAG diagnostics "
+                    "(manju.graph-diagnostics/v1): the read-only derived "
+                    "phase/shot/render/export dependency view",
+                },
+            }
+        ),
         "handler": _h_explain,
     },
     {

@@ -381,3 +381,33 @@ controlled-write machinery end to end.
 - **Not exposed over MCP** — mirroring the existing decision for the
   roundtrip/ingest command class (none are MCP tools today); CLI and any
   future MCP path share the same two service functions.
+
+## 15. Deep Research 03B — graph diagnostics stay a derived view (2026-07-10)
+
+External research (03B, Forge Film) audited first: Manju has NO explicit
+edge-based dependency graph (grep-zero for depends_on/predecessor/topological/
+DAG) — its "graph" is the phased pipeline with deliberate per-shot isolation.
+The batch therefore ships diagnostics, not a scheduler.
+
+- **A pure core with the strict truth table** (`build/graphdiag.py`): only
+  SUCCEEDED or a key-verified cache hit satisfies a required edge; FAILED/
+  CANCELED/WAITING/UNKNOWN never unlock successors; cycles get deterministic
+  minimal paths; multi-parent nodes must declare `handoff_from` OR an explicit
+  `merge_policy` — `predecessors[0]` is never assumed (the Forge-Film bugs are
+  rejected by construction). Pure: no DB/clock/randomness/mutation/dict-order.
+- **`derive_build_graph` is a read-only projection** of the actually-modeled
+  dependencies (every edge cites the code that models it; gen→compile REQ,
+  voice→compile OPT per §4.3 advisory voices, compile→captions/render/export
+  per the phase order; exports depend on compile, not render — the code says
+  so). No inter-shot edges; nothing inferred from scenes/characters/prompts
+  (pinned by test). Manju's compile node declares `merge_policy: index_order` —
+  shots/index.yaml IS the assembly contract, so no permanent handoff noise.
+- **Failure propagation was already correct-by-design** (characterized, not
+  fixed): a final-target build with an unresolved shot refuses at compile
+  (`CompileError` → ok=False, no render); audition slates are the explicit
+  optional-edge analog. No execution code changed.
+- **SchedulingHints: NOT_IMPLEMENTED** (contract default REJECTED_UNLESS_
+  BENCHMARKED — no stable benchmark harness; diagnostics emit no scheduling
+  directives and never become an execution input).
+- Surface: `manju explain --graph [--json]` (+ MCP explain parity) — the
+  diagnostics doc rides the existing command; no new command family.

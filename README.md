@@ -176,7 +176,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju voice <shot>` | M3 | synthesize a new voice take (append-only; newest wins) |
 | `manju voice <shot> --preview [--text …]` | WP2 | 试听: disposable TTS sample under `.manju/webpreview/tts/` (never a take; cache-keyed) |
 | `manju build --target audition` | WP2 | 先听后看: voice+captions+music on slate video; no picture generation; missing takes allowed |
-| `manju explain [--json] [--cost]` | M4/WP5 | why will the next build do what it will do (read-only); `--cost` adds est_cost totals |
+| `manju explain [--json] [--cost] [--graph]` | M4/WP5/DR03B | why will the next build do what it will do (read-only); `--cost` adds est_cost totals; `--graph` appends the derived dependency diagnostics (manju.graph-diagnostics/v1: ready/blocked/failed ancestry, cycles, issues — a read-only view, never a scheduling truth source) |
 | `manju impact <shot> [--field … --value …] [--json]` | WP1 | interconnection spine: what a dialogue/field edit stales, recompiles, costs |
 | `manju align <shot> [--from-srt\|--asr]` | WP3 | align imported VO → `<take>.timing.json` (regenerable; free text-anchor default) |
 | `manju align --media VO --shots S001-S012 [--apply]` | WP3 | multi-shot VO split plan/apply (manual takes + batch record) |

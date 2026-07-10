@@ -2210,13 +2210,27 @@ def explain(
     cost: bool = typer.Option(
         False, "--cost",
         help="WP5: add per-shot est_cost + total (same estimators as build --dry-run)"),
+    graph: bool = typer.Option(
+        False, "--graph",
+        help="DR03B: append explicit-DAG diagnostics — the read-only derived "
+             "phase/shot/render/export dependency VIEW (blocking, root cause, cycles)"),
 ):
     """Why will the next build do what it will do? Read-only: per-shot
     picture/voice states with hash evidence, timeline fingerprint diff, and
-    final/proxy content-key verdicts. Never mutates, never spends."""
+    final/proxy content-key verdicts. Never mutates, never spends.
+
+    ``--graph`` (DR03B) appends the ``manju.graph-diagnostics/v1`` document: a
+    read-only derivation of Manju's actually-modeled dependencies (every indexed
+    shot's generation → compile → render/export, voice advisory). It is a
+    diagnostic VIEW, never a scheduling truth source."""
+    project = _project()
     from .build.explain import explain as _explain
 
-    info = _explain(_project(), with_cost=cost)
+    info = _explain(project, with_cost=cost)
+    if graph:
+        from .build.graphdiag import diagnose_project
+
+        info["graph"] = diagnose_project(project)
     if as_json:
         _emit(info, True)
         return
@@ -2244,6 +2258,17 @@ def explain(
     if cost and "cost" in info:
         c = info["cost"]
         typer.echo(f"成本合计  {c.get('total')} {c.get('currency') or ''}  ({c.get('note') or ''})")
+    if graph and "graph" in info:
+        gd = info["graph"]
+        s = gd["summary"]
+        typer.echo(
+            f"依赖图 graph  节点={s['node_count']} 边={s['edge_count']}  "
+            f"ready={s['ready']} blocked={s['blocked']} pending={s['pending']} "
+            f"waiting={s['waiting']} failed={s['failed']} cycles={s['cycles']}  "
+            f"(只读派生视图,非调度真相)"
+        )
+        for iss in gd["issues"]:
+            typer.echo(f"  ! {iss['code']}  {iss['node_id']}")
 
 
 # ------------------------------------------------------------------ locale
