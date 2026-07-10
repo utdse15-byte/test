@@ -454,14 +454,20 @@ def test_generate_records_failure_kind_and_closes_job(tmp_project, add_shot):
         assert log[0]["remote_job_id"] == "job_fresh_1"
 
 
-def test_generate_survives_broken_runtime_state(tmp_project, add_shot):
-    # §3: a broken DB must never block generation. Make .manju/ a FILE so
-    # RuntimeState cannot create its db there; generation must still succeed.
+def test_generate_broken_runtime_state_fails_closed_before_paid_submit(tmp_project, add_shot):
+    # DR06 (ruling 5) reverses the pre-DR06 §3 behavior for the PAID cloud path:
+    # if the PREPARED intent / DISPATCHING claim cannot be persisted (here the
+    # runtime DB is unusable — .manju/ is a FILE), the paid submit MUST NOT
+    # start. It fail-closes BEFORE the network rather than spending blind. (The
+    # §3 best-effort disposability still holds for READS and post-commit
+    # bookkeeping; it is the pre-submit identity that is now a hard gate.)
     project = tmp_project
     shot = add_shot(project, "S001")
     shutil.rmtree(project.root / ".manju")
     (project.root / ".manju").write_text("not a directory", encoding="utf-8")
 
     provider = _ScriptedCloud()
-    takes = provider.generate(_req(project, shot))
-    assert len(takes) == 1  # generation unaffected by the unusable DB path
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(_req(project, shot))
+    assert provider.submit_calls == 0  # never reached the paid submit
+    assert "fail-closed" in str(exc.value).lower()

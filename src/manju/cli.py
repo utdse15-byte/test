@@ -3875,6 +3875,74 @@ def _reason_tail(text: str | None, limit: int = 90) -> str:
     return one if len(one) <= limit else "…" + one[-limit:]
 
 
+def _unresolved_submissions(project, state) -> list[dict]:
+    """DR06 — the `manju tasks --json` unresolved_submissions section (ruling 11).
+
+    One row per submission still needing resolution (DISPATCHING / ADMITTED-
+    without-terminal / OUTCOME_UNKNOWN), each carrying the honest recovery
+    contract: ``automatic_resubmit: false`` always, the disposition, the offered
+    actions (attach/abandon only — reconcile is SKIPPED_WITH_EVIDENCE), and a
+    ``evidence_chain_ok`` flag (a corrupt per-submission chain fail-closes only
+    that shot+provider). NO 'retry unknown' anywhere."""
+    from .build.attempts import read_submission_events
+    from .providers import submission as S
+
+    out: list[dict] = []
+    for row in state.unresolved_submissions():
+        sid = row["submission_id"]
+        events, _ = read_submission_events(project, sid)
+        ok, broken_at = S.verify_chain(events)
+        st = S.normalize_state(row.get("state"))
+        disposition = (S.OUTCOME_UNKNOWN_DISPOSITION
+                       if st in S.SIDE_EFFECT_AMBIGUOUS else st)
+        out.append({
+            "submission_id": sid,
+            "shot": row.get("shot"),
+            "provider": row.get("provider"),
+            "request_digest": row.get("request_digest"),
+            "state": st,
+            "remote_job_id": row.get("remote_job_id"),
+            "updated": row.get("updated_ts"),
+            "events": len(events),
+            "disposition": disposition,
+            "automatic_resubmit": False,
+            "possible_remote_side_effect": st in S.SIDE_EFFECT_AMBIGUOUS,
+            "evidence_chain_ok": ok,
+            "evidence_chain_broken_at": broken_at,
+            "actions": ["attach_remote_job", "abandon_with_duplicate_risk"],
+        })
+    return out
+
+
+def _load_submission(state, submission_id: str) -> dict:
+    row = state.get_submission(submission_id)
+    if row is None or row.get("state") is None:
+        _fail(f"没有 submission {submission_id}(见 `manju tasks --json` 的 "
+              f"unresolved_submissions)")
+    return row
+
+
+def _emit_recovery_transition(project, state, row, to_state, *, reason_code,
+                              remote_job_id=None, detail=None):
+    """Emit ONE recovery transition event (attach/abandon) onto the submission's
+    hash chain and update the SQLite projection. Enforces transition legality via
+    the pure state machine; the chain tail digest links the new event."""
+    from .build.attempts import append_submission_event, read_submission_events
+    from .providers import submission as S
+
+    from_state = S.normalize_state(row.get("state"))
+    S.assert_transition(from_state, to_state)  # IllegalTransition -> caught by caller
+    events, _ = read_submission_events(project, row["submission_id"])
+    prev = S.submission_event_digest(events[-1]) if events else None
+    append_submission_event(
+        project, submission_id=row["submission_id"],
+        request_digest=row.get("request_digest"), from_state=from_state,
+        to_state=to_state, provider_id=row.get("provider"), shot=row.get("shot"),
+        remote_job_id=remote_job_id, reason_code=reason_code, prev_event_digest=prev,
+        detail=detail, actor=ACTOR)
+    state.set_submission_state(row["submission_id"], to_state, remote_job_id=remote_job_id)
+
+
 tasks_app = typer.Typer(
     no_args_is_help=False,
     help="任务 / tasks — the run-ledger JOB/QUEUE view (§8.3, goal 19). "
@@ -3915,12 +3983,16 @@ def tasks(ctx: typer.Context,
     note = ""
     runs: list[dict] = []
     pending: list[dict] = []
+    unresolved: list[dict] = []
     try:
         with RuntimeState(project.root) as state:
             runs = state.run_log(n)
             pending = state.pending_jobs()
             total, currency = state.total_cost()
             by_provider = state.cost_by_provider()
+            # DR06 (ruling 11): the unresolved-submission section — in-flight and
+            # ambiguous paid submissions with their honest recovery contract.
+            unresolved = _unresolved_submissions(project, state)
     except Exception as exc:  # §3: the ledger is disposable — degrade, never crash
         available = False
         note = f"run ledger unavailable ({exc}); try `manju rebuild-index`"
@@ -3959,6 +4031,7 @@ def tasks(ctx: typer.Context,
     payload = {
         "tasks": tasks_out,
         "pending": pending_out,
+        "unresolved_submissions": unresolved,
         "spend": {"by_provider": by_provider, "total": float(total), "currency": currency},
         "shown": len(tasks_out),
     }
@@ -3993,6 +4066,19 @@ def tasks(ctx: typer.Context,
         for p in pending_out:
             typer.echo(f"  {p['remote_job_id']}  {p['shot'] or '—'}  {p['provider'] or '—'}  "
                        f"polling  {p['created'] or ''}")
+    if unresolved:
+        typer.secho("未决提交 / unresolved submissions (结果未知,绝不自动重提):",
+                    fg=typer.colors.YELLOW)
+        for u in unresolved:
+            corrupt = "" if u["evidence_chain_ok"] else "  ⚠证据链损坏/CORRUPT"
+            typer.echo(f"  {u['submission_id']}  {u['shot'] or '—'}  "
+                       f"{u['provider'] or '—'}  {u['state']}  "
+                       f"job={u['remote_job_id'] or '—'}{corrupt}")
+            typer.secho(
+                f"        ↳ automatic_resubmit: false — 恢复: "
+                f"`manju tasks attach-remote-job {u['submission_id']} <remote_job_id>` "
+                f"或 `manju tasks abandon {u['submission_id']} --reason ...`",
+                fg=typer.colors.BRIGHT_BLACK)
     typer.secho("花费 / spend by provider:", fg=typer.colors.BRIGHT_BLACK)
     for row in by_provider:
         cur = row["currency"] or "?"
@@ -4086,6 +4172,93 @@ def tasks_retry(
     if not as_json:
         typer.secho(f"已重试 #{run_id} → {shot_id}: {', '.join(takes)}",
                     fg=typer.colors.GREEN)
+
+
+@tasks_app.command("attach-remote-job")
+def tasks_attach_remote_job(
+    submission_id: str = typer.Argument(..., help="unresolved submission id (see `manju tasks --json`)"),
+    remote_job_id: str = typer.Argument(..., help="the remote job id you confirmed out-of-band"),
+    expected_state: Optional[str] = typer.Option(
+        None, "--expected-state", help="guard: only act if the submission is in this state"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Attach a remote job id to an UNKNOWN/DISPATCHING submission (DR06 §11.5).
+
+    The HONEST recovery for an ambiguous outcome once YOU have confirmed, in the
+    provider's console, that the remote job DID run: it appends an ADMITTED
+    evidence event under the SAME submission_id (never a new submission), updates
+    the projection, and hands the job to the normal poll path on the next build —
+    it NEVER claims verified ownership itself (you asserted it) and NEVER
+    resubmits. The provider is taken from the submission row (you cannot attach a
+    job from a different provider)."""
+    from .providers import submission as S
+    from .runtime.state import RuntimeState
+
+    project = _project()
+    with RuntimeState(project.root) as state:
+        row = _load_submission(state, submission_id)
+        st = S.normalize_state(row.get("state"))
+        if expected_state and st != expected_state:
+            _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
+        if st not in (S.OUTCOME_UNKNOWN, S.DISPATCHING):
+            _fail(f"只能给 UNKNOWN/DISPATCHING 的 submission 关联远程任务"
+                  f"(当前 {st});已 ADMITTED/terminal 的无需关联")
+        try:
+            _emit_recovery_transition(
+                project, state, row, S.ADMITTED, reason_code="attach_remote_job",
+                remote_job_id=remote_job_id,
+                detail={"attached_by": ACTOR, "claimed_verified_ownership": False})
+        except S.IllegalTransition as exc:
+            _fail(str(exc))
+    payload = {"ok": True, "submission_id": submission_id, "state": S.ADMITTED,
+               "remote_job_id": remote_job_id, "note": "poll-only on next build; "
+               "no resubmit; ownership asserted by operator, not verified"}
+    _emit(payload, as_json)
+    if not as_json:
+        typer.secho(f"已关联 {submission_id} → 远程任务 {remote_job_id}(ADMITTED);"
+                    f"下次构建将仅轮询,不会重提。", fg=typer.colors.GREEN)
+
+
+@tasks_app.command("abandon")
+def tasks_abandon(
+    submission_id: str = typer.Argument(..., help="unresolved submission id (see `manju tasks --json`)"),
+    reason: str = typer.Option(..., "--reason", help="why (recorded on the evidence event)"),
+    expected_state: Optional[str] = typer.Option(
+        None, "--expected-state", help="guard: only act if the submission is in this state"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Abandon an unresolved submission (DR06 §11.6) → ABANDONED_BY_USER.
+
+    Accepts the duplicate-risk EXPLICITLY (the remote side may have run and may
+    bill): records an ABANDONED_BY_USER evidence event carrying your reason and
+    the risk acceptance, and stops the submission blocking the shot+provider. The
+    history is preserved (append-only); a NEW submission_id is only ever minted by
+    the next explicit redo/build — abandon itself never resubmits."""
+    from .providers import submission as S
+    from .runtime.state import RuntimeState
+
+    project = _project()
+    with RuntimeState(project.root) as state:
+        row = _load_submission(state, submission_id)
+        st = S.normalize_state(row.get("state"))
+        if expected_state and st != expected_state:
+            _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
+        if st in S.TERMINAL_STATES:
+            _fail(f"submission {submission_id} 已是终态 {st},无需 abandon")
+        try:
+            _emit_recovery_transition(
+                project, state, row, S.ABANDONED_BY_USER, reason_code="abandoned_by_user",
+                detail={"reason": S.redact_reason(reason), "abandoned_by": ACTOR,
+                        "duplicate_risk_accepted": True})
+        except S.IllegalTransition as exc:
+            _fail(str(exc))
+    payload = {"ok": True, "submission_id": submission_id, "state": S.ABANDONED_BY_USER,
+               "reason": reason, "duplicate_risk_accepted": True}
+    _emit(payload, as_json)
+    if not as_json:
+        typer.secho(f"已放弃 {submission_id}(ABANDONED_BY_USER,接受重复风险);"
+                    f"历史保留,后续 redo/build 才会生成新的 submission。",
+                    fg=typer.colors.YELLOW)
 
 
 @tasks_app.command("manifest")

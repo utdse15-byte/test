@@ -98,6 +98,19 @@ CREATE TABLE IF NOT EXISTS intents (
 );
 """
 
+# DR06: the additive submission-identity/admission-state columns on the SAME
+# intents table (ruling 4, following the #47 migration precedent). A UNIQUE
+# index on submission_id (NULLs stay distinct so legacy/goal-27 rows never
+# collide) is the SQLite-level guarantee behind the atomic DISPATCHING claim.
+# ``state`` is the admission state machine (providers.submission.STATES);
+# ``updated_ts`` is display-only. Legacy rows read state NULL -> UNKNOWN_LEGACY.
+_INTENT_SUBMISSION_COLUMNS = (
+    ("submission_id", "TEXT"),
+    ("request_digest", "TEXT"),
+    ("state", "TEXT"),
+    ("updated_ts", "TEXT"),
+)
+
 
 def _dumps(value: Any) -> str | None:
     """Canonical JSON for a params dict (or None). Non-ASCII kept, keys sorted
@@ -158,6 +171,24 @@ class RuntimeState:
                     self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {coltype}")
             except sqlite3.Error:
                 pass
+        # DR06: additively grow the intents table with the submission columns
+        # (same idempotent "duplicate column name -> swallow" precedent), then
+        # the UNIQUE index behind the atomic claim. A pre-DR06 DB gains empty
+        # columns (its rows read state UNKNOWN_LEGACY); a fresh/upgraded DB
+        # no-ops. §3-disposable: a failed upgrade degrades, never raises.
+        for column, coltype in _INTENT_SUBMISSION_COLUMNS:
+            try:
+                with self._conn:
+                    self._conn.execute(f"ALTER TABLE intents ADD COLUMN {column} {coltype}")
+            except sqlite3.Error:
+                pass
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_intents_submission "
+                    "ON intents(submission_id)")
+        except sqlite3.Error:
+            pass
 
     def _migrate_legacy_jobs_table(self) -> None:
         """#47: ``jobs`` used to key on ``remote_job_id`` ALONE. Two providers
@@ -426,22 +457,116 @@ class RuntimeState:
     # -------------------------------------------------------------- intents
 
     def open_intent(self, *, provider: str, shot: str,
-                    params_hash: str | None = None) -> str:
+                    params_hash: str | None = None,
+                    submission_id: str | None = None,
+                    request_digest: str | None = None,
+                    state: str | None = None) -> str:
         """Persist a PRE-SUBMIT intent (§8.1 double-submit window, goal 27):
         written BEFORE the paid ``submit()`` call so a crash between "we are
         about to spend money" and "we know the remote job id" leaves a
         breadcrumb — the interval :meth:`open_job` cannot cover because the
         job id does not exist yet. Returns a local intent id (never a remote
         one); pass it to :meth:`resolve_intent` once ``submit()`` returns (or
-        raises)."""
+        raises).
+
+        DR06 (additive): the paid cloud path also threads ``submission_id`` /
+        ``request_digest`` / ``state`` (typically PREPARED) so the SAME row is
+        the admission-state projection. Legacy/goal-27 callers omit them and get
+        byte-identical behavior (state NULL -> UNKNOWN_LEGACY on read). This is
+        the write whose FAILURE the paid path treats as fail-closed (ruling 5):
+        it re-raises so the caller can refuse to submit."""
         intent_id = uuid.uuid4().hex
+        ts = self._ts()
         with self._conn:
             self._conn.execute(
                 "INSERT INTO intents (id, provider, shot, params_hash, ts, "
-                "remote_job_id, status) VALUES (?, ?, ?, ?, ?, NULL, 'open')",
-                (intent_id, provider, shot, params_hash, self._ts()),
+                "remote_job_id, status, submission_id, request_digest, state, "
+                "updated_ts) VALUES (?, ?, ?, ?, ?, NULL, 'open', ?, ?, ?, ?)",
+                (intent_id, provider, shot, params_hash, ts,
+                 submission_id, request_digest, state, ts if state else None),
             )
         return intent_id
+
+    # ------------------------------------------------ DR06 submission projection
+
+    def claim_dispatching(self, submission_id: str) -> bool:
+        """The ATOMIC admission claim (ruling 4): a single SQLite CAS
+        ``UPDATE ... SET state='DISPATCHING' WHERE submission_id=? AND
+        state='PREPARED'`` under a transaction, returning whether exactly one
+        row changed. This is multi-process safe (SQLite row locking is the
+        guarantee, NOT an in-memory lock): if two processes race the same
+        PREPARED submission, exactly one sees rowcount==1 and proceeds to the
+        paid submit; the loser sees False and must NOT submit."""
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE intents SET state = 'DISPATCHING', updated_ts = ? "
+                "WHERE submission_id = ? AND state = 'PREPARED'",
+                (self._ts(), submission_id),
+            )
+        return cur.rowcount == 1
+
+    def set_submission_state(self, submission_id: str, new_state: str, *,
+                             expected_state: str | None = None,
+                             remote_job_id: str | None = None) -> bool:
+        """Transition a submission's state (ruling 4). When ``expected_state`` is
+        given the update is a CAS on it (returns whether it applied); otherwise
+        it applies unconditionally to the named submission. ``remote_job_id`` is
+        recorded when supplied (e.g. on ADMITTED). Returns whether a row changed.
+
+        The caller validates transition LEGALITY via ``providers.submission``;
+        this method is the persistence primitive."""
+        sql = ("UPDATE intents SET state = ?, updated_ts = ?"
+               + (", remote_job_id = ?" if remote_job_id is not None else "")
+               + " WHERE submission_id = ?"
+               + (" AND state = ?" if expected_state is not None else ""))
+        args: list[Any] = [new_state, self._ts()]
+        if remote_job_id is not None:
+            args.append(remote_job_id)
+        args.append(submission_id)
+        if expected_state is not None:
+            args.append(expected_state)
+        with self._conn:
+            cur = self._conn.execute(sql, args)
+        return cur.rowcount == 1
+
+    def get_submission(self, submission_id: str) -> dict | None:
+        """One submission's intent row by submission_id, or ``None``."""
+        row = self._conn.execute(
+            "SELECT * FROM intents WHERE submission_id = ?", (submission_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def submissions(self, *, shot: str | None = None, provider: str | None = None,
+                    states: tuple[str, ...] | None = None,
+                    request_digest: str | None = None) -> list[dict]:
+        """Submission intent rows (state IS NOT NULL — i.e. DR06-minted, never a
+        legacy goal-27 row), newest first, filtered by any of shot / provider /
+        state set / request_digest. The one query behind the fresh-submit
+        correlation (ruling 8), ``tasks`` unresolved view, and recovery."""
+        sql = "SELECT * FROM intents WHERE state IS NOT NULL"
+        args: list[Any] = []
+        if shot is not None:
+            sql += " AND shot = ?"
+            args.append(shot)
+        if provider is not None:
+            sql += " AND provider = ?"
+            args.append(provider)
+        if request_digest is not None:
+            sql += " AND request_digest = ?"
+            args.append(request_digest)
+        if states:
+            sql += " AND state IN (%s)" % ",".join("?" * len(states))
+            args.extend(states)
+        sql += " ORDER BY updated_ts DESC, ts DESC, rowid DESC"
+        return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
+
+    def unresolved_submissions(self) -> list[dict]:
+        """Every submission still needing resolution — state in
+        DISPATCHING / ADMITTED / OUTCOME_UNKNOWN (ruling 4/11). Newest first.
+        The projection ``manju tasks --json`` surfaces and ``rebuild`` restores."""
+        from ..providers.submission import UNRESOLVED_STATES
+
+        return self.submissions(states=tuple(sorted(UNRESOLVED_STATES)))
 
     def resolve_intent(self, intent_id: str, remote_job_id: str | None) -> None:
         """Fold a submit's outcome back onto its intent (goal 27): a
@@ -544,4 +669,67 @@ class RuntimeState:
                 "SELECT COUNT(*) AS c FROM jobs WHERE status = 'pending'"
             ).fetchone()["c"]
 
-        return {"runs": run_count, "pending_jobs": int(pending)}
+        # DR06 (ruling 4): SQLite is a rebuildable projection of the events
+        # truth — restore any UNRESOLVED submission (DISPATCHING / ADMITTED-
+        # without-terminal / OUTCOME_UNKNOWN) from the submission_state event
+        # stream so a .manju/ loss cannot silently forget an in-flight or
+        # ambiguous paid submission. Best-effort: a read hiccup degrades to no
+        # restore, never raises.
+        restored = self._restore_submissions_from_events(project)
+        return {"runs": run_count, "pending_jobs": int(pending),
+                "submissions_restored": restored}
+
+    def _restore_submissions_from_events(self, project: "Project") -> int:
+        """Reconstruct each submission's latest state from the events stream and
+        re-project the UNRESOLVED ones into the intents table. Events are the
+        source of truth (a state change emits its event around/before the SQLite
+        write — the §8.4 order), so events win on reconcile. A broken per-
+        submission chain is restored at its last VALID state and left for the
+        recovery layer to fail-close (never silently dropped)."""
+        try:
+            from ..build.attempts import read_submission_events
+            from ..providers.submission import (
+                UNRESOLVED_STATES,
+                normalize_state,
+            )
+        except Exception:
+            return 0
+        try:
+            records, _malformed = read_submission_events(project)
+        except Exception:
+            return 0
+        # latest event per submission_id (records are already sequence-sorted)
+        latest: dict[str, dict] = {}
+        for rec in records:
+            sid = rec.get("submission_id")
+            if sid:
+                latest[sid] = rec
+        restored = 0
+        with self._conn:
+            for sid, rec in latest.items():
+                state = normalize_state(rec.get("to"))
+                if state not in UNRESOLVED_STATES:
+                    continue
+                row = self._conn.execute(
+                    "SELECT id FROM intents WHERE submission_id = ?", (sid,)
+                ).fetchone()
+                ts = rec.get("ts") or self._ts()
+                if row is None:
+                    self._conn.execute(
+                        "INSERT INTO intents (id, provider, shot, params_hash, ts, "
+                        "remote_job_id, status, submission_id, request_digest, "
+                        "state, updated_ts) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, "
+                        "?, ?, ?)",
+                        (uuid.uuid4().hex, rec.get("provider_id") or "?",
+                         rec.get("shot") or "?", None, ts, rec.get("remote_job_id"),
+                         sid, rec.get("request_digest"), state, ts),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE intents SET state = ?, remote_job_id = ?, "
+                        "request_digest = ?, updated_ts = ? WHERE submission_id = ?",
+                        (state, rec.get("remote_job_id"), rec.get("request_digest"),
+                         ts, sid),
+                    )
+                restored += 1
+        return restored

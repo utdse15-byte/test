@@ -243,6 +243,25 @@ class RefsConfig(ManjuModel):
     first_last_multipart_last: str = "image_tail"  # multipart part name, end frame
 
 
+class IdempotencyConfig(ManjuModel):
+    """DR06 ruling 10 — declared provider-native idempotency. ``mode: header``
+    injects the derived key (sha256 over namespace+provider_id+submission_id,
+    NEVER a secret) into the named request ``field`` on submit, so a re-dispatch
+    of the SAME submission dedupes remotely (no second side effect). Default
+    ``mode: none`` is a strict no-op — old manifests are byte-identical."""
+
+    mode: str = "none"          # none | header
+    field: str | None = None    # ★ header name, e.g. "Idempotency-Key"
+
+
+class SubmissionConfig(ManjuModel):
+    """DR06 — the additive per-provider submission policy. Only ``idempotency``
+    lives here today; the section is absent on every existing manifest, so its
+    default is a pure no-op."""
+
+    idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
+
+
 class LocalCmdConfig(ManjuModel):
     """Local-command adapter config: drive any local generator CLI (§8.6).
 
@@ -283,6 +302,9 @@ class ProviderManifest(ManjuModel):
     comfyui: ComfyConfig = Field(default_factory=ComfyConfig)
     local_cmd: LocalCmdConfig = Field(default_factory=LocalCmdConfig)
     refs: RefsConfig = Field(default_factory=RefsConfig)
+    # DR06 (ruling 10): additive, default no-op — provider-native idempotency
+    # declaration. Absent on every existing manifest, so byte-identical.
+    submission: SubmissionConfig = Field(default_factory=SubmissionConfig)
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —

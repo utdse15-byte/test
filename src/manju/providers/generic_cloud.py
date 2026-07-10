@@ -121,9 +121,19 @@ def default_transport(method: str, url: str, headers: dict[str, str],
         return HttpResponse(exc.code, dict(exc.headers or {}),
                             _read_capped(exc, url, max_bytes))
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # DR06 (ruling 6): mark the send boundary. ONLY a DNS failure or a
+        # connection-refused before any byte was written is provably-not-sent;
+        # everything else after submit was attempted (timeout, reset, EOF,
+        # unknown OSError) is OUTCOME_UNKNOWN — the request MAY have arrived, so
+        # its outcome must never be auto-treated as not-happened. The
+        # classification is a pure function in providers.submission; the caller
+        # (submit) reads it off the raised ProviderFailure.
+        from .submission import disposition_for_transport_error
+
         raise ProviderFailure(
             FailureKind.timeout, f"network error calling {url}: {exc}",
             detail={"url": url},
+            disposition=disposition_for_transport_error(exc),
         ) from exc
 
 
@@ -327,6 +337,22 @@ class GenericCloudProvider(CloudProvider):
                 return FailureKind.content_rejected
         return FailureKind.provider_error
 
+    def _with_idempotency_header(self, headers: dict[str, str],
+                                 req: GenerationRequest) -> dict[str, str]:
+        """DR06 ruling 10: inject the derived idempotency key into the declared
+        header ONLY when the manifest opts in (``submission.idempotency.mode ==
+        header``) AND base has derived a key for this submission. Old manifests
+        (no ``submission`` section) and direct provider tests are byte-identical —
+        no header is added. The key is a sha256 over (namespace, provider_id,
+        submission_id): stable across re-dispatch attempts, carrying no secret."""
+        sub = getattr(self.manifest, "submission", None)
+        idem = getattr(sub, "idempotency", None) if sub is not None else None
+        key = getattr(req, "submission_idempotency_key", None)
+        if idem is not None and getattr(idem, "mode", None) == "header" \
+                and getattr(idem, "field", None) and key:
+            headers = {**headers, idem.field: key}
+        return headers
+
     def _throttle(self) -> None:
         """Engine-side rate limiting (§8.2): we do not rely on remote 429s.
 
@@ -362,41 +388,68 @@ class GenericCloudProvider(CloudProvider):
     # ---------------------------------------------------- CloudProvider API
 
     def submit(self, req: GenerationRequest) -> str:
+        from .submission import (
+            DEFINITELY_REJECTED,
+            NOT_DISPATCHED,
+            OUTCOME_UNKNOWN_DISPOSITION,
+            disposition_for_status,
+        )
+
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
-        self._enforce_limits(req.shot, req.duration_ms)
-        rendered = render_body(cfg.body_template, _placeholder_map(req))
-        # Reference inputs (goal item 7): inject per the manifest `refs:` section,
-        # validating every local ref is readable BEFORE this paid POST. Returns
-        # any multipart file parts and records the delivery lineage on req.params
-        # so it lands on the take (auditable per take).
-        files = self._deliver_refs(rendered, req)
-        if files:
-            content_type, body = encode_multipart(_body_as_fields(rendered), files)
-            headers = self._headers({**cfg.extra_headers, "Content-Type": content_type})
-        else:
-            body = json.dumps(rendered, ensure_ascii=False).encode("utf-8")
-            headers = self._headers(cfg.extra_headers)
+        # Everything BEFORE the transport call is provably-not-sent: a duration
+        # cap, a render/refs error, a missing key. DR06 marks these NOT_DISPATCHED
+        # so the admission machine records REJECTED_PRE_DISPATCH (retry allowed).
+        try:
+            self._enforce_limits(req.shot, req.duration_ms)
+            rendered = render_body(cfg.body_template, _placeholder_map(req))
+            # Reference inputs (goal item 7): inject per the manifest `refs:`
+            # section, validating every local ref is readable BEFORE this paid
+            # POST. Returns any multipart file parts and records the delivery
+            # lineage on req.params so it lands on the take (auditable per take).
+            files = self._deliver_refs(rendered, req)
+            if files:
+                content_type, body = encode_multipart(_body_as_fields(rendered), files)
+                headers = self._headers({**cfg.extra_headers, "Content-Type": content_type})
+            else:
+                body = json.dumps(rendered, ensure_ascii=False).encode("utf-8")
+                headers = self._headers(cfg.extra_headers)
+            # ruling 10: inject the derived idempotency key ONLY when the manifest
+            # declares an idempotency header (req.submission_idempotency_key is set
+            # by base._prepare_submission for a declared provider, else None).
+            headers = self._with_idempotency_header(headers, req)
+        except ProviderFailure as exc:
+            if exc.disposition is None:
+                exc.disposition = NOT_DISPATCHED  # pre-transport = provably not sent
+            raise
         self._throttle()
         resp = self._transport(cfg.method, cfg.url, headers, body)
+        # From here the send boundary is crossed — a failure's disposition is
+        # DEFINITELY_REJECTED only for the tested 4xx statuses, else UNKNOWN.
         if resp.status == 429:
             raise ProviderFailure(
                 FailureKind.rate_limited, f"{self.id}: remote rate limit (429)",
-                detail={"body": resp.text()[:500]},
+                detail={"status": 429, "body": resp.text()[:500]},
+                disposition=DEFINITELY_REJECTED,
             )
         if resp.status >= 400:
             kind = self._classify_body(resp.text())
             raise ProviderFailure(
                 kind, f"{self.id}: submit failed with HTTP {resp.status}",
                 detail={"status": resp.status, "body": resp.text()[:2000]},
+                disposition=disposition_for_status(resp.status),
             )
         try:
             job_id = extract(resp.json(), cfg.job_id_path)
         except (JsonPathError, json.JSONDecodeError) as exc:
+            # a 2xx we cannot read a job id out of: the server accepted the
+            # request (a job MAY exist remotely) but we cannot track it —
+            # genuinely ambiguous, so OUTCOME_UNKNOWN, never a safe retry/fallback.
             raise ProviderFailure(
                 FailureKind.provider_error,
                 f"{self.id}: cannot read job id ({exc})",
-                detail={"body": resp.text()[:2000]},
+                detail={"status": resp.status, "body": resp.text()[:2000]},
+                disposition=OUTCOME_UNKNOWN_DISPOSITION,
             ) from exc
         # #53: remember this job's duration for poll()'s cost fallback. #29:
         # this adapter's submit/poll/download path always returns exactly ONE

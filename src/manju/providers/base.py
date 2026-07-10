@@ -55,11 +55,19 @@ class ProviderFailure(RuntimeError):
     the full rejection reason so an agent can rewrite the prompt (§8.1, §8.5).
     """
 
-    def __init__(self, kind: FailureKind, message: str, *, detail: dict | None = None):
+    def __init__(self, kind: FailureKind, message: str, *, detail: dict | None = None,
+                 disposition: str | None = None):
         super().__init__(message)
         self.kind = kind
         self.message = message
         self.detail = detail or {}
+        # DR06 (ruling 6): the ORTHOGONAL submit-outcome classification
+        # (providers.submission NOT_DISPATCHED / DEFINITELY_REJECTED / ADMITTED /
+        # OUTCOME_UNKNOWN). ``None`` = legacy/conservative — a failure that never
+        # classified its disposition keeps the pre-DR06 retry-by-kind behavior;
+        # only an explicit OUTCOME_UNKNOWN triggers the fail-closed path (never
+        # retry, never fallback, never resubmit). ``FailureKind`` is untouched.
+        self.disposition = disposition
 
 
 class NeedsHumanInput(RuntimeError):
@@ -149,7 +157,14 @@ def record_provider_failure(project, shot_id: str, provider_id: str,
                 evidence=evidence,
                 hint=detail.get("hint") or _KIND_HINT.get(kind_val, ""),
                 actor=actor,
-                detail={"provider": provider_id, "failure_kind": kind_val},
+                detail={"provider": provider_id, "failure_kind": kind_val,
+                        # DR06: an UNKNOWN submission's failure record carries its
+                        # submission_id (existing free-form detail dict, no
+                        # signature change) so `manju failures --json` links to it.
+                        **({"submission_id": detail["submission_id"]}
+                           if detail.get("submission_id") else {}),
+                        **({"disposition": detail["disposition"]}
+                           if detail.get("disposition") else {})},
             ),
         )
         return rec.get("id")
@@ -311,6 +326,69 @@ class Provider(ABC):
         return req.project.register_take(req.shot.id, media_file, sidecar)
 
 
+class _SubmissionContext:
+    """DR06 — the per-submission admission bookkeeping for ONE paid cloud
+    generate() call. Owns the submission_id/request_digest, the current state,
+    and the hash-chain tail; every ``transition`` emits the ``submission_state``
+    event FIRST (evidence) then updates the SQLite projection (§8.4 order), and
+    threads the previous event's digest forward so the per-submission chain is
+    intact. NO network. State can be ``None`` only on a resume of an ADMITTED
+    submission whose row is being polled (never on a fresh submit — that path
+    fail-closes if the DB is unavailable, ruling 5)."""
+
+    def __init__(self, provider: "CloudProvider", state, req: "GenerationRequest",
+                 *, submission_id: str, request_digest: str, current_state: str,
+                 prev_event_digest: str | None = None):
+        self.provider = provider
+        self.state = state
+        self.req = req
+        self.submission_id = submission_id
+        self.request_digest = request_digest
+        self.current_state = current_state
+        self.remote_job_id: str | None = None
+        self._last_digest = prev_event_digest
+        self._intent_id: str | None = None
+        self.warnings: list[str] = []
+
+    def emit(self, from_state: str | None, to_state: str, *, reason_code: str | None = None,
+             remote_job_id: str | None = None, detail: dict | None = None) -> None:
+        from ..build.attempts import append_submission_event
+        from .submission import submission_event_digest
+
+        rec = append_submission_event(
+            self.req.project, submission_id=self.submission_id,
+            request_digest=self.request_digest, from_state=from_state, to_state=to_state,
+            provider_id=self.provider.id, shot=self.req.shot.id,
+            remote_job_id=remote_job_id, reason_code=reason_code,
+            prev_event_digest=self._last_digest, detail=detail)
+        if rec:
+            self._last_digest = submission_event_digest(rec)
+        else:
+            self.warnings.append(
+                f"submission evidence append failed for {self.submission_id} "
+                f"({self.current_state}->{to_state})")
+
+    def transition(self, to_state: str, *, reason_code: str | None = None,
+                   remote_job_id: str | None = None, detail: dict | None = None) -> None:
+        """Evidence-FIRST transition (§8.4/§8.5 row 5): the event lands before
+        the SQLite projection, so a crash between them recovers the state from
+        the event stream. Legality is enforced by the pure state machine."""
+        from . import submission as S
+
+        S.assert_transition(self.current_state, to_state)
+        self.emit(self.current_state, to_state, reason_code=reason_code,
+                  remote_job_id=remote_job_id, detail=detail)
+        if self.state is not None:
+            try:
+                self.state.set_submission_state(
+                    self.submission_id, to_state, remote_job_id=remote_job_id)
+            except Exception:
+                pass  # projection is rebuildable from the event just written
+        self.current_state = to_state
+        if remote_job_id:
+            self.remote_job_id = remote_job_id
+
+
 class CloudProvider(Provider):
     """Async task skeleton for cloud video/image/TTS APIs (§8.1).
 
@@ -385,63 +463,506 @@ class CloudProvider(Provider):
     # -- concrete orchestration --------------------------------------------
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
-        # Runtime state is disposable (§3): every use of it below is best-effort
-        # so a broken/absent DB can never block generation — generation is what
-        # costs money, bookkeeping is not.
+        # Runtime state is disposable (§3) for READS and for post-commit
+        # bookkeeping; but DR06 (ruling 5) makes the PRE-submit identity a
+        # fail-closed gate: if PREPARED / the DISPATCHING claim cannot be
+        # persisted, the paid submit MUST NOT start. The cloud flow that
+        # succeeds cleanly is byte-identical bar the additive submission
+        # evidence + intent columns.
+        from . import submission as S
+
         state = self._open_state(req)
         try:
-            # goal 27: an intent left OPEN by an earlier, unresolved attempt for
-            # this shot+provider means that attempt may have reached the remote
-            # side and could be billing right now — flag it loudly (never
-            # silently) rather than proceeding as if nothing happened. Advisory
-            # only: it does not block THIS call, which is presumably the
-            # human/agent's deliberate new attempt.
+            # goal 27: flag any intent left OPEN by an earlier crashed attempt.
             self._flag_dangling_intents(state, req)
 
-            # Resume contract (§8.1, §14): a persisted job id — passed explicitly
-            # or found still-pending for this shot+provider — means skip submit
-            # and re-poll, so an interrupted long task never resubmits/re-charges.
+            # Resume contract (§8.1, §14): an EXPLICIT job id short-circuits to
+            # re-poll (never resubmit) — the forced-resume path, unchanged.
             job_id: str | None = req.params.get("remote_job_id")
+            sub: _SubmissionContext | None = None
             if not job_id:
-                job_id = self._resume_job_id(state, req)
-            # Build-mode retry budget (goal 14): the request may cap retries for
-            # THIS call (quality retries hardest, speed least); None keeps the
-            # provider's own default — byte-identical to before modes existed.
+                # DR06 (ruling 8): strict correlation against unresolved
+                # submissions for this shot+provider BEFORE minting a new paid
+                # submission. May resume an ADMITTED job under its submission_id,
+                # re-dispatch an idempotent one, or FAIL CLOSED on an ambiguous
+                # (DISPATCHING/OUTCOME_UNKNOWN) outcome — never auto-resubmit.
+                action, job_id, sub = self._resolve_resume(state, req)
             max_retries = self._max_retries if req.max_retries is None else req.max_retries
             attempt = 0
             while True:
                 intent_id: str | None = None
                 try:
                     if not job_id:
-                        # goal 27: the PRE-SUBMIT breadcrumb — written before the
-                        # paid call, resolved right after it returns (or raises)
-                        # in the SAME process. Only a genuine crash between these
-                        # two lines leaves it open for the NEXT attempt to flag.
-                        intent_id = self._open_intent(state, req)
-                        job_id = self.submit(req)
+                        # §8.4 write order: PREPARED (intent row + event) ->
+                        # atomic DISPATCHING claim (+event) -> adapter submit.
+                        if sub is None:
+                            sub = self._prepare_submission(state, req)
+                        else:
+                            self._redispatch(sub)  # a retry / idempotent recovery
+                        intent_id = sub._intent_id
+                        try:
+                            job_id = self.submit(req)
+                        except ProviderFailure as exc:
+                            self._resolve_intent(state, intent_id, None)
+                            intent_id = None
+                            self._classify_submit_failure(sub, exc)
+                            raise
+                        except Exception as exc:
+                            # DR06 contract test 28 — the conservative DEFAULT at
+                            # the ONE choke point: a RAW/unclassified adapter
+                            # exception past the send boundary (escape-hatch
+                            # adapters raising TimeoutError/ConnectionResetError/
+                            # anything) is OUTCOME_UNKNOWN, never a crash and
+                            # never a "safe to retry". generic_cloud classifies
+                            # its own transport; this catches every adapter that
+                            # did not.
+                            from . import submission as S_
+
+                            self._resolve_intent(state, intent_id, None)
+                            intent_id = None
+                            failure = ProviderFailure(
+                                FailureKind.provider_error,
+                                f"{self.id}: unclassified submit exception past "
+                                f"the send boundary ({type(exc).__name__}: {exc}) "
+                                "— outcome unknown; the remote side may have "
+                                "accepted the task",
+                                detail={"error_class": type(exc).__name__},
+                                disposition=S_.OUTCOME_UNKNOWN_DISPOSITION,
+                            )
+                            self._classify_submit_failure(sub, failure)
+                            raise failure from exc
+                        # remote_job_id / provable receipt: ADMITTED event FIRST,
+                        # THEN the SQLite projection (resolve_intent/open_job) —
+                        # a crash between them recovers from evidence (§8.5 row 5).
+                        sub.transition(S.ADMITTED, reason_code="submit_accepted",
+                                       remote_job_id=job_id)
                         self._resolve_intent(state, intent_id, job_id)
                         intent_id = None
                         self._on_submit(state, req, job_id)  # 提交成功即写入
                     info = self._poll_to_completion(job_id, should_cancel=req.should_cancel)
                     takes = self._download_and_register(req, job_id, info)
                     self._on_success(state, req, job_id, info, takes)
+                    # SUCCEEDED-class transition ONLY after the existing commit
+                    # points (register_take + ledger) have run.
+                    if sub is not None:
+                        sub.transition(S.TERMINAL_SUCCESS, reason_code="downloaded")
+                        self._surface_submission_warnings(req, sub)
                     return takes
                 except ProviderFailure as exc:
                     if intent_id is not None:
-                        # submit() itself raised: resolved locally, right here —
-                        # not a dangling/open intent (goal 27).
                         self._resolve_intent(state, intent_id, None)
+                    # DR06 (ruling 6/7): an OUTCOME_UNKNOWN submit outcome is
+                    # fail-closed — never a local retry, never a fallback, never
+                    # a resubmit. It propagates carrying its disposition so the
+                    # registry stops the chain.
+                    if exc.disposition == S.OUTCOME_UNKNOWN_DISPOSITION:
+                        if sub is not None:
+                            exc.detail.setdefault("submission_id", sub.submission_id)
+                        exc.detail.setdefault("disposition", exc.disposition)
+                        self._on_failure(state, req, job_id, exc)
+                        self._surface_submission_warnings(req, sub)
+                        raise
                     if exc.kind is FailureKind.content_rejected:
                         self._on_failure(state, req, job_id, exc)
+                        if sub is not None and sub.current_state == S.ADMITTED:
+                            sub.transition(S.TERMINAL_FAILURE, reason_code="content_rejected")
                         raise  # §8.1: first-class, never auto-retried
                     retryable = exc.kind in (FailureKind.rate_limited, FailureKind.timeout)
                     if not retryable or attempt >= max_retries:
                         self._on_failure(state, req, job_id, exc)
+                        # A DEFINITE post-admission failure (remote job failed /
+                        # unknown status / no downloadable files) is TERMINAL_
+                        # FAILURE; an EXHAUSTED but retryable poll timeout leaves
+                        # the submission ADMITTED (resume-safe — a later build
+                        # re-polls the same job, never resubmits).
+                        if sub is not None and sub.current_state == S.ADMITTED \
+                                and not retryable:
+                            sub.transition(S.TERMINAL_FAILURE, reason_code=exc.kind.value)
+                        self._finalize_failed_submission(sub, exc)
                         raise
                     attempt += 1
                     self._sleep(self._backoff(attempt - 1))
         finally:
             self._close_state(state)
+
+    # -- DR06 submission identity + admission (ruling 2/4/5/8) --------------
+
+    def _submission_capability(self, req: GenerationRequest) -> str:
+        """A deterministic capability string for the profile digest. Prefers the
+        provider manifest's capabilities (first sorted), else the provider kind —
+        stable, and moves the digest only on a real capability change."""
+        manifest = getattr(self, "manifest", None)
+        caps = sorted(getattr(manifest, "capabilities", None) or [])
+        return caps[0] if caps else (self.kind or "generate")
+
+    def _build_identity(self, req: GenerationRequest) -> tuple[dict, str]:
+        """Assemble the submission identity + its request_digest (pure module).
+        Hashes the small ref files and the compiled prompt HERE; the pure module
+        never touches disk. Memoized per-provider on the request so the fresh
+        path (correlation check + PREPARED) does not re-hash the ref files
+        twice — keyed by provider id since a fallback provider has a distinct
+        identity."""
+        from . import submission as S
+        from ..core.hashing import hash_file
+        from .catalog import descriptor_for_manifest, provider_profile_digest
+
+        cache = getattr(req, "_dr06_identity_cache", None)
+        if cache is None:
+            cache = req._dr06_identity_cache = {}
+        if self.id in cache:
+            return cache[self.id]
+
+        manifest = getattr(self, "manifest", None)
+        capability = self._submission_capability(req)
+        descriptor = descriptor_for_manifest(manifest) if manifest is not None else None
+        profile_digest = provider_profile_digest(self.id, capability, descriptor=descriptor)
+
+        # compiled prompt -> digest only (never stored). Best-effort compile.
+        compiled_prompt = None
+        try:
+            from .prompt import compile_prompt
+
+            compiled_prompt = compile_prompt(req.shot, req.bible)
+        except Exception:
+            compiled_prompt = None
+
+        # final selected refs in delivery order: (role, logical_id, sha256).
+        ref_refs: list[dict] = []
+        try:
+            refset = req.refset()
+            for it in list(refset.image_items()) + list(refset.video_items()):
+                sha = None
+                if it.path is not None and not it.is_url:
+                    try:
+                        if it.path.is_file():
+                            sha = hash_file(it.path)
+                    except OSError:
+                        sha = None
+                ref_refs.append(S.ref_fact(it.kind, it.ref, sha))
+        except Exception:
+            ref_refs = []
+
+        first_frame, last_frame = self._keyframe_flags(req)
+        identity = S.build_submission_identity(
+            shot_id=req.shot.id, spec_hash=req.spec_hash, provider_id=self.id,
+            provider_profile_digest=profile_digest, capability=capability,
+            duration_ms=req.duration_ms, candidates=req.candidates,
+            seed=req.params.get("seed"), params=req.params,
+            compiled_prompt=compiled_prompt, ref_refs=ref_refs,
+            first_frame=first_frame, last_frame=last_frame,
+            project_root=req.project.root)
+        result = (identity, S.request_digest(identity))
+        cache[self.id] = result
+        return result
+
+    def _keyframe_flags(self, req: GenerationRequest) -> tuple[bool, bool]:
+        raw = getattr(req.shot, "keyframes", None) or []
+        has_start = has_end = False
+        for entry in raw:
+            pos = getattr(entry, "position", None)
+            if pos is None and isinstance(entry, dict):
+                pos = entry.get("position")
+            if pos == "start":
+                has_start = True
+            elif pos == "end":
+                has_end = True
+        return has_start, has_end
+
+    def _idempotency_field(self):
+        """The declared provider-native idempotency header name, or ``None``
+        (ruling 10). Only a manifest that opts in with
+        ``submission.idempotency.mode == header`` injects a key."""
+        manifest = getattr(self, "manifest", None)
+        sub = getattr(manifest, "submission", None)
+        idem = getattr(sub, "idempotency", None) if sub is not None else None
+        if idem is not None and getattr(idem, "mode", None) == "header" \
+                and getattr(idem, "field", None):
+            return idem.field
+        return None
+
+    def _prepare_submission(self, state, req: GenerationRequest) -> "_SubmissionContext":
+        """Mint the submission, persist PREPARED (intent row + event), then the
+        atomic DISPATCHING claim (+event) — the fail-closed gate (ruling 5): if
+        either cannot be persisted, raise BEFORE the network so the paid submit
+        never starts."""
+        from . import submission as S
+        from ..core.hashing import hash_text
+
+        identity, digest = self._build_identity(req)
+        submission_id = S.mint_submission_id()
+        # the derived idempotency key rides a request ATTRIBUTE (never req.params,
+        # which would leak into the take sidecar / ledger AND perturb the identity
+        # digest) so submit() can inject it ONLY when the manifest declares an
+        # idempotency header (ruling 10). Stable across re-dispatch of this id.
+        req.submission_id = submission_id
+        req.submission_idempotency_key = (
+            S.idempotency_key(self.id, submission_id) if self._idempotency_field() else None)
+
+        if state is None:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: cannot persist the PREPARED submission intent — the "
+                f"runtime state is unavailable; refusing to start a paid submit "
+                f"(DR06 fail-closed, ruling 5)",
+                detail={"code": "submission_prepare_unavailable", "shot": req.shot.id},
+            )
+        try:
+            params_hash = hash_text(str(sorted(req.params.items())))
+        except Exception:
+            params_hash = None
+        try:
+            intent_id = state.open_intent(
+                provider=self.id, shot=req.shot.id, params_hash=params_hash,
+                submission_id=submission_id, request_digest=digest, state=S.PREPARED)
+        except (OSError, sqlite3.Error) as exc:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: failed to persist the PREPARED submission intent "
+                f"({exc}); refusing to start a paid submit (DR06 fail-closed)",
+                detail={"code": "submission_prepare_failed", "shot": req.shot.id},
+            ) from exc
+
+        sub = _SubmissionContext(self, state, req, submission_id=submission_id,
+                                 request_digest=digest, current_state=S.PREPARED)
+        sub._intent_id = intent_id
+        sub.emit(None, S.PREPARED, reason_code="prepared",
+                 detail=self._gate_detail(req))
+        # atomic DISPATCHING claim (SQLite CAS) then its event.
+        try:
+            claimed = state.claim_dispatching(submission_id)
+        except (OSError, sqlite3.Error) as exc:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: failed to claim DISPATCHING ({exc}); refusing to "
+                f"start a paid submit (DR06 fail-closed)",
+                detail={"code": "submission_claim_failed", "shot": req.shot.id},
+            ) from exc
+        if not claimed:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: could not claim DISPATCHING for {submission_id} "
+                f"(another process owns it, or it is not PREPARED) — refusing to "
+                f"start a duplicate paid submit (DR06 fail-closed, SQLite CAS)",
+                detail={"code": "submission_claim_lost", "shot": req.shot.id},
+            )
+        sub.current_state = S.DISPATCHING
+        sub.emit(S.PREPARED, S.DISPATCHING, reason_code="claimed",
+                 detail=self._gate_detail(req))
+        return sub
+
+    def _redispatch(self, sub: "_SubmissionContext") -> None:
+        """Re-enter DISPATCHING for a retry (NOT_DISPATCHED/DEFINITELY_REJECTED)
+        or an idempotent recovery — the SAME submission_id records a new dispatch
+        attempt (ruling 10). Nothing was admitted, so this is not a resubmit of a
+        billed job."""
+        from . import submission as S
+
+        if sub.current_state != S.DISPATCHING:
+            sub.transition(S.DISPATCHING, reason_code="redispatch")
+
+    def _gate_detail(self, req: GenerationRequest) -> dict:
+        """The ask_before/budget gate correlation recorded on the PREPARED /
+        DISPATCHING event (ruling 5) — the existing gate results inline, no new
+        SpendAuthorizationRef schema (SKIPPED_WITH_EVIDENCE). The ask_before/
+        budget gate lives UPSTREAM in build.graph (run_build); reaching a paid
+        submit at all means it cleared, so we record that correlation + the
+        per-shot estimate threaded on the request (assume_yes is not re-plumbed
+        to the provider layer — that would need a graph.py touch beyond the
+        file cap)."""
+        return {"estimated_cost": getattr(req, "estimated_cost", None),
+                "gate": "cleared_upstream"}
+
+    def _classify_submit_failure(self, sub: "_SubmissionContext",
+                                 exc: ProviderFailure) -> None:
+        """Drive the submission state off a submit()-phase ProviderFailure's
+        disposition (ruling 5/6). An explicit OUTCOME_UNKNOWN -> OUTCOME_UNKNOWN
+        (fail-closed). NOT_DISPATCHED -> REJECTED_PRE_DISPATCH (retry allowed).
+        DEFINITELY_REJECTED -> REMOTE_REJECTED (fallback allowed). A ``None``
+        disposition (a provider that never classified) is the legacy case:
+        inferred conservatively from the kind for the RECORD, but it never
+        triggers the fail-closed path (the retry gate stays kind-based)."""
+        from . import submission as S
+
+        disp = exc.disposition
+        if disp is None:
+            # legacy inference for the projection only (never fail-closed here):
+            # a local pre-check refusal is not-dispatched; a definite remote kind
+            # is remote-rejected; anything else stays not-dispatched (safe).
+            if exc.kind in (FailureKind.content_rejected, FailureKind.rate_limited):
+                target = S.REMOTE_REJECTED
+            else:
+                target = S.REJECTED_PRE_DISPATCH
+        else:
+            target = S.disposition_to_state(disp)
+        try:
+            if sub.current_state in S.LEGAL_TRANSITIONS and target in \
+                    S.LEGAL_TRANSITIONS.get(sub.current_state, frozenset()):
+                sub.transition(target, reason_code=exc.kind.value)
+            else:
+                # already past DISPATCHING or an illegal edge: record via event
+                # only, never crash the paid path on bookkeeping.
+                sub.emit(sub.current_state, target, reason_code=exc.kind.value)
+                sub.current_state = target
+        except Exception:
+            pass
+
+    def _finalize_failed_submission(self, sub: "_SubmissionContext | None",
+                                    exc: ProviderFailure) -> None:
+        if sub is None:
+            return
+        self._surface_submission_warnings(sub.req, sub)
+
+    def _surface_submission_warnings(self, req: GenerationRequest,
+                                     sub: "_SubmissionContext | None") -> None:
+        """Fold any submission-evidence-append warnings onto the run evidence so
+        they surface (never silent), mirroring the DR03C append-fail handling."""
+        if sub is None or not sub.warnings:
+            return
+        ev = getattr(req, "evidence", None)
+        note = getattr(ev, "note_warning", None)
+        if callable(note):
+            for w in sub.warnings:
+                note(w)
+
+    def _resolve_resume(self, state, req: GenerationRequest):
+        """Strict resume correlation (ruling 8). Returns ``(action, job_id,
+        sub)``: ``("fresh", None, None)`` to mint a new submission;
+        ``("resume", job_id, sub)`` to re-poll an ADMITTED job under its
+        submission_id; ``("redispatch", None, sub)`` to re-dispatch an idempotent
+        submission. Raises a structured fail-closed diagnostic on an ambiguous
+        (DISPATCHING/OUTCOME_UNKNOWN) submission that cannot be safely resumed."""
+        from . import submission as S
+
+        if state is None:
+            return ("fresh", None, None)
+        try:
+            _identity, digest = self._build_identity(req)
+        except Exception:
+            digest = None
+        try:
+            subs = state.submissions(shot=req.shot.id, provider=self.id,
+                                     states=tuple(sorted(S.UNRESOLVED_STATES)))
+        except Exception:
+            subs = []
+
+        # a broken per-submission event chain fail-closes ONLY this shot+provider.
+        for row in subs:
+            self._guard_chain_integrity(req, row)
+
+        # 1) an ADMITTED submission is resume-safe (polling, never resubmit).
+        admitted = [r for r in subs if r.get("state") == S.ADMITTED]
+        for row in admitted:
+            if digest is not None and row.get("request_digest") == digest \
+                    and row.get("remote_job_id"):
+                sub = self._context_from_row(state, req, row, digest)
+                return ("resume", row["remote_job_id"], sub)
+        if admitted and digest is not None:
+            # an ADMITTED job exists but the spec changed under it (digest
+            # mismatch): conflict — never silently poll the old task (test 45/46).
+            raise self._conflict_failure(req, admitted[0], digest)
+
+        # 2) a DISPATCHING/OUTCOME_UNKNOWN submission is side-effect ambiguous.
+        ambiguous = [r for r in subs if r.get("state") in S.SIDE_EFFECT_AMBIGUOUS]
+        if ambiguous:
+            row = ambiguous[0]
+            if digest is not None and row.get("request_digest") == digest \
+                    and self._idempotency_field():
+                # ruling 10: a DECLARED idempotent provider MAY re-dispatch the
+                # SAME submission_id (the derived key dedupes remotely).
+                sub = self._context_from_row(state, req, row, digest)
+                req.submission_id = row["submission_id"]
+                req.submission_idempotency_key = S.idempotency_key(
+                    self.id, row["submission_id"])
+                return ("redispatch", None, sub)
+            raise self._unknown_outcome_failure(req, row)
+
+        # 3) no DR06 submission: fall back to the legacy pending-job resume
+        #    (shot+provider) for backward compatibility (pre-DR06 jobs / doubles).
+        legacy = self._resume_job_id(state, req)
+        return ("resume", legacy, None) if legacy else ("fresh", None, None)
+
+    def _context_from_row(self, state, req, row, digest):
+        from . import submission as S
+
+        sub = _SubmissionContext(
+            self, state, req, submission_id=row["submission_id"],
+            request_digest=row.get("request_digest") or digest or "",
+            current_state=S.normalize_state(row.get("state")),
+            prev_event_digest=self._chain_tail_digest(req, row["submission_id"]))
+        sub._intent_id = row.get("id")
+        sub.remote_job_id = row.get("remote_job_id")
+        return sub
+
+    def _chain_tail_digest(self, req, submission_id):
+        try:
+            from ..build.attempts import read_submission_events
+            from .submission import submission_event_digest
+
+            events, _ = read_submission_events(req.project, submission_id)
+            return submission_event_digest(events[-1]) if events else None
+        except Exception:
+            return None
+
+    def _guard_chain_integrity(self, req, row) -> None:
+        """A broken per-submission event chain -> RECOVERY_EVIDENCE_CORRUPT that
+        fail-closes ONLY this shot+provider (ruling 4), never unrelated work."""
+        from ..build.attempts import read_submission_events
+        from . import submission as S
+
+        sid = row.get("submission_id")
+        if not sid:
+            return
+        try:
+            events, _ = read_submission_events(req.project, sid)
+        except Exception:
+            return
+        ok, broken_at = S.verify_chain(events)
+        if not ok:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: submission {sid} for shot {req.shot.id} has a "
+                f"corrupt evidence chain (broken at event {broken_at}) — "
+                f"fail-closing this shot+provider only (DR06 ruling 4); resolve "
+                f"with `manju tasks attach-remote-job`/`abandon`",
+                detail={"code": "RECOVERY_EVIDENCE_CORRUPT", "submission_id": sid,
+                        "shot": req.shot.id, "broken_at": broken_at,
+                        "automatic_resubmit": False},
+                disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+            )
+
+    def _unknown_outcome_failure(self, req, row) -> ProviderFailure:
+        from . import submission as S
+
+        return ProviderFailure(
+            FailureKind.provider_error,
+            f"{self.id}: shot {req.shot.id} has an unresolved submission "
+            f"{row.get('submission_id')} in state {row.get('state')} — its remote "
+            f"outcome is UNKNOWN and must not be auto-resubmitted (DR06 ruling 8). "
+            f"Attach the remote job id or abandon it with duplicate-risk accepted.",
+            detail={"code": "submission_outcome_unknown",
+                    "submission_id": row.get("submission_id"),
+                    "shot": req.shot.id, "state": row.get("state"),
+                    "automatic_resubmit": False, "possible_remote_side_effect": True,
+                    "actions": ["attach_remote_job", "abandon_with_duplicate_risk"]},
+            disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+        )
+
+    def _conflict_failure(self, req, row, digest) -> ProviderFailure:
+        from . import submission as S
+
+        return ProviderFailure(
+            FailureKind.provider_error,
+            f"{self.id}: shot {req.shot.id} has an ADMITTED submission "
+            f"{row.get('submission_id')} still in flight, but the request spec "
+            f"changed under it (digest mismatch) — refusing to silently poll the "
+            f"old task (DR06 ruling 8).",
+            detail={"code": "submission_spec_conflict",
+                    "submission_id": row.get("submission_id"), "shot": req.shot.id,
+                    "pending_digest": row.get("request_digest"),
+                    "request_digest": digest, "automatic_resubmit": False,
+                    "actions": ["attach_remote_job", "abandon_with_duplicate_risk"]},
+            disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+        )
 
     # -- runtime-state bookkeeping: best-effort, never blocks generation ----
     #    (§3 the DB is disposable; §8.1 resume-polling; §8.3 per-call ledger)

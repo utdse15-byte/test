@@ -400,6 +400,125 @@ def append_attempt(project: Any, payload: dict, *, actor: str = "engine") -> dic
         return {}
 
 
+# -------------------------------------------------- DR06 submission events
+# Submission lifecycle transitions ride THIS SAME events.jsonl (ruling 1): one
+# event line, action "submission_state", schema
+# manju.provider-submission-event/v1, carrying a per-submission hash chain
+# (prev_event_digest) for corruption detection. They reuse the SAME flock
+# (_events_lock) and the SAME redaction backstop — no new ledger, no new lock,
+# no new file. The chain math + field contract live in providers.submission
+# (pure); this is only the locked write + the projection read.
+
+SUBMISSION_ACTION = "submission_state"
+
+
+def append_submission_event(
+    project: Any, *, submission_id: str, request_digest: str | None,
+    from_state: str | None, to_state: str, provider_id: str,
+    shot: str | None = None, remote_job_id: str | None = None,
+    reason_code: str | None = None, prev_event_digest: str | None = None,
+    detail: dict | None = None, actor: str = "engine",
+) -> dict:
+    """Append ONE ``submission_state`` event under the SAME ``events.lock`` flock
+    build.attempts owns. Mints ``event_id``, sets ``prev_event_digest`` (the
+    caller threads it forward — in-process from the previous append's returned
+    event, cross-process from the verified chain tail), redacts ONLY the free-
+    form ``detail`` (the chain fields are controlled and stay intact so the
+    digest is stable), writes, and returns the written event document (whose
+    :func:`providers.submission.submission_event_digest` is the NEXT event's
+    ``prev_event_digest``). NEVER raises out — best-effort like
+    :func:`append_attempt`; a caller turns an empty return into a warning."""
+    from ..providers.submission import SCHEMA_EVENT
+
+    try:
+        applied: list[str] = []
+        red_detail = _redact_obj(dict(detail or {}), applied) if detail else None
+        event: dict[str, Any] = {
+            "schema": SCHEMA_EVENT,
+            "submission_id": submission_id,
+            "request_digest": request_digest,
+            "from": from_state,
+            "to": to_state,
+            "provider_id": provider_id,
+            "remote_job_id": remote_job_id,   # non-secret job id (§8.6)
+            "reason_code": reason_code,
+            "event_id": "evt_" + uuid4().hex[:12],
+            "prev_event_digest": prev_event_digest,
+        }
+        if shot is not None:
+            event["shot"] = shot           # projection aid (not part of the chain)
+        if red_detail:
+            event["detail"] = red_detail
+        record = {"ts": _now_iso(), "actor": actor, "action": SUBMISSION_ACTION,
+                  "detail": event}
+        # secret backstop over the whole line (chain fields are controlled and
+        # never match, so the digest stays stable) — belt-and-braces.
+        record = _scrub_secret_patterns(record, applied)
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        root = _root(project)
+        path = root / EVENTS_FILE
+        with _events_lock(root):
+            with open(path, "ab") as f:
+                f.write(line.encode("utf-8"))
+                f.flush()
+                os.fsync(f.fileno())
+        return record["detail"]
+    except Exception:
+        return {}
+
+
+def read_submission_events(project: Any, submission_id: str | None = None
+                           ) -> tuple[list[dict], int]:
+    """Project the submission-state events out of ``events.jsonl`` (ruling 1/4).
+
+    Returns ``(records, malformed)`` in FILE order — which IS emission order (the
+    append is serialized under the events flock), so it is the exact order the
+    per-submission hash chain assumes and :func:`providers.submission.verify_chain`
+    validates. Deliberately NOT re-sorted: a ts/event_id sort would scramble
+    same-second events and defeat corruption detection. Optionally filtered to one
+    ``submission_id``; ``malformed`` counts torn lines. Mirrors
+    :func:`read_attempts` (minus the explicit sequence sort attempts need)."""
+    path = _root(project) / EVENTS_FILE
+    records: list[dict] = []
+    malformed = 0
+    if not path.exists():
+        return records, malformed
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if not isinstance(rec, dict) or rec.get("action") != SUBMISSION_ACTION:
+                continue
+            detail = rec.get("detail")
+            if not isinstance(detail, dict):
+                continue
+            if submission_id is not None and detail.get("submission_id") != submission_id:
+                continue
+            # carry the envelope ts onto the detail so rebuild has a timestamp
+            detail = {**detail, "ts": rec.get("ts") or detail.get("ts")}
+            records.append(detail)
+    return records, malformed
+
+
+def submission_chains(project: Any) -> dict[str, list[dict]]:
+    """Every submission's event list, grouped by ``submission_id`` in chain
+    order — the input to a per-submission
+    :func:`providers.submission.verify_chain` (recovery / corruption scoping)."""
+    records, _ = read_submission_events(project)
+    chains: dict[str, list[dict]] = {}
+    for rec in records:
+        sid = rec.get("submission_id")
+        if sid:
+            chains.setdefault(sid, []).append(rec)
+    return chains
+
+
 # ---------------------------------------------------------- the run context
 
 

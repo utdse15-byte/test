@@ -267,6 +267,15 @@ def generate_with_fallback(
             attempts.append((name, f"{exc.kind.value}: {exc.message}"))
             if handle is not None:
                 _emit_ctx.provider_failure(handle, exc)
+            # DR06 (ruling 7): an OUTCOME_UNKNOWN disposition STOPS the fallback
+            # chain — falling back would be NEW spend on an unresolved outcome
+            # (the remote side of THIS provider may already be running/billing).
+            # Re-raise immediately, carrying the disposition + structured detail
+            # so the caller/tasks surface the honest "attach or abandon" choice.
+            from .submission import OUTCOME_UNKNOWN_DISPOSITION
+
+            if getattr(exc, "disposition", None) == OUTCOME_UNKNOWN_DISPOSITION:
+                raise
             continue
         except media_errors as exc:  # media package's MediaError, if importable
             attempts.append((name, f"media error: {exc}"))
@@ -442,6 +451,21 @@ class _EvidenceChain:
                 "category": kind, "code": kind, "message": _one_line(message),
                 "retryable": kind in _RETRYABLE_KINDS,
             }
+            # DR06: the submit-outcome disposition rides the attempt's failure
+            # payload (never a new attempt state — the attempt stays FAILED). An
+            # OUTCOME_UNKNOWN attempt is flagged as possibly-still-billing so the
+            # projection can surface the honest recovery choice.
+            disposition = getattr(exc, "disposition", None)
+            if disposition is not None:
+                failure["disposition"] = disposition
+                from .submission import OUTCOME_UNKNOWN_DISPOSITION
+
+                if disposition == OUTCOME_UNKNOWN_DISPOSITION:
+                    failure["remote_may_continue"] = True
+                    failure["automatic_resubmit"] = False
+                    sid = detail.get("submission_id")
+                    if sid:
+                        failure["submission_id"] = sid
             job_id = detail.get("job_id") or detail.get("prompt_id")
             if job_id:
                 failure["provider_job_id"] = job_id

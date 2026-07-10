@@ -480,3 +480,69 @@ opaque string. The batch extracts one source instead of adding a catalog.
   submit instead of silently degrading. The §8.4 no-routing fallback chain
   order is deliberately unchanged (safety-net semantics; the submit guard
   defends it).
+
+## 18. Deep Research 06 — persistent submission identity, idempotent admission, ambiguous-outcome recovery (2026-07-10)
+
+The paid-submission safety batch. Core principle: **an ambiguous submit
+outcome must never be automatically treated as not-happened** — we make the
+ambiguity durable and recoverable, and never claim exactly-once. Cache hits,
+local/offline providers and cleanly-succeeding cloud flows are byte-identical
+(characterization-pinned); the only behavior changes are documented
+fail-earlier/fail-closed ones.
+
+- **Evidence rides 03C's stream, no new ledger.** Submission lifecycle
+  transitions are `submission_state` events in the SAME flock-locked
+  events.jsonl (schema `manju.provider-submission-event/v1`), each carrying a
+  per-submission hash chain (`prev_event_digest`) for corruption detection.
+  `build/attempts.py` gained the locked writer/reader; no second lock, no
+  second file.
+- **`providers/submission.py` is a pure module**: identity + `request_digest`
+  (§7, reusing DR04's `provider_profile_digest`), submission_id mint
+  (`sub_`+uuid12, minted+persisted BEFORE any network), the state machine
+  (9 states + legal transitions), disposition classification, the event-chain
+  digest/verify, idempotency-key derivation, redaction. No persistence.
+- **Intents table extended additively** (submission_id UNIQUE / request_digest /
+  state / updated_ts — the #47 migration precedent). The DISPATCHING claim is a
+  SQLite-CAS `UPDATE ... WHERE submission_id=? AND state='PREPARED'` with a
+  rowcount==1 check (multi-process safe, not an in-memory lock). rebuild()
+  restores unresolved submissions from the event stream — SQLite stays a
+  rebuildable projection.
+- **§8.4 write order** in CloudProvider.generate (wraps the existing flow):
+  cache hit → untouched; PREPARED (row+event) → atomic DISPATCHING claim
+  (+event) → submit → classify. **Evidence ADMITTED lands BEFORE the SQLite
+  job projection** (a crash between recovers from evidence). If PREPARED or the
+  claim cannot be persisted, the paid submit does NOT start (fail-closed).
+- **Conservative disposition** (generic_cloud): provably-not-sent =
+  DNS/connection-refused ONLY (→ NOT_DISPATCHED, retry allowed); tested 4xx
+  (400/401/403/404/409/422/429) = DEFINITELY_REJECTED (fallback allowed);
+  EVERYTHING else after the send boundary — timeout, reset, EOF, 5xx,
+  unparseable 2xx receipt — = OUTCOME_UNKNOWN. On OUTCOME_UNKNOWN there is NO
+  local retry, NO fallback (the registry stops the chain), NO resubmit.
+  FailureKind is untouched; disposition is an orthogonal additive attr on
+  ProviderFailure (default None = legacy/conservative, so non-classifying
+  providers keep pre-DR06 retry-by-kind behavior).
+- **Strict correlation** (ruling 8): a fresh submit consults unresolved
+  submissions for the shot+provider — digest match on an ADMITTED one resumes
+  polling under the SAME submission_id; a DISPATCHING/OUTCOME_UNKNOWN one fails
+  closed with `{code: submission_outcome_unknown, automatic_resubmit: false,
+  possible_remote_side_effect: true, actions: [attach_remote_job,
+  abandon_with_duplicate_risk]}`; a digest-mismatched ADMITTED one is a
+  conflict (never a silent poll). **No TTL, ever** for unresolved states.
+- **Recovery is honest**: `manju tasks attach-remote-job` (appends ADMITTED
+  evidence, poll-only, never claims verified ownership) and `manju tasks
+  abandon` (ABANDONED_BY_USER with explicit duplicate-risk acceptance, history
+  preserved). NO "retry unknown" anywhere. A new submission_id is only minted by
+  the next explicit redo/build.
+- **Minimal declared-only idempotency** (ruling 10): additive manifest
+  `submission.idempotency.{mode: header, field: <Name>}`; generic_cloud injects
+  the derived key ONLY when declared; a declared provider MAY re-dispatch the
+  SAME submission_id on recovery (remote dedupes). **SKIPPED_WITH_EVIDENCE**:
+  SpendAuthorizationRef (gate results referenced inline on the PREPARED event),
+  the reconcile/status-by-key hook (manifests model no query-by-key endpoint —
+  attach/abandon is the honest recovery), and the multi-process keyed-flight
+  optimization (SQLite CAS + build_lock are the guarantee).
+- **Documented behavior changes** (each pinned-then-flipped in the
+  characterization file): a submit-phase timeout/5xx/unparseable-receipt is now
+  OUTCOME_UNKNOWN (was retried/fallback-eligible); a broken/absent runtime DB
+  now fail-closes a cloud paid submit (was: proceeded on best-effort state, §3);
+  the registry stops the fallback chain on OUTCOME_UNKNOWN.
