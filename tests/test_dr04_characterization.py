@@ -188,9 +188,18 @@ def test_char_duration_within_limit_allows_submit(tmp_project, add_shot, monkeyp
     shot = add_shot(tmp_project, "S1")
     req = GenerationRequest(project=tmp_project, shot=shot, bible={},
                             spec_hash="x", duration_ms=6000)
-    # _enforce_limits must NOT raise at the boundary; it raises later trying the net
-    with pytest.raises(AssertionError):
+    # _enforce_limits must NOT raise at the boundary; submit IS reached and the
+    # probe transport trips there. CHARACTERIZATION FLIP (DR06): the probe's
+    # raw AssertionError no longer escapes — a raw/unclassified exception past
+    # the send boundary is conservatively OUTCOME_UNKNOWN (base.py choke point,
+    # DR06 contract test 28). The probe marker inside the failure message still
+    # proves submit was reached, which is all this pin ever asserted.
+    with pytest.raises(ProviderFailure) as exc:
         provider.generate(req)
+    assert "must not reach the network" in str(exc.value)  # submit WAS reached
+    from manju.providers.submission import OUTCOME_UNKNOWN_DISPOSITION
+
+    assert exc.value.disposition == OUTCOME_UNKNOWN_DISPOSITION
 
 
 # ------------------------------------------------- 8. placeholder vocabulary
