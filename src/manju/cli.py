@@ -5017,6 +5017,52 @@ def providers_add(
         typer.echo(f"  {i}. {s}")
 
 
+def _providers_check_sections(provider_id: str, m, manifest_errors: list) -> dict:
+    """DR04 structured sections for ``providers check`` — global manifest
+    errors, this provider's credential env (name + presence, never a value),
+    projection self-consistency (recompute → same digest, provider present),
+    routing references (validate the active routing config where a project is
+    resolvable), and warnings (the opaque LEGACY ``max_resolution``; disabled)."""
+    from .providers.catalog import project_provider_capabilities
+
+    key_env = m.auth.key_env
+    credential_presence = {
+        "env": key_env,
+        "set": bool(os.environ.get(key_env)) if key_env else None,
+    }
+    proj_a = project_provider_capabilities()
+    proj_b = project_provider_capabilities()
+    in_projection = any(p["provider_id"] == provider_id for p in proj_a["providers"])
+    projection_consistency = {
+        "ok": proj_a["projection_digest"] == proj_b["projection_digest"] and in_projection,
+        "projection_digest": proj_a["projection_digest"],
+        "in_projection": in_projection,
+    }
+    routing_references: dict = {"problems": [], "ok": True, "project": False}
+    try:
+        from .providers.routing import validate_config
+
+        project = Project.find(Path.cwd())
+        problems = validate_config(project)
+        routing_references = {"problems": problems, "ok": not problems, "project": True}
+    except Exception:
+        pass
+    warnings: list[str] = []
+    if m.limits.max_resolution:
+        warnings.append(
+            f"limits.max_resolution {m.limits.max_resolution!r} is an opaque LEGACY "
+            "limit — surfaced verbatim, never used to block a request (§8.6)")
+    if m.disabled:
+        warnings.append(f"{provider_id} is disabled (manju providers enable {provider_id})")
+    return {
+        "manifest_errors": list(manifest_errors),
+        "credential_presence": credential_presence,
+        "projection_consistency": projection_consistency,
+        "routing_references": routing_references,
+        "warnings": warnings,
+    }
+
+
 @providers_app.command("check")
 def providers_check(
     provider_id: str = typer.Argument(..., metavar="ID"),
@@ -5035,7 +5081,7 @@ def providers_check(
         reachability_probe,
     )
 
-    manifests, _ = load_manifests()
+    manifests, manifest_errors = load_manifests()
     m = manifests.get(provider_id)
     if m is None:
         _fail(f"no such provider {provider_id!r} "
@@ -5047,10 +5093,15 @@ def providers_check(
         ok, detail = reachability_probe(m)
         live_info = {"ok": ok, "detail": detail}
     passed = (not problems) and not (live_info and live_info["ok"] is False)
+    # DR04 structured sections (§10.2 — never a credential VALUE; presence is
+    # allowed here, this is the offline doctor, not the derived projection).
+    sections = _providers_check_sections(provider_id, m, manifest_errors)
     if as_json:
         _emit({"id": provider_id, "ok": passed, "enabled": not m.disabled,
-               "problems": findings, "live": live_info}, True)
+               "problems": findings, "live": live_info, **sections}, True)
         raise typer.Exit(0 if passed else 1)
+    for w in sections["warnings"]:
+        typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
     if m.disabled:
         typer.secho(f"• {provider_id} is disabled "
                     f"(manju providers enable {provider_id})", fg=typer.colors.BRIGHT_BLACK)
@@ -5140,6 +5191,56 @@ def providers_show(provider_id: str = typer.Argument(..., metavar="ID"),
         _emit(masked, True)
         return
     typer.echo(dump_yaml(masked))
+
+
+@providers_app.command("catalog")
+def providers_catalog(
+    as_json: bool = typer.Option(False, "--json"),
+    output: Optional[Path] = typer.Option(
+        None, "--output",
+        help="write the derived projection (JSON) atomically to this path"),
+):
+    """The shared provider capability projection
+    (``manju.provider-capability-projection/v1``, DR04): every provider's
+    capabilities, limits (``max_resolution`` surfaced VERBATIM — an opaque LEGACY
+    limit, never guessed into width/height), reference caps, cost, credential env
+    NAMES (never values or presence), free-probe availability, and per-profile
+    digests. DERIVED — safe to delete and regenerate, never read by a build.
+    ``--output`` writes an atomic report; ``--json`` prints the projection."""
+    from .core.yamlio import atomic_write_text
+    from .providers.catalog import project_provider_capabilities
+
+    proj = project_provider_capabilities()
+    if output is not None:
+        atomic_write_text(output, json.dumps(proj, ensure_ascii=False, indent=2) + "\n")
+    if as_json:
+        _emit(proj, True)
+        return
+    providers = proj["providers"]
+    if not providers:
+        typer.echo("no providers discovered (~/.manju/providers, §8.6)")
+    idw = max([len("ID")] + [len(p["provider_id"]) for p in providers], default=2)
+    for p in providers:
+        caps = ", ".join(c["profile_id"].split("#", 1)[1]
+                         for c in p["capabilities"]) or "—"
+        cred = p["credential_requirements"][0] if p["credential_requirements"] else "—"
+        status = "enabled" if p["enabled"] else "disabled"
+        probe = "free-probe" if p["free_probe_available"] else "—"
+        typer.secho(
+            f"{_pad(p['provider_id'], idw)}  {_pad(p['provider_type'], 6)}  "
+            f"{_pad(p['source']['kind'], 8)}  {status:8}  key={cred}  {probe}",
+            fg=(typer.colors.GREEN if p["enabled"] else typer.colors.BRIGHT_BLACK))
+        typer.secho(f"{' ' * idw}  caps: {caps}", fg=typer.colors.BRIGHT_BLACK)
+        mr = p["limits"].get("max_resolution")
+        if mr:  # opaque LEGACY limit — surfaced verbatim, never interpreted
+            typer.secho(f"{' ' * idw}  max_resolution: {mr} "
+                        "(LEGACY — opaque, not interpreted)", fg=typer.colors.YELLOW)
+    for e in proj["errors"]:
+        typer.secho(f"✗ {e}", fg=typer.colors.RED)
+    typer.secho(f"projection_digest: {proj['projection_digest']}",
+                fg=typer.colors.BRIGHT_BLACK)
+    if output is not None:
+        typer.secho(f"wrote {output}", fg=typer.colors.GREEN)
 
 
 # =============================================================== routing group

@@ -245,40 +245,88 @@ class _ProviderView:
     disabled: bool
     exists: bool
     adapter: str = ""  # goal 30: needed to mirror the #29 candidates-clamp when pricing
+    # DR04: the duration cap generic_cloud enforces at submit — routing reads it
+    # to skip a structurally-incompatible candidate BEFORE the paid path.
+    max_duration_ms: int | None = None
 
 
 def _catalog() -> dict[str, _ProviderView]:
     """Every provider Manju knows about, disabled ones included, as a flat view
     the selectors read (kind for local_only, per_second for cheapest, disabled
-    for the skip-reason ledger, capabilities for 'capable')."""
-    from .manifest import (
-        GENERIC_ADAPTER,
-        GENERIC_ASR_ADAPTER,
-        GENERIC_TTS_ADAPTER,
-        load_manifests,
-    )
-    from .registry import available_providers
+    for the skip-reason ledger, capabilities for 'capable', max_duration_ms for
+    the DR04 compatibility skip).
 
-    cloud_adapters = {GENERIC_ADAPTER, GENERIC_TTS_ADAPTER, GENERIC_ASR_ADAPTER}
-    cat: dict[str, _ProviderView] = {}
-    manifests, _ = load_manifests()  # includes disabled + broken declarations
-    for pid, m in manifests.items():
-        cat[pid] = _ProviderView(
-            id=pid,
-            kind="cloud" if m.adapter in cloud_adapters else "local",
-            capabilities=list(m.capabilities),
-            per_second=float(m.cost.per_second),
-            per_call=float(m.cost.per_call),
-            disabled=bool(getattr(m, "disabled", False)),
-            exists=True,
-            adapter=m.adapter,
+    DR04: a THIN consumer of :func:`providers.catalog.iter_provider_descriptors`
+    — the provider FACTS now come from that one shared module (routing, the CLI
+    and preflight all read the same descriptors), and ``_ProviderView`` stays as
+    routing's internal adapter. The resulting view is byte-identical to the old
+    hand-rolled scan (pinned by test_providers_routing + test_dr04_characterization)."""
+    from .catalog import iter_provider_descriptors
+
+    descriptors, _errors = iter_provider_descriptors()
+    return {
+        d.provider_id: _ProviderView(
+            id=d.provider_id,
+            kind=d.kind,
+            capabilities=list(d.capabilities),
+            per_second=d.per_second,
+            per_call=d.per_call,
+            disabled=not d.enabled,
+            exists=d.exists,
+            adapter=d.adapter,
+            max_duration_ms=d.max_duration_ms,
         )
-    for pid, prov in available_providers().items():  # built-ins + constructed manifests
-        if pid in cat:
-            cat[pid].kind = prov.kind  # authoritative kind from the live instance
-        else:
-            cat[pid] = _ProviderView(pid, prov.kind, [], 0.0, 0.0, False, True)
-    return cat
+        for d in descriptors
+    }
+
+
+def _incompatible_skip(view: "_ProviderView", shot) -> str | None:
+    """DR04 fail-earlier: the reason ``view`` is structurally INCOMPATIBLE with
+    this shot on an EXECUTABLE fact the submit path also enforces — today the
+    duration cap, via the SAME rule ``generic_cloud._enforce_limits`` applies
+    (``providers.preflight.duration_exceeds_limit``). Returns a visible skip
+    reason, or ``None``.
+
+    Scope note (documented, not a gap): reference-count shortfalls are OMISSIONS
+    (never a hard skip — the shot still generates), and capability is already the
+    filter in :func:`_capable_sorted`; so neither belongs here. Only an
+    INCOMPATIBLE-level fact that would otherwise be caught (and degraded) at
+    submit is surfaced as a routing skip."""
+    d = _duration_s(shot)
+    if d is None:  # "auto" duration → nothing to check yet
+        return None
+    from .preflight import duration_exceeds_limit
+
+    duration_ms = int(round(d * 1000))
+    if duration_exceeds_limit(view.max_duration_ms, duration_ms):
+        return (f"incompatible: shot needs {duration_ms}ms but {view.id} caps at "
+                f"max_duration_ms {view.max_duration_ms}ms")
+    return None
+
+
+def explicit_pin_incompatibility(pid: str, req: Any) -> str | None:
+    """DR04 fail-earlier for an EXPLICIT provider pin: the reason ``pid`` is
+    structurally incompatible with THIS request (duration over its
+    ``max_duration_ms`` — the SAME fact generic_cloud enforces at submit), or
+    ``None``. The registry raises on a non-None result so an explicit pin fails
+    BEFORE submit instead of degrading to the fallback chain (never silently
+    replaced). Defensive: any lookup hiccup returns ``None`` — the submit-time
+    guard remains the final defense."""
+    try:
+        from .catalog import iter_provider_descriptors
+        from .preflight import duration_exceeds_limit
+
+        descriptors, _ = iter_provider_descriptors()
+        d = next((x for x in descriptors if x.provider_id == pid), None)
+        if d is None:
+            return None
+        duration_ms = getattr(req, "duration_ms", None)
+        if duration_exceeds_limit(d.max_duration_ms, duration_ms):
+            return (f"needs {duration_ms}ms but its max_duration_ms is "
+                    f"{d.max_duration_ms}ms — split the shot or pick another provider")
+    except Exception:
+        return None
+    return None
 
 
 def _provider_price(view: "_ProviderView", duration_s: float, candidates: int) -> float:
@@ -388,7 +436,8 @@ class Resolution:
 
 
 def _capable_sorted(cat: dict[str, _ProviderView], shot, *, kind: str | None = None,
-                    by_cost: bool = False, project: Any = None) -> list[str]:
+                    by_cost: bool = False, project: Any = None,
+                    skipped: list[dict[str, Any]] | None = None) -> list[str]:
     """Enabled providers advertising a capability this shot's pipeline calls
     for (its generation.fallback steps), optionally filtered to one kind and
     ordered cheapest-first.
@@ -396,12 +445,25 @@ def _capable_sorted(cat: dict[str, _ProviderView], shot, *, kind: str | None = N
     Goal 30: "cheapest" ranks by the REAL per-shot price — ``per_call +
     per_second × expected_duration`` (candidates-clamped per #29) — not just
     ``per_second``, so a high-per-call/low-per-second provider is no longer
-    wrongly preferred for a short clip over the opposite shape."""
+    wrongly preferred for a short clip over the opposite shape.
+
+    DR04 fail-earlier: a candidate that is structurally incompatible with this
+    shot (duration over its cap) is dropped with a VISIBLE reason appended to
+    ``skipped`` — so ``cheapest``/``local``/``quality`` only ever compare
+    candidates that could actually run."""
     needs = set(shot.generation.fallback)
-    cands = [v for v in cat.values()
-             if v.exists and not v.disabled
-             and (kind is None or v.kind == kind)
-             and (set(v.capabilities) & needs)]
+    cands: list[_ProviderView] = []
+    for v in cat.values():
+        if not (v.exists and not v.disabled
+                and (kind is None or v.kind == kind)
+                and (set(v.capabilities) & needs)):
+            continue
+        reason = _incompatible_skip(v, shot)
+        if reason is not None:
+            if skipped is not None:
+                skipped.append({"provider": v.id, "reason": reason})
+            continue
+        cands.append(v)
     if by_cost:
         duration_s, candidates = _shot_price_inputs(project, shot)
         cands.sort(key=lambda v: (_provider_price(v, duration_s, candidates), v.id))
@@ -431,22 +493,38 @@ def resolve(project, shot, config: RoutingConfig | None = None, *,
     order: list[str] = []
     skipped: list[dict[str, Any]] = []
 
-    def add(pid: str) -> None:
+    def _record_skip(entry: dict[str, Any]) -> None:
+        if entry not in skipped:  # dedup: a candidate reached from >1 path skips once
+            skipped.append(entry)
+
+    def add(pid: str, *, explicit: bool = False) -> None:
+        if pid in order:  # already chosen upstream — never re-evaluate/duplicate
+            return
         view = cat.get(pid)
         if view is None or not view.exists:
-            skipped.append({"provider": pid, "reason": "not registered / no manifest"})
+            _record_skip({"provider": pid, "reason": "not registered / no manifest"})
             return
         if view.disabled:
-            skipped.append({"provider": pid,
-                            "reason": f"disabled (run: manju providers enable {pid})"})
+            _record_skip({"provider": pid,
+                          "reason": f"disabled (run: manju providers enable {pid})"})
             return
-        if pid not in order:
-            order.append(pid)
+        # DR04 fail-earlier: a rule/tier/else/fallback candidate that is
+        # structurally incompatible is skipped with a visible reason (its
+        # RELATIVE position in whatever list it came from is otherwise untouched);
+        # an EXPLICIT pin is kept in the order (byte-identical) so the registry's
+        # explicit-pin guard raises on it BEFORE submit rather than the fallback
+        # silently replacing it.
+        reason = _incompatible_skip(view, shot)
+        if reason is not None:
+            _record_skip({"provider": pid, "reason": reason})
+            if not explicit:
+                return
+        order.append(pid)
 
     # 1. explicit provider always wins (a disabled one is a hard build error
     #    raised in the registry before we get here; recorded as a skip in explain)
     if shot.generation.provider:
-        add(shot.generation.provider)
+        add(shot.generation.provider, explicit=True)
 
     # 2. the active strategy's FIRST matching rule
     fired: dict[str, Any] | None = None
@@ -474,10 +552,11 @@ def resolve(project, shot, config: RoutingConfig | None = None, *,
         if else_sel == "fallback":
             pass  # the safety net below is exactly this
         elif else_sel == "local":
-            for pid in _capable_sorted(cat, shot, kind="local"):
+            for pid in _capable_sorted(cat, shot, kind="local", skipped=skipped):
                 add(pid)
         elif else_sel == "cheapest":
-            for pid in _capable_sorted(cat, shot, by_cost=True, project=project):
+            for pid in _capable_sorted(cat, shot, by_cost=True, project=project,
+                                       skipped=skipped):
                 add(pid)
         elif else_sel == "quality":
             for pid in strat["priority"]:
@@ -486,7 +565,14 @@ def resolve(project, shot, config: RoutingConfig | None = None, *,
             add(else_sel)
 
     # 4. §8.4 fallback chain — always the safety net (fallback_chain already
-    #    drops disabled providers)
+    #    drops disabled providers). DR04 keeps this byte-identical: "fallback
+    #    ORDER unchanged" is a hard rule — the exhaustive safety net must never be
+    #    trimmed (a shot must never dead-end, and downstream consumers such as the
+    #    promptlab excessive-duration linter read this whole chain to find a
+    #    provider's clip ceiling). Compatibility skips apply to the STRATEGY
+    #    selectors (cheapest/local/rules/tiers) and the explicit-pin guard, not
+    #    here. An incompatible provider that only the safety net reaches is still
+    #    stopped by generic_cloud's submit-time guard (the final defense).
     for pid in fallback_chain(shot):
         if pid not in order:
             order.append(pid)

@@ -141,6 +141,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju snapshot [label]` | P2 | labeled git checkpoint of the truth text |
 | `manju rollback shot <id> \| file <path> [--to <ref>]` | P2 | scoped rollback; history only grows |
 | `manju providers list/add/check/enable/disable/show` | S | provider manifests: scaffold, offline probes, toggles; secrets never printed |
+| `manju providers catalog [--json] [--output …]` | DR04 | the shared capability projection (manju.provider-capability-projection/v1): every provider's capabilities/limits/refs/cost + stable profile digests — the same facts routing and the spend-free preflight consume; deterministic, no secrets, no credential presence, `--output` writes a derived report builds never read |
 | `manju route list/explain [--json]` | S | routing strategies (timeline/routing.yaml): which provider fires for a shot and why |
 | `manju redo --shots/--all-stale/--all-missing/--all [--yes]` | S | batch redo: one lock, one aggregated spend gate, per-shot isolation, loud skip reasons |
 | `manju voice --missing/--all/--shots` | S | batch voice for missing dialogue lines (stale voices stay advisory §4.3) |

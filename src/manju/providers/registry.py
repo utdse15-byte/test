@@ -197,6 +197,18 @@ def generate_with_fallback(
             f"(disabled: true) — run `manju providers enable {preferred}` or pick "
             f"another provider",
         )
+    # DR04 fail-earlier: an explicit pin that is structurally incompatible with
+    # THIS request (duration over the provider's max_duration_ms — the SAME fact
+    # generic_cloud enforces at submit) FAILS here, before any submit, instead of
+    # being silently degraded down the fallback chain. The submit-time guard
+    # remains the final defense for any path that reaches it.
+    if preferred:
+        incompat = routing.explicit_pin_incompatibility(preferred, req)
+        if incompat:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"shot {req.shot.id} names provider {preferred!r} but it {incompat}",
+            )
 
     # A routing.yaml (project or user) lets the active strategy decide the
     # order — this is the one wiring point, so it applies even when a caller

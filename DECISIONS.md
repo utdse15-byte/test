@@ -444,3 +444,39 @@ digests. The batch converges them on ONE stream instead of adding a ledger.
   api-key params dropped, signed-URL queries stripped, prompts by digest).
 - Deferred stages recorded honestly: voice/export/repair/package attempts
   and per-segment render evidence are later wirings, not silent gaps.
+
+## 17. Deep Research 04 — one provider-fact source, spend-free preflight (2026-07-10)
+
+External research (04, LumenX) audited first: provider facts lived in
+routing's private `_catalog()`, the duration cap was enforced only inside
+generic_cloud's submit, and `max_resolution` was a declared-but-never-read
+opaque string. The batch extracts one source instead of adding a catalog.
+
+- **providers/catalog.py is the single provider-fact source** (built-ins +
+  manifests; broken manifests → errors without hiding healthy providers).
+  Routing's `_catalog()`, the CLI (`providers catalog`/`check`) and
+  preflight all consume the same descriptors; routing behavior is
+  byte-identical (pinned). The projection
+  (manju.provider-capability-projection/v1) is derived, deterministic, and
+  excludes paths/mtime/credential values AND credential presence;
+  `provider_profile_digest(provider_id, capability)` is the stable identity
+  downstream batches derive submission identity from.
+- **providers/preflight.py: spend-free request compatibility**
+  (manju.request-compatibility/v1) validating ONLY explicit executable
+  facts — provider exists/enabled, capability, duration (the SAME rule
+  generic_cloud enforces at submit, now shared), refs counts via the ONE
+  existing budget allocator (preflight and submit see identical effective
+  refs), first/last frame, body-placeholder completeness. Never infers
+  from story/prompt/shot language.
+- **max_resolution is never guessed**: surfaced verbatim with a
+  LEGACY_UNINTERPRETABLE_LIMIT warning. Structured resolution limits,
+  capability_profiles overlays and param type/enum/range contracts are
+  SKIPPED_WITH_EVIDENCE (grep-zero readers; no real manifest with
+  conflicting per-capability limits) — no manifest fields were added
+  without a failing fixture.
+- **Deliberate fail-earlier changes** (each visible as a skip reason):
+  cheapest/rule/tier candidates skip duration-incompatible providers;
+  an EXPLICIT provider pin that cannot satisfy the request fails BEFORE
+  submit instead of silently degrading. The §8.4 no-routing fallback chain
+  order is deliberately unchanged (safety-net semantics; the submit guard
+  defends it).

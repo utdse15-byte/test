@@ -167,7 +167,12 @@ def reject_html_error_page(resp: "HttpResponse", url: str, provider_id: str) -> 
 
 def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
     """Values available to body_template placeholders. Everything the design
-    names (§8.6) plus the shot's generation params verbatim."""
+    names (§8.6) plus the shot's generation params verbatim.
+
+    DR04: the base key set here IS
+    ``providers.preflight.BASE_PLACEHOLDER_KEYS`` — the single vocabulary the
+    spend-free preflight checks a body_template's completeness against (their
+    equality is pinned by test_dr04_preflight). Keep the two in lock-step."""
     from .prompt import compile_prompt
 
     config = req.project.load_config()
@@ -695,8 +700,16 @@ class GenericCloudProvider(CloudProvider):
     # ------------------------------------------------------------- helpers
 
     def _enforce_limits(self, shot: ShotSpec, duration_ms: int) -> None:
+        # DR04: the duration rule is now the shared, pure
+        # ``preflight.duration_exceeds_limit`` — the SAME predicate the spend-free
+        # preflight uses, so submit and preflight can never disagree. This guard
+        # REMAINS as the final defense (a request may reach submit without having
+        # been preflighted). Behaviour is byte-identical to the old
+        # ``if limit and duration_ms > limit``.
+        from .preflight import duration_exceeds_limit
+
         limit = self.manifest.limits.max_duration_ms
-        if limit and duration_ms > limit:
+        if duration_exceeds_limit(limit, duration_ms):
             raise ProviderFailure(
                 FailureKind.invalid,
                 f"{self.id}: shot {shot.id} needs {duration_ms}ms but the provider "
