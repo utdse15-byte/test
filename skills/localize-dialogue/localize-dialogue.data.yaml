@@ -1,0 +1,37 @@
+# localize-dialogue data pack — the flow vocabulary the SKILL.md and its eval
+# fixtures pin together, so a stage rename or a field drift is caught (mirrors
+# the 08_10_12C skill data packs). This is DATA, not truth: the core reads none
+# of it; it only keeps the skill honest against the real locale schema.
+schema: manju.skill.localize-dialogue/v1
+
+# the five-stage flow (contract §11 / VideoLingo, at the Skill layer).
+flow:
+  - id: terminology
+    goal: 抽术语/人名/世界观词,定全集一致的对照表
+  - id: translate
+    goal: 逐行忠实直译,保留 speaker,不并/不拆镜头行
+  - id: reflect
+    goal: 对照原文自检漏译/误译/术语不一致/机翻腔
+  - id: adaptation
+    goal: 改写成目标语言自然台词,意思对齐可改句式(源提案)
+  - id: timing_fit_review
+    goal: 估读时长对齐槽位,超时走 duration 建议,绝不删字改意
+
+# the ONLY core fields a locale patch may touch (must match core/locale.py).
+locale_patch:
+  file: locales/<lang>/lines.yaml
+  per_line_fields: [text, base_hash]
+  staleness_key: base_hash        # sha of base dialogue.text; core judges STALE
+
+# duration adaptation routes this skill may PROPOSE (must match qc/lipsync.py
+# ordered proposals) — never a core auto text edit.
+duration_routes:
+  - RETTS_SPEED
+  - SOURCE_PROPOSAL
+  - TIME_STRETCH
+  - PICTURE_EDIT
+  - ACCEPT_DEVIATION
+
+discipline:
+  produces: source_patch_plus_evidence
+  never: [write_core_truth, call_paid_provider, mutate_text_for_duration]

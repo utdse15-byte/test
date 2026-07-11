@@ -3210,6 +3210,58 @@ def align(
             typer.secho(f"  ⚠ {a}", fg=typer.colors.YELLOW)
 
 
+# --------------------------------------------------------------- masters
+
+
+@app.command()
+def masters(
+    profile: str = typer.Option(
+        "master", "--profile",
+        help="AI_IDE_18 WP7: delivery profile id (project.yaml delivery_profiles). "
+             "Its loudness_target_lufs / true_peak_target_dbtp drive the "
+             "normalised master — targets are the PROFILE's, never hardcoded"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Render the professional audio masters (AI_IDE_18 WP7): DIALOGUE / MUSIC /
+    SFX stems, FULL MIX and the international M&E master — all REAL ffmpeg renders
+    off the current timeline's four audio buses, with measured EBU R128 loudness.
+    They fill the 13C DeliveryManifest audio roles through the export centre."""
+    from .build import delivery as _delivery
+    from .build import exportstatus as _es
+    from .media import masters as _masters
+
+    project = _project()
+    ctx = _es._gather(project)
+    if ctx.timeline is None:
+        _fail("没有可渲染的时间线(先 manju build 或提供 manual timeline.json)")
+        return
+    config = _es._safe(lambda: project.load_config())
+    profiles = _delivery._delivery_profiles(config) if config is not None else {}
+    prof = dict(profiles.get(profile) or {})
+    target = prof.get("loudness_target_lufs")
+    tp = prof.get("true_peak_target_dbtp")
+    try:
+        index = _masters.render_masters(
+            project, ctx.timeline,
+            loudness_target_lufs=float(target) if target is not None else None,
+            true_peak_target_dbtp=float(tp) if tp is not None else None)
+    except Exception as exc:
+        _fail(" ".join(str(exc).split())[:500])
+        return
+    if as_json:
+        _emit(index, True)
+    else:
+        typer.secho(f"audio masters → exports/masters/ (profile={profile})",
+                    fg=typer.colors.GREEN)
+        for a in index["artifacts"]:
+            loud = a["loudness"]
+            typer.echo(f"  {a['role']:16} {a['path']}  "
+                       f"I={loud['integrated_lufs']} LUFS  TP={loud['true_peak_dbtp']} dBTP")
+        if index.get("loudnorm_master"):
+            ln = index["loudnorm_master"]
+            typer.echo(f"  normalised → {ln['path']} (target {ln['target_lufs']} LUFS)")
+
+
 # -------------------------------------------------------------- transcribe
 
 

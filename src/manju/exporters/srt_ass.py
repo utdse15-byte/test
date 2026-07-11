@@ -25,9 +25,11 @@ if TYPE_CHECKING:  # avoid an import cycle at module load; Project only needed f
 __all__ = [
     "ms_to_srt",
     "ms_to_ass",
+    "ms_to_vtt",
     "escape_ass_text",
     "compile_srt",
     "compile_ass",
+    "compile_vtt",
     "export_captions",
 ]
 
@@ -56,6 +58,16 @@ def ms_to_ass(ms: int) -> str:
     m, rem = divmod(rem, 60_000)
     s, milli = divmod(rem, 1000)
     return f"{h:d}:{m:02d}:{s:02d}.{milli // 10:02d}"
+
+
+def ms_to_vtt(ms: int) -> str:
+    """Milliseconds -> WebVTT timestamp ``HH:MM:SS.mmm`` (dot before ms, per the
+    W3C WebVTT grammar — the one field that differs from SRT's comma)."""
+    ms = max(0, int(round(ms)))
+    h, rem = divmod(ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, milli = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{milli:03d}"
 
 
 # ------------------------------------------------------------------- SRT
@@ -140,6 +152,29 @@ def compile_srt(timeline: Timeline, *, max_chars_per_line: int | None = None) ->
         parts.append(text)
         parts.append("")  # blank line terminates the cue
     return "\n".join(parts) + ("\n" if parts else "")
+
+
+# ------------------------------------------------------------------- WebVTT
+
+
+def compile_vtt(timeline: Timeline, *, max_chars_per_line: int | None = None) -> str:
+    """A real WebVTT document (contract §10 / 13C ``CAPTIONS_VTT`` — the role
+    13C declared but SKIPPED as "no such artifact exists"). Compiled from the
+    SAME ``Timeline.tracks.captions`` as SRT/ASS, so all three agree cue-for-cue.
+
+    Cue-level only: :class:`CaptionLine` carries no per-word timing, so inline
+    karaoke ``<hh:mm:ss.mmm>`` tokens are honestly NOT emitted (that would be
+    fabricated word boundaries — contract §5 UNALIGNED discipline). The header is
+    the required ``WEBVTT`` signature; text is arbitrary UTF-8 (CJK safe)."""
+    parts = ["WEBVTT", ""]
+    for i, cap in enumerate(timeline.tracks.captions, start=1):
+        text = _normalize_newlines(cap.text).strip("\n")
+        text = break_lines(text, max_chars_per_line)
+        parts.append(str(i))
+        parts.append(f"{ms_to_vtt(cap.start_ms)} --> {ms_to_vtt(cap.end_ms)}")
+        parts.append(text)
+        parts.append("")
+    return "\n".join(parts) + ("\n" if timeline.tracks.captions else "")
 
 
 # ------------------------------------------------------------------- ASS
@@ -282,11 +317,14 @@ def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
     and the burned ASS is recompiled FROM the human cues so the film shows
     exactly what they wrote.
 
-    Returns ``{"srt": <path>, "ass": <path>}`` — the files downstream must use.
+    Returns ``{"srt": <path>, "ass": <path>, "vtt": <path>}`` — the files
+    downstream must use. The ``vtt`` (AI_IDE_18 WP7) is compiled from the same
+    truth as the ``srt`` in both auto and manual modes.
     """
     style = _caption_style(project)
     srt_path = project.captions_dir / "captions.srt"
     ass_path = project.captions_dir / "captions.ass"
+    vtt_path = project.captions_dir / "captions.vtt"
 
     max_chars = style.get("max_chars_per_line")
 
@@ -314,11 +352,14 @@ def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
             compile_ass(human_timeline, width=timeline.width, height=timeline.height,
                         style=style, apply_line_breaks=False),
         )
-        return {"srt": srt_path, "ass": ass_path}
+        # WebVTT re-emits the human cues verbatim too (no re-break).
+        atomic_write_text(vtt_path, compile_vtt(human_timeline))
+        return {"srt": srt_path, "ass": ass_path, "vtt": vtt_path}
 
     atomic_write_text(srt_path, compile_srt(timeline, max_chars_per_line=max_chars))
     atomic_write_text(
         ass_path,
         compile_ass(timeline, width=timeline.width, height=timeline.height, style=style),
     )
-    return {"srt": srt_path, "ass": ass_path}
+    atomic_write_text(vtt_path, compile_vtt(timeline, max_chars_per_line=max_chars))
+    return {"srt": srt_path, "ass": ass_path, "vtt": vtt_path}

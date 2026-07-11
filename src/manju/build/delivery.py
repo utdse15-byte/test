@@ -68,39 +68,66 @@ BLOCKED = "BLOCKED"
 # textless / M&E masters and dialogue/music/sfx/full-mix stems are NOT produced
 # by the current pipeline, so their roles are declared-but-unpopulated
 # (contract §6.3: "只列真实支持/生成的角色"; do not pre-generate empty files).
+# AI_IDE_18 WP7 (addendum ruling 8): the audio-master + WebVTT kinds the export
+# centre now emits are mapped onto the roles 13C ALREADY declared in KNOWN_ROLES
+# (TEXTLESS/M_AND_E/CAPTIONS_VTT/*_STEM/FULL_MIX) but had honestly left
+# unpopulated. Adding the mapping is what turns those declared roles real — the
+# manifest picks the rows up through the SAME row→role scan (no new engine).
 _ROLE_BY_KIND = {
     "final": "MASTER_VIDEO",
     "proxy": "PROXY_VIDEO",
     "srt": "CAPTIONS_SRT",
     "ass": "CAPTIONS_ASS",
+    "vtt": "CAPTIONS_VTT",
     "otio": "NLE_OTIO",
     "jianying": "NLE_JIANYING",
     "capcut": "NLE_CAPCUT",
     "cover": "POSTER",
     "teaser": "TEASER",
+    "dialogue_stem": "DIALOGUE_STEM",
+    "music_stem": "MUSIC_STEM",
+    "sfx_stem": "SFX_STEM",
+    "full_mix": "FULL_MIX",
+    "mne": "M_AND_E_MASTER",
 }
 _ARTIFACT_ID_BY_KIND = {
     "final": "master:main",
     "proxy": "proxy:main",
     "srt": "captions:srt",
     "ass": "captions:ass",
+    "vtt": "captions:vtt",
     "otio": "nle:otio",
     "jianying": "nle:jianying",
     "capcut": "nle:capcut",
     "cover": "poster:main",
     "teaser": "teaser:main",
+    "dialogue_stem": "audio:dialogue_stem",
+    "music_stem": "audio:music_stem",
+    "sfx_stem": "audio:sfx_stem",
+    "full_mix": "audio:full_mix",
+    "mne": "audio:mne_master",
 }
 _MIME_BY_KIND = {
     "final": "video/mp4",
     "proxy": "video/mp4",
     "srt": "application/x-subrip",
     "ass": "text/x-ssa",
+    "vtt": "text/vtt",
     "otio": "application/vnd.opentimelineio+json",
     "jianying": "application/json",
     "capcut": "application/json",
     "cover": "image/png",
     "teaser": "video/mp4",
+    "dialogue_stem": "audio/wav",
+    "music_stem": "audio/wav",
+    "sfx_stem": "audio/wav",
+    "full_mix": "audio/wav",
+    "mne": "audio/wav",
 }
+# roles whose extra technical facts (loudness, bus source hashes) live in the
+# exports/masters index and are folded onto the manifest artifact row.
+_MASTERS_ROLES = frozenset({
+    "DIALOGUE_STEM", "MUSIC_STEM", "SFX_STEM", "FULL_MIX", "M_AND_E_MASTER"})
 # exportstatus Freshness value → manifest artifact state.
 _STATE_BY_FRESHNESS = {
     "up_to_date": TECHNICALLY_VERIFIED,
@@ -310,7 +337,22 @@ def _content_key(kind: str, abspath: Path) -> str | None:
     return None
 
 
-def _artifact_from_row(project: Project, row: Any) -> dict:
+def _masters_facts(project: Project) -> dict[str, dict]:
+    """AI_IDE_18 WP7: the per-role loudness / bus-source facts recorded by the
+    ``exports/masters`` index, keyed by role. Empty when no masters exist — the
+    manifest row then simply carries no acoustic facts (honest)."""
+    try:
+        from ..media.masters import load_index
+
+        index = load_index(project)
+    except Exception:
+        index = None
+    if not index:
+        return {}
+    return {a["role"]: a for a in index.get("artifacts", []) if a.get("role")}
+
+
+def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | None = None) -> dict:
     kind = row.kind
     role = _ROLE_BY_KIND.get(kind, "OTHER_DECLARED")
     freshness = row.freshness.value
@@ -351,6 +393,21 @@ def _artifact_from_row(project: Project, row: Any) -> dict:
             "actor": row.verified_by,
             "at": row.verified_at,
         })
+    # AI_IDE_18 WP7: fold the recorded acoustic facts onto the stem/mix/M&E row
+    # so the manifest binds source/audio-input hashes + measured loudness (never
+    # a target — measurement only, contract §10).
+    if role in _MASTERS_ROLES and masters:
+        fact = masters.get(role)
+        if fact:
+            art["source_refs"] = list(fact.get("source_refs") or [])
+            art["audio"] = {
+                "loudness": fact.get("loudness"),
+                "sample_rate": fact.get("sample_rate"),
+                "channels": fact.get("channels"),
+                "duration_ms": fact.get("duration_ms"),
+                "buses": fact.get("buses"),
+                "excludes_dialogue": fact.get("excludes_dialogue"),
+            }
     return art
 
 
@@ -941,7 +998,8 @@ def build_manifest(project: Project, profile_id: str = "master", *,
                                              chain=_base_chain)
     variant_kind = variant["kind"]
 
-    artifacts = [_artifact_from_row(project, r) for r in rows]
+    masters = _masters_facts(project)
+    artifacts = [_artifact_from_row(project, r, masters) for r in rows]
 
     nle, nle_diags = _nle_section(project, config, ctx.timeline, rows_by_kind)
 

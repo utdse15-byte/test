@@ -215,6 +215,17 @@ FIRST_LAST_CAPABILITY = "first_last_frame"
 FIRST_LAST_MODES = ("none", "fields", "array")
 FIRST_LAST_ENCODINGS = ("base64_field", "url_field", "multipart")
 
+# AI_IDE_18 WP5 (addendum ruling 6): the optional lip-sync capability token a
+# provider advertises to opt into ``lip_sync(video, audio, subject, params)``.
+# ``capabilities`` is a free ``list[str]`` (additive — no schema change), so a
+# manifest simply lists ``lip_sync`` to route lip-sync jobs to it. The request
+# binds exact video+audio hashes and an explicit subject selector; the output is
+# a new append-only take (qc/lipsync.py). It flows through the STANDARD
+# GenerationRequest / admission / evidence machinery, so UNKNOWN + reconcile come
+# for free. The real qualification rung for lip_sync lands in AI_IDE_14's matrix
+# as UNTESTED until a real provider is exercised (honest — no cloud account here).
+LIP_SYNC_CAPABILITY = "lip_sync"
+
 
 class RefsConfig(ManjuModel):
     """How a generic_cloud provider receives reference INPUTS (goal item 7).

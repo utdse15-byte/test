@@ -197,12 +197,33 @@ def align_shot(
         words = _spread_over_duration(pieces, duration_ms)
 
     path = _write_timing(media, words)
+
+    # AI_IDE_18 WP2: alignment evidence companion sidecar (media/timing.py).
+    # Binds the EXACT source-audio hash + aligner identity so a later same-name
+    # replacement reads STALE, and records a genuine failure as UNALIGNED rather
+    # than letting an empty/failed pass masquerade as timed (§5 pins). The bare
+    # <take>.timing.json above stays byte-identical for the caption consumers.
+    from . import timing as _timing
+
+    speaker = (shot.dialogue.speaker or "").strip()
+    if (source in ("asr", "from_srt")) and not words:
+        _timing.write_unaligned(
+            media, provider=source,
+            reason="识别/字幕未产生任何可对齐片段(保留 UNALIGNED,不伪造均匀时间)")
+        align_status = _timing.UNALIGNED
+    else:
+        ev_cues = [{**w, "speaker": speaker} if speaker else dict(w) for w in words]
+        _timing.write_evidence(media, ev_cues, provider=source, status=_timing.ALIGNED)
+        align_status = _timing.ALIGNED
+
     return {
         "shot": shot_id,
         "take": media.stem,
         "timing": project.relpath(path),
+        "evidence": project.relpath(_timing.align_path(media)),
         "cues": len(words),
         "source": source,
+        "align_status": align_status,
         "duration_ms": duration_ms,
         "advisories": advisories,
         "manual": True,  # never changes MANUAL status

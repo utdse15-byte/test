@@ -754,15 +754,115 @@ def _teaser_row(ctx: _Ctx) -> DeliverableRow:
                           openable=True, open_hint=hint)
 
 
+# ----------------------------------------------------- AI_IDE_18 audio masters
+
+
+# label per masters role (生成来源 glossary vocabulary).
+_MASTERS_LABEL = {
+    "DIALOGUE_STEM": "对白 分轨 Stem",
+    "MUSIC_STEM": "音乐 分轨 Stem",
+    "SFX_STEM": "音效/环境 分轨 Stem",
+    "FULL_MIX": "全混音 Full Mix",
+    "M_AND_E_MASTER": "国际版 M&E 母版",
+}
+
+
+def _masters_rows(ctx: _Ctx) -> list[DeliverableRow]:
+    """AI_IDE_18 WP7: one row per real audio master the ``exports/masters``
+    index recorded. CONDITIONAL — a project that never ran ``manju masters``
+    keeps the historical nine rows byte-identical (the roles stay
+    declared-but-unpopulated, contract §6.3). Freshness compares the recorded
+    timeline semantic digest against the current one (the SAME digest the 13C
+    manifest binds), so a moved cue / dropped shot marks every master 待更新."""
+    from ..media.masters import KIND_ROLE, load_index
+
+    index = load_index(ctx.project)
+    if not index or not index.get("artifacts"):
+        return []
+    try:
+        from .delivery import timeline_semantic_digest
+
+        current = timeline_semantic_digest(ctx.timeline)
+    except Exception:
+        current = None
+    rows: list[DeliverableRow] = []
+    for art in index.get("artifacts", []):
+        role = art.get("role")
+        kind = art.get("kind") or KIND_ROLE.get(role, "")
+        label = _MASTERS_LABEL.get(role, role or "Audio Master")
+        rel = art.get("path")
+        abspath = (ctx.project.root / rel) if rel else None
+        if abspath is None or not abspath.exists():
+            rows.append(DeliverableRow(kind, label, rel, Freshness.MISSING,
+                                       "母版文件缺失(manju masters 重新生成)"))
+            continue
+        hint = f"文件:{rel}"
+        recorded = art.get("timeline_digest")
+        if current is not None and recorded is not None and recorded != current:
+            rows.append(DeliverableRow(
+                kind, label, rel, Freshness.STALE,
+                "时间线语义已改:母版基于旧混音(manju masters 重新生成)",
+                openable=True, open_hint=hint))
+        else:
+            loud = art.get("loudness") or {}
+            rows.append(DeliverableRow(
+                kind, label, rel, Freshness.UP_TO_DATE,
+                f"母版字节存在且时间线未变;实测 integrated "
+                f"{loud.get('integrated_lufs')} LUFS / TP "
+                f"{loud.get('true_peak_dbtp')} dBTP",
+                openable=True, open_hint=hint))
+    return rows
+
+
+def _vtt_row(ctx: _Ctx) -> DeliverableRow | None:
+    """AI_IDE_18 WP7: the CAPTIONS_VTT deliverable — CONDITIONAL on a
+    captions.vtt existing (so historical projects are unchanged). Compiled from
+    the SAME captions track as SRT/ASS; freshness is a verbatim recompile
+    compare, exactly like :func:`_caption_row`."""
+    project = ctx.project
+    path = project.captions_dir / "captions.vtt"
+    if not path.exists():
+        return None
+    rel = project.relpath(path)
+    hint = f"文件:{rel}"
+    if _size(path) == 0:
+        return DeliverableRow("vtt", "WebVTT 字幕", rel, Freshness.PROBLEMATIC,
+                              "captions.vtt 0 字节", openable=False, open_hint=hint)
+    manual = ctx.rules is not None and getattr(ctx.rules.captions, "mode", None) == "manual"
+    if manual or ctx.timeline is None:
+        return DeliverableRow("vtt", "WebVTT 字幕", rel, Freshness.NEEDS_MANUAL,
+                              "manual/无时间线:请人工确认 WebVTT", openable=True, open_hint=hint)
+    try:
+        from ..exporters.srt_ass import _caption_style, compile_vtt
+
+        style = _caption_style(project)
+        expected = compile_vtt(ctx.timeline, max_chars_per_line=style.get("max_chars_per_line"))
+        on_disk = path.read_text(encoding="utf-8")
+    except Exception:
+        return DeliverableRow("vtt", "WebVTT 字幕", rel, Freshness.NEEDS_MANUAL,
+                              "WebVTT 重新编译比对失败,请人工确认", openable=True, open_hint=hint)
+    if on_disk == expected:
+        return DeliverableRow("vtt", "WebVTT 字幕", rel, Freshness.UP_TO_DATE,
+                              "与当前时间线字幕逐字一致(重新编译比对)",
+                              openable=True, open_hint=hint)
+    return DeliverableRow("vtt", "WebVTT 字幕", rel, Freshness.STALE,
+                          "时间线字幕已改:磁盘 ≠ 重新编译(manju export 更新)",
+                          openable=True, open_hint=hint)
+
+
 # --------------------------------------------------------------------- api
 
 
 def deliverables(project: Project) -> list[DeliverableRow]:
-    """The export center's nine deliverable rows, in ship order. Pure and
-    read-only — never spends, never mutates. Degrades cleanly on an empty or
-    half-built project (every row falls to an honest 缺失/待人工确认)."""
+    """The export center's deliverable rows, in ship order. Pure and read-only —
+    never spends, never mutates. Degrades cleanly on an empty or half-built
+    project (every row falls to an honest 缺失/待人工确认).
+
+    The historical nine rows are always present; AI_IDE_18 appends the WebVTT
+    caption and the audio-master rows ONLY when those artifacts exist, so a
+    project that never produced them is byte-identical to before (§6.3)."""
     ctx = _gather(project)
-    return [
+    rows = [
         _final_row(ctx),
         _proxy_row(ctx),
         _caption_row(ctx, "srt"),
@@ -773,6 +873,11 @@ def deliverables(project: Project) -> list[DeliverableRow]:
         _cover_row(ctx),
         _teaser_row(ctx),
     ]
+    vtt = _vtt_row(ctx)
+    if vtt is not None:
+        rows.append(vtt)
+    rows.extend(_masters_rows(ctx))
+    return rows
 
 
 def deliverables_data(project: Project) -> dict[str, Any]:
