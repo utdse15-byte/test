@@ -687,3 +687,52 @@ approves again; nothing ever re-derives an "equivalent" approval.**
 - Budget: 3 production files (cap 6), 0 new public schemas, 30 red-first
   tests; zero existing pins flipped (the CLI/GUI byte-agreement pins held
   because the assessment is composed inside the shared payload builder).
+
+## 22. 08_10_12C — the production loop runs through existing sources, not new nouns (2026-07-11)
+
+The accepted-take production-loop batch (AI_IDE_08_10_12C, replacing the
+08R/10R/12R object families). Core principle: **every creative decision that
+can change a paid request must first become a diff on an existing text
+source; everything else is a deletable derived view.** The seven planned
+schemas (DirectingBrief, ClipContract, CandidateSet, RecipeSnapshot,
+AcceptedObservedState, ContinuityDiff, ContinuationCapsule) all resolved to
+existing owners — 0 new public schemas (Path A held: verdict v2 carries the
+production decision additively).
+
+- **Source authority is now pinned by tests**: mutating a derived directing
+  report moves NO prompt/request digest; applying the equivalent proposal
+  moves spec_hash + prompt digest; locked sources still demand proposals.
+- **Prompt workbench stays the one projection**: `manju prompt --json` gained
+  additive production_checks (clip-scope, reference-transfer, surface
+  freshness, budget, capability-via-preflight — pure functions naming source
+  paths, auto_apply always false) and a compiler_trace (source revision,
+  bundle digest, surface-profile digest/freshness, continuation_source).
+  Surface profiles are ONE conservative source-dated internal data family +
+  an UNKNOWN fallback — never a capability authority (DR04 owns that).
+- **Ref transfer rides the existing binding**: dict-form refs entries with a
+  closed controls/ignore vocabulary + subject_ref; conflicts and unknown
+  enums are recorded and refused, legacy string refs byte-identical (flagged
+  advisory REFERENCE_TRANSFER_UNDECLARED). Authored in params ⇒ in spec_hash.
+- **Candidate families are a derived join** over sidecars + attempt/
+  submission evidence — same request_digest groups; an explicit
+  `redo --from-take X` now stamps additive TakeSidecar.redo_of (red-proven
+  the only durable lineage carrier since redo emits no attempt evidence
+  outside a run). keeper (QC evidence) / selected_take (shot source) /
+  promoted reference (refs source) remain three separate states.
+- **Bound review**: verdict v2 optionally carries decision{disposition
+  KEEP|FIX_IN_POST|EDIT_DONT_REGENERATE|REROLL|REWRITE_SOURCE,
+  primary_repair_variable (17-value closed set, mandatory for non-KEEP),
+  diagnostic_isolation, reason} + observed_states[] (START/END transient
+  observations, 5-value visibility, bounded confidence) — validated in the
+  DR02 zero-write intake; reviewers still cannot write assurance; observed
+  transients never become Bible facts.
+- **Continuation gate**: next-shot continuation requires the accepted media's
+  verified hash + a bound endpoint observation; the observed ending beats the
+  prompt's predicted ending; the output is only ever a next-shot source
+  proposal, recompiled by the same workbench.
+- **Three first-party skills** (direct-shot-source-patch,
+  review-take-and-route-repair, continue-from-accepted-take) with
+  source-dated data packs; eval tests pin their vocabularies to the code's
+  enums so drift fails loudly.
+- Budget: 8 of 10 production files; board additions SKIPPED_WITH_EVIDENCE
+  (a comparison entry already exists); zero pins flipped.
