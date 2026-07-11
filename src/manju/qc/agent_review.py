@@ -1056,6 +1056,24 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
             "evidence_refs": list(o.get("evidence_refs") or []),
         })
 
+    # ---- step 7 (payload validity): no DUPLICATE expectation_id inside ONE
+    # payload. assurance.diff() maps observations by id, so a repeated id is
+    # silently last-one-wins — an earlier (possibly conflicting) observation
+    # would be dropped. That is an invalid payload, not a world move: reject the
+    # WHOLE batch with ZERO writes, never half-resolve the conflict. (P0-B, I)
+    seen_eids: set[str] = set()
+    dup_eids: list[str] = []
+    for o in obs_norm:
+        eid = o["expectation_id"]
+        if not eid:
+            continue
+        if eid in seen_eids and eid not in dup_eids:
+            dup_eids.append(eid)
+        seen_eids.add(eid)
+    for eid in dup_eids:
+        errs.append(f"verdict #{idx}: expectation_id {eid!r} 在同一 payload 内重复"
+                    "(每个期望至多一条 observation;整批拒绝,零写入)")
+
     findings = v.get("findings")
     if findings is None:
         findings = []

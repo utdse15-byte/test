@@ -106,13 +106,13 @@ def compute_assurance(project: "Project", shot_id: str, *,
     re-running ``run_qc`` per shot; omitted, the gate computes its own."""
     human_review_state = _human_review_state(project, shot_id)
 
-    es = _safe_compile(project, shot_id)
+    es, compile_error = _safe_compile(project, shot_id)
     expectations = es.get("expectations", [])
     spec_hash = es.get("spec_hash")
     expectation_digest = es.get("digest")
 
     def result(state, *, reasons, failed=None, unknown=None, evidence=None,
-               stale_reasons=None):
+               stale_reasons=None, qc=None, expectation_compile_error=None):
         return {
             "schema": SCHEMA,
             "subject": {"kind": "shot", "id": shot_id},
@@ -125,6 +125,12 @@ def compute_assurance(project: "Project", shot_id: str, *,
             "unknown_expectation_ids": sorted(unknown or []),
             "evidence": evidence,
             "stale_reasons": sorted(stale_reasons or []),
+            # tri-state deterministic-QC input to the acceptance gate (H, WP0):
+            # {"status": pass|blocked|unavailable, "reason": <code|None>} for the
+            # states that consult it, else None. Never invisible.
+            "qc": qc,
+            # J (WP5): non-None when expectation compilation itself failed.
+            "expectation_compile_error": expectation_compile_error,
         }
 
     # 1. not_reviewable — no selected take, or its media file is missing.
@@ -132,6 +138,17 @@ def compute_assurance(project: "Project", shot_id: str, *,
     if cur_sha is None:
         return result("not_reviewable",
                       reasons=["no selected take, or its media file is missing"])
+
+    # J (WP5). expectation compilation FAILED — never collapse a malformed
+    # quality/continuity block into a vacuous "nothing was promised" pass. We
+    # cannot derive what the author promised, so we cannot accept: surface the
+    # compile error and hold the shot in the honest non-accepting `unknown`.
+    if compile_error is not None:
+        return result("unknown",
+                      reasons=["expectation compilation failed — the shot's promises "
+                               "cannot be derived, so acceptance is withheld: "
+                               + compile_error],
+                      expectation_compile_error=compile_error)
 
     # 2. no_explicit_expectations — nothing was promised.
     if not expectations:
@@ -194,18 +211,31 @@ def compute_assurance(project: "Project", shot_id: str, *,
                                "not evaluated / unobserved): " + ", ".join(sorted(unknown))],
                       unknown=unknown, evidence=evidence)
 
-    # 7. accepted — every required expectation is a current-bound PASS, no blocker,
-    #    AND the deterministic QC report raises no policy-blocking error for this
-    #    shot. A machine-tier error blocks release even when the promises are met.
-    if _shot_has_policy_error(project, shot_id, qc_report):
+    # 7. Deterministic-QC gate (tri-state PASS / BLOCKED / UNAVAILABLE). Every
+    #    required expectation is already a current-bound PASS with no blocker, so
+    #    the machine tier is the last word before acceptance:
+    #      BLOCKED     — a policy-blocking error names THIS shot => rejected;
+    #      UNAVAILABLE — QC raised / missing / unreadable => we CANNOT confirm the
+    #                    absence of blocks, so we never silently accept (H, WP0):
+    #                    the honest non-accepting `unknown`, reason visible;
+    #      PASS        — accepted.
+    qc_status, qc_reason = _shot_qc_status(project, shot_id, qc_report)
+    qc_view = {"status": qc_status, "reason": qc_reason}
+    if qc_status == "blocked":
         return result("rejected",
                       reasons=["deterministic QC reports a policy-blocking error for "
                                "this shot (see manju qc) — cannot accept"],
-                      evidence=evidence)
+                      evidence=evidence, qc=qc_view)
+    if qc_status == "unavailable":
+        return result("unknown",
+                      reasons=["deterministic QC is unavailable (" + (qc_reason or "unknown")
+                               + ") — cannot confirm this shot has no policy-blocking "
+                               "error, so acceptance is withheld"],
+                      unknown=unknown, evidence=evidence, qc=qc_view)
     return result("accepted",
                   reasons=["every required expectation has a current-bound PASS, no "
                            "blocker finding, and QC has no policy-blocking error"],
-                  evidence=evidence)
+                  evidence=evidence, qc=qc_view)
 
 
 # ----------------------------------------------------------- repair proposal
@@ -251,11 +281,15 @@ def repair_proposal(project: "Project", shot_id: str,
 # ------------------------------------------------------------------ helpers
 
 
-def _safe_compile(project: "Project", shot_id: str) -> dict:
+def _safe_compile(project: "Project", shot_id: str) -> tuple[dict, str | None]:
+    """Compile the shot's expectations. Returns ``(expectation_set, None)`` on
+    success, or ``({}, "<ErrType>: <msg>")`` when compilation RAISES — so the
+    caller surfaces an honest compile-error state (J, WP5) instead of silently
+    reading a malformed quality/continuity block as 'nothing was promised'."""
     try:
-        return compile_expectations(project, shot_id)
-    except Exception:
-        return {}
+        return compile_expectations(project, shot_id), None
+    except Exception as exc:
+        return {}, f"{type(exc).__name__}: {exc}"
 
 
 def _human_review_state(project: "Project", shot_id: str) -> str | None:
@@ -311,20 +345,53 @@ def _has_legacy_evidence(project: "Project", shot_id: str) -> bool:
     return any(r.get("shot") == shot_id for r in records)
 
 
-def _shot_has_policy_error(project: "Project", shot_id: str,
-                           report: "QCReport | None" = None) -> bool:
-    """Whether the deterministic QC report raises an error-level (policy-blocking)
-    item ATTRIBUTED TO THIS SHOT — reusing QCReport's existing error semantics.
-    Scoped to the shot so one shot's machine error never blocks another's
-    acceptance. Degrades to False (never spuriously blocks) if QC itself fails."""
+class _QCUnavailable:
+    """Sentinel: the deterministic QC pass could not be produced (run_qc raised,
+    or the report is missing/unreadable). DISTINCT from ``None``, which means
+    'not run yet — compute it'. Threading this through :func:`assurance_for_all`
+    lets one failed shared run_qc mark every shot's QC unavailable without each
+    shot re-running (and re-failing) it, and without the old silent read of a
+    failed pass as 'no policy block' (H, WP0)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "QC_UNAVAILABLE"
+
+
+QC_UNAVAILABLE = _QCUnavailable()
+
+
+def _shot_qc_status(project: "Project", shot_id: str,
+                    report: "QCReport | None" = None) -> tuple[str, str | None]:
+    """Tri-state deterministic-QC input to the acceptance gate for THIS shot:
+
+        "pass"        QC ran; no error-level item is attributed to this shot
+        "blocked"     QC ran; an error-level (policy-blocking) item names this shot
+        "unavailable" QC could not be produced (run_qc raised, or the report is
+                      missing/unreadable) — the honest 'we cannot confirm the
+                      absence of blocks' input; NEVER silently a pass (H, WP0)
+
+    Returns ``(status, reason_code)`` — ``reason_code`` is a short machine token
+    only when unavailable, else ``None``. Scoped to the shot so one shot's
+    machine error never blocks another's acceptance (reuses QCReport's existing
+    per-item error semantics)."""
+    if report is QC_UNAVAILABLE:
+        return "unavailable", "qc_run_failed"
     if report is None:
         try:
             from .checks import run_qc
 
             report = run_qc(project, None, extract_frames=False)
         except Exception:
-            return False
-    return any(it.level == "error" and it.subject == shot_id for it in report.items)
+            return "unavailable", "qc_run_failed"
+    try:
+        blocked = any(it.level == "error" and it.subject == shot_id
+                      for it in report.items)
+    except Exception:
+        # a malformed/unreadable report is not evidence of "no blocks".
+        return "unavailable", "qc_report_unreadable"
+    return ("blocked" if blocked else "pass"), None
 
 
 def assurance_for_all(project: "Project",
@@ -340,6 +407,9 @@ def assurance_for_all(project: "Project",
 
             qc_report = run_qc(project, None, extract_frames=False)
         except Exception:
-            qc_report = None
+            # the shared QC pass failed -> mark every shot's QC unavailable
+            # (H, WP0) rather than the old silent None (which read as 'no
+            # blocks') or letting each shot re-run and re-fail run_qc.
+            qc_report = QC_UNAVAILABLE
     return [compute_assurance(project, sid, qc_report=qc_report)
             for sid in project.shot_ids()]
