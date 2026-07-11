@@ -591,12 +591,18 @@ def test_cli_and_core_service_agree(tmp_project, add_shot, monkeypatch):
 
 
 def test_editor_approved_only_after_human_nle_verification(tmp_project, add_shot):
-    """technical_ready ≠ editor_approved: a verified JianYing draft is required."""
+    """technical_ready ≠ editor_approved: a verified JianYing draft is required.
+    FINAL_ACCEPTANCE F2: the final must be RUN-PROVEN for technical_ready (and
+    hence editor_approved) to be reachable — a bare sidecar no longer passes."""
+    from manju.build import attempts as A
+
     add_shot(tmp_project, "S001")
     tname, src = _register(tmp_project, "S001")
     tl = _manual_timeline(tmp_project, [VideoClip(shot="S001", take=tname, source=src,
                                                   start_ms=0, duration_ms=2000)])
-    _fab_final(tmp_project, _final_key(tmp_project, tl))
+    A.append_run_started(tmp_project, "run_jy", target="final", gen="missing")
+    A.append_run_terminal(tmp_project, "run_jy", status="completed")
+    _fab_final(tmp_project, _final_key(tmp_project, tl), run_id="run_jy")
     # a JianYing skeleton draft on disk, then a human marks it verified
     d = tmp_project.exports_dir / "jianying" / tmp_project.load_config().name
     d.mkdir(parents=True, exist_ok=True)

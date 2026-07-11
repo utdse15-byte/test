@@ -87,10 +87,23 @@ def _fab_final(project, key, *, version=1, data=b"final-bytes", run_id=None,
     return p
 
 
+def _seed_completed_run(project, run_id: str) -> None:
+    """FINAL_ACCEPTANCE F2: run-lifecycle evidence proving ``run_id`` completed —
+    the release gate now demands a final's run linkage be PROVEN, so the shared
+    clean-final fixture carries a completed run instead of a bare sidecar."""
+    A.append_run_started(project, run_id, target="final", gen="missing")
+    A.append_run_terminal(project, run_id, status="completed")
+
+
 def _clean_current_final(project):
-    """A deterministic up-to-date current final (manual timeline + matching key)."""
+    """A deterministic up-to-date current final (manual timeline + matching key),
+    RUN-PROVEN (FINAL_ACCEPTANCE F2): sidecar run_id + completed run evidence —
+    a run_id-less final is now RUN_NOT_PROVEN-blocked by design (the flip is
+    pinned in tests/test_final_acceptance.py beside test_23's ready case)."""
     tl = _manual_timeline(project)
-    return _fab_final(project, _final_key(project, tl), output_sha256="auto"), tl
+    _seed_completed_run(project, "run_clean")
+    return _fab_final(project, _final_key(project, tl), output_sha256="auto",
+                      run_id="run_clean"), tl
 
 
 def _snap(video, *, captions=None, music=None):
@@ -417,7 +430,9 @@ def test_23_first_release_without_baseline_can_be_technical_ready(tmp_project, a
 def test_24_baseline_content_change_requires_human_review(tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     tl = _manual_timeline(tmp_project)
-    _fab_final(tmp_project, _final_key(tmp_project, tl), version=1, output_sha256="auto")
+    _seed_completed_run(tmp_project, "run_t24")  # F2: approval needs run proof
+    _fab_final(tmp_project, _final_key(tmp_project, tl), version=1, output_sha256="auto",
+               run_id="run_t24")
     BL.approve_baseline(tmp_project, "final_v1", reason="baseline")
     # a genuinely different newer final becomes the candidate
     _fab_final(tmp_project, _final_key(tmp_project, tl), version=2,

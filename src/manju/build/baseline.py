@@ -243,10 +243,23 @@ def current_baseline(project: Any, target: str = "final") -> dict:
         "risk_accepted": bool(latest.get("risk_accepted")),
         "known_blockers": latest.get("known_blockers") or [],
     }
+    if malformed:
+        # FINAL_ACCEPTANCE F5: torn lines ride along even when the latest event
+        # is valid — a torn line could BE the superseding approval, so the
+        # release assessment turns this into a blocking evidence blocker (the
+        # display status itself stays whatever the valid event proves).
+        result["malformed_count"] = malformed
     try:
         abspath = project.resolve(path)
     except Exception:
-        abspath = project.root / path
+        # FINAL_ACCEPTANCE F5: NEVER fall back to a raw root-join — an
+        # absolute or ../-escaping stored path would resolve OUTSIDE the
+        # project and could even read back VALID against foreign bytes. An
+        # unresolvable approved path is damage, full stop.
+        result["status"] = DAMAGED
+        result["damage"] = ("the approved artifact path cannot be resolved "
+                            "inside the project (fail closed)")
+        return result
     if not abspath.exists():
         result["status"] = DAMAGED
         result["damage"] = "artifact bytes missing at the approved path"
@@ -405,6 +418,8 @@ _BLOCKER_ACTIONS: dict[str, dict[str, str | None]] = {
     "CURRENT_FINAL_MISSING": {"command": "manju build --dry-run", "tool": "build"},
     "CURRENT_FINAL_STALE": {"command": "manju build --dry-run", "tool": "build"},
     "CURRENT_FINAL_HASH_MISMATCH": {"command": "manju build", "tool": "build"},
+    "CURRENT_FINAL_UNVERIFIABLE": {"command": "manju build", "tool": "build"},
+    "RUN_NOT_PROVEN": {"command": "manju build", "tool": "build"},
     "RUN_INCOMPLETE": {"command": "manju tasks manifest", "tool": None},
     "RUN_FAILED": {"command": "manju tasks manifest", "tool": None},
     "RUN_CANCELED": {"command": "manju tasks manifest", "tool": None},
@@ -485,12 +500,23 @@ def _final_health(project: Any, final_path: Path | None) -> list[dict]:
         return [_blocker("CURRENT_FINAL_HASH_MISMATCH", "final",
                          "missing content-key sidecar (render may be incomplete)")]
     out: list[dict] = []
+    # FINAL_ACCEPTANCE F3: the final's bytes must be PROVABLE — a sidecar with
+    # no output_sha256 proves nothing, unhashable bytes prove nothing, and a
+    # recorded-vs-actual mismatch proves tampering. Only mismatch blocked
+    # before; the two unprovable cases silently passed.
     recorded = key_data.get("output_sha256")
-    if recorded:
-        actual = _safe_hash(final_path)
-        if actual is not None and actual != recorded:
-            out.append(_blocker("CURRENT_FINAL_HASH_MISMATCH", "final",
-                                "final bytes changed since render (sidecar output_sha256 mismatch)"))
+    actual = _safe_hash(final_path)
+    if not recorded:
+        out.append(_blocker("CURRENT_FINAL_UNVERIFIABLE", "final",
+                            "the sidecar records no output_sha256 — the final's "
+                            "bytes cannot be proven (fail closed)"))
+    elif actual is None:
+        out.append(_blocker("CURRENT_FINAL_UNVERIFIABLE", "final",
+                            "the final's bytes could not be hashed — nothing "
+                            "proves they are the rendered ones (fail closed)"))
+    elif actual != recorded:
+        out.append(_blocker("CURRENT_FINAL_HASH_MISMATCH", "final",
+                            "final bytes changed since render (sidecar output_sha256 mismatch)"))
     cur_key, note = _current_final_key(project)
     if cur_key is None:
         out.append(_blocker("CURRENT_FINAL_STALE", "final",
@@ -520,10 +546,22 @@ _RUN_STATUS_BLOCKERS: dict[str, tuple[str, str]] = {
 
 
 def _run_blockers(project: Any, final_path: Path | None) -> list[dict]:
-    key_data = _read_key_full(final_path) if final_path else None
+    if final_path is None or not final_path.exists():
+        return []  # no final at all — _final_health owns CURRENT_FINAL_MISSING
+    key_data = _read_key_full(final_path)
     run_id = (key_data or {}).get("run_id")
     if not run_id:
-        return []  # a manual/legacy final with no run linkage — nothing to prove here
+        # FINAL_ACCEPTANCE F2 (reverses the POST_COMPLETION skip): the ABSENCE
+        # of a run linkage is itself the signal — no sidecar schema marker is
+        # needed. A final nobody can tie to a completed run is not silently a
+        # success; a genuine legacy/manual final passes ONLY through the
+        # explicit human --accept-known-risk approval (exact-SHA bound,
+        # append-only on the verification log).
+        return [_blocker("RUN_NOT_PROVEN", "final",
+                         "the final's sidecar carries no run_id — no run "
+                         "evidence proves how it was produced (fail closed); "
+                         "rebuild, or approve with explicit human risk "
+                         "acceptance for a legacy/manual final", owner="human")]
     try:
         manifest = build_run_manifest(project, run_id)
     except Exception:
@@ -566,11 +604,20 @@ def _submission_blockers(project: Any) -> list[dict]:
     # cheap AND ledger-free (test §9.3.26) — no evidence + no ledger ⇒ nothing to
     # gate, and we do NOT create the disposable ledger just to answer a read.
     try:
-        sub_events, _ = read_submission_events(project)
+        sub_events, malformed = read_submission_events(project)
     except Exception:
         return [_blocker("SUBMISSION_RECOVERY_UNAVAILABLE", "project",
                          "paid-submission evidence is unreadable — outcome "
                          "unverifiable (fail closed)", owner="human")]
+    # FINAL_ACCEPTANCE F1: a torn/unparseable line has no recoverable
+    # submission_id — it could BE a paid submission's record, so the stream can
+    # never be read as clean/empty history. Blocks even when no parseable
+    # submission event and no ledger exist (the torn line is the evidence).
+    if malformed:
+        return [_blocker("ATTEMPT_EVIDENCE_CORRUPT", "events",
+                         f"the submission evidence stream has {malformed} torn/"
+                         "unparseable line(s) — paid outcomes unverifiable "
+                         "(fail closed)", owner="human")]
     if not sub_events and not sqlite_exists:
         return []
     # Consume the SAME WP1 projection/verification helper the paid consult uses
@@ -754,9 +801,23 @@ def release_assessment(project: Any, rows: list | None = None) -> dict:
     else:  # NO_BASELINE — first release is not a technical failure (§7.3, test 23)
         regression = {"status": NO_BASELINE, "compare_ref": None}
 
+    # FINAL_ACCEPTANCE F5: torn line(s) in the verification log block the
+    # release EVEN beside a valid baseline event — a torn line could BE the
+    # superseding approval. (The CORRUPT branch above already carries its own
+    # evidence blocker; don't double-report.)
+    if base.get("malformed_count") and base["status"] != CORRUPT:
+        blockers.append(_blocker(
+            "BASELINE_EVIDENCE_CORRUPT", "baseline",
+            f"the verification log has {base['malformed_count']} torn/"
+            "unparseable line(s) — the true latest approval is unprovable "
+            "(fail closed)", owner="human"))
+
     hard = [b for b in blockers if b.get("blocking")]
     review = [b for b in blockers if b.get("requires_human_review")]
-    ready = (candidate_path is not None) and not hard and not review
+    # F3: a candidate whose bytes cannot be hashed is never ready, whatever
+    # else holds — no byte proof, no release.
+    ready = (candidate_path is not None) and (candidate.get("sha256") is not None) \
+        and not hard and not review
 
     return {
         "candidate": candidate,

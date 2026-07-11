@@ -1072,9 +1072,18 @@ class CloudProvider(Provider):
         if not sid:
             return
         try:
-            events, _ = read_submission_events(req.project, sid)
+            events, malformed = read_submission_events(req.project, sid)
         except Exception as exc:
             raise self._recovery_unavailable(req, "evidence_read", exc) from exc
+        # FINAL_ACCEPTANCE F1: the malformed count is STREAM-GLOBAL — a torn
+        # line has no parseable submission_id, so the per-sid filter cannot
+        # exclude it and it could belong to ANY submission (this one included).
+        # A stream that provably lost a line cannot vouch for any chain read
+        # from it: fail closed, never resume/poll/submit past it.
+        if malformed:
+            raise self._recovery_unavailable(
+                req, "evidence_malformed",
+                RuntimeError(f"{malformed} torn line(s) in the evidence stream"))
         try:
             ok, broken_at = S.verify_chain(events)
         except Exception as exc:

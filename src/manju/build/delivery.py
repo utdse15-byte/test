@@ -33,6 +33,7 @@ hand-off-ready with published.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import zipfile
@@ -390,12 +391,35 @@ def _nle_section(project: Project, config: Any, timeline: Any,
 
     fps = float(getattr(timeline, "fps", 0) or getattr(config, "fps", 0) or 24)
     project_file: dict[str, Any] = {"path": project_row.path, "sha256": None}
+    # FINAL_ACCEPTANCE F5: a project-file deliverable the manifest POINTS AT but
+    # cannot vouch for is a blocking diagnostic, never a silent None. Scope: a
+    # REGULAR FILE whose bytes cannot be hashed, or a path that no longer
+    # resolves/exists. A directory-based draft (JianYing/CapCut native folders)
+    # has no single-file byte identity by construction — its binding rides the
+    # per-asset sha256 list + the human opened-in-target-app verification axis,
+    # exactly as before.
+    unverifiable_detail: str | None = None
     try:
         pabs = project.resolve(project_row.path)
-        if pabs.exists():
-            project_file["sha256"] = hash_file(pabs)
-    except (ProjectError, OSError):
-        pass
+    except ProjectError:
+        pabs = None
+        unverifiable_detail = "its path does not resolve inside the project"
+    if pabs is not None:
+        if pabs.is_file():
+            try:
+                project_file["sha256"] = hash_file(pabs)
+            except OSError:
+                unverifiable_detail = "its bytes could not be hashed"
+        elif not pabs.exists():
+            unverifiable_detail = "it no longer exists on disk"
+    if unverifiable_detail is not None:
+        diagnostics.append({
+            "code": "NLE_PROJECT_UNVERIFIABLE",
+            "severity": "blocking",
+            "detail": f"NLE project file {project_row.path} is registered as a "
+                      f"deliverable but {unverifiable_detail} — the binding "
+                      "cannot be proven (fail closed)",
+        })
 
     tracks = getattr(timeline, "tracks", None)
     media: list[dict] = []
@@ -1226,52 +1250,43 @@ def _bundle_members(project: Project, manifest: dict) -> list[tuple[str, Path]]:
     return members
 
 
-def _sha256sums(members: list[tuple[str, Path]]) -> str:
-    """SHA256SUMS over the EXACT bytes of every packed file (no such writer
-    existed in the repo — this is the first). Stable order, project-relative
-    names, ``sha256:``-stripped hex to match the coreutils format."""
-    lines = []
-    for arcname, abspath in members:
-        digest = hash_file(abspath)[len(HASH_PREFIX):]
-        lines.append(f"{digest}  {arcname}")
+def _sha256sums_from(streamed: dict[str, str],
+                     members: list[tuple[str, Path]]) -> str:
+    """SHA256SUMS generated FROM THE STREAMED DIGESTS (FINAL_ACCEPTANCE F5) —
+    never a second disk read, so the checksums describe exactly the bytes that
+    entered the ZIP. Stable order, project-relative names, ``sha256:``-stripped
+    hex to match the coreutils format."""
+    lines = [f"{streamed[arcname][len(HASH_PREFIX):]}  {arcname}"
+             for arcname, _abspath in members]
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def _cas_revalidate(manifest: dict, members: list[tuple[str, Path]]) -> None:
-    """Hardening WP5 7.2 (claim 10): before ANY zip byte is written, every
-    member's CURRENT sha256+size must equal what the manifest recorded — the
-    embedded manifest, SHA256SUMS and the actual ZIP bytes must agree. Drift
-    (or a member the manifest carries no hash for) refuses with
-    DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST; no new ZIP, the old ZIP stays."""
-    expected: dict[str, tuple[str | None, int | None]] = {}
+def _expected_bindings(manifest: dict,
+                       members: list[tuple[str, Path]]
+                       ) -> dict[str, tuple[str, int | None]]:
+    """The manifest's recorded (sha256, bytes) per member arcname — the CAS
+    reference the streamed bytes are verified against (WP5 7.2 / F5). A member
+    the manifest carries NO hash for refuses up front: nothing could prove its
+    bytes. Structural only — reads no file bytes."""
+    recorded: dict[str, tuple[str | None, int | None]] = {}
     for a in manifest.get("artifacts") or []:
         if a.get("path"):
-            expected[a["path"]] = (a.get("sha256"), a.get("bytes"))
+            recorded[a["path"]] = (a.get("sha256"), a.get("bytes"))
     nle = manifest.get("nle") or {}
     pf = (nle.get("project_file") or {})
-    if pf.get("path") and pf["path"] not in expected:
-        expected[pf["path"]] = (pf.get("sha256"), None)
+    if pf.get("path") and pf["path"] not in recorded:
+        recorded[pf["path"]] = (pf.get("sha256"), None)
 
-    for arcname, abspath in members:
-        want_sha, want_bytes = expected.get(arcname, (None, None))
+    expected: dict[str, tuple[str, int | None]] = {}
+    for arcname, _abspath in members:
+        want_sha, want_bytes = recorded.get(arcname, (None, None))
         if not want_sha:
             raise DeliveryManifestError(
                 "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: the manifest records "
                 f"no hash for {arcname} — cannot prove the bytes are the ones "
                 "the manifest described (fail closed)")
-        try:
-            cur_sha = hash_file(abspath)
-            cur_bytes = abspath.stat().st_size
-        except OSError as exc:
-            raise DeliveryManifestError(
-                "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: "
-                f"{arcname} became unreadable after the manifest was built"
-            ) from exc
-        if cur_sha != want_sha or (want_bytes is not None and cur_bytes != want_bytes):
-            raise DeliveryManifestError(
-                "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: "
-                f"{arcname} changed after the manifest was built — rebuild the "
-                "manifest; the previous bundle (if any) is left untouched")
+        expected[arcname] = (want_sha, want_bytes)
+    return expected
 
 
 def write_bundle(project: Project, manifest: dict, *, output: Path | None = None
@@ -1281,33 +1296,32 @@ def write_bundle(project: Project, manifest: dict, *, output: Path | None = None
     atomic (a failure leaves any prior bundle intact). Returns (path, manifest')
     where manifest' carries the ``checksums`` binding.
 
-    Every member is CAS-revalidated against the manifest's recorded sha256 and
-    size BEFORE any byte is written (WP5 7.2), so SHA256SUMS, the embedded
-    manifest and the actual ZIP contents always agree.
+    FINAL_ACCEPTANCE F5 (stream-hash-once): each member's bytes are read
+    exactly ONCE, hashed WHILE they stream into the ZIP in bounded chunks
+    (finals can be GBs — nothing is buffered whole), and the streamed digest is
+    compared to the manifest's recorded sha256/size. Any drift refuses with
+    DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST, the temp is discarded and any
+    prior bundle stays intact. SHA256SUMS is generated FROM the streamed
+    digests and the embedded manifest binds that same text — checksums,
+    manifest and ZIP therefore consume ONE byte snapshot by construction; the
+    old validate→re-hash→re-read pipeline left two windows for a concurrent
+    writer to slip changed bytes into the archive.
 
     Distinct from ``manju pack`` (whole-project archive) — this is only the
     NLE/platform-facing delivery files (contract §11.3)."""
     from ..media.ffmpeg import atomic_output
 
     members = _bundle_members(project, manifest)
-    _cas_revalidate(manifest, members)
-    sums_text = _sha256sums(members)
-
-    # bind the checksums file into the manifest BEFORE embedding it, so the
-    # embedded manifest matches what the bundle contains.
-    manifest = dict(manifest)
-    manifest["checksums"] = {
-        "path": "SHA256SUMS",
-        "sha256": hash_value({"sha256sums": sums_text}),
-    }
-    manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    expected = _expected_bindings(manifest, members)
 
     dest = output if output is not None else (
         project.exports_dir / "delivery" / f"{_safe_name(manifest['profile_id'])}.bundle.zip")
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     # atomic: write to a sibling temp, os.replace on clean completion; on any
-    # failure the temp is unlinked and an existing bundle is left untouched.
+    # failure (including a streamed-digest mismatch) the temp is unlinked and
+    # an existing bundle is left untouched.
+    streamed: dict[str, str] = {}
     with atomic_output(dest) as tmp:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
             # normalized, fixed archive timestamp for reproducibility (not now()).
@@ -1315,7 +1329,38 @@ def write_bundle(project: Project, manifest: dict, *, output: Path | None = None
                 info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.external_attr = 0o644 << 16
-                zf.writestr(info, abspath.read_bytes())
+                want_sha, want_bytes = expected[arcname]
+                digester = hashlib.sha256()
+                size = 0
+                try:
+                    with open(abspath, "rb") as src, zf.open(info, "w") as zdst:
+                        while chunk := src.read(1 << 20):
+                            digester.update(chunk)
+                            size += len(chunk)
+                            zdst.write(chunk)
+                except OSError as exc:
+                    raise DeliveryManifestError(
+                        "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: "
+                        f"{arcname} became unreadable after the manifest was built"
+                    ) from exc
+                got_sha = HASH_PREFIX + digester.hexdigest()
+                if got_sha != want_sha or (want_bytes is not None and size != want_bytes):
+                    raise DeliveryManifestError(
+                        "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: "
+                        f"{arcname} changed after the manifest was built — rebuild the "
+                        "manifest; the previous bundle (if any) is left untouched")
+                streamed[arcname] = got_sha
+
+            # SHA256SUMS from the STREAMED digests; the embedded manifest binds
+            # the same text — one byte snapshot end to end.
+            sums_text = _sha256sums_from(streamed, members)
+            manifest = dict(manifest)
+            manifest["checksums"] = {
+                "path": "SHA256SUMS",
+                "sha256": hash_value({"sha256sums": sums_text}),
+            }
+            manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2)
+                              + "\n").encode("utf-8")
             for arcname, data in (("SHA256SUMS", sums_text.encode("utf-8")),
                                   ("delivery-manifest.json", manifest_bytes)):
                 info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))

@@ -120,6 +120,15 @@ def _dumps(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+class MalformedSubmissionEvidence(RuntimeError):
+    """FINAL_ACCEPTANCE F1 — the submission evidence stream contains torn or
+    unparseable lines. A torn line has no recoverable submission_id, so it
+    could belong to ANY submission: a strict consult must treat the whole
+    stream as unverifiable (``submission_recovery_unavailable``, stage
+    ``evidence_malformed``) rather than as empty history. Not a schema — an
+    internal control-flow signal between the strict restore and its callers."""
+
+
 class RuntimeState:
     """SQLite-backed runtime bookkeeping for one project.
 
@@ -720,6 +729,16 @@ class RuntimeState:
             if strict:
                 raise
             return 0
+        # FINAL_ACCEPTANCE F1: a torn/unparseable line carries NO recoverable
+        # submission_id — it could belong to ANY submission, so under a strict
+        # consult the whole stream is untrustworthy evidence. Never interpreted
+        # as empty history. (Non-strict rebuild still restores what parses: the
+        # explicit recovery path must not be bricked, and the consult re-checks
+        # the stream on the very next paid attempt anyway.)
+        if strict and _malformed:
+            raise MalformedSubmissionEvidence(
+                f"{_malformed} torn/unparseable line(s) in the submission "
+                f"evidence stream")
         # group per submission_id in FILE order (= emission/chain order)
         chains: dict[str, list[dict]] = {}
         for rec in records:
@@ -824,6 +843,11 @@ class RuntimeState:
             self._restore_submissions_from_events(
                 project, shot=shot, provider=provider, strict=True)
             after = self.submissions(shot=shot, provider=provider, states=states)
+        except MalformedSubmissionEvidence as exc:
+            # F1: torn evidence is never read as empty history — fail closed
+            # with the honest stage so the consult/gate can say WHY.
+            return {"status": "recovery_unavailable", "stage": "evidence_malformed",
+                    "error": type(exc).__name__, "unresolved": []}
         except Exception as exc:
             return {"status": "recovery_unavailable", "stage": "evidence_projection",
                     "error": type(exc).__name__, "unresolved": []}
