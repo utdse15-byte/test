@@ -884,3 +884,67 @@ best bug of the whole program.
   that local 0-failed reports do not substitute: run 29151178302 at HEAD
   6d141d9 — 2803 passed / 0 failed (CI also runs the 12 locally env-skipped
   tests) + the M0 build-twice smoke. FINAL_ACCEPTANCE_PASSED.
+
+## 27. AI_IDE 14–21G — the capability program: qualification, perception, ladder, sound, series, semantics, gates (2026-07-11)
+
+Eight contracts executed in the operator's order (14 → 20A → 15 → 16 → 18 →
+17 → 19 → 20B → 21G), pivoting from safety hardening to production
+capability. Core principle held throughout: **every new capability is either
+derived evidence over existing owners or an additive source field — and
+anything a model reports remains an observation that only a pure function or
+a human can turn into acceptance.**
+
+- **14**: the qualification ladder (UNTESTED→PRODUCTION_READY, STALE/BLOCKED
+  overlays) as a pure derivation bound to profile/adapter/fixture/request
+  digests; cost-bounded canaries through the standard admission path in a
+  disposable canary project; PRODUCTION_READY requires transport=="real"
+  evidence — a scripted canary can prove the machinery but never production
+  readiness. This environment has no real account: real providers honestly
+  cap at DRY_RUN_VALID.
+- **20A/20B**: the golden corpus (77 synthetic cases, ~145 KB), the fake
+  reviewer + disagreeing twin loading through the real registry, the
+  deterministic bad-media generator (probe-fact validated — ffmpeg bytes are
+  not cross-version stable), calibration rates with known-value denominators
+  proving the HARNESS (subjects are the fakes; asserted in-test), provider
+  regression cards with a tested no-aggregate-score walker, and a
+  cannot-rot evidence index (every file::test ref verified fresh).
+- **15**: reviewers only observe — dimension_observations ride verdict v2
+  additively through the same zero-write intake; observations alone can
+  never derive accepted; blocker disagreement is UNKNOWN_REVIEWER_
+  DISAGREEMENT, never majority-voted; drift trends and the 7-route repair
+  vocabulary are route-level (not dispositions); colorstats is pure PIL +
+  honest UNKNOWN color metadata; real VLMs wait behind REVIEWER_NOT_
+  QUALIFIED.
+- **16**: the spend ladder is derived state over existing adoption facts;
+  unattended video spend on unadopted keyframes refuses pre-generate
+  (transport 0) while humans get advisories; auto-select now skips image
+  takes (contract flip, pinned); animatic rides kenburns as a derived
+  artifact; the pull sheet round-trips through ShotDraft/CAS discipline.
+- **18**: real audio masters off the existing four-bus mix (stems/M&E/
+  loudness measured by EBU-R128, M&E provably dialogue-free) fill the 13C
+  roles that were honestly skipped; alignment evidence is a companion
+  sidecar (UNALIGNED never fabricated); voice profiles carry provenance and
+  missing rights BLOCK template export; lip_sync is a standard-admission
+  capability whose result API cannot carry a model self-score.
+- **17**: canonical/variant/transient identity strictly separated by
+  storage; variants resolve deterministically per episode; world state is
+  engine-validated text; season health aggregates owners' current results
+  verbatim (a stale episode is never masked); template packs ride the 13C
+  bundle discipline + the 18 voice-rights gate, import is copy-on-import.
+- **19**: media analysis is hash-bound derived evidence (fixture-first,
+  ANALYZER_NOT_QUALIFIED for real); cutdowns are proposal payloads with
+  no-cut-zone diagnostics and CAS apply; smart reframe compiles ROI tracks
+  to rate-limited, safe-area-constrained crop keyframes that preserve the
+  FORMAT_ONLY semantic digest — 13C's declared framing becomes executable;
+  bridges execute through the standard paid path and provably never reach a
+  final unapproved; the tool map dispatches a 10-op whitelist onto existing
+  executors with no LLM planner in core.
+- **21G**: both gates SKIPPED_WITH_EVIDENCE on real evidence — the Board
+  already owns the visual core, and the scheduler benchmark shows the
+  ordering gap is textbook LPT-vs-FIFO that vanishes on realistic clips.
+  0 production files, like 09_11G before it.
+- Program discipline: three agent spawns collapsed to the recurring
+  infrastructure fault and were replaced by resuming context-bearing
+  agents (18→17, 20A→20B); two agents independently applied the
+  provider-layer gate correction that 14's build-boundary guard enforces;
+  every batch was CI-gated after the BuildLock lesson.
