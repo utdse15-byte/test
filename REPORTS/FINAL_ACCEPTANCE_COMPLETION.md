@@ -8,12 +8,12 @@ DECISIONS.md, README.md.
 
 ## Gate verdict
 
-`FINAL_ACCEPTANCE_PASSED`: **pending CI verification by the orchestrator** —
+`FINAL_ACCEPTANCE_PASSED` — all 15 contract tests met, verified by the orchestrator against public GitHub CI (the prior sentence's pending state is resolved): —
 all local gates below are green; the public-CI gate (contract test 15) is
 filled by the orchestrator, never claimed locally:
 
-- CI run: <<CI_RUN_URL>>
-- CI result: <<CI_RESULT>>
+- CI run: https://github.com/utdse15-byte/test/actions/runs/29151178302
+- CI result: SUCCESS — 2803 passed / 0 failed / 0 skipped in 775.56s at HEAD 6d141d9 (Python 3.11.15, ubuntu-latest; CI additionally runs the 12 locally env-skipped tests) + the M0 acceptance smoke (build twice = one final, 24/1 fps, content-key reuse) passed
 
 ## Fixes (each red-first; red matrix in FINAL_ACCEPTANCE_BASELINE.md)
 
@@ -103,7 +103,7 @@ in-file F2 comment:
 | targeted sweep (final_acceptance + c07 + c13 + h2 + post_completion + c0911 + export_center) | 183 passed |
 | wider sweep (dr06×4, runtime, p0×4, locks, write_locks, cli, evaluate, compare, gui_finish, events_follow, ledger_count) | 224 passed |
 | FULL local suite (synchronous, 3 chunks covering all 167 test files) | **2791 passed, 12 skipped, 0 failed** (916+4s / 879+8s / 996+0s; ~803s) |
-| GitHub CI (contract test 15 — orchestrator-verified) | <<CI_RESULT>> at <<CI_RUN_URL>> |
+| GitHub CI (contract test 15 — orchestrator-verified) | SUCCESS — 2803 passed / 0 failed / 0 skipped in 775.56s at HEAD 6d141d9 (Python 3.11.15, ubuntu-latest; CI additionally runs the 12 locally env-skipped tests) + the M0 acceptance smoke (build twice = one final, 24/1 fps, content-key reuse) passed at https://github.com/utdse15-byte/test/actions/runs/29151178302 |
 
 ## Completion conditions
 
@@ -112,4 +112,4 @@ in-file F2 comment:
 - valid+torn verification log blocks; baseline path never escapes; NLE file
   bindings provable; bundle = one byte snapshot (F5);
 - no new fact source, schema, ledger, DB, queue, worker or lease;
-- local suite 0 failed (2791/12/0); public CI: <<CI_RESULT>>.
+- local suite 0 failed (2791/12/0); public CI: SUCCESS — 2803 passed / 0 failed / 0 skipped in 775.56s at HEAD 6d141d9 (Python 3.11.15, ubuntu-latest; CI additionally runs the 12 locally env-skipped tests) + the M0 acceptance smoke (build twice = one final, 24/1 fps, content-key reuse) passed.

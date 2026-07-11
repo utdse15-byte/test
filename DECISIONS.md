@@ -840,3 +840,47 @@ into honest halves). Its two structural insights are worth recording:
 - Budget: 8 of 10 production files, 0 new schemas, 41+ new red-first tests,
   5 pins flipped with rationale. Two honest SKIPPED_WITH_EVIDENCE sub-items
   (no-run_id sidecar marker; release-side final_ref already correct).
+
+## 26. Final acceptance — the red CI was telling the truth (2026-07-11)
+
+The final-acceptance contract (FINAL_ACCEPTANCE, external review #2) closed
+four P0s and four P1s. Verdict: agreed in full — and its CI claim found the
+best bug of the whole program.
+
+- **The BuildLock dual-ownership race was real** (F4/D). GitHub CI had been
+  red for four commits with `['ACQUIRED', 'ACQUIRED']` from the G11-5
+  two-process probe — not a flake: `_create()` opened O_EXCL then wrote the
+  holder JSON, and `_is_stale()` treated an empty lock as stale OUTRIGHT, so
+  a sibling landing in the open→write window stole the winner's lock. Our
+  fast local container never lost that race; CI's loaded runners were the
+  fault injection we lacked — 09_11G's "no reproducible dual ownership" was
+  an environment-limited claim. Fix (still no lease/fencing — the remedy
+  hierarchy held): write-then-hardlink creation (the lock is never visible
+  empty) + corrupt-needs-age staleness (10s grace) + the race test now
+  asserts the true invariant (hold intervals never overlap; sequential
+  re-acquire under runner starvation is legal). Deterministic red tests b16/
+  b17 pin the window shut. Lesson recorded: single-host claims proven only
+  in one environment are claims about that environment.
+- **F1**: a torn line in the submission evidence stream now taints every
+  paid consult AND the release gate (stream-global: a torn line has no
+  parseable submission_id, so no scope can be exonerated); previously the
+  malformed count from read_submission_events was silently discarded at
+  every consumer.
+- **F2**: RUN_NOT_PROVEN — a final without run_id in its key sidecar cannot
+  be ready (reverses hardening's SKIPPED sub-item: absence IS the signal, no
+  schema marker was ever needed); the only escape is the existing human
+  --accept-known-risk, exact-SHA-bound.
+- **F3**: CURRENT_FINAL_UNVERIFIABLE — missing output_sha256 / unreadable
+  bytes / a None candidate hash all block readiness.
+- **F5**: a torn verification-log line blocks release even beside a VALID
+  baseline event (the torn line could BE the superseding approval); the
+  baseline path-escape fallback is deleted (unresolvable ⇒ DAMAGED, never
+  root-relative guessing); an unverifiable NLE project file blocks
+  (directory drafts keep per-asset hashes — no single-file identity exists);
+  write_bundle is stream-hash-once, so SHA256SUMS, the embedded manifest and
+  the ZIP provably consume ONE byte snapshot (the validate→re-read pipeline
+  had a second TOCTOU window).
+- Acceptance was verified against PUBLIC CI, per the contract's own rule
+  that local 0-failed reports do not substitute: run 29151178302 at HEAD
+  6d141d9 — 2803 passed / 0 failed (CI also runs the 12 locally env-skipped
+  tests) + the M0 build-twice smoke. FINAL_ACCEPTANCE_PASSED.

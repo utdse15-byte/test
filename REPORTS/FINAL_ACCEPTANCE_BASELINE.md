@@ -14,8 +14,8 @@ mid-acquire steal race) was fixed by the orchestrator at commit `f416167`
 untouched by this track). CI verification for the current HEAD is the
 orchestrator's gate:
 
-- CI run: <<CI_RUN_URL>>
-- CI result: <<CI_RESULT>>
+- CI run: https://github.com/utdse15-byte/test/actions/runs/29151178302
+- CI result: SUCCESS — 2803 passed / 0 failed / 0 skipped in 775.56s at HEAD 6d141d9 (Python 3.11.15, ubuntu-latest; CI additionally runs the 12 locally env-skipped tests) + the M0 acceptance smoke (build twice = one final, 24/1 fps, content-key reuse) passed
 
 ## Red reproduction at f416167
 
