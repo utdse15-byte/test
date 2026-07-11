@@ -561,7 +561,11 @@ def test_apply_skip_duplicate_is_a_pure_noop(tmp_project, tmp_path):
     assert result.results[0].ok and result.results[0].detail == {"skipped": True}
 
     def _is_audit_trail(relpath: str) -> bool:
-        return relpath == "events.jsonl" or relpath.startswith("reports/ingest_batches/")
+        # P0 WP1 flip: every events.jsonl writer (append_event included) now
+        # rides the ONE flock coordinator, so its 0-byte events.lock sibling is
+        # part of the same audit-trail infrastructure.
+        return relpath in ("events.jsonl", "events.lock") \
+            or relpath.startswith("reports/ingest_batches/")
 
     after = {p: sz for p, sz in _snapshot(tmp_project.root) if not _is_audit_trail(p)}
     before = {p: sz for p, sz in before if not _is_audit_trail(p)}
