@@ -2164,17 +2164,85 @@ _FRESHNESS_COLOR = {
 
 
 @app.command()
-def exports(as_json: bool = typer.Option(False, "--json")):
+def exports(
+    as_json: bool = typer.Option(False, "--json"),
+    baseline: bool = typer.Option(
+        False, "--baseline",
+        help="AI_IDE_07C: show the current approved release baseline (VALID/"
+             "NO_BASELINE/DAMAGED/CORRUPT) and its exact byte binding"),
+    approve_baseline: bool = typer.Option(
+        False, "--approve-baseline",
+        help="AI_IDE_07C: approve a final's exact bytes as the current release "
+             "baseline (human action — appends to the verification log; never spends)"),
+    final: Optional[str] = typer.Option(
+        None, "--final", help="which final to approve (default: current newest)"),
+    reason: str = typer.Option(
+        "", "--reason", help="why this is the release baseline (recorded in the event)"),
+    accept_known_risk: bool = typer.Option(
+        False, "--accept-known-risk",
+        help="approve despite blockers (human-only; records the blockers + reason)"),
+):
     """导出中心 Export center — every finished-output's freshness at a glance.
 
     One honest table over the nine deliverables (成片/预览版/SRT/ASS/OTIO/剪映
     草稿/CapCut 草稿/封面/预告): 上新 / 待更新 / 缺失 / 有问题 / 待人工确认 /
     已人工确认, each with the one-line evidence behind the verdict. Read-only —
     never spends, never mutates. Reads the SAME engine (build/exportstatus) the
-    GUI /exports page renders, so the two can never disagree. `--json` for agents."""
+    GUI /exports page renders, so the two can never disagree. `--json` for agents.
+
+    AI_IDE_07C: `--approve-baseline` blesses the exact final bytes as the release
+    baseline (a narrow human-verification event, no new store); `--baseline`
+    shows it; `--json` embeds the composed `release_assessment` (blockers,
+    readiness, regression review, next safe actions)."""
     from .build.exportstatus import deliverables_data
 
     project = _project()
+
+    if approve_baseline:
+        from .build import baseline as _bl
+
+        try:
+            res = _bl.approve_baseline(
+                project, final, reason=reason, actor_kind=ACTOR,
+                accept_known_risk=accept_known_risk)
+        except _bl.BaselineError as exc:
+            _fail(str(exc))
+        ev = res["event"]
+        append_event(project.root, ACTOR, "approve_baseline",
+                     {"artifact": ev["artifact"]["path"], "event_id": ev["event_id"]})
+        if as_json:
+            _emit(res, True)
+            return
+        typer.secho("已批准发布基线 / baseline approved", fg=typer.colors.GREEN)
+        typer.echo(f"  artifact  {ev['artifact']['path']}")
+        typer.echo(f"  sha256    {ev['artifact']['sha256']}")
+        typer.echo(f"  final_key {ev['artifact']['final_key']}")
+        if res.get("risk_accepted_blockers"):
+            typer.secho("  ⚠ 已接受风险 known blockers: "
+                        + ", ".join(res["risk_accepted_blockers"]), fg=typer.colors.YELLOW)
+        return
+
+    if baseline:
+        from .build import baseline as _bl
+
+        info = _bl.current_baseline(project)
+        if as_json:
+            _emit(info, True)
+            return
+        color = (typer.colors.GREEN if info["status"] == "VALID"
+                 else typer.colors.BRIGHT_BLACK if info["status"] == "NO_BASELINE"
+                 else typer.colors.RED)
+        typer.secho(f"发布基线 / release baseline: {info['status']}", fg=color)
+        if info.get("artifact"):
+            typer.echo(f"  artifact  {info['artifact'].get('path')}")
+            typer.echo(f"  sha256    {info['artifact'].get('sha256')}")
+        if info.get("damage"):
+            typer.secho(f"  ⚠ {info['damage']}", fg=typer.colors.RED)
+        if info["status"] == "NO_BASELINE":
+            typer.secho("  （尚无发布基线;manju exports --approve-baseline 设定）",
+                        fg=typer.colors.BRIGHT_BLACK)
+        return
+
     data = deliverables_data(project)
     if as_json:
         _emit(data, True)
@@ -2197,6 +2265,22 @@ def exports(as_json: bool = typer.Option(False, "--json")):
             typer.secho(f"        {row['path']}", fg=typer.colors.BRIGHT_BLACK)
     counts = "  ".join(f"{k}:{v}" for k, v in sorted(data["counts"].items()))
     typer.secho(f"合计 / by state:  {counts}", fg=typer.colors.BRIGHT_BLACK)
+
+    # AI_IDE_07C: the composed release verdict over the same evidence.
+    ra = data.get("release_assessment") or {}
+    ready = ra.get("ready")
+    blockers = ra.get("blockers") or []
+    base_status = (ra.get("baseline") or {}).get("status")
+    verdict = "READY 可发布" if ready else "NOT READY 未就绪"
+    typer.secho(f"发布评估 / release:  {verdict}  "
+                f"(baseline={base_status}, blockers={len(blockers)})",
+                fg=typer.colors.GREEN if ready else typer.colors.YELLOW)
+    for b in blockers:
+        typer.secho(f"    ✗ {b['code']}  [{b['scope']}]  {b['detail']}", fg=typer.colors.RED)
+    for act in (ra.get("next_actions") or []):
+        typer.secho(f"    → {act['command']}  ({act['reason_code']}, "
+                    f"fix={act['fix_owner']}, auto={act['safe_to_auto_run']})",
+                    fg=typer.colors.BRIGHT_BLACK)
     typer.secho("（生成/更新与标记已人工确认见 manju gui → 导出中心）",
                 fg=typer.colors.BRIGHT_BLACK)
 
@@ -4629,6 +4713,12 @@ def compare(
     show_unchanged: bool = typer.Option(
         False, "--all", help="also list shots that did not change"),
     as_json: bool = typer.Option(False, "--json"),
+    against_baseline: bool = typer.Option(
+        False, "--against-baseline",
+        help="AI_IDE_07C: diff the candidate final against the approved release "
+             "baseline (same diff engine; baseline is always the reference side)"),
+    candidate: Optional[str] = typer.Option(
+        None, "--candidate", help="which final is the candidate (default: current newest)"),
 ):
     """Diff two finals — what changed between final_vA and final_vB (goal 11).
 
@@ -4637,8 +4727,37 @@ def compare(
     caption cue diff, audio-track diff and packaging diff — each with a
     root-cause line correlated from events.jsonl. Reads the per-final timeline
     snapshots persisted at render time; finals rendered before snapshots
-    existed degrade to a key-only diff. Default: the latest two finals."""
+    existed degrade to a key-only diff. Default: the latest two finals.
+
+    AI_IDE_07C: `--against-baseline` diffs the candidate against the approved
+    release baseline through the SAME engine, adding a `review_status`
+    (UNCHANGED / CHANGED_REQUIRES_REVIEW); it never auto-approves or rolls back."""
     from .build.compare import CompareError, compare_finals
+
+    if against_baseline:
+        from .build import baseline as _bl
+
+        try:
+            diff = _bl.compare_against_baseline(_project(), candidate)
+        except (_bl.BaselineError, CompareError) as exc:
+            _fail(str(exc))
+        if as_json:
+            _emit(diff, True)
+            return
+        typer.secho(f"发布基线比较 / against baseline: {diff['review_status']}",
+                    fg=typer.colors.CYAN)
+        typer.echo(f"  baseline  {diff['baseline']['status']}"
+                   + (f"  {diff['baseline'].get('artifact_sha256')}"
+                      if diff['baseline'].get('artifact_sha256') else ""))
+        if diff.get("note"):
+            typer.secho(f"  {diff['note']}", fg=typer.colors.YELLOW)
+            return
+        changed = [c for c in diff.get("changes", []) if c["change"] != "unchanged"]
+        typer.secho(f"  变更 changes: {len(changed)}",
+                    fg=typer.colors.MAGENTA if changed else typer.colors.GREEN)
+        for c in changed:
+            typer.echo(f"    {c['shot']:<16}  {c['change']}")
+        return
 
     try:
         diff = compare_finals(_project(), a, b)

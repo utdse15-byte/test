@@ -767,9 +767,19 @@ def deliverables(project: Project) -> list[DeliverableRow]:
 
 def deliverables_data(project: Project) -> dict[str, Any]:
     """JSON-ready payload for the CLI ``--json`` and the GUI ``/api/exports``:
-    the same rows both surfaces render, so they can never disagree."""
+    the same rows both surfaces render, so they can never disagree.
+
+    AI_IDE_07C: exports is the SOLE composition entry for the release assessment.
+    The ``release_assessment`` section is an additive, instant, read-only
+    derivation folded in here over the SAME ``rows`` (no second gather, no new
+    file/schema). It is deterministic, so two reads deep-equal; a lazy import
+    keeps :mod:`baseline` (which reads exportstatus) cycle-free."""
     rows = deliverables(project)
     counts: dict[str, int] = {}
     for r in rows:
         counts[r.freshness.value] = counts.get(r.freshness.value, 0) + 1
-    return {"deliverables": [r.to_dict() for r in rows], "counts": counts}
+    data: dict[str, Any] = {"deliverables": [r.to_dict() for r in rows], "counts": counts}
+    from . import baseline as _baseline
+
+    data["release_assessment"] = _baseline.release_assessment(project, rows=rows)
+    return data
