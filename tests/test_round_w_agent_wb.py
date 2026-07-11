@@ -376,7 +376,7 @@ def test_build_gen_off_still_skips_generation(in_project, add_shot):
     result = runner.invoke(app, ["build", "--gen", "off", "--dry-run", "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["plan"] == []  # off means no generation planned
+    assert payload["rows"] == []  # off means no generation planned
 
 
 def test_run_build_centralizes_gen_validation_for_every_caller():

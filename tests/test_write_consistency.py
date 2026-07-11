@@ -417,7 +417,8 @@ def test_execute_locked_internally_action_type_no_double_acquire(
 
     def fake_run_build(project, *, target="final", gen="missing", regen_stale=False,
                        dry_run=False, force=False, actor="engine",
-                       assume_yes=False, on_phase=None, mode=None):
+                       assume_yes=False, on_phase=None, mode=None,
+                       include_unindexed=False, should_cancel=None, lang=None):
         r = graph.BuildResult()
         r.ok = True
         r.render_path = None if dry_run else "renders/final/final_v1.mp4"

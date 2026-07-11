@@ -245,7 +245,8 @@ def test_execute_build_passes_assume_yes_from_confirmed_state(git_project, monke
 
     def fake_run_build(project, *, target="final", gen="missing", regen_stale=False,
                        dry_run=False, force=False, actor="engine",
-                       assume_yes=False, on_phase=None, mode=None):
+                       assume_yes=False, on_phase=None, mode=None,
+                       include_unindexed=False, should_cancel=None, lang=None):
         calls.append({"dry_run": dry_run, "assume_yes": assume_yes})
         r = graph.BuildResult()
         r.ok = True
@@ -399,7 +400,8 @@ def test_mcp_driven_roundtrip_build_mocked(git_project, monkeypatch):
 
     def fake_run_build(project, *, target="final", gen="missing", regen_stale=False,
                        dry_run=False, force=False, actor="engine",
-                       assume_yes=False, on_phase=None, mode=None):
+                       assume_yes=False, on_phase=None, mode=None,
+                       include_unindexed=False, should_cancel=None, lang=None):
         r = graph.BuildResult()
         r.ok = True
         r.render_path = None if dry_run else "renders/final/final_v1.mp4"
