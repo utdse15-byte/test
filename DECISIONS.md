@@ -594,3 +594,63 @@ ask_before guards).
   per-project policy file, no runtime capability negotiation, no policy
   enforcement inside engine functions (they keep their own guards), no
   hiding of read-only tools in unattended mode.
+
+## 20. P0 remediation 01–06 — paid-path evidence is a precondition, not telemetry (2026-07-11)
+
+The cross-batch hardening pass (AI_IDE_01_06_P0_REMEDIATION). Core principle:
+**before money moves, evidence is a precondition; after money moved, evidence
+is telemetry.** The same events.jsonl, the same single flock — but two honest
+policies instead of one optimistic one. Ten claimed gaps audited claim-by-claim
+(all ten CONFIRMED by source + failure injection with transport call counts —
+none was already handled); every fix red-first. Full evidence:
+REPORTS/AI_IDE_01_06_P0_REMEDIATION_{BASELINE,COMPLETION}.md.
+
+- **One append coordinator, two policies** (core/events.py, the layering-true
+  home): REQUIRED_BEFORE_SIDE_EFFECT for PREPARED/DISPATCHING (incl. the
+  redispatch re-entry — a review find: the retry's DISPATCHING event was still
+  best-effort) raises EvidenceWriteError and the paid submit never starts;
+  BEST_EFFORT for everything post-spend keeps media and warns. A lock timeout
+  or a no-fcntl platform now DROPS a best-effort record and REFUSES a paid one
+  — the old "never lose a record: write unlocked" fallthrough is gone (a torn
+  line in the evidence stream is worse than a dropped telemetry line).
+- **Disposition is phase-aware** at the one submit choke point: inside submit,
+  an unclassified ProviderFailure is OUTCOME_UNKNOWN (the DR06 "legacy
+  retry-by-kind for non-classifying adapters" default was a double-charge
+  vector — retried an unclassified timeout into 4 transport submits);
+  poll/download keep kind-based retry and can never re-enter submit. The
+  global tested-4xx/429 ⇒ DEFINITELY_REJECTED table is DELETED: definite
+  rejection is now a PER-PROVIDER DECLARED fact
+  (submit.definite_rejection_statuses, additive) — a gateway 4xx after the
+  backend accepted is real, so an undeclared post-send error is UNKNOWN.
+- **The consult never degrades to "fresh"**: identity/state-query/evidence-
+  read/chain-verify failures raise structured submission_recovery_unavailable
+  (automatic_resubmit false, possible_remote_side_effect true) instead of the
+  old silent skip that fresh-submitted past in-flight ADMITTED/DISPATCHING
+  rows.
+- **Chain rebuild is longest-valid-prefix, never last-event-wins**
+  (submission.project_chain): a corrupt/torn tail can no longer forge a
+  resolution and unblock a resubmit; a chain with no valid prefix restores the
+  new RECOVERY_EVIDENCE_CORRUPT sentinel — side-effect-ambiguous by
+  construction, resolved ONLY by tasks attach-remote-job / abandon, never by
+  redispatch (corrupt evidence cannot prove the prior idempotency key).
+- **Runs and expensive attempts have real lifecycles** (manju.run-lifecycle/v1
+  on the SAME stream, best-effort): run_started/run_terminal on every
+  run_build exit, attempt_started before provider generation and the final
+  render on the SAME attempt_id their existing terminals ride. The RunManifest
+  stops lying: INCOMPLETE + dangling_attempts for interrupted runs, NOT_FOUND
+  for unknown ids, legacy streams stamped legacy_terminal_only. The DR03C
+  claim "terminal-only attempt evidence is loss-proof" is formally RETRACTED.
+- **Assurance fails closed** (qc/): deterministic QC is tri-state — 
+  UNAVAILABLE derives `unknown` with a visible qc block, never accepted;
+  expectation compile errors surface instead of reading as "nothing promised";
+  a duplicate expectation_id rejects the whole verdict batch with zero writes.
+- **The 4 include_unindexed baseline failures are fixed tests-only** — three
+  stale doubles now mirror run_build's real signature; one stale assertion
+  (payload["plan"]) moved to the CLI's actual "rows" envelope
+  (git-history-verified test drift). Suite target: 0 failed.
+- **What did NOT happen**: no second ledger/lock/stream/table (the sentinel is
+  a STATE, not a store); no TTL on unresolved paid states; no auto-resubmit
+  anywhere; no msvcrt lock (Windows paid appends refuse instead — the
+  contract's explicit alternative); no wrapping of attempt families that have
+  no terminal events to correlate (direct TTS, audition/locale renders —
+  recorded openly).
