@@ -1,0 +1,26 @@
+# AI_IDE_20B — brand/claims/compliance WORDLIST FIXTURE (contract §3
+# Delivery/edit/policy: brand/claims/compliance wordlist fixture).
+#
+# 定位(契约原文):只作 deterministic/advisory finding,最终法律判断归人。
+# 本清单是自制合成 fixture(license: self-made-synthetic),不是法律意见,
+# 不是完整合规词库;它驱动 qc.roughcut.rough_cut_proposal 的 sensitive_terms
+# 输入(annotate-only、reversible、default_action=annotate),产出的每条命中都
+# 只是候选标注 —— 引擎绝不据此自动剪删,人来定。
+wordlist_id: brand_claims_wordlist.v1
+license: self-made-synthetic
+disposition: advisory_only
+final_judgment: human
+terms:
+  # 绝对化用语(广告法式 claim 词,合成示例)
+  - 全网最低价
+  - 第一品牌
+  - 国家级
+  - 最高级
+  - 绝无仅有
+  # 功效断言(合成示例)
+  - 保证疗效
+  - 根治
+  - 无副作用
+  # 品牌安全(合成示例)
+  - 竞品贬损
+  - 独家授权

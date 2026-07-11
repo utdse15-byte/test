@@ -53,10 +53,14 @@ TECH = [c for c in MANIFEST["cases"] if c["partition"] == "technical_media"]
 
 def test_manifest_top_level_shape():
     assert MANIFEST["schema"] == "manju.golden_corpus/20A"
-    assert MANIFEST["version"] == "20A.v1"
+    # 20B extends the SAME manifest (version bumped, partitions appended); the
+    # 20A discipline pinned HERE is that the original two partitions, rubric and
+    # reviewer defaults survive unchanged. The 20B partitions get their own
+    # discipline tests in test_c20b_corpus.py.
+    assert MANIFEST["version"].startswith("20")
     assert MANIFEST["rubric_version"] == "20A.rubric.v1"
     assert MANIFEST["annotator"] == "orchestrated-synthetic-v1"
-    assert set(MANIFEST["partitions"]) == {"visual_continuity", "technical_media"}
+    assert {"visual_continuity", "technical_media"} <= set(MANIFEST["partitions"])
     assert set(MANIFEST["fake_reviewer_defaults"]) == set(PROFILES)
     assert MANIFEST["design_notes"] and isinstance(MANIFEST["design_notes"], list)
 
@@ -72,13 +76,20 @@ def test_no_duplicate_case_ids():
 
 
 def test_every_case_carries_the_required_annotation_fields():
+    # Every case in EVERY partition carries the §4 annotation identity fields.
+    # expected_observations must additionally be non-empty on the two 20A media
+    # partitions (a media case without a ground-truth observation is unusable);
+    # 20B evidence-index / gap / eval kinds express expectations through their
+    # own fields (expected_codes / expected / status), checked in test_c20b.
     required = ("id", "partition", "dimension", "kind", "license", "rubric_version",
-                "annotator", "expected_observations", "blocking_policy",
-                "repair_route", "rationale")
+                "annotator", "blocking_policy", "repair_route", "rationale")
     for c in MANIFEST["cases"]:
         for field in required:
             assert field in c and c[field] not in (None, "", []), \
                 f"{c['id']} missing {field}"
+        assert "expected_observations" in c, f"{c['id']} missing expected_observations"
+        if c["partition"] in ("visual_continuity", "technical_media"):
+            assert c["expected_observations"], f"{c['id']} has no ground truth"
 
 
 def test_all_licenses_are_self_made_synthetic():

@@ -37,7 +37,13 @@ from pathlib import Path
 
 from manju.core.hashing import hash_value, short_hash
 from manju.core.yamlio import read_yaml
-from manju.qc.agent_review import LEVELS, OBSERVED_STATES, VERDICT_SCHEMA
+from manju.qc.agent_review import (
+    LEVELS,
+    OBSERVED_STATES,
+    REPAIR_VARIABLES,
+    REVIEWER_DIMENSIONS,
+    VERDICT_SCHEMA,
+)
 
 GOLDEN_DIR = Path(__file__).resolve().parent
 PROVIDERS_DIR = GOLDEN_DIR / "providers"
@@ -45,6 +51,27 @@ PROVIDERS_DIR = GOLDEN_DIR / "providers"
 PROFILES = ("primary", "twin")
 # profile -> the committed provider manifest id it occupies the vision slot as.
 MANIFEST_IDS = {"primary": "qc_vision_fake", "twin": "qc_vision_fake_twin"}
+
+# ---- AI_IDE_15 §6 mappings (20B calibration) --------------------------------
+# corpus dimension -> the 11-dimension reviewer vocabulary (REVIEWER_DIMENSIONS).
+# "unspecified" (the default-fallback stance) maps to None — no §6 dimension
+# observation is emitted for unregistered media.
+CORPUS_TO_REVIEWER_DIMENSION = {
+    "identity": "character_identity",
+    "wardrobe": "appearance_variant",
+    "prop": "prop_product",
+    "scene": "scene",
+    "lighting": "scene",                    # 灯光 lives in the scene dimension
+    "screen_direction": "spatial_relations",
+    "action_phase": "action_phase",
+    "style": "style",
+    "visibility": "character_identity",     # occlusion -> identity not_visible
+}
+# per-expectation observed enum -> §6 DIMENSION_OBSERVED vocabulary.
+_OBS_TO_DIMENSION = {"present": "match", "absent": "mismatch",
+                     "uncertain": "uncertain", "not_evaluated": "not_visible"}
+# finding LEVELS -> §6 DIMENSION_SEVERITY vocabulary.
+_SEV_TO_DIMENSION = {"blocker": "blocker", "issue": "warning", "fyi": "info"}
 
 
 class FakeReviewerError(RuntimeError):
@@ -126,6 +153,10 @@ class FakeVisionReviewer:
                 "dimension": case.get("dimension", "unspecified"),
                 "message": rv.get("message", f"{case['id']} 判读"),
                 "case_id": case["id"],
+                # 20B: the annotated repair route rides the stance so the §6
+                # dimension observation can carry suggested_repair_variable
+                # (only when it is a real REPAIR_VARIABLES member).
+                "repair_route": case.get("repair_route"),
             }
         return table
 
@@ -145,6 +176,7 @@ class FakeVisionReviewer:
             "dimension": d.get("dimension", "unspecified"),
             "message": d.get("message", "未登记媒体:默认判读(UNKNOWN)"),
             "case_id": None,
+            "repair_route": None,
         }
 
     @property
@@ -184,15 +216,48 @@ class FakeVisionReviewer:
             "message": s["message"],
         }]
 
+    # ---- AI_IDE_15 §6 dimension observation (20B calibration) ---------------
+
+    def dimension_observation(self, media_sha256: str | None) -> dict | None:
+        """This profile's §6 DIMENSION observation for one media, in the REAL
+        reviewer vocabulary (``REVIEWER_DIMENSIONS`` × ``DIMENSION_OBSERVED`` ×
+        ``DIMENSION_SEVERITY``) that ``record_verdicts`` validates. ``None`` when
+        the stance has no mappable dimension (the unregistered-media default) —
+        no observation is fabricated. Deterministic."""
+        s = self.stance_for(media_sha256)
+        reviewer_dim = CORPUS_TO_REVIEWER_DIMENSION.get(s["dimension"])
+        if reviewer_dim is None:
+            return None
+        assert reviewer_dim in REVIEWER_DIMENSIONS
+        obs = {
+            "dimension": reviewer_dim,
+            "observed": _OBS_TO_DIMENSION[s["present"]],
+            "subject_ref": s["case_id"] or "unknown",
+            "evidence_refs": [f"frame:{s['case_id'] or 'default'}"],
+            "explanation": s["message"],
+        }
+        if s["severity"]:
+            obs["severity"] = _SEV_TO_DIMENSION[s["severity"]]
+        route = s.get("repair_route")
+        if route in REPAIR_VARIABLES:
+            obs["suggested_repair_variable"] = route
+        return obs
+
     # ---- v2 verdict emission (real intake plumbing) -------------------------
 
-    def build_verdict(self, brief_row: dict) -> dict:
+    def build_verdict(self, brief_row: dict, *, include_dimensions: bool = False) -> dict:
         """Map this reviewer's stance onto ONE brief row's packet expectations →
         a ``manju.qc.verdict/v2`` payload ready for ``record_verdicts``. The
         observed state per expectation is chosen by the expectation's polarity;
         a non-null severity adds one finding. Echoes the packet's binding fields
         exactly (media_sha256 / spec_hash / expectation_digest) so intake binds
-        (never re-stamps) — the whole DR02 race contract stays intact."""
+        (never re-stamps) — the whole DR02 race contract stays intact.
+
+        ``include_dimensions=True`` (20B) additionally rides the profile's §6
+        ``dimension_observations`` (AI_IDE_15 Path A additive shape) so the
+        calibration runner exercises the REAL 15 reviewer surfaces
+        (reviewer_agreement / drift_trend / repair_routes). Default ``False``
+        keeps every 20A/15 caller byte-identical."""
         if "packet_id" not in brief_row or "expectations" not in brief_row:
             raise FakeReviewerError(
                 "brief row lacks packet fields — call qc_brief on a project whose "
@@ -212,7 +277,7 @@ class FakeVisionReviewer:
             if s["severity"] not in LEVELS:
                 raise FakeReviewerError(f"severity {s['severity']!r} not in {LEVELS}")
             findings.append({"level": s["severity"], "message": s["message"]})
-        return {
+        payload = {
             "schema": VERDICT_SCHEMA,
             "packet_id": brief_row["packet_id"],
             "subject": {"kind": "shot", "id": brief_row["shot"]},
@@ -223,6 +288,11 @@ class FakeVisionReviewer:
             "findings": findings,
             "reviewer": self.reviewer_ref(),
         }
+        if include_dimensions:
+            dobs = self.dimension_observation(media_sha)
+            if dobs is not None:
+                payload["dimension_observations"] = [dobs]
+        return payload
 
     def verdicts_for_brief(self, brief: dict) -> dict:
         """A whole-brief batch payload (every reviewable shot row) for one

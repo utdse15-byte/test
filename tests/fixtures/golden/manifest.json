@@ -1,6 +1,6 @@
 {
   "schema": "manju.golden_corpus/20A",
-  "version": "20A.v1",
+  "version": "20B.v1",
   "rubric_version": "20A.rubric.v1",
   "annotator": "orchestrated-synthetic-v1",
   "generated": "2026-07-11",
@@ -9,7 +9,11 @@
     "视觉集为已提交的微型 PNG,sha256 固定(committed bytes 为权威);技术故障媒体为生成物,按 PROBE FACT(ffprobe 时长/帧率/流/尺寸)校验,不钉 output byte hash——ffmpeg 编码字节跨版本不稳定,钉字节会造成假回归(契约 §8)。",
     "本 manifest 是 TEST DATA,完全位于 tests/ 下;运行时代码从不读取它(src/manju 无任何对本文件的引用,self-test 断言之)。",
     "生成媒体不提交(session 级 pytest fixture 生成到 tmp);仓库只存生成器与视觉集。",
-    "fake reviewer 的观察表按输入媒体 sha256 索引,未登记媒体回退到 declared default(fake_reviewer_defaults)——UNKNOWN 是一等结果,绝不静默通过。"
+    "fake reviewer 的观察表按输入媒体 sha256 索引,未登记媒体回退到 declared default(fake_reviewer_defaults)——UNKNOWN 是一等结果,绝不静默通过。",
+    "20B:新增分区的 case 为 declared_input(manifest 内声明输入,self-test 现场构造并跑真实检查函数)、live_pure/live_injection(纯函数/注入点活体验证)、indexed_evidence(索引既有测试为证据,不重复实现;self-test 校验索引新鲜:被引测试函数必须真实存在)、skill_eval、contract_index、honest_gap(如实缺口)。",
+    "20B 校准(§5):tests/fixtures/golden/calibration.py 把视觉 corpus 喂进真实 15 管线(fake primary+twin),产出 per-dimension P/R、误报/漏报 blocker、UNKNOWN、disagreement(7/18 已声明冲突为已知值分母)、honest-zero 成本/时延、profile digest。校准对象是 fake —— 证明 harness,不证明任何真实模型;阈值绝不写回 production policy(src/manju 无 calibration 引用,self-test 断言)。",
+    "20B Provider 卡(§6):tests/fixtures/golden/provider_cards.py 从 14 的资格机器纯派生;无总分/排名(self-test 断言禁键)。",
+    "§8 双路径:默认完全离线确定性 fake(scripted transport / fake reviewer);真实 canary 由操作者经 AI_IDE_14 qualify --run 启用(cost-bounded,PRODUCTION_READY 仅真实 transport 可达)。两者共用同一 admission/evidence 路径。"
   ],
   "partitions": {
     "visual_continuity": {
@@ -19,6 +23,26 @@
     "technical_media": {
       "description": "确定性技术故障族:good/short/black/freeze/aspect/fps/corrupt/silent/clipped/drift/subtitle-overlap/text-mutation。",
       "count": 13
+    },
+    "prompt_director": {
+      "description": "08_10_12C 提示/导演检查族的声明式输入+期望码 corpus:多拍过载/未来泄漏/参照污染/相机动作冲突/续接终点/单变量(intake 级)。",
+      "count": 10
+    },
+    "delivery_policy": {
+      "description": "交付/剪辑/政策:平台 profile 检查、format-only、剪短边界、裁切安全区、词表 advisory、授权来源、stems/M&E、bundle TOCTOU、NLE 映射与如实缺口。",
+      "count": 11
+    },
+    "provider_runtime": {
+      "description": "§3 Provider 运行时故障族映射到既有 p0/dr06/c14 注入点:两条活体注入 + 其余为证据索引。",
+      "count": 9
+    },
+    "story_skill": {
+      "description": "四个第一方技能的结构/schema/边界 eval fixture(不跑 LLM):章节纪律、词表-代码同步、gate 码点名、数据包字段。",
+      "count": 4
+    },
+    "cross_platform": {
+      "description": "跨平台/仓库契约索引:可在本 CI 执行的行 EXECUTED(证据测试 id),Windows/macOS 行 SKIPPED_WITH_EVIDENCE,缺口如实记录。",
+      "count": 12
     }
   },
   "fake_reviewer_defaults": {
@@ -1147,6 +1171,993 @@
       "repair_route": "text_overlay",
       "rationale": "烧录文字帧 B(SCENE 02),与帧 A 文字不同。",
       "pair_with": "technical.text_mutation.a"
+    },
+    {
+      "id": "pd.multi_beat.too_many_actions",
+      "partition": "prompt_director",
+      "dimension": "multi_beat_overload",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "clip_scope",
+      "rationale": "三个从句的多拍动作(然后/再)超出单镜两拍上限 —— check_shot 的 too_many_actions。",
+      "inputs": {
+        "action_main": "她走进房间然后转身再坐下"
+      },
+      "check_fn": "check_shot",
+      "expected_codes": [
+        "too_many_actions"
+      ],
+      "evidence": [
+        "tests/test_promptlab.py::test_too_many_actions_warns_and_proposes_split"
+      ]
+    },
+    {
+      "id": "pd.clip_scope.multiple_completed",
+      "partition": "prompt_director",
+      "dimension": "multi_beat_overload",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "clip_scope",
+      "rationale": "三个已完成动作从句 —— production_checks 的 CLIP_SCOPE_MULTIPLE_COMPLETED_ACTIONS。",
+      "inputs": {
+        "action_main": "她推门进店,然后走向货架,然后拿起硬币仔细看"
+      },
+      "check_fn": "production_checks",
+      "expected_codes": [
+        "CLIP_SCOPE_MULTIPLE_COMPLETED_ACTIONS"
+      ],
+      "evidence": [
+        "tests/test_c081012_prompt_checks.py::test_multiple_completed_actions_flagged"
+      ]
+    },
+    {
+      "id": "pd.future_leak",
+      "partition": "prompt_director",
+      "dimension": "future_event_leak",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "clip_scope",
+      "rationale": "「即将」泄漏未来拍点 —— CLIP_SCOPE_FUTURE_BEAT_LEAK。",
+      "inputs": {
+        "action_main": "她低头看硬币,即将抬头发现监控"
+      },
+      "check_fn": "production_checks",
+      "expected_codes": [
+        "CLIP_SCOPE_FUTURE_BEAT_LEAK"
+      ],
+      "evidence": [
+        "tests/test_c081012_prompt_checks.py::test_future_beat_leak_flagged"
+      ]
+    },
+    {
+      "id": "pd.ref.control_conflict",
+      "partition": "prompt_director",
+      "dimension": "reference_contamination",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "reference_role",
+      "rationale": "同一 ref 的 controls 与 ignore 同名冲突 —— REFERENCE_CONTROL_CONFLICT。",
+      "inputs": {
+        "action_main": "她低头看硬币",
+        "ref": {
+          "controls": [
+            "pose"
+          ],
+          "ignore": [
+            "pose"
+          ]
+        }
+      },
+      "check_fn": "production_checks",
+      "expected_codes": [
+        "REFERENCE_CONTROL_CONFLICT"
+      ],
+      "evidence": [
+        "tests/test_c081012_prompt_checks.py::test_dict_binding_declares_transfer_and_conflict_rejected"
+      ]
+    },
+    {
+      "id": "pd.ref.transfer_undeclared",
+      "partition": "prompt_director",
+      "dimension": "reference_contamination",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "reference_role",
+      "rationale": "裸字符串 ref 未声明迁移意图 —— REFERENCE_TRANSFER_UNDECLARED(advisory)。",
+      "inputs": {
+        "action_main": "她低头看硬币",
+        "ref": {
+          "legacy_string": true
+        }
+      },
+      "check_fn": "production_checks",
+      "expected_codes": [
+        "REFERENCE_TRANSFER_UNDECLARED"
+      ],
+      "evidence": [
+        "tests/test_c081012_prompt_checks.py::test_legacy_string_ref_compatible_but_undeclared"
+      ]
+    },
+    {
+      "id": "pd.camera_action.motion_overload",
+      "partition": "prompt_director",
+      "dimension": "camera_action_conflict",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "camera",
+      "rationale": "结构化 camera.movement 与文本运动词相加超限 —— too_many_motion_paths(相机与动作互抢的唯一确定性检查;无独立 CAMERA_CONFLICT 码,如实索引)。",
+      "inputs": {
+        "action_main": "镜头从左到右移动,主体走向门口",
+        "camera_movement": "pan"
+      },
+      "check_fn": "check_shot",
+      "expected_codes": [
+        "too_many_motion_paths"
+      ],
+      "evidence": [
+        "tests/test_promptlab.py::test_motion_path_counting_and_warning"
+      ]
+    },
+    {
+      "id": "pd.continuation.endpoint_missing",
+      "partition": "prompt_director",
+      "dimension": "continuation",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "endpoint",
+      "rationale": "被续接镜头的动作没有终点标记 —— CLIP_SCOPE_ENDPOINT_MISSING_FOR_CONTINUATION(在源镜头上触发)。",
+      "inputs": {
+        "action_main": "她低头看硬币",
+        "successor_prev": true
+      },
+      "check_fn": "production_checks",
+      "expected_codes": [
+        "CLIP_SCOPE_ENDPOINT_MISSING_FOR_CONTINUATION"
+      ],
+      "evidence": [
+        "tests/test_c081012_prompt_checks.py::test_endpoint_missing_fires_only_for_continuation_sources"
+      ]
+    },
+    {
+      "id": "pd.clean.single_action",
+      "partition": "prompt_director",
+      "dimension": "negative_control",
+      "kind": "declared_input",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "单动作、无相机运动、无 ref 的干净镜头 —— 两个检查函数都不得报本分区任何码。",
+      "inputs": {
+        "action_main": "她低头看硬币"
+      },
+      "check_fn": "both",
+      "expected_codes": [],
+      "evidence": [
+        "tests/test_c081012_prompt_checks.py::test_clean_project_stays_clean_under_check"
+      ]
+    },
+    {
+      "id": "pd.one_variable.intake_enforced",
+      "partition": "prompt_director",
+      "dimension": "one_variable_repair",
+      "kind": "live_intake",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "none",
+      "rationale": "§9.3 单变量修复不是 shot 检查码,而是 verdict intake 校验:非 KEEP 的 decision 缺 primary_repair_variable ⇒ 整批拒绝零写入(经真实 record_verdicts 验证)。",
+      "expected_error_contains": "primary_repair_variable",
+      "evidence": [
+        "tests/test_c081012_review.py::test_non_keep_requires_primary_repair_variable"
+      ]
+    },
+    {
+      "id": "pd.continuation.restart_gate",
+      "partition": "prompt_director",
+      "dimension": "continuation_restart",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "endpoint",
+      "rationale": "「continuation restart」没有同名检查码 —— 最近实现是续接源 gate 三码(SOURCE_NOT_ACCEPTED / SOURCE_HASH_MISMATCH / ENDPOINT_UNOBSERVED,ffmpeg 证据链)与 reviewer 维度 action_phase(是否重启)。如实索引,不虚构检查。",
+      "nearest_codes": [
+        "CONTINUATION_SOURCE_NOT_ACCEPTED",
+        "CONTINUATION_SOURCE_HASH_MISMATCH",
+        "CONTINUATION_ENDPOINT_UNOBSERVED"
+      ],
+      "evidence": [
+        "tests/test_c081012_continuation.py::test_continuation_gate_blocks_unaccepted_source",
+        "tests/test_c081012_continuation.py::test_continuation_gate_blocks_unobserved_endpoint",
+        "tests/test_c081012_continuation.py::test_continuation_gate_detects_pinned_hash_mismatch"
+      ]
+    },
+    {
+      "id": "dp.platform.profile_checks",
+      "partition": "delivery_policy",
+      "dimension": "platform_profile",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "none",
+      "rationale": "平台 profile 的确定性检查族:ASPECT_RATIO(可判)+ DURATION_LIMIT 与 DISCLOSURE_REVIEW(一律 PENDING_HUMAN —— 合成媒体披露只查显式 profile 且最终判断归人)。codec/loudness-vs-profile 检查不存在(如实缺口,见 gap case)。",
+      "expected_checks": {
+        "ASPECT_RATIO": "PASS",
+        "DURATION_LIMIT": "PENDING_HUMAN",
+        "DISCLOSURE_REVIEW": "PENDING_HUMAN"
+      },
+      "evidence": [
+        "tests/test_c13_delivery.py::test_platform_handoff_no_credentials_and_no_upload"
+      ]
+    },
+    {
+      "id": "dp.platform.credential_leak",
+      "partition": "delivery_policy",
+      "dimension": "platform_profile",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "none",
+      "rationale": "平台 metadata 携带 token ⇒ CREDENTIALS_PRESENT FAIL + PLATFORM_CREDENTIAL_LEAK blocking 诊断(凭据永不入包)。",
+      "expected_checks": {
+        "CREDENTIALS_PRESENT": "FAIL"
+      },
+      "expected_diagnostics": [
+        "PLATFORM_CREDENTIAL_LEAK"
+      ],
+      "evidence": [
+        "tests/test_c13_delivery.py::test_f10_metadata_with_token_sets_credentials_present"
+      ]
+    },
+    {
+      "id": "dp.format_only.variant_kind_mismatch",
+      "partition": "delivery_policy",
+      "dimension": "format_only",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "none",
+      "rationale": "format-only 变体语义摘要偏离母版 ⇒ VARIANT_KIND_MISMATCH(纯函数)。",
+      "expected_codes": [
+        "VARIANT_KIND_MISMATCH"
+      ],
+      "evidence": [
+        "tests/test_c13_delivery.py::test_format_only_invariant_pure_function",
+        "tests/test_c19_reframe.py::test_format_only_invariant_preserved"
+      ]
+    },
+    {
+      "id": "dp.cutdown.no_cut_zone",
+      "partition": "delivery_policy",
+      "dimension": "cutdown_boundary",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "clip_scope",
+      "rationale": "剪短边界切进禁剪区 ⇒ CUT_CROSSES_NO_CUT_ZONE;区间倒置 ⇒ RANGE_INVERTED(validate_cutdown 零写入)。",
+      "expected_codes": [
+        "CUT_CROSSES_NO_CUT_ZONE",
+        "RANGE_INVERTED"
+      ],
+      "evidence": [
+        "tests/test_c19_reframe.py::test_format_only_invariant_preserved"
+      ]
+    },
+    {
+      "id": "dp.reframe.crop_jump_safe_area",
+      "partition": "delivery_policy",
+      "dimension": "crop_safe_area",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "framing",
+      "rationale": "裁切跳变被 max_px_per_s 限速;安全区放不进裁窗 ⇒ BLANKING(pillarbox/letterbox);多主体冲突 ⇒ NEEDS_MANUAL。FORMAT_ONLY 恒真(changes 全 False)。",
+      "expected_statuses": [
+        "ok",
+        "blanking",
+        "needs_manual"
+      ],
+      "evidence": [
+        "tests/test_c19_reframe.py::test_crop_keyframes_are_rate_limited",
+        "tests/test_c19_reframe.py::test_safe_area_stays_inside_crop",
+        "tests/test_c19_reframe.py::test_infeasible_crop_falls_back_to_blanking",
+        "tests/test_c19_reframe.py::test_multi_subject_conflict_is_needs_manual"
+      ]
+    },
+    {
+      "id": "dp.wordlist.brand_claims_advisory",
+      "partition": "delivery_policy",
+      "dimension": "compliance_wordlist",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "品牌/claims 词表 fixture(自制)驱动 rough_cut_proposal 的 sensitive_terms:命中只产 annotate-only 候选(default_action=annotate,reversible),最终法律判断归人 —— 词表永不变成核心硬规则。",
+      "wordlist": "policy/brand_claims_wordlist.v1.yaml",
+      "inputs": {
+        "cues": [
+          {
+            "text": "全网最低价,买它",
+            "start_ms": 0,
+            "end_ms": 1200,
+            "speaker": "host"
+          },
+          {
+            "text": "普通的一句台词",
+            "start_ms": 1200,
+            "end_ms": 2400,
+            "speaker": "host"
+          },
+          {
+            "text": "保证疗效",
+            "start_ms": 2400,
+            "end_ms": 3000,
+            "speaker": "host"
+          }
+        ]
+      },
+      "expected": {
+        "sensitive_hits": 2,
+        "action": "annotate",
+        "reversible": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "dp.voice.provenance_missing",
+      "partition": "delivery_policy",
+      "dimension": "license_provenance",
+      "kind": "live_pure",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "none",
+      "rationale": "voice profile 缺 source/license_or_consent ⇒ template_export_gate blocked (资产/声音授权缺失即拒共享)。",
+      "expected": {
+        "blocked": true,
+        "reason_contains": "provenance"
+      },
+      "evidence": [
+        "tests/test_c18_dialogue_masters.py::test_voice_profile_missing_rights_blocks_template_export"
+      ]
+    },
+    {
+      "id": "dp.stems.mne_textless",
+      "partition": "delivery_policy",
+      "dimension": "stems_mne_textless",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "audio",
+      "rationale": "五种 master(dialogue/music/sfx/full/M&E)由 ffmpeg 证据链测试钉住;M&E 可证不含对白。TEXTLESS_MASTER 是 schema 认可角色但当前不产出 —— 如实缺口。",
+      "known_roles_must_contain": [
+        "M_AND_E_MASTER",
+        "TEXTLESS_MASTER"
+      ],
+      "evidence": [
+        "tests/test_c18_dialogue_masters.py::test_mne_master_provably_lacks_dialogue",
+        "tests/test_c18_dialogue_masters.py::test_stems_render_with_full_mix_and_duration_sanity",
+        "tests/test_c18_dialogue_masters.py::test_loudness_measured_as_facts"
+      ]
+    },
+    {
+      "id": "dp.bundle.toctou",
+      "partition": "delivery_policy",
+      "dimension": "bundle_toctou",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "none",
+      "rationale": "交付包 TOCTOU:成员流式只读一次 + CAS 复验,漂移 ⇒ DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST,旧包保留。",
+      "nearest_codes": [
+        "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST"
+      ],
+      "evidence": [
+        "tests/test_final_acceptance.py::test_f5_bundle_members_are_read_exactly_once",
+        "tests/test_final_acceptance.py::test_f5_mutation_between_manifest_and_bundle_refused_cleanly",
+        "tests/test_h2_hardening.py::test_24_artifact_changed_after_manifest_blocks_bundle",
+        "tests/test_h2_hardening.py::test_25_old_zip_remains_after_cas_refusal"
+      ]
+    },
+    {
+      "id": "dp.nle.mapping",
+      "partition": "delivery_policy",
+      "dimension": "nle_mapping",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "blocking",
+      "repair_route": "none",
+      "rationale": "NLE 绑定检查族(NLE_PROJECT_UNVERIFIABLE / NLE_MEDIA_UNRESOLVED / NLE_STALE / NLE_ARTIFACT_BINDING_MISMATCH);真实目标应用打开属人工证据(xp 分区)。",
+      "nearest_codes": [
+        "NLE_ARTIFACT_BINDING_MISMATCH",
+        "NLE_STALE"
+      ],
+      "evidence": [
+        "tests/test_c13_delivery.py::test_nle_media_hash_matches_selected_take",
+        "tests/test_c13_delivery.py::test_nle_frame_timebase_precise_and_handles_zero"
+      ]
+    },
+    {
+      "id": "dp.gap.codec_loudness_profile",
+      "partition": "delivery_policy",
+      "dimension": "known_gap",
+      "kind": "honest_gap",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "平台 profile 的 codec 检查与 loudness-vs-profile 违规检查不存在:loudness 只以事实度量存在(masters.py),safe-area 只在 reframe 几何里。契约 §1 要求明确已知限制 —— 这行就是限制记录,不虚构检查。",
+      "gap": true,
+      "evidence": []
+    },
+    {
+      "id": "pr.preflight_reject",
+      "partition": "provider_runtime",
+      "dimension": "preflight_reject",
+      "kind": "live_injection",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "缺 API key 在传输前拒绝 —— FailureKind.invalid + NOT_DISPATCHED(可安全重试/回退)。",
+      "evidence": [
+        "tests/test_dr06_admission.py::test_pre_transport_invalid_is_not_dispatched",
+        "tests/test_dr04_preflight.py"
+      ],
+      "injection": "missing_api_key",
+      "expected": {
+        "disposition": "NOT_DISPATCHED"
+      }
+    },
+    {
+      "id": "pr.remote_reject_definite",
+      "partition": "provider_runtime",
+      "dimension": "explicit_remote_reject",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "声明的 4xx 是 DEFINITELY_REJECTED → REMOTE_REJECTED,可回退不停链。",
+      "evidence": [
+        "tests/test_dr06_admission.py::test_definite_4xx_is_remote_rejected_and_stops_but_fallback_eligible",
+        "tests/test_c14_qualification.py::test_6_definite_rejection_and_unknown_are_distinct_on_the_canary"
+      ]
+    },
+    {
+      "id": "pr.timeout_before_send",
+      "partition": "provider_runtime",
+      "dimension": "timeout_before_send",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "发送边界前的 DNS/超时是 NOT_DISPATCHED → REJECTED_PRE_DISPATCH,可重试。",
+      "evidence": [
+        "tests/test_dr06_admission.py::test_dns_failure_is_not_dispatched_and_may_retry"
+      ]
+    },
+    {
+      "id": "pr.timeout_after_send",
+      "partition": "provider_runtime",
+      "dimension": "timeout_after_send",
+      "kind": "live_injection",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "发送后超时 ⇒ OUTCOME_UNKNOWN,单次尝试、停回退链(fail-closed 头条)。",
+      "evidence": [
+        "tests/test_dr06_admission.py::test_submit_timeout_after_send_is_outcome_unknown_no_retry"
+      ],
+      "injection": "post_send_timeout",
+      "expected": {
+        "disposition": "OUTCOME_UNKNOWN"
+      }
+    },
+    {
+      "id": "pr.poll_transient",
+      "partition": "provider_runtime",
+      "dimension": "poll_transient",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "poll 阶段瞬断重试绝不重复提交(posts 计数不变)。",
+      "evidence": [
+        "tests/test_c14_qualification.py::test_7_poll_retries_do_not_resubmit"
+      ]
+    },
+    {
+      "id": "pr.download_corruption",
+      "partition": "provider_runtime",
+      "dimension": "download_corruption",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "下载损坏 fail-closed —— 不产出 take,不记成功。",
+      "evidence": [
+        "tests/test_c14_qualification.py::test_9_corrupt_download_fails_closed"
+      ]
+    },
+    {
+      "id": "pr.idempotency_reconcile",
+      "partition": "provider_runtime",
+      "dimension": "idempotency_reconcile",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "同一 submission 重派发经 declared idempotency 去重;恢复走 poll-only reconcile。",
+      "evidence": [
+        "tests/test_c14_qualification.py::test_10_recovery_drill_delete_sqlite_resume_poll_only",
+        "tests/test_dr06_recovery.py::test_rebuild_restores_unresolved_and_ignores_terminal"
+      ]
+    },
+    {
+      "id": "pr.cancel_remote_may_continue",
+      "partition": "provider_runtime",
+      "dimension": "cancel_remote_may_continue",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "取消后远端可能继续:取消是本地意图记录,永不谎称远端已停。",
+      "evidence": [
+        "tests/test_job_cancel.py"
+      ]
+    },
+    {
+      "id": "pr.malformed_evidence",
+      "partition": "provider_runtime",
+      "dimension": "malformed_evidence",
+      "kind": "indexed_evidence",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "畸形/撕裂证据绝不产生假通过 —— fail-closed。",
+      "evidence": [
+        "tests/test_c14_qualification.py::test_11_malformed_evidence_never_yields_a_false_pass",
+        "tests/test_c14_qualification.py::test_11b_torn_submission_evidence_fails_closed"
+      ]
+    },
+    {
+      "id": "sk.direct_shot_source_patch",
+      "partition": "story_skill",
+      "dimension": "skill_contract",
+      "kind": "skill_eval",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "导演直改:交付物只有窄 patch 或纯建议报告;引擎从不读 reports/ 编译 Prompt(source-authority 铁律);不花钱、不 build、不 select。",
+      "skill_id": "direct-shot-source-patch",
+      "required_sections": [
+        "## 输入",
+        "## 输出",
+        "## 失败条件",
+        "## 纪律"
+      ],
+      "forbidden_phrases": [
+        "--yes"
+      ],
+      "boundary_phrases": [
+        "不花钱",
+        "reports/"
+      ],
+      "evidence": [
+        "tests/test_c081012_skills.py::test_direct_skill_maps_only_to_existing_fields",
+        "tests/test_c081012_skills.py::test_skill_has_io_and_failure_sections"
+      ]
+    },
+    {
+      "id": "sk.review_take_and_route_repair",
+      "partition": "story_skill",
+      "dimension": "skill_contract",
+      "kind": "skill_eval",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "评审技能只交观察+决策建议,裁决由引擎纯函数算;词表须与代码 enum 同步(DISPOSITIONS/OBS_STATE_VISIBILITY/REPAIR_VARIABLES)。",
+      "skill_id": "review-take-and-route-repair",
+      "required_sections": [
+        "## 输入",
+        "## 输出",
+        "## 失败条件",
+        "## 纪律"
+      ],
+      "forbidden_phrases": [
+        "--yes"
+      ],
+      "boundary_phrases": [
+        "primary_repair_variable",
+        "disposition"
+      ],
+      "evidence": [
+        "tests/test_c081012_skills.py::test_review_skill_data_pack_matches_code_vocabulary"
+      ],
+      "vocab_bindings": [
+        "DISPOSITIONS",
+        "OBS_STATE_VISIBILITY",
+        "REPAIR_VARIABLES"
+      ]
+    },
+    {
+      "id": "sk.continue_from_accepted_take",
+      "partition": "story_skill",
+      "dimension": "skill_contract",
+      "kind": "skill_eval",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "续接技能引用真实 observed endpoint,并点名续接 gate 三码;不调 Provider、不花钱。",
+      "skill_id": "continue-from-accepted-take",
+      "required_sections": [
+        "## 输入",
+        "## 输出",
+        "## 失败条件",
+        "## 纪律"
+      ],
+      "forbidden_phrases": [
+        "--yes"
+      ],
+      "boundary_phrases": [
+        "CONTINUATION_SOURCE_NOT_ACCEPTED",
+        "observed_endpoint"
+      ],
+      "evidence": [
+        "tests/test_c081012_skills.py::test_continue_skill_names_the_gate_codes"
+      ],
+      "named_codes": [
+        "CONTINUATION_SOURCE_NOT_ACCEPTED",
+        "CONTINUATION_SOURCE_HASH_MISMATCH",
+        "CONTINUATION_ENDPOINT_UNOBSERVED"
+      ]
+    },
+    {
+      "id": "sk.localize_dialogue",
+      "partition": "story_skill",
+      "dimension": "skill_contract",
+      "kind": "skill_eval",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "本地化技能产 locale source patch({text, base_hash})+ 术语表;只是源提案,人确认后走既有 locale 写入路径;绝不直呼云翻译/TTS。",
+      "skill_id": "localize-dialogue",
+      "required_sections": [
+        "## 输入",
+        "## 输出",
+        "## 失败条件",
+        "## 纪律"
+      ],
+      "forbidden_phrases": [
+        "--yes"
+      ],
+      "boundary_phrases": [
+        "base_hash",
+        "术语"
+      ],
+      "evidence": [
+        "tests/test_c18_dialogue_masters.py::test_localize_skill_data_pack_matches_locale_and_route_vocabulary"
+      ],
+      "data_pack": "localize-dialogue.data.yaml",
+      "per_line_fields": [
+        "text",
+        "base_hash"
+      ]
+    },
+    {
+      "id": "xp.cjk_paths",
+      "partition": "cross_platform",
+      "dimension": "unicode_cjk_paths",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "中文项目目录/文件名往返(conftest 全套件即 雨夜便利店.manju)+ NFC/NFD 同一性。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_container.py::test_create_preserves_chinese_directory_name",
+        "tests/test_gitops.py::test_cjk_filename_roundtrips_exactly",
+        "tests/test_dr02_expectations.py::test_unicode_nfc_and_nfd_yield_the_same_id"
+      ]
+    },
+    {
+      "id": "xp.long_path",
+      "partition": "cross_platform",
+      "dimension": "long_path_limits",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "无专门的长路径/MAX_PATH 上限 pin —— 如实缺口(Windows 260 字符边界未测)。",
+      "status": "HONEST_GAP",
+      "evidence": [],
+      "gap": true
+    },
+    {
+      "id": "xp.rename",
+      "partition": "cross_platform",
+      "dimension": "rename",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "含空格/CJK 的改名经 git porcelain -z 解析不崩。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_gitops.py::test_rename_with_spaces_does_not_crash_z_parser"
+      ]
+    },
+    {
+      "id": "xp.buildlock",
+      "partition": "cross_platform",
+      "dimension": "buildlock",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "BuildLock 全族:持有者信息、过期窃取、心跳,以及 CI 抓到的 mid-acquire 窃取竞态(新鲜损坏锁按兄弟进程处理,绝不窃取)。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_buildlock.py::test_second_acquire_raises_buildlocked_with_holder_info",
+        "tests/test_buildlock.py::test_fresh_corrupt_lock_is_not_stolen",
+        "tests/test_c0911_gates.py::test_b1_g11_1_two_processes_same_submission_exactly_one_claims"
+      ]
+    },
+    {
+      "id": "xp.cli_json_schema",
+      "partition": "cross_platform",
+      "dimension": "cli_json_schema",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "status --json 键集只增不减的向后兼容 pin + 各读命令 --json 形状。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_c0911_gates.py::test_a10_status_json_shape_is_backward_compatible",
+        "tests/test_cli.py::test_status_json_has_shots_total_and_run_log"
+      ]
+    },
+    {
+      "id": "xp.core_no_sdk",
+      "partition": "cross_platform",
+      "dimension": "core_no_provider_sdk_llm",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "core 不 import Provider SDK/LLM:c19 模块级 pin + 本 corpus 的全树 grep 自测(test_c20b 内全 src/manju 扫描)。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_c19_orchestration.py::test_no_llm_planner_module_in_core",
+        "tests/test_c19_orchestration.py::test_no_llm_import_in_derived_modules"
+      ]
+    },
+    {
+      "id": "xp.imports_readonly",
+      "partition": "cross_platform",
+      "dimension": "imports_read_only",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "imports/ 神圣不可写:去重只读、导入永不覆盖。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_import_dedup.py::test_same_content_different_name_is_found",
+        "tests/test_cli.py::test_import_json_copies_and_never_overwrites"
+      ]
+    },
+    {
+      "id": "xp.sqlite_rebuild",
+      "partition": "cross_platform",
+      "dimension": "sqlite_rebuildable",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "删 .manju/ 后 SQLite 从事件/侧车完全重建。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_runtime.py::test_runtime_state_rebuilds_from_scratch_after_manju_wiped",
+        "tests/test_dr06_recovery.py::test_rebuild_restores_unresolved_and_ignores_terminal"
+      ]
+    },
+    {
+      "id": "xp.reports_not_build_inputs",
+      "partition": "cross_platform",
+      "dimension": "reports_never_drive_build",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "reports/ 任意涂改/删除,所有构建摘要字节不变;qualification/calibration 报告同律。",
+      "status": "EXECUTED",
+      "evidence": [
+        "tests/test_c081012_source_authority.py::test_directing_report_mutation_moves_nothing",
+        "tests/test_c081012_source_authority.py::test_derived_views_write_nothing_and_bundle_reads_no_reports",
+        "tests/test_c14_qualification.py::test_15_qualification_report_is_not_a_build_input"
+      ]
+    },
+    {
+      "id": "xp.windows_macos",
+      "partition": "cross_platform",
+      "dimension": "windows_macos_matrix",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "CI 只有 ubuntu-latest 单 job(.github/workflows/ci.yml 无 strategy.matrix);Windows/macOS 行为 CI-matrix 未来项,合约允许 SKIPPED_WITH_EVIDENCE。",
+      "status": "SKIPPED_WITH_EVIDENCE",
+      "evidence": [],
+      "ci_evidence": ".github/workflows/ci.yml"
+    },
+    {
+      "id": "xp.ffmpeg_font_locale",
+      "partition": "cross_platform",
+      "dimension": "ffmpeg_font_tz_locale",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "CI 固定安装 ffmpeg + 中文字体 + tesseract chi_sim(差异面收敛);时区/locale 漂移无专测 —— 如实部分覆盖。",
+      "status": "PARTIAL",
+      "evidence": [],
+      "ci_evidence": ".github/workflows/ci.yml"
+    },
+    {
+      "id": "xp.nle_human_evidence",
+      "partition": "cross_platform",
+      "dimension": "nle_opens_in_real_app",
+      "kind": "contract_index",
+      "license": "self-made-synthetic",
+      "rubric_version": "20B.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "NLE 文件被真实目标应用打开属人工证据,CI 不可执行;机器侧由 NLE 绑定检查族保底。",
+      "status": "HUMAN_EVIDENCE_REQUIRED",
+      "evidence": [
+        "tests/test_c13_delivery.py::test_nle_media_hash_matches_selected_take"
+      ]
     }
   ]
 }
