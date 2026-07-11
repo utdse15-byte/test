@@ -147,7 +147,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju route list/explain [--json]` | S | routing strategies (timeline/routing.yaml): which provider fires for a shot and why |
 | `manju redo --shots/--all-stale/--all-missing/--all [--yes]` | S | batch redo: one lock, one aggregated spend gate, per-shot isolation, loud skip reasons |
 | `manju voice --missing/--all/--shots` | S | batch voice for missing dialogue lines (stale voices stay advisory §4.3) |
-| `manju compare [a b] [--json]` | S | per-shot diff between finals: takes/captions/audio/packaging + why |
+| `manju compare [a b] [--json] [--against-baseline [--candidate F]]` | S/07C | per-shot diff between finals: takes/captions/audio/packaging + why; `--against-baseline` diffs the current candidate against the approved release baseline through the SAME engine (additive comparison_mode/baseline/review_status fields) |
 | `manju lib add/list/show/use/rm` | S | private cross-project asset library (~/.manju/library, content-addressed, tags) |
 | `manju failures [-n] [--json]` | S | recent structured failures: step, cause, evidence, hint, log path |
 | `manju repair --op inout --in-ms A --out-ms B [--mode virtual\|reencode]` | T | crop a clip's time range (virtual = keeps handles for real crossfades) |
@@ -160,7 +160,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju board scene <id> [--grid 4\|9] / keyframes <shot> --n N [--scaffold]` | U | 4/9-panel storyboards; action → keyframe beats (writes only with --scaffold) |
 | `manju build --mode quality\|balanced\|speed` | U | quality modes: provider bias + retries + bounded parallel generation (gates preserved) |
 | `manju routing explain [<shot>] [--mode]` | U | per-shot: chosen provider, why (explicit/rule/tier/fallback), full order, est cost |
-| `manju exports [--json]` | U | 导出中心 status: 9 deliverables × 上新/待更新/缺失/有问题/待人工确认 + human verification log |
+| `manju exports [--json] [--baseline] [--approve-baseline --reason … [--accept-known-risk]]` | U/07C | 导出中心 status: 9 deliverables × 上新/待更新/缺失/有问题/待人工确认 + human verification log; `--json` now carries the additive `release_assessment` (blockers/ready/regression review/next safe actions from ToolPolicy); baseline approval is a human-only append-only event binding the final's exact bytes |
 | `manju director propose/confirm/run/suggest [--json]` | U | the six-step AI-director contract: propose → cost → confirm → execute → diff → next |
 | `manju skills [show <id>] [--json]` | V | the 14-skill expertise library: index cheap, full text on demand (project > user > bundled) |
 | `manju create [brief\|synopsis\|beats] [--force]` | V | the creation funnel: 立意→梗概→节拍→剧本→分镜→计划→生成 checklist + guided scaffolds |

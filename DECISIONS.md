@@ -654,3 +654,36 @@ REPORTS/AI_IDE_01_06_P0_REMEDIATION_{BASELINE,COMPLETION}.md.
   contract's explicit alternative); no wrapping of attempt families that have
   no terminal events to correlate (direct TTS, audition/locale renders —
   recorded openly).
+
+## 21. 07C — the release baseline is evidence about exact bytes, never a rebuildable pointer (2026-07-11)
+
+The approved-baseline batch (AI_IDE_07C). Core principle: **what a human
+approved is a specific file's bytes — if those bytes or their evidence are
+gone, the baseline is DAMAGED/CORRUPT and stays that way until a human
+approves again; nothing ever re-derives an "equivalent" approval.**
+
+- **No new store**: the baseline is a `release_baseline_approved` event kind
+  inside the existing reports/verifications.jsonl human-verification envelope,
+  binding {path, sha256, bytes, final_key} + source_revision/run_id/assurance
+  digest, with an append-only supersedes_event_id chain. Durable append
+  (flush+fsync, partial-line rollback) gates the success report.
+- **Human-only**: unattended/agent callers are refused at the engine; there is
+  deliberately NO MCP tool for approval (CLI is the surface); a planted
+  "approved" flag in project source changes nothing (tested).
+- **Approval runs the assessment's own technical gate** — blockers refuse by
+  default; `--accept-known-risk` (human CLI) approves anyway but records the
+  accepted blocker codes + reason INTO the event (auditable risk acceptance).
+- **One compare engine**: `compare --against-baseline` calls the same
+  compare_finals service; a sha difference is CHANGED_REQUIRES_REVIEW — a
+  human judgment prompt, never an auto-verdict of better/worse.
+- **exports composes, subsystems own**: the additive `release_assessment` in
+  exports' deliverables_data is a pure combination of existing services —
+  exports rows, baseline resolver, compare, QC assurance tri-state, P0
+  RunManifest terminal honesty, unresolved-submission/chain state — with the
+  16 contract blocker codes mapping 1:1 onto those signals. NO_BASELINE on a
+  virgin project is not a blocker (first release stays possible).
+  next_actions safety metadata is READ from the DR05 ToolPolicy registry,
+  never a hand-written allowlist; nothing auto-executes.
+- Budget: 3 production files (cap 6), 0 new public schemas, 30 red-first
+  tests; zero existing pins flipped (the CLI/GUI byte-agreement pins held
+  because the assessment is composed inside the shared payload builder).
