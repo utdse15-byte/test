@@ -2181,6 +2181,24 @@ def exports(
     accept_known_risk: bool = typer.Option(
         False, "--accept-known-risk",
         help="approve despite blockers (human-only; records the blockers + reason)"),
+    manifest: bool = typer.Option(
+        False, "--manifest",
+        help="AI_IDE_13C: derive the manju.delivery-manifest/v1 for --profile "
+             "(read-only; add --output to materialize atomically into reports/)"),
+    bundle: bool = typer.Option(
+        False, "--bundle",
+        help="AI_IDE_13C: write a delivery bundle ZIP (manifest files + "
+             "SHA256SUMS, atomic) for --profile — distinct from `manju pack`"),
+    profile: str = typer.Option(
+        "master", "--profile",
+        help="AI_IDE_13C: delivery profile id from project.yaml delivery_profiles "
+             "(default: master)"),
+    metadata_file: Optional[str] = typer.Option(
+        None, "--metadata",
+        help="AI_IDE_13C: user-provided platform metadata file (never a credential)"),
+    output: Optional[Path] = typer.Option(
+        None, "--output",
+        help="AI_IDE_13C: where to write the manifest/bundle (project-relative)"),
 ):
     """导出中心 Export center — every finished-output's freshness at a glance.
 
@@ -2242,6 +2260,50 @@ def exports(
             typer.secho("  （尚无发布基线;manju exports --approve-baseline 设定）",
                         fg=typer.colors.BRIGHT_BLACK)
         return
+
+    if manifest or bundle:
+        # AI_IDE_13C: the derived delivery manifest / bundle. Read-only pure
+        # derivation over the SAME deliverables engine + 07C release assessment —
+        # never an export input; --output/--bundle write atomically, never delete.
+        from .build import delivery as _dm
+
+        try:
+            man = _dm.build_manifest(project, profile, metadata_file=metadata_file)
+            if bundle:
+                out, man = _dm.write_bundle(project, man, output=output)
+                append_event(project.root, ACTOR, "delivery_bundle",
+                             {"profile": profile, "bundle": project.relpath(out)})
+                if as_json:
+                    _emit({"bundle": project.relpath(out), "manifest": man}, True)
+                    return
+                typer.secho(f"交付包 / delivery bundle: {project.relpath(out)}",
+                            fg=typer.colors.GREEN)
+                typer.echo(f"  entries={len(_dm._bundle_members(project, man))}  "
+                           f"checksums={man['checksums']['path']}")
+                return
+            if output is not None:
+                dest = _dm.materialize_manifest(project, man, output=output)
+                append_event(project.root, ACTOR, "delivery_manifest",
+                             {"profile": profile, "path": project.relpath(dest)})
+            if as_json:
+                _emit(man, True)
+                return
+            ds = man["release"]["delivery_state"]
+            typer.secho(f"交付清单 / delivery-manifest  profile={profile}  "
+                        f"variant={man['variant']['kind']}", fg=typer.colors.CYAN)
+            typer.echo(f"  manifest_id  {man['manifest_id']}")
+            typer.echo(f"  technical_ready={ds['technical_ready']}  "
+                       f"editor_approved={ds['editor_approved']}  "
+                       f"publish_handoff_ready={ds['publish_handoff_ready']}  "
+                       f"published={ds['published']}")
+            for a in man["artifacts"]:
+                typer.echo(f"    {a['role']:<16} {a['state']:<20} {a['path'] or '—'}")
+            for d in man["diagnostics"]:
+                typer.secho(f"    ⚠ {d['code']} [{d['severity']}] {d['detail']}",
+                            fg=typer.colors.YELLOW)
+            return
+        except (_dm.DeliveryManifestError, ProjectError) as exc:
+            _fail(str(exc))
 
     data = deliverables_data(project)
     if as_json:
