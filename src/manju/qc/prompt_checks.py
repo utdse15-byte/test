@@ -639,10 +639,27 @@ def production_checks(project, shot, *, duration_ms: int | None = None,
 
     # WP5 continuation-source gate (qc.production derives it from accepted
     # evidence; lazy import — production imports this module's clause tools).
+    # Hardening WP4 6.2 (claim 8): pre-hardening this was `except: pass` — a
+    # raising derivation made the gate silently VANISH for a shot that declares
+    # continuity.prev. Unavailable evidence now blocks (WARNING level enters
+    # has_blocking); shots without a continuation stay finding-free.
     try:
         from .production import continuation_checks
 
         findings.extend(continuation_checks(project, shot.id))
-    except Exception:
-        pass
+    except Exception as exc:
+        prev_id = ""
+        try:
+            prev_id = (shot.continuity.prev or "").strip() if shot.continuity else ""
+        except Exception:
+            prev_id = ""
+        if prev_id:
+            findings.append(_pcheck(
+                "CONTINUATION_CHECK_UNAVAILABLE", WARNING,
+                f"续接源 {prev_id} 的续接检查本身推导失败({type(exc).__name__})"
+                "— 证据不可用时不得静默放行续写",
+                [f"shots/{shot.id}.yaml#/continuity/prev"],
+                "修复评审证据(reports/ 下 v2 记录/媒体可读性)后重试,"
+                "或显式改写 continuity.prev",
+            ))
     return findings

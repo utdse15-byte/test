@@ -159,6 +159,13 @@ def test_f1_master_and_format_only_share_timeline_semantic_digest(tmp_project, a
 
 
 def test_f2_format_only_dropped_segment_is_variant_kind_mismatch(tmp_project, add_shot):
+    # PIN FLIPPED (POST_COMPLETION_HARDENING WP5 7.3, claim 11): this test used
+    # to pin the MATERIALIZED master manifest as the variant's base identity —
+    # the exact manifest-becomes-an-input violation (hand-editing the report
+    # shifted the verdict; see tests/test_h2_hardening.py::test_26). The base
+    # is now the EXPLICIT in-memory derivation passed as ``base_master`` (or an
+    # in-process re-derivation); the invariant SEMANTICS are unchanged: a
+    # dropped segment against the pinned base is still VARIANT_KIND_MISMATCH.
     add_shot(tmp_project, "S001")
     add_shot(tmp_project, "S002")
     two = [VideoClip(shot="S001", take="t", source="media/gen/S001/take_01.mp4",
@@ -167,11 +174,10 @@ def test_f2_format_only_dropped_segment_is_variant_kind_mismatch(tmp_project, ad
                      start_ms=1000, duration_ms=1000)]
     _manual_timeline(tmp_project, two)
     _set_profiles(tmp_project, {"yt": {"variant_kind": "format_only", "base_profile": "master"}})
-    master = D.build_manifest(tmp_project, "master")
-    D.materialize_manifest(tmp_project, master)
+    master = D.build_manifest(tmp_project, "master")   # the explicit base derivation
     # a segment silently disappears from the cut the format-only is built from
     _manual_timeline(tmp_project, two[:1])
-    fmt = D.build_manifest(tmp_project, "yt")
+    fmt = D.build_manifest(tmp_project, "yt", base_master=master)
     codes = {d["code"] for d in fmt["diagnostics"]}
     assert "VARIANT_KIND_MISMATCH" in codes
     assert fmt["release"]["delivery_state"]["technical_ready"] is False
@@ -380,12 +386,15 @@ def test_manifest_is_relative_and_secret_free(tmp_project, add_shot):
 def test_old_project_without_delivery_profiles_defaults_to_master(tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     _clean_final(tmp_project)
-    # no delivery_profiles in project.yaml at all
+    # no delivery_profiles in project.yaml at all — implicit master compat pinned
     man = D.build_manifest(tmp_project, "master")
     assert man["variant"]["kind"] == "MASTER"
-    # an unknown profile id also degrades to a MASTER default (never a crash)
-    unknown = D.build_manifest(tmp_project, "does_not_exist")
-    assert unknown["variant"]["kind"] == "MASTER"
+    # PIN FLIPPED (POST_COMPLETION_HARDENING WP5 7.6, claim 15): an EXPLICITLY
+    # unknown profile id used to silently degrade to MASTER — it now errors
+    # (see tests/test_h2_hardening.py::test_31). Only the implicit "master"
+    # default stays permissive for old projects.
+    with pytest.raises(D.DeliveryManifestError):
+        D.build_manifest(tmp_project, "does_not_exist")
 
 
 def test_unknown_artifact_role_policy_is_explicit(tmp_project, add_shot):
@@ -441,8 +450,12 @@ def test_format_only_invariant_pure_function():
     assert D.check_format_only_invariant("sha256:a", "sha256:a") == []
     mism = D.check_format_only_invariant("sha256:a", "sha256:b")
     assert mism and mism[0]["code"] == "VARIANT_KIND_MISMATCH"
+    # PIN FLIPPED (POST_COMPLETION_HARDENING WP5 7.6, claim 33): a missing base
+    # identity used to be a WARNING (FORMAT_ONLY_UNVERIFIED) — an unprovable
+    # format-only claim now BLOCKS (see test_h2_hardening.py::test_33).
     unv = D.check_format_only_invariant(None, "sha256:b")
-    assert unv and unv[0]["code"] == "FORMAT_ONLY_UNVERIFIED"
+    assert unv and unv[0]["code"] == "BASE_IDENTITY_MISSING"
+    assert unv[0]["severity"] == "blocking"
 
 
 def test_platform_package_does_not_change_narrative_cut(tmp_project, add_shot):

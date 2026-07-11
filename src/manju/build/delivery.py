@@ -160,29 +160,49 @@ def _delivery_profiles(config: Any) -> dict[str, dict]:
 
 
 def _norm_kind(value: Any) -> str:
+    """ABSENT variant_kind → MASTER (old-profile compat, pinned). An EXPLICIT
+    unknown kind is an error — hardening WP5 7.6 (claim 15): it used to
+    silently normalize to MASTER, hiding a typo'd/unsupported variant claim."""
     if not value:
         return MASTER
     up = str(value).strip().upper()
-    return up if up in _VARIANT_KINDS else MASTER
+    if up not in _VARIANT_KINDS:
+        raise DeliveryManifestError(
+            f"unknown variant_kind {value!r} — declared kinds are "
+            f"{sorted(_VARIANT_KINDS)} (absent = MASTER)")
+    return up
 
 
 # --------------------------------------------------------- timeline semantic id
 
 
 def timeline_semantic_digest(timeline: Any) -> str | None:
-    """Digest over segment IDENTITY / ORDER / SOURCE-IN-OUT / DURATION only —
-    the format-only invariant surface (contract §4.2 / §8.2).
+    """Digest over the compiled timeline's FULL narrative semantics — the
+    format-only invariant surface (contract §4.2 / §8.2; hardening WP5 7.4).
 
-    Deliberately EXCLUDES width/height/fps/encoding/frame-layout so a master
-    16:9 and a genuine format-only 9:16 built from the same cut share it, and
-    INCLUDES exactly the fields a format-only must preserve so dropping/
-    reordering/retiming a segment moves it. ``source_out`` is implicit
-    (``source_in_ms + duration_ms``): the compiled ``VideoClip`` carries no
-    ``source_out_ms`` (audit fact). Order-sensitive (a list, not a set)."""
+    INCLUDES every narrative axis a format-only variant must preserve:
+    video segment identity/selection/order/source-in-out/duration; audio cues
+    on all four tracks (voice/music/sfx/ambient — identity/timing/source plus
+    the audible shape: offset/loop/gain/fades/ducking); subtitle SOURCE
+    text/owner-id/timing; overlay identity/text/timing.
+
+    Deliberately EXCLUDES width/height/fps, encoding, pure caption LAYOUT
+    (styles live outside CaptionLine), overlay burn geometry (corner/size/
+    margin/opacity/template) and wall clock — so a master 16:9 and a genuine
+    format-only 9:16 built from the same cut share it, while ANY narrative
+    change (dropped segment, moved music cue, edited subtitle line) moves it.
+
+    ``source_out`` is implicit (``source_in_ms + duration_ms``): the compiled
+    ``VideoClip`` carries no ``source_out_ms`` (audit fact). Order-sensitive
+    (lists, not sets). Hardening claim 12: the 13C digest hashed video
+    segments ONLY — an audio/subtitle change on the same cut did not move it."""
     if timeline is None:
         return None
     tracks = getattr(timeline, "tracks", None)
-    video = list(getattr(tracks, "video", None) or []) if tracks is not None else []
+
+    def _clips(track: str) -> list:
+        return list(getattr(tracks, track, None) or []) if tracks is not None else []
+
     segments = [
         {
             "shot": getattr(c, "shot", None),
@@ -192,9 +212,54 @@ def timeline_semantic_digest(timeline: Any) -> str | None:
             "duration_ms": getattr(c, "duration_ms", None),
             "source_in_ms": getattr(c, "source_in_ms", 0) or 0,
         }
-        for c in video
+        for c in _clips("video")
     ]
-    return hash_value({"video_segments": segments})
+    audio = {
+        track: [
+            {
+                "source": getattr(c, "source", None),
+                "start_ms": getattr(c, "start_ms", None),
+                "duration_ms": getattr(c, "duration_ms", None),
+                "start_offset_ms": getattr(c, "start_offset_ms", 0) or 0,
+                "loop": bool(getattr(c, "loop", False)),
+                "gain_db": getattr(c, "gain_db", 0.0) or 0.0,
+                "ducking": bool(getattr(c, "ducking", False)),
+                "fade_in_ms": getattr(c, "fade_in_ms", 0) or 0,
+                "fade_out_ms": getattr(c, "fade_out_ms", 0) or 0,
+            }
+            for c in _clips(track)
+        ]
+        for track in ("voice", "music", "sfx", "ambient")
+    }
+    captions = [
+        {
+            "text": getattr(c, "text", None),
+            "speaker": getattr(c, "speaker", "") or "",
+            "shot": getattr(c, "shot", "") or "",
+            "start_ms": getattr(c, "start_ms", None),
+            "end_ms": getattr(c, "end_ms", None),
+        }
+        for c in _clips("captions")
+    ]
+    overlays = [
+        {
+            # identity + text + timing only — corner/size_pct/margin_pct/
+            # opacity/template are burn LAYOUT, excluded per contract 7.4.
+            "kind": getattr(c, "kind", None),
+            "subkind": getattr(c, "subkind", "") or "",
+            "text": getattr(c, "text", "") or "",
+            "source": getattr(c, "source", "") or "",
+            "start_ms": getattr(c, "start_ms", None),
+            "duration_ms": getattr(c, "duration_ms", None),
+        }
+        for c in _clips("overlay")
+    ]
+    return hash_value({
+        "video_segments": segments,
+        "audio_tracks": audio,
+        "captions": captions,
+        "overlays": overlays,
+    })
 
 
 def check_format_only_invariant(base_digest: str | None,
@@ -202,13 +267,17 @@ def check_format_only_invariant(base_digest: str | None,
     """The format-only proof (contract §8.2): the variant's SOURCE timeline
     semantic digest must equal the base master's. A mismatch is a manifest
     DIAGNOSTIC that blocks the format-only labelling — never a build failure
-    (addendum ruling 4)."""
+    (addendum ruling 4).
+
+    Hardening WP5 7.6 (claim 15/33): a FORMAT_ONLY variant whose base identity
+    cannot be derived BLOCKS — it used to be a warning (FORMAT_ONLY_UNVERIFIED),
+    which let an unprovable format-only claim ride as merely advisory."""
     if base_digest is None:
         return [{
-            "code": "FORMAT_ONLY_UNVERIFIED",
-            "severity": "warning",
-            "detail": "no base master timeline digest to compare against — "
-                      "cannot prove this is format-only",
+            "code": "BASE_IDENTITY_MISSING",
+            "severity": "blocking",
+            "detail": "no base master timeline digest could be derived — a "
+                      "format-only claim without a base identity is unprovable",
         }]
     if base_digest != variant_digest:
         return [{
@@ -538,7 +607,18 @@ def _platform_handoff(project: Project, config: Any, profile: dict, variant_kind
                 credentials_present = _scan_credentials(
                     mabs.read_text(encoding="utf-8", errors="replace"))
         except (ProjectError, OSError):
-            meta_rel = str(mpath)
+            # hardening WP5 7.5 (claim 13): an absolute / out-of-project /
+            # unresolvable metadata path used to be echoed VERBATIM into the
+            # manifest (an absolute-path leak). Refuse with a blocking
+            # diagnostic and never emit any fragment of the offending path.
+            meta_rel = None
+            diagnostics.append({
+                "code": "PLATFORM_METADATA_PATH_INVALID",
+                "severity": "blocking",
+                "detail": "the platform metadata path is absolute, escapes the "
+                          "project, or cannot be resolved — use a project-"
+                          "relative path (the offending value is not echoed)",
+            })
 
     checks: list[dict] = []
     # Deterministic checks: aspect ratio (profile frame vs project) + disclosure.
@@ -588,7 +668,7 @@ def _platform_handoff(project: Project, config: Any, profile: dict, variant_kind
 
 def _release_section(project: Project, rows: list, artifacts: list[dict],
                      required_roles: list[str], variant_kind: str,
-                     blocking_diags: bool, final_ref: str | None) -> dict:
+                     blocking_diags: bool) -> dict:
     """Consume 07C ``release_assessment`` VERBATIM (contract §12). Never
     re-derives run/QC/submission honesty — it reads the assessment's own
     ``ready`` boolean + blocker codes and layers the four separated delivery
@@ -633,28 +713,77 @@ def _release_section(project: Project, rows: list, artifacts: list[dict],
 # --------------------------------------------------------------- variant build
 
 
-def _resolve_base_master_digest(project: Project, profile: dict,
-                                base_master: Any) -> str | None:
-    """The base master's RECORDED source timeline digest for the format-only
-    invariant. Accepts a manifest dict, a raw digest string, or looks up a
-    materialized master manifest on disk (deterministic reports path)."""
+# base-profile recursion ceiling: variant→master chains are 1 deep in practice;
+# anything deeper than this is a mis-configured profile graph, not a delivery.
+_MAX_BASE_CHAIN = 8
+
+
+def _resolve_base_master_digest(project: Project, profile: dict, base_master: Any,
+                                *, profile_id: str, chain: frozenset[str]
+                                ) -> tuple[str | None, list[dict]]:
+    """The base's source timeline digest for the format-only/localized identity.
+
+    Hardening WP5 7.3 (claim 11, CONFIRMED): the 13C version FELL BACK TO
+    READING the materialized ``reports/delivery/*.delivery-manifest.json`` —
+    the exact "materialized manifest becomes an input" violation (hand-editing
+    that report shifted the variant's base identity). That disk-read branch is
+    DELETED. Base identity now comes ONLY from:
+
+    (a) the explicit in-memory derivation/digest passed by the caller
+        (``base_master`` dict or ``sha256:...`` string), or
+    (b) re-deriving the base profile's manifest IN-PROCESS (recursive
+        :func:`build_manifest` guarded against self/cyclic/over-deep base
+        chains — a cycle is a blocking diagnostic, never a RecursionError).
+
+    Hand-editing or deleting any materialized report is provably inert."""
     if isinstance(base_master, dict):
-        return (base_master.get("variant") or {}).get("source_timeline_digest")
+        return (base_master.get("variant") or {}).get("source_timeline_digest"), []
     if isinstance(base_master, str) and base_master.startswith(HASH_PREFIX):
-        return base_master
-    base_profile = profile.get("base_profile") or "master"
-    path = _manifest_path(project, base_profile)
-    if path.exists():
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-            return (doc.get("variant") or {}).get("source_timeline_digest")
-        except (json.JSONDecodeError, OSError):
-            return None
-    return None
+        return base_master, []
+
+    base_profile = str(profile.get("base_profile") or "master")
+    if base_profile == profile_id or base_profile in chain or len(chain) >= _MAX_BASE_CHAIN:
+        return None, [{
+            "code": "BASE_PROFILE_CYCLE",
+            "severity": "blocking",
+            "detail": f"base_profile chain cycles or exceeds depth {_MAX_BASE_CHAIN} "
+                      f"at {base_profile!r} — a variant's base must resolve to a "
+                      "master, not back into itself",
+        }]
+    try:
+        base_manifest = build_manifest(project, base_profile,
+                                       _base_chain=chain | {profile_id})
+    except DeliveryManifestError as exc:
+        return None, [{
+            "code": "BASE_PROFILE_INVALID",
+            "severity": "blocking",
+            "detail": f"base_profile {base_profile!r} could not be derived: "
+                      + " ".join(str(exc).split())[:160],
+        }]
+    # A base whose OWN base chain is broken proves nothing — propagate the
+    # cycle/invalid verdict instead of silently adopting its timeline digest
+    # (the deeper manifest is discarded; its diagnostics must not vanish).
+    base_codes = {d.get("code") for d in (base_manifest.get("diagnostics") or [])}
+    if "BASE_PROFILE_CYCLE" in base_codes:
+        return None, [{
+            "code": "BASE_PROFILE_CYCLE",
+            "severity": "blocking",
+            "detail": f"base_profile {base_profile!r} sits on a cyclic base "
+                      "chain — a variant's base must resolve to a master",
+        }]
+    if {"BASE_PROFILE_INVALID", "BASE_IDENTITY_MISSING"} & base_codes:
+        return None, [{
+            "code": "BASE_PROFILE_INVALID",
+            "severity": "blocking",
+            "detail": f"base_profile {base_profile!r} has no clean base identity "
+                      "of its own — resolve its chain first",
+        }]
+    return (base_manifest.get("variant") or {}).get("source_timeline_digest"), []
 
 
 def _build_variant(project: Project, profile: dict, profile_id: str,
-                   timeline: Any, base_master: Any) -> tuple[dict, list[dict]]:
+                   timeline: Any, base_master: Any,
+                   chain: frozenset[str] = frozenset()) -> tuple[dict, list[dict]]:
     diagnostics: list[dict] = []
     kind = _norm_kind(profile.get("variant_kind"))
     tl_digest = timeline_semantic_digest(timeline)
@@ -704,9 +833,14 @@ def _build_variant(project: Project, profile: dict, profile_id: str,
             })
 
     if kind == FORMAT_ONLY:
-        base_digest = _resolve_base_master_digest(project, profile, base_master)
+        base_digest, base_diags = _resolve_base_master_digest(
+            project, profile, base_master, profile_id=profile_id, chain=chain)
         variant["base_master_manifest_digest"] = base_digest
-        diagnostics += check_format_only_invariant(base_digest, tl_digest)
+        diagnostics += base_diags
+        # a cycle already blocks with its own diagnostic; only add the
+        # invariant/missing-base verdict when base resolution itself was clean.
+        if not base_diags:
+            diagnostics += check_format_only_invariant(base_digest, tl_digest)
 
     elif kind == EDITORIAL_CUTDOWN:
         # A cutdown must reference an explicit, diffable source revision — this
@@ -723,8 +857,19 @@ def _build_variant(project: Project, profile: dict, profile_id: str,
             })
 
     elif kind == LOCALIZED:
-        base_digest = _resolve_base_master_digest(project, profile, base_master)
+        base_digest, base_diags = _resolve_base_master_digest(
+            project, profile, base_master, profile_id=profile_id, chain=chain)
         variant["base_master_manifest_digest"] = base_digest
+        diagnostics += base_diags
+        if not base_diags and base_digest is None:
+            # hardening WP5 7.6: LOCALIZED without a derivable base identity
+            # blocks — the locale claim has nothing provable to bind to.
+            diagnostics.append({
+                "code": "BASE_IDENTITY_MISSING",
+                "severity": "blocking",
+                "detail": "no base master timeline digest could be derived for "
+                          "the LOCALIZED variant — nothing to bind the locale to",
+            })
 
     return variant, diagnostics
 
@@ -733,19 +878,31 @@ def _build_variant(project: Project, profile: dict, profile_id: str,
 
 
 def build_manifest(project: Project, profile_id: str = "master", *,
-                   final_ref: str | None = None, metadata_file: str | None = None,
-                   base_master: Any = None) -> dict:
+                   metadata_file: str | None = None, base_master: Any = None,
+                   _base_chain: frozenset[str] = frozenset()) -> dict:
     """Derive the ``manju.delivery-manifest/v1`` for ``profile_id`` — instant,
     read-only, deterministic (NO wall-clock field, every path project-relative,
     no secret). Writes nothing (materialization is a separate, optional step).
 
+    The manifest targets the CURRENT/NEWEST final only — hardening WP5 7.7
+    option B (claim 16): the former ``final_ref`` parameter was accepted but
+    ignored, so it is REMOVED rather than half-supported.
+
     A pure composition over existing services: it never re-derives status,
-    readiness, staleness, or take selection."""
+    readiness, staleness, or take selection. ``_base_chain`` is the private
+    base-profile recursion guard (WP5 7.3)."""
     from . import exportstatus as ES
     from .shotpackage import project_revision
 
     config = ES._safe(lambda: project.load_config())
     profiles = _delivery_profiles(config) if config is not None else {}
+    if profile_id != "master" and profile_id not in profiles:
+        # hardening WP5 7.6 (claim 15): an EXPLICITLY unknown profile used to
+        # silently derive a MASTER manifest. The implicit "master" id stays the
+        # old-project compat default (absent delivery_profiles → MASTER).
+        raise DeliveryManifestError(
+            f"unknown delivery profile {profile_id!r} — declare it under "
+            "delivery_profiles in project.yaml (the implicit default is 'master')")
     profile = dict(profiles.get(profile_id) or {})
     profile.setdefault("id", profile_id)
 
@@ -756,12 +913,18 @@ def build_manifest(project: Project, profile_id: str = "master", *,
     rows_by_kind = {r.kind: r for r in rows}
 
     variant, variant_diags = _build_variant(project, profile, profile_id,
-                                             ctx.timeline, base_master)
+                                             ctx.timeline, base_master,
+                                             chain=_base_chain)
     variant_kind = variant["kind"]
 
     artifacts = [_artifact_from_row(project, r) for r in rows]
 
     nle, nle_diags = _nle_section(project, config, ctx.timeline, rows_by_kind)
+
+    # hardening WP5 7.1 (claim 9): the nle.project_file and the NLE artifact
+    # row describe the SAME file — a hash disagreement between the two is a
+    # binding mismatch, surfaced here (and enforced again at bundle time).
+    nle_diags += _nle_binding_check(artifacts, nle)
 
     locale = variant.get("locale") if variant_kind == LOCALIZED else None
     localization, loc_diags = _localization_section(
@@ -770,12 +933,18 @@ def build_manifest(project: Project, profile_id: str = "master", *,
     platform_handoff, ph_diags = _platform_handoff(
         project, config, profile, variant_kind, artifacts, metadata_file)
 
+    # hardening WP5 7.5 (claim 14): platform metadata is a FIRST-CLASS artifact
+    # row (sha256/bytes/mime), so its exact bytes join manifest_digest — 13C
+    # deliberately excluded them; POST_COMPLETION_HARDENING reverses that.
+    # Credential CONTENT still never enters the output (boolean + diagnostics).
+    artifacts += _metadata_artifact(project, platform_handoff)
+
     diagnostics = variant_diags + nle_diags + loc_diags + ph_diags
     blocking = any(d.get("severity") == "blocking" for d in diagnostics)
 
     required_roles = _required_roles(profile, variant_kind)
     release = _release_section(project, rows, artifacts, required_roles,
-                               variant_kind, blocking, final_ref)
+                               variant_kind, blocking)
 
     # publish_handoff_ready: only a technically-ready delivery WITH a credential-
     # free hand-off whose checks carry no FAIL — and even then a PENDING_HUMAN
@@ -812,6 +981,64 @@ def _required_roles(profile: dict, variant_kind: str) -> list[str]:
         return [str(r).upper() for r in raw]
     # sensible default: a master delivery must at least have the master video.
     return ["MASTER_VIDEO"]
+
+
+def _nle_binding_check(artifacts: list[dict], nle: dict | None) -> list[dict]:
+    """WP5 7.1: when artifacts[] and nle.project_file name the same path, their
+    recorded hashes must agree — a disagreement is a blocking
+    NLE_ARTIFACT_BINDING_MISMATCH, never a silent divergence."""
+    if not nle:
+        return []
+    pf = nle.get("project_file") or {}
+    path, sha = pf.get("path"), pf.get("sha256")
+    if not path or not sha:
+        return []
+    for a in artifacts:
+        if a.get("path") == path and a.get("sha256") and a["sha256"] != sha:
+            return [{
+                "code": "NLE_ARTIFACT_BINDING_MISMATCH",
+                "severity": "blocking",
+                "detail": "the NLE project file hash disagrees between the "
+                          "artifact row and nle.project_file for the same path — "
+                          "the file changed mid-derivation or the manifest was edited",
+            }]
+    return []
+
+
+def _metadata_artifact(project: Project, platform_handoff: dict | None) -> list[dict]:
+    """WP5 7.5 (claim 14): the platform metadata file as a first-class artifact
+    row — exact sha256/bytes/mime — so manifest_digest covers its bytes."""
+    if not platform_handoff or not platform_handoff.get("metadata_file"):
+        return []
+    rel = platform_handoff["metadata_file"]
+    try:
+        abspath = project.resolve(rel)
+    except ProjectError:
+        return []  # _platform_handoff already refused + diagnosed invalid paths
+    if not abspath.exists():
+        state, sha, size = MISSING, None, None
+    else:
+        try:
+            sha = hash_file(abspath)
+            size = abspath.stat().st_size
+            state = GENERATED  # user-provided; no staleness machinery owns it
+        except OSError:
+            state, sha, size = INVALID, None, None
+    return [{
+        "artifact_id": "platform:metadata",
+        "role": "PLATFORM_METADATA",
+        "path": rel,
+        "sha256": sha,
+        "bytes": size,
+        "mime": "application/json" if rel.endswith(".json") else "text/plain",
+        "content_key": None,
+        "source_refs": [],
+        "state": state,
+        "freshness": None,
+        "basis": "user-provided platform metadata (bytes bound by sha256)",
+        "verification": {"technical": "PENDING", "human": "PENDING",
+                         "evidence_refs": []},
+    }]
 
 
 # --------------------------------------------------------------- deterministic
@@ -949,6 +1176,7 @@ def _bundle_members(project: Project, manifest: dict) -> list[tuple[str, Path]]:
         seen.add(arcname)
         members.append((arcname, abspath))
 
+    sha_by_arcname: dict[str, str | None] = {}
     for a in manifest["artifacts"]:
         if not a["path"] or a["state"] == MISSING:
             continue
@@ -960,17 +1188,34 @@ def _bundle_members(project: Project, manifest: dict) -> list[tuple[str, Path]]:
             raise DeliveryManifestError(f"refusing symlink in bundle: {a['path']}")
         if abspath.exists():
             _add(a["path"], abspath)
+            sha_by_arcname[a["path"]] = a.get("sha256")
+
+    # hardening WP5 7.1 (claim 9): nle.project_file names the SAME file the NLE
+    # artifact row registered — one logical file is packed ONCE. A recorded-hash
+    # disagreement is a binding mismatch, never an uncaught duplicate error.
     nle = manifest.get("nle")
     if nle and nle.get("project_file", {}).get("path"):
         pf = nle["project_file"]["path"]
-        try:
-            abspath = project.resolve(pf)
-            if abspath.exists() and not abspath.is_symlink():
-                _add(pf, abspath)
-        except ProjectError:
-            pass
+        pf_sha = nle["project_file"].get("sha256")
+        if pf in seen:
+            registered = sha_by_arcname.get(pf)
+            if pf_sha and registered and pf_sha != registered:
+                raise DeliveryManifestError(
+                    "NLE_ARTIFACT_BINDING_MISMATCH: nle.project_file and the "
+                    f"registered artifact disagree on the hash of {pf}")
+            # same path + same identity → already packed once; nothing to add.
+        else:
+            try:
+                abspath = project.resolve(pf)
+                if abspath.exists() and not abspath.is_symlink():
+                    _add(pf, abspath)
+                    sha_by_arcname[pf] = pf_sha
+            except ProjectError:
+                pass
+    # platform metadata rides its artifact row (PLATFORM_METADATA) since the
+    # hardening; the handoff pointer only backfills manifests that lack the row.
     ph = manifest.get("platform_handoff")
-    if ph and ph.get("metadata_file"):
+    if ph and ph.get("metadata_file") and ph["metadata_file"] not in seen:
         try:
             abspath = project.resolve(ph["metadata_file"])
             if abspath.exists() and not abspath.is_symlink():
@@ -992,6 +1237,43 @@ def _sha256sums(members: list[tuple[str, Path]]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def _cas_revalidate(manifest: dict, members: list[tuple[str, Path]]) -> None:
+    """Hardening WP5 7.2 (claim 10): before ANY zip byte is written, every
+    member's CURRENT sha256+size must equal what the manifest recorded — the
+    embedded manifest, SHA256SUMS and the actual ZIP bytes must agree. Drift
+    (or a member the manifest carries no hash for) refuses with
+    DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST; no new ZIP, the old ZIP stays."""
+    expected: dict[str, tuple[str | None, int | None]] = {}
+    for a in manifest.get("artifacts") or []:
+        if a.get("path"):
+            expected[a["path"]] = (a.get("sha256"), a.get("bytes"))
+    nle = manifest.get("nle") or {}
+    pf = (nle.get("project_file") or {})
+    if pf.get("path") and pf["path"] not in expected:
+        expected[pf["path"]] = (pf.get("sha256"), None)
+
+    for arcname, abspath in members:
+        want_sha, want_bytes = expected.get(arcname, (None, None))
+        if not want_sha:
+            raise DeliveryManifestError(
+                "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: the manifest records "
+                f"no hash for {arcname} — cannot prove the bytes are the ones "
+                "the manifest described (fail closed)")
+        try:
+            cur_sha = hash_file(abspath)
+            cur_bytes = abspath.stat().st_size
+        except OSError as exc:
+            raise DeliveryManifestError(
+                "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: "
+                f"{arcname} became unreadable after the manifest was built"
+            ) from exc
+        if cur_sha != want_sha or (want_bytes is not None and cur_bytes != want_bytes):
+            raise DeliveryManifestError(
+                "DELIVERY_ARTIFACT_CHANGED_AFTER_MANIFEST: "
+                f"{arcname} changed after the manifest was built — rebuild the "
+                "manifest; the previous bundle (if any) is left untouched")
+
+
 def write_bundle(project: Project, manifest: dict, *, output: Path | None = None
                  ) -> tuple[Path, dict]:
     """Write a delivery bundle ZIP of exactly the manifest-registered files plus
@@ -999,11 +1281,16 @@ def write_bundle(project: Project, manifest: dict, *, output: Path | None = None
     atomic (a failure leaves any prior bundle intact). Returns (path, manifest')
     where manifest' carries the ``checksums`` binding.
 
+    Every member is CAS-revalidated against the manifest's recorded sha256 and
+    size BEFORE any byte is written (WP5 7.2), so SHA256SUMS, the embedded
+    manifest and the actual ZIP contents always agree.
+
     Distinct from ``manju pack`` (whole-project archive) — this is only the
     NLE/platform-facing delivery files (contract §11.3)."""
     from ..media.ffmpeg import atomic_output
 
     members = _bundle_members(project, manifest)
+    _cas_revalidate(manifest, members)
     sums_text = _sha256sums(members)
 
     # bind the checksums file into the manifest BEFORE embedding it, so the

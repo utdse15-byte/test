@@ -58,8 +58,21 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
     ``request_digest`` and the take's ``candidate_index`` within that request's
     returned outputs; plus the latest bound review disposition for the take's
     EXACT bytes, and the keeper/selected separation (§8.4: a KEEP conclusion
-    never implies selection)."""
+    never implies selection).
+
+    Hardening WP4 6.1 (claim 7): ``keeper=true`` requires the KEEP record to be
+    FULLY current-bound — re-verified through the one existing binding checker
+    (:func:`assurance._live_failures`: media/spec/expectations + intake-stale
+    marks). A KEEP whose bindings drifted stays visible as
+    ``historical_disposition`` with ``binding_status="stale"`` and
+    ``keeper=false`` — history is never deleted.
+
+    Hardening WP4 6.3: a ``redo_of`` CYCLE (corrupted/looped lineage) is
+    detected, the whole cycle lands in ONE family under a stable canonical
+    representative (the min take name), and a ``REDO_LINEAGE_CYCLE`` diagnostic
+    is emitted at the view level. Sidecars are never rewritten (derived view)."""
     from ..core.hashing import hash_file
+    from .assurance import _live_failures
 
     takes = list(project.takes(shot_id))
     by_name = {t.name: t for t in takes}
@@ -71,12 +84,15 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
 
     # evidence join: media sha -> (request_digest, candidate_index)
     sha_to_request = _attempt_output_index(project, shot_id)
-    # review join: media sha -> latest disposition (file order, later wins)
-    dispo_by_sha = _dispositions_by_sha(project, shot_id)
+    # review join: media sha -> latest FULL v2 record (file order, later wins)
+    verdict_by_sha = _verdicts_by_sha(project, shot_id)
 
     families: dict[str, dict[str, Any]] = {}
+    cycles: dict[frozenset, list[str]] = {}
     for take in sorted(takes, key=lambda t: t.name):
-        root = _lineage_root(take, by_name)
+        root, cycle = _lineage_root(take, by_name)
+        if cycle:
+            cycles.setdefault(frozenset(cycle), sorted(cycle))
         root_rev = (root.sidecar.spec_hash or "").strip()
         if not root_rev or root_rev == "manual":
             key = {"shot": shot_id, "root_take": root.name}
@@ -96,7 +112,17 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
             except OSError:
                 sha = None
         digest, cand_idx = sha_to_request.get(sha, (None, None)) if sha else (None, None)
-        dispo = dispo_by_sha.get(sha) if sha else None
+        record = verdict_by_sha.get(sha) if sha else None
+        dispo = (record.get("decision") or {}).get("disposition") if record else None
+        binding_status = None
+        keeper = False
+        if record is not None and dispo:
+            try:
+                current = not _live_failures(project, shot_id, record)
+            except Exception:
+                current = False  # unverifiable binding is never current (fail closed)
+            binding_status = "current" if current else "stale"
+            keeper = dispo == "KEEP" and current
         fam["takes"].append({
             "take": take.name,
             "media_sha256": sha,
@@ -104,27 +130,54 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
             "request_digest": digest,
             "redo_of": getattr(take.sidecar, "redo_of", None),
             "review_disposition": dispo,
-            "keeper": dispo == "KEEP",
+            "historical_disposition": dispo,
+            "binding_status": binding_status,
+            "keeper": keeper,
             "selected": take.name == selected,
         })
 
-    return {
+    out: dict[str, Any] = {
         "shot": shot_id,
         "families": sorted(families.values(), key=lambda f: f["family_id"]),
     }
+    if cycles:
+        out["diagnostics"] = [
+            {
+                "code": "REDO_LINEAGE_CYCLE",
+                "severity": _WARNING,
+                "members": members,
+                "canonical_representative": members[0],  # min name (sorted)
+                "message": "redo_of lineage forms a cycle — grouped under the "
+                           "canonical representative; fix the sidecars by hand "
+                           "if the lineage is wrong (never auto-rewritten)",
+            }
+            for members in sorted(cycles.values())
+        ]
+    return out
 
 
 def _lineage_root(take, by_name: dict, *, max_hops: int = 32):
-    """Follow ``redo_of`` to the chain root (cycle/dangling-safe)."""
+    """Follow ``redo_of`` to the chain root. Returns ``(root, cycle_members)``
+    — ``cycle_members`` is the list of take names forming a cycle when one is
+    hit (empty otherwise). On a cycle the root is the STABLE canonical
+    representative (min take name among the cycle's members), so every take
+    walking into the same cycle lands in the SAME family regardless of entry
+    point (WP4 6.3; pre-hardening each member rooted at its predecessor,
+    splitting the cycle across families)."""
+    order = [take.name]
     seen = {take.name}
     cur = take
     for _ in range(max_hops):
         parent = getattr(cur.sidecar, "redo_of", None)
-        if not parent or parent not in by_name or parent in seen:
-            return cur
+        if not parent or parent not in by_name:
+            return cur, []
+        if parent in seen:
+            cycle = order[order.index(parent):]
+            return by_name[min(cycle)], cycle
         seen.add(parent)
+        order.append(parent)
         cur = by_name[parent]
-    return cur
+    return cur, []
 
 
 def _attempt_output_index(project: "Project", shot_id: str) -> dict[str, tuple]:
@@ -155,14 +208,18 @@ def _attempt_output_index(project: "Project", shot_id: str) -> dict[str, tuple]:
     return out
 
 
-def _dispositions_by_sha(project: "Project", shot_id: str) -> dict[str, str]:
+def _verdicts_by_sha(project: "Project", shot_id: str) -> dict[str, dict]:
+    """media sha256 → the latest v2 record carrying a decision for those exact
+    bytes (file order — later verdicts win). The FULL record is kept so keeper
+    can be re-verified against CURRENT bindings via ``_live_failures`` (WP4
+    6.1) instead of trusting the disposition string alone."""
     try:
         from .agent_review import read_v2_records
 
         records, _ = read_v2_records(project)
     except Exception:
         return {}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     for rec in records:  # file order — later verdicts win
         subj = rec.get("subject") or {}
         if subj.get("kind") != "shot" or subj.get("id") != shot_id:
@@ -170,7 +227,7 @@ def _dispositions_by_sha(project: "Project", shot_id: str) -> dict[str, str]:
         dispo = (rec.get("decision") or {}).get("disposition")
         sha = rec.get("media_sha256")
         if dispo and sha:
-            out[sha] = dispo
+            out[sha] = rec
     return out
 
 
@@ -260,7 +317,27 @@ def continuation_view(project: "Project", shot_id: str) -> dict[str, Any] | None
         return None
     pinned = getattr(shot.continuity, "source_media_sha256", None)
 
-    src = accepted_observed_state(project, prev_id)
+    # Hardening WP4 6.2 (claim 8): a shot that DECLARES continuity.prev must
+    # never lose its gate to a raising derivation — pre-hardening the exception
+    # propagated into prompt_checks' `except: pass` and the gate silently
+    # vanished. Unavailable evidence is a blocking finding, not silence.
+    try:
+        src = accepted_observed_state(project, prev_id)
+    except Exception as exc:
+        return {
+            "subject": shot_id,
+            "source_shot": prev_id,
+            "source_status": "unavailable",
+            "checks": [_check(
+                "CONTINUATION_CHECK_UNAVAILABLE",
+                f"续接源 {prev_id} 的验收/观察证据当前无法推导"
+                f"({type(exc).__name__})— 证据不可用时不得静默放行续写",
+                [f"shots/{shot_id}.yaml#/continuity/prev"],
+                f"修复 {prev_id} 的评审证据(reports/ 下 v2 记录/媒体可读性)"
+                "后重试;或显式改写 continuity.prev",
+            )],
+            "do_not_execute_automatically": True,
+        }
     checks: list[dict[str, Any]] = []
     src_path = f"shots/{shot_id}.yaml#/continuity/prev"
 
