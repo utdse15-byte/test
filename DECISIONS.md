@@ -773,3 +773,30 @@ verified — deleting it changes nothing.**
   guards locally and the completion report says so.
 - Budget: 2 of 8 production files, exactly 1 new public schema, 35
   red-first tests, old profiles derive MASTER (compat pinned).
+
+## 24. 09_11G — the discipline held: nothing to build, and we can prove it (2026-07-11)
+
+The anti-overbuild gate batch (AI_IDE_09_11G, replacing 09R/11R). Core
+principle: **for a single-operator local workspace, resume and single-host
+safety are already owned — by status/tasks/exports/agent_surface on the read
+side and by build-lock/06-admission/limiter on the write side; the deliverable
+is PROOF, not features.** Outcome: Path A — SKIPPED_WITH_EVIDENCE, 0
+production files, 0 new schemas, 26 characterization tests
+(tests/test_c0911_gates.py) as the standing evidence.
+
+- **Resume**: a real interrupted-session transcript (killed run, dead-pid
+  lock holder, unknown paid submission) is fully recoverable read-only; the
+  §4 trigger chain failed decisively (no missing safety information, next
+  safe action decided, every mis-action engine-blocked regardless). No
+  status resume section, no ResumeCapsule, no SkillLock (REJECTED — the
+  surface digest covers the TOOL surface by design; skill files are sources
+  under git like everything else).
+- **Single host**: two real OS processes cannot duplicate a paid submit
+  (SQLite CAS admits exactly one) nor dual-own the build lock; the limiter
+  holds its manifest cap without leaks and cache hits never consume vendor
+  permits; classifications survive a full .manju wipe; cancel stays honest —
+  and REMOTE_CANCEL_CONFIRMED is REJECTED_WITH_REASON because no provider
+  cancel API exists to confirm through (recording a confirmation state we
+  cannot obtain would be a lie).
+- **Lease/fencing REJECTED_WITH_REASON**: no reproducible dual ownership
+  exists to justify one.
