@@ -6347,18 +6347,38 @@ def series_new(
 
 
 @series_app.command("status")
-def series_status_cmd(as_json: bool = typer.Option(False, "--json")):
+def series_status_cmd(as_json: bool = typer.Option(False, "--json"),
+                      health: bool = typer.Option(
+                          False, "--health",
+                          help="AI_IDE_17 WP3: fold the season-health aggregation "
+                               "(release readiness/unresolved submissions/drift/"
+                               "refs/variants/locale/budget per episode + season "
+                               "ready-never-masks verdict) into the --json output")):
     """跨集状态汇总:每集镜头分布 / 成片 / 花费,加合计行(复用单项目机制,只读)。"""
     from .core.series import SeriesError, series_status
 
     series = _series()
     try:
         info = series_status(series)
+        if health:
+            # AI_IDE_17: additive season_health section — pure aggregation of
+            # per-episode CURRENT evidence (core/series_state.py); the classic
+            # keys above stay byte-identical (basic-series behaviour unchanged).
+            from .core.series_state import season_health
+
+            info["season_health"] = season_health(series)
     except SeriesError as exc:
         _fail(str(exc))
     if as_json:
         _emit(info, True)
         return
+    if health:
+        sh = info.get("season_health") or {}
+        flag = "READY" if sh.get("ready") else "NOT READY"
+        typer.secho(f"season health: {flag}", fg=(
+            typer.colors.GREEN if sh.get("ready") else typer.colors.YELLOW))
+        for blk in sh.get("not_ready") or []:
+            typer.echo(f"  ✗ {blk['id']}: {blk['reason']}")
     typer.secho(f"剧集 / series  {info['series']}", fg=typer.colors.CYAN)
     for e in info["episodes"]:
         title = f"  {e['title']}" if e.get("title") else ""
@@ -6603,6 +6623,47 @@ def series_split_script_cmd(
     if report.get("unused_force"):
         typer.secho(f"  ⚠ 未命中的 --force: {', '.join(report['unused_force'])}",
                     fg=typer.colors.YELLOW)
+
+
+@series_app.command("outline")
+def series_outline_cmd(
+    package: Path,
+    apply: bool = typer.Option(False, "--apply",
+                               help="人工确认后创建分集(走既有 new-episode 路径)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """AI_IDE_17 WP4:EpisodeOutlinePackage 检查/应用。Skill/Director 提出拆集提案
+    (source spans、标题、目标时长、cliffhanger 仅为建议字段);引擎只验证 span
+    覆盖/顺序/重复。默认零写入 inspect;--apply 经既有 new_episode 创建分集。"""
+    from .build.seriespack import (SeriesPackError, apply_outline,
+                                   inspect_outline, load_outline_package)
+
+    series = _series()
+    try:
+        pkg = load_outline_package(package)
+        report = inspect_outline(series, pkg)
+        applied = apply_outline(series, pkg, actor=ACTOR) if apply else None
+    except SeriesPackError as exc:
+        _fail(str(exc))
+        return
+    if as_json:
+        _emit({"inspect": report, "applied": applied}, True)
+        return
+    ok = "通过" if report["ok"] else "未通过"
+    typer.secho(f"outline 检查 {ok}  (source={report.get('source_script') or '—'})",
+                fg=typer.colors.GREEN if report["ok"] else typer.colors.RED)
+    for d in report["diagnostics"]:
+        typer.secho(f"  ✗ {d['code']}  {d.get('episode') or ''}  {d.get('detail') or ''}",
+                    fg=typer.colors.RED)
+    for row in report["episodes"]:
+        cliff = f"  悬念: {row['cliffhanger']}" if row.get("cliffhanger") else ""
+        typer.echo(f"  {row['id']}  {row['title']}  span={row['span']}  "
+                   f"{'已存在' if row['exists'] else '将新建'}{cliff}")
+    if applied:
+        typer.secho(f"  已应用:创建 {sum(1 for r in applied['applied'] if r['created'])} 集",
+                    fg=typer.colors.GREEN)
+    elif not apply:
+        typer.secho("  零写入检查;加 --apply 才创建分集", fg=typer.colors.BRIGHT_BLACK)
 
 
 if __name__ == "__main__":
