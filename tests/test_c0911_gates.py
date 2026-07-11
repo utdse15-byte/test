@@ -483,17 +483,23 @@ try:
     lock.acquire()
 except BuildLocked:
     print("LOCKED"); sys.exit(0)
-time.sleep(0.4)  # hold it long enough for the sibling to lose
+t_acq = time.time()          # wall clock: comparable across sibling processes
+time.sleep(0.4)              # hold, attempting real overlap with the sibling
 lock.release()
-print("ACQUIRED")
+print(f"ACQUIRED {t_acq:.6f} {time.time():.6f}")
 """
 
 
 def test_b4_g11_5_two_processes_race_build_lock_single_owner(tmp_project):
     """G11-5 — the dual-ownership probe: two OS processes race the project
-    build lock simultaneously. O_EXCL admits exactly one; the loser gets
-    BuildLocked with holder info. No reproducible dual ownership exists, so
-    lease/fencing stays REJECTED_WITH_REASON."""
+    build lock simultaneously. THE invariant is that the two hold intervals
+    NEVER OVERLAP (an overlap is dual ownership). Under CI scheduling
+    starvation the loser may legitimately acquire AFTER the winner released
+    (sequential ACQUIRED/ACQUIRED) — that is not dual ownership, and the old
+    assertion that exactly one process must lose was what made this test
+    flake red on GitHub CI while ALSO exposing a real steal race (b16).
+    Lease/fencing stays REJECTED_WITH_REASON: the lock itself, fixed, is the
+    single-owner mechanism."""
     script = tmp_project.root / "_lock_race.py"
     script.write_text(_LOCK_SCRIPT, encoding="utf-8")
     barrier = tmp_project.root / "_go_lock"
@@ -502,9 +508,19 @@ def test_b4_g11_5_two_processes_race_build_lock_single_owner(tmp_project):
     time.sleep(0.3)
     barrier.write_text("go")
     out1, out2 = _finish(p1), _finish(p2)
-    verdicts = sorted([out1[-1], out2[-1]])
-    assert verdicts == ["ACQUIRED", "LOCKED"], verdicts
-    assert not (tmp_project.runtime_dir / "build.lock").exists()  # winner released
+    lines = sorted([out1[-1], out2[-1]])
+    assert "BARRIER_TIMEOUT" not in lines, lines
+    acquired = [l for l in lines if l.startswith("ACQUIRED")]
+    assert acquired, lines                       # at least one always wins
+    if len(acquired) == 1:
+        assert lines.count("LOCKED") == 1, lines  # the simultaneous case
+    else:
+        # sequential double-acquire: legal IFF the hold intervals are disjoint
+        spans = sorted(tuple(map(float, l.split()[1:3])) for l in acquired)
+        (a_start, a_end), (b_start, b_end) = spans
+        assert a_end <= b_start, (
+            f"DUAL OWNERSHIP: hold intervals overlap "
+            f"[{a_start:.6f},{a_end:.6f}] vs [{b_start:.6f},{b_end:.6f}]")
 
 
 def test_b5_g11_2_limiter_cap_holds_under_concurrency(monkeypatch):
@@ -843,3 +859,60 @@ def test_b15_wp6_delete_dot_manju_without_rebuild_still_fail_closes(tmp_project,
         provider.generate(_req(tmp_project, shot))
     assert provider.submit_calls == 0
     assert exc.value.detail.get("automatic_resubmit") is False
+
+
+# ================= b16: the mid-acquire empty-lock steal window (CI's find)
+
+
+def test_b16_fresh_empty_lock_is_not_stolen(tmp_project):
+    """FINAL_ACCEPTANCE F4/D root cause — the race GitHub CI reproduced that
+    our container never did: BuildLock._create() used to open O_EXCL and THEN
+    write the holder JSON, while _is_stale() treated an empty/unparsable lock
+    as stale OUTRIGHT. A sibling landing in the open->write window read the
+    empty file, judged it stale, deleted the winner's lock and acquired —
+    ['ACQUIRED', 'ACQUIRED'], real dual ownership.
+
+    Deterministic reproduction: an EMPTY lock file that is FRESH (a writer
+    mid-acquire) must NOT be stealable; once it is genuinely old it is a
+    corpse and MAY be stolen. RED at HEAD: the fresh empty lock was stolen
+    immediately."""
+    import os as _os
+    import time as _time
+
+    from manju.runtime.buildlock import BuildLock, BuildLocked
+
+    lock_path = tmp_project.root / ".manju" / "build.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_bytes(b"")                 # a writer between open and write
+
+    with pytest.raises(BuildLocked):           # fresh empty => NOT stealable
+        BuildLock(tmp_project.root, actor="ai").acquire()
+    assert lock_path.exists()                  # the winner's lock survived
+
+    # ...but a genuinely OLD empty lock is a corpse: stealable via the
+    # existing staleness machinery (backdate far past any grace).
+    old = _time.time() - 3600
+    _os.utime(lock_path, (old, old))
+    lk = BuildLock(tmp_project.root, actor="ai", stale_after_s=600).acquire()
+    try:
+        assert lock_path.read_text(encoding="utf-8")  # never exists empty now
+    finally:
+        lk.release()
+
+
+def test_b17_lock_file_never_visible_empty(tmp_project):
+    """With write-then-hardlink creation the lock file's first visible state
+    already carries the full holder JSON — the steal window cannot exist."""
+    from manju.runtime.buildlock import BuildLock
+
+    lk = BuildLock(tmp_project.root, actor="ai").acquire()
+    try:
+        lock_path = tmp_project.root / ".manju" / "build.lock"
+        holder = json.loads(lock_path.read_text(encoding="utf-8"))
+        assert holder.get("pid") == os.getpid()
+        # no stray temp siblings left behind
+        strays = [p for p in lock_path.parent.iterdir()
+                  if p.name.startswith("build.lock.") and p != lock_path]
+        assert strays == []
+    finally:
+        lk.release()

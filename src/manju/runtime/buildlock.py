@@ -11,11 +11,19 @@ mutating entrypoint (CLI, GUI, MCP) funnels its work through one
 time. The loser gets a :class:`BuildLocked` with a one-line, actionable
 finding instead of a corrupted timeline.
 
-Mechanism: atomic ``os.open(path, O_CREAT | O_EXCL | O_WRONLY)``. O_EXCL over
-``fcntl`` on purpose:
+Mechanism: write-then-hardlink — the holder JSON is fully written (and
+fsynced) to a per-pid temp sibling, then ``os.link``ed to the lock path.
+Link creation is atomic AND the lock file's first visible state already
+carries the complete holder record, so no sibling can ever observe an empty
+lock mid-acquire (FINAL_ACCEPTANCE F4/D: GitHub CI reproduced a real dual
+ownership through exactly that window — O_EXCL-create THEN write left an
+empty file that the old "empty = stale outright" rule let a racing sibling
+steal). Filesystems without hard links fall back to the historical
+``O_CREAT | O_EXCL`` create-then-write; the staleness grace below keeps the
+fallback safe too. O_EXCL/link over ``fcntl`` on purpose:
 
 - portable — ``fcntl`` does not exist on Windows, and Chinese/Windows paths
-  are first-class (§14); O_EXCL-create is atomic everywhere we run.
+  are first-class (§14); both creates are atomic everywhere we run.
 - the lock file doubles as human-readable holder info: JSON with ``pid``,
   ``actor``, ``started`` and ``hostname``, so ``cat .manju/build.lock`` (or
   the BuildLocked message itself) tells a stuck user exactly who holds the
@@ -33,8 +41,12 @@ when any of:
   While held, a daemon heartbeat thread touches the mtime every
   ``min(stale_after_s / 4, 30)`` seconds, so a long render never *looks*
   stale.
-- **corrupt** — an empty or non-JSON lock file can only be a torn write from
-  a process that died mid-acquire; treated as stale outright.
+- **corrupt AND old** — an empty or non-JSON lock file is a torn write from
+  a dead process ONLY once it has aged past a short grace
+  (``_CORRUPT_GRACE_S``); a FRESH unparsable lock is presumed to be a
+  legacy/fallback writer mid-acquire and is NOT stealable (the CI-caught
+  dual-ownership fix; with link-create the window no longer exists at all,
+  the grace guards the O_EXCL fallback and tampered files).
 
 A stale lock is removed and the atomic create retried exactly once; losing
 that race raises :class:`BuildLocked` like any fresh lock. Consistent with §3
@@ -59,6 +71,11 @@ __all__ = ["BuildLock", "BuildLocked", "build_lock"]
 
 LOCK_DIR = ".manju"  # the disposable runtime dir (§3); mkdir'd on demand
 _HEARTBEAT_CAP_S = 30.0  # never beat slower than this, however lax the staleness
+# How long an EMPTY/unparsable lock must sit before it counts as a corpse. A
+# fresh one is a mid-acquire writer (O_EXCL fallback path) — stealing it is the
+# dual-ownership race GitHub CI reproduced. 10s dwarfs any open->write gap by
+# orders of magnitude while a genuinely torn lock still clears fast.
+_CORRUPT_GRACE_S = 10.0
 
 
 def _pid_alive(pid: int) -> bool:
@@ -160,20 +177,46 @@ class BuildLock:
         return self
 
     def _create(self) -> None:
-        """The atomic acquire: O_CREAT | O_EXCL either mints the file or raises
-        FileExistsError. Holder JSON is written through the same fd so the
-        empty-file window is as small as the OS allows."""
-        fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        """The atomic acquire: holder JSON is FULLY written (+fsynced) to a
+        per-pid temp sibling, then hard-linked to the lock path. ``os.link``
+        either mints the lock (already complete — no empty-file window, the
+        FINAL_ACCEPTANCE F4/D fix) or raises FileExistsError. Filesystems
+        without hard links (rare: some FAT/network mounts) fall back to the
+        historical O_EXCL create-then-write; ``_is_stale``'s corrupt-grace
+        keeps that fallback unstealable mid-acquire."""
+        holder = {
+            "pid": os.getpid(),
+            "actor": self.actor,
+            "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "hostname": self._hostname,
+        }
+        payload = json.dumps(holder, ensure_ascii=False).encode("utf-8")
+        tmp = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
         try:
-            holder = {
-                "pid": os.getpid(),
-                "actor": self.actor,
-                "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "hostname": self._hostname,
-            }
-            os.write(fd, json.dumps(holder, ensure_ascii=False).encode("utf-8"))
+            fd = os.open(tmp, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
+            try:
+                os.write(fd, payload)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            try:
+                os.link(tmp, self.path)  # atomic; target appears fully written
+                return
+            except FileExistsError:
+                raise
+            except OSError:
+                # hard links unsupported here — historical O_EXCL fallback (the
+                # corrupt-grace in _is_stale closes its mid-acquire window).
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                try:
+                    os.write(fd, payload)
+                finally:
+                    os.close(fd)
         finally:
-            os.close(fd)
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     # ------------------------------------------------------------ staleness
 
@@ -188,11 +231,18 @@ class BuildLock:
         return data if isinstance(data, dict) else None
 
     def _is_stale(self, holder: dict[str, Any] | None) -> bool:
-        if holder is None:
-            return True  # empty / non-JSON: only a torn or tampered write
-        pid = holder.get("pid")
-        if not isinstance(pid, int) or isinstance(pid, bool):
-            return True  # our writer always records an int pid — corrupt
+        pid = holder.get("pid") if holder is not None else None
+        corrupt = holder is None or not isinstance(pid, int) or isinstance(pid, bool)
+        if corrupt:
+            # FINAL_ACCEPTANCE F4/D: a FRESH unparsable lock is a mid-acquire
+            # writer (O_EXCL fallback), NOT a corpse — stealing it was the
+            # dual-ownership race GitHub CI reproduced. Only corrupt AND old
+            # is stealable.
+            try:
+                age = time.time() - self.path.stat().st_mtime
+            except OSError:
+                return True  # vanished mid-check; the retried create decides
+            return age > _CORRUPT_GRACE_S
         if holder.get("hostname") == self._hostname and not _pid_alive(pid):
             return True  # provably dead on this very host
         try:

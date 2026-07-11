@@ -140,14 +140,29 @@ def test_stale_by_age_alive_pid_other_host(tmp_path):
 
 @pytest.mark.parametrize("content", ["", "not json {{{", "[1, 2, 3]"])
 def test_corrupt_lock_file_is_treated_as_stale(tmp_path, content):
+    # FLIPPED (FINAL_ACCEPTANCE F4/D): corrupt is stealable only once OLD —
+    # a FRESH unparsable lock is a mid-acquire writer (the empty-window steal
+    # was the dual ownership GitHub CI reproduced). Backdate past the grace.
     lock = BuildLock(tmp_path)
     _write_holder(lock.path, text=content)
-    lock.acquire()  # empty / non-JSON / non-dict: torn write -> stale
+    old_ts = time.time() - 60  # far past _CORRUPT_GRACE_S
+    os.utime(lock.path, (old_ts, old_ts))
+    lock.acquire()  # empty / non-JSON / non-dict AND old: torn write -> stale
     try:
         holder = json.loads(lock.path.read_text(encoding="utf-8"))
         assert holder["pid"] == os.getpid()
     finally:
         lock.release()
+
+
+@pytest.mark.parametrize("content", ["", "not json", "[1, 2, 3]"])
+def test_fresh_corrupt_lock_is_not_stolen(tmp_path, content):
+    """FINAL_ACCEPTANCE F4/D companion: a FRESH corrupt/empty lock presumes a
+    mid-acquire sibling — BuildLocked, never a steal (the CI-caught race)."""
+    lock = BuildLock(tmp_path)
+    _write_holder(lock.path, text=content)
+    with pytest.raises(BuildLocked):
+        BuildLock(tmp_path).acquire()
 
 
 # -------------------------------------------------------------------- release
