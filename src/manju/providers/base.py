@@ -228,6 +228,12 @@ class GenerationRequest:
     # how ``_on_success``/``_on_failure`` thread the SAME attempt_id onto the
     # runs row (tasks --json parity for the expensive path, not just local).
     evidence_attempt_id: str | None = None
+    # 08_10_12C WP3 (additive, default-absent): the parent take name when this
+    # request is an EXPLICIT recipe-replay redo (`manju redo --from-take X`).
+    # ``Provider._register`` stamps it onto every produced take's sidecar as
+    # ``redo_of`` so the derived candidate-family view can join the redo to its
+    # creative family. Provenance only — providers must not read it.
+    redo_of: str | None = None
 
     def refset(self) -> "RefSet":
         """The resolved :class:`~manju.providers.refs.RefSet` for this shot.
@@ -322,6 +328,9 @@ class Provider(ABC):
             remote=remote,
             probe=probe_media(media_file),
             source=source,
+            # 08_10_12C WP3: explicit-redo creative lineage (None otherwise —
+            # dropped on write, so non-redo takes stay byte-identical).
+            redo_of=req.redo_of,
         )
         return req.project.register_take(req.shot.id, media_file, sidecar)
 

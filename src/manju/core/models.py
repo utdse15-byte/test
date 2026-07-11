@@ -358,6 +358,16 @@ class TakeSidecar(ManjuModel):
     # no mass restage). The generation path (providers/base.py Provider.
     # _register) stamps every NEW take with the current SPEC_VERSION.
     spec_version: int | None = None
+    # 08_10_12C WP3: creative lineage for an EXPLICIT recipe-replay redo
+    # (`manju redo --from-take X`) — the parent take's name. This is what lets
+    # the DERIVED candidate-family view join a redo to its creative family
+    # even across a source edit (a redo emits no attempt evidence — registry
+    # evidence is None outside a run — so the sidecar is the only durable
+    # carrier). Additive and default-absent (dropped by exclude_none on
+    # write): every pre-existing take reads back byte-identical, and the
+    # field never participates in spec_hash or any content key. Provenance
+    # only — never a build/cache/render input.
+    redo_of: str | None = None
 
     # Round W (issue #22): a negative in-point or a reversed/zero-length window
     # (out <= in) is not a legal trim — ``set_inout_take`` (media/repair_ops.py)

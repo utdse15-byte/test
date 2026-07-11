@@ -1772,6 +1772,10 @@ class _RedoPlan:
     cost: float
     currency: str | None
     candidates: int | None  # explicit --candidates override, else None
+    # 08_10_12C WP3: the replayed parent take name for an explicit
+    # `--from-take` redo — stamped onto the new take sidecars as ``redo_of``
+    # (creative-family lineage). None for a plain redo (no single parent).
+    redo_of: str | None = None
 
 
 def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
@@ -1806,7 +1810,7 @@ def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
     # would otherwise be estimated off the static fallback-chain head.
     priced_shot = _routed_shot_for_pricing(project, shot)
     cost, currency = _estimate_shot_cost(priced_shot, _target_duration_ms(project, shot, rules))
-    return _RedoPlan(shot, params, cost, currency, candidates)
+    return _RedoPlan(shot, params, cost, currency, candidates, redo_of=from_take)
 
 
 def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
@@ -1839,6 +1843,8 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
         # refs use the request params (which on a redo carry the reused take's
         # image), matching the resolver's params-tier read (goal item 7).
         refs=resolve_refs(project, shot, bible, params=plan.params),
+        # 08_10_12C WP3: explicit-redo lineage travels to the take sidecar.
+        redo_of=plan.redo_of,
     )
     takes = generate_with_fallback(req, fallback_chain(shot))
     if not shot.status.selected_take and takes:

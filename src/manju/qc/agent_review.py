@@ -102,6 +102,28 @@ CONSISTENCY_NOTE = ("先 manju skills show visual-qc-review 获取判读标准 A
 LEVELS = ("blocker", "issue", "fyi")
 LEVEL_MAP = {"blocker": "error", "issue": "warn", "fyi": "info"}
 
+# 08_10_12C WP4 (Path A) — additive OPTIONAL production-decision fields on the
+# EXISTING verdict v2. Absent => legacy verdict, byte-compatible. Present =>
+# validated at intake (payload-invalid ⇒ whole-batch reject, zero writes) and
+# persisted verbatim on the stored record. The reviewer still never writes
+# assurance: acceptance stays qc/assurance.py's pure function; these fields are
+# routing/view data (candidate family views, repair mapping), never an
+# acceptance input.
+DISPOSITIONS = ("KEEP", "FIX_IN_POST", "EDIT_DONT_REGENERATE",
+                "REROLL", "REWRITE_SOURCE")
+# §9.3: the one primary variable the next diagnostic try may change.
+REPAIR_VARIABLES = (
+    "clip_scope", "source_action", "camera", "motion", "endpoint",
+    "reference_role", "reference_asset", "framing", "lighting",
+    "text_overlay", "audio", "seed", "provider_surface", "safety_wording",
+    "post_trim", "post_mask", "post_grade",
+)
+# §9.4: transient (opening/endpoint) observation enums — bound to the reviewed
+# media bytes, NEVER promoted into Bible identity facts.
+OBS_STATE_VISIBILITY = ("VISIBLE", "NOT_VISIBLE", "UNCERTAIN",
+                        "NOT_EVALUATED", "NOT_APPLICABLE")
+OBS_STATE_POSITIONS = ("START", "END")
+
 # The 中文 prefix that marks a finding as the driving agent's own judgment.
 AI_PREFIX = "[AI判读]"
 
@@ -398,6 +420,21 @@ def qc_brief(project: "Project", shots: list[str] | None = None, *,
                 "evidence_frames": packet["evidence_frames"],
                 "review_skill": packet["review_skill"],
             })
+        except Exception:
+            pass
+        # 08_10_12C WP4 §9.1: candidate-family + continuation context ride the
+        # brief row as DERIVED, optional views (never persisted, never packet
+        # identity). Best-effort — a view failure never breaks the brief.
+        try:
+            from .production import candidate_families, continuation_view
+
+            fams = candidate_families(project, sid)["families"]
+            row["candidate_family"] = next(
+                (f for f in fams if any(m["take"] == take.name for m in f["takes"])),
+                None)
+            cont = continuation_view(project, sid)
+            if cont is not None:
+                row["continuation"] = cont
         except Exception:
             pass
         reviewed.append(row)
@@ -1090,6 +1127,75 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
         if _is_unsafe_ref(fnd.get("evidence")):
             errs.append(f"verdict #{idx} finding #{j}: 不安全的 evidence 路径")
 
+    # ---- step 8 (08_10_12C WP4, Path A additive): production decision +
+    # transient observed states. OPTIONAL — absent is a legal legacy payload.
+    # Present but malformed ⇒ payload-invalid ⇒ whole-batch reject, zero writes.
+    decision_norm = None
+    decision = v.get("decision")
+    if decision is not None:
+        if not isinstance(decision, dict):
+            errs.append(f"verdict #{idx}: decision 必须是对象")
+        else:
+            dispo = decision.get("disposition")
+            if dispo not in DISPOSITIONS:
+                errs.append(f"verdict #{idx}: decision.disposition 必须是 "
+                            f"{'|'.join(DISPOSITIONS)} 之一,收到 {dispo!r}")
+            prv = decision.get("primary_repair_variable")
+            if dispo in DISPOSITIONS and dispo != "KEEP" and prv is None:
+                errs.append(f"verdict #{idx}: 非 KEEP 的 decision 必须指定一个 "
+                            "primary_repair_variable(§9.3 one-variable rule)")
+            if prv is not None and prv not in REPAIR_VARIABLES:
+                errs.append(f"verdict #{idx}: 未知 primary_repair_variable {prv!r}"
+                            f"(必须是 {'|'.join(REPAIR_VARIABLES)} 之一)")
+            iso = decision.get("diagnostic_isolation", True)
+            if not isinstance(iso, bool):
+                errs.append(f"verdict #{idx}: decision.diagnostic_isolation 必须是布尔值")
+            decision_norm = {"disposition": dispo, "diagnostic_isolation": iso}
+            if prv is not None:
+                decision_norm["primary_repair_variable"] = prv
+            reason = decision.get("reason")
+            if reason is not None:
+                decision_norm["reason"] = str(reason)
+
+    obs_states_norm = None
+    obs_states = v.get("observed_states")
+    if obs_states is not None:
+        if not isinstance(obs_states, list):
+            errs.append(f"verdict #{idx}: observed_states 必须是数组")
+        else:
+            obs_states_norm = []
+            for j, s in enumerate(obs_states):
+                if not isinstance(s, dict):
+                    errs.append(f"verdict #{idx} observed_state #{j}: 必须是对象")
+                    continue
+                dim = str(s.get("dimension") or "").strip()
+                if not dim:
+                    errs.append(f"verdict #{idx} observed_state #{j}: 缺少 dimension")
+                if s.get("position") not in OBS_STATE_POSITIONS:
+                    errs.append(f"verdict #{idx} observed_state #{j}: position 必须是 "
+                                f"{OBS_STATE_POSITIONS} 之一,收到 {s.get('position')!r}")
+                if s.get("visibility") not in OBS_STATE_VISIBILITY:
+                    errs.append(f"verdict #{idx} observed_state #{j}: visibility 必须是 "
+                                f"{OBS_STATE_VISIBILITY} 之一,收到 {s.get('visibility')!r}")
+                for ref in (s.get("evidence_refs") or []):
+                    if _is_unsafe_ref(ref):
+                        errs.append(f"verdict #{idx} observed_state #{j}: "
+                                    f"不安全的 evidence_ref {ref!r}")
+                conf = s.get("confidence")
+                if conf is not None and (not isinstance(conf, (int, float))
+                                         or isinstance(conf, bool)
+                                         or not 0.0 <= float(conf) <= 1.0):
+                    errs.append(f"verdict #{idx} observed_state #{j}: confidence "
+                                f"必须是 0..1 的数,收到 {conf!r}")
+                obs_states_norm.append({
+                    "dimension": dim,
+                    "position": s.get("position"),
+                    "value": str(s.get("value") or ""),
+                    "visibility": s.get("visibility"),
+                    "evidence_refs": list(s.get("evidence_refs") or []),
+                    "confidence": conf,
+                })
+
     if _contains_secret(v):
         errs.append(f"verdict #{idx}: 载荷疑似包含 API key/密钥,拒绝存储"
                     "(密钥只应存在于环境变量,§8.2)")
@@ -1163,6 +1269,12 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
         rec["media_members"] = packet.get("media_members")
     if binding_failures:
         rec["binding_failures"] = binding_failures
+    # 08_10_12C WP4 additive: persist the validated production decision +
+    # transient observed states verbatim (absent for legacy payloads).
+    if decision_norm is not None:
+        rec["decision"] = decision_norm
+    if obs_states_norm is not None:
+        rec["observed_states"] = obs_states_norm
     return rec, []
 
 

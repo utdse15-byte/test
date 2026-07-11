@@ -42,19 +42,19 @@ def _relpath(project: Project, path: Path | None) -> str | None:
         return str(path)
 
 
-def _references(project: Project, shot, bible: dict) -> dict[str, Any]:
-    """RefSet summary with per-ref tier lineage (goal item 7). Reuses the single
-    resolver so paths/kinds/tiers match exactly what the build would deliver."""
-    from ..providers.refs import resolve_refs
-
-    refset = resolve_refs(project, shot, bible)
+def _references(project: Project, refset) -> dict[str, Any]:
+    """RefSet summary with per-ref tier lineage (goal item 7). The caller
+    resolves the RefSet ONCE (the single resolver) and shares it with the
+    production checks, so paths/kinds/tiers/transfer fields match exactly what
+    the build would deliver."""
     return {
         "images": [_relpath(project, p) for p in refset.images],
         "videos": [_relpath(project, p) for p in refset.videos],
         "primary_image": _relpath(project, refset.primary_image),
         "primary_image_tier": refset.primary_image_source,
         "has_declared_refs": refset.has_declared_refs(),
-        # per-ref lineage: authored value, tier that supplied it, kind, existence
+        # per-ref lineage: authored value, tier that supplied it, kind,
+        # existence — plus (08_10_12C §7.4, additive) the declared transfer.
         "items": [
             {
                 "ref": it.ref,
@@ -63,6 +63,10 @@ def _references(project: Project, shot, bible: dict) -> dict[str, Any]:
                 "path": _relpath(project, it.path),
                 "is_url": it.is_url,
                 "exists": it.exists,
+                "controls": list(it.controls),
+                "ignore": list(it.ignore),
+                "subject_ref": it.subject_ref,
+                "declared_transfer": it.declared_transfer,
             }
             for it in refset.items
         ],
@@ -149,6 +153,7 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
     Raises :class:`~manju.core.container.ProjectError` when the shot does not
     exist (the caller turns that into a clean CLI failure). The returned dict is
     JSON-serialisable (paths are strings, findings are plain dicts)."""
+    from ..core.hashing import hash_value
     from ..core.spec import compute_spec_hash, spec_payload
     from ..providers.prompt import (
         compile_director_prompt,
@@ -156,12 +161,37 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
         compile_negative_prompt,
         compile_prompt,
     )
-    from ..qc.prompt_checks import check_shot
+    from ..providers.refs import resolve_refs
+    from ..qc.prompt_checks import (
+        check_shot,
+        production_checks,
+        surface_profile_digest,
+        surface_profile_for,
+    )
 
     shot = project.load_shot(shot_id)  # ProjectError if missing
     bible = project.load_bible()
 
     cost = _cost(project, shot)
+    refset = resolve_refs(project, shot, bible)  # ONE resolve, shared below
+    video_prompt = compile_prompt(shot, bible)
+    image_prompt = compile_image_prompt(shot, bible)
+    director_prompt = compile_director_prompt(shot, bible)
+    negative_prompt = compile_negative_prompt(shot)
+
+    # 08_10_12C WP2 — additive: the deterministic production checks and the
+    # compiler trace. Everything derives from THIS bundle's own inputs (the
+    # same code paths the build uses); nothing under reports/ is ever read.
+    prod_checks = production_checks(
+        project, shot, duration_ms=cost["duration_ms"],
+        video_prompt=video_prompt, refset=refset)
+    profile, freshness = surface_profile_for(shot)
+    try:
+        from ..qc.production import continuation_view
+
+        continuation = continuation_view(project, shot_id)
+    except Exception:
+        continuation = None
 
     return {
         "shot": shot_id,
@@ -170,16 +200,36 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
         "shot_spec": spec_payload(shot, bible),
         "spec_hash": compute_spec_hash(shot, bible),
         # (2) the prompts, assembled by the build's own code path (prompt.py).
-        "image_prompt": compile_image_prompt(shot, bible),
-        "video_prompt": compile_prompt(shot, bible),  # == the build's compiled_prompt
-        "director_prompt": compile_director_prompt(shot, bible),
-        "negative_prompt": compile_negative_prompt(shot),
+        "image_prompt": image_prompt,
+        "video_prompt": video_prompt,  # == the build's compiled_prompt
+        "director_prompt": director_prompt,
+        "negative_prompt": negative_prompt,
         # (3) references with per-ref tier lineage.
-        "references": _references(project, shot, bible),
+        "references": _references(project, refset),
         # (4) provider resolution: chosen + why + full fallback order.
         "provider": _provider_resolution(project, shot),
         # (5) estimated cost for this shot.
         "cost": cost,
         # (6) single-action checks (incl. split-shot suggestions).
         "checks": check_shot(project, shot, duration_ms=cost["duration_ms"]),
+        # (7) 08_10_12C production checks — proposal-only, never auto-applied.
+        "production_checks": prod_checks,
+        # (8) the compiler trace: which source revision + prompt bundle these
+        # projections came from, which surface-profile data was assumed (and
+        # how fresh it is), and — when the shot declares continuity.prev —
+        # the continuation source binding (Skill input, never a build input).
+        "compiler_trace": {
+            "source_revision": compute_spec_hash(shot, bible),
+            "prompt_bundle_digest": hash_value({
+                "image": image_prompt, "video": video_prompt,
+                "director": director_prompt, "negative": negative_prompt,
+            }),
+            "surface_profile": {
+                "id": profile["id"],
+                "digest": surface_profile_digest(profile),
+                "evidence_date": profile["evidence_date"],
+                "freshness": freshness,
+            },
+            "continuation_source": continuation,
+        },
     }

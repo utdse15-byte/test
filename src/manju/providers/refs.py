@@ -72,6 +72,21 @@ class RefItem:
     # one that resolves outside the project root — the untrusted-project
     # containment guard refused it rather than treating it as "missing".
     blocked_reason: str | None = None
+    # 08_10_12C WP2 §7.4 — reference-transfer declaration, additive on the
+    # EXISTING binding (a refs entry may be the dict form
+    # ``{ref: ..., controls: [...], ignore: [...], subject_ref: ...}``).
+    # Authored in generation.params / the shot's refs — so it participates in
+    # spec_hash and the request identity through the params the build already
+    # hashes. ``transfer_errors`` carries validation problems (unknown enum,
+    # controls∩ignore conflict) — never silently accepted, surfaced as
+    # REFERENCE_CONTROL_CONFLICT by the prompt production checks. A plain
+    # string ref stays byte-identical (declared_transfer=False), compatible
+    # but flagged REFERENCE_TRANSFER_UNDECLARED by the checks.
+    controls: tuple = ()
+    ignore: tuple = ()
+    subject_ref: str | None = None
+    declared_transfer: bool = False
+    transfer_errors: tuple = ()
 
 
 @dataclass
@@ -407,19 +422,75 @@ def _is_url(value: str) -> bool:
     return value.startswith(("http://", "https://"))
 
 
+# 08_10_12C WP2 §7.4 — the closed reference-transfer vocabulary. An unknown
+# token is NEVER silently accepted: it lands in ``transfer_errors`` and the
+# production checks refuse it (REFERENCE_CONTROL_CONFLICT).
+REF_TRANSFER_VOCAB = frozenset({
+    "character_identity", "face", "costume", "prop", "style",
+    "background", "pose", "framing", "lighting", "location",
+    "color_grade", "motion",
+})
+
+
+def _split_transfer(value: Any) -> tuple[Any, dict | None]:
+    """Accept the additive dict-form binding entry — ``{ref|path|image|video:
+    str, controls: [...], ignore: [...], subject_ref: ...}`` — returning the
+    plain ref value plus the transfer spec. A non-dict entry passes through
+    unchanged (legacy string bindings stay byte-identical)."""
+    if not isinstance(value, dict):
+        return value, None
+    ref = (value.get("ref") or value.get("path")
+           or value.get("image") or value.get("video") or "")
+    return ref, value
+
+
+def _transfer_fields(spec: dict | None) -> dict:
+    """Validated RefItem transfer fields from a dict-form entry. Unknown enums
+    and controls∩ignore conflicts are recorded, never dropped."""
+    if spec is None:
+        return {}
+    controls = tuple(str(c) for c in _as_list(spec.get("controls")))
+    ignore = tuple(str(c) for c in _as_list(spec.get("ignore")))
+    errors: list[str] = []
+    unknown = sorted({c for c in (*controls, *ignore) if c not in REF_TRANSFER_VOCAB})
+    if unknown:
+        errors.append("未知 transfer 枚举: " + ", ".join(unknown)
+                      + "(允许: " + ", ".join(sorted(REF_TRANSFER_VOCAB)) + ")")
+    overlap = sorted(set(controls) & set(ignore))
+    if overlap:
+        errors.append("controls 与 ignore 冲突: " + ", ".join(overlap))
+    subject = spec.get("subject_ref")
+    return {
+        "controls": controls,
+        "ignore": ignore,
+        "subject_ref": str(subject) if subject else None,
+        "declared_transfer": bool(controls or ignore or subject),
+        "transfer_errors": tuple(errors),
+    }
+
+
 def _make_item(project: "Project", value: Any, tier: str, kind: str) -> RefItem:
+    value, transfer = _split_transfer(value)
+    extra = _transfer_fields(transfer)
     s = str(value)
     if _is_url(s):
-        return RefItem(ref=s, tier=tier, kind=kind, path=None, is_url=True, exists=True)
+        return RefItem(ref=s, tier=tier, kind=kind, path=None, is_url=True,
+                       exists=True, **extra)
     p, reason = resolve_local_ref(project, s)
     exists = bool(p and p.exists() and p.is_file())
     return RefItem(ref=s, tier=tier, kind=kind, path=p, is_url=False, exists=exists,
-                   blocked_reason=reason)
+                   blocked_reason=reason, **extra)
 
 
 def _classify(project: "Project", value: Any, tier: str) -> RefItem:
-    """A mixed refs list entry: video by extension, else image."""
-    s = str(value)
+    """A mixed refs list entry: video by extension, else image. The dict form
+    may also name its kind via an explicit ``video:``/``image:`` key."""
+    plain, spec = _split_transfer(value)
+    if spec is not None and spec.get("video"):
+        return _make_item(project, value, tier, "video")
+    if spec is not None and spec.get("image"):
+        return _make_item(project, value, tier, "image")
+    s = str(plain)
     kind = "video" if Path(s.split("?", 1)[0]).suffix.lower() in _VIDEO_EXTS else "image"
     return _make_item(project, value, tier, kind)
 
@@ -483,4 +554,13 @@ def _first_existing_image(items: list[RefItem]) -> RefItem | None:
 
 
 def _ref_lineage(it: RefItem) -> dict:
-    return {"ref": it.ref, "tier": it.tier, "exists": it.exists, "is_url": it.is_url}
+    out = {"ref": it.ref, "tier": it.tier, "exists": it.exists, "is_url": it.is_url}
+    # 08_10_12C WP2: declared reference-transfer rides the lineage (additive —
+    # a legacy string binding emits the exact keys it always did).
+    if it.declared_transfer or it.transfer_errors:
+        out["controls"] = list(it.controls)
+        out["ignore"] = list(it.ignore)
+        out["subject_ref"] = it.subject_ref
+        if it.transfer_errors:
+            out["transfer_errors"] = list(it.transfer_errors)
+    return out

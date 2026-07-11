@@ -273,8 +273,11 @@ def check_shot(project, shot, *, duration_ms: int | None = None) -> list[dict[st
 
 
 def check_all(project) -> list[dict[str, Any]]:
-    """Run :func:`check_shot` over every shot; each finding tagged with its
-    ``shot`` id, in shot order. Used by ``manju prompt --check``."""
+    """Run :func:`check_shot` PLUS the 08_10_12C production checks over every
+    shot; each finding tagged with its ``shot`` id, in shot order. Used by
+    ``manju prompt --check`` (production findings carry the same
+    ``level``/``code``/``message``/``suggestion`` keys, so the printer and
+    :func:`has_blocking` treat them uniformly)."""
     out: list[dict[str, Any]] = []
     for sid in project.shot_ids():
         try:
@@ -283,6 +286,8 @@ def check_all(project) -> list[dict[str, Any]]:
             continue  # a broken shot file is `manju check`'s job, not this linter's
         for finding in check_shot(project, shot):
             out.append({"shot": sid, **finding})
+        for finding in production_checks(project, shot):
+            out.append({"shot": sid, **finding})
     return out
 
 
@@ -290,3 +295,354 @@ def has_blocking(findings: list[dict[str, Any]]) -> bool:
     """True when any finding is at a blocking (WARNING) level — the exit-code
     predicate for ``manju prompt --check``."""
     return any(f.get("level") in FAIL_LEVELS for f in findings)
+
+
+# ============================================================================
+# 08_10_12C WP2 — production checks (deterministic, read-only, never applied)
+#
+# Every finding names the problem + the authored source path and PROPOSES a
+# patch; nothing here splits shots, edits prompts, or touches refs. Shape is a
+# superset of the legacy finding dict (level/code/message/suggestion) plus the
+# contract keys (severity/source_paths/proposal/auto_apply=False), so the CLI
+# printer, ``has_blocking`` and the --json envelope all work unchanged.
+# ============================================================================
+
+CODE_CLIP_SCOPE_MULTIPLE = "CLIP_SCOPE_MULTIPLE_COMPLETED_ACTIONS"
+CODE_CLIP_SCOPE_FUTURE_LEAK = "CLIP_SCOPE_FUTURE_BEAT_LEAK"
+CODE_CLIP_SCOPE_ENDPOINT_MISSING = "CLIP_SCOPE_ENDPOINT_MISSING_FOR_CONTINUATION"
+CODE_REF_ROLE_AMBIGUOUS = "REFERENCE_ROLE_AMBIGUOUS"
+CODE_REF_TRANSFER_UNDECLARED = "REFERENCE_TRANSFER_UNDECLARED"
+CODE_REF_CONTROL_CONFLICT = "REFERENCE_CONTROL_CONFLICT"
+CODE_REF_SOURCE_STALE = "REFERENCE_SOURCE_STALE"
+CODE_SURFACE_PROFILE_STALE = "SURFACE_PROFILE_STALE"
+CODE_SURFACE_PROFILE_UNKNOWN = "SURFACE_PROFILE_UNKNOWN"
+CODE_PROMPT_BUDGET_EXCEEDED = "PROMPT_BUDGET_EXCEEDED"
+# PROVIDER_CAPABILITY_MISMATCH is DR04's fact — produced by CALLING preflight,
+# never by re-deriving its rules here.
+CODE_PROVIDER_CAPABILITY_MISMATCH = "PROVIDER_CAPABILITY_MISMATCH"
+
+# future-beat markers: things a single clip cannot show yet (reserved beats).
+_FUTURE_PATTERNS = (
+    r"将要", r"将会", r"即将", r"随后将", r"之后会", r"接下来会", r"未来",
+    r"下一镜", r"预示", r"埋下伏笔",
+    r"\bwill\s+(?:later|then|soon)\b", r"\babout\s+to\b",
+    r"\bin\s+the\s+next\s+shot\b", r"\bforeshadow\w*\b", r"\blater\s+reveal\w*\b",
+)
+_FUTURE_RE = re.compile("|".join(_FUTURE_PATTERNS), re.IGNORECASE)
+
+# endpoint markers: the shot authors where its picture LANDS (for continuation).
+_ENDPOINT_PATTERNS = (
+    r"最后", r"最终", r"结尾", r"定格", r"收在", r"落在", r"止于", r"停在",
+    r"\bends?\s+(?:on|with)\b", r"\bfinally\b", r"\bfreeze\s*frame\b",
+)
+_ENDPOINT_RE = re.compile("|".join(_ENDPOINT_PATTERNS), re.IGNORECASE)
+
+# ---------------------------------------------------------- surface profiles
+# §7.5: internal, source-dated data shipped WITH the compiler — never fetched,
+# never guessed from a brand prefix, never a substitute for DR04's capability
+# projection. Exactly one conservative family + an UNKNOWN fallback (no DSL).
+SURFACE_PROFILES: dict[str, dict[str, Any]] = {
+    "generic-video-v1": {
+        "id": "generic-video-v1",
+        "family": "generic-video",
+        "version": 1,
+        "status": "current",
+        "evidence_date": "2026-06-30",
+        "prompt_char_budget": 2000,
+        "reference_expression": "image_list",
+        "notes": "conservative cross-surface envelope; execution limits stay "
+                 "with DR04 provider profile/preflight",
+    },
+    "generic-video-v0": {
+        "id": "generic-video-v0",
+        "family": "generic-video",
+        "version": 0,
+        "status": "superseded",  # kept so an authored pin surfaces as STALE
+        "evidence_date": "2025-10-01",
+        "prompt_char_budget": 1500,
+        "reference_expression": "single_image",
+        "notes": "superseded by generic-video-v1",
+    },
+}
+
+UNKNOWN_SURFACE_PROFILE: dict[str, Any] = {
+    "id": "unknown",
+    "family": None,
+    "version": None,
+    "status": "unknown",
+    "evidence_date": None,
+    # conservative: assume the tightest budget we ship rather than guessing.
+    "prompt_char_budget": 1500,
+    "reference_expression": None,
+    "notes": "no surface profile declared/matched — conservative assumptions, "
+             "no guessed limits",
+}
+
+
+def surface_profile_for(shot) -> tuple[dict[str, Any], str]:
+    """(profile, freshness) for a shot. Selection is EXPLICIT ONLY —
+    ``generation.params.surface_profile`` names a profile id; no declaration
+    (or an unknown id) yields the conservative UNKNOWN profile. freshness ∈
+    CURRENT | STALE | UNKNOWN."""
+    pid = (getattr(shot.generation, "params", {}) or {}).get("surface_profile")
+    if not pid:
+        return UNKNOWN_SURFACE_PROFILE, "UNKNOWN"
+    profile = SURFACE_PROFILES.get(str(pid))
+    if profile is None:
+        return UNKNOWN_SURFACE_PROFILE, "UNKNOWN"
+    return profile, ("CURRENT" if profile.get("status") == "current" else "STALE")
+
+
+def surface_profile_digest(profile: dict[str, Any]) -> str:
+    from ..core.hashing import hash_value
+
+    return hash_value(profile)
+
+
+def _pcheck(code: str, severity: str, message: str, source_paths: list[str],
+            proposal: str) -> dict[str, Any]:
+    return {
+        "level": severity,          # printer/has_blocking compat
+        "severity": severity,
+        "code": code,
+        "message": message,
+        "suggestion": proposal,
+        "source_paths": source_paths,
+        "proposal": proposal,
+        "auto_apply": False,
+    }
+
+
+def _clip_scope_checks(project, shot, findings: list[dict[str, Any]]) -> None:
+    sid = shot.id
+    action_path = f"shots/{sid}.yaml#/action"
+    text = _action_text(shot)
+    clauses = split_clauses(text)
+    completed = [c for c in clauses if not _FUTURE_RE.search(c)]
+    future = [c for c in clauses if _FUTURE_RE.search(c)]
+
+    if len(completed) > MAX_ACTIONS:
+        findings.append(_pcheck(
+            CODE_CLIP_SCOPE_MULTIPLE, WARNING,
+            f"单 clip 装了 {len(completed)} 个完成动作(> {MAX_ACTIONS})— "
+            "一镜一个可见 beat,多动作会糊/丢",
+            [action_path], "split_or_rescope:拆镜或收窄 action 到一个 beat"))
+    if future:
+        findings.append(_pcheck(
+            CODE_CLIP_SCOPE_FUTURE_LEAK, WARNING,
+            "action/Prompt 泄漏了未来 beat(本镜不该演出): " + "; ".join(future),
+            [action_path],
+            "把未来剧情移到下一镜/故事 source,本镜只写当前可见 beat"))
+
+    # a shot OTHER shots continue from must author its endpoint.
+    continued_by = []
+    try:
+        for other_id in project.shot_ids():
+            if other_id == sid:
+                continue
+            try:
+                other = project.load_shot(other_id)
+            except Exception:
+                continue
+            if other.continuity and (other.continuity.prev or "").strip() == sid:
+                continued_by.append(other_id)
+    except Exception:
+        continued_by = []
+    if continued_by and text and not _ENDPOINT_RE.search(text):
+        findings.append(_pcheck(
+            CODE_CLIP_SCOPE_ENDPOINT_MISSING, WARNING,
+            f"{', '.join(sorted(continued_by))} 声明从本镜续接,但本镜 action "
+            "没有写明结尾落点(endpoint)",
+            [action_path],
+            "在 action 里写明画面收在哪个状态(如「最后定格在…」),"
+            "续接才有可验收的 endpoint"))
+
+
+def _reference_checks(project, shot, refset, findings: list[dict[str, Any]]) -> None:
+    from ..providers.refs import DECLARED_TIERS
+
+    sid = shot.id
+    declared_images = [it for it in refset.items
+                       if it.kind == "image" and it.tier in DECLARED_TIERS]
+    for it in declared_images:
+        src = [f"shots/{sid}.yaml#/generation/params ({it.tier}: {it.ref})"]
+        if it.transfer_errors:
+            findings.append(_pcheck(
+                CODE_REF_CONTROL_CONFLICT, WARNING,
+                f"reference {it.ref} 的 transfer 声明无效: "
+                + "; ".join(it.transfer_errors),
+                src, "修正 controls/ignore(不能重叠,只能用已知枚举)"))
+        elif not it.declared_transfer:
+            findings.append(_pcheck(
+                CODE_REF_TRANSFER_UNDECLARED, ADVISORY,
+                f"reference {it.ref} 未声明 transfer(controls/ignore/"
+                "subject_ref)— 旧式绑定仍兼容,但背景/姿态是否该迁移不可知",
+                src,
+                "把该 ref 写成 {ref: …, controls: [character_identity], "
+                "ignore: [background, pose]} 的显式绑定"))
+
+    with_decl = [it for it in declared_images if it.declared_transfer]
+    if len(declared_images) >= 2 and not any(
+            it.subject_ref or it.controls for it in with_decl):
+        findings.append(_pcheck(
+            CODE_REF_ROLE_AMBIGUOUS, ADVISORY,
+            f"{len(declared_images)} 张声明的 image reference 都没说各自控制什么"
+            "(身份?场景?风格?)— 角色不明的多 ref 会互相打架",
+            [f"shots/{sid}.yaml#/generation/params"],
+            "给每个 ref 声明 controls/subject_ref,分清身份 ref 与场景/风格 ref"))
+
+    # a ref pointing at another shot's take media that is no longer selected.
+    for it in refset.items:
+        if it.tier not in DECLARED_TIERS or not it.ref:
+            continue
+        stale = _take_ref_stale(project, it.ref)
+        if stale is not None:
+            ref_shot, ref_take, current = stale
+            findings.append(_pcheck(
+                CODE_REF_SOURCE_STALE, WARNING,
+                f"reference {it.ref} 指向 {ref_shot} 的 take {ref_take},"
+                f"但该镜当前选中的是 {current!r} — 引用源已过期",
+                [f"shots/{sid}.yaml#/generation/params ({it.tier})"],
+                f"确认要锚定的媒体:改指当前选中 take,或明确保留旧 take 的引用"))
+
+
+def _take_ref_stale(project, ref: str) -> tuple[str, str, str | None] | None:
+    """(shot, take, current_selected) when ``ref`` names a take media file of
+    a shot whose CURRENT selection differs; None otherwise. Pure path math on
+    the project's own gen layout — never guesses beyond it."""
+    norm = ref.replace("\\", "/")
+    if "media/gen/" not in norm:
+        return None
+    try:
+        tail = norm.split("media/gen/", 1)[1]
+        ref_shot, fname = tail.split("/", 1)
+        ref_take = fname.rsplit(".", 1)[0]
+    except (ValueError, IndexError):
+        return None
+    try:
+        if project.get_take(ref_shot, ref_take) is None:
+            return None
+        current = project.load_shot(ref_shot).status.selected_take
+    except Exception:
+        return None
+    if current == ref_take:
+        return None
+    return ref_shot, ref_take, current
+
+
+def _surface_checks(shot, video_prompt: str | None,
+                    findings: list[dict[str, Any]]) -> None:
+    sid = shot.id
+    params_path = f"shots/{sid}.yaml#/generation/params/surface_profile"
+    profile, freshness = surface_profile_for(shot)
+    declared = bool((getattr(shot.generation, "params", {}) or {})
+                    .get("surface_profile"))
+
+    if declared and freshness == "UNKNOWN":
+        findings.append(_pcheck(
+            CODE_SURFACE_PROFILE_UNKNOWN, WARNING,
+            f"声明的 surface_profile 不在已知表中 — 不猜测其限制,"
+            f"按保守 unknown profile 处理",
+            [params_path], "改用已知 profile id,或移除声明走保守假设"))
+    elif declared and freshness == "STALE":
+        findings.append(_pcheck(
+            CODE_SURFACE_PROFILE_STALE, WARNING,
+            f"surface_profile {profile['id']} 已过期(status="
+            f"{profile['status']}, evidence {profile['evidence_date']})",
+            [params_path], f"升级到当前 profile(如 generic-video-v1)"))
+
+    budget = profile.get("prompt_char_budget")
+    if budget and video_prompt and len(video_prompt) > int(budget):
+        findings.append(_pcheck(
+            CODE_PROMPT_BUDGET_EXCEEDED,
+            WARNING if declared else ADVISORY,
+            f"video prompt {len(video_prompt)} 字符超出 profile "
+            f"{profile['id']} 的预算 {budget}(可能被截断)",
+            [f"shots/{sid}.yaml#/action", params_path],
+            "收窄 action/prompt_override,或拆镜"))
+
+
+def _capability_checks(project, shot, duration_ms, refset,
+                       findings: list[dict[str, Any]]) -> None:
+    """PROVIDER_CAPABILITY_MISMATCH — produced by CALLING DR04's preflight on
+    the routed provider (the one execution-limit authority), never re-derived."""
+    try:
+        from ..providers.catalog import descriptor_for_manifest
+        from ..providers.preflight import (
+            STATUS_INCOMPATIBLE,
+            check_request_compatibility,
+        )
+        from ..providers.registry import get_manifest
+
+        _max_ms, provider = _routed_max_duration_ms(project, shot)
+        if not provider:
+            return
+        manifest = get_manifest(provider)
+        if manifest is None:
+            return  # builtin/no facts — preflight's UNKNOWN never hard-blocks
+        images = len(refset.image_items()) if refset is not None else 0
+        videos = len(refset.video_items()) if refset is not None else 0
+        capability = "image_to_video" if images else "text_to_video"
+        doc = check_request_compatibility(
+            descriptor_for_manifest(manifest), capability=capability,
+            duration_ms=duration_ms, ref_image_count=images,
+            ref_video_count=videos,
+            params=dict(getattr(shot.generation, "params", {}) or {}))
+    except Exception:
+        return  # preflight unavailability is DR04's to surface, never a crash here
+    if doc.get("status") == STATUS_INCOMPATIBLE:
+        reasons = "; ".join(str(r.get("message") or r.get("code") or r)
+                            for r in (doc.get("reasons") or [])) or "见 preflight"
+        findings.append(_pcheck(
+            CODE_PROVIDER_CAPABILITY_MISMATCH, WARNING,
+            f"路由供应商 {provider} 与本请求不兼容(preflight): {reasons}",
+            [f"shots/{shot.id}.yaml#/generation"],
+            "换 provider/改 generation.params,或按 preflight 建议调整请求"))
+
+
+def production_checks(project, shot, *, duration_ms: int | None = None,
+                      video_prompt: str | None = None,
+                      refset=None) -> list[dict[str, Any]]:
+    """The 08_10_12C deterministic production checks for one shot — pure,
+    read-only, proposal-only (§7.2). ``video_prompt``/``refset``/``duration_ms``
+    may be passed by a caller that already computed them (the prompt bundle);
+    otherwise they are derived from the same code paths the build uses."""
+    findings: list[dict[str, Any]] = []
+
+    if duration_ms is None:
+        try:
+            from ..build.graph import _target_duration_ms
+
+            duration_ms = _target_duration_ms(project, shot, project.load_rules())
+        except Exception:
+            duration_ms = 0
+    if video_prompt is None:
+        try:
+            from ..providers.prompt import compile_prompt
+
+            video_prompt = compile_prompt(shot, project.load_bible())
+        except Exception:
+            video_prompt = ""
+    if refset is None:
+        try:
+            from ..providers.refs import resolve_refs
+
+            refset = resolve_refs(project, shot, project.load_bible())
+        except Exception:
+            refset = None
+
+    _clip_scope_checks(project, shot, findings)
+    if refset is not None:
+        _reference_checks(project, shot, refset, findings)
+    _surface_checks(shot, video_prompt, findings)
+    _capability_checks(project, shot, duration_ms, refset, findings)
+
+    # WP5 continuation-source gate (qc.production derives it from accepted
+    # evidence; lazy import — production imports this module's clause tools).
+    try:
+        from .production import continuation_checks
+
+        findings.extend(continuation_checks(project, shot.id))
+    except Exception:
+        pass
+    return findings
