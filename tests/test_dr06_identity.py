@@ -177,16 +177,32 @@ def test_unknown_state_normalizes_to_legacy_never_invented():
 
 
 @pytest.mark.parametrize("status,expected", [
-    (400, S.DEFINITELY_REJECTED), (401, S.DEFINITELY_REJECTED),
-    (403, S.DEFINITELY_REJECTED), (404, S.DEFINITELY_REJECTED),
-    (409, S.DEFINITELY_REJECTED), (422, S.DEFINITELY_REJECTED),
-    (429, S.DEFINITELY_REJECTED),
+    # P0 WP2 flip: definite rejection is now manifest-declared, not a global
+    # table. With NOTHING declared, EVERY status >= 400 is conservatively
+    # OUTCOME_UNKNOWN (the request may have created a billable job); < 400 stays
+    # ADMITTED (the caller's job-id parse decides).
+    (400, S.OUTCOME_UNKNOWN_DISPOSITION), (401, S.OUTCOME_UNKNOWN_DISPOSITION),
+    (403, S.OUTCOME_UNKNOWN_DISPOSITION), (404, S.OUTCOME_UNKNOWN_DISPOSITION),
+    (409, S.OUTCOME_UNKNOWN_DISPOSITION), (422, S.OUTCOME_UNKNOWN_DISPOSITION),
+    (429, S.OUTCOME_UNKNOWN_DISPOSITION),
     (500, S.OUTCOME_UNKNOWN_DISPOSITION), (502, S.OUTCOME_UNKNOWN_DISPOSITION),
     (503, S.OUTCOME_UNKNOWN_DISPOSITION), (408, S.OUTCOME_UNKNOWN_DISPOSITION),
     (200, S.ADMITTED_DISPOSITION),
 ])
-def test_disposition_for_status(status, expected):
+def test_disposition_for_status_undeclared(status, expected):
+    # no declared set -> nothing is DEFINITELY_REJECTED by default
     assert S.disposition_for_status(status) == expected
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 422, 429])
+def test_disposition_for_status_declared_is_definite(status):
+    # P0 WP2: a status the MANIFEST declares is DEFINITELY_REJECTED (fallback ok);
+    # a status NOT in the declared set stays OUTCOME_UNKNOWN.
+    declared = {status}
+    assert S.disposition_for_status(status, declared) == S.DEFINITELY_REJECTED
+    assert S.disposition_for_status(500, declared) == S.OUTCOME_UNKNOWN_DISPOSITION
+    # < 400 is never a rejection even if (nonsensically) declared
+    assert S.disposition_for_status(200, declared) == S.ADMITTED_DISPOSITION
 
 
 def test_disposition_for_transport_error_only_dns_and_refused_are_not_dispatched():

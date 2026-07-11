@@ -46,6 +46,27 @@ class SubmitConfig(ManjuModel):
     body_template: dict = Field(default_factory=dict)
     job_id_path: str  # ★ mini-JSONPath into the submit response
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    # P0 WP2 (additive, optional): the ONLY submit HTTP statuses this provider
+    # treats as a DEFINITE remote rejection (the request reached the server and
+    # was refused with NO side effect — so a fallback provider is safe). There is
+    # no global "these 4xx are always rejected" assumption anymore: a post-send
+    # status NOT in this list is conservatively OUTCOME_UNKNOWN (the request MAY
+    # have created a billable job). ``None``/absent declares nothing, so every
+    # existing manifest loads unchanged and its delivered request is byte-identical.
+    definite_rejection_statuses: list[int] | None = None
+
+    @field_validator("definite_rejection_statuses")
+    @classmethod
+    def _valid_reject_statuses(cls, v: list[int] | None) -> list[int] | None:
+        if v is None:
+            return v
+        for s in v:
+            if isinstance(s, bool) or not isinstance(s, int) or not (400 <= s <= 599):
+                raise ValueError(
+                    f"submit.definite_rejection_statuses 只能是 400–599 的 HTTP "
+                    f"错误码(实际 {s!r})"
+                )
+        return v
 
 
 class PollConfig(ManjuModel):

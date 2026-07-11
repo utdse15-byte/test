@@ -382,10 +382,19 @@ def test_dns_failure_is_not_dispatched_and_may_retry(gc_req, monkeypatch):
 
 
 def test_definite_4xx_is_remote_rejected_and_stops_but_fallback_eligible(gc_req, monkeypatch):
-    """A tested 4xx (422) is DEFINITELY_REJECTED -> REMOTE_REJECTED; it is not
-    OUTCOME_UNKNOWN, so it does NOT fail-close the fallback."""
+    """A DECLARED 4xx (422) is DEFINITELY_REJECTED -> REMOTE_REJECTED; it is not
+    OUTCOME_UNKNOWN, so it does NOT fail-close the fallback.
+
+    P0 WP2 flip: definite rejection is now manifest-declared. This test is about
+    the downstream fallback behavior of a definite rejection, so the fixture
+    DECLARES 422 (instead of relying on the removed global tested-4xx table)."""
     resp = HttpResponse(422, {}, json.dumps({"error": "bad params"}).encode())
-    provider = _gc_provider(RaisingTransport(None, [resp]), monkeypatch)
+    provider = _gc_provider(
+        RaisingTransport(None, [resp]), monkeypatch,
+        submit={"url": "https://api.example.com/v1/videos",
+                "body_template": {"prompt": "{prompt}", "seed": "{seed}"},
+                "job_id_path": "$.data.task_id",
+                "definite_rejection_statuses": [422]})
     req = gc_req()
     with pytest.raises(ProviderFailure) as exc:
         provider.generate(req)

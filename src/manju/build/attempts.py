@@ -27,9 +27,11 @@ Design decisions recorded in code (see the contract):
   serialize every attempt append behind an ``events.lock`` flock — the exact
   rotate-then-append pattern ``core/failures.py`` uses for ``failures.lock`` — so
   concurrent writers (the generation ThreadPoolExecutor, a second process) never
-  interleave or tear a line. Plain small ``append_event`` writes stay unlocked
-  (still atomic under ``PIPE_BUF``); a mixed small write can only land wholly
-  before or after a locked line, never inside it.
+  interleave or tear a line. WP1: that flock + the durable write are now the ONE
+  coordinator ``core.events.append_jsonl_line``, and EVERY writer — the attempt
+  stream, the submission stream, AND plain ``append_event`` — routes through it
+  under the same lock (a lock-timeout / no-fcntl platform DROPS a best-effort
+  record rather than ever writing it unlocked).
 * **Sequence bound.** ``sequence`` is a per-run monotonic int from a process-local
   ``itertools.count`` guarded by a ``threading.Lock``. This is sufficient because
   a build is single-process (``build_lock`` serializes builds) and its generation
@@ -42,24 +44,19 @@ Design decisions recorded in code (see the contract):
 
 from __future__ import annotations
 
-import contextlib
 import itertools
 import json
-import os
 import re
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from uuid import uuid4
 
+from ..core import events as _events_core
+from ..core.events import EvidenceWriteError
 from ..core.hashing import hash_file, hash_value
-
-try:
-    import fcntl
-except ImportError:  # Windows: no fcntl — the lock degrades to a no-op below.
-    fcntl = None  # type: ignore[assignment]
 
 # --------------------------------------------------------------- schema/states
 
@@ -129,41 +126,22 @@ def _root(project: Any) -> Path:
 
 
 # ------------------------------------------------------------------ the lock
+# WP1: the ONE append coordinator (the single flock + the durable write) now
+# lives in ``core.events`` — the core layer must not import build/*, and build/*
+# imports core, so the primitive belongs there. Every writer in THIS module
+# routes through ``core.events.append_jsonl_line``; ``_events_lock`` stays as a
+# thin, best-effort delegate for any out-of-tree caller.
 
 
-@contextlib.contextmanager
-def _events_lock(project_root: Path, *, timeout_s: float = 15.0) -> Iterator[None]:
-    """Cross-process/-thread mutex around an attempt append — the SAME flock
-    pattern ``core/failures.py::_ledger_lock`` uses for ``failures.lock``, on a
-    sibling ``events.lock`` next to ``events.jsonl``. Attempt lines exceed
-    ``PIPE_BUF`` so their append is not atomic on its own; this serializes the
-    large writers so two never interleave or tear a line. Degrade-not-hang: a
-    platform without ``fcntl`` no-ops, and a wedged holder times out to an
-    unlocked write rather than ever dropping the record."""
-    project_root = Path(project_root)
-    project_root.mkdir(parents=True, exist_ok=True)
-    if fcntl is None:
-        yield
-        return
-    lock_path = project_root / EVENTS_LOCK
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        deadline = time.monotonic() + timeout_s
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    break  # never lose the record to a wedged lock — proceed
-                time.sleep(0.02)
-        yield
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        os.close(fd)
+def _events_lock(project_root: Path, *, timeout_s: float | None = None):
+    """Deprecated thin delegate to :func:`manju.core.events.events_lock` (WP1).
+
+    Best-effort context manager: yields ``True`` when the events lock is held
+    (safe to write) and ``False`` when it could not be acquired — in which case
+    the caller MUST skip the write (WP1 never writes unlocked). Retained only so
+    an external caller of the old name keeps working; internal writers use
+    :func:`manju.core.events.append_jsonl_line` directly."""
+    return _events_core.events_lock(project_root, timeout_s=timeout_s, required=False)
 
 
 # ------------------------------------------------------------------ redaction
@@ -353,14 +331,19 @@ def semantic_digest(doc: dict) -> str:
 # --------------------------------------------------------- the emission helper
 
 
-def append_attempt(project: Any, payload: dict, *, actor: str = "engine") -> dict:
+def append_attempt(project: Any, payload: dict, *, actor: str = "engine",
+                   required: bool = False) -> dict:
     """Normalize + redact + stamp + append ONE attempt event; return the written
-    record. NEVER raises out (log-and-degrade like ``append_event``'s callers):
-    the evidence stream is best-effort, and — critically — an evidence-append
-    failure AFTER a media commit must never delete media, only surface a warning
-    (the caller turns a ``None``/empty return into a build warning).
+    record. Default (``required=False``) is best-effort — NEVER raises out
+    (log-and-degrade like ``append_event``'s callers): the evidence stream is
+    best-effort, and — critically — an evidence-append failure AFTER a media
+    commit must never delete media, only surface a warning (the caller turns a
+    ``None``/empty return into a build warning). ``required=True`` propagates an
+    :class:`EvidenceWriteError` when the durable write cannot be made (WP1) — used
+    only where losing the evidence must fail the operation.
 
-    The write is a single locked ``write()`` behind ``events.lock``."""
+    The write is a single locked ``write()`` via the WP1 coordinator
+    (``core.events.append_jsonl_line``); ALL redaction stays HERE, before it."""
     try:
         doc = dict(payload)
         doc.setdefault("schema", SCHEMA)
@@ -381,18 +364,13 @@ def append_attempt(project: Any, payload: dict, *, actor: str = "engine") -> dic
         doc["semantic_digest"] = semantic_digest(doc)
 
         record = {"ts": doc["ts"], "actor": actor, "action": ACTION, "detail": doc}
-        line = json.dumps(record, ensure_ascii=False) + "\n"
-
-        root = _root(project)
-        path = root / EVENTS_FILE
-        with _events_lock(root):
-            # ONE write() of the whole line, then durability — under the flock so
-            # a >PIPE_BUF line never interleaves with another attempt writer.
-            with open(path, "ab") as f:
-                f.write(line.encode("utf-8"))
-                f.flush()
-                os.fsync(f.fileno())
-        return record
+        # ONE durable, flock-serialized write via the single coordinator so a
+        # >PIPE_BUF line never interleaves with another attempt writer.
+        ok = _events_core.append_jsonl_line(_root(project), record,
+                                            durable=True, required=required)
+        return record if ok else {}
+    except EvidenceWriteError:
+        raise  # required-mode durable failure — never swallowed (WP1)
     except Exception:
         # best-effort: never propagate. The caller (RunEvidence) treats a
         # falsy return as "evidence append failed" and warns — never deletes
@@ -417,17 +395,21 @@ def append_submission_event(
     from_state: str | None, to_state: str, provider_id: str,
     shot: str | None = None, remote_job_id: str | None = None,
     reason_code: str | None = None, prev_event_digest: str | None = None,
-    detail: dict | None = None, actor: str = "engine",
+    detail: dict | None = None, actor: str = "engine", required: bool = False,
 ) -> dict:
-    """Append ONE ``submission_state`` event under the SAME ``events.lock`` flock
-    build.attempts owns. Mints ``event_id``, sets ``prev_event_digest`` (the
-    caller threads it forward — in-process from the previous append's returned
-    event, cross-process from the verified chain tail), redacts ONLY the free-
-    form ``detail`` (the chain fields are controlled and stay intact so the
-    digest is stable), writes, and returns the written event document (whose
-    :func:`providers.submission.submission_event_digest` is the NEXT event's
-    ``prev_event_digest``). NEVER raises out — best-effort like
-    :func:`append_attempt`; a caller turns an empty return into a warning."""
+    """Append ONE ``submission_state`` event via the SAME WP1 coordinator
+    (one ``events.lock`` flock, one ``events.jsonl``). Mints ``event_id``, sets
+    ``prev_event_digest`` (the caller threads it forward — in-process from the
+    previous append's returned event, cross-process from the verified chain
+    tail), redacts ONLY the free-form ``detail`` (the chain fields are controlled
+    and stay intact so the digest is stable), writes, and returns the written
+    event document (whose :func:`providers.submission.submission_event_digest` is
+    the NEXT event's ``prev_event_digest``).
+
+    Default (``required=False``) is best-effort — NEVER raises out; a caller turns
+    an empty return into a warning. ``required=True`` (the PREPARED / DISPATCHING
+    admission gate) propagates an :class:`EvidenceWriteError` when the durable
+    write cannot be made, so the paid submit refuses to start (WP1)."""
     from ..providers.submission import SCHEMA_EVENT
 
     try:
@@ -454,16 +436,17 @@ def append_submission_event(
         # secret backstop over the whole line (chain fields are controlled and
         # never match, so the digest stays stable) — belt-and-braces.
         record = _scrub_secret_patterns(record, applied)
-        line = json.dumps(record, ensure_ascii=False) + "\n"
-        root = _root(project)
-        path = root / EVENTS_FILE
-        with _events_lock(root):
-            with open(path, "ab") as f:
-                f.write(line.encode("utf-8"))
-                f.flush()
-                os.fsync(f.fileno())
-        return record["detail"]
-    except Exception:
+        # ONE durable, flock-serialized write via the single coordinator.
+        ok = _events_core.append_jsonl_line(_root(project), record,
+                                            durable=True, required=required)
+        return record["detail"] if ok else {}
+    except EvidenceWriteError:
+        raise  # required-mode durable failure — never swallowed (WP1)
+    except Exception as exc:
+        if required:
+            # a build/redaction failure in required mode is still an evidence
+            # failure the admission gate must see — surface it, don't drop it.
+            raise EvidenceWriteError("io_error") from exc
         return {}
 
 

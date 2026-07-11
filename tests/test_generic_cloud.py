@@ -216,6 +216,11 @@ def test_content_rejected_never_retried(request_for, monkeypatch):
 
 
 def test_rate_limited_submit_retries(request_for, monkeypatch):
+    # P0 WP2 flip: a submit 429 is DEFINITELY_REJECTED (safe to retry — no job
+    # was created) ONLY when the manifest declares it; the global 429->DEFINITE
+    # assumption is gone. This provider DECLARES 429 so rate-limit retry keeps
+    # working (an UNDECLARED 429 is now OUTCOME_UNKNOWN and would fail closed).
+    submit = dict(_manifest_dict()["submit"], definite_rejection_statuses=[429])
     provider, transport = _provider(
         [
             _resp(429, {"error": "slow down"}),
@@ -225,9 +230,10 @@ def test_rate_limited_submit_retries(request_for, monkeypatch):
             HttpResponse(200, {}, b"V"),
         ],
         monkeypatch,
+        submit=submit,
     )
     takes = provider.generate(request_for("S003"))
-    assert len(takes) == 1  # retried after 429 and succeeded
+    assert len(takes) == 1  # retried after a declared-definite 429 and succeeded
 
 
 def test_unmapped_status_is_provider_error(request_for, monkeypatch):

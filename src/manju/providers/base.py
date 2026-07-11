@@ -351,33 +351,64 @@ class _SubmissionContext:
         self.warnings: list[str] = []
 
     def emit(self, from_state: str | None, to_state: str, *, reason_code: str | None = None,
-             remote_job_id: str | None = None, detail: dict | None = None) -> None:
+             remote_job_id: str | None = None, detail: dict | None = None,
+             required: bool = False) -> None:
+        """Emit ONE submission_state event through the WP1 coordinator.
+
+        ``required=True`` (the PREPARED / DISPATCHING admission gate) turns an
+        :class:`EvidenceWriteError` OR an empty append into a
+        ``ProviderFailure(provider_error, code=submission_evidence_unavailable,
+        disposition=NOT_DISPATCHED)`` — nothing was sent, so NOT_DISPATCHED is
+        honest (a later attempt may retry; each provider fails closed at its own
+        prepare). ``required=False`` (ADMITTED / terminal / classify, where money
+        is already spent) keeps the best-effort warning so the flow is never
+        orphaned."""
         from ..build.attempts import append_submission_event
+        from ..core.events import EvidenceWriteError
+        from . import submission as S
         from .submission import submission_event_digest
 
-        rec = append_submission_event(
-            self.req.project, submission_id=self.submission_id,
-            request_digest=self.request_digest, from_state=from_state, to_state=to_state,
-            provider_id=self.provider.id, shot=self.req.shot.id,
-            remote_job_id=remote_job_id, reason_code=reason_code,
-            prev_event_digest=self._last_digest, detail=detail)
+        reason: str | None = None
+        try:
+            rec = append_submission_event(
+                self.req.project, submission_id=self.submission_id,
+                request_digest=self.request_digest, from_state=from_state, to_state=to_state,
+                provider_id=self.provider.id, shot=self.req.shot.id,
+                remote_job_id=remote_job_id, reason_code=reason_code,
+                prev_event_digest=self._last_digest, detail=detail, required=required)
+        except EvidenceWriteError as exc:
+            rec, reason = {}, exc.reason
         if rec:
             self._last_digest = submission_event_digest(rec)
-        else:
-            self.warnings.append(
-                f"submission evidence append failed for {self.submission_id} "
-                f"({self.current_state}->{to_state})")
+            return
+        if required:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.provider.id}: durable submission evidence could not be "
+                f"persisted before dispatch — refusing to start a paid submit "
+                f"(WP1 fail-closed admission gate)",
+                detail={"code": "submission_evidence_unavailable",
+                        "shot": self.req.shot.id, "reason": reason or "empty_append"},
+                disposition=S.NOT_DISPATCHED,
+            )
+        self.warnings.append(
+            f"submission evidence append failed for {self.submission_id} "
+            f"({self.current_state}->{to_state})")
 
     def transition(self, to_state: str, *, reason_code: str | None = None,
-                   remote_job_id: str | None = None, detail: dict | None = None) -> None:
+                   remote_job_id: str | None = None, detail: dict | None = None,
+                   required: bool = False) -> None:
         """Evidence-FIRST transition (§8.4/§8.5 row 5): the event lands before
         the SQLite projection, so a crash between them recovers the state from
-        the event stream. Legality is enforced by the pure state machine."""
+        the event stream. Legality is enforced by the pure state machine.
+        ``required=True`` applies the WP1 durable-admission gate to the event —
+        any DISPATCHING (re-)entry that precedes a paid submit must be as
+        durable as the first attempt's (constraint 4 covers EVERY submit)."""
         from . import submission as S
 
         S.assert_transition(self.current_state, to_state)
         self.emit(self.current_state, to_state, reason_code=reason_code,
-                  remote_job_id=remote_job_id, detail=detail)
+                  remote_job_id=remote_job_id, detail=detail, required=required)
         if self.state is not None:
             try:
                 self.state.set_submission_state(
@@ -503,6 +534,18 @@ class CloudProvider(Provider):
                         try:
                             job_id = self.submit(req)
                         except ProviderFailure as exc:
+                            # WP2 phase-aware default: INSIDE the submit phase, a
+                            # ProviderFailure that never classified its disposition
+                            # defaults to OUTCOME_UNKNOWN — the request may have
+                            # reached the remote side, so it must never be auto-
+                            # retried / resubmitted (double-charge risk).
+                            # generic_cloud classifies its own transport; this is
+                            # the conservative default for any adapter that did not
+                            # (was: None -> kind-based retry -> re-submit).
+                            if exc.disposition is None:
+                                exc.disposition = S.OUTCOME_UNKNOWN_DISPOSITION
+                                exc.detail.setdefault("disposition_defaulted",
+                                                      "submit_phase")
                             self._resolve_intent(state, intent_id, None)
                             intent_id = None
                             self._classify_submit_failure(sub, exc)
@@ -725,8 +768,11 @@ class CloudProvider(Provider):
         sub = _SubmissionContext(self, state, req, submission_id=submission_id,
                                  request_digest=digest, current_state=S.PREPARED)
         sub._intent_id = intent_id
+        # WP1: the PREPARED evidence MUST be durable before the paid submit — an
+        # append failure here raises ProviderFailure(NOT_DISPATCHED) and the
+        # transport is never reached.
         sub.emit(None, S.PREPARED, reason_code="prepared",
-                 detail=self._gate_detail(req))
+                 detail=self._gate_detail(req), required=True)
         # atomic DISPATCHING claim (SQLite CAS) then its event.
         try:
             claimed = state.claim_dispatching(submission_id)
@@ -746,8 +792,10 @@ class CloudProvider(Provider):
                 detail={"code": "submission_claim_lost", "shot": req.shot.id},
             )
         sub.current_state = S.DISPATCHING
+        # WP1: the DISPATCHING evidence MUST be durable before the paid submit —
+        # same fail-closed gate as PREPARED above.
         sub.emit(S.PREPARED, S.DISPATCHING, reason_code="claimed",
-                 detail=self._gate_detail(req))
+                 detail=self._gate_detail(req), required=True)
         return sub
 
     def _redispatch(self, sub: "_SubmissionContext") -> None:
@@ -758,7 +806,11 @@ class CloudProvider(Provider):
         from . import submission as S
 
         if sub.current_state != S.DISPATCHING:
-            sub.transition(S.DISPATCHING, reason_code="redispatch")
+            # WP1: this DISPATCHING evidence precedes a paid submit exactly like
+            # the first attempt's — same durable-admission gate (a failed append
+            # refuses the retry's transport call; a recovered row ALREADY in
+            # DISPATCHING re-submits under its earlier durable evidence).
+            sub.transition(S.DISPATCHING, reason_code="redispatch", required=True)
 
     def _gate_detail(self, req: GenerationRequest) -> dict:
         """The ask_before/budget gate correlation recorded on the PREPARED /
@@ -785,6 +837,10 @@ class CloudProvider(Provider):
 
         disp = exc.disposition
         if disp is None:
+            # WP2 NOTE: on the SUBMIT path this branch is now DEAD — the choke
+            # point in generate() defaults an unclassified submit-phase failure to
+            # OUTCOME_UNKNOWN before calling here, so ``exc.disposition`` is always
+            # set. Kept tolerant for any other (non-submit) caller / future reuse.
             # legacy inference for the projection only (never fail-closed here):
             # a local pre-check refusal is not-dispatched; a definite remote kind
             # is remote-rejected; anything else stays not-dispatched (safe).

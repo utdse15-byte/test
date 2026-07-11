@@ -43,6 +43,7 @@ What lives here (contract ruling 2):
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -147,22 +148,21 @@ OUTCOME_UNKNOWN_DISPOSITION = "OUTCOME_UNKNOWN"
 DISPOSITIONS = (NOT_DISPATCHED, DEFINITELY_REJECTED, ADMITTED_DISPOSITION,
                 OUTCOME_UNKNOWN_DISPOSITION)
 
-# The HTTP statuses the existing failure taxonomy classifies as a DEFINITE
-# rejection (the request reached the server and was refused with no side effect):
-# 400/401/403/404/409/422/429. Everything else >= 400 (5xx, 408, 425, 5xx, an
-# unexpected 3xx…) is conservatively OUTCOME_UNKNOWN once submit was attempted.
-TESTED_REJECT_STATUS = frozenset({400, 401, 403, 404, 409, 422, 429})
-
-
-def disposition_for_status(status: int) -> str:
-    """Classify a submit HTTP status. < 400 is the caller's success concern (the
-    job-id parse decides ADMITTED vs OUTCOME_UNKNOWN); >= 400 in the tested set
-    is DEFINITELY_REJECTED, any other >= 400 is OUTCOME_UNKNOWN (conservative)."""
-    if status in TESTED_REJECT_STATUS:
+def disposition_for_status(status: int,
+                           definite_statuses: Iterable[int] | None = None) -> str:
+    """Classify a submit HTTP status against the provider's DECLARED definite-
+    rejection set (P0 WP2). There is NO global "these 4xx are always rejected"
+    table anymore (no global 429/tested-4xx assumption): a post-send status is
+    DEFINITELY_REJECTED ONLY when the manifest explicitly declares it
+    (``submit.definite_rejection_statuses``); otherwise ANY status >= 400 is
+    conservatively OUTCOME_UNKNOWN once the send boundary was crossed. < 400 is
+    the caller's success concern (the job-id parse decides ADMITTED vs
+    OUTCOME_UNKNOWN). ``definite_statuses`` ``None``/empty declares nothing."""
+    if status < 400:
+        return ADMITTED_DISPOSITION
+    if definite_statuses is not None and status in definite_statuses:
         return DEFINITELY_REJECTED
-    if status >= 400:
-        return OUTCOME_UNKNOWN_DISPOSITION
-    return ADMITTED_DISPOSITION
+    return OUTCOME_UNKNOWN_DISPOSITION
 
 
 def disposition_for_transport_error(exc: BaseException) -> str:

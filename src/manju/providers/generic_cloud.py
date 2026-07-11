@@ -389,7 +389,6 @@ class GenericCloudProvider(CloudProvider):
 
     def submit(self, req: GenerationRequest) -> str:
         from .submission import (
-            DEFINITELY_REJECTED,
             NOT_DISPATCHED,
             OUTCOME_UNKNOWN_DISPOSITION,
             disposition_for_status,
@@ -397,9 +396,15 @@ class GenericCloudProvider(CloudProvider):
 
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
+        # P0 WP2: the provider's DECLARED definite-rejection statuses (else empty
+        # = declare nothing). A post-send status is DEFINITELY_REJECTED ONLY if it
+        # is in this set; every other >= 400 is conservatively OUTCOME_UNKNOWN.
+        declared = frozenset(cfg.definite_rejection_statuses or ())
         # Everything BEFORE the transport call is provably-not-sent: a duration
-        # cap, a render/refs error, a missing key. DR06 marks these NOT_DISPATCHED
-        # so the admission machine records REJECTED_PRE_DISPATCH (retry allowed).
+        # cap, a render/refs error, a missing key, the engine-side throttle. DR06
+        # marks these NOT_DISPATCHED so the admission machine records
+        # REJECTED_PRE_DISPATCH (retry allowed) — and so the WP2 submit-phase
+        # default (OUTCOME_UNKNOWN) never swallows a provably-not-sent failure.
         try:
             self._enforce_limits(req.shot, req.duration_ms)
             rendered = render_body(cfg.body_template, _placeholder_map(req))
@@ -418,26 +423,30 @@ class GenericCloudProvider(CloudProvider):
             # declares an idempotency header (req.submission_idempotency_key is set
             # by base._prepare_submission for a declared provider, else None).
             headers = self._with_idempotency_header(headers, req)
+            # the engine-side throttle is pre-network too — keep it inside the
+            # provably-not-sent boundary so any refusal here is NOT_DISPATCHED.
+            self._throttle()
         except ProviderFailure as exc:
             if exc.disposition is None:
                 exc.disposition = NOT_DISPATCHED  # pre-transport = provably not sent
             raise
-        self._throttle()
         resp = self._transport(cfg.method, cfg.url, headers, body)
         # From here the send boundary is crossed — a failure's disposition is
-        # DEFINITELY_REJECTED only for the tested 4xx statuses, else UNKNOWN.
+        # DEFINITELY_REJECTED only for a MANIFEST-DECLARED status, else UNKNOWN
+        # (no global 429/tested-4xx assumption). The FailureKind mapping is
+        # unchanged (kind stays honest; disposition is the safety bit).
         if resp.status == 429:
             raise ProviderFailure(
                 FailureKind.rate_limited, f"{self.id}: remote rate limit (429)",
                 detail={"status": 429, "body": resp.text()[:500]},
-                disposition=DEFINITELY_REJECTED,
+                disposition=disposition_for_status(429, declared),
             )
         if resp.status >= 400:
             kind = self._classify_body(resp.text())
             raise ProviderFailure(
                 kind, f"{self.id}: submit failed with HTTP {resp.status}",
                 detail={"status": resp.status, "body": resp.text()[:2000]},
-                disposition=disposition_for_status(resp.status),
+                disposition=disposition_for_status(resp.status, declared),
             )
         try:
             job_id = extract(resp.json(), cfg.job_id_path)

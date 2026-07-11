@@ -183,20 +183,24 @@ def test_char_pending_lookup_matches_shot_and_provider_only(tmp_project, add_sho
 # ==================================================== (3) submit-timeout retried
 
 
-def test_char_submit_timeout_is_retried_then_raises(request_for, monkeypatch):
-    """HEAD: a submit-phase timeout (transport raises timeout) is RETRIED as a
-    retryable kind — max_retries+1 transport attempts before it finally raises.
-    THIS is the ambiguity DR06 fail-closes (a timed-out submit may have been
-    received remotely; retrying risks a double-charge)."""
+def test_char_submit_timeout_is_now_outcome_unknown_no_retry(request_for, monkeypatch):
+    """P0 WP2 flip (was test_char_submit_timeout_is_retried_then_raises): a
+    submit-phase timeout whose disposition was never classified now DEFAULTS to
+    OUTCOME_UNKNOWN at the base choke point — exactly ONE transport attempt (no
+    retry: a timed-out submit may have been received remotely; retrying risks a
+    double-charge). HEAD retried it max_retries times (4 attempts)."""
+    from manju.providers.submission import OUTCOME_UNKNOWN_DISPOSITION
+
     timeout = ProviderFailure(FailureKind.timeout, "network error calling submit")
-    provider, transport = _provider([timeout, timeout, timeout, timeout], monkeypatch)
-    # provider default max_retries is 3 -> 1 initial + 3 retries = 4 attempts
+    provider, transport = _provider([timeout], monkeypatch)
     with pytest.raises(ProviderFailure) as exc:
         provider.generate(request_for("S001"))
-    assert exc.value.kind is FailureKind.timeout
+    assert exc.value.kind is FailureKind.timeout  # kind stays honest
+    assert exc.value.disposition == OUTCOME_UNKNOWN_DISPOSITION  # safety bit set
+    assert exc.value.detail.get("disposition_defaulted") == "submit_phase"
     submit_posts = [r for r in transport.requests
                     if r[1].endswith("/v1/videos")]
-    assert len(submit_posts) == 4, "HEAD retries a submit timeout max_retries times"
+    assert len(submit_posts) == 1, "P0 WP2: no retry on an ambiguous submit outcome"
 
 
 def test_char_unparseable_submit_ok_is_now_outcome_unknown(request_for, monkeypatch):
