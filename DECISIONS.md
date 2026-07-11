@@ -736,3 +736,40 @@ production decision additively).
   enums so drift fails loudly.
 - Budget: 8 of 10 production files; board additions SKIPPED_WITH_EVIDENCE
   (a comparison entry already exists); zero pins flipped.
+
+## 23. 13C — the delivery manifest states facts; sources decide cuts (2026-07-11)
+
+The delivery-boundary batch (AI_IDE_13C, replacing seven planned objects with
+ONE schema). Core principle: **creative editing decisions belong to source;
+manju.delivery-manifest/v1 only states what was already generated, hashed and
+verified — deleting it changes nothing.**
+
+- **One schema, pure derivation** (build/delivery.py): composed from
+  exportstatus rows (the one status owner), 07C's release_assessment
+  (verbatim), the compiled timeline, locale_status, key sidecars. Optional
+  atomic materialization; delete/hand-edit inert; rebuild-identical (no
+  wall-clock field exists anywhere in the manifest).
+- **Variant boundaries are verifiable**: FORMAT_ONLY is proven by a
+  segment-only timeline semantic digest (VARIANT_KIND_MISMATCH blocks the
+  label); EDITORIAL_CUTDOWN requires an explicit adopted source revision
+  (never auto-cut); LOCALIZED binds the locale base hash (stale ⇒ block);
+  PLATFORM_PACKAGE cannot silently change the narrative cut. Framing is
+  recorded declared-only — the renderer has no per-profile crop today, so
+  execution is SKIPPED_WITH_EVIDENCE, not faked.
+- **NLE handoff is exact-bytes**: per-clip asset_sha256 + integer frame
+  in/out + timebase read from the compiled timeline through the source
+  resolver — no directory scanning, no take guessing; human
+  opened-in-target-app verification stays separate from adapter roundtrip.
+- **Platform handoff is credential-free by construction**: the manifest's
+  credentials_present is a real scan (core.check SECRET_PATTERNS + the
+  submission signed-URL detector) and a detected token REFUSES the manifest;
+  upload_supported is always false — publishing is not owned by this batch.
+- **The bundle is reproducible and safe**: only manifest-registered files +
+  SHA256SUMS; `..`/absolute/symlink/duplicate entries rejected; atomic
+  replace keeps the old bundle on failure; fixed 1980 zip timestamps make
+  the archive byte-deterministic. Deliberately distinct from `manju pack`.
+- **Honest rejection**: pack's inline zip guards were NOT lifted into a
+  shared helper (frozen surface + budget); delivery re-enforces stricter
+  guards locally and the completion report says so.
+- Budget: 2 of 8 production files, exactly 1 new public schema, 35
+  red-first tests, old profiles derive MASTER (compat pinned).
