@@ -69,6 +69,12 @@ OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
 TERMINAL_SUCCESS = "TERMINAL_SUCCESS"
 TERMINAL_FAILURE = "TERMINAL_FAILURE"
 ABANDONED_BY_USER = "ABANDONED_BY_USER"
+# P0 WP3 sentinel: a submission whose event chain could not be projected AT ALL
+# (first event already bad / no parseable state). Restored by rebuild so the
+# consult BLOCKS a fresh submit on it; resolved ONLY by the explicit recovery
+# actions (`tasks attach-remote-job` -> ADMITTED, `tasks abandon` ->
+# ABANDONED_BY_USER). Never written by the normal submit flow.
+RECOVERY_EVIDENCE_CORRUPT = "RECOVERY_EVIDENCE_CORRUPT"
 # a projection of a legacy intent row that predates the state column — never a
 # state we WRITE, only one we READ for rows minted before DR06.
 UNKNOWN_LEGACY = "UNKNOWN_LEGACY"
@@ -76,7 +82,7 @@ UNKNOWN_LEGACY = "UNKNOWN_LEGACY"
 STATES = (
     PREPARED, DISPATCHING, ADMITTED, REJECTED_PRE_DISPATCH, REMOTE_REJECTED,
     OUTCOME_UNKNOWN, TERMINAL_SUCCESS, TERMINAL_FAILURE, ABANDONED_BY_USER,
-    UNKNOWN_LEGACY,
+    RECOVERY_EVIDENCE_CORRUPT, UNKNOWN_LEGACY,
 )
 _STATES = frozenset(STATES)
 
@@ -85,10 +91,14 @@ _STATES = frozenset(STATES)
 # them (ruling 8). ADMITTED-without-a-terminal is unresolved too, but it is
 # resume-safe (polling, never a resubmit) and is handled distinctly from the two
 # side-effect-ambiguous states below.
-UNRESOLVED_STATES = frozenset({DISPATCHING, ADMITTED, OUTCOME_UNKNOWN})
+UNRESOLVED_STATES = frozenset(
+    {DISPATCHING, ADMITTED, OUTCOME_UNKNOWN, RECOVERY_EVIDENCE_CORRUPT})
 # The states whose remote side effect is genuinely ambiguous: a fresh submit for
-# the same shot+provider must fail closed on these (never auto-resubmit).
-SIDE_EFFECT_AMBIGUOUS = frozenset({DISPATCHING, OUTCOME_UNKNOWN})
+# the same shot+provider must fail closed on these (never auto-resubmit). The
+# WP3 sentinel is ambiguous BY CONSTRUCTION — corrupt evidence cannot prove what
+# was (or was not) sent, so it blocks exactly like DISPATCHING/OUTCOME_UNKNOWN.
+SIDE_EFFECT_AMBIGUOUS = frozenset(
+    {DISPATCHING, OUTCOME_UNKNOWN, RECOVERY_EVIDENCE_CORRUPT})
 TERMINAL_STATES = frozenset(
     {TERMINAL_SUCCESS, TERMINAL_FAILURE, REJECTED_PRE_DISPATCH, REMOTE_REJECTED,
      ABANDONED_BY_USER})
@@ -112,6 +122,10 @@ LEGAL_TRANSITIONS: dict[str, frozenset[str]] = {
     TERMINAL_SUCCESS: frozenset(),
     TERMINAL_FAILURE: frozenset(),
     ABANDONED_BY_USER: frozenset(),
+    # P0 WP3: the sentinel resolves ONLY via the explicit recovery actions —
+    # attach (poll-only ADMITTED) or abandon. Never a redispatch: corrupt
+    # evidence can never prove nothing was sent.
+    RECOVERY_EVIDENCE_CORRUPT: frozenset({ADMITTED, ABANDONED_BY_USER}),
     UNKNOWN_LEGACY: frozenset(),
 }
 
@@ -397,6 +411,61 @@ def verify_chain(events: list[dict]) -> tuple[bool, int | None]:
             return False, i
         prev_digest = submission_event_digest(ev)
     return True, None
+
+
+def project_chain(events: list[dict]) -> dict:
+    """P0 WP3 §5.2 — project ONE submission's state from its event chain as the
+    LONGEST VALID PREFIX, never "last event wins".
+
+    Walks the events in FILE order (which IS emission order under the append
+    flock) and accepts an event into the prefix only while ALL of: its
+    ``prev_event_digest`` links to the recomputed digest of its predecessor
+    (:func:`verify_chain` semantics), its ``to`` state is a known state, and the
+    transition from the prefix's current tail state is legal
+    (:func:`is_legal_transition`; the FIRST event must come from ``None`` and
+    open on a real state). Everything after the first bad event is IGNORED.
+
+    Returns ``{"state", "last_valid_index", "corrupt", "reason"}``:
+
+    - a non-empty valid prefix projects its TAIL state (so a valid
+      PREPARED→DISPATCHING prefix with a corrupt third line projects
+      DISPATCHING — the consult then blocks a fresh submit);
+    - an EMPTY prefix (the first event is already bad / carries no parseable
+      state) projects the :data:`RECOVERY_EVIDENCE_CORRUPT` sentinel;
+    - an empty ``events`` list projects ``state=None`` (nothing to say —
+      distinct from corruption).
+    """
+    if not events:
+        return {"state": None, "last_valid_index": None, "corrupt": False,
+                "reason": "no_events"}
+    prev_digest: str | None = None
+    tail_state: str | None = None
+    last_valid = -1
+    corrupt = False
+    reason: str | None = None
+    for i, ev in enumerate(events):
+        if ev.get("prev_event_digest") != prev_digest:
+            corrupt, reason = True, f"digest_broken_at_{i}"
+            break
+        to = ev.get("to")
+        if to not in _STATES or to == UNKNOWN_LEGACY:
+            corrupt, reason = True, f"unparseable_state_at_{i}"
+            break
+        if tail_state is None:
+            if ev.get("from") is not None:
+                corrupt, reason = True, f"chain_start_not_fresh_at_{i}"
+                break
+        elif not is_legal_transition(tail_state, to):
+            corrupt, reason = True, f"illegal_transition_at_{i}"
+            break
+        prev_digest = submission_event_digest(ev)
+        tail_state = to
+        last_valid = i
+    if last_valid < 0:
+        return {"state": RECOVERY_EVIDENCE_CORRUPT, "last_valid_index": None,
+                "corrupt": True, "reason": reason or "empty_prefix"}
+    return {"state": tail_state, "last_valid_index": last_valid,
+            "corrupt": corrupt, "reason": reason}
 
 
 # --------------------------------------------------------------- redaction

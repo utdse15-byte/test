@@ -680,17 +680,24 @@ class RuntimeState:
                 "submissions_restored": restored}
 
     def _restore_submissions_from_events(self, project: "Project") -> int:
-        """Reconstruct each submission's latest state from the events stream and
+        """Reconstruct each submission's state from the events stream and
         re-project the UNRESOLVED ones into the intents table. Events are the
         source of truth (a state change emits its event around/before the SQLite
-        write — the §8.4 order), so events win on reconcile. A broken per-
-        submission chain is restored at its last VALID state and left for the
-        recovery layer to fail-close (never silently dropped)."""
+        write — the §8.4 order), so events win on reconcile.
+
+        P0 WP3 §5.2: the projected state is the tail of the LONGEST VALID PREFIX
+        of the per-submission hash chain (``providers.submission.project_chain``)
+        — NEVER "last event wins". A valid PREPARED→DISPATCHING prefix followed
+        by a corrupt line restores DISPATCHING (the consult then blocks a fresh
+        submit); a chain with NO valid prefix restores the
+        RECOVERY_EVIDENCE_CORRUPT sentinel (blocks until `tasks
+        attach-remote-job`/`abandon`). A corrupt tail can no longer forge a
+        resolved state and silently unblock a resubmit."""
         try:
             from ..build.attempts import read_submission_events
             from ..providers.submission import (
                 UNRESOLVED_STATES,
-                normalize_state,
+                project_chain,
             )
         except Exception:
             return 0
@@ -698,18 +705,30 @@ class RuntimeState:
             records, _malformed = read_submission_events(project)
         except Exception:
             return 0
-        # latest event per submission_id (records are already sequence-sorted)
-        latest: dict[str, dict] = {}
+        # group per submission_id in FILE order (= emission/chain order)
+        chains: dict[str, list[dict]] = {}
         for rec in records:
             sid = rec.get("submission_id")
             if sid:
-                latest[sid] = rec
+                chains.setdefault(sid, []).append(rec)
         restored = 0
         with self._conn:
-            for sid, rec in latest.items():
-                state = normalize_state(rec.get("to"))
-                if state not in UNRESOLVED_STATES:
-                    continue
+            for sid, events in chains.items():
+                proj = project_chain(events)
+                state = proj.get("state")
+                if state is None or state not in UNRESOLVED_STATES:
+                    continue  # resolved by a VALID prefix, or nothing to restore
+                # row facts come from the VALID prefix only (never a corrupt
+                # tail): the tail-most prefix event, plus the last remote_job_id
+                # any prefix event carried. A sentinel (no valid prefix) takes
+                # advisory identity fields from the first event — the consult
+                # re-verifies the chain from evidence regardless.
+                last_valid = proj.get("last_valid_index")
+                prefix = events[: last_valid + 1] if last_valid is not None else []
+                rec = prefix[-1] if prefix else events[0]
+                remote_job_id = next(
+                    (e.get("remote_job_id") for e in reversed(prefix)
+                     if e.get("remote_job_id")), None)
                 row = self._conn.execute(
                     "SELECT id FROM intents WHERE submission_id = ?", (sid,)
                 ).fetchone()
@@ -721,14 +740,14 @@ class RuntimeState:
                         "state, updated_ts) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, "
                         "?, ?, ?)",
                         (uuid.uuid4().hex, rec.get("provider_id") or "?",
-                         rec.get("shot") or "?", None, ts, rec.get("remote_job_id"),
+                         rec.get("shot") or "?", None, ts, remote_job_id,
                          sid, rec.get("request_digest"), state, ts),
                     )
                 else:
                     self._conn.execute(
                         "UPDATE intents SET state = ?, remote_job_id = ?, "
                         "request_digest = ?, updated_ts = ? WHERE submission_id = ?",
-                        (state, rec.get("remote_job_id"), rec.get("request_digest"),
+                        (state, remote_job_id, rec.get("request_digest"),
                          ts, sid),
                     )
                 restored += 1

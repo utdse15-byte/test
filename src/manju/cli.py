@@ -4200,9 +4200,11 @@ def tasks_attach_remote_job(
         st = S.normalize_state(row.get("state"))
         if expected_state and st != expected_state:
             _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
-        if st not in (S.OUTCOME_UNKNOWN, S.DISPATCHING):
-            _fail(f"只能给 UNKNOWN/DISPATCHING 的 submission 关联远程任务"
-                  f"(当前 {st});已 ADMITTED/terminal 的无需关联")
+        # P0 WP3: the RECOVERY_EVIDENCE_CORRUPT sentinel is attachable too — a
+        # corrupt-evidence submission resolves ONLY via attach/abandon.
+        if st not in (S.OUTCOME_UNKNOWN, S.DISPATCHING, S.RECOVERY_EVIDENCE_CORRUPT):
+            _fail(f"只能给 UNKNOWN/DISPATCHING/EVIDENCE_CORRUPT 的 submission 关联"
+                  f"远程任务(当前 {st});已 ADMITTED/terminal 的无需关联")
         try:
             _emit_recovery_transition(
                 project, state, row, S.ADMITTED, reason_code="attach_remote_job",

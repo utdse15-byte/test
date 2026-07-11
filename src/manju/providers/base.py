@@ -890,16 +890,22 @@ class CloudProvider(Provider):
         from . import submission as S
 
         if state is None:
+            # downstream _prepare_submission fail-closes on state None BEFORE any
+            # transport (ruling 5) — pinned, so "fresh" here can never spend.
             return ("fresh", None, None)
+        # P0 WP3 §5.1: the consult MUST NOT degrade to "fresh" when it cannot
+        # actually verify prior submissions — an identity/state-query/evidence
+        # failure here used to silently skip the correlation and fresh-submit
+        # past an in-flight ADMITTED/DISPATCHING job (double-charge risk).
         try:
             _identity, digest = self._build_identity(req)
-        except Exception:
-            digest = None
+        except Exception as exc:
+            raise self._recovery_unavailable(req, "identity", exc) from exc
         try:
             subs = state.submissions(shot=req.shot.id, provider=self.id,
                                      states=tuple(sorted(S.UNRESOLVED_STATES)))
-        except Exception:
-            subs = []
+        except Exception as exc:
+            raise self._recovery_unavailable(req, "state_query", exc) from exc
 
         # a broken per-submission event chain fail-closes ONLY this shot+provider.
         for row in subs:
@@ -917,14 +923,19 @@ class CloudProvider(Provider):
             # mismatch): conflict — never silently poll the old task (test 45/46).
             raise self._conflict_failure(req, admitted[0], digest)
 
-        # 2) a DISPATCHING/OUTCOME_UNKNOWN submission is side-effect ambiguous.
+        # 2) a DISPATCHING/OUTCOME_UNKNOWN/RECOVERY_EVIDENCE_CORRUPT submission
+        #    is side-effect ambiguous.
         ambiguous = [r for r in subs if r.get("state") in S.SIDE_EFFECT_AMBIGUOUS]
         if ambiguous:
             row = ambiguous[0]
-            if digest is not None and row.get("request_digest") == digest \
+            if row.get("state") != S.RECOVERY_EVIDENCE_CORRUPT \
+                    and digest is not None \
+                    and row.get("request_digest") == digest \
                     and self._idempotency_field():
                 # ruling 10: a DECLARED idempotent provider MAY re-dispatch the
-                # SAME submission_id (the derived key dedupes remotely).
+                # SAME submission_id (the derived key dedupes remotely). NEVER
+                # off the WP3 sentinel — corrupt evidence cannot prove the
+                # prior dispatch used the same key.
                 sub = self._context_from_row(state, req, row, digest)
                 req.submission_id = row["submission_id"]
                 req.submission_idempotency_key = S.idempotency_key(
@@ -959,9 +970,32 @@ class CloudProvider(Provider):
         except Exception:
             return None
 
+    def _recovery_unavailable(self, req, stage: str, exc: BaseException) -> ProviderFailure:
+        """P0 WP3 §5.1 — the structured fail-closed failure for a CONSULT that
+        could not run (identity / state query / evidence read / chain verify
+        raised). Distinct from a consult that RAN and found an ambiguous or
+        conflicting row (submission_outcome_unknown / submission_spec_conflict):
+        here we could not even look, so a fresh paid submit must not start."""
+        from . import submission as S
+
+        return ProviderFailure(
+            FailureKind.provider_error,
+            f"{self.id}: cannot verify shot {req.shot.id}'s prior submissions — "
+            f"the recovery consult failed at {stage} ({type(exc).__name__}); "
+            f"refusing a fresh paid submit while earlier outcomes are "
+            f"unverifiable (P0 WP3 fail-closed)",
+            detail={"code": "submission_recovery_unavailable", "stage": stage,
+                    "shot": req.shot.id, "automatic_resubmit": False,
+                    "possible_remote_side_effect": True},
+            disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+        )
+
     def _guard_chain_integrity(self, req, row) -> None:
         """A broken per-submission event chain -> RECOVERY_EVIDENCE_CORRUPT that
-        fail-closes ONLY this shot+provider (ruling 4), never unrelated work."""
+        fail-closes ONLY this shot+provider (ruling 4), never unrelated work.
+        P0 WP3 §5.1: a FAILURE to read or verify the evidence (as opposed to a
+        verified-corrupt result) is submission_recovery_unavailable — it used to
+        silently pass the guard."""
         from ..build.attempts import read_submission_events
         from . import submission as S
 
@@ -970,9 +1004,12 @@ class CloudProvider(Provider):
             return
         try:
             events, _ = read_submission_events(req.project, sid)
-        except Exception:
-            return
-        ok, broken_at = S.verify_chain(events)
+        except Exception as exc:
+            raise self._recovery_unavailable(req, "evidence_read", exc) from exc
+        try:
+            ok, broken_at = S.verify_chain(events)
+        except Exception as exc:
+            raise self._recovery_unavailable(req, "chain_verify", exc) from exc
         if not ok:
             raise ProviderFailure(
                 FailureKind.provider_error,

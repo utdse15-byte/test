@@ -101,6 +101,11 @@ COMPLETED_WITH_WARNINGS = "COMPLETED_WITH_WARNINGS"
 MANIFEST_FAILED = "FAILED"
 MANIFEST_CANCELED = "CANCELED"
 MANIFEST_WAITING_USER = "WAITING_USER"
+# P0 WP4: the two honest non-terminal statuses. INCOMPLETE = run_started with
+# no run_terminal (an interrupted/killed run is never claimed COMPLETED);
+# NOT_FOUND = no events at all for the run_id.
+MANIFEST_INCOMPLETE = "INCOMPLETE"
+MANIFEST_NOT_FOUND = "NOT_FOUND"
 
 # The semantic_digest is a fingerprint of an attempt's MEANING. It deliberately
 # EXCLUDES incidentals that vary run-to-run without changing what happened: the
@@ -502,6 +507,111 @@ def submission_chains(project: Any) -> dict[str, list[dict]]:
     return chains
 
 
+# -------------------------------------------------- P0 WP4 run-lifecycle events
+# Additive event kinds on the SAME events.jsonl through the A1 coordinator:
+# run_started (run_build's real start), run_terminal (EVERY run_build exit),
+# attempt_started (BEFORE the two expensive attempt families only — provider
+# generation and the final render). All BEST-EFFORT: run telemetry must never
+# block or crash a build (only paid admission evidence is required=True). The
+# existing terminal ``stage_attempt`` event IS the attempt terminal — it is not
+# renamed and never dual-written.
+
+LIFECYCLE_SCHEMA = "manju.run-lifecycle/v1"
+RUN_STARTED_ACTION = "run_started"
+RUN_TERMINAL_ACTION = "run_terminal"
+ATTEMPT_STARTED_ACTION = "attempt_started"
+# run_terminal.status vocabulary (lowercase on the event; the manifest maps it
+# onto the MANIFEST_* constants verbatim, plus the warnings promotion).
+RUN_TERMINAL_STATUSES = ("completed", "completed_with_warnings", "failed",
+                         "canceled", "waiting_user")
+
+
+def _append_lifecycle(project: Any, action: str, detail: dict, *,
+                      actor: str = "engine") -> bool:
+    """ONE best-effort, durable lifecycle append via the WP1 coordinator —
+    exactly one lock acquisition, never raises (telemetry must never block or
+    crash a build)."""
+    try:
+        record = {"ts": _now_iso(), "actor": actor, "action": action,
+                  "detail": {"schema": LIFECYCLE_SCHEMA, **detail}}
+        return _events_core.append_jsonl_line(_root(project), record,
+                                              durable=True, required=False)
+    except Exception:
+        return False
+
+
+def append_run_started(project: Any, run_id: str, *, target: str | None = None,
+                       gen: str | None = None, actor: str = "engine") -> bool:
+    """run_build's real start (after the build lock, at the run_id mint).
+    Carries run_id + target/gen only — never a params dump."""
+    detail: dict[str, Any] = {"run_id": run_id}
+    if target is not None:
+        detail["target"] = target
+    if gen is not None:
+        detail["gen"] = gen
+    return _append_lifecycle(project, RUN_STARTED_ACTION, detail, actor=actor)
+
+
+def append_run_terminal(project: Any, run_id: str, *, status: str,
+                        counts: dict | None = None, actor: str = "engine") -> bool:
+    """One run_terminal per run_build exit (success/failure/canceled/refusal).
+    An unknown status collapses to ``failed`` (conservative, never invented into
+    a success). A hard KILL emits nothing — exactly what INCOMPLETE detects."""
+    detail: dict[str, Any] = {
+        "run_id": run_id,
+        "status": status if status in RUN_TERMINAL_STATUSES else "failed",
+    }
+    if counts:
+        detail["counts"] = dict(counts)
+    return _append_lifecycle(project, RUN_TERMINAL_ACTION, detail, actor=actor)
+
+
+def append_attempt_started(project: Any, run_id: str, attempt_id: str, *,
+                           stage: str, provider: str | None = None,
+                           actor: str = "engine") -> bool:
+    """BEFORE one expensive attempt (provider generation / final render). The
+    ``attempt_id`` correlates to the pre-minted handle whose terminal
+    ``stage_attempt`` event lands later; a started attempt with no terminal is
+    a dangling attempt on an INCOMPLETE run."""
+    detail: dict[str, Any] = {"run_id": run_id, "attempt_id": attempt_id,
+                              "stage": stage}
+    if provider:
+        detail["provider"] = provider
+    return _append_lifecycle(project, ATTEMPT_STARTED_ACTION, detail, actor=actor)
+
+
+def read_run_lifecycle(project: Any, run_id: str) -> dict[str, list[dict]]:
+    """Project ONE run's lifecycle events out of events.jsonl in file order:
+    ``{"started": [...], "terminals": [...], "attempt_started": [...]}``. Torn
+    lines are skipped exactly like every other reader on this stream."""
+    path = _root(project) / EVENTS_FILE
+    out: dict[str, list[dict]] = {"started": [], "terminals": [],
+                                  "attempt_started": []}
+    if not path.exists():
+        return out
+    keys = {RUN_STARTED_ACTION: "started", RUN_TERMINAL_ACTION: "terminals",
+            ATTEMPT_STARTED_ACTION: "attempt_started"}
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            key = keys.get(rec.get("action") or "")
+            if key is None:
+                continue
+            detail = rec.get("detail")
+            if not isinstance(detail, dict) or detail.get("run_id") != run_id:
+                continue
+            out[key].append({**detail, "ts": rec.get("ts")})
+    return out
+
+
 # ---------------------------------------------------------- the run context
 
 
@@ -771,8 +881,10 @@ def _cost_of(doc: dict) -> tuple[float, str | None]:
 
 
 def _terminal_status(run_doc: dict | None, has_failure: bool) -> str:
-    """Map the run-end (build/run) attempt's state + whether any failure attempt
-    is present to a manifest terminal_status."""
+    """LEGACY derivation (pre-WP4 streams only): map the run-end (build/run)
+    attempt's state + whether any failure attempt is present to a manifest
+    terminal_status. A lifecycle-aware run (run_started/run_terminal present)
+    never uses this — see :func:`build_run_manifest`."""
     state = run_doc.get("state") if run_doc else None
     if state == CANCELED:
         return MANIFEST_CANCELED
@@ -786,11 +898,36 @@ def _terminal_status(run_doc: dict | None, has_failure: bool) -> str:
     return MANIFEST_FAILED if has_failure else COMPLETED
 
 
+# run_terminal.status (lowercase, on the event) -> manifest vocabulary.
+_RUN_TERMINAL_TO_MANIFEST = {
+    "completed": COMPLETED,
+    "completed_with_warnings": COMPLETED_WITH_WARNINGS,
+    "failed": MANIFEST_FAILED,
+    "canceled": MANIFEST_CANCELED,
+    "waiting_user": MANIFEST_WAITING_USER,
+}
+
+
 def build_run_manifest(project: Any, run_id: str) -> dict:
     """The ``manju.run-manifest/v1`` document derived from the run's attempt
     events. Pure projection: never guesses from files on disk (test 13), never
-    re-claims validity (test 21 uses :func:`verify_outputs` for that)."""
+    re-claims validity (test 21 uses :func:`verify_outputs` for that).
+
+    P0 WP4 status rules (exact vocabulary COMPLETED / COMPLETED_WITH_WARNINGS /
+    FAILED / CANCELED / WAITING_USER / INCOMPLETE / NOT_FOUND):
+
+    - no events at all for the run_id → NOT_FOUND;
+    - run_started without run_terminal → INCOMPLETE, with ``dangling_attempts``
+      = every attempt_started whose attempt_id has no terminal stage_attempt;
+    - run_terminal present → its status verbatim (a ``completed`` with failure
+      attempts on record promotes to COMPLETED_WITH_WARNINGS);
+    - LEGACY streams (attempt terminals only, no lifecycle events) keep the
+      pre-WP4 derivation and are stamped ``legacy_terminal_only: true`` — the
+      terminals prove no more than they ever did, and started evidence is never
+      fabricated. Success is NEVER inferred from file existence.
+    """
     records, malformed = read_attempts(project, run_id)
+    lifecycle = read_run_lifecycle(project, run_id)
 
     run_doc: dict | None = None
     for d in records:
@@ -837,6 +974,39 @@ def build_run_manifest(project: Any, run_id: str) -> dict:
 
     run_context = dict((run_doc or {}).get("run_context") or {})
 
+    # ---- P0 WP4 terminal_status ------------------------------------------
+    lifecycle_present = bool(lifecycle["started"] or lifecycle["terminals"]
+                             or lifecycle["attempt_started"])
+    dangling_attempts: list[dict] | None = None
+    legacy_terminal_only = False
+    if not records and not lifecycle_present:
+        terminal_status = MANIFEST_NOT_FOUND  # no events at all for this run_id
+    elif lifecycle_present:
+        if lifecycle["terminals"]:
+            raw = str(lifecycle["terminals"][-1].get("status") or "")
+            terminal_status = _RUN_TERMINAL_TO_MANIFEST.get(raw, MANIFEST_FAILED)
+            if terminal_status == COMPLETED and failures:
+                terminal_status = COMPLETED_WITH_WARNINGS  # warnings promotion
+        else:
+            # started (or an attempt started) but never terminated: the run was
+            # interrupted/killed. NEVER claimed COMPLETED — the WP0-G fix.
+            terminal_status = MANIFEST_INCOMPLETE
+            terminal_ids = {str(d.get("attempt_id")) for d in records
+                            if d.get("attempt_id")}
+            dangling_attempts = [
+                {k: v for k, v in (("attempt_id", a.get("attempt_id")),
+                                   ("stage", a.get("stage")),
+                                   ("provider", a.get("provider")))
+                 if v is not None}
+                for a in lifecycle["attempt_started"]
+                if str(a.get("attempt_id")) not in terminal_ids
+            ]
+    else:
+        # legacy stream (pre-WP4: attempt terminals only): today's derivation,
+        # honestly stamped — never fabricate started evidence.
+        terminal_status = _terminal_status(run_doc, bool(failures))
+        legacy_terminal_only = True
+
     manifest = {
         "schema": MANIFEST_SCHEMA,
         "run_id": run_id,
@@ -846,7 +1016,7 @@ def build_run_manifest(project: Any, run_id: str) -> dict:
         "command": run_context.get("command"),
         "target": run_context.get("target"),
         "mode": run_context.get("mode"),
-        "terminal_status": _terminal_status(run_doc, bool(failures)),
+        "terminal_status": terminal_status,
         "attempt_count": len(records),
         "malformed_lines": malformed,
         "stages": stages,
@@ -857,6 +1027,10 @@ def build_run_manifest(project: Any, run_id: str) -> dict:
         "attempts": records,
         "evidence_digest": hash_value(sorted(digests)),
     }
+    if dangling_attempts is not None:
+        manifest["dangling_attempts"] = dangling_attempts
+    if legacy_terminal_only:
+        manifest["legacy_terminal_only"] = True
     return manifest
 
 

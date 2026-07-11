@@ -137,11 +137,16 @@ def _record_local_runs(project: Project, takes: list, params: dict,
 
 
 def _emit_render_attempt(evidence, project: Project, out, target: str, *,
-                         reused: bool) -> None:
+                         reused: bool, handle=None) -> None:
     """DR03C: emit the render attempt (SUCCEEDED fresh / SKIPPED_CACHE_HIT
     reused). The final's ``.key.json`` sidecar already carries ``output_sha256``
     (DR01) and ``final_key`` — read them (a cheap JSON read), never re-hash the
-    mp4. Best-effort: any read hiccup degrades to an attempt without the sha."""
+    mp4. Best-effort: any read hiccup degrades to an attempt without the sha.
+
+    P0 WP4: ``handle`` is the attempt handle PRE-MINTED before the render ran
+    (its id was announced by an attempt_started event); when given, the terminal
+    lands on that SAME attempt_id so started/terminal correlate. ``None`` keeps
+    the old post-hoc mint (any legacy/direct caller)."""
     import json as _json
 
     from .attempts import output_ref
@@ -172,7 +177,9 @@ def _emit_render_attempt(evidence, project: Project, out, target: str, *,
     except OSError:
         pass
     out_ref = output_ref("final", **ref_kwargs)
-    handle = evidence.attempt("render", {"kind": "render", "target": target}, "render")
+    if handle is None:
+        handle = evidence.attempt("render", {"kind": "render", "target": target},
+                                  "render")
     if reused:
         handle.skipped_cache_hit(outputs=[out_ref])
     else:
@@ -635,6 +642,11 @@ def run_build(
             assume_yes=assume_yes, mode=mode, on_phase=on_phase,
             include_unindexed=include_unindexed, lang=lang,
         )
+    # P0 WP4: _run_build_phases stamps its run_id + terminal-emitted flag onto
+    # this carrier, so an EXCEPTION escaping the phases still emits
+    # run_terminal(failed) below (try/finally semantics). A hard KILL emits
+    # nothing — which is exactly what the manifest's INCOMPLETE detects.
+    _run_info: dict = {}
     try:
         with build_lock(project.root, actor=actor):
             result = _run_build_phases(
@@ -642,7 +654,7 @@ def run_build(
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, mode=mode, on_phase=on_phase,
                 include_unindexed=include_unindexed, should_cancel=should_cancel,
-                lang=lang,
+                lang=lang, _run_info=_run_info,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -663,11 +675,39 @@ def run_build(
         result.generated = list(exc.generated)
         result.run_id = exc.run_id  # DR03C: correlate the canceled result to its run
         result.errors.append(str(exc))
+        # P0 WP4 (review): _cancel_check emits the canceled run_terminal before
+        # raising, so this is a no-op on the normal path — but a BuildCanceled
+        # from the documented-unreachable direct-raise (a flapping cancel flag
+        # at graph.py's MediaCanceled edge) must still terminate the run, or a
+        # deliberately canceled run would derive INCOMPLETE.
+        rid = _run_info.get("run_id")
+        if rid and not _run_info.get("terminal_emitted"):
+            _run_info["terminal_emitted"] = True
+            try:
+                from .attempts import append_run_terminal
+
+                append_run_terminal(project, rid, status="canceled", actor=actor)
+            except Exception:
+                pass
         append_event(project.root, actor, "build",
                      {"target": target, "ok": False, "canceled": True,
                       "generated": exc.generated, "spent": exc.spent,
                       "currency": exc.currency, "run_id": exc.run_id})
         return result
+    except BaseException:
+        # P0 WP4: any other exception escaping the phases still terminates the
+        # run honestly (run_terminal failed) before propagating. Best-effort;
+        # idempotent via the carrier flag (_finish_run/_cancel_check may have
+        # already emitted).
+        rid = _run_info.get("run_id")
+        if rid and not _run_info.get("terminal_emitted"):
+            try:
+                from .attempts import append_run_terminal
+
+                append_run_terminal(project, rid, status="failed", actor=actor)
+            except Exception:
+                pass
+        raise
 
     _attach_failures(project, result, build_start)
     return result
@@ -708,6 +748,7 @@ def _run_build_phases(
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
     lang: str | None = None,  # WP4 locale
+    _run_info: dict | None = None,  # P0 WP4: run_build's lifecycle carrier (internal)
 ) -> BuildResult:
     result = BuildResult()
     # WP3 run-evidence: one run id per build invocation, minted before any
@@ -723,7 +764,12 @@ def _run_build_phases(
     # creates NO context and emits NO attempts (evidence stays None); every
     # emission point below is guarded on `evidence is not None`. Wraps existing
     # flow only; when None, behaviour is byte-identical to before DR03C.
-    from .attempts import RunEvidence, materialize_run_manifest
+    from .attempts import (
+        RunEvidence,
+        append_run_started,
+        append_run_terminal,
+        materialize_run_manifest,
+    )
     evidence = None if dry_run else RunEvidence(
         project, run_id, actor=actor,
         # what invocation this run IS — lands on the run-level terminal and
@@ -731,6 +777,29 @@ def _run_build_phases(
         # mode produced me" (contract §6.1 command/target/mode).
         run_context={"command": "build", "target": target, "gen": gen,
                      "mode": mode or "balanced"})
+    # P0 WP4 run lifecycle: run_started lands at the run's REAL start (the
+    # run_id mint, after the build lock); run_terminal lands on EVERY exit
+    # (see _finish_run / _cancel_check / run_build's exception guard). All
+    # best-effort — telemetry never blocks a build. ``lifecycle`` doubles as
+    # run_build's carrier so a hard exception can still emit run_terminal
+    # (a hard KILL emits nothing — exactly what INCOMPLETE detects).
+    lifecycle = _run_info if _run_info is not None else {}
+    lifecycle["run_id"] = run_id
+    lifecycle["terminal_emitted"] = evidence is None  # dry-run: no lifecycle
+    if evidence is not None:
+        append_run_started(project, run_id, target=target, gen=gen, actor=actor)
+
+    def _emit_run_terminal(status: str) -> None:
+        """Emit the ONE run_terminal for this run (idempotent, best-effort)."""
+        if lifecycle.get("terminal_emitted"):
+            return
+        lifecycle["terminal_emitted"] = True
+        append_run_terminal(
+            project, run_id, status=status,
+            counts={"generated": len(result.generated),
+                    "errors": len(result.errors),
+                    "warnings": len(result.warnings)},
+            actor=actor)
     # goal: honest job cancellation — running total of what THIS build has
     # actually spent so far, updated as each shot's takes commit (see
     # _commit_one below). Used only to word the cancellation message
@@ -765,10 +834,15 @@ def _run_build_phases(
         evidence.warnings.clear()
         if res.waiting_user:
             evidence.run_waiting_user()
+            _emit_run_terminal("waiting_user")
         elif not res.ok:
             evidence.run_failed()
+            _emit_run_terminal("failed")
         else:
             evidence.run_succeeded()
+            # "completed" verbatim: the manifest derivation promotes to
+            # COMPLETED_WITH_WARNINGS when failure attempts are on record.
+            _emit_run_terminal("completed")
         res.warnings.extend(evidence.warnings)
         evidence.warnings.clear()
         _materialize()
@@ -802,6 +876,7 @@ def _run_build_phases(
             evidence.run_canceled(outputs=[{"role": "generated_count",
                                             "count": len(result.generated)}],
                                   decision={"remote_may_continue": bool(remote_pending)})
+            _emit_run_terminal("canceled")  # P0 WP4: canceled exits terminate too
             result.warnings.extend(evidence.warnings)
             evidence.warnings.clear()
             _materialize()
@@ -1507,6 +1582,18 @@ def _run_build_phases(
         from ..media.ffmpeg import MediaCanceled, cancel_scope
 
         finals_before = set(project.final_dir.glob("final_v*.mp4"))
+        # P0 WP4: the final render is one of the two expensive attempt families
+        # — pre-mint its handle and announce attempt_started BEFORE the work, so
+        # an interrupted render is a dangling attempt on an INCOMPLETE run. The
+        # terminal (SUCCEEDED / SKIPPED_CACHE_HIT via _emit_render_attempt)
+        # lands on the SAME attempt_id. Best-effort, one append.
+        render_handle = None
+        if evidence is not None:
+            from .attempts import append_attempt_started
+            render_handle = evidence.attempt(
+                "render", {"kind": "render", "target": target}, "render")
+            append_attempt_started(project, run_id, render_handle.attempt_id,
+                                   stage="render", actor=actor)
         try:
             with cancel_scope(should_cancel):
                 out = render_timeline(project, timeline, target=target, ass_file=ass_path,
@@ -1552,7 +1639,8 @@ def _run_build_phases(
         # output sha256 + content_key are READ from the DR01 .key.json sidecar
         # (already computed at render completion) — never re-hashed here.
         if evidence is not None:
-            _emit_render_attempt(evidence, project, out, target, reused=reused)
+            _emit_render_attempt(evidence, project, out, target, reused=reused,
+                                 handle=render_handle)
 
     # ---- 6. QC (§9)
     if target in ("proxy", "final", "qc"):

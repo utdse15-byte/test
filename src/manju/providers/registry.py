@@ -378,6 +378,15 @@ class _EvidenceChain:
             handle.fallback_root_attempt_id = self._first_id or handle.attempt_id
             if self._first_id is None:
                 self._first_id = handle.attempt_id
+            # P0 WP4: provider generation is one of the two expensive attempt
+            # families — announce attempt_started BEFORE provider.generate runs,
+            # on the SAME pre-minted attempt_id the terminal stage_attempt will
+            # carry. Best-effort (returns False on failure, never raises).
+            self._A.append_attempt_started(
+                getattr(self.ev, "project", None) or req.project,
+                getattr(self.ev, "run_id", None) or "?",
+                handle.attempt_id, stage="generate", provider=name,
+                actor=getattr(self.ev, "actor", "engine"))
             return handle
         except Exception:
             return None
