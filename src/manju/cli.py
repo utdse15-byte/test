@@ -6666,5 +6666,173 @@ def series_outline_cmd(
         typer.secho("  零写入检查;加 --apply 才创建分集", fg=typer.colors.BRIGHT_BLACK)
 
 
+# ===================================================== AI_IDE_19: understand → edit
+# Media understanding, explainable semantic editing, cutdown and smart reframe.
+# Every command below is DERIVED / read-only or a ZERO-WRITE proposal — none write
+# the Timeline; the LLM/VLM never does either (contract §1). A real cloud analyzer
+# / bridge is gated behind AI_IDE_14 qualification and refuses when unqualified.
+
+
+@app.command("analyze")
+def analyze_cmd(
+    media: Path = typer.Argument(..., help="the exact source media to bind analysis to"),
+    fixture: Optional[Path] = typer.Option(None, "--fixture",
+        help="a committed JSON observation set — fixture analysis FIRST (contract §2)"),
+    provider: Optional[str] = typer.Option(None, "--provider",
+        help="a cloud video-understanding provider (gated behind AI_IDE_14 qualification)"),
+    write: bool = typer.Option(False, "--write", help="materialise the deletable report"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """WP1: produce a `manju.media-analysis/v1` derived evidence document bound to
+    the EXACT media hash. Fixture analysis is deterministic + offline; the cloud
+    slot refuses ANALYZER_NOT_QUALIFIED until a real provider is qualified."""
+    import json as _json
+    from .core.hashing import hash_file
+    from .media import analysis as _an
+
+    project = _project()
+    if not media.exists():
+        _fail(f"media not found: {media}", code="no_media")
+        return
+    src_hash = hash_file(media)
+    if provider:
+        # the gate lives in the provider layer (build-boundary guard); cli calls it.
+        from .providers.qualification import analyzer_admission
+        decision = analyzer_admission(provider, _an.CAPABILITY, project=project)
+        decision["source_media_hash"] = src_hash
+        if as_json:
+            _emit(decision, True)
+        else:
+            typer.echo(f"analyzer {provider}: "
+                       f"{'admitted' if decision['admitted'] else decision['refusal']}"
+                       f" — {decision['reason']}")
+        return
+    if not fixture or not fixture.exists():
+        _fail("fixture analysis needs --fixture <committed json> (contract §2)",
+              code="no_fixture")
+        return
+    try:
+        obs = _json.loads(fixture.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _fail(f"bad fixture json: {exc}", code="bad_fixture")
+        return
+    ev = _an.analyze_with_fixture(src_hash, obs, source_ref=str(media))
+    if write:
+        _an.write_report(project, ev)
+    if as_json:
+        _emit(ev, True)
+    else:
+        typer.secho(f"analyzed {media.name}  hash={src_hash[:16]}…  "
+                    f"unknown_axes={ev['unknown_axes']}", fg=typer.colors.GREEN)
+
+
+@app.command("segments")
+def segments_cmd(
+    report: Path = typer.Argument(..., help="a media-analysis report JSON"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """WP2: derive coherent A/V segments (read-only) from analysis evidence."""
+    import json as _json
+    from .build import segments as _seg
+
+    _project()
+    try:
+        ev = _json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _fail(f"bad report: {exc}", code="bad_report")
+        return
+    segs = _seg.derive_segments(ev)
+    if as_json:
+        _emit(segs, True)
+    else:
+        for s in segs:
+            typer.echo(f"  [{s['start_ms']}-{s['end_ms']}] scene={s['scene']} "
+                       f"risk={s['cut_risk']} dialogue_ok={s['dialogue_complete']}")
+
+
+@app.command("reframe")
+def reframe_cmd(
+    report: Path = typer.Argument(..., help="a media-analysis report JSON (ROI tracks)"),
+    target: str = typer.Option(..., "--target", help="target WxH, e.g. 1080x1920"),
+    source: str = typer.Option(..., "--source", help="source WxH, e.g. 1920x1080"),
+    max_px_per_s: float = typer.Option(600.0, "--max-px-s", help="crop jump rate limit"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """WP4: compile ROI tracks → crop keyframes (read-only). Rate-limited, safe-area
+    aware, multi-subject → needs_manual, infeasible → blanking. FORMAT_ONLY."""
+    import json as _json
+    from .media import analysis as _an, reframe as _rf
+
+    _project()
+    try:
+        ev = _json.loads(report.read_text(encoding="utf-8"))
+        sw, sh = (int(x) for x in source.lower().split("x"))
+        tw, th = (int(x) for x in target.lower().split("x"))
+    except (OSError, ValueError) as exc:
+        _fail(f"bad input: {exc}", code="bad_input")
+        return
+    out = _rf.compile_crop_keyframes(_an.roi_tracks(ev), source_wh=(sw, sh),
+                                     target_wh=(tw, th), max_px_per_s=max_px_per_s)
+    if as_json:
+        _emit(out, True)
+    else:
+        typer.secho(f"reframe {source}→{target}: status={out['status']} "
+                    f"strategy={out['strategy']} keyframes={len(out['keyframes'])}",
+                    fg=typer.colors.GREEN if out["status"] == _rf.OK else typer.colors.YELLOW)
+
+
+@app.command("rough-cut")
+def rough_cut_cmd(
+    align: Path = typer.Argument(..., help="an AI_IDE_18 <take>.align.json evidence file"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """WP5a: annotate-only speech rough-cut proposal (never deletes; reversible;
+    never touches the Timeline). Built from AI_IDE_18 word/speaker evidence."""
+    import json as _json
+    from .qc import roughcut as _rc
+
+    _project()
+    try:
+        ev = _json.loads(align.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _fail(f"bad align evidence: {exc}", code="bad_align")
+        return
+    prop = _rc.rough_cut_proposal(ev)
+    if as_json:
+        _emit(prop, True)
+    else:
+        typer.secho(f"rough cut: {len(prop['annotations'])} annotation(s) "
+                    f"[default={prop['default_action']}, reversible]",
+                    fg=typer.colors.GREEN)
+        for a in prop["annotations"]:
+            typer.echo(f"  {a['kind']}  [{a['start_ms']}-{a['end_ms']}]  {a['reason']}")
+
+
+@app.command("tool")
+def tool_cmd(
+    op: str = typer.Argument(..., help="a whitelisted edit op"),
+    dry_run: bool = typer.Option(True, "--dry-run/--resolve"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """WP6: describe a whitelisted intent op's EXISTING deterministic executor.
+    Off-whitelist is refused; there is no LLM planner in core. (Programmatic
+    resolve/dry-run with real args lives in build.toolmap.)"""
+    from .build import toolmap as _tm
+
+    _project()
+    spec = _tm.TOOL_WHITELIST.get(op)
+    if spec is None:
+        _fail(f"op {op!r} is not on the tool whitelist {list(_tm.whitelist_ops())} "
+              f"— refused, never improvised", code="tool_refused")
+        return
+    out = {"op": op, "executor": spec["executor"], "kind": spec["kind"],
+           "priced": 0.0, "deterministic": True,
+           "required": list(_tm._REQUIRED.get(op, ()))}
+    if as_json:
+        _emit(out, True)
+    else:
+        typer.echo(f"{op} → {out['executor']}  (whitelist: {list(_tm.whitelist_ops())})")
+
+
 if __name__ == "__main__":
     app()

@@ -522,6 +522,137 @@ def reviewer_admission(provider_id: str, capability: str = "vision", *,
     return decision
 
 
+# ============================================ AI_IDE_19 analyzer admission gate
+#
+# A cloud video-understanding / media-analysis provider (AI_IDE_19 WP1, addendum
+# ruling 1) is one more capability rung on the SAME ladder: real cloud analysis
+# lands ONLY behind qualification, and fixture analysis runs first (contract §2).
+# This mirrors the AI_IDE_15 reviewer gate exactly — a pure qualification check
+# that opens NO transport and imports NO vendor SDK; a broken / absent /
+# unqualified analyzer is refused with ``ANALYZER_NOT_QUALIFIED`` rather than
+# dispatched. The offline fixture analyzer never reaches this gate.
+
+ANALYZER_MIN_QUALIFICATION = DRY_RUN_VALID
+ANALYZER_REFUSAL = "ANALYZER_NOT_QUALIFIED"
+
+
+def analyzer_admission_from_state(qualification: dict) -> dict:
+    """Pure admission predicate for a cloud analyzer over a
+    :func:`qualification_state` dict. Dispatch is allowed ONLY when the provider
+    is qualified to at least :data:`ANALYZER_MIN_QUALIFICATION`, not BLOCKED and
+    not STALE; anything else is a structured ``ANALYZER_NOT_QUALIFIED`` refusal —
+    never a silent proceed. No I/O, so both branches are testable offline."""
+    level = qualification.get("level")
+    stale = bool(qualification.get("stale"))
+    blocked = qualification.get("blocked_reason")
+    min_rung = _ORDER.get(ANALYZER_MIN_QUALIFICATION, 0)
+    qualified = _ORDER.get(level, -1) >= min_rung and not blocked and not stale
+    if qualified:
+        return {"admitted": True, "refusal": None, "level": level,
+                "state": qualification.get("state"),
+                "min_required": ANALYZER_MIN_QUALIFICATION,
+                "reason": f"qualified to {level} (>= {ANALYZER_MIN_QUALIFICATION})"}
+    if blocked:
+        why = f"provider blocked: {blocked}"
+    elif stale:
+        why = f"qualification stale (rung fell back to {level})"
+    else:
+        why = (f"qualified only to {level}; a cloud analysis needs "
+               f">= {ANALYZER_MIN_QUALIFICATION} (run provider qualification first)")
+    return {"admitted": False, "refusal": ANALYZER_REFUSAL, "level": level,
+            "state": qualification.get("state"),
+            "min_required": ANALYZER_MIN_QUALIFICATION, "reason": why}
+
+
+def analyzer_admission(provider_id: str, capability: str = "media_analysis", *,
+                       project: Any | None = None,
+                       evidence: dict | None = None,
+                       fixtures_dir: Path | None = None) -> dict:
+    """Whether a cloud media-analysis run may be dispatched through
+    ``provider_id`` for ``capability``. Reuses the ladder end to end (live
+    :func:`declared_facts` + any recorded deletable evidence → the pure
+    :func:`qualification_state` → :func:`analyzer_admission_from_state`), exactly
+    like :func:`reviewer_admission`. In this environment no real analyzer reaches
+    ``DRY_RUN_VALID``, so the real analysis round-trip is SKIPPED_WITH_EVIDENCE
+    and this refusal is its stand-in (contract §2: fixture analysis first)."""
+    try:
+        declared = declared_facts(provider_id, capability, fixtures_dir=fixtures_dir)
+    except Exception as exc:  # a broken manifest is not qualified — never a pass
+        declared = {"exists": False, "manifest_error": str(exc)}
+    ev = evidence
+    if ev is None and project is not None:
+        try:
+            ev = _stored_evidence(project, provider_id, capability)
+        except Exception:
+            ev = None
+    q = qualification_state(provider_id, capability, evidence=ev, declared=declared)
+    decision = analyzer_admission_from_state(q)
+    decision.update({"provider_id": provider_id, "capability": capability})
+    return decision
+
+
+# ============================================ AI_IDE_19 bridge admission gate
+#
+# A REAL generative transition bridge (WP5b, addendum ruling 6) executes through
+# the STANDARD paid provider path — but only when the video provider is qualified
+# to the same DRY_RUN_VALID rung. Same ladder, same shape as the reviewer/analyzer
+# gates; a structured ``BRIDGE_NOT_QUALIFIED`` refusal rather than a silent paid
+# submit. The gate lives in the PROVIDER layer (build/ must not import it — the
+# build-boundary guard); cli.py calls it before dispatching a real bridge.
+
+BRIDGE_MIN_QUALIFICATION = DRY_RUN_VALID
+BRIDGE_REFUSAL = "BRIDGE_NOT_QUALIFIED"
+
+
+def bridge_admission_from_state(qualification: dict) -> dict:
+    """Pure admission predicate for a generative bridge over a
+    :func:`qualification_state` dict — qualified only at ``>= DRY_RUN_VALID``,
+    not BLOCKED, not STALE; else a ``BRIDGE_NOT_QUALIFIED`` refusal. No I/O."""
+    level = qualification.get("level")
+    stale = bool(qualification.get("stale"))
+    blocked = qualification.get("blocked_reason")
+    min_rung = _ORDER.get(BRIDGE_MIN_QUALIFICATION, 0)
+    qualified = _ORDER.get(level, -1) >= min_rung and not blocked and not stale
+    if qualified:
+        return {"admitted": True, "refusal": None, "level": level,
+                "state": qualification.get("state"),
+                "min_required": BRIDGE_MIN_QUALIFICATION,
+                "reason": f"qualified to {level} (>= {BRIDGE_MIN_QUALIFICATION})"}
+    if blocked:
+        why = f"provider blocked: {blocked}"
+    elif stale:
+        why = f"qualification stale (rung fell back to {level})"
+    else:
+        why = (f"qualified only to {level}; a real generative bridge needs "
+               f">= {BRIDGE_MIN_QUALIFICATION} (run provider qualification first)")
+    return {"admitted": False, "refusal": BRIDGE_REFUSAL, "level": level,
+            "state": qualification.get("state"),
+            "min_required": BRIDGE_MIN_QUALIFICATION, "reason": why}
+
+
+def bridge_admission(provider_id: str, capability: str = "generative_bridge", *,
+                     project: Any | None = None, evidence: dict | None = None,
+                     fixtures_dir: Path | None = None) -> dict:
+    """Whether a REAL generative bridge may be dispatched through ``provider_id``.
+    Reuses the ladder end to end (like the reviewer / analyzer gates). No real
+    video provider reaches ``DRY_RUN_VALID`` here, so the real bridge is
+    SKIPPED_WITH_EVIDENCE and this refusal is its stand-in."""
+    try:
+        declared = declared_facts(provider_id, capability, fixtures_dir=fixtures_dir)
+    except Exception as exc:
+        declared = {"exists": False, "manifest_error": str(exc)}
+    ev = evidence
+    if ev is None and project is not None:
+        try:
+            ev = _stored_evidence(project, provider_id, capability)
+        except Exception:
+            ev = None
+    q = qualification_state(provider_id, capability, evidence=ev, declared=declared)
+    decision = bridge_admission_from_state(q)
+    decision.update({"provider_id": provider_id, "capability": capability})
+    return decision
+
+
 # ============================================================ WP3 declared-vs-observed
 
 

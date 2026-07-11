@@ -226,6 +226,19 @@ FIRST_LAST_ENCODINGS = ("base64_field", "url_field", "multipart")
 # as UNTESTED until a real provider is exercised (honest — no cloud account here).
 LIP_SYNC_CAPABILITY = "lip_sync"
 
+# AI_IDE_19 (addendum ruling 1 & 6): two more optional capability tokens on the
+# SAME free ``capabilities`` list (additive — no schema change). A cloud video-
+# understanding provider advertises ``media_analysis`` to opt into producing a
+# ``manju.media-analysis/v1`` derived evidence document (media/analysis.py) — real
+# cloud analysis lands only behind AI_IDE_14's qualification, fixture analysis
+# first (contract §2). A video provider advertises ``generative_bridge`` to opt
+# into transition-bridge generation (build/bridge.py) through the STANDARD paid
+# path. Both are UNTESTED in AI_IDE_14's matrix until a real provider is exercised
+# (honest — no cloud account here); the gates refuse ANALYZER_NOT_QUALIFIED /
+# BRIDGE_NOT_QUALIFIED rather than silently proceed.
+MEDIA_ANALYSIS_CAPABILITY = "media_analysis"
+GENERATIVE_BRIDGE_CAPABILITY = "generative_bridge"
+
 
 class RefsConfig(ManjuModel):
     """How a generic_cloud provider receives reference INPUTS (goal item 7).
