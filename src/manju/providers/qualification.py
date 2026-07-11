@@ -449,6 +449,79 @@ def _stored_evidence(project: Any, provider_id: str, capability: str) -> dict | 
     return report.get("evidence") if report else None
 
 
+# =============================================== AI_IDE_15 reviewer admission gate
+#
+# The cloud-visual reviewer (AI_IDE_15 §2, addendum ruling 1) may dispatch a real
+# VLM review ONLY when the vision provider is qualified. This gate lives in the
+# PROVIDER layer (it consumes the ladder above); the qc package must not couple to
+# the qualification report (the build-boundary guard §15). Core imports NO vendor
+# SDK: this is a pure qualification check, never a transport. The offline fake
+# reviewer double drives record_verdicts directly and never reaches this gate.
+
+# a review needs at least this rung; below it (or blocked/stale) → refusal.
+REVIEWER_MIN_QUALIFICATION = DRY_RUN_VALID
+REVIEWER_REFUSAL = "REVIEWER_NOT_QUALIFIED"
+
+
+def reviewer_admission_from_state(qualification: dict) -> dict:
+    """Pure admission predicate over a :func:`qualification_state` dict. A cloud
+    VLM review may be dispatched ONLY when the provider is qualified to at least
+    :data:`REVIEWER_MIN_QUALIFICATION`, is not BLOCKED and is not STALE; anything
+    else is a structured ``REVIEWER_NOT_QUALIFIED`` refusal — never a silent
+    proceed. No I/O, so both branches are testable without a real provider."""
+    level = qualification.get("level")
+    stale = bool(qualification.get("stale"))
+    blocked = qualification.get("blocked_reason")
+    min_rung = _ORDER.get(REVIEWER_MIN_QUALIFICATION, 0)
+    qualified = _ORDER.get(level, -1) >= min_rung and not blocked and not stale
+    if qualified:
+        return {"admitted": True, "refusal": None, "level": level,
+                "state": qualification.get("state"),
+                "min_required": REVIEWER_MIN_QUALIFICATION,
+                "reason": f"qualified to {level} (>= {REVIEWER_MIN_QUALIFICATION})"}
+    if blocked:
+        why = f"provider blocked: {blocked}"
+    elif stale:
+        why = f"qualification stale (rung fell back to {level})"
+    else:
+        why = (f"qualified only to {level}; a cloud VLM review needs "
+               f">= {REVIEWER_MIN_QUALIFICATION} (run provider qualification first)")
+    return {"admitted": False, "refusal": REVIEWER_REFUSAL, "level": level,
+            "state": qualification.get("state"),
+            "min_required": REVIEWER_MIN_QUALIFICATION, "reason": why}
+
+
+def reviewer_admission(provider_id: str, capability: str = "vision", *,
+                       project: Any | None = None,
+                       evidence: dict | None = None,
+                       fixtures_dir: Path | None = None) -> dict:
+    """Whether a cloud VLM review may be dispatched through ``provider_id`` for
+    ``capability`` (default ``vision``). Reuses the ladder end to end: live
+    :func:`declared_facts` + any recorded (deletable) evidence → the pure
+    :func:`qualification_state` → :func:`reviewer_admission_from_state`.
+
+    This is the SAME plumbing behind the real-reviewer path (AI_IDE_15 addendum
+    ruling 1): a pure qualification check that opens NO network transport and
+    imports NO vendor SDK — a broken / absent / unqualified vision provider is
+    refused with ``REVIEWER_NOT_QUALIFIED`` rather than dispatched. In this
+    environment no real vision provider reaches ``DRY_RUN_VALID``, so the real
+    review round-trip is SKIPPED_WITH_EVIDENCE and this refusal is its stand-in."""
+    try:
+        declared = declared_facts(provider_id, capability, fixtures_dir=fixtures_dir)
+    except Exception as exc:  # a broken manifest is not qualified — never a pass
+        declared = {"exists": False, "manifest_error": str(exc)}
+    ev = evidence
+    if ev is None and project is not None:
+        try:
+            ev = _stored_evidence(project, provider_id, capability)
+        except Exception:
+            ev = None
+    q = qualification_state(provider_id, capability, evidence=ev, declared=declared)
+    decision = reviewer_admission_from_state(q)
+    decision.update({"provider_id": provider_id, "capability": capability})
+    return decision
+
+
 # ============================================================ WP3 declared-vs-observed
 
 

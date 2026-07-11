@@ -45,6 +45,66 @@ def frames_cache_dir(project_root: Path) -> Path:
     return Path(project_root) / ".manju" / "frames"
 
 
+# ------------------------------------------------- deterministic frame plan (WP1)
+
+# AI_IDE_15 §5 WP1: the minimal per-shot review-frame plan is first / 25% / 50% /
+# 75% / last. The plan is a PURE function of the media's duration + fps + content
+# hash, so it is repeatable and the generated frames are derivatives (contract:
+# "抽帧计划必须由 duration/fps/hash 决定,可重复;生成的 frame/contact sheet 是派生物").
+FRAME_PLAN_SCHEMA = "manju.qc.frame_plan/v1"
+FRAME_PLAN_LABELS = ("first", "p25", "mid", "p75", "last")
+# scene-change slots are ONLY added when the existing tooling already detects
+# scenes. Core has black/freeze detectors but NO scene-change detector, and this
+# batch does not add scdet (addendum ruling 2) — recorded, never faked.
+_SCENE_SLOTS_SKIPPED = {
+    "status": "SKIPPED_WITH_EVIDENCE",
+    "reason": ("no scene-change detector exists in core (only black/freeze "
+               "detectors); adding scdet is out of scope for this batch — "
+               "scene-change frame slots are recorded as skipped, never faked"),
+}
+
+
+def frame_plan(duration_ms: int | None, fps: float | None,
+               media_hash: str | None) -> dict:
+    """The deterministic review-frame plan for one clip (§5 WP1).
+
+    Returns ``{schema, positions:[{label, at_ms}], plan_digest, scene_change_slots,
+    duration_ms, fps}``. PURE: the positions are a function of ``duration_ms``
+    alone (first / 25% / 50% / 75% / last); ``fps`` only sets the LAST extractable
+    frame (``duration - one frame``) so 'last' resolves to a real frame exactly as
+    :func:`extract_frame`'s clamp does — never an empty extract past EOF. The
+    ``plan_digest`` folds in ``media_hash`` so a regenerated take (new bytes) has a
+    distinct plan identity even at an identical duration. Extraction of each
+    position stays the EXISTING content-addressed ``.manju/frames`` cache
+    (:func:`extract_frame`) — this adds a plan, never a second cache.
+
+    A clip with an unknown/zero duration degrades to a single ``first`` frame at
+    0ms (honest: nothing else is derivable), never an invented mid/last.
+    """
+    dur = int(duration_ms or 0)
+    if dur <= 0:
+        positions = [{"label": "first", "at_ms": 0}]
+    else:
+        last = max(0, dur - _frame_len_ms(fps))
+        raw = {"first": 0, "p25": dur // 4, "mid": dur // 2,
+               "p75": (dur * 3) // 4, "last": last}
+        # keep the canonical order; clamp every interior point below 'last' so a
+        # very short clip never orders p75 after last.
+        positions = [{"label": lbl, "at_ms": min(raw[lbl], last) if lbl != "first" else 0}
+                     for lbl in FRAME_PLAN_LABELS]
+    plan_digest = short_hash(cache_key(
+        FRAME_PLAN_SCHEMA, media_hash or "", dur, int(round(fps)) if fps else 0,
+        [(p["label"], p["at_ms"]) for p in positions]))
+    return {
+        "schema": FRAME_PLAN_SCHEMA,
+        "duration_ms": dur or None,
+        "fps": fps,
+        "positions": positions,
+        "plan_digest": plan_digest,
+        "scene_change_slots": dict(_SCENE_SLOTS_SKIPPED),
+    }
+
+
 def _resolve_source(project: Project, source_relpath: str | Path) -> Path:
     """Project-relative media path → an existing absolute file (rejects escapes
     above the root the same way :meth:`Project.resolve` does)."""

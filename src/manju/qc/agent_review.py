@@ -124,6 +124,40 @@ OBS_STATE_VISIBILITY = ("VISIBLE", "NOT_VISIBLE", "UNCERTAIN",
                         "NOT_EVALUATED", "NOT_APPLICABLE")
 OBS_STATE_POSITIONS = ("START", "END")
 
+# AI_IDE_15 §3/§6 (addendum ruling 3, Path A additive) — the cloud-visual
+# reviewer's per-DIMENSION observation, a NEW optional field on verdict v2 that
+# rides ALONGSIDE the per-expectation `observations` above. The 11 reviewer
+# dimensions (§3): only observable facts, never inferred motive/plot.
+REVIEWER_DIMENSIONS = (
+    "character_identity",       # 1. 脸/发型/体型/关键特征
+    "appearance_variant",       # 2. 服装/饰品/伤势/年龄/形态
+    "scene",                    # 3. 布局/时间/天气/灯光/主要背景物
+    "prop_product",             # 4. 存在/几何/颜色/文字/Logo
+    "spatial_relations",        # 5. 相对位置/屏幕方向/视线/180°轴线
+    "action_phase",             # 6. 是否完成/是否重启/手-物交互
+    "composition_photography",  # 7. 景别/相机高度/运动阶段
+    "style",                    # 8. 色板/材质/渲染风格
+    "technical_defect",         # 9. 畸变/多肢/闪烁/穿插/跨帧文字纹理突变
+    "color_exposure",           # 10. 白平衡/曝光/对比/肤色/色域伽马
+    "lip_sync",                 # 11. 仅在具备对齐证据时评价
+)
+# §6 observed vocabulary — DISTINCT from the per-expectation OBSERVED_STATES; it
+# expresses match-vs-reference, not present-vs-must_show. Still never accepted by
+# a model: the PASS/FAIL/UNKNOWN authority stays qc/assurance.py's pure function.
+DIMENSION_OBSERVED = ("match", "mismatch", "uncertain", "not_visible")
+# §6 severity tiers (info|warning|blocker) — the reviewer's OWN severity, distinct
+# from the finding LEVELS (blocker|issue|fyi). `confidence` never computes accept.
+DIMENSION_SEVERITY = ("info", "warning", "blocker")
+
+# Reviewer qualification gate (addendum ruling 1): a review dispatched to a vision
+# provider below DRY_RUN_VALID is refused with a structured REVIEWER_NOT_QUALIFIED.
+# The gate itself lives in the PROVIDER layer (``reviewer_admission`` in
+# providers.qualification) — the qc package must NOT couple to the qualification
+# evidence store (AI_IDE_14 build-boundary guard §15), and admission is a
+# provider-layer concern. The offline fake double drives record_verdicts DIRECTLY
+# (no real dispatch) and never consults the gate — so core needs no reference to
+# the fake's id (20A ruling: runtime never reads the corpus).
+
 # The 中文 prefix that marks a finding as the driving agent's own judgment.
 AI_PREFIX = "[AI判读]"
 
@@ -300,6 +334,24 @@ def _shot_frames(project: "Project", take: "TakeInfo") -> dict[str, str | None]:
     return out
 
 
+def _shot_frame_plan(project: "Project", take: "TakeInfo") -> dict | None:
+    """The deterministic first/25/50/75/last review-frame plan for a take (§5
+    WP1), keyed by duration/fps/media-hash via :func:`media.frames.frame_plan`.
+    Pure and cheap (one ffprobe reused from the frame pass); degrades to ``None``
+    on any failure so it never breaks the legacy brief. The plan's positions
+    address the SAME ``.manju/frames`` cache the legacy first/mid/last frames use
+    — this ADDS a plan, never a second cache."""
+    from ..media.frames import frame_plan
+
+    try:
+        from ..media.probe import probe as _probe
+
+        info = _probe(take.media_path)
+        return frame_plan(info.duration_ms, info.fps, _safe_hash(take.media_path))
+    except Exception:
+        return None
+
+
 def _character_context(matrix: dict, cid: str) -> dict:
     """A character's brief context: id + name + its bible ref image paths (from
     the asset matrix — the same read model @mentions resolve against)."""
@@ -393,6 +445,7 @@ def qc_brief(project: "Project", shots: list[str] | None = None, *,
             "take": take.name,
             "take_hash": _safe_hash(take.media_path),
             "frames": frames,
+            "frame_plan": _shot_frame_plan(project, take),
             "context": {
                 "scene": _scene_context(matrix, shot.scene),
                 "characters": characters,
@@ -1196,6 +1249,62 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
                     "confidence": conf,
                 })
 
+    # ---- step 8 (AI_IDE_15 §6, Path A additive): per-DIMENSION observations.
+    # OPTIONAL — absent is a legal legacy payload. Present but malformed (unknown
+    # dimension/observed/severity/variable, bad confidence, unsafe ref) ⇒
+    # payload-invalid ⇒ whole-batch reject, ZERO writes (same path as above). The
+    # reviewer NEVER writes accepted: these are routing/drift view data, never an
+    # acceptance input (that stays qc/assurance.py's pure diff).
+    dim_obs_norm = None
+    dim_obs = v.get("dimension_observations")
+    if dim_obs is not None:
+        if not isinstance(dim_obs, list):
+            errs.append(f"verdict #{idx}: dimension_observations 必须是数组")
+        else:
+            dim_obs_norm = []
+            for j, o in enumerate(dim_obs):
+                if not isinstance(o, dict):
+                    errs.append(f"verdict #{idx} dimension_observation #{j}: 必须是对象")
+                    continue
+                dim = o.get("dimension")
+                if dim not in REVIEWER_DIMENSIONS:
+                    errs.append(f"verdict #{idx} dimension_observation #{j}: dimension "
+                                f"必须是 11 个 reviewer 维度之一,收到 {dim!r}")
+                observed = o.get("observed")
+                if observed not in DIMENSION_OBSERVED:
+                    errs.append(f"verdict #{idx} dimension_observation #{j}: observed "
+                                f"必须是 {DIMENSION_OBSERVED} 之一,收到 {observed!r}")
+                sev = o.get("severity")
+                if sev is not None and sev not in DIMENSION_SEVERITY:
+                    errs.append(f"verdict #{idx} dimension_observation #{j}: severity "
+                                f"必须是 {DIMENSION_SEVERITY} 之一或省略,收到 {sev!r}")
+                var = o.get("suggested_repair_variable")
+                if var is not None and var not in REPAIR_VARIABLES:
+                    errs.append(f"verdict #{idx} dimension_observation #{j}: 未知 "
+                                f"suggested_repair_variable {var!r}")
+                conf = o.get("confidence")
+                if conf is not None and (not isinstance(conf, (int, float))
+                                         or isinstance(conf, bool)
+                                         or not 0.0 <= float(conf) <= 1.0):
+                    errs.append(f"verdict #{idx} dimension_observation #{j}: confidence "
+                                f"必须是 0..1 的数,收到 {conf!r}")
+                for ref in (o.get("evidence_refs") or []):
+                    if _is_unsafe_ref(ref):
+                        errs.append(f"verdict #{idx} dimension_observation #{j}: "
+                                    f"不安全的 evidence_ref {ref!r}")
+                dim_obs_norm.append({
+                    "dimension": dim,
+                    "subject_ref": (str(o["subject_ref"])
+                                    if o.get("subject_ref") is not None else None),
+                    "observed": observed,
+                    "severity": sev,
+                    "confidence": conf,
+                    "evidence_refs": list(o.get("evidence_refs") or []),
+                    "explanation": (str(o["explanation"])
+                                    if o.get("explanation") is not None else None),
+                    "suggested_repair_variable": var,
+                })
+
     if _contains_secret(v):
         errs.append(f"verdict #{idx}: 载荷疑似包含 API key/密钥,拒绝存储"
                     "(密钥只应存在于环境变量,§8.2)")
@@ -1275,6 +1384,11 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
         rec["decision"] = decision_norm
     if obs_states_norm is not None:
         rec["observed_states"] = obs_states_norm
+    # AI_IDE_15 §6 additive: persist the validated per-dimension observations
+    # verbatim (absent for legacy payloads). The reviewer's severity/confidence
+    # ride here as routing/drift data — assurance never reads them.
+    if dim_obs_norm is not None:
+        rec["dimension_observations"] = dim_obs_norm
     return rec, []
 
 

@@ -483,3 +483,273 @@ def repair_route(disposition: str) -> dict[str, Any] | None:
         return None
     return {**route, "disposition": disposition,
             "do_not_execute_automatically": True}
+
+
+# ================================================= AI_IDE_15 §7/§8 derived views
+#
+# The multi-reviewer agreement view, the drift trend, and the 7-route repair
+# proposal — all READ-ONLY projections over current-bound v2 review records
+# (their §6 dimension observations). Nothing here writes, spends, or executes;
+# every route is human-gated (``requires_confirmation``).
+
+DRIFT_SCHEMA = "manju.qc.drift/v1"
+ROUTES_SCHEMA = "manju.qc.repair_routes/v1"
+AGREEMENT_SCHEMA = "manju.qc.reviewer_agreement/v1"
+
+# §8: the 7-route vocabulary EXTENDS the 5-disposition repair mapping above.
+# KEEP→ACCEPT_DEVIATION and the four other dispositions map 1:1; REGENERATE_
+# REFERENCE and RESHOOT are ROUTE-LEVEL additions — they are NOT verdict
+# dispositions (a reviewer can never emit them as decision.disposition; see
+# agent_review.DISPOSITIONS). This distinction is the whole point of ruling 5.
+DISPOSITION_TO_ROUTE: dict[str, str] = {
+    "KEEP": "ACCEPT_DEVIATION",
+    "FIX_IN_POST": "FIX_IN_POST",
+    "EDIT_DONT_REGENERATE": "EDIT_DONT_REGENERATE",
+    "REROLL": "REROLL",
+    "REWRITE_SOURCE": "REWRITE_SOURCE",
+}
+ROUTE_LEVEL_ADDITIONS = ("REGENERATE_REFERENCE", "RESHOOT")
+SEVEN_ROUTES = tuple(DISPOSITION_TO_ROUTE.values()) + ROUTE_LEVEL_ADDITIONS
+
+# the §9.3 one-variable → route map. The reviewer's suggested_repair_variable is
+# the primary signal (one variable per repair, §6); routes never invent a second.
+_VARIABLE_ROUTE: dict[str, str] = {
+    "reference_asset": "REGENERATE_REFERENCE",
+    "reference_role": "REGENERATE_REFERENCE",
+    "source_action": "RESHOOT",
+    "camera": "RESHOOT",
+    "motion": "RESHOOT",
+    "endpoint": "RESHOOT",
+    "framing": "EDIT_DONT_REGENERATE",
+    "clip_scope": "EDIT_DONT_REGENERATE",
+    "post_trim": "FIX_IN_POST",
+    "post_mask": "FIX_IN_POST",
+    "post_grade": "FIX_IN_POST",
+    "text_overlay": "FIX_IN_POST",
+    "audio": "FIX_IN_POST",
+    "lighting": "FIX_IN_POST",
+    "seed": "REROLL",
+    "provider_surface": "REROLL",
+    "safety_wording": "REWRITE_SOURCE",
+}
+_ROUTE_DEFAULT_VARIABLE = {
+    "REGENERATE_REFERENCE": "reference_asset", "RESHOOT": "camera",
+    "FIX_IN_POST": "post_grade", "EDIT_DONT_REGENERATE": "clip_scope",
+    "REROLL": "seed", "REWRITE_SOURCE": "safety_wording",
+    "ACCEPT_DEVIATION": "clip_scope",
+}
+# routes that spend on a generation provider price through the EXISTING estimator
+# (build.spend) at the human-gated spend step; local routes are deterministic
+# ffmpeg (repair_op) or a plain accept — no generation spend.
+_GENERATION_ROUTES = {"REROLL", "REGENERATE_REFERENCE", "RESHOOT", "REWRITE_SOURCE"}
+_DIM_SEV_ORDER = {None: 0, "info": 1, "warning": 2, "blocker": 3}
+
+
+def _max_dim_severity(sevs) -> str | None:
+    best: str | None = None
+    for s in sevs:
+        if _DIM_SEV_ORDER.get(s, 0) > _DIM_SEV_ORDER.get(best, 0):
+            best = s
+    return best
+
+
+def _bound_dimension_records(project: "Project", shot_id: str) -> list[dict]:
+    """Every CURRENT-bound v2 shot record for ``shot_id`` that carries §6
+    dimension observations (file order). Uses the ONE binding checker
+    (:func:`assurance._live_failures`) so a record whose media/spec/expectations
+    moved is dropped as history — the drift trend is derived from current-bound
+    evidence ONLY (§12: 漂移趋势只从 current-bound evidence 派生)."""
+    from .agent_review import read_v2_records
+    from .assurance import _live_failures
+
+    out: list[dict] = []
+    try:
+        records, _ = read_v2_records(project)
+    except Exception:
+        return out
+    for rec in records:
+        subj = rec.get("subject") or {}
+        if subj.get("kind") != "shot" or subj.get("id") != shot_id:
+            continue
+        if not rec.get("dimension_observations"):
+            continue
+        try:
+            if _live_failures(project, shot_id, rec):
+                continue
+        except Exception:
+            continue
+        out.append(rec)
+    return out
+
+
+def verdict_reviewer_current(record: dict, current_reviewer_digest: str | None) -> bool:
+    """§11 cache currency extended to the reviewer PROFILE digest: a stored
+    verdict is current for the configured reviewer iff its ``reviewer.profile_
+    digest`` equals the current one. A changed reviewer profile/model makes old
+    verdicts historical — the review cache never reuses a result across models
+    (§12: 缓存不跨模型错误复用). ``None`` disables the check (profile-agnostic)."""
+    if current_reviewer_digest is None:
+        return True
+    return (record.get("reviewer") or {}).get("profile_digest") == current_reviewer_digest
+
+
+def drift_trend(project: "Project", shots: list[str] | None = None) -> dict[str, Any]:
+    """The §8 drift trend: a dimension × shot-order matrix over current-bound §6
+    dimension observations. Surfaces DRIFT (``observed == "mismatch"``) — a
+    per-dimension row in shot order, latest current-bound record winning per
+    dimension. Pure, read-only, current-bound only."""
+    order = list(shots) if shots is not None else list(project.shot_ids())
+    dimensions: dict[str, list[dict]] = {}
+    for sid in order:
+        latest_by_dim: dict[str, tuple[dict, dict]] = {}
+        for rec in _bound_dimension_records(project, sid):  # file order
+            for o in rec.get("dimension_observations") or []:
+                latest_by_dim[o["dimension"]] = (o, rec)
+        for dim, (o, rec) in latest_by_dim.items():
+            if o.get("observed") != "mismatch":
+                continue  # a match is continuity, not drift
+            dimensions.setdefault(dim, []).append({
+                "shot": sid,
+                "observed": o["observed"],
+                "severity": o.get("severity"),
+                "subject_ref": o.get("subject_ref"),
+                "suggested_repair_variable": o.get("suggested_repair_variable"),
+                "reviewer": (rec.get("reviewer") or {}).get("name"),
+            })
+    return {
+        "schema": DRIFT_SCHEMA,
+        "shot_order": order,
+        "dimensions": dimensions,
+        "bound_only": True,
+        "do_not_execute_automatically": True,
+    }
+
+
+def _route_for(variable: str | None) -> str:
+    """One route from the reviewer's suggested repair variable (§9.3 one-variable
+    rule). No variable named ⇒ the minimal same-intent retry (REROLL)."""
+    return _VARIABLE_ROUTE.get(variable or "", "REROLL")
+
+
+def repair_routes(project: "Project", shots: list[str] | None = None) -> dict[str, Any]:
+    """The §8 minimal, executable repair-route proposals derived from the drift
+    trend. One proposal per (route, dimension) with drift; each declares its
+    primary variable, an estimated-cost class (generation routes price through
+    the existing build.spend estimator at the human-gated spend step), the
+    affected shots, and ``requires_confirmation: true``. NOTHING auto-executes."""
+    trend = drift_trend(project, shots)
+    proposals: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for dim, entries in trend["dimensions"].items():
+        if not entries:
+            continue
+        affected = [e["shot"] for e in entries]
+        sev = _max_dim_severity(e.get("severity") for e in entries)
+        variable = next((e["suggested_repair_variable"] for e in entries
+                         if e.get("suggested_repair_variable")), None)
+        route = _route_for(variable)
+        key = (route, dim)
+        if key in seen:
+            continue
+        seen.add(key)
+        gen = route in _GENERATION_ROUTES
+        proposals.append({
+            "route": route,
+            "dimension": dim,
+            "primary_variable": variable or _ROUTE_DEFAULT_VARIABLE.get(route, "seed"),
+            "estimated_cost": {
+                "class": "generation" if gen else "local",
+                "note": ("prices through build.spend at the human-gated spend step; "
+                         "nothing here spends or executes") if gen
+                        else ("deterministic post op (media.repair_ops) or accept — "
+                              "no generation spend"),
+            },
+            "affected_shots": affected,
+            "severity": sev,
+            "is_route_level_addition": route in ROUTE_LEVEL_ADDITIONS,
+            "requires_confirmation": True,
+            "do_not_execute_automatically": True,
+        })
+    proposals.sort(key=lambda p: (p["route"], p["dimension"]))
+    return {
+        "schema": ROUTES_SCHEMA,
+        "routes": proposals,
+        "route_vocabulary": list(SEVEN_ROUTES),
+        "route_level_additions": list(ROUTE_LEVEL_ADDITIONS),
+        "do_not_execute_automatically": True,
+    }
+
+
+def reviewer_agreement(project: "Project", shot_id: str, *,
+                       current_reviewer_digest: str | None = None) -> dict[str, Any]:
+    """§7 multi-reviewer / blind-review agreement view for one shot. Reads every
+    v2 record's §6 dimension observations per reviewer (current-bound), computes
+    per-dimension agreement, and — crucially — sets state
+    ``UNKNOWN_REVIEWER_DISAGREEMENT`` when reviewers disagree on ANY
+    blocker-severity dimension (never majority-vote a blocker away). Human
+    adjudication (a verdict filed by ``actor="human"`` / ``reviewer.kind ==
+    "human"``) is listed separately as an APPENDED opinion; the original reviewer
+    records are always kept. ``current_reviewer_digest`` (optional) marks records
+    from a superseded reviewer profile as historical (§11 cache currency)."""
+    from .agent_review import read_v2_records
+    from .assurance import _live_failures
+
+    try:
+        records, _ = read_v2_records(project)
+    except Exception:
+        records = []
+
+    reviewers: dict[str, dict] = {}
+    per_dim: dict[str, dict[str, dict]] = {}
+    adjudications: list[dict] = []
+    for rec in records:
+        subj = rec.get("subject") or {}
+        if subj.get("kind") != "shot" or subj.get("id") != shot_id:
+            continue
+        reviewer = rec.get("reviewer") or {}
+        if reviewer.get("kind") == "human" or rec.get("actor") == "human":
+            adjudications.append({
+                "actor": rec.get("actor"),
+                "reviewer": reviewer,
+                "ts": rec.get("ts"),
+                "dimension_observations": rec.get("dimension_observations") or [],
+            })
+            continue
+        try:
+            bound = not _live_failures(project, shot_id, rec)
+        except Exception:
+            bound = False
+        name = reviewer.get("name") or "?"
+        pdig = reviewer.get("profile_digest")
+        reviewers[name] = {
+            "name": name, "profile_digest": pdig,
+            "current": bound and verdict_reviewer_current(rec, current_reviewer_digest),
+        }
+        if not bound:
+            continue
+        for o in rec.get("dimension_observations") or []:
+            per_dim.setdefault(o["dimension"], {})[name] = {
+                "observed": o.get("observed"), "severity": o.get("severity")}
+
+    per_dimension: dict[str, dict] = {}
+    blocker_disagreement = False
+    for dim, by_rev in per_dim.items():
+        observeds = {v["observed"] for v in by_rev.values()}
+        agree = len(observeds) <= 1
+        max_sev = _max_dim_severity(v.get("severity") for v in by_rev.values())
+        if not agree and max_sev == "blocker":
+            blocker_disagreement = True
+        per_dimension[dim] = {
+            "observed_by_reviewer": by_rev, "agree": agree, "max_severity": max_sev}
+
+    return {
+        "schema": AGREEMENT_SCHEMA,
+        "subject": shot_id,
+        "reviewers": sorted(reviewers.values(), key=lambda r: r["name"]),
+        "per_dimension": per_dimension,
+        "blocker_disagreement": blocker_disagreement,
+        "state": ("UNKNOWN_REVIEWER_DISAGREEMENT" if blocker_disagreement
+                  else "AGREEMENT"),
+        "adjudications": adjudications,
+        "do_not_execute_automatically": True,
+    }
