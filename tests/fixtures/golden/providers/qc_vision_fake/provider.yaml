@@ -1,0 +1,18 @@
+# AI_IDE_20A golden-corpus fake qc_vision reviewer (PRIMARY / calibrated).
+#
+# A TEST DOUBLE (contract §5 Reviewer Calibration / §8 deterministic fake path).
+# It loads through the REAL provider registry (manifest.load_manifests) via
+# MANJU_PROVIDERS_DIR and fills the type:vision "consistency-screening" slot that
+# qc.content.vision_provider_id() looks up — with ZERO network and ZERO model.
+# The observation logic lives in tests/fixtures/golden/fake_reviewer.py, keyed by
+# input media sha256. adapter is a non-REST marker so `manju doctor`'s
+# generic-cloud validation stays clean (no submit/poll needed).
+id: qc_vision_fake
+type: vision
+adapter: manju_test_fake_vision
+capabilities: [visual_review, consistency_screening]
+disabled: false
+review_profile: primary
+cost:
+  per_call: 0.0
+  currency: CNY

@@ -1,0 +1,1152 @@
+{
+  "schema": "manju.golden_corpus/20A",
+  "version": "20A.v1",
+  "rubric_version": "20A.rubric.v1",
+  "annotator": "orchestrated-synthetic-v1",
+  "generated": "2026-07-11",
+  "license_note": "全部为自制合成 fixture(PIL 几何图形/渐变 + ffmpeg lavfi),无任何私密或受版权限制素材(契约 §4/§9)。license 一律 self-made-synthetic。",
+  "design_notes": [
+    "视觉集为已提交的微型 PNG,sha256 固定(committed bytes 为权威);技术故障媒体为生成物,按 PROBE FACT(ffprobe 时长/帧率/流/尺寸)校验,不钉 output byte hash——ffmpeg 编码字节跨版本不稳定,钉字节会造成假回归(契约 §8)。",
+    "本 manifest 是 TEST DATA,完全位于 tests/ 下;运行时代码从不读取它(src/manju 无任何对本文件的引用,self-test 断言之)。",
+    "生成媒体不提交(session 级 pytest fixture 生成到 tmp);仓库只存生成器与视觉集。",
+    "fake reviewer 的观察表按输入媒体 sha256 索引,未登记媒体回退到 declared default(fake_reviewer_defaults)——UNKNOWN 是一等结果,绝不静默通过。"
+  ],
+  "partitions": {
+    "visual_continuity": {
+      "description": "AI_IDE_15 视觉连续性维度校准集:身份/服装/道具/场景光照/轴线/动作相位/风格/不可见/歧义。",
+      "count": 18
+    },
+    "technical_media": {
+      "description": "确定性技术故障族:good/short/black/freeze/aspect/fps/corrupt/silent/clipped/drift/subtitle-overlap/text-mutation。",
+      "count": 13
+    }
+  },
+  "fake_reviewer_defaults": {
+    "primary": {
+      "present": "uncertain",
+      "absent": "uncertain",
+      "severity": null,
+      "dimension": "unspecified",
+      "message": "未登记媒体:primary 默认弃权(UNKNOWN)"
+    },
+    "twin": {
+      "present": "uncertain",
+      "absent": "uncertain",
+      "severity": null,
+      "dimension": "unspecified",
+      "message": "未登记媒体:twin 默认弃权(UNKNOWN)"
+    }
+  },
+  "cases": [
+    {
+      "id": "visual.identity.ref.charA",
+      "partition": "visual_continuity",
+      "dimension": "identity",
+      "kind": "committed_image",
+      "path": "visual/identity_ref_charA.png",
+      "sha256": "1f5491abc11382645db4abb20c544625a01f848415c5d9c323ef680c6a6ecba1",
+      "bytes": 475,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "identity",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 的规范参考帧:身份特征(青头/深蓝衣/黄三角徽)清晰可辨,作为其它身份判读的锚。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 的规范参考帧:身份特征(青头/深蓝衣/黄三角徽)清晰可辨,作为其它身份判读的锚。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.identity.ref.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.identity.ref.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.identity.match.charA",
+      "partition": "visual_continuity",
+      "dimension": "identity",
+      "kind": "committed_image",
+      "path": "visual/identity_match_charA.png",
+      "sha256": "1d5d9938d791c0a6ff443e416f24a311bb8da47e400d9635eb3086969494c0f6",
+      "bytes": 526,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "identity",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "同一角色 charA 的另一姿态,身份保持一致(identity match)。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "同一角色 charA 的另一姿态,身份保持一致(identity match)。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.identity.match.charA 主判读"
+        },
+        "twin": {
+          "present": "uncertain",
+          "absent": "absent",
+          "severity": null,
+          "message": "twin 对身份是否一致把握不足(过度保守 UNKNOWN)"
+        }
+      }
+    },
+    {
+      "id": "visual.identity.mismatch.charB",
+      "partition": "visual_continuity",
+      "dimension": "identity",
+      "kind": "committed_image",
+      "path": "visual/identity_mismatch_charB.png",
+      "sha256": "f043eb9509edb94ac61de9e598f9426a5c125d35f26b4c4fd3e657f1bfaa0cbc",
+      "bytes": 459,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "identity",
+          "observed": "absent",
+          "severity": "blocker",
+          "allow_unknown": false,
+          "note": "画面是 charB(橙头/暗红衣/绿方徽),要求的 charA 身份缺席 —— 硬性身份穿帮,阻断上线。"
+        }
+      ],
+      "blocking_policy": "blocking",
+      "repair_route": "reference_asset",
+      "rationale": "画面是 charB(橙头/暗红衣/绿方徽),要求的 charA 身份缺席 —— 硬性身份穿帮,阻断上线。",
+      "reviewer": {
+        "primary": {
+          "present": "absent",
+          "absent": "present",
+          "severity": "blocker",
+          "message": "visual.identity.mismatch.charB 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "twin 误判身份一致(漏报 blocker)"
+        }
+      }
+    },
+    {
+      "id": "visual.wardrobe.base.charA",
+      "partition": "visual_continuity",
+      "dimension": "wardrobe",
+      "kind": "committed_image",
+      "path": "visual/wardrobe_base_charA.png",
+      "sha256": "22993288f2062f68f22466714d6cd6aef0d0ce9d2deb6a94c3fa10094450ab79",
+      "bytes": 474,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "wardrobe",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 规范服装(深蓝风衣)在场,作为服装漂移判读的基准。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 规范服装(深蓝风衣)在场,作为服装漂移判读的基准。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.wardrobe.base.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.wardrobe.base.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.wardrobe.drift.charA",
+      "partition": "visual_continuity",
+      "dimension": "wardrobe",
+      "kind": "committed_image",
+      "path": "visual/wardrobe_drift_charA.png",
+      "sha256": "1f28c86076e5586a697bb07234e22231b6f39f4d7189532c50af0f9cc3f872b9",
+      "bytes": 474,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "wardrobe",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "charA 风衣被改成暗红 —— 服装漂移;要求的规范服装缺席。"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "reference_asset",
+      "rationale": "charA 风衣被改成暗红 —— 服装漂移;要求的规范服装缺席。",
+      "reviewer": {
+        "primary": {
+          "present": "absent",
+          "absent": "present",
+          "severity": "issue",
+          "message": "visual.wardrobe.drift.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "twin 漏看服装漂移"
+        }
+      }
+    },
+    {
+      "id": "visual.prop.base.charA",
+      "partition": "visual_continuity",
+      "dimension": "prop",
+      "kind": "committed_image",
+      "path": "visual/prop_base_charA.png",
+      "sha256": "8624e968246ff6b9ffd6950625ded4bc991a3a9334558980245e3938d63ebd6d",
+      "bytes": 553,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "prop",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 手持规范道具(红伞)在场。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 手持规范道具(红伞)在场。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.prop.base.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.prop.base.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.prop.drift.charA",
+      "partition": "visual_continuity",
+      "dimension": "prop",
+      "kind": "committed_image",
+      "path": "visual/prop_drift_charA.png",
+      "sha256": "fdc1075bb023a79f0c1ddb13731ca00138de6aa066be29950872493325fa6122",
+      "bytes": 555,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "prop",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "红伞被换成蓝伞 —— 道具漂移;要求的红伞缺席。"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "reference_asset",
+      "rationale": "红伞被换成蓝伞 —— 道具漂移;要求的红伞缺席。",
+      "reviewer": {
+        "primary": {
+          "present": "absent",
+          "absent": "present",
+          "severity": "issue",
+          "message": "visual.prop.drift.charA 主判读"
+        },
+        "twin": {
+          "present": "absent",
+          "absent": "present",
+          "severity": "issue",
+          "message": "visual.prop.drift.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.scene.base",
+      "partition": "visual_continuity",
+      "dimension": "scene",
+      "kind": "committed_image",
+      "path": "visual/scene_base.png",
+      "sha256": "7e323e94246e8f86672c3f000a46a7c78c36d2ed33e75ab38079750e94a1d356",
+      "bytes": 334,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "scene",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "便利店窗景基准帧(冷光)。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "便利店窗景基准帧(冷光)。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.scene.base 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.scene.base 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.scene.drift.lighting",
+      "partition": "visual_continuity",
+      "dimension": "lighting",
+      "kind": "committed_image",
+      "path": "visual/scene_drift_lighting.png",
+      "sha256": "b131f1b8df6fd009b75a97ac58951b268dcba4fd7587b3ce4982520fa2eb5ee3",
+      "bytes": 324,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "lighting",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "同一窗景构图被暖光重打光 —— 场景/光照连续性破坏。"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "lighting",
+      "rationale": "同一窗景构图被暖光重打光 —— 场景/光照连续性破坏。",
+      "reviewer": {
+        "primary": {
+          "present": "absent",
+          "absent": "present",
+          "severity": "issue",
+          "message": "visual.scene.drift.lighting 主判读"
+        },
+        "twin": {
+          "present": "uncertain",
+          "absent": "uncertain",
+          "severity": null,
+          "message": "twin 对光照变化把握不足"
+        }
+      }
+    },
+    {
+      "id": "visual.axis.facing_left.charA",
+      "partition": "visual_continuity",
+      "dimension": "screen_direction",
+      "kind": "committed_image",
+      "path": "visual/axis_facing_left_charA.png",
+      "sha256": "b8ab47ed65c2d9e92a6c55a0d4dceb41f6005b116883f431b09eb4a7861eda39",
+      "bytes": 473,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "screen_direction",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 朝左 —— 与 facing_right 组成轴线/银幕方向翻转对(供 15 做跨镜轴线判读)。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 朝左 —— 与 facing_right 组成轴线/银幕方向翻转对(供 15 做跨镜轴线判读)。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.axis.facing_left.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.axis.facing_left.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.axis.facing_right.charA",
+      "partition": "visual_continuity",
+      "dimension": "screen_direction",
+      "kind": "committed_image",
+      "path": "visual/axis_facing_right_charA.png",
+      "sha256": "0683a4e466e43fa5e434e8190dbe6d12cdedf52bd5258beb0494d176621fa230",
+      "bytes": 478,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "screen_direction",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 朝右 —— 轴线对的另一半。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 朝右 —— 轴线对的另一半。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.axis.facing_right.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.axis.facing_right.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.action.arm_up.charA",
+      "partition": "visual_continuity",
+      "dimension": "action_phase",
+      "kind": "committed_image",
+      "path": "visual/action_arm_up_charA.png",
+      "sha256": "25fc96966b0bdea8c5557be9fe98b84b298efe51045038cebbed255a1a7fdf2b",
+      "bytes": 471,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "action_phase",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 抬臂 —— 与 arm_down 组成动作相位对(供 15 做动作阶段判读)。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 抬臂 —— 与 arm_down 组成动作相位对(供 15 做动作阶段判读)。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.action.arm_up.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.action.arm_up.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.action.arm_down.charA",
+      "partition": "visual_continuity",
+      "dimension": "action_phase",
+      "kind": "committed_image",
+      "path": "visual/action_arm_down_charA.png",
+      "sha256": "2d3198ca4190d1c7ed61d7b3ac08b5426485ce316732696abbd1b498ff858697",
+      "bytes": 477,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "action_phase",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 垂臂 —— 动作相位对的另一半。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 垂臂 —— 动作相位对的另一半。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.action.arm_down.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.action.arm_down.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.style.flat.charA",
+      "partition": "visual_continuity",
+      "dimension": "style",
+      "kind": "committed_image",
+      "path": "visual/style_flat_charA.png",
+      "sha256": "e7cca6367f41b421a2a3ee65585b3c9860d356ef15a8b61b7b403d0b275f49b5",
+      "bytes": 472,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "style",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "charA 平涂风格基准帧。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "charA 平涂风格基准帧。",
+      "reviewer": {
+        "primary": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.style.flat.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "visual.style.flat.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.style.gradient.charA",
+      "partition": "visual_continuity",
+      "dimension": "style",
+      "kind": "committed_image",
+      "path": "visual/style_gradient_charA.png",
+      "sha256": "533302947181e53c7b33986f2f8a9f2f480500b624bcffd9650b1471f874ff58",
+      "bytes": 730,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "style",
+          "observed": "absent",
+          "severity": "fyi",
+          "allow_unknown": false,
+          "note": "charA 改为渐变/绘感风格 —— 风格/调色漂移(通常仅知悉级)。"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "post_grade",
+      "rationale": "charA 改为渐变/绘感风格 —— 风格/调色漂移(通常仅知悉级)。",
+      "reviewer": {
+        "primary": {
+          "present": "absent",
+          "absent": "present",
+          "severity": "fyi",
+          "message": "visual.style.gradient.charA 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "twin 漏看风格漂移"
+        }
+      }
+    },
+    {
+      "id": "visual.visibility.occluded.charA",
+      "partition": "visual_continuity",
+      "dimension": "visibility",
+      "kind": "committed_image",
+      "path": "visual/visibility_occluded_charA.png",
+      "sha256": "dc90e94785cc9face996c9bb31847f91d120052fa906e24ddf4fb64d7d8a5c6d",
+      "bytes": 305,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "visibility",
+          "observed": "not_evaluated",
+          "severity": null,
+          "allow_unknown": true,
+          "note": "charA 被黑条遮挡大半 —— 身份不可判读(not-visible),诚实标记 not_evaluated。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "framing",
+      "rationale": "charA 被黑条遮挡大半 —— 身份不可判读(not-visible),诚实标记 not_evaluated。",
+      "reviewer": {
+        "primary": {
+          "present": "not_evaluated",
+          "absent": "not_evaluated",
+          "severity": null,
+          "message": "visual.visibility.occluded.charA 主判读"
+        },
+        "twin": {
+          "present": "not_evaluated",
+          "absent": "not_evaluated",
+          "severity": null,
+          "message": "visual.visibility.occluded.charA 主判读"
+        }
+      }
+    },
+    {
+      "id": "visual.ambiguous.lowsignal",
+      "partition": "visual_continuity",
+      "dimension": "identity",
+      "kind": "committed_image",
+      "path": "visual/ambiguous_lowsignal.png",
+      "sha256": "c9c83ee135326cf60d1dc3dccdb02e1fb74e014ae0cb48d4378af5d1e5e794e4",
+      "bytes": 257,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "identity",
+          "observed": "uncertain",
+          "severity": null,
+          "allow_unknown": true,
+          "note": "近乎均匀的低对比场:无可判读主体,应诚实回答 UNCERTAIN(允许 UNKNOWN)。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "human_review",
+      "rationale": "近乎均匀的低对比场:无可判读主体,应诚实回答 UNCERTAIN(允许 UNKNOWN)。",
+      "reviewer": {
+        "primary": {
+          "present": "uncertain",
+          "absent": "uncertain",
+          "severity": null,
+          "message": "visual.ambiguous.lowsignal 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "twin 在噪声上过度自信(误报 present)"
+        }
+      }
+    },
+    {
+      "id": "visual.ambiguous.tinyfigure",
+      "partition": "visual_continuity",
+      "dimension": "identity",
+      "kind": "committed_image",
+      "path": "visual/ambiguous_tinyfigure.png",
+      "sha256": "b57168f160b0bbcbb309493e8943e819c09e94c8b8180fdf9ac161419f617f48",
+      "bytes": 277,
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "expected_observations": [
+        {
+          "dimension": "identity",
+          "observed": "uncertain",
+          "severity": null,
+          "allow_unknown": true,
+          "note": "大空帧里的极小人形:身份在场但不可分辨,UNCERTAIN(允许 UNKNOWN)。"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "human_review",
+      "rationale": "大空帧里的极小人形:身份在场但不可分辨,UNCERTAIN(允许 UNKNOWN)。",
+      "reviewer": {
+        "primary": {
+          "present": "uncertain",
+          "absent": "uncertain",
+          "severity": null,
+          "message": "visual.ambiguous.tinyfigure 主判读"
+        },
+        "twin": {
+          "present": "present",
+          "absent": "absent",
+          "severity": null,
+          "message": "twin 对极小主体过度断言"
+        }
+      }
+    },
+    {
+      "id": "technical.good",
+      "partition": "technical_media",
+      "dimension": "technical.container",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.good",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe",
+      "probe": {
+        "has_video": true,
+        "has_audio": true,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          1900,
+          2100
+        ]
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.container",
+          "observed": "present",
+          "severity": null,
+          "allow_unknown": false,
+          "note": "干净基线片:全部技术探针通过"
+        }
+      ],
+      "blocking_policy": "non_blocking",
+      "repair_route": "none",
+      "rationale": "干净 2s 视频+音频基线,技术探针全过。"
+    },
+    {
+      "id": "technical.short",
+      "partition": "technical_media",
+      "dimension": "technical.duration",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.short",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe",
+      "probe": {
+        "has_video": true,
+        "has_audio": false,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          150,
+          400
+        ]
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.duration",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "时长远低于最短门限"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "clip_scope",
+      "rationale": "0.25s 过短片,触发最短时长门。"
+    },
+    {
+      "id": "technical.black_head_tail",
+      "partition": "technical_media",
+      "dimension": "technical.black_frames",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.black_head_tail",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe+detector",
+      "probe": {
+        "has_video": true,
+        "has_audio": false,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          2900,
+          3100
+        ],
+        "black_detected": true
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.black_frames",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "首尾各 >=1s 黑屏"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "post_trim",
+      "rationale": "首尾各 1s 黑屏,被生产级 blackdetect(d=1.0)捕获。"
+    },
+    {
+      "id": "technical.freeze",
+      "partition": "technical_media",
+      "dimension": "technical.freeze",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.freeze",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe+detector",
+      "probe": {
+        "has_video": true,
+        "has_audio": false,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          2900,
+          3100
+        ],
+        "freeze_detected": true
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.freeze",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "整段画面冻结"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "motion",
+      "rationale": "3s 全静止,被生产级 freezedetect(d=2)捕获。"
+    },
+    {
+      "id": "technical.bad_aspect",
+      "partition": "technical_media",
+      "dimension": "technical.aspect",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.bad_aspect",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe",
+      "probe": {
+        "has_video": true,
+        "width": 400,
+        "height": 100,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          1400,
+          1600
+        ]
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.aspect",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "4:1 非常规画幅"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "framing",
+      "rationale": "400x100(4:1)非常规画幅。"
+    },
+    {
+      "id": "technical.bad_fps",
+      "partition": "technical_media",
+      "dimension": "technical.fps",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.bad_fps",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe",
+      "probe": {
+        "has_video": true,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 5.0,
+        "duration_ms": [
+          1900,
+          2100
+        ]
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.fps",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "5fps 远低于交付帧率"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "provider_surface",
+      "rationale": "5fps 低帧率。"
+    },
+    {
+      "id": "technical.corrupt_container",
+      "partition": "technical_media",
+      "dimension": "technical.container",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.corrupt_container",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "probe_fail",
+      "probe": {
+        "probe_must_fail": true
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.container",
+          "observed": "absent",
+          "severity": "blocker",
+          "allow_unknown": false,
+          "note": "容器损坏,ffprobe 失败"
+        }
+      ],
+      "blocking_policy": "blocking",
+      "repair_route": "reroll",
+      "rationale": "截断的 MP4:moov/容器不完整,ffprobe 必然失败。"
+    },
+    {
+      "id": "technical.silent",
+      "partition": "technical_media",
+      "dimension": "technical.audio_presence",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.silent",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe",
+      "probe": {
+        "has_video": true,
+        "has_audio": false,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          1900,
+          2100
+        ]
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.audio_presence",
+          "observed": "absent",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "无音频流"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "audio",
+      "rationale": "视频无音频流(应有声却静音)。"
+    },
+    {
+      "id": "technical.clipped",
+      "partition": "technical_media",
+      "dimension": "technical.audio_clipping",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.clipped",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe",
+      "probe": {
+        "has_video": true,
+        "has_audio": true,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          1900,
+          2100
+        ]
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.audio_clipping",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "音频被推到 0dBFS 削波"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "audio",
+      "rationale": "音频音量放大 8 倍硬削波(0dBFS)。"
+    },
+    {
+      "id": "technical.audio_drift",
+      "partition": "technical_media",
+      "dimension": "technical.audio_sync",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.audio_drift",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ffprobe+audio_start",
+      "probe": {
+        "has_video": true,
+        "has_audio": true,
+        "width": 320,
+        "height": 240,
+        "fps_approx": 24.0,
+        "duration_ms": [
+          2200,
+          2600
+        ],
+        "audio_start_ms_min": 300
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.audio_sync",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "音频较视频滞后 ~400ms"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "audio",
+      "rationale": "音频相对视频偏移 400ms(唇音漂移)。"
+    },
+    {
+      "id": "technical.subtitle_overlap",
+      "partition": "technical_media",
+      "dimension": "technical.subtitle",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.subtitle_overlap",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "ass_overlap",
+      "probe": {
+        "format": "ass"
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.subtitle",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "两条字幕时间轴重叠"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "text_overlay",
+      "rationale": "两条 Dialogue 时间区间重叠(0-3s 与 2-5s)。"
+    },
+    {
+      "id": "technical.text_mutation.a",
+      "partition": "technical_media",
+      "dimension": "technical.text_mutation",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.text_mutation.a",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "distinct_frame",
+      "probe": {
+        "kind": "image"
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.text_mutation",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "帧 A 烧录文字 SCENE 01"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "text_overlay",
+      "rationale": "烧录文字帧 A(SCENE 01),与帧 B 文字不同。",
+      "pair_with": "technical.text_mutation.b"
+    },
+    {
+      "id": "technical.text_mutation.b",
+      "partition": "technical_media",
+      "dimension": "technical.text_mutation",
+      "kind": "generated_media",
+      "generator": "make_bad_media.py",
+      "generator_case": "technical.text_mutation.b",
+      "license": "self-made-synthetic",
+      "rubric_version": "20A.rubric.v1",
+      "annotator": "orchestrated-synthetic-v1",
+      "validation": "distinct_frame",
+      "probe": {
+        "kind": "image"
+      },
+      "expected_observations": [
+        {
+          "dimension": "technical.text_mutation",
+          "observed": "present",
+          "severity": "issue",
+          "allow_unknown": false,
+          "note": "帧 B 烧录文字 SCENE 02"
+        }
+      ],
+      "blocking_policy": "advisory",
+      "repair_route": "text_overlay",
+      "rationale": "烧录文字帧 B(SCENE 02),与帧 A 文字不同。",
+      "pair_with": "technical.text_mutation.a"
+    }
+  ]
+}
