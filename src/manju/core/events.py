@@ -52,10 +52,15 @@ class EvidenceWriteError(RuntimeError):
 
 @contextlib.contextmanager
 def events_lock(project_root: Any, *, timeout_s: float | None = None,
-                required: bool = False) -> Iterator[bool]:
+                required: bool = False, lock_name: str = EVENTS_LOCK) -> Iterator[bool]:
     """The SINGLE cross-process/-thread mutex around an ``events.jsonl`` append —
     one flock on the sibling ``events.lock`` (the DR03C pattern, now the one
     coordinator the whole codebase shares).
+
+    ``lock_name`` selects the sibling lock file (default ``events.lock``); a
+    caller coordinating a DIFFERENT append-only log under the same discipline
+    (07C's ``verifications.jsonl`` → ``verifications.lock``) passes its own so
+    the two logs never contend on one another's mutex (WP2 §4.4).
 
     WP1 policy (``不允许锁超时后无锁写`` — never fall through to an unlocked write):
 
@@ -84,7 +89,7 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
             raise EvidenceWriteError("no_reliable_lock")
         yield False  # never write unlocked — drop the best-effort record
         return
-    lock_path = root / EVENTS_LOCK
+    lock_path = root / lock_name
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         deadline = time.monotonic() + timeout_s
@@ -109,7 +114,8 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
 
 
 def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,
-                      required: bool) -> bool:
+                      required: bool, file_name: str = EVENTS_FILE,
+                      lock_name: str = EVENTS_LOCK) -> bool:
     """Append ONE JSON line for ``record`` to ``events.jsonl`` under the single
     :func:`events_lock` (WP1 coordinator). One ``write()`` of the full line then a
     ``flush()``; an ``fsync()`` when ``durable``.
@@ -118,7 +124,16 @@ def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,
     timeout / no reliable lock / open / write / flush / fsync). ``required=False``
     returns ``True`` on a durable write and ``False`` when the write was skipped
     (lock unavailable) or failed — the best-effort contract, so a caller degrades
-    to a warning and never loses committed media."""
+    to a warning and never loses committed media.
+
+    ``file_name`` / ``lock_name`` (WP2 §4.4) let a second append-only log —
+    07C's ``verifications.jsonl`` (baseline approval AND draft verification) —
+    ride the SAME coordinator under its own ``verifications.lock`` sibling, so
+    the two writers serialize instead of tearing/truncating each other's bytes.
+    A failed write is rolled back to the pre-write size WHILE the exclusive lock
+    is still held (the 07C durable-append discipline): because no other process
+    can have appended in between, this truncate can never clobber another
+    writer's committed line."""
     root = Path(project_root)
     try:
         line = json.dumps(record, ensure_ascii=False) + "\n"
@@ -126,16 +141,28 @@ def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,
         if required:
             raise EvidenceWriteError("io_error") from exc
         return False
-    path = root / EVENTS_FILE
-    with events_lock(root, required=required) as locked:
+    path = root / file_name
+    with events_lock(root, required=required, lock_name=lock_name) as locked:
         if not locked:
             return False  # best-effort under an unavailable lock: drop, never tear
         try:
             with open(path, "a", encoding="utf-8") as f:
-                f.write(line)
-                f.flush()
-                if durable:
-                    os.fsync(f.fileno())
+                # the true EOF under our exclusive lock — the rollback anchor.
+                start = os.fstat(f.fileno()).st_size
+                try:
+                    f.write(line)
+                    f.flush()
+                    if durable:
+                        os.fsync(f.fileno())
+                except OSError:
+                    # roll the partial line back — SAFE only because we hold the
+                    # exclusive lock, so no other writer's bytes sit past `start`.
+                    try:
+                        f.flush()
+                        os.ftruncate(f.fileno(), start)
+                    except OSError:
+                        pass
+                    raise
         except OSError as exc:
             if required:
                 raise EvidenceWriteError("io_error") from exc

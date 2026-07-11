@@ -754,3 +754,92 @@ def test_b13_g11_bad_task_never_blocks_unrelated_work(tmp_project, add_shot):
     fine = ScriptedCloud()
     takes = fine.generate(_req(tmp_project, s2))
     assert takes and fine.submit_calls == 1          # S002: unaffected
+
+
+# =====================================================================
+# Part B (POST_COMPLETION WP6) — the two proof-scope corrections
+# =====================================================================
+
+
+_FULL_GEN_SCRIPT = """
+import sys, time
+from pathlib import Path
+from manju.core.container import Project
+from manju.runtime.buildlock import BuildLock, BuildLocked
+from tests.test_dr06_admission import ScriptedCloud, _req
+
+root, barrier = Path(sys.argv[1]), Path(sys.argv[2])
+deadline = time.monotonic() + 15
+while not barrier.exists():
+    if time.monotonic() > deadline:
+        print("SUBMITS 0"); print("VERDICT BARRIER_TIMEOUT"); sys.exit(0)
+    time.sleep(0.005)
+project = Project(root)
+shot = project.load_shot("S001")
+lock = BuildLock(root, actor="ai")
+try:
+    lock.acquire()
+except BuildLocked:
+    print("SUBMITS 0"); print("VERDICT LOCKED"); sys.exit(0)  # loser: no transport
+try:
+    provider = ScriptedCloud()
+    provider.generate(_req(project, shot))            # the FULL paid generate path
+    time.sleep(0.4)                                   # hold so the sibling reliably loses
+    print("SUBMITS", provider.submit_calls)
+    print("VERDICT WON")
+finally:
+    lock.release()
+"""
+
+
+def test_b14_wp6_two_full_subprocess_generates_single_transport(tmp_project, add_shot):
+    """WP6 §1 — two INDEPENDENT OS processes each run the FULL paid generate
+    path for the same shot+provider. The cross-process single-owner property for
+    a full build comes from the BUILD LOCK (O_EXCL), not a submission-level CAS:
+    exactly one process wins the lock and its scripted transport fires once; the
+    loser fail-closes (BuildLocked) with transport 0. Transport across both is
+    therefore exactly 1 — the honest end-to-end characterization behind the
+    report's "layered with the build lock, transport 2 is not reachable"."""
+    add_shot(tmp_project, "S001")
+    script = tmp_project.root / "_full_gen.py"
+    script.write_text(_FULL_GEN_SCRIPT, encoding="utf-8")
+    barrier = tmp_project.root / "_go_full"
+    p1 = _spawn(script, tmp_project.root, barrier)
+    p2 = _spawn(script, tmp_project.root, barrier)
+    time.sleep(0.3)                                   # both children at the barrier
+    barrier.write_text("go")
+    out1, out2 = _finish(p1), _finish(p2)
+
+    def _facts(lines):
+        d = {}
+        for ln in lines:
+            parts = ln.split()
+            if parts and parts[0] in ("SUBMITS", "VERDICT"):
+                d[parts[0]] = parts[1] if len(parts) > 1 else ""
+        return d
+
+    f1, f2 = _facts(out1), _facts(out2)
+    verdicts = sorted([f1.get("VERDICT"), f2.get("VERDICT")])
+    assert verdicts == ["LOCKED", "WON"], (out1, out2)
+    total = int(f1.get("SUBMITS", 0)) + int(f2.get("SUBMITS", 0))
+    assert total == 1                                 # exactly one transport across both
+
+
+def test_b15_wp6_delete_dot_manju_without_rebuild_still_fail_closes(tmp_project, add_shot):
+    """WP6 §2 / §5 — deleting `.manju` and NOT running an explicit rebuild is
+    still safe: the paid consult AUTO-projects the unresolved submission from
+    evidence and fail-closes (transport 0). This is the automatic guard the
+    report now distinguishes from an EXPLICIT `rebuild()` (test_b8) — the
+    classification is identical, but here no rebuild command was run."""
+    import shutil
+
+    shot = add_shot(tmp_project, "S001")
+    _seed_chain(tmp_project, "sub_nr", (S.PREPARED, None), (S.DISPATCHING, None),
+                (S.OUTCOME_UNKNOWN, None))
+    shutil.rmtree(tmp_project.root / ".manju", ignore_errors=True)   # NO rebuild
+
+    provider = ScriptedCloud()
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(_req(tmp_project, shot))
+    assert provider.submit_calls == 0
+    assert exc.value.detail.get("automatic_resubmit") is False

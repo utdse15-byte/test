@@ -318,27 +318,28 @@ def _req(project, shot, **params) -> GenerationRequest:
     )
 
 
-def test_generate_resumes_pending_job_without_resubmitting(tmp_project, add_shot):
+def test_generate_legacy_pending_job_without_digest_fails_closed(tmp_project, add_shot):
+    """FLIPPED (was test_generate_resumes_pending_job_without_resubmitting):
+    POST_COMPLETION WP3 §5.2 deliberately tightens the pre-DR06 §8.1 resume. A
+    legacy `jobs` row carries NO request digest, so shot+provider alone can no
+    longer authorize a resume — the pending remote job may be a DIFFERENT
+    request entirely. The generate now fail-closes (transport 0) as
+    LEGACY_PENDING_CORRELATION_UNKNOWN for a human attach/abandon decision,
+    rather than silently polling an uncorrelated job."""
     project = tmp_project
     shot = add_shot(project, "S001")
-    # A job was already submitted for this shot+provider before a crash.
+    # A job was already submitted for this shot+provider before a crash — but
+    # with no correlatable request digest (a pre-DR06 legacy row).
     with RuntimeState(project.root) as st:
         st.open_job("job_resume_1", provider="cloud_test", shot="S001")
 
     provider = _ScriptedCloud()
-    takes = provider.generate(_req(project, shot))
-
-    # §8.1: submit was NOT called; polling resumed on the persisted job id.
-    assert provider.submit_calls == 0
-    assert provider.polled_ids == ["job_resume_1"]
-    assert len(takes) == 1
-
-    with RuntimeState(project.root) as st:
-        assert st.pending_jobs() == []  # job closed
-        log = st.run_log()
-        assert log[0]["status"] == "succeeded"
-        assert log[0]["remote_job_id"] == "job_resume_1"
-        assert log[0]["provider"] == "cloud_test"
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(_req(project, shot))
+    assert provider.submit_calls == 0  # never resubmitted…
+    assert provider.polled_ids == []   # …and never auto-resumed either
+    assert exc.value.detail.get("code") == "LEGACY_PENDING_CORRELATION_UNKNOWN"
+    assert exc.value.detail.get("automatic_resubmit") is False
 
 
 def test_generate_fresh_submits_once_and_records_closed_job_and_cost(tmp_project, add_shot):

@@ -35,7 +35,6 @@ block; a first release with no baseline is NOT a technical failure.
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,7 +43,7 @@ from ..core.hashing import hash_file, hash_value
 from ..qc.assurance import assurance_for_all
 from .attempts import build_run_manifest
 from .compare import compare_finals, resolve_final
-from .exportstatus import VERIFICATIONS_FILE, Freshness, deliverables
+from .exportstatus import VERIFICATIONS_FILE, VERIFICATIONS_LOCK, Freshness, deliverables
 from .shotpackage import project_revision
 
 # The narrow new event kind — a value INSIDE the existing verification envelope,
@@ -56,6 +55,9 @@ VALID = "VALID"
 NO_BASELINE = "NO_BASELINE"
 DAMAGED = "DAMAGED"          # artifact bytes missing or hash no longer matches
 CORRUPT = "CORRUPT"          # the baseline event itself is malformed/incomplete
+# POST_COMPLETION WP2 §4.2 tri-state: the verification log PRESENT but unreadable
+# is NOT the same as absent — it must fail closed, never degrade to NO_BASELINE.
+EVIDENCE_UNAVAILABLE = "BASELINE_EVIDENCE_UNAVAILABLE"
 
 # regression review verdicts (contract §6.2)
 UNCHANGED = "UNCHANGED"
@@ -84,20 +86,28 @@ def _event_id(event: dict) -> str:
     return hash_value({k: v for k, v in event.items() if k != "event_id"})
 
 
-def _read_baseline_events(project: Any, target: str = "final") -> tuple[list[dict], int]:
-    """(events, malformed_line_count) — every ``release_baseline_approved`` record
-    for ``target`` in append order. Torn JSON lines are skipped exactly like the
-    events log (§3): a malformed line NEVER swallows the valid events around it
-    (test §9.1.5)."""
+def _read_baseline_events(project: Any, target: str = "final"
+                          ) -> tuple[list[dict], int, str]:
+    """(events, malformed_line_count, io_state) — every ``release_baseline_approved``
+    record for ``target`` in append order. Torn JSON lines are skipped exactly
+    like the events log (§3): a malformed line NEVER swallows the valid events
+    around it (test §9.1.5).
+
+    POST_COMPLETION WP2 §4.2 tri-state ``io_state``:
+
+    - ``ABSENT``   — the log does not exist yet (a first release, NO_BASELINE);
+    - ``READABLE`` — the log was read (events/malformed are meaningful);
+    - ``UNREADABLE``— the log exists but ``read_text`` raised (fail closed as
+      ``BASELINE_EVIDENCE_UNAVAILABLE``; NEVER equated to ABSENT/NO_BASELINE)."""
     path = _verifications_path(project)
     events: list[dict] = []
     malformed = 0
     if not path.exists():
-        return events, malformed
+        return events, malformed, "ABSENT"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return events, malformed
+        return events, malformed, "UNREADABLE"
     for line in lines:
         line = line.strip()
         if not line:
@@ -110,34 +120,28 @@ def _read_baseline_events(project: Any, target: str = "final") -> tuple[list[dic
         if (isinstance(rec, dict) and rec.get("kind") == BASELINE_KIND
                 and rec.get("target", "final") == target):
             events.append(rec)
-    return events, malformed
+    return events, malformed, "READABLE"
 
 
 def _append_baseline_event(project: Any, event: dict) -> None:
     """Append ONE baseline event durably to the existing verification log.
-    write → flush → fsync; on ANY failure the partial append is rolled back so a
-    failed durable write is NEVER reported as a successful approval (§5.2.7 /
-    §9.1.6)."""
-    path = _verifications_path(project)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(event, ensure_ascii=False) + "\n"
+
+    WP2 §4.4: routed through the ONE shared cross-process append coordinator
+    (``core.events.append_jsonl_line`` against ``verifications.jsonl`` under the
+    ``verifications.lock`` sibling) — the SAME locked helper draft verification
+    uses. write → flush → fsync under the exclusive flock; on ANY failure the
+    partial append is rolled back INSIDE the lock, so a failed durable write is
+    NEVER reported as a successful approval (§5.2.7 / §9.1.6) AND a concurrent
+    writer's committed bytes are never truncated."""
+    from ..core.events import EvidenceWriteError, append_jsonl_line
+
+    _verifications_path(project).parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            start = f.tell()
-            try:
-                f.write(line)
-                f.flush()
-                os.fsync(f.fileno())
-            except OSError:
-                try:  # roll the partial line back so no phantom baseline survives
-                    f.flush()
-                    os.ftruncate(f.fileno(), start)
-                except OSError:
-                    pass
-                raise
-    except OSError as exc:
+        append_jsonl_line(project.reports_dir, event, durable=True, required=True,
+                          file_name=VERIFICATIONS_FILE, lock_name=VERIFICATIONS_LOCK)
+    except EvidenceWriteError as exc:
         raise BaselineError(
-            f"durable append failed ({type(exc).__name__}); approval NOT recorded"
+            f"durable append failed ({exc.reason}); approval NOT recorded"
         ) from exc
 
 
@@ -193,8 +197,19 @@ def current_baseline(project: Any, target: str = "final") -> dict:
     rewritten). The result is bound to the EXACT bytes that were approved — a
     missing or hash-mismatched artifact is ``DAMAGED`` and is NEVER silently
     re-pointed at a newer final (contract §3, §5.3, tests §9.1.2/3)."""
-    events, _malformed = _read_baseline_events(project, target)
+    events, malformed, io_state = _read_baseline_events(project, target)
+    if io_state == "UNREADABLE":
+        # WP2 §4.2: present-but-unreadable is fail-closed, never NO_BASELINE.
+        return {"status": EVIDENCE_UNAVAILABLE, "target": target,
+                "reason": "the release-baseline verification log is unreadable"}
     if not events:
+        if malformed:
+            # WP2 §4.2: a malformed baseline line must NOT be equated to
+            # NO_BASELINE — the evidence is corrupt, not absent.
+            return {"status": CORRUPT, "target": target,
+                    "reason": f"baseline evidence has {malformed} malformed line(s) "
+                              "and no valid baseline event",
+                    "malformed_count": malformed}
         return {"status": NO_BASELINE, "target": target}
 
     latest = events[-1]
@@ -205,6 +220,13 @@ def current_baseline(project: Any, target: str = "final") -> dict:
     if not (isinstance(path, str) and path and isinstance(sha, str) and sha):
         return {"status": CORRUPT, "target": target, "event_id": event_id,
                 "reason": "baseline event is missing its artifact path/sha256 binding"}
+    # WP2 §4.3 self-verification: recompute the deterministic event_id over the
+    # STORED payload; a mismatch means the event was tampered with (a field
+    # changed while its id was left untouched) — CORRUPT, never trusted as VALID.
+    if not (isinstance(event_id, str) and event_id and _event_id(latest) == event_id):
+        return {"status": CORRUPT, "target": target, "event_id": event_id,
+                "reason": "baseline event failed self-verification "
+                          "(recomputed event_id does not match the stored id)"}
 
     result = {
         "status": VALID,
@@ -384,6 +406,10 @@ _BLOCKER_ACTIONS: dict[str, dict[str, str | None]] = {
     "CURRENT_FINAL_STALE": {"command": "manju build --dry-run", "tool": "build"},
     "CURRENT_FINAL_HASH_MISMATCH": {"command": "manju build", "tool": "build"},
     "RUN_INCOMPLETE": {"command": "manju tasks manifest", "tool": None},
+    "RUN_FAILED": {"command": "manju tasks manifest", "tool": None},
+    "RUN_CANCELED": {"command": "manju tasks manifest", "tool": None},
+    "RUN_WAITING_USER": {"command": "manju tasks manifest", "tool": None},
+    "RUN_NOT_FOUND": {"command": "manju tasks manifest", "tool": None},
     "ATTEMPT_EVIDENCE_CORRUPT": {"command": "manju tasks manifest", "tool": None},
     "SUBMISSION_OUTCOME_UNKNOWN": {"command": "manju tasks", "tool": None},
     "SUBMISSION_RECOVERY_UNAVAILABLE": {"command": "manju tasks", "tool": None},
@@ -395,6 +421,7 @@ _BLOCKER_ACTIONS: dict[str, dict[str, str | None]] = {
     "REQUIRED_EXPORT_PROBLEM": {"command": "manju export", "tool": "export"},
     "BASELINE_DAMAGED": {"command": "manju exports --baseline", "tool": None},
     "BASELINE_EVIDENCE_CORRUPT": {"command": "manju exports --baseline", "tool": None},
+    "BASELINE_EVIDENCE_UNAVAILABLE": {"command": "manju exports --baseline", "tool": None},
     "REGRESSION_REVIEW_REQUIRED": {"command": "manju compare --against-baseline", "tool": None},
 }
 
@@ -475,6 +502,23 @@ def _final_health(project: Any, final_path: Path | None) -> list[dict]:
     return out
 
 
+# WP2 §4.5: the run-manifest terminal_status → (blocker code, detail) map. The
+# two success statuses (COMPLETED / COMPLETED_WITH_WARNINGS) are deliberately
+# absent — they pass.
+_RUN_STATUS_BLOCKERS: dict[str, tuple[str, str]] = {
+    "INCOMPLETE": ("RUN_INCOMPLETE",
+                   "the run that produced this final never reached a terminal state"),
+    "FAILED": ("RUN_FAILED",
+               "the run that produced this final terminated FAILED"),
+    "CANCELED": ("RUN_CANCELED",
+                 "the run that produced this final was CANCELED"),
+    "WAITING_USER": ("RUN_WAITING_USER",
+                     "the run that produced this final is WAITING_USER — not a terminal success"),
+    "NOT_FOUND": ("RUN_NOT_FOUND",
+                  "this final claims a run_id with no run evidence at all (NOT_FOUND)"),
+}
+
+
 def _run_blockers(project: Any, final_path: Path | None) -> list[dict]:
     key_data = _read_key_full(final_path) if final_path else None
     run_id = (key_data or {}).get("run_id")
@@ -486,9 +530,19 @@ def _run_blockers(project: Any, final_path: Path | None) -> list[dict]:
         return [_blocker("ATTEMPT_EVIDENCE_CORRUPT", f"run:{run_id}",
                          "the run manifest could not be derived (fail closed)", owner="human")]
     out: list[dict] = []
-    if manifest.get("terminal_status") == "INCOMPLETE":
+    # WP2 §4.5 run gate: ONLY COMPLETED / COMPLETED_WITH_WARNINGS pass. Every
+    # honest non-success terminal — INCOMPLETE / FAILED / CANCELED / WAITING_USER
+    # — and a run whose evidence is missing entirely (NOT_FOUND) blocks: a final
+    # produced by an interrupted / failed / canceled / waiting run must never be
+    # blessed as a release baseline. HEAD mapped INCOMPLETE alone.
+    status = manifest.get("terminal_status")
+    if status in _RUN_STATUS_BLOCKERS:
+        code, detail = _RUN_STATUS_BLOCKERS[status]
+        out.append(_blocker(code, f"run:{run_id}", detail, owner="human"))
+    elif status not in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
+        # any UNKNOWN_LEGACY / unmapped status is not a PROVEN success → block.
         out.append(_blocker("RUN_INCOMPLETE", f"run:{run_id}",
-                            "the run that produced this final never reached a terminal state",
+                            f"the run terminal status {status!r} is not a proven success",
                             owner="human"))
     for f in (manifest.get("failures") or []):
         if f.get("code") == "submission_recovery_unavailable":
@@ -504,15 +558,36 @@ def _submission_blockers(project: Any) -> list[dict]:
     from ..runtime.state import RuntimeState
     from .attempts import read_submission_events
 
-    # Read-only: never CREATE the disposable ledger. A project that never ran a
-    # paid job has no ledger, hence no unresolved submissions (test §9.3.26).
-    if not (project.root / ".manju" / "state.sqlite").exists():
+    sqlite_exists = (project.root / ".manju" / "state.sqlite").exists()
+    # WP1 / WP2 §4.1: append-only submission EVIDENCE is the fact source — a
+    # fresh/empty OR absent state.sqlite must NEVER be read as "no remote side
+    # effect" (HEAD returned [] the instant the ledger was missing/unavailable).
+    # Probe the evidence first: this keeps the genuinely-never-ran-paid project
+    # cheap AND ledger-free (test §9.3.26) — no evidence + no ledger ⇒ nothing to
+    # gate, and we do NOT create the disposable ledger just to answer a read.
+    try:
+        sub_events, _ = read_submission_events(project)
+    except Exception:
+        return [_blocker("SUBMISSION_RECOVERY_UNAVAILABLE", "project",
+                         "paid-submission evidence is unreadable — outcome "
+                         "unverifiable (fail closed)", owner="human")]
+    if not sub_events and not sqlite_exists:
         return []
+    # Consume the SAME WP1 projection/verification helper the paid consult uses
+    # (never a second recovery algorithm): it folds evidence into the projection
+    # when the ledger is fresh/empty, and fail-closes when the consult cannot run.
     try:
         with RuntimeState(project.root) as state:
-            rows = state.unresolved_submissions()
+            proj = state.ensure_submission_projection(project)
     except Exception:
-        return []  # the disposable ledger being unavailable is a tasks concern, not a gate
+        return [_blocker("SUBMISSION_RECOVERY_UNAVAILABLE", "project",
+                         "the paid-submission projection could not be consulted "
+                         "(fail closed)", owner="human")]
+    if proj.get("status") == "recovery_unavailable":
+        return [_blocker("SUBMISSION_RECOVERY_UNAVAILABLE", "project",
+                         "paid-submission recovery consult failed — outcome "
+                         "unverifiable (fail closed)", owner="human")]
+    rows = proj.get("unresolved") or []
     out: list[dict] = []
     for row in rows:
         sid = row["submission_id"]
@@ -649,7 +724,14 @@ def release_assessment(project: Any, rows: list | None = None) -> dict:
     blockers = _technical_blockers(project, candidate_path, rows=rows)
 
     base = current_baseline(project)
-    if base["status"] == DAMAGED:
+    if base["status"] == EVIDENCE_UNAVAILABLE:
+        # WP2 §4.2: a present-but-unreadable baseline log is fail-closed — the
+        # release cannot be proven safe against a baseline we cannot even read.
+        blockers.append(_blocker("BASELINE_EVIDENCE_UNAVAILABLE", "baseline",
+                                 base.get("reason") or "baseline evidence unavailable",
+                                 owner="human"))
+        regression = {"status": EVIDENCE_UNAVAILABLE, "compare_ref": None}
+    elif base["status"] == DAMAGED:
         blockers.append(_blocker("BASELINE_DAMAGED", "baseline",
                                  base.get("damage") or "baseline artifact damaged", owner="human"))
         regression = {"status": DAMAGED, "compare_ref": None}

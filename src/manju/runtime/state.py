@@ -679,7 +679,10 @@ class RuntimeState:
         return {"runs": run_count, "pending_jobs": int(pending),
                 "submissions_restored": restored}
 
-    def _restore_submissions_from_events(self, project: "Project") -> int:
+    def _restore_submissions_from_events(self, project: "Project", *,
+                                         shot: str | None = None,
+                                         provider: str | None = None,
+                                         strict: bool = False) -> int:
         """Reconstruct each submission's state from the events stream and
         re-project the UNRESOLVED ones into the intents table. Events are the
         source of truth (a state change emits its event around/before the SQLite
@@ -692,7 +695,15 @@ class RuntimeState:
         submit); a chain with NO valid prefix restores the
         RECOVERY_EVIDENCE_CORRUPT sentinel (blocks until `tasks
         attach-remote-job`/`abandon`). A corrupt tail can no longer forge a
-        resolved state and silently unblock a resubmit."""
+        resolved state and silently unblock a resubmit.
+
+        ``shot`` / ``provider`` (POST_COMPLETION WP1) scope the restore to one
+        unit's chains — the SAME algorithm, an additive filter — so the paid
+        consult recovers only the shot+provider it is about (correctness-first:
+        a full-log read is acceptable, an unrelated unit is never blocked).
+        ``strict=True`` propagates an evidence read/verify failure instead of
+        swallowing it to 0, so :meth:`ensure_submission_projection` can classify
+        it as ``submission_recovery_unavailable`` rather than an empty set."""
         try:
             from ..build.attempts import read_submission_events
             from ..providers.submission import (
@@ -700,10 +711,14 @@ class RuntimeState:
                 project_chain,
             )
         except Exception:
+            if strict:
+                raise
             return 0
         try:
             records, _malformed = read_submission_events(project)
         except Exception:
+            if strict:
+                raise
             return 0
         # group per submission_id in FILE order (= emission/chain order)
         chains: dict[str, list[dict]] = {}
@@ -711,6 +726,20 @@ class RuntimeState:
             sid = rec.get("submission_id")
             if sid:
                 chains.setdefault(sid, []).append(rec)
+        if shot is not None or provider is not None:
+            # a submission's identity is stable across its chain; take it from
+            # the first event that carries the field (a later event may omit it).
+            def _match(events: list[dict]) -> bool:
+                c_shot = next((e.get("shot") for e in events if e.get("shot")), None)
+                c_prov = next((e.get("provider_id") for e in events
+                               if e.get("provider_id")), None)
+                if shot is not None and c_shot != shot:
+                    return False
+                if provider is not None and c_prov != provider:
+                    return False
+                return True
+
+            chains = {sid: evs for sid, evs in chains.items() if _match(evs)}
         restored = 0
         with self._conn:
             for sid, events in chains.items():
@@ -752,3 +781,50 @@ class RuntimeState:
                     )
                 restored += 1
         return restored
+
+    def ensure_submission_projection(self, project: "Project", *,
+                                     shot: str | None = None,
+                                     provider: str | None = None) -> dict:
+        """POST_COMPLETION WP1 — fold append-only submission EVIDENCE into the
+        intents projection so a FRESH/empty ``state.sqlite`` can never be read as
+        "no paid submission in flight" while ``events.jsonl`` still holds an
+        unresolved/ambiguous chain (the double-charge gap).
+
+        Discipline (contract §3.2/§3.3):
+
+        - only touches evidence when the intents table has NO unresolved row for
+          the scope — the genuinely-never-ran-paid case stays cheap;
+        - reuses the SAME ``project_chain`` restore machinery as
+          :meth:`rebuild` (no second ledger, no second algorithm); a terminal
+          chain is NOT resurrected as unresolved, an unrelated shot/provider is
+          never touched (the scope filter);
+        - an evidence read/verify failure fail-closes as
+          ``submission_recovery_unavailable`` — NEVER an empty set.
+
+        Consumed identically by the paid consult (``_resolve_resume``) and the
+        07C release gate (``build.baseline._submission_blockers``). Returns::
+
+            {"status": "ok", "unresolved": [rows]}
+            {"status": "recovery_unavailable", "stage": ..., "error": ...,
+             "unresolved": []}
+        """
+        from ..providers.submission import UNRESOLVED_STATES
+
+        states = tuple(sorted(UNRESOLVED_STATES))
+        try:
+            existing = self.submissions(shot=shot, provider=provider, states=states)
+        except Exception as exc:
+            return {"status": "recovery_unavailable", "stage": "state_query",
+                    "error": type(exc).__name__, "unresolved": []}
+        if existing:
+            # already projected (or the DB is authoritative for this scope) — the
+            # existing consult/gate logic verifies each chain from here.
+            return {"status": "ok", "unresolved": existing}
+        try:
+            self._restore_submissions_from_events(
+                project, shot=shot, provider=provider, strict=True)
+            after = self.submissions(shot=shot, provider=provider, states=states)
+        except Exception as exc:
+            return {"status": "recovery_unavailable", "stage": "evidence_projection",
+                    "error": type(exc).__name__, "unresolved": []}
+        return {"status": "ok", "unresolved": after}

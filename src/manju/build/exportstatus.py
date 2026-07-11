@@ -77,6 +77,10 @@ FRESHNESS_ZH: dict[Freshness, str] = {
 DRAFT_KINDS = ("jianying", "capcut")
 
 VERIFICATIONS_FILE = "verifications.jsonl"  # under reports/
+# WP2 §4.4: the sibling flock that serializes EVERY verifications.jsonl append
+# (this draft verification AND 07C baseline approval) through the one shared
+# core.events coordinator, so the two writers never tear/truncate each other.
+VERIFICATIONS_LOCK = "verifications.lock"  # under reports/
 
 
 @dataclass
@@ -378,10 +382,16 @@ def mark_verified(project: Project, kind: str, actor: str, note: str = "") -> di
         "actor": actor,
         "note": note or "",
     }
+    # WP2 §4.4: route through the ONE shared append coordinator against
+    # verifications.jsonl/.lock — the same locked helper 07C baseline approval
+    # uses — so a draft verification and a baseline approval racing this log
+    # serialize instead of interleaving/truncating.
+    from ..core.events import append_jsonl_line
+
     dest = _verifications_path(project)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    append_jsonl_line(project.reports_dir, record, durable=True, required=False,
+                      file_name=VERIFICATIONS_FILE, lock_name=VERIFICATIONS_LOCK)
     return record
 
 

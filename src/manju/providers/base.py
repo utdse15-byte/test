@@ -669,30 +669,49 @@ class CloudProvider(Provider):
         descriptor = descriptor_for_manifest(manifest) if manifest is not None else None
         profile_digest = provider_profile_digest(self.id, capability, descriptor=descriptor)
 
+        # P0 WP3 §5.1: for a PAID cloud submit the request identity is a
+        # fail-closed gate — a compiled-prompt / ref-resolution / ref-hash
+        # failure must NOT degrade to a None/empty identity and spend anyway
+        # (the remote job would be shaped by an identity we cannot vouch for).
+        # Local providers (non-"cloud" kind) keep the historic best-effort
+        # behaviour — decided by kind here, never a global flag.
+        strict = (self.kind == "cloud")
+
         # compiled prompt -> digest only (never stored). Best-effort compile.
         compiled_prompt = None
         try:
             from .prompt import compile_prompt
 
             compiled_prompt = compile_prompt(req.shot, req.bible)
-        except Exception:
+        except Exception as exc:
+            if strict:
+                raise self._identity_unavailable(req, "prompt_compile", exc) from exc
             compiled_prompt = None
 
         # final selected refs in delivery order: (role, logical_id, sha256).
         ref_refs: list[dict] = []
         try:
             refset = req.refset()
-            for it in list(refset.image_items()) + list(refset.video_items()):
-                sha = None
-                if it.path is not None and not it.is_url:
-                    try:
-                        if it.path.is_file():
-                            sha = hash_file(it.path)
-                    except OSError:
-                        sha = None
-                ref_refs.append(S.ref_fact(it.kind, it.ref, sha))
-        except Exception:
-            ref_refs = []
+            items = list(refset.image_items()) + list(refset.video_items())
+        except Exception as exc:
+            if strict:
+                raise self._identity_unavailable(req, "ref_resolution", exc) from exc
+            items = []
+        for it in items:
+            sha = None
+            if it.path is not None and not it.is_url:
+                try:
+                    if it.path.is_file():
+                        sha = hash_file(it.path)
+                    elif strict:
+                        # a declared LOCAL ref that should be hashed but is not a
+                        # readable file — the identity is incomplete, fail closed.
+                        raise OSError(f"local ref not a readable file: {it.ref}")
+                except OSError as exc:
+                    if strict:
+                        raise self._identity_unavailable(req, "ref_hash", exc) from exc
+                    sha = None
+            ref_refs.append(S.ref_fact(it.kind, it.ref, sha))
 
         first_frame, last_frame = self._keyframe_flags(req)
         identity = S.build_submission_identity(
@@ -908,8 +927,26 @@ class CloudProvider(Provider):
         # past an in-flight ADMITTED/DISPATCHING job (double-charge risk).
         try:
             _identity, digest = self._build_identity(req)
+        except ProviderFailure:
+            # P0 WP3 §5.1: an identity-unavailable failure is ALREADY fail-closed
+            # and provably pre-send (NOT_DISPATCHED) — propagate it verbatim,
+            # never remask it as recovery_unavailable (OUTCOME_UNKNOWN).
+            raise
         except Exception as exc:
             raise self._recovery_unavailable(req, "identity", exc) from exc
+        # POST_COMPLETION WP1: fold append-only submission EVIDENCE into the
+        # projection BEFORE the query, so a fresh/empty state.sqlite is never
+        # read as "nothing in flight" while events.jsonl holds an unresolved
+        # chain (the double-charge gap). Same helper the release gate consumes.
+        try:
+            proj = state.ensure_submission_projection(
+                req.project, shot=req.shot.id, provider=self.id)
+        except Exception as exc:
+            raise self._recovery_unavailable(req, "evidence_projection", exc) from exc
+        if proj.get("status") == "recovery_unavailable":
+            raise self._recovery_unavailable(
+                req, proj.get("stage") or "evidence_projection",
+                RuntimeError(proj.get("error") or "submission evidence unavailable"))
         try:
             subs = state.submissions(shot=req.shot.id, provider=self.id,
                                      states=tuple(sorted(S.UNRESOLVED_STATES)))
@@ -952,9 +989,11 @@ class CloudProvider(Provider):
                 return ("redispatch", None, sub)
             raise self._unknown_outcome_failure(req, row)
 
-        # 3) no DR06 submission: fall back to the legacy pending-job resume
-        #    (shot+provider) for backward compatibility (pre-DR06 jobs / doubles).
-        legacy = self._resume_job_id(state, req)
+        # 3) no DR06 submission: consult the legacy pending-job table. A legacy
+        #    row is auto-resumed poll-only ONLY when it correlates to THIS
+        #    request's digest; an uncorrelated row fail-closes for a human
+        #    decision (P0 WP3 §5.2) rather than resuming on shot+provider alone.
+        legacy = self._resume_job_id(state, req, digest)
         return ("resume", legacy, None) if legacy else ("fresh", None, None)
 
     def _context_from_row(self, state, req, row, digest):
@@ -978,6 +1017,27 @@ class CloudProvider(Provider):
             return submission_event_digest(events[-1]) if events else None
         except Exception:
             return None
+
+    def _identity_unavailable(self, req, stage: str, exc: BaseException) -> ProviderFailure:
+        """P0 WP3 §5.1 — the structured fail-closed failure for a PAID submit
+        whose request identity could not be fully assembled (compiled prompt /
+        ref resolution / local-ref hash). ``NOT_DISPATCHED``: nothing was sent
+        (the identity is built strictly BEFORE the transport), so this is
+        provably pre-send — transport 0. Distinct from a consult that could not
+        LOOK (``submission_recovery_unavailable``): here we know we did not
+        spend."""
+        from . import submission as S
+
+        return ProviderFailure(
+            FailureKind.provider_error,
+            f"{self.id}: cannot assemble the submission identity for shot "
+            f"{req.shot.id} — {stage} unavailable ({type(exc).__name__}); "
+            f"refusing to send a paid submit with an incomplete request identity "
+            f"(P0 WP3 §5.1 fail-closed)",
+            detail={"code": "submission_identity_unavailable", "stage": stage,
+                    "shot": req.shot.id, "automatic_resubmit": False},
+            disposition=S.NOT_DISPATCHED,
+        )
 
     def _recovery_unavailable(self, req, stage: str, exc: BaseException) -> ProviderFailure:
         """P0 WP3 §5.1 — the structured fail-closed failure for a CONSULT that
@@ -1085,7 +1145,8 @@ class CloudProvider(Provider):
         except (OSError, sqlite3.Error):
             pass
 
-    def _resume_job_id(self, state, req: GenerationRequest) -> str | None:
+    def _resume_job_id(self, state, req: GenerationRequest,
+                       digest: str | None = None) -> str | None:
         if state is None:
             return None
         try:
@@ -1094,13 +1155,46 @@ class CloudProvider(Provider):
             return None
         if not pending:
             return None
-        job_id = pending[0].get("remote_job_id")
-        if self._logger is not None and job_id:
-            self._logger(
-                f"{self.id}: resuming poll on pending job {job_id} for shot "
-                f"{req.shot.id} — no resubmit, no double-charge (§8.1)"
-            )
-        return job_id
+        # P0 WP3 §5.2: shot+provider alone can no longer authorize a resume — a
+        # pending row may belong to an entirely DIFFERENT request. Auto-resume
+        # poll-only ONLY when the row carries a request digest that CORRELATES to
+        # the current identity. Pre-DR06 `jobs` rows carry no digest, so they now
+        # require a human attach/abandon decision (this deliberately tightens the
+        # old DR06 characterization that matched on shot+provider only).
+        job = pending[0]
+        row_digest = job.get("request_digest")
+        if digest is not None and row_digest and row_digest == digest:
+            job_id = job.get("remote_job_id")
+            if self._logger is not None and job_id:
+                self._logger(
+                    f"{self.id}: resuming poll on correlated pending job {job_id} "
+                    f"for shot {req.shot.id} — no resubmit, no double-charge (§8.1)"
+                )
+            return job_id
+        raise self._legacy_pending_unknown(req, job)
+
+    def _legacy_pending_unknown(self, req, job) -> ProviderFailure:
+        """P0 WP3 §5.2 — a legacy pending job that cannot be correlated to the
+        current request is side-effect ambiguous: its remote output may be a
+        different request's, so it is neither auto-resumed nor auto-resubmitted.
+        A human attaches it (poll-only ADMITTED) or abandons it with the
+        duplicate-charge risk accepted."""
+        from . import submission as S
+
+        return ProviderFailure(
+            FailureKind.provider_error,
+            f"{self.id}: shot {req.shot.id} has a legacy pending job "
+            f"{job.get('remote_job_id')} with no correlatable request identity — "
+            f"resuming it on shot+provider alone could poll a DIFFERENT request's "
+            f"output; refusing (P0 WP3 §5.2). Attach the remote job id or abandon "
+            f"it with duplicate-risk accepted.",
+            detail={"code": "LEGACY_PENDING_CORRELATION_UNKNOWN",
+                    "remote_job_id": job.get("remote_job_id"),
+                    "shot": req.shot.id, "automatic_resubmit": False,
+                    "possible_remote_side_effect": True,
+                    "actions": ["attach_remote_job", "abandon_with_duplicate_risk"]},
+            disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+        )
 
     def _flag_dangling_intents(self, state, req: GenerationRequest) -> None:
         """goal 27: an intent left ``open`` by an earlier attempt for this

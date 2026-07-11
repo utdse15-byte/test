@@ -162,10 +162,15 @@ def test_char_dangling_intent_is_advisory_not_blocking(tmp_project, add_shot):
 # ======================================================= (2) pending match fields
 
 
-def test_char_pending_lookup_matches_shot_and_provider_only(tmp_project, add_shot):
-    """HEAD: resume finds a pending job by shot+provider ALONE — the params /
-    request semantics are never consulted, so ANY pending job for the pair is
-    resumed (this is what DR06 tightens to a request_digest match)."""
+def test_char_pending_lookup_now_requires_digest_correlation(tmp_project, add_shot):
+    """FLIPPED (was test_char_pending_lookup_matches_shot_and_provider_only):
+    POST_COMPLETION WP3 §5.2 tightens exactly the characterization #2 named in
+    this module's docstring. HEAD resumed a pending job by shot+provider ALONE,
+    so ANY pending row for the pair was polled (double-charge / wrong-output
+    risk). Now a legacy `jobs` row carries no request digest, so it can no
+    longer authorize a resume: the generate fail-closes as
+    LEGACY_PENDING_CORRELATION_UNKNOWN (transport 0), leaving the human to
+    attach the remote job id or abandon it with duplicate-risk accepted."""
     shot = add_shot(tmp_project, "S001")
     with RuntimeState(tmp_project.root) as st:
         # a pending job whose params bear no relation to this request
@@ -173,11 +178,12 @@ def test_char_pending_lookup_matches_shot_and_provider_only(tmp_project, add_sho
                     params={"totally": "different"})
 
     provider = _ScriptedCloud()
-    takes = provider.generate(_req(tmp_project, shot, seed=999))
-    assert provider.submit_calls == 0  # resumed, never resubmitted
-    assert len(takes) == 1
-    with RuntimeState(tmp_project.root) as st:
-        assert st.run_log()[0]["remote_job_id"] == "job_resume_1"
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(_req(tmp_project, shot, seed=999))
+    assert provider.submit_calls == 0  # neither resubmitted…
+    assert exc.value.detail.get("code") == "LEGACY_PENDING_CORRELATION_UNKNOWN"
+    assert set(exc.value.detail.get("actions") or []) == {
+        "attach_remote_job", "abandon_with_duplicate_risk"}
 
 
 # ==================================================== (3) submit-timeout retried

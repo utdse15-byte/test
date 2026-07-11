@@ -6,7 +6,10 @@ default outcome SKIPPED_WITH_EVIDENCE). Repo HEAD at audit: `891fce2`
 `claude/cost-optimization-strategy-cjfmn5`.
 
 Gate evidence file: `tests/test_c0911_gates.py` (26 tests, all GREEN at HEAD —
-no red reproduced anywhere, so **0 production files changed**).
+no red reproduced anywhere, so **0 production files changed**). POST_COMPLETION
+WP6 later added b14/b15 (28 total) for the two proof-scope corrections — the
+per-process semaphore framing, the same-pre-existing-submission_id CAS scope,
+and the explicit-vs-automatic rebuild distinction (see the completion report).
 
 ---
 
@@ -20,7 +23,7 @@ no red reproduced anywhere, so **0 production files changed**).
 | AgentSurface / ToolPolicy / skills | ALREADY_IMPLEMENTED | `mcp/policy.py:resolve_agent_surface` / `Surface.digest()` (pure, stable); skills listed via `skill_list`/`skill_show`; **skill files deliberately outside the digest** (tool-policy digest only) |
 | RunManifest / tasks / failures | ALREADY_IMPLEMENTED | `build/attempts.py:build_run_manifest` (P0: INCOMPLETE + `dangling_attempts` / NOT_FOUND / `legacy_terminal_only`); `cli.py:tasks` + `tasks manifest`; `core/failures.py` + `failure_id` cross-ref on ledger rows |
 | build lock & process ownership | ALREADY_IMPLEMENTED | `runtime/buildlock.py:BuildLock` — atomic `O_CREAT\|O_EXCL`, holder JSON (pid/actor/host/started), dead-pid + age staleness, heartbeat, release-only-own; held around `run_build` (`build/graph.py:651`), MCP mutating tools (`mcp/tools.py:267,318,355`), CLI `_write_lock` (`cli.py:134`) |
-| provider max_concurrent / rate limit | ALREADY_IMPLEMENTED | manifest `limits.max_concurrent` (validated ≥1, `providers/manifest.py:110`); HARD cap via shared per-provider `threading.Semaphore` under the worker pool (`build/graph.py:_provider_semaphore`/`_gated`, exception-safe `with`); `rate_limit_per_min` per-process soft throttle, **honestly documented** as such (`generic_cloud.py:_throttle` docstring); remote 429 → `rate_limited` backoff is the cross-process backstop |
+| provider max_concurrent / rate limit | ALREADY_IMPLEMENTED | manifest `limits.max_concurrent` (validated ≥1, `providers/manifest.py:110`); **per-process / per-build cap** via a shared per-provider in-process `threading.Semaphore` under one build's worker pool (`build/graph.py:_provider_semaphore`/`_gated`, exception-safe `with`) — a thread-level bound, NOT a cross-process host quota; `rate_limit_per_min` per-process soft throttle, **honestly documented** as such (`generic_cloud.py:_throttle` docstring); remote 429 → `rate_limited` backoff is the cross-process backstop |
 | 06 submission claim / recovery | ALREADY_IMPLEMENTED | `providers/base.py:_prepare_submission` — durable PREPARED evidence → SQLite-CAS `claim_dispatching` (`runtime/state.py:492`, WAL, cross-process row lock) → submit; `_resolve_resume` strict consult (ADMITTED→poll-only, DISPATCHING/UNKNOWN→fail closed, corrupt chain→fail closed); P0 `submission_recovery_unavailable` |
 | tasks cancel / retry / remote_may_continue | ALREADY_IMPLEMENTED | `cli.py:tasks_cancel` refuses to pretend (exit ≠0, points at Ctrl-C / GUI); GUI `gui/jobs.py:JobRunner` cooperative cancel; `providers/base.py:ProviderCanceled` ("远程任务可能仍在进行并计费", job id persisted, resume-not-resubmit); `build/graph.py:876` `run_canceled(decision={remote_may_continue})`; P0 `run_terminal canceled` |
 | provider REMOTE cancel hook | MISSING (by design) | no `cancel` method exists on `CloudProvider`/`GenericCloudProvider` (audited; pinned by test_b11) — hence `REMOTE_CANCEL_CONFIRMED` is unrecordable truth → REJECTED_WITH_REASON, not built |
@@ -83,13 +86,18 @@ neither.
 
 ## Part B — gate inputs (all reproduced with real fixtures)
 
-- G11-1: cross-process CAS race + cross-process ADMITTED resume + consult
-  fail-closed (tests b1/b2/b3) — transport never 2, exactly one DISPATCHING owner.
-- G11-2: hard cap 2 held under 8 workers; permit released on exception;
-  no-manifest providers uncapped by design; cache hit never enters the
-  dispatch plan (tests b5/b5b/b5c/b6).
+- G11-1: CAS race on the **same pre-existing submission_id** + cross-process
+  ADMITTED resume + consult fail-closed (tests b1/b2/b3); two FULL subprocess
+  generates serialized by the build lock to exactly one transport (b14, WP6).
+  The submission CAS scopes to one submission_id; the build lock scopes one
+  build — together transport 2 for a given submission/build is unreachable.
+- G11-2: **per-process (thread) cap** of 2 held under 8 threads; permit
+  released on exception; no-manifest providers uncapped by design; cache hit
+  never enters the dispatch plan (tests b5/b5b/b5c/b6).
 - G11-3: killed process → INCOMPLETE + dangling + truncated-final note;
-  classification identical after full `.manju` loss + rebuild (tests b7/b8, a1).
+  classification identical after full `.manju` loss both via an EXPLICIT
+  `rebuild()` (b8) and via the AUTOMATIC consult guard with no rebuild (b15,
+  POST_COMPLETION WP1) (tests b7/b8/b15, a1).
 - G11-4: cancel-before-dispatch (zero submission events, remote_may_continue
   =false), stop-polling stays ADMITTED + resume-poll-only, CLI cancel refuses
   to pretend, no remote-cancel hook exists (tests b9/b10/b11).
