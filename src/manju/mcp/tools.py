@@ -322,7 +322,7 @@ def _h_select_take(project: Project, args: dict) -> dict:
     return {"ok": True, "shot": result["shot"], "take": result["take"]}
 
 
-def _h_build(project: Project, args: dict) -> dict:
+def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -> dict:
     return run_build(
         project,
         target=args.get("target", "final"),
@@ -330,6 +330,7 @@ def _h_build(project: Project, args: dict) -> dict:
         regen_stale=bool(args.get("regen_stale", False)),
         dry_run=bool(args.get("dry_run", False)),
         actor="ai",
+        agent_profile=profile,  # AI_IDE_16 §10 keyframe spend gate
     ).to_dict()
 
 
@@ -512,11 +513,16 @@ def _h_director_confirm(project: Project, args: dict) -> dict:
         raise ToolError(str(exc)) from exc
 
 
-def _h_director_execute(project: Project, args: dict) -> dict:
+def _h_director_execute(project: Project, args: dict, *,
+                        profile: str = _P.COLLABORATIVE) -> dict:
     from ..build.director import DirectorError, execute
 
     try:
-        return execute(project, str(args["id"]), actor="ai").to_dict()
+        # AI_IDE_16 §10: the confirmed-proposal build honors the keyframe spend
+        # gate under the unattended profile (the ENGINE gate; the human confirm
+        # released the SPEND, the ladder is a separate discipline).
+        return execute(project, str(args["id"]), actor="ai",
+                       agent_profile=profile).to_dict()
     except DirectorError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -1070,6 +1076,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
 
 TOOLS: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOL_DEFS}
 
+# AI_IDE_16 §10: handlers that accept the LIVE agent profile (for the keyframe
+# spend gate). The profile is the server flag, never the agent's arguments.
+_PROFILE_AWARE_TOOLS = frozenset({"build", "director_execute"})
+
 # Load-time integrity gate (§7.8): every tool declares a legal policy; the enums
 # and cross-field rules hold. A malformed policy fails the import loudly rather
 # than silently shipping a broken agent surface.
@@ -1114,4 +1124,9 @@ def call_tool(
     if name == "agent_surface":
         # a pure function of (registry, profile) — return THIS profile's manifest
         return surface.manifest()
+    # AI_IDE_16 §10: the two paid-video handlers honor the keyframe spend gate,
+    # so they need the LIVE profile (server-flag trusted — NEVER read from the
+    # agent's `args`). Every other handler keeps the (project, args) signature.
+    if name in _PROFILE_AWARE_TOOLS:
+        return entry["handler"](project, args, profile=profile)
     return entry["handler"](project, args)

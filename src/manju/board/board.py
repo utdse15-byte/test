@@ -403,6 +403,152 @@ def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
+# ---------------------------------------------------------------------------
+# AI_IDE_16 §7 WP3 — 2D blocking, DERIVED from Shot source (NO 3D, no canvas
+# truth): camera frame + subject box + line of action + movement arrow as a pure
+# deterministic SVG string. The canvas is a VIEW; the Shot fields stay the truth.
+# ---------------------------------------------------------------------------
+
+_BLOCK_W, _BLOCK_H = 320, 180
+# subject footprint (fraction of frame height) by shot size — a close-up fills
+# the frame; a wide shot is a small figure.
+_SHOT_SIZE_BOX = {
+    "extreme_close_up": 0.86, "close_up": 0.68, "medium": 0.46,
+    "wide": 0.26, "extreme_wide": 0.14,
+}
+# horizontal movement arrows (dx sign) and push/pull (scale) hints, keyed by
+# common movement tokens; unknown movements draw no arrow (never guessed).
+_MOVE_HINT = {
+    "static": None,
+    "pan_left": ("h", -1), "pan_right": ("h", 1),
+    "truck_left": ("h", -1), "truck_right": ("h", 1),
+    "tilt_up": ("v", -1), "tilt_down": ("v", 1),
+    "dolly_in": ("z", 1), "push_in": ("z", 1), "zoom_in": ("z", 1),
+    "dolly_out": ("z", -1), "pull_out": ("z", -1), "zoom_out": ("z", -1),
+}
+
+
+def blocking_svg(shot: Any) -> str:
+    """A pure, deterministic 2D blocking diagram for one shot (§7 WP3).
+
+    Derived ONLY from the Shot source camera/action fields — camera frame,
+    a subject box sized by ``camera.shot_size`` and shifted by ``camera.angle``,
+    a movement arrow from ``camera.movement``, and the action beat as the line
+    of action label. No 3D, no persisted canvas coordinates: same shot → same
+    bytes. Returns a self-contained ``<svg>`` string (a board asset)."""
+    try:
+        cam = shot.camera
+        size = getattr(cam, "shot_size", "medium")
+        movement = getattr(cam, "movement", "static") or "static"
+        angle = getattr(cam, "angle", "eye_level") or "eye_level"
+        action = (shot.action.main or "").strip()
+        sid = shot.id
+    except Exception:
+        size, movement, angle, action, sid = "medium", "static", "eye_level", "", "?"
+
+    w, h = _BLOCK_W, _BLOCK_H
+    frac = _SHOT_SIZE_BOX.get(size, 0.46)
+    box_h = h * frac
+    box_w = box_h * 0.6
+    cx = w / 2.0
+    # angle shifts the subject vertically within the frame (low angle → subject
+    # sits higher in frame, high angle → lower).
+    cy = h / 2.0 + ({"low_angle": h * 0.12, "high_angle": -h * 0.12}.get(angle, 0.0))
+    bx, by = cx - box_w / 2.0, cy - box_h / 2.0
+
+    parts = [
+        f'<svg viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
+        'xmlns="http://www.w3.org/2000/svg" role="img" '
+        f'aria-label="blocking {_esc(sid)}">',
+        f'<rect x="1" y="1" width="{w - 2}" height="{h - 2}" fill="none" '
+        'stroke="#888" stroke-width="1.5"/>',
+        # rule-of-thirds guides
+        f'<line x1="{w/3:.0f}" y1="0" x2="{w/3:.0f}" y2="{h}" stroke="#8883" />',
+        f'<line x1="{2*w/3:.0f}" y1="0" x2="{2*w/3:.0f}" y2="{h}" stroke="#8883" />',
+        # subject box + line of action (baseline through the subject)
+        f'<line x1="0" y1="{cy:.0f}" x2="{w}" y2="{cy:.0f}" stroke="#4c9aff55" '
+        'stroke-dasharray="4 3"/>',
+        f'<rect x="{bx:.1f}" y="{by:.1f}" width="{box_w:.1f}" height="{box_h:.1f}" '
+        'fill="#4c9aff33" stroke="#4c9aff" stroke-width="2" rx="4"/>',
+        f'<circle cx="{cx:.1f}" cy="{by + box_h*0.22:.1f}" r="{box_w*0.22:.1f}" '
+        'fill="none" stroke="#4c9aff" stroke-width="2"/>',
+    ]
+
+    hint = _MOVE_HINT.get(movement)
+    if hint is not None:
+        kind, sign = hint
+        if kind == "h":
+            y = cy
+            x1, x2 = (cx - 55, cx + 55) if sign > 0 else (cx + 55, cx - 55)
+            parts.append(
+                f'<line x1="{x1:.0f}" y1="{y:.0f}" x2="{x2:.0f}" y2="{y:.0f}" '
+                'stroke="#ffb020" stroke-width="2.5" marker-end="url(#ar)"/>')
+        elif kind == "v":
+            x = cx + box_w
+            y1, y2 = (cy - 45, cy + 45) if sign > 0 else (cy + 45, cy - 45)
+            parts.append(
+                f'<line x1="{x:.0f}" y1="{y1:.0f}" x2="{x:.0f}" y2="{y2:.0f}" '
+                'stroke="#ffb020" stroke-width="2.5" marker-end="url(#ar)"/>')
+        else:  # z: push/pull — nested frame
+            k = 26 if sign > 0 else -26
+            parts.append(
+                f'<rect x="{bx - k:.0f}" y="{by - k*box_h/box_w:.0f}" '
+                f'width="{box_w + 2*k:.0f}" height="{box_h + 2*k*box_h/box_w:.0f}" '
+                'fill="none" stroke="#ffb020" stroke-width="2" '
+                'stroke-dasharray="5 4"/>')
+    parts.append(
+        '<defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" '
+        'markerWidth="6" markerHeight="6" orient="auto-start-reverse">'
+        '<path d="M0 0 L10 5 L0 10 z" fill="#ffb020"/></marker></defs>')
+    label = f"{size} · {movement} · {angle}"
+    parts.append(
+        f'<text x="6" y="{h - 8}" font-size="11" fill="#aaa" '
+        f'font-family="monospace">{_esc(label)}</text>')
+    if action:
+        parts.append(
+            f'<text x="6" y="15" font-size="11" fill="#ccc">'
+            f'{_esc(action[:46])}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _ladder_chips(project: "Project", shot_id: str) -> str:
+    """AI_IDE_16 §6 read-only board view fields: the shot's DERIVED preview
+    ladder stage, its keyframe-approval status, and the predicted next-step
+    (video-layer) cost via the existing estimators. Serve-mode only — the static
+    board bytes are unchanged."""
+    try:
+        from ..qc.production import ladder_view
+
+        view = ladder_view(project, shot_id)
+    except Exception:
+        return ""
+    stage = view.get("stage", "SCRIPT")
+    kf = view.get("keyframe") or {}
+    if not kf.get("has_candidates"):
+        appr = "无关键帧 no keyframes"
+        appr_cls = "st-manual"
+    elif kf.get("adopted"):
+        appr = f"关键帧已采纳 adopted ({_esc(kf.get('via'))})"
+        appr_cls = "st-fresh"
+    else:
+        appr = f"关键帧待采纳 {kf.get('candidate_count', 0)} pending"
+        appr_cls = "st-needs"
+    nxt = view.get("next_step") or {}
+    cost = nxt.get("estimated_cost")
+    cur = nxt.get("currency") or ""
+    cost_chip = (
+        f'<span class="badge st-stale">下一步 next→video ≈ {_esc(cost)} {_esc(cur)}</span>'
+        if cost else "")
+    return (
+        '<div class="ladder-chips">'
+        f'<span class="badge st-fresh">ladder: {_esc(stage)}</span>'
+        f'<span class="badge {appr_cls}">{appr}</span>'
+        f"{cost_chip}"
+        "</div>"
+    )
+
+
 def _fmt_duration(ms: int | None) -> str:
     if not ms or ms <= 0:
         return "—"
@@ -584,6 +730,18 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
     else:
         takes_html = '<div class="dialogue">no takes yet</div>'
 
+    # AI_IDE_16 §6/§7: read-only ladder chips + 2D blocking SVG. Serve-mode ONLY,
+    # so the static board.html stays byte-for-byte identical (its pin holds).
+    ladder_html = ""
+    blocking_html = ""
+    if serve:
+        ladder_html = _ladder_chips(project, shot_id)
+        try:
+            blocking_html = ('<details class="blocking"><summary>2D blocking</summary>'
+                             f"{blocking_svg(shot)}</details>")
+        except Exception:
+            blocking_html = ""
+
     actions_html = ""
     compare_html = ""
     if serve:
@@ -610,8 +768,9 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
             compare_html = _render_compare(project, shot_id, takes, selected)
         actions_html = f'<div class="shot-actions">{"".join(btns)}</div>'
 
-    return (f'<section class="shot">{head}{sel_reject_html}{dialogue}{note_html}'
-            f"{takes_html}{actions_html}{compare_html}</section>")
+    return (f'<section class="shot">{head}{ladder_html}{sel_reject_html}'
+            f"{dialogue}{note_html}{takes_html}{blocking_html}"
+            f"{actions_html}{compare_html}</section>")
 
 
 def _render_compare(project: "Project", shot_id: str, takes: list[Any],

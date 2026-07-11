@@ -662,4 +662,16 @@ def production_checks(project, shot, *, duration_ms: int | None = None,
                 "修复评审证据(reports/ 下 v2 记录/媒体可读性)后重试,"
                 "或显式改写 continuity.prev",
             ))
+
+    # AI_IDE_16 §10 collaborative gate surface: an ADVISORY KEYFRAME_NOT_ADOPTED
+    # finding for a shot with pending (unadopted) keyframe candidates. Never
+    # blocks a human (advisory tier — not in FAIL_LEVELS); the unattended
+    # refusal rides the build-dispatch gate, not this linter. Isolated so a
+    # derivation error never drops the continuation gate above.
+    try:
+        from .production import keyframe_ladder_checks
+
+        findings.extend(keyframe_ladder_checks(project, shot.id))
+    except Exception:
+        pass
     return findings

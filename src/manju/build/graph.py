@@ -87,6 +87,165 @@ def spend_gate(project: Project, estimated_cost: float, currency: str | None,
     )
 
 
+def _keyframe_gated_video_shots(project: Project, *, gen: str,
+                                rules=None) -> list[str]:
+    """AI_IDE_16 §10 — shots pending PAID video whose keyframe candidates are
+    NOT adopted (Fable ruling 2). A shot qualifies iff it (a) has keyframe
+    (image) candidates but no adopted one, (b) has no final VIDEO take yet, and
+    (c) its video generation is PRICED > 0 (a free local fallback is not a §10
+    paid-video request; a local-only project is never gated).
+
+    Deliberately SHOT-level, not plan-level: an unadopted keyframe leaves the
+    shot NEEDS_SELECTION (not MISSING), so it is not in the auto-generate plan —
+    but under the unattended profile an unadopted keyframe must still block the
+    paid build (the ladder discipline). A shot with no keyframe candidates never
+    appears here (opt-in per shot → old projects byte-identical). Never raises
+    into the build."""
+    if gen == "off":
+        return []
+    from ..qc.production import keyframe_gate, video_takes
+
+    if rules is None:
+        try:
+            rules = project.load_rules()
+        except Exception:
+            return []
+    out: list[str] = []
+    for sid in project.shot_ids():
+        try:
+            if not keyframe_gate(project, sid)["gated"]:
+                continue
+            if video_takes(project, sid):
+                continue  # already has a video take → past the gate
+            shot = project.load_shot(sid)
+            cost, _cur = _estimate_shot_cost(
+                shot, _target_duration_ms(project, shot, rules))
+        except Exception:
+            continue
+        if (cost or 0) > 0:
+            out.append(sid)
+    return out
+
+
+# AI_IDE_16: image extensions that mark a take as a KEYFRAME candidate (never a
+# video deliverable). Kept local so graph does not import qc at module load.
+_LADDER_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg"})
+
+
+def _animatic_shot_still(project: Project, shot_id: str) -> "Path | None":
+    """The best keyframe still for a shot's animatic panel (§6): the ADOPTED
+    keyframe (selected image take or promoted ref) > first candidate image take
+    > an authored keyframe image ref > None (caller falls back to a slate)."""
+    from ..qc.production import keyframe_adoption, keyframe_candidates
+
+    cands = keyframe_candidates(project, shot_id)
+    ad = keyframe_adoption(project, shot_id)
+    if ad.get("adopted") and ad.get("take"):
+        t = next((c for c in cands if c.name == ad["take"]), None)
+        if t is not None and t.media_path is not None and t.media_path.exists():
+            return t.media_path
+    for c in cands:
+        if c.media_path is not None and c.media_path.exists():
+            return c.media_path
+    try:
+        from ..providers.refs import resolve_local_ref
+
+        for kf in getattr(project.load_shot(shot_id), "keyframes", []) or []:
+            img = getattr(kf, "image", None)
+            if not img:
+                continue
+            p, _ = resolve_local_ref(project, str(img))
+            if p is not None and p.exists():
+                return p
+    except Exception:
+        pass
+    return None
+
+
+def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
+    """AI_IDE_16 §6 — a DETERMINISTIC animatic assembled from each shot's best
+    keyframe still via ffmpeg_kenburns pan/hold, over the EXISTING timeline
+    audio/captions. Output is a DERIVED artifact in ``renders/animatic/`` — never
+    a video take, never selected; content-keyed so a repeat run is idempotent and
+    a delete is rebuildable. REUSES the kenburns + final-render helpers (Fable
+    ruling 4); it never plans or submits a paid video request."""
+    from pathlib import Path
+
+    from ..core.hashing import cache_key, hash_file, short_hash
+    from ..core.models import Timeline
+    from ..media.audition import ensure_slate
+    from ..media.ffmpeg import default_log
+    from ..media.kenburns import kenburns
+    from ..media.render import (
+        _audio_input_hashes, _enc_params, _read_key_sidecar, _write_key_sidecar,
+        render_timeline,
+    )
+
+    log = default_log(project.root, "animatic")
+    config = project.load_config()
+    clips_dir = project.root / ".manju" / "animatic" / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    data = timeline.model_dump()
+    seg_keys: list[str] = []
+    for clip in data.get("tracks", {}).get("video", []) or []:
+        shot = str(clip.get("shot") or "")
+        dur = int(clip.get("duration_ms") or 1000)
+        still = (_animatic_shot_still(project, shot)
+                 if shot and not shot.startswith("__") else None)
+        if still is not None:
+            key = short_hash(cache_key({
+                "still": hash_file(still), "dur": dur, "w": config.width,
+                "h": config.height, "fps": config.fps, "kind": "animatic_kenburns",
+            }), 12)
+            dest = clips_dir / f"{shot}_{key}.mp4"
+            if force or not (dest.exists() and dest.stat().st_size > 0):
+                kenburns(still, dest, width=config.width, height=config.height,
+                         fps=config.fps, duration_ms=dur, zoom_from=1.0,
+                         zoom_to=1.08, log=log)
+            clip["source"] = project.relpath(dest)
+            clip["take"] = "__animatic__"
+            seg_keys.append(f"kb:{hash_file(still)}:{dur}")
+        else:
+            slate = ensure_slate(project, shot or "shot", duration_ms=dur,
+                                 width=config.width, height=config.height,
+                                 fps=config.fps)
+            clip["source"] = project.relpath(slate)
+            clip["take"] = "__slate__"
+            seg_keys.append(f"slate:{shot}:{dur}")
+    tl = Timeline.model_validate(data)
+
+    key = cache_key({
+        "segments": seg_keys,
+        "timeline": tl.model_dump(exclude={"meta"}),
+        "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
+        "audio": _audio_input_hashes(project, tl),
+        "encoding": _enc_params("final"),
+        "target": "animatic",
+    })
+
+    out_dir = project.root / "renders" / "animatic"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    versions = []
+    for p in out_dir.glob("animatic_v*.mp4"):
+        try:
+            versions.append((int(p.stem.split("_v", 1)[1]), p))
+        except (IndexError, ValueError):
+            pass
+    if not force and versions:
+        newest = max(versions, key=lambda t: t[0])[1]
+        if _read_key_sidecar(newest) == key:
+            log(f"animatic up-to-date (content key match): reusing {newest.name}")
+            return newest
+    n = max((v for v, _ in versions), default=0) + 1
+    out = out_dir / f"animatic_v{n}.mp4"
+    rendered = render_timeline(project, tl, target="final", out_path=out,
+                               ass_file=ass_file, force=True, log=log)
+    _write_key_sidecar(rendered, key, "animatic")
+    log(f"animatic written: {project.relpath(rendered)}")
+    return rendered
+
+
 def _record_local_runs(project: Project, takes: list, params: dict,
                        estimates: dict[str, float] | None = None,
                        evidence: Any = None) -> None:
@@ -580,6 +739,7 @@ def run_build(
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
     lang: str | None = None,  # WP4: locale overlay (None = base, byte-identical)
+    agent_profile: str = "collaborative",  # AI_IDE_16 §10 keyframe spend gate
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
     *content*; this process lock guards the dual-actor scenario — a human
@@ -641,6 +801,7 @@ def run_build(
             dry_run=True, force=force, actor=actor,
             assume_yes=assume_yes, mode=mode, on_phase=on_phase,
             include_unindexed=include_unindexed, lang=lang,
+            agent_profile=agent_profile,
         )
     # P0 WP4: _run_build_phases stamps its run_id + terminal-emitted flag onto
     # this carrier, so an EXCEPTION escaping the phases still emits
@@ -654,7 +815,7 @@ def run_build(
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, mode=mode, on_phase=on_phase,
                 include_unindexed=include_unindexed, should_cancel=should_cancel,
-                lang=lang, _run_info=_run_info,
+                lang=lang, agent_profile=agent_profile, _run_info=_run_info,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -748,6 +909,7 @@ def _run_build_phases(
     include_unindexed: bool = False,  # review #5: opt back into pre-round-W behaviour
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
     lang: str | None = None,  # WP4 locale
+    agent_profile: str = "collaborative",  # AI_IDE_16 §10 keyframe spend gate
     _run_info: dict | None = None,  # P0 WP4: run_build's lifecycle carrier (internal)
 ) -> BuildResult:
     result = BuildResult()
@@ -964,7 +1126,9 @@ def _run_build_phases(
     # the provider that will actually run first (#7).
     # WP2 audition: voice only — never plan/spend video generation.
     # WP4 lang: video plan empty (shared segments); locale voice only.
-    if target == "audition":
+    if target in ("audition", "animatic"):
+        # WP2/WP6: a preview render — voice only, never plan/spend paid video
+        # (the animatic uses EXISTING keyframe stills + kenburns pan/hold).
         result.plan = _plan_voice(project, gen=gen)
     elif lang:
         from .locale_build import plan_locale_voice
@@ -978,6 +1142,24 @@ def _run_build_phases(
                                        else_bias=else_bias)
         result.plan += _plan_voice(project, gen=gen)
     result.estimated_cost = sum(p["estimated_cost"] for p in result.plan)
+
+    # ---- AI_IDE_16 §10 keyframe spend gate (the batch's teeth). A shot about
+    # to submit a PAID video whose keyframe candidates are not adopted is
+    # flagged. COLLABORATIVE (default): an advisory warning, surfaced in the
+    # dry-run plan too — never a hard block (a human may skip the ladder).
+    # UNATTENDED: a structured refusal below (transport 0). Empty for any
+    # project with no keyframe candidates → byte-identical.
+    gated_kf_shots = _keyframe_gated_video_shots(project, gen=gen)
+    if gated_kf_shots:
+        gated_set = set(gated_kf_shots)
+        for p in result.plan:
+            if p.get("shot") in gated_set and p.get("kind") != "voice":
+                p["keyframe_not_adopted"] = True
+        result.warnings.append(
+            "keyframe ladder(§10): 未采纳关键帧即将付费生成视频 — "
+            f"{', '.join(gated_kf_shots)};建议先采纳一个关键帧"
+            "(select 该 take 或提升为 first-frame ref)。unattended 档会拒绝。"
+        )
 
     budget = config.budget.limit
     if budget is not None and result.estimated_cost > budget:
@@ -1010,6 +1192,23 @@ def _run_build_phases(
             f"{next((p.get('currency') for p in result.plan if p.get('currency')), '')} "
             "命中 ask_before=expensive_generation — 确认后重试:CLI `manju build --yes`,"
             "MCP/GUI 带 assume_yes(先 dry-run 看计划,§8.3)"
+        )
+        return _finish_run(result)
+
+    # ---- 1c. AI_IDE_16 §10 the teeth: under the UNATTENDED profile a paid
+    # video for an UNADOPTED keyframe is a STRUCTURED REFUSAL, before any
+    # submission (transport 0). It rides beside the ask_before gate but is
+    # INDEPENDENT of assume_yes — a confirmed director proposal (assume_yes=True)
+    # still cannot let unattended automation skip the ladder; a human confirms
+    # the SPEND, the ladder is a separate discipline. Collaborative keeps only
+    # the advisory warning above (never blocks a human).
+    if agent_profile == "unattended" and gated_kf_shots:
+        result.ok = False
+        result.errors.append(
+            "KEYFRAME_NOT_ADOPTED: unattended 档拒绝为未采纳关键帧的镜头提交付费视频 — "
+            f"{', '.join(gated_kf_shots)};先采纳一个关键帧(select 该 take,或把它提升为 "
+            "first-frame ref 绑定),或改由 collaborative 人工路径确认(§10)。"
+            "未发生任何 transport / 花费(transport=0)。"
         )
         return _finish_run(result)
 
@@ -1339,7 +1538,12 @@ def _run_build_phases(
     for st in evaluate_all(project, indexed_only=not include_unindexed):
         if st.state == ShotState.NEEDS_SELECTION:
             takes = project.takes(st.shot_id)
-            usable = [t for t in takes if t.media_path is not None]
+            # AI_IDE_16 §5: a keyframe (IMAGE) candidate is NEVER auto-adopted as
+            # selected_take — the contract forbids auto-setting a candidate as
+            # selected, and an image is not a video deliverable for the timeline.
+            # A human/agent adopts a keyframe explicitly (select / promote-to-ref).
+            usable = [t for t in takes if t.media_path is not None
+                      and t.media_path.suffix.lower() not in _LADDER_IMAGE_EXTS]
             if usable:
                 choice = usable[-1].name
                 try:
@@ -1390,7 +1594,7 @@ def _run_build_phases(
     # takes; NEVER write timeline.json (the real timeline stays gated).
     # WP4 lang: in-memory locale overlay on base structure; never write base
     # timeline.json.
-    if target == "audition":
+    if target in ("audition", "animatic"):
         from ..timeline.compiler import compile_timeline, gather_compile_input
 
         try:
@@ -1404,15 +1608,15 @@ def _run_build_phases(
         except CompileError as exc:
             result.ok = False
             result.errors.append(str(exc))
-            _record(project, "compile", "timeline", "试听时间线编译失败",
+            _record(project, "compile", "timeline", f"{target} 时间线编译失败",
                     evidence=" ".join(str(exc).split())[:800],
-                    hint="先 manju voice --missing 合成配音;试听不需要画面 takes",
+                    hint="先 manju voice --missing 合成配音;预览不需要画面视频 takes",
                     actor=actor)
             return _finish_run(result)
         result.timeline_path = None  # not written
         result.warnings.append(
-            "audition: in-memory timeline (timeline.json untouched); "
-            "missing picture takes use slate placeholders"
+            f"{target}: in-memory timeline (timeline.json untouched); "
+            "missing picture takes use slate/keyframe placeholders"
         )
     elif lang:
         from ..timeline.compiler import compile_timeline, gather_compile_input
@@ -1525,6 +1729,31 @@ def _run_build_phases(
         result.render_path = project.relpath(out)
         append_event(project.root, actor, "render",
                      {"target": "audition", "output": result.render_path})
+    elif target == "animatic":
+        _phase("render:animatic")
+        from ..media.ffmpeg import MediaError as _MediaError
+
+        try:
+            out = _render_animatic(project, timeline, ass_file=ass_path, force=force)
+        except _MediaError as exc:
+            result.ok = False
+            result.errors.append(
+                f"animatic: {' '.join(str(exc).split())} "
+                "(建议:查看 .manju/logs/animatic.log / render.log)"
+            )
+            _record(project, "render", "animatic", "动态分镜(animatic)渲染失败",
+                    evidence=str(exc)[-1200:],
+                    hint="查看 .manju/logs/animatic.log;确认 ffmpeg 可用",
+                    log_path=".manju/logs/animatic.log", actor=actor)
+            return _finish_run(result)
+        result.render_path = project.relpath(out)
+        # a DERIVED artifact — never a video take, never selected (pin).
+        result.warnings.append(
+            "animatic: 派生预演产物(renders/animatic/),不是视频 take、不会被 "
+            "selected,可删除后由关键帧重建(§6)"
+        )
+        append_event(project.root, actor, "render",
+                     {"target": "animatic", "output": result.render_path})
     elif target in ("proxy", "final") and lang and target == "final":
         _phase("render:final:locale")
         from ..media.ffmpeg import MediaError as _MediaError

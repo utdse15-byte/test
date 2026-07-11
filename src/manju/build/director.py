@@ -664,7 +664,7 @@ def reject(project: Project, proposal_id: str, actor: str | None = None) -> Prop
 
 
 def execute(project: Project, proposal_id: str, actor: str | None = None,
-            on_phase=None) -> Outcome:
+            on_phase=None, *, agent_profile: str = "collaborative") -> Outcome:
     """EXECUTE (step 4) + SHOW DIFF (step 5) + SUGGEST NEXT (step 6).
 
     Runs the confirmed proposal's actions strictly IN ORDER through the real
@@ -715,7 +715,8 @@ def execute(project: Project, proposal_id: str, actor: str | None = None,
     for i, pa in enumerate(proposal.actions):
         _phase(on_phase, f"action {i + 1}/{len(proposal.actions)}: {pa.action['type']}")
         try:
-            result = _run_action(project, pa.action, actor, on_phase)
+            result = _run_action(project, pa.action, actor, on_phase,
+                                 agent_profile=agent_profile)
         except ActionError as exc:
             failure = _record_action_failure(project, pa.action, exc, actor)
             pa.result = {"ok": False, "error": " ".join(str(exc).split())}
@@ -877,7 +878,8 @@ def _record_action_failure(project: Project, action: dict, exc: ActionError,
 _LOCKED_INTERNALLY = frozenset({"build", "redo", "voice", "mixer"})
 
 
-def _run_action(project: Project, action: dict, actor: str, on_phase) -> dict[str, Any]:
+def _run_action(project: Project, action: dict, actor: str, on_phase,
+                *, agent_profile: str = "collaborative") -> dict[str, Any]:
     """Dispatch one validated action to its real engine entry point. Raises
     :class:`ActionError` on a clean failure (first-failure stop).
 
@@ -890,6 +892,11 @@ def _run_action(project: Project, action: dict, actor: str, on_phase) -> dict[st
     handler = _DISPATCH.get(atype)
     if handler is None:  # unreachable — validation whitelisted the type
         raise ActionError(f"no handler for action type {atype!r}")
+    # AI_IDE_16 §10: the build action is the paid-video path that honors the
+    # keyframe spend gate under the unattended profile. Hand it the LIVE profile
+    # on a runtime COPY (never mutate/persist the proposal's own action).
+    if atype == "build":
+        action = {**action, "_agent_profile": agent_profile}
     if atype in _LOCKED_INTERNALLY:
         return handler(project, action, actor, on_phase)
 
@@ -907,10 +914,16 @@ def _do_build(project, action, actor, on_phase) -> dict[str, Any]:
     from .graph import WaitingUser, run_build
 
     try:
+        # Pass agent_profile ONLY when it is the non-default unattended value, so
+        # the collaborative/human path stays byte-identical to every existing
+        # caller (and test double) of run_build.
+        prof = action.get("_agent_profile", "collaborative")
+        extra = {"agent_profile": prof} if prof != "collaborative" else {}
         result = run_build(
             project, target=action["target"], gen=action["gen"],
             regen_stale=action["regen_stale"], force=action["force"],
-            actor=actor, assume_yes=True, on_phase=on_phase)  # confirmed → assume_yes
+            actor=actor, assume_yes=True, on_phase=on_phase,  # confirmed → assume_yes
+            **extra)
     except WaitingUser as exc:  # shouldn't fire under assume_yes; surfaced honestly
         raise ActionError(str(exc), subject="build") from exc
     if not result.ok:

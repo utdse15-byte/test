@@ -753,3 +753,278 @@ def reviewer_agreement(project: "Project", shot_id: str, *,
         "adjudications": adjudications,
         "do_not_execute_automatically": True,
     }
+
+
+# ============================================================================
+# AI_IDE_16 — Preview Ladder (DERIVED state) + keyframe adoption + spend gate
+#
+# The ladder is DERIVED, never stored (Fable ruling 1): a pure projection over
+# EXISTING truth. "Approved" at KEYFRAME rides the EXISTING adoption facts — a
+# selected keyframe (image) take OR a refs-binding referencing that keyframe's
+# exact media (a promoted ref). NO new approval store/flag is introduced, and a
+# shot with no keyframe candidates is UNAFFECTED (the ladder is opt-in per shot,
+# so old projects are byte-identical).
+# ============================================================================
+
+LADDER_SCHEMA = "manju.preview-ladder/v1"
+
+# §3 rungs, ascending cost order.
+LADDER_STAGES = (
+    "SCRIPT", "AUDITION", "KEYFRAME", "BOARD", "ANIMATIC", "MOTION_REF",
+    "FINAL_VIDEO",
+)
+
+# Keyframe candidates are IMAGE takes; final video takes are VIDEO takes. The
+# take's own media kind is the ONLY grouping signal (never filename/mtime).
+_LADDER_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg"})
+_LADDER_VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".webm", ".m4v"})
+
+KEYFRAME_NOT_ADOPTED = "KEYFRAME_NOT_ADOPTED"
+
+
+def _take_media_ext(take) -> str:
+    mp = getattr(take, "media_path", None)
+    return mp.suffix.lower() if mp is not None else ""
+
+
+def _ladder_media_sha(path) -> str | None:
+    from ..core.hashing import hash_file
+
+    try:
+        return hash_file(path) if path is not None and path.exists() else None
+    except Exception:
+        return None
+
+
+def keyframe_candidates(project: "Project", shot_id: str) -> list:
+    """A shot's KEYFRAME candidates = its IMAGE takes (Fable ruling 3).
+
+    Image takes produced through the EXISTING generate path (image-capability
+    providers / a human image import); their candidate sidecars already carry
+    request/ref/provider/cost provenance (08_10_12C). This is a derivation over
+    ``project.takes`` — no candidate store."""
+    return [t for t in project.takes(shot_id)
+            if _take_media_ext(t) in _LADDER_IMAGE_EXTS]
+
+
+def video_takes(project: "Project", shot_id: str) -> list:
+    """A shot's VIDEO takes (the FINAL_VIDEO rung evidence)."""
+    return [t for t in project.takes(shot_id)
+            if _take_media_ext(t) in _LADDER_VIDEO_EXTS]
+
+
+def keyframe_adoption(project: "Project", shot_id: str) -> dict[str, Any]:
+    """The EXISTING adoption facts at the KEYFRAME rung (Fable ruling 1).
+
+    A keyframe is ADOPTED iff an image candidate is EITHER the shot's selected
+    take OR referenced by EXACT media bytes from a refs-source binding (a
+    promoted ref / canonical style frame / first-frame ref). Read-only: this
+    reads ``status.selected_take`` and the resolved refs and joins by content
+    hash — it never writes a flag."""
+    candidates = keyframe_candidates(project, shot_id)
+    out: dict[str, Any] = {
+        "has_candidates": bool(candidates),
+        "candidate_count": len(candidates),
+        "candidates": [t.name for t in candidates],
+        "adopted": False,
+        "via": None,
+        "take": None,
+        "media_sha": None,
+    }
+    if not candidates:
+        return out
+
+    cand_by_sha: dict[str, str] = {}
+    for t in candidates:
+        sha = _ladder_media_sha(getattr(t, "media_path", None))
+        if sha:
+            cand_by_sha.setdefault(sha, t.name)
+
+    # (a) a selected keyframe (image) take
+    try:
+        selected = project.load_shot(shot_id).status.selected_take
+    except Exception:
+        selected = None
+    sel = next((t for t in candidates if t.name == selected), None)
+    if sel is not None:
+        out.update(adopted=True, via="selected_take", take=sel.name,
+                   media_sha=_ladder_media_sha(getattr(sel, "media_path", None)))
+        return out
+
+    # (b) a refs-binding referencing a candidate's EXACT media (promoted ref)
+    try:
+        from ..providers.refs import resolve_refs
+
+        shot = project.load_shot(shot_id)
+        refset = resolve_refs(project, shot, project.load_bible())
+    except Exception:
+        refset = None
+    if refset is not None:
+        for it in refset.items:
+            p = getattr(it, "path", None)
+            if p is None or not getattr(it, "exists", False):
+                continue
+            sha = _ladder_media_sha(p)
+            if sha and sha in cand_by_sha:
+                out.update(adopted=True, via="promoted_ref",
+                           take=cand_by_sha[sha], media_sha=sha, ref=it.ref)
+                return out
+    return out
+
+
+def motion_references(project: "Project", shot_id: str) -> list[dict[str, Any]]:
+    """External MOTION references (§7 WP3 / Fable ruling 5).
+
+    A motion reference is a VIDEO ref whose transfer contract declares
+    ``controls`` including ``motion``; its ``must_not_transfer`` set rides the
+    EXISTING ``ignore`` field. The closed ``REF_TRANSFER_VOCAB`` already carries
+    ``motion`` — no new vocabulary. Bytes/URL + controls/ignore ride the
+    resolved binding, so this is pure derivation."""
+    try:
+        from ..providers.refs import resolve_refs
+
+        shot = project.load_shot(shot_id)
+        refset = resolve_refs(project, shot, project.load_bible())
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for it in refset.video_items():
+        if "motion" in (getattr(it, "controls", ()) or ()):
+            out.append({
+                "ref": it.ref,
+                "controls": list(it.controls),
+                "must_not_transfer": list(it.ignore),
+                "content_sha": _ladder_media_sha(getattr(it, "path", None)),
+                "is_url": bool(getattr(it, "is_url", False)),
+            })
+    return out
+
+
+def _audition_exists(project: "Project") -> bool:
+    d = project.root / "renders" / "audition"
+    return d.is_dir() and any(d.glob("audition_v*.mp4"))
+
+
+def _animatic_exists(project: "Project") -> bool:
+    d = project.root / "renders" / "animatic"
+    return d.is_dir() and any(d.glob("animatic_v*.mp4"))
+
+
+def _board_exists(project: "Project") -> bool:
+    if (project.root / "board.html").exists():
+        return True
+    frames = project.root / "reports" / "frames"
+    return frames.is_dir() and any(frames.glob("board_*.jpg"))
+
+
+def _next_step_estimate(project: "Project", shot_id: str) -> dict[str, Any]:
+    """The §6 predicted incremental cost from the current preview layer to the
+    paid VIDEO layer — priced through the EXISTING per-shot estimator (the same
+    routing the build would use). ``None`` cost when unpriceable (never coerced
+    to 0)."""
+    try:
+        from ..build.graph import _estimate_shot_cost, _target_duration_ms
+
+        shot = project.load_shot(shot_id)
+        cost, currency = _estimate_shot_cost(
+            shot, _target_duration_ms(project, shot, project.load_rules()))
+        return {"stage": "FINAL_VIDEO", "estimated_cost": cost, "currency": currency}
+    except Exception:
+        return {"stage": "FINAL_VIDEO", "estimated_cost": None, "currency": None}
+
+
+def ladder_view(project: "Project", shot_id: str) -> dict[str, Any]:
+    """The DERIVED §3 preview-ladder view for one shot — pure, read-only,
+    rebuildable, never stored. Each rung's ``reached`` is a fact over EXISTING
+    truth; ``stage`` is the highest reached rung. ``approved_at_keyframe`` rides
+    the existing adoption facts (no new flag)."""
+    reached = {s: False for s in LADDER_STAGES}
+
+    try:
+        project.load_shot(shot_id)
+        reached["SCRIPT"] = True
+    except Exception:
+        pass
+
+    reached["AUDITION"] = _audition_exists(project)
+
+    adoption = keyframe_adoption(project, shot_id)
+    reached["KEYFRAME"] = adoption["has_candidates"]
+
+    reached["BOARD"] = _board_exists(project)
+    reached["ANIMATIC"] = _animatic_exists(project)
+
+    mrefs = motion_references(project, shot_id)
+    reached["MOTION_REF"] = bool(mrefs)
+
+    vts = video_takes(project, shot_id)
+    reached["FINAL_VIDEO"] = bool(vts)
+
+    stage = "SCRIPT"
+    for s in LADDER_STAGES:
+        if reached[s]:
+            stage = s
+
+    return {
+        "schema": LADDER_SCHEMA,
+        "shot": shot_id,
+        "stage": stage,
+        "reached": reached,
+        "keyframe": adoption,
+        "approved_at_keyframe": adoption["adopted"],
+        "motion_references": mrefs,
+        "final_video_takes": [t.name for t in vts],
+        "next_step": (None if reached["FINAL_VIDEO"]
+                      else _next_step_estimate(project, shot_id)),
+        "do_not_execute_automatically": True,
+    }
+
+
+def keyframe_gate(project: "Project", shot_id: str) -> dict[str, Any]:
+    """The §10 spend-gate condition for ONE shot (Fable ruling 2).
+
+    A shot that HAS keyframe candidates but NO adopted one is GATED for paid
+    video. A shot with NO keyframe candidates is UNAFFECTED (opt-in per shot —
+    old projects byte-identical)."""
+    adoption = keyframe_adoption(project, shot_id)
+    return {
+        "shot": shot_id,
+        "gated": adoption["has_candidates"] and not adoption["adopted"],
+        "adoption": adoption,
+    }
+
+
+def keyframe_gated_shots(project: "Project", shot_ids=None) -> list[str]:
+    """Every shot whose paid video is gated by an unadopted keyframe."""
+    ids = list(shot_ids) if shot_ids is not None else list(project.shot_ids())
+    return [sid for sid in ids if keyframe_gate(project, sid)["gated"]]
+
+
+def keyframe_ladder_checks(project: "Project", shot_id: str) -> list[dict[str, Any]]:
+    """The collaborative surface of the spend gate (Fable ruling 2): a
+    ``KEYFRAME_NOT_ADOPTED`` production check for ``manju prompt --check``.
+
+    ADVISORY level (NOT in ``FAIL_LEVELS``) — never a hard block for a human,
+    who may legitimately skip the ladder. Fires only for a shot with pending
+    (unadopted) keyframe candidates."""
+    gate = keyframe_gate(project, shot_id)
+    if not gate["gated"]:
+        return []
+    n = gate["adoption"]["candidate_count"]
+    return [{
+        "code": KEYFRAME_NOT_ADOPTED,
+        "severity": "advisory",
+        "level": "advisory",  # qc/prompt_checks printer + has_blocking compat
+        "message": (
+            f"{shot_id}: {n} 个关键帧候选尚未采纳 — 付费视频前先采纳一个关键帧"
+            "(select 该 take,或把它提升为 refs first-frame 绑定);"
+            "unattended 档会在派发时拒绝未采纳关键帧的付费视频(transport=0)"
+        ),
+        "suggestion": (
+            f"manju select {shot_id} <take> 采纳关键帧,或在 generation.params.refs "
+            "写入指向该关键帧字节的 first-frame 绑定"
+        ),
+        "source_paths": [f"shots/{shot_id}.yaml#/status/selected_take"],
+        "proposal": None,
+        "auto_apply": False,
+    }]

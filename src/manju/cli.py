@@ -846,13 +846,15 @@ def ingest_discard_cmd(
 def build(
     target: str = typer.Option(
         "final",
-        help="proxy | final | exports | qc | audition — qc does NOT render first: it "
-             "checks the newest EXISTING final on disk against a freshly "
+        help="proxy | final | exports | qc | audition | animatic — qc does NOT render "
+             "first: it checks the newest EXISTING final on disk against a freshly "
              "recompiled timeline (same as the standalone `manju qc`, plus "
              "gap-filling generation). Run --target final beforehand for QC "
              "on a fresh render; the output/--json names which artifact it "
              "checked (qc_final). audition = 先听后看: voice+captions+music "
-             "on slate video, no picture generation (WP2)."),
+             "on slate video, no picture generation (WP2). animatic = 关键帧 + "
+             "kenburns pan/hold + 现有音轨/字幕的确定性预演,派生产物,不是视频 take"
+             "(AI_IDE_16 §6)."),
     gen: str = typer.Option("missing", help="missing | auto | off"),
     regen_stale: bool = typer.Option(False, "--regen-stale"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -894,7 +896,7 @@ def build(
     from .build.graph import run_build
     from .core.models import BUILD_MODE_NAMES
 
-    if target not in ("proxy", "final", "exports", "qc", "audition"):
+    if target not in ("proxy", "final", "exports", "qc", "audition", "animatic"):
         _fail(f"unknown target: {target}")
     if mode is not None and mode not in BUILD_MODE_NAMES:
         _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
@@ -1838,6 +1840,10 @@ def export(
     capcut: bool = typer.Option(False, "--capcut", help="international CapCut draft (pycapcut)"),
     srt: bool = typer.Option(False, "--srt"),
     otio: bool = typer.Option(False, "--otio"),
+    pullsheet: bool = typer.Option(
+        False, "--pullsheet",
+        help="AI_IDE_16 §9: CSV + Markdown storyboard pull sheet "
+             "(exports/pullsheet/) derived from the timeline + shots"),
     yes: bool = typer.Option(False, "--yes", "-y",
                              help="approve ask_before=final_export when present"),
     as_json: bool = typer.Option(False, "--json"),
@@ -1857,13 +1863,34 @@ def export(
             "(非金钱花费)。确认后重试: manju export --yes …",
             code="waiting_user",
         )
-    timeline = project.load_timeline()
-    if timeline is None:
-        _fail("no timeline.json — run `manju build` first")
-    if not (jianying or capcut or srt or otio):
-        srt = otio = True
+    # AI_IDE_16 §9 pull sheet: a derived CSV+MD export that does NOT require a
+    # written timeline.json (it loads-or-compiles). Handle it first so it works
+    # pre-build, and let it be requested alongside the timeline exporters.
     outputs: dict[str, Path] = {}
     notes: list[str] = []
+    if pullsheet:
+        from .build.pullsheet import export_pull_sheet
+
+        for kind, path in export_pull_sheet(project).items():
+            outputs[f"pullsheet_{kind}"] = path
+        notes.append("pull sheet: CSV+MD in exports/pullsheet/ (PDF skipped — "
+                     "no headless-Chromium/PDF-table path in this environment)")
+    timeline = project.load_timeline()
+    if timeline is None:
+        if pullsheet and not (jianying or capcut or srt or otio):
+            rel = {k: project.relpath(v) for k, v in outputs.items()}
+            append_event(project.root, ACTOR, "export", rel)
+            if as_json:
+                _emit({"outputs": rel, "notes": notes}, True)
+            else:
+                for k, v in rel.items():
+                    typer.secho(f"{k}: {v}", fg=typer.colors.GREEN)
+                for note in notes:
+                    typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
+            return
+        _fail("no timeline.json — run `manju build` first")
+    if not (jianying or capcut or srt or otio or pullsheet):
+        srt = otio = True
     # Which target we're building, so a mid-export failure names its subject in
     # the structured record (goal 10) — the capcut path below records the same way.
     _target = "timeline"
@@ -2622,6 +2649,61 @@ def shot_package(
         detail = "; ".join(result.get("reasons") or result.get("new_errors")
                            or [result.get("error", "")])
         typer.secho(f"apply refused ({result['code']}): {detail}"[:600], fg=typer.colors.RED)
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@app.command(name="pull-sheet")
+def pull_sheet(
+    file: Path = typer.Argument(..., help="an edited storyboard pull sheet "
+                                          "(.csv or .md) exported by `manju export --pullsheet`"),
+    apply: bool = typer.Option(False, "--apply",
+                               help="apply the reviewed plan under CAS; "
+                                    "default = inspect/plan only, zero writes"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """AI_IDE_16 §9 — round-trip an edited storyboard pull sheet.
+
+    The import DIFFS the sheet against current truth and maps it onto the DR03A
+    ShotDraftPackage machinery: a NEW row creates a shot, an EDITED row is a
+    checked-write CAS proposal. Default = inspect (ZERO writes). ``--apply``
+    applies the reviewed plan; a source that moved since inspect fails the CAS,
+    and ``selected_take`` / media / locks are NEVER overwritten. ``transition``,
+    ``refs``, ``frame_refs`` and ``status`` are export-only (never written back)."""
+    from .build.pullsheet import (
+        PullSheetError,
+        apply_pull_sheet_import,
+        plan_pull_sheet_import,
+    )
+
+    project = _project()
+    try:
+        plan = plan_pull_sheet_import(project, file)
+    except PullSheetError as exc:
+        _fail(" ".join(str(exc).split())[:600], code="pull_sheet_invalid")
+        return
+
+    if not apply:
+        if as_json:
+            _emit({k: v for k, v in plan.items() if k != "_package"}, True)
+        else:
+            s = plan["summary"]
+            typer.secho(
+                f"pull-sheet plan: {s['create']} create · {s['update']} update · "
+                f"{s['unchanged']} unchanged (inspect — 加 --apply 才会写入)",
+                fg=typer.colors.BRIGHT_BLACK)
+        return
+
+    result = apply_pull_sheet_import(project, plan, actor=ACTOR)
+    if as_json:
+        _emit({"apply": result}, True)
+    elif result["ok"]:
+        typer.secho(
+            f"pull-sheet apply: updated {', '.join(result['applied']) or '(none)'}"
+            f" · created {', '.join(result['created']) or '(none)'}",
+            fg=typer.colors.GREEN)
+    else:
+        typer.secho(f"apply refused: {result['refused']}"[:600], fg=typer.colors.RED)
     if not result["ok"]:
         raise typer.Exit(1)
 
