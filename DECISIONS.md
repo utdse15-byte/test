@@ -800,3 +800,43 @@ production files, 0 new schemas, 26 characterization tests
   cannot obtain would be a lie).
 - **Lease/fencing REJECTED_WITH_REASON**: no reproducible dual ownership
   exists to justify one.
+
+## 25. Post-completion hardening — an external review, accepted and repaid in full (2026-07-11)
+
+An external AI review (POST_COMPLETION_HARDENING_V1) of the completed
+01–13 work claimed sixteen gaps. Verdict after source-verification: the
+review was RIGHT — fifteen of sixteen reproduced red (the sixteenth split
+into honest halves). Its two structural insights are worth recording:
+
+1. **Durable evidence is not enough if consumers trust the projection.**
+   P0 made paid-submission evidence durable, but the resume consult and the
+   07C release gate still read the DISPOSABLE SQLite projection — so a
+   deleted/fresh `.manju` read as "nothing in flight" while events.jsonl
+   held an unresolved chain. Fix: `ensure_submission_projection` — the one
+   helper both consumers now call, folding evidence into the projection
+   (same project_chain machinery) before anything is trusted, fail-closed
+   on any read failure. "Empty" and "verified empty" are different facts.
+2. **A derived artifact can become an input through its own convenience
+   fallback.** 13C's manifest was derived-only by contract, but its base-
+   identity resolver quietly re-read the materialized master manifest from
+   disk — hand-editing a report drove the format-only invariant. Fix: the
+   disk-read is deleted; base identity is explicit or re-derived in-process
+   under a cycle guard. The same review also caught the semantic digest
+   covering only video (audio/subtitle changes now break FORMAT_ONLY), the
+   fail-open unreadable baseline log, the unverified baseline event_id, the
+   run-gate matrix gap, keeper currency, the NLE duplicate-entry crash on
+   the NORMAL path, missing bundle CAS, metadata-outside-the-digest
+   (13C's deliberate exclusion, now REVERSED on the review's better
+   argument), silent-MASTER fallbacks, and the accepted-but-ignored
+   final_ref (removed, Option B).
+- Strict identity (cloud submits refuse to proceed on prompt/ref/hash
+  failures — NOT_DISPATCHED, transport 0) and honest legacy correlation
+  (digest match ⇒ poll-only; else human attach/abandon — a deliberate,
+  pinned DR06-compat flip) close WP3.
+- The 09_11G report language was corrected to claim exactly what its tests
+  prove (per-process cap; same-submission-id CAS; explicit-vs-automatic
+  rebuild) and two stronger gates were added (two full subprocess generates
+  ⇒ one transport submit; delete-`.manju` auto-guard).
+- Budget: 8 of 10 production files, 0 new schemas, 41+ new red-first tests,
+  5 pins flipped with rationale. Two honest SKIPPED_WITH_EVIDENCE sub-items
+  (no-run_id sidecar marker; release-side final_ref already correct).
