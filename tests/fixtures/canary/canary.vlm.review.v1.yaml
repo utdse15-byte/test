@@ -1,0 +1,9 @@
+schema: manju.canary-fixture/v1
+fixture_id: canary.vlm.review.v1
+expected_capability: vision
+max_estimated_cost: 0.05
+prompt: "Describe the dominant color and whether the frame is static."
+expected_frame_size: [64, 64]
+required_receipt_fields: [job_id]
+forbidden_secret_fields: [authorization, api_key, apikey, token, secret, bearer, key, password, credential, signature]
+input_media: canary.frame.png

@@ -1,0 +1,10 @@
+schema: manju.canary-fixture/v1
+fixture_id: canary.image.t2i.v1
+expected_capability: text_to_image
+max_estimated_cost: 0.2
+prompt: "a solid teal square, flat, centered"
+duration_ms: 0
+expected_frame_size: [64, 64]
+required_receipt_fields: [job_id]
+forbidden_secret_fields: [authorization, api_key, apikey, token, secret, bearer, key, password, credential, signature]
+sample_artifact: canary.frame.png

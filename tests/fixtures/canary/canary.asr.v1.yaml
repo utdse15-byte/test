@@ -1,0 +1,8 @@
+schema: manju.canary-fixture/v1
+fixture_id: canary.asr.v1
+expected_capability: asr
+max_estimated_cost: 0.05
+duration_ms: 300
+required_receipt_fields: [job_id]
+forbidden_secret_fields: [authorization, api_key, apikey, token, secret, bearer, key, password, credential, signature]
+input_media: canary.audio.wav

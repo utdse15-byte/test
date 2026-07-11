@@ -1,0 +1,16 @@
+# Canary contract (AI_IDE_14 §5) — video image-to-video. Fixed, low-cost, and
+# free of ANY private/restricted material (§8, test 18): a generated solid-teal
+# first frame + a 1s solid clip. The fixture FILE hash (yaml + bundled media) is
+# the fixture_version binding — editing any of it makes prior qualification STALE.
+schema: manju.canary-fixture/v1
+fixture_id: canary.video.i2v.v1
+expected_capability: image_to_video
+max_estimated_cost: 0.5
+prompt: "a single solid teal square on black, static, one second"
+duration_ms: 1000
+expected_duration_range_ms: [500, 2000]
+expected_frame_size: [64, 64]
+required_receipt_fields: [job_id]
+forbidden_secret_fields: [authorization, api_key, apikey, token, secret, bearer, key, password, credential, signature]
+input_media: canary.frame.png
+sample_artifact: canary.clip.mp4

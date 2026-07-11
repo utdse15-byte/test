@@ -283,6 +283,22 @@ class SubmissionConfig(ManjuModel):
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
 
 
+class DataHandlingConfig(ManjuModel):
+    """AI_IDE_14 WP4 (§8) — DECLARED data-handling facts, additive + all
+    optional so every existing manifest loads byte-identically. These are human-
+    decision material surfaced VERBATIM in the qualification report tagged
+    ``declared``; a technical canary can NEVER verify them as true, so they must
+    never be presented as observed fact (contract §8, test 19). ``source_ref``
+    is where the operator read them (a docs URL / dated note), recorded so the
+    claim is traceable — never treated as proof."""
+
+    region: str | None = None            # e.g. "cn-shanghai" / "us-east"
+    retention: str | None = None         # e.g. "30d" / "deleted on request"
+    training_opt_out: bool | None = None  # is content excluded from training?
+    deletion_url: str | None = None      # documented deletion entry point
+    source_ref: str | None = None        # where these facts were read (audit)
+
+
 class LocalCmdConfig(ManjuModel):
     """Local-command adapter config: drive any local generator CLI (§8.6).
 
@@ -326,6 +342,11 @@ class ProviderManifest(ManjuModel):
     # DR06 (ruling 10): additive, default no-op — provider-native idempotency
     # declaration. Absent on every existing manifest, so byte-identical.
     submission: SubmissionConfig = Field(default_factory=SubmissionConfig)
+    # AI_IDE_14 WP4: additive, all-optional DECLARED data-handling facts
+    # (region/retention/training opt-out/deletion/source). Absent on every
+    # existing manifest, so byte-identical; surfaced verbatim by the
+    # qualification report, never verified by a canary (§8).
+    data_handling: DataHandlingConfig = Field(default_factory=DataHandlingConfig)
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —

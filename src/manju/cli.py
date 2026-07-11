@@ -5613,6 +5613,159 @@ def providers_catalog(
         typer.secho(f"wrote {output}", fg=typer.colors.GREEN)
 
 
+# --------------------------------------------------------- qualification (AI_IDE_14)
+# `manju providers qualify` / `providers qualification` — derive a provider
+# capability's qualification level from a fixed low-cost canary. Audit-first,
+# red-first, DERIVED-only: the report is a deletable evidence projection, never a
+# build input. Real network is operator-gated behind --run + --max-cost + the
+# ask_before spend gate; --dry-run never touches a transport.
+
+_QUAL_COLOR = {
+    "UNTESTED": typer.colors.BRIGHT_BLACK,
+    "CONFIG_VALID": typer.colors.CYAN,
+    "DRY_RUN_VALID": typer.colors.BLUE,
+    "CANARY_SUBMIT_PASSED": typer.colors.GREEN,
+    "CANARY_ARTIFACT_PASSED": typer.colors.GREEN,
+    "RECOVERY_PASSED": typer.colors.GREEN,
+    "PRODUCTION_READY": typer.colors.BRIGHT_GREEN,
+    "STALE": typer.colors.YELLOW,
+    "BLOCKED": typer.colors.RED,
+}
+
+
+@providers_app.command("qualify")
+def providers_qualify(
+    provider_id: str = typer.Argument(..., metavar="ID"),
+    capability: str = typer.Option(..., "--capability",
+                                   help="capability to qualify, e.g. image_to_video / tts"),
+    run: bool = typer.Option(False, "--run",
+                             help="run the REAL canary (operator-gated, PAID; needs --max-cost)"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="config + fixture + estimate, NO network (the default)"),
+    max_cost: Optional[float] = typer.Option(
+        None, "--max-cost", help="hard cap on the canary estimate — required with --run (§5)"),
+    yes: bool = typer.Option(False, "--yes",
+                             help="pre-approve the ask_before spend gate for --run"),
+    live: bool = typer.Option(False, "--live",
+                              help="also run the free GET-only health probe (never a submit)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Qualify ONE provider capability against its fixed low-cost canary fixture.
+
+    Default (or --dry-run) validates config + fixture + estimate with NO network
+    and records DRY_RUN_VALID. --run is the operator-gated PAID canary: it is
+    refused without --max-cost (and if the estimate exceeds it), passes the
+    ask_before spend gate (unless --yes), and drives a SINGLE submission with NO
+    fallback. The report is a deletable evidence projection under
+    reports/providers/qualification/ — never a build input."""
+    from .providers.base import ProviderFailure
+    from .providers.qualification import CanaryError, qualify
+
+    if run and dry_run:
+        _fail("choose one of --dry-run or --run, not both", code="bad_args")
+    project = _project()
+    mode = "run" if run else "dry_run"
+    try:
+        report = qualify(project, provider_id, capability, mode=mode,
+                         max_cost=max_cost, assume_yes=yes, health_probe=live)
+    except CanaryError as exc:
+        _fail(str(exc), code=exc.code)
+    except ValueError as exc:
+        _fail(str(exc), code="bad_capability")
+    except ProviderFailure as exc:  # a real --run that reached (and failed at) the API
+        _fail(f"canary submit failed: {exc} "
+              f"(disposition={getattr(exc, 'disposition', None)})",
+              code="canary_submit_failed")
+    if as_json:
+        _emit(report, True)
+        return
+    state = report["state"]
+    typer.secho(f"{report['provider_id']}#{report['capability']}: {state}",
+                fg=_QUAL_COLOR.get(state, None), bold=True)
+    typer.echo(f"  level={report['level']}  mode={report['mode']}  "
+               f"transport={report['transport']}  "
+               f"estimate={report['estimated_cost']} {report['currency'] or ''}")
+    for r in report.get("reasons", []):
+        typer.secho(f"  · {r}", fg=typer.colors.BRIGHT_BLACK)
+    ac = report.get("artifact_checks")
+    if ac:
+        for c in ac["checks"]:
+            glyph = "✓" if c["ok"] else ("•" if c["ok"] is None else "✗")
+            color = (typer.colors.GREEN if c["ok"] else
+                     typer.colors.BRIGHT_BLACK if c["ok"] is None else typer.colors.RED)
+            typer.secho(f"    {glyph} {c['check']}: {c['detail']}", fg=color)
+    rec = report.get("recovery")
+    if rec:
+        typer.secho(f"  recovery: {'passed' if rec['passed'] else 'FAILED'} "
+                    f"(restored={rec['restored_state']}, resubmit_calls={rec['resubmit_calls']})",
+                    fg=typer.colors.GREEN if rec["passed"] else typer.colors.RED)
+    if report.get("environment_note"):
+        typer.secho(f"  note: {report['environment_note']}", fg=typer.colors.YELLOW)
+    typer.secho(f"  report: reports/providers/qualification/"
+                f"{report['provider_id']}__{report['capability']}.json (derived — deletable)",
+                fg=typer.colors.BRIGHT_BLACK)
+
+
+@providers_app.command("qualification")
+def providers_qualification(
+    provider_id: Optional[str] = typer.Argument(None, metavar="[ID]"),
+    capability: Optional[str] = typer.Option(None, "--capability"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Show the qualification matrix (capability × level) re-derived LIVE from
+    the current manifests + any recorded evidence, so a stale report reads STALE.
+    Pass an ID (and optionally --capability) to focus on one provider."""
+    from .providers.qualification import (
+        declared_facts,
+        qualification_matrix,
+        qualification_state,
+        read_report,
+    )
+
+    project = _project()
+    if provider_id and capability:
+        declared = declared_facts(provider_id, capability)
+        stored = read_report(project, provider_id, capability)
+        evidence = stored.get("evidence") if stored else None
+        derived = qualification_state(provider_id, capability,
+                                      evidence=evidence, declared=declared)
+        out = {"provider_id": provider_id, "capability": capability,
+               "state": derived["state"], "level": derived["level"],
+               "stale": derived["stale"], "blocked_reason": derived["blocked_reason"],
+               "reasons": derived["reasons"], "bindings": derived["bindings"],
+               "report": stored}
+        if as_json:
+            _emit(out, True)
+            return
+        typer.secho(f"{provider_id}#{capability}: {derived['state']}",
+                    fg=_QUAL_COLOR.get(derived["state"], None), bold=True)
+        for r in derived["reasons"]:
+            typer.secho(f"  · {r}", fg=typer.colors.BRIGHT_BLACK)
+        return
+
+    matrix = qualification_matrix(project)
+    rows = matrix["rows"]
+    if provider_id:
+        rows = [r for r in rows if r["provider_id"] == provider_id]
+    if as_json:
+        _emit({"schema": matrix["schema"], "rows": rows, "errors": matrix["errors"]}, True)
+        return
+    if not rows:
+        typer.echo("no provider capabilities to qualify "
+                   "(~/.manju/providers, §8.6) — try: manju providers add …")
+        return
+    idw = max([len("ID")] + [len(r["provider_id"]) for r in rows])
+    capw = max([len("CAPABILITY")] + [len(r["capability"]) for r in rows])
+    for r in rows:
+        tag = "STALE" if r["stale"] else r["state"]
+        typer.secho(
+            f"{_pad(r['provider_id'], idw)}  {_pad(r['capability'], capw)}  "
+            f"{_pad(r['kind'], 5)}  {r['state']}",
+            fg=_QUAL_COLOR.get(r["state"], None))
+    for e in matrix["errors"]:
+        typer.secho(f"✗ {e}", fg=typer.colors.RED)
+
+
 # =============================================================== routing group
 # `manju route …` — inspect the active routing strategy (goal item 9).
 
