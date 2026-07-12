@@ -8144,5 +8144,246 @@ def bridge_adopt_cmd(
                f"via {prop['source_patch']['apply_via']}")
 
 
+# --------------------------------------------------------------------- migrate
+# The real `manju migrate` tool: the declared project.fps int→rational migration
+# (CONTRACTS.yaml planned_migrations[0]), made runnable now that R1/R2/R4 give it
+# a real benefit. inspect is zero-write and NEVER recommends a rate; apply is
+# CAS + atomic, edits ONLY project.yaml, and never git-commits (it prints the
+# revert command). Downgrade is supported but refuses to write without an
+# explicit loss acknowledgement. Core logic lives in core/migrate.py.
+
+migrate_app = typer.Typer(
+    no_args_is_help=True,
+    help="Rational edit-rate migration: inspect | plan | apply | downgrade "
+         "(the declared project.fps int→rational move).")
+app.add_typer(migrate_app, name="migrate")
+
+
+def _migrate_candidate_lines(doc) -> None:
+    for c in doc["candidates"]:
+        typer.echo(f"  {c['rate']:>12}  [{c['kind']}]  {c['note']}")
+    if doc.get("candidate_note"):
+        typer.secho("  " + doc["candidate_note"], fg=typer.colors.BRIGHT_BLACK)
+
+
+def _migrate_print_plan(plan) -> None:
+    typer.secho(f"plan: {plan['action']} → {plan['target_rate']}  ({plan['path']})",
+                fg=typer.colors.CYAN)
+    if plan["already_at_target"]:
+        typer.secho("  already at target — nothing to write", fg=typer.colors.YELLOW)
+    for ln in plan["diff"]:
+        color = None
+        if ln.startswith("+") and not ln.startswith("+++"):
+            color = typer.colors.GREEN
+        elif ln.startswith("-") and not ln.startswith("---"):
+            color = typer.colors.RED
+        typer.secho("  " + ln.rstrip("\n"), fg=color)
+    typer.secho(f"  expected sha256: {plan['expected_sha256']}", fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f"  result   sha256: {plan['result_sha256']}", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo("  post-checks: " + "; ".join(plan["post_checks"]))
+
+
+def _migrate_print_apply(result) -> None:
+    if not result["changed"]:
+        typer.secho(f"no change — {result.get('reason', 'already at target')}",
+                    fg=typer.colors.YELLOW)
+        return
+    to = result.get("to_rate") or result.get("to_fps")
+    typer.secho(f"migrated {result['path']} → {to}  (fps mirror kept)", fg=typer.colors.GREEN)
+    pc = result["post_check"]
+    typer.echo(f"  post-check: validates={pc['validates']}  resolver={pc['resolver_rate']}  "
+               f"rational_declared={pc['rational_declared']}")
+    typer.secho("  NOT git-committed — git is your rollback engine.",
+                fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f"  revert:  {result['revert']}", fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f"       or  {result['revert_native']}", fg=typer.colors.BRIGHT_BLACK)
+    cold = result.get("cache", {}).get("cold_segments", 0)
+    if cold:
+        typer.secho(f"  {cold} cached segment(s) now cold — rebuilt on the next "
+                    "`manju build` (nothing deleted)", fg=typer.colors.BRIGHT_BLACK)
+
+
+def _migrate_print_loss(report) -> None:
+    typer.secho(f"downgrade loss report: {report['current_rate']} → fps "
+                f"{report['downgrades_to_fps']}", fg=typer.colors.CYAN)
+    for row in report["loss"]:
+        typer.echo(f"  {row['aspect']}: {row['before']} → {row['after']}")
+        typer.secho(f"      {row['impact']}", fg=typer.colors.BRIGHT_BLACK)
+
+
+def _migrate_target_or_refuse(project, rate: Optional[str], as_json: bool):
+    """Parse --rate into a Rate, or LIST candidates and refuse. The migration
+    never auto-selects a rate (inspect only lists them), so a missing --rate is a
+    clean refusal that hands the caller the candidate list."""
+    from .core.migrate import migrate_inspect
+    from .core.timebase import Rate
+
+    if rate:
+        try:
+            return Rate.parse(rate)
+        except ValueError as exc:
+            _fail(f"bad --rate {rate!r}: {exc} — use N/D (e.g. 24000/1001), an int, "
+                  "or a known NTSC alias (29.97)", code="bad_rate")
+    doc = migrate_inspect(project)
+    if as_json:
+        typer.echo(json.dumps(
+            {"error": "no target rate — the migration never auto-selects; pass --rate",
+             "code": "no_target", "candidates": doc["candidates"],
+             "candidate_note": doc["candidate_note"]},
+            ensure_ascii=False, indent=2, default=str))
+    else:
+        typer.secho("no target rate — the migration never auto-selects. "
+                    "Candidates (pick one with --rate):", fg=typer.colors.YELLOW)
+        _migrate_candidate_lines(doc)
+    raise typer.Exit(1)
+
+
+@migrate_app.command("inspect")
+def migrate_inspect_cmd(as_json: bool = typer.Option(False, "--json")):
+    """Show the migration picture — current rate, candidate target rates (LISTED,
+    never recommended), affected surfaces, and the cache rebuild forecast (a
+    count of cached segments that go cold; nothing is deleted). Zero-write."""
+    from .core.migrate import migrate_inspect
+
+    project = _project()
+    doc = migrate_inspect(project)
+    if as_json:
+        _emit(doc, True)
+        return
+    typer.secho(f"migrate: fps={doc['fps']}  current_rate={doc['current_rate']}  "
+                f"rational_declared={doc['rational_declared']}", fg=typer.colors.CYAN)
+    typer.echo("candidate target rates (pick one with --rate; never auto-chosen):")
+    _migrate_candidate_lines(doc)
+    rf = doc["rebuild_forecast"]
+    typer.secho(f"rebuild forecast: {rf['cached_segments']} cached segment(s) go cold "
+                "after the change (count only, no deletion)", fg=typer.colors.BRIGHT_BLACK)
+    for s in doc["affected_surfaces"]:
+        typer.echo(f"  · {s}")
+    if doc["downgrade_available"]:
+        typer.secho("downgrade available (`manju migrate downgrade`)",
+                    fg=typer.colors.BRIGHT_BLACK)
+
+
+@migrate_app.command("plan")
+def migrate_plan_cmd(
+    rate: Optional[str] = typer.Option(
+        None, "--rate", help="target rate N/D (e.g. 24000/1001) — required; "
+                             "`migrate inspect` lists the candidates"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Show the CAS plan for a target rate — the project.yaml byte diff (rational
+    key insertion, fps mirror kept), the expected/result sha256, the post-checks.
+    Zero-write."""
+    from .core.migrate import MigrateError, migrate_plan
+
+    project = _project()
+    target = _migrate_target_or_refuse(project, rate, as_json)
+    try:
+        plan = migrate_plan(project, target)
+    except MigrateError as exc:
+        _fail(str(exc), code="migrate_refused")
+        return
+    if as_json:
+        _emit(plan, True)
+        return
+    _migrate_print_plan(plan)
+
+
+@migrate_app.command("apply")
+def migrate_apply_cmd(
+    rate: Optional[str] = typer.Option(
+        None, "--rate", help="target rate N/D (e.g. 24000/1001) — required"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="confirm the write"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Apply the int→rational migration: CAS (refuses if project.yaml changed
+    since the plan) + atomic write of ONLY project.yaml + post-check. Never
+    git-commits — prints the exact revert command. Without --yes it shows the
+    plan and refuses to write."""
+    from .core.migrate import MigrateError, apply_plan, migrate_plan
+
+    project = _project()
+    target = _migrate_target_or_refuse(project, rate, as_json)
+    try:
+        plan = migrate_plan(project, target)
+    except MigrateError as exc:
+        _fail(str(exc), code="migrate_refused")
+        return
+    if not yes:
+        if as_json:
+            _emit({**plan, "applied": False, "hint": "re-run with --yes to write"}, True)
+        else:
+            _migrate_print_plan(plan)
+            typer.secho("dry-run — re-run with --yes to write project.yaml",
+                        fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+    with _write_lock(project):
+        try:
+            result = apply_plan(project, plan)
+        except MigrateError as exc:
+            _fail(str(exc), code="migrate_refused")
+            return
+    if as_json:
+        _emit(result, True)
+    else:
+        _migrate_print_apply(result)
+
+
+@migrate_app.command("downgrade")
+def migrate_downgrade_cmd(
+    acknowledge_loss: bool = typer.Option(
+        False, "--acknowledge-loss",
+        help="accept the rational→int loss (REQUIRED to write)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="confirm the write"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Downgrade rational → int: remove the rational rate, keep the fps mirror.
+    Without --acknowledge-loss it prints the structured loss report and REFUSES
+    to write. With --acknowledge-loss --yes it applies (CAS + atomic, no commit)."""
+    from .core.migrate import (
+        MigrateError, apply_plan, downgrade_loss_report, downgrade_plan,
+    )
+
+    project = _project()
+    try:
+        report = downgrade_loss_report(project)
+    except MigrateError as exc:
+        _fail(str(exc), code="nothing_to_downgrade")
+        return
+    if not acknowledge_loss:
+        if as_json:
+            _emit({**report, "applied": False, "refused": "acknowledgment_required",
+                   "hint": "re-run with --acknowledge-loss --yes to write"}, True)
+        else:
+            _migrate_print_loss(report)
+            typer.secho("refused: re-run with --acknowledge-loss --yes to apply "
+                        "the downgrade", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    try:
+        plan = downgrade_plan(project)
+    except MigrateError as exc:
+        _fail(str(exc), code="migrate_refused")
+        return
+    if not yes:
+        if as_json:
+            _emit({**plan, "applied": False, "loss": report["loss"],
+                   "hint": "re-run with --yes to write"}, True)
+        else:
+            _migrate_print_plan(plan)
+            typer.secho("loss acknowledged — re-run with --yes to write project.yaml",
+                        fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+    with _write_lock(project):
+        try:
+            result = apply_plan(project, plan, acknowledged=True)
+        except MigrateError as exc:
+            _fail(str(exc), code="migrate_refused")
+            return
+    if as_json:
+        _emit(result, True)
+    else:
+        _migrate_print_apply(result)
+
+
 if __name__ == "__main__":
     app()

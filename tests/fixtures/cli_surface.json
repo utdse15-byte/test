@@ -263,6 +263,22 @@
     "exists": true,
     "params": []
   },
+  "migrate apply": {
+    "exists": true,
+    "params": []
+  },
+  "migrate downgrade": {
+    "exists": true,
+    "params": []
+  },
+  "migrate inspect": {
+    "exists": true,
+    "params": []
+  },
+  "migrate plan": {
+    "exists": true,
+    "params": []
+  },
   "new": {
     "exists": true,
     "params": [
