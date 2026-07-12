@@ -55,7 +55,7 @@
 - GitHub Actions（公网 CI，ubuntu-latest，跑本地被环境门跳过的用例）：
   - `7a20453`（C3）：**success** — run 29177204320
   - `d12422a`（C1+C2）：**success** — run 29177677548
-  - `18470a1`（C4+C5）：run 29179451242 — **提交本报告时 in_progress**（同一棵树的本地同步全量 3168 passed / 0 failed 已绿；前两 run 均 success）。结论核验后在本节追加更正记录；若非 success 立即修复。
+  - `18470a1`（C4+C5）：run 29179451242 — **success**〔核验追记：报告首次提交（3a3ab37）时该 run 尚 in_progress，实际已于 2026-07-12T04:32:04Z 以 success 结束；三个代码 commit 至此全部公网 CI 绿〕。
 - secret / absolute-path / signed-url 扫描：三轨全部改动文件 + 两份 closeout 报告扫描 **0 命中**（无 API key/Authorization/签名 URL/绝对路径入任何输出、digest、事件或报告）。
 
 ## 5. 最终状态与决策标记
