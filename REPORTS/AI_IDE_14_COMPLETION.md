@@ -156,3 +156,10 @@ No `providers/catalog.py` hook was needed (digest reused directly). No
 - Response-schema staleness has a real per-run fingerprint; a LIVE re-probe to
   auto-flip STALE needs a real account (the anchor + its firing are proven, the
   live feed is operator-run).
+
+---
+
+## 14_21 CLOSEOUT 更正块（2026-07-12）
+
+1. **报告曾兼任 admission 记忆（缺陷）**：§1.2 称报告是「deletable derived JSON」——但 14 的 `_stored_evidence` 恰恰从该报告 JSON 重读 evidence 喂 admission，即这份可编辑投影实为准入权威：伪造/编辑报告可扩权，删除报告即抹除资质（closeout Q06–Q08 红灯证实）。closeout 起 admission 从 events.jsonl 上按 (provider, capability) hash 链接的追加式 qualification evidence 重新物化（`record/read_qualification_evidence`，_finish 先写 durable evidence 再写投影），报告仅为显示投影——伪造/编辑/删除零影响；证据流损坏 fail-closed（`BLOCKED(evidence_corrupt)`，transport 0，Q09）。**派生报告绝不作为 authorization input**（contract §8 item 5）。
+2. **其余更正**：`enabled==false` ⇒ `BLOCKED(provider_disabled)`（Q01）；未声明 capability ⇒ 阻断（Q02）；缺失强制 staleness anchor = STALE 而非「无漂移」（Q03–Q05）；reviewer/analyzer/bridge 地板改为——无人值守/付费 `PRODUCTION_READY`、人工交互 `CANARY_ARTIFACT_PASSED`、bridge `PRODUCTION_READY` + 一次性 digest 绑定 risk acceptance（Q10–Q12）；capability 精确隔离定桩（Q13/Q14）。

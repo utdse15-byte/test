@@ -948,3 +948,60 @@ a human can turn into acceptance.**
   agents (18→17, 20A→20B); two agents independently applied the
   provider-layer gate correction that 14's build-boundary guard enforces;
   every batch was CI-gated after the BuildLock lesson.
+
+## 28. AI_IDE 14–21G production closeout — the offline theoretical closed loop (2026-07-12)
+
+**Scope ruling (operator)**: this acceptance round is limited to the offline
+theoretical closed loop — C1–C5 only; ALL of C6 (real providers, real model
+calibration) is SKIPPED_WITH_EVIDENCE. Consequently
+`REAL_NETWORK_PAID_PATH_ACCEPTED` is not written, and
+`PRODUCTION_CAPABILITY_ACCEPTED` is not written either (its §11 row "real
+reviewer/analyzer calibration cards exist" is C6-dependent); the round's
+verdict is recorded as `OFFLINE_THEORETICAL_CLOSED_LOOP_ACCEPTED` with the
+full §11 row-by-row table in the completion report.
+
+- **Admission truth moved out of the editable report** (the round's gravest
+  baseline finding, Q06–Q08: forging/editing/deleting
+  reports/providers/qualification/*.json changed real admission). Network
+  admission now re-materializes from hash-chained append-only qualification
+  evidence on events.jsonl (the existing WP1 coordinator — no new ledger);
+  the report is a display projection with zero authority; corrupt/torn
+  evidence fails closed (BLOCKED(evidence_corrupt), transport 0). Floors:
+  unattended/paid PRODUCTION_READY, human-interactive
+  CANARY_ARTIFACT_PASSED, bridge PRODUCTION_READY with a single-use,
+  digest-exact, durably-consumed operator risk acceptance that can never
+  cover provider_disabled / capability_not_declared.
+- **The bridge gate got a mandatory caller**: baseline had NO enforced
+  caller (the claimed "called from cli.py" was false — no bridge CLI
+  existed; direct calls bypassed). The gate now lives in
+  providers.base.dispatch_bridge — the one service seam execute_bridge
+  funnels through — with real `manju bridge plan|run|adopt` wrappers,
+  real endpoint frame refs+hashes in the request digest, Shot-derived
+  spec_hash (literal "bridge" rejected), Assurance-only adoption emitting a
+  zero-write Proposal, and a content-hash finality guard (rename/copy
+  cannot launder).
+- **One validator, honestly shared**: apply_cutdown re-runs the SAME
+  validate_cutdown (baseline: CAS only — inverted ranges applied cleanly);
+  the range contract (half-open, single resolvable open tail) is documented
+  and shared with roughcut's _complement; key moments carry versioned
+  tolerance windows that enter the analysis digest.
+- **Variants merge, never single-pick**: all live variants merge in stable
+  order (disjoint coexist, same-value dedup, contradictions block
+  unresolved); diagnostics and runtime share one predicate. World state
+  gained episode/scene/shot scope (shot>scene>episode, no narrow-scope
+  leakage). Season health is tri-state; an unreadable runtime projection is
+  UNAVAILABLE and forces not-ready (never "None means zero").
+- **Masters tell the truth**: RAW_* naming with ambient split out;
+  RAW_STEM_SUM instead of a FULL_MIX that implied a program mix;
+  PROGRAM_MASTER deliberately absent with the reason recorded (render.py's
+  ducking/loudnorm chain is not reused); dropped expected sources block
+  verification (silence never verifies); uniform sum headroom with a true
+  peak ceiling and blocking AUDIO_CLIPPING; M&E claims bus exclusion
+  (excludes_voice_bus), never content-level proof.
+- 40/40 closeout red tests failed at baseline 4200109 and are green now;
+  suite 3114 → 3168 passed / 13 skipped / 0 failed; 13 existing pins
+  updated equal-or-stronger (several had pinned the defects themselves),
+  none deleted or weakened; 0 new public schemas; 0 network calls, 0.00
+  spent. §8 documentation corrections applied (19's bridge-CLI claim, the
+  toolmap "resolver" wording, 18's M&E wording, 14's report-authority
+  contradiction; 20B was already honest; 21G stays skipped).

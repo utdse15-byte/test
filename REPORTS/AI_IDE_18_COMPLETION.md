@@ -92,3 +92,11 @@ voice lock/stale · 对齐绑定 exact audio · 同名替换 stale · 无法对�
 
 - `tests/test_c18_dialogue_masters.py`：31 passed。
 - 全量套件：见最终回报（未改动 tests/fixtures/golden/；触碰的共享文件回归为零）。
+
+---
+
+## 14_21 CLOSEOUT 更正块（2026-07-12）
+
+1. **命名**：DIALOGUE/MUSIC/SFX_STEM、FULL_MIX、M_AND_E_MASTER 更名为 RAW_DIALOGUE/MUSIC/SFX/AMBIENT_STEM（ambient 独立成 stem）、RAW_STEM_SUM、M_AND_E_BUS_EXCLUSION_MASTER——原 FULL_MIX 是未复用 program mixer（ducking/loudnorm）链的裸总线和，不得再暗示 program master；PROGRAM_MASTER 明确不产出并在 `index.roles_absent` 记录原因（A04/A05）。delivery 映射保留旧名别名，无角色丢失。
+2. **M&E 承诺降级**：(b) 原文「M&E 证明不含对白」过强——实际保证是 BUS EXCLUSION（混音不含 voice 总线），非内容级验证。index 现携 `excludes_voice_bus=true` + `mne_claim="bus_exclusion"` + `content_verified=false`（A06）。
+3. **缺源与电平**：新增 per-bus expected/resolved/dropped 记账——缺任一 expected 源 ⇒ 该 master INCOMPLETE/BLOCKED，静默替代永不算 verified（A01/A02）；两个 sum 统一 −6 dB headroom + −1 dBTP 上限，超限为 blocking `AUDIO_CLIPPING`（A03）；loudnorm 和 raw sum 为不同 kind，绝不混称。

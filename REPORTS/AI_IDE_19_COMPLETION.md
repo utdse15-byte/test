@@ -37,7 +37,7 @@ media import/hash=`ingest.hash_file`+`register_take`+`MANUAL_HASH`；transcripti
 - `execute_bridge` 走**标准** `GenerationRequest`→`provider.generate`→`register_take`（**追加式**；`params.bridge` 载 plan，`redo_of` 记父）——继承 14 admission/预算/付费恢复。无真账户→scripted provider stand-in。
 - `bridge_lineage` 绑 input 双帧 hash + **output_media_hash**，`is_transition_candidate=True/adopted=False`。`bridge_review_requirement` → 需**当前绑定** review（15，绑 output 字节）；`adopt_bridge` 拒绝无 review / review 绑旧字节（不得掩盖 continuity 失败）。
 - **未批准不进 final**：`assert_not_in_final(lineage, compiled_sources, adopted=False)` → 候选不在 final=`[]`；若混入 final=**UNAPPROVED_BRIDGE_IN_FINAL** blocking；显式 adopted 后合法（补 16 gate + 13C manifest 检查）。
-- 真 bridge 资质闸在 provider 层 `qualification.bridge_admission`（**`BRIDGE_NOT_QUALIFIED`**），cli 调用；build/ 不 import qualification。
+- 真 bridge 资质闸在 provider 层 `qualification.bridge_admission`（**`BRIDGE_NOT_QUALIFIED`**）；build/ 不 import qualification。〔14_21 closeout 更正：本报告原称"cli 调用"——**当时并无任何 bridge CLI 命令或 cli 调用点**，该表述不成立;直接 Python 调用可绕过闸。closeout 已把闸落到服务级 seam `providers.base.dispatch_bridge`（CLI/直调同一闸）并新增真实 `manju bridge plan|run|adopt`。见文末更正块。〕
 
 ## (g) 白名单编排 map（WP6，`build/toolmap.py`）
 `TOOL_WHITELIST` = 10 意图 op → **既有** deterministic executor：trim/split→`repair_ops.set_inout_take`、crop→`crop_pad_take`、speed→`retime_take`、gain/ducking→`build.mixer.apply_mixer`、caption→`gui.captions_edit`、transition→`TimelineRules.transition_overrides`、overlay→`OverlayClip`、reorder→`Project.save_index`。`resolve_tool` 校验+成形 payload；`dry_run_tool` 复用校验、local op **priced 0**；**off-whitelist→`ToolError`**（拒绝不臆造）。**核心无 LLM planner**：断言 `src/manju/**` 无 `planner.py`、toolmap 无 LLM import/`def plan(`。是纯数据+派发，未新建引擎。
@@ -57,8 +57,18 @@ analysis 绑 exact hash · 同名替换 STALE · 低置信/未知 UNKNOWN 透传
 1. **无真云账户**：analyzer / bridge 的真云路径 SKIPPED_WITH_EVIDENCE——资质闸拒 `ANALYZER_NOT_QUALIFIED`/`BRIDGE_NOT_QUALIFIED` 是其 stand-in；bridge 执行用 scripted provider 证明标准路径（reframe crop 是真 ffmpeg）。
 2. **WP7 AAF/FCPXML SKIPPED_WITH_EVIDENCE**（无真实编辑器 fixture）；WP7 人工 trim/split marker→`set_inout` reviewable patch(零写) + 13C 整数帧映射为**既有能力，验证+定桩**，未新增生产文件（守预算）。
 3. **cutdown apply 边界**：本批产 `approved_proposal` ref 喂 13C EDITORIAL_CUTDOWN（13C 只打包既有 cut）；CAS 拒陈旧源。真正的时间线重切由 13C 既有变体路径承担，未在本批重造切割引擎（与 13C 边界一致）。
-4. **闸在 provider 层**：analyzer/bridge admission 落 `qualification.py` 并由 cli 调用，`media/`·`build/` 不 import qualification（build-boundary guard），故这两个 gate 的 C19 测试直接调 `providers.qualification`。
+4. **闸在 provider 层**：analyzer/bridge admission 落 `qualification.py`，`media/`·`build/` 不 import qualification（build-boundary guard），故这两个 gate 的 C19 测试直接调 `providers.qualification`。〔14_21 closeout 更正：原文"并由 cli 调用"对 bridge 不成立（无 CLI 调用点，闸无强制 caller）;现闸在 `providers.base.dispatch_bridge` 服务 seam,任何表面（含直调）不可绕过。〕
 
 ## (l) REPORTS 路径
 - `REPORTS/AI_IDE_19_BASELINE.md`
 - `REPORTS/AI_IDE_19_COMPLETION.md`
+
+---
+
+## 14_21 CLOSEOUT 更正块（2026-07-12）
+
+1. **bridge CLI**：本报告发布时不存在任何 `manju bridge` 命令，(f)/(k)(4) 原文「cli 调用」不成立——当时 bridge 资质闸没有任何强制 caller，直接 Python 调用可达 provider。closeout 落地：闸移入服务级 seam `providers.base.dispatch_bridge`（CLI/直调同一代码对象，B05/B06 定桩，MCP 定桩无旁路），并实现真实 `manju bridge plan|run|adopt` 薄包装。
+2. **spec_hash**：原 `execute_bridge(..., spec_hash="bridge")` 固定占位默认已删除；spec 身份从当前 Shot + bridge plan 派生，字面 `"bridge"` 被拒（B07）。
+3. **adoption**：原 `adopt_bridge` 接受任意 `{passed, bound_hash}` dict；现仅消费 current-bound accepted Assurance（`manju.qc.assurance/v1`，绑精确字节 + spec），输出零写 adoption Proposal（B08–B10）。
+4. **不进 final**：原 `assert_not_in_final` 只比 take 名；现比实际 source path 内容 hash，改名/复制不能洗白（B11）。
+5. **toolmap 措辞**：(g) 的「派发」应读作 whitelist RESOLVER——`resolve_tool`/`dry_run_tool` 解析、校验、报价，从不代为调用 executor（README 同步更正）。
