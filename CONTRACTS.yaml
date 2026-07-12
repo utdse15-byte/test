@@ -574,6 +574,21 @@ documents:
     notes: >-
       Provider manifest (provider.yaml): capabilities/limits/refs/cost/auth.
       Additive `capabilities: list[str]`; old manifests load byte-identically.
+  - id: manjupkg
+    kind: document
+    owner: manju.cli
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The .manjupkg project archive (manju pack/unpack): deterministic member
+      order, zip comment never trusted for restore paths, symlink members
+      refused, decompression preflight (count + declared-total-vs-free-disk).
+      Since FP wave 5 packs carry a final MANJU_FIXITY.json member (plain
+      format manju-fixity.1 — not a manju.*/vN schema): unpack verifies and
+      REMOVES a failed restore; packs without it restore byte-identically
+      (advisory only); manju fixity verifies without extracting.
   - id: support-bundle
     kind: document
     owner: manju.core.supportbundle

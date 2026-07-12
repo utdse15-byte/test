@@ -140,6 +140,12 @@
     "exists": true,
     "params": []
   },
+  "fixity": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "frames": {
     "exists": true,
     "params": [
@@ -284,6 +290,10 @@
     "params": []
   },
   "package": {
+    "exists": true,
+    "params": []
+  },
+  "perf": {
     "exists": true,
     "params": []
   },

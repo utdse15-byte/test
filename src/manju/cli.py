@@ -23,6 +23,7 @@ import typer
 from .core.check import run_check
 from .core.container import Project, ProjectError
 from .core.events import append_event, tail_events
+from .core.hashing import HASH_PREFIX, hash_file
 from .core.locks import seal_lock
 
 app = typer.Typer(add_completion=False, no_args_is_help=True,
@@ -3745,6 +3746,162 @@ PACK_EXCLUDE = (".manju/", ".git/")
 # keeps them.
 PACK_CACHE = ("renders/segments/", "renders/proxy/")
 
+# ------------------------------------------------------------- archive fixity
+# FP roadmap §7.8 (narrow): `manju pack` records a content-fixity manifest as
+# ONE extra zip member so `unpack` (and `manju fixity`) can prove the restored
+# bytes are exactly what was packed. The manifest is a SELF-DESCRIBING document
+# member — a PLAIN "manju-fixity.1" format string, deliberately NOT a
+# CONTRACTS manju.*/vN registered schema (it never leaves the zip). Each file's
+# ``sha256`` is the BARE 64-hex digest (the field name already names the algo).
+# Additive by construction: an older .manjupkg with no manifest unpacks exactly
+# as before.
+FIXITY_MANIFEST_NAME = "MANJU_FIXITY.json"
+FIXITY_FORMAT = "manju-fixity.1"
+
+
+def _fixity_manifest_bytes(files_map: dict[str, dict]) -> bytes:
+    """Serialize the in-zip fixity manifest. Deterministic for an unchanged
+    tree: sorted keys, no wall-clock timestamps in the content (the manju
+    version is the only non-tree input, and it is stable within a release)."""
+    from .core.toolchain import _manju_version
+
+    manifest = {
+        "format": FIXITY_FORMAT,
+        "manju_version": _manju_version(),
+        "files": files_map,
+        "totals": {
+            "count": len(files_map),
+            "bytes": sum(f["bytes"] for f in files_map.values()),
+        },
+    }
+    return (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+
+
+def _fixity_zipinfo() -> zipfile.ZipInfo:
+    """ZipInfo for the manifest member. A FIXED 1980-01-01 stamp (zip's minimum)
+    — the manifest is synthesized at pack time and has no source mtime, so a
+    wall-clock stamp (writestr's default) would inject needless nondeterminism.
+    (The other members keep their real file mtimes, as the writer always has.)"""
+    info = zipfile.ZipInfo(FIXITY_MANIFEST_NAME, date_time=(1980, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    return info
+
+
+def _parse_fixity_manifest(raw: bytes) -> Optional[dict]:
+    """Parse + validate a manifest member. Returns None when it is not a
+    recognizable ``manju-fixity.1`` document (unparseable, or a foreign/newer
+    format) — callers treat that as 'cannot verify', never as a failure of the
+    payload itself."""
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(doc, dict) or doc.get("format") != FIXITY_FORMAT:
+        return None
+    if not isinstance(doc.get("files"), dict):
+        return None
+    return doc
+
+
+def _verify_fixity_rows(manifest: dict, present: dict[str, tuple[str, int]]) -> dict:
+    """Compare a parsed manifest against the ACTUAL members. ``present`` maps
+    relpath -> (bare-hex sha256, size) for every real member (the manifest
+    member itself already excluded by the caller). Structured rows:
+    mismatched / missing / extra, plus overall ``ok`` and a checked count."""
+    declared: dict = manifest.get("files") or {}
+    mismatched: list[dict] = []
+    missing: list[dict] = []
+    extra: list[dict] = []
+    for rel in sorted(declared):
+        spec = declared[rel] or {}
+        want_sha = str(spec.get("sha256") or "")
+        want_bytes = spec.get("bytes")
+        got = present.get(rel)
+        if got is None:
+            missing.append({"path": rel, "expected_sha256": want_sha,
+                            "expected_bytes": want_bytes})
+            continue
+        got_sha, got_bytes = got
+        if got_sha != want_sha or got_bytes != want_bytes:
+            mismatched.append({"path": rel, "expected_sha256": want_sha,
+                               "actual_sha256": got_sha,
+                               "expected_bytes": want_bytes,
+                               "actual_bytes": got_bytes})
+    for rel in sorted(present):
+        if rel not in declared:
+            got_sha, got_bytes = present[rel]
+            extra.append({"path": rel, "actual_sha256": got_sha,
+                          "actual_bytes": got_bytes})
+    return {
+        "ok": not (mismatched or missing or extra),
+        "format": manifest.get("format"),
+        "manju_version": manifest.get("manju_version"),
+        "checked": len(declared),
+        "mismatched": mismatched,
+        "missing": missing,
+        "extra": extra,
+    }
+
+
+def _present_from_dir(root: Path) -> dict[str, tuple[str, int]]:
+    """(bare-hex sha256, size) for every extracted file under ``root``, minus
+    the manifest itself and the ``.manju`` runtime dir (created post-extract)."""
+    present: dict[str, tuple[str, int]] = {}
+    for p in sorted(root.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(root).as_posix()
+        if rel == FIXITY_MANIFEST_NAME or rel == ".manju" or rel.startswith(".manju/"):
+            continue
+        present[rel] = (hash_file(p).removeprefix(HASH_PREFIX), p.stat().st_size)
+    return present
+
+
+def _present_from_zip_stream(zf: zipfile.ZipFile) -> dict[str, tuple[str, int]]:
+    """(bare-hex sha256, size) for every member, computed by STREAMING each
+    member (bounded memory — never materialize a whole member), for the
+    verify-without-extract path. Directory entries and the manifest are
+    skipped."""
+    import hashlib
+
+    present: dict[str, tuple[str, int]] = {}
+    for info in zf.infolist():
+        nm = info.filename
+        if nm == FIXITY_MANIFEST_NAME or nm.endswith("/"):
+            continue
+        h = hashlib.sha256()
+        size = 0
+        with zf.open(info) as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                size += len(chunk)
+                h.update(chunk)
+        present[nm] = (h.hexdigest(), size)
+    return present
+
+
+def _remove_restored_dest(dest: Path) -> bool:
+    """Remove a freshly-created restore dir after a fixity FAILURE, so a corrupt
+    restore can never masquerade as a good one. Guarded: `unpack` refuses when
+    ``dest`` pre-exists, so ``dest`` here is always the tree THIS invocation just
+    extracted. Best-effort; returns True iff ``dest`` is gone afterward."""
+    try:
+        if dest.is_dir():
+            shutil.rmtree(dest)
+    except OSError:
+        pass
+    return not dest.exists()
+
+
+def _print_fixity_rows(result: dict) -> None:
+    for row in result.get("mismatched") or []:
+        typer.secho(f"  ✗ mismatch  {row['path']}", fg=typer.colors.RED)
+    for row in result.get("missing") or []:
+        typer.secho(f"  ✗ missing   {row['path']}", fg=typer.colors.RED)
+    for row in result.get("extra") or []:
+        typer.secho(f"  ✗ extra     {row['path']}", fg=typer.colors.RED)
+
 
 @app.command()
 def pack(out: Optional[Path] = typer.Option(None),
@@ -3769,6 +3926,7 @@ def pack(out: Optional[Path] = typer.Option(None),
     excluded_cache = 0
     skipped_symlinks: list[str] = []
     files_packed = 0
+    fixity_files: dict[str, dict] = {}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
@@ -3781,6 +3939,11 @@ def pack(out: Optional[Path] = typer.Option(None),
             if not path.is_file():
                 continue
             rel = path.relative_to(project.root).as_posix()
+            # never let a stray on-disk MANJU_FIXITY.json ride as a payload
+            # member — it would collide with the manifest we write below and
+            # break self-exclusion (normal project trees never contain one).
+            if rel == FIXITY_MANIFEST_NAME:
+                continue
             if any(rel.startswith(prefix) for prefix in PACK_EXCLUDE):
                 continue
             if not full and any(rel.startswith(prefix) for prefix in PACK_CACHE):
@@ -3788,6 +3951,12 @@ def pack(out: Optional[Path] = typer.Option(None),
                 continue
             zf.write(path, rel)
             files_packed += 1
+            fixity_files[rel] = {
+                "sha256": hash_file(path).removeprefix(HASH_PREFIX),
+                "bytes": path.stat().st_size,
+            }
+        # LAST member: the in-zip fixity manifest, recording every OTHER member.
+        zf.writestr(_fixity_zipinfo(), _fixity_manifest_bytes(fixity_files))
     if as_json:
         _emit({
             "packed": str(out),
@@ -3795,9 +3964,15 @@ def pack(out: Optional[Path] = typer.Option(None),
             "files": files_packed,
             "full": full,
             "excluded_cache_bytes": excluded_cache,
+            "fixity": FIXITY_FORMAT,
         }, True)
         return
     typer.secho(f"packed → {out}", fg=typer.colors.GREEN)
+    typer.secho(
+        f"  ✓ 写入完整性清单 {FIXITY_MANIFEST_NAME} "
+        f"({len(fixity_files)} files, sha256+size;unpack 时自动校验)",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
     if excluded_cache:
         typer.echo(f"  跳过可重建缓存 {excluded_cache / 1e6:.1f} MB "
                    "(segments/proxy — 重建即回;--full 保留)")
@@ -3936,17 +4111,143 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
                   f"{free} 字节(含 {UNPACK_FREE_DISK_MARGIN_BYTES} 安全余量)— "
                   "空间不足或为 zip bomb,先释放磁盘空间或检查压缩包")
         names = zf.namelist()
+        fixity_raw = (
+            zf.read(FIXITY_MANIFEST_NAME) if FIXITY_MANIFEST_NAME in names else None
+        )
         zf.extractall(dest)
+    # ---- fixity verify-after-extract (only when a manifest is present) ------
+    # Absent manifest ⇒ today's behavior byte-for-byte + a one-line advisory
+    # (exit 0). Present + FAIL ⇒ structured rows, the just-created destination
+    # is REMOVED (a corrupt restore must not look like a good one), nonzero exit.
+    fixity_json: dict = {"present": False}
+    fixity_note: Optional[str] = None
+    if fixity_raw is None:
+        fixity_note = (
+            f"注:此包不含 {FIXITY_MANIFEST_NAME}(旧包或非 manju pack 生成)— "
+            "已按原样解包,未做完整性校验"
+        )
+    else:
+        manifest = _parse_fixity_manifest(fixity_raw)
+        if manifest is None:
+            # present but unparseable/unsupported: cannot verify, but that is not
+            # itself evidence the payload is bad — advisory, keep the restore.
+            fixity_json = {"present": True, "verified": False, "reason": "unparseable"}
+            fixity_note = (
+                f"注:{FIXITY_MANIFEST_NAME} 无法解析/非受支持格式 — 跳过完整性校验"
+            )
+        else:
+            result = _verify_fixity_rows(manifest, _present_from_dir(dest))
+            if not result["ok"]:
+                removed = _remove_restored_dest(dest)
+                if as_json:
+                    _emit({
+                        "ok": False,
+                        "unpacked": None,
+                        "archive": str(archive),
+                        "dest_removed": removed,
+                        "fixity": {"present": True, **result},
+                    }, True)
+                else:
+                    typer.secho(
+                        f"✗ 解包完整性校验失败 fixity(mismatch {len(result['mismatched'])}"
+                        f" · missing {len(result['missing'])} · extra {len(result['extra'])})",
+                        fg=typer.colors.RED,
+                    )
+                    _print_fixity_rows(result)
+                    typer.secho(
+                        f"  已删除恢复目录 {dest}(损坏的恢复不能伪装成成功)"
+                        if removed else
+                        f"  ⚠ 尝试删除 {dest} 未完全成功,请手动清理",
+                        fg=typer.colors.RED,
+                    )
+                raise typer.Exit(1)
+            fixity_json = {"present": True, **result}
+            # verified OK — drop the transport-only manifest so the restored tree
+            # equals the original project (and a re-pack won't double-write it).
+            try:
+                (dest / FIXITY_MANIFEST_NAME).unlink(missing_ok=True)
+            except OSError:
+                pass
     (dest / ".manju").mkdir(exist_ok=True)
+    restored_files = sum(1 for n in names if n != FIXITY_MANIFEST_NAME)
     if as_json:
         _emit({
             "unpacked": str(dest),
             "archive": str(archive),
             "name": original_name,
-            "files": len(names),
+            "files": restored_files,
+            "fixity": fixity_json,
         }, True)
         return
     typer.secho(f"unpacked → {dest}", fg=typer.colors.GREEN)
+    if fixity_json.get("present") and fixity_json.get("ok"):
+        typer.secho(
+            f"  ✓ 完整性校验通过 fixity({fixity_json['checked']} files, sha256+size)",
+            fg=typer.colors.GREEN,
+        )
+    if fixity_note:
+        typer.secho("  " + fixity_note, fg=typer.colors.BRIGHT_BLACK)
+
+
+@app.command()
+def fixity(archive: Path,
+           as_json: bool = typer.Option(False, "--json")):
+    """Verify a .manjupkg's in-zip MANJU_FIXITY.json WITHOUT extracting it.
+
+    Streams every member (bounded memory — never inflates a whole member),
+    recomputes sha256+size and compares against the manifest recorded at pack
+    time: structured rows for mismatched / missing / extra members, an overall
+    ``ok``, and a matching exit code. READ-ONLY — nothing is written to disk.
+
+    A pack that carries no manifest (packed before fixity, or not produced by
+    ``manju pack``) cannot be verified — reported ``present: false`` with a
+    nonzero exit (an unverifiable pack is not a verified one). The member-count
+    sanity cap mirrors the unpack preflight; the free-disk cap does not apply
+    here because nothing is extracted."""
+    if not archive.exists():
+        _fail(f"not found: {archive}")
+    with zipfile.ZipFile(archive) as zf:
+        infos = zf.infolist()
+        if len(infos) > UNPACK_MAX_MEMBERS:
+            _fail(f"拒绝校验:成员数 {len(infos)} 超出上限 {UNPACK_MAX_MEMBERS}"
+                  "(zip bomb 防护)")
+        names = [i.filename for i in infos]
+        if FIXITY_MANIFEST_NAME not in names:
+            if as_json:
+                _emit({"ok": False, "present": False, "archive": str(archive),
+                       "reason": "no_manifest"}, True)
+            else:
+                typer.secho(
+                    f"fixity: {archive.name} 不含 {FIXITY_MANIFEST_NAME}"
+                    "(旧包或非 manju pack 生成)— 无法校验完整性",
+                    fg=typer.colors.YELLOW)
+            raise typer.Exit(1)
+        manifest = _parse_fixity_manifest(zf.read(FIXITY_MANIFEST_NAME))
+        if manifest is None:
+            if as_json:
+                _emit({"ok": False, "present": True, "archive": str(archive),
+                       "reason": "unparseable_manifest"}, True)
+            else:
+                typer.secho(
+                    f"fixity: {archive.name} 的 {FIXITY_MANIFEST_NAME} "
+                    "无法解析/非受支持格式", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        result = _verify_fixity_rows(manifest, _present_from_zip_stream(zf))
+    result = {"present": True, "archive": str(archive), **result}
+    if as_json:
+        _emit(result, True)
+    elif result["ok"]:
+        typer.secho(
+            f"fixity ✓ {archive.name}: {result['checked']} files verified "
+            "(sha256+size)", fg=typer.colors.GREEN)
+    else:
+        typer.secho(
+            f"fixity ✗ {archive.name}: FAILED(mismatch {len(result['mismatched'])}"
+            f" · missing {len(result['missing'])} · extra {len(result['extra'])})",
+            fg=typer.colors.RED)
+        _print_fixity_rows(result)
+    if not result["ok"]:
+        raise typer.Exit(1)
 
 
 # ----------------------------------------------------------------- relink
@@ -4081,6 +4382,83 @@ def relink(
                             fg=typer.colors.RED)
     if not result["ok"]:
         raise typer.Exit(1)
+
+
+# ----------------------------------------------------------------- perf
+
+
+@app.command()
+def perf(
+    run_id: Optional[str] = typer.Argument(
+        None, help="build run id(见 `manju build --json`);缺省取最近一次运行/latest"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """运行性能报告 — the run performance report (§8.6, a DERIVED view).
+
+    A read-only lens over the SAME events.jsonl attempt evidence the RunManifest
+    projects — it adds NO instrumentation and the engine never reads it back
+    (§8.7 原则:性能提示不是调度事实). Surfaces per-stage duration, cache hit rate
+    (derived from the recorded SKIPPED_CACHE_HIT state), provider-vs-local time
+    split, recorded cost totals, slowest stages, and error categories. A §8.6
+    metric with no recorded source (QC time, disk usage) is listed honestly under
+    `unavailable`, never estimated. No RUN_ID ⇒ the latest run on the stream;
+    `--json` prints the full report (plain CLI JSON, not a manju.*/vN schema)."""
+    from .qc.runperf import run_performance
+
+    report = run_performance(_project(), run_id)
+    if as_json:
+        _emit(report, True)
+        return
+
+    if not report["found"]:
+        which = f"运行/run {report['run_id']}" if report["run_id"] else "任何运行/any run"
+        typer.secho(f"性能报告 / perf:未找到 {which}(terminal_status="
+                    f"{report['terminal_status']})。", fg=typer.colors.YELLOW)
+        return
+
+    typer.secho(f"性能报告 / performance  run {report['run_id']}  "
+                f"[{report['terminal_status']}]", fg=typer.colors.CYAN)
+    wall = report["wall"]
+    if wall["ms"] is not None:
+        typer.echo(f"  墙钟 / wall        {wall['ms'] / 1000:g}s  ({wall['source']})")
+    typer.echo(f"  尝试 / attempts    {report['attempt_count']}"
+               + (f"  (malformed lines: {report['malformed_lines']})"
+                  if report["malformed_lines"] else ""))
+
+    if report["stages"]:
+        typer.secho("按阶段 / by stage (slowest first):", fg=typer.colors.BRIGHT_BLACK)
+        for s in report["stages"]:
+            counts = ", ".join(f"{st}×{n}" for st, n in s["status_counts"].items())
+            typer.echo(f"  {s['stage']:<10} {s['total_ms'] / 1000:>8.3g}s  "
+                       f"×{s['attempts']}  [{counts}]")
+
+    ts = report["time_split"]
+    typer.echo(f"  供应商 / provider  {ts['provider_ms'] / 1000:g}s"
+               f"   本地 / local  {ts['local_ms'] / 1000:g}s"
+               f"   渲染 / render  {ts['render_ms'] / 1000:g}s")
+
+    cache = report["cache"]
+    if cache["eligible"]:
+        rate = f"{cache['rate'] * 100:.1f}%" if cache["rate"] is not None else "—"
+        typer.echo(f"  缓存命中 / cache   {cache['hits']}/{cache['eligible']}  ({rate})")
+
+    if report["cost"]["totals"]:
+        parts = ", ".join(f"{c['amount']:g} {c['currency']}"
+                          for c in report["cost"]["totals"])
+        typer.echo(f"  花费 / cost        {parts}")
+
+    if report["errors"]["count"]:
+        cats = ", ".join(f"{c['category']}×{c['count']}"
+                         for c in report["errors"]["by_category"])
+        typer.secho(f"  错误 / errors      {report['errors']['count']}  ({cats})",
+                    fg=typer.colors.YELLOW)
+
+    # honest gap list — every §8.6 metric with no recorded source, named.
+    if report["unavailable"]:
+        typer.secho("不可得 / unavailable (no recorded source — never estimated):",
+                    fg=typer.colors.BRIGHT_BLACK)
+        for u in report["unavailable"]:
+            typer.echo(f"  {u['metric']}: {u['missing_source']}")
 
 
 # ------------------------------------------------------------- appearances
