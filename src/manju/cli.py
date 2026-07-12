@@ -4081,6 +4081,85 @@ def appearances(as_json: bool = typer.Option(False, "--json")):
                        f"{', '.join(m['shots'])}{hint}")
 
 
+# -------------------------------------------------------------- toolchain
+
+
+@app.command()
+def toolchain(
+    write: bool = typer.Option(False, "--write",
+                               help="落盘 reports/toolchain/<digest>.json(派生、可删除的证据投影)"),
+    diff: Optional[Path] = typer.Option(None, "--diff",
+                                        help="与一份旧清单 JSON 比较,输出结构化漂移行"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """工具链清单(roadmap §7.7):record-only reproducibility evidence.
+
+    Captures THIS machine's toolchain facts — manju/python/OS versions, the
+    ffmpeg/ffprobe -version first lines verbatim, key dep versions, the burn
+    font (basename + content hash), optional tools, locale — as a
+    manju.toolchain-manifest/v1 document. Derived + deletable: nothing reads
+    it back; it never enters content keys, caching, or authorization (that
+    future step is declared in core/toolchain.py's docstring). No hostname,
+    username, or absolute path ever enters the document. --diff OLD.json
+    prints the changed-fact rows; drift is evidence, never an error (exit 0).
+    Needs a project only for --write."""
+    from .core.toolchain import toolchain_drift, toolchain_manifest, write_toolchain_manifest
+
+    doc = toolchain_manifest()
+    payload: dict = {"manifest": doc}
+    if diff is not None:
+        try:
+            old = json.loads(Path(diff).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _fail(f"无法读取旧清单 / cannot read old manifest {diff}: {exc}",
+                  code="toolchain_diff_unreadable")
+        try:
+            payload["drift"] = toolchain_drift(old, doc)
+        except ValueError as exc:
+            _fail(f"旧清单不是工具链清单 / not a toolchain manifest: {exc}",
+                  code="toolchain_diff_unreadable")
+    if write:
+        project = _project()
+        path = write_toolchain_manifest(project, doc)
+        payload["written"] = path.relative_to(project.root).as_posix()
+    if as_json:
+        _emit(payload, True)
+        return
+
+    facts = doc["facts"]
+    typer.secho(f"工具链清单 / toolchain manifest  digest {doc['manifest_digest']}",
+                fg=typer.colors.CYAN)
+    typer.echo(f"  manju {facts['manju']['version']} · "
+               f"python {facts['python']['version']} "
+               f"{facts['python']['implementation']} {facts['python']['arch']} · "
+               f"{facts['os']['system']} {facts['os']['release']} {facts['os']['machine']}")
+    for tool, line in facts["tools"].items():
+        color = typer.colors.RED if line == "missing" else None
+        typer.secho(f"  {tool}: {line}", fg=color)
+    opt = " · ".join(f"{name} {'✓' if present else '✗'}"
+                     for name, present in facts["optional_tools"].items())
+    typer.secho(f"  可选 optional: {opt}", fg=typer.colors.BRIGHT_BLACK)
+    for role, entry in facts["fonts"].items():
+        desc = "unknown" if entry == "unknown" else f"{entry['basename']}  {entry['sha256']}"
+        typer.secho(f"  字体 font [{role}]: {desc}", fg=typer.colors.BRIGHT_BLACK)
+    deps = " · ".join(f"{k} {v}" for k, v in facts["deps"].items())
+    typer.secho(f"  deps: {deps}", fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f"  locale: fs-encoding {facts['locale']['filesystem_encoding']} · "
+                f"LANG {'set' if facts['locale']['lang_set'] else 'unset'}",
+                fg=typer.colors.BRIGHT_BLACK)
+    if "drift" in payload:
+        rows = payload["drift"]
+        if not rows:
+            typer.secho("漂移 / drift: 无 (toolchain unchanged)", fg=typer.colors.GREEN)
+        else:
+            typer.secho(f"漂移 / drift: {len(rows)} 项 (evidence, not an error)",
+                        fg=typer.colors.YELLOW)
+            for row in rows:
+                typer.echo(f"  {row['fact']}: {row['old']!r} → {row['new']!r}")
+    if "written" in payload:
+        typer.secho(f"已写入 / written: {payload['written']}", fg=typer.colors.GREEN)
+
+
 # ----------------------------------------------------------------- assets
 
 assets_app = typer.Typer(no_args_is_help=False,
