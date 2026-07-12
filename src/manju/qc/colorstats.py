@@ -34,6 +34,21 @@ from typing import Any
 
 from ..core.hashing import cache_key, hash_file, short_hash
 
+
+class ColorStatsUnavailable(RuntimeError):
+    """The deterministic color-stats layer needs Pillow (PIL) for exact integer
+    channel histograms (numpy is absent by design, §10 WP6), and Pillow is not
+    installed. A member of the house adapter-wall family
+    (:class:`manju.exporters.native_draft.ExporterUnavailable`,
+    :class:`manju.providers.tts.TtsUnavailable`,
+    :class:`manju.media.ttspreview.PreviewUnavailable`): a missing optional
+    dependency is a STRUCTURED, actionable condition — never a raw
+    ``ImportError`` traceback through the CLI. Being a ``RuntimeError`` subclass,
+    the CLI's existing RuntimeError / ``_fail`` handlers render it as one clean
+    line. The fix it names is the optional extra: ``pip install
+    "manju[colorstats]"``."""
+
+
 SCHEMA = "manju.qc.colorstats/v1"
 PREVIEW_SCHEMA = "manju.qc.colorstats.preview/v1"
 COMPARE_SCHEMA = "manju.qc.colorstats.compare/v1"
@@ -79,7 +94,22 @@ def color_stats(image_path: str | Path) -> dict[str, Any]:
     Bound to ``input_sha256`` — identical bytes always yield an identical result.
     PIL-only (integer histograms), so there is no float-accumulation nondeterminism.
     """
-    from PIL import Image
+    # Adapter wall (§2.5): Pillow is an OPTIONAL extra, not a base dep. Its
+    # absence is a structured, bilingual, actionable failure — never a raw
+    # ModuleNotFoundError leaking through the CLI (mirrors edge_tts's ImportError
+    # wall and the exporters' ExporterUnavailable).
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ColorStatsUnavailable(
+            "颜色统计需要 Pillow(PIL)做精确整数直方图,但 Pillow 未安装 —— "
+            '运行 pip install "manju[colorstats]" 安装该可选依赖后重试'
+            "(其余 QC 检查与交付出口不受影响)。 "
+            "Pillow is not installed: colorstats needs it for exact integer "
+            "channel histograms — install the optional extra with "
+            'pip install "manju[colorstats]" (the rest of QC and every delivery '
+            "exit are unaffected)."
+        ) from exc
 
     path = Path(image_path)
     with Image.open(path) as im:

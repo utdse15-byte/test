@@ -22,6 +22,15 @@ jianying = ["pyJianYingDraft==0.2.7"]  # 剪映草稿主路 (M1)
 capcut = ["pycapcut==0.0.3"]           # 国际 CapCut 草稿 (M1)
 mcpvideo = ["mcp-video==1.5.1"]        # QC 质量门 / 媒体分析 / Agent 工具带 (M2/M3)
 edgetts = ["edge-tts==7.2.8"]          # 免费无 key 的云 TTS(竞品研究 round J)
+# §10 WP6 exact color-stats (qc/colorstats.py): Pillow's integer channel
+# histograms (numpy is absent by design). NOT a base dep — a hidden transitive
+# today (the gating ci.yml pulls PIL only via the toolbelt libs above; a clean
+# `pip install manju` has none), which the optimization audit sanctions declaring
+# here. Absent → structured ColorStatsUnavailable, never a raw ModuleNotFoundError.
+# Floor 9.3 = the first Pillow with cp311 wheels (this project is
+# requires-python>=3.11); the APIs used (Image.open/convert/size/histogram) are
+# ancient, so Python-3.11 wheel availability is the binding constraint, not the API.
+colorstats = ["Pillow>=9.3"]
 
 [project.scripts]
 manju = "manju.cli:app"

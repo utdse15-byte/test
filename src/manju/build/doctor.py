@@ -84,6 +84,24 @@ def run_doctor(project: Project | None = None) -> dict[str, Any]:
     except ImportError:
         pass
 
+    # Pillow powers the §10 WP6 exact color-stats layer (qc/colorstats.py: PIL
+    # integer channel histograms; numpy is absent by design). OPTIONAL — its
+    # absence degrades behind the colorstats adapter wall (ColorStatsUnavailable),
+    # so this row is INFORMATIONAL (✓/•) and NEVER gates ok, exactly like the
+    # toolbelt/optional-tool rows above (add(..., True, ...)). find_spec returns
+    # None both when Pillow is genuinely absent and under sys.modules poisoning;
+    # the guard also absorbs the ValueError some Pythons raise for a poisoned entry.
+    try:
+        pil_present = _ilu.find_spec("PIL") is not None
+    except (ImportError, ValueError):
+        pil_present = False
+    add("Pillow", True,
+        "installed" if pil_present
+        else 'not installed (qc colorstats — pip install "manju[colorstats]")',
+        f"{'✓' if pil_present else '•'} Pillow (PIL): "
+        + ("installed" if pil_present
+           else '未安装 — QC 颜色统计走 pip install "manju[colorstats]" (§10 WP6)'))
+
     # ---- provider manifests (§8.6): a bad fill fails HERE, not at first spend
     try:
         from ..providers.manifest import load_manifests
