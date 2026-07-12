@@ -305,6 +305,43 @@ _SERVE_CSS = """
 .ab-gainlabel { color: var(--star); font-size: .76rem; }
 .cmp-ab-unavail { color: var(--muted); font-size: .8rem; }
 
+/* --- onion skin (FP V2): a fourth A/B mode — B stacked over A at CSS opacity.
+   No canvas for the video pair; the wipe clip-path and the onion opacity are
+   each an inline override on .ab-b that setCmpMode clears on every switch, so a
+   mode always starts from its own CSS baseline (never a leaked half-clip). --- */
+.compare-wrap[data-mode="onion"] .cmp-ab { display: block; }
+.compare-wrap[data-mode="onion"] .compare-grid { display: none; }
+.compare-wrap[data-mode="onion"] .ab-b { clip-path: none; opacity: .5; }
+.ab-onionctl { display: none; }
+.compare-wrap[data-mode="onion"] .ab-onionctl { display: inline-block; }
+.compare-wrap[data-mode="onion"] .ab-wipectl,
+.compare-wrap[data-mode="onion"] .ab-gainctl,
+.compare-wrap[data-mode="onion"] .ab-gainlabel { display: none; }
+.ab-onionlabel { display: none; color: var(--accent); font-size: .76rem; }
+.compare-wrap[data-mode="onion"] .ab-onionlabel { display: inline; }
+
+/* --- scopes (FP V2): a collapsed-by-default luma histogram + per-column luma
+   waveform of video A's CURRENT PARKED frame. Client-side, browser-decoded RGB,
+   VIEW-ONLY — the canvas is never a fact source (permanent label below). --- */
+.cmp-scopes-wrap { margin-top: .8rem; }
+.cmp-scopes {
+  display: none; margin-top: .5rem; border-top: 1px dashed var(--line); padding-top: .6rem;
+}
+.cmp-scopes.open { display: block; }
+.cmp-scopes-label {
+  color: var(--muted); font-size: .76rem; line-height: 1.55; margin: 0 0 .55rem;
+}
+.cmp-scope-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .8rem;
+}
+.cmp-scope-cell { min-width: 0; }
+.cmp-scope-cap { color: var(--muted); font-size: .74rem; margin-bottom: .25rem; }
+.cmp-scope-canvas {
+  width: 100%; height: auto; max-width: 320px; background: #000; border-radius: 6px;
+  display: block; image-rendering: pixelated;
+}
+.cmp-scopes-note { color: var(--star); font-size: .78rem; margin: .5rem 0 0; }
+
 /* --- boundary view (FP T1): accepted ending vs next start, per adjacent pair --- */
 .boundary h2 { font-size: 1.15rem; border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
 .bnd-row {
@@ -328,6 +365,18 @@ _SERVE_CSS = """
   background: #000; border-radius: 6px;
 }
 .bnd-row.bnd-diffon .bnd-canvas { display: block; }
+
+/* --- boundary onion skin (FP V2): the next shot's FIRST still stacked over
+   this shot's LAST still at CSS opacity — does the cut register? A view stacked
+   from the SAME cached stills, distinct from (and independent of) the diff
+   canvas above; both toggle on the same row without conflicting. --- */
+.bnd-onionctl { color: var(--muted); font-size: .78rem; }
+.bnd-onion { display: none; position: relative; max-width: 480px; margin-top: .6rem; }
+.bnd-row.bnd-onionon .bnd-onion { display: block; }
+.bnd-onion .bnd-onion-img {
+  width: 100%; display: block; border-radius: 5px; background: #000;
+}
+.bnd-onion .bnd-onion-b { position: absolute; inset: 0; opacity: .5; }
 """.strip()
 
 _SERVE_JS = """
@@ -440,7 +489,14 @@ _SERVE_JS = """
     for (var i = 0; i < btns.length; i++){ btns[i].classList.toggle("active", btns[i] === btn); }
     pauseAll(wrap.querySelectorAll("video"));
     wrap.setAttribute("data-mode", mode);
+    // FP V2: wipe (clip-path) and onion (opacity) each own a different INLINE
+    // override on .ab-b; clear both on every switch so the new mode starts from
+    // its CSS baseline — never a leaked half-clip or a stale onion opacity that
+    // would even survive into diff mode's opacity:0 rule (inline beats sheet).
+    var abB = wrap.querySelector(".cmp-ab .ab-b");
+    if (abB){ abB.style.clipPath = ""; abB.style.opacity = ""; }
     if (mode === "diff"){ startDiffLoop(wrap); } else { stopDiffLoop(wrap); }
+    drawScopes(wrap);  // parked frame may now be visible under a new mode
   }
   // ±1 frame, pause-synced, using the EXACT frame period den/num seconds from
   // data-fps-num/den (the R2 rational timeline echo when the project is
@@ -457,11 +513,23 @@ _SERVE_JS = """
     for (var i = 0; i < vids.length; i++){
       try { vids[i].currentTime = Math.max(0, vids[i].currentTime + dt); } catch(e) {}
     }
+    drawScopes(wrap);  // FP V2: scopes follow the step (also fired on 'seeked')
   }
   function wipeMove(input){
     var stage = input.closest(".cmp-ab"); if(!stage) return;
     var b = stage.querySelector(".ab-b"); if(!b) return;
     b.style.clipPath = "inset(0 0 0 " + input.value + "%)";
+  }
+  // FP V2: onion-skin opacity on the stacked B video (0-100% → 0-1). The classic
+  // "does the next frame register?" overlay — pure CSS opacity, no canvas.
+  function onionMove(input){
+    var stage = input.closest(".cmp-ab"); if(!stage) return;
+    var b = stage.querySelector(".ab-b"); if(!b) return;
+    b.style.opacity = (parseInt(input.value, 10) || 0) / 100;
+    var ctl = input.closest(".ab-controls");
+    var lab = ctl ? ctl.querySelector("[data-onionlabel]") : null;
+    if (lab){ lab.textContent = "B 叠加 over A @ " + input.value +
+      "% — 洋葱皮 onion-skin(仅视图 view-only)"; }
   }
   function gainHostOf(el){ return el.closest(".compare-wrap") || el.closest(".bnd-row"); }
   function gainMove(input){
@@ -563,6 +631,103 @@ _SERVE_JS = """
              parseInt(row.getAttribute("data-gain") || "4", 10),
              row.querySelector("[data-gainlabel]"));
   }
+  // FP V2: onion-skin on a boundary pair — the next shot's FIRST still stacked
+  // over this shot's LAST still at CSS opacity (does the cut register?). A pure
+  // CSS overlay of the SAME cached stills; independent of the diff canvas, both
+  // toggle on the same row without conflicting.
+  function toggleBoundaryOnion(btn){
+    var row = btn.closest(".bnd-row"); if(!row) return;
+    var on = row.classList.toggle("bnd-onionon");
+    btn.classList.toggle("active", on);
+  }
+  function boundaryOnionMove(input){
+    var row = input.closest(".bnd-row"); if(!row) return;
+    var b = row.querySelector(".bnd-onion-b"); if(!b) return;
+    b.style.opacity = (parseInt(input.value, 10) || 0) / 100;
+  }
+  // FP V2: SCOPES — a Rec.709 luma histogram + a per-column luma waveform of
+  // video A's CURRENT PARKED frame. VIEW-ONLY: browser-decoded RGB sampled to an
+  // offscreen canvas; the canvas is NEVER a fact source (QC colorstats remain the
+  // measurement authority — see the permanent label). Redrawn ONLY on discrete
+  // parked-frame events (pause / frame-step / seek / slider), NEVER in a loop
+  // while playing — scopes are for parked frames.
+  function toggleScopes(btn){
+    var box = btn.closest(".cmp-scopes-wrap"); if(!box) return;
+    var panel = box.querySelector(".cmp-scopes"); if(!panel) return;
+    var on = panel.classList.toggle("open");
+    btn.classList.toggle("active", on);
+    if (on){ drawScopes(btn.closest(".compare-wrap")); }
+  }
+  function scopesNote(panel, msg){
+    var n = panel.querySelector("[data-scope-note]");
+    if (n){ n.textContent = msg || ""; n.hidden = !msg; }
+  }
+  function rec709(d, o){ return 0.2126*d[o] + 0.7152*d[o+1] + 0.0722*d[o+2]; }
+  function drawScopes(wrap){
+    if (!wrap || !wrap.classList.contains("open")) return;
+    var panel = wrap.querySelector(".cmp-scopes");
+    if (!panel || !panel.classList.contains("open")) return;  // collapsed → skip
+    var a = wrap.querySelector(".cmp-ab .ab-a");
+    var hist = panel.querySelector("[data-scope-hist]");
+    var wave = panel.querySelector("[data-scope-wave]");
+    if (!a || !hist || !wave) return;
+    if (!a.videoWidth){ scopesNote(panel, "暂无帧 — 播放后暂停或步进一帧 park a frame first"); return; }
+    var hctx = hist.getContext && hist.getContext("2d");
+    var wctx = wave.getContext && wave.getContext("2d");
+    if (!hctx || !wctx){ scopesNote(panel, "画布 2D 不可用 canvas 2D unavailable — 示波器无法绘制"); return; }
+    var sw = Math.min(a.videoWidth, 256);
+    var sh = Math.max(1, Math.round(sw * a.videoHeight / a.videoWidth));
+    var samp = wrap._mjScopeSamp || (wrap._mjScopeSamp = document.createElement("canvas"));
+    samp.width = sw; samp.height = sh;
+    var sctx = samp.getContext("2d"), data;
+    try {
+      sctx.drawImage(a, 0, 0, sw, sh);
+      data = sctx.getImageData(0, 0, sw, sh).data;
+    } catch (e){
+      scopesNote(panel, "无法读取像素 pixel read blocked (" + ((e && e.name) || "error") +
+        ") — 示波器仅供查看,非事实来源 view-only, not a fact source");
+      return;
+    }
+    scopesNote(panel, "");
+    drawLumaHistogram(hctx, hist, data);
+    drawLumaWaveform(wctx, wave, data, sw, sh);
+  }
+  function drawLumaHistogram(ctx, canvas, data){
+    var W = 256, H = 120; canvas.width = W; canvas.height = H;
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    var bins = new Array(256), k;
+    for (k = 0; k < 256; k++){ bins[k] = 0; }
+    for (var i = 0; i < data.length; i += 4){
+      var y = rec709(data, i) | 0; if (y < 0){ y = 0; } else if (y > 255){ y = 255; }
+      bins[y]++;
+    }
+    var max = 0, b;
+    for (b = 0; b < 256; b++){ if (bins[b] > max){ max = bins[b]; } }
+    ctx.fillStyle = "#7ee2a8";
+    if (max > 0){
+      for (var x = 0; x < 256; x++){
+        var bh = Math.round((H - 2) * bins[x] / max);
+        if (bh > 0){ ctx.fillRect(x, H - bh, 1, bh); }
+      }
+    }
+  }
+  function drawLumaWaveform(ctx, canvas, data, sw, sh){
+    var W = sw, H = 120; canvas.width = W; canvas.height = H;
+    var img = ctx.createImageData(W, H), o = img.data, p;
+    for (p = 3; p < o.length; p += 4){ o[p] = 255; }  // opaque black baseline
+    for (var x = 0; x < sw; x++){
+      for (var yy = 0; yy < sh; yy++){
+        var s = (yy * sw + x) * 4;
+        var py = H - 1 - Math.round(rec709(data, s) * (H - 1) / 255);
+        if (py < 0){ py = 0; } else if (py >= H){ py = H - 1; }
+        var dp = (py * W + x) * 4;
+        o[dp] = Math.min(255, o[dp] + 40);
+        o[dp + 1] = Math.min(255, o[dp + 1] + 90);
+        o[dp + 2] = Math.min(255, o[dp + 2] + 60);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
   function playAll(btn){
     var section = btn.closest("section.shot"); if(!section) return;
     var vids = section.querySelectorAll(".takes video");
@@ -578,6 +743,8 @@ _SERVE_JS = """
     if ((hit = t.closest && t.closest("[data-cmpmode]"))){ setCmpMode(hit); return; }
     if ((hit = t.closest && t.closest("[data-framestep]"))){ frameStep(hit); return; }
     if ((hit = t.closest && t.closest("[data-bnddiff]"))){ toggleBoundaryDiff(hit); return; }
+    if ((hit = t.closest && t.closest("[data-bndonion]"))){ toggleBoundaryOnion(hit); return; }
+    if ((hit = t.closest && t.closest("[data-scopes]"))){ toggleScopes(hit); return; }
     var btn = t.closest ? t.closest("button[data-act]") : null;
     if (!btn || btn.disabled) return;
     var body = {};
@@ -591,8 +758,12 @@ _SERVE_JS = """
   document.addEventListener("input", function(e){
     var t = e.target;
     if (!t || !t.matches) return;
-    if (t.matches("input[data-wipe]")){ wipeMove(t); return; }
+    // FP V2: scopes redraw on slider events too (a no-op unless the panel is
+    // open) — one of the sanctioned parked-frame redraw triggers, never a loop.
+    if (t.matches("input[data-wipe]")){ wipeMove(t); drawScopes(t.closest(".compare-wrap")); return; }
+    if (t.matches("input[data-onion]")){ onionMove(t); drawScopes(t.closest(".compare-wrap")); return; }
     if (t.matches("input[data-diffgain]")){ gainMove(t); return; }
+    if (t.matches("input[data-bndonion-op]")){ boundaryOnionMove(t); return; }
   });
   // FP T1: duration honesty for the A/B pair as soon as metadata arrives.
   document.addEventListener("loadedmetadata", function(e){
@@ -602,6 +773,18 @@ _SERVE_JS = """
       if (wrap){ checkAbDurations(wrap); }
     }
   }, true);
+  // FP V2: scopes redraw on the discrete parked-frame events ONLY — pause and
+  // seek (the frame-step lands here) — never a rAF loop while playing (the
+  // scopes are for parked frames; the permanent label says so).
+  function scopesFromVideoEvent(e){
+    var t = e.target;
+    if (t && t.tagName === "VIDEO" && t.closest && t.closest(".cmp-ab")){
+      var wrap = t.closest(".compare-wrap");
+      if (wrap){ drawScopes(wrap); }
+    }
+  }
+  document.addEventListener("pause", scopesFromVideoEvent, true);
+  document.addEventListener("seeked", scopesFromVideoEvent, true);
   // Keyboard: space toggles the focused <video> (frame.io/PlayPause convention).
   document.addEventListener("keydown", function(e){
     if (e.code !== "Space" && e.key !== " ") return;
@@ -1083,10 +1266,62 @@ def _render_ab_block(project: "Project", take_a: Any, take_b: Any,
         f'<input type="range" data-diffgain="1" min="1" max="16" step="1" '
         f'value="{_DIFF_GAIN_DEFAULT}"></label>'
         f'<span class="ab-gainlabel" data-gainlabel="1">{_AMPLIFIED_LABEL}</span>'
+        # FP V2: onion-skin opacity for the stacked B video (shown only in
+        # onion mode via CSS). Pure CSS opacity — no canvas for the pair.
+        '<label class="ab-onionctl">洋葱皮 onion '
+        '<input type="range" data-onion="1" min="0" max="100" value="50"></label>'
+        '<span class="ab-onionlabel" data-onionlabel="1">B 叠加 over A @ 50% — '
+        "洋葱皮 onion-skin(仅视图 view-only)</span>"
         "</div>"
         f"{dur_fact}"
         '<div class="cmp-durwarn" data-durwarn hidden></div>'
         "</div>"
+    )
+
+
+# FP V2 (user item 6, "scopes"): the PERMANENT honesty label. It is BINDING —
+# it states that the readings come from browser-decoded RGB, from the current
+# paused frame of video A only, that they are view-only, the exact Rec.709 luma
+# formula, that they are NOT the engine's color facts (QC colorstats remain the
+# measurement authority), and that they redraw only for parked frames (never a
+# play-time loop). The canvas is a VIEW, never a fact source; nothing is written.
+_SCOPES_LABEL = (
+    "示波器 scopes:读数取自浏览器解码的 RGB(browser-decoded RGB),"
+    "来自视频 A 的当前暂停帧(current paused frame of video A only)—— 仅供查看 view-only。"
+    "亮度用 Rec.709 luma:Y = 0.2126·R + 0.7152·G + 0.0722·B。"
+    "这不是引擎的颜色事实(not the engine's color facts):"
+    "QC colorstats remain the measurement authority。"
+    "仅在暂停 / 逐帧步进 / 滑块时重绘,播放时绝不连续刷新"
+    "(redrawn on pause / frame-step / slider only, never looped while playing "
+    "— scopes are for parked frames)。"
+)
+
+
+def _render_scopes() -> str:
+    """The scopes panel (FP V2): collapsed by default, a Rec.709 luma histogram
+    and a per-column luma waveform of video A's CURRENT PARKED frame, drawn
+    CLIENT-SIDE from browser-decoded RGB. VIEW-ONLY — the canvas is never a fact
+    source (the permanent :data:`_SCOPES_LABEL` says exactly this). Two canvases,
+    an honest-degradation note slot, and a toggle wired to the delegated
+    click/redraw listeners. Only emitted when the A/B stack (video A) exists."""
+    return (
+        '<div class="cmp-scopes-wrap">'
+        '<button type="button" class="btn btn-mode" data-scopes="1">'
+        "📊 示波器 scopes</button>"
+        '<div class="cmp-scopes">'
+        f'<p class="cmp-scopes-label">{_SCOPES_LABEL}</p>'
+        '<div class="cmp-scope-row">'
+        '<div class="cmp-scope-cell">'
+        '<div class="cmp-scope-cap">亮度直方图 luma histogram</div>'
+        '<canvas class="cmp-scope-canvas" data-scope-hist="1"></canvas>'
+        "</div>"
+        '<div class="cmp-scope-cell">'
+        '<div class="cmp-scope-cap">亮度波形 luma waveform(逐列 per-column)</div>'
+        '<canvas class="cmp-scope-canvas" data-scope-wave="1"></canvas>'
+        "</div>"
+        "</div>"
+        '<p class="cmp-scopes-note" data-scope-note hidden></p>'
+        "</div></div>"
     )
 
 
@@ -1135,14 +1370,20 @@ def _render_compare(project: "Project", shot_id: str, takes: list[Any],
     mode_btns = ['<button type="button" class="btn btn-mode active" '
                  'data-cmpmode="sbs">并排 side-by-side</button>']
     ab_html = ""
+    scopes_html = ""
     if take_a is not None and take_b is not None:
         mode_btns.append('<button type="button" class="btn btn-mode" '
                          'data-cmpmode="wipe">擦除 wipe</button>')
         mode_btns.append('<button type="button" class="btn btn-mode" '
                          'data-cmpmode="diff">差异 difference</button>')
+        # FP V2: onion skin — a fourth mode on the SAME A/B stack (B over A at
+        # CSS opacity). The scopes panel (video A's parked frame) rides along.
+        mode_btns.append('<button type="button" class="btn btn-mode" '
+                         'data-cmpmode="onion">洋葱皮 onion</button>')
         ab_html = _render_ab_block(project, take_a, take_b, selected, rate_nd)
+        scopes_html = _render_scopes()
     else:
-        mode_btns.append('<span class="cmp-ab-unavail">擦除/差异不可用 — '
+        mode_btns.append('<span class="cmp-ab-unavail">擦除/差异/洋葱皮不可用 — '
                          "need two takes with media</span>")
 
     # Frame-lock stepping: ±1 frame at the EXACT period. Unknown rate ⇒ the
@@ -1170,7 +1411,8 @@ def _render_compare(project: "Project", shot_id: str, takes: list[Any],
     )
     return (f'<div class="compare-wrap" data-mode="sbs" '
             f'data-gain="{_DIFF_GAIN_DEFAULT}"{rate_attrs}>{head}'
-            f'<div class="compare-grid">{"".join(cells)}</div>{ab_html}</div>')
+            f'<div class="compare-grid">{"".join(cells)}</div>'
+            f"{ab_html}{scopes_html}</div>")
 
 
 # ------------------------------------------------------------- boundary view
@@ -1239,6 +1481,7 @@ def _render_boundary(project: "Project", statuses: dict[str, Any]) -> str:
         rel_l, why_l = _boundary_still(project, left, sel_l, last=True)
         rel_r, why_r = _boundary_still(project, right, sel_r, last=False)
         tools = ""
+        onion_stage = ""
         if rel_l is not None and rel_r is not None:
             tools = (
                 '<button type="button" class="btn btn-mode" data-bnddiff="1">'
@@ -1247,6 +1490,21 @@ def _render_boundary(project: "Project", statuses: dict[str, Any]) -> str:
                 f'<input type="range" data-diffgain="1" min="1" max="16" step="1" '
                 f'value="{_DIFF_GAIN_DEFAULT}"></label>'
                 f'<span class="ab-gainlabel" data-gainlabel="1">{_AMPLIFIED_LABEL}</span>'
+                # FP V2: onion toggle + opacity slider for this boundary pair.
+                '<button type="button" class="btn btn-mode" data-bndonion="1">'
+                "洋葱皮 onion</button>"
+                '<label class="bnd-onionctl">不透明度 opacity '
+                '<input type="range" data-bndonion-op="1" min="0" max="100" '
+                'value="50"></label>'
+            )
+            # FP V2: the stacked onion stage — the next shot's FIRST still (B)
+            # over this shot's LAST still (A) at CSS opacity. Reuses the SAME
+            # cached stills; distinct classes leave the diff canvas untouched.
+            onion_stage = (
+                '<div class="bnd-onion" aria-hidden="true">'
+                f'<img class="bnd-onion-img bnd-onion-a" src="/media/{_esc(rel_l)}" alt="">'
+                f'<img class="bnd-onion-img bnd-onion-b" src="/media/{_esc(rel_r)}" alt="">'
+                "</div>"
             )
         rows.append(
             f'<div class="bnd-row" data-gain="{_DIFF_GAIN_DEFAULT}">'
@@ -1257,14 +1515,16 @@ def _render_boundary(project: "Project", statuses: dict[str, Any]) -> str:
             f"{_boundary_cell(left, sel_l, rel_l, why_l, '末帧 last frame')}"
             f"{_boundary_cell(right, sel_r, rel_r, why_r, '首帧 first frame')}"
             '<canvas class="bnd-canvas" data-bndcanvas="1"></canvas>'
-            "</div></div>"
+            "</div>"
+            f"{onion_stage}"
+            "</div>"
         )
     return (
         '<section class="shot boundary">'
         "<h2>剪辑点 Cut boundaries — 已选结尾 vs 下一镜开头 "
         "(accepted ending vs next start)</h2>"
         '<p class="mj-note">帧取自各镜头已选用 take(现有抽帧缓存,可随时删除);'
-        "差异视图为客户端合成,仅供查看 view-only — 画布不是事实来源。</p>"
+        "差异/洋葱皮视图为客户端合成/叠加,仅供查看 view-only — 画布不是事实来源。</p>"
         f"{''.join(rows)}</section>"
     )
 
