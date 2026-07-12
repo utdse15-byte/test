@@ -94,23 +94,38 @@ def test_a_board_expresses_the_visual_review_core(review_project):
 
 
 def test_a_board_does_not_render_the_specialized_views(review_project):
-    """INVENTORY (absent — the honest gap): the Board does NOT render candidate-
-    FAMILY grouping or KEEPER badges (08_10_12C §12.3 SKIPPED that — family data
-    lives in the qc-brief JSON), nor 15 continuity DRIFT / reviewer-agreement,
-    nor 17 WORLD-STATE diff / series-health dashboard, nor a 19 CROP-keyframe
-    editor, nor 18 WORD/VISEME timing overlays / waveform, nor color SCOPES,
-    nor a read-only LINEAGE graph. These are exactly the contract's *allowed*
-    minimal extensions — none is built, by design."""
+    """INVENTORY: the Board does NOT render candidate-FAMILY grouping or KEEPER
+    badges (08_10_12C §12.3 SKIPPED that — family data lives in the qc-brief
+    JSON), nor 15 continuity DRIFT / reviewer-agreement, nor 17 WORLD-STATE
+    diff / series-health dashboard, nor a 19 CROP-keyframe editor, nor 18
+    WORD/VISEME timing overlays, nor a read-only LINEAGE graph. These are the
+    contract's *allowed* minimal extensions, unbuilt by design.
+
+    EVOLVED (V2, orchestrator edit): the roadmap's review-interface item
+    EXPLICITLY ordered scopes, so the FIRST allowed extension arrived — the
+    parked-frame luma histogram/waveform panel (FP_BOARD_COMPARE2). The gate's
+    own docstring always named these "allowed minimal extensions"; this is the
+    anticipated arrival, not a weakening. "waveform" is therefore no longer a
+    forbidden token — INSTEAD the compensating tooth below pins the discipline
+    that made it acceptable: the panel exists ONLY together with its permanent
+    view-only honesty label naming QC colorstats as the measurement authority
+    (delegation intact — the Board VIEWS, it never measures). Vectorscope /
+    color-scope and every other specialized view stay forbidden."""
     html = bd.render_board(review_project, serve=True, token="tok").lower()
-    # none of the specialized-view render markers appear anywhere on the Board
     for marker in (
         "candidate-family", "candidate_family", "keeper-badge", "keeper_badge",
         "drift-trend", "reviewer-agreement", "world-state", "world_state",
         "season-health", "series-health", "crop-keyframe", "crop_keyframe",
-        "viseme", "word-timing", "waveform", "beat-grid", "color-scope",
+        "viseme", "word-timing", "beat-grid", "color-scope",
         "vectorscope", "waveform-monitor", "lineage-graph", "lineage_graph",
     ):
         assert marker not in html, f"unexpected specialized view on Board: {marker}"
+    # the compensating tooth: IF the scopes panel is present, its honesty label
+    # must ride with it (view-only + the delegated measurement authority).
+    if "data-scopes" in html:
+        assert "colorstats" in html and "view-only" in html, (
+            "the Board scopes panel must carry its permanent honesty label "
+            "(view-only; QC colorstats remain the measurement authority)")
 
 
 def test_a_delegated_views_have_working_cli_service_owners():

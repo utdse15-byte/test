@@ -1335,3 +1335,40 @@ the conform truth-update orchestrator-executed.
 - Orchestration: V1/V2 spawned clean, zero collapses this wave; agent
   tokens V1 233k + V2 182k. Both loops ran the standing ratemig1 rule
   themselves AND the orchestrator re-ran it at both landings.
+
+### 32a. The V2 scopes ⇄ 21G gate conflict (amendment, same day)
+
+The V definitive run surfaced ONE failure the per-loop batches missed:
+`test_c21g_gates::test_a_board_does_not_render_the_specialized_views`
+forbade the "waveform" token on the Board — V2's scopes panel tripped it.
+A genuine CONTRACT CONFLICT, not a bug: the 21G delegation gate (Board =
+lean review core; specialized analysis views live with delegated owners)
+vs the roadmap's item 6, which EXPLICITLY ordered scopes into the review
+interface. Renaming tokens to slip the gate was rejected as evasion. The
+gate's own docstring had always called these "the contract's ALLOWED
+minimal extensions — none is built, by design": the resolution is the
+anticipated arrival, orchestrator-executed teeth-preserving evolution —
+"waveform" leaves the forbidden list; a COMPENSATING tooth pins the
+discipline that made it acceptable (a Board carrying data-scopes MUST
+also carry "view-only" + "colorstats" — the delegation stays intact: the
+Board views, it never measures); vectorscope/color-scope and every other
+specialized view remain forbidden.
+
+Process finding (the gap class's THIRD instance): T1's landing batch
+included test_c21g_gates; V2's batch (and the orchestrator's mirror of
+it) dropped it, so the gate was only hit by the definitive run. The
+ratemig1 standing rule generalizes: a loop touching surface X runs the
+UNION of the previous X-loop's verification batch, not its own
+selection. The definitive-suite-before-push discipline caught it exactly
+as designed — the failure never reached origin.
+
+Also recorded: the W1 candidate (WebVTT writer) DISSOLVED on pre-launch
+audit — compile_vtt has shipped since 13C/18 (captions.vtt + the
+CAPTIONS_VTT deliverable + conform coverage); no loop was spawned for
+already-existing work. Loop materialization for FCPXML audio_loops is
+RECORDED OUT: laying N repeats requires the source's natural duration —
+a live media probe the pure writer must not perform (the same fact-source
+discipline that omitted duration-None clips); the render's aloop remains
+the owner of fill semantics. V1's placement math got a three-mutation
+discriminating-power sweep (formula sign → 4 red; lane map → 6 red;
+tie-break flip → exactly the tie test red; restored 55/55).
