@@ -1647,6 +1647,64 @@ def qc_tech_cmd(
                     fg=typer.colors.YELLOW)
 
 
+@qc_app.command("conformance")
+def qc_conformance_cmd(
+    profile: str = typer.Option(
+        "master", "--profile",
+        help="delivery profile id from project.yaml delivery_profiles; its "
+             "additive `technical:` block declares the delivery targets (§7.1)"),
+    metadata_file: Optional[str] = typer.Option(
+        None, "--metadata", help="platform metadata file (never a credential)"),
+    write: bool = typer.Option(
+        False, "--write",
+        help="materialise the deletable reports/conformance/<profile>.json "
+             "(never a build/release input)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Declarative delivery conformance (`manju.delivery-conformance/v1`, §7.2):
+    per-check PASS / FAIL / UNKNOWN / NOT_APPLICABLE against the profile's
+    additive `technical:` targets — container / codec / resolution / PAR /
+    frame-rate / colour / audio / loudness / true-peak / captions / checksum /
+    package / disclosure / unresolved. UNKNOWN is honest (no stored profile,
+    colour genuinely unknown, no measured loudness) — never guessed into PASS.
+
+    There is NO aggregate score (roadmap §7.2 不生成单一总分); the summary is
+    counts by status only. The report is a deletable derived projection and is
+    NEVER a build or release input — it does not gate readiness this loop."""
+    from .build import conformance as _conf
+    from .build import delivery as _dm
+    from .build import exportstatus as _es
+
+    project = _project()
+    config = _es._safe(lambda: project.load_config())
+    profiles = _dm._delivery_profiles(config) if config is not None else {}
+    prof = dict(profiles.get(profile) or {})
+    try:
+        manifest = _dm.build_manifest(project, profile, metadata_file=metadata_file)
+    except (_dm.DeliveryManifestError, ProjectError) as exc:
+        _fail(str(exc))
+        return
+    doc = _conf.check_delivery_conformance(project, manifest, prof)
+    if write:
+        dest = _conf.write_conformance_report(project, doc)
+        append_event(project.root, ACTOR, "delivery_conformance",
+                     {"profile": profile, "path": project.relpath(dest)})
+    if as_json:
+        _emit(doc, True)
+        return
+    s = doc["summary"]
+    typer.secho(f"交付一致性 / delivery-conformance  profile={profile}  "
+                f"digest={doc['conformance_digest'][:23]}…", fg=typer.colors.CYAN)
+    typer.echo(f"  PASS={s['PASS']}  FAIL={s['FAIL']}  UNKNOWN={s['UNKNOWN']}  "
+               f"NOT_APPLICABLE={s['NOT_APPLICABLE']}  (no single score)")
+    _color = {"PASS": typer.colors.GREEN, "FAIL": typer.colors.RED,
+              "UNKNOWN": typer.colors.YELLOW, "NOT_APPLICABLE": typer.colors.BRIGHT_BLACK}
+    for r in doc["checks"]:
+        typer.secho(f"    {r['status']:<15} {r['check']:<20} {r['artifact']}"
+                    + (f"  — {r['detail']}" if r['detail'] else ""),
+                    fg=_color.get(r["status"], typer.colors.WHITE))
+
+
 def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[str],
                factor: float, ms: int, mode: Optional[str],
                in_ms: Optional[int], out_ms: Optional[int], as_json: bool) -> None:
@@ -3837,6 +3895,140 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         }, True)
         return
     typer.secho(f"unpacked → {dest}", fg=typer.colors.GREEN)
+
+
+# ----------------------------------------------------------------- relink
+
+
+@app.command()
+def relink(
+    mode: str = typer.Argument(..., help="report | plan | apply"),
+    root: Optional[list[Path]] = typer.Option(
+        None, "--root", help="plan: 搜索候选文件的目录(可重复给多个)"),
+    out: Optional[Path] = typer.Option(
+        None, "--out", help="plan: 计划 JSON 写入路径(省略则只打印 — 保持零写入)"),
+    plan_file: Optional[Path] = typer.Option(
+        None, "--plan", help="apply: relink 计划文件(`manju relink plan --out` 生成)"),
+    allow_unverified: bool = typer.Option(
+        False, "--allow-unverified",
+        help="apply: 允许 name-only ADVISORY 行落盘(逐行重新哈希并记录为 unverified)"),
+    max_files: int = typer.Option(
+        None, "--max-files", help="plan: 扫描文件数上限(默认 20000;超限 ⇒ 结构化 partial-scan)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Missing-media report + hash-verified relink (FP roadmap §6.3).
+
+    ``report``: ZERO-WRITE — every take sidecar whose media file is gone
+    (the container's ``media_path=None`` seam), every timeline clip source
+    that does not resolve, every bible ref pin naming an absent file; rows
+    carry a recorded content hash ONLY where attempt evidence recorded one.
+
+    ``plan``: ZERO-WRITE, bounded scan of ``--root`` dirs — hash-first for
+    recorded-hash items (a byte-identical file is found under any name);
+    hashless items get name-only ADVISORY candidates.
+
+    ``apply``: CAS — every candidate re-hashed at apply time; bytes restored
+    to the ORIGINAL recorded path under media/gen/**|media/refs/** only
+    (imports/ is ingest-only; truth files are NEVER rewritten); tampered/
+    vanished candidates refuse per-row; unverified rows need
+    ``--allow-unverified`` and are recorded as unverified restores."""
+    from .media.relink import (
+        DEFAULT_MAX_FILES,
+        RelinkError,
+        apply_relink,
+        missing_media_report,
+        relink_plan,
+    )
+
+    if mode not in ("report", "plan", "apply"):
+        _fail(f"未知模式: {mode!r} — 用 report | plan | apply", code="bad_mode")
+    project = _project()
+
+    if mode == "report":
+        report = missing_media_report(project)
+        if as_json:
+            _emit(report, True)
+            return
+        s = report["summary"]
+        color = typer.colors.GREEN if s["total"] == 0 else typer.colors.YELLOW
+        typer.secho(
+            f"缺失媒体 / missing media: {s['total']}  "
+            f"(take {s['by_kind']['take']} · timeline {s['by_kind']['timeline_source']}"
+            f" · ref {s['by_kind']['ref']};可哈希校验恢复 {s['hash_relink_available']})",
+            fg=color)
+        for row in report["rows"]:
+            tag = "✓hash" if row["hash_relink_available"] else "advisory-only"
+            typer.echo(f"  [{row['kind']}] {row['id']} → "
+                       f"{row['last_known_relpath'] or '(无记录路径)'}  ({tag})")
+        if s["total"]:
+            typer.secho("  下一步: manju relink plan --root <备份/外置盘目录> --out plan.json",
+                        fg=typer.colors.BRIGHT_BLACK)
+        return
+
+    if mode == "plan":
+        if not root:
+            _fail("plan 需要至少一个 --root <目录>(候选文件搜索范围)",
+                  code="missing_root")
+        plan = relink_plan(project, list(root),
+                           max_files=max_files or DEFAULT_MAX_FILES)
+        if out is not None:
+            out.write_text(json.dumps(plan, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+        if as_json:
+            _emit(plan, True)
+        else:
+            s = plan["summary"]
+            typer.secho(
+                f"relink 计划: 缺失 {s['missing']} · 可恢复 {s['relink']} "
+                f"(已验证 {s['verified']} · advisory {s['advisory']}) · 跳过 {s['skip']}",
+                fg=typer.colors.CYAN)
+            if not plan["scan"]["complete"]:
+                typer.secho(f"  ⚠ partial scan — {'; '.join(plan['scan']['notes'])}",
+                            fg=typer.colors.YELLOW)
+            for r in plan["rows"]:
+                if r["action"] == "relink":
+                    mark = "✓" if r["verified"] else "?"
+                    typer.echo(f"  {mark} {r['missing']['id']} ← {r['candidate']['path']}"
+                               f"  ({r['verification']})")
+            if out is not None:
+                typer.secho(f"  计划已写入 {out} — apply: manju relink apply --plan {out}",
+                            fg=typer.colors.BRIGHT_BLACK)
+        return
+
+    # ---- apply
+    if plan_file is None:
+        _fail("apply 需要 --plan <计划文件>(先 manju relink plan --out 生成)",
+              code="missing_plan")
+    if not plan_file.exists():
+        _fail(f"计划文件不存在: {plan_file}", code="plan_not_found")
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _fail(f"计划文件不可读/不是 JSON: {plan_file} — {exc}", code="plan_unreadable")
+        return  # unreachable; keeps the type checker happy
+    with _write_lock(project):
+        try:
+            result = apply_relink(project, plan,
+                                  allow_unverified=allow_unverified, actor=ACTOR)
+        except RelinkError as exc:
+            _fail(str(exc), code="bad_plan")
+            return
+    if as_json:
+        _emit(result, True)
+    else:
+        s = result["summary"]
+        color = typer.colors.GREEN if result["ok"] else typer.colors.RED
+        typer.secho(
+            f"relink apply: 恢复 {s['restored']} · unverified {s['restored_unverified']}"
+            f" · 拒绝 {s['refused']} · 跳过 {s['skipped']}", fg=color)
+        for r in result["rows"]:
+            if r["status"] in ("restored", "restored_unverified"):
+                typer.secho(f"  ✓ {r['target']}  ({r['status']})", fg=typer.colors.GREEN)
+            elif r["status"] == "refused":
+                typer.secho(f"  ✗ {r['id'] or r['target']}  拒绝: {r['reason']}",
+                            fg=typer.colors.RED)
+    if not result["ok"]:
+        raise typer.Exit(1)
 
 
 # ------------------------------------------------------------- appearances

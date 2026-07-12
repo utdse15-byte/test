@@ -357,6 +357,10 @@
     "exists": true,
     "params": []
   },
+  "qc conformance": {
+    "exists": true,
+    "params": []
+  },
   "qc coverage": {
     "exists": true,
     "params": []
@@ -399,6 +403,12 @@
     "exists": true,
     "params": [
       "shot_id"
+    ]
+  },
+  "relink": {
+    "exists": true,
+    "params": [
+      "mode"
     ]
   },
   "repair": {

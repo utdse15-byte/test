@@ -399,6 +399,31 @@ schemas:
       Per-export preserved/approximated/dropped/unsupported rows (line-cited
       exporter audit) + exact frame-drift block; read-only reporter — exported
       bytes unchanged; no silent degradation (unclassified exporter fails a pin).
+  - id: manju.relink-plan/v1
+    kind: schema
+    owner: manju.media.relink
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Zero-write missing-media report + hash-first relink plan; apply is
+      per-row CAS (re-hash at apply, never trusts the plan), restores bytes
+      only to recorded media/gen|refs paths (imports/ and escapes refuse),
+      never rewrites truth files; name-only candidates stay advisory.
+
+  - id: manju.delivery-conformance/v1
+    kind: schema
+    owner: manju.build.conformance
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Per-check delivery conformance (PASS/FAIL/UNKNOWN/NOT_APPLICABLE) of a
+      delivery manifest against a declarative additive delivery technical
+      profile. No aggregate score; deterministic; deletable projection under
+      reports/conformance/; never a build or release input (grep-pinned).
 
   # -- media technical facts (FP wave 2) -------------------------------------
   - id: manju.media-technical-profile/v1
