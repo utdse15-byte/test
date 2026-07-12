@@ -17,8 +17,9 @@ Routes:
                                    root (``..``/absolute/symlink escapes → 403)
                                    AND inside the preview-surface allowlist
                                    (``BoardHandler._MEDIA_PREFIXES`` — media/,
-                                   reports/frames/, .manju/thumbs/): truth
-                                   files like project.yaml, shots/*.yaml or
+                                   reports/frames/, .manju/thumbs/,
+                                   .manju/frames/): truth files like
+                                   project.yaml, shots/*.yaml or
                                    .manju/state.sqlite are never served here.
   POST /api/<action>             → JSON in, ``{ok: true, ...}`` / ``{ok: false,
                                    error: "one line"}`` out. Only the seven safe
@@ -435,10 +436,14 @@ class BoardHandler(BaseHTTPRequestHandler):
     # .manju/state.sqlite — not just the media/preview surfaces the board
     # actually links to. Allowlisted to what board.py actually renders as an
     # image/video/poster src: take media + imports thumbnails under media/,
-    # keyframe posters under reports/frames/, and the thumb/waveform cache
-    # under .manju/thumbs/ (NOT the rest of .manju — state.sqlite/events stay
-    # unreachable). Mirrors the GUI's MEDIA_PREFIXES allowlist (gui/server.py).
-    _MEDIA_PREFIXES = ("media/", "reports/frames/", ".manju/thumbs/")
+    # keyframe posters under reports/frames/, the thumb/waveform cache under
+    # .manju/thumbs/, and (FP T1) the boundary-view stills in the EXISTING
+    # frame-preview cache .manju/frames/ — another §3 disposable preview
+    # surface, precedent: the GUI's .manju/webpreview/ entry (NOT the rest of
+    # .manju — state.sqlite/events stay unreachable). Mirrors the GUI's
+    # MEDIA_PREFIXES allowlist (gui/server.py).
+    _MEDIA_PREFIXES = ("media/", "reports/frames/", ".manju/thumbs/",
+                       ".manju/frames/")
 
     def _safe_media_path(self, rel: str) -> Path:
         """Resolve a project-relative media path, refusing any escape above the

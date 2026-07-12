@@ -267,6 +267,67 @@ _SERVE_CSS = """
 .cmp-name { font-weight: 700; margin-bottom: .35rem; font-size: .92rem; }
 .cmp-name .star { color: var(--star); }
 .cmp-meta { color: var(--muted); font-size: .76rem; margin: .4rem 0; word-break: break-all; }
+
+/* --- compare pro modes (FP T1): wipe / difference / frame-lock stepping --- */
+.btn-mode { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.btn-mode.active { background: var(--accent); color: #0b1220; border-color: var(--accent); }
+.cmp-rate {
+  color: var(--muted); font-size: .74rem; font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+.cmp-durwarn {
+  margin: .1rem 0 .5rem; padding: .3rem .6rem; border-radius: 6px;
+  font-size: .8rem; font-weight: 700; color: var(--star);
+  background: #4a3a12; border: 1px solid #6b5518;
+}
+.cmp-ab { display: none; }
+.compare-wrap[data-mode="wipe"] .cmp-ab,
+.compare-wrap[data-mode="diff"] .cmp-ab { display: block; }
+.compare-wrap[data-mode="wipe"] .compare-grid,
+.compare-wrap[data-mode="diff"] .compare-grid { display: none; }
+.ab-stage {
+  position: relative; background: #000; border-radius: 6px; overflow: hidden;
+  max-width: 720px;
+}
+.ab-stage video { width: 100%; height: auto; display: block; }
+.ab-stage .ab-b { position: absolute; inset: 0; clip-path: inset(0 0 0 50%); }
+.ab-stage .ab-canvas { display: none; position: absolute; inset: 0; width: 100%; height: 100%; }
+.compare-wrap[data-mode="diff"] .ab-canvas { display: block; }
+.compare-wrap[data-mode="diff"] .ab-stage video { opacity: 0; }
+.ab-controls {
+  display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+  margin-top: .5rem; font-size: .8rem; color: var(--muted);
+}
+.ab-controls input[type="range"] { vertical-align: middle; }
+.compare-wrap[data-mode="wipe"] .ab-gainctl,
+.compare-wrap[data-mode="wipe"] .ab-gainlabel { display: none; }
+.compare-wrap[data-mode="diff"] .ab-wipectl { display: none; }
+.ab-gainlabel { color: var(--star); font-size: .76rem; }
+.cmp-ab-unavail { color: var(--muted); font-size: .8rem; }
+
+/* --- boundary view (FP T1): accepted ending vs next start, per adjacent pair --- */
+.boundary h2 { font-size: 1.15rem; border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
+.bnd-row {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel2);
+  padding: .7rem .8rem; margin-bottom: .8rem;
+}
+.bnd-head { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: .55rem; }
+.bnd-pair { font-weight: 700; font-size: .98rem; }
+.bnd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; }
+.bnd-cell { min-width: 0; }
+.bnd-lab { color: var(--muted); font-size: .78rem; margin-bottom: .3rem; }
+.bnd-img { width: 100%; height: auto; display: block; border-radius: 5px; background: #000; }
+.bnd-missing {
+  /* MANJU_ASPECT is substituted with the project's real w/h at render time */
+  width: 100%; aspect-ratio: MANJU_ASPECT; display: flex; align-items: center;
+  justify-content: center; color: var(--muted); font-size: .78rem; background: #000;
+  border-radius: 5px; text-align: center; padding: .5rem;
+}
+.bnd-canvas {
+  display: none; grid-column: 1 / -1; width: 100%; max-width: 560px;
+  background: #000; border-radius: 6px;
+}
+.bnd-row.bnd-diffon .bnd-canvas { display: block; }
 """.strip()
 
 _SERVE_JS = """
@@ -338,18 +399,27 @@ _SERVE_JS = """
     var wrap = section.querySelector(".compare-wrap"); if(!wrap) return;
     var open = wrap.classList.toggle("open");
     btn.classList.toggle("active", open);
-    if(!open){ pauseAll(wrap.querySelectorAll("video")); }
+    if(!open){ pauseAll(wrap.querySelectorAll("video")); stopDiffLoop(wrap); }
+    else if ((wrap.getAttribute("data-mode") || "sbs") === "diff"){ startDiffLoop(wrap); }
   }
   function pauseAll(vids){ for (var i = 0; i < vids.length; i++){ vids[i].pause(); } }
   function anyPlaying(vids){
     for (var i = 0; i < vids.length; i++){ if(!vids[i].paused && !vids[i].ended){ return true; } }
     return false;
   }
+  // FP T1: the videos the CURRENT compare mode shows — the grid in
+  // side-by-side, the A/B stack in wipe/difference. Sync/step act on these
+  // only, so hidden duplicates never double the audio.
+  function activeCmpVideos(wrap){
+    var mode = wrap.getAttribute("data-mode") || "sbs";
+    var vids = wrap.querySelectorAll(mode === "sbs" ? ".compare-grid video" : ".cmp-ab video");
+    return vids.length ? vids : wrap.querySelectorAll("video");
+  }
   function syncPlay(btn){
     var wrap = btn.closest(".compare-wrap"); if(!wrap) return;
-    var vids = wrap.querySelectorAll("video");
+    var vids = activeCmpVideos(wrap);
     if (anyPlaying(vids)){
-      pauseAll(vids);
+      pauseAll(wrap.querySelectorAll("video"));
       btn.textContent = "▶ 同步播放 sync play";
     } else {
       for (var i = 0; i < vids.length; i++){
@@ -358,6 +428,140 @@ _SERVE_JS = """
       }
       btn.textContent = "⏸ 同步暂停 pause all";
     }
+  }
+  // ---- FP T1: compare pro modes (wipe / difference / frame-lock stepping).
+  // All pixel work is CLIENT-SIDE (CSS clip-path; canvas composite) — the
+  // canvas is a VIEW, never a fact source, and the difference is honestly
+  // labelled "amplified ×N" whenever gain is applied.
+  function setCmpMode(btn){
+    var wrap = btn.closest(".compare-wrap"); if(!wrap) return;
+    var mode = btn.getAttribute("data-cmpmode") || "sbs";
+    var btns = wrap.querySelectorAll("[data-cmpmode]");
+    for (var i = 0; i < btns.length; i++){ btns[i].classList.toggle("active", btns[i] === btn); }
+    pauseAll(wrap.querySelectorAll("video"));
+    wrap.setAttribute("data-mode", mode);
+    if (mode === "diff"){ startDiffLoop(wrap); } else { stopDiffLoop(wrap); }
+  }
+  // ±1 frame, pause-synced, using the EXACT frame period den/num seconds from
+  // data-fps-num/den (the R2 rational timeline echo when the project is
+  // rational — 1001/24000 s — never a rounded millisecond count).
+  function frameStep(btn){
+    var wrap = btn.closest(".compare-wrap"); if(!wrap) return;
+    var num = parseInt(wrap.getAttribute("data-fps-num") || "0", 10);
+    var den = parseInt(wrap.getAttribute("data-fps-den") || "0", 10);
+    if (!num || !den) return;
+    var dir = parseInt(btn.getAttribute("data-framestep") || "0", 10);
+    var dt = dir * den / num;  // one exact frame period, signed
+    pauseAll(wrap.querySelectorAll("video"));
+    var vids = activeCmpVideos(wrap);
+    for (var i = 0; i < vids.length; i++){
+      try { vids[i].currentTime = Math.max(0, vids[i].currentTime + dt); } catch(e) {}
+    }
+  }
+  function wipeMove(input){
+    var stage = input.closest(".cmp-ab"); if(!stage) return;
+    var b = stage.querySelector(".ab-b"); if(!b) return;
+    b.style.clipPath = "inset(0 0 0 " + input.value + "%)";
+  }
+  function gainHostOf(el){ return el.closest(".compare-wrap") || el.closest(".bnd-row"); }
+  function gainMove(input){
+    var host = gainHostOf(input); if(!host) return;
+    host.setAttribute("data-gain", input.value);
+    var label = host.querySelector("[data-gainlabel]");
+    if (label){ label.textContent = "差异已放大 amplified ×" + input.value + " — 非原始像素差 not raw pixel deltas"; }
+    if (host.classList && host.classList.contains("bnd-diffon")){ drawBoundaryDiff(host); }
+  }
+  // Draw |A-B| into ctx, then amplify by `gain` in a second pass IF the
+  // browser supports canvas filters; otherwise stay at ×1 and SAY so.
+  function diffDraw(ctx, a, b, w, h, gain, label){
+    ctx.filter = "none";
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(a, 0, 0, w, h);
+    ctx.globalCompositeOperation = "difference";
+    ctx.drawImage(b, 0, 0, w, h);
+    ctx.globalCompositeOperation = "source-over";
+    var applied = 1;
+    if (gain > 1 && typeof ctx.filter === "string"){
+      ctx.globalCompositeOperation = "copy";
+      ctx.filter = "brightness(" + gain + ")";
+      ctx.drawImage(ctx.canvas, 0, 0);
+      ctx.filter = "none";
+      ctx.globalCompositeOperation = "source-over";
+      applied = gain;
+    }
+    if (label){
+      label.textContent = (applied > 1)
+        ? "差异已放大 amplified ×" + applied + " — 非原始像素差 not raw pixel deltas"
+        : (gain > 1 ? "增益不可用 gain unavailable — 显示原始差异 raw difference (×1)"
+                    : "原始差异 raw difference (×1)");
+    }
+  }
+  function stopDiffLoop(wrap){
+    if (wrap._mjRaf){ cancelAnimationFrame(wrap._mjRaf); wrap._mjRaf = null; }
+  }
+  function startDiffLoop(wrap){
+    stopDiffLoop(wrap);
+    var a = wrap.querySelector(".cmp-ab .ab-a"), b = wrap.querySelector(".cmp-ab .ab-b");
+    var canvas = wrap.querySelector(".cmp-ab .ab-canvas");
+    if (!a || !b || !canvas) return;
+    var ctx = canvas.getContext("2d");
+    function tick(){
+      if ((wrap.getAttribute("data-mode") || "sbs") !== "diff" || !wrap.classList.contains("open")){
+        wrap._mjRaf = null; return;
+      }
+      if (a.videoWidth){
+        var w = Math.min(a.videoWidth, 640);
+        var h = Math.round(w * a.videoHeight / a.videoWidth);
+        if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+        if (a.readyState >= 2 && b.readyState >= 2){
+          diffDraw(ctx, a, b, w, h,
+                   parseInt(wrap.getAttribute("data-gain") || "4", 10),
+                   wrap.querySelector("[data-gainlabel]"));
+        }
+      }
+      wrap._mjRaf = requestAnimationFrame(tick);
+    }
+    wrap._mjRaf = requestAnimationFrame(tick);
+  }
+  // Duration honesty (client side): once metadata is in, differing A/B
+  // durations get labelled — never a silent misalignment. (The server also
+  // renders a fact label when the sidecar probes already prove a mismatch.)
+  function checkAbDurations(wrap){
+    var a = wrap.querySelector(".cmp-ab .ab-a"), b = wrap.querySelector(".cmp-ab .ab-b");
+    var warn = wrap.querySelector("[data-durwarn]");
+    if (!a || !b || !warn || !isFinite(a.duration) || !isFinite(b.duration)) return;
+    var num = parseInt(wrap.getAttribute("data-fps-num") || "24", 10) || 24;
+    var den = parseInt(wrap.getAttribute("data-fps-den") || "1", 10) || 1;
+    if (Math.abs(a.duration - b.duration) > (den / num) / 2){
+      warn.textContent = "⚠ 时长不同 " + a.duration.toFixed(3) + "s vs " +
+        b.duration.toFixed(3) + "s — 逐帧步进按各自时钟 frame steps run on each video's own clock";
+      warn.hidden = false;
+    }
+  }
+  // Boundary view: client-side difference of the two boundary stills.
+  function toggleBoundaryDiff(btn){
+    var row = btn.closest(".bnd-row"); if(!row) return;
+    var on = row.classList.toggle("bnd-diffon");
+    btn.classList.toggle("active", on);
+    if (on){ drawBoundaryDiff(row); }
+  }
+  function drawBoundaryDiff(row){
+    var imgs = row.querySelectorAll("img.bnd-img");
+    var canvas = row.querySelector("canvas[data-bndcanvas]");
+    if (imgs.length < 2 || !canvas) return;
+    var a = imgs[0], b = imgs[1];
+    if (!a.complete || !b.complete){
+      var retry = function(){ drawBoundaryDiff(row); };
+      if (!a.complete) a.addEventListener("load", retry, {once: true});
+      if (!b.complete) b.addEventListener("load", retry, {once: true});
+      return;
+    }
+    var w = a.naturalWidth || 480, h = a.naturalHeight || 270;
+    canvas.width = w; canvas.height = h;
+    diffDraw(canvas.getContext("2d"), a, b, w, h,
+             parseInt(row.getAttribute("data-gain") || "4", 10),
+             row.querySelector("[data-gainlabel]"));
   }
   function playAll(btn){
     var section = btn.closest("section.shot"); if(!section) return;
@@ -371,6 +575,9 @@ _SERVE_JS = """
     if ((hit = t.closest && t.closest("[data-compare]"))){ toggleCompare(hit); return; }
     if ((hit = t.closest && t.closest("[data-syncplay]"))){ syncPlay(hit); return; }
     if ((hit = t.closest && t.closest("[data-playall]"))){ playAll(hit); return; }
+    if ((hit = t.closest && t.closest("[data-cmpmode]"))){ setCmpMode(hit); return; }
+    if ((hit = t.closest && t.closest("[data-framestep]"))){ frameStep(hit); return; }
+    if ((hit = t.closest && t.closest("[data-bnddiff]"))){ toggleBoundaryDiff(hit); return; }
     var btn = t.closest ? t.closest("button[data-act]") : null;
     if (!btn || btn.disabled) return;
     var body = {};
@@ -379,6 +586,22 @@ _SERVE_JS = """
     if (btn.dataset.target) body.target = btn.dataset.target;
     post(btn.getAttribute("data-act"), body);
   });
+  // FP T1: range sliders (wipe position / difference gain) via one delegated
+  // input listener, mirroring the delegated click handler above.
+  document.addEventListener("input", function(e){
+    var t = e.target;
+    if (!t || !t.matches) return;
+    if (t.matches("input[data-wipe]")){ wipeMove(t); return; }
+    if (t.matches("input[data-diffgain]")){ gainMove(t); return; }
+  });
+  // FP T1: duration honesty for the A/B pair as soon as metadata arrives.
+  document.addEventListener("loadedmetadata", function(e){
+    var t = e.target;
+    if (t && t.tagName === "VIDEO" && t.closest && t.closest(".cmp-ab")){
+      var wrap = t.closest(".compare-wrap");
+      if (wrap){ checkAbDurations(wrap); }
+    }
+  }, true);
   // Keyboard: space toggles the focused <video> (frame.io/PlayPause convention).
   document.addEventListener("keydown", function(e){
     if (e.code !== "Space" && e.key !== " ") return;
@@ -668,7 +891,8 @@ def _take_action(shot_id: str, take_name: str, selected: bool) -> str:
 
 
 def _render_shot(project: "Project", shot_id: str, status: Any,
-                 serve: bool = False, rollbackable: bool = False) -> str:
+                 serve: bool = False, rollbackable: bool = False,
+                 rate_nd: tuple[int, int] | None = None) -> str:
     try:
         shot = project.load_shot(shot_id)
         action = shot.action.main
@@ -765,7 +989,8 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
                 '<button type="button" class="btn btn-cmp" data-compare="1">'
                 "⧉ 对比 compare</button>"
             )
-            compare_html = _render_compare(project, shot_id, takes, selected)
+            compare_html = _render_compare(project, shot_id, takes, selected,
+                                           rate_nd=rate_nd)
         actions_html = f'<div class="shot-actions">{"".join(btns)}</div>'
 
     return (f'<section class="shot">{head}{ladder_html}{sel_reject_html}'
@@ -773,11 +998,108 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
             f"{actions_html}{compare_html}</section>")
 
 
+# FP T1 (user item 6): the default difference-view brightness gain. The canvas
+# view multiplies |A-B| by this, so the label must always SAY it is amplified.
+_DIFF_GAIN_DEFAULT = 4
+_AMPLIFIED_LABEL = (f"差异已放大 amplified ×{_DIFF_GAIN_DEFAULT} — "
+                    "非原始像素差 not raw pixel deltas")
+
+
+def _frame_step_label(num: int, den: int) -> str:
+    """Display-honest frame period: the EXACT fraction first (den/num seconds),
+    the rounded milliseconds only as an ≈ convenience, and the rate spelled
+    ``num/den`` whenever it is rational (never a rounded float posing as fps)."""
+    period_ms = 1000.0 * den / num
+    if den == 1:
+        return f"1帧 frame = 1/{num} s ≈ {period_ms:.3f} ms @ {num} fps"
+    return (f"1帧 frame = {den}/{num} s ≈ {period_ms:.3f} ms "
+            f"@ {num}/{den} fps (exact rational)")
+
+
+def _rate_info(project: "Project") -> tuple[int, int] | None:
+    """The exact edit rate the compare stepper uses, as ``(num, den)``.
+
+    Truth precedence mirrors what the board already reads: the compiled
+    timeline when one exists — ``Timeline.frame_rate`` resolves the R2
+    rational echo (``edit_rate: {num, den}``) when present, else the int
+    ``fps`` promoted exactly — otherwise the project's declared rate via the
+    single ``Project.edit_rate()`` accessor. ``None`` when even that fails
+    (broken project.yaml): the stepper is then honestly disabled, never fed a
+    guessed rate."""
+    try:
+        timeline = project.load_timeline()
+        rate = timeline.frame_rate if timeline is not None else project.edit_rate()
+        return rate.numerator, rate.denominator
+    except Exception:
+        return None
+
+
+def _sidecar_duration_ms(take: Any) -> int | None:
+    sc = take.sidecar
+    return sc.probe.duration_ms if (sc.probe and sc.probe.duration_ms) else None
+
+
+def _render_ab_block(project: "Project", take_a: Any, take_b: Any,
+                     selected: str | None, rate_nd: tuple[int, int] | None) -> str:
+    """The wipe/difference A/B stack (FP T1). All pixel work is client-side:
+    the wipe is a CSS clip-path on the stacked top video, the difference is a
+    <canvas> composite honestly labelled "amplified ×N". B is muted so the two
+    stacked takes never double the audio."""
+    rel_a = _esc(project.relpath(take_a.media_path))
+    rel_b = _esc(project.relpath(take_b.media_path))
+    star_a = " ★" if take_a.name == selected else ""
+    star_b = " ★" if take_b.name == selected else ""
+
+    # Duration honesty from the takes' EXISTING sidecar probe facts: a known
+    # mismatch beyond one frame period is a server-rendered FACT label
+    # (data-durfact). The client-side check (data-durwarn) covers unprobed
+    # takes once the browser knows the real durations. Never silent.
+    dur_fact = ""
+    ms_a, ms_b = _sidecar_duration_ms(take_a), _sidecar_duration_ms(take_b)
+    if ms_a and ms_b:
+        num, den = rate_nd if rate_nd else (24, 1)
+        if abs(ms_a - ms_b) > 1000.0 * den / num:
+            dur_fact = (
+                '<div class="cmp-durwarn" data-durfact="1">'
+                f"⚠ 时长不同 durations differ: {_esc(take_a.name)} {ms_a / 1000.0:.3f}s"
+                f" vs {_esc(take_b.name)} {ms_b / 1000.0:.3f}s — "
+                "逐帧步进按各自时钟 frame steps run on each video's own clock</div>"
+            )
+
+    return (
+        '<div class="cmp-ab">'
+        '<div class="ab-stage">'
+        f'<video class="ab-a" preload="metadata" src="/media/{rel_a}"></video>'
+        f'<video class="ab-b" preload="metadata" muted src="/media/{rel_b}"></video>'
+        '<canvas class="ab-canvas" data-diffcanvas="1"></canvas>'
+        "</div>"
+        '<div class="ab-controls">'
+        f"<span>A: {_esc(take_a.name)}{star_a} · B: {_esc(take_b.name)}{star_b}</span>"
+        '<label class="ab-wipectl">擦除 wipe '
+        '<input type="range" data-wipe="1" min="0" max="100" value="50"></label>'
+        '<label class="ab-gainctl">增益 gain '
+        f'<input type="range" data-diffgain="1" min="1" max="16" step="1" '
+        f'value="{_DIFF_GAIN_DEFAULT}"></label>'
+        f'<span class="ab-gainlabel" data-gainlabel="1">{_AMPLIFIED_LABEL}</span>'
+        "</div>"
+        f"{dur_fact}"
+        '<div class="cmp-durwarn" data-durwarn hidden></div>'
+        "</div>"
+    )
+
+
 def _render_compare(project: "Project", shot_id: str, takes: list[Any],
-                    selected: str | None) -> str:
-    """Serve-mode side-by-side take comparison (frame.io-style compare view):
-    a responsive 2-up/3-up grid of the shot's takes, each large with its
-    sidecar metadata + select button, driven by one synchronized play/pause."""
+                    selected: str | None,
+                    rate_nd: tuple[int, int] | None = None) -> str:
+    """Serve-mode take comparison (frame.io-style compare view).
+
+    The original synced side-by-side grid (a responsive 2-up/3-up of ALL the
+    shot's takes, one synchronized play/pause, per-take metadata + select)
+    stays exactly as it was; FP T1 EXTENDS it with a mode toggle — side-by-side
+    | wipe (CSS clip-path slider) | difference (client-side canvas, honest
+    "amplified ×N" label) — and pause-synced ±1-frame stepping that carries the
+    EXACT frame period (``data-fps-num``/``data-fps-den``; the R2 rational
+    timeline echo when the project is rational)."""
     poster_path = project.reports_dir / "frames" / f"{shot_id}.jpg"
     poster_rel = _esc(project.relpath(poster_path)) if poster_path.exists() else ""
     cells = []
@@ -799,14 +1121,162 @@ def _render_compare(project: "Project", shot_id: str, takes: list[Any],
             f"{_take_action(shot_id, take.name, is_sel)}"
             "</div>"
         )
+
+    # A/B pair for wipe/difference: the selected take (when it has media) vs
+    # the first OTHER take with media. Fewer than two playable takes ⇒ the two
+    # pixel modes are honestly unavailable — a labelled note, never a broken
+    # stack or a silent fallback.
+    playable = [t for t in takes if t.media_path is not None]
+    take_a = next((t for t in playable if t.name == selected), playable[0] if playable else None)
+    take_b = next((t for t in playable if take_a is not None and t.name != take_a.name), None)
+
+    mode_btns = ['<button type="button" class="btn btn-mode active" '
+                 'data-cmpmode="sbs">并排 side-by-side</button>']
+    ab_html = ""
+    if take_a is not None and take_b is not None:
+        mode_btns.append('<button type="button" class="btn btn-mode" '
+                         'data-cmpmode="wipe">擦除 wipe</button>')
+        mode_btns.append('<button type="button" class="btn btn-mode" '
+                         'data-cmpmode="diff">差异 difference</button>')
+        ab_html = _render_ab_block(project, take_a, take_b, selected, rate_nd)
+    else:
+        mode_btns.append('<span class="cmp-ab-unavail">擦除/差异不可用 — '
+                         "need two takes with media</span>")
+
+    # Frame-lock stepping: ±1 frame at the EXACT period. Unknown rate ⇒ the
+    # buttons are omitted and the label says so (display honesty, no guess).
+    if rate_nd is not None:
+        num, den = rate_nd
+        step_html = (
+            f'<button type="button" class="btn btn-mode" data-framestep="-1">⏮ -1帧</button>'
+            f'<button type="button" class="btn btn-mode" data-framestep="1">+1帧 ⏭</button>'
+            f'<span class="cmp-rate">{_esc(_frame_step_label(num, den))}</span>'
+        )
+        rate_attrs = f' data-fps-num="{num}" data-fps-den="{den}"'
+    else:
+        step_html = ('<span class="cmp-rate">fps 未知 unknown — '
+                     "逐帧步进不可用 frame stepping unavailable</span>")
+        rate_attrs = ""
+
     head = (
         '<div class="compare-head">'
         '<button type="button" class="btn" data-syncplay="1">▶ 同步播放 sync play</button>'
+        f"{''.join(mode_btns)}"
+        f"{step_html}"
         '<span class="compare-hint">同步播放本镜头所有备选 · 空格键播放/暂停聚焦的视频</span>'
         "</div>"
     )
-    return (f'<div class="compare-wrap">{head}'
-            f'<div class="compare-grid">{"".join(cells)}</div></div>')
+    return (f'<div class="compare-wrap" data-mode="sbs" '
+            f'data-gain="{_DIFF_GAIN_DEFAULT}"{rate_attrs}>{head}'
+            f'<div class="compare-grid">{"".join(cells)}</div>{ab_html}</div>')
+
+
+# ------------------------------------------------------------- boundary view
+# FP T1 (user item 6): for consecutive shots in index order, shot N's LAST
+# frame vs shot N+1's FIRST frame — the cut the director actually judges. The
+# stills are extracted through the EXISTING media/frames.extract_frame service
+# (content-addressed cache under .manju/frames — §3 disposable, `manju gc`
+# wipes it, NEVER a build input); this module adds no extractor and no fact
+# source. Serve-mode only: the static board stays byte-for-byte identical.
+
+# Past-any-clip sentinel for "the last frame": extract_frame clamps the seek
+# inside the clip BEFORE deriving its cache key (round-W #36), so one huge
+# at_ms resolves to exactly the real last frame with exactly one cache entry.
+_BOUNDARY_END_MS = 10**10
+_BOUNDARY_STILL_W = 480  # modest preview width; aspect kept by the extractor
+
+
+def _boundary_still(project: "Project", shot_id: str,
+                    selected: str | None, *, last: bool) -> tuple[str | None, str | None]:
+    """Resolve one boundary still for ``shot_id``'s SELECTED take.
+
+    Returns ``(project-relative jpg, None)`` on success, else ``(None, honest
+    reason)`` — a missing selection, missing media or a failed extraction each
+    name themselves; nothing here ever raises into the page render."""
+    if not selected:
+        return None, "未选用 take (no selected take)"
+    take = project.get_take(shot_id, selected)
+    if take is None:
+        return None, f"选用的 take 不存在 (selected take '{selected}' not found)"
+    if take.media_path is None:
+        return None, "媒体缺失 (no media on disk)"
+    try:
+        from ..media.frames import extract_frame
+
+        jpg = extract_frame(project, project.relpath(take.media_path),
+                            _BOUNDARY_END_MS if last else 0,
+                            width=_BOUNDARY_STILL_W)
+        return project.relpath(jpg), None
+    except Exception as exc:
+        reason = " ".join(str(exc).split())[:160]
+        return None, f"抽帧失败 (frame extraction failed): {reason}"
+
+
+def _boundary_cell(shot_id: str, take_name: str | None, rel: str | None,
+                   reason: str | None, side_label: str) -> str:
+    cap = f"{shot_id} · {side_label}" + (f" · {take_name}" if take_name else "")
+    if rel is not None:
+        media = f'<img class="bnd-img" src="/media/{_esc(rel)}" alt="{_esc(cap)}">'
+    else:
+        media = f'<div class="bnd-missing">{_esc(reason)}</div>'
+    return f'<div class="bnd-cell"><div class="bnd-lab">{_esc(cap)}</div>{media}</div>'
+
+
+def _render_boundary(project: "Project", statuses: dict[str, Any]) -> str:
+    """The cut-boundary section (serve mode): one row per adjacent shot pair,
+    ending still vs starting still, with a client-side difference toggle
+    (canvas view, honest amplified label). Every degraded slot carries its
+    reason; a wholly broken section degrades to a note, never a 500."""
+    order = project.shot_ids()
+    if len(order) < 2:
+        return ""
+    rows = []
+    for left, right in zip(order, order[1:]):
+        sel_l = getattr(statuses.get(left), "selected_take", None)
+        sel_r = getattr(statuses.get(right), "selected_take", None)
+        rel_l, why_l = _boundary_still(project, left, sel_l, last=True)
+        rel_r, why_r = _boundary_still(project, right, sel_r, last=False)
+        tools = ""
+        if rel_l is not None and rel_r is not None:
+            tools = (
+                '<button type="button" class="btn btn-mode" data-bnddiff="1">'
+                "差异 difference</button>"
+                '<label class="ab-gainctl">增益 gain '
+                f'<input type="range" data-diffgain="1" min="1" max="16" step="1" '
+                f'value="{_DIFF_GAIN_DEFAULT}"></label>'
+                f'<span class="ab-gainlabel" data-gainlabel="1">{_AMPLIFIED_LABEL}</span>'
+            )
+        rows.append(
+            f'<div class="bnd-row" data-gain="{_DIFF_GAIN_DEFAULT}">'
+            '<div class="bnd-head">'
+            f'<span class="bnd-pair">{_esc(left)} → {_esc(right)}</span>{tools}'
+            "</div>"
+            '<div class="bnd-grid">'
+            f"{_boundary_cell(left, sel_l, rel_l, why_l, '末帧 last frame')}"
+            f"{_boundary_cell(right, sel_r, rel_r, why_r, '首帧 first frame')}"
+            '<canvas class="bnd-canvas" data-bndcanvas="1"></canvas>'
+            "</div></div>"
+        )
+    return (
+        '<section class="shot boundary">'
+        "<h2>剪辑点 Cut boundaries — 已选结尾 vs 下一镜开头 "
+        "(accepted ending vs next start)</h2>"
+        '<p class="mj-note">帧取自各镜头已选用 take(现有抽帧缓存,可随时删除);'
+        "差异视图为客户端合成,仅供查看 view-only — 画布不是事实来源。</p>"
+        f"{''.join(rows)}</section>"
+    )
+
+
+def _boundary_section(project: "Project", statuses: dict[str, Any]) -> str:
+    """Failure containment for the boundary view — same stance as
+    :func:`_safe_panel`: a broken section is a note, never a dead board."""
+    try:
+        return _render_boundary(project, statuses)
+    except Exception as exc:
+        reason = " ".join(str(exc).split())[:160]
+        return ('<section class="shot boundary"><h2>剪辑点 Cut boundaries</h2>'
+                f'<p class="mj-note">边界视图暂不可用 (boundary view unavailable): '
+                f"{_esc(reason)}</p></section>")
 
 
 def _rollbackable_shots(project: "Project", statuses: dict[str, Any]) -> set[str]:
@@ -1237,6 +1707,9 @@ def render_board(project: "Project", serve: bool = False, token: str = "") -> st
     point at ``/media/<relpath>``, per-take/-shot/header action buttons appear, an
     inline vanilla-JS layer POSTs to ``/api/<action>`` with a busy overlay, and a
     tabbed inspector (project/subtitles/bible/log/assets/QC) rides above the shots.
+    FP T1 (user item 6) extends the serve-mode compare with wipe/difference modes
+    and frame-lock stepping, and appends the cut-boundary section (ending vs next
+    start stills via the existing frames cache) after the shots.
 
     ``token`` (Round Y, review #12) is the server's per-run token; in serve mode
     it is embedded as ``MANJU_TOKEN`` so the board's own ``post()`` sends it in
@@ -1244,10 +1717,13 @@ def render_board(project: "Project", serve: bool = False, token: str = "") -> st
     """
     statuses = {s.shot_id: s for s in evaluate_all(project)}
     rollbackable = _rollbackable_shots(project, statuses) if serve else set()
+    # FP T1: the exact edit rate for frame-lock stepping, resolved ONCE per
+    # render (timeline echo first — rational-aware — else the project rate).
+    rate_nd = _rate_info(project) if serve else None
 
     shots_html = "".join(
         _render_shot(project, sid, statuses.get(sid), serve=serve,
-                     rollbackable=(sid in rollbackable))
+                     rollbackable=(sid in rollbackable), rate_nd=rate_nd)
         for sid in project.shot_ids()
     )
     if not shots_html:
@@ -1265,11 +1741,13 @@ def render_board(project: "Project", serve: bool = False, token: str = "") -> st
         script = f"var MANJU_TOKEN={json.dumps(token)};\n" + script
     body_extras = _SERVE_BODY if serve else ""
 
-    # In serve mode the QC section moves into the panel strip (above the shots);
-    # static mode keeps the standalone QC section appended after the shots so the
-    # pinned board stays byte-for-byte identical.
+    # In serve mode the QC section moves into the panel strip (above the shots)
+    # and the FP T1 cut-boundary view rides after them; static mode keeps the
+    # standalone QC section appended after the shots so the pinned board stays
+    # byte-for-byte identical.
     if serve:
-        main_inner = f"{_render_panels(project)}{shots_html}"
+        main_inner = (f"{_render_panels(project)}{shots_html}"
+                      f"{_boundary_section(project, statuses)}")
     else:
         main_inner = f"{shots_html}{_render_qc(project)}"
 
