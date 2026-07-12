@@ -369,7 +369,27 @@ def _masters_facts(project: Project) -> dict[str, dict]:
     return {a["role"]: a for a in index.get("artifacts", []) if a.get("role")}
 
 
-def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | None = None) -> dict:
+# FP loop I (§5.5): the artifact roles that describe the caption cue set —
+# the rows an additive ``caption_roles`` count map may ride on.
+_CAPTION_ARTIFACT_ROLES = frozenset({"CAPTIONS_SRT", "CAPTIONS_ASS", "CAPTIONS_VTT"})
+
+
+def _caption_role_counts(timeline: Any) -> dict[str, int]:
+    """FP loop I (§5.5): cue count per caption role (VERBATIM strings, unknown
+    vocabulary included — QC/advisories judge them, the manifest records them).
+    ``{}`` whenever no cue carries a role, so a role-less project's manifest
+    gains no key at all and keeps its digest (byte-identity pin)."""
+    counts: dict[str, int] = {}
+    caps = getattr(getattr(timeline, "tracks", None), "captions", None) or []
+    for cap in caps:
+        role = getattr(cap, "role", None)
+        if role:
+            counts[role] = counts.get(role, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | None = None,
+                       caption_roles: dict[str, int] | None = None) -> dict:
     kind = row.kind
     role = _ROLE_BY_KIND.get(kind, "OTHER_DECLARED")
     freshness = row.freshness.value
@@ -437,6 +457,13 @@ def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | No
             if fact.get("blocked"):
                 art["state"] = BLOCKED
                 art["verification"]["technical"] = "FAILED"
+    # FP loop I (§5.5): ADDITIVE cue-role coverage on caption rows only —
+    # absent entirely for role-less projects (byte-identical manifest) and
+    # excluded from _manifest_digest exactly like the additive ``audio`` block
+    # above (the file sha256 already binds the delivered bytes, and SRT/VTT
+    # bytes carry no role; the truth lives in timeline.json).
+    if caption_roles and role in _CAPTION_ARTIFACT_ROLES:
+        art["caption_roles"] = dict(caption_roles)
     return art
 
 
@@ -1028,7 +1055,11 @@ def build_manifest(project: Project, profile_id: str = "master", *,
     variant_kind = variant["kind"]
 
     masters = _masters_facts(project)
-    artifacts = [_artifact_from_row(project, r, masters) for r in rows]
+    # FP loop I (§5.5): one role-count pass over the SAME gathered timeline —
+    # {} (→ no caption_roles key anywhere) for every role-less project.
+    caption_roles = _caption_role_counts(ctx.timeline)
+    artifacts = [_artifact_from_row(project, r, masters, caption_roles=caption_roles)
+                 for r in rows]
 
     nle, nle_diags = _nle_section(project, config, ctx.timeline, rows_by_kind)
 

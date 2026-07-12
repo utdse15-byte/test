@@ -361,6 +361,10 @@
     "exists": true,
     "params": []
   },
+  "qc captions": {
+    "exists": true,
+    "params": []
+  },
   "qc conformance": {
     "exists": true,
     "params": []

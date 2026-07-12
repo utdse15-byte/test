@@ -411,6 +411,19 @@ schemas:
       per-row CAS (re-hash at apply, never trusts the plan), restores bytes
       only to recorded media/gen|refs paths (imports/ and escapes refuse),
       never rewrites truth files; name-only candidates stay advisory.
+  - id: manju.caption-accessibility/v1
+    kind: schema
+    owner: manju.qc.captions_access
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: >-
+      Advisory-only caption readability/accessibility report (UAX#11 CJK-
+      weighted CPS, line length/count, duration floors/ceilings, gaps/
+      overlaps, forced-vs-nonforced, role coverage) — every row severity
+      advisory; never flips QC ok, never blocks build/export; deletable
+      projection under reports/captions/.
   - id: manju.toolchain-manifest/v1
     kind: schema
     owner: manju.core.toolchain

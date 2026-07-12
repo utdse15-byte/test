@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..build.stale import ShotBuildStatus, ShotState, evaluate_all
 from ..core.container import Project
-from ..core.models import ProbeInfo, ProjectConfig, Timeline
+from ..core.models import CAPTION_ROLES, ProbeInfo, ProjectConfig, Timeline
 
 # tolerances (§9)
 _DURATION_TOL_MS = 150      # per-clip source vs timeline duration
@@ -701,6 +701,17 @@ def _technical_captions(project, report, timeline: Timeline) -> None:
                        f"{budget}-char budget ({rules.max_chars_per_line}"
                        f"×{rules.max_lines})",
                        suggestion="shorten the line or split the caption")
+        # FP loop I (§5.5): optional role vocabulary — an unknown string is a
+        # STRUCTURED warn (never silent, never a blocker; TRANSITION_TYPES
+        # stance — the model stays lenient because timeline.json is
+        # hand-editable truth). Known roles and absent roles add nothing.
+        role = getattr(cap, "role", None)
+        if role is not None and role not in CAPTION_ROLES:
+            report.add("warn", "technical", "timeline",
+                       f"caption #{i} 使用了未收录的 role “{role}”"
+                       "(仅记录+建议,不影响构建/导出/质检结论)",
+                       suggestion=f"可用角色:{', '.join(CAPTION_ROLES)};"
+                                  "或删除该 role(role 为可选字段)")
 
     # Minor caption bleed (≤ tol) is a warn; a substantial overlap is a hard
     # timeline conflict raised as an error in _technical_timeline_conflicts.

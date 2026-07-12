@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .idents import validate_safe_segment
 
@@ -965,6 +972,15 @@ class AudioClip(ManjuModel):
     # (added round W) instead of a raw parse-time crash on load.
 
 
+# FP loop I (roadmap §5.5): curated caption-cue role vocabulary — record +
+# advise, never block. Deliberately lenient at the model (timeline.json is
+# compiled AND hand-editable truth, same stance as TRANSITION_TYPES): an
+# unknown role string parses fine and is surfaced as a STRUCTURED warn by
+# qc/checks.py:_technical_captions at check time (never silent, never a
+# blocker) and as a ROLE_UNKNOWN advisory in qc/captions_access.py.
+CAPTION_ROLES = ("translation", "sdh", "forced", "lyrics", "speaker_label")
+
+
 class CaptionLine(ManjuModel):
     start_ms: int
     end_ms: int
@@ -975,6 +991,23 @@ class CaptionLine(ManjuModel):
     # ignore it. First recompile with this field moves the timeline
     # fingerprint once (byte-identity rule §1.5, round-O precedent).
     shot: str = ""
+    # FP loop I (§5.5): OPTIONAL role (see CAPTION_ROLES above). None — the
+    # default — is DROPPED from serialization by the wrap serializer below, so
+    # a role-less project's timeline.json / model dumps stay BYTE-IDENTICAL
+    # (save_timeline uses plain model_dump(); without the drop this field
+    # would land as `"role": null` in every recompiled timeline — stricter
+    # than the round-O `shot` precedent: no fingerprint move at all). A set
+    # role flows VERBATIM into the ASS Name field (exporters/srt_ass.py) and
+    # the delivery caption artifact rows (build/delivery.py); SRT/VTT have no
+    # role slot, so there the role stays truth-side only.
+    role: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_default_role(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("role") is None:
+            data.pop("role", None)
+        return data
 
 
 class TimelineTracks(ManjuModel):

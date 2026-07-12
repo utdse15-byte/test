@@ -1705,6 +1705,58 @@ def qc_conformance_cmd(
                     fg=_color.get(r["status"], typer.colors.WHITE))
 
 
+@qc_app.command("captions")
+def qc_captions_cmd(
+    write: bool = typer.Option(
+        False, "--write",
+        help="materialise the deletable reports/captions/<digest>."
+             "caption-accessibility.json(仅记录 — never a build/check input)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Caption readability / accessibility advisories
+    (`manju.caption-accessibility/v1`, roadmap §5.5 — record + advise, NEVER block).
+
+    CJK-aware per-cue facts over the SAME cue truth the SRT/ASS writers render:
+    reading speed(East Asian Width W/F 记 2、换行记 0,其余记 1;CPS=加权字符/秒)、
+    行宽/行数、时长下限/上限、字幕间隔/重叠、forced 与非 forced 同屏、role 覆盖统计。
+    每一行 severity 都是 "advisory" — 阈值只是起点,平台/人来决定;本命令永远退出 0,
+    从不改变 qc/check/build 的结论(manual 模式分析人工 captions.srt,SRT 无 role
+    字段,role 覆盖如实为空)。"""
+    from .qc.captions_access import accessibility_for_project, write_accessibility
+
+    project = _project()
+    doc = accessibility_for_project(project)
+    if write:
+        path = write_accessibility(project, doc)
+        if not as_json:
+            typer.echo(f"报告 → {project.relpath(path)}")
+    if as_json:
+        _emit(doc, True)
+        return
+    s = doc["summary"]
+    typer.secho(
+        f"caption accessibility: {s['totals']['cues']} cues, "
+        f"{s['totals']['advisories']} advisories(仅建议,不阻塞)"
+        f"  digest={doc['report_digest'][:23]}…",
+        fg=typer.colors.CYAN)
+    rs = s["reading_speed"]
+    if rs["measured_cues"]:
+        typer.echo(f"  阅读速度 cps(加权): min {rs['min']}  median {rs['median']}  "
+                   f"max {rs['max']}  超上限 {rs['over_ceiling']}")
+    cov = s["role_coverage"]
+    if cov["counts"]:
+        roles = ", ".join(f"{k}={v}" for k, v in cov["counts"].items())
+        typer.echo(f"  角色 roles: {roles}  未标注 {cov['unroled']}")
+        if cov["unknown_roles"]:
+            typer.secho(f"  未收录 role: {', '.join(cov['unknown_roles'])}"
+                        "(仅记录;manju check 会给出结构化 warn)",
+                        fg=typer.colors.YELLOW)
+    for a in doc["advisories"][:20]:
+        typer.echo(f"  ⚑ {a['code']} {a['subject']} — {a['detail']}")
+    if len(doc["advisories"]) > 20:
+        typer.echo(f"  … 另有 {len(doc['advisories']) - 20} 条(--json 查看全部)")
+
+
 def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[str],
                factor: float, ms: int, mode: Optional[str],
                in_ms: Optional[int], out_ms: Optional[int], as_json: bool) -> None:

@@ -142,7 +142,12 @@ def break_lines(text: str, max_chars: int | None) -> str:
 def compile_srt(timeline: Timeline, *, max_chars_per_line: int | None = None) -> str:
     """Numbered, blank-line-separated SRT cues (LF newlines, UTF-8 text).
     ``max_chars_per_line`` breaks long cues at the declared budget (compiled
-    mode only — callers re-emitting human cues pass None)."""
+    mode only — callers re-emitting human cues pass None).
+
+    SRT has NO role field (FP loop I, §5.5): a cue's optional ``role`` stays
+    truth-side in ``timeline.json`` and the output bytes are identical with or
+    without roles (pinned). The ASS writer's Name field is where a role lands.
+    """
     parts: list[str] = []
     for i, cap in enumerate(timeline.tracks.captions, start=1):
         text = _normalize_newlines(cap.text).strip("\n")
@@ -178,6 +183,21 @@ def compile_vtt(timeline: Timeline, *, max_chars_per_line: int | None = None) ->
 
 
 # ------------------------------------------------------------------- ASS
+
+
+def _ass_name_field(cap: Any) -> str:
+    """The Dialogue *Name* field (FP loop I, §5.5): the cue's optional role
+    VERBATIM when set (``translation|sdh|forced|lyrics|speaker_label``), else
+    the historical empty field — a role-less timeline renders BYTE-IDENTICAL
+    ASS (pinned). Name sits mid field-grid, so the two characters that could
+    shift the grid are swapped for lookalikes (comma → fullwidth comma,
+    newline → space) and override syntax is neutralized exactly like cue text
+    (round-W #31 stance) — a hostile role can never break the Dialogue line."""
+    role = getattr(cap, "role", None)
+    if not role:
+        return ""
+    safe = str(role).replace("\r", " ").replace("\n", " ").replace(",", "，")
+    return escape_ass_text(safe)
 
 
 def _resolve_style(
@@ -272,9 +292,11 @@ def compile_ass(
         # real break — it is added AFTER escaping runs.
         text = escape_ass_text(_normalize_newlines(cap.text).strip("\n"))
         text = break_lines(text, max_chars).replace("\n", "\\N")
+        # Name carries the cue's optional role (FP loop I §5.5); "" when unset
+        # keeps the exact historical "Default,,0,0,0,," prefix (byte-identity).
         prefix = (
             f"Dialogue: 0,{ms_to_ass(cap.start_ms)},{ms_to_ass(cap.end_ms)},"
-            "Default,,0,0,0,,"
+            f"Default,{_ass_name_field(cap)},0,0,0,,"
         )
         event_lines.append(prefix + text)
     events = "\n".join(event_lines)
