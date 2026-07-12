@@ -197,18 +197,38 @@ def export_locale_captions(
     timeline: Timeline,
     lang: str,
 ) -> dict[str, Path]:
-    """Write captions/locales/<lang>/captions.srt|.ass from the (locale) timeline."""
+    """Write captions/locales/<lang>/captions.srt|.ass|.ttml from the (locale)
+    timeline.
+
+    The TTML sibling is the ONE caption exit that carries a declared language:
+    ``lang`` (the validated locale id) lands on ``xml:lang`` — the base
+    non-locale export honestly records none (``exporters/ttml.py``). An
+    OPTIONAL ``locales/<lang>/meta.yaml`` may declare a layout ``direction``
+    (``rtl``/``ltr``, human-declared, never inferred); absent → ``None`` →
+    the writer emits a byte-identical bare ``<div>``. Same determinism +
+    line-budget discipline as the srt/ass siblings.
+    """
+    from ..core.locale import load_locale_meta
     from ..exporters.srt_ass import compile_ass, compile_srt, _caption_style
+    from ..exporters.ttml import compile_ttml
 
     style = _caption_style(project)
     d = locale_captions_dir(project, lang)
     srt_path = d / "captions.srt"
     ass_path = d / "captions.ass"
+    ttml_path = d / "captions.ttml"
     max_chars = style.get("max_chars_per_line")
     atomic_write_text(srt_path, compile_srt(timeline, max_chars_per_line=max_chars))
     atomic_write_text(
         ass_path,
         compile_ass(timeline, width=timeline.width, height=timeline.height, style=style),
+    )
+    direction = load_locale_meta(project, lang).get("direction")
+    atomic_write_text(
+        ttml_path,
+        compile_ttml(
+            timeline, lang=lang, max_chars_per_line=max_chars, direction=direction,
+        ),
     )
     # Hash-based freshness for locale status (not mere presence)
     try:
@@ -216,7 +236,7 @@ def export_locale_captions(
         write_locale_captions_key(project, lang)
     except Exception:
         pass
-    return {"srt": srt_path, "ass": ass_path}
+    return {"srt": srt_path, "ass": ass_path, "ttml": ttml_path}
 
 
 def next_locale_final_path(project: Project, lang: str) -> Path:

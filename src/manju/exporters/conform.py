@@ -398,8 +398,10 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "ttm:agent + per-cue ttm:agent ref; role → standard hint where "
             "mapped (ttm:role / itts:forcedDisplay / agent stub) + VERBATIM "
             "x-manju:role on every roled cue. Honest subset: one default "
-            "bottom-centre region only; RTL/vertical/ruby are NOT expressed "
-            "(the cue model carries no layout semantics)",
+            "bottom-centre region only; RTL rides ONLY an explicit locale "
+            "declaration (locales/<lang>/meta.yaml direction, U2 — this "
+            "report's own compile carries none); vertical/ruby are NOT "
+            "expressed (the cue model carries no layout semantics)",
             "exporters/ttml.py:114-144,147-213"),
         # everything else falls to the caption-only fallback below
     },

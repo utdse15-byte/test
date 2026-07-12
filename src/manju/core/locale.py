@@ -26,6 +26,16 @@ from ..core.yamlio import atomic_write_text, read_yaml, write_yaml
 
 _LANG_RE = re.compile(r"^[a-z]{2,8}(-[A-Za-z0-9]+)*$")
 
+# locales/<lang>/meta.yaml — an OPTIONAL, EXPLICIT per-locale declaration file.
+# Today it carries one field: ``direction: rtl|ltr`` (the human's statement of
+# the language's text direction). BOTH sets are closed and validated so a
+# typo'd key or a bogus value can never slip through — the engine reads only
+# what a human wrote and refuses the rest. Direction is NEVER inferred from the
+# language code (no CLDR tables, no guessing): an RTL language with no meta.yaml
+# has no declared direction, full stop.
+_LOCALE_META_KEYS = ("direction",)
+_LOCALE_DIRECTIONS = ("ltr", "rtl")
+
 
 def locales_dir(project: Project) -> Path:
     return project.root / "locales"
@@ -71,6 +81,51 @@ def load_voices(project: Project, lang: str) -> dict[str, dict[str, Any]]:
         return {}
     data = read_yaml(path) or {}
     return data if isinstance(data, dict) else {}
+
+
+def load_locale_meta(project: Project, lang: str) -> dict[str, Any]:
+    """Read the OPTIONAL declared ``locales/<lang>/meta.yaml``.
+
+    A missing (or empty) file → ``{}`` — the honest default: the locale
+    declares nothing. Today the ONLY supported field is ``direction: rtl|ltr``,
+    the human's EXPLICIT statement of text direction; it is NEVER inferred from
+    the language code (no CLDR tables, no guessing). Anything the human did not
+    mean is a STRUCTURED rejection (the S4 ``cache_toolchain_keys`` precedent —
+    name the allowed set, name the offending value, say WHY) rather than a
+    silently-ignored typo:
+
+    * a non-mapping document is rejected (meta.yaml is a key→value declaration);
+    * an unknown key is rejected (the field set is closed);
+    * a ``direction`` outside ``{rtl, ltr}`` is rejected.
+    """
+    path = locale_dir(project, lang) / "meta.yaml"
+    if not path.exists():
+        return {}
+    data = read_yaml(path) or {}
+    if not isinstance(data, dict):
+        raise ProjectError(
+            f"locales/{lang}/meta.yaml: 必须是键值映射(实际 {type(data).__name__})"
+            f" — 目前支持的字段:{list(_LOCALE_META_KEYS)}(例如 direction: rtl)"
+        )
+    unknown = [str(k) for k in data if k not in _LOCALE_META_KEYS]
+    if unknown:
+        raise ProjectError(
+            f"locales/{lang}/meta.yaml: 未知字段 {sorted(unknown)} — "
+            f"目前只接受 {list(_LOCALE_META_KEYS)}(排版方向必须由人显式声明,"
+            f"引擎绝不从语言代码推断);未知字段一律在读取层拒绝,"
+            f"以免悄悄忽略打错的声明"
+        )
+    meta: dict[str, Any] = {}
+    if "direction" in data:
+        direction = data["direction"]
+        if direction not in _LOCALE_DIRECTIONS:
+            raise ProjectError(
+                f"locales/{lang}/meta.yaml: direction={direction!r} 非法 — "
+                f"只接受 {list(_LOCALE_DIRECTIONS)}(rtl=从右到左,ltr=从左到右);"
+                f"这是人对该语言排版方向的显式声明,绝不从语言代码推断"
+            )
+        meta["direction"] = direction
+    return meta
 
 
 def add_locale(project: Project, lang: str) -> dict[str, Any]:

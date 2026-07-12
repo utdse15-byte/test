@@ -26,8 +26,13 @@ Honest scope boundaries (recorded, not silently claimed):
 
 * ONE default region (bottom centre, ``tts:displayAlign="after"``) — the cue
   model carries no positioning, so no other region could be honest;
-* RTL, vertical writing and ruby are OUT OF SCOPE: they need layout semantics
-  (``tts:direction``/``writingMode``/ruby containers) the cue model lacks;
+* vertical writing and ruby stay OUT OF SCOPE: they need layout semantics
+  (``writingMode``/ruby containers) the cue model lacks. RTL is supported ONLY
+  as an explicit per-locale declaration (``locales/<lang>/meta.yaml``'s
+  ``direction: rtl|ltr`` → the additive ``direction`` param → ``tts:direction``
+  and, for rtl, ``tts:unicodeBidi="embed"`` on the content div) — NEVER inferred
+  from the language code, and the cue model itself still carries no direction
+  (a project that declares none emits a byte-identical bare ``<div>``);
 * ``xml:lang`` is ``""`` unless a caller passes a language — the base project
   records NO locale (locales are per-language overlays, ``core/locale.py``);
 * no ``ttp:profile`` conformance claim: no external validator runs here (no
@@ -111,6 +116,22 @@ def _attr_str(pairs: list[tuple[str, str]]) -> str:
     )
 
 
+def _div_open(direction: str | None) -> str:
+    """The content ``<div>`` open tag. ``direction`` is a HUMAN-declared layout
+    direction from ``locales/<lang>/meta.yaml`` (never inferred from the
+    language code). Falsy (``None``/``""``) → exactly ``    <div>`` — the
+    drop-when-absent stance, byte-identical to a project that declares none
+    (R1/S4 precedent). ``"rtl"`` also emits ``tts:unicodeBidi="embed"`` so the
+    bidi embedding level is explicit; ``"ltr"`` sets ``tts:direction`` only.
+    Attributes ride the same sorted ``_attr_str`` order as every other tag."""
+    if not direction:
+        return "    <div>"
+    pairs = [("tts:direction", direction)]
+    if direction == "rtl":
+        pairs.append(("tts:unicodeBidi", "embed"))
+    return "    <div " + _attr_str(pairs) + ">"
+
+
 def _agent_ids(captions: list[CaptionLine]) -> dict[str, str]:
     """Deterministic ``speaker -> xml:id``: distinct non-empty speakers,
     sorted (codepoint order), numbered from 1."""
@@ -149,6 +170,7 @@ def compile_ttml(
     *,
     lang: str = "",
     max_chars_per_line: int | None = None,
+    direction: str | None = None,
 ) -> str:
     """The full IMSC1-shaped TTML1 document as a string (LF endings, trailing
     newline, deterministic bytes).
@@ -158,6 +180,13 @@ def compile_ttml(
     locale overlay build — may pass one). ``max_chars_per_line`` applies the
     same line budget as ``compile_srt``/``compile_vtt`` (compiled mode only —
     manual-takeover callers pass ``None`` so human cues are never re-broken).
+
+    ``direction`` is an EXPLICIT per-locale layout declaration (from
+    ``locales/<lang>/meta.yaml``, validated by ``core.locale.load_locale_meta``
+    to ``"rtl"``/``"ltr"``) — NEVER inferred from ``lang``. ``"rtl"`` puts
+    ``tts:direction="rtl"`` + ``tts:unicodeBidi="embed"`` on the content div,
+    ``"ltr"`` puts ``tts:direction`` only, and the default ``None`` leaves the
+    div bare so the output is byte-identical to a project that declares none.
     """
     caps = timeline.tracks.captions
     agent_ids = _agent_ids(caps)
@@ -206,7 +235,7 @@ def compile_ttml(
         "  </head>",
         "  <body " + _attr_str([("region", "r.bottom"),
                                 ("style", "s.default")]) + ">",
-        "    <div>",
+        _div_open(direction),
     ]
     out += ["      " + _p_line(c, agent_ids, max_chars_per_line) for c in caps]
     out += ["    </div>", "  </body>", "</tt>"]
