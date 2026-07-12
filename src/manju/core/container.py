@@ -32,6 +32,7 @@ from .models import (
     Timeline,
     TimelineRules,
 )
+from .timebase import Rate
 from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml
 
 PROJECT_FILE = "project.yaml"
@@ -280,6 +281,28 @@ class Project:
 
     def save_config(self, config: ProjectConfig) -> None:
         write_yaml(self.root / PROJECT_FILE, config.model_dump(exclude_none=True))
+
+    def edit_rate(self, config: ProjectConfig | None = None) -> Rate:
+        """The project's exact edit rate as a :class:`~manju.core.timebase.Rate`
+        — the SINGLE accessor for the declared project.fps int->rational
+        migration (stage 1).
+
+        Truth precedence: the rational ``edit_rate`` field when project.yaml
+        declares one (``ProjectConfig`` guarantees it agrees with ``fps``), else
+        the legacy integer ``fps`` promoted to an exact whole-number ``Rate``.
+        The result is always a ``Rate`` whose ``nominal_int`` equals ``fps``, so
+        this is a safe drop-in wherever an exact rate is wanted while every
+        existing consumer keeps reading the plain ``fps`` int unchanged.
+
+        Pass an already-loaded ``config`` to avoid re-reading project.yaml;
+        omitted, it is loaded fresh (mirrors how ``fps`` is read via
+        ``load_config().fps`` today). NOTHING in the engine consumes this yet —
+        the migration is staged (R2+ opt the frame grid / captions / audio in).
+        """
+        config = config if config is not None else self.load_config()
+        if config.edit_rate is not None:
+            return config.edit_rate.rate
+        return Rate.from_fraction(config.fps)
 
     # ----------------------------------------------------------------- shots
 

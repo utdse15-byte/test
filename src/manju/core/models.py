@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from .idents import validate_safe_segment
+from .timebase import Rate
 
 SHOT_SIZES = (
     "extreme_wide",
@@ -71,11 +72,90 @@ class BuildConfig(ManjuModel):
         raise ValueError(f"build.mode must be one of {BUILD_MODE_NAMES} or unset, got {v!r}")
 
 
+# ----------------------------------------------------- rational edit rate (R1)
+# Registry-declared migration (CONTRACTS.yaml planned_migrations: project.fps
+# int -> rational edit_rate), STAGE 1: land the OPTIONAL truth field + a single
+# accessor (core/container.Project.edit_rate). NO consumer changes this loop —
+# `fps` stays the legacy int mirror every existing reader keeps reading, and a
+# project WITHOUT edit_rate is BYTE-IDENTICAL everywhere (the field defaults
+# None and the ProjectConfig serializer drops the key entirely; wave-4b
+# CaptionLine.role drop-None precedent). When edit_rate IS present it is the ONE
+# truth and `fps` MUST equal its nominal integer rate (enforced on
+# ProjectConfig below) so no legacy consumer can read a stale/contradictory fps.
+
+# A real edit rate sits between 1 and 1000 fps after normalization — a sanity
+# bound that rejects {0,1}, negatives, and absurd garbage ({2000,1} → 2000 fps)
+# while admitting every standard rate (23.976 .. 120 and their 1001 partners).
+_EDIT_RATE_MIN_FPS = 1
+_EDIT_RATE_MAX_FPS = 1000
+
+
+class EditRate(ManjuModel):
+    """An exact rational frame rate as authored in project.yaml: ``{num, den}``.
+
+    The future truth for the declared project.fps int->rational migration. Both
+    ``num`` and ``den`` are positive ints and ``num/den`` must land in
+    ``[1, 1000]`` fps after normalization (a real edit rate, never garbage). This
+    model validates only the FIELD's own shape; the tie to the legacy ``fps``
+    mirror (``fps == rate.nominal_int``) is enforced on :class:`ProjectConfig`
+    where both are visible. Parsed into a :class:`~manju.core.timebase.Rate`
+    (exact rationals, ``nominal_int``, ``is_ntsc``) by the single accessor
+    ``core/container.Project.edit_rate`` — nothing else consumes it this loop."""
+
+    num: int
+    den: int
+
+    @field_validator("num", "den", mode="before")
+    @classmethod
+    def _positive_int(cls, v: Any, info) -> int:
+        # bool is an int subclass — reject it explicitly (a frame-rate term of
+        # True/False is nonsense); accept only a genuine positive int.
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValueError(
+                f"edit_rate.{info.field_name} 必须是正整数(实际 {v!r})— "
+                "num/den 都必须写成大于 0 的整数"
+            )
+        if v <= 0:
+            raise ValueError(
+                f"edit_rate.{info.field_name} 必须是正整数(实际 {v!r})— "
+                "0 或负数不是合法的帧率分子/分母;请改成大于 0 的整数"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _sane_frame_rate(self) -> "EditRate":
+        # Reuses timebase.Rate (the future migration's canonical type): normalises
+        # to lowest terms and guarantees positivity, so the only thing left to
+        # bound here is the human-plausible fps window.
+        fps = Rate.from_fraction(self.num, self.den).fps_float
+        if not (_EDIT_RATE_MIN_FPS <= fps <= _EDIT_RATE_MAX_FPS):
+            raise ValueError(
+                f"edit_rate {self.num}/{self.den} ≈ {fps:g}fps 不是合理的剪辑帧率"
+                f"(必须落在 [{_EDIT_RATE_MIN_FPS}, {_EDIT_RATE_MAX_FPS}] fps 之间)"
+                "— 请检查 project.yaml 里的 edit_rate.num/den"
+            )
+        return self
+
+    @property
+    def rate(self) -> Rate:
+        """The exact :class:`~manju.core.timebase.Rate` this field denotes."""
+        return Rate.from_fraction(self.num, self.den)
+
+
 class ProjectConfig(ManjuModel):
     name: str
     width: int = 1080
     height: int = 1920
     fps: int = 24
+    # Rational edit rate (declared project.fps int->rational migration, STAGE 1).
+    # OPTIONAL and default-absent: None means "no rational truth yet — read fps",
+    # and the model serializer below DROPS the key entirely so a project without
+    # it serializes BYTE-IDENTICALLY (wave-4b CaptionLine.role precedent — needed
+    # because presets/supportbundle/status dump config with plain model_dump()).
+    # When present it is the ONE truth; `fps` MUST equal its nominal_int (checked
+    # in `_edit_rate_mirrors_fps` below). The single accessor is
+    # core/container.Project.edit_rate — NOTHING else in src consumes this yet.
+    edit_rate: EditRate | None = None
     mode: Literal["manual", "copilot", "autopilot"] = "copilot"
     # Default build mode (goal 14); None keeps today's behaviour. `--mode` wins.
     build: BuildConfig | None = None
@@ -110,6 +190,37 @@ class ProjectConfig(ManjuModel):
                 "也不合法;请把 project.yaml 里的这个字段改成大于 0 的整数"
             )
         return v
+
+    # Rational edit-rate migration (STAGE 1): when a project declares edit_rate,
+    # it is the ONE truth and the legacy `fps` int must MIRROR it exactly (==
+    # nominal integer rate: 24000/1001 -> 24, 30000/1001 -> 30, 25 -> 25). A
+    # mismatch is a structured error naming BOTH values — never a silent split
+    # truth where old consumers reading `fps` disagree with the rational field.
+    # No edit_rate (the default) => this is a strict no-op, byte-identical.
+    @model_validator(mode="after")
+    def _edit_rate_mirrors_fps(self) -> "ProjectConfig":
+        if self.edit_rate is not None:
+            nominal = self.edit_rate.rate.nominal_int
+            if nominal != self.fps:
+                raise ValueError(
+                    f"project.fps({self.fps})必须等于 edit_rate "
+                    f"{self.edit_rate.num}/{self.edit_rate.den} 的名义整数帧率"
+                    f"(nominal_int={nominal})— edit_rate 是唯一真值,fps 是它给旧代码看的"
+                    f"遗留镜像,两者必须一致;请把 fps 改成 {nominal},或修正 edit_rate"
+                )
+        return self
+
+    # Byte-identity: drop a None edit_rate from EVERY serialization (not only the
+    # exclude_none save paths — presets/supportbundle/status dump with a plain
+    # model_dump()), so a project that never sets edit_rate emits no such key at
+    # all. Mirrors CaptionLine._drop_default_role (wave-4b). A PRESENT edit_rate
+    # is untouched and rides through as its {num, den} mapping.
+    @model_serializer(mode="wrap")
+    def _drop_default_edit_rate(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("edit_rate") is None:
+            data.pop("edit_rate", None)
+        return data
 
 
 # ------------------------------------------------------------------- ShotSpec
