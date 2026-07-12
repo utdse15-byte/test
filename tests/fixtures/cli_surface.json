@@ -116,6 +116,12 @@
     "exists": true,
     "params": []
   },
+  "edl import-plan": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
   "evaluate": {
     "exists": true,
     "params": []

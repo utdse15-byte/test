@@ -420,6 +420,20 @@ schemas:
       windows / transition candidates / audio-bus suggestions (V1 role map
       inverted) + needs_relink rows; writes nothing, fetches nothing,
       never auto-applies. Experimental = the registry's arrival state.
+  - id: manju.edl-import-plan/v1
+    kind: schema
+    owner: manju.exporters.edl_import
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Staged CMX3600 EDL import plan (Y4, W2's pattern) — read-only
+      analysis into proposed windows / dissolve candidates + needs_relink
+      rows (EDL sources are reels/names, never paths — every source is a
+      relink candidate by nature); rate inferred from FCM with an honest
+      rate_assumed flag when not supplied; writes nothing, never
+      auto-applies. Experimental = the arrival state.
   - id: manju.conform-loss/v1
     kind: schema
     owner: manju.exporters.conform

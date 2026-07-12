@@ -2405,6 +2405,104 @@ def fcpxml_import_plan(
                         fg=typer.colors.BRIGHT_BLACK)
 
 
+# --------------------------------------------------------------- edl
+
+# The CMX3600 EDL adapter surfaces its READ-ONLY import-plan exactly as openclap
+# and fcpxml do: a per-format Typer sub-app with an `import-plan` subcommand (FP
+# loop Y4, the analysis half S2 declined). The WRITER stays a flag on
+# `manju export --edl`, untouched; this group adds only the plan-only analysis
+# surface.
+edl_app = typer.Typer(
+    no_args_is_help=True,
+    help="CMX3600 EDL (.edl) 互换适配器 —— import-plan 只规划不落盘"
+         "(从不拷贝/取用媒体、从不写入项目、从不自动落轨)。写出口仍是 "
+         "`manju export --edl`。",
+)
+app.add_typer(edl_app, name="edl")
+
+
+def _edl_read_or_fail(file: Path, as_json: bool):
+    """Parse a CMX3600 EDL, turning a fail-closed read (bad input type) into the
+    repo's JSON error envelope on ``--json`` or colored prose otherwise — mirrors
+    ``_fcpxml_read_or_fail``. Note: EDL parsing is tolerant (unknown lines are
+    COUNTED, never raised), so a well-formed read effectively never fails here."""
+    from .exporters.edl_import import EdlImportError, parse_edl
+
+    try:
+        return parse_edl(file)
+    except EdlImportError as exc:
+        diags = exc.diagnostics
+        code = next((d["code"] for d in diags if d.get("severity") == "error"),
+                    "edl_parse_error")
+        if as_json:
+            typer.echo(json.dumps(
+                {"error": str(exc), "code": code, "diagnostics": diags},
+                ensure_ascii=False, indent=2))
+        else:
+            typer.secho(f"无法解析 .edl: {exc}", fg=typer.colors.RED, err=True)
+            for d in diags:
+                typer.secho(f"  [{d.get('severity')}] {d.get('code')}: {d.get('message')}",
+                            fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(1)
+
+
+@edl_app.command("import-plan")
+def edl_import_plan(
+    file: Path = typer.Argument(..., help="path to a .edl file"),
+    target: Optional[Path] = typer.Option(
+        None, "--target", help="existing project to describe against (never written)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """规划一次 .edl 导入(只规划、零写入):把外来 CMX3600 剪辑表只读解析成建议的
+    片段窗口/转场候选(D→xfade_fade)/音频通道记录,来源(卷带/片名)记为
+    needs_relink 指向既有 relink 工具,MANJU 备注原样呈现,未知行只计数不崩。
+    从不拷贝/取用媒体、从不写入项目。有 --target 时只描述并列出冲突。"""
+    from .core.hashing import hash_file
+    from .exporters.edl_import import plan_edl_import
+
+    parsed = _edl_read_or_fail(file, as_json)
+    target_project = None
+    if target is not None:
+        try:
+            target_project = Project(target)
+        except ProjectError as exc:
+            _fail(str(exc), code="no_project")
+    plan = plan_edl_import(parsed, source_sha256=hash_file(file),
+                           target_project=target_project)
+    if as_json:
+        _emit(plan, True)
+        return
+    typer.secho(f"import-plan {plan['schema']} · {file}", fg=typer.colors.CYAN)
+    typer.echo(f"  source_sha256: {plan['source_sha256']}")
+    typer.echo(f"  fcm {plan['frame_code_mode'] or '(none)'} · edit_rate "
+               f"{plan['edit_rate']}{' (assumed)' if plan['rate_assumed'] else ''}")
+    typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    typer.echo(f"  windows: {len(plan['windows'])} · transitions: "
+               f"{len(plan['transitions'])} · audio: {len(plan['audio_events'])} · "
+               f"needs_relink: {len(plan['needs_relink'])} · unknown_rows: "
+               f"{plan['unknown_rows']}")
+    for w in plan["windows"]:
+        typer.echo(f"    window {w['clip_name']} @ {w['rec_in_frames']}f "
+                   f"+{w['duration_frames']}f (reel {w['reel']} {w['channel']})"
+                   f"  ⚠needs_relink")
+    for t in plan["transitions"]:
+        typer.echo(f"    transition {t['disposition']} ({t['edit_type']}) at "
+                   f"{t['at_clip']}")
+    for a in plan["audio_events"]:
+        typer.echo(f"    audio {a['channel']} {a['clip_name']} (no bus fabricated)")
+    for r in plan["needs_relink"]:
+        typer.secho(f"    needs_relink [{r['classification']}] {r['source']}",
+                    fg=typer.colors.YELLOW)
+    for note in plan["manju_notes"]:
+        typer.secho(f"    {note}", fg=typer.colors.BRIGHT_BLACK)
+    for c in plan["conflicts"]:
+        typer.secho(f"    冲突 {c['target']}: {c['reason']}", fg=typer.colors.YELLOW)
+    for d in plan["diagnostics"]:
+        if d.get("severity") != "info":
+            typer.secho(f"    [{d.get('severity')}] {d.get('code')}: {d.get('message')}",
+                        fg=typer.colors.BRIGHT_BLACK)
+
+
 # ----------------------------------------------------------------- package
 
 
