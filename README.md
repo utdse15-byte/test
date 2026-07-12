@@ -170,7 +170,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju qc brief --mode consistency / qc coverage` | X | cross-shot consistency briefs (contact sheets, pair boards) + review coverage tracking |
 | `manju tasks cancel/retry <id>` | X | retry failed ledger runs; cancel is GUI-native (running jobs cancel cooperatively, ffmpeg killed) |
 | `manju import --on-duplicate skip\|import\|link` | X | import dedup against the private library with reuse suggestions |
-| `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`) |
+| `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`); `pack --bagit` writes an RFC 8493 serialized bag instead (`data/` payload + BagIt manifests as the ONE fixity authority in that mode — deterministic bag-info, no Bagging-Date, stated in the restore note), auto-detected by `unpack`/`fixity` with the same remove-on-mismatch discipline |
 | `manju events` | M0 | collaboration log |
 | `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
 | `manju gc [--hard]` | M0 | tiered cleanup (never touches imports/final; `--hard` is interactive-only) |

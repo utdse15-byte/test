@@ -41,3 +41,4 @@ jobs:
           tests/test_fp_cli_snapshot.py
           tests/test_fp_plugin_api.py
           tests/test_fp_ttml_locale.py
+          tests/test_fp_bagit.py
