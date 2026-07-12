@@ -140,6 +140,12 @@
     "exists": true,
     "params": []
   },
+  "fcpxml import-plan": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
   "fixity": {
     "exists": true,
     "params": [

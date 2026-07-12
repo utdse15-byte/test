@@ -2312,6 +2312,99 @@ def openclap_import_plan(
         typer.secho(f"    冲突 {c['target']}: {c['reason']}", fg=typer.colors.YELLOW)
 
 
+# --------------------------------------------------------------- fcpxml
+
+# The FCPXML adapter surfaces its READ-ONLY import-plan exactly as openclap does:
+# a per-format Typer sub-app with an `import-plan` subcommand (FP loop W2, the
+# analysis half T2/V1 declined). The WRITER stays a flag on `manju export`
+# (`--fcpxml`), untouched; this group adds only the plan-only analysis surface.
+fcpxml_app = typer.Typer(
+    no_args_is_help=True,
+    help="FCPXML (.fcpxml) 互换适配器 —— import-plan 只规划不落盘"
+         "(从不下载/拷贝媒体、从不写入项目、从不自动落轨)。写出口仍是 "
+         "`manju export --fcpxml`。",
+)
+app.add_typer(fcpxml_app, name="fcpxml")
+
+
+def _fcpxml_read_or_fail(file: Path, as_json: bool):
+    """Parse a .fcpxml file, turning a fail-closed parse (non-fcpxml root /
+    malformed XML) into the repo's JSON error envelope (with diagnostics) on
+    ``--json`` or colored prose otherwise — mirrors ``_openclap_read_or_fail``."""
+    from .exporters.fcpxml_import import FcpxmlImportError, parse_fcpxml
+
+    try:
+        return parse_fcpxml(file)
+    except FcpxmlImportError as exc:
+        diags = exc.diagnostics
+        code = next((d["code"] for d in diags if d.get("severity") == "error"),
+                    "fcpxml_parse_error")
+        if as_json:
+            typer.echo(json.dumps(
+                {"error": str(exc), "code": code, "diagnostics": diags},
+                ensure_ascii=False, indent=2))
+        else:
+            typer.secho(f"无法解析 .fcpxml: {exc}", fg=typer.colors.RED, err=True)
+            for d in diags:
+                typer.secho(f"  [{d.get('severity')}] {d.get('code')}: {d.get('message')}",
+                            fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(1)
+
+
+@fcpxml_app.command("import-plan")
+def fcpxml_import_plan(
+    file: Path = typer.Argument(..., help="path to a .fcpxml file"),
+    target: Optional[Path] = typer.Option(
+        None, "--target", help="existing project to describe against (never written)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """规划一次 .fcpxml 导入(只规划、零写入):把外来 FCPXML 只读解析成建议的
+    片段窗口/转场候选/音频总线映射,外部素材记为 needs_relink 指向既有 relink
+    工具。从不下载/拷贝媒体、从不写入项目。有 --target 时只描述并列出冲突。"""
+    from .core.hashing import hash_file
+    from .exporters.fcpxml_import import plan_fcpxml_import
+
+    parsed = _fcpxml_read_or_fail(file, as_json)
+    target_project = None
+    if target is not None:
+        try:
+            target_project = Project(target)
+        except ProjectError as exc:
+            _fail(str(exc), code="no_project")
+    plan = plan_fcpxml_import(parsed, source_sha256=hash_file(file),
+                              target_project=target_project)
+    if as_json:
+        _emit(plan, True)
+        return
+    typer.secho(f"import-plan {plan['schema']} · {file}", fg=typer.colors.CYAN)
+    typer.echo(f"  source_sha256: {plan['source_sha256']}")
+    typer.echo(f"  fcpxml {plan['fcpxml_version'] or '(unversioned)'} "
+               f"({'verified' if plan['version_verified'] else 'UNVERIFIED'}) · "
+               f"edit_rate {plan['edit_rate'] or '(unknown)'}")
+    typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    typer.echo(f"  windows: {len(plan['windows'])} · transitions: "
+               f"{len(plan['transitions'])} · audio: {len(plan['audio_suggestions'])} · "
+               f"needs_relink: {len(plan['needs_relink'])}")
+    for w in plan["windows"]:
+        flag = "" if w["media_status"] == "inside_project" else "  ⚠needs_relink"
+        typer.echo(f"    window {w['name']} @ {w['offset_frames']}f "
+                   f"+{w['duration_frames']}f (src {w['src']}){flag}")
+    for t in plan["transitions"]:
+        typer.echo(f"    transition {t['disposition']} '{t['name']}' at {t['at_clip']}")
+    for a in plan["audio_suggestions"]:
+        bus = a.get("bus") or f"?{a['audio_role']}"
+        typer.echo(f"    audio {a['disposition']} → {bus} (src {a['src']})")
+    for r in plan["needs_relink"]:
+        typer.secho(f"    needs_relink [{r['classification']}] {r['src']}",
+                    fg=typer.colors.YELLOW)
+    for c in plan["conflicts"]:
+        typer.secho(f"    冲突 {c['target']}: {c['reason']}", fg=typer.colors.YELLOW)
+    for d in plan["diagnostics"]:
+        if d.get("severity") != "info":
+            typer.secho(f"    [{d.get('severity')}] {d.get('code')}: {d.get('message')}",
+                        fg=typer.colors.BRIGHT_BLACK)
+
+
 # ----------------------------------------------------------------- package
 
 

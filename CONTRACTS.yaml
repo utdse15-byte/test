@@ -407,6 +407,19 @@ schemas:
     notes: >-
       Staged OpenClap (.clap) import plan — writes nothing, downloads nothing,
       never auto-selects takes.
+  - id: manju.fcpxml-import-plan/v1
+    kind: schema
+    owner: manju.exporters.fcpxml_import
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Staged FCPXML (.fcpxml) import plan (W2, openclap precedent) —
+      read-only analysis of a foreign FCPXML document into proposed
+      windows / transition candidates / audio-bus suggestions (V1 role map
+      inverted) + needs_relink rows; writes nothing, fetches nothing,
+      never auto-applies. Experimental = the registry's arrival state.
   - id: manju.conform-loss/v1
     kind: schema
     owner: manju.exporters.conform
