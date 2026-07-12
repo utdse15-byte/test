@@ -394,6 +394,75 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "exporters/ttml.py:114-144,147-213"),
         # everything else falls to the caption-only fallback below
     },
+    "edl": {
+        "video_clips": (
+            "preserved",
+            "one CMX3600 V-track event per clip (C cut, or a two-line C+D "
+            "dissolve on the incoming event); record TC from the cumulative "
+            "timeline position, ms→frames ROUND_HALF_UP at the edit rate",
+            "exporters/edl.py:238-322 (compile_edl)"),
+        "video_in_points": (
+            "preserved",
+            "source_in_ms becomes the source-side in-point (ms→frames, "
+            "00:00:00:00-based — generated media's zero timebase IS its source "
+            "TC); source length reuses the record frame count",
+            "exporters/edl.py:207-224 (_Placed)"),
+        "audio_in_points": (
+            "unsupported",
+            "audio is out of scope for this V-only CMX EDL (see audio_tracks); "
+            "no audio event carries a source in-point",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "transitions": (
+            "approximated",
+            "clean cross-dissolves (xfade_fade, dur>0) become native CMX D "
+            "events (type+duration preserved); EVERY other kind — dip-to-black "
+            "fade, the xfade_* wipes/slides (CMX W events, out of scope), any "
+            "unknown type — degrades to a hard cut with an in-band `* MANJU:` "
+            "note (never a wrong dissolve)",
+            "exporters/edl.py:227-235,289-322"),
+        "overlays": (
+            "dropped",
+            "export_edl never reads tracks.overlay — titles/branding are not a "
+            "cut-list primitive; absent from the EDL entirely",
+            "exporters/edl.py:266 (video track only, no overlay path)"),
+        "captions": (
+            "dropped",
+            "export_edl never reads tracks.captions — an EDL is a picture cut "
+            "list; SRT/ASS/VTT/TTML are the caption exits",
+            "exporters/edl.py:266 (video track only, no caption path)"),
+        "clip_volume": (
+            "unsupported",
+            "own-audio level/mute is an audio-domain feature; this V-only EDL "
+            "carries no audio channel at all (see audio_tracks)",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "audio_gain": (
+            "unsupported",
+            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "audio_fade_in": (
+            "unsupported",
+            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "audio_fade_out": (
+            "unsupported",
+            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "ducking": (
+            "unsupported",
+            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "audio_loops": (
+            "unsupported",
+            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+        "audio_tracks": (
+            "unsupported",
+            "Manju's four buses (voice/music/sfx/ambient) cannot ride CMX's "
+            "flat A-channel model faithfully; this loop exports the V track "
+            "only — audio is honestly out of scope by design, not silently "
+            "dropped",
+            "exporters/edl.py:1-80 (module scope: V track only)"),
+    },
     "openclap": {
         "video_clips": (
             "preserved",
@@ -505,6 +574,10 @@ _SCOPE_NOTES: dict[str, str] = {
     "openclap": "open .clap snapshot; non-mappable semantics ride the "
                 "namespaced x-manju extension (never fabricated standard "
                 "fields).",
+    "edl": "CMX3600 video cut list with real SMPTE timecode (record TC from "
+           "the timeline position; FCM DROP/NON-DROP per rate; colon-NDF / "
+           "semicolon-DF). V track only — audio is out of scope by design; "
+           "source TC is 00:00:00:00-based (takes carry no recorded reel/TC).",
 }
 
 # import-time typo guard: every rule key must be a known feature.
@@ -563,6 +636,9 @@ _DRIFT_TRACKS: dict[str, tuple[str, ...]] = {
     "jianying": ("video", *_AUDIO_BUSES, "captions"),
     "native_draft": ("video", *_AUDIO_BUSES, "captions"),
     "openclap": ("video", *_AUDIO_BUSES),
+    # V-only cut list: only the video track lands on the record/source frame
+    # grid (audio/captions/overlays are not exported).
+    "edl": ("video",),
 }
 
 _NOT_TIME_BEARING = {
@@ -745,7 +821,7 @@ def _exported_notes(
             except Exception:
                 return [f"{label} is not readable JSON — no cross-check performed"]
             doc = loaded if isinstance(loaded, dict) else None
-        elif suffix in (".srt", ".vtt", ".ass", ".ttml"):
+        elif suffix in (".srt", ".vtt", ".ass", ".ttml", ".edl"):
             text = p.read_text(encoding="utf-8")
         else:
             return [f"{label} not parsed (opaque/binary payload) — "
@@ -792,6 +868,17 @@ def _exported_notes(
             return [f"{label} is not readable XML — no cross-check performed"]
         note = f"{label}: {cues} cue(s) vs timeline {len(t.captions)}"
         if cues != len(t.captions):
+            note += " — MISMATCH: verify the export is fresh"
+        return [note]
+    if target == "edl" and text is not None:
+        import re  # lazy: only this branch scans event rows
+
+        # One event NUMBER per clip; a dissolve reuses the incoming clip's
+        # number for both its lines, so distinct numbers == clip count.
+        nums = {m.group(1) for m in re.finditer(r"(?m)^(\d{3})\s", text)}
+        note = (f"{label}: {len(nums)} event(s) vs timeline "
+                f"{len(t.video)} video clip(s)")
+        if len(nums) != len(t.video):
             note += " — MISMATCH: verify the export is fresh"
         return [note]
     if target == "native_draft":
