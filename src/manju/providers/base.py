@@ -37,6 +37,16 @@ from ..core.models import ProbeInfo, RemoteJobInfo, ShotSpec, TakeSidecar
 if TYPE_CHECKING:
     from .refs import RefSet
 
+# Roadmap item 10 — the provider plugin surface is FROZEN as a v1 contract
+# (stable, additive-only): Provider/CloudProvider ABCs, GenerationRequest's
+# constructor shape, ProviderFailure, the registry entry points and the
+# provider.yaml adapter escape hatch. Registered in CONTRACTS.yaml under this
+# id; the teeth live in tests/test_fp_plugin_api.py (surface pins — renames/
+# removals/new abstracts go red there; additions stay legal). There is
+# deliberately NO plugin marketplace, discovery service or remote index:
+# plugins arrive as local manifests or explicit register_provider() calls.
+PLUGIN_API_CONTRACT = "manju.provider-plugin-api/v1"
+
 
 class FailureKind(str, Enum):
     """How a generation attempt failed — the response differs per kind (§8.1)."""

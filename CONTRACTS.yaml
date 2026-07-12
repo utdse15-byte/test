@@ -187,6 +187,25 @@ schemas:
     notes: Preview spend ladder with keyframe gates.
 
   # -- providers -----------------------------------------------------------
+  - id: manju.provider-plugin-api/v1
+    kind: schema
+    owner: manju.providers.base
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The FROZEN provider plugin surface (roadmap item 10): Provider /
+      CloudProvider ABCs (generate; submit/poll/download), GenerationRequest's
+      constructor shape (five required head fields, everything later
+      default-carrying), ProviderFailure(kind, message, detail, disposition),
+      registry entry points (register_provider/get_provider/available_providers/
+      fallback_chain/generate_with_fallback) and the provider.yaml adapter
+      escape hatch (generic_cloud | module:Class; broken or builtin-shadowing
+      manifests surface in manifest_errors, never break the registry).
+      Additive-only from here; teeth in tests/test_fp_plugin_api.py. NO
+      marketplace/discovery service — plugins are local manifests or explicit
+      registrations only.
   - id: manju.provider-capability-projection/v1
     kind: schema
     owner: manju.providers.catalog

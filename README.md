@@ -454,3 +454,21 @@ proxy. Captions support manual takeover like the timeline: set
 `rules.captions.mode: manual` and `captions.srt` becomes human truth — the
 burned ASS is recompiled from your cues and the compiler's version lands in
 `captions.generated.srt` (§3).
+
+### Writing your own provider — the frozen v1 plugin API
+
+The provider surface is a **declared, frozen contract**
+(`manju.provider-plugin-api/v1` in `CONTRACTS.yaml`, stable/additive-only;
+teeth in `tests/test_fp_plugin_api.py`). A plugin written today keeps
+working: the `Provider`/`CloudProvider` ABCs (`generate`;
+`submit`/`poll`/`download`), `GenerationRequest`'s constructor shape,
+`ProviderFailure(kind, message, detail=, disposition=)`, the registry entry
+points (`register_provider`/`get_provider`/`fallback_chain`/
+`generate_with_fallback`) and the `provider.yaml` adapter escape hatch
+(`adapter: generic_cloud` or `module:Class`) are all pinned — renames,
+removals or new abstract members fail the freeze tests. A broken or
+builtin-shadowing manifest surfaces in `manju doctor`'s manifest errors and
+never breaks the registry; the fallback chain always terminates at the
+network-independent `caption_card`. There is deliberately **no plugin
+marketplace or remote discovery** — plugins are local manifests or explicit
+`register_provider()` calls, nothing else.
