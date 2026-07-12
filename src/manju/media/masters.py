@@ -9,24 +9,40 @@ EXISTING compiled-timeline audio graph (voice / music / sfx / ambient buses,
 What it produces, all real files under ``exports/masters/`` with a companion
 ``masters.json`` index the export centre (and thus the manifest) reads back:
 
-    DIALOGUE_STEM ..... the voice bus alone
-    MUSIC_STEM ........ the music bus alone
-    SFX_STEM .......... sfx + ambient buses (the effects/atmos stem, contract §10)
-    FULL_MIX .......... all four buses summed
-    M_AND_E_MASTER .... full mix MINUS the dialogue bus (music + sfx + ambient)
+    RAW_DIALOGUE_STEM ........... the voice bus alone (raw: pre-duck/pre-loudnorm)
+    RAW_MUSIC_STEM .............. the music bus alone
+    RAW_SFX_STEM ............... the sfx bus alone
+    RAW_AMBIENT_STEM ........... the ambient bus alone (named honestly, not folded
+                                 into sfx — the ambient bus is symmetric with the trio)
+    RAW_STEM_SUM ............... all four raw buses summed (headroom-protected)
+    M_AND_E_BUS_EXCLUSION_MASTER  the non-voice buses (music + sfx + ambient); its
+                                 name STATES the claim — BUS EXCLUSION, never a
+                                 content-level "no dialogue" proof
+
+PROGRAM_MASTER is deliberately NOT emitted (CLOSEOUT C5 ruling 2 / A05): this
+module renders raw stems + a raw sum PRE-duck / PRE-loudnorm and does NOT reuse
+the final program mixer's ducking/loudness/automation chain (``media/render.py``
+applies sidechain ducking + ``loudnorm`` then encodes lossy AAC into the mp4), so
+no extractable, hash-verifiable program master exists here — a raw sum must never
+masquerade as one. The index records the role as absent with that reason.
 
 Every artifact binds its source/timeline/audio-input hashes and carries measured
 loudness (integrated LUFS / true-peak dBTP / LRA via ffmpeg ``loudnorm`` /
-``ebur128``) recorded as PROBE FACTS, plus sample-rate / channels / duration.
+``ebur128``) recorded as PROBE FACTS, plus sample-rate / channels / duration, and
+a per-bus expected/resolved/dropped clip accounting (an unreadable expected
+source blocks the bus's masters — digital silence never counts as verified).
 
-Honesty boundaries (contract §7, §12; addendum ruling 8):
+Honesty boundaries (contract §6, §7, §12):
 
-- Stems are rendered PRE-DUCK and PRE-loudnorm: a stem is one bus's own
-  contribution, so ``DIALOGUE + MUSIC + SFX`` reconstructs ``FULL_MIX`` and
-  ``M_AND_E == FULL_MIX − DIALOGUE`` by construction (the "stems sum" test).
-- M&E provably lacks dialogue: it is mixed from exactly the non-voice buses;
-  a ``volumedetect`` on it never contains the dialogue signal (silence on the
-  dialogue band — the deterministic §12 check).
+- Stems are rendered PRE-DUCK and PRE-loudnorm: a raw stem is one bus's own
+  contribution, so the four raw stems reconstruct ``RAW_STEM_SUM`` — and ``M&E``
+  equals the sum minus the dialogue bus — up to the DECLARED uniform sum
+  headroom (``level_safety.headroom_db``: the two sums carry a fixed
+  attenuation the raw single-bus stems do not, so the relation holds exactly
+  in the attenuated domain, never as a silent sample-identical claim).
+- M&E provably lacks the dialogue BUS: it is mixed from exactly the non-voice
+  buses; a ``volumedetect`` on it never contains the dialogue signal. This is a
+  BUS-exclusion guarantee, not a content-level proof (the claim is worded so).
 - Loudness TARGETS are not hardcoded: they come from the delivery profile
   (:func:`manju.build.delivery` optional fields). This module only MEASURES;
   it records the measurement as a fact and, when a profile target is declared,
@@ -51,23 +67,42 @@ SAMPLE_RATE = 48_000
 CHANNELS = 2
 _AFMT = f"aformat=sample_fmts=fltp:sample_rates={SAMPLE_RATE}:channel_layouts=stereo"
 
-# role -> the timeline buses it renders from (contract §10 stem taxonomy).
+# role -> the timeline buses it renders from (CLOSEOUT C5 ruling 2 honest stem
+# taxonomy). Each RAW_*_STEM is exactly ONE bus (ambient is symmetric with the
+# trio — named honestly, not hidden inside sfx); RAW_STEM_SUM is the raw four-bus
+# sum (the former FULL_MIX); M_AND_E_BUS_EXCLUSION_MASTER is the non-voice buses
+# (the former M_AND_E_MASTER — the name now STATES the bus-exclusion semantics).
 BUS_ROLES: dict[str, tuple[str, ...]] = {
-    "DIALOGUE_STEM": ("voice",),
-    "MUSIC_STEM": ("music",),
-    "SFX_STEM": ("sfx", "ambient"),
-    "FULL_MIX": ("voice", "music", "sfx", "ambient"),
-    "M_AND_E_MASTER": ("music", "sfx", "ambient"),
+    "RAW_DIALOGUE_STEM": ("voice",),
+    "RAW_MUSIC_STEM": ("music",),
+    "RAW_SFX_STEM": ("sfx",),
+    "RAW_AMBIENT_STEM": ("ambient",),
+    "RAW_STEM_SUM": ("voice", "music", "sfx", "ambient"),
+    "M_AND_E_BUS_EXCLUSION_MASTER": ("music", "sfx", "ambient"),
 }
 # manifest kind token <-> role (the export-centre row kind; §6.3 additive).
 ROLE_KIND = {
-    "DIALOGUE_STEM": "dialogue_stem",
-    "MUSIC_STEM": "music_stem",
-    "SFX_STEM": "sfx_stem",
-    "FULL_MIX": "full_mix",
-    "M_AND_E_MASTER": "mne",
+    "RAW_DIALOGUE_STEM": "dialogue_stem",
+    "RAW_MUSIC_STEM": "music_stem",
+    "RAW_SFX_STEM": "sfx_stem",
+    "RAW_AMBIENT_STEM": "ambient_stem",
+    "RAW_STEM_SUM": "stem_sum",
+    "M_AND_E_BUS_EXCLUSION_MASTER": "mne",
 }
 KIND_ROLE = {v: k for k, v in ROLE_KIND.items()}
+
+# Level safety (CLOSEOUT C5 ruling 3): the deliverable SUMS (RAW_STEM_SUM + the
+# M&E bus-exclusion master) get a fixed HEADROOM attenuation applied UNIFORMLY —
+# fixed gain preserves the relative levels between them (a raw single-bus stem is
+# never attenuated), so summing hot buses cannot silently clip. True peak is then
+# measured and any residual over-ceiling is a BLOCKING diagnostic (never a note).
+SUM_HEADROOM_DB = -6.0
+TRUE_PEAK_CEILING_DBTP = -1.0
+_SUM_LEVEL_SAFETY = {
+    "method": "headroom",
+    "headroom_db": SUM_HEADROOM_DB,
+    "ceiling_dbtp": TRUE_PEAK_CEILING_DBTP,
+}
 
 
 class MastersError(MediaError):
@@ -124,22 +159,38 @@ def _clip_chain(idx: int, clip: Any, label: str) -> str:
 
 
 def _render_bus(project: Project, clips: list[Any], duration_ms: int,
-                dest: Path) -> tuple[Path, list[str]]:
+                dest: Path) -> tuple[Path, list[str], dict[str, Any]]:
     """Render one bus's clips to ``dest`` (a real WAV of exactly ``duration_ms``).
-    Returns (path, source_hashes). An empty bus renders true digital silence."""
+    Returns (path, source_hashes, accounting) where accounting records
+    expected/resolved/dropped clips (CLOSEOUT C5 ruling 1). An empty bus (nothing
+    EXPECTED) renders true digital silence legitimately; a bus whose EXPECTED
+    source is unreadable renders silence too but is recorded as a DROP with a
+    reason so the master summing it can never be reported as verified."""
     dur_s = max(0.001, duration_ms / 1000.0)
     inputs: list[str] = []
     resolved: list[tuple[int, Any]] = []
     src_hashes: list[str] = []
+    dropped: list[dict[str, Any]] = []
     for clip in clips:
-        path = _resolve_source(project, getattr(clip, "source", "") or "")
+        source = getattr(clip, "source", "") or ""
+        path = _resolve_source(project, source)
         if path is None:
+            dropped.append({
+                "source": source,
+                "reason": ("expected source missing/unreadable/empty or escapes "
+                           "the project sandbox — digital silence substituted"),
+            })
             continue
         idx = len(resolved)
         resolved.append((idx, clip))
         inputs += ["-i", str(path)]
         src_hashes.append(hash_file(path))
 
+    accounting = {
+        "expected_clips": len(clips),
+        "resolved_clips": len(resolved),
+        "dropped_clips": dropped,
+    }
     with atomic_output(dest) as tmp:
         if not resolved:
             cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
@@ -164,23 +215,32 @@ def _render_bus(project: Project, clips: list[Any], duration_ms: int,
         if proc.returncode != 0 or not tmp.exists():
             tail = "\n".join((proc.stderr or "").splitlines()[-8:])
             raise MastersError(f"bus render failed for {dest.name}:\n{tail}")
-    return dest, src_hashes
+    return dest, src_hashes, accounting
 
 
-def _mix_files(sources: list[Path], duration_ms: int, dest: Path) -> Path:
-    """amix a set of already-rendered stems into a combined master (FULL_MIX /
-    SFX_STEM / M&E). normalize=0 so the sum is the literal bus sum."""
+def _mix_files(sources: list[Path], duration_ms: int, dest: Path, *,
+               headroom_db: float = 0.0) -> Path:
+    """amix a set of already-rendered stems into a combined master (RAW_STEM_SUM /
+    M&E). normalize=0 so the sum is the literal bus sum. ``headroom_db`` (< 0)
+    applies a fixed attenuation to the SUM — a uniform gain that preserves the
+    relative levels between sums while keeping hot buses from clipping (CLOSEOUT
+    C5 ruling 3). Raw single-bus stems pass ``headroom_db=0`` and are untouched."""
     dur_s = max(0.001, duration_ms / 1000.0)
     inputs: list[str] = []
     for s in sources:
         inputs += ["-i", str(s)]
+    vol = f",volume={headroom_db}dB" if headroom_db else ""
     with atomic_output(dest) as tmp:
-        if len(sources) == 1:
+        if len(sources) == 1 and not headroom_db:
             cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
                    "-i", str(sources[0]), "-c:a", "pcm_s16le", str(tmp)]
         else:
-            graph = (f"amix=inputs={len(sources)}:normalize=0:"
-                     f"dropout_transition=0,{_AFMT},atrim=duration={dur_s}[out]")
+            if len(sources) == 1:
+                graph = f"[0:a]{_AFMT}{vol},atrim=duration={dur_s}[out]"
+            else:
+                graph = (f"amix=inputs={len(sources)}:normalize=0:"
+                         f"dropout_transition=0,{_AFMT}{vol},"
+                         f"atrim=duration={dur_s}[out]")
             cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
                    *inputs, "-filter_complex", graph, "-map", "[out]",
                    "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
@@ -264,6 +324,34 @@ def _fl(v: Any) -> float | None:
     return round(f, 2) if math.isfinite(f) else None
 
 
+# --------------------------------------------------------------- level safety
+
+
+def _level_safety_diagnostics(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Scan the SUM masters (the only artifacts carrying a ``level_safety``
+    ceiling) and raise a BLOCKING ``AUDIO_CLIPPING`` diagnostic for any whose
+    MEASURED true peak still exceeds the ceiling after headroom (CLOSEOUT C5
+    ruling 3 — clipping/overs are a blocker, never a silent note). Raw single-bus
+    stems carry no ceiling and are intentionally allowed to be hot."""
+    diags: list[dict[str, Any]] = []
+    for a in artifacts:
+        ls = a.get("level_safety") or {}
+        ceiling = ls.get("ceiling_dbtp")
+        tp = (a.get("loudness") or {}).get("true_peak_dbtp")
+        if ceiling is None or tp is None:
+            continue
+        if tp > ceiling:
+            diags.append({
+                "code": "AUDIO_CLIPPING",
+                "severity": "blocking",
+                "role": a.get("role"),
+                "detail": (f"{a.get('role')} true peak {tp} dBTP exceeds the "
+                           f"{ceiling} dBTP ceiling after {ls.get('method')} — "
+                           "reduce level / add headroom before delivery"),
+            })
+    return diags
+
+
 # ---------------------------------------------------------------- public entry
 
 
@@ -284,12 +372,17 @@ def _timeline_digest(timeline: Any) -> str | None:
 def render_masters(project: Project, timeline: Any, *,
                    loudness_target_lufs: float | None = None,
                    true_peak_target_dbtp: float | None = None) -> dict[str, Any]:
-    """Render the full stem set + full mix + M&E for ``timeline`` and write the
-    ``masters.json`` index. Returns the index dict. All files are REAL WAVs.
+    """Render the raw stem set + raw stem sum + M&E bus-exclusion master for
+    ``timeline`` and write the ``masters.json`` index. Returns the index dict.
+    All files are REAL WAVs. The index records per-bus expected/resolved/dropped
+    clip accounting + master status (a dropped expected source blocks that
+    master), sum-master level safety + true-peak clipping diagnostics, and the
+    deliberately-absent PROGRAM_MASTER with its reason (CLOSEOUT C5).
 
     ``loudness_target_lufs`` (from the delivery profile) is recorded and, when
-    present, drives an extra loudnorm'd ``full_mix.loudnorm.wav`` master — the
-    target is the profile's, never this module's."""
+    present, drives an extra loudnorm'd sum master (a DISTINCT kind, never
+    conflated with the raw sum) — the target is the profile's, never this
+    module's."""
     tracks = getattr(timeline, "tracks", None)
 
     def _bus(name: str) -> list[Any]:
@@ -306,20 +399,30 @@ def render_masters(project: Project, timeline: Any, *,
     out = masters_dir(project)
     out.mkdir(parents=True, exist_ok=True)
 
-    # 1) render the four raw buses once each.
+    # 1) render the four raw buses once each, capturing per-bus clip accounting.
     bus_paths: dict[str, Path] = {}
     bus_src: dict[str, list[str]] = {}
+    bus_acct: dict[str, dict[str, Any]] = {}
     for name in ("voice", "music", "sfx", "ambient"):
-        p, hashes = _render_bus(project, _bus(name), duration_ms, out / f"_bus_{name}.wav")
+        p, hashes, acct = _render_bus(project, _bus(name), duration_ms,
+                                      out / f"_bus_{name}.wav")
         bus_paths[name] = p
         bus_src[name] = hashes
+        bus_acct[name] = acct
 
     tdigest = _timeline_digest(timeline)
     artifacts: list[dict[str, Any]] = []
 
-    def _emit(role: str, path: Path, buses: tuple[str, ...]) -> None:
+    def _emit(role: str, path: Path, buses: tuple[str, ...], *,
+              level_safety: dict[str, Any] | None = None) -> None:
         srcs = sorted({h for b in buses for h in bus_src.get(b, [])})
-        art = {
+        expected = sum(bus_acct[b]["expected_clips"] for b in buses)
+        resolved = sum(bus_acct[b]["resolved_clips"] for b in buses)
+        dropped = [dict(d, bus=b) for b in buses for d in bus_acct[b]["dropped_clips"]]
+        blocked = bool(dropped)   # any expected source dropped ⇒ master not verified
+        status = ("COMPLETE" if not blocked
+                  else ("BLOCKED" if resolved == 0 else "INCOMPLETE"))
+        art: dict[str, Any] = {
             "role": role,
             "kind": ROLE_KIND[role],
             "path": project.relpath(path),
@@ -333,43 +436,65 @@ def render_masters(project: Project, timeline: Any, *,
             "source_refs": srcs,
             "timeline_digest": tdigest,
             "loudness": measure_loudness(path),
-            "excludes_dialogue": "voice" not in buses,
+            "excludes_dialogue": "voice" not in buses,   # back-compat field
+            "excludes_voice_bus": "voice" not in buses,
+            "expected_clips": expected,
+            "resolved_clips": resolved,
+            "dropped_clips": dropped,
+            "status": status,
+            "blocked": blocked,
+            "is_program_master": False,
         }
+        if role == "M_AND_E_BUS_EXCLUSION_MASTER":
+            # the claim is BUS exclusion — never a content-level "no dialogue" proof
+            art["mne_claim"] = "bus_exclusion"
+            art["content_verified"] = False
+        if level_safety is not None:
+            art["level_safety"] = level_safety
         artifacts.append(art)
 
-    # 2) DIALOGUE / MUSIC stems are the raw buses; SFX = sfx+ambient; combined
-    #    masters are amix of the raw buses so the sum relationship is exact.
-    dialogue = out / "dialogue_stem.wav"
+    # 2) raw stems are single buses (ambient is its own stem, symmetric with the
+    #    trio); the sums are amix of the raw buses (headroom-protected) so the
+    #    raw-sum relationship holds while hot buses cannot silently clip.
+    dialogue = out / "raw_dialogue_stem.wav"
     _mix_files([bus_paths["voice"]], duration_ms, dialogue)
-    _emit("DIALOGUE_STEM", dialogue, ("voice",))
+    _emit("RAW_DIALOGUE_STEM", dialogue, ("voice",))
 
-    music = out / "music_stem.wav"
+    music = out / "raw_music_stem.wav"
     _mix_files([bus_paths["music"]], duration_ms, music)
-    _emit("MUSIC_STEM", music, ("music",))
+    _emit("RAW_MUSIC_STEM", music, ("music",))
 
-    sfx = out / "sfx_stem.wav"
-    _mix_files([bus_paths["sfx"], bus_paths["ambient"]], duration_ms, sfx)
-    _emit("SFX_STEM", sfx, ("sfx", "ambient"))
+    sfx = out / "raw_sfx_stem.wav"
+    _mix_files([bus_paths["sfx"]], duration_ms, sfx)
+    _emit("RAW_SFX_STEM", sfx, ("sfx",))
 
-    full = out / "full_mix.wav"
+    ambient = out / "raw_ambient_stem.wav"
+    _mix_files([bus_paths["ambient"]], duration_ms, ambient)
+    _emit("RAW_AMBIENT_STEM", ambient, ("ambient",))
+
+    stem_sum = out / "raw_stem_sum.wav"
     _mix_files([bus_paths[n] for n in ("voice", "music", "sfx", "ambient")],
-               duration_ms, full)
-    _emit("FULL_MIX", full, ("voice", "music", "sfx", "ambient"))
+               duration_ms, stem_sum, headroom_db=SUM_HEADROOM_DB)
+    _emit("RAW_STEM_SUM", stem_sum, ("voice", "music", "sfx", "ambient"),
+          level_safety=dict(_SUM_LEVEL_SAFETY))
 
-    mne = out / "mne_master.wav"
-    _mix_files([bus_paths[n] for n in ("music", "sfx", "ambient")], duration_ms, mne)
-    _emit("M_AND_E_MASTER", mne, ("music", "sfx", "ambient"))
+    mne = out / "mne_bus_exclusion_master.wav"
+    _mix_files([bus_paths[n] for n in ("music", "sfx", "ambient")], duration_ms,
+               mne, headroom_db=SUM_HEADROOM_DB)
+    _emit("M_AND_E_BUS_EXCLUSION_MASTER", mne, ("music", "sfx", "ambient"),
+          level_safety=dict(_SUM_LEVEL_SAFETY))
 
-    # 3) optional profile-targeted loudness-normalised full mix.
+    # 3) optional profile-targeted loudness-normalised sum — a DISTINCT kind,
+    #    never conflated with the raw sum (CLOSEOUT C5 ruling 2).
     loudnorm_master = None
     if loudness_target_lufs is not None:
         tp = true_peak_target_dbtp if true_peak_target_dbtp is not None else -1.0
-        ln = out / "full_mix.loudnorm.wav"
+        ln = out / "raw_stem_sum.loudnorm.wav"
         dur_s = max(0.001, duration_ms / 1000.0)
         ok = False
         with atomic_output(ln) as tmp:
             cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                   "-i", str(full),
+                   "-i", str(stem_sum),
                    "-af", f"loudnorm=I={loudness_target_lufs}:TP={tp}:LRA=11,"
                           f"atrim=duration={dur_s}",
                    "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
@@ -378,19 +503,46 @@ def render_masters(project: Project, timeline: Any, *,
             ok = proc.returncode == 0 and tmp.exists()
         if ok and ln.exists():
             loudnorm_master = {
-                "role": "FULL_MIX",
-                "kind": "full_mix_loudnorm",
+                "role": "RAW_STEM_SUM",
+                "kind": "stem_sum_loudnorm",
                 "path": project.relpath(ln),
                 "sha256": hash_file(ln),
                 "bytes": ln.stat().st_size,
                 "target_lufs": loudness_target_lufs,
                 "target_true_peak_dbtp": tp,
                 "loudness": measure_loudness(ln),
+                "is_program_master": False,
             }
 
     # 4) drop the private per-bus temporaries (they are not deliverables).
     for p in bus_paths.values():
         p.unlink(missing_ok=True)
+
+    # 5) index-level roll-ups: dropped clips, level-safety/clipping diagnostics,
+    #    source-incompleteness blockers, and the deliberately-absent PROGRAM_MASTER.
+    dropped_index = [dict(d, bus=name)
+                     for name in ("voice", "music", "sfx", "ambient")
+                     for d in bus_acct[name]["dropped_clips"]]
+    diagnostics = _level_safety_diagnostics(artifacts)
+    for a in artifacts:
+        if a.get("blocked"):
+            diagnostics.append({
+                "code": "MASTER_SOURCE_INCOMPLETE",
+                "severity": "blocking",
+                "role": a["role"],
+                "detail": (f"{a['role']} has {len(a['dropped_clips'])} dropped "
+                           "expected source(s); digital silence was substituted — "
+                           "the master is INCOMPLETE, never verified"),
+            })
+    roles_absent = [{
+        "role": "PROGRAM_MASTER",
+        "reason": ("no PROGRAM_MASTER emitted: this module renders RAW stems + a "
+                   "raw sum PRE-duck / PRE-loudnorm and does NOT reuse the final "
+                   "program mixer's ducking/loudness/automation chain "
+                   "(media/render.py). The final's program audio is lossy AAC "
+                   "muxed into the mp4, so no extractable, hash-verifiable program "
+                   "master exists here — a raw sum must not masquerade as one"),
+    }]
 
     index = {
         "schema": "manju.audio-masters/v1",
@@ -399,8 +551,13 @@ def render_masters(project: Project, timeline: Any, *,
         "sample_rate": SAMPLE_RATE,
         "channels": CHANNELS,
         "loudness_target_lufs": loudness_target_lufs,
+        "level_safety": {"sum_headroom_db": SUM_HEADROOM_DB,
+                         "true_peak_ceiling_dbtp": TRUE_PEAK_CEILING_DBTP},
         "artifacts": artifacts,
         "loudnorm_master": loudnorm_master,
+        "dropped_clips": dropped_index,
+        "roles_absent": roles_absent,
+        "diagnostics": diagnostics,
     }
     index["index_digest"] = hash_value({"a": artifacts, "t": tdigest})
     with atomic_output(index_path(project)) as tmp:

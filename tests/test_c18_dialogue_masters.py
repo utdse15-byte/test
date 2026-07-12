@@ -64,15 +64,19 @@ def _audio_project(tmp_path: Path, *, with_sfx: bool = True) -> tuple[Project, T
 
 
 def test_stems_render_with_full_mix_and_duration_sanity(tmp_path):
-    """§12: stems 与 full mix 相加关系/时长. Every stem + the full mix + M&E render
-    as real files of the SAME duration; FULL_MIX = sum of the bus stems."""
+    """§12: stems 与 raw sum 相加关系/时长. Every raw stem + the raw stem sum + M&E
+    render as real files of the SAME duration; RAW_STEM_SUM = sum of the raw
+    buses. (CLOSEOUT C5 ruling 2 rename: DIALOGUE/MUSIC/SFX/FULL_MIX/M_AND_E →
+    RAW_*_STEM / RAW_STEM_SUM / M_AND_E_BUS_EXCLUSION_MASTER, ambient split out as
+    its own RAW_AMBIENT_STEM.)"""
     from manju.media import masters as M
 
     project, tl = _audio_project(tmp_path)
     index = M.render_masters(project, tl)
     roles = {a["role"]: a for a in index["artifacts"]}
-    assert set(roles) == {"DIALOGUE_STEM", "MUSIC_STEM", "SFX_STEM", "FULL_MIX",
-                          "M_AND_E_MASTER"}
+    assert set(roles) == {"RAW_DIALOGUE_STEM", "RAW_MUSIC_STEM", "RAW_SFX_STEM",
+                          "RAW_AMBIENT_STEM", "RAW_STEM_SUM",
+                          "M_AND_E_BUS_EXCLUSION_MASTER"}
     for a in roles.values():
         p = project.root / a["path"]
         assert p.exists() and p.stat().st_size > 0
@@ -90,13 +94,13 @@ def test_mne_master_provably_lacks_dialogue(tmp_path):
     index = M.render_masters(project, tl)
     roles = {a["role"]: a for a in index["artifacts"]}
 
-    dlg = M.volume_stats(project.root / roles["DIALOGUE_STEM"]["path"])
-    mne = M.volume_stats(project.root / roles["M_AND_E_MASTER"]["path"])
-    full = M.volume_stats(project.root / roles["FULL_MIX"]["path"])
+    dlg = M.volume_stats(project.root / roles["RAW_DIALOGUE_STEM"]["path"])
+    mne = M.volume_stats(project.root / roles["M_AND_E_BUS_EXCLUSION_MASTER"]["path"])
+    full = M.volume_stats(project.root / roles["RAW_STEM_SUM"]["path"])
 
-    assert roles["M_AND_E_MASTER"]["excludes_dialogue"] is True
-    assert "voice" not in roles["M_AND_E_MASTER"]["buses"]
-    assert roles["DIALOGUE_STEM"]["excludes_dialogue"] is False
+    assert roles["M_AND_E_BUS_EXCLUSION_MASTER"]["excludes_dialogue"] is True
+    assert "voice" not in roles["M_AND_E_BUS_EXCLUSION_MASTER"]["buses"]
+    assert roles["RAW_DIALOGUE_STEM"]["excludes_dialogue"] is False
     # the dialogue stem is real audio, not silence
     assert dlg["mean_volume"] is not None and dlg["mean_volume"] > -80.0
     # removing the (loudest) dialogue bus drops the peak — M&E ≠ full mix
@@ -141,8 +145,9 @@ def test_masters_fill_manifest_roles_with_technical_verification(tmp_path):
     M.render_masters(project, tl)
     man = D.build_manifest(project, "master")
     roles = {a["role"]: a for a in man["artifacts"]}
-    for role in ("DIALOGUE_STEM", "MUSIC_STEM", "SFX_STEM", "FULL_MIX",
-                 "M_AND_E_MASTER"):
+    for role in ("RAW_DIALOGUE_STEM", "RAW_MUSIC_STEM", "RAW_SFX_STEM",
+                 "RAW_AMBIENT_STEM", "RAW_STEM_SUM",
+                 "M_AND_E_BUS_EXCLUSION_MASTER"):
         art = roles[role]
         assert art["state"] == "TECHNICALLY_VERIFIED"
         assert art["sha256"] and art["bytes"]
@@ -165,7 +170,8 @@ def test_master_stale_when_timeline_semantics_change(tmp_path):
         a["timeline_digest"] = "sha256:staleXXXX"
     idx.write_text(json.dumps(data))
     rows = {r.kind: r for r in ES.deliverables(project)}
-    assert rows["full_mix"].freshness.value == "stale"
+    # CLOSEOUT C5 ruling 2 rename: the raw four-bus sum's kind is now 'stem_sum'.
+    assert rows["stem_sum"].freshness.value == "stale"
 
 
 # ==================================================================== WP7 VTT

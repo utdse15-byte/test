@@ -537,8 +537,10 @@ def test_dp_known_roles_and_the_textless_honest_gap():
     for role in case["known_roles_must_contain"]:
         assert role in KNOWN_ROLES
     # the honest gap the case records: TEXTLESS_MASTER is a recognised role that
-    # the masters renderer does NOT produce (M&E it does).
-    assert "M_AND_E_MASTER" in ROLE_KIND
+    # the masters renderer does NOT produce (M&E it does). CLOSEOUT C5 ruling 2
+    # rename: that M&E role is now M_AND_E_BUS_EXCLUSION_MASTER (its name states
+    # the bus-exclusion claim); both old names stay in KNOWN_ROLES above.
+    assert "M_AND_E_BUS_EXCLUSION_MASTER" in ROLE_KIND
     assert "TEXTLESS_MASTER" not in ROLE_KIND
 
 

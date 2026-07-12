@@ -84,11 +84,16 @@ _ROLE_BY_KIND = {
     "capcut": "NLE_CAPCUT",
     "cover": "POSTER",
     "teaser": "TEASER",
-    "dialogue_stem": "DIALOGUE_STEM",
-    "music_stem": "MUSIC_STEM",
-    "sfx_stem": "SFX_STEM",
-    "full_mix": "FULL_MIX",
-    "mne": "M_AND_E_MASTER",
+    # CLOSEOUT C5 ruling 2 honest audio-master taxonomy (kinds map onto the RAW_*
+    # roles the masters renderer now emits). ``full_mix`` is kept as a back-compat
+    # alias onto RAW_STEM_SUM so an OLD on-disk index never loses its role.
+    "dialogue_stem": "RAW_DIALOGUE_STEM",
+    "music_stem": "RAW_MUSIC_STEM",
+    "sfx_stem": "RAW_SFX_STEM",
+    "ambient_stem": "RAW_AMBIENT_STEM",
+    "stem_sum": "RAW_STEM_SUM",
+    "full_mix": "RAW_STEM_SUM",
+    "mne": "M_AND_E_BUS_EXCLUSION_MASTER",
 }
 _ARTIFACT_ID_BY_KIND = {
     "final": "master:main",
@@ -104,8 +109,10 @@ _ARTIFACT_ID_BY_KIND = {
     "dialogue_stem": "audio:dialogue_stem",
     "music_stem": "audio:music_stem",
     "sfx_stem": "audio:sfx_stem",
-    "full_mix": "audio:full_mix",
-    "mne": "audio:mne_master",
+    "ambient_stem": "audio:ambient_stem",
+    "stem_sum": "audio:stem_sum",
+    "full_mix": "audio:stem_sum",
+    "mne": "audio:mne_bus_exclusion_master",
 }
 _MIME_BY_KIND = {
     "final": "video/mp4",
@@ -121,12 +128,18 @@ _MIME_BY_KIND = {
     "dialogue_stem": "audio/wav",
     "music_stem": "audio/wav",
     "sfx_stem": "audio/wav",
+    "ambient_stem": "audio/wav",
+    "stem_sum": "audio/wav",
     "full_mix": "audio/wav",
     "mne": "audio/wav",
 }
-# roles whose extra technical facts (loudness, bus source hashes) live in the
-# exports/masters index and are folded onto the manifest artifact row.
+# roles whose extra technical facts (loudness, bus source hashes, clip
+# accounting, level safety, M&E claim) live in the exports/masters index and are
+# folded onto the manifest artifact row (CLOSEOUT C5 honest taxonomy; the old
+# names are kept so a stale on-disk index still folds).
 _MASTERS_ROLES = frozenset({
+    "RAW_DIALOGUE_STEM", "RAW_MUSIC_STEM", "RAW_SFX_STEM", "RAW_AMBIENT_STEM",
+    "RAW_STEM_SUM", "M_AND_E_BUS_EXCLUSION_MASTER",
     "DIALOGUE_STEM", "MUSIC_STEM", "SFX_STEM", "FULL_MIX", "M_AND_E_MASTER"})
 # exportstatus Freshness value → manifest artifact state.
 _STATE_BY_FRESHNESS = {
@@ -137,11 +150,15 @@ _STATE_BY_FRESHNESS = {
     "problematic": INVALID,
     "needs_manual": GENERATED,
 }
-# All roles the schema RECOGNISES (allow-set is additive; §6.3).
+# All roles the schema RECOGNISES (allow-set is additive; §6.3). The CLOSEOUT C5
+# honest audio-master names are added; the OLD names stay recognised so platform
+# profiles / calibration corpora referencing them keep validating (no role loss).
 KNOWN_ROLES = frozenset({
     "MASTER_VIDEO", "PROXY_VIDEO", "TEXTLESS_MASTER", "M_AND_E_MASTER",
     "CAPTIONS_SRT", "CAPTIONS_ASS", "CAPTIONS_VTT",
     "DIALOGUE_STEM", "MUSIC_STEM", "SFX_STEM", "FULL_MIX",
+    "RAW_DIALOGUE_STEM", "RAW_MUSIC_STEM", "RAW_SFX_STEM", "RAW_AMBIENT_STEM",
+    "RAW_STEM_SUM", "M_AND_E_BUS_EXCLUSION_MASTER",
     "POSTER", "THUMBNAIL", "TEASER",
     "NLE_OTIO", "NLE_JIANYING", "NLE_CAPCUT",
     "LOCALIZATION_SOURCE", "PLATFORM_METADATA", "OTHER_DECLARED",
@@ -407,7 +424,19 @@ def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | No
                 "duration_ms": fact.get("duration_ms"),
                 "buses": fact.get("buses"),
                 "excludes_dialogue": fact.get("excludes_dialogue"),
+                "excludes_voice_bus": fact.get("excludes_voice_bus"),
+                "mne_claim": fact.get("mne_claim"),          # bus_exclusion, never content
+                "status": fact.get("status"),
+                "blocked": fact.get("blocked"),
+                "dropped_clips": fact.get("dropped_clips") or [],
+                "level_safety": fact.get("level_safety"),
             }
+            # CLOSEOUT C5 ruling 1: a master with a dropped expected source can
+            # never be 'technically verified' — digital silence never satisfies
+            # verification. Downgrade the state and fail the technical axis.
+            if fact.get("blocked"):
+                art["state"] = BLOCKED
+                art["verification"]["technical"] = "FAILED"
     return art
 
 

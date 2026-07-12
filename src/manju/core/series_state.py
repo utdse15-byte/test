@@ -171,13 +171,12 @@ def variant_diagnostics(series: Series) -> list[dict[str, Any]]:
 
 def active_variant(entry: dict[str, Any] | None, eid: str,
                    order: dict[str, int]) -> dict[str, Any] | None:
-    """The variant ACTIVE for ``eid``, resolved deterministically: among the
-    variants whose [valid_from, valid_to] range contains the episode, the one
-    with the LATEST valid_from wins (the most recently-started state); a tie
-    breaks lexicographically on variant_id (stable). Contradictions are the
-    CHECKER's business — resolution never guesses between conflicting values,
-    it just picks the deterministic winner and the diagnostics say if that
-    winner was ambiguous."""
+    """LEGACY single-variant accessor (kept for callers that want one
+    representative variant). It returns the live variant with the LATEST
+    valid_from (tie → lexicographic variant_id). It is NO LONGER the resolution
+    authority: per contract §5 the per-episode resolution is a stable MERGE of
+    ALL live variants (:func:`resolve_variants` / :func:`resolve_entry_for_episode`),
+    never a single pick."""
     idx = order.get(eid)
     if idx is None:
         return None
@@ -197,35 +196,98 @@ def active_variant(entry: dict[str, Any] | None, eid: str,
     return live[-1][2]
 
 
+def resolve_variants(entry: dict[str, Any] | None, eid: str,
+                     order: dict[str, int]) -> dict[str, Any]:
+    """The deterministic MERGE of every variant LIVE at episode ``eid`` (contract
+    §5 / addendum C4 ruling 1). All live variants (range contains ``eid``) merge
+    in stable ``variant_id`` order:
+
+    - disjoint ``changes`` fields COEXIST;
+    - the same field set to the SAME value dedups;
+    - the same field set to DIFFERENT values is a BLOCKING conflict that is NEVER
+      auto-resolved (the fix is to correct the YAML, never to pick a winner).
+
+    Returns ``active_variant_ids`` / ``merged_changes`` (conflict-free overlay) /
+    ``field_sources`` (which variant each effective field came from) /
+    ``conflicts``. This is exactly the surface :func:`variant_diagnostics`
+    validates, so checker and runtime can never disagree (the split the contract
+    forbids — 'diagnostics allow disjoint overlap but runtime picks one' — is
+    closed here)."""
+    idx = order.get(eid)
+    live: list[tuple[str, dict[str, Any]]] = []
+    if idx is not None:
+        for v in variants_of(entry):
+            vid = str(v.get("variant_id") or "").strip()
+            if not vid:
+                continue
+            lo, hi = _range_indices(v, order)
+            if lo is None or hi is None or lo > hi:
+                continue
+            if lo <= idx <= hi:
+                live.append((vid, v))
+    live.sort(key=lambda t: t[0])   # stable, YAML-declaration-order independent
+
+    per_field: dict[str, list[tuple[str, Any]]] = {}
+    for vid, v in live:
+        changes = v.get("changes")
+        if not isinstance(changes, dict):
+            continue
+        for field, value in changes.items():
+            per_field.setdefault(str(field), []).append((vid, value))
+
+    merged: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+    conflicts: list[dict[str, Any]] = []
+    for field in sorted(per_field):
+        pairs = per_field[field]
+        distinct: list[Any] = []
+        for _vid, value in pairs:
+            if value not in distinct:
+                distinct.append(value)
+        if len(distinct) == 1:          # unanimous (disjoint or same-value dedup)
+            merged[field] = distinct[0]
+            sources[field] = pairs[0][0]   # smallest variant_id (stable order)
+        else:                           # same field, different values → blocking
+            conflicts.append({
+                "field": field,
+                "variants": sorted({vid for vid, _ in pairs}),
+                "values": distinct,
+            })
+    return {
+        "active_variant_ids": [vid for vid, _ in live],
+        "merged_changes": merged,
+        "field_sources": sources,
+        "conflicts": conflicts,
+    }
+
+
 def resolve_entry_for_episode(entry: dict[str, Any], eid: str,
                               order: dict[str, int]) -> dict[str, Any]:
     """A DERIVED per-episode view of one canonical entry: canonical fields with
-    the active variant's ``changes`` overlaid. Read-only — the canonical entry
-    is never mutated; the result is labelled by layer so canonical and variant
-    facts can never be confused (§3), and TRANSIENT state is deliberately not
-    representable here (it lives in episode source + accepted observations)."""
-    variant = active_variant(entry, eid, order)
+    the MERGE of every live variant's ``changes`` overlaid (:func:`resolve_variants`).
+    Read-only — the canonical entry is never mutated; the result is labelled by
+    layer so canonical and variant facts can never be confused (§3), and TRANSIENT
+    state is deliberately not representable here (it lives in episode source +
+    accepted observations). A contradicted field is NEVER folded into
+    ``merged_changes``/``effective``; it stays in ``conflicts`` until the YAML is
+    fixed."""
+    merge = resolve_variants(entry, eid, order)
+    active = merge["active_variant_ids"]
     canonical = {k: v for k, v in (entry or {}).items() if k != "variants"}
     effective = dict(canonical)
-    overlay = {}
-    if variant is not None and isinstance(variant.get("changes"), dict):
-        overlay = dict(variant["changes"])
-        effective.update(overlay)
+    effective.update(merge["merged_changes"])
     return {
         "episode": eid,
-        "layer": _LAYER_VARIANT if variant is not None else _LAYER_CANONICAL,
+        "layer": _LAYER_VARIANT if active else _LAYER_CANONICAL,
         "canonical": canonical,
-        "variant": None if variant is None else {
-            "variant_id": variant.get("variant_id"),
-            "valid_from_episode": variant.get("valid_from_episode"),
-            "valid_to_episode": variant.get("valid_to_episode"),
-            "changes": overlay,
-            "reference_roles": list(variant.get("reference_roles") or []),
-            "voice_profile_ref": variant.get("voice_profile_ref"),
-        },
+        "active_variant_ids": active,
+        "merged_changes": merge["merged_changes"],
+        "field_sources": merge["field_sources"],
+        "conflicts": merge["conflicts"],
         "effective": effective,
         "note": "transient state 不在此视图(它只存在于分集 source 与 accepted "
-                "observations,绝不写回 canonical)",
+                "observations,绝不写回 canonical);冲突字段留在 conflicts,"
+                "绝不自动择一",
     }
 
 
@@ -246,6 +308,19 @@ def load_world_state(series: Series) -> list[dict[str, Any]]:
     data = read_yaml(path) or {}
     entries = data.get("entries") if isinstance(data, dict) else data
     return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+
+
+def _entry_scope(eff: Any) -> tuple[str | None, str | None]:
+    """The (scene, shot) scope of a world-state entry's ``effective`` block,
+    normalized to a string or None. Neither present ⇒ EPISODE scope; scene only
+    ⇒ SCENE scope; shot present ⇒ SHOT scope (precedence shot > scene > episode).
+    Backward compatible: an entry that predates scoping (no scene/shot) reads
+    exactly as episode scope, i.e. unchanged."""
+    if not isinstance(eff, dict):
+        return None, None
+    scene = eff.get("scene")
+    shot = eff.get("shot")
+    return (str(scene) if scene else None, str(shot) if shot else None)
 
 
 def world_state_diagnostics(series: Series,
@@ -288,37 +363,68 @@ def world_state_diagnostics(series: Series,
             diags.append({"code": "UNKNOWN_EPISODE", "entry": entry_id,
                           "detail": f"effective.episode {eid!r} 未注册"})
             continue
+        # scope (episode/scene/shot) is part of the conflict identity: the SAME
+        # subject field set differently in two DIFFERENT scopes (e.g. two scenes,
+        # or a shot override vs the episode default) is NOT a contradiction — only
+        # same subject+field+episode+scene+shot with different values is.
+        scene, shot = _entry_scope(eff)
         change = e.get("change") or {}
         if isinstance(change, dict):
             for field, value in change.items():
-                key = (subject, str(field), eid)
+                key = (subject, str(field), eid, scene, shot)
                 if key in by_key and by_key[key] != value:
                     diags.append({"code": "STATE_CONFLICT", "entry": entry_id,
                                   "subject": subject, "field": str(field),
-                                  "episode": eid})
+                                  "episode": eid, "scene": scene, "shot": shot})
                 by_key.setdefault(key, value)
     return diags
 
 
-def world_state_at(series: Series, eid: str) -> dict[str, Any]:
-    """DERIVED world view at (through) episode ``eid``: entries whose effective
-    episode is at or before it, applied in (episode order, file order). Pure
-    read — known/unknown flags carried verbatim, nothing promoted anywhere."""
+def world_state_at(series: Series, eid: str, *, scene: str | None = None,
+                   shot: str | None = None) -> dict[str, Any]:
+    """DERIVED world view at (through) episode ``eid``, optionally NARROWED to a
+    ``scene`` and/or ``shot`` (contract §5 / addendum C4 ruling 2). Each entry
+    carries an episode/scene/shot scope; precedence is shot > scene > episode and
+    a narrower scope NEVER leaks into a broader view:
+
+    - EPISODE-scope entries (no scene/shot) always apply through ``eid``;
+    - SCENE-scope entries apply only when their scene matches the queried
+      ``scene`` (invisible in the episode-wide view);
+    - SHOT-scope entries apply only when their shot matches the queried ``shot``.
+
+    Entries apply in (scope-rank, episode order, file order) so a narrower scope
+    deterministically overrides a broader one. Pure read — known/unknown flags
+    and the SOURCE scope are carried verbatim; nothing is promoted anywhere.
+    Backward compatible: with no scene/shot queried, only episode-scope entries
+    apply — identical to the pre-scoping behaviour for episode-only data."""
     order = episode_order(series)
     idx = order.get(eid)
+    if idx is None:
+        return {"episode": eid, "scene": scene, "shot": shot, "state": {},
+                "applied_entries": [], "error": f"episode {eid!r} 未注册"}
     state: dict[str, dict[str, Any]] = {}
     applied: list[str] = []
-    if idx is None:
-        return {"episode": eid, "state": {}, "applied_entries": [],
-                "error": f"episode {eid!r} 未注册"}
-    ranked = []
+    ranked: list[tuple[int, int, int, str, dict[str, Any]]] = []
     for pos, e in enumerate(load_world_state(series)):
         eff = e.get("effective") or {}
         e_idx = order.get(str(eff.get("episode") or "")) if isinstance(eff, dict) else None
         if e_idx is None or e_idx > idx:
             continue
-        ranked.append((e_idx, pos, e))
-    for _e_idx, _pos, e in sorted(ranked, key=lambda t: (t[0], t[1])):
+        e_scene, e_shot = _entry_scope(eff)
+        if e_shot is not None:                       # SHOT scope
+            if shot is None or e_shot != shot:
+                continue
+            if e_scene is not None and scene is not None and e_scene != scene:
+                continue
+            rank, e_scope = 2, "shot"
+        elif e_scene is not None:                    # SCENE scope
+            if scene is None or e_scene != scene:
+                continue
+            rank, e_scope = 1, "scene"
+        else:                                        # EPISODE scope
+            rank, e_scope = 0, "episode"
+        ranked.append((rank, e_idx, pos, e_scope, e))
+    for _rank, _e_idx, _pos, e_scope, e in sorted(ranked, key=lambda t: (t[0], t[1], t[2])):
         subject = str(e.get("subject") or "")
         change = e.get("change") or {}
         if not subject or not isinstance(change, dict):
@@ -327,9 +433,10 @@ def world_state_at(series: Series, eid: str) -> dict[str, Any]:
         for field, value in change.items():
             slot[str(field)] = {"value": value,
                                 "known": bool(e.get("known", True)),
-                                "entry": e.get("id")}
+                                "entry": e.get("id"), "scope": e_scope}
         applied.append(str(e.get("id") or ""))
-    return {"episode": eid, "state": state, "applied_entries": applied}
+    return {"episode": eid, "scene": scene, "shot": shot, "state": state,
+            "applied_entries": applied}
 
 
 # ----------------------------------------------------------- continuity packet
@@ -405,20 +512,30 @@ def _episode_health(project: Any) -> dict[str, Any]:
     # unresolved paid submissions / incomplete runs — the P0 SQLite projection.
     # The DB is a REBUILDABLE projection: absent (deleted) is explainable, not
     # an error and never fabricated as zero (§10: 删除 SQLite 可解释).
+    # Tri-state (addendum C4 ruling 3): VERIFIED_NONE (readable, zero unresolved)
+    # / VERIFIED_UNRESOLVED (readable, >0) / UNAVAILABLE (projection missing or
+    # unreadable). UNAVAILABLE is honest, not fabricated as zero — and, being
+    # unverifiable, it forces the season not-ready (season_health below).
     db = project.root / ".manju" / "state.sqlite"
     if not db.exists():
         out["unresolved_submissions"] = None
+        out["unresolved_status"] = "UNAVAILABLE"
         out["unresolved_note"] = ("runtime DB 不存在(可重建投影;删除即无未决"
-                                  "记录可读,不臆造为 0)")
+                                  "记录可读,不臆造为 0;状态 UNAVAILABLE 不可核实"
+                                  "即未就绪)")
     else:
         try:
             from ..runtime.state import RuntimeState
 
-            out["unresolved_submissions"] = len(
-                RuntimeState(project.root).unresolved_submissions())
+            n = len(RuntimeState(project.root).unresolved_submissions())
+            out["unresolved_submissions"] = n
+            out["unresolved_status"] = "VERIFIED_UNRESOLVED" if n else "VERIFIED_NONE"
         except Exception as exc:
             out["unresolved_submissions"] = None
-            out["unresolved_note"] = str(exc)[:160]
+            out["unresolved_status"] = "UNAVAILABLE"
+            out["unresolved_note"] = ("runtime 投影不可读(可重建;不臆造为 0;"
+                                      "状态 UNAVAILABLE 不可核实即未就绪):"
+                                      + str(exc)[:120])
 
     # 15 drift trend — verbatim summary, optional.
     try:
@@ -494,9 +611,16 @@ def season_health(series: Series) -> dict[str, Any]:
                 "blockers": release.get("blocker_codes") or
                             ([release["error"]] if release.get("error") else []),
             })
-        if row.get("unresolved_submissions"):
+        u_status = row.get("unresolved_status")
+        if u_status == "VERIFIED_UNRESOLVED":
             not_ready.append({"id": ref.id, "reason": "unresolved paid submissions",
-                              "count": row["unresolved_submissions"]})
+                              "count": row.get("unresolved_submissions")})
+        elif u_status == "UNAVAILABLE":
+            # a projection we cannot read cannot prove zero unresolved paid work —
+            # fail closed (addendum C4 ruling 3): UNAVAILABLE ⇒ season not ready.
+            not_ready.append({"id": ref.id,
+                              "reason": "unresolved submissions unverifiable "
+                                        "(runtime projection unavailable)"})
 
     v_diags = variant_diagnostics(series)
     w_diags = world_state_diagnostics(series)

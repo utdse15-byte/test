@@ -78,7 +78,13 @@ def test_variant_episode_range_resolution(tmp_series):
     assert base["layer"] == "canonical" and "injury" not in base["effective"]
 
 
-def test_variant_latest_from_wins_deterministically(tmp_series):
+def test_variant_overlap_merges_or_conflicts_never_single_pick(tmp_series):
+    """CLOSEOUT C4 ruling 1 (PIN FLIPPED): per-episode resolution is a stable
+    MERGE of ALL live variants, never the forbidden 'latest valid_from wins'
+    single pick (contract §5 bans that runtime behaviour). Where only one variant
+    is live the merge is clean; where two set the SAME field it is a BLOCKING
+    conflict, never a silent winner. (Was test_variant_latest_from_wins_
+    deterministically — same fixture, assertions flipped to the merge model.)"""
     from manju.core import series_state as S
 
     entry = {
@@ -90,8 +96,15 @@ def test_variant_latest_from_wins_deterministically(tmp_series):
         ],
     }
     order = S.episode_order(tmp_series)
-    assert S.active_variant(entry, "E03", order)["variant_id"] == "b_later"
-    assert S.active_variant(entry, "E01", order)["variant_id"] == "a_base"
+    # E01: only a_base is live → clean single-source merge, no conflict
+    r1 = S.resolve_variants(entry, "E01", order)
+    assert r1["merged_changes"] == {"hair": "长发"}
+    assert r1["field_sources"]["hair"] == "a_base" and r1["conflicts"] == []
+    # E03: both live on the SAME field → blocking conflict, never a silent winner
+    r3 = S.resolve_variants(entry, "E03", order)
+    assert r3["merged_changes"] == {}
+    assert any(c["field"] == "hair" for c in r3["conflicts"])
+    assert set(r3["active_variant_ids"]) == {"a_base", "b_later"}
 
 
 # ----------------------------------------------- §10.3 overlap / contradiction
