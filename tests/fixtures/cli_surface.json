@@ -154,6 +154,10 @@
     "exists": true,
     "params": []
   },
+  "help-workflow": {
+    "exists": true,
+    "params": []
+  },
   "history": {
     "exists": true,
     "params": []

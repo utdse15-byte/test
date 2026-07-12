@@ -4160,6 +4160,54 @@ def toolchain(
         typer.secho(f"已写入 / written: {payload['written']}", fg=typer.colors.GREEN)
 
 
+# ----------------------------------------------------------- help-workflow
+
+
+@app.command("help-workflow")
+def help_workflow(
+    name: Optional[str] = typer.Argument(
+        None, help="workflow id(如 qc-repair);缺省列出全部工作流"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """我想做 X,该按什么顺序敲哪些命令?Task-oriented navigation (roadmap §8.3).
+
+    Read-only and project-free: renders the curated WORKFLOWS table from
+    cli_workflows.py — a cli-side dict, NOT a new fact source, and its --json
+    is plain CLI JSON (no manju.*/vN schema). Every command a step names must
+    exist in this app, test-enforced against the live typer registry
+    (tests/test_fp_workflows.py — the same mechanism that keeps the README
+    command table honest). No name ⇒ list workflows (title + when); with a
+    name ⇒ the steps table with a one-line why per command."""
+    from .cli_workflows import (WORKFLOWS, detail_payload, list_payload,
+                                render_detail, render_list)
+
+    if name is None:
+        if as_json:
+            _emit(list_payload(), True)
+            return
+        typer.secho("工作流 / workflows — manju help-workflow <name> 看步骤",
+                    fg=typer.colors.CYAN)
+        for line in render_list():
+            typer.echo(line)
+        return
+    if name not in WORKFLOWS:
+        valid = sorted(WORKFLOWS)
+        if as_json:
+            typer.echo(json.dumps(
+                {"error": f"unknown workflow: {name}", "code": "unknown_workflow",
+                 "valid_workflows": valid}, ensure_ascii=False))
+        else:
+            typer.secho(f"未知工作流 / unknown workflow: {name}",
+                        fg=typer.colors.RED, err=True)
+            typer.echo("可用 / valid: " + ", ".join(valid))
+        raise typer.Exit(1)
+    if as_json:
+        _emit(detail_payload(name), True)
+        return
+    for line in render_detail(name):
+        typer.echo(line)
+
+
 # ----------------------------------------------------------------- assets
 
 assets_app = typer.Typer(no_args_is_help=False,
