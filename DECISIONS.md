@@ -1142,3 +1142,136 @@ spy; kenburns key coverage catch); S5 xplat informational CI `1d393c5`
 (orchestrator-executed; allow-fail; the ubuntu gate untouched).
 
 Spawn collapses #10–#12 recovered by resume. Suite: 3478 → 3653 passed / 13 skipped / 0 failed (definitive quiescent run); snapshot 121 → 125.
+
+## 31. T/U wave: pro compare, FCPXML, plugin freeze, locale TTML, BagIt (2026-07-12)
+
+The 7-hour window's second half, straight after #30's close. Parallel agent
+loops (T1/T2 then U1/U2); the plugin freeze and every registry/README edit
+orchestrator-executed. Items 2/9/11 recorded OUT with reasons; with them,
+all twelve roadmap items are dispositioned.
+
+- Plugin API freeze (item 10) `6369034`+`4eef882`:
+  manju.provider-plugin-api/v1 registered stable; the PLUGIN_API_CONTRACT
+  constant is the ONLY src change (zero behavior). 14 surface pins:
+  __all__ floor; FailureKind str-enum value stability; GenerationRequest
+  head-field law + the ENFORCED additive law (every post-head field must
+  carry a default — was comment discipline, now teeth); ProviderFailure /
+  CloudProvider / registry entry-point signatures (knobs keyword-only-with-
+  default, checked generically for future knobs); minimal-subclass and
+  cloud-trio instantiability proofs; the two protective manifest rules
+  (broken adapter + builtin shadowing — sandbox-verified BEFORE pinning);
+  chain-terminal pin; and the follow-up pin of the cls(manifest) adapter
+  convention + the module:Class happy path end-to-end (a real out-of-tree
+  module slots into fallback chains via declared capability). Deliberately
+  NO marketplace/discovery — the item's own exclusion.
+- T1 board professional compare (item 6) `2225e15`: wipe / difference /
+  frame-lock stepping / cut-boundary view as read-only EXTENSIONS of the
+  existing compare (7 legacy markers pinned; static board byte-identical
+  with the new markers asserted absent; tree-hash read-only proof). The
+  difference canvas is a VIEW with the always-honest "amplified ×N — not
+  raw pixel deltas" label (stated ×1 fallback); stepping carries the EXACT
+  den/num period from the typed rate resolvers, honestly disabled when
+  unresolvable; boundary stills ride the EXISTING .manju/frames
+  content-addressed cache — the past-EOF sentinel exploits the round-W
+  clamp-before-key (verified at frames.py:151-155); one server allowlist
+  entry (.manju/frames/), truth files re-pinned 403.
+- The T1 pin violation + fix `2d4716e`: T1's fallback named the rate
+  accessor literally; the R1 grep pin (board/ is named-forbidden) went red
+  at HEAD, and BOTH T1's suite set and the orchestrator's T1 review batch
+  lacked ratemig1 — the #30 S2 gap class, second occurrence, caught by
+  T2's clean-HEAD stash isolation proof. The pin stayed UNTOUCHED; board
+  switched to the typed resolver (load_config().frame_rate), exactly the
+  pin's own prescription. STANDING RULE adopted: test_fp_ratemig1.py joins
+  the orchestrator's landing-verification batch for every loop that
+  consumes rate machinery.
+- T2 FCPXML writer (item 5) `40d0bd1` (+README row `1aca907`): the one NLE
+  exit where rational time rides NATIVELY — frameDuration is the exact
+  rate reciprocal; times "{F·den}/{num}s" never reduced (frame-alignment
+  verifiable by inspection); zero drift for int AND 1001-family (conform
+  all_zero_by_construction on both paths, pinned via an off-grid-ms case
+  OTIO's int path would carry); R2/R4 duration_frames consumed with ms
+  telescoping fallback; clean cross-dissolves become native transitions
+  with FCP's overlap geometry (pull-back telescoping independently
+  verified), everything else a cut + in-band note; captions ride the
+  SRT/TTML exits; audio = honest unsupported rows (writer-scope deferred
+  increment, NOT a format limit — the addendum's "else" branch, reasoned:
+  connected-clip offset coupling is not trivially faithful). DEVIATION
+  recorded: red-first ORDER unproven (impl predated tests on disk); the
+  orchestrator ran a three-mutation discriminating-power check instead
+  (fraction-reduction → 11 red; overlap-guard <= → its guard test red;
+  tcFormat flip → golden bytes red; restored 33/33) — substance verified,
+  order lapse noted.
+- U2 locale-aware TTML (item 4 remnant) `9f0c97c`: the S1 lang slot's one
+  legitimate caller wired (locale build writes captions.ttml with
+  xml:lang == the validated locale id); NEW declared file
+  locales/<lang>/meta.yaml with the closed set {direction: rtl|ltr} —
+  explicit human declaration ONLY, never inferred from the language code;
+  rtl → tts:direction + unicodeBidi=embed; None path byte-identical
+  (proven three ways). Ruby stays out — the cue model has no ruby
+  structure; emitting <ruby> would fabricate data. Registry ruling: NO
+  documents row for meta.yaml (the lines.yaml/voices.yaml project-side
+  pattern) — agent recommended, orchestrator concurred. conform's ttml
+  row wording refined accordingly (RTL only via explicit declaration).
+  Exemplary red-first: 21 failures with exact causes captured.
+- U1 BagIt serialized bag (item 8 remnant) `8b766cb`: pack --bagit writes
+  an RFC 8493 bag inside the .manjupkg zip; ONE FIXITY TRUTH PER FORMAT —
+  MANJU_FIXITY.json omitted in bagit mode, the BagIt manifests are the
+  authority; tagmanifest covers every tag file (incl. the MANJU_*
+  transport members) except itself; bag-info is deterministic (no
+  Bagging-Date — RFC-optional per a sourced ruling carrying its honest
+  no-live-validator caveat; omission stated in the restore note);
+  unpack/fixity auto-detect with strict two-manifest verify where extras
+  FAIL, and the staging + os.replace(stage/data, dest) restore
+  structurally guarantees no dest on verify failure. Default-mode pack
+  bytes golden-pinned identical; CLI snapshot regen byte-identical
+  (125 rows). Red-first proven: 18 failed / 1 passed (the pre-change
+  golden) → 19/19.
+- Item 8 "resolver maps" — MOOT for packs, grounded: the pack walk
+  includes the full truth+imports payload; only §3-rebuildable caches are
+  excluded by default (--full keeps them) and symlinks are skipped, never
+  followed. Nothing non-rebuildable is external to a .manjupkg, so there
+  is nothing for a resolver map to resolve; hash-based relinking for LIVE
+  trees shipped in wave 3 (media/relink.py). No second mechanism built.
+- Orchestrator's independent verification beyond per-loop review:
+  (a) 4000-case seeded adversarial sweep of the R2 walker — telescoping
+  sum exactness, ≤1ms per-clip deviation, ≤0.5ms cumulative drift at
+  EVERY prefix: 0 failures; a mis-specified 4th sweep property was
+  corrected against compiler.py:324/776 (int rates never reach the
+  walker — no echo emitted; legacy byte-identity is structural).
+  (b) Cross-loop integration dry-run on a real scratch project via the
+  real CLI: new → migrate inspect/plan/apply (CAS, dry-run default,
+  printed rollback, no auto-commit) → build → the rendered final probes
+  r_frame_rate=24000/1001 → the interchange matrix closed on the SAME
+  project: EDL FCM NON-DROP with the honest approximation note, OTIO
+  exactly 23.976023976023978 (the R4 float64 pin), FCPXML 1001/24000s —
+  four exits, one truth, zero disagreement.
+- Color/HDR OCIO/ACES (item 2) RECORDED OUT: honest implementation needs
+  OpenColorIO (heavyweight new dep) or pseudo-ACES hand math; both
+  refused. Colorstats projections stay experimental (registry-pinned).
+  Revisit only as its own loop behind an operator dependency decision.
+- Benchmark-driven performance (item 11) RECORDED OUT as work, honored as
+  discipline: no benchmarks → no perf work (the item's own rule); the
+  opt-in env-gated benchmark pattern already exists (MANJU_C21G_BENCH).
+- C2PA / licensing (item 9) RECORDED OUT: honest C2PA needs the real
+  toolchain + signing-key custody; a hand-rolled manifest is exactly the
+  fake provenance the item warns against. If ever built: delivery-layer
+  only, never internal truth (the item's own constraint).
+
+Orchestration: spawn collapse #13 (T1) recovered by resume; T2/U1/U2
+spawned clean; U1 additionally recovered from a ~10-minute wedged tool
+round via a queued nudge. Agent tokens ≈ 744k across four loops (T1 189k,
+T2 247k, U1 179k, U2 129k); the freeze, sweeps, integration dry-run,
+registry/README/conform-wording edits, deep reviews, mutation checks and
+git/CI stayed with the orchestrator. CI: T-batch `1aca907` run
+29195075680 SUCCESS; the S5 xplat informational matrix (allow-fail) is
+GENUINELY GREEN on windows AND macos for both `1aca907` and `bc5d97a` —
+with test_fp_plugin_api aboard — so the pure layers are demonstrably
+OS-portable, not merely unblocking; tip ci.yml on `bc5d97a` (U2+xplat)
+run 29195379665 SUCCESS; the close sha's run verified in the window
+wrap. Suite: 3653 → expected 3755 passed / 13
+skipped / 0 failed (arithmetic: exactly the 102 new red-first-governed
+tests 14+15+33+21+19; every constituent suite verified green
+individually). The definitive quiescent full run was IN FLIGHT when this
+entry was committed — the close commit confirms the concluded count and
+this line is corrected there if reality disagrees. Snapshot: 125 rows,
+unmoved (both new CLI additions are optional flags).
