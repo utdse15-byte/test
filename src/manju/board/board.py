@@ -1019,16 +1019,18 @@ def _frame_step_label(num: int, den: int) -> str:
 def _rate_info(project: "Project") -> tuple[int, int] | None:
     """The exact edit rate the compare stepper uses, as ``(num, den)``.
 
-    Truth precedence mirrors what the board already reads: the compiled
-    timeline when one exists — ``Timeline.frame_rate`` resolves the R2
-    rational echo (``edit_rate: {num, den}``) when present, else the int
-    ``fps`` promoted exactly — otherwise the project's declared rate via the
-    single ``Project.edit_rate()`` accessor. ``None`` when even that fails
-    (broken project.yaml): the stepper is then honestly disabled, never fed a
-    guessed rate."""
+    Truth precedence mirrors what the board already reads, dispatched ONLY
+    through the TYPED rate resolvers (the R1 grep pin keeps the raw declared
+    field out of display surfaces like this one): the compiled timeline when
+    one exists — ``Timeline.frame_rate`` resolves the R2 rational echo when
+    present, else the int ``fps`` promoted exactly — otherwise the config's
+    ``ProjectConfig.frame_rate`` (same truth precedence, same exactness).
+    ``None`` when even that fails (broken project.yaml): the stepper is then
+    honestly disabled, never fed a guessed rate."""
     try:
         timeline = project.load_timeline()
-        rate = timeline.frame_rate if timeline is not None else project.edit_rate()
+        rate = (timeline.frame_rate if timeline is not None
+                else project.load_config().frame_rate)
         return rate.numerator, rate.denominator
     except Exception:
         return None
