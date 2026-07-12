@@ -1328,10 +1328,15 @@ the conform truth-update orchestrator-executed.
   property predating U1) and the locale flow (locale add ar +
   direction:rtl + build --lang ar → xml:lang/tts:direction/unicodeBidi
   all correct with Arabic text and a localized final render).
-- Suite: 3755 → 3790 expected (V2 13 + V1 22); the definitive quiescent
-  run's concluded tail is recorded in the close commit (same in-flight
-  protocol as #31's, resolved there). CI: the V close sha's verdict in
-  the window wrap.
+- Suite: 3755 → 3790 passed / 13 skipped / 0 failed — CONFIRMED by the
+  post-32a definitive quiescent rerun (1053s, EXIT 0; run 1's single
+  c21g failure and its resolution are #32a's record). CI: `a196bcb`
+  failed on exactly the known c21g gate (log-verified singular), then
+  `348da51` ci+xplat BOTH success — the fix verified remotely on the
+  full gate before this flip. Protocol tightened after this episode:
+  commits carrying CODE ride only pushes whose definitive suite has
+  CONCLUDED; the in-flight marker remains legitimate for prose-only
+  closes.
 - Orchestration: V1/V2 spawned clean, zero collapses this wave; agent
   tokens V1 233k + V2 182k. Both loops ran the standing ratemig1 rule
   themselves AND the orchestrator re-ran it at both landings.
