@@ -1274,3 +1274,64 @@ EXIT 0), which concluded exactly at the arithmetic expectation (the 102
 new red-first-governed tests 14+15+33+21+19); the in-flight marker the
 previous commit carried is hereby resolved, no correction needed. Snapshot: 125 rows,
 unmoved (both new CLI additions are optional flags).
+
+## 32. V-wave: FCPXML connected-audio lanes + board onion skin & scopes (2026-07-12)
+
+The user extended the window three hours after the T/U close (#31, all
+twelve items dispositioned). The V-wave deepened the two calibrated
+continuations. Both loops agent-executed (Opus), orchestrator-reviewed;
+the conform truth-update orchestrator-executed.
+
+- V1 FCPXML audio lanes `1ba26d0` (item 5, the increment T2's #31 entry
+  deferred with reasons): non-loop resolvable-duration clips on the four
+  buses become CONNECTED role/lane asset-clips at exact frame placement
+  on the pulled-back spine geometry — offset = in_frames[i] + F −
+  offsets[i], REUSING T2's arrays (no second geometry). The hard case
+  (audio under a dissolve-pulled parent with a source in-point) was
+  hand-computed by the agent AND re-derived independently by the
+  orchestrator (36+(30−6)=60 recovers F exactly). Honest boundaries:
+  fades GAIN-ONLY (low confidence in the exact fade element shape — a
+  wrong guess risks whole-document rejection; values ride in-band
+  notes); loop beds not written (one pass of fill-to-duration is wrong
+  audio); duration-None omitted with AUDITED parity to the render path
+  (_build_audio_graph never probes; the only compiler-produced None is
+  sfx); ducking clips written at static gain, the sidechain relationship
+  noted. Empty buses byte-identical to T2's frozen video-only golden.
+- The conform truth-update (orchestrator, same commit): V1 CORRECTLY
+  refused to touch T2's frozen conform pin and shipped with its static
+  audio rows stale — the conform document (the honesty artifact) would
+  have understated real exports. Test evolution on a legitimate contract
+  change is an orchestrator prerogative (migration-pin / R1-pin
+  precedents): six audio rows moved unsupported → approximated with the
+  loop/None boundary STATED in the detail; audio_loops honestly STAYS
+  unsupported; T2's pin renamed + evolved teeth-preserving ("not a
+  format limit" carried forward, plus a new tooth: the OMITTED boundary
+  must be stated).
+- V2 board onion skin + scopes `f271981` (item 6's last two words):
+  onion as a FOURTH A/B mode (CSS opacity on the same stack; per-mode
+  inline-override reset so stale opacity never leaks between modes) +
+  the boundary-row register-check overlay from the SAME cached stills;
+  a scopes panel (Rec.709 luma histogram + per-column waveform of video
+  A's parked frame, event-driven redraw ONLY — no play-time loop)
+  carrying the permanent honesty label verbatim: browser-decoded RGB,
+  video A only, view-only, the exact formula, NOT the engine's color
+  facts — QC colorstats remain the measurement authority. No server.py
+  change (T1's allowlist suffices). Static board byte-identical; the
+  read-only tree-hash proof re-pinned. V2 self-caught two over-broad
+  guard tests at first green and tightened them (recorded in its
+  report) — the seven discriminating reds were valid.
+- Orchestrator hands-on dry-runs of the U surfaces (real CLI, the
+  migrated 24000/1001 scratch project, during the V-wave): pack --bagit
+  (49 members, exact declaration bytes, no MANJU_FIXITY, deterministic
+  bag-info, fixity --info bag summary, verified restore files-equal —
+  the only deltas being .git by design and two empty dirs, a zip-format
+  property predating U1) and the locale flow (locale add ar +
+  direction:rtl + build --lang ar → xml:lang/tts:direction/unicodeBidi
+  all correct with Arabic text and a localized final render).
+- Suite: 3755 → 3790 expected (V2 13 + V1 22); the definitive quiescent
+  run's concluded tail is recorded in the close commit (same in-flight
+  protocol as #31's, resolved there). CI: the V close sha's verdict in
+  the window wrap.
+- Orchestration: V1/V2 spawned clean, zero collapses this wave; agent
+  tokens V1 233k + V2 182k. Both loops ran the standing ratemig1 rule
+  themselves AND the orchestrator re-ran it at both landings.
