@@ -143,8 +143,133 @@ def run_doctor(project: Project | None = None) -> dict[str, Any]:
             f"{'✓' if report.ok else '✗'} project check: "
             f"{'ok' if report.ok else f'{len(report.errors)} errors'}")
         ok = ok and report.ok
+
+        # ---- locale overlays (WP4) + interchange exits: ADVISORY diagnostics.
+        # These rows surface health as ✓/•/⚠ exactly like the toolbelt/disk
+        # probes above and NEVER touch `ok` — doctor's exit-code policy is
+        # unchanged (gating stays env-tools + provider manifests + project
+        # check). They DELEGATE, never re-validate: locale meta goes through
+        # core.locale.load_locale_meta (its structured message is surfaced
+        # VERBATIM — the S4/bridge "consult, don't copy" precedent), and an
+        # interchange exit gets a stdlib well-formedness + presence probe only
+        # (exporters.conform owns the real semantics/drift — the row points
+        # there). A probe bug degrades to one ⚠ row, never a traceback (the
+        # provider-probe precedent above).
+        try:
+            _add_locale_rows(project, add)
+            _add_interchange_rows(project, add)
+        except Exception as exc:
+            add("advisory_probe", True, str(exc),
+                f"⚠ locale/interchange 探测异常(建议诊断,不影响退出码): {exc}")
     else:
         add("project", True, "no project in cwd (environment checks only)",
             "• no project in cwd (environment checks only)")
 
     return {"checks": checks, "ok": ok}
+
+
+# --------------------------------------------------------------------- advisory
+
+
+def _add_locale_rows(project: Project, add) -> None:
+    """One ADVISORY ``locale:<lang>`` row per locale overlay dir (WP4).
+
+    Facets, all sourced from ``core.locale`` (never re-implemented here): whether
+    ``lines.yaml`` parses (``load_lines`` — it raises on malformed YAML), whether
+    ``meta.yaml`` validates (``load_locale_meta`` — its EXACT structured rejection
+    is surfaced VERBATIM on failure), and the declared ``direction`` echoed only
+    when the human set one. A parse/validation failure makes the row ⚠ with
+    ``ok=False`` — but this row is informational and never gates ``doctor``.
+    """
+    from ..core.locale import list_locales, load_lines, load_locale_meta, locale_dir
+
+    for lang in list_locales(project):
+        facets: list[str] = []
+        glyph, row_ok = "✓", True
+        # lines.yaml — CONSULT load_lines (it propagates a YAML parse error).
+        try:
+            facets.append(f"lines.yaml 解析正常({len(load_lines(project, lang))} 行)")
+        except Exception as exc:
+            glyph, row_ok = "⚠", False
+            facets.append(f"lines.yaml 无法解析 — {exc}")
+        # meta.yaml — CONSULT load_locale_meta; surface its message VERBATIM.
+        try:
+            meta = load_locale_meta(project, lang)
+            direction = meta.get("direction")
+            if direction:
+                facets.append(f"meta.yaml 有效(direction: {direction})")
+            elif (locale_dir(project, lang) / "meta.yaml").exists():
+                facets.append("meta.yaml 有效(未声明 direction)")
+            else:
+                facets.append("未声明 meta.yaml(方向未定)")
+        except Exception as exc:
+            glyph, row_ok = "⚠", False
+            facets.append(str(exc))  # load_locale_meta's structured message, verbatim
+        detail = ";".join(facets)
+        add(f"locale:{lang}", row_ok, detail, f"{glyph} locale {lang}: {detail}")
+
+
+# Each interchange exit: its canonical artifact path (relative to the project)
+# and the ONE stdlib well-formedness probe kind. Semantics/drift are NOT checked
+# — that is exporters.conform's job, and the row says so.
+_INTERCHANGE_EXITS = (
+    ("otio", "OTIO 交换格式", "exports/otio/{name}.otio", "json", "manju export --otio"),
+    ("edl", "EDL 剪辑单", "exports/edl/{name}.edl", "edl", "manju export --edl"),
+    ("fcpxml", "FCPXML", "exports/fcpxml/{name}.fcpxml", "xml", "manju export --fcpxml"),
+    ("ttml", "TTML 字幕", "captions/captions.ttml", "xml", "manju export --ttml"),
+    ("vtt", "WebVTT 字幕", "captions/captions.vtt", "vtt", "manju export --srt"),
+)
+
+
+def _interchange_problem(path, kind: str) -> str | None:
+    """``None`` when the file is well-formed for its ``kind``, else a short
+    Chinese reason. STDLIB checks only (json/ElementTree) — never a semantic
+    re-validation: XML uses ``ET.fromstring`` on BYTES so the ``<?xml
+    encoding?>`` declaration the fcpxml/ttml writers emit is honoured (a decoded
+    ``str`` with an encoding decl raises in ElementTree)."""
+    if kind == "json":
+        import json as _json
+
+        doc = _json.loads(path.read_text(encoding="utf-8"))
+        if not (isinstance(doc, dict) and doc.get("OTIO_SCHEMA")):
+            return "缺少 OTIO_SCHEMA 顶层标记"
+        return None
+    if kind == "xml":
+        import xml.etree.ElementTree as _ET
+
+        _ET.fromstring(path.read_bytes())  # bytes: honour the encoding declaration
+        return None
+    first = path.read_text(encoding="utf-8").splitlines()[:1]
+    if kind == "edl":
+        return None if (first and first[0].startswith("TITLE:")) else "首行缺少 TITLE: 头"
+    # vtt
+    return None if (first and first[0].startswith("WEBVTT")) else "首行缺少 WEBVTT 签名"
+
+
+def _add_interchange_rows(project: Project, add) -> None:
+    """One ADVISORY ``export:<fmt>`` row per interchange exit (§14 fallback
+    exits). Absent ⇒ ``•`` (absence is a fact, not a failure — the toolbelt
+    precedent); present + well-formed ⇒ ``✓``; present + malformed/unreadable ⇒
+    ``⚠`` with ``ok=False``. None of these gate ``doctor``; the row delegates
+    semantics to ``manju.exporters.conform``."""
+    try:
+        name = project.load_config().name
+    except Exception:
+        name = project.root.name
+    for fmt, label, tmpl, kind, made_by in _INTERCHANGE_EXITS:
+        path = project.root / tmpl.format(name=name)
+        if not path.exists():
+            add(f"export:{fmt}", True, "未导出(缺席不是错误)",
+                f"• {label}: 未导出 — 缺席不是错误({made_by})")
+            continue
+        rel = project.relpath(path)
+        try:
+            problem = _interchange_problem(path, kind)
+        except Exception as exc:
+            problem = " ".join(str(exc).split())
+        if problem is None:
+            add(f"export:{fmt}", True, "存在且良构(语义/丢帧以 conform 为准)",
+                f"✓ {label}: {rel} 存在且良构(仅探测格式;语义/丢帧以 conform 为准)")
+        else:
+            add(f"export:{fmt}", False, f"良构探测失败:{problem}",
+                f"⚠ {label}: {rel} 存在但格式探测失败 — {problem}(语义以 conform 为准)")
