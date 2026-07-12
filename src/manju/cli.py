@@ -1590,6 +1590,63 @@ def qc_verdict_cmd(
         typer.echo("→ 跑 manju qc 查看汇入的 [AI判读] 项")
 
 
+@qc_app.command("tech")
+def qc_tech_cmd(
+    media: Path = typer.Argument(..., help="the exact source media (project-relative) to profile"),
+    edit_fps: Optional[int] = typer.Option(
+        None, "--edit-fps",
+        help="integer edit-grid fps; turns on the edit-grid drift diagnostic (§5.1)"),
+    write: bool = typer.Option(
+        False, "--write", help="materialise the deletable reports/technical/<hash>.json"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Honest per-file technical facts (`manju.media-technical-profile/v1`, §5.2-5.6):
+    time / picture / colour / audio / container recorded VERBATIM or ``"unknown"`` —
+    never guessed — plus structured diagnostics (edit-grid drift vs --edit-fps,
+    DAR/SAR geometry mismatch, colour-unknown, VFR suspicion). The report is a
+    deletable derived projection, never a build/authorization input."""
+    from .media.ffmpeg import MediaError
+    from .media.technical_profile import technical_profile, write_profile
+
+    project = _project()
+    if not media.exists():
+        _fail(f"media not found: {media}", code="no_media")
+        return
+    try:
+        source_ref = project.relpath(media)  # project-relative — never store an abs path
+    except (ValueError, ProjectError):
+        source_ref = media.name  # media outside the project root
+    try:
+        doc = technical_profile(media, edit_fps=edit_fps, source_ref=source_ref)
+    except MediaError as exc:
+        _fail(f"cannot profile media: {exc}", code="unreadable_media")
+        return
+    if write:
+        write_profile(project, doc)
+    if as_json:
+        _emit(doc, True)
+        return
+    f = doc["facts"]
+    t, p, c = f["time"], f["picture"], f["color"]
+    typer.secho(f"technical profile {media.name}  digest={doc['profile_digest'][:23]}…",
+                fg=typer.colors.GREEN)
+    typer.echo(f"  time    rate={t['r_frame_rate']} mode={t['rate_mode']} "
+               f"dur_ms={t['duration_ms']}")
+    typer.echo(f"  picture {p['coded_width']}x{p['coded_height']} {p['pix_fmt']} "
+               f"{p['bit_depth']}-bit {p['chroma_subsampling']} rot={p['rotation']}")
+    typer.echo(f"  color   primaries={c['primaries']} transfer={c['transfer']} "
+               f"matrix={c['matrix']} range={c['range']} known={c['color_known']}")
+    if f["audio"]:
+        a = f["audio"]
+        typer.echo(f"  audio   {a['codec_name']} {a['sample_rate']}Hz "
+                   f"{a['channel_layout']} {a['bit_depth']}-bit")
+    else:
+        typer.echo("  audio   (none)")
+    for d in doc["diagnostics"]:
+        typer.secho(f"  ⚑ {d['code']} [{d['severity']}] {d['detail']}",
+                    fg=typer.colors.YELLOW)
+
+
 def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[str],
                factor: float, ms: int, mode: Optional[str],
                in_ms: Optional[int], out_ms: Optional[int], as_json: bool) -> None:
@@ -3663,6 +3720,40 @@ def _sanitize_archive_stem(stem: str) -> str:
 # cap and DECLARED-total-vs-free-disk (the actual harm is fill-the-disk DoS).
 UNPACK_MAX_MEMBERS = 100_000
 UNPACK_FREE_DISK_MARGIN_BYTES = 64 * 1024 * 1024
+
+
+@app.command("support-bundle")
+def support_bundle_cmd(
+    out: Optional[Path] = typer.Option(None, "--out",
+                                       help="bundle zip 输出路径(默认 support-bundle.zip)"),
+    events_tail: int = typer.Option(200, "--events-tail",
+                                    help="包含 events.jsonl 末尾多少行(脱敏后)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Build a REDACTED diagnostic support bundle (roadmap §8.5).
+
+    Default-deny collectors only: environment versions, project shape COUNTS,
+    a redacted events/failures tail, provider-manifest digests (bytes hashed,
+    never parsed). Never media bytes, never bible/shot/timeline content, never
+    absolute private paths — a pre-write self-scan REFUSES to produce a bundle
+    containing any secret/path marker."""
+    from .core.supportbundle import BundleError, build_support_bundle
+
+    project = _project()
+    dest = out if out is not None else Path.cwd() / "support-bundle.zip"
+    try:
+        summary = build_support_bundle(project, dest,
+                                       include_events_tail=events_tail)
+    except BundleError as exc:
+        _fail(str(exc), code="bundle_refused")
+        return
+    if as_json:
+        _emit(summary, True)
+        return
+    typer.secho(f"support bundle → {dest.name}", fg=typer.colors.GREEN)
+    typer.echo(f"  members: {len(summary.get('members') or [])}  "
+               f"redaction: {summary.get('redaction')}  "
+               f"self-scan ok: {summary.get('self_scan', {}).get('ok')}")
 
 
 @app.command()

@@ -388,6 +388,31 @@ schemas:
     notes: >-
       Staged OpenClap (.clap) import plan — writes nothing, downloads nothing,
       never auto-selects takes.
+  - id: manju.conform-loss/v1
+    kind: schema
+    owner: manju.exporters.conform
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Per-export preserved/approximated/dropped/unsupported rows (line-cited
+      exporter audit) + exact frame-drift block; read-only reporter — exported
+      bytes unchanged; no silent degradation (unclassified exporter fails a pin).
+
+  # -- media technical facts (FP wave 2) -------------------------------------
+  - id: manju.media-technical-profile/v1
+    kind: schema
+    owner: manju.media.technical_profile
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Honest per-file technical facts (time/picture/color/audio/container) —
+      verbatim-or-"unknown", never guessed; edit-grid drift diagnostics via
+      core.timebase; content-addressed deletable projection under
+      reports/technical/ (never a build input); profile_digest over facts only.
 
 # ---------------------------------------------------------------------------
 # documents — public contracts that are NOT `manju.*/vN` schema ids: hand-edited
@@ -499,6 +524,18 @@ documents:
     notes: >-
       Provider manifest (provider.yaml): capabilities/limits/refs/cost/auth.
       Additive `capabilities: list[str]`; old manifests load byte-identically.
+  - id: support-bundle
+    kind: document
+    owner: manju.core.supportbundle
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Redacted diagnostic bundle (deterministic zip + MANIFEST.json with a plain
+      `format: support-bundle-manifest.1` field — deliberately NOT a manju.*/vN
+      schema). Default-deny collectors; self-scan tripwire refuses to write any
+      bundle containing secret/path markers; never media bytes or source content.
 
 # ---------------------------------------------------------------------------
 # ownership — §4.7 object ownership map. One authoritative owner per concept;

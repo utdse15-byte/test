@@ -1,0 +1,679 @@
+"""Redacted diagnostic support bundle — the honest ``manju support-bundle`` core.
+
+A support bundle is what a user hands to whoever is helping them debug: enough
+of the *shape* of their environment and recent activity to diagnose a problem,
+with **none** of their content, media, credentials, or private paths.
+
+The design principle is **redaction-by-construction** (default-deny, allowlist):
+
+    the bundle CONTAINS ONLY what this collector explicitly produces — it never
+    copies a raw project file wholesale, never reads media bytes, never opens a
+    provider auth block, and never emits an absolute private path.
+
+Every string that could conceivably carry project data passes through the ONE
+redactor (:func:`redact_record` → :func:`redact_text`) before it is written, and
+then — belt *and* braces — the assembled bundle is scanned against its own
+tripwire (:func:`self_scan`): if any of ``/home/`` ``/root/`` ``/Users/`` ``C:\\``
+``Authorization:`` ``Bearer`` ``?signature=`` or an API-key token survives into
+the output, the collector raises :class:`BundleError` and writes **nothing**.
+That tripwire is what makes a redaction bug fail loudly instead of leaking.
+
+The public entrypoint is :func:`build_support_bundle`. It is a **pure read** of
+the project — it appends no event and mutates nothing, so building the same
+project state twice yields a **byte-identical** zip (fixed 1980 member
+timestamps, sorted members, no wall-clock anywhere).
+
+The in-zip ``MANIFEST.json`` declares ``"format": "support-bundle-manifest.1"``
+— a plain format string, deliberately **not** a ``manju.*/vN`` public schema id:
+the bundle is a throwaway diagnostic artifact, not a truth surface.
+
+Stdlib only (zipfile/json/subprocess/importlib/hashlib) — no new dependency, no
+network. The secret token list is reused verbatim from
+:data:`manju.core.check.SECRET_PATTERNS` (the ONE token list) so this can never
+disagree with ``manju check``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from .check import SECRET_PATTERNS
+from .container import Project
+from .hashing import HASH_PREFIX, hash_file
+
+# The manifest is a diagnostic artifact, NOT a manju.*/vN public schema (see the
+# module docstring and the Loop-F registry ruling): a plain format string.
+BUNDLE_FORMAT = "support-bundle-manifest.1"
+
+DEFAULT_EVENTS_TAIL = 200
+DEFAULT_FAILURES_TAIL = 50
+
+# Optional deps we report present/absent (names + versions ONLY). A fixed,
+# sorted tuple keeps the environment section deterministic.
+_OPTIONAL_DEPS = (
+    ("opentimelineio", "otio"),
+    ("hypothesis", "hypothesis"),
+    ("PIL", "pillow"),
+    ("numpy", "numpy"),
+    ("pydantic", "pydantic"),
+    ("yaml", "pyyaml"),
+)
+
+# PATH tools whose --version first line we probe (absent ⇒ "missing").
+_PATH_TOOLS = ("ffmpeg", "ffprobe")
+
+
+class BundleError(RuntimeError):
+    """Raised when the bundle cannot be written honestly.
+
+    The dominant cause is the self-scan tripwire firing — a forbidden marker
+    (private path / credential) survived into the assembled output. The message
+    names the offending *markers and member files only*; it never carries the
+    matched secret text, so the error is safe to log or surface anywhere.
+    """
+
+
+# --------------------------------------------------------------------------- #
+# Redaction — the ONE seam. Everything that could carry project data goes       #
+# through redact_record(); monkeypatching it to a no-op is what the tripwire    #
+# test uses to prove the self-scan actually refuses to write.                   #
+# --------------------------------------------------------------------------- #
+
+# Values of any key matching these are masked wholesale (case-insensitive).
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(key|token|secret|authorization|signature|password|bearer)"
+)
+
+# "Authorization: Bearer <tok>" / "authorization=<tok>" — remove the literal
+# word too (the self-scan hunts the bare "Authorization:" marker), value optional.
+_AUTH_RE = re.compile(r"(?i)authorization\s*[:=]\s*(?:bearer\s+)?\S*")
+# A standalone "Bearer <tok>" (or a lone "Bearer") — the self-scan hunts "Bearer".
+_BEARER_RE = re.compile(r"(?i)\bbearer\b\s*\S*")
+# Signed-URL query params — mask the WHOLE "?sig=…"/"&signature=…" pair so the
+# "?signature=" marker itself disappears, not just its value.
+_SIGNED_URL_RE = re.compile(
+    r"(?i)[?&][\w.\-]*"
+    r"(?:signature|sig|token|key|secret|password|credential|expires|se|sp|sv|sr)"
+    r"[\w.\-]*=[^&\s\"'}]*"
+)
+# Absolute paths whose ROOT is sensitive — always rewritten to their basename so
+# the self-scan markers (/home/ /root/ /Users/ C:\ …) can never survive.
+_SENSITIVE_PATH_RE = re.compile(
+    r"(?:/(?:home|root|Users|tmp|var|opt|mnt|media|private|data|Applications|etc|srv)"
+    r"|[A-Za-z]:\\)[^\s\"'<>|]*"
+)
+# General POSIX absolute paths (best-effort), guarded so a URL's "scheme://host"
+# is left intact (the slash must not follow a word char, ':' or '/').
+_GENERAL_ABS_RE = re.compile(r"(?<![\w:/])(?:/[^\s\"'<>|:]+)+")
+
+REDACTED = "<redacted>"
+
+
+def _basename_sub(match: "re.Match[str]") -> str:
+    """Replacement: collapse a matched absolute path to its basename only."""
+    raw = match.group(0)
+    parts = re.split(r"[\\/]+", raw.rstrip("/\\"))
+    base = parts[-1] if parts and parts[-1] else ""
+    return base or "<path>"
+
+
+def _bump(stats: dict[str, int] | None, key: str, n: int) -> None:
+    if stats is not None and n:
+        stats[key] = stats.get(key, 0) + n
+
+
+def redact_text(text: Any, stats: dict[str, int] | None = None) -> Any:
+    """Mask secrets, signed-URL query values and absolute private paths in a
+    free string. Non-strings pass through unchanged.
+
+    The output is guaranteed to contain none of the tripwire markers: the auth
+    header words, ``Bearer``, ``?signature=``, an API-key token, or a
+    ``/home``|``/root``|``/Users``|``C:\\`` rooted path. Secret masking runs both
+    before and after path rewriting, so a token exposed as a filename basename is
+    still caught.
+    """
+    if not isinstance(text, str):
+        return text
+    text, n = _AUTH_RE.subn("<redacted-authorization>", text)
+    _bump(stats, "auth_masked", n)
+    text, n = _BEARER_RE.subn("<redacted-bearer>", text)
+    _bump(stats, "auth_masked", n)
+    text, n = _SIGNED_URL_RE.subn("?<redacted-signed-query>", text)
+    _bump(stats, "signed_urls_masked", n)
+    for pat in SECRET_PATTERNS:
+        text, n = pat.subn("<redacted-secret>", text)
+        _bump(stats, "secret_tokens_masked", n)
+    text, n = _SENSITIVE_PATH_RE.subn(_basename_sub, text)
+    _bump(stats, "abs_paths_rewritten", n)
+    text, n = _GENERAL_ABS_RE.subn(_basename_sub, text)
+    _bump(stats, "abs_paths_rewritten", n)
+    # a token that only surfaced once a path was collapsed to its basename
+    for pat in SECRET_PATTERNS:
+        text, n = pat.subn("<redacted-secret>", text)
+        _bump(stats, "secret_tokens_masked", n)
+    return text
+
+
+def redact_record(obj: Any, stats: dict[str, int] | None = None) -> Any:
+    """THE redactor. Recursively redact a JSON-ish value:
+
+    * a dict value under a secret-shaped key (``*key*``/``*token*``/``*secret*``/
+      ``authorization``/``signature``/``password``/``bearer``) is masked whole;
+    * every other string is run through :func:`redact_text`;
+    * lists/dicts recurse; other scalars pass through.
+
+    This is the single seam every collector routes through. The tripwire test
+    monkeypatches it to the identity function to prove that, with redaction
+    disabled, :func:`self_scan` refuses to let the bundle be written.
+    """
+    if isinstance(obj, dict):
+        out: dict[Any, Any] = {}
+        for key, value in obj.items():
+            if isinstance(key, str) and _SECRET_KEY_RE.search(key):
+                out[key] = REDACTED
+                _bump(stats, "secret_key_masks", 1)
+            else:
+                out[key] = redact_record(value, stats)
+        return out
+    if isinstance(obj, list):
+        return [redact_record(item, stats) for item in obj]
+    if isinstance(obj, str):
+        return redact_text(obj, stats)
+    return obj
+
+
+# --------------------------------------------------------------------------- #
+# Self-scan tripwire                                                            #
+# --------------------------------------------------------------------------- #
+
+# (name, literal) markers that must NEVER survive into the bundle. Case-sensitive
+# on the literal, as the addendum specifies; redaction is case-insensitive so
+# lowercase variants are masked upstream regardless. Only the safe NAME is ever
+# echoed into the manifest/verdict — embedding the raw literal would trip the
+# scanner on its own report.
+_SCAN_LITERALS = (
+    ("posix-home", "/home/"),
+    ("posix-root", "/root/"),
+    ("macos-users", "/Users/"),
+    ("windows-drive", "C:\\"),
+    ("http-authorization", "Authorization:"),
+    ("http-bearer", "Bearer "),
+    ("signed-url-query", "?signature="),
+)
+_SECRET_TOKEN_NAME = "secret-token"
+
+
+def self_scan(members: dict[str, bytes]) -> dict[str, Any]:
+    """Scan assembled member bytes for forbidden markers. Returns a verdict
+    ``{"ok": bool, "patterns": [...], "hits": [...]}`` where each hit is
+    ``{"member": name, "marker": <safe-name>, "count": n}`` — the marker is a
+    stable SAFE NAME (``posix-home``, ``secret-token``, …), NEVER the matched
+    text and never the raw literal (so the verdict is itself safe to embed)."""
+    hits: list[dict[str, Any]] = []
+    for name in sorted(members):
+        text = members[name].decode("utf-8", errors="replace")
+        for marker_name, literal in _SCAN_LITERALS:
+            count = text.count(literal)
+            if count:
+                hits.append({"member": name, "marker": marker_name, "count": count})
+        token_hits = sum(len(pat.findall(text)) for pat in SECRET_PATTERNS)
+        if token_hits:
+            hits.append({"member": name, "marker": _SECRET_TOKEN_NAME, "count": token_hits})
+    return {
+        "ok": not hits,
+        "patterns": [name for name, _ in _SCAN_LITERALS] + [_SECRET_TOKEN_NAME],
+        "hits": hits,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Collectors — each produces ONLY derived, allowlisted facts.                   #
+# --------------------------------------------------------------------------- #
+
+def _manju_version() -> str:
+    """manju version: importlib.metadata → git describe → "unknown"."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("manju")
+        except PackageNotFoundError:
+            pass
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            capture_output=True, text=True, timeout=5,
+        )
+        described = (out.stdout or "").strip()
+        if out.returncode == 0 and described:
+            return described
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "unknown"
+
+
+def _tool_version(name: str) -> str:
+    """First line of ``<tool> -version`` (redacted); "missing" when absent or on
+    any failure — an absent optional tool is a fact, never a crash."""
+    exe = shutil.which(name)
+    if not exe:
+        return "missing"
+    try:
+        out = subprocess.run(
+            [exe, "-version"], capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "missing"
+    for stream in (out.stdout, out.stderr):
+        line = (stream or "").splitlines()
+        if line:
+            return line[0].strip()
+    return "missing"
+
+
+def _dep_version(module: str, dist: str) -> str:
+    """"absent" or a version string for an optional dependency (name+version
+    only). Tries importlib.metadata by distribution name, then a light import."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            pass
+    except Exception:
+        pass
+    try:
+        mod = __import__(module)
+    except Exception:
+        return "absent"
+    return str(getattr(mod, "__version__", "present"))
+
+
+def collect_environment() -> dict[str, Any]:
+    """Tool + interpreter identity — names and versions only, no host identity
+    (no hostname/user), no paths."""
+    return {
+        "manju": _manju_version(),
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
+        "tools": {name: _tool_version(name) for name in _PATH_TOOLS},
+        "optional_deps": {
+            dist: _dep_version(module, dist) for module, dist in _OPTIONAL_DEPS
+        },
+    }
+
+
+_TAKE_BUCKETS = ("0", "1", "2", "3-5", "6-10", "11+")
+
+
+def _bucket(n: int) -> str:
+    if n <= 2:
+        return str(n)
+    if n <= 5:
+        return "3-5"
+    if n <= 10:
+        return "6-10"
+    return "11+"
+
+
+def _safe_project_yaml(project: Project) -> dict[str, Any]:
+    """The SAFE allowlisted subset of project.yaml: fps/width/height/mode, the
+    name (dropped if it looks like a path), and budget PRESENCE only — never a
+    budget amount, never a provider/auth value."""
+    try:
+        raw = project.load_config().model_dump()
+    except Exception:
+        return {"error": "project.yaml unreadable"}
+    safe: dict[str, Any] = {}
+    for field in ("fps", "width", "height", "mode"):
+        if field in raw and isinstance(raw[field], (int, float, str)):
+            safe[field] = raw[field]
+    name = raw.get("name")
+    if isinstance(name, str) and name and not re.search(r"[\\/]|^[A-Za-z]:", name):
+        safe["name"] = name
+    else:
+        safe["name_omitted"] = True  # looked path-like (or absent)
+    budget = raw.get("budget") or {}
+    safe["budget_limit_set"] = bool(isinstance(budget, dict) and budget.get("limit") is not None)
+    return safe
+
+
+def _reports_schema_ids(project: Project) -> tuple[list[str], list[str]]:
+    """(reports_subdirs, schema_ids) — subdir NAMES present under reports/, and
+    the distinct schema ids DECLARED in report .json/.jsonl files (ids only, no
+    content). Bounded and defensive: unreadable/oversized files are skipped."""
+    reports = project.reports_dir
+    subdirs: list[str] = []
+    schema_ids: set[str] = set()
+    if not reports.is_dir():
+        return subdirs, sorted(schema_ids)
+    subdirs = sorted(p.name for p in reports.iterdir() if p.is_dir())
+    for path in sorted(reports.rglob("*")):
+        if not path.is_file() or path.suffix not in (".json", ".jsonl"):
+            continue
+        try:
+            if path.stat().st_size > 5_000_000:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        blobs = [text] if path.suffix == ".json" else text.splitlines()
+        for blob in blobs:
+            blob = blob.strip()
+            if not blob:
+                continue
+            try:
+                obj = json.loads(blob)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                sid = obj.get("schema")
+                if isinstance(sid, str) and sid:
+                    schema_ids.add(sid)
+    return subdirs, sorted(schema_ids)
+
+
+def collect_project_shape(project: Project) -> dict[str, Any]:
+    """Counts and safe scalars only — NO shot/bible/timeline content, no media.
+
+    * shot count, bible entry count, timeline clip count;
+    * a histogram of takes-per-shot (bucketed, so an exact per-shot production
+      count is never revealed);
+    * reports subdirs present + schema ids seen in reports;
+    * the SAFE project.yaml subset.
+    """
+    try:
+        shot_ids = project.shot_ids()
+    except Exception:
+        shot_ids = []
+    histogram = {b: 0 for b in _TAKE_BUCKETS}
+    for sid in shot_ids:
+        try:
+            n_takes = len(project.takes(sid))
+        except Exception:
+            n_takes = 0
+        histogram[_bucket(n_takes)] += 1
+
+    try:
+        bible_entries = len(project.load_bible())
+    except Exception:
+        bible_entries = 0
+
+    timeline_clips = 0
+    try:
+        timeline = project.load_timeline()
+        if timeline is not None:
+            tracks = timeline.tracks
+            timeline_clips = sum(
+                len(getattr(tracks, name))
+                for name in ("video", "overlay", "voice", "music", "sfx", "ambient", "captions")
+            )
+    except Exception:
+        timeline_clips = 0
+
+    subdirs, schema_ids = _reports_schema_ids(project)
+    return {
+        "shots": len(shot_ids),
+        "bible_entries": bible_entries,
+        "timeline_clips": timeline_clips,
+        "takes_per_shot_histogram": histogram,
+        "reports_subdirs": subdirs,
+        "schema_ids": schema_ids,
+        "project_yaml": _safe_project_yaml(project),
+    }
+
+
+def _redact_tail_lines(raw_lines: list[str], stats: dict[str, int]) -> tuple[list[str], int]:
+    """Redact each raw JSONL line; a torn/invalid line is COUNTED and replaced by
+    a ``<malformed line skipped>`` marker (never included verbatim). Returns
+    (redacted_lines, malformed_count)."""
+    out: list[str] = []
+    malformed = 0
+    for raw in raw_lines:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            malformed += 1
+            out.append("<malformed line skipped>")
+            continue
+        redacted = redact_record(obj, stats)
+        out.append(json.dumps(redacted, ensure_ascii=False, sort_keys=True))
+    return out, malformed
+
+
+def collect_events_tail(project: Project, n: int, stats: dict[str, int]) -> tuple[list[str], int, bool]:
+    """The last ``n`` events.jsonl lines, each redacted. Returns
+    (lines, malformed_count, source_present)."""
+    path = project.root / "events.jsonl"
+    if not path.exists():
+        return [], 0, False
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return [], 0, False
+    lines, malformed = _redact_tail_lines(raw[-n:], stats)
+    return lines, malformed, True
+
+
+def collect_failures_tail(project: Project, n: int, stats: dict[str, int]) -> tuple[list[str], int, bool]:
+    """The last ``n`` reports/failures.jsonl lines, each redacted (same
+    discipline as events). Returns (lines, malformed_count, source_present)."""
+    path = project.reports_dir / "failures.jsonl"
+    if not path.exists():
+        return [], 0, False
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return [], 0, False
+    lines, malformed = _redact_tail_lines(raw[-n:], stats)
+    return lines, malformed, True
+
+
+def collect_config_digests(stats: dict[str, int]) -> list[dict[str, str]]:
+    """Provider manifest DIGESTS only — the sha256 of each provider.yaml's raw
+    bytes. The file is hashed, NEVER parsed and NEVER opened for its auth block,
+    so a credential can't leak even through a redaction bug. Returns a sorted
+    list of ``{"provider": id, "digest": "sha256:…"}``."""
+    try:
+        from ..providers.manifest import providers_dir
+    except Exception:
+        return []
+    root = providers_dir()
+    if not root.is_dir():
+        return []
+    digests: list[dict[str, str]] = []
+    for manifest_path in sorted(root.glob("*/provider.yaml")):
+        try:
+            digest = hash_file(manifest_path)  # hashes bytes; does not parse
+        except OSError:
+            continue
+        provider_id = redact_record(manifest_path.parent.name, stats)
+        digests.append({"provider": provider_id, "digest": digest})
+    return sorted(digests, key=lambda d: (d["provider"], d["digest"]))
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic zip writer                                                      #
+# --------------------------------------------------------------------------- #
+
+def _write_zip(dest: Path, members: dict[str, bytes]) -> int:
+    """Write ``members`` to ``dest`` as a reproducible zip (sorted member order,
+    fixed 1980 timestamp, 0644) via a sibling temp + atomic replace. Returns the
+    output size in bytes."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f".{dest.name}.tmp-{os.getpid()}")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arcname in sorted(members):
+                info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                zf.writestr(info, members[arcname])
+        size = tmp.stat().st_size
+        os.replace(tmp, dest)
+        return size
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+# --------------------------------------------------------------------------- #
+# Public entrypoint                                                             #
+# --------------------------------------------------------------------------- #
+
+def build_support_bundle(
+    project: Project | str | Path,
+    dest_zip: str | Path,
+    *,
+    include_events_tail: int = DEFAULT_EVENTS_TAIL,
+) -> dict[str, Any]:
+    """Build a redacted diagnostic support bundle for ``project`` at ``dest_zip``.
+
+    A PURE READ of the project (appends no event, mutates nothing), so identical
+    project state yields a byte-identical zip. The bundle carries only derived,
+    allowlisted, redacted facts — environment shape, project counts, a redacted
+    tail of events and failures, and provider-manifest digests — and NEVER media
+    bytes, bible/shot/timeline content, provider manifests, or absolute private
+    paths.
+
+    Before anything is written the assembled output is run through
+    :func:`self_scan`; if a forbidden marker survived, this raises
+    :class:`BundleError` and writes NO zip. On success returns the summary
+    manifest dict (a superset of the in-zip ``MANIFEST.json``: the same keys plus
+    the local ``output`` path and ``output_bytes``).
+
+    ``include_events_tail`` bounds how many trailing events.jsonl lines are
+    included (default 200).
+    """
+    if not isinstance(project, Project):
+        project = Project(project)
+    dest = Path(dest_zip)
+
+    stats: dict[str, int] = {}
+
+    environment = redact_record(collect_environment(), stats)
+    project_shape = redact_record(collect_project_shape(project), stats)
+    config_digests = collect_config_digests(stats)
+
+    events_lines, events_malformed, events_present = collect_events_tail(
+        project, include_events_tail, stats
+    )
+    failures_lines, failures_malformed, failures_present = collect_failures_tail(
+        project, DEFAULT_FAILURES_TAIL, stats
+    )
+
+    # ---- assemble the non-manifest members
+    members: dict[str, bytes] = {}
+    included: list[dict[str, str]] = [
+        {"member": "MANIFEST.json", "describes": "index + self-scan verdict + redaction counts"},
+        {"member": "(inline) environment", "describes": "manju/python/platform/tool + optional-dep versions"},
+        {"member": "(inline) project_shape", "describes": "counts + bucketed take histogram + safe project.yaml subset + report schema ids"},
+        {"member": "(inline) config_digests", "describes": "provider manifest sha256 digests (bytes hashed, never parsed)"},
+    ]
+    skipped: list[dict[str, str]] = []
+
+    if events_present:
+        members["events-tail.txt"] = ("\n".join(events_lines) + ("\n" if events_lines else "")).encode("utf-8")
+        included.append({"member": "events-tail.txt", "describes": f"last {include_events_tail} events.jsonl lines, redacted per line"})
+    else:
+        skipped.append({"what": "events-tail.txt", "reason": "no events.jsonl in project"})
+
+    if failures_present:
+        members["failures-tail.jsonl"] = ("\n".join(failures_lines) + ("\n" if failures_lines else "")).encode("utf-8")
+        included.append({"member": "failures-tail.jsonl", "describes": f"last {DEFAULT_FAILURES_TAIL} reports/failures.jsonl lines, redacted per line"})
+    else:
+        skipped.append({"what": "failures-tail.jsonl", "reason": "no reports/failures.jsonl in project"})
+
+    # These content facts are always-declared honesties about what is NOT here.
+    skipped.append({"what": "media bytes", "reason": "never collected (counts only)"})
+    skipped.append({"what": "bible/shot/timeline content", "reason": "never collected (counts only)"})
+    skipped.append({"what": "provider manifests", "reason": "digest only; contents never read"})
+
+    redaction = {
+        "events_included": len(events_lines),
+        "events_malformed": events_malformed,
+        "failures_included": len(failures_lines),
+        "failures_malformed": failures_malformed,
+        "secret_key_masks": stats.get("secret_key_masks", 0),
+        "auth_masked": stats.get("auth_masked", 0),
+        "signed_urls_masked": stats.get("signed_urls_masked", 0),
+        "secret_tokens_masked": stats.get("secret_tokens_masked", 0),
+        "abs_paths_rewritten": stats.get("abs_paths_rewritten", 0),
+    }
+    redaction["total"] = (
+        redaction["secret_key_masks"] + redaction["auth_masked"]
+        + redaction["signed_urls_masked"] + redaction["secret_tokens_masked"]
+        + redaction["abs_paths_rewritten"]
+    )
+
+    # ---- self-scan the assembled content (incl. the inline structured data),
+    # BEFORE building/writing anything. A hit refuses the write.
+    scan_targets = dict(members)
+    scan_targets["__inline_environment__"] = json.dumps(environment, ensure_ascii=False).encode("utf-8")
+    scan_targets["__inline_project_shape__"] = json.dumps(project_shape, ensure_ascii=False).encode("utf-8")
+    scan_targets["__inline_config_digests__"] = json.dumps(config_digests, ensure_ascii=False).encode("utf-8")
+    verdict = self_scan(scan_targets)
+    if not verdict["ok"]:
+        summary = ", ".join(
+            f"{h['member']}:{h['marker']}x{h['count']}" for h in verdict["hits"]
+        )
+        raise BundleError(
+            "refusing to write support bundle: self-scan found forbidden "
+            f"marker(s) — {summary}. Redaction failed; no bundle was written."
+        )
+
+    manifest = {
+        "format": BUNDLE_FORMAT,
+        "self_scan": verdict,
+        "redaction": redaction,
+        "environment": environment,
+        "project_shape": project_shape,
+        "config_digests": config_digests,
+        "included": included,
+        "skipped": skipped,
+    }
+    members["MANIFEST.json"] = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    manifest["members"] = sorted(members)
+
+    # Re-serialize MANIFEST.json now that it carries its own members list, then a
+    # FINAL enforcement scan over every real member (manifest included).
+    members["MANIFEST.json"] = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    final = self_scan(members)
+    if not final["ok"]:
+        summary = ", ".join(
+            f"{h['member']}:{h['marker']}x{h['count']}" for h in final["hits"]
+        )
+        raise BundleError(
+            "refusing to write support bundle: final self-scan found forbidden "
+            f"marker(s) — {summary}. No bundle was written."
+        )
+
+    size = _write_zip(dest, members)
+
+    summary = dict(manifest)
+    summary["output"] = str(dest)
+    summary["output_bytes"] = size
+    return summary

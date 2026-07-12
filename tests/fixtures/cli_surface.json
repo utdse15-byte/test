@@ -361,6 +361,12 @@
     "exists": true,
     "params": []
   },
+  "qc tech": {
+    "exists": true,
+    "params": [
+      "media"
+    ]
+  },
   "qc verdict": {
     "exists": true,
     "params": [
@@ -517,6 +523,10 @@
     "params": []
   },
   "status": {
+    "exists": true,
+    "params": []
+  },
+  "support-bundle": {
     "exists": true,
     "params": []
   },
