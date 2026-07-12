@@ -550,11 +550,15 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "in-band approximation note — the mix is never silently claimed",
             "exporters/fcpxml.py (V1 ducking ruling + _audio_approx_notes)"),
         "audio_loops": (
-            "unsupported",
-            "loop beds are fill-to-duration semantics — a single written pass "
-            "would be WRONG audio, so loop clips are omitted with an in-band "
-            "note (materializing the repeats is the honest future increment)",
-            "exporters/fcpxml.py (V1 loop ruling + _audio_approx_notes)"),
+            "approximated",
+            "materialized at export time as whole passes + a trimmed tail from "
+            "the PROBED natural length (render parity: -stream_loop); "
+            "cumulative pass boundaries telescope to the clip's exact frame "
+            "total. compile without probed lengths (the pure default) keeps the "
+            "honest omission — a bed whose source cannot be probed is omitted "
+            "with an in-band note, never a fabricated length",
+            "exporters/fcpxml.py (W1 _plan_audio loop materialization + "
+            "export_fcpxml probe wiring)"),
         "audio_tracks": (
             "approximated",
             "V1: non-loop clips with resolvable duration_ms become CONNECTED "
@@ -656,7 +660,16 @@ TARGET_CLASSIFIERS: dict[str, dict[str, _Rule]] = _RULES
 #: today — every shipped exporter is classified. Adding exporter #6 without a
 #: classifier or a row here fails tests/test_fp_conform.py (no silent
 #: degradation, doc §6.2).
-UNSUPPORTED_TARGETS: dict[str, str] = {}
+UNSUPPORTED_TARGETS: dict[str, str] = {
+    # W2 (orchestrator-declared coverage): the FCPXML import-plan module is
+    # read-only ANALYSIS, not a writer exit — conform-loss classifies what
+    # WRITERS lose; the plan document (manju.fcpxml-import-plan/v1) carries
+    # its own honesty rows (unsupported_transitions / unknown_elements /
+    # needs_relink) inside itself, so a writer-style classifier here would
+    # be a second voice for the same facts.
+    "fcpxml_import": "read-only import-plan analysis (never a writer exit); "
+                     "loss honesty lives in the plan document itself",
+}
 
 # One static honest-scope note per target, prepended to the doc's notes.
 _SCOPE_NOTES: dict[str, str] = {

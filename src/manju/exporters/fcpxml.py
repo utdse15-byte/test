@@ -70,9 +70,15 @@ Honest scope boundaries (recorded, not silently claimed)
   ``effects.ambient``). Placement is parent-relative (``child.offset =
   in_frames[i] + F − offsets[i]`` against the pulled-back spine geometry); gain
   becomes ``<adjust-volume>``; a connected clip MAY extend past its parent's end
-  (legal — never split). HONEST omissions (an in-band ``<!-- MANJU --> `` note,
-  never faked): a ``loop`` bed is fill-to-duration (a single pass would be wrong
-  audio); a ``duration_ms is None`` clip resolves in the render to the source's
+  (legal — never split). A ``loop`` bed MATERIALIZES (FP loop W1) into
+  whole-source passes + a trimmed tail when its natural length is probed and
+  passed in ``loop_lengths`` — render parity with ``media/render.py``'s
+  ``-stream_loop -1`` + atrim; pass boundaries are cumulative so the durations
+  telescope to the clip's exact frame total. HONEST omissions (an in-band
+  ``<!-- MANJU --> `` note, never faked): a ``loop`` bed with NO probed length
+  (the pure default / a probe failure) stays fill-to-duration and is omitted (a
+  single pass would be wrong audio); a ``duration_ms is None`` clip resolves in
+  the render to the source's
   natural length with NO static probe, so it is not statically resolvable; a
   ``ducking`` clip IS written (static gain) but its render-time sidechain
   relationship is noted; fades are gain-only this increment (no native fade
@@ -218,9 +224,11 @@ def _audio_approx_notes(clip: "AudioClip", bus: str, name: str) -> list[str]:
 
 class _AudioPlanItem(NamedTuple):
     """One planned audio bus clip. ``kind`` is ``"write"`` (a connected asset-clip
-    at ``child_off``/``in_pt``/``dur_f`` frames) or ``"omit"`` (a loop bed / an
-    unresolvable duration — carried only as the honest in-band ``note``). ``parent``
-    is the index of the owning spine clip."""
+    at ``child_off``/``in_pt``/``dur_f`` frames), ``"loop"`` (one materialized
+    whole-source pass — same shape as ``"write"`` with ``in_pt`` 0, the first pass
+    carrying the materialization ``note``), or ``"omit"`` (a loop bed with no
+    probed length / an unresolvable duration — carried only as the honest in-band
+    ``note``). ``parent`` is the index of the owning spine clip."""
 
     kind: str
     parent: int
@@ -236,17 +244,21 @@ class _AudioPlanItem(NamedTuple):
 def _plan_audio(
     timeline: "Timeline", clips: list["VideoClip"], offsets: list[int],
     frames: list[int], in_frames: list[int], rate: Rate,
+    loop_lengths: dict[str, int] | None = None,
 ) -> tuple[list[_AudioPlanItem], list[str], dict[str, int], dict[str, str]]:
     """Plan the four audio buses into connected-clip items + their deduped asset
     resources (source → first-appearance order, widened available range).
 
     The faithful subset (addendum): a clip is WRITTEN when it is non-loop with a
-    resolvable ``duration_ms``. A loop bed is fill-to-duration semantics (a single
-    pass would be wrong audio) and a ``duration_ms is None`` clip resolves, in the
-    render's ``_build_audio_graph``, to the source's natural length WITHOUT any
-    static probe — so both are honestly OMITTED (a note records why) rather than
-    faked. Connected clips need a spine host, so an empty video track draws no
-    audio at all."""
+    resolvable ``duration_ms``. A loop bed MATERIALIZES into whole-source passes +
+    a trimmed tail WHEN its source carries a probed natural length in
+    ``loop_lengths`` (render parity with ``media/render.py``'s ``-stream_loop -1``
+    + atrim); without a probed length — the pure default ``None``, a probe
+    failure, or a non-positive/None duration — it is honestly OMITTED (a note
+    records why) rather than faked. A ``duration_ms is None`` non-loop clip
+    resolves, in the render's ``_build_audio_graph``, to the source's natural
+    length WITHOUT any static probe, so it too is omitted. Connected clips need a
+    spine host, so an empty video track draws no audio at all."""
     plan: list[_AudioPlanItem] = []
     order: list[str] = []
     avail: dict[str, int] = {}
@@ -259,6 +271,47 @@ def _plan_audio(
             pi = _audio_parent_index(f, offsets, frames)
             name = _audio_name(clip.source)
             if clip.loop:
+                nat_ms = None if loop_lengths is None else loop_lengths.get(clip.source)
+                if (nat_ms is not None and int(nat_ms) > 0
+                        and clip.duration_ms is not None and int(clip.duration_ms) > 0):
+                    # MATERIALIZE: whole-source passes + a trimmed tail. Boundaries
+                    # are CUMULATIVE — b_k = ms_to_frames(min(k·N, D)) — so the pass
+                    # durations telescope to the clip's exact whole-frame total with
+                    # no per-pass rounding drift (same argument as R2). Each pass
+                    # repeats the WHOLE source from 0 (parity with -stream_loop).
+                    d_ms, n_ms = int(clip.duration_ms), int(nat_ms)
+                    kk = (d_ms + n_ms - 1) // n_ms          # ceil(D/N), exact int
+                    bounds = [ms_to_frames(min(k * n_ms, d_ms), rate,
+                                           Rounding.ROUND_HALF_UP)
+                              for k in range(kk + 1)]
+                    first = True
+                    for k in range(kk):
+                        dur_f = bounds[k + 1] - bounds[k]
+                        if dur_f <= 0:                      # sub-frame pass — skip
+                            continue
+                        abs_f = f + bounds[k]
+                        ppi = _audio_parent_index(abs_f, offsets, frames)
+                        if clip.source not in avail:        # dedup + widen like V1
+                            order.append(clip.source)
+                            avail[clip.source] = dur_f
+                            names[clip.source] = name
+                        else:
+                            avail[clip.source] = max(avail[clip.source], dur_f)
+                        note = ""
+                        if first:                           # note on first pass only
+                            note = (f" MANJU: audio '{name}' ({bus}) materialized "
+                                    f"loop ({kk} passes, natural {n_ms}ms, render "
+                                    "parity: -stream_loop) ")
+                            first = False
+                        plan.append(_AudioPlanItem(
+                            "loop", ppi, bus, name, clip,
+                            child_off=in_frames[ppi] + abs_f - offsets[ppi],
+                            in_pt=0, dur_f=dur_f, note=note))
+                    if not first:                           # at least one pass emitted
+                        continue
+                # honest omission: no probed natural length (pure default / probe
+                # failure / zero) or no fill target — a single pass would be wrong
+                # audio. Byte-identical to the pre-materialization behaviour.
                 plan.append(_AudioPlanItem(
                     "omit", pi, bus, name, clip,
                     note=(f" MANJU: audio '{name}' ({bus}) is a loop bed "
@@ -290,7 +343,10 @@ def _plan_audio(
     return plan, order, avail, names
 
 
-def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
+def compile_fcpxml(
+    timeline: "Timeline", *, rate: Rate, name: str = "",
+    loop_lengths: dict[str, int] | None = None,
+) -> str:
     """The full FCPXML 1.9 document as a string (LF endings, trailing newline,
     deterministic bytes).
 
@@ -300,6 +356,15 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
     Times are exact rational-seconds strings on ``rate``'s ``frameDuration``
     timescale; every clip boundary is a whole frame, so there is no drift for
     int OR 1001-family projects (the rational-native advantage).
+
+    ``loop_lengths`` (source → probed natural ms) is the PURE materialization
+    seam. ``None`` (the default) keeps today's behaviour byte-identical: loop
+    beds are omitted with the honest in-band note. When a loop bed's source
+    carries a positive entry, the bed MATERIALIZES into whole-source passes + a
+    trimmed tail (render parity with ``-stream_loop``); the IO layer
+    :func:`export_fcpxml` fills this dict by probing. A source left out of the
+    dict (probe failure / zero) takes the honest omission path — never a faked
+    length. This function performs NO IO of its own.
     """
     clips: list[VideoClip] = list(timeline.tracks.video)
 
@@ -356,7 +421,7 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
     # loop beds and None-duration clips are honestly NOT written (an in-band note
     # records why), reusing the SAME asset dedup/widening as the video track.
     audio_plan, audio_order, audio_avail, audio_names = _plan_audio(
-        timeline, clips, offsets, frames, in_frames, rate)
+        timeline, clips, offsets, frames, in_frames, rate, loop_lengths)
 
     asset_id = {src: f"r{n + 2}" for n, src in enumerate(order)}
     audio_id = {src: f"r{len(order) + n + 2}" for n, src in enumerate(audio_order)}
@@ -464,6 +529,29 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
                               {"amount": f"{clip.gain_db:g}dB"})
             for note in _audio_approx_notes(clip, bus, item.name):
                 parent.append(ET.Comment(note))
+        elif item.kind == "loop":
+            # One materialized whole-source pass — same asset-clip shape as a
+            # written clip, but ``start`` is always 0 (the source repeats from the
+            # top, parity with -stream_loop). Gain rides EVERY pass. The first
+            # pass (note set) also carries the materialization note + any
+            # ducking/fade approximation notes, emitted ONCE.
+            clip, bus = item.clip, item.bus
+            child = ET.SubElement(parent, "asset-clip", {
+                "ref": audio_id[clip.source],
+                "lane": str(_AUDIO_LANES[bus]),
+                "offset": _secs(item.child_off, rate),
+                "name": item.name,
+                "start": _secs(item.in_pt, rate),  # 0s — whole-source repeat
+                "duration": _secs(item.dur_f, rate),
+                "audioRole": _AUDIO_ROLES[bus],
+            })
+            if clip.gain_db:
+                ET.SubElement(child, "adjust-volume",
+                              {"amount": f"{clip.gain_db:g}dB"})
+            if item.note:  # first pass only
+                parent.append(ET.Comment(item.note))
+                for note in _audio_approx_notes(clip, bus, item.name):
+                    parent.append(ET.Comment(note))
         else:  # honest omission (loop bed / unresolvable duration) — a note only
             parent.append(ET.Comment(item.note))
 
@@ -488,6 +576,33 @@ def _require_contained_source(project: "Project", source: str, *, label: str) ->
         ) from exc
 
 
+def _probe_loop_lengths(project: "Project", timeline: "Timeline") -> dict[str, int]:
+    """Probe the NATURAL duration (ms) of every distinct loop-bed source via the
+    EXISTING media probe machinery (``media.probe.probe_duration_ms`` — the same
+    prober render/compile use; never a second one) so the pure
+    :func:`compile_fcpxml` can materialize whole passes + a trimmed tail.
+
+    A source that cannot be resolved (out of project), fails to probe, or reports
+    a non-positive/None duration is LEFT OUT of the dict, so the compiler takes
+    the honest omission path for it — never a fabricated length. This is the ONE
+    IO seam; ``probe_duration_ms`` itself never raises."""
+    from ..media.probe import probe_duration_ms
+
+    lengths: dict[str, int] = {}
+    for bus in _AUDIO_BUSES:
+        for clip in getattr(timeline.tracks, bus):
+            if not clip.loop or clip.source in lengths:
+                continue
+            try:
+                abspath = project.resolve(clip.source)
+            except Exception:
+                continue  # out-of-project loop source → honest omission, no probe
+            dur = probe_duration_ms(abspath)
+            if dur is not None and int(dur) > 0:
+                lengths[clip.source] = int(dur)
+    return lengths
+
+
 def export_fcpxml(
     project: "Project", timeline: "Timeline", dest: Path | None = None
 ) -> Path:
@@ -499,12 +614,19 @@ def export_fcpxml(
     document carries the EXACT ``frameDuration`` — ``"1001/24000s"`` for a
     1001-family project, ``"1/24s"`` for an int one — with every time a whole-frame
     rational-seconds string.
+
+    This IO layer probes every loop-bed source (:func:`_probe_loop_lengths`) so
+    the pure compiler can MATERIALIZE the beds into whole-source passes + a
+    trimmed tail (render parity with ``-stream_loop``); an unprobeable source is
+    honestly omitted, never faked.
     """
     config = project.load_config()
     for c in timeline.tracks.video:
         _require_contained_source(project, c.source, label=f"{c.shot}/{c.take}")
     rate = timeline.frame_rate
-    text = compile_fcpxml(timeline, rate=rate, name=config.name)
+    loop_lengths = _probe_loop_lengths(project, timeline)
+    text = compile_fcpxml(timeline, rate=rate, name=config.name,
+                          loop_lengths=loop_lengths)
     path = (Path(dest) if dest is not None
             else project.exports_dir / "fcpxml" / f"{config.name}.fcpxml")
     atomic_write_text(path, text)

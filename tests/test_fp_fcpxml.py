@@ -454,16 +454,16 @@ def test_fcpxml_conform_every_feature_classified_exactly_once():
 
 
 def test_fcpxml_conform_video_preserved_captions_dropped_audio_classified():
-    """EVOLVED with the V1 audio increment (orchestrator edit, teeth
-    preserved): T2's original pin asserted audio_tracks/audio_gain
-    "unsupported" while the writer carried no audio at all. V1 writes
-    non-loop resolvable clips as connected role/lane asset-clips, so the
-    honest static classification moved to "approximated" — with the
-    loop/None omission stated in the detail (a loop-only timeline still
-    gets no audio) — and audio_loops STAYS "unsupported" (one written
-    pass of a fill-to-duration bed would be wrong audio). The original
-    honesty tooth — writer-scope, not a format limit, nothing faked —
-    remains asserted below."""
+    """EVOLVED TWICE (orchestrator edits, teeth preserved both times):
+    T2's original pin asserted all audio "unsupported" (no audio written).
+    V1 moved audio_tracks/audio_gain to "approximated" (connected
+    role/lane clips; loop/None omission stated). W1 then materialized
+    loop beds with RENDER PARITY (whole -stream_loop passes + trimmed
+    tail from the PROBED natural length; cumulative boundaries), so
+    audio_loops moved unsupported → "approximated" — with the probe-less
+    pure default still an honest omission, which the detail must state.
+    The original honesty tooth — writer-scope, not a format limit,
+    nothing faked, every omission stated — remains asserted below."""
     tl = _full_inventory_timeline()
     cats = conform.classify_features("fcpxml", conform.timeline_feature_inventory(tl))
     preserved = {r["feature"] for r in cats["preserved"]}
@@ -474,11 +474,15 @@ def test_fcpxml_conform_video_preserved_captions_dropped_audio_classified():
     assert "transitions" in approx
     assert {"captions", "overlays", "clip_volume"} <= dropped
     assert "audio_tracks" in approx and "audio_gain" in approx
-    assert "audio_loops" in unsupported
+    assert "audio_loops" in approx  # W1: materialized, render parity
     audio_row = next(r for r in cats["approximated"] if r["feature"] == "audio_tracks")
     assert "role/lane" in audio_row["detail"] and "fcpxml.py" in audio_row["where"]
     assert "not a format limit" in audio_row["detail"]
     assert "OMITTED" in audio_row["detail"]  # the loop/None boundary is stated
+    loops_row = next(r for r in cats["approximated"] if r["feature"] == "audio_loops")
+    assert "render parity" in loops_row["detail"] or "-stream_loop" in loops_row["detail"]
+    assert "omission" in loops_row["detail"]  # probe-less default stays honest
+    assert "fabricated" in loops_row["detail"]  # never a fabricated length
 
 
 def test_fcpxml_module_is_classified():
