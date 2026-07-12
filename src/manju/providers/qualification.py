@@ -88,12 +88,46 @@ def _max_level(a: str, b: str) -> str:
 
 def staleness_drift(evidence: dict | None, declared: dict | None) -> list[str]:
     """The staleness anchors whose evidence-recorded value differs from the
-    current declared value (§3). Only compares anchors present on BOTH sides —
-    a missing declared/recorded anchor is never treated as drift."""
+    current declared value (§3). The VALUE compare needs both sides; a MISSING
+    mandatory anchor is handled separately by
+    :func:`missing_staleness_anchors` (closeout §2 item 5 — a missing anchor is
+    never read as "no drift")."""
     ev, cur = evidence or {}, declared or {}
     return [k for k in STALENESS_ANCHORS
             if ev.get(k) is not None and cur.get(k) is not None
             and ev.get(k) != cur.get(k)]
+
+
+def missing_staleness_anchors(evidence: dict | None, declared: dict | None,
+                              capability: str | None = None) -> list[str]:
+    """The MANDATORY staleness anchors a recorded rung cannot be verified
+    without (closeout contract §2 item 5: 缺失不是"无漂移" — a missing anchor is
+    STALE, never silently current).
+
+    * any recorded rung >= DRY_RUN_VALID must carry the profile + adapter
+      digests (and the fixture version when the capability has a canary
+      fixture);
+    * a canary rung (>= CANARY_SUBMIT_PASSED) must additionally carry the
+      request digest and the response-schema digest it was earned under;
+    * a live-derivable anchor recorded on the evidence but absent from the
+      CURRENT declared facts (e.g. the canary fixture was deleted) can no
+      longer be verified as un-drifted — also missing.
+
+    Pure: the only lookup is the static capability→fixture map."""
+    ev, cur = evidence or {}, declared or {}
+    level = ev.get("level")
+    if level not in _ORDER or _ORDER[level] < _ORDER[DRY_RUN_VALID]:
+        return []
+    required = {"provider_profile_digest", "adapter_semantic_digest"}
+    if capability and capability_fixture_id(capability) is not None:
+        required.add("fixture_version")
+    if _ORDER[level] >= _ORDER[CANARY_SUBMIT_PASSED]:
+        required.update({"request_digest", "response_schema_digest"})
+    missing = sorted(k for k in required if not ev.get(k))
+    for k in ("provider_profile_digest", "adapter_semantic_digest", "fixture_version"):
+        if ev.get(k) is not None and cur.get(k) is None and k not in missing:
+            missing.append(k)
+    return missing
 
 
 def _bindings(provider_id: str, capability: str,
@@ -143,6 +177,14 @@ def qualification_state(provider_id: str, capability: str, *,
         blocked_reason = "provider_absent"
     elif declared.get("manifest_error"):
         blocked_reason = "manifest_error"
+    elif declared.get("enabled") is False:
+        # closeout §2 item 3: enabled == false ⇒ BLOCKED(provider_disabled) —
+        # regardless of any recorded evidence.
+        blocked_reason = "provider_disabled"
+    elif declared.get("capability_declared") is False:
+        # closeout §2 item 4: a capability the provider never declared cannot
+        # be admitted, whatever evidence claims.
+        blocked_reason = "capability_not_declared"
 
     config_ok = bool(declared.get("config_ok"))
     floor = CONFIG_VALID if (exists and config_ok) else UNTESTED
@@ -154,9 +196,15 @@ def qualification_state(provider_id: str, capability: str, *,
     ev_level = (evidence or {}).get("level")
     if evidence and ev_level in _ORDER:
         drift = staleness_drift(evidence, declared)
+        missing = missing_staleness_anchors(evidence, declared, capability)
         if drift:
-            stale = True
             reasons.append("stale:" + ",".join(drift))
+        if missing:
+            # closeout §2 item 5: a missing mandatory anchor is STALE — the
+            # recorded rung cannot be verified, so it falls to the live floor.
+            reasons.append("stale_missing_anchors:" + ",".join(missing))
+        if drift or missing:
+            stale = True
             level = floor
         else:
             level = _max_level(floor, ev_level)
@@ -341,6 +389,9 @@ def declared_facts(provider_id: str, capability: str, *,
         facts.update({
             "exists": True,
             "enabled": not manifest.disabled,
+            # closeout §2 item 4: admission is capability-exact — a capability
+            # the manifest never declared is structurally blocked.
+            "capability_declared": capability in (manifest.capabilities or []),
             "kind": descriptor.kind,
             "adapter": manifest.adapter,
             "adapter_short": _adapter_short(manifest.adapter),
@@ -364,6 +415,12 @@ def declared_facts(provider_id: str, capability: str, *,
         facts.update({
             "exists": True,
             "enabled": descriptor.enabled,
+            # a built-in declares its capabilities on the descriptor; its
+            # provider TYPE stands in when the capability list is empty (the
+            # matrix iterates exactly those rows).
+            "capability_declared": (
+                capability in (descriptor.capabilities or ())
+                or capability == getattr(descriptor, "provider_type", None)),
             "kind": descriptor.kind,
             "adapter": "builtin",
             "adapter_short": "builtin",
@@ -401,10 +458,12 @@ def _adapter_short(adapter: str) -> str:
 
 
 # ============================================================ report projection
-# The qualification report is a DELETABLE derived JSON (addendum ruling 2):
-# reports/providers/qualification/<provider>__<capability>.json. It is NEVER a
-# build/resume/cache input — deleting it loses qualification HISTORY, never
-# truth. A test pins that no build path reads this directory (contract test 15).
+# The qualification report is a DELETABLE derived JSON — a DISPLAY PROJECTION
+# ONLY (closeout §2 items 1/9): reports/providers/qualification/
+# <provider>__<capability>.json. It is NEVER a build/resume/cache/ADMISSION
+# input — forging, editing or deleting it changes no real admission authority
+# (the durable evidence stream below is the truth admission re-materializes
+# from). A test pins that no build path reads this directory (contract test 15).
 
 
 def qualification_dir(project: Any) -> Path:
@@ -441,12 +500,214 @@ def read_report(project: Any, provider_id: str, capability: str) -> dict | None:
         return None
 
 
-def _stored_evidence(project: Any, provider_id: str, capability: str) -> dict | None:
-    """The recorded evidence (from a prior report) that feeds the pure
-    derivation — never trusted as truth, only as a claim to re-derive against
-    the CURRENT declared facts (so a stale report re-reads as STALE)."""
-    report = read_report(project, provider_id, capability)
-    return report.get("evidence") if report else None
+# ====================================================== durable evidence store
+# CLOSEOUT C1 (contract §2 items 1-2): network admission is re-materialized
+# from durable APPEND-ONLY qualification evidence riding the project's existing
+# events.jsonl stream — the same flock-serialized coordinator the canary's
+# submission events already use (core.events.append_jsonl_line: no new ledger,
+# no new lock, no new file, no new schema). Each (provider, capability) chain
+# is hash-linked exactly like the DR06 submission chains, so tampering is
+# detectable; a torn/corrupt stream FAILS CLOSED (admission blocked,
+# transport 0), never "no evidence, carry on".
+
+QUALIFICATION_EVIDENCE_ACTION = "qualification_evidence"
+RISK_ACCEPTANCE_ACTION = "bridge_risk_acceptance"
+RISK_CONSUMED_ACTION = "bridge_risk_acceptance_consumed"
+# the structured fail-closed blocked_reason for unreadable/tampered evidence.
+EVIDENCE_CORRUPT = "evidence_corrupt"
+
+_EVIDENCE_ACTIONS = frozenset(
+    {QUALIFICATION_EVIDENCE_ACTION, RISK_ACCEPTANCE_ACTION, RISK_CONSUMED_ACTION})
+
+
+def _evidence_event_digest(detail: dict) -> str:
+    """The per-(provider, capability) chain digest — over the controlled fields
+    only, mirroring ``providers.submission.submission_event_digest``."""
+    return hash_value({
+        "provider_id": detail.get("provider_id"),
+        "capability": detail.get("capability"),
+        "evidence": detail.get("evidence"),
+        "event_id": detail.get("event_id"),
+        "prev_event_digest": detail.get("prev_event_digest"),
+    })
+
+
+def _read_evidence_stream(project: Any) -> tuple[list[dict], int]:
+    """Project the qualification-evidence / risk-acceptance events out of
+    ``events.jsonl`` in FILE order (emission order under the append flock).
+    Returns ``(records, malformed)`` — ``malformed`` counts torn lines in the
+    WHOLE stream (F1 discipline: a stream that provably lost a line cannot
+    vouch for any chain read from it)."""
+    import json as _json
+
+    path = Path(project.root) / "events.jsonl"
+    records: list[dict] = []
+    malformed = 0
+    if not path.exists():
+        return records, malformed
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = _json.loads(raw)
+            except ValueError:
+                malformed += 1
+                continue
+            if not isinstance(rec, dict) or rec.get("action") not in _EVIDENCE_ACTIONS:
+                continue
+            detail = rec.get("detail")
+            if isinstance(detail, dict):
+                records.append({**detail, "_action": rec.get("action")})
+            else:
+                malformed += 1
+    return records, malformed
+
+
+def record_qualification_evidence(project: Any, provider_id: str, capability: str,
+                                  evidence: dict, *, actor: str = "engine") -> dict:
+    """Append ONE durable qualification-evidence event — the admission-truth
+    write. Hash-chained per (provider, capability); the report JSON written
+    alongside is only a projection of this. Returns the written event detail
+    (``{}`` when the best-effort durable append could not land)."""
+    from uuid import uuid4
+
+    from ..core import events as _events_core
+    from ..core.idents import validate_safe_segment
+
+    validate_safe_segment(provider_id, label="provider_id")
+    validate_safe_segment(capability, label="capability")
+    records, _malformed = _read_evidence_stream(project)
+    chain = [r for r in records
+             if r.get("_action") == QUALIFICATION_EVIDENCE_ACTION
+             and r.get("provider_id") == provider_id
+             and r.get("capability") == capability]
+    prev = _evidence_event_digest(chain[-1]) if chain else None
+    detail = {
+        "provider_id": provider_id,
+        "capability": capability,
+        "evidence": evidence,
+        "event_id": "qev_" + uuid4().hex[:12],
+        "prev_event_digest": prev,
+    }
+    record = {"ts": _now_iso(), "actor": actor,
+              "action": QUALIFICATION_EVIDENCE_ACTION, "detail": detail}
+    ok = _events_core.append_jsonl_line(Path(project.root), record,
+                                        durable=True, required=False)
+    return detail if ok else {}
+
+
+def read_qualification_evidence(project: Any, provider_id: str,
+                                capability: str) -> tuple[dict | None, str | None]:
+    """The durable evidence for one (provider, capability): ``(evidence,
+    error)``. ``error == EVIDENCE_CORRUPT`` means the stream is torn or the
+    chain broke — the caller MUST fail closed (blocked admission, transport 0),
+    never treat it as UNTESTED-and-fine (closeout §2 item 10)."""
+    try:
+        records, malformed = _read_evidence_stream(project)
+    except OSError:
+        return None, EVIDENCE_CORRUPT
+    if malformed:
+        return None, EVIDENCE_CORRUPT
+    chain = [r for r in records
+             if r.get("_action") == QUALIFICATION_EVIDENCE_ACTION
+             and r.get("provider_id") == provider_id
+             and r.get("capability") == capability]
+    prev: str | None = None
+    for rec in chain:
+        if rec.get("prev_event_digest") != prev:
+            return None, EVIDENCE_CORRUPT
+        prev = _evidence_event_digest(rec)
+    if not chain:
+        return None, None
+    evidence = chain[-1].get("evidence")
+    if not isinstance(evidence, dict) or evidence.get("level") not in _ORDER:
+        return None, EVIDENCE_CORRUPT
+    return evidence, None
+
+
+def _stored_evidence(project: Any, provider_id: str,
+                     capability: str) -> tuple[dict | None, str | None]:
+    """The recorded evidence that feeds the pure derivation — read from the
+    DURABLE append-only store, never from the deletable report projection
+    (closeout §2 item 1). Never trusted as truth: only a claim re-derived
+    against the CURRENT declared facts (so stale evidence re-reads as STALE).
+    Returns ``(evidence, error)`` — see :func:`read_qualification_evidence`."""
+    return read_qualification_evidence(project, provider_id, capability)
+
+
+# ------------------------------------------------- one-time risk acceptance
+# closeout §2 item 8 / addendum C1 ruling 6: a LOW-RUNG manual bridge
+# experiment may be admitted only by a ONE-TIME operator risk acceptance —
+# an append-only evidence event bound to the EXACT (provider_id, capability,
+# request_digest), consumed on first use, never a config flag, never covering
+# a different digest. It can never override an explicit provider disable or an
+# undeclared capability on a real manifest.
+
+
+def record_bridge_risk_acceptance(project: Any, provider_id: str, capability: str,
+                                  request_digest: str, *,
+                                  accepted_by: str = "operator") -> dict:
+    """Record the one-time operator risk acceptance (durable, append-only).
+    Raises ``EvidenceWriteError`` when the durable write cannot land — an
+    acceptance that is not durably recorded must not exist."""
+    from uuid import uuid4
+
+    from ..core import events as _events_core
+
+    detail = {
+        "provider_id": provider_id,
+        "capability": capability,
+        "request_digest": request_digest,
+        "accepted_by": accepted_by,
+        "acceptance_id": "acc_" + uuid4().hex[:12],
+        "single_use": True,
+    }
+    record = {"ts": _now_iso(), "actor": "human",
+              "action": RISK_ACCEPTANCE_ACTION, "detail": detail}
+    _events_core.append_jsonl_line(Path(project.root), record,
+                                   durable=True, required=True)
+    return detail
+
+
+def _consume_risk_acceptance(project: Any, provider_id: str, capability: str,
+                             request_digest: str) -> dict | None:
+    """Find an UNCONSUMED acceptance for the exact triple and durably consume
+    it (single-use). Returns the acceptance, or ``None`` (none matches, the
+    stream is corrupt, or the consumption event could not be durably written —
+    all fail closed)."""
+    from ..core import events as _events_core
+
+    if not request_digest:
+        return None
+    try:
+        records, malformed = _read_evidence_stream(project)
+    except OSError:
+        return None
+    if malformed:
+        return None  # a torn stream cannot vouch for acceptances either
+    consumed = {r.get("acceptance_id") for r in records
+                if r.get("_action") == RISK_CONSUMED_ACTION}
+    match = next(
+        (r for r in records
+         if r.get("_action") == RISK_ACCEPTANCE_ACTION
+         and r.get("provider_id") == provider_id
+         and r.get("capability") == capability
+         and r.get("request_digest") == request_digest
+         and r.get("acceptance_id") not in consumed),
+        None)
+    if match is None:
+        return None
+    record = {"ts": _now_iso(), "actor": "engine", "action": RISK_CONSUMED_ACTION,
+              "detail": {"acceptance_id": match.get("acceptance_id"),
+                         "provider_id": provider_id, "capability": capability,
+                         "request_digest": request_digest}}
+    ok = _events_core.append_jsonl_line(Path(project.root), record,
+                                        durable=True, required=False)
+    if not ok:
+        return None  # single-use is only provable when the consumption is durable
+    return {k: v for k, v in match.items() if k != "_action"}
 
 
 # =============================================== AI_IDE_15 reviewer admission gate
@@ -458,43 +719,66 @@ def _stored_evidence(project: Any, provider_id: str, capability: str) -> dict | 
 # SDK: this is a pure qualification check, never a transport. The offline fake
 # reviewer double drives record_verdicts directly and never reaches this gate.
 
-# a review needs at least this rung; below it (or blocked/stale) → refusal.
-REVIEWER_MIN_QUALIFICATION = DRY_RUN_VALID
+# closeout §2 item 7: an UNATTENDED or PAID review dispatch needs a fully
+# proven provider; only an explicitly HUMAN-INTERACTIVE session may run from a
+# passed canary artifact. DRY_RUN_VALID launches nothing real (Q10).
+REVIEWER_MIN_QUALIFICATION = PRODUCTION_READY
+REVIEWER_INTERACTIVE_MIN_QUALIFICATION = CANARY_ARTIFACT_PASSED
 REVIEWER_REFUSAL = "REVIEWER_NOT_QUALIFIED"
 
 
-def reviewer_admission_from_state(qualification: dict) -> dict:
+def _evidence_corrupt_refusal(refusal: str, min_required: str,
+                              provider_id: str, capability: str) -> dict:
+    """The structured fail-closed decision for corrupt/unreadable durable
+    evidence (closeout §2 item 10): admission blocked, transport 0, never an
+    exception escaping to the caller, never UNTESTED-and-fine."""
+    return {"admitted": False, "refusal": refusal, "level": None,
+            "state": BLOCKED, "blocked_reason": EVIDENCE_CORRUPT,
+            "evidence_corrupt": True, "min_required": min_required,
+            "reason": ("durable qualification evidence is corrupt/unreadable — "
+                       "failing closed (no dispatch, transport 0); repair or "
+                       "re-run qualification"),
+            "provider_id": provider_id, "capability": capability}
+
+
+def reviewer_admission_from_state(qualification: dict, *,
+                                  interactive: bool = False) -> dict:
     """Pure admission predicate over a :func:`qualification_state` dict. A cloud
     VLM review may be dispatched ONLY when the provider is qualified to at least
-    :data:`REVIEWER_MIN_QUALIFICATION`, is not BLOCKED and is not STALE; anything
+    the applicable floor — :data:`REVIEWER_MIN_QUALIFICATION` (unattended/paid
+    default) or :data:`REVIEWER_INTERACTIVE_MIN_QUALIFICATION` (an explicitly
+    human-interactive session) — and is not BLOCKED and not STALE; anything
     else is a structured ``REVIEWER_NOT_QUALIFIED`` refusal — never a silent
     proceed. No I/O, so both branches are testable without a real provider."""
+    min_required = (REVIEWER_INTERACTIVE_MIN_QUALIFICATION if interactive
+                    else REVIEWER_MIN_QUALIFICATION)
     level = qualification.get("level")
     stale = bool(qualification.get("stale"))
     blocked = qualification.get("blocked_reason")
-    min_rung = _ORDER.get(REVIEWER_MIN_QUALIFICATION, 0)
+    min_rung = _ORDER.get(min_required, 0)
     qualified = _ORDER.get(level, -1) >= min_rung and not blocked and not stale
     if qualified:
         return {"admitted": True, "refusal": None, "level": level,
                 "state": qualification.get("state"),
-                "min_required": REVIEWER_MIN_QUALIFICATION,
-                "reason": f"qualified to {level} (>= {REVIEWER_MIN_QUALIFICATION})"}
+                "min_required": min_required,
+                "reason": f"qualified to {level} (>= {min_required})"}
     if blocked:
         why = f"provider blocked: {blocked}"
     elif stale:
         why = f"qualification stale (rung fell back to {level})"
     else:
         why = (f"qualified only to {level}; a cloud VLM review needs "
-               f">= {REVIEWER_MIN_QUALIFICATION} (run provider qualification first)")
+               f">= {min_required} (run provider qualification first)")
     return {"admitted": False, "refusal": REVIEWER_REFUSAL, "level": level,
             "state": qualification.get("state"),
-            "min_required": REVIEWER_MIN_QUALIFICATION, "reason": why}
+            "min_required": min_required, "reason": why}
 
 
 def reviewer_admission(provider_id: str, capability: str = "vision", *,
                        project: Any | None = None,
                        evidence: dict | None = None,
-                       fixtures_dir: Path | None = None) -> dict:
+                       fixtures_dir: Path | None = None,
+                       interactive: bool = False) -> dict:
     """Whether a cloud VLM review may be dispatched through ``provider_id`` for
     ``capability`` (default ``vision``). Reuses the ladder end to end: live
     :func:`declared_facts` + any recorded (deletable) evidence → the pure
@@ -513,11 +797,16 @@ def reviewer_admission(provider_id: str, capability: str = "vision", *,
     ev = evidence
     if ev is None and project is not None:
         try:
-            ev = _stored_evidence(project, provider_id, capability)
+            ev, err = _stored_evidence(project, provider_id, capability)
         except Exception:
-            ev = None
+            ev, err = None, EVIDENCE_CORRUPT
+        if err == EVIDENCE_CORRUPT:
+            return _evidence_corrupt_refusal(
+                REVIEWER_REFUSAL,
+                REVIEWER_INTERACTIVE_MIN_QUALIFICATION if interactive
+                else REVIEWER_MIN_QUALIFICATION, provider_id, capability)
     q = qualification_state(provider_id, capability, evidence=ev, declared=declared)
-    decision = reviewer_admission_from_state(q)
+    decision = reviewer_admission_from_state(q, interactive=interactive)
     decision.update({"provider_id": provider_id, "capability": capability})
     return decision
 
@@ -532,42 +821,52 @@ def reviewer_admission(provider_id: str, capability: str = "vision", *,
 # unqualified analyzer is refused with ``ANALYZER_NOT_QUALIFIED`` rather than
 # dispatched. The offline fixture analyzer never reaches this gate.
 
-ANALYZER_MIN_QUALIFICATION = DRY_RUN_VALID
+# closeout §2 item 7: same floors as the reviewer — unattended/paid analysis
+# needs PRODUCTION_READY; only an explicitly human-interactive session may run
+# from a passed canary artifact. DRY_RUN_VALID launches nothing real (Q11).
+ANALYZER_MIN_QUALIFICATION = PRODUCTION_READY
+ANALYZER_INTERACTIVE_MIN_QUALIFICATION = CANARY_ARTIFACT_PASSED
 ANALYZER_REFUSAL = "ANALYZER_NOT_QUALIFIED"
 
 
-def analyzer_admission_from_state(qualification: dict) -> dict:
+def analyzer_admission_from_state(qualification: dict, *,
+                                  interactive: bool = False) -> dict:
     """Pure admission predicate for a cloud analyzer over a
     :func:`qualification_state` dict. Dispatch is allowed ONLY when the provider
-    is qualified to at least :data:`ANALYZER_MIN_QUALIFICATION`, not BLOCKED and
-    not STALE; anything else is a structured ``ANALYZER_NOT_QUALIFIED`` refusal —
-    never a silent proceed. No I/O, so both branches are testable offline."""
+    is qualified to at least the applicable floor (unattended/paid default
+    :data:`ANALYZER_MIN_QUALIFICATION`; human-interactive
+    :data:`ANALYZER_INTERACTIVE_MIN_QUALIFICATION`), not BLOCKED and not STALE;
+    anything else is a structured ``ANALYZER_NOT_QUALIFIED`` refusal — never a
+    silent proceed. No I/O, so both branches are testable offline."""
+    min_required = (ANALYZER_INTERACTIVE_MIN_QUALIFICATION if interactive
+                    else ANALYZER_MIN_QUALIFICATION)
     level = qualification.get("level")
     stale = bool(qualification.get("stale"))
     blocked = qualification.get("blocked_reason")
-    min_rung = _ORDER.get(ANALYZER_MIN_QUALIFICATION, 0)
+    min_rung = _ORDER.get(min_required, 0)
     qualified = _ORDER.get(level, -1) >= min_rung and not blocked and not stale
     if qualified:
         return {"admitted": True, "refusal": None, "level": level,
                 "state": qualification.get("state"),
-                "min_required": ANALYZER_MIN_QUALIFICATION,
-                "reason": f"qualified to {level} (>= {ANALYZER_MIN_QUALIFICATION})"}
+                "min_required": min_required,
+                "reason": f"qualified to {level} (>= {min_required})"}
     if blocked:
         why = f"provider blocked: {blocked}"
     elif stale:
         why = f"qualification stale (rung fell back to {level})"
     else:
         why = (f"qualified only to {level}; a cloud analysis needs "
-               f">= {ANALYZER_MIN_QUALIFICATION} (run provider qualification first)")
+               f">= {min_required} (run provider qualification first)")
     return {"admitted": False, "refusal": ANALYZER_REFUSAL, "level": level,
             "state": qualification.get("state"),
-            "min_required": ANALYZER_MIN_QUALIFICATION, "reason": why}
+            "min_required": min_required, "reason": why}
 
 
 def analyzer_admission(provider_id: str, capability: str = "media_analysis", *,
                        project: Any | None = None,
                        evidence: dict | None = None,
-                       fixtures_dir: Path | None = None) -> dict:
+                       fixtures_dir: Path | None = None,
+                       interactive: bool = False) -> dict:
     """Whether a cloud media-analysis run may be dispatched through
     ``provider_id`` for ``capability``. Reuses the ladder end to end (live
     :func:`declared_facts` + any recorded deletable evidence → the pure
@@ -582,32 +881,49 @@ def analyzer_admission(provider_id: str, capability: str = "media_analysis", *,
     ev = evidence
     if ev is None and project is not None:
         try:
-            ev = _stored_evidence(project, provider_id, capability)
+            ev, err = _stored_evidence(project, provider_id, capability)
         except Exception:
-            ev = None
+            ev, err = None, EVIDENCE_CORRUPT
+        if err == EVIDENCE_CORRUPT:
+            return _evidence_corrupt_refusal(
+                ANALYZER_REFUSAL,
+                ANALYZER_INTERACTIVE_MIN_QUALIFICATION if interactive
+                else ANALYZER_MIN_QUALIFICATION, provider_id, capability)
     q = qualification_state(provider_id, capability, evidence=ev, declared=declared)
-    decision = analyzer_admission_from_state(q)
+    decision = analyzer_admission_from_state(q, interactive=interactive)
     decision.update({"provider_id": provider_id, "capability": capability})
     return decision
 
 
 # ============================================ AI_IDE_19 bridge admission gate
 #
-# A REAL generative transition bridge (WP5b, addendum ruling 6) executes through
-# the STANDARD paid provider path — but only when the video provider is qualified
-# to the same DRY_RUN_VALID rung. Same ladder, same shape as the reviewer/analyzer
-# gates; a structured ``BRIDGE_NOT_QUALIFIED`` refusal rather than a silent paid
-# submit. The gate lives in the PROVIDER layer (build/ must not import it — the
-# build-boundary guard); cli.py calls it before dispatching a real bridge.
+# A REAL generative transition bridge (WP5b) executes through the STANDARD paid
+# provider path — closeout §2 item 8: the DEFAULT floor is PRODUCTION_READY (a
+# paid unattended generation), and the ONLY way below it is a one-time operator
+# risk acceptance bound to the exact (provider, capability, request_digest) —
+# single-use, durable, never a config flag. Same ladder, same shape as the
+# reviewer/analyzer gates; a structured ``BRIDGE_NOT_QUALIFIED`` refusal rather
+# than a silent paid submit. The gate lives in the PROVIDER layer (build/ must
+# not import it — the build-boundary guard); the ONE dispatch seam every bridge
+# surface funnels through (``providers.base.dispatch_bridge``) consults it.
 
-BRIDGE_MIN_QUALIFICATION = DRY_RUN_VALID
+BRIDGE_MIN_QUALIFICATION = PRODUCTION_READY
 BRIDGE_REFUSAL = "BRIDGE_NOT_QUALIFIED"
+
+# Blocked reasons a risk acceptance can NEVER override: an explicit operator
+# disable, an undeclared capability and a broken manifest outrank a one-time
+# experiment acceptance (Q01/Q02: blocked regardless of any evidence). Only an
+# unblocked provider or one ABSENT from the catalog entirely (a directly-passed
+# scripted experiment object the acceptance names exactly) is coverable.
+_RISK_COVERABLE_BLOCKS = (None, "provider_absent")
 
 
 def bridge_admission_from_state(qualification: dict) -> dict:
     """Pure admission predicate for a generative bridge over a
-    :func:`qualification_state` dict — qualified only at ``>= DRY_RUN_VALID``,
-    not BLOCKED, not STALE; else a ``BRIDGE_NOT_QUALIFIED`` refusal. No I/O."""
+    :func:`qualification_state` dict — qualified only at
+    ``>= PRODUCTION_READY``, not BLOCKED, not STALE; else a
+    ``BRIDGE_NOT_QUALIFIED`` refusal. No I/O. (The one-time risk-acceptance
+    path lives in :func:`bridge_admission`, which owns the durable store.)"""
     level = qualification.get("level")
     stale = bool(qualification.get("stale"))
     blocked = qualification.get("blocked_reason")
@@ -624,18 +940,25 @@ def bridge_admission_from_state(qualification: dict) -> dict:
         why = f"qualification stale (rung fell back to {level})"
     else:
         why = (f"qualified only to {level}; a real generative bridge needs "
-               f">= {BRIDGE_MIN_QUALIFICATION} (run provider qualification first)")
+               f">= {BRIDGE_MIN_QUALIFICATION} (run provider qualification "
+               f"first, or record a one-time operator risk acceptance for this "
+               f"exact request digest)")
     return {"admitted": False, "refusal": BRIDGE_REFUSAL, "level": level,
             "state": qualification.get("state"),
+            "blocked_reason": blocked,
             "min_required": BRIDGE_MIN_QUALIFICATION, "reason": why}
 
 
 def bridge_admission(provider_id: str, capability: str = "generative_bridge", *,
                      project: Any | None = None, evidence: dict | None = None,
-                     fixtures_dir: Path | None = None) -> dict:
+                     fixtures_dir: Path | None = None,
+                     request_digest: str | None = None) -> dict:
     """Whether a REAL generative bridge may be dispatched through ``provider_id``.
-    Reuses the ladder end to end (like the reviewer / analyzer gates). No real
-    video provider reaches ``DRY_RUN_VALID`` here, so the real bridge is
+    Reuses the ladder end to end (like the reviewer / analyzer gates), floored
+    at PRODUCTION_READY. Below the floor, a low-rung MANUAL experiment may be
+    admitted exactly once by an operator risk acceptance bound to this precise
+    ``request_digest`` (recorded + consumed durably — closeout §2 item 8). No
+    real video provider reaches the floor here, so the real bridge stays
     SKIPPED_WITH_EVIDENCE and this refusal is its stand-in."""
     try:
         declared = declared_facts(provider_id, capability, fixtures_dir=fixtures_dir)
@@ -644,12 +967,32 @@ def bridge_admission(provider_id: str, capability: str = "generative_bridge", *,
     ev = evidence
     if ev is None and project is not None:
         try:
-            ev = _stored_evidence(project, provider_id, capability)
+            ev, err = _stored_evidence(project, provider_id, capability)
         except Exception:
-            ev = None
+            ev, err = None, EVIDENCE_CORRUPT
+        if err == EVIDENCE_CORRUPT:
+            # a corrupt store also invalidates the risk-acceptance path — it
+            # rides the same stream, so nothing here can vouch for anything.
+            return _evidence_corrupt_refusal(
+                BRIDGE_REFUSAL, BRIDGE_MIN_QUALIFICATION, provider_id, capability)
     q = qualification_state(provider_id, capability, evidence=ev, declared=declared)
     decision = bridge_admission_from_state(q)
     decision.update({"provider_id": provider_id, "capability": capability})
+    if (not decision["admitted"] and project is not None and request_digest
+            and q.get("blocked_reason") in _RISK_COVERABLE_BLOCKS):
+        acceptance = _consume_risk_acceptance(project, provider_id, capability,
+                                              request_digest)
+        if acceptance is not None:
+            decision = {
+                "admitted": True, "refusal": None, "level": q.get("level"),
+                "state": q.get("state"), "min_required": BRIDGE_MIN_QUALIFICATION,
+                "risk_accepted": True,
+                "acceptance_id": acceptance.get("acceptance_id"),
+                "reason": ("one-time operator risk acceptance consumed for this "
+                           "exact provider/capability/request digest (single-use "
+                           "manual experiment path — closeout §2 item 8)"),
+                "provider_id": provider_id, "capability": capability,
+            }
     return decision
 
 
@@ -982,6 +1325,10 @@ def _finish(project, provider_id, capability, declared, *, evidence, mode,
     }
     report.update(extra)
     if write:
+        # DURABLE evidence FIRST (the admission truth — append-only events
+        # stream), THEN the deletable display projection (closeout §2 item 1).
+        if evidence is not None:
+            record_qualification_evidence(project, provider_id, capability, evidence)
         write_report(project, report)
     return report
 
@@ -1266,7 +1613,20 @@ def qualification_matrix(project: Any, *, fixtures_dir: Path | None = None) -> d
         for capability in caps:
             declared = declared_facts(d.provider_id, capability,
                                       fixtures_dir=fixtures_dir)
-            evidence = _stored_evidence(project, d.provider_id, capability)
+            evidence, ev_err = _stored_evidence(project, d.provider_id, capability)
+            if ev_err == EVIDENCE_CORRUPT:
+                # fail closed (closeout §2 item 10): a torn/tampered durable
+                # store cannot vouch for any rung — the row is BLOCKED, never
+                # silently the live floor.
+                rows.append({
+                    "provider_id": d.provider_id, "capability": capability,
+                    "kind": d.kind, "enabled": d.enabled,
+                    "state": BLOCKED, "level": UNTESTED, "stale": False,
+                    "blocked_reason": EVIDENCE_CORRUPT, "has_evidence": False,
+                    "reasons": ["durable qualification evidence corrupt/"
+                                "unreadable — failing closed (transport 0)"],
+                })
+                continue
             derived = qualification_state(d.provider_id, capability,
                                           evidence=evidence, declared=declared)
             rows.append({

@@ -172,6 +172,60 @@ def record_provider_failure(project, shot_id: str, provider_id: str,
         return None
 
 
+# --------------------------------------------------------- bridge dispatch seam
+# CLOSEOUT C2 (contract §3 执行边界): qualification/admission for the generative
+# bridge lives HERE — the ONE provider-layer service every bridge surface
+# funnels through (build.bridge.execute_bridge → dispatch_bridge →
+# provider.generate). CLI/MCP/GUI are thin wrappers over execute_bridge, and a
+# direct Python call cannot bypass it either: an unqualified provider yields
+# transport 0 with durable refusal evidence. The admission itself is
+# providers.qualification.bridge_admission (floor PRODUCTION_READY, plus the
+# single-use operator risk-acceptance path) — consulted, never re-implemented,
+# so CLI / MCP / direct share the SAME gate function, not three copies.
+
+BRIDGE_PARAMS_KEY = "bridge"
+BRIDGE_DISPATCH_CAPABILITY = "generative_bridge"
+
+
+def dispatch_bridge(project, provider, req: "GenerationRequest", *,
+                    capability: str = BRIDGE_DISPATCH_CAPABILITY) -> list:
+    """Admission-gate + dispatch ONE generative-bridge request through the
+    standard provider path. Refusal is a structured
+    ``ProviderFailure(code=BRIDGE_NOT_QUALIFIED)`` raised BEFORE any transport
+    (spend 0) and recorded durably (``reports/failures.jsonl``); admission
+    proceeds to the ordinary ``provider.generate`` → ``register_take`` path,
+    inheriting the AI_IDE_14 submission admission / budget / paid-recovery
+    machinery unchanged."""
+    from .qualification import BRIDGE_REFUSAL, bridge_admission
+
+    plan = (req.params or {}).get(BRIDGE_PARAMS_KEY) or {}
+    provider_id = getattr(provider, "id", "") or "<unknown>"
+    decision = bridge_admission(provider_id, capability, project=project,
+                                request_digest=plan.get("request_digest"))
+    if not decision.get("admitted"):
+        exc = ProviderFailure(
+            FailureKind.invalid,
+            f"{provider_id}: generative bridge refused before dispatch "
+            f"(transport 0) — {decision.get('reason')}",
+            detail={"code": decision.get("refusal") or BRIDGE_REFUSAL,
+                    "capability": capability,
+                    "request_digest": plan.get("request_digest"),
+                    "min_required": decision.get("min_required"),
+                    "level": decision.get("level"),
+                    "evidence_corrupt": decision.get("evidence_corrupt", False),
+                    "hint": "运行 provider qualification(真实 canary)或由操作者"
+                            "登记一次性 risk acceptance(绑定本次 request digest)"})
+        record_provider_failure(project, req.shot.id, provider_id, exc)
+        raise exc
+    # provenance of the gate decision on the request params (deterministic
+    # content only — replays of the same plan produce the identical identity).
+    req.params.setdefault("bridge_admission", {
+        "admitted": True,
+        "risk_accepted": bool(decision.get("risk_accepted", False)),
+        "min_required": decision.get("min_required")})
+    return provider.generate(req)
+
+
 @dataclass
 class GenerationRequest:
     """Everything a provider needs to produce takes for one shot.

@@ -224,12 +224,24 @@ def test_confidence_never_participates_in_acceptance(tmp_project, add_shot):
 # ============================================ REVIEWER_NOT_QUALIFIED gate
 
 
-def test_admission_predicate_admits_only_dry_run_valid_and_up():
+def test_admission_predicate_enforces_closeout_floors():
+    """14_21 closeout Q10 update (was: admits DRY_RUN_VALID and up): the
+    unattended/paid floor is PRODUCTION_READY, the explicitly human-interactive
+    floor is CANARY_ARTIFACT_PASSED — DRY_RUN_VALID launches nothing real."""
     from manju.providers import qualification as Q
-    admit = reviewer_admission_from_state(
-        {"level": Q.DRY_RUN_VALID, "state": Q.DRY_RUN_VALID, "stale": False,
-         "blocked_reason": None})
+    dry = {"level": Q.DRY_RUN_VALID, "state": Q.DRY_RUN_VALID, "stale": False,
+           "blocked_reason": None}
+    r = reviewer_admission_from_state(dry)
+    assert r["admitted"] is False and r["refusal"] == "REVIEWER_NOT_QUALIFIED"
+    assert reviewer_admission_from_state(dry, interactive=True)["admitted"] is False
+    prod = {"level": Q.PRODUCTION_READY, "state": Q.PRODUCTION_READY,
+            "stale": False, "blocked_reason": None}
+    admit = reviewer_admission_from_state(prod)
     assert admit["admitted"] is True and admit["refusal"] is None
+    canary = {"level": Q.CANARY_ARTIFACT_PASSED, "state": Q.CANARY_ARTIFACT_PASSED,
+              "stale": False, "blocked_reason": None}
+    assert reviewer_admission_from_state(canary)["admitted"] is False  # unattended
+    assert reviewer_admission_from_state(canary, interactive=True)["admitted"] is True
     for lvl in (Q.UNTESTED, Q.CONFIG_VALID):
         r = reviewer_admission_from_state(
             {"level": lvl, "state": lvl, "stale": False, "blocked_reason": None})
@@ -264,7 +276,9 @@ def test_fabricated_unqualified_vision_manifest_is_refused(tmp_path, monkeypatch
         decision = reviewer_admission("cloud_vlm", capability="vision")
         assert decision["admitted"] is False
         assert decision["refusal"] == "REVIEWER_NOT_QUALIFIED"
-        assert decision["min_required"] == "DRY_RUN_VALID"
+        # 14_21 closeout Q10: the unattended/paid default floor is now
+        # PRODUCTION_READY (was DRY_RUN_VALID pre-closeout).
+        assert decision["min_required"] == "PRODUCTION_READY"
     finally:
         registry_mod._manifest_cache = None
 

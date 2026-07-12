@@ -5850,19 +5850,31 @@ def providers_qualification(
     the current manifests + any recorded evidence, so a stale report reads STALE.
     Pass an ID (and optionally --capability) to focus on one provider."""
     from .providers.qualification import (
+        EVIDENCE_CORRUPT,
         declared_facts,
         qualification_matrix,
         qualification_state,
+        read_qualification_evidence,
         read_report,
     )
 
     project = _project()
     if provider_id and capability:
         declared = declared_facts(provider_id, capability)
+        # 14_21 closeout: the state derives from the DURABLE evidence store;
+        # the report JSON below is a display projection only (never an input).
         stored = read_report(project, provider_id, capability)
-        evidence = stored.get("evidence") if stored else None
-        derived = qualification_state(provider_id, capability,
-                                      evidence=evidence, declared=declared)
+        evidence, ev_err = read_qualification_evidence(project, provider_id,
+                                                       capability)
+        if ev_err == EVIDENCE_CORRUPT:
+            derived = {"state": "BLOCKED", "level": "UNTESTED", "stale": False,
+                       "blocked_reason": EVIDENCE_CORRUPT,
+                       "reasons": ["durable qualification evidence corrupt/"
+                                   "unreadable — failing closed"],
+                       "bindings": None}
+        else:
+            derived = qualification_state(provider_id, capability,
+                                          evidence=evidence, declared=declared)
         out = {"provider_id": provider_id, "capability": capability,
                "state": derived["state"], "level": derived["level"],
                "stale": derived["stale"], "blocked_reason": derived["blocked_reason"],
@@ -6832,6 +6844,141 @@ def tool_cmd(
         _emit(out, True)
     else:
         typer.echo(f"{op} → {out['executor']}  (whitelist: {list(_tm.whitelist_ops())})")
+
+
+# ===================================================== 14_21 CLOSEOUT: bridge CLI
+# `manju bridge plan|run|adopt` — THIN wrappers over the ONE bridge service
+# (build.bridge.*, gated in the provider layer via providers.base.dispatch_bridge
+# → providers.qualification.bridge_admission). No second gate, no second digest
+# scheme, no bridge ledger. Honest JSON; refs stay project-relative (no
+# absolute paths, no secrets).
+
+bridge_app = typer.Typer(
+    no_args_is_help=True,
+    help="生成式转场 bridge:plan / run / adopt(同一服务、Provider 层准入门)")
+app.add_typer(bridge_app, name="bridge")
+
+
+@bridge_app.command("plan")
+def bridge_plan_cmd(
+    prev: Path = typer.Option(..., "--prev", help="前一镜头 END 帧文件"),
+    next_frame: Path = typer.Option(..., "--next", help="后一镜头 START 帧文件"),
+    duration_ms: int = typer.Option(..., "--duration-ms", help="bridge 时长(毫秒)"),
+    direction: Optional[str] = typer.Option(None, "--direction",
+                                            help="运动/方向约束,如 left_to_right"),
+    description: Optional[str] = typer.Option(None, "--description",
+                                              help="转场描述(进入 request digest)"),
+    out: Optional[Path] = typer.Option(None, "--out", help="把 plan JSON 写到此文件"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Bind the bridge inputs: BOTH endpoint frames as real files (hashed here),
+    duration, direction, description. Zero-write unless --out."""
+    import json as _json
+
+    from .build.bridge import BridgeError, plan_bridge
+
+    project = _project()
+    try:
+        plan = plan_bridge(prev_end_frame=prev, next_start_frame=next_frame,
+                           duration_ms=duration_ms, direction=direction,
+                           description=description, project_root=project.root)
+    except (BridgeError, OSError) as exc:
+        _fail(str(exc), code="bad_plan")
+        return
+    if out is not None:
+        out.write_text(_json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
+                       encoding="utf-8")
+    if as_json:
+        _emit(plan, True)
+        return
+    typer.secho(f"bridge plan: digest={plan['request_digest'][:23]}…  "
+                f"duration={plan['duration_ms']}ms", fg=typer.colors.GREEN)
+    typer.echo(f"  prev={plan['prev_end_frame']}  next={plan['next_start_frame']}")
+    if out is not None:
+        typer.secho(f"  written: {out.name}", fg=typer.colors.BRIGHT_BLACK)
+
+
+@bridge_app.command("run")
+def bridge_run_cmd(
+    shot: str = typer.Argument(..., help="镜头 id(spec 身份来源)"),
+    plan_file: Path = typer.Option(..., "--plan", help="bridge plan JSON 文件"),
+    provider: str = typer.Option(..., "--provider", help="视频 provider id"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Execute a planned bridge through the ONE gated service. An unqualified
+    provider refuses in the provider-layer gate with transport 0."""
+    import json as _json
+
+    from .build.bridge import BridgeError, bridge_lineage, execute_bridge
+    from .providers.base import ProviderFailure
+    from .providers.registry import get_provider
+
+    project = _project()
+    try:
+        plan = _json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _fail(f"bad plan file: {exc}", code="bad_plan")
+        return
+    try:
+        prov = get_provider(provider)
+    except KeyError as exc:
+        _fail(str(exc), code="unknown_provider")
+        return
+    try:
+        take = execute_bridge(project, shot, plan, provider=prov)
+    except BridgeError as exc:
+        _fail(str(exc), code="bridge_refused")
+        return
+    except ProviderFailure as exc:
+        _fail(str(exc),
+              code=str(exc.detail.get("code") or exc.kind.value))
+        return
+    lineage = bridge_lineage(plan, take, shot=shot)
+    if as_json:
+        _emit({"shot": shot, "take": take.name, "lineage": lineage}, True)
+        return
+    typer.secho(f"bridge take {take.name} registered for {shot} "
+                f"(transition CANDIDATE — adopt 前不得进 final)",
+                fg=typer.colors.GREEN)
+
+
+@bridge_app.command("adopt")
+def bridge_adopt_cmd(
+    lineage_file: Path = typer.Option(..., "--lineage", help="bridge lineage JSON"),
+    review_file: Path = typer.Option(..., "--review",
+                                     help="当前绑定的 accepted Assurance JSON"),
+    media: Optional[Path] = typer.Option(None, "--media",
+                                         help="bridge 输出媒体文件(校验精确字节)"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Adopt a reviewed bridge: consumes a CURRENT-bound accepted Assurance and
+    emits a zero-write adoption Proposal — it never writes Shot/selected_take."""
+    import json as _json
+
+    from .build.bridge import BridgeError, adopt_bridge
+
+    _project()
+    try:
+        lineage = _json.loads(lineage_file.read_text(encoding="utf-8"))
+        review = _json.loads(review_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _fail(f"bad input: {exc}", code="bad_input")
+        return
+    try:
+        adopted = adopt_bridge(lineage, review=review, media_path=media)
+    except BridgeError as exc:
+        _fail(str(exc), code="adopt_refused")
+        return
+    if as_json:
+        _emit(adopted, True)
+        return
+    prop = adopted["proposal"]
+    typer.secho(f"bridge {adopted.get('take')} adopted — PROPOSAL only "
+                f"(do_not_execute_automatically={prop['do_not_execute_automatically']})",
+                fg=typer.colors.GREEN)
+    typer.echo(f"  source patch: {prop['source_patch']['field']} → "
+               f"{prop['source_patch']['proposed_value']}  "
+               f"via {prop['source_patch']['apply_via']}")
 
 
 if __name__ == "__main__":

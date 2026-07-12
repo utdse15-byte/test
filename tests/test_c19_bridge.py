@@ -78,12 +78,40 @@ def test_real_bridge_is_qualification_gated(tmp_project):
 
 
 # --------------------------------------------------- row 15: standard path + hashes
+# 14_21 closeout update: a plan must bind REAL endpoint frame files (hash-only
+# is not deliverable input, contract §3) and an unqualified scripted stand-in
+# executes only under a one-time operator risk acceptance bound to the exact
+# request digest (the low-rung manual-experiment path) — so these tests now
+# create real frames and record that acceptance before executing.
+
+
+def _frames(project):
+    d = project.root / "bridge_frames"
+    d.mkdir(exist_ok=True)
+    prev, nxt = d / "prev.png", d / "next.png"
+    prev.write_bytes(b"c19-prev-frame")
+    nxt.write_bytes(b"c19-next-frame")
+    return prev, nxt
+
+
+def _plan(project, **kw):
+    prev, nxt = _frames(project)
+    kw.setdefault("duration_ms", 600)
+    return bridge.plan_bridge(prev_end_frame=prev, next_start_frame=nxt,
+                              project_root=project.root, **kw)
+
+
+def _accept(project, provider, plan):
+    from manju.providers.qualification import record_bridge_risk_acceptance
+    record_bridge_risk_acceptance(project, provider.id, bridge.BRIDGE_CAPABILITY,
+                                  plan["request_digest"])
+
 
 def test_execute_rides_standard_path_append_only_binds_hashes(tmp_project, add_shot):
     add_shot(tmp_project, "S001")
-    plan = bridge.plan_bridge(prev_end_frame_hash="sha256:prev",
-                              next_start_frame_hash="sha256:next", duration_ms=600)
+    plan = _plan(tmp_project, direction="left_to_right")
     provider = _FakeBridgeProvider()
+    _accept(tmp_project, provider, plan)
     before = len(tmp_project.takes("S001"))
     take = bridge.execute_bridge(tmp_project, "S001", plan, provider=provider)
     # standard path: a GenerationRequest was handed to provider.generate
@@ -93,8 +121,8 @@ def test_execute_rides_standard_path_append_only_binds_hashes(tmp_project, add_s
     # append-only: a NEW take was registered, nothing overwritten
     assert len(tmp_project.takes("S001")) == before + 1
     lineage = bridge.bridge_lineage(plan, take)
-    assert lineage["prev_end_frame_hash"] == "sha256:prev"
-    assert lineage["next_start_frame_hash"] == "sha256:next"
+    assert lineage["prev_end_frame_hash"] == plan["prev_end_frame_hash"]
+    assert lineage["next_start_frame_hash"] == plan["next_start_frame_hash"]
     assert lineage["output_media_hash"]      # output hash bound
     assert lineage["is_transition_candidate"] is True
     assert lineage["adopted"] is False
@@ -104,8 +132,10 @@ def test_execute_rides_standard_path_append_only_binds_hashes(tmp_project, add_s
 
 def test_bridge_requires_current_bound_review_before_adoption(tmp_project, add_shot):
     add_shot(tmp_project, "S001")
-    plan = bridge.plan_bridge(prev_end_frame_hash="p", next_start_frame_hash="n", duration_ms=500)
-    take = bridge.execute_bridge(tmp_project, "S001", plan, provider=_FakeBridgeProvider())
+    plan = _plan(tmp_project, duration_ms=500)
+    provider = _FakeBridgeProvider()
+    _accept(tmp_project, provider, plan)
+    take = bridge.execute_bridge(tmp_project, "S001", plan, provider=provider)
     lineage = bridge.bridge_lineage(plan, take)
     req = bridge.bridge_review_requirement(lineage)
     assert req["required"] is True and req["status"] == "PENDING_REVIEW"
@@ -114,10 +144,17 @@ def test_bridge_requires_current_bound_review_before_adoption(tmp_project, add_s
     with pytest.raises(bridge.BridgeError):
         bridge.adopt_bridge(lineage, review=None)
     # a review bound to STALE bytes is refused (current-bound, 不得掩盖 continuity)
-    stale = {"passed": True, "bound_hash": "sha256:OLD"}
+    # 14_21 closeout B08/B09 update: adoption consumes only an ACCEPTED
+    # Assurance from the existing QC machinery — the old raw
+    # {passed, bound_hash} dicts are exactly what the closeout forbids.
+    stale = {"schema": bridge.ASSURANCE_SCHEMA, "assurance_state": "accepted",
+             "spec_hash": lineage.get("spec_hash"),
+             "evidence": {"media_sha256": "sha256:OLD"}}
     with pytest.raises(bridge.BridgeError):
         bridge.adopt_bridge(lineage, review=stale)
-    good = {"passed": True, "bound_hash": lineage["output_media_hash"]}
+    good = {"schema": bridge.ASSURANCE_SCHEMA, "assurance_state": "accepted",
+            "spec_hash": lineage.get("spec_hash"),
+            "evidence": {"media_sha256": lineage["output_media_hash"]}}
     adopted = bridge.adopt_bridge(lineage, review=good)
     assert adopted["adopted"] is True
 
@@ -126,8 +163,10 @@ def test_bridge_requires_current_bound_review_before_adoption(tmp_project, add_s
 
 def test_unapproved_bridge_never_reaches_final(tmp_project, add_shot):
     add_shot(tmp_project, "S001")
-    plan = bridge.plan_bridge(prev_end_frame_hash="p", next_start_frame_hash="n", duration_ms=500)
-    take = bridge.execute_bridge(tmp_project, "S001", plan, provider=_FakeBridgeProvider())
+    plan = _plan(tmp_project, duration_ms=500)
+    provider = _FakeBridgeProvider()
+    _accept(tmp_project, provider, plan)
+    take = bridge.execute_bridge(tmp_project, "S001", plan, provider=provider)
     lineage = bridge.bridge_lineage(plan, take)
     # a compiled final that does NOT reference the bridge media
     compiled_sources = ["S001/take_09", "S002/take_03"]

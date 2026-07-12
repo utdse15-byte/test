@@ -152,10 +152,15 @@ def test_untested_and_config_floor_and_blocked():
 
 def test_production_ready_needs_a_real_transport():
     """A scripted run that recorded PRODUCTION_READY is capped at RECOVERY_PASSED
-    — production-readiness is real-canary-only (environment honesty)."""
+    — production-readiness is real-canary-only (environment honesty).
+
+    14_21 closeout Q05: a canary-level evidence record must carry ALL mandatory
+    anchors (request/response digests included) or it reads STALE — so this
+    evidence now carries the full set (the pre-closeout dict omitted them)."""
     ev = {"level": Q.PRODUCTION_READY, "transport": "scripted",
           "provider_profile_digest": "sha256:p1", "adapter_semantic_digest": "sha256:a1",
-          "fixture_version": "sha256:f1"}
+          "fixture_version": "sha256:f1", "request_digest": "sha256:r1",
+          "response_schema_digest": "sha256:s1"}
     r = Q.qualification_state("x", "c", evidence=ev, declared=_declared())
     assert r["level"] == Q.RECOVERY_PASSED
     assert "production_ready_requires_real_canary" in r["reasons"]
@@ -385,16 +390,31 @@ def test_10_recovery_drill_delete_sqlite_resume_poll_only(providers_dir, user, m
 
 
 def test_11_malformed_evidence_never_yields_a_false_pass(providers_dir, user, monkeypatch):
+    """14_21 closeout Q06–Q09 update: the report JSON is a DISPLAY projection
+    with zero admission effect. Corrupting it neither yields a false pass NOR
+    erases the durable append-only evidence (the pre-closeout pin read the
+    report AS the evidence store; the closeout contract forbids that).
+    Corrupting the DURABLE stream itself fails closed (BLOCKED, transport 0 —
+    pinned in test_closeout_c1 Q09)."""
     pid = write_manifest(providers_dir, monkeypatch)
-    run_canary(user, pid)                        # writes a real report
-    # corrupt the derived report JSON → read_report returns None → the matrix
-    # re-derives to the LIVE floor, never a stale spurious high level.
+    run_canary(user, pid)                        # records durable evidence + report
+    # corrupt the derived report JSON → read_report returns None (no crash) …
     Q.report_path(user, pid, "image_to_video").write_text("{ not json", encoding="utf-8")
     assert Q.read_report(user, pid, "image_to_video") is None
+    # … but the DURABLE evidence is untouched: the matrix keeps the earned
+    # rung — and a forged high-level report could never lift it either.
     row = next(r for r in Q.qualification_matrix(user)["rows"]
                if r["provider_id"] == pid and r["capability"] == "image_to_video")
-    assert row["has_evidence"] is False
-    assert row["state"] in (Q.CONFIG_VALID, Q.DRY_RUN_VALID)  # floor, not a canary rung
+    assert row["has_evidence"] is True
+    assert row["state"] == Q.CANARY_ARTIFACT_PASSED
+    Q.report_path(user, pid, "image_to_video").write_text(
+        json.dumps({"schema": Q.SCHEMA, "state": Q.PRODUCTION_READY,
+                    "level": Q.PRODUCTION_READY,
+                    "evidence": {"level": Q.PRODUCTION_READY, "transport": "real"}}),
+        encoding="utf-8")
+    row2 = next(r for r in Q.qualification_matrix(user)["rows"]
+                if r["provider_id"] == pid and r["capability"] == "image_to_video")
+    assert row2["state"] == Q.CANARY_ARTIFACT_PASSED  # forged report: zero effect
 
 
 def test_11b_torn_submission_evidence_fails_closed(providers_dir, user, monkeypatch):
