@@ -426,6 +426,12 @@ def test_edl_conform_every_feature_classified_exactly_once():
 
 
 def test_edl_conform_audio_is_unsupported_video_is_preserved():
+    """EVOLVED with Y1 (orchestrator edit, teeth preserved): S2's original
+    pin asserted audio_tracks unsupported while the writer was V-only. Y1
+    landed the DECLARED A1/A2 subset (voice->A1, music->A2; sfx/ambient
+    omitted with per-clip notes), so the honest classification moved to
+    approximated — with the never-squeezed boundary asserted. loop/ducking
+    stay unsupported (no CMX primitive; no fabricated events)."""
     tl = _full_inventory_timeline()
     cats = conform.classify_features("edl", conform.timeline_feature_inventory(tl))
     preserved = {r["feature"] for r in cats["preserved"]}
@@ -433,9 +439,13 @@ def test_edl_conform_audio_is_unsupported_video_is_preserved():
     approx = {r["feature"] for r in cats["approximated"]}
     dropped = {r["feature"] for r in cats["dropped"]}
     assert "video_clips" in preserved and "video_in_points" in preserved
-    assert "audio_tracks" in unsupported
+    assert "audio_tracks" in approx  # Y1: declared A1/A2 subset
+    assert {"audio_loops", "ducking"} <= unsupported  # still no primitive
     assert "transitions" in approx
     assert "captions" in dropped and "overlays" in dropped
+    row = next(r for r in cats["approximated"] if r["feature"] == "audio_tracks")
+    assert "A1" in row["detail"] and "A2" in row["detail"]
+    assert "never squeezed" in row["detail"]  # sfx/ambient honesty stated
 
 
 def test_edl_conform_report_and_drift_and_crosscheck(tmp_project, add_shot, make_take):

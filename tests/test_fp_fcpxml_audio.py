@@ -416,18 +416,30 @@ def test_ducking_clip_is_written_but_ducking_relationship_noted():
 
 
 def test_fades_take_gain_only_branch_no_fade_elements():
+    """EVOLVED with Y3 (orchestrator edit): V1's original pin recorded the
+    gain-only branch — fades were withheld because the element shape's
+    confidence was not high, with an honest in-band note. That uncertainty
+    DISSOLVED when the orchestrator sourced the grammar from Apple's
+    archived FCPXML v1.7 DTD (asset-clip → adjust-volume → param name →
+    fadeIn/fadeOut), so Y3 emits REAL fades and this pin now asserts the
+    DTD chain with exact rational durations. The retained teeth: the gain
+    value still lands, and nothing about the fade is silent."""
     tl = _tl([_vid("S001", "TAKEA", 0, 4000)],
              music=[_aud("media/a/bed.mp3", 0, 4000, gain_db=-6.0,
                          fade_in_ms=250, fade_out_ms=500)])
     got = compile_fcpxml(tl, rate=R24, name="X")
-    # gain-only branch: NO fade element shapes are emitted
-    for token in ("fadeIn", "fadeOut", "fade-in", "fade-out", "<fade"):
-        assert token not in got, token
-    # but the omission is honest (in-band note names the fade values)
-    assert "MANJU" in got and "250" in got and "500" in got
-    # gain still lands
     root = ET.fromstring(got)
-    assert root.find(".//asset-clip[@lane='-2']/adjust-volume").get("amount") == "-6dB"
+    av = root.find(".//asset-clip[@lane='-2']/adjust-volume")
+    assert av.get("amount") == "-6dB"  # the original tooth, unchanged
+    param = av.find("param")
+    assert param is not None and param.get("name") == "amount"
+    fade_in = param.find("fadeIn")
+    fade_out = param.find("fadeOut")
+    # 250ms @24 -> 6 frames; 500ms -> 12 frames; exact rational seconds
+    assert fade_in.get("type") == "linear" and fade_in.get("duration") == "6/24s"
+    assert fade_out.get("type") == "linear" and fade_out.get("duration") == "12/24s"
+    # the old gain-only MANJU fade note is GONE for expressed fades
+    assert "approximated as gain-only" not in got
 
 
 # --------------------------------------------------------------------------- #

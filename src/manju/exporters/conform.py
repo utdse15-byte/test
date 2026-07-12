@@ -419,10 +419,14 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "TC); source length reuses the record frame count",
             "exporters/edl.py:207-224 (_Placed)"),
         "audio_in_points": (
-            "unsupported",
-            "audio is out of scope for this V-only CMX EDL (see audio_tracks); "
-            "no audio event carries a source in-point",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "approximated",
+            "A1/A2 (voice/music) audio events carry a zero-based source "
+            "in-point from start_offset_ms (ms->frames, 00:00:00:00-based — "
+            "generated media's zero timebase IS its source TC, the video "
+            "source_in_ms precedent); sfx/ambient in-points are omitted with "
+            "their buses (see audio_tracks)",
+            "exporters/edl.py (_emit_audio: src_in = ms_to_frames("
+            "start_offset_ms))"),
         "transitions": (
             "approximated",
             "clean cross-dissolves (xfade_fade, dur>0) become native CMX D "
@@ -443,36 +447,50 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "exporters/edl.py:266 (video track only, no caption path)"),
         "clip_volume": (
             "unsupported",
-            "own-audio level/mute is an audio-domain feature; this V-only EDL "
-            "carries no audio channel at all (see audio_tracks)",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "VideoClip own-audio level/mute is an audio-domain feature of the "
+            "picture clip, not one of the voice/music buses this EDL emits as "
+            "A1/A2; out of scope",
+            "exporters/edl.py (module scope: no video own-audio path)"),
         "audio_gain": (
-            "unsupported",
-            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "approximated",
+            "gain_db is not a CMX3600 cut-list primitive; a nonzero gain on a "
+            "placed A1/A2 clip survives only as a per-clip '* MANJU:' note "
+            "(the level rides the mix, not the cut list)",
+            "exporters/edl.py (_audio_loss_notes)"),
         "audio_fade_in": (
-            "unsupported",
-            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "approximated",
+            "fade_in_ms is not expressible in bare CMX3600; a nonzero fade-in "
+            "on a placed A1/A2 clip survives only as a per-clip '* MANJU:' "
+            "note",
+            "exporters/edl.py (_audio_loss_notes)"),
         "audio_fade_out": (
-            "unsupported",
-            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "approximated",
+            "fade_out_ms is not expressible in bare CMX3600; a nonzero "
+            "fade-out on a placed A1/A2 clip survives only as a per-clip "
+            "'* MANJU:' note",
+            "exporters/edl.py (_audio_loss_notes)"),
         "ducking": (
             "unsupported",
-            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "sidechain ducking (ducking/duck_*) has no CMX3600 primitive; not "
+            "written and not noted per clip — out of scope by design",
+            "exporters/edl.py (module scope: no ducking path)"),
         "audio_loops": (
             "unsupported",
-            "audio is out of scope for this V-only CMX EDL (see audio_tracks)",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "loop=True beds are materialized by repetition at render time; "
+            "CMX3600 has no loop primitive and there is no honest single-event "
+            "source window here, so a looped clip is OMITTED (recorded as a "
+            "'* MANJU:' note, never a fabricated event) — no materialization "
+            "in this exporter (fcpxml pre-W1 stance)",
+            "exporters/edl.py (_audio_omit_reason)"),
         "audio_tracks": (
-            "unsupported",
-            "Manju's four buses (voice/music/sfx/ambient) cannot ride CMX's "
-            "flat A-channel model faithfully; this loop exports the V track "
-            "only — audio is honestly out of scope by design, not silently "
-            "dropped",
-            "exporters/edl.py:1-80 (module scope: V track only)"),
+            "approximated",
+            "the VOICE bus becomes A1 events (CMX channel token 'A') and the "
+            "MUSIC bus becomes A2 events (token 'A2') — a DECLARED two-channel "
+            "subset (Y1). sfx + ambient have no classic third/fourth stereo "
+            "pair and are recorded as in-band '* MANJU:' omission notes "
+            "(bus/source/window), never squeezed into a channel",
+            "exporters/edl.py (_emit_audio; _AUDIO_EMIT_BUSES/"
+            "_AUDIO_OMIT_BUSES)"),
     },
     "fcpxml": {
         "video_clips": (
@@ -532,17 +550,33 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "gain with them (see audio_tracks)",
             "exporters/fcpxml.py (V1 gain emission)"),
         "audio_fade_in": (
-            "approximated",
-            "GAIN-ONLY branch (V1): fade handles are NOT encoded — confidence "
-            "in the exact FCPXML fade element shape is not high and a wrong "
-            "one risks whole-document rejection; the omitted fade values ride "
-            "an in-band <!-- MANJU --> note on the clip",
-            "exporters/fcpxml.py (V1 fades ruling + _audio_approx_notes)"),
+            "preserved",
+            "REAL native FCPXML fade (Y3, DTD-sourced): on every WRITTEN clip, "
+            "<adjust-volume amount=\"{gain:g}dB\"> → <param name=\"amount\"> → "
+            "<fadeIn type=\"linear\" duration=\"N/Ds\"/>. The containment chain is "
+            "Apple's archived FCPXML v1.7 DTD (adjust-volume(param*); param(name "
+            "#REQUIRED)(fadeIn?,fadeOut?); fadeIn EMPTY, type %fadeType #IMPLIED, "
+            "duration %time #REQUIRED). fade_in_ms → whole frames ROUND_HALF_UP → "
+            "exact rational seconds; a fade longer than the clip clamps to the "
+            "clip length with an in-band note (never an invalid over-long fade). "
+            "type=\"linear\" mirrors the render's afade default curve (parity). "
+            "The param name \"amount\" is a CONVENTION — the DTD requires a name "
+            "attribute but does NOT mandate that string. Honest edges: a "
+            "materialized loop pass carries no fade (whole-source repeat, stated "
+            "in a note) and clips the loop/None rule omits take their fades with "
+            "them (see audio_tracks)",
+            "exporters/fcpxml.py (Y3 _fade_frames + _emit_adjust_volume param/fadeIn)"),
         "audio_fade_out": (
-            "approximated",
-            "GAIN-ONLY branch (V1), same ruling as audio_fade_in: not "
-            "encoded, named in the clip's in-band note",
-            "exporters/fcpxml.py (V1 fades ruling + _audio_approx_notes)"),
+            "preserved",
+            "REAL native FCPXML fade (Y3, DTD-sourced), same chain as "
+            "audio_fade_in: <adjust-volume> → <param name=\"amount\"> → <fadeOut "
+            "type=\"linear\" duration=\"N/Ds\"/> on every WRITTEN clip. "
+            "fade_out_ms → whole frames ROUND_HALF_UP → exact rational seconds, "
+            "clamped to the clip length with an in-band note when over-long; "
+            "type=\"linear\" for afade parity; param name \"amount\" is a "
+            "convention (DTD requires only a name attribute). Loop passes carry "
+            "no fade and omitted clips take their fades with them (see audio_tracks)",
+            "exporters/fcpxml.py (Y3 _fade_frames + _emit_adjust_volume param/fadeOut)"),
         "ducking": (
             "approximated",
             "the ducked clip IS written at its static gain; the render-time "
@@ -669,6 +703,11 @@ UNSUPPORTED_TARGETS: dict[str, str] = {
     # be a second voice for the same facts.
     "fcpxml_import": "read-only import-plan analysis (never a writer exit); "
                      "loss honesty lives in the plan document itself",
+    # Y4 (orchestrator-declared coverage): same class as fcpxml_import — the
+    # CMX3600 import-plan module analyzes, never writes; the plan document
+    # (manju.edl-import-plan/v1) carries its own honesty rows.
+    "edl_import": "read-only import-plan analysis (never a writer exit); "
+                  "loss honesty lives in the plan document itself",
 }
 
 # One static honest-scope note per target, prepended to the doc's notes.
@@ -692,8 +731,11 @@ _SCOPE_NOTES: dict[str, str] = {
                 "fields).",
     "edl": "CMX3600 video cut list with real SMPTE timecode (record TC from "
            "the timeline position; FCM DROP/NON-DROP per rate; colon-NDF / "
-           "semicolon-DF). V track only — audio is out of scope by design; "
-           "source TC is 00:00:00:00-based (takes carry no recorded reel/TC).",
+           "semicolon-DF). V track + a DECLARED A1/A2 audio subset (Y1: "
+           "voice->A1, music->A2, blocked-by-track after the V block; "
+           "sfx/ambient omitted with per-clip '* MANJU:' notes, never "
+           "squeezed); source TC is 00:00:00:00-based (takes carry no "
+           "recorded reel/TC).",
     "fcpxml": "FCPXML 1.9 video spine (library>event>project>sequence>spine) — "
               "the one NLE exit where our rational time rides NATIVELY: every "
               "offset/start/duration is an EXACT whole-frame rational-seconds "
@@ -701,7 +743,10 @@ _SCOPE_NOTES: dict[str, str] = {
               "'1001/24000s' for the 1001 family), so there is ZERO drift for "
               "either. Cross-dissolves are native <transition>s (others cut + "
               "note, never a wrong dissolve); captions ride the SRT/TTML exits "
-              "and audio is a deferred writer increment — both honestly omitted.",
+              "(honestly omitted). Audio: connected role/lane asset-clips with "
+              "gain (V1), loop beds materialized at render parity (W1), "
+              "DTD-sourced fades (Y3); remaining omissions (ducking relation, "
+              "unprobeable loops, None durations) are per-clip in-band notes.",
 }
 
 # import-time typo guard: every rule key must be a known feature.

@@ -81,9 +81,12 @@ Honest scope boundaries (recorded, not silently claimed)
   the render to the source's
   natural length with NO static probe, so it is not statically resolvable; a
   ``ducking`` clip IS written (static gain) but its render-time sidechain
-  relationship is noted; fades are gain-only this increment (no native fade
-  element — the exact FCPXML fade shape is not emitted). Speed ramps / multicam /
-  nested sequences remain out of scope.
+  relationship is noted; audio fades are REAL native FCPXML fades (FP loop Y3 —
+  the DTD chain ``adjust-volume`` → ``param name="amount"`` →
+  ``fadeIn``/``fadeOut type="linear" duration=…``, from Apple's archived FCPXML
+  v1.7 DTD; ms→frames ROUND_HALF_UP, an over-long fade clamps to the clip with an
+  in-band note; a materialized loop pass carries no fade — a whole-source repeat).
+  Speed ramps / multicam / nested sequences remain out of scope.
 * Every feature is classified per the timeline inventory by
   :mod:`manju.exporters.conform` (target ``"fcpxml"``).
 
@@ -201,11 +204,19 @@ def _audio_name(source: str) -> str:
     return source.rsplit("/", 1)[-1]
 
 
-def _audio_approx_notes(clip: "AudioClip", bus: str, name: str) -> list[str]:
-    """Honest in-band notes for a WRITTEN connected clip whose render-time
-    behaviour FCPXML does not carry: the ducking sidechain relationship (the clip
-    still plays at its static gain — the mix is never silently claimed) and, on
-    the gain-only fades branch, the omitted fade handles."""
+def _audio_approx_notes(
+    clip: "AudioClip", bus: str, name: str, *, fades_expressed: bool = False,
+) -> list[str]:
+    """Honest in-band notes for a connected clip whose render-time behaviour
+    FCPXML does not carry: the ducking sidechain relationship (the clip still
+    plays at its static gain — the mix is never silently claimed) and, WHEN the
+    fades are NOT expressed as native elements, the un-expressed fade handles.
+
+    ``fades_expressed`` is True on a WRITTEN clip (Y3 emits real
+    ``<param><fadeIn/><fadeOut/></param>`` — see :func:`_emit_adjust_volume`), so
+    no fade note is added there. It is False on a MATERIALIZED loop: each pass
+    repeats the WHOLE source, so a per-pass fade handle would be wrong — the loop
+    carries no fade, and that omission is stated here (never silent)."""
     notes: list[str] = []
     if clip.ducking:
         notes.append(
@@ -213,13 +224,85 @@ def _audio_approx_notes(clip: "AudioClip", bus: str, name: str) -> list[str]:
             "relationship (keyed under the voice bus) not expressible in FCPXML — "
             "the clip is written at its static gain; the ducking mix is NOT "
             "represented ")
-    fi, fo = int(clip.fade_in_ms or 0), int(clip.fade_out_ms or 0)
-    if fi > 0 or fo > 0:
-        notes.append(
-            f" MANJU: audio '{name}' ({bus}) fade_in {fi}ms / fade_out {fo}ms "
-            "approximated as gain-only (no native FCPXML fade element emitted this "
-            "increment) ")
+    if not fades_expressed:
+        fi, fo = int(clip.fade_in_ms or 0), int(clip.fade_out_ms or 0)
+        if fi > 0 or fo > 0:
+            notes.append(
+                f" MANJU: audio '{name}' ({bus}) fade_in {fi}ms / fade_out {fo}ms "
+                "not expressed as a native fade — a materialized loop repeats the "
+                "whole source per pass (render parity: -stream_loop) and carries "
+                "no fade handles ")
     return notes
+
+
+def _fade_frames(
+    clip: "AudioClip", dur_f: int, bus: str, name: str, rate: Rate,
+) -> tuple[int, int, list[str]]:
+    """The clip's fadeIn/fadeOut lengths as EXACT whole frames (ms → frames
+    ROUND_HALF_UP), each CLAMPED to the connected clip's frame length ``dur_f``.
+
+    A fade longer than the whole clip is not a valid FCPXML fade, so it clamps to
+    the clip length and records an honest in-band note (the original over-long ms
+    is named — never a silent truncation, never an emitted over-long fade).
+    Returns ``(fade_in_frames, fade_out_frames, clamp_notes)``."""
+    notes: list[str] = []
+    fi_ms, fo_ms = int(clip.fade_in_ms or 0), int(clip.fade_out_ms or 0)
+    fi = ms_to_frames(fi_ms, rate, Rounding.ROUND_HALF_UP) if fi_ms > 0 else 0
+    fo = ms_to_frames(fo_ms, rate, Rounding.ROUND_HALF_UP) if fo_ms > 0 else 0
+    if fi > dur_f:
+        notes.append(
+            f" MANJU: audio '{name}' ({bus}) fade_in {fi_ms}ms ({fi} frames) is "
+            f"longer than the clip ({dur_f} frames) — clamped to the clip length ")
+        fi = dur_f
+    if fo > dur_f:
+        notes.append(
+            f" MANJU: audio '{name}' ({bus}) fade_out {fo_ms}ms ({fo} frames) is "
+            f"longer than the clip ({dur_f} frames) — clamped to the clip length ")
+        fo = dur_f
+    return fi, fo, notes
+
+
+def _emit_adjust_volume(
+    parent_clip: ET.Element, clip: "AudioClip", rate: Rate,
+    fi_frames: int = 0, fo_frames: int = 0,
+) -> None:
+    """Emit ``<adjust-volume>`` on a connected asset-clip carrying gain and/or a
+    native fade (the DTD chain, Apple FCPXML v1.7):
+
+        <adjust-volume amount="{gain:g}dB">
+          <param name="amount">
+            <fadeIn  type="linear" duration="N/Ds"/>
+            <fadeOut type="linear" duration="N/Ds"/>
+          </param>
+        </adjust-volume>
+
+    * ``amount`` is always ``"{gain:g}dB"`` (``0.0`` → ``"0dB"``, harmless — the
+      DTD default for ``amount`` is ``"0dB"``). V1's drop-when-zero is preserved
+      ONLY when there are NO fades: with a fade, ``adjust-volume`` is the REQUIRED
+      container (``<!ELEMENT adjust-volume (param*)>``,
+      ``<!ELEMENT param (fadeIn?, fadeOut?, …)>``), so it opens even at 0 gain.
+    * ``type="linear"`` is DELIBERATE — it mirrors the render's afade default
+      (triangular/linear) so the exported curve matches what we actually render.
+    * the param name string ``"amount"`` is a CONVENTION: the DTD requires a
+      ``name`` ATTRIBUTE (``#REQUIRED``) but does NOT mandate this string. This is
+      recorded here and in REPORTS/FP_FCPXML_FADES.md; it is never claimed as
+      DTD-mandated.
+
+    ``fi_frames``/``fo_frames`` default to 0 (the loop path passes neither — a
+    materialized loop pass carries gain only, no fade)."""
+    has_fades = fi_frames > 0 or fo_frames > 0
+    if not clip.gain_db and not has_fades:
+        return  # V1 drop-when-absent — byte-identical to the gain-only branch
+    av = ET.SubElement(parent_clip, "adjust-volume", {"amount": f"{clip.gain_db:g}dB"})
+    if not has_fades:
+        return
+    param = ET.SubElement(av, "param", {"name": "amount"})  # name is a convention
+    if fi_frames > 0:
+        ET.SubElement(param, "fadeIn",
+                      {"type": "linear", "duration": _secs(fi_frames, rate)})
+    if fo_frames > 0:
+        ET.SubElement(param, "fadeOut",
+                      {"type": "linear", "duration": _secs(fo_frames, rate)})
 
 
 class _AudioPlanItem(NamedTuple):
@@ -524,10 +607,16 @@ def compile_fcpxml(
                 "duration": _secs(item.dur_f, rate),
                 "audioRole": _AUDIO_ROLES[bus],
             })
-            if clip.gain_db:  # <adjust-volume> only when the gain is non-zero
-                ET.SubElement(child, "adjust-volume",
-                              {"amount": f"{clip.gain_db:g}dB"})
-            for note in _audio_approx_notes(clip, bus, item.name):
+            # Native fades (Y3): ms → whole frames (ROUND_HALF_UP), each clamped to
+            # the clip length; emit gain and/or the fade container on the clip. A
+            # zero-gain zero-fade clip still drops the element (V1 byte-identity).
+            fi_f, fo_f, clamp_notes = _fade_frames(
+                clip, item.dur_f, bus, item.name, rate)
+            _emit_adjust_volume(child, clip, rate, fi_f, fo_f)
+            for note in clamp_notes:  # honest note when an over-long fade clamped
+                parent.append(ET.Comment(note))
+            # fades ARE expressed here, so no gain-only fade note; ducking unchanged.
+            for note in _audio_approx_notes(clip, bus, item.name, fades_expressed=True):
                 parent.append(ET.Comment(note))
         elif item.kind == "loop":
             # One materialized whole-source pass — same asset-clip shape as a
@@ -545,11 +634,13 @@ def compile_fcpxml(
                 "duration": _secs(item.dur_f, rate),
                 "audioRole": _AUDIO_ROLES[bus],
             })
-            if clip.gain_db:
-                ET.SubElement(child, "adjust-volume",
-                              {"amount": f"{clip.gain_db:g}dB"})
+            # Gain rides EVERY pass; a materialized loop pass carries NO fade (each
+            # pass repeats the whole source, so a per-pass fade would be wrong) —
+            # _emit_adjust_volume with no fade frames is byte-identical to V1/W1.
+            _emit_adjust_volume(child, clip, rate)
             if item.note:  # first pass only
                 parent.append(ET.Comment(item.note))
+                # fades NOT expressed on the passes → the honest fade note (if any).
                 for note in _audio_approx_notes(clip, bus, item.name):
                     parent.append(ET.Comment(note))
         else:  # honest omission (loop bed / unresolvable duration) — a note only
