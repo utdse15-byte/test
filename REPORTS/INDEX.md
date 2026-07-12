@@ -43,3 +43,12 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `FP_BAGIT.md` | U1 RFC 8493 serialized-bag pack | #31 |
 | `FP_FCPXML_AUDIO.md` | V1 connected-audio lanes (+ conform truth-update) | V window, DECISIONS #32/#32a |
 | `FP_BOARD_COMPARE2.md` | V2 onion skin + scopes (21G gate evolved, #32a) | #32/#32a |
+| `FP_BOARD_TRANSPORT.md` | X1 K/L/J/arrows transport | W/X window, DECISIONS #33 |
+| `FP_FCPXML_LOOPS.md` | W1 loop-bed materialization (render parity) | #33 |
+| `FP_FCPXML_IMPORT.md` | W2 FCPXML import-plan | #33 |
+| `FP_EDL_AUDIO.md` | Y1 declared A1/A2 subset | #33 |
+| `FP_EDL_IMPORT.md` | Y4 EDL import-plan | #33 |
+| `FP_DOCTOR_LOCALE.md` | Y2 locale + interchange probes | #33 |
+| `FP_FCPXML_FADES.md` | Y3 DTD-sourced fades | #33 |
+| `FP_COLORSTATS_WALL.md` | Z1 Pillow defect fix | #33 |
+| `OPTIMIZATION_AUDIT_20260712.md` | the four-hour nine-dimension audit + 28-refuter panel | #33 |

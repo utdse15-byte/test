@@ -42,3 +42,6 @@ jobs:
           tests/test_fp_plugin_api.py
           tests/test_fp_ttml_locale.py
           tests/test_fp_bagit.py
+          tests/test_fp_fcpxml_fades.py
+          tests/test_fp_edl_audio.py
+          tests/test_fp_edl_import.py

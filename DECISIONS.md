@@ -1377,3 +1377,83 @@ discipline that omitted duration-None clips); the render's aloop remains
 the owner of fill semantics. V1's placement math got a three-mutation
 discriminating-power sweep (formula sign → 4 red; lane map → 6 red;
 tie-break flip → exactly the tie test red; restored 55/55).
+
+## 33. W/X/Y/Z waves + the four-hour optimization research program (2026-07-12)
+
+The window's final arc: three more implementation waves (item-5/6 depth,
+then the audit's own defect) INTERLEAVED with a nine-dimension research
+program the user commissioned ("find all the areas that can be
+optimised"), closed by a 28-agent adversarial refuter panel. Peak
+concurrency: 28 refuters + 6 loose agents.
+
+Implementation:
+- X1 board pro transport 2cb8765: K/L/J/arrows on the ONE delegated
+  handler; the honest J ruling (single step-back, label states browsers
+  have no native reverse, fake shuttles pinned absent); T1's period math
+  extracted once into framePeriod/cmpSeek.
+- W2 FCPXML import-plan 353bfbc + W1 loop materialization 8872eb0 (render
+  parity -stream_loop verified FIRST; cumulative-boundary passes; W1
+  wedged 51min post-delivery — artifacts verified independently). W2's
+  registry row (manju.fcpxml-import-plan/v1, EXPERIMENTAL) applied by the
+  orchestrator per stop-and-report.
+- Y-wave, all four in parallel: Y1 EDL A1/A2 2001bfe (blocked-by-track
+  ordering keeps S2 goldens byte-identical; sfx/ambient never squeezed —
+  per-clip notes; conform rows handed off per amendment); Y4 EDL
+  import-plan ea07b14 (rate_assumed honesty — EDL carries no rate; every
+  reel a needs_relink by nature; registry row applied, 48→49); Y2 doctor
+  probes d6f80c2 (locale rows surface load_locale_meta's message
+  VERBATIM — consult-don't-copy pinned; exit-code policy pinned
+  unchanged); Y3 DTD fades 954388d — the fades uncertainty T2 and V1
+  twice recorded DISSOLVED by orchestrator research against Apple's
+  archived FCPXML v1.7 DTD (adjust-volume → param name="amount"
+  [convention, not DTD-mandated — documented] → fadeIn/fadeOut
+  type="linear" = afade parity), with the JOINT CONFORM TRANSACTION:
+  V1's pin evolved, Y1's rows applied, S2's pin evolved per the surfaced
+  collision, edl_import coverage declared, both stale scope notes
+  updated. FCPXML's writer story is now complete: placement + roles +
+  lanes + gain + materialized loops + real fades; remaining honest
+  boundaries: ducking (no primitive), loop start_offset_ms combo (W1's
+  noted follow-up).
+- Z1 e09fb95: the audit's confirmed packaging defect FIXED same-window —
+  ColorStatsUnavailable adapter wall (house family), colorstats extra
+  with the REASONED Pillow>=9.3 floor (first cp311 wheel; the audit's
+  own >=9 hypothesis corrected by evidence), doctor probe row; the
+  audit's "qc colorstats command" phrasing corrected (no CLI command
+  exists — the import path is the crash surface).
+
+Research (REPORTS/OPTIMIZATION_AUDIT_20260712.md is the deliverable):
+- Nine dimensions, all READ-ONLY agents, headline mechanisms hand-
+  verified by the orchestrator before the panel: performance (tail_events
+  full-file parse with n=100_000 callers; the voice-probe-per-compile
+  asymmetry; double hashing; import cost), code quality (cli.py
+  decomposition map; atomic-write inconsistency; dual ToolError; dead
+  code), tests (40% runtime in 15% of files; xdist feasibility w/
+  worklist), robustness (7 of 8 areas clean CONFIRMATIONS; board CSP
+  gap; fcpxml input caps), architecture (60%-lazy import discipline
+  holds the only acyclicity; TWO hard qc→build edges; §3 authority
+  actively enforced — a past violation found deleted), UX (the
+  Quickstart select-crash DEFECT; flat 65-command help; localized
+  next-step token), deps+AI (Pillow defect; OTIO phantom dep; MCP
+  surface ≈3.4k tokens/session with digest-free trim path; SKILL.md
+  stale), GUI (316 ffprobe spawns on the /review request thread;
+  build_state doubles both evals; ~8.3KB JS copied ×10), providers
+  (local_cmd orphans grandchildren on timeout; transient-5xx kills paid
+  jobs; FailureKind drift; the fallback floor untested directly).
+- The 28-refuter panel: 17 CONFIRMED / 11 ADJUSTED / 0 REFUTED — no
+  finding died; adjustments (folded) include defer_build savings halved,
+  a second qc→build hard edge, the CI-smoke redundancy's real pinning
+  test (test_idempotency), and count/path corrections. The audit's
+  do-not-touch list (negative results) is recorded as load-bearing.
+- Discipline note: this report IS the benchmark evidence the item-11
+  rule requires; NO performance change shipped in the window that
+  produced it (Z1 fixed a packaging defect, not perf).
+
+Orchestration: W1 and Z1 wedged post-delivery (51min/13min) — both
+recovered by nudge with artifacts verified independently first; the
+OPT-security spawn was killed by an API-filter false positive and
+relaunched reworded (OPT-ROBUST). Two candidate loops DISSOLVED on
+pre-launch audit (WebVTT existed since 13C/18; OTIO audio since R4) —
+recorded as the pattern that the remaining-work list underestimates
+existing coverage. Suite: 3790 → 3928 passed / 13 skipped / 0 failed
+(definitive quiescent run with --durations profiling folded in). CI:
+the batch push's verdict in the window wrap.
