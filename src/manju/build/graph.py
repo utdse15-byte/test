@@ -187,6 +187,16 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
     clips_dir.mkdir(parents=True, exist_ok=True)
 
     data = timeline.model_dump()
+    # R2: a rational (1001-family) project folds its exact rate into the per-still
+    # preview key so its animatic clips are content-distinct from an int-nominal
+    # project's; None (int) contributes nothing → byte-identical key. Read via the
+    # config's frame_rate resolver (never the raw rational field — R1 surface
+    # pin). The animatic is a de-scoped preview surface: its clips still ENCODE at
+    # the int nominal fps below (kenburns/slate are untouched), so a rational
+    # preview is nominal-rate — the OUTER animatic key still differs via the
+    # timeline's rational-rate echo folded through tl.model_dump() below.
+    _rate = config.frame_rate
+    _rate_key = None if _rate.exact_int is not None else str(_rate)
     seg_keys: list[str] = []
     for clip in data.get("tracks", {}).get("video", []) or []:
         shot = str(clip.get("shot") or "")
@@ -194,10 +204,13 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
         still = (_animatic_shot_still(project, shot)
                  if shot and not shot.startswith("__") else None)
         if still is not None:
-            key = short_hash(cache_key({
+            kb_key: dict[str, Any] = {
                 "still": hash_file(still), "dur": dur, "w": config.width,
                 "h": config.height, "fps": config.fps, "kind": "animatic_kenburns",
-            }), 12)
+            }
+            if _rate_key is not None:
+                kb_key["rate"] = _rate_key
+            key = short_hash(cache_key(kb_key), 12)
             dest = clips_dir / f"{shot}_{key}.mp4"
             if force or not (dest.exists() and dest.stat().st_size > 0):
                 kenburns(still, dest, width=config.width, height=config.height,

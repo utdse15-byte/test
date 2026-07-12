@@ -323,9 +323,17 @@ def _segment_cache_key(
     target: str,
     fade_in_ms: int,
     fade_out_ms: int,
+    rate_key: str | None = None,
 ) -> str:
     """The one segment-key formula, shared by the segment cache and the
-    final content key (FIX-A) so they can never drift apart."""
+    final content key (FIX-A) so they can never drift apart.
+
+    ``fps`` stays the int nominal rate (byte-identical key INPUTS for every int
+    project). ``rate_key`` (R2) is the canonical exact-rate string ("24000/1001")
+    for a rational project ONLY — appended so a 1001-family project's segments
+    are content-distinct from the int-nominal project's and from each other's
+    rates, deterministically. ``None`` (every int project) appends nothing, so
+    the produced key is byte-for-byte what it was before R2."""
     src = project.resolve(clip.source)
     parts: list[object] = [
         hash_file(src), width, height, fps, clip.duration_ms, target, fade_in_ms, fade_out_ms
@@ -341,6 +349,10 @@ def _segment_cache_key(
     in_ms = getattr(clip, "source_in_ms", 0)
     if in_ms:
         parts.append(("source_in_ms", in_ms))
+    # R2 rational edit rate: distinct + deterministic key for a 1001-family
+    # project; absent (None) for every int project → byte-identical key.
+    if rate_key is not None:
+        parts.append(("rate", rate_key))
     return cache_key(*parts)
 
 
@@ -355,6 +367,8 @@ def _build_segment(
     fade_in_ms: int,
     fade_out_ms: int,
     log: Log,
+    rate_key: str | None = None,
+    rate_arg: str | int | None = None,
 ) -> Path:
     """Return the cached segment path for one clip, rendering it if absent.
 
@@ -364,14 +378,21 @@ def _build_segment(
     preserved). Writes into the cache are atomic (see module design note), so
     an unreadable hit can only be legacy pre-durability debris or external
     damage — it is evicted and rebuilt rather than poisoning every future final.
-    """
+
+    ``rate_key``/``rate_arg`` (R2) carry a rational edit rate: ``rate_key`` (the
+    "24000/1001" key string) makes a 1001-family project's segment content-
+    distinct, and ``rate_arg`` is the ffmpeg frame-rate token normalize encodes
+    at (the exact ``num/den`` — ffmpeg's ``fps``/``-framerate`` take fractions).
+    Both default to today's int behaviour (None → the int ``fps``), so an int
+    project's key AND ffmpeg command line are byte-identical."""
     src = project.resolve(clip.source)
     if not src.exists():
         raise MediaError(f"take source not found for {clip.shot}/{clip.take}: {clip.source}")
     key = _segment_cache_key(
         project, clip, width=width, height=height, fps=fps, target=target,
-        fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms,
+        fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, rate_key=rate_key,
     )
+    enc_fps = rate_arg if rate_arg is not None else fps
     seg_path = project.segments_dir / f"{short_hash(key)}.mp4"
     if seg_path.exists():
         # Integrity gate before reuse: one cheap ffprobe (headers only). A
@@ -389,7 +410,7 @@ def _build_segment(
     in_ms = getattr(clip, "source_in_ms", 0)
     if fade_in_ms == 0 and fade_out_ms == 0:
         normalize_segment(
-            src, seg_path, width=width, height=height, fps=fps,
+            src, seg_path, width=width, height=height, fps=enc_fps,
             duration_ms=clip.duration_ms,
             source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
             source_in_ms=in_ms,
@@ -401,7 +422,7 @@ def _build_segment(
     with tempfile.TemporaryDirectory(dir=seg_path.parent) as tmp:
         base = Path(tmp) / "base.mp4"
         normalize_segment(
-            src, base, width=width, height=height, fps=fps,
+            src, base, width=width, height=height, fps=enc_fps,
             duration_ms=clip.duration_ms,
             source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
             source_in_ms=in_ms,
@@ -628,17 +649,18 @@ def _plan_transitions(
 
 def _boundary_cache_key(
     project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
-    *, width: int, height: int, fps: int, target: str,
+    *, width: int, height: int, fps: int, target: str, rate_key: str | None = None,
 ) -> str:
     """Content identity of a boundary segment: both neighbour segment keys
-    (which already fold source hashes, dims, fps, durations and in-points) plus
-    the transition shape. Changing the transition TYPE re-keys only the boundary
-    (the neighbours' fade-free segment keys are unchanged), so the boundary
-    re-renders while the segment cache is reused."""
+    (which already fold source hashes, dims, fps, durations, in-points and — R2 —
+    the rational rate via ``rate_key``) plus the transition shape. Changing the
+    transition TYPE re-keys only the boundary (the neighbours' fade-free segment
+    keys are unchanged), so the boundary re-renders while the segment cache is
+    reused. ``rate_key`` None (every int project) keeps this key byte-identical."""
     ka = _segment_cache_key(project, a, width=width, height=height, fps=fps,
-                            target=target, fade_in_ms=0, fade_out_ms=0)
+                            target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key)
     kb = _segment_cache_key(project, b, width=width, height=height, fps=fps,
-                            target=target, fade_in_ms=0, fade_out_ms=0)
+                            target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key)
     return cache_key("xfade-boundary", ka, kb, boundary.xfade,
                      boundary.duration_ms, boundary.half_ms, width, height, fps, target)
 
@@ -646,14 +668,21 @@ def _boundary_cache_key(
 def _build_boundary_segment(
     project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
     *, width: int, height: int, fps: int, target: str, log: Log,
+    rate_key: str | None = None, rate_arg: str | int | None = None,
 ) -> Path:
     """Render (or reuse) the content-addressed boundary segment for an applied
     xfade: the outgoing tail (last half real + half tail-handle) cross-dissolved
     with the incoming head (half head-handle + first half real), video via
     ``xfade`` and audio via ``acrossfade`` over the same window. Length = 2·half,
-    which exactly replaces the ``half`` trimmed off each neighbour."""
+    which exactly replaces the ``half`` trimmed off each neighbour.
+
+    ``rate_key``/``rate_arg`` (R2): the rational rate keys the boundary distinct
+    and is the ffmpeg frame-rate token the layers normalize to + the ``fps=``
+    node runs at. Both default to today's int behaviour (byte-identical)."""
+    enc_fps = rate_arg if rate_arg is not None else fps
     key = _boundary_cache_key(project, a, b, boundary,
-                              width=width, height=height, fps=fps, target=target)
+                              width=width, height=height, fps=fps, target=target,
+                              rate_key=rate_key)
     seg_path = project.segments_dir / f"xfade_{short_hash(key)}.mp4"
     if seg_path.exists():
         if probe_duration_ms(seg_path) is not None:
@@ -672,16 +701,16 @@ def _build_boundary_segment(
         a_layer = tmpd / "a.mp4"
         b_layer = tmpd / "b.mp4"
         # Outgoing: start half BEFORE the window end → half real + half tail-handle.
-        normalize_segment(a_src, a_layer, width=width, height=height, fps=fps,
+        normalize_segment(a_src, a_layer, width=width, height=height, fps=enc_fps,
                           duration_ms=layer_ms,
                           source_in_ms=a.source_in_ms + a.duration_ms - half, log=log)
         # Incoming: start half BEFORE the window start → half head-handle + half real.
-        normalize_segment(b_src, b_layer, width=width, height=height, fps=fps,
+        normalize_segment(b_src, b_layer, width=width, height=height, fps=enc_fps,
                           duration_ms=layer_ms, source_in_ms=b.source_in_ms - half, log=log)
         d = layer_ms / 1000.0
         fc = (
             f"[0:v][1:v]xfade=transition={boundary.xfade}:duration={d:.3f}:offset=0,"
-            f"fps={fps},format=yuv420p[v];"
+            f"fps={enc_fps},format=yuv420p[v];"
             f"[0:a][1:a]acrossfade=d={d:.3f}[a]"
         )
         with atomic_output(seg_path) as tmp_out:
@@ -694,15 +723,21 @@ def _build_boundary_segment(
 
 
 def _trim_segment(
-    src: Path, dest: Path, *, start_ms: int, dur_ms: int, fps: int, log: Log
+    src: Path, dest: Path, *, start_ms: int, dur_ms: int, fps: int, log: Log,
+    rate_arg: str | int | None = None,
 ) -> None:
     """Re-encode ``src`` to ``[start_ms, start_ms+dur_ms)`` with the segment
     profile so the result concats (stream-copy) with the cached segments. Used
     to shorten an applied xfade's neighbours by the handle they lent the
-    boundary. Output seeking (``-ss`` after ``-i``) keeps the cut frame-accurate."""
+    boundary. Output seeking (``-ss`` after ``-i``) keeps the cut frame-accurate.
+
+    ``rate_arg`` (R2) is the ffmpeg frame-rate token the ``fps=`` node runs at
+    (the exact ``num/den`` for a rational project); None → the int ``fps``
+    (byte-identical)."""
+    enc_fps = rate_arg if rate_arg is not None else fps
     run_ffmpeg(
         ["-i", str(src), "-ss", f"{start_ms / 1000.0:.3f}", "-t", f"{dur_ms / 1000.0:.3f}",
-         "-vf", f"fps={fps},format=yuv420p", *_SEG_ENC, str(dest)],
+         "-vf", f"fps={enc_fps},format=yuv420p", *_SEG_ENC, str(dest)],
         log=log,
     )
 
@@ -711,12 +746,15 @@ def _assemble_video_pieces(
     project: Project, clips: list[VideoClip], segments: list[Path],
     boundaries: list[_Boundary], *, width: int, height: int, fps: int,
     target: str, tmp_dir: Path, log: Log,
+    rate_key: str | None = None, rate_arg: str | int | None = None,
 ) -> list[Path]:
     """The ordered concat pieces once applied xfades restructure the track:
     each clip contributes its cached segment (untouched when it lends no handle)
     or a shortened trim, and every applied boundary segment is spliced in at its
     cut. Total frame count is invariant: each boundary is 2·half and removes
-    exactly half from each neighbour."""
+    exactly half from each neighbour. ``rate_key``/``rate_arg`` (R2) flow into
+    the trims + boundary segments so a rational project's restructured pieces
+    carry its exact rate; None (int) is byte-identical."""
     applied = {b.i: b for b in boundaries if b.applied}
     head_trim = {b.i + 1: b.half_ms for b in applied.values()}
     tail_trim = {b.i: b.half_ms for b in applied.values()}
@@ -729,13 +767,15 @@ def _assemble_video_pieces(
         else:
             piece = tmp_dir / f"piece_{idx:04d}.mp4"
             _trim_segment(segments[idx], piece, start_ms=ht,
-                          dur_ms=clip.duration_ms - ht - tt, fps=fps, log=log)
+                          dur_ms=clip.duration_ms - ht - tt, fps=fps, log=log,
+                          rate_arg=rate_arg)
             pieces.append(piece)
         b = applied.get(idx)
         if b is not None:
             pieces.append(_build_boundary_segment(
                 project, clips[idx], clips[idx + 1], b,
                 width=width, height=height, fps=fps, target=target, log=log,
+                rate_key=rate_key, rate_arg=rate_arg,
             ))
     return pieces
 
@@ -1015,6 +1055,13 @@ def _final_key_payload(
     change (the key is derived as ``cache_key(payload)`` below, unchanged)."""
     width, height, fps = timeline.width, timeline.height, timeline.fps
     clips = list(timeline.tracks.video)
+    # R2: a rational (1001-family) project folds its exact rate string into every
+    # segment key so its content key is distinct from the int-nominal project's;
+    # None for an int project → byte-identical key INPUTS. Read via the timeline's
+    # frame_rate resolver (never the raw rational field — R1 surface pin). fps
+    # stays the int nominal rate everywhere it already appears in the key.
+    _rate = timeline.frame_rate
+    rate_key = None if _rate.exact_int is not None else str(_rate)
     # Round-T: the segment fade params come from the shared boundary plan so a
     # degraded xfade's baked dip-to-black is reflected here exactly as rendered.
     # For a timeline with only fade/cut transitions the plan == _fade_params, so
@@ -1023,7 +1070,7 @@ def _final_key_payload(
     seg_keys = [
         _segment_cache_key(
             project, clip, width=width, height=height, fps=fps, target=target,
-            fade_in_ms=seg_fades[i][0], fade_out_ms=seg_fades[i][1],
+            fade_in_ms=seg_fades[i][0], fade_out_ms=seg_fades[i][1], rate_key=rate_key,
         )
         if project.resolve(clip.source).exists()
         else f"missing:{clip.source}"
@@ -1033,6 +1080,7 @@ def _final_key_payload(
     # project that never trims a clip keeps a byte-identical content key (the
     # whole-file source hash inside each seg key already covers the bytes).
     tl_payload = timeline.model_dump(exclude={"meta"})  # meta is provenance, not content
+    _int_rate = rate_key is None  # a whole-number edit rate (every int project)
     for vc in tl_payload.get("tracks", {}).get("video", []):
         if isinstance(vc, dict):
             if vc.get("source_in_ms", 0) == 0:
@@ -1040,6 +1088,14 @@ def _final_key_payload(
             # source-audio rides the segment keys (round-T): always excluded
             vc.pop("source_gain_db", None)
             vc.pop("source_mute", None)
+            # R2: duration_frames is meaningful ONLY on the rational grid. A
+            # compiled int project never carries it (dropped), and a HAND-EDITED
+            # int timeline that carries a stray value must have it IGNORED — strip
+            # it so it cannot perturb the int content key (never silent: the
+            # render also logs a structured advisory, see render_timeline). A
+            # rational timeline keeps it (part of the distinct rational key).
+            if _int_rate:
+                vc.pop("duration_frames", None)
     payload = {
         # tl_payload excludes meta (provenance) and strips default source_in_ms;
         # the per-shot source-audio fields are excluded below for the same
@@ -1194,6 +1250,32 @@ def render_timeline(
         raise MediaError("timeline has no video clips to render")
 
     width, height, fps = timeline.width, timeline.height, timeline.fps
+    # R2 rational edit rate. ``fps`` stays the INT nominal rate for cache keys,
+    # frame math (_plan_transitions/xfade handles) and byte-identity. A rational
+    # (1001-family) project ALSO carries its exact rate: ``rate_arg`` is the
+    # native ffmpeg frame-rate token ("24000/1001") the segment/boundary/trim/
+    # final ``fps=`` nodes run at + the explicit ``-r`` on the final encode, and
+    # ``rate_key`` makes its cache keys content-distinct. Read via the timeline's
+    # frame_rate resolver (never the raw rational field — R1 surface pin). Both
+    # None/int for an int project → byte-identical command lines AND keys.
+    rate = timeline.frame_rate
+    rational = rate.exact_int is None
+    rate_arg: str | int = str(rate) if rational else fps
+    rate_key: str | None = str(rate) if rational else None
+    # R2: an int-rate timeline that carries a hand-edited stray duration_frames
+    # has it IGNORED (the render keys/encodes off duration_ms + the int fps; the
+    # field is stripped from the content key in _final_key_payload) — but never
+    # SILENTLY: name the clips so a hand-editor knows it did nothing and how to
+    # make it real (declare the project's rational edit rate + recompile).
+    if not rational:
+        stray = [c.shot for c in video_clips if getattr(c, "duration_frames", None) is not None]
+        if stray:
+            log(
+                "advisory: duration_frames on an int-rate timeline is IGNORED "
+                f"(clips {', '.join(stray)}) — it only applies to a rational edit "
+                "rate; declare the project's rational rate (e.g. 24000/1001) and "
+                "recompile to give these clips a real whole-frame length"
+            )
     if target == "final":
         out_w, out_h = width, height
     else:
@@ -1233,6 +1315,7 @@ def render_timeline(
             _build_segment(
                 project, clip, width=width, height=height, fps=fps, target=target,
                 fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, log=log,
+                rate_key=rate_key, rate_arg=rate_arg,
             )
         )
 
@@ -1285,7 +1368,7 @@ def render_timeline(
             pieces = _assemble_video_pieces(
                 project, video_clips, segments, xfade_boundaries,
                 width=width, height=height, fps=fps, target=target,
-                tmp_dir=tmp_dir, log=log,
+                tmp_dir=tmp_dir, log=log, rate_key=rate_key, rate_arg=rate_arg,
             )
         else:
             pieces = segments
@@ -1329,16 +1412,23 @@ def render_timeline(
                 image_overlays, project=project, in_label="[vbase]",
                 out_w=out_w, base_idx=1 + extra_inputs.count("-i"),
             )
-            img_stmts.append(f"{last_label}fps={fps},format=yuv420p[vout]")
+            # R2: rational projects snap the final node onto the native num/den.
+            img_stmts.append(f"{last_label}fps={rate_arg},format=yuv420p[vout]")
             filter_complex = ";".join([vchain, *img_stmts, *audio_stmts])
         else:
             # FIX-B: force the output onto the project frame grid — without an
             # explicit fps the concat of segments can drift the deduced rate
-            # (observed pre-fix: r_frame_rate=143/6 instead of 24/1).
-            vchain += f",fps={fps},format=yuv420p[vout]"
+            # (observed pre-fix: r_frame_rate=143/6 instead of 24/1). R2: a
+            # rational project uses its native rate token (fps=24000/1001).
+            vchain += f",fps={rate_arg},format=yuv420p[vout]"
             filter_complex = ";".join([vchain, *audio_stmts])
 
         enc = _enc_params(target)
+        # R2: a rational project also stamps the container's output frame rate
+        # explicitly (-r num/den), belt-and-suspenders with the fps= node above.
+        # Int projects add NO -r (byte-identical command line) — they already
+        # rely on the fps= filter, exactly as before.
+        rate_out = ["-r", str(rate_arg)] if rational else []
 
         with atomic_output(out_path, must_not_exist=fresh_final) as tmp_out:
             run_ffmpeg(
@@ -1349,7 +1439,7 @@ def render_timeline(
                  # segments) is the master; this trims any audio tail (mix priming,
                  # bounded voice/music) to a deterministic total.
                  "-t", f"{total_s:.3f}",
-                 *enc, str(tmp_out)],
+                 *rate_out, *enc, str(tmp_out)],
                 log=log,
             )
             # Encode complete, swap imminent. For the (overwritable) proxy, drop

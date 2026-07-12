@@ -27,6 +27,7 @@ from ..core.hashing import hash_value
 from ..core.models import (
     AudioClip,
     CaptionLine,
+    EditRate,
     OverlayClip,
     PackagingSpec,
     ProjectConfig,
@@ -38,6 +39,7 @@ from ..core.models import (
     TransitionSpec,
     VideoClip,
 )
+from ..core.timebase import Rate, Rounding, frames_to_ms, ms_to_frames
 from .anchors import resolve_anchor
 from .packaging import packaging_card_relpath
 
@@ -158,6 +160,14 @@ class CompileInput:
         pkg = self._active_packaging()
         if pkg is not None:  # absent when nothing is enabled → today's hash
             payload["packaging"] = pkg
+        # R2: fold the EXACT edit rate into the fingerprint ONLY for a rational
+        # project (drop-when-int, the same non-default-only stance as packaging /
+        # source_window above), so an int project keeps today's byte-identical
+        # hash while two projects differing only in edit rate — which compile to
+        # different frame boundaries — never share a compiled_from fingerprint.
+        rate = self.config.frame_rate
+        if rate.exact_int is None:
+            payload["rate"] = str(rate)  # canonical "num/den" (never the raw field)
         return hash_value(payload)
 
 
@@ -166,6 +176,11 @@ def snap_to_frame_grid(duration_ms: int, fps: int) -> int:
 
         frames = max(1, round(duration_ms * fps / 1000))
         snapped = max(1, round(frames * 1000 / fps))
+
+    Integer-fps only (the whole-number edit-rate path). The opt-in rational
+    (1001-family) sibling is :func:`snap_to_frame_grid_rational` /
+    :class:`_RationalFrameGrid` below — this function is UNTOUCHED by R2 and
+    every int project keeps snapping through it exactly as before.
 
     A duration that is not a whole number of frames cannot be rendered
     faithfully — the encoder rounds every segment up/down independently and
@@ -200,6 +215,121 @@ def _resolve_duration_ms(inp: ShotInput, rules: TimelineRules, fps: int) -> int:
     else:
         raw = timing.default_shot_ms
     return snap_to_frame_grid(max(timing.min_shot_ms, min(timing.max_shot_ms, raw)), fps)
+
+
+# ---------------------------------------------------------- rational grid (R2)
+# The opt-in sibling of snap_to_frame_grid for a rational (1001-family) edit
+# rate. The ms timeline is a stable hand-editable contract and cannot exactly
+# carry 24000/1001 (timebase documents the ≤½ms/call bound), so per-clip ms
+# durations are the DIFFERENCE of successive EXACT rational boundaries rounded
+# to the ms grid — per-clip ms wobbles ±1ms around the true frame duration, but
+# the CUMULATIVE boundary error of any prefix stays ≤ ½ms forever (the sum of
+# rounded-boundary diffs telescopes to a single rounded total). Frame counts
+# come from the SAME duration-resolution rules as _resolve_duration_ms (explicit
+# wins; audio-drives-picture; min/max clamps) applied in FRAME space.
+
+
+def snap_to_frame_grid_rational(frame_counts: list[int], rate: Rate) -> list[int]:
+    """Cumulative-boundary ms durations for a sequence of whole-frame clip
+    lengths at an exact rational ``rate`` — the rational sibling of
+    :func:`snap_to_frame_grid`.
+
+    Walks the clip sequence tracking the EXACT rational boundary position
+    (``cum_frames × 1000·den/num`` ms, an exact Fraction inside timebase); each
+    clip's emitted ms = ``round(exact_end) − round(exact_start)``. Because the
+    emitted durations are differences of rounded boundaries, their running sum
+    equals ``round(exact_total)`` at every prefix, so the cumulative timing error
+    never exceeds ½ ms no matter how long the film — unlike rounding each clip's
+    frame duration to ms INDEPENDENTLY, whose error accumulates past a whole
+    frame (see the contrast pin in tests/test_fp_ratemig2.py)."""
+    out: list[int] = []
+    cum = 0
+    for f in frame_counts:
+        start = frames_to_ms(cum, rate, Rounding.ROUND_HALF_UP)
+        cum += f
+        end = frames_to_ms(cum, rate, Rounding.ROUND_HALF_UP)
+        out.append(end - start)
+    return out
+
+
+def _resolve_duration_frames(inp: ShotInput, rules: TimelineRules, rate: Rate) -> int:
+    """Frame-space twin of :func:`_resolve_duration_ms` for the rational path:
+    the SAME rules (explicit numeric duration wins; else audio-drives-picture;
+    min/max clamps) resolved to a whole FRAME count instead of snapped ms.
+    ``frames = max(1, ms_to_frames(raw, rate))`` with the min/max clamps
+    converted to frames via the same ROUND_HALF_UP rounding."""
+    timing = rules.timing
+    if inp.shot.duration != "auto":
+        raw = max(1, int(round(float(inp.shot.duration) * 1000)))
+        return max(1, ms_to_frames(raw, rate, Rounding.ROUND_HALF_UP))
+    if inp.voice_duration_ms:
+        raw = inp.voice_duration_ms + timing.padding_before_ms + timing.padding_after_ms
+    elif inp.take_duration_ms:
+        raw = inp.take_duration_ms
+    else:
+        raw = timing.default_shot_ms
+    frames = ms_to_frames(raw, rate, Rounding.ROUND_HALF_UP)
+    min_frames = ms_to_frames(timing.min_shot_ms, rate, Rounding.ROUND_HALF_UP)
+    max_frames = ms_to_frames(timing.max_shot_ms, rate, Rounding.ROUND_HALF_UP)
+    return max(1, max(min_frames, min(max_frames, frames)))
+
+
+class _IntFrameGrid:
+    """Integer-fps dispatch: a thin, STATELESS delegator to the untouched
+    ``snap_to_frame_grid`` / ``_resolve_duration_ms`` so the int path stays
+    byte-identical (same numbers, same call sequence). Records no
+    ``duration_frames`` (None → dropped by the serializer)."""
+
+    rational = False
+
+    def __init__(self, fps: int) -> None:
+        self._fps = fps
+
+    def card_duration(self, duration_ms: int) -> tuple[int, int | None]:
+        return snap_to_frame_grid(duration_ms, self._fps), None
+
+    def shot_duration(self, inp: ShotInput, rules: TimelineRules) -> tuple[int, int | None]:
+        return _resolve_duration_ms(inp, rules, self._fps), None
+
+
+class _RationalFrameGrid:
+    """Rational (1001-family) dispatch: the STATEFUL cumulative-boundary walker.
+    Instantiated ONLY when ``project.frame_rate`` is not a whole integer — an int
+    project never constructs one (the spy pin), so its compile is untouched.
+    Each ``*_duration`` call resolves a whole frame count, advances the exact
+    boundary, and returns ``(emitted_ms, frames)`` so the clip records both its
+    snapped ms and its exact ``duration_frames``."""
+
+    rational = True
+
+    def __init__(self, rate: Rate) -> None:
+        self._rate = rate
+        self._cum_frames = 0
+
+    def _emit(self, frames: int) -> int:
+        start = frames_to_ms(self._cum_frames, self._rate, Rounding.ROUND_HALF_UP)
+        self._cum_frames += frames
+        end = frames_to_ms(self._cum_frames, self._rate, Rounding.ROUND_HALF_UP)
+        return end - start
+
+    def card_duration(self, duration_ms: int) -> tuple[int, int]:
+        frames = max(1, ms_to_frames(duration_ms, self._rate, Rounding.ROUND_HALF_UP))
+        return self._emit(frames), frames
+
+    def shot_duration(self, inp: ShotInput, rules: TimelineRules) -> tuple[int, int]:
+        frames = _resolve_duration_frames(inp, rules, self._rate)
+        return self._emit(frames), frames
+
+
+def _frame_grid(config: ProjectConfig) -> _IntFrameGrid | _RationalFrameGrid:
+    """Dispatch the compile onto the int (byte-identical) or rational grid by
+    asking the project for its exact edit rate. A whole-number rate
+    (``exact_int is not None``, every int project) takes today's code path and
+    never enters the rational walker."""
+    rate = config.frame_rate
+    if rate.exact_int is not None:
+        return _IntFrameGrid(config.fps)
+    return _RationalFrameGrid(rate)
 
 
 def _split_caption(text: str, max_chars: int, max_lines: int) -> list[str]:
@@ -368,6 +498,13 @@ def compile_timeline(inp: CompileInput) -> Timeline:
     packaging = inp.packaging
     tracks = TimelineTracks()
     cursor = 0
+    # R2 rational edit rate: dispatch the whole compile onto the int
+    # (byte-identical) or the rational cumulative-boundary frame grid by asking
+    # the project for its exact edit rate. An int project builds an _IntFrameGrid
+    # (delegating to the untouched snap_to_frame_grid/_resolve_duration_ms) and
+    # NEVER constructs the rational walker (the spy pin); a 1001-family project
+    # walks the exact rational boundary and stamps each clip's duration_frames.
+    grid = _frame_grid(config)
 
     # Packaging intro/outro become REAL leading/trailing segments inside the
     # clip accumulation (§13-14): the intro advances `cursor` before shots are
@@ -396,7 +533,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
     intro_ms = 0  # content starts here; absolute overlays shift past the intro
     if intro_on:
         card = packaging.intro
-        dur = snap_to_frame_grid(card.duration_ms, config.fps)
+        dur, dur_frames = grid.card_duration(card.duration_ms)
         intro_ms = dur
         tracks.video.append(
             VideoClip(
@@ -407,6 +544,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 ),
                 start_ms=cursor,
                 duration_ms=dur,
+                duration_frames=dur_frames,
                 transition_out=_transition(seg_i, "__intro__"),
             )
         )
@@ -414,7 +552,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
         seg_i += 1
 
     for s in inp.shots:
-        duration_ms = _resolve_duration_ms(s, rules, config.fps)
+        duration_ms, duration_frames = grid.shot_duration(s, rules)
         tracks.video.append(
             VideoClip(
                 shot=s.shot.id,
@@ -422,6 +560,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 source=s.take_source,
                 start_ms=cursor,
                 duration_ms=duration_ms,
+                duration_frames=duration_frames,
                 transition_out=_transition(seg_i, s.shot.id),
                 # Round-T: the footage's own-audio level/mute travels onto the
                 # clip so the render is purely a function of the compiled
@@ -496,7 +635,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
 
     if outro_on:
         card = packaging.outro
-        dur = snap_to_frame_grid(card.duration_ms, config.fps)
+        dur, dur_frames = grid.card_duration(card.duration_ms)
         tracks.video.append(
             VideoClip(
                 shot="__outro__",
@@ -506,6 +645,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
                 ),
                 start_ms=cursor,
                 duration_ms=dur,
+                duration_frames=dur_frames,
                 transition_out=_transition(seg_i, "__outro__"),  # last segment → None
             )
         )
@@ -627,6 +767,15 @@ def compile_timeline(inp: CompileInput) -> Timeline:
             )
         )
 
+    # R2: a rational project also echoes its exact {num, den} onto the timeline
+    # (surfaced under the exporter-facing rate key by the model serializer) so
+    # downstream consumers/exporters see the truth without re-loading
+    # project.yaml. None for an int project → dropped by the serializer →
+    # byte-identical timeline. fps stays the int nominal mirror.
+    rate = config.frame_rate
+    rate_echo = None if rate.exact_int is not None else EditRate(
+        num=rate.numerator, den=rate.denominator
+    )
     return Timeline(
         meta=TimelineMeta(compiled_from=inp.fingerprint(), mode="compiled"),
         fps=config.fps,
@@ -634,6 +783,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
         height=config.height,
         duration_ms=total_ms,
         tracks=tracks,
+        rate_echo=rate_echo,
     )
 
 

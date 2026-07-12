@@ -315,16 +315,46 @@ def test_edit_rate_yaml_round_trips_exactly(tmp_project):
 # =====================================================================
 
 def test_edit_rate_only_referenced_in_models_and_container():
-    """R1 lands the field + the accessor and NOTHING else. The ONLY src
-    references to the token `edit_rate` must live in core/models.py and
-    core/container.py — this fails the moment a consumer starts plumbing it in
-    ahead of its staged loop (R2+)."""
+    """R1 landed the ``edit_rate`` field + accessor in core/models.py +
+    core/container.py and NOTHING else — the guard against premature plumbing
+    "ahead of its staged loop (R2+)". That staged loop has now landed, so the
+    guard is updated (as R1 anticipated) to permit ONLY the sanctioned R2+
+    consumers while keeping full teeth everywhere else:
+
+      * the field is still DECLARED in the R1 surface (core/models.py +
+        core/container.py);
+      * the R2 rational BUILD SPINE stays token-free — timeline/compiler,
+        media/render, media/normalize, media/ffmpeg and build/graph dispatch on
+        an exact :class:`~manju.core.timebase.Rate` via the typed resolvers
+        ``ProjectConfig.frame_rate`` / ``Timeline.frame_rate`` and NEVER touch
+        the raw field, so a regression that pokes ``edit_rate`` from the
+        compile/render/graph path is caught HERE (those files are not
+        sanctioned below → they land in ``unexpected``);
+      * the only OTHER sanctioned consumers are the interchange/CLI surface —
+        the ``exporters/`` package and ``cli.py`` (the parallel export loop's
+        rational-rate OTIO/EDL/TTML export);
+      * it still leaks into NOTHING else (gui/qc/providers/board/runtime/…)."""
     src_root = Path(__file__).resolve().parent.parent / "src" / "manju"
     hits = sorted(
         p.relative_to(src_root).as_posix()
         for p in src_root.rglob("*.py")
         if "edit_rate" in p.read_text(encoding="utf-8")
     )
-    assert hits == ["core/container.py", "core/models.py"], (
-        f"edit_rate leaked into unexpected src files: {hits}"
+    # R1 surface still owns the declaration.
+    r1_surface = ["core/container.py", "core/models.py"]
+    assert all(f in hits for f in r1_surface), (
+        f"edit_rate vanished from the R1 surface: {hits}"
+    )
+    # Every other reference must be a SANCTIONED R2+ consumer: the exporters
+    # package or the CLI. Anything else — crucially the R2 build spine
+    # (timeline/compiler.py, media/render.py, build/graph.py, …), or any
+    # gui/qc/providers/board/runtime module — is a leak and fails here.
+    sanctioned_prefixes = ("exporters/", "cli.py")
+    unexpected = [
+        h for h in hits
+        if h not in r1_surface and not h.startswith(sanctioned_prefixes)
+    ]
+    assert unexpected == [], (
+        f"edit_rate leaked into unsanctioned src files (the R2 build spine reads "
+        f"the frame_rate resolver, never the raw field): {unexpected}"
     )

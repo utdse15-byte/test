@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -221,6 +222,25 @@ class ProjectConfig(ManjuModel):
         if isinstance(data, dict) and data.get("edit_rate") is None:
             data.pop("edit_rate", None)
         return data
+
+    @property
+    def frame_rate(self) -> Rate:
+        """The project's exact edit rate as a :class:`~manju.core.timebase.Rate`
+        — the CONSUMER-FACING resolver the rational build spine (R2) reads.
+
+        Same truth precedence as ``core/container.Project.edit_rate`` (the
+        rational field when declared, else the legacy int ``fps`` promoted to an
+        exact whole-number rate), exposed on the already-loaded config so
+        ``timeline/compiler``, ``media/render`` and ``build/graph`` can dispatch
+        on ``rate.exact_int`` WITHOUT reaching for the raw ``edit_rate`` field:
+        the field stays encapsulated in ``core/models`` + ``core/container``
+        (the R1 surface pin), and every consumer depends on a ``Rate`` instead.
+        ``rate.nominal_int`` always equals ``fps``, so an int project's rate is
+        an exact whole number (``exact_int is not None``) and takes today's
+        byte-identical code path."""
+        if self.edit_rate is not None:
+            return self.edit_rate.rate
+        return Rate.from_fraction(self.fps)
 
 
 # ------------------------------------------------------------------- ShotSpec
@@ -1024,6 +1044,23 @@ class VideoClip(ManjuModel):
     # needs on the incoming side. The compiler does not populate this yet (a
     # future `set_inout` will); it is carried here so the render can honour it.
     source_in_ms: int = 0
+    # Rational edit rate (R2, additive). The EXACT whole-frame count this clip
+    # spans at the project's edit rate — written by the compiler ONLY on the
+    # rational (opt-in) path, so a 1001-family clip's timeline carries the frame
+    # truth the millisecond ``duration_ms`` cannot exactly hold (timebase's
+    # ≤½ms/call bound). None — the default for every int-fps project — is DROPPED
+    # by the wrap serializer below (wave-4b CaptionLine.role precedent), so an
+    # int project's clip serializes BYTE-IDENTICALLY (no such key in timeline.json
+    # or the content-key payload). Hand-editable: an int project that carries a
+    # stray duration_frames has it ignored + a structured check advisory.
+    duration_frames: int | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_default_duration_frames(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("duration_frames") is None:
+            data.pop("duration_frames", None)
+        return data
 
     # Round W (issue #2/#6): NOT bounded here on purpose. Timeline/VideoClip
     # stays lenient at the model layer — same stance as TRANSITION_TYPES above
@@ -1143,6 +1180,54 @@ class Timeline(ManjuModel):
     height: int = 1920
     duration_ms: int = 0
     tracks: TimelineTracks = Field(default_factory=TimelineTracks)
+    # Rational edit rate (R2, additive echo). ``fps`` stays the int hand-editable
+    # mirror (nominal_int); a rational project's compiled timeline ALSO carries
+    # its exact ``{num, den}`` so downstream consumers/exporters can see the truth
+    # without re-loading project.yaml. Serialized under the exporter-facing key
+    # ``edit_rate`` (matching ProjectConfig.edit_rate's shape) by the wrap
+    # serializer below; the Python attribute is ``rate_echo`` so the R2 spine
+    # (compiler/render/graph) sets/reads it WITHOUT the raw ``edit_rate`` token —
+    # the field stays encapsulated in core/models (the R1 surface pin). None (the
+    # default for every int project) is DROPPED, so an int timeline serializes
+    # BYTE-IDENTICALLY. Loading an ``edit_rate``-bearing timeline round-trips it
+    # (validation alias), and hand-editing the timeline without touching it keeps
+    # it — the consumer-facing exact rate is ``frame_rate`` below.
+    rate_echo: EditRate | None = Field(
+        default=None, validation_alias=AliasChoices("rate_echo", "edit_rate")
+    )
+
+    @model_serializer(mode="wrap")
+    def _emit_rate_echo_as_edit_rate(self, handler):
+        data = handler(self)
+        if isinstance(data, dict):
+            echo = data.pop("rate_echo", None)
+            if echo is not None:  # a rational project: surface it as `edit_rate`
+                data["edit_rate"] = echo
+        return data
+
+    @property
+    def frame_rate(self) -> Rate:
+        """The timeline's exact edit rate as a :class:`~manju.core.timebase.Rate`
+        — the CONSUMER-FACING resolver ``media/render`` + ``build/graph`` read
+        (the rational echo when present, else the int ``fps`` promoted to an
+        exact whole-number rate). Dispatching on ``rate.exact_int`` keeps int
+        projects on today's byte-identical ffmpeg/cache-key path while a rational
+        project contributes its native ``num/den`` — WITHOUT any consumer naming
+        the raw ``edit_rate`` field (R1 surface pin)."""
+        if self.rate_echo is not None:
+            return self.rate_echo.rate
+        return Rate.from_fraction(self.fps)
+
+    @property
+    def edit_rate(self) -> "EditRate | None":
+        """The rational echo as the exporter-facing ``edit_rate`` (the same name
+        it serializes under and that ``ProjectConfig.edit_rate`` carries): an
+        :class:`EditRate` (``.rate`` → exact :class:`Rate`) for a rational
+        project, else ``None``. A read-only view of ``rate_echo`` so an exporter
+        reading ``getattr(timeline, "edit_rate")`` sees the truth without
+        re-loading project.yaml — the ``rate_echo`` attribute keeps the R2 build
+        spine off the surface pin, this alias serves the interchange surface."""
+        return self.rate_echo
 
     # Round W (issue #2/#6): fps/width/height NOT bounded here — same
     # lenient-at-model stance as VideoClip.duration_ms above (timeline.json is
