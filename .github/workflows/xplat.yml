@@ -1,0 +1,41 @@
+# Cross-platform INFORMATIONAL matrix (FP continuation, user item 3 / roadmap §8.8).
+#
+# Purpose: surface Windows/macOS breakage in the OS-portable layers (path
+# handling, YAML/JSON contracts, rational-time math, CLI surface freeze,
+# registry consistency) WITHOUT gating merges — ubuntu ci.yml remains the one
+# acceptance gate. Jobs are continue-on-error: a red row here is a signal to
+# read, never a block. The subset deliberately excludes everything that needs
+# ffmpeg/tesseract/chromium or renders media — those stay Linux-CI-only until
+# a real cross-platform toolchain story exists (recorded in DECISIONS).
+name: xplat-informational
+
+on:
+  push:
+    branches: ["claude/cost-optimization-strategy-cjfmn5", "main"]
+  workflow_dispatch: {}
+
+jobs:
+  pure-suites:
+    name: ${{ matrix.os }} (informational)
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install (core + dev extras, no media tooling)
+        run: pip install -e ".[dev]"
+      - name: Pure OS-portable suites
+        run: >
+          python -m pytest -q
+          tests/test_fp_timebase.py
+          tests/test_fp_contracts.py
+          tests/test_fp_compat.py
+          tests/test_fp_docs.py
+          tests/test_fp_workflows.py
+          tests/test_fp_cli_snapshot.py
