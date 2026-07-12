@@ -1070,13 +1070,21 @@ targeted regression → report; definitive suites + CI orchestrator-owned):
   never block; role-less projects byte-identical everywhere; 39 tests). README gained the FP rows + governance
   section; snapshot 112 → 118+ via the reviewed regeneration flow (each
   addition an explicit regen; the ≥112 floor held throughout).
+- Wave 5 `ff9b067`: .manjupkg fixity (in-zip MANJU_FIXITY.json; unpack
+  verifies and REMOVES a failed restore, old packs byte-identical; manju
+  fixity verifies without extracting, streaming/header-lie-safe) + the run
+  performance view (qc/runperf over existing attempt evidence; cache rate
+  derived from the recorded SKIPPED_CACHE_HIT state — the audit inverted
+  the addendum's unavailable-default honestly; qc_time/disk_usage named as
+  the true unavailable[] gaps; never a scheduling input, grep-pinned).
+  32 tests. manjupkg registered as a stable document contract.
 - The close-gate integration suite caught exactly ONE cross-loop defect in
   the whole program: an over-broad grep pin ("reports/conform" prefix-
   matched the new, unrelated reports/conformance store) — tightened to the
   precise directory with the rationale in-line. Every loop's own targeted
   verification had been green; only the integrated run could see it.
 
-Suite: 3168 → 3446 passed / 13 skipped / 0 failed (final quiescent run); CI green per
+Suite: 3168 → 3446 (wave-4 close gate) → 3478 passed / 13 skipped / 0 failed (wave-5 final gate); CI green per
 commit. 0 existing tests modified beyond sanctioned snapshot regens; 0 new
 runtime deps; 0 network. Six of the seven agent loops ran on Opus 4.8 with
 binding addenda + orchestrator review; five mid-flight corrections were
