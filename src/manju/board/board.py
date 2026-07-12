@@ -275,6 +275,13 @@ _SERVE_CSS = """
   color: var(--muted); font-size: .74rem; font-family: ui-monospace, monospace;
   white-space: nowrap;
 }
+/* FP X1: the live review-transport status label — empty until a key drives it,
+   then echoes the current key/rate (K pause · L ×N · J step-back · frame/1s). */
+.cmp-transport {
+  color: var(--accent); font-size: .74rem; font-family: ui-monospace, monospace;
+  white-space: nowrap; min-height: 1em;
+}
+.cmp-transport:empty { display: none; }
 .cmp-durwarn {
   margin: .1rem 0 .5rem; padding: .3rem .6rem; border-radius: 6px;
   font-size: .8rem; font-weight: 700; color: var(--star);
@@ -501,19 +508,29 @@ _SERVE_JS = """
   // ±1 frame, pause-synced, using the EXACT frame period den/num seconds from
   // data-fps-num/den (the R2 rational timeline echo when the project is
   // rational — 1001/24000 s — never a rounded millisecond count).
-  function frameStep(btn){
-    var wrap = btn.closest(".compare-wrap"); if(!wrap) return;
+  // FP X1: the den/num arithmetic and the pause+seek+scope-redraw path are
+  // extracted into framePeriod()/cmpSeek() so the ±1-frame BUTTONS and the
+  // keyboard review transport (K/L/J/arrows) share ONE reader and ONE seek path
+  // — the arithmetic is never duplicated and there is never a second seek code.
+  function framePeriod(wrap){
     var num = parseInt(wrap.getAttribute("data-fps-num") || "0", 10);
     var den = parseInt(wrap.getAttribute("data-fps-den") || "0", 10);
-    if (!num || !den) return;
-    var dir = parseInt(btn.getAttribute("data-framestep") || "0", 10);
-    var dt = dir * den / num;  // one exact frame period, signed
+    if (!num || !den) return 0;
+    return den / num;  // one exact frame period, seconds (0 ⇒ rate unknown)
+  }
+  function cmpSeek(wrap, dt){
     pauseAll(wrap.querySelectorAll("video"));
     var vids = activeCmpVideos(wrap);
     for (var i = 0; i < vids.length; i++){
       try { vids[i].currentTime = Math.max(0, vids[i].currentTime + dt); } catch(e) {}
     }
     drawScopes(wrap);  // FP V2: scopes follow the step (also fired on 'seeked')
+  }
+  function frameStep(btn){
+    var wrap = btn.closest(".compare-wrap"); if(!wrap) return;
+    var per = framePeriod(wrap); if (!per) return;
+    var dir = parseInt(btn.getAttribute("data-framestep") || "0", 10);
+    cmpSeek(wrap, dir * per);  // one exact frame period, signed
   }
   function wipeMove(input){
     var stage = input.closest(".cmp-ab"); if(!stage) return;
@@ -785,14 +802,77 @@ _SERVE_JS = """
   }
   document.addEventListener("pause", scopesFromVideoEvent, true);
   document.addEventListener("seeked", scopesFromVideoEvent, true);
-  // Keyboard: space toggles the focused <video> (frame.io/PlayPause convention).
-  document.addEventListener("keydown", function(e){
-    if (e.code !== "Space" && e.key !== " ") return;
-    var a = document.activeElement;
-    if (a && a.tagName === "VIDEO"){
+  // FP X1: professional review TRANSPORT for the open compare — K/L/J + arrows,
+  // NATIVE browser transport ONLY. It extends the SAME delegated keydown listener
+  // below (never a second listener) and shares framePeriod()/cmpSeek() with the
+  // ±1-frame buttons, so parked scopes follow via V2's 'seeked' hook.
+  // NATIVE playbackRate cycle 1→2→4→1: return the rate to play at THIS press and
+  // advance the stored state for the next — the browser's own rate, never a
+  // re-timed shuttle.
+  function cmpRate(wrap){
+    var cur = wrap._mjRate || 1;
+    wrap._mjRate = (cur >= 4) ? 1 : cur * 2;  // 1→2→4→1
+    return cur;
+  }
+  // The one small transport status label (data-transport) — the current key/rate
+  // shows here so the pro grammar is discoverable, never a hidden chord.
+  function setTransport(wrap, msg){
+    var lab = wrap.querySelector("[data-transport]");
+    if (lab){ lab.textContent = msg; }
+  }
+  function cmpTransport(e, wrap){
+    var vids = activeCmpVideos(wrap), i;
+    var k = e.key;
+    if (k === "k" || k === "K"){
       e.preventDefault();
-      if (a.paused) { a.play().catch(function(){}); } else { a.pause(); }
+      pauseAll(wrap.querySelectorAll("video"));
+      setTransport(wrap, "K ⏸ 暂停 pause");
+    } else if (k === "l" || k === "L"){
+      e.preventDefault();
+      var rate = cmpRate(wrap);
+      for (i = 0; i < vids.length; i++){
+        try { vids[i].playbackRate = rate; } catch(err) {}  // a video refusing rate: swallowed
+        vids[i].play().catch(function(){});
+      }
+      setTransport(wrap, "L ▶ 播放 play ×" + rate);
+    } else if (k === "j" || k === "J"){
+      // HONEST: <video> has no native reverse, so J is a SINGLE −1-frame step
+      // (same exact period as ArrowLeft) — never a fake smooth-reverse interval
+      // shuttle. The label says so, plainly.
+      e.preventDefault();
+      var pj = framePeriod(wrap);
+      if (pj){ cmpSeek(wrap, -pj); }
+      setTransport(wrap, "J: 逐帧回退 step-back (浏览器不支持倒放 no native reverse)");
+    } else if (k === "ArrowLeft" || k === "ArrowRight"){
+      e.preventDefault();
+      var dir = (k === "ArrowRight") ? 1 : -1;
+      if (e.shiftKey){
+        cmpSeek(wrap, dir * 1);  // EXACT one second, signed
+        setTransport(wrap, (dir > 0 ? "→ +1秒" : "← -1秒") + " 1s");
+      } else {
+        var pa = framePeriod(wrap);
+        if (pa){ cmpSeek(wrap, dir * pa); }  // one exact frame period, shared math
+        setTransport(wrap, (dir > 0 ? "→ +1帧" : "← -1帧") + " frame");
+      }
     }
+  }
+  // Keyboard: Space toggles the focused <video> (frame.io/PlayPause convention);
+  // FP X1 EXTENDS the SAME delegated listener with the review transport — active
+  // ONLY when the event target is inside an OPEN .compare-wrap, and NEVER when the
+  // user is typing in a form field (tagName guard). No second keydown listener.
+  document.addEventListener("keydown", function(e){
+    if (e.code === "Space" || e.key === " "){
+      var a = document.activeElement;
+      if (a && a.tagName === "VIDEO"){
+        e.preventDefault();
+        if (a.paused) { a.play().catch(function(){}); } else { a.pause(); }
+      }
+      return;
+    }
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    var wrap = (t && t.closest) ? t.closest(".compare-wrap.open") : null;
+    if (wrap){ cmpTransport(e, wrap); }
   });
 })();
 """.strip()
@@ -1407,6 +1487,15 @@ def _render_compare(project: "Project", shot_id: str, takes: list[Any],
         f"{''.join(mode_btns)}"
         f"{step_html}"
         '<span class="compare-hint">同步播放本镜头所有备选 · 空格键播放/暂停聚焦的视频</span>'
+        # FP X1: the review-transport discoverability line — every key spelled out,
+        # bilingual, so the pro grammar is never a hidden chord. The live status
+        # label to its right echoes the current key/rate as the reviewer drives.
+        '<span class="compare-hint cmp-transport-hint">评审快捷键 review keys · '
+        'K=暂停 pause · L=播放 play(倍速 rate ×1→2→4) · '
+        'J=逐帧回退 step-back(无原生倒放 no native reverse) · '
+        '←/→=±1帧 frame · Shift+←/→=±1秒 1s · '
+        '仅在打开的对比区内 only inside an open compare</span>'
+        '<span class="cmp-transport" data-transport aria-live="polite"></span>'
         "</div>"
     )
     return (f'<div class="compare-wrap" data-mode="sbs" '
