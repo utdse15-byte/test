@@ -3819,6 +3819,54 @@ PACK_TRANSPORT_MEMBERS = (
     FIXITY_MANIFEST_NAME,
 )
 
+# ------------------------------------------------- BagIt serialized-bag variant
+# FP Loop U1 (roadmap item 8): `manju pack --bagit` writes an RFC 8493 SERIALIZED
+# bag INSIDE the same .manjupkg zip (opt-in — the default pack is byte-unchanged):
+#   bagit.txt               the bag declaration (fixed bytes below).
+#   manifest-sha256.txt      payload manifest — one line "<hex>  data/<path>" per
+#                            payload file (two-space separator, the bagit-python
+#                            convention; RFC 8493 §2.1.3 allows any whitespace).
+#   bag-info.txt             DETERMINISTIC metadata only: External-Identifier
+#                            (canonical pack name), Bag-Software-Agent
+#                            (manju <version>), Payload-Oxum (octetcount.
+#                            streamcount). NO Bagging-Date — a wall-clock field
+#                            would break two-packs-byte-identical, and RFC 8493
+#                            §2.2.2 makes every bag-info element optional (indeed
+#                            bag-info.txt itself is optional), so its omission
+#                            keeps the bag valid; the restore note says so.
+#   tagmanifest-sha256.txt   digests of every tag file EXCEPT itself (RFC 8493
+#                            §2.2.1) — that is bagit.txt, bag-info.txt,
+#                            manifest-sha256.txt AND the MANJU_* transport members
+#                            (they ride as tag files at bag root).
+#   data/<project tree>      the payload.
+# ONE FIXITY TRUTH PER FORMAT: in --bagit mode MANJU_FIXITY.json is OMITTED — the
+# BagIt manifests ARE the fixity authority (never two authorities in one archive).
+# unpack + `manju fixity` AUTO-DETECT the bag (bagit.txt member present) and
+# verify payload against manifest-sha256.txt + tag files against
+# tagmanifest-sha256.txt; restore extracts data/ as the project tree and drops
+# every tag file, with the SAME remove-on-mismatch discipline as the JSON path.
+BAGIT_TXT_NAME = "bagit.txt"
+BAGIT_PAYLOAD_MANIFEST_NAME = "manifest-sha256.txt"
+BAGIT_TAG_MANIFEST_NAME = "tagmanifest-sha256.txt"
+BAGIT_INFO_NAME = "bag-info.txt"
+BAGIT_PAYLOAD_PREFIX = "data/"
+BAGIT_FORMAT = "bagit-1.0"
+# the exact bagit.txt bytes (RFC 8493 §2.1.1): version + tag-file encoding.
+BAGIT_DECLARATION_BYTES = (
+    b"BagIt-Version: 1.0\n"
+    b"Tag-File-Character-Encoding: UTF-8\n"
+)
+# reserved tag-file names a stray on-disk payload file may never shadow at bag
+# ROOT — but in bag mode the payload lands under data/, so these can never
+# collide with a real project file; the guard below still skips the MANJU_* set
+# (shared with the default path) for symmetry.
+BAGIT_STANDARD_TAG_MEMBERS = (
+    BAGIT_TXT_NAME,
+    BAGIT_INFO_NAME,
+    BAGIT_PAYLOAD_MANIFEST_NAME,
+    BAGIT_TAG_MANIFEST_NAME,
+)
+
 
 def _toolchain_snapshot_bytes() -> bytes:
     """``MANJU_TOOLCHAIN.json`` content: the ``manju.toolchain-manifest/v1``
@@ -4117,6 +4165,10 @@ def _pack_meta_info(zf: zipfile.ZipFile) -> dict:
         "toolchain_snapshot": TOOLCHAIN_SNAPSHOT_NAME in names,
         "toolchain": None,
     }
+    # a serialized BagIt bag additionally surfaces its format + Payload-Oxum
+    # (additive: the JSON-fixity path never grows a "bag" key).
+    if BAGIT_TXT_NAME in names:
+        info["bag"] = _bag_info_summary(zf, names)
     if TOOLCHAIN_SNAPSHOT_NAME in names:
         raw = _read_meta_member_capped(zf, TOOLCHAIN_SNAPSHOT_NAME)
         if raw is None:
@@ -4152,12 +4204,307 @@ def _print_meta_info(info: dict) -> None:
         f"toolchain {tool_line}",
         fg=typer.colors.BRIGHT_BLACK,
     )
+    bag = info.get("bag")
+    if isinstance(bag, dict):
+        typer.secho(
+            f"  info: bag format {bag.get('format')} · "
+            f"Payload-Oxum {bag.get('payload_oxum')}",
+            fg=typer.colors.BRIGHT_BLACK,
+        )
+
+
+def _bagit_encode_path(rel: str) -> str:
+    """Percent-encode ONLY the characters RFC 8493 §2.1.3 requires in a manifest
+    filepath — '%', CR, LF (encode '%' first so a later step never double-hits
+    it). Everything else, including UTF-8 multibyte (CJK) paths, is verbatim, so
+    a normal ``as_posix`` project path is unchanged."""
+    return rel.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _bagit_decode_path(field: str) -> str:
+    """Inverse of :func:`_bagit_encode_path` (decode '%25' LAST)."""
+    return field.replace("%0D", "\r").replace("%0A", "\n").replace("%25", "%")
+
+
+def _bagit_manifest_bytes(entries: dict[str, str]) -> bytes:
+    """A bagit ``*-sha256.txt`` manifest body: ``<hex>  <filepath>\\n`` per entry
+    (two-space separator), sorted by in-bag path for byte-determinism.
+    ``entries`` maps the RAW in-bag path → bare-hex sha256."""
+    return "".join(
+        f"{entries[path]}  {_bagit_encode_path(path)}\n" for path in sorted(entries)
+    ).encode("utf-8")
+
+
+def _bagit_info_bytes(canonical_name: str, octets: int, streams: int) -> bytes:
+    """``bag-info.txt`` — DETERMINISTIC fields only, fixed order (no Bagging-Date;
+    see the section note). Payload-Oxum is ``octetcount.streamcount`` per RFC 8493
+    §2.2.2."""
+    from .core.toolchain import _manju_version
+
+    lines = [
+        f"External-Identifier: {canonical_name}",
+        f"Bag-Software-Agent: manju {_manju_version()}",
+        f"Payload-Oxum: {octets}.{streams}",
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _bagit_restore_note_bytes(canonical_name: str, *, contracts_included: bool) -> bytes:
+    """``MANJU_RESTORE.txt`` for a BagIt bag — honest + deterministic, and
+    explicit about the two deliberate omissions (no MANJU_FIXITY.json, no
+    Bagging-Date). Kept separate from :func:`_restore_note_bytes` so the DEFAULT
+    pack's note stays byte-identical."""
+    from .core.toolchain import _manju_version
+
+    contracts_line = (
+        f"  {CONTRACTS_SNAPSHOT_NAME} — byte copy of the packing engine's\n"
+        "    contract registry (CONTRACTS.yaml) at pack time (a tag file)."
+        if contracts_included else
+        f"  {CONTRACTS_SNAPSHOT_NAME} — NOT INCLUDED: the packing engine shipped\n"
+        "    no CONTRACTS.yaml registry file; no snapshot was fabricated."
+    )
+    text = f"""MANJU RESTORE NOTES ({RESTORE_NOTE_FORMAT}; BagIt bag)
+=========================================================
+
+This archive is a manju project pack (.manjupkg) written as an RFC 8493
+SERIALIZED BagIt bag ({BAGIT_FORMAT}): the payload is the project tree under
+{BAGIT_PAYLOAD_PREFIX}, with {BAGIT_PAYLOAD_MANIFEST_NAME} (payload fixity),
+{BAGIT_INFO_NAME}, {BAGIT_TXT_NAME}, and {BAGIT_TAG_MANIFEST_NAME} (tag-file
+fixity) as tag files at the bag root. The synthesized manju transport members
+(this file, {TOOLCHAIN_SNAPSHOT_NAME}{", " + CONTRACTS_SNAPSHOT_NAME if contracts_included else ""})
+ride as tag files too and are covered by {BAGIT_TAG_MANIFEST_NAME}.
+
+Packed by manju version: {_manju_version()}
+Canonical pack name:     {canonical_name}
+(the archive file may have been renamed since — substitute the actual filename
+in the commands below.)
+
+How to restore
+--------------
+1. Verify without extracting (read-only):
+
+     manju fixity {canonical_name}
+
+2. Restore (refuses to overwrite an existing directory):
+
+     manju unpack {canonical_name}
+
+   unpack auto-detects the bag layout, re-verifies every payload file against
+   {BAGIT_PAYLOAD_MANIFEST_NAME} AND every tag file against
+   {BAGIT_TAG_MANIFEST_NAME}; on any mismatch/missing/extra the restored
+   directory is REMOVED and the exit is nonzero — a corrupt restore never looks
+   like a good one. On success the {BAGIT_PAYLOAD_PREFIX} payload becomes the
+   restored project tree and all tag files are dropped.
+
+Deliberate omissions (stated honestly)
+--------------------------------------
+- {FIXITY_MANIFEST_NAME} is NOT written in bag mode: the BagIt manifests are the
+  single fixity authority (never two authorities in one archive).
+- Bagging-Date is NOT written in {BAGIT_INFO_NAME}: a wall-clock field would
+  break byte-for-byte determinism (two packs of one tree are identical). RFC
+  8493 §2.2.2 makes every bag-info element optional, so the bag stays valid.
+
+What the manifests guarantee — and what they do NOT
+---------------------------------------------------
+GUARANTEES: every payload/tag file's sha256 matches what `manju pack` recorded.
+DOES NOT: the manifests are NOT signed. Anyone who can rewrite the archive can
+  rewrite the manifests to match, so fixity detects corruption and accidental
+  edits — not a capable adversary. Establish provenance out-of-band.
+
+Snapshots in this pack (transport metadata / tag files)
+-------------------------------------------------------
+  {TOOLCHAIN_SNAPSHOT_NAME} — the packing machine's toolchain facts.
+{contracts_line}
+
+All MANJU_* members and the BagIt tag files are transport-only: after a passing
+verify, `manju unpack` drops them so the restored tree equals the project.
+"""
+    return text.encode("utf-8")
+
+
+def _bagit_parse_manifest(raw: Optional[bytes]) -> Optional[dict[str, str]]:
+    """Parse a bagit ``*-sha256.txt`` manifest → {RAW in-bag path: bare-hex}.
+    ``None`` when absent/undecodable (the caller treats that as unverifiable —
+    a bag missing a required manifest is a verify FAILURE, never a silent pass)."""
+    if raw is None:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(None, 1)  # first whitespace run only; path keeps its spaces
+        if len(parts) != 2:
+            continue
+        digest, path_field = parts
+        out[_bagit_decode_path(path_field)] = digest
+    return out
+
+
+def _verify_bag_rows(payload_manifest: Optional[dict[str, str]],
+                     tag_manifest: Optional[dict[str, str]],
+                     present: dict[str, tuple[str, int]]) -> dict:
+    """Compare a serialized bag against the ACTUAL members. ``present`` maps every
+    member's in-bag path → (bare-hex sha256, size). Payload members (``data/``)
+    are checked against ``manifest-sha256.txt``; the remaining tag files (all but
+    ``tagmanifest-sha256.txt``, which never lists itself) against
+    ``tagmanifest-sha256.txt``. sha256-only, since BagIt manifests carry no size.
+    Same structured rows as :func:`_verify_fixity_rows`, plus ``format``."""
+    if payload_manifest is None or tag_manifest is None:
+        return {"ok": False, "format": BAGIT_FORMAT, "checked": 0,
+                "mismatched": [], "missing": [], "extra": [],
+                "reason": "missing_manifest"}
+    present_payload = {k: v for k, v in present.items()
+                       if k.startswith(BAGIT_PAYLOAD_PREFIX)}
+    present_tags = {k: v for k, v in present.items()
+                    if not k.startswith(BAGIT_PAYLOAD_PREFIX)
+                    and k != BAGIT_TAG_MANIFEST_NAME}
+    mismatched: list[dict] = []
+    missing: list[dict] = []
+    extra: list[dict] = []
+
+    def _check(declared: dict[str, str], have: dict[str, tuple[str, int]]) -> None:
+        for rel in sorted(declared):
+            want = declared[rel]
+            got = have.get(rel)
+            if got is None:
+                missing.append({"path": rel, "expected_sha256": want})
+            elif got[0] != want:
+                mismatched.append({"path": rel, "expected_sha256": want,
+                                   "actual_sha256": got[0]})
+        for rel in sorted(have):
+            if rel not in declared:
+                extra.append({"path": rel, "actual_sha256": have[rel][0]})
+
+    _check(payload_manifest, present_payload)
+    _check(tag_manifest, present_tags)
+    return {
+        "ok": not (mismatched or missing or extra),
+        "format": BAGIT_FORMAT,
+        "checked": len(payload_manifest) + len(tag_manifest),
+        "mismatched": mismatched,
+        "missing": missing,
+        "extra": extra,
+    }
+
+
+def _present_from_stage(stage: Path) -> dict[str, tuple[str, int]]:
+    """(bare-hex sha256, size) for every extracted file under a bag STAGING dir,
+    keyed by its in-bag path (``data/…`` for payload, the bare name for tag
+    files)."""
+    present: dict[str, tuple[str, int]] = {}
+    for p in sorted(stage.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(stage).as_posix()
+        present[rel] = (hash_file(p).removeprefix(HASH_PREFIX), p.stat().st_size)
+    return present
+
+
+def _bag_info_summary(zf: zipfile.ZipFile, names: set[str]) -> dict:
+    """READ-ONLY `--info` summary for a bag: the format tag plus Payload-Oxum
+    parsed from bag-info.txt under the capped, header-blind reader."""
+    summary: dict = {"format": BAGIT_FORMAT, "payload_oxum": None}
+    if BAGIT_INFO_NAME in names:
+        raw = _read_meta_member_capped(zf, BAGIT_INFO_NAME)
+        if raw is not None:
+            try:
+                for line in raw.decode("utf-8").splitlines():
+                    label, sep, value = line.partition(":")
+                    if sep and label.strip() == "Payload-Oxum":
+                        summary["payload_oxum"] = value.strip()
+                        break
+            except UnicodeDecodeError:
+                pass
+    return summary
+
+
+def _unpack_bag(zf: zipfile.ZipFile, names: list[str], archive: Path, dest: Path,
+                original_name: Optional[str], as_json: bool) -> None:
+    """Restore a serialized BagIt bag. Extract into a STAGING dir first, verify
+    payload + tag files, and only on success rename ``data/`` to ``dest`` (so the
+    ``data/`` wrapper is stripped and every tag file dropped). On any failure the
+    stage is removed and ``dest`` is never created — the same remove-on-mismatch
+    discipline as the JSON path, structurally guaranteed."""
+    import tempfile
+
+    payload_manifest = _bagit_parse_manifest(
+        zf.read(BAGIT_PAYLOAD_MANIFEST_NAME) if BAGIT_PAYLOAD_MANIFEST_NAME in names else None)
+    tag_manifest = _bagit_parse_manifest(
+        zf.read(BAGIT_TAG_MANIFEST_NAME) if BAGIT_TAG_MANIFEST_NAME in names else None)
+    stage = Path(tempfile.mkdtemp(prefix=".manjupkg-bag-", dir=str(dest.parent)))
+    try:
+        zf.extractall(stage)
+        result = _verify_bag_rows(payload_manifest, tag_manifest,
+                                  _present_from_stage(stage))
+        if not result["ok"]:
+            shutil.rmtree(stage, ignore_errors=True)  # dest never created
+            if as_json:
+                _emit({
+                    "ok": False,
+                    "unpacked": None,
+                    "archive": str(archive),
+                    "dest_removed": not dest.exists(),
+                    "fixity": {"present": True, **result},
+                }, True)
+            else:
+                typer.secho(
+                    f"✗ 解包完整性校验失败 BagIt(mismatch {len(result['mismatched'])}"
+                    f" · missing {len(result['missing'])} · extra {len(result['extra'])})",
+                    fg=typer.colors.RED,
+                )
+                _print_fixity_rows(result)
+                typer.secho(
+                    f"  已删除临时目录,未生成恢复目录 {dest}(损坏的恢复不能伪装成成功)",
+                    fg=typer.colors.RED,
+                )
+            raise typer.Exit(1)
+        # verified OK: the data/ payload becomes the restored tree; all tag files
+        # (in the stage root) are discarded when the stage is removed below.
+        payload_root = stage / "data"
+        if not payload_root.is_dir():
+            # a bag whose manifest verified but that carries no data/ dir (empty
+            # payload) — create an empty restored tree rather than failing.
+            dest.mkdir(parents=True)
+        else:
+            os.replace(payload_root, dest)  # atomic rename on the same filesystem
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    (dest / ".manju").mkdir(exist_ok=True)
+    restored_files = len(payload_manifest or {})
+    if as_json:
+        _emit({
+            "unpacked": str(dest),
+            "archive": str(archive),
+            "name": original_name,
+            "files": restored_files,
+            "fixity": {"present": True, **result},
+        }, True)
+        return
+    typer.secho(f"unpacked (BagIt) → {dest}", fg=typer.colors.GREEN)
+    typer.secho(
+        f"  ✓ 完整性校验通过 BagIt fixity({result['checked']} files, "
+        "payload+tag sha256)",
+        fg=typer.colors.GREEN,
+    )
+    typer.secho(
+        f"  ✓ 已剥离 {BAGIT_PAYLOAD_PREFIX} 前缀并移除全部 tag 文件(bagit.txt/"
+        "manifest/tagmanifest/bag-info/MANJU_*)— 恢复目录即原项目树",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
 
 
 @app.command()
 def pack(out: Optional[Path] = typer.Option(None),
          full: bool = typer.Option(False, "--full",
                                    help="include the rebuildable render caches too"),
+         bagit: bool = typer.Option(
+             False, "--bagit",
+             help="write an RFC 8493 serialized BagIt bag (payload under data/, "
+                  "sha256 payload+tag manifests) instead of MANJU_FIXITY.json"),
          as_json: bool = typer.Option(False, "--json")):
     """Archive the project into a single .manjupkg (zip) for backup/migration.
 
@@ -4178,6 +4525,11 @@ def pack(out: Optional[Path] = typer.Option(None),
     skipped_symlinks: list[str] = []
     files_packed = 0
     fixity_files: dict[str, dict] = {}
+    # --bagit accumulators: the payload rides under data/, hashed ONCE per file
+    # (same single hash_file call the default path uses — never twice per file).
+    bag_payload: dict[str, str] = {}  # raw in-bag path (data/…) -> bare-hex sha256
+    payload_octets = 0
+    payload_streams = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
@@ -4202,60 +4554,135 @@ def pack(out: Optional[Path] = typer.Option(None),
             if not full and any(rel.startswith(prefix) for prefix in PACK_CACHE):
                 excluded_cache += path.stat().st_size
                 continue
-            zf.write(path, rel)
+            bare = hash_file(path).removeprefix(HASH_PREFIX)  # single hash per file
+            size = path.stat().st_size
+            if bagit:
+                arc = BAGIT_PAYLOAD_PREFIX + rel  # payload rides under data/
+                zf.write(path, arc)
+                bag_payload[arc] = bare
+                payload_octets += size
+                payload_streams += 1
+            else:
+                zf.write(path, rel)
+                fixity_files[rel] = {"sha256": bare, "bytes": size}
             files_packed += 1
-            fixity_files[rel] = {
-                "sha256": hash_file(path).removeprefix(HASH_PREFIX),
-                "bytes": path.stat().st_size,
-            }
-        # S3 self-description members — written BEFORE the fixity manifest and
-        # recorded in fixity_files, so each is FIXITY-COVERED (tampering one
-        # fails verification like any payload member). Content is deterministic:
-        # the restore note names the CANONICAL pack filename (derived from the
-        # project directory, never --out) so two packs of one tree are
-        # byte-identical for all three members.
+        # Synthesized transport members. Default mode writes the S3 self-
+        # description members + MANJU_FIXITY.json; --bagit mode writes the BagIt
+        # tag files instead (see each branch). The canonical pack name is derived
+        # from the project directory (never --out) so packs stay rename-safe and
+        # two packs of one tree are byte-identical.
         import hashlib as _hashlib
 
         contracts_bytes = _contracts_snapshot_bytes()
         canonical_name = project.root.stem + ".manjupkg"
         meta_members: list[tuple[str, bytes]] = []
-        if contracts_bytes is not None:
-            meta_members.append((CONTRACTS_SNAPSHOT_NAME, contracts_bytes))
-        meta_members.append((RESTORE_NOTE_NAME, _restore_note_bytes(
-            canonical_name, contracts_included=contracts_bytes is not None)))
-        meta_members.append((TOOLCHAIN_SNAPSHOT_NAME, _toolchain_snapshot_bytes()))
-        for meta_name, meta_data in meta_members:
-            zf.writestr(_synth_zipinfo(meta_name), meta_data)
-            fixity_files[meta_name] = {
-                "sha256": _hashlib.sha256(meta_data).hexdigest(),
-                "bytes": len(meta_data),
-            }
-        # LAST member: the in-zip fixity manifest, recording every OTHER member.
-        zf.writestr(_fixity_zipinfo(), _fixity_manifest_bytes(fixity_files))
+        if bagit:
+            # BagIt serialized bag: the MANJU_* self-description members ride as
+            # TAG FILES at bag root alongside the standard bag tag files; the bag
+            # manifests are the ONE fixity authority (MANJU_FIXITY.json is NOT
+            # written). All tag files carry the fixed 1980 stamp (_synth_zipinfo)
+            # and their write order is sorted ⇒ two packs of one tree are equal.
+            tagfiles: dict[str, bytes] = {}
+            if contracts_bytes is not None:
+                tagfiles[CONTRACTS_SNAPSHOT_NAME] = contracts_bytes
+            tagfiles[RESTORE_NOTE_NAME] = _bagit_restore_note_bytes(
+                canonical_name, contracts_included=contracts_bytes is not None)
+            tagfiles[TOOLCHAIN_SNAPSHOT_NAME] = _toolchain_snapshot_bytes()
+            tagfiles[BAGIT_PAYLOAD_MANIFEST_NAME] = _bagit_manifest_bytes(bag_payload)
+            tagfiles[BAGIT_TXT_NAME] = BAGIT_DECLARATION_BYTES
+            tagfiles[BAGIT_INFO_NAME] = _bagit_info_bytes(
+                canonical_name, payload_octets, payload_streams)
+            # the tag manifest covers every tag file EXCEPT itself (RFC 8493 §2.2.1)
+            tagmanifest = _bagit_manifest_bytes(
+                {name: _hashlib.sha256(data).hexdigest()
+                 for name, data in tagfiles.items()})
+            for name in sorted(tagfiles):  # deterministic write order
+                zf.writestr(_synth_zipinfo(name), tagfiles[name])
+            zf.writestr(_synth_zipinfo(BAGIT_TAG_MANIFEST_NAME), tagmanifest)
+            meta_members = [
+                (n, tagfiles[n]) for n in
+                (CONTRACTS_SNAPSHOT_NAME, RESTORE_NOTE_NAME, TOOLCHAIN_SNAPSHOT_NAME)
+                if n in tagfiles
+            ]
+        else:
+            # S3 self-description members — written BEFORE the fixity manifest and
+            # recorded in fixity_files, so each is FIXITY-COVERED (tampering one
+            # fails verification like any payload member). Content is deterministic:
+            # the restore note names the CANONICAL pack filename (derived from the
+            # project directory, never --out) so two packs of one tree are
+            # byte-identical for all three members.
+            if contracts_bytes is not None:
+                meta_members.append((CONTRACTS_SNAPSHOT_NAME, contracts_bytes))
+            meta_members.append((RESTORE_NOTE_NAME, _restore_note_bytes(
+                canonical_name, contracts_included=contracts_bytes is not None)))
+            meta_members.append((TOOLCHAIN_SNAPSHOT_NAME, _toolchain_snapshot_bytes()))
+            for meta_name, meta_data in meta_members:
+                zf.writestr(_synth_zipinfo(meta_name), meta_data)
+                fixity_files[meta_name] = {
+                    "sha256": _hashlib.sha256(meta_data).hexdigest(),
+                    "bytes": len(meta_data),
+                }
+            # LAST member: the in-zip fixity manifest, recording every OTHER member.
+            zf.writestr(_fixity_zipinfo(), _fixity_manifest_bytes(fixity_files))
     if as_json:
-        _emit({
-            "packed": str(out),
-            "name": project.root.name,
-            "files": files_packed,
-            "full": full,
-            "excluded_cache_bytes": excluded_cache,
-            "fixity": FIXITY_FORMAT,
-            "meta_members": [nm for nm, _ in meta_members],
-        }, True)
+        if bagit:
+            _emit({
+                "packed": str(out),
+                "name": project.root.name,
+                "files": files_packed,
+                "full": full,
+                "excluded_cache_bytes": excluded_cache,
+                "bagit": True,
+                "format": BAGIT_FORMAT,
+                "payload_oxum": f"{payload_octets}.{payload_streams}",
+                "meta_members": [nm for nm, _ in meta_members],
+            }, True)
+        else:
+            _emit({
+                "packed": str(out),
+                "name": project.root.name,
+                "files": files_packed,
+                "full": full,
+                "excluded_cache_bytes": excluded_cache,
+                "fixity": FIXITY_FORMAT,
+                "meta_members": [nm for nm, _ in meta_members],
+            }, True)
         return
-    typer.secho(f"packed → {out}", fg=typer.colors.GREEN)
-    typer.secho(
-        f"  ✓ 写入完整性清单 {FIXITY_MANIFEST_NAME} "
-        f"({len(fixity_files)} files, sha256+size;unpack 时自动校验)",
-        fg=typer.colors.BRIGHT_BLACK,
-    )
-    typer.secho(
-        f"  ✓ 附带自描述元数据 {' + '.join(nm for nm, _ in meta_members)}"
-        "(恢复说明/快照,unpack 校验通过后自动移除)"
-        + ("" if contracts_bytes is not None else
-           f";{CONTRACTS_SNAPSHOT_NAME} 省略 — engine 未随附 CONTRACTS.yaml"),
-        fg=typer.colors.BRIGHT_BLACK,
-    )
+    if bagit:
+        typer.secho(f"packed (BagIt) → {out}", fg=typer.colors.GREEN)
+        typer.secho(
+            f"  ✓ RFC 8493 序列化 bag:{BAGIT_PAYLOAD_PREFIX} 载荷 + "
+            f"{BAGIT_PAYLOAD_MANIFEST_NAME} / {BAGIT_TAG_MANIFEST_NAME}"
+            f"({payload_streams} files, sha256;unpack/fixity 自动识别校验)",
+            fg=typer.colors.BRIGHT_BLACK,
+        )
+        typer.secho(
+            f"  ✓ Payload-Oxum {payload_octets}.{payload_streams}(bag-info.txt;"
+            f"省略 Bagging-Date 以保持确定性;bag 模式不写 {FIXITY_MANIFEST_NAME}"
+            "— BagIt 清单即唯一 fixity 权威)",
+            fg=typer.colors.BRIGHT_BLACK,
+        )
+        typer.secho(
+            f"  ✓ 自描述元数据作为 tag 文件 {' + '.join(nm for nm, _ in meta_members)}"
+            "(tagmanifest 覆盖,unpack 校验通过后随 tag 文件一并移除)"
+            + ("" if contracts_bytes is not None else
+               f";{CONTRACTS_SNAPSHOT_NAME} 省略 — engine 未随附 CONTRACTS.yaml"),
+            fg=typer.colors.BRIGHT_BLACK,
+        )
+    else:
+        typer.secho(f"packed → {out}", fg=typer.colors.GREEN)
+        typer.secho(
+            f"  ✓ 写入完整性清单 {FIXITY_MANIFEST_NAME} "
+            f"({len(fixity_files)} files, sha256+size;unpack 时自动校验)",
+            fg=typer.colors.BRIGHT_BLACK,
+        )
+        typer.secho(
+            f"  ✓ 附带自描述元数据 {' + '.join(nm for nm, _ in meta_members)}"
+            "(恢复说明/快照,unpack 校验通过后自动移除)"
+            + ("" if contracts_bytes is not None else
+               f";{CONTRACTS_SNAPSHOT_NAME} 省略 — engine 未随附 CONTRACTS.yaml"),
+            fg=typer.colors.BRIGHT_BLACK,
+        )
     if excluded_cache:
         typer.echo(f"  跳过可重建缓存 {excluded_cache / 1e6:.1f} MB "
                    "(segments/proxy — 重建即回;--full 保留)")
@@ -4394,6 +4821,13 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
                   f"{free} 字节(含 {UNPACK_FREE_DISK_MARGIN_BYTES} 安全余量)— "
                   "空间不足或为 zip bomb,先释放磁盘空间或检查压缩包")
         names = zf.namelist()
+        if BAGIT_TXT_NAME in names:
+            # serialized BagIt bag (auto-detected by the bagit.txt member): verify
+            # payload against manifest-sha256.txt + tag files against
+            # tagmanifest-sha256.txt, then reshape data/ into the restored tree.
+            # Self-contained so the default (JSON-fixity) path below is untouched.
+            _unpack_bag(zf, names, archive, dest, original_name, as_json)
+            return
         fixity_raw = (
             zf.read(FIXITY_MANIFEST_NAME) if FIXITY_MANIFEST_NAME in names else None
         )
@@ -4512,7 +4946,20 @@ def fixity(archive: Path,
         meta_info: Optional[dict] = _pack_meta_info(zf) if info else None
         info_extra = {"info": meta_info} if meta_info is not None else {}
         names = [i.filename for i in infos]
-        if FIXITY_MANIFEST_NAME not in names:
+        if BAGIT_TXT_NAME in names:
+            # serialized BagIt bag (auto-detected): verify payload against
+            # manifest-sha256.txt AND tag files against tagmanifest-sha256.txt,
+            # streamed (never inflates a whole member). Same structured verdict +
+            # exit code as the JSON-fixity path; `format` reports "bagit-1.0".
+            payload_manifest = _bagit_parse_manifest(
+                zf.read(BAGIT_PAYLOAD_MANIFEST_NAME)
+                if BAGIT_PAYLOAD_MANIFEST_NAME in names else None)
+            tag_manifest = _bagit_parse_manifest(
+                zf.read(BAGIT_TAG_MANIFEST_NAME)
+                if BAGIT_TAG_MANIFEST_NAME in names else None)
+            result = _verify_bag_rows(payload_manifest, tag_manifest,
+                                      _present_from_zip_stream(zf))
+        elif FIXITY_MANIFEST_NAME not in names:
             if as_json:
                 _emit({"ok": False, "present": False, "archive": str(archive),
                        "reason": "no_manifest", **info_extra}, True)
@@ -4524,19 +4971,20 @@ def fixity(archive: Path,
                 if meta_info is not None:
                     _print_meta_info(meta_info)
             raise typer.Exit(1)
-        manifest = _parse_fixity_manifest(zf.read(FIXITY_MANIFEST_NAME))
-        if manifest is None:
-            if as_json:
-                _emit({"ok": False, "present": True, "archive": str(archive),
-                       "reason": "unparseable_manifest", **info_extra}, True)
-            else:
-                typer.secho(
-                    f"fixity: {archive.name} 的 {FIXITY_MANIFEST_NAME} "
-                    "无法解析/非受支持格式", fg=typer.colors.RED)
-                if meta_info is not None:
-                    _print_meta_info(meta_info)
-            raise typer.Exit(1)
-        result = _verify_fixity_rows(manifest, _present_from_zip_stream(zf))
+        else:
+            manifest = _parse_fixity_manifest(zf.read(FIXITY_MANIFEST_NAME))
+            if manifest is None:
+                if as_json:
+                    _emit({"ok": False, "present": True, "archive": str(archive),
+                           "reason": "unparseable_manifest", **info_extra}, True)
+                else:
+                    typer.secho(
+                        f"fixity: {archive.name} 的 {FIXITY_MANIFEST_NAME} "
+                        "无法解析/非受支持格式", fg=typer.colors.RED)
+                    if meta_info is not None:
+                        _print_meta_info(meta_info)
+                raise typer.Exit(1)
+            result = _verify_fixity_rows(manifest, _present_from_zip_stream(zf))
     result = {"present": True, "archive": str(archive), **result, **info_extra}
     if as_json:
         _emit(result, True)
