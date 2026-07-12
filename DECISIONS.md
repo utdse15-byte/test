@@ -1005,3 +1005,81 @@ full §11 row-by-row table in the completion report.
   spent. §8 documentation corrections applied (19's bridge-CLI claim, the
   toolmap "resolver" wording, 18's M&E wording, 14's report-authority
   contradiction; 20B was already honest; 21G stays skipped).
+
+## 29. Function-perfection program — governance first, honest media semantics second (2026-07-12)
+
+Operator directive: five hours of continuous improvement on the external
+"Function Perfection Audit / All-Possible Roadmap" doc, own analysis first,
+better ideas allowed without approval. Own audit findings that set the scope
+(each verified at source before any loop launched): 40 public schema ids +
+112 CLI commands with zero governance; Project.fps is int / ProbeInfo.fps is
+float / the frame grid is ms x int-fps (NTSC edit rates unrepresentable);
+otio.py wrote fractional frame values rounded to 6dp at float rates; the
+untrusted-pack inspect path inflated zip members with no caps; `manju unpack`
+extractall'd with no size preflight.
+
+Structural rulings (deviations from the external doc, taken deliberately):
+- The engine's int edit rate was NOT converted under a deadline. The pure
+  rational foundation (core/timebase.py) landed instead, and the int→rational
+  edit-rate major is DECLARED in CONTRACTS.yaml planned_migrations — the
+  registry's first governed future migration.
+- `manju migrate` machinery deferred: zero real pending migrations exist
+  (doc §16 #20 real-benefit rule). Registry + compat fixture corpus + declared
+  plan are the honest minimum.
+- Every shipped schema defaults to STABLE in the registry; newcomers arrive
+  EXPERIMENTAL (stable is a promotion, not a default). Growth-hostile exact
+  pins (==112 commands, ==40 schemas, experimental-set equality) were rejected
+  in review and replaced with floors/membership — the floor is what catches a
+  truncated snapshot regeneration, which live-vs-snapshot tests cannot.
+- Unpack zip-bomb guard is declared-total-vs-free-disk, NOT absolute caps or
+  compression-ratio heuristics: real restores are legitimately huge and
+  digital-silence WAVs compress ~1000:1 legally. Template packs (small by
+  contract) get hard caps + header-blind stream-capped reads.
+- PROGRAM/loudness facts have ONE owner each; conformance consumes the
+  masters index and the technical profile, never re-measures, and UNKNOWN is
+  never guessed into PASS. Conformance is grep-pinned OUT of release paths —
+  promotion to a release gate is a future explicit decision.
+- Relink restores BYTES to the paths truth already records — truth files are
+  never rewritten; expected hashes come only from the attempt-evidence
+  stream (recorded lineage); "verified without a hash" refuses as a lie.
+
+Landed (each loop = audit → red fixtures → minimal contract → implement →
+targeted regression → report; definitive suites + CI orchestrator-owned):
+- Wave 1 `5334590`: CONTRACTS.yaml registry (50 entries; ownership map;
+  planned migration) + core/contracts.py loader + CLI compat snapshot +
+  8-fixture compat corpus + doc validation; core/timebase.py (exact NTSC
+  rates, SMPTE NDF/DF incl. 17982 + 108/216 pins, grid-drift math:
+  23.976-on-24 = one frame per 125000/3 ms, 7.2 s per 2 h); archive
+  decompression limits (orchestrator-built). 88 tests.
+- Wave 2 `05f85b2`: manju.media-technical-profile/v1 (verbatim-or-unknown
+  facts + drift diagnostics, manju qc tech), manju.conform-loss/v1
+  (line-cited per-exporter loss tables — otio drops overlays/captions/
+  audio-gain/ducking today, recorded honestly; exact fractional-frame drift
+  rows), redacted support bundle with a self-scan tripwire that refuses to
+  write leaks (manju support-bundle). 81 tests.
+- Wave 3 `cdee36e`+`c32f934`: manju.delivery-conformance/v1 (17 checks,
+  PASS/FAIL/UNKNOWN/NOT_APPLICABLE, no aggregate score, manju qc
+  conformance), manju.relink-plan/v1 (missing-media report joined to
+  attempt-evidence hashes; per-row CAS apply; manju relink),
+  manju.toolchain-manifest/v1 (record-only reproducibility evidence,
+  manju toolchain). 62 tests (E 17 + G 23 + H 22).
+- Wave 4 `156e724`+`b072b53`: manju help-workflow (10 task-oriented
+  workflows, 91 command strings test-resolved against the live typer
+  registry, paid-safety wording preserved verbatim in the recover flow);
+  caption roles + CJK-aware accessibility advisories (record + advise,
+  never block; role-less projects byte-identical everywhere; 39 tests). README gained the FP rows + governance
+  section; snapshot 112 → 118+ via the reviewed regeneration flow (each
+  addition an explicit regen; the ≥112 floor held throughout).
+- The close-gate integration suite caught exactly ONE cross-loop defect in
+  the whole program: an over-broad grep pin ("reports/conform" prefix-
+  matched the new, unrelated reports/conformance store) — tightened to the
+  precise directory with the rationale in-line. Every loop's own targeted
+  verification had been green; only the integrated run could see it.
+
+Suite: 3168 → 3446 passed / 13 skipped / 0 failed (final quiescent run); CI green per
+commit. 0 existing tests modified beyond sanctioned snapshot regens; 0 new
+runtime deps; 0 network. Six of the seven agent loops ran on Opus 4.8 with
+binding addenda + orchestrator review; five mid-flight corrections were
+issued from early review (all growth-hostility or process); the recurring
+agent-spawn collapse struck three times and was recovered by resume each
+time.

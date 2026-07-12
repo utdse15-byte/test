@@ -191,8 +191,30 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju providers qualify/qualification`, `manju masters`, `manju analyze/segments/reframe/rough-cut/tool`, `manju series status --health`, `manju series outline`, `manju export --pullsheet`, `manju pull-sheet`, `build --target animatic` | 14–21G | provider qualification ladder + cost-bounded canary; real audio masters (raw stems / raw stem sum / M&E **bus-exclusion** master, loudness + true-peak measured) filling the delivery-manifest roles; hash-bound media analysis, cutdown proposals, smart reframe and the whitelist tool **resolver** (`manju tool` resolves + validates intent ops onto existing executors — it never invokes them); series world state, variants, season health and voice-rights-gated template packs; the preview spend ladder with keyframe gates and storyboard round-trip |
 | `manju serve-mcp [--agent-profile collaborative\|unattended]` | M2/DR05 | stdio MCP server for structured IO (no `unlock`/`gc` on this surface); every tool carries a declared ToolPolicy and the `agent_surface` tool returns the machine-readable manifest+digest; `unattended` (opt-in, operator flag only) hides `redo`/`director_confirm` and answers them with a structured denial naming the collaborative path back — the default surface is byte-identical to before |
 | `manju auto "一句话" [--agent …]` | M2 | autopilot shell over ANY one-shot agent CLI (claude/codex/gemini/qwen/aider or a custom template) |
+| `manju qc tech MEDIA [--edit-fps N] [--write]` | FP | honest per-file technical profile (`manju.media-technical-profile/v1`): time/picture/color/audio/container facts **verbatim-or-`unknown`, never guessed**, with exact edit-grid drift diagnostics (rational NTSC rates via `core/timebase`) — a deletable derived projection, never a build input |
+| `manju support-bundle [--out F] [--events-tail N]` | FP | redacted diagnostic bundle: default-deny collectors (env versions, project shape counts, redacted events/failures tails, provider-manifest byte digests — auth never read), a pre-write self-scan **refuses** to produce any bundle containing secret/path markers; deterministic zip |
+| `manju qc conformance [--profile ID] [--write]` | FP | delivery conformance vs a declarative technical target riding `delivery_profiles`: 17 checks, each `PASS/FAIL/UNKNOWN/NOT_APPLICABLE` (UNKNOWN is honest — no profile/color/measurement means UNKNOWN, never a guessed PASS), **no aggregate score**, never a release input |
+| `manju relink report\|plan\|apply [--root DIR]` | FP | missing-media recovery: zero-write report (takes/timeline sources/ref pins; hashes from recorded attempt evidence only), hash-first candidate plan under bounded roots, per-row CAS apply that restores bytes to the **recorded** path — truth files never rewritten, imports/ never a target, unverified rows opt-in only |
+| `manju toolchain [--write] [--diff OLD]` | FP | record-only reproducibility evidence (`manju.toolchain-manifest/v1`): manju/python/OS/ffmpeg/dep versions + font content digests, facts-only digest, structured drift compare; no absolute paths/hostname/username ever; content-key wiring is a declared future step |
+| `manju help-workflow [NAME]` | FP | task-oriented navigation: 10 real workflows (new-project → deliver, recover, diagnose …) whose every step is a command that exists (test-enforced against the live CLI registry) with an honest one-line why |
+| `manju qc captions [--json\|--write]` | FP | caption accessibility advisories (`manju.caption-accessibility/v1`): CJK-aware CPS (UAX#11 wide=2), line length/count, duration floors, gaps/overlaps, forced-vs-nonforced, role coverage — **advisory only**, never blocks, always exits 0; optional cue `role` vocabulary flows into ASS Name + delivery rows, role-less projects stay byte-identical |
 
 Dangerous commands (`unlock`, `gc --hard`) are **not** exposed over MCP.
+
+**Contract governance (FP)**: every public contract is registered in
+`CONTRACTS.yaml` (40+ `manju.*/vN` schema rows + document rows, each with
+owner/status/`read_older`/`write_older`) and enforced by tests — registry⇄code
+consistency both directions, a frozen CLI-surface snapshot
+(`tests/fixtures/cli_surface.json`, regenerate via
+`python -m tests.test_fp_cli_snapshot`), an old-project compat corpus
+(`tests/fixtures/compat/` — old shapes load byte-identically, torn files reject
+structurally, unknown future majors refuse), and README command validation. The
+first declared (not yet implemented) major migration is `project.fps int →
+rational edit_rate`; `core/timebase.py` (exact rational rates, SMPTE NDF/DF
+timecode, grid-drift analysis) is its landed foundation. Export honesty lives in
+`manju.conform-loss/v1` (`exporters/conform.py`): per-target
+preserved/approximated/dropped/unsupported tables (line-cited) + exact
+one-frame-drift detection — no exporter degrades silently.
 
 ## Milestones
 

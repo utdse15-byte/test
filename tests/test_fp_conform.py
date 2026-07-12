@@ -512,7 +512,12 @@ def test_reports_conform_is_never_a_build_input():
     anchor_seen = False
     for py in SRC_ROOT.rglob("*.py"):
         text = py.read_text(encoding="utf-8")
-        if "reports/conform" in text or 'reports_dir / "conform"' in text:
+        # Match the conform DIRECTORY precisely: "reports/conform/" with its
+        # trailing slash, or the exact reports_dir / "conform" join. The bare
+        # prefix "reports/conform" also matches "reports/conformance" — the
+        # unrelated, separately-pinned delivery-conformance store — which made
+        # this pin false-positive the moment build/conformance.py landed.
+        if "reports/conform/" in text or 'reports_dir / "conform"' in text:
             if py.name == "conform.py" and py.parent.name == "exporters":
                 anchor_seen = True
             else:
