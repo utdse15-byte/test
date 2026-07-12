@@ -63,11 +63,21 @@ Honest scope boundaries (recorded, not silently claimed)
 * CAPTIONS ride the SRT/TTML exits — NOT written here (honest boundary; FCPXML
   titles are deliberately not emitted). Overlays/branding are likewise not a
   spine primitive and are not written.
-* AUDIO is not written this loop: FCPXML's connected-clip role/lane model CAN
-  carry Manju's four buses (unlike CMX EDL's flat A-channel), so this is a
-  WRITER-scope boundary — a deferred increment — not a format limit; audio is
-  honestly omitted rather than faked. Speed ramps / multicam / nested sequences
-  are out of scope.
+* AUDIO (FP loop V1 — the T2-deferred increment): the four buses
+  (voice/music/sfx/ambient) ride as CONNECTED ``<asset-clip>``\\ s nested in their
+  owning spine clip, on a fixed lane (voice −1 … ambient −4) with the standard
+  base role + verbatim bus subrole (``dialogue`` / ``music`` / ``effects.sfx`` /
+  ``effects.ambient``). Placement is parent-relative (``child.offset =
+  in_frames[i] + F − offsets[i]`` against the pulled-back spine geometry); gain
+  becomes ``<adjust-volume>``; a connected clip MAY extend past its parent's end
+  (legal — never split). HONEST omissions (an in-band ``<!-- MANJU --> `` note,
+  never faked): a ``loop`` bed is fill-to-duration (a single pass would be wrong
+  audio); a ``duration_ms is None`` clip resolves in the render to the source's
+  natural length with NO static probe, so it is not statically resolvable; a
+  ``ducking`` clip IS written (static gain) but its render-time sidechain
+  relationship is noted; fades are gain-only this increment (no native fade
+  element — the exact FCPXML fade shape is not emitted). Speed ramps / multicam /
+  nested sequences remain out of scope.
 * Every feature is classified per the timeline inventory by
   :mod:`manju.exporters.conform` (target ``"fcpxml"``).
 
@@ -82,7 +92,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ..core.container import ProjectError
 from ..core.timebase import Rate, Rounding, ms_to_frames
@@ -90,7 +100,7 @@ from ..core.yamlio import atomic_write_text
 
 if TYPE_CHECKING:  # avoid an import cycle at module load (srt_ass/ttml/edl stance)
     from ..core.container import Project
-    from ..core.models import Timeline, VideoClip
+    from ..core.models import AudioClip, Timeline, VideoClip
 
 __all__ = ["compile_fcpxml", "export_fcpxml"]
 
@@ -145,6 +155,139 @@ def _is_clean_dissolve(clip: "VideoClip") -> bool:
     adjacent clips) is applied at layout time — see :func:`compile_fcpxml`."""
     t = clip.transition_out
     return t is not None and t.type in _CLEAN_DISSOLVE_TYPES and t.duration_ms > 0
+
+
+# --------------------------------------------------------------------------- #
+# connected audio lanes (FP loop V1 — the T2-deferred increment)              #
+# --------------------------------------------------------------------------- #
+
+#: The four audio buses of ``TimelineTracks`` in their deterministic emit order.
+_AUDIO_BUSES = ("voice", "music", "sfx", "ambient")
+
+#: Fixed deterministic lane map (connected clips ride BELOW the spine, so the
+#: lanes are negative) and the standard base-role + verbatim bus-subrole map.
+_AUDIO_LANES = {"voice": -1, "music": -2, "sfx": -3, "ambient": -4}
+_AUDIO_ROLES = {
+    "voice": "dialogue",
+    "music": "music",
+    "sfx": "effects.sfx",
+    "ambient": "effects.ambient",
+}
+
+
+def _audio_parent_index(f: int, offsets: list[int], frames: list[int]) -> int:
+    """The spine clip a connected audio clip at absolute frame ``f`` attaches to:
+    the FIRST clip whose PULLED-BACK interval ``[offsets[i], offsets[i]+frames[i])``
+    contains ``f``. Iterating from 0 makes a dissolve-overlap tie resolve to the
+    EARLIER clip; ``f`` at/after the last clip's end falls through to the LAST
+    clip (a connected clip legally extends past its parent). Callers guarantee at
+    least one spine clip."""
+    for i in range(len(offsets)):
+        if offsets[i] <= f < offsets[i] + frames[i]:
+            return i
+    return len(offsets) - 1
+
+
+def _audio_name(source: str) -> str:
+    """A stable clip/asset name from a project-relative audio ``source``: its
+    basename (paths are ``/``-joined project-relative strings; CJK rides
+    natively)."""
+    return source.rsplit("/", 1)[-1]
+
+
+def _audio_approx_notes(clip: "AudioClip", bus: str, name: str) -> list[str]:
+    """Honest in-band notes for a WRITTEN connected clip whose render-time
+    behaviour FCPXML does not carry: the ducking sidechain relationship (the clip
+    still plays at its static gain — the mix is never silently claimed) and, on
+    the gain-only fades branch, the omitted fade handles."""
+    notes: list[str] = []
+    if clip.ducking:
+        notes.append(
+            f" MANJU: audio '{name}' ({bus}) ducking is a render-time sidechain "
+            "relationship (keyed under the voice bus) not expressible in FCPXML — "
+            "the clip is written at its static gain; the ducking mix is NOT "
+            "represented ")
+    fi, fo = int(clip.fade_in_ms or 0), int(clip.fade_out_ms or 0)
+    if fi > 0 or fo > 0:
+        notes.append(
+            f" MANJU: audio '{name}' ({bus}) fade_in {fi}ms / fade_out {fo}ms "
+            "approximated as gain-only (no native FCPXML fade element emitted this "
+            "increment) ")
+    return notes
+
+
+class _AudioPlanItem(NamedTuple):
+    """One planned audio bus clip. ``kind`` is ``"write"`` (a connected asset-clip
+    at ``child_off``/``in_pt``/``dur_f`` frames) or ``"omit"`` (a loop bed / an
+    unresolvable duration — carried only as the honest in-band ``note``). ``parent``
+    is the index of the owning spine clip."""
+
+    kind: str
+    parent: int
+    bus: str
+    name: str
+    clip: "AudioClip"
+    child_off: int = 0
+    in_pt: int = 0
+    dur_f: int = 0
+    note: str = ""
+
+
+def _plan_audio(
+    timeline: "Timeline", clips: list["VideoClip"], offsets: list[int],
+    frames: list[int], in_frames: list[int], rate: Rate,
+) -> tuple[list[_AudioPlanItem], list[str], dict[str, int], dict[str, str]]:
+    """Plan the four audio buses into connected-clip items + their deduped asset
+    resources (source → first-appearance order, widened available range).
+
+    The faithful subset (addendum): a clip is WRITTEN when it is non-loop with a
+    resolvable ``duration_ms``. A loop bed is fill-to-duration semantics (a single
+    pass would be wrong audio) and a ``duration_ms is None`` clip resolves, in the
+    render's ``_build_audio_graph``, to the source's natural length WITHOUT any
+    static probe — so both are honestly OMITTED (a note records why) rather than
+    faked. Connected clips need a spine host, so an empty video track draws no
+    audio at all."""
+    plan: list[_AudioPlanItem] = []
+    order: list[str] = []
+    avail: dict[str, int] = {}
+    names: dict[str, str] = {}
+    if not clips:
+        return plan, order, avail, names
+    for bus in _AUDIO_BUSES:
+        for clip in getattr(timeline.tracks, bus):
+            f = ms_to_frames(int(clip.start_ms), rate, Rounding.ROUND_HALF_UP)
+            pi = _audio_parent_index(f, offsets, frames)
+            name = _audio_name(clip.source)
+            if clip.loop:
+                plan.append(_AudioPlanItem(
+                    "omit", pi, bus, name, clip,
+                    note=(f" MANJU: audio '{name}' ({bus}) is a loop bed "
+                          "(fill-to-duration) — a single pass would be wrong audio; "
+                          "omitted this increment (a future loop may materialize "
+                          "repeats) ")))
+                continue
+            if clip.duration_ms is None:
+                plan.append(_AudioPlanItem(
+                    "omit", pi, bus, name, clip,
+                    note=(f" MANJU: audio '{name}' ({bus}) at {int(clip.start_ms)}ms "
+                          "has no resolvable duration — the render plays the source's "
+                          "natural length (no static probe in _build_audio_graph); "
+                          "omitted rather than guessed ")))
+                continue
+            dur_f = ms_to_frames(int(clip.duration_ms), rate, Rounding.ROUND_HALF_UP)
+            in_pt = ms_to_frames(int(clip.start_offset_ms or 0), rate,
+                                 Rounding.ROUND_HALF_UP)
+            need = in_pt + dur_f
+            if clip.source not in avail:
+                order.append(clip.source)
+                avail[clip.source] = need
+                names[clip.source] = name
+            else:
+                avail[clip.source] = max(avail[clip.source], need)
+            plan.append(_AudioPlanItem(
+                "write", pi, bus, name, clip,
+                child_off=in_frames[pi] + f - offsets[pi], in_pt=in_pt, dur_f=dur_f))
+    return plan, order, avail, names
 
 
 def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
@@ -206,9 +349,19 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
             asset_name[c.source] = c.shot
         else:
             avail[c.source] = max(avail[c.source], need)
+
+    # --- connected audio lanes: plan every bus clip in deterministic order ----- #
+    # Bus order voice/music/sfx/ambient, then clip-list order. A clip becomes a
+    # CONNECTED asset-clip on its owning spine clip (found by absolute frame F);
+    # loop beds and None-duration clips are honestly NOT written (an in-band note
+    # records why), reusing the SAME asset dedup/widening as the video track.
+    audio_plan, audio_order, audio_avail, audio_names = _plan_audio(
+        timeline, clips, offsets, frames, in_frames, rate)
+
     asset_id = {src: f"r{n + 2}" for n, src in enumerate(order)}
+    audio_id = {src: f"r{len(order) + n + 2}" for n, src in enumerate(audio_order)}
     has_dissolve = any(d > 0 for d in dissolves)
-    effect_id = f"r{len(order) + 2}" if has_dissolve else None
+    effect_id = (f"r{len(order) + len(audio_order) + 2}" if has_dissolve else None)
 
     # --- build the tree ------------------------------------------------------- #
     fcpxml = ET.Element("fcpxml", {"version": FCPXML_VERSION})
@@ -231,6 +384,17 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
             "hasVideo": "1",
             "format": "r1",
         })
+    for src in audio_order:
+        # audio source: hasAudio, no video format ref; available range widens to
+        # cover in-point + window exactly like the video assets above.
+        ET.SubElement(resources, "asset", {
+            "id": audio_id[src],
+            "name": audio_names[src],
+            "src": src,               # project-relative (containment-checked)
+            "start": "0s",
+            "duration": _secs(audio_avail[src], rate),
+            "hasAudio": "1",
+        })
     if effect_id is not None:
         ET.SubElement(resources, "effect", {
             "id": effect_id,
@@ -248,8 +412,9 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
         "tcFormat": "NDF",  # honest subset: no drop-frame timecode display claim
     })
     spine = ET.SubElement(sequence, "spine")
+    spine_clip_elems: list[ET.Element] = []
     for i, c in enumerate(clips):
-        ET.SubElement(spine, "asset-clip", {
+        spine_clip_elems.append(ET.SubElement(spine, "asset-clip", {
             "ref": asset_id[c.source],
             "offset": _secs(offsets[i], rate),
             "name": c.shot,
@@ -257,7 +422,7 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
             "duration": _secs(frames[i], rate),
             "format": "r1",
             "tcFormat": "NDF",
-        })
+        }))
         if dissolves[i] > 0:
             # The native cross-dissolve sits in the overlap [offsets[i+1], clip
             # end); its offset IS the (pulled-back) incoming clip's offset.
@@ -275,6 +440,32 @@ def compile_fcpxml(timeline: "Timeline", *, rate: Rate, name: str = "") -> str:
                 f" MANJU: transition '{t.type}' ({t.duration_ms}ms) at {c.shot} "
                 "approximated as a hard cut (no clean FCPXML cross-dissolve "
                 "mapping) "))
+
+    # Nest the planned connected audio clips INSIDE their owning spine clip. A
+    # connected clip's ``offset`` is parent-relative (child.offset =
+    # in_frames[i] + F − offsets[i]); it MAY extend past the parent's end (legal
+    # FCPXML — never split). Notes (loop/None omission, ducking/fade approximation)
+    # ride as in-band comments on the same parent so nothing is silently dropped.
+    for item in audio_plan:
+        parent = spine_clip_elems[item.parent]
+        if item.kind == "write":
+            clip, bus = item.clip, item.bus
+            child = ET.SubElement(parent, "asset-clip", {
+                "ref": audio_id[clip.source],
+                "lane": str(_AUDIO_LANES[bus]),
+                "offset": _secs(item.child_off, rate),
+                "name": item.name,
+                "start": _secs(item.in_pt, rate),
+                "duration": _secs(item.dur_f, rate),
+                "audioRole": _AUDIO_ROLES[bus],
+            })
+            if clip.gain_db:  # <adjust-volume> only when the gain is non-zero
+                ET.SubElement(child, "adjust-volume",
+                              {"amount": f"{clip.gain_db:g}dB"})
+            for note in _audio_approx_notes(clip, bus, item.name):
+                parent.append(ET.Comment(note))
+        else:  # honest omission (loop bed / unresolvable duration) — a note only
+            parent.append(ET.Comment(item.note))
 
     ET.indent(fcpxml, space="  ")
     body = ET.tostring(fcpxml, encoding="unicode")

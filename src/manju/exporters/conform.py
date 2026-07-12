@@ -493,10 +493,11 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "available media range, OTIO precedent)",
             "exporters/fcpxml.py (_clip_frames + asset available range)"),
         "audio_in_points": (
-            "unsupported",
-            "video spine only this loop — audio is not written (see "
-            "audio_tracks), so no audio in-point rides the document",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "approximated",
+            "start_offset_ms becomes the connected clip's start (exact whole "
+            "frame) on every WRITTEN clip; clips the loop/None rule omits "
+            "(see audio_tracks) take their in-points with them",
+            "exporters/fcpxml.py (_plan_audio: start from start_offset_ms)"),
         "transitions": (
             "approximated",
             "a clean cross-dissolve (xfade_fade, 0<dur<BOTH adjacent clips) "
@@ -525,38 +526,45 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "<adjust-volume> is written on the video asset-clip this loop",
             "exporters/fcpxml.py (no volume path)"),
         "audio_gain": (
-            "unsupported",
-            "video spine only this loop — audio is not written (see "
-            "audio_tracks)",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "approximated",
+            "<adjust-volume amount=\"{gain:g}dB\"> on every WRITTEN clip with "
+            "a nonzero gain_db; clips the loop/None rule omits take their "
+            "gain with them (see audio_tracks)",
+            "exporters/fcpxml.py (V1 gain emission)"),
         "audio_fade_in": (
-            "unsupported",
-            "video spine only this loop — audio is not written (see "
-            "audio_tracks)",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "approximated",
+            "GAIN-ONLY branch (V1): fade handles are NOT encoded — confidence "
+            "in the exact FCPXML fade element shape is not high and a wrong "
+            "one risks whole-document rejection; the omitted fade values ride "
+            "an in-band <!-- MANJU --> note on the clip",
+            "exporters/fcpxml.py (V1 fades ruling + _audio_approx_notes)"),
         "audio_fade_out": (
-            "unsupported",
-            "video spine only this loop — audio is not written (see "
-            "audio_tracks)",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "approximated",
+            "GAIN-ONLY branch (V1), same ruling as audio_fade_in: not "
+            "encoded, named in the clip's in-band note",
+            "exporters/fcpxml.py (V1 fades ruling + _audio_approx_notes)"),
         "ducking": (
-            "unsupported",
-            "video spine only this loop — audio is not written (see "
-            "audio_tracks)",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "approximated",
+            "the ducked clip IS written at its static gain; the render-time "
+            "sidechain RELATIONSHIP has no FCPXML primitive and rides an "
+            "in-band approximation note — the mix is never silently claimed",
+            "exporters/fcpxml.py (V1 ducking ruling + _audio_approx_notes)"),
         "audio_loops": (
             "unsupported",
-            "video spine only this loop — audio is not written (see "
-            "audio_tracks)",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "loop beds are fill-to-duration semantics — a single written pass "
+            "would be WRONG audio, so loop clips are omitted with an in-band "
+            "note (materializing the repeats is the honest future increment)",
+            "exporters/fcpxml.py (V1 loop ruling + _audio_approx_notes)"),
         "audio_tracks": (
-            "unsupported",
-            "video spine only this loop: FCPXML's connected-clip role/lane "
-            "model CAN carry Manju's four buses (unlike CMX EDL's flat "
-            "A-channel), so this is a WRITER-scope boundary — a deferred "
-            "increment — not a format limit; audio is honestly omitted rather "
-            "than faked",
-            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+            "approximated",
+            "V1: non-loop clips with resolvable duration_ms become CONNECTED "
+            "role/lane asset-clips (voice -1/dialogue, music -2/music, sfx "
+            "-3/effects.sfx, ambient -4/effects.ambient) at exact frame "
+            "placement on the pulled-back spine geometry; loop beds and "
+            "natural-length (duration None) sfx are OMITTED with in-band "
+            "notes — a loop-only timeline gets no audio. The remainder is "
+            "still WRITER scope, not a format limit; nothing is ever faked",
+            "exporters/fcpxml.py (V1 _plan_audio + connected emission)"),
     },
     "openclap": {
         "video_clips": (

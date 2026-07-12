@@ -453,7 +453,17 @@ def test_fcpxml_conform_every_feature_classified_exactly_once():
     assert union - inventory == set(), f"fabricated: {sorted(union - inventory)}"
 
 
-def test_fcpxml_conform_video_preserved_captions_dropped_audio_unsupported():
+def test_fcpxml_conform_video_preserved_captions_dropped_audio_classified():
+    """EVOLVED with the V1 audio increment (orchestrator edit, teeth
+    preserved): T2's original pin asserted audio_tracks/audio_gain
+    "unsupported" while the writer carried no audio at all. V1 writes
+    non-loop resolvable clips as connected role/lane asset-clips, so the
+    honest static classification moved to "approximated" — with the
+    loop/None omission stated in the detail (a loop-only timeline still
+    gets no audio) — and audio_loops STAYS "unsupported" (one written
+    pass of a fill-to-duration bed would be wrong audio). The original
+    honesty tooth — writer-scope, not a format limit, nothing faked —
+    remains asserted below."""
     tl = _full_inventory_timeline()
     cats = conform.classify_features("fcpxml", conform.timeline_feature_inventory(tl))
     preserved = {r["feature"] for r in cats["preserved"]}
@@ -463,10 +473,12 @@ def test_fcpxml_conform_video_preserved_captions_dropped_audio_unsupported():
     assert {"video_clips", "video_in_points"} <= preserved
     assert "transitions" in approx
     assert {"captions", "overlays", "clip_volume"} <= dropped
-    assert "audio_tracks" in unsupported and "audio_gain" in unsupported
-    # the audio row is honest that FCPXML COULD carry it (writer-scope, not format)
-    audio_row = next(r for r in cats["unsupported"] if r["feature"] == "audio_tracks")
+    assert "audio_tracks" in approx and "audio_gain" in approx
+    assert "audio_loops" in unsupported
+    audio_row = next(r for r in cats["approximated"] if r["feature"] == "audio_tracks")
     assert "role/lane" in audio_row["detail"] and "fcpxml.py" in audio_row["where"]
+    assert "not a format limit" in audio_row["detail"]
+    assert "OMITTED" in audio_row["detail"]  # the loop/None boundary is stated
 
 
 def test_fcpxml_module_is_classified():
