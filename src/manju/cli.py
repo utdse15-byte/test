@@ -2007,6 +2007,10 @@ def export(
     jianying: bool = typer.Option(False, "--jianying"),
     capcut: bool = typer.Option(False, "--capcut", help="international CapCut draft (pycapcut)"),
     srt: bool = typer.Option(False, "--srt"),
+    ttml: bool = typer.Option(
+        False, "--ttml",
+        help="IMSC1-flavoured TTML caption sidecar (captions/captions.ttml, "
+             "FP §5.5 — same cue truth as --srt)"),
     otio: bool = typer.Option(False, "--otio"),
     pullsheet: bool = typer.Option(
         False, "--pullsheet",
@@ -2045,7 +2049,7 @@ def export(
                      "no headless-Chromium/PDF-table path in this environment)")
     timeline = project.load_timeline()
     if timeline is None:
-        if pullsheet and not (jianying or capcut or srt or otio):
+        if pullsheet and not (jianying or capcut or srt or ttml or otio):
             rel = {k: project.relpath(v) for k, v in outputs.items()}
             append_event(project.root, ACTOR, "export", rel)
             if as_json:
@@ -2057,7 +2061,7 @@ def export(
                     typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
             return
         _fail("no timeline.json — run `manju build` first")
-    if not (jianying or capcut or srt or otio or pullsheet):
+    if not (jianying or capcut or srt or ttml or otio or pullsheet):
         srt = otio = True
     # Which target we're building, so a mid-export failure names its subject in
     # the structured record (goal 10) — the capcut path below records the same way.
@@ -2068,6 +2072,11 @@ def export(
 
             _target = "srt"
             outputs.update(export_captions(project, timeline))
+        if ttml:
+            from .exporters.ttml import export_ttml
+
+            _target = "ttml"
+            outputs["ttml"] = export_ttml(project, timeline)
         if otio:
             from .exporters.otio import export_otio
 

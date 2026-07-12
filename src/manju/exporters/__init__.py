@@ -1,4 +1,4 @@
-"""Exporters (§8 出口层, §13 M1): captions (SRT/ASS), OTIO, JianYing draft.
+"""Exporters (§8 出口层, §13 M1): captions (SRT/ASS/VTT/TTML), OTIO, JianYing draft.
 
 Everything here is a dependency-free, deterministic, atomic writer. Each
 exporter is one optional exit; ``final.mp4`` + SRT + OTIO always suffice to
@@ -18,13 +18,16 @@ from .srt_ass import (
     ms_to_ass,
     ms_to_srt,
 )
+from .ttml import compile_ttml, export_ttml
 
 __all__ = [
     "ms_to_srt",
     "ms_to_ass",
     "compile_srt",
     "compile_ass",
+    "compile_ttml",
     "export_captions",
+    "export_ttml",
     "export_otio",
     "export_jianying",
     "export_openclap",

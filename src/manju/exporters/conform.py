@@ -381,6 +381,19 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "exporters/srt_ass.py:142-177,216-282"),
         # everything else falls to the caption-only fallback below
     },
+    "ttml": {
+        "captions": (
+            "preserved",
+            "one <p> per cue: begin/end as media-time HH:MM:SS.mmm (ms-exact), "
+            "escaped UTF-8 text with <br/> line breaks; speaker → head "
+            "ttm:agent + per-cue ttm:agent ref; role → standard hint where "
+            "mapped (ttm:role / itts:forcedDisplay / agent stub) + VERBATIM "
+            "x-manju:role on every roled cue. Honest subset: one default "
+            "bottom-centre region only; RTL/vertical/ruby are NOT expressed "
+            "(the cue model carries no layout semantics)",
+            "exporters/ttml.py:114-144,147-213"),
+        # everything else falls to the caption-only fallback below
+    },
     "openclap": {
         "video_clips": (
             "preserved",
@@ -446,7 +459,7 @@ _RULES: dict[str, dict[str, _Rule]] = {
 }
 
 # Per-target fallback for features with no explicit row. Only the caption-only
-# exit has one: EVERYTHING non-caption is out of scope by design and the
+# exits have one: EVERYTHING non-caption is out of scope by design and the
 # report must say so instead of silently passing (§6.2).
 _FALLBACK_RULES: dict[str, _Rule] = {
     "srt_ass": (
@@ -454,6 +467,11 @@ _FALLBACK_RULES: dict[str, _Rule] = {
         "caption-only exit: SRT/ASS/VTT carry subtitle cues only — this "
         "feature is outside the format's scope by design",
         "exporters/srt_ass.py:1-12 (module scope: captions only)"),
+    "ttml": (
+        "unsupported",
+        "caption-only exit: the TTML/IMSC1 document carries subtitle cues "
+        "only — this feature is outside the format's scope by design",
+        "exporters/ttml.py:1-50 (module scope: captions only)"),
 }
 
 #: target name -> rule table. One entry per exporter module under
@@ -480,6 +498,10 @@ _SCOPE_NOTES: dict[str, str] = {
                     "draft structure is library-owned and not audited here.",
     "srt_ass": "caption-only exit — SRT/ASS/VTT carry subtitle cues only; "
                "this export is NOT a picture/audio conform.",
+    "ttml": "caption-only exit — IMSC1-Text-Profile-shaped TTML1 (media time "
+            "base, ms precision, one default bottom-centre region; no "
+            "ttp:profile conformance claim — no external validator runs); "
+            "NOT a picture/audio conform.",
     "openclap": "open .clap snapshot; non-mappable semantics ride the "
                 "namespaced x-manju extension (never fabricated standard "
                 "fields).",
@@ -547,6 +569,9 @@ _NOT_TIME_BEARING = {
     "srt_ass": "srt/ass/vtt are ms-native caption documents; fps never "
                "enters them (exporters/srt_ass.py:45-70) — no frame grid to "
                "drift against",
+    "ttml": "ttml is an ms-native caption document (media time base, "
+            "HH:MM:SS.mmm — exporters/ttml.py:71,169); fps never enters it — "
+            "no frame grid to drift against",
 }
 
 
@@ -720,7 +745,7 @@ def _exported_notes(
             except Exception:
                 return [f"{label} is not readable JSON — no cross-check performed"]
             doc = loaded if isinstance(loaded, dict) else None
-        elif suffix in (".srt", ".vtt", ".ass"):
+        elif suffix in (".srt", ".vtt", ".ass", ".ttml"):
             text = p.read_text(encoding="utf-8")
         else:
             return [f"{label} not parsed (opaque/binary payload) — "
@@ -753,6 +778,18 @@ def _exported_notes(
         return [note]
     if target == "srt_ass" and text is not None:
         cues = text.count("-->")
+        note = f"{label}: {cues} cue(s) vs timeline {len(t.captions)}"
+        if cues != len(t.captions):
+            note += " — MISMATCH: verify the export is fresh"
+        return [note]
+    if target == "ttml" and text is not None:
+        import xml.etree.ElementTree as ET  # lazy: only this branch parses XML
+
+        try:
+            cues = len(ET.fromstring(text).findall(
+                ".//{http://www.w3.org/ns/ttml}p"))
+        except ET.ParseError:
+            return [f"{label} is not readable XML — no cross-check performed"]
         note = f"{label}: {cues} cue(s) vs timeline {len(t.captions)}"
         if cues != len(t.captions):
             note += " — MISMATCH: verify the export is fresh"
