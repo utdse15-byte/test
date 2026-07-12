@@ -1268,10 +1268,9 @@ GENUINELY GREEN on windows AND macos for both `1aca907` and `bc5d97a` —
 with test_fp_plugin_api aboard — so the pure layers are demonstrably
 OS-portable, not merely unblocking; tip ci.yml on `bc5d97a` (U2+xplat)
 run 29195379665 SUCCESS; the close sha's run verified in the window
-wrap. Suite: 3653 → expected 3755 passed / 13
-skipped / 0 failed (arithmetic: exactly the 102 new red-first-governed
-tests 14+15+33+21+19; every constituent suite verified green
-individually). The definitive quiescent full run was IN FLIGHT when this
-entry was committed — the close commit confirms the concluded count and
-this line is corrected there if reality disagrees. Snapshot: 125 rows,
+wrap. Suite: 3653 → 3755 passed / 13 skipped /
+0 failed — CONFIRMED by the definitive quiescent full run (1006s,
+EXIT 0), which concluded exactly at the arithmetic expectation (the 102
+new red-first-governed tests 14+15+33+21+19); the in-flight marker the
+previous commit carried is hereby resolved, no correction needed. Snapshot: 125 rows,
 unmoved (both new CLI additions are optional flags).
