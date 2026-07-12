@@ -264,3 +264,47 @@ def test_fallback_chain_never_dead_ends():
 
     chain = R.fallback_chain(ShotSpec(id="s1"))
     assert chain and chain[-1] == "caption_card"
+
+
+def test_module_class_adapter_end_to_end(tmp_path, monkeypatch):
+    """The HAPPY path of the escape hatch, as a realistic third-party plugin:
+    a real out-of-tree module resolves via ``adapter: module:Class``, the
+    registry instantiates it as ``cls(manifest)`` — THE adapter constructor
+    convention, pinned here because registry.py calls exactly that — and a
+    declared capability slots the plugin into shots' fallback chains ahead of
+    the locals (the §8.6 promise that a filled-in manifest needs no code
+    changes anywhere else)."""
+    from manju.core.models import ShotSpec
+
+    pkg = tmp_path / "pypath"
+    pkg.mkdir()
+    (pkg / "acme_plugin_freeze.py").write_text(
+        "from manju.providers.base import Provider\n"
+        "class AcmeProvider(Provider):\n"
+        "    kind = 'cloud'\n"
+        "    def __init__(self, manifest):\n"
+        "        self.manifest = manifest\n"
+        "        self.id = manifest.id\n"
+        "    def generate(self, req):\n"
+        "        return []\n",
+        encoding="utf-8")
+    provdir = tmp_path / "providers"
+    (provdir / "acme_video").mkdir(parents=True)
+    (provdir / "acme_video" / "provider.yaml").write_text(
+        "id: acme_video\ntype: video\nadapter: acme_plugin_freeze:AcmeProvider\n"
+        "capabilities: [image_to_video]\n",
+        encoding="utf-8")
+    monkeypatch.syspath_prepend(str(pkg))
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(provdir))
+
+    provs = R.available_providers()
+    plugin = provs.get("acme_video")
+    assert plugin is not None and type(plugin).__name__ == "AcmeProvider"
+    assert plugin.id == "acme_video"
+    assert plugin.manifest.id == "acme_video"  # cls(manifest) convention
+    assert R.manifest_errors() == []
+
+    # image_to_video has no local builtin -> the plugin fills the step, and
+    # the chain still terminates network-independent.
+    chain = R.fallback_chain(ShotSpec(id="s1"))
+    assert chain[0] == "acme_video" and chain[-1] == "caption_card"
