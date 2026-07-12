@@ -64,14 +64,36 @@ NAME`` comments name both). EVERY OTHER transition kind — dip-to-black
 cut with an in-band ``* MANJU:`` note stating the loss. A wrong dissolve is
 never emitted.
 
+Audio (a DECLARED A1/A2 subset — never a silent squeeze)
+--------------------------------------------------------
+The V block is followed by a declared two-channel audio subset: the VOICE bus
+becomes A1 events (CMX channel token ``A``) and the MUSIC bus becomes A2 events
+(token ``A2``). Each placeable audio clip is one CMX cut event whose SOURCE TC
+is zero-based from ``start_offset_ms`` (the same generated-media honesty S2
+applies to video ``source_in_ms`` — it is stated as such, never dressed up as
+real tape TC) and whose RECORD TC rides the SAME timebase machinery as the
+picture (``ms_to_frames`` ROUND_HALF_UP, offset by the start frame). Source
+length reuses the record frame count. Event numbering is a SINGLE monotone
+sequence across V → A1 → A2 (blocked-by-track: audio events follow the whole V
+block, which keeps every V event byte-identical to the V-only world and needs no
+cross-track record-TC tie-break).
+
+sfx + ambient are NOT squeezed into channels — the classic CMX3600 form has no
+third/fourth stereo pair, so every sfx/ambient clip is recorded as an in-band
+``* MANJU:`` omission note naming its bus/source/window instead of a fabricated
+channel. Gain and fades are not expressible in bare CMX3600 → a per-clip note
+whenever nonzero (never silent). A looped bed (``loop=True``) or an open-ended
+clip (``duration_ms is None``) is NEVER fabricated into a single cut event — it
+gets an omission note (loop is materialized by repetition at render time; an
+open clip has no frame-exact out-point). Ducking has no CMX primitive at all and
+stays out of scope (classified by the conform audit, not per clip).
+
 Scope (loud, not silent)
 ------------------------
-V track only. Audio is honestly UNSUPPORTED: Manju's four buses
-(voice/music/sfx/ambient) cannot ride CMX's flat A-channel model faithfully, so
-this loop exports no audio and the conform report says so. Overlays/titles and
-captions are not in a cut list (SRT/TTML are the caption exits). Speed ramps,
-nested sequences and multicam are out of scope. All of this is classified per
-feature by :mod:`manju.exporters.conform` (target ``"edl"``).
+V + the declared A1/A2 audio subset above. Overlays/titles and captions are not
+in a cut list (SRT/TTML are the caption exits). Speed ramps, nested sequences
+and multicam are out of scope. All of this is classified per feature by
+:mod:`manju.exporters.conform` (target ``"edl"``).
 
 Determinism: fixed header, fixed column layout, LF endings, trailing newline,
 deterministic reels, no wall-clock — the same timeline renders byte-identical
@@ -94,9 +116,20 @@ if TYPE_CHECKING:  # avoid an import cycle at module load (srt_ass/ttml stance)
 
 __all__ = ["compile_edl", "export_edl"]
 
-# CMX reel column limit (chars). Video channel label (V-only this loop).
+# CMX reel column limit (chars). Channel-column labels (CMX3600 tokens): V is
+# the picture track; A is A1 audio, A2 is A2 audio. Manju maps the VOICE bus to
+# A1 and the MUSIC bus to A2 — a DECLARED two-channel subset (see the module
+# docstring's Audio section). sfx/ambient have no classic third/fourth pair and
+# are omitted with in-band notes rather than squeezed into a channel.
 _REEL_MAX = 8
 _CHANNEL = "V"
+_CH_A1 = "A"    # voice bus -> A1
+_CH_A2 = "A2"   # music bus -> A2
+# (bus attribute, channel token) for the buses that become audio events, in the
+# order they are emitted after the V block. sfx/ambient are NOT here.
+_AUDIO_EMIT_BUSES = (("voice", _CH_A1), ("music", _CH_A2))
+# Buses with no CMX channel in the classic form — recorded as omission notes.
+_AUDIO_OMIT_BUSES = ("sfx", "ambient")
 
 # The dissolve family that maps CLEANLY onto a CMX ``D`` event. Only the true
 # cross-dissolve; wipes/slides are ``W`` events (out of scope) and dip-to-black
@@ -182,11 +215,12 @@ def _tc(frame: int, rate: Rate, drop_frame: bool) -> str:
     return str(Timecode.from_frames(frame, rate, drop_frame))
 
 
-def _event_line(num: int, reel: str, op: str, tdur: str,
+def _event_line(num: int, reel: str, channel: str, op: str, tdur: str,
                 src_in: str, src_out: str, rec_in: str, rec_out: str) -> str:
-    """One fixed-column CMX3600 event row. ``tdur`` is the 3-digit transition
+    """One fixed-column CMX3600 event row. ``channel`` is the track-column token
+    (``V`` picture, ``A``/``A2`` audio). ``tdur`` is the 3-digit transition
     frame count for a ``D`` event, or ``""`` (blank column) for a cut."""
-    return (f"{num:03d}  {reel:<{_REEL_MAX}} {_CHANNEL:<4} {op:<4} {tdur:>3} "
+    return (f"{num:03d}  {reel:<{_REEL_MAX}} {channel:<4} {op:<4} {tdur:>3} "
             f"{src_in} {src_out} {rec_in} {rec_out}")
 
 
@@ -232,6 +266,122 @@ def _is_degraded_transition(clip: "VideoClip") -> bool:
     if t is None or t.type == "cut":
         return False  # no transition / an explicit hard cut — nothing lost
     return t.type not in _CLEAN_DISSOLVE_TYPES  # xfade_fade(>0) is the clean case
+
+
+# --------------------------------------------------------------------------- #
+# audio (declared A1/A2 subset — voice -> A, music -> A2)                       #
+# --------------------------------------------------------------------------- #
+
+
+def _assign_audio_reels(clips: "list", used: set[str]) -> dict[str, str]:
+    """Deterministic ``source path -> 8-char reel`` for audio clips, folded from
+    the source stem and disambiguated against ``used`` (the reels already handed
+    to the V events) so the reel column stays a SINGLE namespace: an audio
+    source that folds to a video reel's stem gets a numeric suffix, never a
+    silent collision. The same source always maps to the same reel."""
+    reels: dict[str, str] = {}
+    for clip in clips:
+        ident = clip.source
+        if ident in reels:
+            continue
+        base = _reel_base(Path(ident).stem)
+        reel = base
+        n = 2
+        while reel in used:
+            suffix = str(n)
+            reel = base[: max(0, _REEL_MAX - len(suffix))] + suffix
+            n += 1
+        used.add(reel)
+        reels[ident] = reel
+    return reels
+
+
+def _audio_omit_reason(clip) -> str | None:
+    """Why an audio clip cannot become an HONEST single cut event, or ``None``
+    when it can. An open-ended clip (``duration_ms is None``) has no frame-exact
+    out-point; a looped bed (``loop=True``) is materialized by repetition at
+    render time and has no single source window — emitting one event would
+    fabricate source that is not there. Both get an omission note, never an
+    event."""
+    if clip.duration_ms is None:
+        return (f"start {clip.start_ms}ms omitted - open-ended (no duration_ms); "
+                "CMX3600 needs a frame-exact out-point")
+    if clip.loop:
+        end = int(clip.start_ms) + int(clip.duration_ms)
+        return (f"[{clip.start_ms}..{end}ms) loop=True omitted - CMX3600 has no "
+                "loop primitive; the render materializes the bed by repetition "
+                "(no honest single-event source window)")
+    return None
+
+
+def _audio_loss_notes(bus: str, clip) -> list[str]:
+    """Per-clip ``* MANJU:`` notes for a PLACED audio clip whose gain/fades bare
+    CMX3600 cannot carry (a mix decision, not a cut-list primitive) — nonzero
+    only, and never silent."""
+    notes: list[str] = []
+    if clip.gain_db:
+        notes.append(
+            f"* MANJU: {bus} clip '{clip.source}' gain {clip.gain_db:+g}dB not "
+            "expressible in bare CMX3600 (a mix level, not a cut-list primitive)")
+    fi = int(clip.fade_in_ms or 0)
+    fo = int(clip.fade_out_ms or 0)
+    if fi or fo:
+        notes.append(
+            f"* MANJU: {bus} clip '{clip.source}' fades (in {fi}ms / out {fo}ms) "
+            "not expressible in bare CMX3600")
+    return notes
+
+
+def _audio_window(clip) -> str:
+    """``[start..end ms)`` for a bounded clip, ``start Nms`` for an open one."""
+    if clip.duration_ms is None:
+        return f"start {clip.start_ms}ms"
+    return f"[{clip.start_ms}..{int(clip.start_ms) + int(clip.duration_ms)}ms)"
+
+
+def _emit_audio(timeline: "Timeline", start_frame: int, rate: Rate,
+                tc, used_reels: set[str], next_num: int) -> list[str]:
+    """The declared A1/A2 audio blocks, appended AFTER the V events. voice -> A
+    (A1), music -> A2; each placeable clip is one CMX cut event whose SOURCE TC
+    is zero-based from ``start_offset_ms`` (generated-media honesty, the S2
+    video precedent) and whose RECORD TC rides the same timebase machinery as
+    the picture. Event numbers continue the single monotone V-then-A1-then-A2
+    sequence; omitted clips (loop / open-ended, and the whole sfx/ambient buses)
+    consume no number and are recorded as in-band notes."""
+    tracks = timeline.tracks
+    lines: list[str] = []
+
+    for bus, channel in _AUDIO_EMIT_BUSES:
+        clips = list(getattr(tracks, bus))
+        reels = _assign_audio_reels(clips, used_reels)
+        for clip in clips:
+            reason = _audio_omit_reason(clip)
+            if reason is not None:
+                lines.append(f"* MANJU: {bus} clip '{clip.source}' {reason}")
+                continue
+            start_ms = int(clip.start_ms)
+            dur_frames = (ms_to_frames(start_ms + int(clip.duration_ms), rate)
+                          - ms_to_frames(start_ms, rate))
+            rec_in = start_frame + ms_to_frames(start_ms, rate)
+            rec_out = rec_in + dur_frames
+            src_in = ms_to_frames(int(clip.start_offset_ms or 0), rate)
+            src_out = src_in + dur_frames
+            lines.append(_event_line(
+                next_num, reels[clip.source], channel, "C", "",
+                tc(src_in), tc(src_out), tc(rec_in), tc(rec_out)))
+            lines.append(f"* FROM CLIP NAME: {clip.source}")
+            lines.extend(_audio_loss_notes(bus, clip))
+            next_num += 1
+
+    # sfx + ambient: NOT squeezed into a channel — a note per omitted clip names
+    # its bus / source / window so nothing vanishes silently.
+    for bus in _AUDIO_OMIT_BUSES:
+        for clip in getattr(tracks, bus):
+            lines.append(
+                f"* MANJU: {bus} clip '{clip.source}' {_audio_window(clip)} "
+                "omitted - CMX3600 classic form carries A1/A2 only "
+                "(voice->A1, music->A2); sfx/ambient have no channel")
+    return lines
 
 
 def compile_edl(
@@ -281,15 +431,15 @@ def compile_edl(
             dur_frames = ms_to_frames(int(incoming.clip.transition_out.duration_ms), rate)
             a_out = tc(incoming.src_out)
             b_recin = tc(p.rec_in)
-            out.append(_event_line(num, incoming.reel, "C", "",
+            out.append(_event_line(num, incoming.reel, _CHANNEL, "C", "",
                                    a_out, a_out, b_recin, b_recin))
-            out.append(_event_line(num, p.reel, "D", f"{dur_frames:03d}",
+            out.append(_event_line(num, p.reel, _CHANNEL, "D", f"{dur_frames:03d}",
                                    tc(p.src_in), tc(p.src_out),
                                    b_recin, tc(p.rec_out)))
             out.append(f"* FROM CLIP NAME: {incoming.clip.take}")
             out.append(f"* TO CLIP NAME: {p.clip.take}")
         else:
-            out.append(_event_line(num, p.reel, "C", "",
+            out.append(_event_line(num, p.reel, _CHANNEL, "C", "",
                                    tc(p.src_in), tc(p.src_out),
                                    tc(p.rec_in), tc(p.rec_out)))
             out.append(f"* FROM CLIP NAME: {p.clip.take}")
@@ -302,6 +452,13 @@ def compile_edl(
                 f"* MANJU: transition '{t.type}' ({t.duration_ms}ms) at "
                 f"{p.clip.shot} approximated as hard cut (no clean CMX3600 "
                 "dissolve mapping)")
+
+    # The declared A1/A2 audio subset, appended AFTER the V block (blocked-by-
+    # track, single monotone numbering continuing from the last V event). Audio
+    # events only appear when a bus is populated, so a V-only timeline renders
+    # byte-identically to the S2 world.
+    out.extend(_emit_audio(timeline, start_frame, rate, tc,
+                           set(reels.values()), len(placed) + 1))
 
     return "\n".join(out) + "\n"
 
