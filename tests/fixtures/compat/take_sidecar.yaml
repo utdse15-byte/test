@@ -1,0 +1,7 @@
+# Old-shape take sidecar (F0 §4.5), copied to media/gen/S001/take_01.yaml in the
+# test project. A manual import from before spec_version/spec_snapshot existed:
+# both are ABSENT, so the take reads back as v1 forever (models.TakeSidecar §4.3
+# conservatism) — the authentic old shape. Loads via core.container.Project.takes.
+provider: manual
+spec_hash: manual
+created_at: "2026-01-01T00:00:00+00:00"

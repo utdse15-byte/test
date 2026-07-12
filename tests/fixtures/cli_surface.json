@@ -1,0 +1,588 @@
+{
+  "align": {
+    "exists": true,
+    "params": []
+  },
+  "analyze": {
+    "exists": true,
+    "params": [
+      "media"
+    ]
+  },
+  "appearances": {
+    "exists": true,
+    "params": []
+  },
+  "assets show": {
+    "exists": true,
+    "params": [
+      "asset_id"
+    ]
+  },
+  "auto": {
+    "exists": true,
+    "params": [
+      "prompt_text"
+    ]
+  },
+  "board keyframes": {
+    "exists": true,
+    "params": [
+      "shot"
+    ]
+  },
+  "board scene": {
+    "exists": true,
+    "params": [
+      "scene"
+    ]
+  },
+  "bridge adopt": {
+    "exists": true,
+    "params": [
+      "lineage_file",
+      "review_file"
+    ]
+  },
+  "bridge plan": {
+    "exists": true,
+    "params": [
+      "duration_ms",
+      "next_frame",
+      "prev"
+    ]
+  },
+  "bridge run": {
+    "exists": true,
+    "params": [
+      "plan_file",
+      "provider",
+      "shot"
+    ]
+  },
+  "build": {
+    "exists": true,
+    "params": []
+  },
+  "check": {
+    "exists": true,
+    "params": []
+  },
+  "compare": {
+    "exists": true,
+    "params": []
+  },
+  "create": {
+    "exists": true,
+    "params": []
+  },
+  "director confirm": {
+    "exists": true,
+    "params": [
+      "proposal_id"
+    ]
+  },
+  "director list": {
+    "exists": true,
+    "params": []
+  },
+  "director propose": {
+    "exists": true,
+    "params": []
+  },
+  "director reject": {
+    "exists": true,
+    "params": [
+      "proposal_id"
+    ]
+  },
+  "director run": {
+    "exists": true,
+    "params": [
+      "proposal_id"
+    ]
+  },
+  "director show": {
+    "exists": true,
+    "params": [
+      "proposal_id"
+    ]
+  },
+  "director suggest": {
+    "exists": true,
+    "params": []
+  },
+  "doctor": {
+    "exists": true,
+    "params": []
+  },
+  "evaluate": {
+    "exists": true,
+    "params": []
+  },
+  "events": {
+    "exists": true,
+    "params": []
+  },
+  "explain": {
+    "exists": true,
+    "params": []
+  },
+  "export": {
+    "exists": true,
+    "params": []
+  },
+  "exports": {
+    "exists": true,
+    "params": []
+  },
+  "failures": {
+    "exists": true,
+    "params": []
+  },
+  "frames": {
+    "exists": true,
+    "params": [
+      "source"
+    ]
+  },
+  "gc": {
+    "exists": true,
+    "params": []
+  },
+  "gui": {
+    "exists": true,
+    "params": []
+  },
+  "history": {
+    "exists": true,
+    "params": []
+  },
+  "impact": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "import": {
+    "exists": true,
+    "params": [
+      "files"
+    ]
+  },
+  "ingest": {
+    "exists": true,
+    "params": [
+      "paths"
+    ]
+  },
+  "ingest-batches": {
+    "exists": true,
+    "params": []
+  },
+  "ingest-confirm": {
+    "exists": true,
+    "params": [
+      "batch"
+    ]
+  },
+  "ingest-discard": {
+    "exists": true,
+    "params": [
+      "batch"
+    ]
+  },
+  "ingest-flag": {
+    "exists": true,
+    "params": [
+      "batch"
+    ]
+  },
+  "ingest-review": {
+    "exists": true,
+    "params": [
+      "batch"
+    ]
+  },
+  "lib add": {
+    "exists": true,
+    "params": [
+      "files"
+    ]
+  },
+  "lib list": {
+    "exists": true,
+    "params": []
+  },
+  "lib rm": {
+    "exists": true,
+    "params": [
+      "hash8"
+    ]
+  },
+  "lib show": {
+    "exists": true,
+    "params": [
+      "hash8"
+    ]
+  },
+  "lib use": {
+    "exists": true,
+    "params": [
+      "hash8"
+    ]
+  },
+  "locale": {
+    "exists": true,
+    "params": [
+      "action"
+    ]
+  },
+  "lock": {
+    "exists": true,
+    "params": [
+      "field",
+      "shot_id"
+    ]
+  },
+  "masters": {
+    "exists": true,
+    "params": []
+  },
+  "mentions": {
+    "exists": true,
+    "params": []
+  },
+  "new": {
+    "exists": true,
+    "params": [
+      "name"
+    ]
+  },
+  "openclap export": {
+    "exists": true,
+    "params": []
+  },
+  "openclap import-plan": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
+  "openclap inspect": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
+  "pack": {
+    "exists": true,
+    "params": []
+  },
+  "package": {
+    "exists": true,
+    "params": []
+  },
+  "presets": {
+    "exists": true,
+    "params": []
+  },
+  "prompt": {
+    "exists": true,
+    "params": []
+  },
+  "propose": {
+    "exists": true,
+    "params": [
+      "title"
+    ]
+  },
+  "providers add": {
+    "exists": true,
+    "params": [
+      "provider_id",
+      "type_"
+    ]
+  },
+  "providers catalog": {
+    "exists": true,
+    "params": []
+  },
+  "providers check": {
+    "exists": true,
+    "params": [
+      "provider_id"
+    ]
+  },
+  "providers disable": {
+    "exists": true,
+    "params": [
+      "provider_id"
+    ]
+  },
+  "providers enable": {
+    "exists": true,
+    "params": [
+      "provider_id"
+    ]
+  },
+  "providers list": {
+    "exists": true,
+    "params": []
+  },
+  "providers qualification": {
+    "exists": true,
+    "params": []
+  },
+  "providers qualify": {
+    "exists": true,
+    "params": [
+      "capability",
+      "provider_id"
+    ]
+  },
+  "providers show": {
+    "exists": true,
+    "params": [
+      "provider_id"
+    ]
+  },
+  "pull-sheet": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
+  "qc brief": {
+    "exists": true,
+    "params": []
+  },
+  "qc coverage": {
+    "exists": true,
+    "params": []
+  },
+  "qc verdict": {
+    "exists": true,
+    "params": [
+      "from_file"
+    ]
+  },
+  "rebuild-index": {
+    "exists": true,
+    "params": []
+  },
+  "redo": {
+    "exists": true,
+    "params": []
+  },
+  "reframe": {
+    "exists": true,
+    "params": [
+      "report",
+      "source",
+      "target"
+    ]
+  },
+  "refs assign": {
+    "exists": true,
+    "params": [
+      "relpath"
+    ]
+  },
+  "refs shot": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "repair": {
+    "exists": true,
+    "params": []
+  },
+  "rollback": {
+    "exists": true,
+    "params": [
+      "target",
+      "what"
+    ]
+  },
+  "rough-cut": {
+    "exists": true,
+    "params": [
+      "align"
+    ]
+  },
+  "roundtrip": {
+    "exists": true,
+    "params": [
+      "edited"
+    ]
+  },
+  "route explain": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "route list": {
+    "exists": true,
+    "params": []
+  },
+  "routing explain": {
+    "exists": true,
+    "params": []
+  },
+  "schema": {
+    "exists": true,
+    "params": []
+  },
+  "segments": {
+    "exists": true,
+    "params": [
+      "report"
+    ]
+  },
+  "select": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "series characters": {
+    "exists": true,
+    "params": []
+  },
+  "series continuity": {
+    "exists": true,
+    "params": []
+  },
+  "series episodes": {
+    "exists": true,
+    "params": []
+  },
+  "series new": {
+    "exists": true,
+    "params": [
+      "path"
+    ]
+  },
+  "series new-episode": {
+    "exists": true,
+    "params": [
+      "eid"
+    ]
+  },
+  "series outline": {
+    "exists": true,
+    "params": [
+      "package"
+    ]
+  },
+  "series split-script": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
+  "series status": {
+    "exists": true,
+    "params": []
+  },
+  "series sync-bible": {
+    "exists": true,
+    "params": []
+  },
+  "serve-mcp": {
+    "exists": true,
+    "params": []
+  },
+  "shot-package": {
+    "exists": true,
+    "params": [
+      "file"
+    ]
+  },
+  "skills show": {
+    "exists": true,
+    "params": [
+      "skill_id"
+    ]
+  },
+  "snapshot": {
+    "exists": true,
+    "params": []
+  },
+  "spend": {
+    "exists": true,
+    "params": []
+  },
+  "status": {
+    "exists": true,
+    "params": []
+  },
+  "tasks abandon": {
+    "exists": true,
+    "params": [
+      "reason",
+      "submission_id"
+    ]
+  },
+  "tasks attach-remote-job": {
+    "exists": true,
+    "params": [
+      "remote_job_id",
+      "submission_id"
+    ]
+  },
+  "tasks cancel": {
+    "exists": true,
+    "params": [
+      "job_id"
+    ]
+  },
+  "tasks manifest": {
+    "exists": true,
+    "params": [
+      "run_id"
+    ]
+  },
+  "tasks retry": {
+    "exists": true,
+    "params": [
+      "run_id"
+    ]
+  },
+  "tool": {
+    "exists": true,
+    "params": [
+      "op"
+    ]
+  },
+  "transcribe": {
+    "exists": true,
+    "params": [
+      "media"
+    ]
+  },
+  "unlock": {
+    "exists": true,
+    "params": [
+      "field",
+      "shot_id"
+    ]
+  },
+  "unpack": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
+  "voice": {
+    "exists": true,
+    "params": []
+  },
+  "watch": {
+    "exists": true,
+    "params": []
+  }
+}

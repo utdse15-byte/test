@@ -1,0 +1,540 @@
+# CONTRACTS.yaml — Manju public contract registry (F0 Contract Governance)
+#
+# Roadmap §4.1/§4.2/§4.7. This file is the SINGLE declared registry of every
+# public contract Manju ships. It is DECLARED + TEST-ENFORCED governance, never
+# an execution input: no build/qc/provider code reads it (see
+# src/manju/core/contracts.py — a pure loader consumed only by tests).
+#
+# Consistency is pinned by tests/test_fp_contracts.py:
+#   (a) every `manju.*/vN` literal in src/manju/** is registered here;
+#   (b) every registered schema id still appears in src (no ghost rows);
+#   (c) statuses are one of the four levels; stable schemas declare read_older;
+#   (d) the §4.7 ownership map below is complete for every listed concept.
+#
+# Status levels (§4.2):
+#   stable        additive-only; a breaking change requires a new major.
+#   experimental  no long-term compatibility promise.
+#   internal      no third-party dependence; may change without a major.
+#   deprecated    superseded but still readable.
+#
+# read_older / write_older (§4.4): read_older = current code loads an older
+# major of this contract; write_older = current code can emit an older major
+# (downgrade). Downgrade is never assumed — write_older is false everywhere
+# today (no schema emits a prior major).
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# schemas — every `manju.*/vN` id emitted by src/manju. latest_version is the
+# integer major in the id. owner is the module that DEFINES the schema constant.
+# ---------------------------------------------------------------------------
+schemas:
+
+  # -- agent / MCP surface -------------------------------------------------
+  - id: manju.agent-surface/v1
+    kind: schema
+    owner: manju.mcp.policy
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Machine-readable MCP tool manifest + digest returned by the agent_surface
+      tool. The wire contract for the whole MCP tool surface (document row
+      mcp-tool-surface).
+  - id: manju.agent-tool-policy/v1
+    kind: schema
+    owner: manju.mcp.policy
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Per-tool ToolPolicy declaration carried by every MCP tool.
+
+  # -- media technical evidence -------------------------------------------
+  - id: manju.alignment-evidence/v1
+    kind: schema
+    owner: manju.media.timing
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: VO→caption alignment evidence (<take>.timing.json). Regenerable.
+  - id: manju.audio-masters/v1
+    kind: schema
+    owner: manju.media.masters
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Real audio masters (raw stems / raw-stem sum / M&E bus-exclusion) with
+      measured loudness + true peak, filling delivery-manifest roles.
+  - id: manju.media-analysis/v1
+    kind: schema
+    owner: manju.media.analysis
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Hash-bound deterministic media analysis (shots/segments facts).
+  - id: manju.qc.frame_plan/v1
+    kind: schema
+    owner: manju.media.frames
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic frame-extraction plan for QC briefs / cover picking.
+
+  # -- QC / assurance ------------------------------------------------------
+  - id: manju.qc.verdict/v2
+    kind: schema
+    owner: manju.qc.agent_review
+    status: stable
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: >-
+      Bound-acceptance agent verdict (reports/qc_agent.jsonl). v1 = the legacy
+      schema-less record, still read as history. An unknown future major
+      (e.g. /v99) is refused at intake, never silently accepted.
+  - id: manju.qc.packet/v2
+    kind: schema
+    owner: manju.qc.agent_review
+    status: stable
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: Content-addressed QC packet (reports/qc_packets/<id>.json).
+  - id: manju.qc.assurance/v1
+    kind: schema
+    owner: manju.qc.assurance
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Derived per-shot assurance (PASS/FAIL/UNKNOWN as a pure function of
+      observation vs expectation). Consumed but not owned by build.bridge.
+  - id: manju.qc.expectations/v1
+    kind: schema
+    owner: manju.qc.expectations
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic QC expectations derived from shot intent.
+  - id: manju.qc.colorstats/v1
+    kind: schema
+    owner: manju.qc.colorstats
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic per-frame colour statistics.
+  - id: manju.qc.colorstats.preview/v1
+    kind: schema
+    owner: manju.qc.colorstats
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: >-
+      Preview colour-stats projection — experimental (ruling): no long-term
+      compatibility promise.
+  - id: manju.qc.colorstats.compare/v1
+    kind: schema
+    owner: manju.qc.colorstats
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: >-
+      Colour-stats comparison projection — experimental (ruling): no long-term
+      compatibility promise.
+  - id: manju.qc.drift/v1
+    kind: schema
+    owner: manju.qc.production
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Preview→final drift report.
+  - id: manju.qc.repair_routes/v1
+    kind: schema
+    owner: manju.qc.production
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic repair-route proposal (never auto-applied).
+  - id: manju.qc.reviewer_agreement/v1
+    kind: schema
+    owner: manju.qc.production
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Reviewer agreement/disagreement projection.
+  - id: manju.preview-ladder/v1
+    kind: schema
+    owner: manju.qc.production
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Preview spend ladder with keyframe gates.
+
+  # -- providers -----------------------------------------------------------
+  - id: manju.provider-capability-projection/v1
+    kind: schema
+    owner: manju.providers.catalog
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Shared capability projection (`manju providers catalog`): capabilities,
+      limits, refs, cost, profile digests. Deterministic, secret-free.
+  - id: manju.provider-qualification/v1
+    kind: schema
+    owner: manju.providers.qualification
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Provider qualification ladder evidence.
+  - id: manju.canary-fixture/v1
+    kind: schema
+    owner: manju.providers.qualification
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Cost-bounded canary fixture descriptor for qualification.
+  - id: manju.provider-submission-event/v1
+    kind: schema
+    owner: manju.providers.submission
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Append-only paid-submission evidence event.
+  - id: manju.submission-identity/v1
+    kind: schema
+    owner: manju.providers.submission
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Stable identity of a paid submission (dedup / recovery).
+  - id: manju.request-compatibility/v1
+    kind: schema
+    owner: manju.providers.preflight
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Spend-free preflight request-compatibility projection.
+
+  # -- build / run evidence ------------------------------------------------
+  - id: manju.stage-attempt-evidence/v1
+    kind: schema
+    owner: manju.build.attempts
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Append-only per-stage attempt evidence (the run ledger's truth).
+  - id: manju.run-lifecycle/v1
+    kind: schema
+    owner: manju.build.attempts
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Run lifecycle (start/interrupt/resume/finish) evidence.
+  - id: manju.run-manifest/v1
+    kind: schema
+    owner: manju.build.attempts
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Derived RunManifest projected from stage-attempt events
+      (reports/runs/<id>/run.json). Deletable, never a resume/cache input.
+  - id: manju.graph-diagnostics/v1
+    kind: schema
+    owner: manju.build.graphdiag
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Read-only dependency-graph diagnostics (never a scheduling source).
+  - id: manju.delivery-manifest/v1
+    kind: schema
+    owner: manju.build.delivery
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Derived delivery manifest (reports/delivery/*.delivery-manifest.json).
+      Pure derivation — deletable, never a build input (a materialized manifest
+      is provably inert; reading it back as input was removed as a violation).
+  - id: manju.shot-draft-package/v1
+    kind: schema
+    owner: manju.build.shotpackage
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      External ShotDraftPackage import contract. Emitted by build.pullsheet,
+      imported by build.shotpackage (zero-write inspect by default).
+  - id: manju.shot-import-plan/v1
+    kind: schema
+    owner: manju.build.shotpackage
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Staged shot-import plan (writes nothing until --apply).
+  - id: manju.pull-sheet/v1
+    kind: schema
+    owner: manju.build.pullsheet
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Pull-sheet export contract.
+  - id: manju.pull-sheet-import-plan/v1
+    kind: schema
+    owner: manju.build.pullsheet
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Staged pull-sheet import plan.
+  - id: manju.episode-outline-package/v1
+    kind: schema
+    owner: manju.build.seriespack
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Episode-outline package (series).
+  - id: manju.episode-outline-inspect/v1
+    kind: schema
+    owner: manju.build.seriespack
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Zero-write episode-outline inspect plan.
+  - id: manju.identity-ref-pack/v1
+    kind: schema
+    owner: manju.build.seriespack
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Cross-episode identity reference pack.
+  - id: manju.template-pack/v1
+    kind: schema
+    owner: manju.build.seriespack
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Voice-rights-gated template pack (series).
+  - id: manju.template-import/v1
+    kind: schema
+    owner: manju.build.seriespack
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Staged template-pack import plan.
+
+  # -- series / world state ------------------------------------------------
+  - id: manju.continuity-packet/v1
+    kind: schema
+    owner: manju.core.series_state
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Cross-shot continuity packet (series world state).
+  - id: manju.season-health/v1
+    kind: schema
+    owner: manju.core.series_state
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Derived season-health projection.
+
+  # -- exporters -----------------------------------------------------------
+  - id: manju.openclap-import-plan/v1
+    kind: schema
+    owner: manju.exporters.openclap.import_plan
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Staged OpenClap (.clap) import plan — writes nothing, downloads nothing,
+      never auto-selects takes.
+
+# ---------------------------------------------------------------------------
+# documents — public contracts that are NOT `manju.*/vN` schema ids: hand-edited
+# truth files, evidence envelopes, and machine surfaces. Excluded from the
+# ghost-row / literal checks (their ids are intentionally not schema ids).
+# ---------------------------------------------------------------------------
+documents:
+  - id: project.yaml
+    kind: document
+    owner: manju.core.models:ProjectConfig
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The project root config (name/width/height/fps/mode/budget…). Loaded by
+      core.container.Project.load_config. fps is int TODAY (see
+      planned_migrations: the int→rational edit_rate major is declared only).
+  - id: bible
+    kind: document
+    owner: manju.core.container:Project
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Character/scene/prop/style/voice identity (bible/*.yaml), loaded by
+      Project.load_bible. The authoritative owner of character identity (§4.7).
+  - id: shot.yaml
+    kind: document
+    owner: manju.core.models:ShotSpec
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      One shot per file (shots/<id>.yaml). Authoritative owner of shot intent
+      AND selected take (§4.7). Loaded by core.container.Project.load_shot.
+  - id: timeline.json
+    kind: document
+    owner: manju.core.models:Timeline
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Compiled + hand-editable timeline (timeline/timeline.json). Loaded by
+      core.container.Project.load_timeline.
+  - id: take-sidecar
+    kind: document
+    owner: manju.core.models:TakeSidecar
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Per-take lineage sidecar (media/gen/<shot>/take_*.yaml): provider,
+      spec_hash, spec_snapshot, virtual-trim window. Loaded by
+      core.container.Project.takes.
+  - id: events-envelope
+    kind: document
+    owner: manju.core.events:append_event
+    status: internal
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The events.jsonl collaboration-log envelope {ts, actor, action, detail}.
+      One row for the ENVELOPE — the `action` strings are values, not schemas.
+      Internal: append-only, old lines always readable.
+  - id: reports-dir
+    kind: document
+    owner: manju.core.container:Project
+    status: internal
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The reports/ tree (runs/, delivery/, qc_*, frames/…) under
+      Project.reports_dir. Derived + deletable projections; never a
+      build/resume/cache input. Internal.
+  - id: cli-json-surface
+    kind: document
+    owner: manju.cli
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The public `--json` output surface across the CLI. Command names + required
+      params are frozen by tests/fixtures/cli_surface.json (test_fp_cli_snapshot).
+  - id: mcp-tool-surface
+    kind: document
+    owner: manju.mcp
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      The MCP tool surface (tool names + input/output). Wire schema is
+      manju.agent-surface/v1 + manju.agent-tool-policy/v1.
+  - id: provider-manifest
+    kind: document
+    owner: manju.providers.manifest
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Provider manifest (provider.yaml): capabilities/limits/refs/cost/auth.
+      Additive `capabilities: list[str]`; old manifests load byte-identically.
+
+# ---------------------------------------------------------------------------
+# ownership — §4.7 object ownership map. One authoritative owner per concept;
+# a concept is never authoritative in two editable objects at once. The
+# consistency test asserts this map covers every listed concept.
+# ---------------------------------------------------------------------------
+ownership:
+  shot_intent: Shot YAML (shots/<id>.yaml)
+  character_identity: Bible (bible/*.yaml)
+  selected_take: Shot YAML (status.selected)
+  provider_request: GenerationRequest (providers)
+  quality_evidence: QC evidence (reports/qc_agent.jsonl + qc/assurance)
+  release_approval: verification event (append-only evidence)
+  delivery_list: DeliveryManifest (manju.delivery-manifest/v1)
+  runtime_state: append-only evidence + SQLite projection (.manju/)
+
+# ---------------------------------------------------------------------------
+# planned_migrations — declared future contract moves. RECORDED here, NOT
+# implemented this loop (roadmap §16 #20: build for a real benefit, not because
+# "another project has it"). No `manju migrate` machinery ships yet — there is
+# no real pending migration to run (every schema is v1/v2 with no prior-major
+# data in the wild).
+# ---------------------------------------------------------------------------
+planned_migrations:
+  - id: project.fps-int-to-rational-edit-rate
+    status: declared
+    implemented: false
+    affects: project.yaml
+    from: >-
+      project.yaml `fps: int` (core.models.ProjectConfig.fps is pinned to int
+      today — see src/manju/core/models.py).
+    to: >-
+      A rational edit_rate {num, den} carried on the future
+      manju.media-technical-profile/v1 (roadmap §5.1 / §13). 24000/1001-class
+      rates cannot be expressed as an int.
+    reason: >-
+      Rational frame rate is the first declared future MAJOR. Declared now so
+      the compatibility boundary is on record; the migration itself is deferred
+      until the media-technical-profile schema lands (F1).

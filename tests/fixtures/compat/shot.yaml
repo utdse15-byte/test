@@ -1,0 +1,10 @@
+# Old-shape Shot YAML (F0 §4.5). No `id` field — load_shot defaults it from the
+# filename, exactly as an early hand-authored shot relied on. Loads via
+# core.container.Project.load_shot -> ShotSpec.model_validate.
+scene: convenience_store
+characters:
+  - linxia
+dialogue:
+  speaker: linxia
+  text: 这不可能。
+duration: auto

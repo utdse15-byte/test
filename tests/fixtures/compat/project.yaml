@@ -1,0 +1,9 @@
+# Old-shape project.yaml (F0 §4.5 compat corpus). Intentionally minimal and
+# pre-migration: fps is an INT (24) — the exact shape the declared
+# project.fps int->rational edit_rate major will one day migrate. Must still
+# load byte-for-byte via core.container.Project.load_config today.
+name: 旧项目雨夜
+width: 1080
+height: 1920
+fps: 24
+mode: copilot

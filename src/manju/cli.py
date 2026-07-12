@@ -3656,6 +3656,15 @@ def _sanitize_archive_stem(stem: str) -> str:
     return stem
 
 
+# FP security loop (roadmap §8.9): unpack decompression preflight. A project
+# restore is legitimately huge (media), so absolute size caps would false-refuse
+# real projects and compression-ratio heuristics false-positive on digital-
+# silence WAVs (~1000:1 legally) — the honest guards are a member-count sanity
+# cap and DECLARED-total-vs-free-disk (the actual harm is fill-the-disk DoS).
+UNPACK_MAX_MEMBERS = 100_000
+UNPACK_FREE_DISK_MARGIN_BYTES = 64 * 1024 * 1024
+
+
 @app.command()
 def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         None, "--dest", help="override the restored directory (default: from the archive filename)"),
@@ -3707,6 +3716,24 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
             if mode and _stat.S_ISLNK(mode):
                 _fail(f"拒绝解包:压缩包含符号链接成员 → {nm!r}"
                       "(symlink 可越出解包目录,正常 .manjupkg 不含符号链接)")
+        # FP security loop: decompression preflight BEFORE extractall — a zip
+        # bomb must refuse structurally, not fill the disk. Declared sizes are
+        # summed (a lie-small header still cannot exceed what zipfile inflates
+        # per its declared size on extract) and compared against the ACTUAL
+        # free space at the destination's filesystem, with a safety margin.
+        infos = zf.infolist()
+        if len(infos) > UNPACK_MAX_MEMBERS:
+            _fail(f"拒绝解包:成员数 {len(infos)} 超出上限 {UNPACK_MAX_MEMBERS}"
+                  "(zip bomb 防护)")
+        declared_total = sum(i.file_size for i in infos)
+        probe_dir = dest.parent
+        while not probe_dir.exists() and probe_dir != probe_dir.parent:
+            probe_dir = probe_dir.parent
+        free = shutil.disk_usage(probe_dir).free
+        if declared_total + UNPACK_FREE_DISK_MARGIN_BYTES > free:
+            _fail(f"拒绝解包:压缩包声明解压总量 {declared_total} 字节,目标磁盘可用 "
+                  f"{free} 字节(含 {UNPACK_FREE_DISK_MARGIN_BYTES} 安全余量)— "
+                  "空间不足或为 zip bomb,先释放磁盘空间或检查压缩包")
         names = zf.namelist()
         zf.extractall(dest)
     (dest / ".manju").mkdir(exist_ok=True)

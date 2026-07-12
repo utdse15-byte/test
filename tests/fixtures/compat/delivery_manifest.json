@@ -1,0 +1,11 @@
+{
+  "schema": "manju.delivery-manifest/v1",
+  "profile_id": "master",
+  "project_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+  "variant": {
+    "kind": "master",
+    "source_timeline_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "artifacts": [],
+  "diagnostics": []
+}

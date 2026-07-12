@@ -55,6 +55,59 @@ TEMPLATE_SCHEMA = "manju.template-pack/v1"
 
 _ZIP_UNSAFE = re.compile(r"^([A-Za-z]:|/|\\)|\.\.")
 
+# --- untrusted-archive decompression limits (FP security loop, roadmap §8.9).
+# A template pack is SMALL BY CONTRACT (bible entries + a handful of ref media),
+# so hard absolute caps are honest here — and the read-only inspect path is the
+# first thing a user runs on an UNTRUSTED pack, so it must never inflate a zip
+# bomb into memory. Names are already guarded by _ZIP_UNSAFE; these guard SIZE.
+MAX_PACK_MEMBERS = 256
+MAX_PACK_MEMBER_BYTES = 64 * 1024 * 1024
+MAX_PACK_TOTAL_BYTES = 256 * 1024 * 1024
+
+
+def _check_pack_limits(zf: "zipfile.ZipFile") -> None:
+    """Refuse a pack whose DECLARED shape exceeds the caps — before any member
+    is inflated. Declared sizes can lie, so every actual read still goes
+    through :func:`_read_member_capped` (stream-capped, header-blind)."""
+    infos = zf.infolist()
+    if len(infos) > MAX_PACK_MEMBERS:
+        raise SeriesPackError(
+            f"pack 成员数 {len(infos)} 超出上限 {MAX_PACK_MEMBERS}"
+            "(zip bomb 防护:template pack 按契约应当很小)")
+    total = 0
+    for info in infos:
+        if info.file_size > MAX_PACK_MEMBER_BYTES:
+            raise SeriesPackError(
+                f"pack 成员 {info.filename!r} 声明解压大小 {info.file_size} 字节,"
+                f"超出单成员解压上限 {MAX_PACK_MEMBER_BYTES}(zip bomb 防护)")
+        total += info.file_size
+    if total > MAX_PACK_TOTAL_BYTES:
+        raise SeriesPackError(
+            f"pack 声明解压总量 {total} 字节超出总量解压上限 "
+            f"{MAX_PACK_TOTAL_BYTES}(zip bomb 防护)")
+
+
+def _read_member_capped(zf: "zipfile.ZipFile", name: str) -> bytes:
+    """Read ONE member with a hard stream cap — never trusting the declared
+    ``file_size`` (a forged central directory can under-declare). Reads at most
+    ``MAX_PACK_MEMBER_BYTES`` + 1 bytes; exceeding the cap refuses
+    structurally instead of exhausting memory."""
+    cap = MAX_PACK_MEMBER_BYTES
+    chunks: list[bytes] = []
+    read_total = 0
+    with zf.open(name) as fh:
+        while True:
+            chunk = fh.read(min(1024 * 1024, cap + 1 - read_total))
+            if not chunk:
+                break
+            read_total += len(chunk)
+            if read_total > cap:
+                raise SeriesPackError(
+                    f"pack 成员 {name!r} 实际解压超出单成员解压上限 {cap}"
+                    "(zip bomb 防护:声明大小不可信,按流截断)")
+            chunks.append(chunk)
+    return b"".join(chunks)
+
 
 class SeriesPackError(RuntimeError):
     """A pack could not be built/validated/imported. Message carries no secret."""
@@ -545,23 +598,25 @@ def inspect_template_pack(zip_path: Path | str) -> dict[str, Any]:
         for n in names:
             if _ZIP_UNSAFE.search(n):
                 raise SeriesPackError(f"pack 含不安全成员名: {n!r}")
+        _check_pack_limits(zf)
         if "manifest.yaml" not in names or "SHA256SUMS" not in names:
             raise SeriesPackError("不是 template pack(缺 manifest.yaml/SHA256SUMS)")
         import yaml as _yaml
 
-        manifest = _yaml.safe_load(zf.read("manifest.yaml").decode("utf-8")) or {}
+        manifest = _yaml.safe_load(
+            _read_member_capped(zf, "manifest.yaml").decode("utf-8")) or {}
         if manifest.get("schema") != TEMPLATE_SCHEMA:
             raise SeriesPackError(f"未知 template schema: {manifest.get('schema')!r}")
         mismatches: list[str] = []
         recorded: dict[str, str] = {}
-        for line in zf.read("SHA256SUMS").decode("utf-8").splitlines():
+        for line in _read_member_capped(zf, "SHA256SUMS").decode("utf-8").splitlines():
             if "  " in line:
                 digest, name = line.split("  ", 1)
                 recorded[name] = digest
         for name in names:
             if name == "SHA256SUMS":
                 continue
-            actual = hashlib.sha256(zf.read(name)).hexdigest()
+            actual = hashlib.sha256(_read_member_capped(zf, name)).hexdigest()
             if recorded.get(name) != actual:
                 mismatches.append(name)
     return {"manifest": manifest, "members": sorted(names),
@@ -603,7 +658,8 @@ def import_template_pack(project: Project, zip_path: Path | str, *,
         # ---- bible subset with explicit conflict policy (dry-run first) ----
         incoming: dict[str, Any] = {}
         if "bible/entries.yaml" in names:
-            incoming = _yaml.safe_load(zf.read("bible/entries.yaml").decode("utf-8")) or {}
+            incoming = _yaml.safe_load(
+                _read_member_capped(zf, "bible/entries.yaml").decode("utf-8")) or {}
         local_bible = project.load_bible()
         plan: list[tuple[str, str, Any]] = []  # (final_id, action, entry)
         for aid, entry in incoming.items():
@@ -640,7 +696,7 @@ def import_template_pack(project: Project, zip_path: Path | str, *,
             arc = str(m.get("file") or "")
             if arc not in names:
                 continue
-            data = zf.read(arc)
+            data = _read_member_capped(zf, arc)
             sha = "sha256:" + hashlib.sha256(data).hexdigest()
             dest_media.mkdir(parents=True, exist_ok=True)
             dest = dest_media / (sha[len(HASH_PREFIX):][:16] + Path(arc).suffix)
@@ -652,7 +708,8 @@ def import_template_pack(project: Project, zip_path: Path | str, *,
         # mutation beyond the entries above; the profiles file is evidence) ----
         voice_payload = None
         if "voice/profiles.yaml" in names:
-            voice_payload = _yaml.safe_load(zf.read("voice/profiles.yaml").decode("utf-8"))
+            voice_payload = _yaml.safe_load(
+                _read_member_capped(zf, "voice/profiles.yaml").decode("utf-8"))
             imported["voice_profiles"] = sorted(voice_payload or {})
 
     record = {
