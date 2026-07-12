@@ -197,11 +197,22 @@ class _Placed:
 
     def __init__(self, clip: "VideoClip", reel: str, start_frame: int, rate: Rate):
         start_ms = int(clip.start_ms)
-        # Duration from the RECORD side (absolute positions) → continuity is
-        # exact when clips abut, and the SAME frame count is reused on the
-        # source side so source length == record length.
-        dur_frames = (ms_to_frames(start_ms + int(clip.duration_ms), rate)
-                      - ms_to_frames(start_ms, rate))
+        # R4 (S2 left duration_frames unconsumed): a rational (R2-compiled) clip
+        # carries the EXACT whole-frame length as ``duration_frames`` — consume it
+        # so the record/source spans are frame-exact instead of the ms→frame
+        # telescoping difference (which the ms grid cannot hold precisely for the
+        # 1001 family). When it is absent (every int project — the field is None),
+        # fall back to the ms difference: BYTE-IDENTICAL to S2's golden pins. The
+        # record IN still telescopes via ``ms_to_frames(start_ms)``, which for an
+        # R2-compiled timeline recovers the exact cumulative frame (start_ms is
+        # ``frames_to_ms(cum)`` and ms_to_frames∘frames_to_ms is the identity),
+        # so continuity (event N out == event N+1 in) stays exact on both paths.
+        df = getattr(clip, "duration_frames", None)
+        if df is not None:
+            dur_frames = int(df)
+        else:
+            dur_frames = (ms_to_frames(start_ms + int(clip.duration_ms), rate)
+                          - ms_to_frames(start_ms, rate))
         self.clip = clip
         self.reel = reel
         self.rec_in = start_frame + ms_to_frames(start_ms, rate)

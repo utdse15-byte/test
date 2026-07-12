@@ -13,10 +13,28 @@ Structure produced (§3, exports/otio):
         children[0]     : Track.1 kind="Video"  -> Clip.1 per video shot
         children[1]     : Track.1 kind="Audio"  -> Clip.1 per voice/music/sfx/ambient clip
 
-Every RationalTime is expressed in frames at the timeline fps; millisecond
-values are converted with ``value = ms * fps / 1000``. TimeRange/RationalTime
-objects are kept internally self-consistent (available_range covers the used
-source_range) even though the lite export does not probe real media.
+Two representation paths, dispatched by the R2 rational echo on the timeline:
+
+* **Int timelines** (every project today) — a RationalTime is expressed in
+  frames at the integer timeline fps; millisecond values are converted with
+  ``value = ms * fps / 1000`` at a ``float`` rate. This path is BYTE-IDENTICAL to
+  every export written before the rational migration (an int timeline carries no
+  echo, so :func:`_edit_rate_of` returns ``None`` and the code below takes the
+  exact float formula it always has).
+* **Rational timelines** (R2-compiled 1001-family projects, e.g. 24000/1001) —
+  the ``rate`` is OTIO's own convention of a ``float64`` fps (``24000/1001`` →
+  ``23.976023976023978``, the exact IEEE-754 double), but every ``value`` is an
+  EXACT WHOLE-FRAME INTEGER: a video clip's duration comes straight from the
+  compiler's ``VideoClip.duration_frames`` truth, and starts telescope by walking
+  those frame counts — there is NO ``ms × fps`` float arithmetic and NO fractional
+  frame value anywhere on this path (the millisecond grid cannot hold a 1001-family
+  boundary exactly; the frame count can). Audio clips carry no ``duration_frames``,
+  so their windows use :func:`~manju.core.timebase.ms_to_frames` (exact Fraction
+  rounding to the nearest whole frame — still integer, still no float).
+
+TimeRange/RationalTime objects are kept internally self-consistent
+(available_range covers the used source_range) even though the lite export does
+not probe real media.
 """
 
 from __future__ import annotations
@@ -26,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.container import ProjectError
 from ..core.models import AudioClip, Timeline, VideoClip
+from ..core.timebase import Rate, Rounding, ms_to_frames
 from ..core.yamlio import write_json
 
 if TYPE_CHECKING:
@@ -36,21 +55,71 @@ __all__ = ["export_otio"]
 OTIO_TARGET_VERSION = "0.15"  # JSON conventions we target
 
 
-def _rational_time(ms: int | float | None, fps: float) -> dict[str, Any]:
-    ms = ms or 0
-    return {
-        "OTIO_SCHEMA": "RationalTime.1",
-        "rate": float(fps),
-        "value": round(float(ms) * float(fps) / 1000.0, 6),
-    }
+def _edit_rate_of(timeline: "Timeline") -> Rate | None:
+    """The timeline's exact rational edit rate IFF it carries R2's rational echo,
+    else ``None`` (the int path). Read defensively via ``getattr`` so a
+    duck-typed/legacy timeline without the echo attribute stays on the
+    byte-identical int path; a whole-number echo (``exact_int is not None``) also
+    returns ``None`` — only a genuine 1001-family rate takes the frame path."""
+    echo = getattr(timeline, "rate_echo", None)
+    if echo is None:
+        return None
+    rate = getattr(echo, "rate", None)
+    return rate if isinstance(rate, Rate) and rate.exact_int is None else None
 
 
-def _time_range(start_ms: int | float, duration_ms: int | float | None,
-                fps: float) -> dict[str, Any]:
+class _Times:
+    """Builds OTIO RationalTime/TimeRange dicts on the int path (today's float
+    ``ms×fps/1000`` bytes, EXACTLY) or the rational path (exact integer frames).
+
+    ``rate is None`` ⇒ int path; a :class:`~manju.core.timebase.Rate` ⇒ rational.
+    The dict key order (``OTIO_SCHEMA``, ``rate``, ``value``) is identical on both
+    paths so the int output is byte-for-byte what it always was."""
+
+    __slots__ = ("fps", "rate")
+
+    def __init__(self, fps: float, rate: Rate | None) -> None:
+        self.fps = fps
+        self.rate = rate
+
+    def frames_of_ms(self, ms: int | float | None) -> int:
+        """The exact nearest whole frame for ``ms`` on the rational grid
+        (``ms_to_frames`` — exact Fraction rounding, never float ms×fps)."""
+        return ms_to_frames(int(ms or 0), self.rate, Rounding.ROUND_HALF_UP)
+
+    def from_ms(self, ms: int | float | None) -> dict[str, Any]:
+        """RationalTime for a millisecond value. Int path: today's float frames
+        at a float rate (byte-identical). Rational path: the exact nearest whole
+        frame at the float64 rational rate."""
+        ms = ms or 0
+        if self.rate is None:
+            return {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": float(self.fps),
+                "value": round(float(ms) * float(self.fps) / 1000.0, 6),
+            }
+        return {
+            "OTIO_SCHEMA": "RationalTime.1",
+            "rate": self.rate.fps_float,  # e.g. 24000/1001 -> 23.976023976023978
+            "value": self.frames_of_ms(ms),
+        }
+
+    def from_frames(self, frames: int) -> dict[str, Any]:
+        """RationalTime for an EXACT whole-frame count (rational path only) — the
+        ``VideoClip.duration_frames`` truth and telescoped starts land here."""
+        return {
+            "OTIO_SCHEMA": "RationalTime.1",
+            "rate": self.rate.fps_float,
+            "value": int(frames),
+        }
+
+
+def _time_range(times: "_Times", start_ms: int | float,
+                duration_ms: int | float | None) -> dict[str, Any]:
     return {
         "OTIO_SCHEMA": "TimeRange.1",
-        "start_time": _rational_time(start_ms, fps),
-        "duration": _rational_time(duration_ms, fps),
+        "start_time": times.from_ms(start_ms),
+        "duration": times.from_ms(duration_ms),
     }
 
 
@@ -73,19 +142,19 @@ def _require_contained_source(project: "Project", source: str, *, label: str) ->
         ) from exc
 
 
-def _external_reference(target_url: str, duration_ms: int | float | None,
-                        fps: float) -> dict[str, Any]:
+def _external_reference(times: "_Times", target_url: str,
+                        duration_ms: int | float | None) -> dict[str, Any]:
     return {
         "OTIO_SCHEMA": "ExternalReference.1",
         "target_url": target_url,
         # The lite export treats the whole clip length as the media's available
         # range (media is not probed); this stays self-consistent with source_range.
-        "available_range": _time_range(0, duration_ms, fps),
+        "available_range": _time_range(times, 0, duration_ms),
         "metadata": {},
     }
 
 
-def _video_clip(project: "Project", clip: VideoClip, fps: float) -> dict[str, Any]:
+def _video_clip(project: "Project", clip: VideoClip, times: "_Times") -> dict[str, Any]:
     _require_contained_source(project, clip.source, label=f"{clip.shot}/{clip.take}")
     # Round-T: the footage's own-audio level/mute travels in metadata, added ONLY
     # when non-default so an untouched clip exports byte-identically to before.
@@ -104,18 +173,44 @@ def _video_clip(project: "Project", clip: VideoClip, fps: float) -> dict[str, An
     # in-point + the window (still just 0..duration_ms when in_ms is 0), so the
     # two ranges stay internally self-consistent per the module's own contract.
     in_ms = clip.source_in_ms or 0
+    if times.rate is not None:
+        # R4 rational truth: the clip duration is the compiler's EXACT whole-frame
+        # count (duration_frames), never ms→frame float math; the source in-point
+        # is the nearest whole frame (0 when untrimmed); available_range widens to
+        # in-point + window, all integers — starts telescope by walking these
+        # frame counts, the same way the compiler's cumulative boundary does.
+        in_frames = times.frames_of_ms(in_ms)
+        dur_frames = clip.duration_frames
+        if dur_frames is None:  # hand-assembled rational clip w/o the stamp
+            dur_frames = times.frames_of_ms(clip.duration_ms)
+        source_range = {
+            "OTIO_SCHEMA": "TimeRange.1",
+            "start_time": times.from_frames(in_frames),
+            "duration": times.from_frames(dur_frames),
+        }
+        media_reference = {
+            "OTIO_SCHEMA": "ExternalReference.1",
+            "target_url": clip.source,
+            "available_range": {
+                "OTIO_SCHEMA": "TimeRange.1",
+                "start_time": times.from_frames(0),
+                "duration": times.from_frames(in_frames + dur_frames),
+            },
+            "metadata": {},
+        }
+    else:
+        source_range = _time_range(times, in_ms, clip.duration_ms)
+        media_reference = _external_reference(times, clip.source, in_ms + clip.duration_ms)
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": clip.shot,
-        "source_range": _time_range(in_ms, clip.duration_ms, fps),
-        "media_reference": _external_reference(
-            clip.source, in_ms + clip.duration_ms, fps
-        ),
+        "source_range": source_range,
+        "media_reference": media_reference,
         "metadata": {"manju": meta},
     }
 
 
-def _audio_clip(project: "Project", clip: AudioClip, fps: float, kind: str) -> dict[str, Any]:
+def _audio_clip(project: "Project", clip: AudioClip, times: "_Times", kind: str) -> dict[str, Any]:
     name = Path(clip.source).stem or kind
     _require_contained_source(project, clip.source, label=f"{kind}:{name}")
     # OTIO has no loop semantics: an ambient bed is represented at its timeline
@@ -130,12 +225,16 @@ def _audio_clip(project: "Project", clip: AudioClip, fps: float, kind: str) -> d
         meta["start_offset_ms"] = clip.start_offset_ms
     if clip.fade_in_ms:
         meta["fade_in_ms"] = clip.fade_in_ms
+    # Audio carries no duration_frames truth; on the rational path its window is
+    # the exact nearest whole frame (ms_to_frames — integer, not float ms×fps),
+    # and on the int path it is today's float ms×fps/1000 (byte-identical). Both
+    # go through ``times`` so the two paths share one code path here.
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": name,
         # The in-point becomes the source_range start (0 by default -> byte-stable).
-        "source_range": _time_range(clip.start_offset_ms, clip.duration_ms, fps),
-        "media_reference": _external_reference(clip.source, clip.duration_ms, fps),
+        "source_range": _time_range(times, clip.start_offset_ms, clip.duration_ms),
+        "media_reference": _external_reference(times, clip.source, clip.duration_ms),
         "metadata": {"manju": meta},
     }
 
@@ -154,12 +253,17 @@ def export_otio(project: "Project", timeline: Timeline) -> Path:
     """Write ``exports/otio/<project name>.otio`` (OTIO 0.15-flavoured JSON)."""
     config = project.load_config()
     fps = float(timeline.fps or config.fps or 24)
+    # R4: an R2-compiled 1001-family timeline carries a rational echo — take the
+    # exact-integer-frame path. Every int project (no echo) keeps the byte-
+    # identical float ms×fps/1000 path.
+    rate = _edit_rate_of(timeline)
+    times = _Times(fps, rate)
 
-    video_children = [_video_clip(project, c, fps) for c in timeline.tracks.video]
-    audio_children = [_audio_clip(project, c, fps, "voice") for c in timeline.tracks.voice]
-    audio_children += [_audio_clip(project, c, fps, "music") for c in timeline.tracks.music]
-    audio_children += [_audio_clip(project, c, fps, "sfx") for c in timeline.tracks.sfx]
-    audio_children += [_audio_clip(project, c, fps, "ambient") for c in timeline.tracks.ambient]
+    video_children = [_video_clip(project, c, times) for c in timeline.tracks.video]
+    audio_children = [_audio_clip(project, c, times, "voice") for c in timeline.tracks.voice]
+    audio_children += [_audio_clip(project, c, times, "music") for c in timeline.tracks.music]
+    audio_children += [_audio_clip(project, c, times, "sfx") for c in timeline.tracks.sfx]
+    audio_children += [_audio_clip(project, c, times, "ambient") for c in timeline.tracks.ambient]
 
     stack = {
         "OTIO_SCHEMA": "Stack.1",
@@ -171,21 +275,25 @@ def export_otio(project: "Project", timeline: Timeline) -> Path:
         "metadata": {},
     }
 
+    manju_meta: dict[str, Any] = {
+        "otio_target_version": OTIO_TARGET_VERSION,
+        "fps": timeline.fps,
+        "width": timeline.width,
+        "height": timeline.height,
+        "duration_ms": timeline.duration_ms,
+        "compiled_from": timeline.meta.compiled_from,
+    }
+    if rate is not None:
+        # Surface the exact rational truth for a rational project (additive,
+        # rational-only — an int project's metadata is untouched/byte-identical).
+        manju_meta["edit_rate"] = {"num": rate.numerator, "den": rate.denominator}
+
     doc: dict[str, Any] = {
         "OTIO_SCHEMA": "Timeline.1",
         "name": config.name,
-        "global_start_time": _rational_time(0, fps),
+        "global_start_time": times.from_ms(0),
         "tracks": stack,
-        "metadata": {
-            "manju": {
-                "otio_target_version": OTIO_TARGET_VERSION,
-                "fps": timeline.fps,
-                "width": timeline.width,
-                "height": timeline.height,
-                "duration_ms": timeline.duration_ms,
-                "compiled_from": timeline.meta.compiled_from,
-            }
-        },
+        "metadata": {"manju": manju_meta},
     }
 
     out = project.exports_dir / "otio" / f"{config.name}.otio"

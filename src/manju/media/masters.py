@@ -60,6 +60,7 @@ from typing import Any
 
 from ..core.container import Project
 from ..core.hashing import hash_file, hash_value
+from ..core.timebase import Rate, Rounding, frames_to_ms, frames_to_samples, ms_to_frames
 from .ffmpeg import FFMPEG, MediaError, atomic_output
 
 # Delivery-grade PCM: 48 kHz stereo, the broadcast/NLE interchange default.
@@ -369,6 +370,56 @@ def _timeline_digest(timeline: Any) -> str | None:
     return timeline_semantic_digest(timeline)
 
 
+def _rational_rate(timeline: Any) -> Rate | None:
+    """The timeline's exact rational edit rate IFF it carries R2's rational echo,
+    else ``None``. Defensive ``getattr`` so a duck-typed/legacy timeline without
+    the echo simply yields no sample facts (int byte-identity); a whole-number
+    echo also yields ``None`` (only a genuine 1001-family rate qualifies)."""
+    echo = getattr(timeline, "rate_echo", None)
+    if echo is None:
+        return None
+    rate = getattr(echo, "rate", None)
+    return rate if isinstance(rate, Rate) and rate.exact_int is None else None
+
+
+def _sample_facts(timeline: Any, duration_ms: int, sample_rate: int) -> dict[str, Any]:
+    """Additive per-artifact audio sample facts — EMITTED ONLY for a rational-echo
+    (R2 1001-family) project.
+
+    RULING (FP_R4_ADDENDUM §3): ``masters.json``'s ``index_digest`` covers the
+    artifact rows, so adding row keys shifts it for EVERY project. That is NOT
+    acceptable for int byte-identity — an int project's masters.json (bytes and
+    digest) MUST stay pinned. Therefore an int/whole-number timeline gets ``{}``
+    (no new keys, byte-identical), and only a rational project's rows gain:
+
+    * ``duration_samples`` — EXACT via :func:`~manju.core.timebase.frames_to_samples`
+      when the render length maps to a WHOLE frame count at the edit rate
+      (``sample_basis="frames"``: e.g. 48 frames @ 24000/1001 & 48 kHz = 96096
+      samples, 2002/frame exactly); ELSE ``round(ms × sr / 1000)``
+      (``sample_basis="ms"``) — honest provenance, the two bases are never mixed
+      silently.
+
+    Facts only: this changes nothing about what is rendered (the WAV bytes and the
+    index-level ``sample_rate`` are untouched)."""
+    rate = _rational_rate(timeline)
+    if rate is None:
+        return {}
+    dur = int(duration_ms)
+    frames = ms_to_frames(dur, rate, Rounding.ROUND_HALF_UP)
+    if frames_to_ms(frames, rate, Rounding.ROUND_HALF_UP) == dur:
+        # the render length lands exactly on a whole frame → exact sample count
+        return {
+            "duration_samples": frames_to_samples(frames, rate, sample_rate,
+                                                  Rounding.ROUND_HALF_UP),
+            "sample_basis": "frames",
+        }
+    # off a whole frame (e.g. a hand-built rational timeline) → honest ms basis
+    return {
+        "duration_samples": round(dur * sample_rate / 1000),
+        "sample_basis": "ms",
+    }
+
+
 def render_masters(project: Project, timeline: Any, *,
                    loudness_target_lufs: float | None = None,
                    true_peak_target_dbtp: float | None = None) -> dict[str, Any]:
@@ -451,6 +502,11 @@ def render_masters(project: Project, timeline: Any, *,
             art["content_verified"] = False
         if level_safety is not None:
             art["level_safety"] = level_safety
+        # R4 (folded R3 remnant): additive audio sample facts — {} for int
+        # projects (masters.json + index_digest byte-identical), duration_samples/
+        # sample_basis for a rational-echo project. Merged LAST so an int row is
+        # untouched and a rational row carries the facts as its trailing keys.
+        art.update(_sample_facts(timeline, duration_ms, SAMPLE_RATE))
         artifacts.append(art)
 
     # 2) raw stems are single buses (ambient is its own stem, symmetric with the

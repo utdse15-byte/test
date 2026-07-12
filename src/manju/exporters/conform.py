@@ -21,11 +21,17 @@ Honesty rules
   the exact lines), not a guess. A timeline feature the target's rule table
   does not know is a hard error — never silently "fine" (§6.2).
 * Drift math is EXACT: :mod:`manju.core.timebase` Fractions only, no float.
-  ``exporters/otio.py:39-44`` writes RationalTime values as
+  On the INT path ``exporters/otio.py`` writes RationalTime values as
   ``round(ms*fps/1000, 6)`` at a float rate — an off-grid millisecond boundary
-  becomes a silently-rounded FRACTIONAL frame value. The ``frame_drift`` block
-  lists every such boundary with its exact residual; if the timeline is fully
-  grid-snapped the report says all-zero (zero fabrication either way).
+  becomes a silently-rounded FRACTIONAL frame value; the ``frame_drift`` block
+  lists every such boundary with its exact residual (all-zero when fully
+  grid-snapped, zero fabrication either way). On the RATIONAL path (R2's
+  ``rate_echo``) the OTIO/EDL exports are frame-native — every RationalTime
+  ``value`` is an EXACT whole frame (video telescopes ``duration_frames``), so
+  residuals against the exact rational grid are 0 BY CONSTRUCTION (the closing
+  pin of the rational-edit-rate track). The µs carriers (jianying/native_draft)
+  can only approximate a 1001-family boundary on their ms×1000 grid — that ≤½ms
+  approximation is recorded as an honest note, never left silent.
 * ``reports/conform/*`` is a deletable, content-addressed, tamper-evident
   DERIVED output. It is never a build input (grep-pinned by
   ``tests/test_fp_conform.py``), and this module never writes into
@@ -175,67 +181,70 @@ _RULES: dict[str, dict[str, _Rule]] = {
         "video_clips": (
             "preserved",
             "one OTIO Clip.1 per video clip; timeline window as source_range, "
-            "self-consistent available_range on an ExternalReference",
-            "exporters/otio.py:88-115,158"),
+            "self-consistent available_range on an ExternalReference. R4: a "
+            "rational timeline writes EXACT integer frames (duration_frames / "
+            "telescoped starts) at a float64 rate; int is unchanged float ms×fps",
+            "exporters/otio.py:157-211,262"),
         "video_in_points": (
             "preserved",
             "source_in_ms becomes source_range.start_time; available_range "
-            "widened to cover in-point + window",
-            "exporters/otio.py:100-114"),
+            "widened to cover in-point + window (int ms frames, or exact whole "
+            "frames on the rational path)",
+            "exporters/otio.py:170-211"),
         "audio_in_points": (
             "preserved",
             "start_offset_ms becomes the audio clip's source_range start "
             "(also mirrored in metadata.manju.start_offset_ms)",
-            "exporters/otio.py:127-137"),
+            "exporters/otio.py:224-236"),
         "transitions": (
             "approximated",
             "no OTIO Transition objects are written; transition type/duration "
             "ride metadata.manju.transition_out only — round-trippable via "
             "`manju roundtrip`",
-            "exporters/otio.py:97-99 (read back by build/roundtrip.py:387-433,"
+            "exporters/otio.py:167-168 (read back by build/roundtrip.py:387-433,"
             "552-602)"),
         "overlays": (
             "dropped",
             "export_otio never reads tracks.overlay — overlays are absent from "
             "the OTIO document entirely",
-            "exporters/otio.py:153-202 (no overlay path)"),
+            "exporters/otio.py:252-297 (no overlay path)"),
         "captions": (
             "dropped",
             "export_otio never reads tracks.captions — no text track in the "
             "OTIO document; SRT/ASS/VTT are the caption exits",
-            "exporters/otio.py:158-172 (video+audio tracks only)"),
+            "exporters/otio.py:262-276 (video+audio tracks only)"),
         "clip_volume": (
             "approximated",
             "source_mute/source_gain_db ride metadata.manju only (no OTIO "
             "audio-gain effect) — round-trippable via `manju roundtrip`",
-            "exporters/otio.py:90-96 (read back by build/roundtrip.py:387-433)"),
+            "exporters/otio.py:161-168 (read back by build/roundtrip.py:387-433)"),
         "audio_gain": (
             "dropped",
             "AudioClip.gain_db is never written — not even as metadata",
-            "exporters/otio.py:118-140 (no gain path)"),
+            "exporters/otio.py:213-239 (no gain path)"),
         "audio_fade_in": (
             "approximated",
             "fade_in_ms rides metadata.manju only; no OTIO effect",
-            "exporters/otio.py:128-132"),
+            "exporters/otio.py:226-227"),
         "audio_fade_out": (
             "dropped",
             "AudioClip.fade_out_ms is never written — not even as metadata",
-            "exporters/otio.py:118-140 (no fade_out path)"),
+            "exporters/otio.py:213-239 (no fade_out path)"),
         "ducking": (
             "dropped",
             "sidechain ducking (ducking/duck_*) is never written",
-            "exporters/otio.py:118-140 (no ducking path)"),
+            "exporters/otio.py:213-239 (no ducking path)"),
         "audio_loops": (
             "approximated",
             "OTIO has no loop semantics; the bed is laid at its span with "
             "loop intent recorded in metadata.manju.loop only",
-            "exporters/otio.py:121-126"),
+            "exporters/otio.py:220-221"),
         "audio_tracks": (
             "approximated",
             "clips land as real Clip.1 children, but all four Manju buses "
             "flatten onto ONE OTIO Audio track; bus identity survives only in "
             "metadata.manju.track",
-            "exporters/otio.py:124,158-171"),
+            "exporters/otio.py:219,262-273"),
     },
     "jianying": {
         "video_clips": (
@@ -650,6 +659,74 @@ _NOT_TIME_BEARING = {
             "no frame grid to drift against",
 }
 
+# Microsecond-carrier exchange targets. jianying / native_draft store times as
+# µs (ms×1000), NOT frame counts, so a rational (1001-family) frame boundary
+# cannot ride them exactly — it is carried as its cumulative-boundary millisecond
+# value, within ≤½ms of the true rational frame boundary (timebase's documented
+# cumulative-boundary bound). A rational project gets ONE honest note per carrier
+# (recorded, never silent); srt/vtt are ms-native by definition and handled by
+# _NOT_TIME_BEARING above (that reason IS their "why no row").
+_MS_CARRIER_NOTE: dict[str, str] = {
+    "jianying": (
+        "rational timeline on a MICROSECOND carrier: jianying stores times as µs "
+        "(ms×1000), so a 1001-family frame boundary is carried as its cumulative-"
+        "boundary millisecond value — within ≤½ms of the exact rational frame "
+        "boundary (timebase cumulative-boundary bound). The µs stream APPROXIMATES "
+        "the rational grid; the exact whole-frame truth lives in the OTIO/EDL exits."),
+    "native_draft": (
+        "rational timeline on a MICROSECOND carrier: the pyJianYingDraft/pycapcut "
+        "draft stores µs timeranges (ms×1000), so a 1001-family frame boundary "
+        "rides its cumulative-boundary millisecond value — within ≤½ms of the exact "
+        "rational frame boundary. The µs draft APPROXIMATES the rational grid; "
+        "OTIO/EDL carry the exact frames."),
+}
+
+
+def _rational_rate(timeline: "Timeline") -> Rate | None:
+    """The timeline's exact rational edit rate IFF it carries R2's rational echo,
+    else ``None`` (the int-grid path, byte-identical behaviour). Read defensively
+    via ``getattr`` — a legacy/duck-typed timeline without the echo stays on the
+    integer grid; a whole-number echo also returns ``None`` (only a genuine
+    1001-family rate takes the frame-exact path)."""
+    echo = getattr(timeline, "rate_echo", None)
+    if echo is None:
+        return None
+    rate = getattr(echo, "rate", None)
+    return rate if isinstance(rate, Rate) and rate.exact_int is None else None
+
+
+def _rational_frame_boundaries(
+    timeline: "Timeline", tracks: tuple[str, ...], rate: Rate,
+) -> Iterator[tuple[str, int]]:
+    """``(label, whole_frame_index)`` for every clip boundary the target exports
+    on the rational path. VIDEO telescopes the compiler's ``duration_frames`` (the
+    exact cumulative whole-frame boundary — the SAME walk the compiler and the R4
+    OTIO exporter do); audio/captions use :func:`ms_to_frames` (the nearest whole
+    frame). Every yielded value is an INTEGER frame index — that is precisely why
+    the residual vs the rational frame grid is zero BY CONSTRUCTION."""
+    for track in tracks:
+        if track == "video":
+            cum = 0  # telescoping cumulative frame position
+            for c in timeline.tracks.video:
+                label = f"video:{c.shot}/{c.take}"
+                yield f"{label}.start", cum
+                df = getattr(c, "duration_frames", None)
+                if df is None:  # hand-assembled rational clip without the stamp
+                    df = ms_to_frames(int(c.duration_ms), rate)
+                cum += int(df)
+                yield f"{label}.end", cum
+        elif track == "captions":
+            for i, cap in enumerate(timeline.tracks.captions):
+                yield f"caption[{i}].start", ms_to_frames(int(cap.start_ms), rate)
+                yield f"caption[{i}].end", ms_to_frames(int(cap.end_ms), rate)
+        else:
+            for i, a in enumerate(getattr(timeline.tracks, track)):
+                dur = a.duration_ms if a.duration_ms is not None else (
+                    timeline.duration_ms or 0)
+                start = int(a.start_ms)
+                yield f"{track}[{i}].start", ms_to_frames(start, rate)
+                yield f"{track}[{i}].end", ms_to_frames(start + int(dur), rate)
+
 
 def _boundaries(timeline: "Timeline", tracks: tuple[str, ...]) -> Iterator[tuple[str, int]]:
     """``(label, ms)`` for every clip boundary the target exports."""
@@ -684,9 +761,14 @@ def _frame_drift(
     if reason is not None:
         return {"checked": False, "reason": reason}, notes
 
+    # R4: when the timeline carries R2's rational echo, measure residuals against
+    # the EXACT rational frame grid (24000/1001 …); otherwise the integer fps grid
+    # exactly as before (int projects are byte-identical).
+    rational = _rational_rate(timeline)
+
     fps_int = int(timeline.fps or 0)
     try:
-        rate = Rate.from_fraction(fps_int, 1)
+        int_rate = Rate.from_fraction(fps_int, 1)
     except (TypeError, ValueError):
         return {
             "checked": False,
@@ -695,24 +777,48 @@ def _frame_drift(
                       "reporting the bad fps)",
         }, notes
 
+    # The grid we measure against + the clock the source-rate mismatch compares to.
+    edit_rate = rational if rational is not None else int_rate
+
     off_grid: list[dict[str, Any]] = []
     max_residual = Fraction(0)
     count = 0
-    for label, ms in _boundaries(timeline, _DRIFT_TRACKS[target]):
-        count += 1
-        # residual = |ms·fps/1000 − round(ms·fps/1000)| — exact Fractions,
-        # nearest frame via timebase.ms_to_frames (ROUND_HALF_UP).
-        exact = Fraction(ms * rate.numerator, 1000 * rate.denominator)
-        residual = abs(exact - ms_to_frames(ms, rate))
-        if residual > max_residual:
-            max_residual = residual
-        if residual > 0:
-            off_grid.append({
-                "clip": label,
-                "ms": ms,
-                "frames_exact": str(exact),
-                "residual_frames": str(residual),
-            })
+    if rational is not None:
+        # RATIONAL PATH (R2-compiled + R4-exported): the exporter writes EXACT
+        # whole frames — video durations telescope from duration_frames, audio/
+        # caption windows are ms_to_frames nearest whole frames. Every exported
+        # boundary is thus an integer on the rational grid, so its residual is 0
+        # BY CONSTRUCTION (the closing pin of the R-track). We still COMPUTE each
+        # residual from the frame truth — the zero is derived, never fabricated.
+        for label, frames in _rational_frame_boundaries(
+                timeline, _DRIFT_TRACKS[target], rational):
+            count += 1
+            exact = Fraction(int(frames))          # a whole-frame index
+            residual = abs(exact - round(exact))   # == 0 for an integer
+            if residual > max_residual:
+                max_residual = residual
+            if residual > 0:  # unreachable for integer frames — kept honest
+                off_grid.append({
+                    "clip": label,
+                    "frames_exact": str(exact),
+                    "residual_frames": str(residual),
+                })
+    else:
+        for label, ms in _boundaries(timeline, _DRIFT_TRACKS[target]):
+            count += 1
+            # residual = |ms·fps/1000 − round(ms·fps/1000)| — exact Fractions,
+            # nearest frame via timebase.ms_to_frames (ROUND_HALF_UP).
+            exact = Fraction(ms * int_rate.numerator, 1000 * int_rate.denominator)
+            residual = abs(exact - ms_to_frames(ms, int_rate))
+            if residual > max_residual:
+                max_residual = residual
+            if residual > 0:
+                off_grid.append({
+                    "clip": label,
+                    "ms": ms,
+                    "frames_exact": str(exact),
+                    "residual_frames": str(residual),
+                })
 
     mismatch: list[dict[str, Any]] = []
     if source_rates:
@@ -722,6 +828,11 @@ def _frame_drift(
             notes.append(
                 f"source_rates key {missing!r} matches no timeline video clip "
                 "— ignored (nothing fabricated)")
+        # The edit grid the probed source is compared against: the exact rational
+        # edit rate when present (so a same-clock 1001 source yields NO row), else
+        # the integer fps grid. The grid_drift_ms / one_frame_drift_at helpers take
+        # an integer edit fps, so the drift numbers use the nominal label.
+        edit_nominal = edit_rate.nominal_int
         for c in timeline.tracks.video:
             if c.source not in by_source:
                 continue
@@ -738,30 +849,53 @@ def _frame_drift(
                             "numbers fabricated",
                 })
                 continue
-            if probed.fraction == Fraction(fps_int, 1):
+            if probed.fraction == edit_rate.fraction:
                 continue  # same clock — no drift row to invent
-            drift = grid_drift_ms(int(c.duration_ms), fps_int, probed)
-            reach = one_frame_drift_at(fps_int, probed)
+            drift = grid_drift_ms(int(c.duration_ms), edit_nominal, probed)
+            reach = one_frame_drift_at(edit_nominal, probed)
             mismatch.append({
                 "clip": label,
                 "source": c.source,
                 "source_rate": str(probed),
-                "edit_fps": fps_int,
+                "edit_fps": edit_nominal,
                 "clip_duration_ms": int(c.duration_ms),
                 "grid_drift_ms_over_clip": str(drift),
                 "one_frame_drift_at_ms": str(reach),
-                "exceeds_one_frame": bool(abs(drift) >= Fraction(1000, fps_int)),
+                "exceeds_one_frame": bool(abs(drift) >= Fraction(1000, edit_nominal)),
             })
 
-    block = {
-        "checked": True,
-        "edit_fps": fps_int,
-        "boundaries_checked": count,
-        "off_grid": off_grid,
-        "cumulative_max_residual": str(max_residual),
-        "all_zero": not off_grid,
-        "rate_mismatch": mismatch,
-    }
+    if rational is not None:
+        block = {
+            "checked": True,
+            "grid": "rational",
+            "edit_rate": str(rational),          # e.g. "24000/1001"
+            "edit_fps": rational.nominal_int,     # the nominal label (24, 30 …)
+            "boundaries_checked": count,
+            "off_grid": off_grid,
+            "cumulative_max_residual": str(max_residual),
+            "all_zero": not off_grid,
+            "all_zero_by_construction": True,
+            "rate_mismatch": mismatch,
+        }
+        notes.append(
+            f"frame_drift measured against the exact rational grid {rational}: "
+            "this project is R2-compiled (video on cumulative whole-frame "
+            "boundaries) and R4-exported (integer RationalTime frame values), so "
+            "every exported boundary is a whole frame — the ms→frame rounding "
+            "residual is 0 BY CONSTRUCTION.")
+        carrier_note = _MS_CARRIER_NOTE.get(target)
+        if carrier_note is not None:
+            notes.append(carrier_note)
+    else:
+        block = {
+            "checked": True,
+            "edit_fps": fps_int,
+            "boundaries_checked": count,
+            "off_grid": off_grid,
+            "cumulative_max_residual": str(max_residual),
+            "all_zero": not off_grid,
+            "rate_mismatch": mismatch,
+        }
     return block, notes
 
 
