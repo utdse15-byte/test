@@ -3776,6 +3776,143 @@ PACK_CACHE = ("renders/segments/", "renders/proxy/")
 FIXITY_MANIFEST_NAME = "MANJU_FIXITY.json"
 FIXITY_FORMAT = "manju-fixity.1"
 
+# ------------------------------------------------- archive self-description
+# FP Loop S3 (roadmap §7.8 extensions): `pack` also writes THREE synthesized
+# self-description members, all BEFORE MANJU_FIXITY.json so each is
+# FIXITY-COVERED (recorded in the manifest ⇒ tampering one fails verification
+# exactly like a payload member):
+#   MANJU_RESTORE.txt    — honest restore instructions (`manju-restore.1`):
+#                          the exact unpack/fixity commands, what the fixity
+#                          manifest guarantees and what it does NOT (no
+#                          signature), pointers to the two snapshots, and the
+#                          packing manju version.
+#   MANJU_CONTRACTS.yaml — the ENGINE's contract registry AT PACK TIME, byte
+#                          copy of core.contracts.REGISTRY_PATH. An installed
+#                          engine without the file ⇒ member OMITTED and the
+#                          restore note says so — never a fabricated snapshot.
+#   MANJU_TOOLCHAIN.json — the core.toolchain.toolchain_manifest() document
+#                          (reused collectors — no parallel fact gathering).
+# Like the fixity manifest they are TRANSPORT metadata, not project content:
+# a passing verify on unpack DROPS all of them so the restored tree equals the
+# original project. Deterministic content (no timestamps, nothing --out-
+# dependent) + fixed 1980 stamps. Old packs without them: zero behavior change.
+RESTORE_NOTE_NAME = "MANJU_RESTORE.txt"
+RESTORE_NOTE_FORMAT = "manju-restore.1"
+CONTRACTS_SNAPSHOT_NAME = "MANJU_CONTRACTS.yaml"
+TOOLCHAIN_SNAPSHOT_NAME = "MANJU_TOOLCHAIN.json"
+# every member `pack` synthesizes (and a verified unpack drops); also the
+# reserved names a stray on-disk payload file may never shadow.
+PACK_TRANSPORT_MEMBERS = (
+    CONTRACTS_SNAPSHOT_NAME,
+    RESTORE_NOTE_NAME,
+    TOOLCHAIN_SNAPSHOT_NAME,
+    FIXITY_MANIFEST_NAME,
+)
+
+
+def _toolchain_snapshot_bytes() -> bytes:
+    """``MANJU_TOOLCHAIN.json`` content: the ``manju.toolchain-manifest/v1``
+    document from :func:`manju.core.toolchain.toolchain_manifest` — REUSED, not
+    re-collected — serialized exactly like ``write_toolchain_manifest`` stores
+    it (sorted keys, indent 2, trailing newline). Deterministic on an unchanged
+    machine (the document keeps ``volatile`` empty by design)."""
+    from .core.toolchain import toolchain_manifest
+
+    return (
+        json.dumps(toolchain_manifest(), ensure_ascii=False, indent=2,
+                   sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
+def _contracts_snapshot_bytes() -> Optional[bytes]:
+    """``MANJU_CONTRACTS.yaml`` content: the engine's contract registry at pack
+    time, byte-for-byte from ``core.contracts.REGISTRY_PATH`` (the pack is a
+    PROJECT archive — the relevant snapshot is the ENGINE registry that governed
+    it, not anything in the project tree). ``None`` when the installed engine
+    ships no registry file (e.g. a wheel without data files) or it is unreadable
+    — the member is then omitted and the restore note says so honestly."""
+    from .core.contracts import REGISTRY_PATH
+
+    path = Path(REGISTRY_PATH)
+    try:
+        if not path.is_file():
+            return None
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _restore_note_bytes(canonical_name: str, *, contracts_included: bool) -> bytes:
+    """``MANJU_RESTORE.txt`` content — honest, deterministic restore notes.
+
+    ``canonical_name`` is the pack's CANONICAL filename derived from the project
+    directory (never ``--out``): the archive is rename-safe (FIX-E), so the note
+    names the canonical spelling and tells the reader to substitute the actual
+    filename — and two packs of the same tree stay byte-identical regardless of
+    where they were written. No timestamps; the version comes from the same
+    source the toolchain manifest uses."""
+    from .core.toolchain import _manju_version
+
+    contracts_line = (
+        f"  {CONTRACTS_SNAPSHOT_NAME} — byte copy of the packing engine's\n"
+        "    contract registry (CONTRACTS.yaml) at pack time."
+        if contracts_included else
+        f"  {CONTRACTS_SNAPSHOT_NAME} — NOT INCLUDED: the packing engine\n"
+        "    shipped no CONTRACTS.yaml registry file (e.g. an installed wheel\n"
+        "    without it); no snapshot was fabricated in its place."
+    )
+    text = f"""MANJU RESTORE NOTES ({RESTORE_NOTE_FORMAT})
+============================================
+
+This archive is a manju project pack (.manjupkg): a plain zip whose payload
+is the project tree, plus synthesized transport-metadata members (this file,
+{FIXITY_MANIFEST_NAME}, {TOOLCHAIN_SNAPSHOT_NAME}{", " + CONTRACTS_SNAPSHOT_NAME if contracts_included else ""}).
+
+Packed by manju version: {_manju_version()}
+Canonical pack name:     {canonical_name}
+(the archive file may have been renamed since — substitute the actual
+filename in the commands below; the zip comment records the original
+project name but is never trusted for restore paths)
+
+How to restore
+--------------
+1. Verify without extracting (read-only):
+
+     manju fixity {canonical_name}
+
+2. Restore (refuses to overwrite an existing directory):
+
+     manju unpack {canonical_name}
+
+   unpack re-verifies every extracted file against {FIXITY_MANIFEST_NAME};
+   on any mismatch/missing/extra member the restored directory is REMOVED
+   and the exit is nonzero — a corrupt restore never looks like a good one.
+3. Optional summary of this pack's metadata without extracting:
+
+     manju fixity {canonical_name} --info
+
+What {FIXITY_MANIFEST_NAME} guarantees — and what it does NOT
+-------------------------------------------------------------
+GUARANTEES: every member's sha256+size matches what `manju pack` recorded
+  at pack time (this note and the snapshots below are covered too — they
+  are written before the manifest and recorded in it).
+DOES NOT: the manifest is NOT signed. Anyone who can rewrite the archive
+  can rewrite the manifest to match, so fixity detects corruption and
+  accidental edits — not a capable adversary. Establish provenance
+  out-of-band (e.g. a separately stored digest of the whole file).
+
+Snapshots in this pack (transport metadata)
+-------------------------------------------
+  {TOOLCHAIN_SNAPSHOT_NAME} — the packing machine's toolchain facts
+    (manju.toolchain-manifest/v1: manju/python/ffmpeg versions, key deps,
+    burn-font identity) for explaining byte drift on a future rebuild.
+{contracts_line}
+
+All MANJU_* members are transport-only: after a passing verify,
+`manju unpack` drops them so the restored tree equals the original project.
+"""
+    return text.encode("utf-8")
+
 
 def _fixity_manifest_bytes(files_map: dict[str, dict]) -> bytes:
     """Serialize the in-zip fixity manifest. Deterministic for an unchanged
@@ -3797,14 +3934,20 @@ def _fixity_manifest_bytes(files_map: dict[str, dict]) -> bytes:
     ).encode("utf-8")
 
 
-def _fixity_zipinfo() -> zipfile.ZipInfo:
-    """ZipInfo for the manifest member. A FIXED 1980-01-01 stamp (zip's minimum)
-    — the manifest is synthesized at pack time and has no source mtime, so a
+def _synth_zipinfo(name: str) -> zipfile.ZipInfo:
+    """ZipInfo for a SYNTHESIZED member (fixity manifest + the S3
+    self-description members). A FIXED 1980-01-01 stamp (zip's minimum) — these
+    members are synthesized at pack time and have no source mtime, so a
     wall-clock stamp (writestr's default) would inject needless nondeterminism.
-    (The other members keep their real file mtimes, as the writer always has.)"""
-    info = zipfile.ZipInfo(FIXITY_MANIFEST_NAME, date_time=(1980, 1, 1, 0, 0, 0))
+    (The payload members keep their real file mtimes, as the writer always has.)"""
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
     return info
+
+
+def _fixity_zipinfo() -> zipfile.ZipInfo:
+    """ZipInfo for the fixity-manifest member (see :func:`_synth_zipinfo`)."""
+    return _synth_zipinfo(FIXITY_MANIFEST_NAME)
 
 
 def _parse_fixity_manifest(raw: bytes) -> Optional[dict]:
@@ -3921,6 +4064,86 @@ def _print_fixity_rows(result: dict) -> None:
         typer.secho(f"  ✗ extra     {row['path']}", fg=typer.colors.RED)
 
 
+# `fixity --info` capped read: a self-description member larger than this is
+# reported present-but-not-summarized instead of being inflated (metadata
+# members are a few KiB; the cap follows the FP-security loop's stream-capped,
+# header-blind reader discipline — never trust ZipInfo.file_size).
+META_INFO_READ_CAP_BYTES = 1 << 20  # 1 MiB
+
+
+def _read_meta_member_capped(zf: zipfile.ZipFile, name: str) -> Optional[bytes]:
+    """Read member ``name`` STREAMED with a hard cap on ACTUAL inflated bytes
+    (header-blind — a lying central directory cannot make us over-read).
+    Returns ``None`` when the stream exceeds the cap or the read fails; the
+    caller reports that honestly rather than guessing."""
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        with zf.open(name) as fh:
+            while True:
+                chunk = fh.read(min(64 * 1024,
+                                    META_INFO_READ_CAP_BYTES + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > META_INFO_READ_CAP_BYTES:
+                    return None
+                chunks.append(chunk)
+    except (OSError, zipfile.BadZipFile):
+        return None
+    return b"".join(chunks)
+
+
+def _pack_meta_info(zf: zipfile.ZipFile) -> dict:
+    """READ-ONLY summary of a pack's S3 self-description members: presence of
+    the restore note / contracts snapshot / toolchain snapshot, plus a tiny
+    toolchain summary (manju + ffmpeg versions) parsed from
+    ``MANJU_TOOLCHAIN.json`` under the capped reader. Nothing is written;
+    oversized/unparseable members are reported honestly, never guessed."""
+    names = set(zf.namelist())
+    info: dict = {
+        "restore_note": RESTORE_NOTE_NAME in names,
+        "contracts_snapshot": CONTRACTS_SNAPSHOT_NAME in names,
+        "toolchain_snapshot": TOOLCHAIN_SNAPSHOT_NAME in names,
+        "toolchain": None,
+    }
+    if TOOLCHAIN_SNAPSHOT_NAME in names:
+        raw = _read_meta_member_capped(zf, TOOLCHAIN_SNAPSHOT_NAME)
+        if raw is None:
+            info["toolchain"] = {"summarized": False, "reason": "over_cap"}
+        else:
+            try:
+                facts = (json.loads(raw.decode("utf-8")) or {}).get("facts") or {}
+                info["toolchain"] = {
+                    "summarized": True,
+                    "manju": str((facts.get("manju") or {}).get("version")),
+                    "ffmpeg": str((facts.get("tools") or {}).get("ffmpeg")),
+                }
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                info["toolchain"] = {"summarized": False, "reason": "unparseable"}
+    return info
+
+
+def _print_meta_info(info: dict) -> None:
+    """Human rendering of the `--info` summary (one dim block, read-only)."""
+    def _mark(flag: bool) -> str:
+        return "✓" if flag else "无"
+
+    tool = info.get("toolchain")
+    if isinstance(tool, dict) and tool.get("summarized"):
+        tool_line = f"manju={tool.get('manju')} · ffmpeg={tool.get('ffmpeg')}"
+    elif isinstance(tool, dict):
+        tool_line = f"present, not summarized ({tool.get('reason')})"
+    else:
+        tool_line = "无"
+    typer.secho(
+        f"  info: restore-note {_mark(info.get('restore_note'))} · "
+        f"contracts-snapshot {_mark(info.get('contracts_snapshot'))} · "
+        f"toolchain {tool_line}",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
+
+
 @app.command()
 def pack(out: Optional[Path] = typer.Option(None),
          full: bool = typer.Option(False, "--full",
@@ -3957,10 +4180,12 @@ def pack(out: Optional[Path] = typer.Option(None),
             if not path.is_file():
                 continue
             rel = path.relative_to(project.root).as_posix()
-            # never let a stray on-disk MANJU_FIXITY.json ride as a payload
-            # member — it would collide with the manifest we write below and
-            # break self-exclusion (normal project trees never contain one).
-            if rel == FIXITY_MANIFEST_NAME:
+            # never let a stray on-disk file named like a synthesized member
+            # (MANJU_FIXITY.json / MANJU_RESTORE.txt / MANJU_CONTRACTS.yaml /
+            # MANJU_TOOLCHAIN.json) ride as a payload member — it would collide
+            # with what we write below and break self-exclusion / coverage
+            # (normal project trees never contain these reserved names).
+            if rel in PACK_TRANSPORT_MEMBERS:
                 continue
             if any(rel.startswith(prefix) for prefix in PACK_EXCLUDE):
                 continue
@@ -3973,6 +4198,28 @@ def pack(out: Optional[Path] = typer.Option(None),
                 "sha256": hash_file(path).removeprefix(HASH_PREFIX),
                 "bytes": path.stat().st_size,
             }
+        # S3 self-description members — written BEFORE the fixity manifest and
+        # recorded in fixity_files, so each is FIXITY-COVERED (tampering one
+        # fails verification like any payload member). Content is deterministic:
+        # the restore note names the CANONICAL pack filename (derived from the
+        # project directory, never --out) so two packs of one tree are
+        # byte-identical for all three members.
+        import hashlib as _hashlib
+
+        contracts_bytes = _contracts_snapshot_bytes()
+        canonical_name = project.root.stem + ".manjupkg"
+        meta_members: list[tuple[str, bytes]] = []
+        if contracts_bytes is not None:
+            meta_members.append((CONTRACTS_SNAPSHOT_NAME, contracts_bytes))
+        meta_members.append((RESTORE_NOTE_NAME, _restore_note_bytes(
+            canonical_name, contracts_included=contracts_bytes is not None)))
+        meta_members.append((TOOLCHAIN_SNAPSHOT_NAME, _toolchain_snapshot_bytes()))
+        for meta_name, meta_data in meta_members:
+            zf.writestr(_synth_zipinfo(meta_name), meta_data)
+            fixity_files[meta_name] = {
+                "sha256": _hashlib.sha256(meta_data).hexdigest(),
+                "bytes": len(meta_data),
+            }
         # LAST member: the in-zip fixity manifest, recording every OTHER member.
         zf.writestr(_fixity_zipinfo(), _fixity_manifest_bytes(fixity_files))
     if as_json:
@@ -3983,12 +4230,20 @@ def pack(out: Optional[Path] = typer.Option(None),
             "full": full,
             "excluded_cache_bytes": excluded_cache,
             "fixity": FIXITY_FORMAT,
+            "meta_members": [nm for nm, _ in meta_members],
         }, True)
         return
     typer.secho(f"packed → {out}", fg=typer.colors.GREEN)
     typer.secho(
         f"  ✓ 写入完整性清单 {FIXITY_MANIFEST_NAME} "
         f"({len(fixity_files)} files, sha256+size;unpack 时自动校验)",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
+    typer.secho(
+        f"  ✓ 附带自描述元数据 {' + '.join(nm for nm, _ in meta_members)}"
+        "(恢复说明/快照,unpack 校验通过后自动移除)"
+        + ("" if contracts_bytes is not None else
+           f";{CONTRACTS_SNAPSHOT_NAME} 省略 — engine 未随附 CONTRACTS.yaml"),
         fg=typer.colors.BRIGHT_BLACK,
     )
     if excluded_cache:
@@ -4180,14 +4435,18 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
                     )
                 raise typer.Exit(1)
             fixity_json = {"present": True, **result}
-            # verified OK — drop the transport-only manifest so the restored tree
-            # equals the original project (and a re-pack won't double-write it).
-            try:
-                (dest / FIXITY_MANIFEST_NAME).unlink(missing_ok=True)
-            except OSError:
-                pass
+            # verified OK — drop ALL transport-only synthesized members (the
+            # fixity manifest + the S3 self-description members) so the restored
+            # tree equals the original project (and a re-pack won't double-write
+            # them). Old packs carry none of these — missing_ok keeps this a
+            # no-op there.
+            for transport_name in PACK_TRANSPORT_MEMBERS:
+                try:
+                    (dest / transport_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
     (dest / ".manju").mkdir(exist_ok=True)
-    restored_files = sum(1 for n in names if n != FIXITY_MANIFEST_NAME)
+    restored_files = sum(1 for n in names if n not in PACK_TRANSPORT_MEMBERS)
     if as_json:
         _emit({
             "unpacked": str(dest),
@@ -4209,13 +4468,21 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
 
 @app.command()
 def fixity(archive: Path,
-           as_json: bool = typer.Option(False, "--json")):
+           as_json: bool = typer.Option(False, "--json"),
+           info: bool = typer.Option(
+               False, "--info",
+               help="额外汇总包内自描述元数据(恢复说明/合同快照/工具链版本)— 只读")):
     """Verify a .manjupkg's in-zip MANJU_FIXITY.json WITHOUT extracting it.
 
     Streams every member (bounded memory — never inflates a whole member),
     recomputes sha256+size and compares against the manifest recorded at pack
     time: structured rows for mismatched / missing / extra members, an overall
     ``ok``, and a matching exit code. READ-ONLY — nothing is written to disk.
+
+    ``--info`` additionally surfaces the pack's S3 self-description members —
+    restore-note presence, contracts-snapshot presence, and a toolchain summary
+    (manju/ffmpeg versions) — read via a capped stream (still read-only; the
+    verdict and exit code are unchanged by --info).
 
     A pack that carries no manifest (packed before fixity, or not produced by
     ``manju pack``) cannot be verified — reported ``present: false`` with a
@@ -4229,29 +4496,38 @@ def fixity(archive: Path,
         if len(infos) > UNPACK_MAX_MEMBERS:
             _fail(f"拒绝校验:成员数 {len(infos)} 超出上限 {UNPACK_MAX_MEMBERS}"
                   "(zip bomb 防护)")
+        # --info is additive-only: computed up front (read-only, capped) and
+        # attached to whichever verdict below; omitted entirely without the flag
+        # so the existing surface stays byte-stable.
+        meta_info: Optional[dict] = _pack_meta_info(zf) if info else None
+        info_extra = {"info": meta_info} if meta_info is not None else {}
         names = [i.filename for i in infos]
         if FIXITY_MANIFEST_NAME not in names:
             if as_json:
                 _emit({"ok": False, "present": False, "archive": str(archive),
-                       "reason": "no_manifest"}, True)
+                       "reason": "no_manifest", **info_extra}, True)
             else:
                 typer.secho(
                     f"fixity: {archive.name} 不含 {FIXITY_MANIFEST_NAME}"
                     "(旧包或非 manju pack 生成)— 无法校验完整性",
                     fg=typer.colors.YELLOW)
+                if meta_info is not None:
+                    _print_meta_info(meta_info)
             raise typer.Exit(1)
         manifest = _parse_fixity_manifest(zf.read(FIXITY_MANIFEST_NAME))
         if manifest is None:
             if as_json:
                 _emit({"ok": False, "present": True, "archive": str(archive),
-                       "reason": "unparseable_manifest"}, True)
+                       "reason": "unparseable_manifest", **info_extra}, True)
             else:
                 typer.secho(
                     f"fixity: {archive.name} 的 {FIXITY_MANIFEST_NAME} "
                     "无法解析/非受支持格式", fg=typer.colors.RED)
+                if meta_info is not None:
+                    _print_meta_info(meta_info)
             raise typer.Exit(1)
         result = _verify_fixity_rows(manifest, _present_from_zip_stream(zf))
-    result = {"present": True, "archive": str(archive), **result}
+    result = {"present": True, "archive": str(archive), **result, **info_extra}
     if as_json:
         _emit(result, True)
     elif result["ok"]:
@@ -4264,6 +4540,8 @@ def fixity(archive: Path,
             f" · missing {len(result['missing'])} · extra {len(result['extra'])})",
             fg=typer.colors.RED)
         _print_fixity_rows(result)
+    if not as_json and meta_info is not None:
+        _print_meta_info(meta_info)
     if not result["ok"]:
         raise typer.Exit(1)
 

@@ -588,7 +588,12 @@ documents:
       Since FP wave 5 packs carry a final MANJU_FIXITY.json member (plain
       format manju-fixity.1 — not a manju.*/vN schema): unpack verifies and
       REMOVES a failed restore; packs without it restore byte-identically
-      (advisory only); manju fixity verifies without extracting.
+      (advisory only); manju fixity verifies without extracting. Since the
+      R/S continuation packs also self-describe with three fixity-covered
+      transport members — MANJU_RESTORE.txt (manju-restore.1),
+      MANJU_CONTRACTS.yaml (engine registry snapshot; honestly omitted when
+      unavailable), MANJU_TOOLCHAIN.json — all dropped from a verified
+      restore; manju fixity --info surfaces them read-only.
   - id: support-bundle
     kind: document
     owner: manju.core.supportbundle
