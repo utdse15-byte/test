@@ -2016,6 +2016,11 @@ def export(
         False, "--edl",
         help="CMX3600 EDL video cut list (exports/edl/, real SMPTE timecode; "
              "V track only — audio is out of scope, see conform-loss)"),
+    fcpxml: bool = typer.Option(
+        False, "--fcpxml",
+        help="FCPXML 1.9 video spine (exports/fcpxml/, EXACT rational time — "
+             "frameDuration=1001/24000s native; video + cross-dissolve only, "
+             "captions ride --srt/--ttml, see conform-loss)"),
     pullsheet: bool = typer.Option(
         False, "--pullsheet",
         help="AI_IDE_16 §9: CSV + Markdown storyboard pull sheet "
@@ -2053,7 +2058,7 @@ def export(
                      "no headless-Chromium/PDF-table path in this environment)")
     timeline = project.load_timeline()
     if timeline is None:
-        if pullsheet and not (jianying or capcut or srt or ttml or otio or edl):
+        if pullsheet and not (jianying or capcut or srt or ttml or otio or edl or fcpxml):
             rel = {k: project.relpath(v) for k, v in outputs.items()}
             append_event(project.root, ACTOR, "export", rel)
             if as_json:
@@ -2065,7 +2070,7 @@ def export(
                     typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
             return
         _fail("no timeline.json — run `manju build` first")
-    if not (jianying or capcut or srt or ttml or otio or edl or pullsheet):
+    if not (jianying or capcut or srt or ttml or otio or edl or fcpxml or pullsheet):
         srt = otio = True
     # Which target we're building, so a mid-export failure names its subject in
     # the structured record (goal 10) — the capcut path below records the same way.
@@ -2091,6 +2096,11 @@ def export(
 
             _target = "edl"
             outputs["edl"] = export_edl(project, timeline)
+        if fcpxml:
+            from .exporters.fcpxml import export_fcpxml
+
+            _target = "fcpxml"
+            outputs["fcpxml"] = export_fcpxml(project, timeline)
         if jianying:
             from .exporters.jianying import export_jianying
             from .exporters.native_draft import (

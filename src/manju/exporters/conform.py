@@ -472,6 +472,90 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "dropped",
             "exporters/edl.py:1-80 (module scope: V track only)"),
     },
+    "fcpxml": {
+        "video_clips": (
+            "preserved",
+            "one <asset-clip> per video clip on the library>event>project>"
+            "sequence>spine; offset/start/duration as EXACT rational-seconds "
+            "strings (N/Ds) on the edit rate's frameDuration timescale — FCPXML "
+            "is natively rational, so an int project rides '1/24s' and a "
+            "1001-family project rides '1001/24000s' with ZERO drift "
+            "(duration_frames on the rational path, ms_to_frames on the int "
+            "path — every boundary a whole frame)",
+            "exporters/fcpxml.py (compile_fcpxml/_secs/_clip_frames)"),
+        "video_in_points": (
+            "preserved",
+            "source_in_ms becomes the asset-clip start (source in-point, exact "
+            "whole frame, 0 when untrimmed); the shared <asset> resource "
+            "duration widens to cover in-point + window (self-consistent "
+            "available media range, OTIO precedent)",
+            "exporters/fcpxml.py (_clip_frames + asset available range)"),
+        "audio_in_points": (
+            "unsupported",
+            "video spine only this loop — audio is not written (see "
+            "audio_tracks), so no audio in-point rides the document",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+        "transitions": (
+            "approximated",
+            "a clean cross-dissolve (xfade_fade, 0<dur<BOTH adjacent clips) "
+            "becomes a NATIVE FCPXML <transition> (Cross Dissolve effect, FCP "
+            "overlap geometry — the incoming clip and every later element pull "
+            "back by the transition frames); EVERY other kind — dip-to-black "
+            "fade, the xfade_* wipes/slides, an unknown type, or a dissolve too "
+            "long to overlap its clips — degrades to a hard cut with an in-band "
+            "<!-- MANJU --> note (never a wrong dissolve, S2 precedent)",
+            "exporters/fcpxml.py (_is_clean_dissolve + overlap guard + degraded "
+            "note)"),
+        "overlays": (
+            "dropped",
+            "compile_fcpxml never reads tracks.overlay — titles/branding are "
+            "not written to the spine",
+            "exporters/fcpxml.py (video track only, no overlay path)"),
+        "captions": (
+            "dropped",
+            "compile_fcpxml never reads tracks.captions — captions ride the "
+            "SRT/TTML exits by design (honest boundary; FCPXML titles are NOT "
+            "emitted this loop)",
+            "exporters/fcpxml.py (video spine only, no caption path)"),
+        "clip_volume": (
+            "dropped",
+            "video source gain/mute is an audio-domain adjustment; no "
+            "<adjust-volume> is written on the video asset-clip this loop",
+            "exporters/fcpxml.py (no volume path)"),
+        "audio_gain": (
+            "unsupported",
+            "video spine only this loop — audio is not written (see "
+            "audio_tracks)",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+        "audio_fade_in": (
+            "unsupported",
+            "video spine only this loop — audio is not written (see "
+            "audio_tracks)",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+        "audio_fade_out": (
+            "unsupported",
+            "video spine only this loop — audio is not written (see "
+            "audio_tracks)",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+        "ducking": (
+            "unsupported",
+            "video spine only this loop — audio is not written (see "
+            "audio_tracks)",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+        "audio_loops": (
+            "unsupported",
+            "video spine only this loop — audio is not written (see "
+            "audio_tracks)",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+        "audio_tracks": (
+            "unsupported",
+            "video spine only this loop: FCPXML's connected-clip role/lane "
+            "model CAN carry Manju's four buses (unlike CMX EDL's flat "
+            "A-channel), so this is a WRITER-scope boundary — a deferred "
+            "increment — not a format limit; audio is honestly omitted rather "
+            "than faked",
+            "exporters/fcpxml.py (module scope: video spine only this loop)"),
+    },
     "openclap": {
         "video_clips": (
             "preserved",
@@ -587,6 +671,14 @@ _SCOPE_NOTES: dict[str, str] = {
            "the timeline position; FCM DROP/NON-DROP per rate; colon-NDF / "
            "semicolon-DF). V track only — audio is out of scope by design; "
            "source TC is 00:00:00:00-based (takes carry no recorded reel/TC).",
+    "fcpxml": "FCPXML 1.9 video spine (library>event>project>sequence>spine) — "
+              "the one NLE exit where our rational time rides NATIVELY: every "
+              "offset/start/duration is an EXACT whole-frame rational-seconds "
+              "string on the format's frameDuration timescale ('1/24s' for int, "
+              "'1001/24000s' for the 1001 family), so there is ZERO drift for "
+              "either. Cross-dissolves are native <transition>s (others cut + "
+              "note, never a wrong dissolve); captions ride the SRT/TTML exits "
+              "and audio is a deferred writer increment — both honestly omitted.",
 }
 
 # import-time typo guard: every rule key must be a known feature.
@@ -648,6 +740,9 @@ _DRIFT_TRACKS: dict[str, tuple[str, ...]] = {
     # V-only cut list: only the video track lands on the record/source frame
     # grid (audio/captions/overlays are not exported).
     "edl": ("video",),
+    # FCPXML video spine: only the video track lands on the frame grid this loop
+    # (audio is a deferred writer increment; captions ride SRT/TTML).
+    "fcpxml": ("video",),
 }
 
 _NOT_TIME_BEARING = {
@@ -750,6 +845,116 @@ def _boundaries(timeline: "Timeline", tracks: tuple[str, ...]) -> Iterator[tuple
                 yield f"{track}[{i}].end", start + int(dur)
 
 
+def _fcpxml_rate_mismatch(
+    timeline: "Timeline", source_rates: dict[str, Any] | None,
+    edit_rate: Rate, notes: list[str],
+) -> list[dict[str, Any]]:
+    """Probed-source-rate vs edit-rate drift rows for FCPXML (same exact
+    grid_drift_ms / one_frame_drift_at math as the shared path; a same-clock
+    source yields NO row, an unclassifiable one an honest ``unknown`` row)."""
+    mismatch: list[dict[str, Any]] = []
+    if not source_rates:
+        return mismatch
+    by_source = {str(k): v for k, v in source_rates.items()}
+    video_sources = {c.source for c in timeline.tracks.video}
+    for missing in sorted(set(by_source) - video_sources):
+        notes.append(
+            f"source_rates key {missing!r} matches no timeline video clip "
+            "— ignored (nothing fabricated)")
+    edit_nominal = edit_rate.nominal_int
+    for c in timeline.tracks.video:
+        if c.source not in by_source:
+            continue
+        raw = by_source[c.source]
+        probed = raw if isinstance(raw, Rate) else classify_rate(raw)
+        label = f"video:{c.shot}/{c.take}"
+        if not isinstance(probed, Rate):
+            mismatch.append({
+                "clip": label, "source": c.source, "source_rate": "unknown",
+                "note": "probed rate not classifiable "
+                        "(timebase.classify_rate → UNKNOWN); no drift numbers "
+                        "fabricated",
+            })
+            continue
+        if probed.fraction == edit_rate.fraction:
+            continue  # same clock — no drift row to invent
+        drift = grid_drift_ms(int(c.duration_ms), edit_nominal, probed)
+        reach = one_frame_drift_at(edit_nominal, probed)
+        mismatch.append({
+            "clip": label, "source": c.source, "source_rate": str(probed),
+            "edit_fps": edit_nominal, "clip_duration_ms": int(c.duration_ms),
+            "grid_drift_ms_over_clip": str(drift),
+            "one_frame_drift_at_ms": str(reach),
+            "exceeds_one_frame": bool(abs(drift) >= Fraction(1000, edit_nominal)),
+        })
+    return mismatch
+
+
+def _fcpxml_frame_drift(
+    timeline: "Timeline", source_rates: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """The ``frame_drift`` block for FCPXML — the rational-NATIVE pin.
+
+    FCPXML writes EVERY time as an exact whole-frame multiple of ``frameDuration``
+    on the exact edit rate (an ``N/D``-seconds string) — for INT projects too
+    (``'1/24s'``), never a float ms×fps value. So every exported video boundary is
+    a whole frame on the exact grid and the ms→frame residual is 0 BY CONSTRUCTION
+    on BOTH the int and the 1001-family path — the one NLE exit where our rational
+    truth rides natively with NO drift row. (Contrast OTIO's int path, which
+    writes fractional-frame RationalTime values; FCPXML never does.)
+    """
+    notes: list[str] = []
+    try:
+        edit_rate = timeline.frame_rate  # exact Rate: echo when rational, else int fps
+    except Exception:
+        return {
+            "checked": False,
+            "reason": f"timeline edit rate unresolvable (fps={timeline.fps!r}) — "
+                      "no drift math on a broken grid (QC owns the bad fps)",
+        }, notes
+
+    off_grid: list[dict[str, Any]] = []
+    max_residual = Fraction(0)
+    count = 0
+    # VIDEO telescopes duration_frames (exact cumulative whole-frame boundary),
+    # ms_to_frames on the stampless fallback — every value an INTEGER frame index,
+    # which is precisely why the residual vs the frame grid is 0 BY CONSTRUCTION.
+    for label, frames in _rational_frame_boundaries(
+            timeline, _DRIFT_TRACKS["fcpxml"], edit_rate):
+        count += 1
+        exact = Fraction(int(frames))
+        residual = abs(exact - round(exact))   # == 0 for a whole frame
+        if residual > max_residual:
+            max_residual = residual
+        if residual > 0:  # unreachable for a whole frame — kept honest
+            off_grid.append({
+                "clip": label, "frames_exact": str(exact),
+                "residual_frames": str(residual),
+            })
+
+    mismatch = _fcpxml_rate_mismatch(timeline, source_rates, edit_rate, notes)
+    block = {
+        "checked": True,
+        "grid": "rational-native",
+        "edit_rate": str(edit_rate),        # "24000/1001" or "24"
+        "edit_fps": edit_rate.nominal_int,
+        "boundaries_checked": count,
+        "off_grid": off_grid,
+        "cumulative_max_residual": str(max_residual),
+        "all_zero": not off_grid,
+        "all_zero_by_construction": True,
+        "rate_mismatch": mismatch,
+    }
+    notes.append(
+        f"frame_drift measured against the exact edit grid {edit_rate}: FCPXML "
+        "carries every time as an exact whole-frame rational-seconds string "
+        "(frameDuration-native) for BOTH int and 1001-family projects, so the "
+        "ms→frame residual is 0 BY CONSTRUCTION — no drift row is needed even for "
+        "an int project (the rational-native advantage; OTIO's int path can carry "
+        "fractional frames, FCPXML never does).")
+    return block, notes
+
+
 def _frame_drift(
     target: str,
     timeline: "Timeline",
@@ -760,6 +965,12 @@ def _frame_drift(
     reason = _NOT_TIME_BEARING.get(target)
     if reason is not None:
         return {"checked": False, "reason": reason}, notes
+
+    # T2: FCPXML is rational-NATIVE — its drift is frame-native (residual 0 by
+    # construction) for the INT path too, so it takes a dedicated branch that the
+    # int/rational float logic below never touches (existing targets unchanged).
+    if target == "fcpxml":
+        return _fcpxml_frame_drift(timeline, source_rates)
 
     # R4: when the timeline carries R2's rational echo, measure residuals against
     # the EXACT rational frame grid (24000/1001 …); otherwise the integer fps grid
@@ -955,7 +1166,7 @@ def _exported_notes(
             except Exception:
                 return [f"{label} is not readable JSON — no cross-check performed"]
             doc = loaded if isinstance(loaded, dict) else None
-        elif suffix in (".srt", ".vtt", ".ass", ".ttml", ".edl"):
+        elif suffix in (".srt", ".vtt", ".ass", ".ttml", ".edl", ".fcpxml"):
             text = p.read_text(encoding="utf-8")
         else:
             return [f"{label} not parsed (opaque/binary payload) — "
@@ -1013,6 +1224,19 @@ def _exported_notes(
         note = (f"{label}: {len(nums)} event(s) vs timeline "
                 f"{len(t.video)} video clip(s)")
         if len(nums) != len(t.video):
+            note += " — MISMATCH: verify the export is fresh"
+        return [note]
+    if target == "fcpxml" and text is not None:
+        import xml.etree.ElementTree as ET  # lazy: only this branch parses XML
+
+        try:
+            # one primary-storyline <asset-clip> per video clip (no namespace)
+            clips = len(ET.fromstring(text).findall(".//spine/asset-clip"))
+        except ET.ParseError:
+            return [f"{label} is not readable XML — no cross-check performed"]
+        note = (f"{label}: {clips} asset-clip(s) vs timeline "
+                f"{len(t.video)} video clip(s)")
+        if clips != len(t.video):
             note += " — MISMATCH: verify the export is fresh"
         return [note]
     if target == "native_draft":

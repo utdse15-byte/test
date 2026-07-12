@@ -1,4 +1,4 @@
-"""Exporters (§8 出口层, §13 M1): captions (SRT/ASS/VTT/TTML), OTIO, CMX3600 EDL, JianYing draft.
+"""Exporters (§8 出口层, §13 M1): captions (SRT/ASS/VTT/TTML), OTIO, CMX3600 EDL, FCPXML, JianYing draft.
 
 Everything here is a dependency-free, deterministic, atomic writer. Each
 exporter is one optional exit; ``final.mp4`` + SRT + OTIO always suffice to
@@ -9,6 +9,7 @@ pure adapter-boundary increments.
 from __future__ import annotations
 
 from .edl import compile_edl, export_edl
+from .fcpxml import compile_fcpxml, export_fcpxml
 from .jianying import export_jianying, lint_draft
 from .openclap import export_openclap
 from .otio import export_otio
@@ -28,9 +29,11 @@ __all__ = [
     "compile_ass",
     "compile_ttml",
     "compile_edl",
+    "compile_fcpxml",
     "export_captions",
     "export_ttml",
     "export_edl",
+    "export_fcpxml",
     "export_otio",
     "export_jianying",
     "export_openclap",
