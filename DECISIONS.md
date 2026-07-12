@@ -1091,3 +1091,54 @@ binding addenda + orchestrator review; five mid-flight corrections were
 issued from early review (all growth-hostility or process); the recurring
 agent-spawn collapse struck three times and was recovered by resume each
 time.
+
+## 30. The rational migration executed + the interchange continuation (2026-07-12)
+
+Seven-hour continuation. Own analysis first: the fps surface spans 20+
+files but spec_hash carries no fps while segment/render keys carry it
+explicitly — so a STAGED migration with per-stage legacy byte-identity
+pins was feasible, and "upgrade everything at once" was not. The external
+list's item 1 executed in stages; items 3/4/5/7/8 landed as side loops;
+color/AAF/Board/plugins/benchmarks deliberately untouched (each needs its
+own narrow loop or violates the no-new-deps discipline this session).
+
+R-track (the registry's declared migration, closed end to end):
+- R1 `d03fbba`: edit_rate truth field + the one accessor; the wrap
+  serializer proven load-bearing red-first (a plain dump leaks
+  edit_rate:null into every config); byte-identity pinned at every
+  surface; a grep pin holds the token to models/container until consumers
+  earn it.
+- R2 `e5a9052`: the opt-in rational build spine. Telescoping cumulative-
+  boundary walker: 2h of 23.976 = +0.5ms cumulative vs +7200.5ms (~172.6
+  frames) per-clip-independent — computed in-test as the design's own
+  justification. Native -r 24000/1001 verified on real output. FIX-B
+  literals verbatim; walker-spy zero on int compiles; keys isolated
+  drop-when-int. The R1 pin had gone red at HEAD from S2's committed echo
+  reader — an honest orchestration gap (S2's verification set missed
+  ratemig1), corrected teeth-preserving.
+- R3 honestly COLLAPSED into R4: boundary-exact timelines made burned
+  captions and audio inherit correctness; forcing a loop would have built
+  for the list, not the need.
+- R4 `730fb45`: export truth — OTIO integer frame values at the float64
+  rational rate; conform drift all_zero BY CONSTRUCTION (the track's
+  closing pin); masters sample facts rational-only so int index digests
+  never move; EDL consumes duration_frames.
+- R5 `362623a`: the real migrate tool the registry deferred until a real
+  migration existed. inspect (no recommended field ever; honest cached-
+  segment rebuild forecast) / CAS plan / apply touching ONLY project.yaml
+  with no auto-commit (Git is the rollback engine; the revert command is
+  printed) / downgrade refused without --acknowledge-loss. migrate.py is
+  TOKEN-FREE (field discovered by type) so R1's pin stands unmodified.
+  planned_migrations[0]: declared → IMPLEMENTED (this close).
+
+S-track: S1 TTML/IMSC writer `e122404` (x-manju verbatim authority over
+registry-token nuance); S2 CMX3600 EDL `4952435` (FCM DF/NDF via
+timebase; zero-based source TC stated honestly; never a wrong dissolve);
+S3 archive self-description `3496a03` (fixity-covered restore notes +
+registry/toolchain snapshots; "no snapshot was fabricated" fallback);
+S4 toolchain→keys `d773933` (tokens EXACTLY ffmpeg|fonts, irrelevant
+facts REJECTED at validation per the roadmap's own warning; single-probe
+spy; kenburns key coverage catch); S5 xplat informational CI `1d393c5`
+(orchestrator-executed; allow-fail; the ubuntu gate untouched).
+
+Spawn collapses #10–#12 recovered by resume. Suite: 3478 → 3653 passed / 13 skipped / 0 failed (definitive quiescent run); snapshot 121 → 125.

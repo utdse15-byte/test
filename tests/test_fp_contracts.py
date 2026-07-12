@@ -180,16 +180,24 @@ def test_every_owner_resolves_to_real_code():
 # ------------------------------------------------------- planned migration pin
 
 
-def test_declared_future_major_is_recorded_not_implemented():
-    """The declared fps int→rational edit_rate major is on record AND still
-    unimplemented — models.ProjectConfig.fps is int today."""
+def test_first_migration_is_recorded_and_now_implemented():
+    """The registry's first migration went declared → IMPLEMENTED (R1–R5):
+    the record must say so AND name its tooling. The pin EVOLVED with the
+    migration itself — its original form asserted implemented: False while
+    the migration was declared-only; the flip to True is the R5 close, not
+    a weakening (the compat teeth below are unchanged)."""
     migs = contracts.planned_migrations()
-    assert migs, "planned_migrations must record the declared future major"
+    assert migs, "planned_migrations must record the fps→rational migration"
     first = migs[0]
     assert first["id"] == "project.fps-int-to-rational-edit-rate"
-    assert first["implemented"] is False
+    assert first["implemented"] is True
+    assert first["status"] == "implemented"
+    assert "manju migrate" in str(first.get("implemented_by", "")), (
+        "an implemented migration must name its tooling")
 
-    # the pin's factual anchor: fps is genuinely an int in the model today.
+    # the compat teeth, unchanged from the original pin: fps is STILL a
+    # genuine int in the model — the migration is opt-in; the legacy int
+    # path (and every old project) remains first-class, not deprecated.
     from manju.core.models import ProjectConfig
     assert ProjectConfig.model_fields["fps"].annotation is int
 

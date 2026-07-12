@@ -639,8 +639,11 @@ ownership:
 # ---------------------------------------------------------------------------
 planned_migrations:
   - id: project.fps-int-to-rational-edit-rate
-    status: declared
-    implemented: false
+    status: implemented
+    implemented: true
+    implemented_by: manju migrate (core.migrate) — R1 field/accessor, R2
+      rational build spine, R4 export truth, R5 tooling (inspect/plan/
+      apply/downgrade with CAS + --acknowledge-loss)
     affects: project.yaml
     from: >-
       project.yaml `fps: int` (core.models.ProjectConfig.fps is pinned to int
