@@ -37,8 +37,13 @@ from typing import Any
 
 # compile-status tokens
 OK = "ok"
-NEEDS_MANUAL = "needs_manual"   # multi-subject conflict → UNKNOWN, human resolves
+NEEDS_MANUAL = "needs_manual"   # multi-subject conflict / low-confidence ROI → human
 BLANKING = "blanking"           # crop infeasible → blanking / pillarbox fallback
+CENTER_CROP_FALLBACK = "center_crop_fallback"   # no ROI → honest centred crop, NOT a
+                                                # smart success (addendum ruling 5, M12)
+
+# an ROI track whose declared confidence is below this is not framed by a guess.
+_DEFAULT_MIN_ROI_CONFIDENCE = 0.25
 
 
 class ReframeError(RuntimeError):
@@ -108,22 +113,63 @@ def _rate_limit(times_ms: list[int], targets: list[float], max_px_per_s: float) 
     return out
 
 
-def _subject_centers(tracks: list[dict]) -> list[list[dict]]:
-    return [t.get("keyframes") or [] for t in tracks if isinstance(t, dict)]
+def _normalize_keyframes(kfs: list[dict]) -> list[dict]:
+    """Sort a track's keyframes by ``t_ms`` and drop exact-duplicate timestamps
+    (keep first — deterministic), so the series is strictly increasing in time
+    (addendum ruling 5, M10/M14). Unsorted input is normalized, never trusted."""
+    out: list[dict] = []
+    seen: set[int] = set()
+    for k in sorted((k for k in kfs if isinstance(k, dict)),
+                    key=lambda k: int(k.get("t_ms", 0))):
+        t = int(k.get("t_ms", 0))
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(k)
+    return out
+
+
+def _sample_center(kfs: list[dict], t: int) -> tuple[float, float]:
+    """The ``(cx, cy)`` of a normalized track at time ``t`` by linear
+    interpolation between the bracketing keyframes (held flat before the first /
+    after the last). Multi-track alignment samples every track at a SHARED
+    timestamp with this — joining by time, never by array index (M11)."""
+    if not kfs:
+        return 0.5, 0.5
+    first, last = kfs[0], kfs[-1]
+    if t <= int(first.get("t_ms", 0)):
+        return float(first.get("cx", 0.5)), float(first.get("cy", 0.5))
+    if t >= int(last.get("t_ms", 0)):
+        return float(last.get("cx", 0.5)), float(last.get("cy", 0.5))
+    for i in range(1, len(kfs)):
+        t0, t1 = int(kfs[i - 1].get("t_ms", 0)), int(kfs[i].get("t_ms", 0))
+        if t0 <= t <= t1:
+            f = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            cx = float(kfs[i - 1].get("cx", 0.5)) + f * (
+                float(kfs[i].get("cx", 0.5)) - float(kfs[i - 1].get("cx", 0.5)))
+            cy = float(kfs[i - 1].get("cy", 0.5)) + f * (
+                float(kfs[i].get("cy", 0.5)) - float(kfs[i - 1].get("cy", 0.5)))
+            return cx, cy
+    return float(last.get("cx", 0.5)), float(last.get("cy", 0.5))
 
 
 def compile_crop_keyframes(tracks: list[dict], *,
                            source_wh: tuple[int, int],
                            target_wh: tuple[int, int],
                            max_px_per_s: float,
-                           safe_areas: list[dict] | None = None) -> dict[str, Any]:
+                           safe_areas: list[dict] | None = None,
+                           min_confidence: float = _DEFAULT_MIN_ROI_CONFIDENCE) -> dict[str, Any]:
     """Compile ROI ``tracks`` into crop keyframes for the ``target_wh`` frame.
 
     Returns ``{status, strategy, keyframes:[{t_ms,x,y,w,h}], source_wh, target_wh,
     max_px_per_s, changes, reason}``. ``status`` is one of :data:`OK`,
-    :data:`NEEDS_MANUAL` (multi-subject conflict), :data:`BLANKING` (crop
-    infeasible). ``changes`` always declares FORMAT_ONLY: duration/selection/
-    audio/subtitle are never touched."""
+    :data:`NEEDS_MANUAL` (multi-subject conflict OR low-confidence ROI, M13),
+    :data:`BLANKING` (crop infeasible), or :data:`CENTER_CROP_FALLBACK` (no ROI —
+    an honest centred crop, never a smart success, M12). Per-track keyframes are
+    normalized (sorted, deduped, strictly increasing in time, M10/M14) and
+    multiple tracks are aligned by TIMESTAMP, never by array index (M11).
+    ``changes`` always declares FORMAT_ONLY: duration/selection/audio/subtitle are
+    never touched."""
     SW, SH = int(source_wh[0]), int(source_wh[1])
     changes = {"duration": False, "selection": False, "audio": False, "subtitle": False}
     cw, ch, feasible = _crop_size((SW, SH), target_wh)
@@ -145,39 +191,61 @@ def compile_crop_keyframes(tracks: list[dict], *,
                 "reason": "a safe area cannot fit inside any crop window — "
                           "blanking/pillarbox fallback"}
 
-    per_track = _subject_centers(tracks)
-    if not per_track or all(not kfs for kfs in per_track):
-        # no ROI evidence → a centred crop (still a valid, honest default)
-        per_track = [[{"t_ms": 0, "cx": 0.5, "cy": 0.5}]]
+    # normalize every track's keyframes (sort by time, dedup) and drop the empties
+    norm_tracks = [(t, _normalize_keyframes(t.get("keyframes") or []))
+                   for t in tracks if isinstance(t, dict)]
+    norm_tracks = [(t, kfs) for (t, kfs) in norm_tracks if kfs]
 
-    # multi-subject conflict: subjects whose centres span more than the crop
-    # window cannot share one frame → UNKNOWN / needs_manual (never a guess).
-    n = min(len(kfs) for kfs in per_track)
-    if len(per_track) > 1 and n > 0:
-        for i in range(n):
-            xs = [float(kfs[i].get("cx", 0.5)) * SW for kfs in per_track]
-            ys = [float(kfs[i].get("cy", 0.5)) * SH for kfs in per_track]
+    # no ROI evidence → an EXPLICIT centred-crop fallback (never a smart success).
+    if not norm_tracks:
+        x = _clamp(SW / 2 - cw / 2, safe_x[0], safe_x[1])
+        y = _clamp(SH / 2 - ch / 2, safe_y[0], safe_y[1])
+        return {**base, "status": CENTER_CROP_FALLBACK, "strategy": "center_crop",
+                "keyframes": [{"t_ms": 0, "x": int(round(x)), "y": int(round(y)),
+                               "w": cw, "h": ch}],
+                "reason": "no ROI evidence — explicit centre-crop fallback, not a "
+                          "smart crop (resolve manually to adopt)"}
+
+    # low-confidence ROI → not framed by a guess → needs_manual (M13).
+    for t, _ in norm_tracks:
+        conf = t.get("confidence")
+        if conf is not None:
+            try:
+                if float(conf) < float(min_confidence):
+                    return {**base, "status": NEEDS_MANUAL, "keyframes": [],
+                            "reason": f"low-confidence ROI (confidence {float(conf):.2f}"
+                                      f" < {float(min_confidence):.2f}) — needs_manual"}
+            except (TypeError, ValueError):
+                pass
+
+    # a unified, strictly-increasing timestamp grid across ALL tracks (M11/M14).
+    grid = sorted({int(k.get("t_ms", 0)) for _, kfs in norm_tracks for k in kfs})
+
+    # multi-subject conflict: at ANY shared timestamp the subjects' centres span
+    # more than the crop window → cannot share one frame → needs_manual (no guess).
+    if len(norm_tracks) > 1:
+        for t in grid:
+            xs = [_sample_center(kfs, t)[0] * SW for _, kfs in norm_tracks]
+            ys = [_sample_center(kfs, t)[1] * SH for _, kfs in norm_tracks]
             if (max(xs) - min(xs)) > cw or (max(ys) - min(ys)) > ch:
                 return {**base, "status": NEEDS_MANUAL, "keyframes": [],
                         "reason": "multi-subject conflict — subjects do not fit one "
                                   "crop window; needs_manual"}
 
-    # collapse (single subject, or a non-conflicting group's midpoint) to targets
-    kf0 = per_track[0]
-    times = [int(k.get("t_ms", 0)) for k in kf0]
+    # collapse to per-timestamp targets (the non-conflicting group's midpoint),
+    # clamped into the safe interval, then rate-limited over real positive dt.
     tgt_x, tgt_y = [], []
-    for i, k in enumerate(kf0):
-        cxs = [float(t[i].get("cx", 0.5)) for t in per_track if i < len(t)]
-        cys = [float(t[i].get("cy", 0.5)) for t in per_track if i < len(t)]
-        cx = sum(cxs) / len(cxs)
-        cy = sum(cys) / len(cys)
+    for t in grid:
+        centers = [_sample_center(kfs, t) for _, kfs in norm_tracks]
+        cx = sum(c[0] for c in centers) / len(centers)
+        cy = sum(c[1] for c in centers) / len(centers)
         tgt_x.append(_clamp(cx * SW - cw / 2, safe_x[0], safe_x[1]))
         tgt_y.append(_clamp(cy * SH - ch / 2, safe_y[0], safe_y[1]))
 
-    xs = _rate_limit(times, tgt_x, max_px_per_s)
-    ys = _rate_limit(times, tgt_y, max_px_per_s)
-    keyframes = [{"t_ms": times[i], "x": int(round(xs[i])), "y": int(round(ys[i])),
-                  "w": cw, "h": ch} for i in range(len(times))]
+    xs = _rate_limit(grid, tgt_x, max_px_per_s)
+    ys = _rate_limit(grid, tgt_y, max_px_per_s)
+    keyframes = [{"t_ms": grid[i], "x": int(round(xs[i])), "y": int(round(ys[i])),
+                  "w": cw, "h": ch} for i in range(len(grid))]
     return {**base, "keyframes": keyframes}
 
 

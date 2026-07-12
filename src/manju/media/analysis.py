@@ -58,6 +58,13 @@ AXES = (
 # default: an observation below this confidence is preserved but flagged UNKNOWN.
 _DEFAULT_MIN_CONFIDENCE = 0.25
 
+# Key moments carry a VERSIONED tolerance window (contract §4, addendum ruling 1):
+# a key moment at ``t`` protects ``[t - tol, t + tol]`` as a no-cut zone. The value
+# and its version enter the analysis header (so a digest moves if it is retuned)
+# and every derived no-cut-zone diagnostic (so a silent retune is always visible).
+KEY_MOMENT_TOLERANCE_MS = 200
+KEY_MOMENT_TOLERANCE_VERSION = "km-tol-1"
+
 
 class AnalysisError(RuntimeError):
     """An analysis document could not be produced. ``str()`` carries no secret."""
@@ -105,7 +112,8 @@ def _axis_value(raw: Any) -> tuple[Any, float | None, bool]:
 
 def analyze_with_fixture(source_hash: str, fixture: dict[str, Any], *,
                          source_ref: str | None = None,
-                         min_confidence: float = _DEFAULT_MIN_CONFIDENCE) -> dict[str, Any]:
+                         min_confidence: float = _DEFAULT_MIN_CONFIDENCE,
+                         key_moment_tolerance_ms: int = KEY_MOMENT_TOLERANCE_MS) -> dict[str, Any]:
     """Deterministic offline analysis (fixture-first). Shape a committed JSON
     observation set into a ``manju.media-analysis/v1`` document BOUND to
     ``source_hash``. Two honesty invariants (contract §4):
@@ -141,6 +149,8 @@ def analyze_with_fixture(source_hash: str, fixture: dict[str, Any], *,
             },
             "status": ANALYZED,
             "min_confidence": float(min_confidence),
+            "key_moment_tolerance_ms": int(key_moment_tolerance_ms),
+            "key_moment_tolerance_version": KEY_MOMENT_TOLERANCE_VERSION,
         },
         "evidence": evidence,
         "confidence": confidence,
@@ -163,7 +173,52 @@ def write_report(project: Any, evidence: dict[str, Any]) -> Path:
     return path
 
 
+def _looks_like_hash(value: Any) -> bool:
+    """A source hash is a non-empty ``algo:hex`` token or a bare hex digest."""
+    if not isinstance(value, str) or len(value) < 8:
+        return False
+    stem = value.split(":")[-1]
+    return len(stem) >= 8 and all(c in "0123456789abcdefABCDEF" for c in stem)
+
+
+def validate_report(data: Any, source_hash: str | None = None) -> list[dict[str, Any]]:
+    """Structured validation of a stored analysis document (addendum ruling 1).
+    Returns a list of blocking diagnostics; an empty list means the document is a
+    well-formed ``manju.media-analysis/v1`` report. Checks schema shape, the
+    source-hash FORM, the minimal structure, and — when ``source_hash`` is given —
+    that the document is content-addressed to the media it is stored under (a
+    tampered / mis-filed report fails). This is what makes a malformed / tampered
+    report a *rejection*, never a silent consumption."""
+    if not isinstance(data, dict):
+        return [{"code": "REPORT_NOT_OBJECT", "severity": "blocking",
+                 "detail": "analysis report is not a JSON object"}]
+    diags: list[dict[str, Any]] = []
+    if data.get("schema") != SCHEMA:
+        diags.append({"code": "REPORT_SCHEMA_MISMATCH", "severity": "blocking",
+                      "detail": f"schema {data.get('schema')!r} is not {SCHEMA!r}"})
+    header = data.get("header")
+    if not isinstance(header, dict):
+        diags.append({"code": "REPORT_HEADER_MISSING", "severity": "blocking",
+                      "detail": "header is absent or not an object"})
+        return diags
+    smh = header.get("source_media_hash")
+    if not _looks_like_hash(smh):
+        diags.append({"code": "REPORT_SOURCE_HASH_MALFORMED", "severity": "blocking",
+                      "detail": "header.source_media_hash is missing or malformed"})
+    elif source_hash is not None and _hash_stem(smh) != _hash_stem(source_hash):
+        diags.append({"code": "REPORT_SOURCE_HASH_MISMATCH", "severity": "blocking",
+                      "detail": "report is not content-addressed to the requested "
+                                "media (tampered or mis-filed)"})
+    if not isinstance(data.get("evidence"), dict):
+        diags.append({"code": "REPORT_EVIDENCE_MISSING", "severity": "blocking",
+                      "detail": "evidence block is absent or not an object"})
+    return diags
+
+
 def read_report(project: Any, source_hash: str) -> dict[str, Any] | None:
+    """Read a stored analysis report. A missing file, unreadable JSON, or a report
+    that fails :func:`validate_report` (malformed / tampered / mis-filed) all yield
+    ``None`` — a structured rejection, never a consumed half-truth (M02)."""
     path = report_path(project, source_hash)
     if not path.is_file():
         return None
@@ -171,21 +226,27 @@ def read_report(project: Any, source_hash: str) -> dict[str, Any] | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) else None
+    if validate_report(data, source_hash):
+        return None
+    return data
 
 
 def analysis_status(evidence: dict[str, Any] | None, media_path: Path) -> str:
     """The live status of an analysis document w.r.t. the bytes on disk.
 
-    ``MISSING`` (no evidence), ``STALE`` (the pinned ``source_media_hash`` no
-    longer matches the file — a same-name replacement, contract §11 row 2), or
-    ``ANALYZED``. The staleness check is evaluated on READ against the real file,
-    so a silent swap can never pass as fresh."""
+    ``MISSING`` (no evidence, OR pinned evidence whose bound media file is gone —
+    a report that outlived its source never reads through to ANALYZED, M01),
+    ``STALE`` (the pinned ``source_media_hash`` no longer matches the file — a
+    same-name replacement, contract §11 row 2), or ``ANALYZED``. The check is
+    evaluated on READ against the real file, so neither a missing source nor a
+    silent swap can pass as fresh."""
     if not evidence:
         return MISSING
     pinned = (evidence.get("header") or {}).get("source_media_hash")
     media_path = Path(media_path)
-    if pinned and media_path.exists():
+    if pinned:
+        if not media_path.exists():
+            return MISSING          # the report's bound media has disappeared
         try:
             if hash_file(media_path) != pinned:
                 return STALE
@@ -201,39 +262,102 @@ def is_stale(evidence: dict[str, Any] | None, media_path: Path) -> bool:
 # --------------------------------------------------------------- derivations
 
 
-def roi_tracks(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
+def roi_tracks(evidence: dict[str, Any] | None, *,
+               allow_unknown: bool = False,
+               min_confidence: float = _DEFAULT_MIN_CONFIDENCE) -> list[dict[str, Any]]:
     """The ROI/subject tracks (contract §7) the Smart Reframe compiler consumes.
-    Pure read of the evidence; an absent / UNKNOWN axis yields an empty list."""
+    Pure read of the evidence; an absent axis yields an empty list.
+
+    Low-confidence / UNKNOWN evidence must NOT flow into an automatic consumer by
+    default (contract §4, addendum ruling 1, M03): if the ``roi_tracks`` axis was
+    flagged ``UNKNOWN`` (in ``unknown_axes``), or an individual track declares a
+    ``confidence`` below ``min_confidence``, it is withheld unless the caller opts
+    in with ``allow_unknown=True`` (the explicit human override)."""
     if not evidence:
+        return []
+    if not allow_unknown and "roi_tracks" in (evidence.get("unknown_axes") or []):
         return []
     tracks = (evidence.get("evidence") or {}).get("roi_tracks")
     if not isinstance(tracks, list):
         return []
-    return [t for t in tracks if isinstance(t, dict)]
+    out: list[dict[str, Any]] = []
+    for t in tracks:
+        if not isinstance(t, dict):
+            continue
+        if not allow_unknown:
+            conf = t.get("confidence")
+            if conf is not None:
+                try:
+                    if float(conf) < float(min_confidence):
+                        continue        # low-confidence track — withheld by default
+                except (TypeError, ValueError):
+                    pass
+        out.append(t)
+    return out
 
 
-def no_cut_zones(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
+def no_cut_zones(evidence: dict[str, Any] | None, *,
+                 key_moment_tolerance_ms: int | None = None) -> list[dict[str, Any]]:
     """Explicit "禁止静默切断" regions derivable from analysis evidence (contract
     §5): the span of every dialogue audio region and every key moment. A cut that
-    lands strictly inside one of these is a blocking diagnostic on a PROPOSAL
-    (build/segments.py), never an engine hard-block on a human."""
+    severs one of these is a blocking diagnostic on a PROPOSAL (build/segments.py),
+    never an engine hard-block on a human.
+
+    A key moment is a POINT, so it is protected by a versioned tolerance window
+    ``[t - tol, t + tol]`` carrying ``point_ms`` (the moment itself) plus the
+    ``tolerance_ms`` / ``tolerance_version`` that produced it (addendum ruling 1):
+    the tolerance rides every diagnostic, so a silent retune is always visible.
+    Removing the moment (its ``point_ms`` falls inside a remove range) or landing a
+    cut inside the window are both blocking in the validator (M04)."""
     if not evidence:
         return []
     ev = evidence.get("evidence") or {}
+    header = evidence.get("header") or {}
+    tol = key_moment_tolerance_ms
+    if tol is None:
+        tol = header.get("key_moment_tolerance_ms", KEY_MOMENT_TOLERANCE_MS)
+    tol = int(tol)
+    tol_ver = header.get("key_moment_tolerance_version", KEY_MOMENT_TOLERANCE_VERSION)
     zones: list[dict[str, Any]] = []
     regions = ev.get("audio_regions")
     if isinstance(regions, list):
         for r in regions:
             if isinstance(r, dict) and r.get("kind") == "dialogue":
                 zones.append({"start_ms": r.get("start_ms"), "end_ms": r.get("end_ms"),
-                              "reason": "dialogue"})
+                              "reason": "dialogue", "kind": "span"})
     moments = ev.get("key_moments")
     if isinstance(moments, list):
         for m in moments:
             if isinstance(m, dict) and m.get("t_ms") is not None:
                 t = int(m["t_ms"])
-                zones.append({"start_ms": t, "end_ms": t, "reason": "key_moment"})
+                zones.append({"start_ms": t - tol, "end_ms": t + tol, "point_ms": t,
+                              "reason": "key_moment", "kind": "key_moment",
+                              "tolerance_ms": tol, "tolerance_version": tol_ver})
     return zones
+
+
+def analysis_digest(evidence: dict[str, Any] | None) -> str | None:
+    """A stable content digest of the derived analysis document — the value a
+    cutdown binds as ``source_analysis_digest``. It covers the schema, the bound
+    source hash, the observed evidence + unknown axes, and the key-moment tolerance,
+    so ANY change to the analysis (including a retuned tolerance) moves the digest
+    and a stale binding is detectable at validate/apply time (addendum ruling 3,
+    M09). Pure read; writes nothing."""
+    if not evidence:
+        return None
+    import hashlib
+
+    header = evidence.get("header") or {}
+    payload = {
+        "schema": evidence.get("schema"),
+        "source_media_hash": header.get("source_media_hash"),
+        "key_moment_tolerance_ms": header.get("key_moment_tolerance_ms"),
+        "key_moment_tolerance_version": header.get("key_moment_tolerance_version"),
+        "evidence": evidence.get("evidence"),
+        "unknown_axes": evidence.get("unknown_axes"),
+    }
+    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return "sha256:" + hashlib.sha256(blob).hexdigest()
 
 
 # --------------------------------------------------------------- cloud slot (gated)

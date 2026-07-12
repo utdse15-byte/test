@@ -110,24 +110,47 @@ def to_cutdown(proposal: dict[str, Any], *, select: list[int],
                source_analysis_digest: str) -> dict[str, Any]:
     """Turn the SELECTED annotations into a WP3 cutdown proposal payload (the
     explicit human action). The rough cut never edits the Timeline — acting on it
-    routes through the cut path. Unselected findings stay as marks (reversible)."""
+    routes through the cut path. Unselected findings stay as marks (reversible).
+
+    The selected spans are MERGED deterministically (addendum ruling 4, M06):
+    overlapping / adjacent removes collapse into a sorted, non-overlapping remove
+    list BEFORE the complement is taken, so the payload is order-independent and
+    the keep/remove pair is internally consistent for the validator."""
     from ..build.segments import build_cutdown
 
     anns = proposal.get("annotations") or []
-    remove = [[anns[i]["start_ms"], anns[i]["end_ms"]] for i in select
-              if 0 <= i < len(anns)]
+    raw = [[anns[i]["start_ms"], anns[i]["end_ms"]] for i in select
+           if 0 <= i < len(anns)]
+    remove = _merge_ranges(raw)
     reasons = "; ".join(anns[i]["reason"] for i in select if 0 <= i < len(anns))
-    # keep = everything not removed, expressed as the complementary spans is the
-    # cut engine's job; here the diffable intent is the explicit remove list plus
-    # a single keep sentinel so the payload is self-describing.
+    # keep = the complementary spans (the cut engine materialises them); the
+    # diffable intent is the explicit merged remove list plus the keep gaps.
     keep = _complement(remove)
     return build_cutdown(keep=keep, remove=remove,
                          reason=f"speech rough cut: {reasons}",
                          source_analysis_digest=source_analysis_digest)
 
 
+def _merge_ranges(ranges: list[list[int]]) -> list[list[int]]:
+    """Sort and merge overlapping / adjacent ``[start, end)`` spans into a
+    deterministic, non-overlapping list (addendum ruling 4). Inverted / empty
+    spans (end <= start) are dropped. The result is order-independent."""
+    norm = sorted((int(a), int(b)) for a, b in ranges if int(b) > int(a))
+    merged: list[list[int]] = []
+    for a, b in norm:
+        if merged and a <= merged[-1][1]:      # overlap OR adjacency (a == prev end)
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return merged
+
+
 def _complement(remove: list[list[int]]) -> list[list[int]]:
-    """Keep spans = the gaps between removed spans (from 0). Diffable, explicit."""
+    """Keep spans = the gaps between removed spans (from 0), honoring the shared
+    RANGE CONTRACT (build/segments.py): finite gaps plus a single open-ended tail
+    ``[cursor, None]`` resolved against the media duration at validate/apply.
+    ``remove`` is expected already merged (see :func:`_merge_ranges`); it is
+    re-sorted here for safety."""
     if not remove:
         return [[0, None]]
     ordered = sorted(remove)

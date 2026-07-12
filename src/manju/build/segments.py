@@ -14,12 +14,24 @@ an honest ``unknown``, never a fabricated boundary.
 WP3 (§6): a cutdown decision list is a ``keep / remove / reorder / transition /
 reason / source_analysis_digest`` PROPOSAL PAYLOAD — NOT a new public schema. It
 rides the existing Director ``ProposalAction`` envelope. :func:`validate_cutdown`
-is a ZERO-WRITE pre-apply check (current media hash match + time-boundary sanity +
-no-cut-zone diagnostics); "禁止静默切断" is a BLOCKING diagnostic on the proposal,
-never an engine hard-block on a human (addendum ruling 2). :func:`apply_cutdown`
-is a CAS: a source that moved since the proposal was built refuses. The confirmed
-ref feeds 13C's EDITORIAL_CUTDOWN ``cutdown_source.ref`` (an "approved proposal",
-a ref type 13C already accepts) — this batch never invents a cut.
+is a ZERO-WRITE pre-apply check; "禁止静默切断" is a BLOCKING diagnostic on the
+proposal, never an engine hard-block on a human (addendum ruling 2).
+:func:`apply_cutdown` re-runs THE SAME validator (never a lighter check) AND the
+CAS at apply time, refusing on any blocking diagnostic (addendum ruling 3). The
+confirmed ref feeds 13C's EDITORIAL_CUTDOWN ``cutdown_source.ref`` (an "approved
+proposal", a ref type 13C already accepts) — this batch never invents a cut.
+
+RANGE CONTRACT (addendum ruling 2, shared with qc/roughcut.py's ``_complement``).
+A cutdown range is a half-open integer-millisecond interval ``[start_ms, end_ms)``
+with ``start_ms < end_ms``. Exactly one normalized representation is used across
+cutdown and roughcut: every bound is FINITE except an optional open-ended TAIL
+whose ``end`` is ``None`` (meaning "to end of media"). An open tail MUST be
+resolved against the known media duration before validate/apply completes —
+:func:`validate_cutdown` flags a blocking ``OPEN_TAIL_UNRESOLVED`` when a ``None``
+end is present without ``media_duration_ms``, and otherwise substitutes
+``end = media_duration_ms`` so EVERY range is finite for the subsequent
+inverted / out-of-bound / overlap / duplicate / keep-remove-conflict /
+no-cut-zone / digest / hash checks. After resolution nothing is open-ended.
 """
 
 from __future__ import annotations
@@ -171,35 +183,96 @@ def build_cutdown(*, keep: list, remove: list, reason: str,
     }
 
 
-def _ranges(cutdown: dict, key: str) -> list[tuple[int, int]]:
-    out: list[tuple[int, int]] = []
+def _ranges(cutdown: dict, key: str) -> list[tuple[int, int | None]]:
+    """Parse a range list per the module RANGE CONTRACT: each entry is
+    ``[start_ms, end_ms]`` with an integer start and an integer end OR ``None``
+    (the single open-ended tail, resolved later against the media duration)."""
+    out: list[tuple[int, int | None]] = []
     for r in cutdown.get(key) or []:
         try:
-            a, b = int(r[0]), int(r[1])
+            a = int(r[0])
+            b = None if r[1] is None else int(r[1])
         except (TypeError, ValueError, IndexError):
             raise CutdownError(f"cutdown.{key} entries must be [start_ms, end_ms]")
         out.append((a, b))
     return out
 
 
+def _resolve_tail(ranges: list[tuple[int, int | None]],
+                  media_duration_ms: int | None) -> list[tuple[int, int]]:
+    """Resolve the open tail (``end=None``) against the known duration. A ``None``
+    end with no duration is dropped here (already flagged ``OPEN_TAIL_UNRESOLVED``
+    by the caller); every returned range is finite."""
+    res: list[tuple[int, int]] = []
+    for a, b in ranges:
+        if b is None:
+            if media_duration_ms is None:
+                continue
+            b = int(media_duration_ms)
+        res.append((a, b))
+    return res
+
+
+def _overlap_diags(ranges: list[tuple[int, int]], key: str) -> list[dict[str, Any]]:
+    """Overlap / exact-duplicate diagnostics within one finite range list."""
+    diags: list[dict[str, Any]] = []
+    ordered = sorted((a, b) for a, b in ranges if b > a)
+    for i in range(len(ordered)):
+        a1, b1 = ordered[i]
+        for j in range(i + 1, len(ordered)):
+            a2, b2 = ordered[j]
+            if a2 >= b1:
+                break                       # sorted → no later range can overlap
+            if a1 == a2 and b1 == b2:
+                diags.append({"code": "RANGE_DUPLICATE", "severity": "blocking",
+                              "detail": f"{key} range [{a1},{b1}) is duplicated"})
+            else:
+                diags.append({"code": "RANGE_OVERLAP", "severity": "blocking",
+                              "detail": f"{key} ranges [{a1},{b1}) and [{a2},{b2}) "
+                                        f"overlap"})
+    return diags
+
+
+def _hashable(x: Any) -> Any:
+    return tuple(x) if isinstance(x, list) else x
+
+
 def validate_cutdown(cutdown: dict[str, Any], *,
                      no_cut_zones: list[dict] | None = None,
                      media_duration_ms: int | None = None,
                      expected_hashes: dict[str, str] | None = None,
-                     current_hashes: dict[str, str] | None = None) -> list[dict[str, Any]]:
-    """ZERO-WRITE pre-apply validation (contract §6, §11 rows 4-5). Returns a list
-    of diagnostics; a ``blocking`` one must stop the apply. Checks:
+                     current_hashes: dict[str, str] | None = None,
+                     current_analysis_digest: str | None = None) -> list[dict[str, Any]]:
+    """The ONE ZERO-WRITE cutdown validator (contract §6, §11 rows 4-5, addendum
+    ruling 3). Returns a list of diagnostics; a ``blocking`` one must stop the
+    apply. :func:`apply_cutdown` calls THIS SAME function — there is no separate,
+    lighter apply-time check. Checks (all blocking):
 
-    * time-boundary sanity — ordered, in-bounds ranges;
-    * no-cut-zone — a remove boundary strictly inside a dialogue / key-moment zone
-      is a BLOCKING ``CUT_CROSSES_NO_CUT_ZONE`` (禁止静默切断, addendum ruling 2);
-    * current media hash match — a source whose live hash differs from what the
-      proposal recorded is a BLOCKING ``MEDIA_HASH_MISMATCH``.
+    * open tail — a ``None`` end with no ``media_duration_ms`` is
+      ``OPEN_TAIL_UNRESOLVED``; otherwise it is resolved to the duration first
+      (RANGE CONTRACT) so every check below runs on finite ranges;
+    * ``RANGE_INVERTED`` / ``RANGE_OUT_OF_BOUNDS`` — empty/inverted or out-of-bound;
+    * ``RANGE_OVERLAP`` / ``RANGE_DUPLICATE`` — overlapping/duplicate keep or remove;
+    * ``KEEP_REMOVE_CONFLICT`` — a span both kept and removed;
+    * ``REORDER_IDENTITY`` — a reorder plan with duplicate targets;
+    * ``CUT_CROSSES_NO_CUT_ZONE`` — a remove that severs a dialogue span or removes
+      / severs a key moment (禁止静默切断, addendum ruling 2 & M04);
+    * ``ANALYSIS_DIGEST_MISMATCH`` — the cutdown's bound analysis digest no longer
+      matches the current analysis (a stale binding, M09);
+    * ``MEDIA_HASH_MISMATCH`` — a source whose live hash differs from the proposal's.
 
     This function writes NOTHING — building and checking a cutdown is inert."""
     diags: list[dict[str, Any]] = []
-    keep = _ranges(cutdown, "keep")
-    remove = _ranges(cutdown, "remove")
+    keep_raw = _ranges(cutdown, "keep")
+    remove_raw = _ranges(cutdown, "remove")
+
+    # RANGE CONTRACT: resolve the open tail against the known duration first.
+    if any(b is None for _, b in keep_raw + remove_raw) and media_duration_ms is None:
+        diags.append({"code": "OPEN_TAIL_UNRESOLVED", "severity": "blocking",
+                      "detail": "an open-ended range (end=None) requires "
+                                "media_duration_ms to resolve before validate/apply"})
+    keep = _resolve_tail(keep_raw, media_duration_ms)
+    remove = _resolve_tail(remove_raw, media_duration_ms)
 
     for a, b in keep + remove:
         if b <= a:
@@ -210,19 +283,53 @@ def validate_cutdown(cutdown: dict[str, Any], *,
                           "detail": f"range [{a},{b}) exceeds media bounds "
                                     f"[0,{media_duration_ms})"})
 
-    # a remove boundary landing strictly inside a no-cut zone severs it
+    # overlap / duplicate within each list
+    diags += _overlap_diags(keep, "keep")
+    diags += _overlap_diags(remove, "remove")
+
+    # keep/remove conflict — a span cannot be both kept and removed
+    for ka, kb in keep:
+        if kb <= ka:
+            continue
+        for ra, rb in remove:
+            if rb > ra and max(ka, ra) < min(kb, rb):
+                diags.append({"code": "KEEP_REMOVE_CONFLICT", "severity": "blocking",
+                              "detail": f"kept [{ka},{kb}) and removed [{ra},{rb}) "
+                                        f"overlap"})
+
+    # reorder identity — the reorder plan must not name a target twice
+    reorder = cutdown.get("reorder") or []
+    if isinstance(reorder, list) and reorder:
+        keys = [_hashable(x) for x in reorder]
+        if len(keys) != len(set(keys)):
+            diags.append({"code": "REORDER_IDENTITY", "severity": "blocking",
+                          "detail": "reorder plan names a target more than once"})
+
+    # no-cut zones: a remove that severs a span, or removes / severs a key moment
     for a, b in remove:
         for z in no_cut_zones or []:
             zs, ze = z.get("start_ms"), z.get("end_ms")
             if zs is None or ze is None:
                 continue
-            for boundary in (a, b):
-                if zs < boundary < ze:
-                    diags.append({
-                        "code": "CUT_CROSSES_NO_CUT_ZONE", "severity": "blocking",
-                        "detail": f"a cut at {boundary}ms falls inside a no-cut "
-                                  f"zone [{zs},{ze}) ({z.get('reason')})",
-                        "zone": z})
+            severed = any(zs < boundary < ze for boundary in (a, b))
+            point = z.get("point_ms")
+            removed_point = point is not None and a <= point < b
+            if severed or removed_point:
+                where = point if removed_point else next(
+                    boundary for boundary in (a, b) if zs < boundary < ze)
+                diags.append({
+                    "code": "CUT_CROSSES_NO_CUT_ZONE", "severity": "blocking",
+                    "detail": f"a cut at {where}ms falls inside a no-cut zone "
+                              f"[{zs},{ze}) ({z.get('reason')})",
+                    "zone": z})
+
+    # analysis-digest binding — a stale cutdown (analysis moved on) is refused
+    if current_analysis_digest is not None:
+        bound = cutdown.get("source_analysis_digest")
+        if bound != current_analysis_digest:
+            diags.append({"code": "ANALYSIS_DIGEST_MISMATCH", "severity": "blocking",
+                          "detail": f"cutdown bound analysis {bound!r} but the "
+                                    f"current analysis is {current_analysis_digest!r}"})
 
     if expected_hashes is not None and current_hashes is not None:
         for src, exp in expected_hashes.items():
@@ -248,17 +355,42 @@ def cutdown_proposal_action(cutdown: dict[str, Any], *, timeline_target: str,
 def apply_cutdown(cutdown: dict[str, Any], *,
                   expected_hashes: dict[str, str],
                   current_hashes: dict[str, str],
-                  proposal_id: str) -> dict[str, Any]:
-    """CAS apply (contract §6, §11 row 6). Re-checks that every source's live hash
-    still matches what the proposal recorded; a mismatch RAISES
-    :class:`StaleCutdownError` (never a silent overwrite). On success returns the
-    ``cutdown_source`` ref that 13C's EDITORIAL_CUTDOWN variant consumes — the cut
-    enters source through the existing proposal/roundtrip path, not a re-invention."""
+                  proposal_id: str,
+                  no_cut_zones: list[dict] | None = None,
+                  media_duration_ms: int | None = None,
+                  current_analysis_digest: str | None = None) -> dict[str, Any]:
+    """CAS + full re-validation at apply (contract §6, §11 row 6, addendum ruling
+    3). A confirmed proposal does NOT bypass semantics: apply
+
+    1. re-runs the CAS — every source's live hash must still match what the
+       proposal recorded; a mismatch RAISES :class:`StaleCutdownError`;
+    2. re-runs THE SAME :func:`validate_cutdown` (no lighter check) and RAISES
+       :class:`CutdownError` on ANY blocking diagnostic — inverted / out-of-bound /
+       overlap / keep-remove conflict / no-cut-zone (M04, M08) / stale analysis
+       digest (M09) / unresolved open tail.
+
+    On success returns the ``cutdown_source`` ref that 13C's EDITORIAL_CUTDOWN
+    variant consumes plus, when a duration is known, the ``resolved_keep`` timeline
+    (open tail resolved to the real duration) — the cut enters source through the
+    existing proposal/roundtrip path, not a re-invention."""
     for src, exp in (expected_hashes or {}).items():
         if current_hashes.get(src) != exp:
             raise StaleCutdownError(
                 f"cannot apply cutdown: source {src!r} moved since the proposal "
                 f"(expected {exp}, got {current_hashes.get(src)}) — re-derive it")
+
+    diags = validate_cutdown(cutdown, no_cut_zones=no_cut_zones,
+                             media_duration_ms=media_duration_ms,
+                             current_analysis_digest=current_analysis_digest)
+    blocking = sorted({d["code"] for d in diags if d.get("severity") == "blocking"})
+    if blocking:
+        raise CutdownError("cannot apply cutdown: blocking diagnostics "
+                           f"{blocking} — re-derive or resolve the proposal")
+
+    resolved_keep = None
+    if media_duration_ms is not None:
+        resolved_keep = [[a, b] for a, b in
+                         _resolve_tail(_ranges(cutdown, "keep"), media_duration_ms)]
     return {
         "cutdown_source": {
             "ref": f"proposal:{proposal_id}",
@@ -266,4 +398,5 @@ def apply_cutdown(cutdown: dict[str, Any], *,
             "source_analysis_digest": cutdown.get("source_analysis_digest"),
         },
         "applied": True,
+        "resolved_keep": resolved_keep,
     }
