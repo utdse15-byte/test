@@ -177,8 +177,8 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
     from ..media.ffmpeg import default_log
     from ..media.kenburns import kenburns
     from ..media.render import (
-        _audio_input_hashes, _enc_params, _read_key_sidecar, _write_key_sidecar,
-        render_timeline,
+        _audio_input_hashes, _enc_params, _read_key_sidecar, _toolchain_key_component,
+        _write_key_sidecar, render_timeline,
     )
 
     log = default_log(project.root, "animatic")
@@ -197,6 +197,14 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
     # timeline's rational-rate echo folded through tl.model_dump() below.
     _rate = config.frame_rate
     _rate_key = None if _rate.exact_int is not None else str(_rate)
+    # S4: the strictly-opt-in toolchain component (sorted token→fact map from
+    # media/render's helper, process-cached facts). None for every project that
+    # never set cache_toolchain_keys → both animatic key sites below append
+    # nothing, byte-identical keys — exactly the _rate_key drop-when-absent
+    # pattern. Opted in, the kenburns clip keys AND the outer animatic key
+    # shift when a declared fact shifts (a new ffmpeg honestly re-renders the
+    # preview instead of reusing stale-toolchain clip bytes).
+    _tc_key = _toolchain_key_component(project, config)
     seg_keys: list[str] = []
     for clip in data.get("tracks", {}).get("video", []) or []:
         shot = str(clip.get("shot") or "")
@@ -210,6 +218,8 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
             }
             if _rate_key is not None:
                 kb_key["rate"] = _rate_key
+            if _tc_key is not None:
+                kb_key["toolchain"] = _tc_key
             key = short_hash(cache_key(kb_key), 12)
             dest = clips_dir / f"{shot}_{key}.mp4"
             if force or not (dest.exists() and dest.stat().st_size > 0):
@@ -228,14 +238,17 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
             seg_keys.append(f"slate:{shot}:{dur}")
     tl = Timeline.model_validate(data)
 
-    key = cache_key({
+    animatic_payload: dict[str, Any] = {
         "segments": seg_keys,
         "timeline": tl.model_dump(exclude={"meta"}),
         "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
         "audio": _audio_input_hashes(project, tl),
         "encoding": _enc_params("final"),
         "target": "animatic",
-    })
+    }
+    if _tc_key is not None:  # S4 opt-in only — absent appends nothing (byte pin)
+        animatic_payload["toolchain"] = _tc_key
+    key = cache_key(animatic_payload)
 
     out_dir = project.root / "renders" / "animatic"
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -434,8 +434,10 @@ schemas:
     notes: >-
       Record-only reproducibility evidence (manju/python/OS/ffmpeg/deps/font
       digests/optional tools/locale) — facts-only digest, structured drift
-      compare, deletable projection; content-key wiring is a DECLARED future
-      step (docstring), not done; no absolute paths/hostname/username ever.
+      compare, deletable projection; no absolute paths/hostname/username ever.
+      Content-key wiring LANDED (S4) strictly opt-in via project.yaml
+      cache_toolchain_keys + process-cached collector wrappers; the manifest
+      document itself stays record-only and is never read back.
 
   - id: manju.delivery-conformance/v1
     kind: schema
@@ -479,8 +481,14 @@ documents:
     write_older: false
     notes: >-
       The project root config (name/width/height/fps/mode/budget…). Loaded by
-      core.container.Project.load_config. fps is int TODAY (see
-      planned_migrations: the int→rational edit_rate major is declared only).
+      core.container.Project.load_config. R1 added OPTIONAL edit_rate {num,den}
+      (fps stays the validated legacy int mirror; absent key ⇒ byte-identical
+      serialization); the int→rational migration is IMPLEMENTED via manju
+      migrate (see planned_migrations). S4 adds OPTIONAL cache_toolchain_keys
+      (drop-None; tokens EXACTLY ffmpeg|fonts, validated — irrelevant facts
+      rejected so they can never cause meaningless rebuilds); listed tokens
+      fold those byte-affecting toolchain facts into every render cache key,
+      so flipping the field is a documented cache-cold re-render.
   - id: bible
     kind: document
     owner: manju.core.container:Project

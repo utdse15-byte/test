@@ -313,6 +313,42 @@ def _apply_fades(
         )
 
 
+def _toolchain_key_component(
+    project: Project, config: "ProjectConfig | None" = None,
+) -> dict[str, str] | None:
+    """S4 (user item 7): the STRICTLY OPT-IN toolchain key component.
+
+    ``None`` — the answer for every project whose ``project.yaml`` never sets
+    ``cache_toolchain_keys`` — appends NOTHING at any key site, so a
+    not-opted-in project's keys stay byte-identical forever (and no collector
+    is even probed). An opted-in project gets a sorted token→fact map over
+    EXACTLY its declared tokens (validation already rejected everything that
+    cannot change output bytes, so this map can never force a meaningless
+    rebuild):
+
+    * ``"ffmpeg"`` → the ``-version`` FIRST line verbatim (honest ``"missing"``
+      when the tool is absent — a fact, never a crash);
+    * ``"fonts"``  → the drawtext burn-font content hash (honest ``"unknown"``
+      when unlocatable).
+
+    Facts come from the process-cached collectors (one probe per process, spy-
+    pinned) so computing N keys never re-runs a subprocess. Pass an already-
+    loaded ``config`` to skip the project.yaml read (build/graph does)."""
+    cfg = config if config is not None else project.load_config()
+    tokens = getattr(cfg, "cache_toolchain_keys", None)
+    if not tokens:
+        return None
+    from ..core.toolchain import cached_drawtext_font_hash, cached_tool_version_line
+
+    component: dict[str, str] = {}
+    for token in sorted(set(tokens)):
+        if token == "ffmpeg":
+            component["ffmpeg"] = cached_tool_version_line("ffmpeg")
+        elif token == "fonts":
+            component["fonts"] = cached_drawtext_font_hash()
+    return component
+
+
 def _segment_cache_key(
     project: Project,
     clip: VideoClip,
@@ -324,6 +360,7 @@ def _segment_cache_key(
     fade_in_ms: int,
     fade_out_ms: int,
     rate_key: str | None = None,
+    toolchain_key: dict[str, str] | None = None,
 ) -> str:
     """The one segment-key formula, shared by the segment cache and the
     final content key (FIX-A) so they can never drift apart.
@@ -333,7 +370,10 @@ def _segment_cache_key(
     for a rational project ONLY — appended so a 1001-family project's segments
     are content-distinct from the int-nominal project's and from each other's
     rates, deterministically. ``None`` (every int project) appends nothing, so
-    the produced key is byte-for-byte what it was before R2."""
+    the produced key is byte-for-byte what it was before R2. ``toolchain_key``
+    (S4) is the opt-in sorted token→fact map from
+    :func:`_toolchain_key_component` — same drop-when-absent contract: ``None``
+    (every not-opted-in project) appends nothing, byte-identical key."""
     src = project.resolve(clip.source)
     parts: list[object] = [
         hash_file(src), width, height, fps, clip.duration_ms, target, fade_in_ms, fade_out_ms
@@ -353,6 +393,10 @@ def _segment_cache_key(
     # project; absent (None) for every int project → byte-identical key.
     if rate_key is not None:
         parts.append(("rate", rate_key))
+    # S4 opt-in toolchain facts: distinct + deterministic key for an opted-in
+    # project; absent (None) for every other project → byte-identical key.
+    if toolchain_key is not None:
+        parts.append(("toolchain", toolchain_key))
     return cache_key(*parts)
 
 
@@ -369,6 +413,7 @@ def _build_segment(
     log: Log,
     rate_key: str | None = None,
     rate_arg: str | int | None = None,
+    toolchain_key: dict[str, str] | None = None,
 ) -> Path:
     """Return the cached segment path for one clip, rendering it if absent.
 
@@ -384,13 +429,16 @@ def _build_segment(
     distinct, and ``rate_arg`` is the ffmpeg frame-rate token normalize encodes
     at (the exact ``num/den`` — ffmpeg's ``fps``/``-framerate`` take fractions).
     Both default to today's int behaviour (None → the int ``fps``), so an int
-    project's key AND ffmpeg command line are byte-identical."""
+    project's key AND ffmpeg command line are byte-identical. ``toolchain_key``
+    (S4) is the opt-in token→fact map; None (every not-opted-in project) keys
+    byte-identically."""
     src = project.resolve(clip.source)
     if not src.exists():
         raise MediaError(f"take source not found for {clip.shot}/{clip.take}: {clip.source}")
     key = _segment_cache_key(
         project, clip, width=width, height=height, fps=fps, target=target,
         fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, rate_key=rate_key,
+        toolchain_key=toolchain_key,
     )
     enc_fps = rate_arg if rate_arg is not None else fps
     seg_path = project.segments_dir / f"{short_hash(key)}.mp4"
@@ -650,17 +698,22 @@ def _plan_transitions(
 def _boundary_cache_key(
     project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
     *, width: int, height: int, fps: int, target: str, rate_key: str | None = None,
+    toolchain_key: dict[str, str] | None = None,
 ) -> str:
     """Content identity of a boundary segment: both neighbour segment keys
     (which already fold source hashes, dims, fps, durations, in-points and — R2 —
     the rational rate via ``rate_key``) plus the transition shape. Changing the
     transition TYPE re-keys only the boundary (the neighbours' fade-free segment
     keys are unchanged), so the boundary re-renders while the segment cache is
-    reused. ``rate_key`` None (every int project) keeps this key byte-identical."""
+    reused. ``rate_key`` None (every int project) keeps this key byte-identical.
+    ``toolchain_key`` (S4) rides the two neighbour segment keys exactly like
+    ``rate_key`` does — None (every not-opted-in project) is byte-identical."""
     ka = _segment_cache_key(project, a, width=width, height=height, fps=fps,
-                            target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key)
+                            target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key,
+                            toolchain_key=toolchain_key)
     kb = _segment_cache_key(project, b, width=width, height=height, fps=fps,
-                            target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key)
+                            target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key,
+                            toolchain_key=toolchain_key)
     return cache_key("xfade-boundary", ka, kb, boundary.xfade,
                      boundary.duration_ms, boundary.half_ms, width, height, fps, target)
 
@@ -669,6 +722,7 @@ def _build_boundary_segment(
     project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
     *, width: int, height: int, fps: int, target: str, log: Log,
     rate_key: str | None = None, rate_arg: str | int | None = None,
+    toolchain_key: dict[str, str] | None = None,
 ) -> Path:
     """Render (or reuse) the content-addressed boundary segment for an applied
     xfade: the outgoing tail (last half real + half tail-handle) cross-dissolved
@@ -682,7 +736,7 @@ def _build_boundary_segment(
     enc_fps = rate_arg if rate_arg is not None else fps
     key = _boundary_cache_key(project, a, b, boundary,
                               width=width, height=height, fps=fps, target=target,
-                              rate_key=rate_key)
+                              rate_key=rate_key, toolchain_key=toolchain_key)
     seg_path = project.segments_dir / f"xfade_{short_hash(key)}.mp4"
     if seg_path.exists():
         if probe_duration_ms(seg_path) is not None:
@@ -747,6 +801,7 @@ def _assemble_video_pieces(
     boundaries: list[_Boundary], *, width: int, height: int, fps: int,
     target: str, tmp_dir: Path, log: Log,
     rate_key: str | None = None, rate_arg: str | int | None = None,
+    toolchain_key: dict[str, str] | None = None,
 ) -> list[Path]:
     """The ordered concat pieces once applied xfades restructure the track:
     each clip contributes its cached segment (untouched when it lends no handle)
@@ -775,7 +830,7 @@ def _assemble_video_pieces(
             pieces.append(_build_boundary_segment(
                 project, clips[idx], clips[idx + 1], b,
                 width=width, height=height, fps=fps, target=target, log=log,
-                rate_key=rate_key, rate_arg=rate_arg,
+                rate_key=rate_key, rate_arg=rate_arg, toolchain_key=toolchain_key,
             ))
     return pieces
 
@@ -1062,6 +1117,10 @@ def _final_key_payload(
     # stays the int nominal rate everywhere it already appears in the key.
     _rate = timeline.frame_rate
     rate_key = None if _rate.exact_int is not None else str(_rate)
+    # S4: the opt-in toolchain component, computed ONCE per payload from the
+    # project config (facts are process-cached — no per-key probes). None for
+    # every not-opted-in project → nothing changes anywhere below.
+    toolchain_key = _toolchain_key_component(project)
     # Round-T: the segment fade params come from the shared boundary plan so a
     # degraded xfade's baked dip-to-black is reflected here exactly as rendered.
     # For a timeline with only fade/cut transitions the plan == _fade_params, so
@@ -1071,6 +1130,7 @@ def _final_key_payload(
         _segment_cache_key(
             project, clip, width=width, height=height, fps=fps, target=target,
             fade_in_ms=seg_fades[i][0], fade_out_ms=seg_fades[i][1], rate_key=rate_key,
+            toolchain_key=toolchain_key,
         )
         if project.resolve(clip.source).exists()
         else f"missing:{clip.source}"
@@ -1119,6 +1179,13 @@ def _final_key_payload(
     look = load_look(project)
     if look.active:
         payload["look"] = {"preset": look.preset, "intensity": look.intensity}
+    # S4: the opt-in toolchain component also keys the FINAL directly — the
+    # final composition pass is itself an ffmpeg/burn-font product beyond the
+    # segments (and a missing-source segment keys as a marker that folds no
+    # facts). Appended ONLY when opted in, exactly like overlay_images/look, so
+    # every not-opted-in project keeps a byte-identical content key.
+    if toolchain_key is not None:
+        payload["toolchain"] = toolchain_key
     return payload
 
 
@@ -1162,6 +1229,8 @@ def _key_inputs_breakdown(payload: dict) -> dict:
         inputs["overlay_images"] = payload["overlay_images"]
     if "look" in payload:
         inputs["look"] = payload["look"]
+    if "toolchain" in payload:                       # S4 opt-in component
+        inputs["toolchain"] = payload["toolchain"]
     return inputs
 
 
@@ -1286,6 +1355,11 @@ def render_timeline(
     # final_vN's sidecar; the (overwritable) proxy compares against its own.
     payload = _final_key_payload(project, timeline, ass_file=ass_file, target=target)
     content_key = cache_key(payload)
+    # S4: reuse the EXACT toolchain component the payload was keyed with for
+    # the segment/boundary builds below (absent → None → byte-identical keys) —
+    # one computation, and the built segment paths can never drift from the
+    # seg keys inside the content key (FIX-A discipline).
+    toolchain_key = payload.get("toolchain")
     if not force and out_path is None:
         if target == "final":
             latest = _latest_final_with_key(project)
@@ -1315,7 +1389,7 @@ def render_timeline(
             _build_segment(
                 project, clip, width=width, height=height, fps=fps, target=target,
                 fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, log=log,
-                rate_key=rate_key, rate_arg=rate_arg,
+                rate_key=rate_key, rate_arg=rate_arg, toolchain_key=toolchain_key,
             )
         )
 
@@ -1369,6 +1443,7 @@ def render_timeline(
                 project, video_clips, segments, xfade_boundaries,
                 width=width, height=height, fps=fps, target=target,
                 tmp_dir=tmp_dir, log=log, rate_key=rate_key, rate_arg=rate_arg,
+                toolchain_key=toolchain_key,
             )
         else:
             pieces = segments

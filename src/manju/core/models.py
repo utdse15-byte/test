@@ -143,6 +143,14 @@ class EditRate(ManjuModel):
         return Rate.from_fraction(self.num, self.den)
 
 
+# S4: the ONLY toolchain facts allowed into render cache keys — the two that
+# change rendered output bytes (encoder body; subtitle burn font). The doc's
+# own warning, enforced: an irrelevant fact in the key would only invalidate
+# caches without changing a single output byte — a meaningless rebuild — so
+# everything else is rejected at validation, never silently accepted.
+CACHE_TOOLCHAIN_TOKENS = ("ffmpeg", "fonts")
+
+
 class ProjectConfig(ManjuModel):
     name: str
     width: int = 1080
@@ -173,6 +181,24 @@ class ProjectConfig(ManjuModel):
     # or a template like "claude -p {prompt}". None → MANJU_AGENT env, then a
     # PATH probe over the known agents (src/manju/agents.py).
     agent: str | None = None
+    # S4 (user item 7): STRICTLY OPT-IN toolchain facts in the render cache
+    # keys. Absent (None, the default) = today's behaviour, byte-identical keys
+    # forever. A project that lists tokens here folds the named byte-affecting
+    # facts into every render key (segment / boundary / final / animatic — the
+    # component helper is media/render.py::_toolchain_key_component):
+    #   "ffmpeg" → the ffmpeg -version first line ("missing" when absent),
+    #   "fonts"  → the drawtext burn-font sha256 ("unknown" when unlocatable).
+    # CONSEQUENCE (state it, never surprise): flipping this ON — or later OFF —
+    # changes every render cache key of the project, so the next build is
+    # CACHE-COLD end to end (segments, boundaries, finals, animatic all
+    # re-render once). That is the feature: a new ffmpeg / swapped burn font
+    # honestly re-renders instead of serving stale-toolchain bytes.
+    # Validation enforces the doc's own warning: ONLY facts that change output
+    # bytes may enter the key — anything else (os/python/deps/…) is rejected in
+    # `_byte_affecting_toolchain_tokens` below, so an irrelevant fact can never
+    # cause a meaningless rebuild. An empty list is an error (absent is the off
+    # switch); serialization drops None entirely (R1 edit_rate precedent).
+    cache_toolchain_keys: list[str] | None = None
 
     # Round W (issue #2/#6): fps/width/height are load-bearing for frame math —
     # fps=0 divides-by-zero in the timeline compiler's frame-grid snap
@@ -211,16 +237,52 @@ class ProjectConfig(ManjuModel):
                 )
         return self
 
-    # Byte-identity: drop a None edit_rate from EVERY serialization (not only the
-    # exclude_none save paths — presets/supportbundle/status dump with a plain
-    # model_dump()), so a project that never sets edit_rate emits no such key at
-    # all. Mirrors CaptionLine._drop_default_role (wave-4b). A PRESENT edit_rate
-    # is untouched and rides through as its {num, den} mapping.
+    # S4: the doc's own warning as a VALIDATOR — only byte-affecting facts may
+    # key the cache. A token outside CACHE_TOOLCHAIN_TOKENS is a structured
+    # error naming the allowed set and WHY; an empty list is an error (absent
+    # is the off switch); a duplicate is an error (the key component is a
+    # sorted token→fact map — repeating a token adds nothing).
+    @field_validator("cache_toolchain_keys")
+    @classmethod
+    def _byte_affecting_toolchain_tokens(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if not v:
+            raise ValueError(
+                "cache_toolchain_keys 不能是空列表 — 要关闭就直接删掉/省略这个字段"
+                "(缺省 = 工具链事实不进缓存键);空列表不是合法的开关状态"
+            )
+        seen: set[str] = set()
+        for token in v:
+            if token not in CACHE_TOOLCHAIN_TOKENS:
+                raise ValueError(
+                    f"cache_toolchain_keys 只接受会改变渲染输出字节的工具链事实:"
+                    f"{CACHE_TOOLCHAIN_TOKENS}(实际 {token!r})— "
+                    "'ffmpeg' 是编码器本体、'fonts' 是字幕烧录字体,它们变了输出字节才会变;"
+                    "其它机器事实(os/python/依赖版本…)不改变输出字节,进键只会造成"
+                    "毫无意义的全量重建(键变了、字节没变),所以在校验层直接拒绝"
+                )
+            if token in seen:
+                raise ValueError(
+                    f"cache_toolchain_keys 里 {token!r} 重复出现 — 每个 token 至多一次"
+                    "(键组件是按 token 排序的映射,重复没有意义)"
+                )
+            seen.add(token)
+        return v
+
+    # Byte-identity: drop a None edit_rate AND a None cache_toolchain_keys from
+    # EVERY serialization (not only the exclude_none save paths — presets/
+    # supportbundle/status dump with a plain model_dump()), so a project that
+    # never sets them emits no such keys at all. Mirrors CaptionLine
+    # ._drop_default_role (wave-4b); S4 rides R1's wrap serializer (pydantic
+    # allows ONE model_serializer per model). Present values are untouched.
     @model_serializer(mode="wrap")
     def _drop_default_edit_rate(self, handler):
         data = handler(self)
-        if isinstance(data, dict) and data.get("edit_rate") is None:
-            data.pop("edit_rate", None)
+        if isinstance(data, dict):
+            for absent_when_none in ("edit_rate", "cache_toolchain_keys"):
+                if data.get(absent_when_none) is None:
+                    data.pop(absent_when_none, None)
         return data
 
     @property

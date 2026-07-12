@@ -15,12 +15,18 @@ build/core/providers/runtime path reads ``reports/toolchain/`` or imports this
 module). The document is evidence a human or dashboard reads; deleting it
 loses the report, never an output.
 
-Declared next step (NOT this loop, mirroring the fps migration pattern in
-:mod:`manju.core.timebase`): 影响输出字节的工具进入内容键 — feeding the tools
-that influence output bytes (ffmpeg version, the burn font) into the content
-key is a FUTURE, separately-audited migration, because it invalidates every
-existing cache key the moment it lands. Until that audit happens, this module
-records and never enforces.
+Declared next step — LANDED as STRICTLY OPT-IN (S4, user item 7), mirroring
+the fps migration pattern in :mod:`manju.core.timebase`: 影响输出字节的工具进入
+内容键 — the two byte-affecting facts (the ffmpeg ``-version`` first line and
+the drawtext font content hash) can now enter the render cache keys, but ONLY
+when a project explicitly lists them in ``project.yaml``'s
+``cache_toolchain_keys`` (validated to EXACTLY {"ffmpeg", "fonts"} — anything
+else would only cause meaningless rebuilds and is rejected at load). A project
+that never opts in keeps byte-identical keys forever. The single consumer seam
+is ``media/render.py``'s key-component helper, which reads the process-cached
+wrappers below; the manifest document itself STAYS record-only — nothing in
+``build``/``core``/``providers``/``runtime`` reads the derived report or
+imports this module (the grep-pinned inertness test still holds verbatim).
 
 Design rules honoured here
 --------------------------
@@ -46,6 +52,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +61,8 @@ from .yamlio import atomic_write_text
 
 __all__ = [
     "SCHEMA",
+    "cached_drawtext_font_hash",
+    "cached_tool_version_line",
     "manifest_digest",
     "toolchain_dir",
     "toolchain_drift",
@@ -195,6 +204,35 @@ def _font_inventory() -> dict[str, Any]:
                                  "sha256": hash_file(Path(path))}}
     except OSError:
         return {"drawtext_cjk": UNKNOWN}
+
+
+# ------------------------------------------------- process-cached facts (S4)
+# The opt-in key wiring (media/render's toolchain key component) reads facts
+# through these wrappers so N cache-key computations cost exactly ONE probe per
+# process (a call-count spy pins this in tests/test_fp_toolkeys.py). They are
+# thin lru_cache shells over the SAME collectors the manifest records — never a
+# parallel account of the machine. ``toolchain_manifest`` itself deliberately
+# keeps probing fresh (it is the record; a manifest written after a live
+# ffmpeg upgrade must see the new truth even mid-process).
+
+
+@lru_cache(maxsize=None)
+def cached_tool_version_line(name: str) -> str:
+    """Process-cached :func:`_tool_version_line`: the ``-version`` FIRST line
+    verbatim, or the honest ``"missing"`` — one subprocess probe per process."""
+    return _tool_version_line(name)
+
+
+@lru_cache(maxsize=None)
+def cached_drawtext_font_hash() -> str:
+    """Process-cached drawtext font content hash (the §8.4 burn font both burn
+    surfaces resolve via ``media/card.find_font``): the ``sha256:...`` string,
+    or the honest ``"unknown"`` when no font is locatable — one hash-the-file
+    probe per process."""
+    entry = _font_inventory().get("drawtext_cjk")
+    if isinstance(entry, dict) and isinstance(entry.get("sha256"), str):
+        return entry["sha256"]
+    return UNKNOWN
 
 
 # --------------------------------------------------------------- the document
