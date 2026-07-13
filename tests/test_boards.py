@@ -517,29 +517,23 @@ def test_breakdown_empty_uses_qichengzhuanhe_labels():
 # ============================================ scaffold gating + lock respect
 
 
-def test_scaffold_only_writes_with_flag(tmp_project, add_shot):
-    import os
-
+def test_scaffold_only_writes_with_flag(tmp_project, add_shot, monkeypatch):
     from typer.testing import CliRunner
 
     from manju.cli import app
 
     add_shot(tmp_project, "S1", action={"main": "推门然后落座"})
     runner = CliRunner()
-    cwd = os.getcwd()
-    os.chdir(tmp_project.root)
-    try:
-        r = runner.invoke(app, ["board", "keyframes", "S1", "--n", "2"])
-        assert r.exit_code == 0 and "推门" in r.output
-        assert tmp_project.load_shot("S1").keyframes == []  # nothing written
+    monkeypatch.chdir(tmp_project.root)
+    r = runner.invoke(app, ["board", "keyframes", "S1", "--n", "2"])
+    assert r.exit_code == 0 and "推门" in r.output
+    assert tmp_project.load_shot("S1").keyframes == []  # nothing written
 
-        r = runner.invoke(app, ["board", "keyframes", "S1", "--n", "2", "--scaffold"])
-        assert r.exit_code == 0
-        kfs = tmp_project.load_shot("S1").keyframes
-        assert [k.position for k in kfs] == ["start", "end"]
-        assert kfs[0].prompt == "推门" and kfs[1].prompt == "落座"
-    finally:
-        os.chdir(cwd)
+    r = runner.invoke(app, ["board", "keyframes", "S1", "--n", "2", "--scaffold"])
+    assert r.exit_code == 0
+    kfs = tmp_project.load_shot("S1").keyframes
+    assert [k.position for k in kfs] == ["start", "end"]
+    assert kfs[0].prompt == "推门" and kfs[1].prompt == "落座"
 
 
 def test_scaffold_respects_keyframes_lock(tmp_project, add_shot):

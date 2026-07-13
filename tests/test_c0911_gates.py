@@ -55,13 +55,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _cli(project, *args):
     """Run one read-only CLI command from inside the project (the fresh-agent
-    transcript primitive)."""
-    cwd = os.getcwd()
-    try:
-        os.chdir(project.root)
+    transcript primitive).
+
+    Uses ``pytest.MonkeyPatch.context()`` (the fixture's context-manager form,
+    since a module-level helper cannot take the ``monkeypatch`` fixture arg) so
+    the cwd is always restored on exit — even if ``invoke`` raises — and never
+    leaks into a sibling test under ``pytest -n auto``."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.chdir(project.root)
         return runner.invoke(app, list(args))
-    finally:
-        os.chdir(cwd)
 
 
 def _cli_json(project, *args):

@@ -428,12 +428,13 @@ def test_verifications_jsonl_is_append_only(tmp_project):
 
 
 def _run_in(project, *args):
-    cwd = os.getcwd()
-    os.chdir(project.root)
-    try:
+    # ``pytest.MonkeyPatch.context()`` = the monkeypatch fixture's context-
+    # manager form (a module-level helper cannot take the fixture arg); it
+    # restores the cwd on exit even if ``invoke`` raises, so it never leaks
+    # into a sibling test under ``pytest -n auto``.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.chdir(project.root)
         return runner.invoke(app, list(args))
-    finally:
-        os.chdir(cwd)
 
 
 def test_cli_exports_human_and_json(tmp_project):

@@ -14,3 +14,9 @@ annotated-types==0.7.0
 markdown-it-py==4.2.0
 mdurl==0.1.2
 Pygments==2.20.0
+# Optimization item 5: pytest-xdist enables `pytest -n auto` (per-core
+# parallelism); execnet is its only runtime transitive. Test-tooling pins live
+# here too so CI's `pip install -c constraints.txt` resolves one reproducible
+# parallel-runner build.
+pytest-xdist==3.8.0
+execnet==2.1.2

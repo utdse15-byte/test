@@ -433,7 +433,7 @@ def test_pin_default_strategy_matches_fallback_chain_order(
 
 
 def test_unknown_match_key_is_clean_error_not_silent_false(
-        providers_dir, tmp_project, add_shot):
+        providers_dir, tmp_project, add_shot, monkeypatch):
     write_yaml(tmp_project.root / "timeline" / "routing.yaml", {
         "strategy": "bad",
         "strategies": {"bad": {"rules": [{"match": {"mood": "tense"}, "use": "x"}]}}})
@@ -443,8 +443,7 @@ def test_unknown_match_key_is_clean_error_not_silent_false(
         routing.resolve(tmp_project, shot)
     assert "unknown match key 'mood'" in str(exc.value)
     # and the CLI surfaces it as a clean failure, not a traceback
-    import os
-    os.chdir(tmp_project.root)
+    monkeypatch.chdir(tmp_project.root)
     res = runner.invoke(app, ["route", "explain", "S001"])
     assert res.exit_code == 1
     assert "unknown match key" in res.output
@@ -605,11 +604,10 @@ def test_check_unknown_provider_errors(providers_dir):
 # ==================================================================== route list
 
 
-def test_route_list_marks_active_and_lists_builtins(providers_dir, tmp_project):
+def test_route_list_marks_active_and_lists_builtins(providers_dir, tmp_project, monkeypatch):
     write_yaml(tmp_project.root / "timeline" / "routing.yaml", {"strategy": "cheapest"})
     import json
-    import os
-    os.chdir(tmp_project.root)
+    monkeypatch.chdir(tmp_project.root)
     res = runner.invoke(app, ["route", "list", "--json"])
     assert res.exit_code == 0, res.output
     info = json.loads(res.output)

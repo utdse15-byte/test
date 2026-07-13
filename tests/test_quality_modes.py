@@ -21,7 +21,6 @@ routing.yaml under tmp, and the registry manifest cache is reset per test.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 
@@ -505,10 +504,10 @@ def test_routing_explain_mode_preview_biases_head(providers_dir, tmp_project, ad
     assert base_row["estimated_cost"] != speed_row["estimated_cost"]
 
 
-def test_routing_explain_cli_json(providers_dir, tmp_project, add_shot):
+def test_routing_explain_cli_json(providers_dir, tmp_project, add_shot, monkeypatch):
     add_shot(tmp_project, "S001")
     add_shot(tmp_project, "S002")
-    os.chdir(tmp_project.root)
+    monkeypatch.chdir(tmp_project.root)
     res = runner.invoke(app, ["routing", "explain", "--json"])
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output)
@@ -519,9 +518,9 @@ def test_routing_explain_cli_json(providers_dir, tmp_project, add_shot):
     assert "S001" in res2.output
 
 
-def test_routing_explain_cli_bad_mode(providers_dir, tmp_project, add_shot):
+def test_routing_explain_cli_bad_mode(providers_dir, tmp_project, add_shot, monkeypatch):
     add_shot(tmp_project, "S001")
-    os.chdir(tmp_project.root)
+    monkeypatch.chdir(tmp_project.root)
     res = runner.invoke(app, ["routing", "explain", "--mode", "turbo"])
     assert res.exit_code == 1
     assert "--mode" in res.output
@@ -530,9 +529,9 @@ def test_routing_explain_cli_bad_mode(providers_dir, tmp_project, add_shot):
 # ============================================================ BUILD --mode CLI
 
 
-def test_build_mode_flag_validated(providers_dir, tmp_project, add_shot):
+def test_build_mode_flag_validated(providers_dir, tmp_project, add_shot, monkeypatch):
     add_shot(tmp_project, "S001")
-    os.chdir(tmp_project.root)
+    monkeypatch.chdir(tmp_project.root)
     res = runner.invoke(app, ["build", "--mode", "hyper", "--dry-run"])
     assert res.exit_code == 1
     assert "--mode" in res.output
