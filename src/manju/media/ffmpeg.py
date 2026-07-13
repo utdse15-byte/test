@@ -108,6 +108,15 @@ def cancel_scope(should_cancel: "Callable[[], bool] | None") -> Iterator[None]:
 
 
 def _quote(cmd: list[str]) -> str:
+    """The reproducible command line for logs and failure evidence — this
+    module's docstring PROMISES every command re-runs from the logs, and that
+    only holds if the quoting matches the OWNER'S shell. POSIX: shlex.quote,
+    byte-identical to the historical output. Windows (UX audit F34):
+    ``subprocess.list2cmdline`` — the exact string CreateProcess receives,
+    paste-able into both cmd.exe and PowerShell (a single-quoted C:\\ path is
+    a literal in cmd.exe and misfires in PowerShell)."""
+    if _IS_WINDOWS:
+        return subprocess.list2cmdline(cmd)
     return " ".join(shlex.quote(c) for c in cmd)
 
 

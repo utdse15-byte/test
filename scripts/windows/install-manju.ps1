@@ -132,6 +132,9 @@ catch {
 $launcher = @"
 @echo off
 setlocal
+rem UTF-8 everywhere, matching the repo invariant: without this, redirected
+rem output (manju doctor ^> log.txt) dies on the ANSI codepage (UX audit F30).
+set "PYTHONUTF8=1"
 set "MANJU_APP=%LOCALAPPDATA%\Manju\App"
 if not exist "%MANJU_APP%\current.txt" (
   echo manju: no installed version found. Run install-manju.ps1 first. 1>&2

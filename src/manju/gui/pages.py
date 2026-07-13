@@ -508,7 +508,7 @@ def render_review(project: Any, token: str) -> str:
         '<div class="page-h"><h1>审片 Review</h1>'
         '<span class="muted">逐条审阅每个' + tooltip_html("shot") + '选用的'
         + tooltip_html("take") + ',看 ' + tooltip_html("QC")
-        + ' · 键盘 j/k 上下 · g 通过 · x 退回 · 空格 播放/暂停</span></div>\n'
+        + ' · 键盘 j/k 上下 · g 好 · x 弃 · 空格 播放/暂停</span></div>\n'
         + err_line
         + '<div class="rv-progress panel">'
         f'<span id="rv-progress">已审 {reviewed} / {total}</span>'
@@ -1769,6 +1769,9 @@ _PAGES_JS = r"""
       if (rev) noteBody.expected_rev = rev;
       post("/api/take-note", noteBody).then(function (res) {
         if (res.status === 200) {
+          /* UX audit F14: refresh the CAS token from the response, or the
+           * owner's NEXT action on this card is refused by their own save. */
+          if (res.data && res.data.rev) s.setAttribute("data-rev", res.data.rev);
           s.setAttribute("data-reviewed", "1");
           s.classList.add("reviewed");
           updateProgress();
@@ -1804,6 +1807,7 @@ _PAGES_JS = r"""
         if (rev2) noteBody2.expected_rev = rev2;
         post("/api/take-note", noteBody2).then(function (res) {
           if (res.status === 200) {
+            if (res.data && res.data.rev) s.setAttribute("data-rev", res.data.rev);
             toast("备注已存", true);
             if (val) { s.setAttribute("data-reviewed", "1"); updateProgress(); }
           } else { toast((res.data && res.data.error) || "失败", false); }
@@ -1818,6 +1822,11 @@ _PAGES_JS = r"""
       else if (act === "qapprove") {
         post("/api/storyboard/approve", { shot: shot, review: "approved" }).then(function (res) {
           if (res.status === 200) {
+            /* UX audit F14: approving rewrote the shot file — refresh the
+             * card's CAS token so a following 好/弃/备注 still lands. */
+            if (res.data && res.data.revs && res.data.revs[shot]) {
+              s.setAttribute("data-rev", res.data.revs[shot]);
+            }
             s.setAttribute("data-review", "approved");
             toast(shot + " 已通过", true);
             updateQueueUI();

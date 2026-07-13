@@ -26,6 +26,34 @@ from .core.events import append_event, tail_events
 from .core.hashing import HASH_PREFIX, hash_file
 from .core.locks import seal_lock
 
+def _utf8_harden_stdio() -> None:
+    """UX audit F30: on Windows, REDIRECTED/PIPED stdout uses the ANSI code
+    page (cp936 on a Chinese system) unless PYTHONUTF8 is set — and none of
+    doctor's ✓/✗/⚠/• glyphs encode there, so ``manju doctor > log.txt`` died
+    with UnicodeEncodeError exactly when the owner tried to save output. The
+    interactive console was fine (WriteConsoleW), which is why this hid.
+    Mirrors the MCP server's stream hardening (mcp/server.py — "UTF-8 on the
+    wire regardless of locale"): reconfigure both streams to UTF-8 with
+    errors=replace. Already-UTF-8 streams are untouched (byte-identical
+    everywhere the env is sane), and capture shims without ``reconfigure``
+    (pytest/typer test runners) are left alone."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if enc == "utf8":
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # a stream that refuses stays as it was — never fatal
+            pass
+
+
+if os.name == "nt":  # pragma: no cover — the guard is driven directly in tests
+    _utf8_harden_stdio()
+
+
 app = typer.Typer(add_completion=False, no_args_is_help=True,
                   help="Manju One — a build system for video. 一键出片:manju build")
 
@@ -252,7 +280,12 @@ def new(
         except PresetError as exc:
             _fail(str(exc))
 
-    project = Project.create(dest, name=name, vertical=vertical)
+    # UX audit F2: re-running new on an existing name is a routine slip for a
+    # single owner juggling projects — a one-line error, never a traceback.
+    try:
+        project = Project.create(dest, name=name, vertical=vertical)
+    except ProjectError as exc:
+        _fail(f"{exc} — 已存在;换个名字,或直接 cd 进去继续用", code="exists")
     if spec is not None:
         from .presets import apply_preset
 
@@ -378,10 +411,22 @@ def status(as_json: bool = typer.Option(False, "--json")):
     from .core.failures import failures_since_last_build
 
     project = _project()
-    info = project_status(project)
-    # goal 10: surface failures since the last GREEN build at the takeover entry
-    # point — one number here, the reasons one command away (`manju failures`).
-    recent_failures = failures_since_last_build(project)
+    # UX audit F1: status is the takeover entry point — exactly the command
+    # the owner runs right after HAND-EDITING truth YAML. A syntax slip used
+    # to surface as a raw traceback (and, under --json, as NOTHING on stdout,
+    # breaking the {error, code} contract). Route it through _fail like every
+    # other structured error; `manju check` is the fixer that names the line.
+    import yaml as _yaml
+
+    try:
+        info = project_status(project)
+        # goal 10: surface failures since the last GREEN build at the takeover
+        # entry point — one number here, the reasons one command away
+        # (`manju failures`).
+        recent_failures = failures_since_last_build(project)
+    except (_yaml.YAMLError, ProjectError) as exc:
+        _fail(f"真相文本解析失败:{exc} — 运行 `manju check` 定位并修复",
+              code="truth_parse_error")
     info["failures_since_build"] = len(recent_failures)
     if as_json:
         _emit(info, True)
@@ -5162,9 +5207,18 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
     an absolute path) whenever the user omitted --dest. The zip-comment name
     is shown for information only when it differs."""
     if not archive.exists():
-        _fail(f"not found: {archive}")
+        _fail(f"not found: {archive} — 这个路径上没有归档文件。核对拼写和当前目录,"
+              "或用绝对路径重试")
     original_name: str | None = None
-    with zipfile.ZipFile(archive) as zf:
+    # UX audit F3: a corrupt/truncated .manjupkg (the realistic half-copied
+    # backup) is the DISASTER-RECOVERY moment — a BadZipFile traceback is the
+    # worst possible answer there. One clean line + the read-only next step.
+    try:
+        _zf_open = zipfile.ZipFile(archive)
+    except zipfile.BadZipFile:
+        _fail(f"{archive} 不是有效的 .manjupkg(zip 结构损坏或拷贝未完成)— "
+              "请用原盘/原位置重新拷贝后重试", code="bad_archive")
+    with _zf_open as zf:
         try:
             meta = json.loads(zf.comment.decode("utf-8")) if zf.comment else {}
             if isinstance(meta, dict) and meta.get("manjupkg"):
@@ -5358,8 +5412,16 @@ def fixity(archive: Path,
     sanity cap mirrors the unpack preflight; the free-disk cap does not apply
     here because nothing is extracted."""
     if not archive.exists():
-        _fail(f"not found: {archive}")
-    with zipfile.ZipFile(archive) as zf:
+        _fail(f"not found: {archive} — 这个路径上没有归档文件。核对拼写和当前目录,"
+              "或用绝对路径重试")
+    # UX audit F3: same clean refusal as unpack — fixity IS the read-only
+    # health check, so it especially must not die on the sick file itself.
+    try:
+        _zf_open = zipfile.ZipFile(archive)
+    except zipfile.BadZipFile:
+        _fail(f"{archive} 不是有效的 .manjupkg(zip 结构损坏或拷贝未完成)— "
+              "请用原盘/原位置重新拷贝后重试", code="bad_archive")
+    with _zf_open as zf:
         infos = zf.infolist()
         if len(infos) > UNPACK_MAX_MEMBERS:
             _fail(f"拒绝校验:成员数 {len(infos)} 超出上限 {UNPACK_MAX_MEMBERS}"

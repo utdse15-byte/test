@@ -1031,6 +1031,12 @@ class _Handler(BaseHTTPRequestHandler):
                             "——请刷新后重试", 409)
                         return
                     project.update_shot_raw(shot_id, mutate)
+                    # UX audit F14: hand the POST-write hash back so the page
+                    # can refresh its data-rev — without it, the owner's very
+                    # next action on the same card was refused 409 by a stale
+                    # token their OWN save had just invalidated (the message
+                    # then blamed "其他入口" — their own click of 2s earlier).
+                    new_rev = shot_text_hash(project, shot_id)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
                 return
@@ -1038,7 +1044,7 @@ class _Handler(BaseHTTPRequestHandler):
                          {"shot": shot_id, "take": take,
                           "deleted": not text.strip(), "via": "gui"})
         self._send_json({"ok": True, "shot": shot_id, "take": take,
-                         "text": text.strip()})
+                         "text": text.strip(), "rev": new_rev})
 
     def _act_refs_assign(self, body: dict[str, Any]) -> None:
         """POST /api/refs/assign (round AA item 3): the refs section's one
@@ -3559,9 +3565,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
         changed: list[str] = []
         skipped: list[dict[str, str]] = []
+        revs: dict[str, str] = {}
         with self.server.quick_mutex:
             try:
                 with _optional_build_lock(project.root, self.server.actor):  # one hold, whole batch
+                    from ..core.writes import shot_text_hash
+
                     for sid in ids:
                         if (not self._SHOT_ID_RE.fullmatch(sid)
                                 or not project.shot_path(sid).exists()):
@@ -3578,6 +3587,10 @@ class _Handler(BaseHTTPRequestHandler):
 
                         project.update_shot_raw(sid, mutate)
                         changed.append(sid)
+                        # UX audit F14: approving rewrites the shot file and
+                        # silently staled the review card's CAS token — hand
+                        # the fresh hash back per shot so the page refreshes.
+                        revs[sid] = shot_text_hash(project, sid)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
                 return
@@ -3589,7 +3602,7 @@ class _Handler(BaseHTTPRequestHandler):
                     detail["shot"] = changed[0]
                 append_event(project.root, self.server.actor, "approve", detail)
         self._send_json({"ok": True, "review": review, "changed": len(changed),
-                         "shots": changed, "skipped": skipped})
+                         "shots": changed, "skipped": skipped, "revs": revs})
 
     def _act_sb_lock_batch(self, body: dict[str, Any]) -> None:
         """Batch LOCK one field across the selected shots — the same seal
