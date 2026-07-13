@@ -2041,3 +2041,15 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - Disposition at close: all 46 audit findings dispositioned — landed except
   F8/F35 (rejected under the maintenance gate, recorded in #42) and F45
   (no-op bookkeeping). REPORTS/UX_AUDIT_2026-07-13.md is the ranked record.
+
+### 42b. Windows run #20: the undreained-refusal RST class (2026-07-13)
+
+- Run #20 (32e6831): 2 F — two token-guard tests died with WinError 10053.
+  Cause: gui/server's do_POST early refusals (host/readonly/token) answered
+  WITHOUT reading the request body; Windows RSTs the connection with unread
+  bytes and the CLIENT sees ConnectionAbortedError instead of the clean 403
+  (Linux lets the buffered response through — 19 green runs hid the race).
+  The board server has ALWAYS drained before refusing (_read_body_raw,
+  "drain so keep-alive stays sane"); the gui server now applies the same
+  discipline via a bounded, best-effort _drain_request_body() at all three
+  gates. Pinned with a 1 MB-body refusal test + a gate-structure pin.

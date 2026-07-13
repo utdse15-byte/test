@@ -608,3 +608,28 @@ def test_annotation_list_container_renders_even_when_empty(
     make_take(tmp_project, "S001", "h")
     html = render_board(tmp_project, serve=True)
     assert 'class="ann-list"' in html  # present with zero annotations
+
+
+def test_token_refused_post_with_large_body_gets_a_clean_403(gui, tmp_project):
+    """Windows gate run #20: a POST refused for a missing token, carrying an
+    UNREAD request body, left bytes on the socket — Windows RSTs and the
+    client saw ConnectionAbortedError (WinError 10053) instead of the 403
+    (two token-guard tests died exactly this way). The gui server now drains
+    before every early refusal, matching the board server's own discipline.
+    A 1 MB body makes the undreained race maximally likely; the clean 403
+    must come back on every platform."""
+    body = json.dumps({"pad": "x" * (1024 * 1024)}).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{gui.port}/api/select", data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Manju-Token", "wrong-token")
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        raise AssertionError("expected 403")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+        assert "X-Manju-Token" in json.loads(exc.read())["error"]
+
+    src = Path("src/manju/gui/server.py").read_text(encoding="utf-8")
+    gate = src.split("def do_POST")[1].split("url = urlsplit")[0]
+    assert gate.count("_drain_request_body()") == 3  # host/readonly/token

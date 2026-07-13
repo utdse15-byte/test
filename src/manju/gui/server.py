@@ -629,8 +629,34 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def _drain_request_body(self) -> None:
+        """Windows gate run #20: an early refusal (host/readonly/token) that
+        answered WITHOUT reading the request body left unread bytes on the
+        socket — Windows then RSTs the connection and the CLIENT saw
+        ConnectionAbortedError (WinError 10053) instead of the clean 403
+        (Linux usually lets the buffered response through, which is why this
+        only ever bit on the gate). The board server has always drained
+        before refusing (`_read_body_raw` — "drain so keep-alive stays
+        sane"); this is the same discipline. Bounded: a hostile
+        Content-Length can never stall the server; best-effort: a broken
+        read never masks the refusal we are about to send."""
+        try:
+            declared = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return
+        remaining = min(declared, 16 * 1024 * 1024)
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass
+
     def do_POST(self) -> None:  # noqa: N802
         if not self._host_allowed():
+            self._drain_request_body()
             self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
             return
         _readonly_ok = {"/api/validate", "/api/impact", "/api/review/consistency"}
@@ -641,9 +667,11 @@ class _Handler(BaseHTTPRequestHandler):
             # only composes the content-addressed frame-board cache — so the
             # review page's lazy boards still load on a readonly workbench, as
             # they did when the section rendered inline before G1.
+            self._drain_request_body()
             self._send_error_json("readonly mode — 只读工作台,操作请回到项目机器", 403)
             return
         if self.headers.get("X-Manju-Token") != self.server.token:
+            self._drain_request_body()
             self._send_error_json("missing or invalid X-Manju-Token", 403)
             return
         url = urlsplit(self.path)
