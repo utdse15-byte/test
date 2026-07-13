@@ -268,7 +268,7 @@ def set_duration_in_text(text: str, value: str) -> str:
 # --------------------------------------------------- playback source (v2 §D)
 
 
-def playback_source(project: Any) -> dict[str, Any]:
+def playback_source(project: Any, *, include_stale: bool = True) -> dict[str, Any]:
     """Resolve the newest playable render for the preview player, honestly:
     a fresh **final** wins, else the **proxy**, else an empty state (先构建).
 
@@ -276,7 +276,13 @@ def playback_source(project: Any) -> dict[str, Any]:
     can seek (Tier 1: play the render, REPORTS §D). ``stale`` flags a final that
     a rebuild would supersede (成片可能已过期), read from the same ``build.explain``
     verdict the dirty chip uses. Best-effort — any read error degrades to the
-    empty state, never raises, so a plain GET always resolves a source."""
+    empty state, never raises, so a plain GET always resolves a source.
+
+    ``include_stale`` (G3): the stale check runs ``build.explain`` (a full
+    recompile). The ``/edit`` PAGE render passes ``False`` so a GET never
+    recompiles inline — the ``stale`` chip is revealed lazily by /edit.js after
+    it fetches ``/api/edit/dirty``. The async ``/api/edit/playback-source``
+    endpoint keeps the default ``True`` (it is off the render thread)."""
     from urllib.parse import quote as _quote
 
     try:
@@ -287,10 +293,10 @@ def playback_source(project: Any) -> dict[str, Any]:
         try:
             if final.is_file():
                 rel = project.relpath(final)
-                stale, _why = _unbuilt(project)
+                stale = bool(_unbuilt(project)[0]) if include_stale else False
                 return {"kind": "final", "rel": rel,
                         "url": "/media/" + _quote(rel, safe="/"),
-                        "label": final.name, "stale": bool(stale)}
+                        "label": final.name, "stale": stale}
         except Exception:
             pass
     try:
@@ -788,7 +794,7 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/edit.css">\n'
         + GLOSSARY_HEAD
-        + '<script src="/edit.js" defer></script>\n'
+        + '<script src="/common.js" defer></script>\n<script src="/edit.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="/edit" class="{bcls}">\n'
         + nav
@@ -893,7 +899,6 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     tstate = transitions_state(project)
     timeline = _load_timeline(project)
     mixer = _mixer_by_shot(project)
-    unbuilt, unbuilt_why = _unbuilt(project)
 
     from .userstate import is_snap_enabled
 
@@ -903,8 +908,12 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     # ---- header + rebuild affordance + undo / keyboard-map toolbar (v2 §A/§C)
     out.append('<div class="page-h">')
     out.append("<h1>剪辑 Edit</h1>")
-    if unbuilt:
-        out.append(f'<span class="chip ed-dirty" title="{_e(unbuilt_why)}">有未构建的修改</span>')
+    # G3: the dirty badge is a LAZY slot — hidden at first paint, revealed by
+    # /edit.js after it fetches /api/edit/dirty. Before, render_edit ran a FULL
+    # build.explain recompile (+ ~40 probes) inline just for this string; that
+    # recompile now happens OFF the request thread (mirrors the review boards).
+    out.append('<span class="chip ed-dirty" id="ed-dirty-chip" hidden '
+               'title="有未构建的修改">有未构建的修改</span>')
     out.append('<button class="btn ghost" id="ed-undo-btn" aria-expanded="false" '
                'title="最近改动 · 一键撤销(git 回滚)">撤销 Undo</button>')
     out.append('<button class="btn ghost" id="ed-keymap-btn" '
@@ -1400,7 +1409,9 @@ def _playback_section(project: Any, timeline: Any) -> str:
     from before this round). The playhead syncs both ways in ``/edit.js``
     regardless of which tier is active (timeupdate → playhead; ruler
     click/step → seek; Space/←→ dispatch to whichever tier is active)."""
-    src = playback_source(project)
+    # G3: include_stale=False so the page GET never recompiles via build.explain
+    # — the stale chip below is a lazy slot revealed by /edit.js after paint.
+    src = playback_source(project, include_stale=False)
     has_t1 = src["kind"] is not None
     has_t2 = timeline is not None and bool(timeline.tracks.video)
     default_tier = 1 if has_t1 else (2 if has_t2 else 0)
@@ -1432,9 +1443,11 @@ def _playback_section(project: Any, timeline: Any) -> str:
     parts.append(f'<div class="ed-tier1" id="ed-tier1"{t1_hidden}>')
     if has_t1:
         kind_label = "成片 final" if src["kind"] == "final" else "预览版 proxy"
-        stale = ('<span class="chip ed-dirty" id="ed-play-stale" '
+        # G3: a lazy slot (hidden) — /edit.js reveals it after /api/edit/dirty,
+        # so the page GET never recompiles just to know if the final is stale.
+        stale = ('<span class="chip ed-dirty" id="ed-play-stale" hidden '
                  'title="有未构建的修改,成片可能已过期">成片可能已过期</span>'
-                 if src["stale"] else "")
+                 if src["kind"] == "final" else "")
         parts.append(
             f'<span class="chip ed-play-kind">{_e(kind_label)} · {_e(src["label"])}</span>'
             f'{stale}'
@@ -1741,29 +1754,7 @@ kbd { font-family: var(--mono); font-size: .8rem; background: var(--panel2);
 _EDIT_JS = r"""
 "use strict";
 (function () {
-  var META = document.querySelector('meta[name="manju-token"]');
-  var TOKEN = META ? META.getAttribute("content") : "";
 
-  function post(url, body) {
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Manju-Token": TOKEN },
-      body: JSON.stringify(body || {})
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (d) {
-        return { status: r.status, data: d };
-      });
-    });
-  }
-  function toast(msg, ok) {
-    var t = document.getElementById("toast");
-    if (!t) return;
-    var el = document.createElement("div");
-    el.className = "toast-item " + (ok === false ? "bad" : "good");
-    el.textContent = msg;
-    t.appendChild(el);
-    setTimeout(function () { el.remove(); }, 3600);
-  }
   function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
   function errText(res) { return (res.data && res.data.error) || "失败"; }
 
@@ -2786,6 +2777,18 @@ _EDIT_JS = r"""
   });
 
   if (lanes) { layoutLanes(); loadSyncHints(); }
+
+  // G3: the dirty / stale badges are fetched AFTER first paint from a small
+  // endpoint (the page GET no longer recompiles via build.explain for them) —
+  // the same lazy idiom the review boards use. A fetch failure leaves the
+  // badges hidden (an honest "unknown"), never a blank or an error.
+  fetch("/api/edit/dirty").then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.unbuilt) return;
+    var chip = document.getElementById("ed-dirty-chip");
+    if (chip) { chip.hidden = false; if (d.why) chip.title = d.why; }
+    var stale = document.getElementById("ed-play-stale");
+    if (stale) stale.hidden = false;
+  }).catch(function () {});
 
   // preview once on load if a look is set beyond none
   if (lookPreset && lookPreset.getAttribute("data-preset") !== "none") refreshLookPreview();

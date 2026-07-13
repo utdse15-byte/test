@@ -274,6 +274,32 @@ class Project:
     def relpath(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root).as_posix()
 
+    def safe_served_path(self, rel: str, prefixes: tuple[str, ...]) -> Path | None:
+        """The ONE file-serving containment gate shared by the GUI and board
+        media routes (Audit 14). Resolve a project-relative served path behind a
+        prefix allowlist, refusing any escape above the root AND anything outside
+        ``prefixes``. Returns ``None`` on ANY refusal — each caller maps that to
+        its own 403 / ``ValueError``, so a future hardening cannot be one-sided.
+
+        The allowlist is checked BEFORE resolving (a cheap reject) AND AGAIN on
+        the resolved relpath, so ``media/../x`` (which stays inside the root) and
+        a symlink out of an allowed subtree cannot sidestep the prefix gate.
+        :meth:`resolve` collapses ``..`` and follows symlinks against the
+        already-``.resolve()``d root, so containment is symlink-aware. Callers
+        pass their OWN prefix tuple (the two surfaces legitimately allow
+        different subtrees) and, if they accept percent-encoded input, ``unquote``
+        before calling (the board does; the GUI router already has)."""
+        rel = rel.lstrip("/")
+        if not any(rel.startswith(p) for p in prefixes):
+            return None
+        try:
+            abspath = self.resolve(rel)  # join → resolve → is_relative_to(root)
+        except ProjectError:
+            return None
+        if not any(self.relpath(abspath).startswith(p) for p in prefixes):
+            return None
+        return abspath
+
     # ---------------------------------------------------------------- config
 
     def load_config(self) -> ProjectConfig:

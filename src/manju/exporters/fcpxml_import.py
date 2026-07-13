@@ -237,18 +237,81 @@ def _frames_field(fr: Fraction | None) -> int | str | None:
 # --------------------------------------------------------------------------- #
 
 
+# Audit 16 / OPT-ROBUST F2: a generous byte cap on FCPXML input. A real
+# editorial FCPXML export is KBs to low MBs; 64 MiB is far above any honest
+# document. Both residuals this guards are LOCAL and plan-only (no writes, no
+# network — DTD-less stdlib ET resolves no external entity), so this is
+# defense-in-depth, not a live hole: (1) the cap fail-closes the multi-GB-OOM
+# vector before the whole file is materialized for the parser; (2) refusing a
+# DOCTYPE/ENTITY prolog closes the platform-libexpat-dependent "billion laughs"
+# residual with a clean structured error instead of a parser-version-dependent
+# one. Overridable in tests to exercise the cap without giant files.
+_MAX_FCPXML_BYTES = 64 * 1024 * 1024  # 64 MiB
+_PROLOG_SCAN = 65536  # a DOCTYPE, if any, is in the prolog — scan only its head
+
+
+def _too_large_error(nbytes: int, where: str) -> "FcpxmlImportError":
+    return FcpxmlImportError(
+        f"FCPXML input too large: {nbytes} bytes exceeds the "
+        f"{_MAX_FCPXML_BYTES}-byte cap ({_MAX_FCPXML_BYTES // (1024 * 1024)} MiB)",
+        [{"severity": "error", "code": "input_too_large", "path": "",
+          "message": f"{where} is {nbytes} bytes; the cap is {_MAX_FCPXML_BYTES} "
+                     f"({_MAX_FCPXML_BYTES // (1024 * 1024)} MiB) — refusing before parse"}])
+
+
+def _guard_text(text: str) -> str:
+    """Enforce the byte cap and refuse a DOCTYPE/ENTITY prolog on already-read
+    text (an inline XML string, or a file whose on-disk size understated it)."""
+    # len(text) chars <= UTF-8 byte count, so a char count over the cap is
+    # already over the byte cap and refuses without the encode; otherwise the
+    # exact byte count is bounded (<= the cap in chars) so the encode is cheap.
+    if len(text) > _MAX_FCPXML_BYTES:
+        raise _too_large_error(len(text), "the input")
+    nbytes = len(text.encode("utf-8"))
+    if nbytes > _MAX_FCPXML_BYTES:
+        raise _too_large_error(nbytes, "the input")
+    prolog = text[:_PROLOG_SCAN].upper()
+    if "<!DOCTYPE" in prolog or "<!ENTITY" in prolog:
+        raise FcpxmlImportError(
+            "FCPXML input declares a DOCTYPE/ENTITY prolog — refused "
+            "(DTD/entity documents are not accepted)",
+            [{"severity": "error", "code": "doctype_forbidden", "path": "",
+              "message": "a <!DOCTYPE or <!ENTITY prolog is refused before parse; "
+                         "manju's FCPXML intake is DTD-less and resolves no entities"}])
+    return text
+
+
 def _load_text(source: str | Path) -> str:
-    """Read an FCPXML document from a path or accept an XML string directly."""
+    """Read an FCPXML document from a path or accept an XML string directly.
+
+    Input caps (Audit 16 / OPT-ROBUST F2): a byte cap (checked on a file via
+    ``stat()`` BEFORE the read, so a multi-GB file is never materialized) and a
+    DOCTYPE/ENTITY-prolog refusal. Normal documents are unaffected — the parse
+    path below is byte-identical to before."""
     if isinstance(source, Path):
-        return source.read_text(encoding="utf-8")
+        _guard_file_size(source)
+        return _guard_text(source.read_text(encoding="utf-8"))
     if isinstance(source, str):
         if source.lstrip().startswith("<"):
-            return source
-        return Path(source).read_text(encoding="utf-8")
+            return _guard_text(source)
+        p = Path(source)
+        _guard_file_size(p)
+        return _guard_text(p.read_text(encoding="utf-8"))
     raise FcpxmlImportError(
         "parse_fcpxml expects a filesystem path or an XML string",
         [{"severity": "error", "code": "bad_input", "path": "",
           "message": f"unsupported source type {type(source).__name__}"}])
+
+
+def _guard_file_size(p: Path) -> None:
+    """Refuse an over-cap file by its on-disk size, before reading a single byte.
+    A missing/unstattable path is left for the subsequent read to report."""
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return
+    if size > _MAX_FCPXML_BYTES:
+        raise _too_large_error(size, str(p))
 
 
 def _audio_clip(el: ET.Element, assets: Mapping[str, FcpxmlAsset]) -> FcpxmlAudioClip:

@@ -443,7 +443,13 @@ class JobRunner:
                     for rec in records:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     f.flush()
-                    os.fsync(f.fileno())
+                    # G6: NO os.fsync — jobs.jsonl is self-declared disposable
+                    # operational history (module docstring), not the durable
+                    # collaboration log. submit() persists on the POST/click
+                    # thread before the 202, so an fsync there put disk-sync
+                    # latency on the user's click path for a rewritten-capped,
+                    # rebuild-irrelevant log. flush() keeps the bytes honest;
+                    # durability of THIS file is explicitly not promised.
         except OSError:
             pass  # operational history only — never blocks a job (module docstring)
 

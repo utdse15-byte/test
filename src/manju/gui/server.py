@@ -413,6 +413,14 @@ class _Handler(BaseHTTPRequestHandler):
                 from .page import render_js
 
                 self._send_text(render_js(), "application/javascript; charset=utf-8")
+            elif path == "/common.js":
+                # audit G5: the shared server-rendered-page helpers (token-reader
+                # + post + toast), served once and included (defer) before each
+                # page's own script so those pages dropped their byte-identical copies.
+                from .common_js import render_common_js
+
+                self._send_text(render_common_js(),
+                                "application/javascript; charset=utf-8")
             elif path == "/workspace.css":
                 from . import workspace as _ws
 
@@ -744,21 +752,10 @@ class _Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- media
 
     def _resolve_served(self, rel: str) -> Path | None:
-        """Allowlist + containment gate shared by /media and /preview."""
-        project = self.server.project
-        rel = rel.lstrip("/")
-        if not any(rel.startswith(p) for p in MEDIA_PREFIXES):
-            return None
-        try:
-            abspath = project.resolve(rel)  # rejects escapes above the root
-            # re-check the allowlist against the RESOLVED path: "media/../x"
-            # stays inside the root but must not sidestep the prefix gate,
-            # and a symlink out of an allowed tree must not either
-            if not any(project.relpath(abspath).startswith(p) for p in MEDIA_PREFIXES):
-                return None
-        except ProjectError:
-            return None
-        return abspath
+        """Allowlist + containment gate shared by /media and /preview. Delegates
+        to the ONE shared helper (Audit 14) so the board and GUI gates can never
+        diverge; the router already unquoted ``rel``."""
+        return self.server.project.safe_served_path(rel, MEDIA_PREFIXES)
 
     def _media(self, rel: str) -> None:
         abspath = self._resolve_served(rel)
@@ -2848,6 +2845,15 @@ class _Handler(BaseHTTPRequestHandler):
             from . import edit
 
             self._send_json(edit.playback_source(self.server.project))
+            return True
+        if path == "/api/edit/dirty":
+            # G3: the dirty/stale badge verdict, fetched by /edit.js AFTER first
+            # paint — so the /edit page GET never runs build.explain inline. Same
+            # verdict _unbuilt computed on the render thread before.
+            from . import edit
+
+            unbuilt, why = edit._unbuilt(self.server.project)
+            self._send_json({"unbuilt": bool(unbuilt), "why": why})
             return True
         if path == "/api/edit/playback-manifest":
             self._edit_playback_manifest()

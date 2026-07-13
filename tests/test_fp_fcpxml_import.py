@@ -571,3 +571,75 @@ def test_cli_import_plan_non_fcpxml_exits_structured(tmp_path):
     data = json.loads(result.output)
     assert data["error"]
     assert data["diagnostics"]
+
+
+# --------------------------------------------------------------------------- #
+# 15. Audit 16 / OPT-ROBUST F2 — input caps (byte cap + DOCTYPE/ENTITY refusal) #
+#     Both are local, plan-only, no-write residuals: defense-in-depth, and the  #
+#     normal-file plan stays byte-identical (the parse path is untouched).      #
+# --------------------------------------------------------------------------- #
+
+
+def test_oversize_file_refused_before_parse(tmp_path, monkeypatch):
+    """A document larger than the byte cap is refused with a structured error
+    BEFORE ElementTree ever materializes it (the multi-GB-OOM residual). The
+    cap is exercised at a tiny value so no giant file is written."""
+    from manju.exporters import fcpxml_import as fi
+
+    monkeypatch.setattr(fi, "_MAX_FCPXML_BYTES", 128)
+    path = tmp_path / "big.fcpxml"
+    path.write_text("<fcpxml version='1.9'>" + ("<x/>" * 200) + "</fcpxml>",
+                    encoding="utf-8")
+    with pytest.raises(FcpxmlImportError) as exc:
+        parse_fcpxml(path)
+    assert exc.value.diagnostics
+    assert any(d["code"] == "input_too_large" for d in exc.value.diagnostics)
+    # the message states the cap (per the mission brief)
+    assert "128" in str(exc.value)
+
+
+def test_oversize_inline_string_refused(monkeypatch):
+    """An inline XML string over the cap is also refused (a caller can hand a
+    huge string directly, not just a path)."""
+    from manju.exporters import fcpxml_import as fi
+
+    monkeypatch.setattr(fi, "_MAX_FCPXML_BYTES", 64)
+    with pytest.raises(FcpxmlImportError) as exc:
+        parse_fcpxml("<fcpxml version='1.9'>" + ("<x/>" * 100) + "</fcpxml>")
+    assert any(d["code"] == "input_too_large" for d in exc.value.diagnostics)
+
+
+def test_doctype_prolog_refused():
+    """A DOCTYPE prolog (the 'billion laughs' carrier) is refused with a clean
+    structured error rather than relying on the platform libexpat version."""
+    billion_laughs = (
+        "<?xml version='1.0'?>\n"
+        "<!DOCTYPE fcpxml [\n"
+        "  <!ENTITY a 'aaaaaaaaaa'>\n"
+        "  <!ENTITY b '&a;&a;&a;&a;&a;'>\n"
+        "]>\n"
+        "<fcpxml version='1.9'><resources/></fcpxml>"
+    )
+    with pytest.raises(FcpxmlImportError) as exc:
+        parse_fcpxml(billion_laughs)
+    assert any(d["code"] == "doctype_forbidden" for d in exc.value.diagnostics)
+
+
+def test_entity_prolog_refused():
+    with pytest.raises(FcpxmlImportError) as exc:
+        parse_fcpxml("<!ENTITY x 'y'><fcpxml version='1.9'><resources/></fcpxml>")
+    assert any(d["code"] == "doctype_forbidden" for d in exc.value.diagnostics)
+
+
+def test_normal_document_unaffected_by_caps(tmp_path):
+    """A normal editorial FCPXML parses and plans EXACTLY as before — the caps
+    only fire on abuse, so the import-plan for a real file is byte-identical."""
+    tl = _audio_timeline()
+    xml = compile_fcpxml(tl, rate=R24, name="DEMO")
+    # inline string path and file path both parse cleanly, same plan
+    plan_inline = plan_fcpxml_import(parse_fcpxml(xml), source_sha256="sha256:x")
+    path = tmp_path / "demo.fcpxml"
+    path.write_text(xml, encoding="utf-8")
+    plan_file = plan_fcpxml_import(parse_fcpxml(path), source_sha256="sha256:x")
+    assert plan_inline == plan_file
+    assert plan_inline["schema"] == PLAN_SCHEMA

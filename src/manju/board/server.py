@@ -49,9 +49,12 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 # large body from tying the handler up.
 _MAX_BODY_BYTES = 1 << 20  # 1 MiB
 
+import base64
+import hashlib
 import json
 import mimetypes
 import os
+import re
 import threading
 import webbrowser
 from http import HTTPStatus
@@ -83,6 +86,57 @@ def _one_line(text: str) -> str:
 
 class _ApiError(Exception):
     """A clean, one-line failure surfaced as ``{ok:false, error:...}`` (HTTP 200)."""
+
+
+# ---- Audit 15: served-board security headers (mirror gui/server.py's set) ----
+# The board is a SINGLE-FILE inline-everything document, so — unlike the GUI,
+# which serves an external /app.js and /app.css — script-src can't be 'self'.
+# Instead it is HASH-based over the ACTUAL inline <script> the served bytes
+# carry (that block includes the per-run token, so the hash is computed at serve
+# time, never baked in): the script runs WITHOUT changing one HTML byte, so the
+# static byte-pin (test_board_serve.py / test_fp_board_transport.py) stays
+# frozen — these are response HEADERS only. style-src is 'unsafe-inline' because
+# the board inlines its <style> block + a few style="" attributes; style
+# injection is not a script-execution vector, so script-src carries the real
+# XSS protection while the board stays styled.
+_INLINE_SCRIPT_RE = re.compile(r"<script(?:\s[^>]*)?>(.*?)</script>", re.DOTALL)
+_INLINE_STYLE_RE = re.compile(r"<style(?:\s[^>]*)?>.*?</style>", re.DOTALL)
+_INLINE_HANDLER_RE = re.compile(r"""\son[a-z]+\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+                                re.IGNORECASE)
+
+
+def _csp_sha256(text: str) -> str:
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
+
+
+def _board_security_headers(html: str) -> list[tuple[str, str]]:
+    """The CSP + framing/sniff headers for a served board, derived from its own
+    bytes so the inline script is allowed without any HTML change."""
+    script_hashes = list(dict.fromkeys(_csp_sha256(m) for m in _INLINE_SCRIPT_RE.findall(html)))
+    # inline event handlers, if any — scan MARKUP only (strip <script>/<style>
+    # bodies so JS/CSS text can't false-match an on*= handler). The served board
+    # has none today (the one onclick is static-mode only), so 'unsafe-hashes'
+    # is omitted; this self-heals if a serve-mode handler is ever added.
+    markup = _INLINE_STYLE_RE.sub("", _INLINE_SCRIPT_RE.sub("", html))
+    handlers = list(dict.fromkeys(a or b for a, b in _INLINE_HANDLER_RE.findall(markup)))
+    script_src_parts = ["script-src", *script_hashes]
+    if handlers:
+        script_src_parts.append("'unsafe-hashes'")
+        script_src_parts += [_csp_sha256(h) for h in handlers]
+    csp = (
+        "default-src 'none'; "
+        + " ".join(script_src_parts) + "; "
+        "style-src 'unsafe-inline'; img-src 'self'; media-src 'self'; "
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "form-action 'none'"
+    )
+    return [
+        ("Content-Security-Policy", csp),
+        ("X-Frame-Options", "DENY"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Referrer-Policy", "no-referrer"),
+    ]
 
 
 # ------------------------------------------------------------------- actions
@@ -426,6 +480,10 @@ class BoardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        # Audit 15: the GUI's security header set, computed from the served
+        # bytes so the inline (token-bearing) script runs with the HTML unchanged.
+        for name, value in _board_security_headers(html):
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 
@@ -448,23 +506,17 @@ class BoardHandler(BaseHTTPRequestHandler):
     def _safe_media_path(self, rel: str) -> Path:
         """Resolve a project-relative media path, refusing any escape above the
         project root AND anything outside the preview-surface allowlist above.
-        ``Path.resolve()`` collapses ``..`` AND follows symlinks, so a symlink
-        pointing outside the tree — or outside the allowlist — is rejected
-        too. Raises :class:`ValueError` on a refusal (→ 403)."""
-        root = self._project.root  # already absolute + resolved (Project.__init__)
-        rel = unquote(rel).lstrip("/")  # an absolute-looking path is treated as project-relative
-        if not any(rel.startswith(p) for p in self._MEDIA_PREFIXES):
+        Delegates to the ONE shared containment gate (Audit 14:
+        :meth:`Project.safe_served_path`) so the board and GUI media gates can
+        never be hardened one-sidedly — ``resolve()`` there collapses ``..`` AND
+        follows symlinks, so a symlink pointing outside the tree (or outside the
+        allowlist) is rejected too. ``unquote`` first (an absolute-looking path
+        is treated as project-relative). Raises :class:`ValueError` on a
+        refusal (→ 403)."""
+        target = self._project.safe_served_path(unquote(rel), self._MEDIA_PREFIXES)
+        if target is None:
             raise ValueError("path is not a served preview surface")
-        candidate = (root / rel).resolve()
-        if candidate != root and not candidate.is_relative_to(root):
-            raise ValueError("path escapes the project root")
-        # re-check the allowlist against the RESOLVED path: "media/../x" stays
-        # inside the root but must not sidestep the prefix gate, and neither
-        # must a symlink that resolves out of an allowed tree into another.
-        rel_resolved = candidate.relative_to(root).as_posix()
-        if not any(rel_resolved.startswith(p) for p in self._MEDIA_PREFIXES):
-            raise ValueError("path is not a served preview surface")
-        return candidate
+        return target
 
     def _serve_media(self, rel: str) -> None:
         try:
@@ -591,6 +643,11 @@ class BoardHandler(BaseHTTPRequestHandler):
         # over-limit request is detected without pulling the whole thing into
         # memory; the JSON parse then fails and _handle_api returns 400.
         if n > _MAX_BODY_BYTES:
+            # Audit 17: the rest of the declared body is left UNDRAINED, so the
+            # keep-alive connection must be closed after we respond — otherwise
+            # those leftover bytes desync into the next request on this socket.
+            # _send_json emits `Connection: close` when this flag is set.
+            self.close_connection = True
             self.rfile.read(min(n, _MAX_BODY_BYTES + 1))
             return b"__oversize__"
         return self.rfile.read(n) if n > 0 else b""
@@ -611,6 +668,8 @@ class BoardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:  # Audit 17: honour an oversize-body close
+            self.send_header("Connection", "close")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)

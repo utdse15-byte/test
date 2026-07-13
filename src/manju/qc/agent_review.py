@@ -950,10 +950,11 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
         return _record_verdicts_v2(project, payload, actor=actor)
 
     if not isinstance(payload, dict):
-        raise VerdictError("verdict 载荷必须是含 'verdicts' 数组的 JSON 对象")
+        raise VerdictError("verdict 载荷必须是含 'verdicts' 数组的 JSON 对象 "
+                           "(the verdict payload must be a JSON object with a 'verdicts' array)")
     verdicts = payload.get("verdicts")
     if not isinstance(verdicts, list) or not verdicts:
-        raise VerdictError("'verdicts' 必须是非空数组")
+        raise VerdictError("'verdicts' 必须是非空数组 ('verdicts' must be a non-empty array)")
 
     known = set(project.shot_ids())
     units_cache: list[dict] | None = None  # lazy: only built if a unit verdict appears
@@ -967,7 +968,7 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
     records: list[dict] = []
     for i, v in enumerate(verdicts):
         if not isinstance(v, dict):
-            raise VerdictError(f"verdict #{i} 必须是对象")
+            raise VerdictError(f"verdict #{i} 必须是对象 (verdict #{i} must be an object)")
 
         unit_id = str(v.get("unit") or "").strip()
         if unit_id:
@@ -975,19 +976,24 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
             if unit_def is None:
                 raise VerdictError(
                     f"verdict #{i}: 未知一致性组合 {unit_id!r}"
-                    "(不是当前可判读的组合;先 manju qc brief --mode consistency 出题)"
+                    "(不是当前可判读的组合;先 manju qc brief --mode consistency 出题) "
+                    f"(unknown consistency unit {unit_id!r} — not a currently reviewable unit; "
+                    "run manju qc brief --mode consistency first)"
                 )
             level = str(v.get("level") or "").strip().lower()
             if level not in LEVELS:
                 raise VerdictError(
-                    f"verdict #{i}: level 必须是 blocker|issue|fyi 之一,收到 {v.get('level')!r}"
+                    f"verdict #{i}: level 必须是 blocker|issue|fyi 之一,收到 {v.get('level')!r} "
+                    "(level must be one of blocker|issue|fyi)"
                 )
             criterion = str(v.get("criterion") or "").strip()
             if not criterion:
-                raise VerdictError(f"verdict #{i} 缺少 'criterion'(判读标准代码或简述,不能为空)")
+                raise VerdictError(f"verdict #{i} 缺少 'criterion'(判读标准代码或简述,不能为空) "
+                                   "(missing 'criterion' — a non-empty criterion code or brief description)")
             message = str(v.get("message") or "").strip()
             if not message:
-                raise VerdictError(f"verdict #{i} 缺少 'message'(中文结论,不能为空)")
+                raise VerdictError(f"verdict #{i} 缺少 'message'(中文结论,不能为空) "
+                                   "(missing 'message' — a non-empty conclusion)")
             rec: dict[str, Any] = {
                 "ts": _now_iso(),
                 "actor": actor,
@@ -1005,13 +1011,15 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
         else:
             shot = str(v.get("shot") or "").strip()
             if not shot:
-                raise VerdictError(f"verdict #{i} 缺少 'shot'")
+                raise VerdictError(f"verdict #{i} 缺少 'shot' (missing 'shot')")
             if shot not in known:
-                raise VerdictError(f"verdict #{i}: 未知镜头 {shot!r}(不是本项目镜头)")
+                raise VerdictError(f"verdict #{i}: 未知镜头 {shot!r}(不是本项目镜头) "
+                                   f"(unknown shot {shot!r} — not a shot in this project)")
             level = str(v.get("level") or "").strip().lower()
             if level not in LEVELS:
                 raise VerdictError(
-                    f"verdict #{i}: level 必须是 blocker|issue|fyi 之一,收到 {v.get('level')!r}"
+                    f"verdict #{i}: level 必须是 blocker|issue|fyi 之一,收到 {v.get('level')!r} "
+                    "(level must be one of blocker|issue|fyi)"
                 )
             # round-W #33: criterion AND message are required non-empty — an
             # empty criterion/message verdict has no actionable meaning (which
@@ -1021,10 +1029,12 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
             # aggregation key below).
             criterion = str(v.get("criterion") or "").strip()
             if not criterion:
-                raise VerdictError(f"verdict #{i} 缺少 'criterion'(判读标准代码或简述,不能为空)")
+                raise VerdictError(f"verdict #{i} 缺少 'criterion'(判读标准代码或简述,不能为空) "
+                                   "(missing 'criterion' — a non-empty criterion code or brief description)")
             message = str(v.get("message") or "").strip()
             if not message:
-                raise VerdictError(f"verdict #{i} 缺少 'message'(中文结论,不能为空)")
+                raise VerdictError(f"verdict #{i} 缺少 'message'(中文结论,不能为空) "
+                                   "(missing 'message' — a non-empty conclusion)")
             take_name, take_hash = _resolve_take(project, shot, str(v.get("take") or "").strip())
             rec = {
                 "ts": _now_iso(),
@@ -1086,7 +1096,7 @@ def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dic
     if isinstance(payload.get("verdicts"), list):
         raw_verdicts = payload["verdicts"]
         if not raw_verdicts:
-            raise VerdictError("'verdicts' 必须是非空数组")
+            raise VerdictError("'verdicts' 必须是非空数组 ('verdicts' must be a non-empty array)")
     else:
         raw_verdicts = [payload]
 

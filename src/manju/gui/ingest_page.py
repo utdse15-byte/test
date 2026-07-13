@@ -53,7 +53,7 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/ingest.css">\n'
-        '<script src="/ingest.js" defer></script>\n'
+        '<script src="/common.js" defer></script>\n<script src="/ingest.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="{PAGE_PATH}">\n'
         + nav_html(PAGE_PATH)
@@ -195,30 +195,8 @@ _INGEST_JS = r"""
 (function () {
   if (document.body.getAttribute("data-page") !== "/ingest") return;
 
-  var META = document.querySelector('meta[name="manju-token"]');
-  var TOKEN = META ? META.getAttribute("content") : "";
   var batchId = null;
 
-  function post(url, body) {
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Manju-Token": TOKEN },
-      body: JSON.stringify(body || {})
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (d) {
-        return { status: r.status, data: d };
-      });
-    });
-  }
-  function toast(msg, ok) {
-    var t = document.getElementById("toast");
-    if (!t) return;
-    var el = document.createElement("div");
-    el.className = "toast-item " + (ok === false ? "bad" : "good");
-    el.textContent = msg;
-    t.appendChild(el);
-    setTimeout(function () { el.remove(); }, 3600);
-  }
   function pollJob(jobId, tries) {
     tries = tries || 0;
     return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {

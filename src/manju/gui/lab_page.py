@@ -335,7 +335,7 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/lab.css">\n'
-        '<script src="/lab.js" defer></script>\n'
+        '<script src="/common.js" defer></script>\n<script src="/lab.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="{PAGE_PATH}">\n'
         + nav_html(PAGE_PATH)
@@ -844,32 +844,10 @@ _LAB_CSS = """
 _LAB_JS = r"""
 "use strict";
 (function () {
-  var META = document.querySelector('meta[name="manju-token"]');
-  var TOKEN = META ? META.getAttribute("content") : "";
   var GRID = document.querySelector(".lab-grid");
   var SHOT = GRID ? GRID.getAttribute("data-shot") : "";
   var quality = "draft";
 
-  function post(url, body) {
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Manju-Token": TOKEN },
-      body: JSON.stringify(body || {})
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (d) {
-        return { status: r.status, data: d };
-      });
-    });
-  }
-  function toast(msg, ok) {
-    var t = document.getElementById("toast");
-    if (!t) return;
-    var el = document.createElement("div");
-    el.className = "toast-item " + (ok === false ? "bad" : "good");
-    el.textContent = msg;
-    t.appendChild(el);
-    setTimeout(function () { el.remove(); }, 3600);
-  }
   function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
 
   function pollJob(jobId, tries) {

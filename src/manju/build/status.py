@@ -15,9 +15,16 @@ from ..core.events import tail_events
 from .stale import evaluate_all
 
 
-def project_status(project: Project) -> dict[str, Any]:
+def project_status(project: Project, *, statuses: Any = None,
+                   voices: Any = None) -> dict[str, Any]:
+    """``statuses`` / ``voices`` (G2): a caller that already ran
+    :func:`evaluate_all` / :func:`~manju.build.voice.evaluate_all_voices` (the
+    GUI's ``build_state`` does, for the per-shot cards) may pass them so this
+    does not recompute the same linear pass. Both default to ``None`` →
+    computed here, so every standalone caller (``manju status``) is unchanged."""
     config = project.load_config()
-    statuses = evaluate_all(project)
+    if statuses is None:
+        statuses = evaluate_all(project)
     by_state: dict[str, list[str]] = {}
     notes: dict[str, str] = {}
     for st in statuses:
@@ -31,7 +38,8 @@ def project_status(project: Project) -> dict[str, Any]:
     try:
         from .voice import VoiceState, evaluate_all_voices
 
-        for vs in evaluate_all_voices(project):
+        voice_list = voices if voices is not None else evaluate_all_voices(project)
+        for vs in voice_list:
             if vs.state != VoiceState.NOT_NEEDED:
                 voice_by_state.setdefault(vs.state.value, []).append(vs.shot_id)
     except Exception:

@@ -174,18 +174,26 @@ def _voice_cards(project: "Project", shot_id: str) -> list[dict[str, Any]]:
     return cards
 
 
-def _shot_cards(project: "Project") -> list[dict[str, Any]]:
-    voices: dict[str, Any] = {}
+def _shot_cards(project: "Project", statuses: Any = None,
+                voices: Any = None) -> list[dict[str, Any]]:
+    """``statuses`` / ``voices`` (G2): the RAW ``evaluate_all`` /
+    ``evaluate_all_voices`` passes ``build_state`` already ran — threaded in so
+    this does not recompute them a second time. Both default to ``None`` →
+    computed here, so ``_shot_cards`` stays callable standalone."""
+    voice_map: dict[str, Any] = {}
     try:  # advisory, like everywhere else the voice layer is consulted
         from ..build.voice import VoiceState, evaluate_all_voices
 
-        voices = {v.shot_id: v for v in evaluate_all_voices(project)
-                  if v.state != VoiceState.NOT_NEEDED}
+        voice_list = voices if voices is not None else evaluate_all_voices(project)
+        voice_map = {v.shot_id: v for v in voice_list
+                     if v.state != VoiceState.NOT_NEEDED}
     except Exception:
-        voices = {}
+        voice_map = {}
 
+    if statuses is None:
+        statuses = evaluate_all(project)
     cards: list[dict[str, Any]] = []
-    for st in evaluate_all(project):
+    for st in statuses:
         action = speaker = dialogue = ""
         locked: list[str] = []
         take_notes: dict[str, str] = {}
@@ -204,7 +212,7 @@ def _shot_cards(project: "Project") -> list[dict[str, Any]]:
         except Exception:
             pass  # a broken shot file still gets a card (state says why)
 
-        voice = voices.get(st.shot_id)
+        voice = voice_map.get(st.shot_id)
         cards.append({
             "id": st.shot_id,
             "state": st.state.value,
@@ -268,7 +276,20 @@ def _failures(project: "Project") -> list[dict[str, Any]]:
 
 
 def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
-    status = project_status(project)
+    # G2: run the stale + voice evaluation ONCE and thread the results through
+    # BOTH project_status(...) and _shot_cards(...) — before, each recomputed
+    # them independently (evaluate_all + evaluate_all_voices ran twice per
+    # build). Pure plumbing: the /api/state payload shape is identical.
+    statuses = evaluate_all(project)
+    voices: Any = None
+    try:
+        from ..build.voice import evaluate_all_voices
+
+        voices = evaluate_all_voices(project)
+    except Exception:
+        voices = None  # advisory; project_status/_shot_cards recompute-and-catch
+
+    status = project_status(project, statuses=statuses, voices=voices)
     config = project.load_config()
 
     latest_final = None
@@ -324,7 +345,7 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
         "build_lock": status.get("build_lock"),
         "qc": _qc_summary(project),
         "failures": _failures(project),
-        "shots": _shot_cards(project),
+        "shots": _shot_cards(project, statuses=statuses, voices=voices),
         "events": tail_events(project.root, _EVENTS_TAIL),
         # round AA item 6: interrupted() (a past GUI process's dangling
         # queued/running/canceling jobs, computed once at JobRunner
