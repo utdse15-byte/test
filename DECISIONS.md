@@ -1792,3 +1792,40 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   (sort key=as_posix).
 - Suite at green: 4270 passed / 1 skipped / 0 failed on the authoring host;
   ubuntu gate green throughout.
+
+## 40. WINDOWS wave 4: the colour minimal closed loop (2026-07-13)
+
+- Scope (plan W4, conditional): ONE opt-in project.yaml block `color:`
+  (ColorSpec — tag_outputs, input_transform srgb_to_bt709|p3_to_bt709), no
+  new public schema (the W3 annotation schema spent the budget). Absent =
+  byte-identical everywhere: serialization (the edit_rate/cache_toolchain_keys
+  wrap-serializer join), cache keys (fold-only-when-active, the look/S4
+  precedent; boundary keys inherit via the neighbour segment keys), command
+  lines (_enc_params literals pinned). `color: {}` rejected — absent is the
+  off switch.
+- tag_outputs stamps finals/proxies bt709/tv — states what the pipeline
+  already produces in substance, converts NOTHING; rides the hashed encoding
+  list so flipping it re-keys honestly and flipping back restores the
+  original key byte-for-byte (test-proven).
+- input_transform is a DECLARED source colour (the user states it; nothing
+  probes or guesses), converted at the one normalize seam with one fixed
+  zscale chain per token. Empirical chain design against the pinned ffmpeg
+  6.1.1: zscale REFUSES untagged yuv without a full input-side declaration
+  ("no path between colorspaces"), zimg ignores the yuv declarations for RGB
+  stills, alpha PNG + full-range mjpeg pass, and the conversion measurably
+  moves pixels ((200,30,30)→(202,40,41) — sRGB→BT.1886, not a relabel).
+- HDR_SOURCE warning in the technical profile (smpte2084/HLG transfer or
+  bt2020 primaries, axes named; facts-only profile_digest unmoved). colorstats
+  adopt_via honesty fix: the advertised `manju repair --op grade` DOES NOT
+  EXIST — now implemented:False + the real manual path; pinned. doctor gains
+  a zscale preflight probed only when a project declares a transform.
+- REJECTED with reasons: OCIO/LUT plumbing (no calibrated-monitor workflow
+  for one user — dead config fabricates correctness); ColorTransformPlan doc
+  (ceremony for two booleans); HDR tone-mapping (no HDR display/QC path to
+  validate a curve — the warning states the limit); the grade repair op (the
+  pointer was the lie); per-clip overrides (homogeneous personal sources).
+- 22 new tests (tests/test_windows_color.py), red-first (collection
+  ImportError + the behavioral all-axes-unknown red on a real render); guard
+  suites green (fp_profile/contracts/ratemig1/transitions_looks/cli_snapshot
+  105, c15_color+colorstats_wall 17, windows_doctor 15). Reports:
+  WINDOWS_WAVE_4_{BASELINE,COMPLETION}.md.
