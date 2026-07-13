@@ -50,7 +50,12 @@ def build_command(template: str, prompt: str) -> list[str]:
     """Split the template shell-style and substitute ``{prompt}`` as a WHOLE
     argument (never word-split, never quoted-injected). A template without
     the placeholder gets the prompt appended as the final argument."""
-    words = shlex.split(template)
+    # Windows gate round 3: POSIX shlex eats the backslashes out of real
+    # Windows paths (the auto-agent's fake-agent invocation died with exit
+    # 127, 1 event instead of 7). One owner: local_cmd's platform-aware split.
+    from .providers.local_cmd import _split_command
+
+    words = _split_command(template)
     if not words:
         raise AgentResolutionError("agent template is empty")
     if any("{prompt}" in w for w in words):

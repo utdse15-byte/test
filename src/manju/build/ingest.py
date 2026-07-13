@@ -384,7 +384,12 @@ def _collect_files(paths: list[Path] | list[str]) -> list[Path]:
         if not p.exists():
             raise IngestError(f"路径不存在: {p} — 核对拼写和当前目录")
         if p.is_dir():
-            out.extend(sorted(x for x in p.rglob("*") if x.is_file() and not x.name.startswith(".")))
+            # sorted(Path) is platform-dependent (Windows folds case in
+            # PurePath ordering — gate run #4 moved plan row indices). Sort by
+            # the POSIX string: byte-identical order on every platform.
+            out.extend(sorted((x for x in p.rglob("*")
+                               if x.is_file() and not x.name.startswith(".")),
+                              key=lambda x: x.as_posix()))
         elif p.is_file():
             out.append(p)
         else:
@@ -411,7 +416,7 @@ def _existing_hash_index(project: Project) -> dict[str, str]:
     for d in dirs:
         if d.exists():
             candidates.extend(x for x in d.rglob("*") if x.is_file())
-    for f in sorted(candidates):
+    for f in sorted(candidates, key=lambda x: x.as_posix()):
         try:
             h = hash_file(f)
         except OSError:

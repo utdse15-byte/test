@@ -158,3 +158,7 @@ if ($AddToPath) {
 
 Write-Step "Done. Active version: $versionId"
 Write-Step "Log: $log"
+# pwsh propagates the LAST native exit code ($LASTEXITCODE) as the script's —
+# doctor legitimately exits 1 on env findings (run #4: a fully successful
+# install "failed" its CI step this way). Success is explicit.
+exit 0

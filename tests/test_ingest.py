@@ -48,7 +48,7 @@ def _snapshot(root):
     """(relpath, size) for every file under root — used to prove a dry run
     touches nothing."""
     return sorted(
-        (str(p.relative_to(root)), p.stat().st_size)
+        (p.relative_to(root).as_posix(), p.stat().st_size)
         for p in root.rglob("*") if p.is_file()
     )
 

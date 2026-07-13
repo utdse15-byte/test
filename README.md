@@ -1,5 +1,9 @@
 # Manju One
 
+> **Personal software, Windows-first.** 本仓库是店主个人使用的单用户软件;
+> Windows 11 x64 是第一平台(硬门禁 `windows-ci.yml`),详见 `CLAUDE.md` 与
+> DECISIONS #36-#38。
+
 **A deterministic build system for video.** Not an "editor with AI bolted on" — a
 compiler. Think `make` / `ninja`: source files compile into derived artifacts,
 staleness is decided by content hashes, unchanged work is cached, and every

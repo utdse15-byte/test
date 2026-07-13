@@ -169,7 +169,11 @@ def test_record_verdicts_append_is_coordinated_grep_pin():
     import manju.qc.agent_review as agent_review
 
     src = Path(agent_review.__file__).read_text(encoding="utf-8")
-    assert 'events_lock(project.root, lock_name=".manju/agent_review.lock")' in src
+    assert 'lock_name=".manju/agent_review.lock"' in src
+    # round 3: fail-closed like events.jsonl — a refused lock RAISES, never
+    # an unlocked interleaving append (run #4 evidence: 5/12 lines survived
+    # the degrade-to-unlocked stance).
+    assert "required=True" in src.split('lock_name=".manju/agent_review.lock"')[0][-200:]
     append_at = src.index('open(path, "a", encoding="utf-8")')
     lock_at = src.index('lock_name=".manju/agent_review.lock"')
     assert lock_at < append_at, "the coordinator must wrap the append, not follow it"
@@ -198,3 +202,38 @@ def test_split_command_posix_unchanged():
         pytest.skip("POSIX byte-identity pin")
     assert (local_cmd._split_command('sh /tmp/gen.sh --prompt "two words" --out {out}')
             == ["sh", "/tmp/gen.sh", "--prompt", "two words", "--out", "{out}"])
+
+
+def test_events_lock_serializes_twelve_threads_required():
+    """Cross-platform coordinator probe (gate round 3): 12 threads append 12
+    lines under required=True — every line lands intact or the lock RAISES
+    with its reason. On the real Windows host this is the diagnostic for the
+    dr02 lost-line mystery (run #4: 5/12 under degrade-to-unlocked)."""
+    import json
+    import tempfile
+    import threading
+
+    import manju.core.events as events
+
+    with tempfile.TemporaryDirectory() as root:
+        errors: list[Exception] = []
+
+        def submit(i: int) -> None:
+            try:
+                ok = events.append_jsonl_line(
+                    root, {"n": i, "text": "雨夜" * 10}, durable=True, required=True,
+                    file_name="probe.jsonl", lock_name="probe.lock")
+                assert ok is True
+            except Exception as exc:  # noqa: BLE001 — collected for the report
+                errors.append(exc)
+
+        threads = [threading.Thread(target=submit, args=(i,)) for i in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"required append refused: {errors[:3]}"
+        lines = (Path(root) / "probe.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 12, f"lost lines: {len(lines)}/12"
+        assert {json.loads(l)["n"] for l in lines if l.strip()} == set(range(12))

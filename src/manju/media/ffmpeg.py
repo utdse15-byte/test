@@ -207,12 +207,19 @@ def _run_ffmpeg_cancelable(cmd: list[str], *, project: Any, subject: str | None,
     stderr = ""
     while True:
         try:
-            _stdout, stderr = proc.communicate(timeout=_CANCEL_POLL_S)
+            # Gate round 3: poll wait() — a bare WaitForSingleObject/waitpid
+            # with no pipe machinery. The old communicate(timeout=…) poll
+            # never yielded on the real Windows host (both cancel tests took
+            # the encode's FULL duration, twice, deterministically — the
+            # reader-thread machinery swallowed the poll interval), so the
+            # cancel check only ran when ffmpeg finished by itself. Pipes are
+            # drained ONCE after death; -loglevel error keeps stderr far
+            # below the pipe buffer while alive, and a pathologically spewing
+            # ffmpeg stalls itself until the overall timeout kill fires.
+            proc.wait(timeout=_CANCEL_POLL_S)
+            _stdout, stderr = proc.communicate()
             break
         except subprocess.TimeoutExpired:
-            # communicate() may be retried after a TimeoutExpired with no
-            # data loss (stdlib docs) — this loop is the documented pattern
-            # for polling a Popen with a short interval.
             if check():
                 proc.terminate()
                 try:

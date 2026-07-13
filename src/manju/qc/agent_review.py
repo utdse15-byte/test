@@ -1062,13 +1062,15 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
     # Linux, but the gate's first run tore it (12 verdicts -> 6 intact lines).
     # Ride THE append coordinator (core/events.events_lock, WP2 §4.4 pattern:
     # own lock name, own sibling file under the disposable runtime dir).
-    # Semantics preserved deliberately: a lock timeout degrades to today's
-    # unlocked append rather than DROPPING verdicts — record_verdicts is an
-    # explicit evidence API whose callers already wrote media/spend.
+    # Gate round 3: FAIL-CLOSED (required=True) — the WP1 stance events.jsonl
+    # already has. Round 2's degrade-to-unlocked left run #4 still losing
+    # lines (5/12) with no visible cause; a refused lock now raises
+    # EvidenceWriteError naming the reason instead of interleaving silently.
     from ..core.events import events_lock
 
     project.runtime_dir.mkdir(parents=True, exist_ok=True)
-    with events_lock(project.root, lock_name=".manju/agent_review.lock"):
+    with events_lock(project.root, required=True,
+                     lock_name=".manju/agent_review.lock"):
         with open(path, "a", encoding="utf-8") as f:
             for rec in records:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
