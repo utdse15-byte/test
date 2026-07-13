@@ -160,6 +160,21 @@ def test_static_board_bytes_unchanged_by_csp(board_project, monkeypatch):
     """Adding the CSP header changed NOTHING in the rendered HTML (serve or
     static) — re-pins the static byte-identity locally so item 15 can never
     have touched the frozen bytes."""
+    # Freeze the render clock: the ONLY nondeterministic bytes in a static
+    # board are the "generated at" stamp (board.py: datetime.now), and two
+    # renders straddling a second boundary flaked this pin twice on CI
+    # (11:51:12 vs 11:51:13 UTC). Byte-identity is about the CONTENT, so both
+    # renders see one frozen instant.
+    import datetime as _dt
+
+    frozen = _dt.datetime(2026, 1, 1, 12, 0, 0, tzinfo=_dt.timezone.utc)
+
+    class _FrozenDatetime(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz else frozen.replace(tzinfo=None)
+
+    monkeypatch.setattr(bd, "datetime", _FrozenDatetime)
     written = bd.render_board(board_project, serve=False)
     assert written == bd.render_board(board_project, serve=False)  # deterministic
     with running(board_project) as (base, server):
