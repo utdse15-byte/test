@@ -1457,3 +1457,94 @@ recorded as the pattern that the remaining-work list underestimates
 existing coverage. Suite: 3790 → 3928 passed / 13 skipped / 0 failed
 (definitive quiescent run with --durations profiling folded in). CI:
 the batch push's verdict in the window wrap.
+
+## 34. OPT wave: the audit's six items implemented + the CI flake killed (2026-07-13)
+
+The user approved the optimization backlog wholesale ("1-6 all"); six
+parallel loops ran on disjoint file sets, each reviewed against
+orchestrator bars written from independent reads BEFORE the diffs landed,
+with the orchestrator's own adversarial harnesses as the acceptance gate.
+
+- L1 tail_events backward-read (91e5ce6): seek-from-EOF 64KiB blocks,
+  1385x-5900x for small-n tails on MB-scale logs, n=100000 still faster.
+  Byte-exact parity pinned adversarially (83 cases). The orchestrator's
+  independent harness caught ONE divergence the loop had classified
+  theoretical — lone-\r separators (old universal newlines split them;
+  the first cut lost events on hand-edited logs) — fixed by splitting on
+  both newline bytes (\r can't sit inside a multibyte sequence either)
+  and pinned red-first. One deliberate improvement kept: an undecodable
+  torn line skips (like follow_events) where the old strict text reader
+  crashed the whole tail. str.splitlines() deliberately avoided —
+  U+2028/9/85 are legal inside ensure_ascii=False JSON lines.
+- L2 voice probe cache (2d74a22): the three synthesis sites now stamp
+  VoiceTakeSidecar.probe via the SAME media.probe reading the live path
+  uses; the compiler reads cache-first at both consumption sites
+  (slate + WP4 locale base-voice) with probe_fn fallback. Zero live
+  voice probes on cached compiles (spy-pinned), exactly-one-probe legacy
+  fallback (§4.3), cache-vs-live timeline JSON identity.
+- L3 /review lazy consistency boards (1c71196): request thread 3409.5ms
+  -> 231.0ms at 8 shots, spawns 474 -> 0 (spy FORBIDS subprocess on
+  render); unit structure + verdict forms stay inline (existing
+  inline pins kept green); boards compose on demand via token-gated
+  POST /api/review/consistency — readonly-allowed as capability-
+  PRESERVING (boards already loaded inline on readonly workbenches;
+  the endpoint writes only the rebuildable frames cache). _member_frame
+  reads the sidecar probe first: 64 redundant ffprobe spawns stripped
+  from board composition itself, frame keys byte-identical.
+- L4 hash_file memo (5cf08bc): process-scoped, (realpath, size,
+  mtime_ns)-keyed, LRU 4096, per-call MANJU_NO_HASH_CACHE kill-switch,
+  SHA-256 outside the lock, failures never cached; the render/graph
+  double-hash collapses at the one seam with render.py/graph.py
+  untouched. The staleness window (same-size rewrite inside one
+  mtime_ns tick) is documented honestly, not engineered away. Open-spy
+  pins prove the collapse at the REAL _segment_cache_key seam with a
+  kill-switch control.
+- L5 pytest-xdist (c067715; ci flip 167dc8b): all 11 raw os.chdir sites converted to
+  monkeypatch.chdir / MonkeyPatch.context() (FIVE were truly
+  unguarded — the audit's two in test_providers_routing plus all three
+  in test_quality_modes, no try/finally at all); lint pin forbids raw chdir
+  under tests/ with no allowlist; pytest-xdist==3.8.0 (+execnet==2.1.2)
+  pinned in constraints + dev extra. Full-suite -n auto proof:
+  4056 passed / 13 skipped / 0 failed in 337.34s (0:05:37). ci.yml flipped to `python -m pytest -q -n auto` by the
+  orchestrator ONLY on that proof (also killing the bare-pytest footgun
+  in CI); fallback documented: revert the one line to serial module
+  form, keep the isolation fixes.
+- L6 polish trio (4c067f9): 8 bilingual rich_help_panel groups over
+  the ~65-command help wall (cli_surface.json pins commands+params, not
+  panels — zero drift); SKILL.md gains the missing rows (migrate,
+  locale, pack --bagit, export formats, and the THREE import-plans —
+  openclap/fcpxml/edl); MCP tool descriptions compressed —
+  the agent-surface digest excludes description text (policy.py:359,
+  verified before editing); names/params/enums untouched, mcp-tool-surface
+  digest pins green. Honest yield: ~196 tokens/session — the cut was
+  changelog provenance (round/goal/finding numbers), everything
+  agent-facing kept; most of the audited ~3.4k surface is load-bearing.
+  A new SKILL cheat-sheet drift-guard tooth was added (red on the
+  unpatched tree with exactly the 9 missing surface tokens) since no
+  existing pin covered rows — approved scope addition. SKILL.md now
+  291/300 against its hard line ceiling (future growth needs the same
+  discipline).
+
+Also in this wave — the CI red on cfe6c8a (run 29220786644) root-caused
+and killed (ba68585): test_fp_bagit's _seed rewrote two identical-content
+files before EVERY pack, refreshing mtimes between the double packs of
+the byte-identity pins; zip members quantize mtimes into 2-second DOS
+ticks, so a straddled boundary differed the archives by exactly two
+mod-time bytes (~2-3% odds per run — latent since U1, first fired on the
+slower CI runner). _seed is now idempotent with a red-first
+no-mtime-churn tooth; the byte-identity assertions are unchanged. L4's
+loop independently converged on the same exoneration mid-wave (its
+bisection found hashes/CRCs identical before being unblocked) — two
+independent derivations, one root cause.
+
+Orchestration: the six loops shared one working tree under a disjoint
+file-ownership map; the orchestrator hand-verified each mechanism
+against independent reference reads (probe-equivalence, digest scope,
+realpath keying, readonly-allowlist capability argument), ran its own
+adversarial harnesses (tail-parity, hash-cache stress), and re-ran every
+loop's union batch before committing per loop. L5's first -n auto proof
+collected L1's pin file mid-edit (its before/after tree fingerprint
+caught exactly this) — rerun clean after the tree settled; the flagged
+failure was the mid-edit artifact, not an xdist issue. Suite: 3934 ->
+4056 passed / 13 skipped / 0 failed in 936.10s (0:15:36) (definitive quiescent serial run) and 4056 passed / 13 skipped / 0 failed in 337.34s (0:05:37) under
+-n auto. CI: the batch push's verdict in the window wrap.
