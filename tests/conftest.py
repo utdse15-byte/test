@@ -45,6 +45,18 @@ def _isolate_recents(monkeypatch, tmp_path):
     monkeypatch.setenv("MANJU_RECENTS", str(tmp_path / "_recents_conftest.json"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_providers(monkeypatch, tmp_path):
+    """UX round-2 incident: a scratch provider manifest left in the REAL
+    ``~/.manju/providers`` turned doctor's gating provider check red across
+    the suite — the tests had only ever been green because that directory
+    happened to be empty on every host so far. ``MANJU_PROVIDERS_DIR`` is the
+    documented test seam (providers/manifest.py); default every test onto a
+    hermetic tmp dir. Suites that set their own dir override this (their
+    monkeypatch.setenv runs after this autouse fixture)."""
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path / "_providers_conftest"))
+
+
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Project:
     """A freshly scaffolded project with a minimal, valid Bible.
