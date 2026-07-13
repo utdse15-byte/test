@@ -184,21 +184,139 @@ def append_event(project_root: Path, actor: str, action: str, detail: dict[str, 
     append_jsonl_line(Path(project_root), record, durable=True, required=False)
 
 
+# Backward-tail read (audit Tier-1 #1). ``tail_events`` used to parse the ENTIRE
+# unbounded events.jsonl only to return its last ``n`` records — 195ms at 9.8MB,
+# vs 0.095ms for a backward read (2042x). It now seeks from EOF and reads
+# fixed-size blocks LEFTWARD, so the common small-``n`` callers (status n=5,
+# cockpit n=8, board n=10, gui-state n=15) touch a block or two regardless of how
+# large the log has grown. The return value is byte-for-byte what the old
+# full-parse reader produced — see :func:`_collect_backward` for the contract.
+_TAIL_BLOCK_SIZE = 65536  # 64 KiB — the leftward read granularity.
+
+
+def _decode_and_parse(raw: bytes) -> dict[str, Any] | None:
+    r"""Turn one raw line — the bytes BETWEEN two ``\n`` bytes (newline excluded) —
+    into a record, or ``None`` when the line contributes nothing, matching the old
+    reader's skip rules line-for-line:
+
+    * empty / all-whitespace line → ``None`` (old: ``if not line: continue``);
+    * invalid JSON → ``None`` (old: ``except json.JSONDecodeError: continue`` —
+      "a torn write must not brick the log");
+    * undecodable UTF-8 → ``None``. This is the ONE deliberate behavioural change,
+      documented here. The old reader opened the log in TEXT mode with the default
+      strict codec, so a genuinely undecodable byte ANYWHERE in the file made it
+      *raise* ``UnicodeDecodeError`` (it read the whole file, so any bad byte
+      aborted the tail). A well-formed events.jsonl can never hold one — every
+      line is ``json.dumps(..., ensure_ascii=False)`` output, always valid UTF-8 —
+      so the old reader effectively never reached this path; the only real source
+      is a write torn mid-multibyte-char at EOF, and on THAT the old reader bricked
+      the entire tail. We instead skip the offending line, exactly as the
+      streaming sibling :func:`follow_events` already does ("undecodable bytes →
+      treat like a torn line"), so a torn write can never brick the tail. Because
+      we only ever hand this function COMPLETE lines and a ``\n`` byte can never
+      fall inside a multibyte sequence, a boundary-straddling character is always
+      whole before it is decoded — the skip fires only on truly torn bytes.
+    """
+    try:
+        line = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+def _collect_backward(path: Path, limit: int | None) -> list[dict[str, Any]]:
+    r"""Return the last ``limit`` parseable records from ``path`` in file (forward)
+    order — or ALL of them when ``limit`` is ``None`` — by seeking from EOF and
+    reading ``_TAIL_BLOCK_SIZE`` blocks LEFTWARD. Byte-exact parity with the old
+    full-file reader for every valid-UTF-8 log:
+
+    * We split on the newline BYTES ``\n`` (0x0A) and ``\r`` (0x0D) — the old
+      text-mode reader's universal newlines split on ``\n``, ``\r\n`` and a lone
+      ``\r``, so we must too. Both bytes are < 0x80 and so can NEVER be part of a
+      multibyte UTF-8 sequence (leader/continuation bytes are all >= 0x80); a
+      record — even CJK-heavy — that straddles a block boundary is therefore
+      reassembled into ONE complete line before it is decoded, and each line is
+      decoded on its own, so no boundary can corrupt a character.
+    * After prepending a block, the segment BEFORE the first ``\n`` is the only
+      one whose left delimiter has not been read yet; it becomes the ``carry``
+      prepended to the next (further-left) block. Every other segment is a
+      complete line. When the block starts at byte 0 the leading segment is ALSO
+      complete — it is the file's first line, so a first line with no preceding
+      newline still parses.
+    * Lines are visited newest-first, so we stop the instant we have ``limit`` of
+      them: the work is bounded by ``min(records-requested, whole-file)``, never
+      more than one full pass — the ``carry`` is at most one line long, so a huge
+      ``n`` degrades to a single forward-equivalent read with no quadratic
+      re-slicing.
+    """
+    out: list[dict[str, Any]] = []
+    carry = b""
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        while pos > 0:
+            read_size = min(_TAIL_BLOCK_SIZE, pos)
+            pos -= read_size
+            f.seek(pos)
+            data = f.read(read_size) + carry
+            # Split on BOTH newline bytes so a lone ``\r`` (old-Mac / hand-edited /
+            # externally-written log) is a line break too — the old TEXT-mode
+            # reader used UNIVERSAL NEWLINES (``\n``, ``\r\n`` and a bare ``\r``).
+            # Normalising ``\r`` → ``\n`` first collapses ``\r\n`` to one empty
+            # segment (skipped as blank), matching universal newlines byte-for-
+            # byte, including a trailing ``\r`` and a ``\r\n`` straddling a block
+            # boundary. We do NOT use ``splitlines()`` — it ALSO breaks on
+            # U+2028/U+2029/U+0085, which are legal inside our ``ensure_ascii=False``
+            # JSON string values and must never tear a record.
+            segments = data.replace(b"\r", b"\n").split(b"\n")
+            if pos == 0:
+                # reached BOF: the leading segment is the file's first line.
+                complete = segments
+                carry = b""
+            else:
+                carry = segments[0]
+                complete = segments[1:]
+            for raw in reversed(complete):
+                rec = _decode_and_parse(raw)
+                if rec is not None:
+                    out.append(rec)
+                    if limit is not None and len(out) >= limit:
+                        out.reverse()
+                        return out
+    out.reverse()
+    return out
+
+
 def tail_events(project_root: Path, n: int = 20) -> list[dict[str, Any]]:
+    r"""The last ``n`` records of events.jsonl, oldest-first — the handover tail.
+
+    Reads BACKWARD from EOF (see :func:`_collect_backward`) instead of parsing the
+    whole unbounded log, so a five-line ``manju status`` tail no longer pays for a
+    ten-megabyte file. The return value is byte-for-byte what the old full-parse
+    reader returned: same records, same order, torn/empty lines skipped silently,
+    a missing file → ``[]`` (the one documented difference is undecodable bytes —
+    see :func:`_decode_and_parse`).
+
+    ``n`` keeps its exact historical slice semantics — the result is
+    ``all_records[-n:]`` — including the quirks: ``n == 0`` returns EVERY record
+    (``-0`` is ``0``) and a negative ``n`` drops the first ``|n|``. Those two need
+    the whole list, so they fall back to a full read; every ``n > 0`` caller gets
+    the bounded backward scan.
+    """
     path = Path(project_root) / EVENTS_FILE
     if not path.exists():
         return []
-    events: list[dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue  # a torn write must not brick the log
-    return events[-n:]
+    if n <= 0:
+        # events[-n:] for n <= 0 is a whole-list slice (n == 0 → ALL via -0 == 0;
+        # n < 0 → all-but-first-|n|): read everything, then reproduce it exactly.
+        return _collect_backward(path, None)[-n:]
+    return _collect_backward(path, n)
 
 
 def follow_events(
