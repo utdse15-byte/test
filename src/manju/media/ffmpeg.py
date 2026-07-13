@@ -27,6 +27,25 @@ from typing import Any
 
 from ..core.yamlio import replace_with_retry
 
+# Gate round 3: os.name is process-constant; a module flag keeps the Windows
+# branch below patchable in tests without touching the global ``os`` module.
+_IS_WINDOWS = os.name == "nt"
+
+
+def _taskkill_tree(proc: "subprocess.Popen") -> None:
+    """Windows cancel/timeout kill must take the whole TREE, and must do it
+    while the direct child is still alive: Chocolatey installs ffmpeg as a
+    SHIM that spawns the real encoder as a child — TerminateProcess on the
+    shim alone leaves the encoder running with the pipes open (gate run #5:
+    every cancel took the encode's FULL duration). ``taskkill /T`` walks the
+    tree from the live shim; killing the shim first would orphan the encoder
+    beyond /T's reach, so call this BEFORE terminate()."""
+    try:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True, timeout=10, check=False)
+    except Exception:
+        pass  # taskkill unavailable/hung — the direct kill still follows
+
 FFMPEG = "ffmpeg"
 _STDERR_TAIL = 15
 _ARGV_HEAD = 12  # how many argv tokens to keep as evidence (the -i/-vf head)
@@ -221,6 +240,8 @@ def _run_ffmpeg_cancelable(cmd: list[str], *, project: Any, subject: str | None,
             break
         except subprocess.TimeoutExpired:
             if check():
+                if _IS_WINDOWS:
+                    _taskkill_tree(proc)  # BEFORE terminate — see its docstring
                 proc.terminate()
                 try:
                     proc.communicate(timeout=_CANCEL_GRACE_S)
@@ -229,6 +250,8 @@ def _run_ffmpeg_cancelable(cmd: list[str], *, project: Any, subject: str | None,
                     proc.communicate()
                 raise _canceled_error(project, step, subject, cmd) from None
             if timeout is not None and (time.monotonic() - start) > timeout:
+                if _IS_WINDOWS:
+                    _taskkill_tree(proc)
                 proc.kill()
                 proc.communicate()
                 raise _timeout_error(project, step, subject, cmd, timeout) from None

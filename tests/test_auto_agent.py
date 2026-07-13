@@ -91,15 +91,28 @@ def test_auto_runs_fake_agent_with_playbook_and_ai_actor(tmp_project, tmp_path,
     """A fake agent script records its argv + env; auto must hand it the
     composed playbook prompt, MANJU_ACTOR=ai, and propagate its exit code."""
     record = tmp_path / "record.json"
-    fake = tmp_path / "fakeagent"
-    fake.write_text(
-        "#!/bin/sh\n"
-        f"printf '%s' \"$1\" > {record}.prompt\n"
-        f"printf '%s' \"$MANJU_ACTOR\" > {record}.actor\n"
-        "exit 7\n",
-        encoding="utf-8",
-    )
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    # Windows gate round 3: a bare #!/bin/sh file is not executable there
+    # ('%1 is not a valid Win32 application') — the fake agent is a .cmd on
+    # nt so the PRIMARY platform gets real coverage, not a skip.
+    if os.name == "nt":
+        fake = tmp_path / "fakeagent.cmd"
+        fake.write_text(
+            "@echo off\r\n"
+            f"<nul set /p=\"%~1\" > \"{record}.prompt\"\r\n"
+            f"<nul set /p=\"%MANJU_ACTOR%\" > \"{record}.actor\"\r\n"
+            "exit /b 7\r\n",
+            encoding="utf-8",
+        )
+    else:
+        fake = tmp_path / "fakeagent"
+        fake.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s' \"$1\" > {record}.prompt\n"
+            f"printf '%s' \"$MANJU_ACTOR\" > {record}.actor\n"
+            "exit 7\n",
+            encoding="utf-8",
+        )
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
     monkeypatch.chdir(tmp_project.root)
     monkeypatch.delenv("MANJU_AGENT", raising=False)
@@ -126,9 +139,13 @@ def test_auto_event_never_carries_the_full_prompt(tmp_project, tmp_path, monkeyp
     A prompt with something secret-shaped in it must not leak into the log."""
     import hashlib
 
-    fake = tmp_path / "fakeagent2"
-    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    if os.name == "nt":
+        fake = tmp_path / "fakeagent2.cmd"
+        fake.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    else:
+        fake = tmp_path / "fakeagent2"
+        fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
     monkeypatch.chdir(tmp_project.root)
     monkeypatch.delenv("MANJU_AGENT", raising=False)

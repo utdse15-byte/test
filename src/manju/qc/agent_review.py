@@ -1129,11 +1129,21 @@ def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dic
 
     path = agent_log_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        for rec in prepared:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    # Gate round 3b: THE SECOND appender — round 1 serialized only the legacy
+    # writer above; this v2 batch write raced unserialized on Windows (dr02:
+    # 12 threads → 5-6 surviving lines while the coordinator probe stayed
+    # green — the tell that a writer was bypassing it). Same coordinator,
+    # same lock name, same fail-closed stance.
+    from ..core.events import events_lock
+
+    project.runtime_dir.mkdir(parents=True, exist_ok=True)
+    with events_lock(project.root, required=True,
+                     lock_name=".manju/agent_review.lock"):
+        with open(path, "a", encoding="utf-8") as f:
+            for rec in prepared:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     bindings: dict[str, int] = {}
     for rec in prepared:
