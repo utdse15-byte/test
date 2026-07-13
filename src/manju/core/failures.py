@@ -44,6 +44,10 @@ try:
     import fcntl
 except ImportError:  # Windows: no fcntl — the lock degrades to a no-op below
     fcntl = None  # type: ignore[assignment]
+try:
+    import msvcrt  # Windows byte-range lock — the fcntl twin (gate round 1)
+except ImportError:  # POSIX: fcntl above is the coordinator
+    msvcrt = None  # type: ignore[assignment]
 
 # reports/ is the project's report surface (qc.md/json live here too); failures
 # ride alongside as an append-only jsonl.
@@ -67,18 +71,42 @@ def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> It
     forever, and a stuck holder times out to a clear error instead of a wedge.
     """
     reports_dir.mkdir(parents=True, exist_ok=True)
-    if fcntl is None:
-        yield
+    if fcntl is None and msvcrt is None:
+        yield  # no lock primitive at all (exotic platform): degrade unlocked
         return
     lock_path = reports_dir / "failures.lock"
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    # Windows gate round 1: the fcntl-only lock no-opped on Windows and the
+    # gate's first run proved dropped lines (12 records -> 10). The msvcrt
+    # byte-0 branch mirrors core/events.events_lock; POSIX path unchanged.
+    if fcntl is not None:
+        retry_exc: tuple[type[BaseException], ...] = (BlockingIOError,)
+
+        def _try() -> None:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        def _unlock() -> None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
+        retry_exc = (OSError,)
+
+        def _try() -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+        def _unlock() -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+    locked = False
     try:
         deadline = time.monotonic() + timeout_s
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _try()
+                locked = True
                 break
-            except BlockingIOError:
+            except retry_exc:
                 if time.monotonic() >= deadline:
                     # Best-effort: a wedged lock must never lose the failure
                     # record itself — proceed unlocked rather than drop it.
@@ -86,10 +114,11 @@ def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> It
                 time.sleep(0.02)
         yield
     finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
+        if locked:
+            try:
+                _unlock()
+            except OSError:
+                pass
         os.close(fd)
 
 

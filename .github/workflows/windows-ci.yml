@@ -40,8 +40,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      # 6.1.1 = the EXACT version ubuntu-latest apt ships (gate run #1
+      # proved 8.x skews ffprobe color-tag output vs the verified suite).
       - name: Install pinned FFmpeg (choco, SHA-256-verified package)
-        run: choco install ffmpeg --version=8.1.2 --no-progress -y
+        run: choco install ffmpeg --version=6.1.1 --no-progress -y
 
       - name: FFmpeg present and at the pinned version (anti-silent-skip gate)
         run: |
@@ -49,7 +51,7 @@ jobs:
           Write-Host "ffmpeg: $ff"
           $v = (& ffmpeg -version | Select-Object -First 1)
           Write-Host $v
-          if ($v -notmatch "ffmpeg version 8\.1") { throw "ffmpeg is not the pinned 8.1.x build: $v" }
+          if ($v -notmatch "ffmpeg version 6\.1") { throw "ffmpeg is not the pinned 6.1.x build: $v" }
           $fp = (Get-Command ffprobe -ErrorAction Stop).Source
           Write-Host "ffprobe: $fp"
 

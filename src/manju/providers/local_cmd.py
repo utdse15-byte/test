@@ -91,7 +91,7 @@ class LocalCommandProvider(Provider):
                 "placeholder"
             )
         try:
-            self._words = shlex.split(cfg.command)
+            self._words = _split_command(cfg.command)
         except ValueError as exc:
             raise ValueError(
                 f"manifest {manifest.id}: local_cmd.command is not valid shell syntax: {exc}"
@@ -321,6 +321,26 @@ def _new_session_kwargs() -> dict:
 # W1 (§3.5): os.name is process-constant; a module flag keeps the Windows
 # branch below patchable in tests without touching the global ``os`` module.
 _IS_WINDOWS = os.name == "nt"
+
+
+def _split_command(template: str) -> list[str]:
+    """Split the manifest command template into argv words.
+
+    POSIX: ``shlex.split`` exactly as before. Windows (gate round 1): POSIX
+    shlex treats ``\`` as an escape character, so a template carrying a real
+    Windows path (``sh C:\\Users\\me\\gen.sh --out {out}``) lost every
+    backslash (``C:Usersme...`` → exit 127). Split in non-POSIX mode there —
+    backslashes survive — then strip one layer of matching outer quotes per
+    word (non-POSIX shlex keeps them), preserving the "quoted phrase = one
+    argv word" contract the placeholder substitution relies on."""
+    if not _IS_WINDOWS:
+        return shlex.split(template)
+    words = []
+    for word in shlex.split(template, posix=False):
+        if len(word) >= 2 and word[0] == word[-1] and word[0] in ("'", '"'):
+            word = word[1:-1]
+        words.append(word)
+    return words
 
 
 def _kill_process_group(proc: "subprocess.Popen") -> None:

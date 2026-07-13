@@ -107,10 +107,30 @@ def _even(n: int) -> int:
 
 
 def _escape_filter_path(path: Path | str) -> str:
-    """Escape a path for use inside a filtergraph option value (e.g. the ass=
-    filter). Chinese/UTF-8 characters need no escaping; only the filtergraph
-    metacharacters do. Handles Windows ``C:`` drive colons too (§14)."""
-    return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    """Escape a path for use inside a filtergraph option value (``ass=``,
+    ``textfile=``, ``fontfile=``). Chinese/UTF-8 characters need no escaping —
+    but a path travels through TWO parsers, and the Windows gate's first run
+    proved single-level escaping wrong on every drive-letter path: the
+    filtergraph parser unescaped ``C\\:`` back to ``C:`` and then the FILTER's
+    own option parser split at that colon, feeding ``\\Users\\...`` into the
+    ass filter's next positional option ("Unable to parse original_size").
+
+    The two-level form: single quotes make the whole value ONE token to the
+    graph parser (level 2), and inside them ``\\:`` survives verbatim so the
+    filter's option parser (level 1) unescapes it to a literal colon.
+    Backslashes become forward slashes (every ffmpeg filter accepts them on
+    Windows; backslash is the escape character at both levels and doubling it
+    twice over is exactly the fragility that broke). A literal apostrophe
+    close-escape-reopens, shell-style. Plain POSIX paths (no ``\\``/``:``/``'``
+    — every Linux tmp path) return UNCHANGED, byte-identical to the
+    historical output, so existing command lines and logs never shift."""
+    p = str(path)
+    if "\\" not in p and ":" not in p and "'" not in p:
+        return p
+    p = p.replace("\\", "/")
+    p = p.replace(":", "\\:")
+    p = p.replace("'", "'\\''")
+    return f"'{p}'"
 
 
 def _text_overlay_style(ov: OverlayClip, *, out_w: int) -> list[str]:

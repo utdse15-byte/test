@@ -67,7 +67,8 @@ def test_hook_installs_executable_with_marker(tmp_path: Path) -> None:
     assert "exec manju check" in text            # the actual gate
 
     mode = hook.stat().st_mode
-    assert mode & 0o111 == 0o111                  # exec bit set (0o755)
+    if os.name != "nt":  # exec bits are POSIX; git-for-windows runs hooks via sh
+        assert mode & 0o111 == 0o111                  # exec bit set (0o755)
 
 
 def test_hook_reinstall_over_own_marker_is_idempotent(tmp_path: Path) -> None:
@@ -82,7 +83,8 @@ def test_hook_reinstall_over_own_marker_is_idempotent(tmp_path: Path) -> None:
     second = gitops.install_check_hook(root)
     assert second == first
     assert second.read_text(encoding="utf-8") == first_text
-    assert second.stat().st_mode & 0o111 == 0o111
+    if os.name != "nt":  # exec bits are POSIX; git-for-windows runs hooks via sh
+        assert second.stat().st_mode & 0o111 == 0o111
 
 
 def test_hook_preserves_foreign_pre_commit(tmp_path: Path) -> None:

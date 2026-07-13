@@ -140,7 +140,8 @@ def test_check_warns_on_casefold_collision(tmp_project):
     media.mkdir(exist_ok=True)
     (media / "Ambience.wav").write_bytes(b"fake-a")
     (media / "ambience.WAV").write_bytes(b"fake-b")
-    if len(list(media.iterdir())) < 2:
+    staged = {p.name for p in media.iterdir() if p.name.lower() == "ambience.wav"}
+    if len(staged) < 2:
         pytest.skip("case-insensitive filesystem — the collision cannot be staged here")
 
     report = run_check(tmp_project)

@@ -289,8 +289,13 @@ def test_no_fcntl_platform_refuses_paid_and_drops_best_effort(tmp_project, add_s
     """§9.14 / WP1: with no reliable file lock (fcntl unavailable) the REQUIRED
     PREPARED append refuses the paid submit (no_reliable_lock, transport 0), and
     a best-effort append DROPS the record (False/{}) rather than writing
-    unlocked. (This CHANGES the old no-fcntl no-op-and-write.)"""
+    unlocked. (This CHANGES the old no-fcntl no-op-and-write.)
+
+    Windows gate round 1 / DECISIONS #36: on a REAL Windows host msvcrt now
+    provides the lock, so paid appends WORK there — this pin is about the
+    no-primitive-at-all contract, so both coordinators are stubbed away."""
     monkeypatch.setattr(core_events, "fcntl", None)
+    monkeypatch.setattr(core_events, "msvcrt", None, raising=False)
     shot = add_shot(tmp_project, "S001")
 
     provider = ScriptedCloud()

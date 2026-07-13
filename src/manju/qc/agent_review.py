@@ -1057,11 +1057,23 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
 
     path = agent_log_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    # Windows gate round 1: this append had NO cross-writer lock — POSIX
+    # append-mode small-writes are effectively atomic so it never showed on
+    # Linux, but the gate's first run tore it (12 verdicts -> 6 intact lines).
+    # Ride THE append coordinator (core/events.events_lock, WP2 §4.4 pattern:
+    # own lock name, own sibling file under the disposable runtime dir).
+    # Semantics preserved deliberately: a lock timeout degrades to today's
+    # unlocked append rather than DROPPING verdicts — record_verdicts is an
+    # explicit evidence API whose callers already wrote media/spend.
+    from ..core.events import events_lock
+
+    project.runtime_dir.mkdir(parents=True, exist_ok=True)
+    with events_lock(project.root, lock_name=".manju/agent_review.lock"):
+        with open(path, "a", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     counts: dict[str, int] = {}
     for rec in records:

@@ -48,7 +48,12 @@ def test_atomic_write_text_fsyncs_parent_directory(tmp_path, monkeypatch):
     assert target.read_text(encoding="utf-8") == "hello: world\n"
     # at least two fsyncs happened: the temp FILE (inside the `with
     # os.fdopen` block) and the PARENT DIRECTORY (_fsync_dir, after replace).
-    assert len(calls) >= 2, "expected both a file fsync and a directory fsync"
+    if os.name == "nt":
+        # Windows cannot open a directory fd — _fsync_dir degrades by design
+        # (yamlio docstring); only the temp FILE fsync is guaranteed there.
+        assert len(calls) >= 1, "expected at least the file fsync"
+    else:
+        assert len(calls) >= 2, "expected both a file fsync and a directory fsync"
 
 
 def test_fsync_dir_degrades_silently_when_os_open_fails(tmp_path, monkeypatch):

@@ -521,9 +521,12 @@ def test_html_card_preset_changes_background_default_is_byte_identical(monkeypat
     def fake_run(cmd, **kw):
         dest = next(a.split("=", 1)[1] for a in cmd if a.startswith("--screenshot="))
         uri = cmd[-1]
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
-        html_path = Path(unquote(urlparse(uri).path))
+        # url2pathname strips the Windows drive-slash ("/C:/Users/..." ->
+        # "C:\\Users\\...") and unquotes; on POSIX it is a plain unquote.
+        html_path = Path(url2pathname(urlparse(uri).path))
         captured_html[dest] = html_path.read_text(encoding="utf-8")
         Path(dest).write_bytes(b"fake-png")
 

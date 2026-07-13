@@ -29,6 +29,7 @@ import json
 import os
 import platform
 import shutil
+import re
 import subprocess
 from pathlib import Path
 
@@ -234,8 +235,16 @@ def test_grep_pin_never_read_by_build_core_providers_runtime():
             ["grep", "-rnE", pattern, str(root / sub),
              "--include=*.py", "--exclude-dir=__pycache__"],
             capture_output=True, text=True).stdout
-        hits += [ln for ln in out.splitlines()
-                 if ln.strip() and "core/toolchain.py" not in ln.split(":", 1)[0]]
+        for ln in out.splitlines():
+            if not ln.strip():
+                continue
+            # Windows grep output: D:\a\...\core/toolchain.py:12:... — the
+            # drive colon breaks a naive split(":", 1) and the separators mix.
+            path_part = re.match(r"^(?:[A-Za-z]:)?[^:]*",
+                                 ln.replace("\\", "/")).group(0)
+            if "core/toolchain.py" in path_part:
+                continue
+            hits.append(ln)
     assert hits == [], f"a build/core/providers/runtime path consumes the manifest: {hits}"
 
 
