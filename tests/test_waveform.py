@@ -11,10 +11,11 @@ import pytest
 
 from manju.media.ffmpeg import MediaError
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg/ffprobe required",
-)
+)]
 
 
 def _gen(args: list[str], dest: Path) -> Path:

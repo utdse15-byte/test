@@ -467,3 +467,93 @@ def test_every_text_subprocess_decode_declares_utf8():
     assert offenders == [], (
         "text=True without encoding= decodes with the ANSI codepage on "
         f"Windows — add encoding='utf-8', errors='replace': {offenders}")
+
+
+# ------------------------------------------- F16: board annotate flow honesty
+
+
+def test_board_annotate_response_carries_the_new_rev(tmp_project, add_shot, make_take):
+    """F16 half 1: without the post-write hash in the response, the page
+    cannot refresh its CAS tokens client-side — every follow-up annotate on
+    the same shot would 409 against the owner's own previous annotation
+    (the F14 class, board edition)."""
+    from manju.board.server import API_ACTIONS
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+    result = API_ACTIONS["annotate"](tmp_project, {
+        "shot": "S001", "take": take.name, "text": "第一条", "severity": "note"})
+    assert result["id"].startswith("ann_")
+    assert result.get("rev", "").startswith("sha256:")
+
+    # the returned rev IS the current file hash — a follow-up CAS write passes
+    result2 = API_ACTIONS["annotate"](tmp_project, {
+        "shot": "S001", "take": take.name, "text": "第二条", "severity": "issue",
+        "expected_rev": result["rev"]})
+    assert result2["id"].startswith("ann_")
+
+
+def test_board_js_annotates_from_the_compare_frame_and_never_reloads():
+    """F16 halves 2+3, source pins on the served JS: the '当前帧' capture must
+    consult the OPEN compare stack (where frame-accurate parking happens —
+    K/L/J and ±1帧 live there) before falling back to the card video; a
+    successful annotate must NOT ride the global location.reload (which
+    dropped every parked player/tab); the active tab survives in the URL
+    hash."""
+    from manju.board.board import _SERVE_JS
+
+    ann = _SERVE_JS.split("function annSubmit(")[1].split("\n  }")[0]
+    assert "compare-wrap" in ann          # the open compare stack is consulted
+    assert "activeCmpVideos" in ann
+    post_fn = _SERVE_JS.split("function post(")[1].split("\n  }")[0]
+    assert "onOk" in post_fn              # caller-managed success path exists
+    assert "mjtab" in _SERVE_JS           # tab persistence via location.hash
+
+
+def test_board_states_read_chinese_with_the_enum_on_title(tmp_project, add_shot, make_take):
+    """F18: the board showed raw English enums ('manual', 'needs_selection')
+    while the GUI translates the SAME vocabulary — one state, two names. The
+    badge now carries the GUI's Chinese with the enum in the title attribute;
+    empty states point at the next step instead of dead-ending."""
+    from manju.board.board import _STATE_ZH, render_board
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_board(tmp_project, serve=True)
+    # a state badge renders the ZH text and keeps the enum greppable in title
+    assert 'title="manual"' in html or 'title="needs_selection"' in html \
+        or 'title="fresh"' in html or 'title="stale"' in html
+    assert any(zh in html for zh in _STATE_ZH.values())
+    # the annotation severity options carry the bilingual labels
+    assert "note 备注" in html and "blocker 阻断" in html
+
+
+def test_board_empty_state_points_at_the_next_step(tmp_project):
+    from manju.board.board import render_board
+
+    html = render_board(tmp_project, serve=True)
+    assert "还没有镜头" in html
+    assert "shots/" in html  # names where shots come from
+
+
+def test_import_expands_wildcards_and_tilde_when_the_shell_did_not(
+        tmp_project, tmp_path, monkeypatch):
+    """F11 (code half): cmd.exe/PowerShell pass ~ and wildcards to native
+    executables LITERALLY — the README's flagship import line failed on the
+    primary platform. import now expands a NON-EXISTING arg that carries ~ or
+    glob chars; a wildcard matching nothing keeps the clean not-found error,
+    and existing weird-named files are never re-interpreted."""
+    clips = tmp_path / "素材"
+    clips.mkdir()
+    (clips / "开场.mp4").write_bytes(b"clip-a")
+    (clips / "雨夜.mp4").write_bytes(b"clip-b")
+    monkeypatch.chdir(tmp_project.root)
+
+    res = runner.invoke(app, ["import", str(clips / "*.mp4")])
+    assert res.exit_code == 0, res.output
+    got = sorted(p.name for p in tmp_project.imports_dir.glob("*.mp4"))
+    assert got == ["开场.mp4", "雨夜.mp4"]
+
+    res = runner.invoke(app, ["import", str(clips / "*.mov")])
+    assert res.exit_code == 1
+    assert "not found" in res.output + (res.stderr or "")

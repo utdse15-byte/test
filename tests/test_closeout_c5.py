@@ -31,7 +31,8 @@ from manju.core.models import AudioClip, Timeline, TimelineRules, TimelineTracks
 from manju.media import masters as M
 
 FFMPEG = shutil.which("ffmpeg")
-pytestmark = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg required for masters")
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(FFMPEG is None, reason="ffmpeg required for masters")]
 
 _FREQ = {"voice": 300, "music": 800, "sfx": 1500, "amb": 120}
 

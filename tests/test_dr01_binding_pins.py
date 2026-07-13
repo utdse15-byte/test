@@ -31,10 +31,11 @@ from manju.media.render import final_content_key
 from manju.timeline.compiler import build_timeline
 from tests.fixtures.make_sample import make_sample_project
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg required",
-)
+)]
 
 CLIP_SECONDS = 1.0
 

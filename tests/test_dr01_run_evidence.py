@@ -25,10 +25,11 @@ from manju.core.events import tail_events
 from manju.core.hashing import cache_key, hash_file
 from tests.fixtures.make_sample import make_sample_project
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg required",
-)
+)]
 
 
 @pytest.fixture(scope="module")

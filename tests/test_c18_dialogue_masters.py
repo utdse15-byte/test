@@ -21,7 +21,8 @@ from manju.core.hashing import hash_value
 from manju.core.models import AudioClip, Timeline, TimelineTracks
 
 FFMPEG = shutil.which("ffmpeg")
-pytestmark = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg required for masters")
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(FFMPEG is None, reason="ffmpeg required for masters")]
 
 
 # ------------------------------------------------------------------- helpers

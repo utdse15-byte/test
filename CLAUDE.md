@@ -35,6 +35,9 @@ Dev loop (never bare `pytest` — src layout needs the editable install):
 
 - Full suite: `python -m pytest -q -n auto` (~6-9 min on 4 cores; needs
   `pip install -e ".[dev]" -c constraints.txt` + ffmpeg/ffprobe on PATH).
+- Fast loop: `python -m pytest -q -n auto -m "not ffmpeg"` — deselects the
+  wholly ffmpeg-gated render-heavy modules (honest under-selection: mixed
+  modules keep their pure halves). Full suite before every commit.
 - Collection sanity: `python -m pytest tests/ --collect-only -q` (~3 s).
 
 Standing grep-pins — several tests scan RAW SOURCE TEXT, so a token in a

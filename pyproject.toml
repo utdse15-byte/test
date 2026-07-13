@@ -45,3 +45,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# UX audit F43: `-m "not ffmpeg"` is the fast dev loop (~3x quicker). Honest
+# subset: only WHOLLY ffmpeg-gated modules carry the marker — mixed modules
+# still run their pure halves, so the fast loop under-selects, never lies.
+markers = [
+    "ffmpeg: the whole module requires a real ffmpeg/ffprobe on PATH (deselect with -m 'not ffmpeg' for the fast dev loop)",
+]

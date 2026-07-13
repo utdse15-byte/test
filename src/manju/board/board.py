@@ -54,6 +54,15 @@ _STATE_CLASS = {
     ShotState.BROKEN: "st-broken",
 }
 
+# UX audit F18: the SAME state vocabulary the GUI already translates
+# (gui/pages.py _RV_BUILDSTATE_ZH) — the two review surfaces used to name one
+# state differently ('manual' badge here vs 手动置入 there). Badge text is the
+# Chinese; the enum rides the title attribute (hover + grep-ability).
+_STATE_ZH = {
+    "missing": "无版本", "fresh": "最新", "stale": "待更新", "manual": "手动置入",
+    "needs_selection": "待挑选", "broken": "缺媒体", "unknown": "未知",
+}
+
 # Per-take director verdicts (§R9/R10): a take_notes value of exactly "好"/"弃"
 # is a one-key verdict (approve / reject); anything else is a free note. These
 # mirror the GUI's 👍/👎 verdict buttons as static, colour-coded chips.
@@ -455,7 +464,7 @@ _SERVE_JS = """
     var notes = (d.notes && d.notes.length) ? " · " + d.notes.join(" · ") : "";
     banner("✓ 导出完成 export: " + (parts.join(" · ") || "无") + notes, true);
   }
-  function post(action, body){
+  function post(action, body, onOk){
     banner("");
     overlay(true, MSG[action] || "处理中…");
     fetch("/api/" + action, {
@@ -469,6 +478,10 @@ _SERVE_JS = """
     }).then(function(d){
       if (d && d.ok) {
         if (d.outputs) { showExport(d); return; }  // export: show paths, don't reload
+        /* UX audit F16: a caller-managed success path — annotate updates the
+         * page in place instead of location.reload(), which dropped every
+         * parked player / compare mode / active tab. */
+        if (onOk) { onOk(d); return; }
         location.reload(); return;
       }
       overlay(false);
@@ -487,7 +500,18 @@ _SERVE_JS = """
     for (j = 0; j < panels.length; j++){
       panels[j].classList.toggle("active", panels[j].getAttribute("data-panel") === key);
     }
+    /* UX audit F16: the active tab survives navigation/reload in the URL
+     * hash (replaceState — no history spam). */
+    try { history.replaceState(null, "", "#mjtab-" + key); } catch (e) {}
   }
+  (function restoreTab(){
+    if (location.hash && location.hash.indexOf("#mjtab-") === 0){
+      var key = location.hash.slice(7);
+      if (document.querySelector('.mj-tab[data-tab="' + key + '"]')){
+        switchTab(key);
+      }
+    }
+  })();
   function toggleCompare(btn){
     var section = btn.closest("section.shot"); if(!section) return;
     var wrap = section.querySelector(".compare-wrap"); if(!wrap) return;
@@ -818,13 +842,47 @@ _SERVE_JS = """
     var num = parseInt(box.getAttribute("data-fps-num") || "0", 10);
     var den = parseInt(box.getAttribute("data-fps-den") || "0", 10);
     if (chk && chk.checked && num && den){
-      var tk = box.closest(".take");
-      var v = tk ? tk.querySelector("video") : null;
+      /* UX audit F16: frame-accurate parking happens in the OPEN compare
+       * stack (K/L/J and the ±1帧 transport live there) — read the parked
+       * time from its active video first; the small take-card player is the
+       * fallback. Without this, '当前帧' silently bound to the card video's
+       * time (usually f0) while the owner was staring at the bad frame. */
+      var v = null;
+      var section = box.closest("section.shot");
+      var wrap = section ? section.querySelector(".compare-wrap.open") : null;
+      if (wrap){
+        var cvids = activeCmpVideos(wrap);
+        if (cvids.length) v = cvids[0];
+      }
+      if (!v){
+        var tk = box.closest(".take");
+        v = tk ? tk.querySelector("video") : null;
+      }
       if (v){ body.frame = Math.max(0, Math.round(v.currentTime * num / den)); }
     }
     var rev = box.getAttribute("data-rev");
     if (rev){ body.expected_rev = rev; }
-    post("annotate", body);
+    post("annotate", body, function(d){
+      overlay(false);
+      banner("✓ 批注已记录(" + (body.severity || "note") + (body.frame != null ? " · f" + body.frame : "") + ")", true);
+      if (input) input.value = "";
+      /* refresh EVERY form of this shot's CAS token — the write staled them
+       * all (the F14 class, board edition). */
+      if (d && d.rev){
+        var forms = document.querySelectorAll('.ann-form[data-shot="' + body.shot + '"]'), i;
+        for (i = 0; i < forms.length; i++){ forms[i].setAttribute("data-rev", d.rev); }
+      }
+      /* show the new annotation in place — no reload, parked state survives */
+      var tk2 = box.closest(".take");
+      var list = tk2 ? tk2.querySelector(".ann-list") : null;
+      if (list){
+        var row = document.createElement("div");
+        row.className = "ann-row";
+        row.textContent = "[" + (body.severity || "note") + "] "
+          + (body.frame != null ? "f" + body.frame + " · " : "") + body.text;
+        list.appendChild(row);
+      }
+    });
   }
   document.addEventListener("click", function(e){
     var t = e.target, hit;
@@ -1247,9 +1305,9 @@ def _render_take_annotations(project: "Project", shot_id: str, take: Any,
         '<input type="text" class="ann-text" maxlength="2000" '
         'placeholder="批注 annotate…">'
         '<select class="ann-sev">'
-        '<option value="note">note</option>'
-        '<option value="issue">issue</option>'
-        '<option value="blocker">blocker</option>'
+        '<option value="note">note 备注</option>'
+        '<option value="issue">issue 问题</option>'
+        '<option value="blocker">blocker 阻断</option>'
         "</select>"
         '<label class="ann-at"><input type="checkbox" class="ann-atframe" checked>'
         "当前帧 at frame</label>"
@@ -1380,15 +1438,17 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
                 VoiceState.FRESH: "st-fresh", VoiceState.MANUAL: "st-manual",
                 VoiceState.STALE: "st-stale", VoiceState.MISSING: "st-missing",
             }.get(voice.state, "st-missing")
-            voice_html = (f'<span class="badge {voice_cls}">'
-                          f"配音 {_esc(voice.state.value)}</span>")
+            voice_html = (f'<span class="badge {voice_cls}" '
+                          f'title="{_esc(voice.state.value)}">'
+                          f"配音 {_esc(_STATE_ZH.get(voice.state.value, voice.state.value))}</span>")
     except Exception:
         voice_html = ""
 
     head = (
         '<div class="shot-head">'
         f'<span class="sid">{_esc(shot_id)}</span>'
-        f'<span class="badge {badge_cls}">{_esc(state_val)}</span>'
+        f'<span class="badge {badge_cls}" title="{_esc(state_val)}">'
+        f"{_esc(_STATE_ZH.get(state_val, state_val))}</span>"
         f"{voice_html}"
         f'<span class="action">{_esc(action)}</span>'
         "</div>"
@@ -1415,7 +1475,8 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
         )
         takes_html = f'<div class="takes">{cards}</div>'
     else:
-        takes_html = '<div class="dialogue">no takes yet</div>'
+        takes_html = ('<div class="dialogue">还没有 take(no takes yet)— '
+                      "生成或 manju import 后在此挑选</div>")
 
     # AI_IDE_16 §6/§7: read-only ladder chips + 2D blocking SVG. Serve-mode ONLY,
     # so the static board.html stays byte-for-byte identical (its pin holds).
@@ -2278,7 +2339,9 @@ def render_board(project: "Project", serve: bool = False, token: str = "") -> st
         for sid in project.shot_ids()
     )
     if not shots_html:
-        shots_html = '<p style="color:#9aa0aa">No shots yet.</p>'
+        shots_html = ('<p style="color:#9aa0aa">还没有镜头(no shots yet)— '
+                      "用 manju gui 的创作页或直接编辑 shots/*.yaml,"
+                      "然后 manju check 校验。</p>")
 
     generated = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     footer = f'<footer class="board">Generated by manju board · {_esc(generated)}</footer>'

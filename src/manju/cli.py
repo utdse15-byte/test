@@ -550,6 +550,25 @@ def import_(
         except LibraryError:
             lib, lib_by_hash = None, {}
 
+        # UX audit F11: cmd.exe/PowerShell pass ~ and wildcards to native
+        # executables LITERALLY (no shell expansion for an .exe) — the
+        # documented `manju import ~/clips/*.mp4` failed on the primary
+        # platform. Expand here, exactly and ONLY when the literal path does
+        # not exist: an existing file whose name contains * (legal on POSIX)
+        # is never re-interpreted, and a wildcard matching nothing falls
+        # through to the same clean not-found error. Deterministic order.
+        import glob as _glob
+
+        _expanded: list[Path] = []
+        for f in files:
+            s = str(f)
+            if not f.exists() and (s.startswith("~") or any(c in s for c in "*?[")):
+                hits = sorted(_glob.glob(os.path.expanduser(s)))
+                if hits:
+                    _expanded.extend(Path(h) for h in hits)
+                    continue
+            _expanded.append(f)
+        files = _expanded
         for f in files:
             if not f.exists():
                 _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"

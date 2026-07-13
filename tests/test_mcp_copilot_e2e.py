@@ -13,9 +13,10 @@ from manju.core.container import Project
 from manju.core.yamlio import write_yaml
 from tests.test_mcp import MCPClient
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(
     shutil.which("ffmpeg") is None, reason="ffmpeg required for the build step"
-)
+)]
 
 SHOT_YAML = """\
 id: S001

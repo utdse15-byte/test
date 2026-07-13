@@ -13,9 +13,10 @@ import subprocess
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(
     shutil.which("ffmpeg") is None, reason="ffmpeg required"
-)
+)]
 
 
 @pytest.fixture

@@ -44,10 +44,11 @@ from manju.media.ffmpeg import MediaError, atomic_output
 from manju.media.probe import probe_duration_ms
 from manju.media.render import final_content_key, render_timeline
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.ffmpeg,  # F43: the fast-loop deselector
+              pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg required",
-)
+)]
 
 W, H, FPS = 256, 448, 24
 CLIP_MS = 1000

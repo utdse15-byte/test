@@ -46,7 +46,12 @@ def test_board_shows_voice_chip_and_verdicts(project_with_voice):
 
     assert run_build(project_with_voice, target="final").ok
     html = generate_board(project_with_voice).read_text(encoding="utf-8")
-    assert "配音 manual" in html
+    # UX audit F18 evolution: the chip now renders the GUI's Chinese state
+    # vocabulary with the enum on the title attribute (one state, one name
+    # across both review surfaces); the pin's intent — the voice chip appears
+    # and carries the state — is unchanged.
+    assert "配音 手动置入" in html
+    assert 'title="manual"' in html
     assert "final: skip (content key matches)" in html
 
 

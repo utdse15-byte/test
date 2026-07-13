@@ -452,7 +452,14 @@ def _api_annotate(project: Project, body: dict) -> dict:
     append_event(project.root, _actor(), "annotate",
                  {"shot": shot, "take": take, "id": ann_id,
                   "severity": annotation.severity, "via": "board"})
-    return {"id": ann_id, "stale": False}
+    # UX audit F16: hand the POST-write hash back so the page can refresh its
+    # CAS tokens client-side (annotate no longer reloads the whole page — a
+    # reload dropped every parked player/compare/tab state); without this,
+    # the owner's second annotation on one shot would 409 against their own
+    # first one (the F14 class, board edition).
+    from ..core.writes import shot_text_hash
+
+    return {"id": ann_id, "stale": False, "rev": shot_text_hash(project, shot)}
 
 
 API_ACTIONS: dict[str, Callable[[Project, dict], dict]] = {
