@@ -1700,3 +1700,62 @@ REPORTS/WINDOWS_WAVE_2_BASELINE.md / WINDOWS_WAVE_2_COMPLETION.md.
 - Suite: 4137 → 4158 passed / 1 skipped / 0 failed. The m0 incremental
   test was made xdist-order-safe (primes its own cache) after one
   observed ordering flake — recorded, not silenced.
+
+## 38. WINDOWS wave 3 + gate rounds 1-2: NLE exchange, annotations, and driving the gate down (2026-07-13)
+
+W3 of MANJU_WINDOWS_ONLY_LEAN_V3 (§5) interleaved with the hard gate's
+first real verdicts. Reports: REPORTS/WINDOWS_WAVE_3_BASELINE.md /
+WINDOWS_WAVE_3_COMPLETION.md. Orchestration: three parallel red-first
+implementation agents on disjoint owners (xmeml+conform / fonts / board)
++ orchestrator CLI wiring and integration review.
+
+- W3 (597656a): NEW exporters/xmeml.py (XMEML v4: timebase+ntsc exact
+  rational rate, whole-frame spine, file://localhost pathurls, linked
+  A/V, clean dissolves only, in-band omission comments); conform gains
+  the xmeml table + caption_roles/caption_speakers loss rows across ALL
+  9 targets (§5.4 不伪造 made machine-readable); manju export now ships
+  a conform-loss doc per produced target (the audit's biggest W3 gap:
+  the machinery was library+tests only); find_font Windows branch
+  (curated CJK list + winreg fallback, POSIX byte-identical, glyph
+  coverage stays UNKNOWN); manju.review.annotation/v1 — THE one budgeted
+  schema — with media-hash-bound, staleness-aware board annotations
+  (annotate action: strict validation + build_lock + checked_shot_write
+  + CAS; serve-only UI with click-to-seek and STALE badges; static board
+  bytes pin-frozen); board --app (Edge app window, honest fallback);
+  manju --version. Pin evolutions (reviewed): test_fp_ttml caption
+  sub-features preserved; board switched to the sanctioned
+  ProjectConfig.frame_rate resolver when ratemig1's grep-pin caught the
+  edit_rate token.
+- REJECTED/DEFERRED with reasons: xmeml IMPORT plan (schema budget spent
+  on review.annotation; AAF stays skipped per plan); subtitle model
+  expansion ruby/vertical/sound-cue (no upstream producer — dead fields
+  would fabricate; conform rows carry the honesty); freehand/canvas
+  drawing UI (schema carries geometry; UI is a future increment);
+  auto-routing annotation→repair (repair_variable carried; the
+  qc/production._VARIABLE_ROUTE seam stays human-triggered).
+- Gate round 1 (133a235, after run #1's 76F/4016P/35E): TWO-LEVEL
+  filtergraph escaping (the graph parser unescapes C\: and the filter's
+  OWN option parser splits at the drive colon — every subtitled render
+  on Windows died); msvcrt byte locks for recents/library/failures;
+  agent_review append under the events coordinator; local_cmd non-POSIX
+  split; ffmpeg pin 8.1.2→6.1.1 (choco carries the EXACT ubuntu apt
+  version — the ffprobe-8 color-tag skew class died with the repin).
+  Run #3 verdict: 41F/4105P/9E (111→50 entries).
+- Gate round 2 (597656a): card/boards/waveform filter paths delegate to
+  the ONE escaping owner — the caption-card death explains the whole
+  'missing' cluster (offline fallback fell through to kenburns, which
+  demands ref images); events_lock Windows branch pairs the byte lock
+  with a per-name threading.Lock (real-host proof: CRT byte locks do NOT
+  exclude same-process threads — 12 verdict threads → 6 lines);
+  installer self-test now gates the pointer switch via LASTEXITCODE
+  (run #3's install-smoke switched on a FAILED self-test) and pointers
+  write ASCII (PS5.1 UTF8 BOM breaks the launcher's set /p); gate jobs
+  run PYTHONUTF8=1 (cp1252 vs CJK sidecars). Remaining tail (expected to
+  shrink on run #4, recorded honestly): ticket2 argparse, round_w_meta
+  argv fallback, round_q repair JSON, ingest dedupe counts, auto_agent
+  event counts, mcp_copilot e2e, job_cancel kill latencies, gui_finish
+  preview format, edit_v3 caption preview, local_cmd video_ref compare —
+  next-round evidence per the plan's iterative discipline.
+- Suite: 4169 → 4269 passed / 1 skipped / 0 failed (100 new tests, zero
+  regressions). ubuntu gate green throughout (one pre-existing
+  render-clock byte-pin flake frozen in 4d1668a).

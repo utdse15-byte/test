@@ -291,7 +291,7 @@ documented, not silent).
 
 ## Final
 
-**Commit SHA:** `{{W3_COMMIT_SHA}}` (W3 slices + gate round 2 + tests; this report
+**Commit SHA:** `597656a (code + tests + gate round 2; this report and DECISIONS #38 land in the docs follow-up commit)` (W3 slices + gate round 2 + tests; this report
 and the DECISIONS follow-up land in the docs commit).
 
 **Remaining risks:**

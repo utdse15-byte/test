@@ -61,3 +61,5 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `WINDOWS_WAVE_1_COMPLETION.md` | W1 Windows hardening — hard gate + file/process semantics | #36 |
 | `WINDOWS_WAVE_2_BASELINE.md` | W2 installer + doctor — audit + red evidence | #37 |
 | `WINDOWS_WAVE_2_COMPLETION.md` | W2 installer + doctor + the gate's first verdict | #37 |
+| `WINDOWS_WAVE_3_BASELINE.md` | W3 NLE/fonts/board — audit + red evidence | #38 |
+| `WINDOWS_WAVE_3_COMPLETION.md` | W3 + gate rounds — xmeml, conform losses, annotations | #38 |
