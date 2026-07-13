@@ -611,10 +611,14 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_allowed():
             self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
             return
-        _readonly_ok = {"/api/validate", "/api/impact"}
+        _readonly_ok = {"/api/validate", "/api/impact", "/api/review/consistency"}
         if self.server.readonly and urlsplit(self.path).path not in _readonly_ok:
             # /api/validate and /api/impact are pure (no write) — readonly
-            # editors keep live checks and impact previews (WP1, R22 precedent)
+            # editors keep live checks and impact previews (WP1, R22 precedent);
+            # /api/review/consistency (audit G1) is likewise a pure read — it
+            # only composes the content-addressed frame-board cache — so the
+            # review page's lazy boards still load on a readonly workbench, as
+            # they did when the section rendered inline before G1.
             self._send_error_json("readonly mode — 只读工作台,操作请回到项目机器", 403)
             return
         if self.headers.get("X-Manju-Token") != self.server.token:
@@ -2364,11 +2368,41 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/lib/tag": self._act_lib_tag,
             "/api/lib/note": self._act_lib_note,
             "/api/qc/verdict": self._act_qc_verdict,
+            "/api/review/consistency": self._act_review_consistency,
         }.get(path)
         if handler is None:
             return False
         handler(body)
         return True
+
+    def _act_review_consistency(self, body: dict[str, Any]) -> None:
+        """Audit G1: the /review consistency contact-sheet boards, computed ON
+        DEMAND. The page renders the unit structure + verdict forms inline and
+        cheaply, then fetches this endpoint AFTER first paint to fill each unit's
+        board — the ffprobe+ffmpeg cost (16.6s at 40 shots) that used to run
+        inline on the request thread. Token-gated like every POST; a pure read
+        (composes only the content-addressed .manju/frames board cache, writes no
+        truth file) so it is in do_POST's readonly allow-list next to
+        /api/validate + /api/impact. Returns a JSON envelope
+        {ok, units:[{unit, kind, label, image}]} — ``image`` is the /media URL of
+        the composed board or null when ffmpeg is unavailable; /pages.js fills the
+        slots by textContent/DOM-building (the house no-innerHTML discipline)."""
+        from urllib.parse import quote
+
+        from ..qc.agent_review import qc_brief
+
+        brief = qc_brief(self.server.project, mode="consistency")
+        units = [
+            {
+                "unit": u.get("unit"),
+                "kind": u.get("kind"),
+                "label": u.get("label"),
+                "image": ("/media/" + quote(str(img), safe="/"))
+                         if (img := u.get("image")) else None,
+            }
+            for u in (brief.get("units") or [])
+        ]
+        self._send_json({"ok": True, "units": units})
 
     def _act_qc_verdict(self, body: dict[str, Any]) -> None:
         """Round X (agent XB, user pain #2): a HUMAN spot-checking the /review

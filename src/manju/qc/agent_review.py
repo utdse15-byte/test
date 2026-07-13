@@ -383,7 +383,7 @@ def _scene_context(matrix: dict, scene_id: str | None) -> dict | None:
 
 
 def qc_brief(project: "Project", shots: list[str] | None = None, *,
-            mode: str = "shots") -> dict:
+            mode: str = "shots", compose_boards: bool = True) -> dict:
     """Build the review package a vision-capable agent consumes (goal item 6).
 
     ``shots`` (a list of shot ids) scopes the brief; ``None`` briefs every shot
@@ -395,9 +395,16 @@ def qc_brief(project: "Project", shots: list[str] | None = None, *,
     ``mode="consistency"`` (round X, agent XB) briefs CROSS-shot comparison
     units instead — see :func:`_qc_brief_consistency` and the module docstring.
     ``shots`` still scopes it (a unit is kept when any member is in the list).
+
+    ``compose_boards=False`` (consistency mode only) skips composing the
+    per-unit contact-sheet images — the ONLY ffprobe/ffmpeg cost in the brief.
+    The GUI /review page uses it to render the unit structure + verdict forms
+    cheaply and subprocess-free on the request thread, then fetches the boards
+    lazily from ``POST /api/review/consistency`` (audit G1). The default (True)
+    keeps every CLI / MCP / on-demand caller byte-identical.
     """
     if mode == "consistency":
-        return _qc_brief_consistency(project, shots)
+        return _qc_brief_consistency(project, shots, compose_boards=compose_boards)
     if mode != "shots":
         raise ValueError(f"mode 必须是 shots|consistency,收到 {mode!r}")
 
@@ -620,10 +627,41 @@ def _member_info(project: "Project", statuses: dict, sid: str) -> dict | None:
     return {"shot": sid, "take": take.name, "take_hash": _safe_hash(take.media_path)}
 
 
+def _member_duration_ms(take: "TakeInfo") -> int:
+    """The member take's duration in ms for the review-frame midpoint.
+
+    Reads the take's SIDECAR probe FIRST (``sidecar.probe.duration_ms``) — a
+    generated take fills it at synthesis and takes are append-only, so the cache
+    can never go stale; this is the SAME cache the video compiler reads at
+    ``timeline/compiler.py`` (audit Tier-1 #2 / G1). Only a sidecar that carries
+    no probe duration falls back to a live ffprobe. Returns 0 when neither is
+    available, preserving the legacy ``int(info.duration_ms or 0)`` degrade.
+
+    The value feeds an UNCHANGED midpoint (``dur // 2``), so a cached-duration
+    path and a live-probe path that see the same duration request the byte-
+    identical frame timestamp — the redundant per-member probe the content-
+    addressed frame cache had already made moot, now removed."""
+    probe_info = take.sidecar.probe if take.sidecar is not None else None
+    if probe_info is not None and probe_info.duration_ms is not None:
+        return int(probe_info.duration_ms or 0)
+    try:
+        from ..media.probe import probe as _probe
+
+        info = _probe(take.media_path)
+        return int(info.duration_ms or 0)
+    except Exception:
+        return 0
+
+
 def _member_frame(project: "Project", shot_id: str, take_name: str):
     """One mid-point review frame for a comparison-unit member, via the
     content-addressed frames.py cache (same degrade-to-None-on-failure stance
-    as :func:`_shot_frames`)."""
+    as :func:`_shot_frames`).
+
+    The midpoint duration comes from :func:`_member_duration_ms` (sidecar probe
+    first, a live ffprobe only when the sidecar carries none). The midpoint
+    arithmetic is UNCHANGED, so the extracted frame is byte-identical whether the
+    duration came from the sidecar or a live probe."""
     take = project.get_take(shot_id, take_name)
     if take is None or take.media_path is None or not take.media_path.exists():
         return None
@@ -633,14 +671,7 @@ def _member_frame(project: "Project", shot_id: str, take_name: str):
         media_rel = project.relpath(take.media_path)
     except Exception:
         return None
-    dur = 0
-    try:
-        from ..media.probe import probe as _probe
-
-        info = _probe(take.media_path)
-        dur = int(info.duration_ms or 0)
-    except Exception:
-        dur = 0
+    dur = _member_duration_ms(take)
     at_ms = dur // 2 if dur else 0
     try:
         return extract_frame(project, media_rel, at_ms)
@@ -816,9 +847,16 @@ def _unit_board_key(unit_id: str, images: list, labels: list[str], grid: int,
     return short_hash(cache_key("qc_consistency_board_v1", unit_id, grid, cw, ch, parts))
 
 
-def _qc_brief_consistency(project: "Project", shots: list[str] | None = None) -> dict:
+def _qc_brief_consistency(project: "Project", shots: list[str] | None = None, *,
+                          compose_boards: bool = True) -> dict:
     """The consistency-mode brief body (round X, agent XB) — see the module
-    docstring and :func:`qc_brief`."""
+    docstring and :func:`qc_brief`.
+
+    ``compose_boards=False`` yields every unit with ``image=None`` and composes
+    NO contact sheet — the unit structure (members, criteria, packet) is pure
+    and cheap (no ffprobe/ffmpeg), which is what the GUI /review render uses so
+    the request thread stays subprocess-free (audit G1); the boards are fetched
+    lazily afterwards with the default ``compose_boards=True``."""
     units, skipped = _consistency_units(project)
     if shots:
         wanted = set(shots)
@@ -826,7 +864,7 @@ def _qc_brief_consistency(project: "Project", shots: list[str] | None = None) ->
 
     out_units: list[dict] = []
     for u in units:
-        image = _compose_unit_board(project, u)
+        image = _compose_unit_board(project, u) if compose_boards else None
         row = {
             "unit": u["unit"],
             "kind": u["kind"],

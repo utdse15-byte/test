@@ -577,11 +577,19 @@ def _consistency_section(project: Any) -> str:
     sheet per unit, its member shots, the criteria hint, coverage chip, and a
     verdict FORM a human can file directly (POSTs into the same intake agents
     use, actor=human). Degrades to one muted line on any failure — a broken
-    matrix/board never breaks the review page."""
+    matrix/board never breaks the review page.
+
+    Audit G1 (OPT-GUI): the unit STRUCTURE renders inline and CHEAPLY here
+    (``compose_boards=False`` — no ffprobe/ffmpeg on the request thread), so the
+    verdict flow is usable at first paint; each unit's contact-sheet BOARD (the
+    ffprobe+ffmpeg cost that made /review 16.6s at 40 shots) is a LAZY slot the
+    page JS fills from ``POST /api/review/consistency`` after first paint (the
+    SAME render-structure-inline / lazy-the-media discipline the alt-take
+    previews above already use)."""
     try:
         from ..qc.agent_review import qc_brief as _qc_brief
 
-        brief = _qc_brief(project, mode="consistency")
+        brief = _qc_brief(project, mode="consistency", compose_boards=False)
     except Exception as exc:
         return (
             '<div class="page-h"><h2>跨镜一致性 Consistency</h2></div>\n'
@@ -615,9 +623,12 @@ def _consistency_section(project: Any) -> str:
 
 
 def _consistency_card(unit: dict, cov: dict) -> str:
-    img = unit.get("image")
-    img_html = (f'<img class="cs-board" src="/media/{quote(str(img), safe="/")}" alt="">'
-               if img else '<p class="muted">看板尚未生成(需要 ffmpeg)</p>')
+    # G1: the contact-sheet board is LAZY — a placeholder slot the page JS fills
+    # from POST /api/review/consistency after first paint (see _consistency_section
+    # and /pages.js initReviewConsistencyBoards). Never composed on the /review
+    # GET, so the request thread spawns no ffprobe/ffmpeg.
+    img_html = ('<div class="cs-board-slot" data-cs-board="1">'
+                '<span class="muted">看板加载中… (loading board)</span></div>')
     members = ", ".join(m["shot"] for m in (unit.get("members") or []))
     state = cov.get("state", "never")
     state_label = _CS_STATE_LABEL.get(state, state)
@@ -1500,6 +1511,9 @@ body.rv-queue-on .rv-shot:not(.rv-qcurrent) { display: none; }
 .cs-unit { margin: .8rem 0; }
 .cs-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
 .cs-board { display: block; max-width: 100%; margin: .5rem 0; border-radius: 8px; border: 1px solid var(--line); }
+/* G1: lazy board placeholder — filled by /pages.js after first paint */
+.cs-board-slot { display: flex; align-items: center; min-height: 3rem; margin: .5rem 0; font-size: .84rem; }
+.cs-board-note { color: var(--muted); }
 .cs-form { align-items: center; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
 .cs-form select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .4rem; font: inherit; font-size: .84rem; }
 .cs-message { flex: 1; min-width: 220px; background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .84rem; }
@@ -1627,6 +1641,52 @@ _PAGES_JS = r"""
   else if (page === "/routing") initRouting();
   else if (page === "/doctor") initDoctor();
   if (page === "/review") initReviewConsistency();
+  if (page === "/review") initReviewConsistencyBoards();
+
+  // ------------------------ 跨镜一致性 lazy contact-sheet boards (audit G1)
+  // The /review GET renders the consistency unit STRUCTURE inline but leaves
+  // each unit's contact-sheet board a placeholder slot (never composes ffmpeg
+  // on the request thread). Here we fetch the composed boards once, after first
+  // paint, and fill the slots by DOM-building (no innerHTML). A fetch failure
+  // leaves a labelled note in every slot — never a blank (degradation contract).
+  function initReviewConsistencyBoards() {
+    var slots = [];
+    Array.prototype.slice.call(document.querySelectorAll(".cs-unit")).forEach(function (u) {
+      var slot = u.querySelector(".cs-board-slot");
+      if (slot) slots.push({ unit: u.getAttribute("data-unit"), slot: slot });
+    });
+    if (!slots.length) return;  // empty state — nothing to load, no fetch
+    function note(slot, text) {
+      slot.textContent = "";
+      var span = document.createElement("span");
+      span.className = "muted cs-board-note";
+      span.textContent = text;
+      slot.appendChild(span);
+    }
+    function degradeAll() {
+      slots.forEach(function (s) {
+        note(s.slot, "看板加载失败,请刷新重试 (consistency boards failed to load)");
+      });
+    }
+    post("/api/review/consistency", {}).then(function (res) {
+      if (res.status !== 200 || !res.data || !res.data.units) { degradeAll(); return; }
+      var byUnit = {};
+      res.data.units.forEach(function (u) { byUnit[u.unit] = u; });
+      slots.forEach(function (s) {
+        var info = byUnit[s.unit];
+        if (info && info.image) {
+          s.slot.textContent = "";
+          var img = document.createElement("img");
+          img.className = "cs-board";
+          img.alt = "";
+          img.src = info.image;
+          s.slot.appendChild(img);
+        } else {
+          note(s.slot, "看板尚未生成(需要 ffmpeg)");
+        }
+      });
+    }).catch(degradeAll);
+  }
 
   // ------------------------------- 跨镜一致性 consistency verdict form (round X)
   function initReviewConsistency() {
