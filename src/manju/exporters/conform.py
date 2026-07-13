@@ -97,6 +97,10 @@ KNOWN_FEATURES = (
     "ducking",          # AudioClip.ducking (+ duck_* shape)
     "audio_loops",      # AudioClip.loop (ambient beds)
     "audio_tracks",     # the voice/music/sfx/ambient buses themselves
+    # Wave 3 §5.4: per-cue caption semantics most exits cannot carry — each is
+    # a first-class loss row so a role/speaker never vanishes silently.
+    "caption_roles",    # CaptionLine.role (wave-4b curated vocabulary)
+    "caption_speakers",  # CaptionLine.speaker (dialogue attribution)
 )
 
 
@@ -137,6 +141,14 @@ def timeline_feature_inventory(timeline: "Timeline") -> list[dict[str, str]]:
          "tracks.overlay")
     _add("captions", len(t.captions), f"{len(t.captions)} caption cue(s)",
          "tracks.captions")
+    # Caption sub-features (Wave 3 §5.4): a row ONLY when a cue actually
+    # carries the field — a role-less/speaker-less project stays row-free.
+    n = sum(1 for c in t.captions if getattr(c, "role", None))
+    _add("caption_roles", n, f"{n} caption cue(s) carrying a role",
+         "tracks.captions[].role")
+    n = sum(1 for c in t.captions if c.speaker)
+    _add("caption_speakers", n, f"{n} caption cue(s) carrying a speaker",
+         "tracks.captions[].speaker")
     n = sum(1 for c in t.video if c.source_mute or c.source_gain_db)
     _add("clip_volume", n,
          f"{n} video clip(s) with non-default source gain/mute",
@@ -213,6 +225,18 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "export_otio never reads tracks.captions — no text track in the "
             "OTIO document; SRT/ASS/VTT are the caption exits",
             "exporters/otio.py:262-276 (video+audio tracks only)"),
+        "caption_roles": (
+            "dropped",
+            "captions themselves are never written (no text track), so the "
+            "per-cue role vanishes with them — roles ride the ASS Name / TTML "
+            "x-manju:role exits",
+            "exporters/otio.py:262-276 (no caption path)"),
+        "caption_speakers": (
+            "dropped",
+            "captions themselves are never written (no text track), so the "
+            "per-cue speaker vanishes with them — speakers ride the TTML "
+            "ttm:agent / jianying text-material exits",
+            "exporters/otio.py:262-276 (no caption path)"),
         "clip_volume": (
             "approximated",
             "source_mute/source_gain_db ride metadata.manju only (no OTIO "
@@ -279,6 +303,19 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "one text material + text-track segment per cue (content, "
             "speaker, µs timerange) + manju stamp for round-trip identity",
             "exporters/jianying.py:214-244,262"),
+        "caption_roles": (
+            "dropped",
+            "CaptionLine.role is never read — the text material and the manju "
+            "caption stamp carry content/speaker/shot/times only, so a role "
+            "does not reach the draft (and is NOT round-tripped)",
+            "exporters/jianying.py:214-244 (no role path)"),
+        "caption_speakers": (
+            "preserved",
+            "the text material carries the cue's speaker natively (the "
+            "'speaker' field the draft schema already records); the manju "
+            "stamp does not repeat it, so round-trip identity keys off "
+            "content/times",
+            "exporters/jianying.py:228-236 (text material 'speaker')"),
         "clip_volume": (
             "approximated",
             "native per-segment volume/muted fields carry a LINEAR scalar "
@@ -346,6 +383,17 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "one TextSegment per cue (text + µs timerange, bottom safe-area "
             "transform); speaker is not carried",
             "exporters/native_draft.py:147-155"),
+        "caption_roles": (
+            "dropped",
+            "the TextSegment call passes text + timerange + clip_settings "
+            "only — CaptionLine.role never reaches the draft library",
+            "exporters/native_draft.py:147-155 (no role argument)"),
+        "caption_speakers": (
+            "dropped",
+            "the TextSegment call passes text + timerange + clip_settings "
+            "only — CaptionLine.speaker never reaches the draft library "
+            "(already stated in the captions row: 'speaker is not carried')",
+            "exporters/native_draft.py:147-155 (no speaker argument)"),
         "clip_volume": (
             "approximated",
             "dB collapses to a linear volume kwarg; guarded — older library "
@@ -388,6 +436,20 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "document (ASS) with injection-neutralized text; all three agree "
             "cue-for-cue",
             "exporters/srt_ass.py:142-177,216-282"),
+        "caption_roles": (
+            "approximated",
+            "the role survives in ONE of the three sibling documents only: "
+            "the ASS Dialogue Name field carries it VERBATIM (injection-"
+            "neutralized, FP loop I); SRT and VTT have no role slot and DROP "
+            "it — a roled cue reads role-less in the .srt/.vtt",
+            "exporters/srt_ass.py:188-200 (_ass_name_field), 142-150 "
+            "(compile_srt: no role slot)"),
+        "caption_speakers": (
+            "dropped",
+            "no caption exit reads CaptionLine.speaker — SRT/VTT/ASS all omit "
+            "it (the ASS Name field carries the cue's ROLE, not the speaker); "
+            "speaker attribution rides the TTML ttm:agent exit",
+            "exporters/srt_ass.py:142-159,285-301 (no speaker path)"),
         # everything else falls to the caption-only fallback below
     },
     "ttml": {
@@ -403,6 +465,20 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "report's own compile carries none); vertical/ruby are NOT "
             "expressed (the cue model carries no layout semantics)",
             "exporters/ttml.py:114-144,147-213"),
+        "caption_roles": (
+            "preserved",
+            "every roled cue carries the VERBATIM x-manju:role attribute, "
+            "plus the standard hint where the binding table maps one (sdh → "
+            "ttm:role='captions', translation → ttm:role='subtitles', forced "
+            "→ itts:forcedDisplay, speaker_label → ttm:agent stub) — an "
+            "unmappable role is never dropped silently",
+            "exporters/ttml.py:90-96 (_TTM_ROLE_HINTS), 142-165 (_p_line)"),
+        "caption_speakers": (
+            "preserved",
+            "one ttm:agent element per distinct speaker in head metadata "
+            "(sorted → deterministic xml:ids) + a per-cue ttm:agent reference",
+            "exporters/ttml.py:135-139 (_agent_ids), 148-153 (_p_line), "
+            "202-215 (head metadata)"),
         # everything else falls to the caption-only fallback below
     },
     "edl": {
@@ -445,6 +521,16 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "export_edl never reads tracks.captions — an EDL is a picture cut "
             "list; SRT/ASS/VTT/TTML are the caption exits",
             "exporters/edl.py:266 (video track only, no caption path)"),
+        "caption_roles": (
+            "dropped",
+            "captions themselves are never written (picture cut list), so "
+            "the per-cue role vanishes with them",
+            "exporters/edl.py:266 (no caption path)"),
+        "caption_speakers": (
+            "dropped",
+            "captions themselves are never written (picture cut list), so "
+            "the per-cue speaker vanishes with them",
+            "exporters/edl.py:266 (no caption path)"),
         "clip_volume": (
             "unsupported",
             "VideoClip own-audio level/mute is an audio-domain feature of the "
@@ -537,6 +623,16 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "compile_fcpxml never reads tracks.captions — captions ride the "
             "SRT/TTML exits by design (honest boundary; FCPXML titles are NOT "
             "emitted this loop)",
+            "exporters/fcpxml.py (video spine only, no caption path)"),
+        "caption_roles": (
+            "dropped",
+            "captions themselves are never written (they ride the SRT/TTML "
+            "exits), so the per-cue role vanishes with the track",
+            "exporters/fcpxml.py (video spine only, no caption path)"),
+        "caption_speakers": (
+            "dropped",
+            "captions themselves are never written (they ride the SRT/TTML "
+            "exits), so the per-cue speaker vanishes with the track",
             "exporters/fcpxml.py (video spine only, no caption path)"),
         "clip_volume": (
             "dropped",
@@ -635,6 +731,18 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "full caption dumps ride the meta x-manju.captions extension "
             "only — no standard clap caption segments",
             "exporters/openclap/exporter.py:249-250"),
+        "caption_roles": (
+            "approximated",
+            "the x-manju.captions dumps are full CaptionLine model dumps, so "
+            "a set role rides the extension verbatim (a default None role is "
+            "serializer-dropped) — never a standard clap field",
+            "exporters/openclap/exporter.py:249-250 (model_dump per cue)"),
+        "caption_speakers": (
+            "approximated",
+            "the x-manju.captions dumps are full CaptionLine model dumps, so "
+            "the speaker rides the extension verbatim — never a standard "
+            "clap field",
+            "exporters/openclap/exporter.py:249-250 (model_dump per cue)"),
         "clip_volume": (
             "approximated",
             "sourceMute/sourceGainDb ride the x-manju extension only",
@@ -665,6 +773,109 @@ _RULES: dict[str, dict[str, _Rule]] = {
             "one deterministic clap track number per bus (video=0, voice=1, "
             "music=2, sfx=3, ambient=4) with DIALOGUE/MUSIC/SOUND categories",
             "exporters/openclap/exporter.py:47-52,280-298"),
+    },
+    "xmeml": {
+        "video_clips": (
+            "preserved",
+            "one <clipitem> per video clip on the single video <track>; "
+            "start/end are the telescoped record-frame integers, in/out the "
+            "source-frame integers — every time a WHOLE frame at the exact "
+            "edit rate on the timebase+ntsc carrier (1001 family: timebase = "
+            "nominal + ntsc TRUE, zero drift; int: ntsc FALSE). duration_frames "
+            "stamps consumed directly, ms_to_frames telescoped otherwise",
+            "exporters/xmeml.py (compile_xmeml video track; _clip_frames)"),
+        "video_in_points": (
+            "preserved",
+            "source_in_ms becomes the clipitem <in> (ms→frames ROUND_HALF_UP; "
+            "<out> = in + window) — REAL numbers, the -1 conventions are not "
+            "used",
+            "exporters/xmeml.py (video clipitem in/out)"),
+        "audio_in_points": (
+            "approximated",
+            "start_offset_ms becomes <in> on every WRITTEN voice/music "
+            "clipitem; sfx/ambient clips (omitted buses) and loop/None-"
+            "duration clips take their in-points with them (see audio_tracks)",
+            "exporters/xmeml.py (audio clipitem in/out)"),
+        "transitions": (
+            "approximated",
+            "a clean cross-dissolve (xfade_fade, 0<dur<BOTH adjacent clips) "
+            "becomes a native <transitionitem> (Cross Dissolve effectid, "
+            "centre alignment straddling the cut, whole-frame start/end); "
+            "EVERY other kind — dip-to-black fade, the xfade_* wipes/slides, "
+            "an unknown type, or a dissolve too long for its clips — degrades "
+            "to a hard cut with an in-band <!-- MANJU --> note (never a wrong "
+            "dissolve, the fcpxml/EDL stance)",
+            "exporters/xmeml.py (_is_clean_dissolve + overlap guard + "
+            "degraded note)"),
+        "overlays": (
+            "dropped",
+            "compile_xmeml never reads tracks.overlay — titles/branding are "
+            "not written",
+            "exporters/xmeml.py (video track only, no overlay path)"),
+        "captions": (
+            "dropped",
+            "compile_xmeml never reads tracks.captions — captions ride the "
+            "SRT/ASS/VTT/TTML exits by design (the fcpxml honest boundary)",
+            "exporters/xmeml.py (no caption path)"),
+        "caption_roles": (
+            "dropped",
+            "captions themselves are never written, so the per-cue role "
+            "vanishes with the track — roles ride the ASS Name / TTML "
+            "x-manju:role exits",
+            "exporters/xmeml.py (no caption path)"),
+        "caption_speakers": (
+            "dropped",
+            "captions themselves are never written, so the per-cue speaker "
+            "vanishes with the track — speakers ride the TTML ttm:agent / "
+            "jianying text-material exits",
+            "exporters/xmeml.py (no caption path)"),
+        "clip_volume": (
+            "dropped",
+            "video source gain/mute is never written — the minimal clipitem "
+            "subset carries no audio <filter>/levels on video clipitems",
+            "exporters/xmeml.py (no volume path)"),
+        "audio_gain": (
+            "dropped",
+            "AudioClip.gain_db is never written — no <filter>/levels in the "
+            "minimal clipitem subset; the level rides the render mix (writer "
+            "scope, not a format limit)",
+            "exporters/xmeml.py (no gain path)"),
+        "audio_fade_in": (
+            "dropped",
+            "fade handles are not written — no <filter> keyframes in the "
+            "minimal clipitem subset; fades ride the render / native FCPXML "
+            "fade exits",
+            "exporters/xmeml.py (no fade path)"),
+        "audio_fade_out": (
+            "dropped",
+            "fade handles are not written — no <filter> keyframes in the "
+            "minimal clipitem subset; fades ride the render / native FCPXML "
+            "fade exits",
+            "exporters/xmeml.py (no fade path)"),
+        "ducking": (
+            "dropped",
+            "the render-time sidechain relationship is never written — a "
+            "ducked voice/music clipitem plays flat in the XMEML (no keyframed "
+            "level primitive in this minimal subset); the ducking mix is never "
+            "silently claimed",
+            "exporters/xmeml.py (no ducking path)"),
+        "audio_loops": (
+            "dropped",
+            "a loop bed is OMITTED with an in-band <!-- MANJU --> comment — "
+            "no materialization in this minimal writer, never a fabricated "
+            "single pass (the fcpxml pre-W1 omission stance; fcpxml itself "
+            "materializes with render parity)",
+            "exporters/xmeml.py (loop/None omission comments)"),
+        "audio_tracks": (
+            "approximated",
+            "the VOICE bus becomes audio track 1 and the MUSIC bus audio "
+            "track 2 — a DECLARED two-track subset (the EDL A1/A2 stance); a "
+            "voice clip sharing its video clip's source is tied to it with "
+            "reciprocal <link> pairs (linked A/V); sfx/ambient clips and "
+            "loop/None-duration clips are OMITTED with in-band comments — "
+            "never squeezed into a track, nothing faked (writer scope, not a "
+            "format limit)",
+            "exporters/xmeml.py (audio tracks + links + omission comments)"),
     },
 }
 
@@ -747,6 +958,20 @@ _SCOPE_NOTES: dict[str, str] = {
               "gain (V1), loop beds materialized at render parity (W1), "
               "DTD-sourced fades (Y3); remaining omissions (ducking relation, "
               "unprobeable loops, None durations) are per-clip in-band notes.",
+    "xmeml": "XMEML (FCP7 XML Interchange Format v4) single-sequence writer — "
+             "the legacy-NLE exit Premiere/Resolve import on Windows. Every "
+             "<start>/<end>/<in>/<out> is a WHOLE-FRAME INTEGER on the "
+             "timebase+ntsc clock (1001 family: timebase=nominal + ntsc TRUE "
+             "IS the exact rational rate — zero drift; int: ntsc FALSE); "
+             "file://localhost pathurls are percent-encoded with the drive-"
+             "letter colon literal, containment-checked against the project "
+             "root. Clean cross-dissolves are native <transitionitem>s "
+             "(others cut + note, never a wrong dissolve); voice/music ride a "
+             "DECLARED two-track audio subset with linked A/V on shared "
+             "sources (sfx/ambient/loops omitted with in-band comments); "
+             "captions/overlays ride their own exits; markers are omitted "
+             "because the Timeline model carries no marker truth (nothing "
+             "invented).",
 }
 
 # import-time typo guard: every rule key must be a known feature.
@@ -811,6 +1036,9 @@ _DRIFT_TRACKS: dict[str, tuple[str, ...]] = {
     # FCPXML video spine: only the video track lands on the frame grid this loop
     # (audio is a deferred writer increment; captions ride SRT/TTML).
     "fcpxml": ("video",),
+    # XMEML: the video track + the DECLARED voice/music audio subset land as
+    # whole-frame clipitems (sfx/ambient/captions are not exported).
+    "xmeml": ("video", "voice", "music"),
 }
 
 _NOT_TIME_BEARING = {
@@ -958,18 +1186,48 @@ def _fcpxml_rate_mismatch(
     return mismatch
 
 
-def _fcpxml_frame_drift(
-    timeline: "Timeline", source_rates: dict[str, Any] | None,
-) -> tuple[dict[str, Any], list[str]]:
-    """The ``frame_drift`` block for FCPXML — the rational-NATIVE pin.
+# The two frame-NATIVE exits: every time they emit is an exact whole-frame
+# value on the exact edit rate, for INT projects too, so the ms→frame residual
+# is 0 BY CONSTRUCTION on both the int and the 1001-family path. FCPXML carries
+# the frames as rational-seconds strings (N/D on the frameDuration timescale);
+# XMEML carries them as bare frame integers on the timebase+ntsc clock (ntsc
+# TRUE + timebase nominal IS the exact 1001-family rate). Per-target grid label
+# + honest note (the fcpxml text is byte-identical to its pre-xmeml wording).
+_FRAME_NATIVE_GRID: dict[str, str] = {
+    "fcpxml": "rational-native",
+    "xmeml": "frame-native",
+}
+_FRAME_NATIVE_NOTE: dict[str, str] = {
+    "fcpxml": (
+        "frame_drift measured against the exact edit grid {rate}: FCPXML "
+        "carries every time as an exact whole-frame rational-seconds string "
+        "(frameDuration-native) for BOTH int and 1001-family projects, so the "
+        "ms→frame residual is 0 BY CONSTRUCTION — no drift row is needed even for "
+        "an int project (the rational-native advantage; OTIO's int path can carry "
+        "fractional frames, FCPXML never does)."),
+    "xmeml": (
+        "frame_drift measured against the exact edit grid {rate}: XMEML carries "
+        "every <start>/<end>/<in>/<out> as a WHOLE-FRAME INTEGER on the "
+        "sequence's timebase+ntsc clock (ntsc TRUE + timebase nominal IS the "
+        "exact 1001-family rate), so the ms→frame residual is 0 BY CONSTRUCTION "
+        "for BOTH int and 1001-family projects — the timebase+ntsc pair is "
+        "drift-free (the fcpxml rational-native stance on an integer-frame "
+        "carrier)."),
+}
 
-    FCPXML writes EVERY time as an exact whole-frame multiple of ``frameDuration``
-    on the exact edit rate (an ``N/D``-seconds string) — for INT projects too
-    (``'1/24s'``), never a float ms×fps value. So every exported video boundary is
-    a whole frame on the exact grid and the ms→frame residual is 0 BY CONSTRUCTION
-    on BOTH the int and the 1001-family path — the one NLE exit where our rational
-    truth rides natively with NO drift row. (Contrast OTIO's int path, which
-    writes fractional-frame RationalTime values; FCPXML never does.)
+
+def _frame_native_drift(
+    target: str, timeline: "Timeline", source_rates: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """The ``frame_drift`` block for the frame-NATIVE exits (fcpxml/xmeml).
+
+    Both write EVERY exported boundary as an exact whole frame on the exact
+    edit rate — for INT projects too, never a float ms×fps value — so the
+    residual is 0 BY CONSTRUCTION on BOTH the int and the 1001-family path
+    (contrast OTIO's int path, which writes fractional-frame RationalTime
+    values). The zero is still DERIVED from the frame truth per boundary,
+    never fabricated; the per-target carrier story rides the grid label + the
+    honest note (see :data:`_FRAME_NATIVE_GRID` / :data:`_FRAME_NATIVE_NOTE`).
     """
     notes: list[str] = []
     try:
@@ -988,7 +1246,7 @@ def _fcpxml_frame_drift(
     # ms_to_frames on the stampless fallback — every value an INTEGER frame index,
     # which is precisely why the residual vs the frame grid is 0 BY CONSTRUCTION.
     for label, frames in _rational_frame_boundaries(
-            timeline, _DRIFT_TRACKS["fcpxml"], edit_rate):
+            timeline, _DRIFT_TRACKS[target], edit_rate):
         count += 1
         exact = Fraction(int(frames))
         residual = abs(exact - round(exact))   # == 0 for a whole frame
@@ -1003,7 +1261,7 @@ def _fcpxml_frame_drift(
     mismatch = _fcpxml_rate_mismatch(timeline, source_rates, edit_rate, notes)
     block = {
         "checked": True,
-        "grid": "rational-native",
+        "grid": _FRAME_NATIVE_GRID[target],
         "edit_rate": str(edit_rate),        # "24000/1001" or "24"
         "edit_fps": edit_rate.nominal_int,
         "boundaries_checked": count,
@@ -1013,13 +1271,7 @@ def _fcpxml_frame_drift(
         "all_zero_by_construction": True,
         "rate_mismatch": mismatch,
     }
-    notes.append(
-        f"frame_drift measured against the exact edit grid {edit_rate}: FCPXML "
-        "carries every time as an exact whole-frame rational-seconds string "
-        "(frameDuration-native) for BOTH int and 1001-family projects, so the "
-        "ms→frame residual is 0 BY CONSTRUCTION — no drift row is needed even for "
-        "an int project (the rational-native advantage; OTIO's int path can carry "
-        "fractional frames, FCPXML never does).")
+    notes.append(_FRAME_NATIVE_NOTE[target].format(rate=edit_rate))
     return block, notes
 
 
@@ -1034,11 +1286,12 @@ def _frame_drift(
     if reason is not None:
         return {"checked": False, "reason": reason}, notes
 
-    # T2: FCPXML is rational-NATIVE — its drift is frame-native (residual 0 by
-    # construction) for the INT path too, so it takes a dedicated branch that the
-    # int/rational float logic below never touches (existing targets unchanged).
-    if target == "fcpxml":
-        return _fcpxml_frame_drift(timeline, source_rates)
+    # T2/W3: FCPXML and XMEML are frame-NATIVE — their drift is 0 by
+    # construction for the INT path too (rational-seconds strings / whole-frame
+    # integers on timebase+ntsc), so they take a dedicated branch that the
+    # int/rational logic below never touches (existing targets unchanged).
+    if target in _FRAME_NATIVE_GRID:
+        return _frame_native_drift(target, timeline, source_rates)
 
     # R4: when the timeline carries R2's rational echo, measure residuals against
     # the EXACT rational frame grid (24000/1001 …); otherwise the integer fps grid
@@ -1234,7 +1487,7 @@ def _exported_notes(
             except Exception:
                 return [f"{label} is not readable JSON — no cross-check performed"]
             doc = loaded if isinstance(loaded, dict) else None
-        elif suffix in (".srt", ".vtt", ".ass", ".ttml", ".edl", ".fcpxml"):
+        elif suffix in (".srt", ".vtt", ".ass", ".ttml", ".edl", ".fcpxml", ".xml"):
             text = p.read_text(encoding="utf-8")
         else:
             return [f"{label} not parsed (opaque/binary payload) — "
@@ -1303,6 +1556,21 @@ def _exported_notes(
         except ET.ParseError:
             return [f"{label} is not readable XML — no cross-check performed"]
         note = (f"{label}: {clips} asset-clip(s) vs timeline "
+                f"{len(t.video)} video clip(s)")
+        if clips != len(t.video):
+            note += " — MISMATCH: verify the export is fresh"
+        return [note]
+    if target == "xmeml" and text is not None:
+        import xml.etree.ElementTree as ET  # lazy: only this branch parses XML
+
+        try:
+            # one video-track <clipitem> per video clip (audio clipitems ride
+            # the audio tracks and are counted by neither side here)
+            clips = len(ET.fromstring(text).findall(
+                "./sequence/media/video/track/clipitem"))
+        except ET.ParseError:
+            return [f"{label} is not readable XML — no cross-check performed"]
+        note = (f"{label}: {clips} clipitem(s) vs timeline "
                 f"{len(t.video)} video clip(s)")
         if clips != len(t.video):
             note += " — MISMATCH: verify the export is fresh"

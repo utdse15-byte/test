@@ -512,6 +512,26 @@ schemas:
       core.timebase; content-addressed deletable projection under
       reports/technical/ (never a build input); profile_digest over facts only.
 
+  # -- board review (Wave 3 §5.5) --------------------------------------------
+  - id: manju.review.annotation/v1
+    kind: schema
+    owner: manju.core.models
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Structured MEDIA-BOUND review annotation, stored inline on the shot
+      (ShotStatus.annotations; the field is absent when empty, so old shots
+      serialize byte-identically). 结构化评审批注:绑定规则(§5.5 的核心)是
+      media_sha256 + frame_rate + frame/range + subject + actor。Takes are
+      append-only, so STALENESS == the stored media_sha256 no longer matching
+      the take file's current hash(take 被替换/重做 ⇒ 批注如实标 STALE,
+      从不静默漂移到新画面)。Never part of spec_payload — annotating never
+      restages a take; repair_variable is carried verbatim (qc/production
+      _VARIABLE_ROUTE hook), never auto-routed. Experimental = the registry's
+      arrival state.
+
 # ---------------------------------------------------------------------------
 # documents — public contracts that are NOT `manju.*/vN` schema ids: hand-edited
 # truth files, evidence envelopes, and machine surfaces. Excluded from the

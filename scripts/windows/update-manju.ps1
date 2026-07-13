@@ -38,9 +38,9 @@ if ($Rollback) {
     }
     $cur = Read-Pointer $Pointer
     $tmp = "$Pointer.tmp"
-    Set-Content -Path $tmp -Value $prev -Encoding UTF8 -NoNewline
+    Set-Content -Path $tmp -Value $prev -Encoding ASCII -NoNewline
     Move-Item -Force $tmp $Pointer
-    if ($cur) { Set-Content -Path $Previous -Value $cur -Encoding UTF8 -NoNewline }
+    if ($cur) { Set-Content -Path $Previous -Value $cur -Encoding ASCII -NoNewline }
     Write-Host "==> Rolled back to $prev (was: $cur)"
     exit 0
 }
@@ -54,6 +54,6 @@ if ($Source) { & $installer -Source $Source } else { & $installer }
 
 # Only reached on success (ErrorActionPreference=Stop): record the rollback target.
 if ($before) {
-    Set-Content -Path $Previous -Value $before -Encoding UTF8 -NoNewline
+    Set-Content -Path $Previous -Value $before -Encoding ASCII -NoNewline
     Write-Host "==> Previous version kept for rollback: $before  (update-manju.ps1 -Rollback)"
 }

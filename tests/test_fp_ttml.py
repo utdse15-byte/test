@@ -425,7 +425,15 @@ def test_conform_ttml_captions_preserved_everything_else_unsupported(tmp_project
            for cat in ("preserved", "approximated", "dropped", "unsupported")
            for r in doc[cat]}
     assert got["captions"] == "preserved"
-    others = {f for f in got if f != "captions"}
+    # W3 §5.4 evolution (reviewed): caption_roles/caption_speakers became
+    # first-class inventory rows, and the ttml writer FACTUALLY preserves both
+    # (ttm:agent + verbatim x-manju:role — ttml.py:135-165), so they join
+    # "captions" on the preserved side. Every other feature keeps the original
+    # teeth: unsupported for the caption-only ttml target.
+    caption_side = {"captions", "caption_roles", "caption_speakers"}
+    assert got["caption_roles"] == "preserved"
+    assert got["caption_speakers"] == "preserved"
+    others = {f for f in got if f not in caption_side}
     assert others, "fixture must carry non-caption features"
     for feat in others:
         assert got[feat] == "unsupported", f"{feat} must be unsupported for ttml"

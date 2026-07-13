@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..build.stale import ShotState, evaluate_all
-from ..core.hashing import HASH_PREFIX
+from ..core.hashing import HASH_PREFIX, hash_file
 from ..core.yamlio import atomic_write_text, read_json, read_yaml
 
 if TYPE_CHECKING:
@@ -384,6 +384,39 @@ _SERVE_CSS = """
   width: 100%; display: block; border-radius: 5px; background: #000;
 }
 .bnd-onion .bnd-onion-b { position: absolute; inset: 0; opacity: .5; }
+
+/* --- review annotations (Wave 3 §5.5): per-take media-bound notes --- */
+.ann-wrap { margin-top: .45rem; }
+.ann-list { display: flex; flex-direction: column; gap: .3rem; }
+.ann-row {
+  background: #0f1114; border: 1px solid var(--line); border-radius: 5px;
+  padding: .3rem .45rem; font-size: .76rem;
+}
+.ann-head { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.ann-note { background: #23324d; color: #8fb8ff; }
+.ann-issue { background: #4a3a12; color: #ffcf5c; }
+.ann-blocker { background: #4d1f22; color: #ff8a90; }
+.ann-stale { background: #4d1f22; color: #ff8a90; }
+.ann-seek {
+  color: var(--accent); cursor: pointer; font-family: ui-monospace, monospace;
+  font-size: .72rem; white-space: nowrap;
+}
+.ann-body { margin-top: .2rem; overflow-wrap: anywhere; color: #cfe3ff; }
+.ann-subject { color: var(--star); }
+.ann-meta { color: var(--muted); font-size: .7rem; margin-top: .15rem; }
+.ann-form {
+  display: flex; gap: .3rem; margin-top: .4rem; flex-wrap: wrap; align-items: center;
+}
+.ann-form .ann-text {
+  flex: 1; min-width: 110px; background: #0f1114; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; padding: .25rem .4rem;
+  font-size: .76rem;
+}
+.ann-form .ann-sev {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 4px; font-size: .74rem; padding: .2rem;
+}
+.ann-at { color: var(--muted); font-size: .72rem; white-space: nowrap; }
 """.strip()
 
 _SERVE_JS = """
@@ -396,7 +429,8 @@ _SERVE_JS = """
     redo: "正在重做该镜头…",
     select: "正在切换选用…",
     rollback_shot: "正在回滚该镜头…",
-    export: "正在导出草稿/字幕…"
+    export: "正在导出草稿/字幕…",
+    annotate: "正在保存批注…"
   };
   function el(id){ return document.getElementById(id); }
   function overlay(show, msg){
@@ -751,6 +785,43 @@ _SERVE_JS = """
     if (anyPlaying(vids)){ pauseAll(vids); }
     else { for (var i = 0; i < vids.length; i++){ vids[i].play().catch(function(){}); } }
   }
+  // --- review annotations (Wave 3 §5.5) --- click-to-seek: a data-seek chip
+  // parks ITS OWN take's <video> at the annotation's bound time (seconds
+  // pre-computed server-side from the annotation's exact frame_rate binding).
+  function annSeek(el){
+    var tk = el.closest(".take"); if(!tk) return;
+    var v = tk.querySelector("video"); if(!v) return;
+    var s = parseFloat(el.getAttribute("data-seek"));
+    if (!isFinite(s)) return;
+    try { v.pause(); v.currentTime = Math.max(0, s); } catch(e) {}
+  }
+  // Add-form submit: POST /api/annotate through the SAME token-carrying post()
+  // every other action uses. "at current frame" captures the take video's
+  // parked currentTime as an exact frame number via the page's rational rate
+  // (data-fps-num/den); expected_rev (the shot's CAS token rendered into the
+  // form) rides along so a stale page can never silently clobber the shot.
+  function annSubmit(btn){
+    var box = btn.closest(".ann-form"); if(!box) return;
+    var input = box.querySelector(".ann-text");
+    var sel = box.querySelector(".ann-sev");
+    var body = {
+      shot: box.getAttribute("data-shot"),
+      take: box.getAttribute("data-take"),
+      text: input ? input.value : "",
+      severity: sel ? sel.value : "note"
+    };
+    var chk = box.querySelector(".ann-atframe");
+    var num = parseInt(box.getAttribute("data-fps-num") || "0", 10);
+    var den = parseInt(box.getAttribute("data-fps-den") || "0", 10);
+    if (chk && chk.checked && num && den){
+      var tk = box.closest(".take");
+      var v = tk ? tk.querySelector("video") : null;
+      if (v){ body.frame = Math.max(0, Math.round(v.currentTime * num / den)); }
+    }
+    var rev = box.getAttribute("data-rev");
+    if (rev){ body.expected_rev = rev; }
+    post("annotate", body);
+  }
   document.addEventListener("click", function(e){
     var t = e.target, hit;
     if ((hit = t.closest && t.closest("[data-tab]"))){ switchTab(hit.getAttribute("data-tab")); return; }
@@ -762,6 +833,8 @@ _SERVE_JS = """
     if ((hit = t.closest && t.closest("[data-bnddiff]"))){ toggleBoundaryDiff(hit); return; }
     if ((hit = t.closest && t.closest("[data-bndonion]"))){ toggleBoundaryOnion(hit); return; }
     if ((hit = t.closest && t.closest("[data-scopes]"))){ toggleScopes(hit); return; }
+    if ((hit = t.closest && t.closest("[data-annsubmit]"))){ annSubmit(hit); return; }
+    if ((hit = t.closest && t.closest("[data-seek]"))){ annSeek(hit); return; }
     var btn = t.closest ? t.closest("button[data-act]") : null;
     if (!btn || btn.disabled) return;
     var body = {};
@@ -1082,6 +1155,106 @@ def _verdict_of(note: str | None) -> str | None:
     return note if note in _VERDICT_LABELS else None
 
 
+# --- review annotations (Wave 3 §5.5) — serve mode ONLY (static bytes pinned) --
+
+_ANN_SEVERITY_CLASS = {"note": "ann-note", "issue": "ann-issue", "blocker": "ann-blocker"}
+_ANN_STALE_BADGE = (
+    '<span class="badge ann-stale" title="绑定的媒体哈希不再匹配 — 该 take 的媒体已被'
+    '替换/重做,批注指向旧画面 (stored media_sha256 no longer matches the take '
+    'file&#39;s current hash)">⚠ 陈旧 STALE</span>'
+)
+
+
+def _parse_rate_string(rate: str) -> tuple[int, int] | None:
+    """``(num, den)`` from an annotation's exact rational rate string ("24" /
+    "24000/1001" — what ``core.timebase.Rate.__str__`` emits). Parse-only, the
+    inverse of the ONE formatter; ``None`` for anything unparsable (the row
+    then honestly renders frames without seconds, never a guessed rate)."""
+    try:
+        num_s, _, den_s = str(rate).partition("/")
+        num, den = int(num_s), int(den_s or "1")
+        return (num, den) if num > 0 and den > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _ann_time_chip(ann: Any) -> str:
+    """The frame/range chip: frames + seconds via the annotation's OWN bound
+    rate, carrying ``data-seek="<seconds>"`` for the click-to-seek handler."""
+    nd = _parse_rate_string(ann.frame_rate)
+    if ann.range_frames is not None and len(ann.range_frames) == 2:
+        start, end = ann.range_frames
+        if nd:
+            num, den = nd
+            sa, sb = start * den / num, end * den / num
+            return (f'<span class="ann-seek" data-seek="{sa:.3f}" '
+                    f'title="点击定位 click to seek">f{start}–f{end} '
+                    f"≈ {sa:.3f}–{sb:.3f}s</span>")
+        return f'<span class="ann-seek">f{_esc(start)}–f{_esc(end)}</span>'
+    if ann.frame is not None:
+        if nd:
+            num, den = nd
+            sec = ann.frame * den / num
+            return (f'<span class="ann-seek" data-seek="{sec:.3f}" '
+                    f'title="点击定位 click to seek">f{ann.frame} ≈ {sec:.3f}s</span>')
+        return f'<span class="ann-seek">f{_esc(ann.frame)}</span>'
+    return ""
+
+
+def _render_take_annotations(project: "Project", shot_id: str, take: Any,
+                             anns: list[Any], rev: str,
+                             rate_nd: tuple[int, int] | None) -> str:
+    """Per-take annotations block (serve mode only): the list rows + the add
+    form. STALE is computed AT RENDER TIME — the take file's CURRENT hash vs
+    each annotation's stored ``media_sha256`` binding (takes are append-only,
+    so a mismatch means the media was replaced/superseded). All user text
+    (text/subject/actor/…) goes through :func:`_esc`."""
+    rows = []
+    if anns:
+        current: str | None = None
+        if take.media_path is not None and take.media_path.is_file():
+            try:
+                current = hash_file(take.media_path)
+            except OSError:
+                current = None
+        for ann in anns:
+            sev = ann.severity if ann.severity in _ANN_SEVERITY_CLASS else "note"
+            chips = [f'<span class="badge {_ANN_SEVERITY_CLASS[sev]}">{_esc(sev)}</span>']
+            time_chip = _ann_time_chip(ann)
+            if time_chip:
+                chips.append(time_chip)
+            if not ann.matches_media(current):
+                chips.append(_ANN_STALE_BADGE)
+            subject = (f'<span class="ann-subject">[{_esc(ann.subject)}]</span> '
+                       if ann.subject else "")
+            rows.append(
+                '<div class="ann-row">'
+                f'<div class="ann-head">{"".join(chips)}</div>'
+                f'<div class="ann-body">{subject}{_esc(ann.text)}</div>'
+                f'<div class="ann-meta">{_esc(ann.actor)} · {_esc(ann.created_at)}</div>'
+                "</div>"
+            )
+    list_html = f'<div class="ann-list">{"".join(rows)}</div>' if rows else ""
+    rate_attrs = (f' data-fps-num="{rate_nd[0]}" data-fps-den="{rate_nd[1]}"'
+                  if rate_nd else "")
+    form = (
+        f'<div class="ann-form" data-shot="{_esc(shot_id)}" data-take="{_esc(take.name)}" '
+        f'data-rev="{_esc(rev)}"{rate_attrs}>'
+        '<input type="text" class="ann-text" maxlength="2000" '
+        'placeholder="批注 annotate…">'
+        '<select class="ann-sev">'
+        '<option value="note">note</option>'
+        '<option value="issue">issue</option>'
+        '<option value="blocker">blocker</option>'
+        "</select>"
+        '<label class="ann-at"><input type="checkbox" class="ann-atframe" checked>'
+        "当前帧 at frame</label>"
+        '<button type="button" class="btn" data-annsubmit="1">批注 annotate</button>'
+        "</div>"
+    )
+    return f'<div class="ann-wrap">{list_html}{form}</div>'
+
+
 def _render_take_note(note: str | None) -> str:
     """Per-take director note (§R9/R10) as static board markup.
 
@@ -1104,7 +1277,9 @@ def _render_take_note(note: str | None) -> str:
 
 
 def _render_take(project: "Project", shot_id: str, take: Any, selected: bool,
-                 serve: bool = False, note: str | None = None) -> str:
+                 serve: bool = False, note: str | None = None,
+                 annotations: list[Any] | None = None, rev: str = "",
+                 rate_nd: tuple[int, int] | None = None) -> str:
     cls = "take selected" if selected else "take"
     if take.media_path is not None:
         rel = _esc(project.relpath(take.media_path))
@@ -1127,6 +1302,10 @@ def _render_take(project: "Project", shot_id: str, take: Any, selected: bool,
     note_html = _render_take_note(note)
     if serve:
         cmd = _take_action(shot_id, take.name, selected)
+        # Wave 3 (§5.5): per-take annotation list + add form — serve mode only,
+        # so the static board stays byte-for-byte identical (its pin holds).
+        cmd += _render_take_annotations(project, shot_id, take,
+                                        annotations or [], rev, rate_nd)
     else:
         cmd = ""
         if not selected:
@@ -1156,15 +1335,31 @@ def _take_action(shot_id: str, take_name: str, selected: bool) -> str:
 def _render_shot(project: "Project", shot_id: str, status: Any,
                  serve: bool = False, rollbackable: bool = False,
                  rate_nd: tuple[int, int] | None = None) -> str:
+    ann_by_take: dict[str, list[Any]] = {}
     try:
         shot = project.load_shot(shot_id)
         action = shot.action.main
         speaker = shot.dialogue.speaker
         dtext = shot.dialogue.text
         take_notes = dict(shot.status.take_notes)
+        if serve:  # Wave 3 (§5.5): media-bound review annotations, per take
+            for ann in shot.status.annotations:
+                ann_by_take.setdefault(ann.take, []).append(ann)
     except Exception:
         action = speaker = dtext = ""
         take_notes = {}
+
+    rev = ""
+    if serve:
+        # the CAS token the per-take annotate form round-trips (expected_rev),
+        # so a page rendered before another entrance edited this shot refuses
+        # cleanly instead of silently last-writer-winning.
+        try:
+            from ..core.writes import shot_text_hash
+
+            rev = shot_text_hash(project, shot_id)
+        except Exception:
+            rev = ""
 
     badge_cls = _STATE_CLASS.get(status.state, "st-missing") if status else "st-missing"
     state_val = status.state.value if status else "unknown"
@@ -1210,7 +1405,8 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
     if takes:
         cards = "".join(
             _render_take(project, shot_id, t, selected=(t.name == selected), serve=serve,
-                         note=take_notes.get(t.name))
+                         note=take_notes.get(t.name),
+                         annotations=ann_by_take.get(t.name), rev=rev, rate_nd=rate_nd)
             for t in takes
         )
         takes_html = f'<div class="takes">{cards}</div>'

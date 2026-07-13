@@ -3,8 +3,10 @@
 A lavfi color source + drawtext, centered and wrapped. The text is written to a
 UTF-8 textfile and passed via ``textfile=`` rather than inlined, which sidesteps
 the notorious drawtext escaping bugs around colons, quotes and Chinese
-punctuation. A CJK-capable font is located via fontconfig; if none exists we
-fall back to drawtext's default font (boxes are acceptable, we must not crash).
+punctuation. A CJK-capable font is located via fontconfig (POSIX) or the
+standard font stores + registry Fonts lists (Windows, W3 §5.3); if none exists
+we fall back to drawtext's default font (boxes are acceptable, we must not
+crash).
 """
 
 from __future__ import annotations
@@ -22,6 +24,30 @@ from .normalize import ANULLSRC
 Log = Callable[[str], None] | None
 
 FONT_ROOTS = (Path("/usr/share/fonts"),)
+
+# W3 (§5.3): os.name is process-constant; a module flag keeps the Windows
+# dispatch patchable in tests without touching the global ``os`` module (the
+# W1/W2 _IS_WINDOWS precedent in buildlock/local_cmd/doctor/html_card).
+_IS_WINDOWS = os.name == "nt"
+
+# Curated, ORDERED CJK-capable fonts that ship with Windows — Microsoft YaHei
+# first (the modern UI CJK font), then the legacy Simplified trio
+# (SimHei/SimSun/KaiTi), the Win8+ DengXian family, and the Traditional
+# MingLiU/JhengHei sets. A curated list keeps find_font CHEAP on Windows: a
+# handful of exists() probes, never a directory-wide glob over the thousands
+# of files a real Fonts dir holds.
+_WINDOWS_CJK_CANDIDATES = (
+    "msyh.ttc",     # Microsoft YaHei
+    "msyhbd.ttc",   # Microsoft YaHei Bold
+    "simhei.ttf",   # SimHei
+    "simsun.ttc",   # SimSun
+    "simkai.ttf",   # KaiTi
+    "Deng.ttf",     # DengXian
+    "Dengb.ttf",    # DengXian Bold
+    "Dengl.ttf",    # DengXian Light
+    "mingliu.ttc",  # MingLiU (Traditional)
+    "msjh.ttc",     # Microsoft JhengHei (Traditional)
+)
 
 # Round X (agent XG): card style presets for the drawtext floor (§8.4) — the
 # SAME preset names as media/html_card.py:CARD_STYLE_PRESETS (kept as two
@@ -42,8 +68,16 @@ CARD_STYLE_PRESETS: dict[str, dict[str, Any]] = {
 
 
 def _escape(path: Path | str) -> str:
-    """Escape a path for a filtergraph option value (drawtext textfile/fontfile)."""
-    return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    """Escape a path for a filtergraph option value (drawtext textfile/fontfile).
+
+    Windows gate round 2: delegates to render's two-level form — the old
+    single-level ``C\:`` escaping died in drawtext's OWN option parser on
+    every drive-letter path (the same 'Unable to parse' failure the ass=
+    filter had), which killed the caption-card fallback and with it the whole
+    offline degradation chain on Windows. One owner, one escaping."""
+    from .render import _escape_filter_path
+
+    return _escape_filter_path(path)
 
 
 def _fc_match(query: str) -> Path | None:
@@ -84,9 +118,93 @@ def _fc_match_family(family: str) -> Path | None:
     return None
 
 
+def _win_font_dirs() -> list[Path]:
+    """The two standard Windows font stores: machine-wide %WINDIR%\\Fonts and
+    the per-user store %LOCALAPPDATA%\\Microsoft\\Windows\\Fonts (where Win10
+    1809+ installs "for me" fonts). Env-derived so tests and unusual installs
+    can redirect them; a missing variable simply drops that store."""
+    dirs: list[Path] = []
+    windir = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
+    if windir:
+        dirs.append(Path(windir) / "Fonts")
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        dirs.append(Path(local) / "Microsoft" / "Windows" / "Fonts")
+    return dirs
+
+
+def _win_registry_font_files() -> list[Path]:
+    """Font files named by the registry Fonts lists (HKLM machine-wide + HKCU
+    per-user ``SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts``).
+    Values are bare file names or absolute paths; relative ones resolve
+    against %WINDIR%\\Fonts. Injectable + failure-safe by contract: ANY
+    problem (no winreg off Windows, missing key, access denied) returns []
+    so the caller can only ever degrade to None, never crash."""
+    try:
+        import winreg  # guarded: only exists on Windows
+
+        windir = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
+        base = Path(windir) / "Fonts" if windir else None
+        subkey = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        files: list[Path] = []
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, subkey) as key:
+                    for i in range(winreg.QueryInfoKey(key)[1]):
+                        value = winreg.EnumValue(key, i)[1]
+                        if not isinstance(value, str) or not value:
+                            continue
+                        p = Path(value)
+                        if not p.is_absolute():
+                            if base is None:
+                                continue  # relative name, nowhere to resolve
+                            p = base / p
+                        files.append(p)
+            except OSError:
+                continue  # a hive without the key is a fact, not an error
+        return files
+    except Exception:
+        return []
+
+
+def _find_font_windows() -> Path | None:
+    """Windows locator (§5.3) — no fontconfig exists here, so:
+
+    1. Probe the curated candidates against the two standard font stores.
+       Curated ORDER wins across stores (YaHei in the user store beats SimSun
+       in the system store) — preference is about the font, not its home.
+    2. Fall back to the registry Fonts lists for fonts installed to
+       non-standard paths, accepting only curated names (same order).
+
+    None = honestly not found: the §8.4 card degrades to drawtext's default
+    font and glyph coverage stays UNKNOWN — never guessed.
+    """
+    dirs = [d for d in _win_font_dirs() if d.is_dir()]
+    for name in _WINDOWS_CJK_CANDIDATES:
+        for d in dirs:
+            candidate = d / name
+            if candidate.exists():
+                return candidate
+    try:
+        registry = _win_registry_font_files()
+    except Exception:
+        return None  # a broken registry probe degrades, never crashes
+    by_name: dict[str, Path] = {}
+    for p in registry:
+        by_name.setdefault(p.name.lower(), p)  # first registry entry wins
+    for name in _WINDOWS_CJK_CANDIDATES:
+        found = by_name.get(name.lower())
+        if found is not None and found.exists():
+            return found
+    return None
+
+
 def find_font() -> Path | None:
     """Locate a CJK-capable font, or None.
 
+    0. Windows (no fontconfig): dispatch to the curated dir-scan + registry
+       locator above — the POSIX chain below is never consulted there, and
+       the Windows sources never on POSIX (the chain stays byte-identical).
     1. Named CJK families (Noto Sans CJK, WenQuanYi), verified so a fontconfig
        fallback to a non-CJK family is not mistaken for a real hit.
     2. Any font that actually covers a common CJK ideograph (U+4E00 一) — the
@@ -94,6 +212,9 @@ def find_font() -> Path | None:
        resolves to a non-CJK font.
     3. Filesystem glob for Noto/DejaVu ttf/otf/ttc under /usr/share/fonts.
     """
+    if _IS_WINDOWS:
+        return _find_font_windows()
+
     for family in (
         "Noto Sans CJK SC",
         "Noto Sans CJK",

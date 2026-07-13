@@ -22,10 +22,11 @@ Routes:
                                    project.yaml, shots/*.yaml or
                                    .manju/state.sqlite are never served here.
   POST /api/<action>             → JSON in, ``{ok: true, ...}`` / ``{ok: false,
-                                   error: "one line"}`` out. Only the seven safe
+                                   error: "one line"}`` out. Only the safe
                                    actions below exist; anything else is 404.
 
-Actions: select · rollback_shot · snapshot · build · qc · package · redo · export.
+Actions: select · rollback_shot · snapshot · build · qc · package · redo ·
+export · annotate.
 
 Concurrency: one global ``threading.Lock`` guards every mutating action so two
 clicks can't interleave. A click that arrives while another action runs gets an
@@ -86,6 +87,13 @@ def _one_line(text: str) -> str:
 
 class _ApiError(Exception):
     """A clean, one-line failure surfaced as ``{ok:false, error:...}`` (HTTP 200)."""
+
+
+class _BadRequest(_ApiError):
+    """A malformed REQUEST (missing/invalid input fields) — the same one-line
+    ``{ok:false, error:...}`` envelope, but as a real HTTP 400: the client sent
+    something the server refuses to interpret, distinct from a well-formed
+    request whose business rule said no (plain :class:`_ApiError`, HTTP 200)."""
 
 
 # ---- Audit 15: served-board security headers (mirror gui/server.py's set) ----
@@ -340,6 +348,113 @@ def _api_export(project: Project, body: dict) -> dict:
     return {"outputs": outputs, "notes": notes}
 
 
+def _api_annotate(project: Project, body: dict) -> dict:
+    """Wave 3 (§5.5): append ONE structured, media-bound review annotation
+    (``manju.review.annotation/v1``, core.models.Annotation) to the shot's
+    ``status.annotations``.
+
+    Validation is strictly SERVER-SIDE (the board form is a convenience, never
+    a guard): the shot must exist, the take must exist AND its media file must
+    be on disk — its sha256 (core.hashing.hash_file) becomes the annotation's
+    media binding; text/severity/frame/range/subject are checked here + by the
+    Annotation model itself. Bad input → :class:`_BadRequest` (HTTP 400, same
+    envelope).
+
+    Write path: the SAME build-lock discipline as the other mutating actions,
+    then ``core.writes.checked_shot_write`` (post-write check + revert;
+    ``expected_rev`` → the CAS token, refused with the standard WriteRejected
+    envelope when stale), then one ``annotate`` event. ``frame_rate`` is the
+    exact rational string of ``ProjectConfig.frame_rate`` (the R2 typed
+    resolver — the raw rational field never leaves core, per the ratemig1
+    grep-pin) rendered by the ONE formatter (core.timebase.Rate.__str__);
+    no second formatter is invented here."""
+    from datetime import datetime, timezone
+
+    from pydantic import ValidationError
+
+    from ..core.hashing import hash_file
+    from ..core.models import Annotation
+    from ..core.writes import WriteRejected, checked_shot_write
+    from ..runtime.buildlock import build_lock
+
+    shot = body.get("shot")
+    take = body.get("take")
+    if not shot or not isinstance(shot, str) or not take or not isinstance(take, str):
+        raise _BadRequest("shot and take are required")
+    if shot not in project.shot_ids():
+        raise _BadRequest(f"unknown shot '{shot}'")
+    take_info = project.get_take(shot, take)
+    if take_info is None:
+        raise _BadRequest(f"{shot} has no take '{take}'")
+    if take_info.media_path is None or not take_info.media_path.is_file():
+        raise _BadRequest(
+            f"{shot}/{take} has no media file on disk — 批注必须绑定真实媒体哈希")
+
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise _BadRequest("text is required (1..2000 chars)")
+    frame = body.get("frame")
+    if frame is not None and (isinstance(frame, bool) or not isinstance(frame, int)):
+        raise _BadRequest("frame must be a non-negative integer")
+    range_frames = body.get("range")
+    if range_frames is not None and not isinstance(range_frames, list):
+        raise _BadRequest("range must be [start_frame, end_frame]")
+    subject = body.get("subject", "")
+    if not isinstance(subject, str):
+        raise _BadRequest("subject must be a string")
+    geometry = body.get("geometry")
+    if geometry is not None and not isinstance(geometry, dict):
+        raise _BadRequest("geometry must be an object")
+    repair_variable = body.get("repair_variable")
+    if repair_variable is not None and not isinstance(repair_variable, str):
+        raise _BadRequest("repair_variable must be a string")
+    expected_rev = body.get("expected_rev")
+    if expected_rev is not None and not isinstance(expected_rev, str):
+        raise _BadRequest("expected_rev must be a string")
+
+    ann_id = "ann_" + secrets.token_hex(6)
+    try:
+        annotation = Annotation(
+            id=ann_id,
+            take=take,
+            media_sha256=hash_file(take_info.media_path),
+            frame_rate=str(project.load_config().frame_rate),
+            frame=frame,
+            range_frames=range_frames,
+            subject=subject,
+            severity=body.get("severity", "note"),
+            text=text.strip(),
+            geometry=geometry,
+            repair_variable=repair_variable,
+            actor=_actor(),
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        raise _BadRequest(str(first.get("msg", exc))) from exc
+
+    record = annotation.model_dump(exclude_none=True)
+
+    def mutate(d: dict) -> None:
+        status = d.setdefault("status", {})
+        anns = status.get("annotations")
+        if not isinstance(anns, list):
+            anns = []
+        anns.append(record)
+        status["annotations"] = anns
+
+    try:
+        with build_lock(project.root, actor=_actor()):
+            checked_shot_write(project, shot, mutate, guard_paths=(),
+                               expected_text_hash=expected_rev)
+    except WriteRejected as exc:
+        raise _ApiError(str(exc)) from exc
+    append_event(project.root, _actor(), "annotate",
+                 {"shot": shot, "take": take, "id": ann_id,
+                  "severity": annotation.severity, "via": "board"})
+    return {"id": ann_id, "stale": False}
+
+
 API_ACTIONS: dict[str, Callable[[Project, dict], dict]] = {
     "select": _api_select,
     "rollback_shot": _api_rollback_shot,
@@ -349,6 +464,7 @@ API_ACTIONS: dict[str, Callable[[Project, dict], dict]] = {
     "package": _api_package,
     "redo": _api_redo,
     "export": _api_export,
+    "annotate": _api_annotate,
 }
 
 
@@ -615,6 +731,11 @@ class BoardHandler(BaseHTTPRequestHandler):
             if result:
                 payload.update(result)
             self._send_json(HTTPStatus.OK, payload)
+        except _BadRequest as exc:
+            # malformed INPUT (Wave 3 annotate validation) — a real 400, same
+            # one-line envelope as everything else.
+            self._send_json(HTTPStatus.BAD_REQUEST,
+                            {"ok": False, "error": _one_line(str(exc))})
         except _ApiError as exc:
             self._send_json(HTTPStatus.OK, {"ok": False, "error": _one_line(str(exc))})
         except BuildLocked as exc:

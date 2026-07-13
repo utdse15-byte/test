@@ -28,6 +28,21 @@ except ImportError:  # POSIX: fcntl above is the coordinator
 EVENTS_FILE = "events.jsonl"
 EVENTS_LOCK = "events.lock"
 
+# Gate round 2: per-lock-name in-process thread locks for the Windows branch
+# (see events_lock). POSIX never needs them — flock excludes same-process fds.
+import threading as _threading
+
+_THREAD_LOCKS: dict[str, "_threading.Lock"] = {}
+_THREAD_LOCKS_GUARD = _threading.Lock()
+
+
+def _name_thread_lock(lock_name: str) -> "_threading.Lock":
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(lock_name)
+        if lock is None:
+            lock = _THREAD_LOCKS[lock_name] = _threading.Lock()
+        return lock
+
 # The default flock acquisition budget (WP1). Kept a module constant (resolved at
 # call time when ``events_lock`` is called with ``timeout_s=None``) so a test can
 # drive the lock-timeout path fast without threading a timeout through every
@@ -110,15 +125,32 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
     else:
         # Windows: non-blocking byte-0 lock. msvcrt raises plain OSError
         # (EACCES/EDEADLK) when the region is held, so OSError retries here.
+        # Gate round 2: the byte lock alone did NOT exclude THREADS of the
+        # same process (12 concurrent record_verdicts threads → 6 surviving
+        # lines on the real host; POSIX flock excludes same-process fds, the
+        # CRT lock demonstrably did not) — so the Windows branch pairs the
+        # byte lock (cross-PROCESS) with a per-lock-name threading.Lock
+        # (cross-THREAD). The thread lock rides the same non-blocking poll
+        # loop, so timeout semantics are unchanged.
         retry_exc = (OSError,)
+        _thread_lock = _name_thread_lock(lock_name)
 
         def _try_lock() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            if not _thread_lock.acquire(blocking=False):
+                raise OSError(13, "thread lock held (same-process contention)")
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                _thread_lock.release()
+                raise
 
         def _unlock() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            finally:
+                _thread_lock.release()
 
     locked = False
     try:

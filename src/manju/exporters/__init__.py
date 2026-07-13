@@ -21,6 +21,7 @@ from .srt_ass import (
     ms_to_srt,
 )
 from .ttml import compile_ttml, export_ttml
+from .xmeml import compile_xmeml, export_xmeml
 
 __all__ = [
     "ms_to_srt",
@@ -34,6 +35,8 @@ __all__ = [
     "export_ttml",
     "export_edl",
     "export_fcpxml",
+    "compile_xmeml",
+    "export_xmeml",
     "export_otio",
     "export_jianying",
     "export_openclap",

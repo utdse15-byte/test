@@ -96,20 +96,28 @@ try {
     & $venvPy @pipArgs 2>&1 | Tee-Object -FilePath $log -Append | Out-Null
 
     # ---------------------------------------------------------- self-test (§4.3)
+    # STRICT: a failed self-test must abort BEFORE the pointer switch (the
+    # first real windows-latest run proved the gap — `manju --version` failed
+    # and the switch still happened). PowerShell does not throw on native
+    # exit codes, so each probe checks $LASTEXITCODE explicitly.
     Write-Step "Self-test: manju --version + doctor"
     $manjuExe = Join-Path $stagingDir "venv\Scripts\manju.exe"
     if (-not (Test-Path $manjuExe)) { throw "manju entry point missing after install" }
     & $manjuExe --version 2>&1 | Tee-Object -FilePath $log -Append
-    # doctor exit code is env-dependent (ffmpeg may be absent); the SELF-test
-    # only requires doctor to RUN and produce output — a missing ffmpeg is a
-    # doctor finding for the user, not an install failure.
+    if ($LASTEXITCODE -ne 0) { throw "self-test failed: manju --version exited $LASTEXITCODE" }
+    # doctor exit code 1 is env-dependent (ffmpeg may be absent — a doctor
+    # FINDING for the user, not an install failure); anything else (crash,
+    # import error) aborts before the switch.
     & $manjuExe doctor 2>&1 | Tee-Object -FilePath $log -Append | Out-Null
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) {
+        throw "self-test failed: manju doctor crashed (exit $LASTEXITCODE)"
+    }
 
     # ---------------------------------------------------------- atomic switch
     Write-Step "Activating $versionId"
     Move-Item $stagingDir $targetDir
     $tmpPointer = "$Pointer.tmp"
-    Set-Content -Path $tmpPointer -Value $versionId -Encoding UTF8 -NoNewline
+    Set-Content -Path $tmpPointer -Value $versionId -Encoding ASCII -NoNewline
     Move-Item -Force $tmpPointer $Pointer
 }
 catch {

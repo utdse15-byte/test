@@ -200,7 +200,10 @@ def test_logo_burns_via_image_overlay_chain(tmp_path):
     inputs, stmts, last = _image_overlay_graph(
         [logo], project=_P(), in_label="[vbase]", out_w=1080, base_idx=3)
     joined = ";".join(stmts)
-    assert inputs == ["-i", "/proj/media/imports/logo.png"]
+    # gate round 2: _P.resolve builds a real Path — on Windows str() renders
+    # backslashes, so the expectation must be platform-native too (the pin is
+    # the JOIN + flag shape, not the separator flavour).
+    assert inputs == ["-i", str(Path("/proj/media/imports/logo.png"))]
     assert "[3:v]scale=130:-1,format=rgba,colorchannelmixer=aa=0.8[br_img0]" in joined
     # tr corner with a 2.5%-of-width inset (27px @ 1080)
     assert "overlay=x=W-w-27:y=27" in joined

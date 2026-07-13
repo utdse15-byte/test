@@ -29,6 +29,7 @@ from pathlib import Path
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file, short_hash
 from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
+from .render import _escape_filter_path
 from .frames import frames_cache_dir, _resolve_source
 from .probe import probe
 
@@ -129,7 +130,12 @@ def rms_levels(
              f"aformat=channel_layouts=mono:sample_rates={sample_rate},"
              f"asetnsamples=n={nsamples}:p=0,"
              "astats=metadata=1:reset=1,"
-             f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file={meta_tmp}",
+             # Windows gate round 2: the file= option value parses at the
+             # filter's OWN option level too — a bare C:\ path split at the
+             # drive colon and astats "produced no readings". Same two-level
+             # escaping as every other filter path.
+             "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:"
+             f"file={_escape_filter_path(meta_tmp)}",
              "-f", "null", "-"],
             log=log,
         )

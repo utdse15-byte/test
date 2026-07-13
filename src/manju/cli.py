@@ -29,6 +29,26 @@ from .core.locks import seal_lock
 app = typer.Typer(add_completion=False, no_args_is_help=True,
                   help="Manju One — a build system for video. 一键出片:manju build")
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from . import __version__
+
+        typer.echo(f"manju {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False, "--version", callback=_version_callback, is_eager=True,
+        help="打印版本号并退出 (print version and exit)"),
+) -> None:
+    """W2/W3: `manju --version` — the installer self-test's probe (the first
+    real windows-latest install run failed on its absence). Eager: prints and
+    exits before any command dispatch; the frozen command surface is
+    unaffected (a callback is not a command)."""
+
 # --help panels (optimization audit 11g): the ~65-command surface rendered as
 # one flat wall — `rich_help_panel` was used zero times. Group every visible
 # command + sub-app into a small set of discoverable panels. Chinese-first
@@ -2057,6 +2077,11 @@ def export(
         help="FCPXML 1.9 video spine (exports/fcpxml/, EXACT rational time — "
              "frameDuration=1001/24000s native; video + cross-dissolve only, "
              "captions ride --srt/--ttml, see conform-loss)"),
+    xmeml: bool = typer.Option(
+        False, "--xmeml",
+        help="W3 §5.2: xmeml v4 sequence for Premiere/Resolve import "
+             "(exports/xmeml/, timebase+ntsc rational rate, linked A/V, "
+             "cross dissolve; 语义损失见 conform-loss)"),
     pullsheet: bool = typer.Option(
         False, "--pullsheet",
         help="AI_IDE_16 §9: CSV + Markdown storyboard pull sheet "
@@ -2094,7 +2119,7 @@ def export(
                      "no headless-Chromium/PDF-table path in this environment)")
     timeline = project.load_timeline()
     if timeline is None:
-        if pullsheet and not (jianying or capcut or srt or ttml or otio or edl or fcpxml):
+        if pullsheet and not (jianying or capcut or srt or ttml or otio or edl or fcpxml or xmeml):
             rel = {k: project.relpath(v) for k, v in outputs.items()}
             append_event(project.root, ACTOR, "export", rel)
             if as_json:
@@ -2106,7 +2131,7 @@ def export(
                     typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
             return
         _fail("no timeline.json — run `manju build` first")
-    if not (jianying or capcut or srt or ttml or otio or edl or fcpxml or pullsheet):
+    if not (jianying or capcut or srt or ttml or otio or edl or fcpxml or xmeml or pullsheet):
         srt = otio = True
     # Which target we're building, so a mid-export failure names its subject in
     # the structured record (goal 10) — the capcut path below records the same way.
@@ -2137,6 +2162,11 @@ def export(
 
             _target = "fcpxml"
             outputs["fcpxml"] = export_fcpxml(project, timeline)
+        if xmeml:
+            from .exporters.xmeml import export_xmeml
+
+            _target = "xmeml"
+            outputs["xmeml"] = export_xmeml(project, timeline)
         if jianying:
             from .exporters.jianying import export_jianying
             from .exporters.native_draft import (
@@ -2174,13 +2204,42 @@ def export(
                             evidence=" ".join(str(exc).split())[:400],
                             hint="安装 pycapcut;或用 --otio/--srt 兜底出口(§14)")
             _fail(str(exc))
+    # W3 (§5.1): every NLE/caption export ships its conform-loss document —
+    # preserved/approximated/dropped/unsupported + frame drift — as a DERIVED
+    # advisory artifact (content-addressed, written and owned by
+    # exporters.conform; never read back as a build input). A derivation
+    # fault degrades to a visible ⚠ note; it must never fail the export whose
+    # artifact already landed. Silent loss is the one forbidden outcome.
+    conform_rel: dict[str, str] = {}
+    if timeline is not None:
+        from .exporters.conform import conform_loss_report, write_conform_report
+
+        _CONFORM_TARGET = {
+            "srt": "srt_ass", "ttml": "ttml", "otio": "otio", "edl": "edl",
+            "fcpxml": "fcpxml", "xmeml": "xmeml", "jianying": "jianying",
+            "jianying_native": "native_draft", "capcut": "native_draft",
+        }
+        for out_key, conform_target in _CONFORM_TARGET.items():
+            if out_key not in outputs:
+                continue
+            try:
+                doc = conform_loss_report(
+                    project, conform_target, timeline, outputs[out_key])
+                conform_rel[out_key] = project.relpath(
+                    write_conform_report(project, doc))
+            except Exception as exc:  # advisory: surface, never abort
+                notes.append(
+                    f"conform-loss ({out_key}) 派生失败: "
+                    f"{' '.join(str(exc).split())[:200]}")
     rel_outputs = {k: project.relpath(v) for k, v in outputs.items()}
     append_event(project.root, ACTOR, "export", rel_outputs)
     if as_json:
-        _emit({"outputs": rel_outputs, "notes": notes}, True)
+        _emit({"outputs": rel_outputs, "notes": notes, "conform": conform_rel}, True)
     else:
         for k, v in rel_outputs.items():
             typer.secho(f"{k}: {v}", fg=typer.colors.GREEN)
+        for k, v in conform_rel.items():
+            typer.secho(f"conform[{k}]: {v}", fg=typer.colors.CYAN)
         for note in notes:
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
 
@@ -3807,6 +3866,10 @@ def board(
     host: str = typer.Option("127.0.0.1", "--host", help="serve host (--serve; localhost only)"),
     open_browser: bool = typer.Option(True, "--open/--no-open",
                                       help="open the board in a browser after binding (--serve)"),
+    app_mode: bool = typer.Option(
+        False, "--app",
+        help="W3 §5.6: open --serve in an Edge/Chrome app window "
+             "(msedge --app=<url>); 找不到时退回默认浏览器"),
 ):
     """Review board — the director's workbench (§1-⑦).
 
@@ -3833,10 +3896,30 @@ def board(
     url = f"http://{host}:{server.server_address[1]}/"
     typer.secho(f"manju board 工作台: {url}  (Ctrl-C 退出)", fg=typer.colors.GREEN)
     if open_browser:
-        try:  # best-effort; headless / no-browser must never crash the server
-            webbrowser.open(url)
-        except Exception:
-            pass
+        # W3 (§5.6): --app prefers an Edge/Chrome app window (a chromeless
+        # local app shell — msedge --app=<url>); anything missing degrades to
+        # the default browser. No Electron, no WebView2 SDK (plan rule).
+        launched = False
+        if app_mode:
+            try:
+                import subprocess as _subprocess
+
+                from .media.html_card import find_chromium, find_edge
+
+                browser = find_edge() or find_chromium()
+                if browser is not None:
+                    _subprocess.Popen(
+                        [str(browser), f"--app={url}"],
+                        stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
+                    )
+                    launched = True
+            except Exception:
+                launched = False  # degrade to the default browser below
+        if not launched:
+            try:  # best-effort; headless / no-browser must never crash the server
+                webbrowser.open(url)
+            except Exception:
+                pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:

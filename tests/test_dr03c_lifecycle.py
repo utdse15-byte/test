@@ -219,7 +219,7 @@ def test_cancel_emits_canceled_run_attempt_and_manifest(tmp_project, add_shot):
     run_attempts = [r for r in recs if r["stage"] == "build" and r["action"] == "run"]
     assert len(run_attempts) == 1 and run_attempts[0]["state"] == A.CANCELED
 
-    m = json.loads(A.run_manifest_path(tmp_project, result.run_id).read_text())
+    m = json.loads(A.run_manifest_path(tmp_project, result.run_id).read_text(encoding="utf-8"))
     assert m["terminal_status"] == A.MANIFEST_CANCELED
 
 
@@ -310,7 +310,7 @@ def test_render_output_sha_reuses_the_dr01_sidecar(built):
     render = next(r for r in recs if r["stage"] == "render")
     out = render["outputs"][0]
     final = project.final_dir / out["path"].rsplit("/", 1)[-1]
-    sidecar = json.loads(final.with_suffix(".key.json").read_text())
+    sidecar = json.loads(final.with_suffix(".key.json").read_text(encoding="utf-8"))
     assert out["sha256"] == sidecar["output_sha256"] == hash_file(final)
     assert out["content_key"] == sidecar["final_key"]
 
@@ -330,7 +330,7 @@ def test_second_build_render_is_skipped_cache_hit(built):
 @needs_ffmpeg
 def test_manifest_terminal_status_and_verify_outputs(built):
     project, result = built
-    m = json.loads(A.run_manifest_path(project, result.run_id).read_text())
+    m = json.loads(A.run_manifest_path(project, result.run_id).read_text(encoding="utf-8"))
     assert m["terminal_status"] == A.COMPLETED
     assert m["qc_report_refs"]  # the build ran QC → refs attached
     assert A.verify_outputs(project, result.run_id) == []  # bytes match the record
@@ -384,7 +384,7 @@ def test_rebuild_index_works_from_sidecars_after_manju_and_manifests_deleted(
     recs, _ = A.read_attempts(tmp_project, result.run_id)
     assert any(r["state"] == A.SUCCEEDED and r["stage"] == "generate" for r in recs)
     # and the manifest can be re-derived on demand from that stream
-    m = json.loads(A.materialize_run_manifest(tmp_project, result.run_id).read_text())
+    m = json.loads(A.materialize_run_manifest(tmp_project, result.run_id).read_text(encoding="utf-8"))
     assert m["run_id"] == result.run_id
 
 

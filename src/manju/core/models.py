@@ -19,7 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-from .idents import validate_safe_segment
+from .idents import is_safe_segment, validate_safe_segment
 from .timebase import Rate
 
 SHOT_SIZES = (
@@ -368,6 +368,171 @@ class Generation(ManjuModel):
 REVIEW_STATES = ("needs_review", "in_progress", "approved")
 
 
+# ------------------------------------------------- review annotations (§5.5)
+# Wave 3 (MANJU_WINDOWS_ONLY_LEAN_V3 §5.5): structured, MEDIA-BOUND review
+# annotations — the ONE new public schema the plan budgets. The id literal
+# lives here because manju.core.models owns the schema; the registry row is
+# in CONTRACTS.yaml (status: experimental) and test_fp_contracts pins the two
+# in the same change.
+ANNOTATION_SCHEMA = "manju.review.annotation/v1"
+
+import re as _re_ann  # noqa: E402 — scoped to the annotation grammar below
+
+ANNOTATION_SEVERITIES = ("note", "issue", "blocker")
+ANNOTATION_GEOMETRY_KINDS = ("rect", "arrow")
+_ANNOTATION_TEXT_MAX = 2000
+_ANNOTATION_SUBJECT_MAX = 200
+
+# The media binding: 'sha256:<hex>' — exactly how take sidecar hashes render
+# (core.hashing.HASH_PREFIX) — or the bare 64-hex digest. Nothing else (not
+# "manual", not a truncated prefix) is an acceptable binding: staleness is a
+# byte-exact comparison, so the stored form must BE a full content hash.
+_MEDIA_SHA256_RE = _re_ann.compile(r"^(sha256:)?[0-9a-fA-F]{64}$")
+# The exact rational rate string core.timebase.Rate.__str__ emits: "24" or
+# "24000/1001" — never a rounded float posing as fps.
+_ANNOTATION_RATE_RE = _re_ann.compile(r"^[1-9][0-9]*(/[1-9][0-9]*)?$")
+
+
+def _normalize_media_sha(value: str) -> str:
+    return value.removeprefix("sha256:").lower()
+
+
+class Annotation(ManjuModel):
+    """ONE structured, media-bound review annotation (:data:`ANNOTATION_SCHEMA`).
+
+    The §5.5 binding rule — the heart of the schema: an annotation binds
+    ``media_sha256`` + ``frame_rate`` + ``frame``/``range_frames`` + ``subject``
+    + ``actor``. Takes are APPEND-ONLY, so STALENESS is exactly "the stored
+    ``media_sha256`` no longer matches the take file's current hash": the take's
+    media was replaced/superseded, and the annotation keeps honestly pointing at
+    the pixels it reviewed instead of silently drifting onto new ones
+    (:meth:`matches_media` is the one comparison, prefix-agnostic).
+
+    Stored INLINE on the shot (``ShotStatus.annotations``) so ``manju check``
+    validates it and gc/pack never touch it; NEVER part of ``spec_payload``
+    (status is excluded, core/spec.py) — annotating never restages a take.
+    ``repair_variable`` is the qc/production ``_VARIABLE_ROUTE`` hook, carried
+    verbatim only — nothing here routes a repair.
+    """
+
+    id: str
+    take: str
+    media_sha256: str
+    frame_rate: str  # exact rational string, e.g. "24" or "24000/1001"
+    frame: int | None = None
+    range_frames: list[int] | None = None
+    subject: str = ""
+    severity: Literal["note", "issue", "blocker"] = "note"
+    text: str
+    geometry: dict[str, Any] | None = None
+    repair_variable: str | None = None  # _VARIABLE_ROUTE hook — carried, never routed
+    actor: str = "human"
+    created_at: str  # ISO timestamp, stamped by the writer
+
+    @field_validator("id")
+    @classmethod
+    def _safe_annotation_id(cls, v: str) -> str:
+        # same safe-segment law as shot ids (core.idents): 1-64 chars of
+        # [A-Za-z0-9_-] — an annotation id may end up in URLs/logs/events and
+        # must never be able to smuggle a path or markup.
+        if not is_safe_segment(v):
+            raise ValueError(
+                f"annotation.id 不合法: {v!r} — 只能包含字母、数字、下划线、连字符,长度 1-64"
+            )
+        return v
+
+    @field_validator("take")
+    @classmethod
+    def _nonempty_take(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("annotation.take 不能为空 — 批注必须绑定一个 take")
+        return v
+
+    @field_validator("media_sha256")
+    @classmethod
+    def _full_media_hash(cls, v: str) -> str:
+        if not _MEDIA_SHA256_RE.fullmatch(v or ""):
+            raise ValueError(
+                f"annotation.media_sha256 必须是 'sha256:<64位hex>' 或裸 64 位 hex(实际 {v!r})"
+                "— 陈旧判定是逐字节的哈希比较,截断/占位值不是合法绑定"
+            )
+        return v
+
+    @field_validator("frame_rate")
+    @classmethod
+    def _exact_rate_string(cls, v: str) -> str:
+        if not _ANNOTATION_RATE_RE.fullmatch(v or ""):
+            raise ValueError(
+                f"annotation.frame_rate 必须是精确有理数字符串,如 \"24\" 或 \"24000/1001\""
+                f"(实际 {v!r})— 帧号只有配上精确帧率才是时间"
+            )
+        return v
+
+    @field_validator("frame")
+    @classmethod
+    def _nonneg_frame(cls, v: int | None) -> int | None:
+        if v is not None and v < 0:
+            raise ValueError(f"annotation.frame 不能为负数(实际 {v!r})")
+        return v
+
+    @field_validator("range_frames")
+    @classmethod
+    def _ordered_range(cls, v: list[int] | None) -> list[int] | None:
+        if v is None:
+            return v
+        if len(v) != 2:
+            raise ValueError(
+                f"annotation.range_frames 必须恰好是 [起始帧, 结束帧] 两个整数(实际 {v!r})")
+        start, end = v
+        for item in (start, end):
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise ValueError(
+                    f"annotation.range_frames 必须是整数帧号(实际 {item!r})")
+            if item < 0:
+                raise ValueError(f"annotation.range_frames 不能含负帧号(实际 {item!r})")
+        if start > end:
+            raise ValueError(
+                f"annotation.range_frames 起始帧必须 <= 结束帧(实际 {start} > {end})")
+        return v
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_cap(cls, v: str) -> str:
+        if len(v) > _ANNOTATION_SUBJECT_MAX:
+            raise ValueError(
+                f"annotation.subject 最多 {_ANNOTATION_SUBJECT_MAX} 字符(实际 {len(v)})")
+        return v
+
+    @field_validator("text")
+    @classmethod
+    def _text_caps(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("annotation.text 不能为空 — 批注必须有内容(1..2000 字符)")
+        if len(v) > _ANNOTATION_TEXT_MAX:
+            raise ValueError(
+                f"annotation.text 最多 {_ANNOTATION_TEXT_MAX} 字符(实际 {len(v)})")
+        return v
+
+    @field_validator("geometry")
+    @classmethod
+    def _known_geometry_kind(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        # deliberately LOOSE (coords are advisory 0..1 floats a view consumes);
+        # only `kind` — the one dispatched-on field — is validated when present.
+        if v is not None and "kind" in v and v["kind"] not in ANNOTATION_GEOMETRY_KINDS:
+            raise ValueError(
+                f"annotation.geometry.kind 只接受 {ANNOTATION_GEOMETRY_KINDS}"
+                f"(实际 {v['kind']!r})")
+        return v
+
+    def matches_media(self, media_hash: str | None) -> bool:
+        """True iff the stored binding equals ``media_hash`` (either side may
+        carry or omit the ``sha256:`` prefix). ``None``/empty — the take's
+        media is gone — never matches: the binding is honestly stale."""
+        if not media_hash:
+            return False
+        return _normalize_media_sha(self.media_sha256) == _normalize_media_sha(media_hash)
+
+
 class ShotStatus(ManjuModel):
     selected_take: str | None = None
     approved: bool = False
@@ -384,6 +549,20 @@ class ShotStatus(ManjuModel):
     # HUMAN truth — never AI-overwritten; lives inside the shot file so
     # `manju check` validates it and gc/pack never touch it.
     take_notes: dict[str, str] = Field(default_factory=dict)
+    # Wave 3 (§5.5): structured, MEDIA-BOUND review annotations
+    # (manju.review.annotation/v1 — :class:`Annotation` above). Serialized ONLY
+    # when non-empty (the wrap serializer below drops the empty default from
+    # EVERY dump, mirroring ProjectConfig.edit_rate / CaptionLine.role), so a
+    # shot written before this landed round-trips BYTE-IDENTICALLY. Never part
+    # of spec_payload — annotating never restages a take.
+    annotations: list[Annotation] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_annotations(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and not data.get("annotations"):
+            data.pop("annotations", None)
+        return data
 
     @field_validator("review")
     @classmethod

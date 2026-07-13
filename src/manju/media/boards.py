@@ -73,8 +73,12 @@ def _escape_drawtext(text: str) -> str:
 
 
 def _escape_path(path: Path | str) -> str:
-    """Escape a font path for a filtergraph option value (same rules as card.py)."""
-    return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    """Escape a font path for a filtergraph option value (same rules as card.py:
+    Windows gate round 2 — the shared two-level form; drive-letter colons died
+    in the option-level parser under the old single-level escaping)."""
+    from .render import _escape_filter_path
+
+    return _escape_filter_path(path)
 
 
 def _label_drawtext(label: str | None, font: Path | None, cw: int, ch: int) -> str:

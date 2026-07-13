@@ -54,6 +54,10 @@ def test_escape_filter_path_colon_and_quote():
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+@pytest.mark.skipif(os.name == "nt",
+                    reason="colon DIRECTORIES are unrepresentable on NTFS — the "
+                           "drive-colon case is covered by the unit tests above, "
+                           "and real Windows renders exercise the escaping end-to-end")
 def test_ass_filter_accepts_colon_path_end_to_end(tmp_path):
     """The REAL parser, the real bug shape: an ass= path containing a colon
     must burn (exit 0). At the pre-fix escaping this failed with the exact

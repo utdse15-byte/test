@@ -29,6 +29,13 @@ on:
     branches: ["**"]
   pull_request:
 
+# Python UTF-8 mode everywhere on the gate: the suite's truth files are UTF-8
+# by design and gate run #3 proved the cp1252 default still bites test-side
+# read_text() calls (CJK sidecars). UTF-8 mode is Python's announced future
+# default; the product's own writers/readers pass encoding explicitly either way.
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   test:
     runs-on: windows-latest
@@ -86,8 +93,9 @@ jobs:
       - name: Launcher runs without PATH edits
         run: |
           $launcher = Join-Path $env:LOCALAPPDATA "Manju\bin\manju.cmd"
-          & $launcher --version
+          $v = & $launcher --version
           if ($LASTEXITCODE -ne 0) { throw "launcher failed" }
+          if ($v -notmatch "^manju ") { throw "unexpected --version output: $v" }
 
       - name: Update keeps the previous version for rollback
         run: |
