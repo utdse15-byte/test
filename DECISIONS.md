@@ -1548,3 +1548,59 @@ caught exactly this) — rerun clean after the tree settled; the flagged
 failure was the mid-edit artifact, not an xdist issue. Suite: 3934 ->
 4056 passed / 13 skipped / 0 failed in 936.10s (0:15:36) (definitive quiescent serial run) and 4056 passed / 13 skipped / 0 failed in 337.34s (0:05:37) under
 -n auto. CI: the batch push's verdict in the window wrap.
+
+## 35. OPT wave 2: providers robustness, GUI/board hardening, test speed — the audit executed to the floor (2026-07-13)
+
+The user approved the remainder wholesale ("Do everything, then wrap up
+afterwards"). Three loops on disjoint files; same bars-before-diffs
+orchestration as #34.
+
+- M1 providers (feabff4): F1 local_cmd process-group kill on timeout
+  (grandchild GPU workers no longer orphaned; identical
+  ProviderFailure(timeout) surface); F6 transient poll-5xx no longer
+  kills paid jobs (generic_cloud + comfyui keep polling within the
+  EXISTING budget; 4xx stays terminal; submit path + DR06 idempotency
+  BYTE-untouched — the audit verified them sound and this wave kept its
+  hands off); F4 shared status_to_kind ends the 429 drift (tts poll +
+  asr now record rate_limited); F5 comfyui 400 bad-graph → invalid;
+  F2 stock records failures in the house shape; F3 generic_cloud job
+  dicts evicted at the download terminal; F11 stock HTML-error-page
+  guard; F9 the degradation-chain floor (kenburns/caption_card/manual)
+  gains direct offline tests. Deferred with reasons: F7 manifest knobs
+  (additive plugin-API design), F10 poll-loop consolidation (no live
+  defect), F12 comfyui cancel (behavior change, own charter).
+- M2 GUI/board (f96bf00): board served responses gain the GUI's
+  security headers (script-src pinned to the sha256 of the actual served inline
+  script computed at serve time; exported static bytes untouched — the
+  byte-pin held); oversize-POST Connection: close;
+  ONE Project.safe_served_path now feeds BOTH serving gates (audit 14 —
+  one-sided-hardening risk retired); G2 build_state evaluates once (was 2x each pass; spy-pinned
+  exactly-once); G3 /edit renders with zero explain recompiles and zero spawns
+  (lazy GET /api/edit/dirty); G5 754B x 10 pages of byte-identical JS helpers deduped into
+  /common.js (divergent glossary/workspace/pollJob left as documented
+  residuals);
+  G6 disposable jobs.jsonl stops fsyncing on the POST thread + the
+  three uncovered endpoints (/api/impact, /api/director/suggest,
+  /api/git/diff) gain HTTP-layer tests; VerdictError bilingual;
+  fcpxml_import byte cap + DOCTYPE/ENTITY refusal. Deferred: G4
+  transport-substrate consolidation (board byte-pin binding; the
+  safe_served_path extraction is the mitigation actually taken).
+- M3 test speed (b4af70d): build-once-read-many fixtures
+  (qc_consistency, dr03c siblings), ultrafast fixture clips, per-file
+  worklist — 27.5s serial saved on the touched set measured honestly (two of
+  the research report's read-only classifications CORRECTED to fresh —
+  a cold-cache call-count pin and a verdict writer); zero assertions
+  weakened, touched-set count 284 before AND after; rule-outs respected (pipeline preset
+  frozen, sleeps load-bearing, tmp_project function-scoped).
+- Orchestrator ci.yml: the M0 smoke's redundant double build dropped in
+  favor of a minimal console-script entry-point check — the suite's
+  test_idempotency pins the same double-build behavior (refuter-
+  corrected citation); the script-wiring coverage the smoke uniquely
+  held is preserved.
+
+Suite: 4056 -> 4103 passed / 13 skipped / 0 failed — serial 948.04s
+(0:15:48) and -n auto 311.68s (0:05:11) in perfect count agreement.
+CI: the batch push's verdict in the window wrap. This closes the optimization program: 4h research audit
+(#33) → wave 1 (#34) → wave 2 (#35); everything actionable in the audit
+is implemented, consciously deferred with reasons, or on the
+do-not-touch list.
