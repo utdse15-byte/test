@@ -97,7 +97,11 @@ def test_run_doctor_none_shape_and_env_tools(no_manifests):
     for tool in ("ffmpeg", "ffprobe", "git"):
         found = shutil.which(tool)
         assert checks[tool]["ok"] is (found is not None)
-        assert checks[tool]["detail"] == (found or "NOT FOUND")
+        # W2 §4.5: rows pass the narrow redaction at the add() choke point —
+        # a /usr/bin path is identity, but on Windows C:\Users\<name>\...
+        # collapses to its basename (no username in a doctor paste).
+        from manju.core.supportbundle import redact_private_text
+        assert checks[tool]["detail"] == redact_private_text(found or "NOT FOUND")
 
     # no project given -> environment-only entry, no project-specific checks
     assert checks["project"]["ok"] is True

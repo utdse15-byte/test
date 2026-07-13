@@ -163,6 +163,41 @@ def redact_text(text: Any, stats: dict[str, int] | None = None) -> Any:
     return text
 
 
+# Private-rooted paths ONLY (W2 §4.5 doctor hygiene): /home /root /Users and
+# drive-letter roots carry a username; /usr /opt /etc /tmp system paths are
+# DIAGNOSTIC and must stay readable in doctor output. Deliberately narrower
+# than _SENSITIVE_PATH_RE (which also collapses /tmp, /opt, … for bundles).
+_PRIVATE_PATH_RE = re.compile(
+    r"(?:/(?:home|root|Users)|[A-Za-z]:\\)[^\s\"'<>|]*"
+)
+
+
+def redact_private_text(text: Any, stats: dict[str, int] | None = None) -> Any:
+    """The NARROW composition for locally-rendered diagnostics (doctor):
+    secrets, auth headers and signed-URL queries mask exactly as
+    :func:`redact_text`, but only PRIVATE-rooted absolute paths (/home /root
+    /Users, ``C:\\``) collapse to their basename — ``/usr/bin/ffmpeg`` stays
+    readable because telling the user where a tool lives is doctor's job.
+    Same owner, same building blocks; never a parallel redactor."""
+    if not isinstance(text, str):
+        return text
+    text, n = _AUTH_RE.subn("<redacted-authorization>", text)
+    _bump(stats, "auth_masked", n)
+    text, n = _BEARER_RE.subn("<redacted-bearer>", text)
+    _bump(stats, "auth_masked", n)
+    text, n = _SIGNED_URL_RE.subn("?<redacted-signed-query>", text)
+    _bump(stats, "signed_urls_masked", n)
+    for pat in SECRET_PATTERNS:
+        text, n = pat.subn("<redacted-secret>", text)
+        _bump(stats, "secret_tokens_masked", n)
+    text, n = _PRIVATE_PATH_RE.subn(_basename_sub, text)
+    _bump(stats, "abs_paths_rewritten", n)
+    for pat in SECRET_PATTERNS:
+        text, n = pat.subn("<redacted-secret>", text)
+        _bump(stats, "secret_tokens_masked", n)
+    return text
+
+
 def redact_record(obj: Any, stats: dict[str, int] | None = None) -> Any:
     """THE redactor. Recursively redact a JSON-ish value:
 

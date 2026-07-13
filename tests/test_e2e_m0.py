@@ -97,6 +97,14 @@ def test_m0_incremental_rerender(sample_project):
     from manju.build.graph import run_build
     from manju.providers.manual import register_manual_take
 
+    # xdist-safe (the #34 L5 program): under --dist load this test can land on
+    # a different worker from test_m0_full_build, with a FRESH module fixture
+    # whose segment cache is empty. The subject here is the SECOND, incremental
+    # build — so populate the cache ourselves when the full-build test didn't
+    # run on this worker, instead of asserting another test's side effect.
+    if not any(sample_project.segments_dir.glob("*.mp4")):
+        first = run_build(sample_project, target="final")
+        assert first.ok, f"priming build failed: errors={first.errors}"
     segments_before = {p.name: p.stat().st_mtime for p in sample_project.segments_dir.glob("*.mp4")}
     assert segments_before, "first build should have populated the segment cache"
 

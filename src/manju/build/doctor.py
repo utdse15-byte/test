@@ -17,14 +17,72 @@ it did in the CLI.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from typing import Any
 
 from ..core.check import run_check
 from ..core.container import Project
 
+# W2 (§4.5): os.name is process-constant; a module flag keeps the Windows-row
+# dispatch patchable in tests without touching the global ``os`` module.
+_IS_WINDOWS = os.name == "nt"
 
-def run_doctor(project: Project | None = None) -> dict[str, Any]:
+
+# ------------------------------------------------------------ Windows probes
+# Tiny, individually-guarded, individually-stubbable. Every probe returns
+# ``None`` for UNKNOWN — an unknown is REPORTED as unknown, never upgraded to a
+# ✓ (§ UNKNOWN 不得猜成 PASS). All resulting rows are INFORMATIONAL: doctor's
+# gating set (env tools + provider manifests + project check) is unchanged.
+
+
+def _win_long_paths_enabled() -> bool | None:
+    """HKLM FileSystem\\LongPathsEnabled — READ-ONLY (the plan forbids doctor
+    from ever writing the registry). None = could not read (report unknown)."""
+    try:
+        import winreg  # type: ignore[import-not-found]
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\FileSystem",
+        ) as key:
+            value, _kind = winreg.QueryValueEx(key, "LongPathsEnabled")
+        return bool(value)
+    except Exception:
+        return None
+
+
+def _win_volume_fs(path: Any) -> str | None:
+    """Filesystem name of the volume holding ``path`` (GetVolumeInformationW),
+    or None when undecidable."""
+    try:
+        import ctypes
+
+        root = os.path.splitdrive(os.path.abspath(str(path)))[0] + "\\"
+        buf = ctypes.create_unicode_buffer(64)
+        ok = ctypes.WinDLL("kernel32").GetVolumeInformationW(  # type: ignore[attr-defined]
+            ctypes.c_wchar_p(root), None, 0, None, None, None, buf, 64
+        )
+        return buf.value or None if ok else None
+    except Exception:
+        return None
+
+
+def _win_drive_remote(path: Any) -> bool | None:
+    """True when ``path`` sits on a network drive (GetDriveTypeW == 4), None
+    when undecidable."""
+    try:
+        import ctypes
+
+        root = os.path.splitdrive(os.path.abspath(str(path)))[0] + "\\"
+        kind = ctypes.WinDLL("kernel32").GetDriveTypeW(ctypes.c_wchar_p(root))  # type: ignore[attr-defined]
+        return int(kind) == 4  # DRIVE_REMOTE
+    except Exception:
+        return None
+
+
+def run_doctor(project: Project | None = None, *, windows: bool | None = None) -> dict[str, Any]:
     """Environment health: ffmpeg, fonts, disk, project integrity (§14).
 
     Returns ``{"checks": [...], "ok": bool}`` where every check is
@@ -40,8 +98,28 @@ def run_doctor(project: Project | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     ok = True
 
+    # W2 (§4.5) output hygiene at the ONE choke point: every row passes the
+    # narrow supportbundle composition — secrets/signed URLs mask, PRIVATE-
+    # rooted paths (C:\Users\<name>, /home/<name>) collapse to basenames,
+    # while diagnostic system paths (/usr/bin/ffmpeg) stay readable. A doctor
+    # paste can no longer leak a username. Degrades to identity if the
+    # redaction seam itself cannot import (doctor must never crash on it).
+    try:
+        from ..core.supportbundle import redact_private_text as _redact
+    except Exception:  # pragma: no cover — defensive only
+        def _redact(text: str) -> str:
+            return text
+
     def add(name: str, chk_ok: bool, detail: str, line: str) -> None:
-        checks.append({"name": name, "ok": chk_ok, "detail": detail, "line": line})
+        checks.append({"name": name, "ok": chk_ok,
+                       "detail": _redact(detail), "line": _redact(line)})
+
+    # ---- the interpreter itself (§4.5: doctor states the Python running it)
+    import platform as _platform
+
+    add("python", True,
+        f"{_platform.python_version()} ({_platform.machine()}) — {sys.executable}",
+        f"✓ python: {_platform.python_version()} ({_platform.machine()}) — {sys.executable}")
 
     for tool in ("ffmpeg", "ffprobe", "git"):
         found = shutil.which(tool)
@@ -124,6 +202,16 @@ def run_doctor(project: Project | None = None) -> dict[str, Any]:
     except Exception as exc:
         add("providers", False, str(exc), f"⚠ provider probe errored: {exc}")
 
+    # ---- W2 (§4.5): Windows environment rows. Auto on a Windows host; forced
+    # by `manju doctor --windows` (which on a non-Windows host must say
+    # PLAINLY that the probes were skipped — never fabricate Windows facts).
+    if _IS_WINDOWS:
+        _add_windows_rows(add, project)
+    elif windows is True:
+        add("windows", True,
+            "非 Windows 主机 — Windows 探测已跳过 (not Windows; probes skipped)",
+            "• windows: 非 Windows 主机 — Windows 探测已跳过")
+
     if project is not None:
         free_gb = shutil.disk_usage(project.root).free / 1e9
         add("disk_free", free_gb > 2, f"{free_gb:.1f} GB",
@@ -184,6 +272,107 @@ def run_doctor(project: Project | None = None) -> dict[str, Any]:
             "• no project in cwd (environment checks only)")
 
     return {"checks": checks, "ok": ok}
+
+
+# ----------------------------------------------------------- Windows rows
+
+
+def _add_windows_rows(add, project: Project | None) -> None:
+    """The §4.5 checklist as INFORMATIONAL rows (never gates ``ok``): Windows
+    version, long-path policy, project volume/drive advisories, OneDrive
+    advisory, config-dir writability, Edge/Chrome, install mode + rollback.
+    Each probe degrades to an honest unknown — never a guessed ✓."""
+    import platform as _platform
+
+    add("windows_version", True, _platform.platform(),
+        f"✓ windows: {_platform.platform()}")
+
+    lp = _win_long_paths_enabled()
+    if lp is True:
+        add("long_paths", True, "LongPathsEnabled=1", "✓ long paths: 已启用(LongPathsEnabled=1)")
+    elif lp is False:
+        add("long_paths", True,
+            "LongPathsEnabled=0 — 深层中文/CJK 路径可能超过 260 字符限制而失败;"
+            "管理员可启用 long path policy(doctor 只读,绝不改注册表)",
+            "⚠ long paths: 未启用(LongPathsEnabled=0)— 深层路径可能失败")
+    else:
+        add("long_paths", True, "unknown(未知)— 无法读取 long path policy",
+            "• long paths: 未知 — 无法读取策略(不猜测)")
+
+    if project is not None:
+        fs = _win_volume_fs(project.root)
+        if fs == "NTFS":
+            add("filesystem", True, "NTFS", "✓ filesystem: NTFS")
+        elif fs:
+            add("filesystem", True,
+                f"{fs} — 非 NTFS:锁/流/权限语义受限,建议把项目放在 NTFS 卷",
+                f"⚠ filesystem: {fs}(非 NTFS)— 建议 NTFS 卷")
+        else:
+            add("filesystem", True, "unknown(未知)", "• filesystem: 未知(不猜测)")
+
+        remote = _win_drive_remote(project.root)
+        if remote is True:
+            add("project_drive", True,
+                "网络盘 — 文件锁与原子替换在网络盘上不可靠,建议本地盘",
+                "⚠ project drive: 网络盘 — 建议把项目移到本地盘")
+        elif remote is False:
+            add("project_drive", True, "本地盘", "✓ project drive: 本地盘")
+        else:
+            add("project_drive", True, "unknown(未知)", "• project drive: 未知(不猜测)")
+
+        onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+        root_str = str(project.root)
+        if (onedrive and root_str.startswith(str(onedrive))) or "OneDrive" in root_str:
+            add("onedrive", True,
+                "项目在 OneDrive 同步目录内 — 同步器持有文件句柄会造成 sharing violation "
+                "与占位文件问题;建议排除同步或移出",
+                "⚠ OneDrive: 项目在同步目录内 — 建议排除同步或移出")
+
+    # config dir writability (~/.manju — providers/routing/recents/skills/library)
+    from pathlib import Path as _Path
+
+    cfg = _Path.home() / ".manju"
+    try:
+        cfg.mkdir(parents=True, exist_ok=True)
+        probe = cfg / ".doctor-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        add("config_writable", True, "~/.manju 可写", "✓ config dir: ~/.manju 可写")
+    except OSError as exc:
+        add("config_writable", True, f"~/.manju 不可写 — {exc}",
+            "⚠ config dir: ~/.manju 不可写 — providers/routing/recents 将不可用")
+
+    # Edge/Chrome (the board's §5.6 app-mode host; informational)
+    try:
+        from ..media.html_card import find_chromium, find_edge
+
+        edge = find_edge()
+        chromium = find_chromium()
+        browser = edge or chromium
+        add("edge_chrome", True,
+            str(browser) if browser else "未找到 Edge/Chrome(board --app 将退回默认浏览器)",
+            f"{'✓' if browser else '•'} browser (board --app): "
+            f"{browser or '未找到 Edge/Chrome — 退回默认浏览器'}")
+    except ImportError:
+        pass
+
+    # install mode + current/rollback version (W2 installer layout, §4.1/§4.3)
+    import manju as _manju
+
+    mode = "pip (site-packages)" if "site-packages" in str(getattr(_manju, "__file__", "")) \
+        else "source checkout (editable)"
+    facets = [f"version {getattr(_manju, '__version__', '?')}", mode]
+    localapp = os.environ.get("LOCALAPPDATA")
+    if localapp:
+        appdir = _Path(localapp) / "Manju" / "App"
+        try:
+            current = (appdir / "current.txt").read_text(encoding="utf-8").strip()
+            facets.append(f"launcher current: {current}")
+            previous = (appdir / "previous.txt").read_text(encoding="utf-8").strip()
+            facets.append(f"rollback target: {previous}(update-manju.ps1 -Rollback)")
+        except OSError:
+            pass
+    add("app_install", True, ";".join(facets), f"• install: {';'.join(facets)}")
 
 
 # --------------------------------------------------------------------- advisory

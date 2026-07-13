@@ -6890,7 +6890,11 @@ def compare(
 
 
 @app.command(rich_help_panel=PANEL_OPS)
-def doctor(as_json: bool = typer.Option(False, "--json")):
+def doctor(as_json: bool = typer.Option(False, "--json"),
+           windows: bool = typer.Option(
+               False, "--windows",
+               help="强制输出 Windows 环境行(Windows 主机上自动开启;"
+                    "非 Windows 主机诚实标注已跳过)")):
     """Environment health: ffmpeg, fonts, disk, project integrity (§14).
 
     The probe logic lives in build/doctor.py — one engine core (§2) — this
@@ -6902,7 +6906,7 @@ def doctor(as_json: bool = typer.Option(False, "--json")):
         project: Optional[Project] = Project.find(Path.cwd())
     except ProjectError:
         project = None
-    info = run_doctor(project)
+    info = run_doctor(project, windows=True if windows else None)
     if as_json:
         _emit({"checks": [{"name": c["name"], "ok": c["ok"], "detail": c["detail"]}
                           for c in info["checks"]], "ok": info["ok"]}, True)

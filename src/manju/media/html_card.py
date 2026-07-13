@@ -27,6 +27,35 @@ _CHROMIUM_CANDIDATES = (
     "chromium", "chromium-browser", "google-chrome", "headless_shell",
 )
 
+# W2 (§4.5/§5.6): os.name is process-constant; a module flag keeps the Windows
+# path list patchable in tests without touching the global ``os`` module.
+_IS_WINDOWS = os.name == "nt"
+
+_EDGE_PATH_CANDIDATES = ("msedge", "microsoft-edge", "microsoft-edge-stable")
+# Standard Windows install roots, checked relative to the env vars so a test
+# (or an unusual install) can redirect them. Edge ships per-machine under
+# Program Files and per-user under LOCALAPPDATA.
+_EDGE_WINDOWS_SUFFIX = ("Microsoft", "Edge", "Application", "msedge.exe")
+
+
+def find_edge() -> Path | None:
+    """Locate Microsoft Edge (the board's §5.6 ``--app`` host) — PATH first,
+    then the standard Windows install roots. ``None`` degrades honestly: the
+    caller falls back to the default browser, never guesses."""
+    for name in _EDGE_PATH_CANDIDATES:
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    if _IS_WINDOWS:
+        for env in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(env)
+            if not base:
+                continue
+            candidate = Path(base).joinpath(*_EDGE_WINDOWS_SUFFIX)
+            if candidate.exists():
+                return candidate
+    return None
+
 
 def find_chromium() -> Path | None:
     """Locate a headless-capable Chromium: CHROME_BIN, PATH, then the

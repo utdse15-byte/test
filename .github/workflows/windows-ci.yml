@@ -63,3 +63,45 @@ jobs:
       # console-script entry point.
       - name: Console-script entry point
         run: manju --help | Out-Null
+
+  # W2 (§4.6): the installer contract executed on a REAL Windows host — clean
+  # per-user install (no admin, no PATH edit), launcher works, uninstall
+  # removes the app but NEVER a project. The static half of this contract is
+  # tests/test_windows_install.py; no continue-on-error here either.
+  install-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Clean per-user install (staging → self-test → atomic switch)
+        run: .\scripts\windows\install-manju.ps1
+
+      - name: Launcher runs without PATH edits
+        run: |
+          $launcher = Join-Path $env:LOCALAPPDATA "Manju\bin\manju.cmd"
+          & $launcher --version
+          if ($LASTEXITCODE -ne 0) { throw "launcher failed" }
+
+      - name: Update keeps the previous version for rollback
+        run: |
+          .\scripts\windows\update-manju.ps1
+          $prev = Join-Path $env:LOCALAPPDATA "Manju\App\previous.txt"
+          if (-not (Test-Path $prev)) { throw "previous.txt missing after update" }
+          .\scripts\windows\update-manju.ps1 -Rollback
+          $launcher = Join-Path $env:LOCALAPPDATA "Manju\bin\manju.cmd"
+          & $launcher --version
+          if ($LASTEXITCODE -ne 0) { throw "launcher broken after rollback" }
+
+      - name: Uninstall never touches projects
+        run: |
+          $proj = Join-Path $env:USERPROFILE "作品 集\雨夜 便利店.manju"
+          New-Item -ItemType Directory -Force -Path $proj | Out-Null
+          Set-Content -Path (Join-Path $proj "project.yaml") -Value "name: 雨夜便利店" -Encoding UTF8
+          .\scripts\windows\uninstall-manju.ps1
+          if (Test-Path (Join-Path $env:LOCALAPPDATA "Manju\App")) { throw "App dir survived uninstall" }
+          if (-not (Test-Path (Join-Path $proj "project.yaml"))) { throw "uninstall touched a project!" }
