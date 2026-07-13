@@ -2053,3 +2053,44 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   "drain so keep-alive stays sane"); the gui server now applies the same
   discipline via a bounded, best-effort _drain_request_body() at all three
   gates. Pinned with a 1 MB-body refusal test + a gate-structure pin.
+
+## 43. UX round 2: the AI-collaboration surfaces + loop-until-dry close (2026-07-13)
+
+- Round-2 sweep over three FRESH dimensions (MCP server as an agent's
+  surface; CLI error-contract consistency; guidance-surface truthfulness),
+  every finding live-driven, plus an owner day-one journey (CLI new→import→
+  check→build→export→browser over every GUI page collecting JS console
+  errors: clean) and a second real-browser pass.
+- MCP (7 landed): required arrays now ENFORCED at dispatch; update_shot's
+  rollback raises (it returned its error dict and the server stamped
+  isError:false — an agent believed a rolled-back write landed); build
+  refuses unknown targets (PAID-SAFETY: a typo spent on generation then
+  silently skipped the requested phase — the CLI always had this guard, MCP
+  was the one open entrance; validated against the tool's own byte-pinned
+  enum); events n clamped; ToolError carries a stable code + structured
+  payloads; skill_show un-double-quoted; build/redo descriptions state they
+  can spend real money.
+- CLI error contract (7 landed): waiting_user (the §8.3 spend stop) is
+  code-branchable on redo/voice/transcribe/tasks-retry (was code:"error" —
+  agents string-matched the prefix); export/qc survive malformed
+  timeline.json and migrate a corrupt project.yaml (raw JSONDecodeError/
+  ValidationError tracebacks, empty --json stdout — three more editions of
+  the status class); _require_shot catches broken shot YAML (select/redo/
+  voice/prompt crashed raw); stable codes on the top user-hit refusals;
+  build's unknown-target names the valid set; the new-project workflow
+  finally writes down the cd step (folded into step 1 — the step-shape pin
+  requires manju-only commands, honored).
+- Also: python -m manju works (__main__.py); scripts/dev/browser_verify.py
+  (15 checks, re-runnable); tests gain the MANJU_PROVIDERS_DIR autouse
+  isolation after a real incident (an audit subprocess's stray manifest in
+  ~/.manju/providers turned doctor's gating check red suite-wide — the
+  suite had only been green because that dir happened to be empty).
+- Guidance-surface auditor verdict (loop-until-dry evidence): workflows
+  execute as written, status 下一步 correct across all driven states (QC
+  errors→repair, no final→build, empty→create), content-key idempotent
+  skip holds on real re-builds — the dimension came back essentially DRY
+  beyond the cd step; round 3 is not warranted. The UX program's finder
+  rounds are closed; the babysit loop (gate watch + fix-on-red) continues.
+- Suites at close: 4356 passed / 2 skipped / 0 failed local; both gates
+  green through 2cc258a (wave H) and the conftest hardening (3634148)
+  verdict pending on the gate at entry-writing time.

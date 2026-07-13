@@ -34,7 +34,9 @@ WORKFLOWS: dict[str, dict] = {
         "steps": [
             ("manju new <名字> --preset vertical_ai_video",
              "scaffold the .manju project (auto git init); a preset kit pre-fills "
-             "frame + technical defaults only — `manju presets` lists the three kits"),
+             "frame + technical defaults only — `manju presets` lists the three "
+             "kits。然后 cd <名字>.manju 进入项目 — 后面的每条命令都在项目里运行"
+             "(round-2 audit: the one unwritten step every cold start tripped on)"),
             ("manju create",
              "print the seven-stage creation funnel (立意→梗概→节拍→剧本→分镜→计划→生成) "
              "with your current stage and next step highlighted"),
