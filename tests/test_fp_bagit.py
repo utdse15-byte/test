@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -58,12 +59,25 @@ runner = CliRunner()
 
 def _seed(project) -> None:
     """A known media payload + a CJK-named payload file, so structure/tamper
-    tests don't depend on the exact scaffold file set and CJK is exercised."""
+    tests don't depend on the exact scaffold file set and CJK is exercised.
+
+    IDEMPOTENT — a file already carrying the wanted bytes is left untouched
+    (CI flake, run 29220786644): ``_pack`` seeds before EVERY pack, and a
+    rewrite-always seed refreshed both files' mtimes between the two packs of
+    the byte-identity pins. Zip members store DOS timestamps quantized to
+    2-second ticks, so whenever the two seeds straddled a tick boundary the
+    archives differed in exactly two mod-time bytes. The pins' contract is
+    packs of the SAME tree — the seed must not quietly change the tree."""
     media = project.root / "media" / "probe.bin"
     media.parent.mkdir(parents=True, exist_ok=True)
-    media.write_bytes(b"probe-payload-" + b"x" * 40)
-    (project.root / "场记").mkdir(exist_ok=True)
-    (project.root / "场记" / "第一场.txt").write_text("雨夜便利店 场记\n", encoding="utf-8")
+    want_media = b"probe-payload-" + b"x" * 40
+    if not media.exists() or media.read_bytes() != want_media:
+        media.write_bytes(want_media)
+    scene = project.root / "场记" / "第一场.txt"
+    scene.parent.mkdir(exist_ok=True)
+    want_scene = "雨夜便利店 场记\n"
+    if not scene.exists() or scene.read_text(encoding="utf-8") != want_scene:
+        scene.write_text(want_scene, encoding="utf-8")
 
 
 def _pack(project, out: Path, monkeypatch, *, bagit: bool = False) -> Path:
@@ -250,6 +264,31 @@ def test_bagit_two_packs_same_tree_byte_identical(tmp_project, tmp_path, monkeyp
     b = _pack(tmp_project, tmp_path / "b.manjupkg", monkeypatch, bagit=True)
     assert a.read_bytes() == b.read_bytes(), (
         "two --bagit packs of the same tree must be byte-identical (no timestamps)")
+
+
+def test_seed_is_idempotent_no_mtime_churn(tmp_project):
+    """Regression tooth for the CI flake (run 29220786644, 2026-07-13): the
+    byte-identity pins above pack the same tree twice via ``_pack``, which
+    seeds each time. A ``_seed`` that REWRITES identical bytes refreshes the
+    two files' mtimes between packs — and zip members carry DOS timestamps
+    quantized to 2-SECOND ticks, so a re-seed straddling a tick boundary makes
+    the second archive differ in exactly two mod-time bytes. The product claim
+    under test is unchanged-tree determinism, not mtime-insensitivity, so the
+    seed must not touch a file that already carries the wanted bytes."""
+    _seed(tmp_project)
+    media = tmp_project.root / "media" / "probe.bin"
+    scene = tmp_project.root / "场记" / "第一场.txt"
+    # Park both mtimes a full DOS tick in the past; a rewriting re-seed would
+    # pull them forward again (that is the raced churn), an idempotent one
+    # leaves them exactly where they are.
+    for p in (media, scene):
+        st = p.stat()
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns - 2_000_000_000))
+    stamps = [p.stat().st_mtime_ns for p in (media, scene)]
+    _seed(tmp_project)
+    assert [p.stat().st_mtime_ns for p in (media, scene)] == stamps, (
+        "_seed rewrote an already-correct file — mtime churn between the "
+        "double packs races the zip's 2-second DOS-time quantum")
 
 
 def test_bagit_cjk_filename_in_payload(tmp_project, tmp_path, monkeypatch):
