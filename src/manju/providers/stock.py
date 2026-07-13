@@ -31,8 +31,14 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from ..core.container import TakeInfo
-from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
-from .generic_cloud import Transport, default_transport
+from .base import (
+    FailureKind,
+    GenerationRequest,
+    Provider,
+    ProviderFailure,
+    record_provider_failure,
+)
+from .generic_cloud import Transport, default_transport, reject_html_error_page
 from .manifest import ProviderManifest
 
 SEARCH_URL = "https://api.pexels.com/videos/search"
@@ -94,6 +100,18 @@ class PexelsStockProvider(Provider):
     # ------------------------------------------------------------ Provider
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        # F2: a plain Provider on the shot fallback chain records its OWN
+        # terminal failures (goal 10) — the registry's fallback walker does not.
+        # So a stock search/download failure lands in reports/failures.jsonl in
+        # the SAME shape comfyui/local_cmd use, keyed to the shot; the exception
+        # type and message are untouched (only the structured record is added).
+        try:
+            return self._generate(req)
+        except ProviderFailure as exc:
+            record_provider_failure(req.project, req.shot.id, self.id, exc)
+            raise
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
         key = self._api_key()
         config = req.project.load_config()
         query = self._query_for(req)
@@ -130,6 +148,14 @@ class PexelsStockProvider(Provider):
                 dl = self._transport("GET", chosen["link"], {}, None)
                 if dl.status >= 400 or not dl.body:
                     continue
+                # F11: a 200 that is actually an HTML/error page (an expired CDN
+                # link, a rate-limit interstitial, a login wall) must never be
+                # registered as a poisoned .mp4 take — the SAME guard
+                # comfyui/generic_cloud/tts already apply. Raises
+                # ProviderFailure(provider_error) with a verbatim snippet, so the
+                # failure is diagnosable from evidence instead of silently
+                # poisoning the shot with an HTML "video".
+                reject_html_error_page(dl, chosen["link"], self.id)
                 dest = Path(tmp) / f"stock_{i:02d}.mp4"
                 dest.write_bytes(dl.body)
                 takes.append(self._register(

@@ -476,6 +476,15 @@ class GenericCloudProvider(CloudProvider):
         text = resp.text()
         if resp.status == 429:
             return "running", {}  # remote asked us to back off; keep polling
+        if resp.status >= 500:
+            # F6: a transient 5xx (502/503/504) during ONE poll GET is NOT a
+            # terminal job failure — the remote job may still be running/billing.
+            # Keep polling within the EXISTING timeout budget
+            # (base._poll_to_completion enforces it, so a 5xx that never clears
+            # becomes the ordinary poll-timeout, never an infinite loop) instead
+            # of killing an otherwise-good PAID job on a single blip. A 4xx below
+            # stays terminal (a definite client error, already-handled 429 aside).
+            return "running", {}
         if resp.status >= 400:
             return "failed", {
                 "failure_kind": self._classify_body(text).value,
@@ -534,7 +543,14 @@ class GenericCloudProvider(CloudProvider):
         return status, info
 
     def download(self, job_id: str, dest_dir: Path) -> list[Path]:
-        info = self._results.get(job_id) or {}
+        # F3: download() is the TERMINAL read of this job's cached poll info —
+        # once here, polling is done and this generate() call will not poll the
+        # id again (a later resume re-polls fresh, re-populating). Pop BOTH
+        # per-job dicts so a registry-cached provider instance (one per manifest,
+        # reused across a build of hundreds of shots or a long-lived MCP/GUI
+        # host) does not accumulate them monotonically for the process lifetime.
+        info = self._results.pop(job_id, None) or {}
+        self._submitted.pop(job_id, None)
         url = info.get("result_url")
         if not url:
             raise ProviderFailure(

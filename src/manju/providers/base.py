@@ -121,6 +121,24 @@ _KIND_HINT: dict[str, str] = {
 }
 
 
+def status_to_kind(status: int) -> FailureKind:
+    """Map an HTTP error status to a :class:`FailureKind` for the sibling REST
+    adapters (generic_cloud / tts / asr) so the classification never drifts
+    between siblings (F4). A ``429`` is the ONLY safely-retryable status here —
+    it becomes ``rate_limited`` so the retryable signal and its throttle hint
+    survive; every other status (``>=500`` outage, ``4xx`` client error) is
+    ``provider_error``. Content-review rejection is NOT status-driven (it is
+    matched on the response BODY via the manifest's ``content_rejected_when``),
+    so it is deliberately out of scope here.
+
+    Additive helper: it does not change the frozen ProviderFailure shape or the
+    FailureKind values (the kind→disposition retry law is unchanged); it only
+    single-sources the status→kind decision the adapters used to inline."""
+    if status == 429:
+        return FailureKind.rate_limited
+    return FailureKind.provider_error
+
+
 def record_provider_failure(project, shot_id: str, provider_id: str,
                             exc: "ProviderFailure", *, actor: str = "engine") -> str | None:
     """Record a generation failure as a structured :class:`Failure` (goal 10).

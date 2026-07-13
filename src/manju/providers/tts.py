@@ -36,7 +36,7 @@ from ..core.container import Project
 from ..core.hashing import hash_value
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
 from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
-from .base import FailureKind, ProviderFailure, probe_media
+from .base import FailureKind, ProviderFailure, probe_media, status_to_kind
 from .jsonpath import JsonPathError, extract
 from .manifest import GENERIC_TTS_ADAPTER, ProviderManifest, load_manifests
 
@@ -168,9 +168,11 @@ class GenericTtsProvider:
         ).encode("utf-8")
         resp = self._transport(cfg.method, cfg.url, self._headers(), body)
         if resp.status >= 400:
-            kind = FailureKind.rate_limited if resp.status == 429 else FailureKind.provider_error
+            # F4: shared status→kind so a 429 stays retryable rate_limited and
+            # every sibling adapter classifies identically (no drift).
             raise ProviderFailure(
-                kind, f"{self.id}: synthesis failed with HTTP {resp.status}",
+                status_to_kind(resp.status),
+                f"{self.id}: synthesis failed with HTTP {resp.status}",
                 detail={"body": resp.text()[:2000]},
             )
         data = resp.json()
@@ -212,8 +214,10 @@ class GenericTtsProvider:
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
             if resp.status >= 400:
+                # F4: a 429 during poll is retryable rate_limited, not a generic
+                # provider_error — shared classification, no sibling drift.
                 raise ProviderFailure(
-                    FailureKind.provider_error,
+                    status_to_kind(resp.status),
                     f"{self.id}: poll failed with HTTP {resp.status}",
                     detail={"job_id": job_id},
                 )

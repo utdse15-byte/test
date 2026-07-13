@@ -106,6 +106,53 @@ def test_no_results_names_the_query(request_for):
     assert "雨夜的便利店门口" in str(exc.value)
 
 
+def test_stock_failure_is_recorded_in_failures_jsonl(request_for, tmp_project):
+    """F2: stock is a plain Provider on the shot fallback chain (like
+    comfyui/local_cmd), so its terminal failures must land in
+    reports/failures.jsonl in the house shape — the registry's fallback walker
+    never records. RED at HEAD: stock raised without recording, so `manju
+    failures` was blind to a stock outage."""
+    from manju.core.failures import read_failures
+
+    provider = PexelsStockProvider(
+        ProviderManifest.model_validate(_stock_manifest()),
+        transport=ScriptedTransport([HttpResponse(500, {}, b"upstream exploded")]),
+    )
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(request_for())
+    assert exc.value.kind is FailureKind.provider_error
+
+    recs = read_failures(tmp_project, 5)
+    assert recs, "stock failure was not recorded to failures.jsonl"
+    r = recs[0]
+    assert r["step"] == "generate" and r["subject"] == "S001"
+    assert r["detail"]["provider"] == "pexels"
+    assert r["detail"]["failure_kind"] == "provider_error"
+    assert "HTTP 500" in r["cause"]
+    assert "upstream exploded" in r["evidence"]
+
+
+def test_stock_download_rejects_html_error_page(request_for, tmp_project):
+    """F11: a stock rendition that 200s with an HTML error page (an expired CDN
+    link, a rate-limit interstitial, a login wall) must never be registered as a
+    poisoned .mp4 take — the SAME guard comfyui/generic_cloud/tts apply. RED at
+    HEAD: the HTML bytes were written and registered as a take."""
+    provider = PexelsStockProvider(
+        ProviderManifest.model_validate(_stock_manifest()),
+        transport=ScriptedTransport([
+            HttpResponse(200, {}, json.dumps(SEARCH_RESULT).encode()),
+            HttpResponse(200, {"Content-Type": "text/html"},
+                         b"<html><body>rate limited</body></html>"),
+        ]),
+    )
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(request_for())
+    assert "html" in str(exc.value).lower()
+    # no poisoned take was registered for the shot
+    gen_dir = tmp_project.root / "media" / "gen" / "S001"
+    assert not gen_dir.exists() or not list(gen_dir.glob("*.mp4"))
+
+
 def test_fallback_chain_routes_stock_footage_step(tmp_path, monkeypatch,
                                                   tmp_project, add_shot):
     """A shot listing 'stock_footage' in its fallback resolves to the manifest

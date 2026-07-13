@@ -183,6 +183,10 @@ def test_node_error_surfaces_node_id(request_for, tmp_project):
 
 
 def test_workflow_validation_error_is_surfaced(request_for, tmp_project):
+    """F5: a 400 bad-graph rejection is a misconfigured workflow_file/input_map —
+    user-fixable INPUT (FailureKind.invalid, whose hint points at the manifest
+    fields), NOT a provider outage. The error + node_errors is still surfaced
+    verbatim. (Was provider_error before F5.)"""
     provider = ComfyUIProvider(
         _manifest(tmp_project),
         transport=ScriptedTransport([
@@ -193,9 +197,88 @@ def test_workflow_validation_error_is_surfaced(request_for, tmp_project):
     )
     with pytest.raises(ProviderFailure) as exc:
         provider.generate(request_for("S003"))
-    assert exc.value.kind is FailureKind.provider_error
+    assert exc.value.kind is FailureKind.invalid
     assert "400" in str(exc.value)
     assert "node_errors" in str(exc.value.detail)
+
+
+def test_submit_5xx_stays_provider_error(request_for, tmp_project):
+    """F5: a 5xx on POST /prompt is a genuine ComfyUI server error — it stays
+    provider_error (only the 400 bad-graph case reclassifies to invalid)."""
+    provider = ComfyUIProvider(
+        _manifest(tmp_project),
+        transport=ScriptedTransport([_resp(503, {"error": "server exploded"})]),
+        sleep_fn=lambda s: None,
+    )
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(request_for("S003b"))
+    assert exc.value.kind is FailureKind.provider_error
+    assert "503" in str(exc.value)
+
+
+def test_poll_5xx_is_transient_keeps_polling(request_for, tmp_project):
+    """F6: a transient 5xx during ONE /history poll GET is NOT a terminal job
+    failure — the graph may still be executing. Polling continues within the
+    poll_timeout_s budget and the job completes. RED at HEAD: a 503 poll raised
+    provider_error and killed the job. Exactly ONE submit (no resubmit)."""
+    provider = ComfyUIProvider(
+        _manifest(tmp_project),
+        transport=ScriptedTransport([
+            _resp(200, {"prompt_id": "p1", "number": 1, "node_errors": {}}),
+            _resp(503, {"error": "upstream hiccup"}),  # transient blip mid-poll
+            _history_ok("p1", {"9": {"gifs": [
+                {"filename": "final.mp4", "subfolder": "vids", "type": "output"}]}}),
+            HttpResponse(200, {}, b"VIDEOBYTES"),
+        ]),
+        sleep_fn=lambda s: None,
+    )
+    takes = provider.generate(request_for("S003c"))
+    assert len(takes) == 1
+    # exactly ONE POST /prompt across the whole call — the 5xx never resubmitted
+    posts = [r for r in provider._transport.requests
+             if r[0] == "POST" and r[1].endswith("/prompt")]
+    assert len(posts) == 1
+
+
+def test_poll_4xx_stays_terminal(request_for, tmp_project):
+    """F6 boundary: a 4xx during poll is a genuine client error and stays
+    terminal (only 5xx is treated as transient)."""
+    provider = ComfyUIProvider(
+        _manifest(tmp_project),
+        transport=ScriptedTransport([
+            _resp(200, {"prompt_id": "p1", "number": 1, "node_errors": {}}),
+            _resp(404, {"error": "no such prompt"}),
+        ]),
+        sleep_fn=lambda s: None,
+    )
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(request_for("S003d"))
+    assert exc.value.kind is FailureKind.provider_error
+    assert "404" in str(exc.value)
+
+
+def test_poll_5xx_forever_hits_poll_timeout_not_infinite_loop(request_for, tmp_project):
+    """F6: a 5xx that NEVER clears must degrade to the existing poll-timeout
+    (FailureKind.timeout), never an infinite loop — the budget is still
+    enforced. A tiny poll_timeout_s + a manual clock make it deterministic."""
+    # t0(_generate), start(_poll), then each poll iteration reads the clock once
+    # for the budget check; the trailing values are past the 1.0s budget so the
+    # loop raises timeout deterministically (extra values are harmless).
+    clock = iter([0.0, 0.0, 0.05, 0.2, 5.0, 5.0, 5.0, 5.0, 5.0]).__next__
+    provider = ComfyUIProvider(
+        _manifest(tmp_project, poll_timeout_s=1.0),
+        transport=ScriptedTransport([
+            _resp(200, {"prompt_id": "p1", "number": 1, "node_errors": {}}),
+            _resp(503, {}), _resp(503, {}), _resp(503, {}), _resp(503, {}),
+            _resp(503, {}), _resp(503, {}),
+        ]),
+        sleep_fn=lambda s: None,
+        clock=clock,
+    )
+    with pytest.raises(ProviderFailure) as exc:
+        provider.generate(request_for("S003e"))
+    assert exc.value.kind is FailureKind.timeout
+    assert "did not finish" in str(exc.value)
 
 
 def test_connection_refused_names_base_url(request_for, tmp_project):

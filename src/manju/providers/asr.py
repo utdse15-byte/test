@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .base import FailureKind, ProviderFailure
+from .base import FailureKind, ProviderFailure, status_to_kind
 from .jsonpath import JsonPathError, extract
 from .manifest import (
     GENERIC_ASR_ADAPTER,
@@ -182,8 +182,10 @@ class GenericAsrProvider:
                           ensure_ascii=False).encode("utf-8")
         resp = self._transport(cfg.method, cfg.url, self._headers(), body)
         if resp.status >= 400:
+            # F4: shared status→kind so ASR classifies a 429 as retryable
+            # rate_limited exactly like its tts sibling (was always provider_error).
             raise ProviderFailure(
-                FailureKind.provider_error,
+                status_to_kind(resp.status),
                 f"{self.id}: transcribe failed with HTTP {resp.status}",
                 detail={"body": resp.text()[:2000]},
             )
@@ -202,8 +204,10 @@ class GenericAsrProvider:
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
             if resp.status >= 400:
+                # F4: a 429 during poll is retryable rate_limited — shared
+                # classification, no sibling drift.
                 raise ProviderFailure(
-                    FailureKind.provider_error,
+                    status_to_kind(resp.status),
                     f"{self.id}: poll failed with HTTP {resp.status}",
                     detail={"job_id": job_id, "body": resp.text()[:2000]},
                 )

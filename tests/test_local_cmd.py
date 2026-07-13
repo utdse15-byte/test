@@ -6,7 +6,9 @@ timeout, missing output, nonzero-exit stderr surfacing."""
 from __future__ import annotations
 
 import os
+import signal
 import stat
+import time
 
 import pytest
 
@@ -131,6 +133,58 @@ def test_timeout_path(tmp_path, request_for):
         provider.generate(request_for("S006"))
     assert exc.value.kind is FailureKind.timeout
     assert "timed out" in str(exc.value)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # exists but not ours (should not happen here)
+        return True
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="POSIX process groups required")
+def test_timeout_reaps_orphaned_grandchild(tmp_path, request_for):
+    """F1: on timeout the WHOLE process group dies. A wrapper command that forks
+    a grandchild (a local SVD/Wan worker holding VRAM) must leave that grandchild
+    DEAD, never orphaned. RED at HEAD: subprocess.run kills only the DIRECT child
+    (the wrapper sh), so the backgrounded `sleep` grandchild survives, reparented
+    to init and still running past timeout_s."""
+    pidfile = tmp_path / "grandchild.pid"
+    # a wrapper that forks a long-lived grandchild in the SAME session/group
+    # (non-interactive sh has no job control, so `&` stays in the shell's group)
+    # and records its pid, then waits — the whole tree outlives the 0.5s budget.
+    script = _script(tmp_path, "wrapper.sh",
+                     f'sleep 30 &\n'
+                     f'echo $! > "{pidfile}"\n'
+                     f'wait\n')
+    provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}", timeout_s=0.5))
+    gpid = None
+    try:
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S001"))
+        # EXACT ProviderFailure(timeout) surface is preserved
+        assert exc.value.kind is FailureKind.timeout
+        assert "timed out" in str(exc.value)
+
+        assert pidfile.exists(), "wrapper never recorded the grandchild pid"
+        gpid = int(pidfile.read_text().strip())
+        # killpg reaped the whole group, not just the wrapper — give the OS a
+        # beat to finish reaping the reparented grandchild.
+        deadline = time.time() + 5.0
+        while _pid_alive(gpid) and time.time() < deadline:
+            time.sleep(0.05)
+        assert not _pid_alive(gpid), (
+            f"grandchild {gpid} survived the timeout — it was orphaned (F1 leak)")
+    finally:
+        # hygiene: never leak a 30s straggler if the fix ever regresses.
+        if gpid is not None and _pid_alive(gpid):
+            try:
+                os.kill(gpid, signal.SIGKILL)
+            except OSError:
+                pass
 
 
 def test_missing_binary_is_invalid(request_for):

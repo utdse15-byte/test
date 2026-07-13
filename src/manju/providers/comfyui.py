@@ -378,9 +378,16 @@ class ComfyUIProvider(Provider):
         ).encode("utf-8")
         resp = self._http("POST", f"{self._base}/prompt", body)
         if resp.status >= 400:
-            # graph validation failure: surface error + node_errors verbatim
+            # F5: a 400 is ComfyUI's bad-graph / validation rejection (the
+            # documented `400 {"error":..., "node_errors":{...}}`) — a
+            # misconfigured workflow_file / input_map, i.e. user-fixable INPUT,
+            # so `invalid` (whose hint points at the manifest fields), NOT a
+            # provider outage. A 5xx (a genuine ComfyUI server error) stays
+            # provider_error. Either way the error + node_errors is surfaced
+            # verbatim in the message/detail.
+            kind = FailureKind.invalid if resp.status == 400 else FailureKind.provider_error
             raise ProviderFailure(
-                FailureKind.provider_error,
+                kind,
                 f"{self.id}: ComfyUI rejected the workflow (HTTP {resp.status}): "
                 f"{resp.text()[:800]}",
                 detail={"status": resp.status, "body": resp.text()[:2000]},
@@ -400,25 +407,35 @@ class ComfyUIProvider(Provider):
         start = self._clock()
         while True:
             resp = self._http("GET", f"{self._base}/history/{prompt_id}")
-            if resp.status >= 400:
+            # F6: a transient 5xx (a ComfyUI/proxy blip) during ONE poll GET is
+            # NOT a terminal job failure — the graph may still be executing. Keep
+            # polling within the EXISTING poll_timeout_s budget (a 5xx that never
+            # clears becomes the ordinary poll-timeout below, never an infinite
+            # loop) instead of killing an otherwise-good job on a single blip. A
+            # 4xx stays terminal (a genuine client error on /history).
+            transient = resp.status >= 500
+            if resp.status >= 400 and not transient:
                 raise ProviderFailure(
                     FailureKind.provider_error,
                     f"{self.id}: /history/{prompt_id} failed (HTTP {resp.status})",
                     detail={"prompt_id": prompt_id},
                 )
-            try:
-                data = resp.json() or {}
-            except json.JSONDecodeError as exc:
-                raise ProviderFailure(
-                    FailureKind.provider_error,
-                    f"{self.id}: /history/{prompt_id} returned non-JSON ({exc})",
-                ) from exc
-            entry = data.get(prompt_id)
-            if entry:  # prompt_id only appears once the job is queued+done
-                status = entry.get("status") or {}
-                if status.get("status_str") == "error":
-                    raise self._node_error(prompt_id, status)
-                return entry.get("outputs") or {}
+            if not transient:
+                try:
+                    data = resp.json() or {}
+                except json.JSONDecodeError as exc:
+                    raise ProviderFailure(
+                        FailureKind.provider_error,
+                        f"{self.id}: /history/{prompt_id} returned non-JSON ({exc})",
+                    ) from exc
+                entry = data.get(prompt_id)
+                if entry:  # prompt_id only appears once the job is queued+done
+                    status = entry.get("status") or {}
+                    if status.get("status_str") == "error":
+                        raise self._node_error(prompt_id, status)
+                    return entry.get("outputs") or {}
+            # still running (empty /history) OR a transient 5xx: keep polling
+            # within the budget.
             if self._clock() - start >= self._cfg.poll_timeout_s:
                 raise ProviderFailure(
                     FailureKind.timeout,

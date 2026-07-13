@@ -45,6 +45,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import signal
 import subprocess
 import tempfile
 import time
@@ -124,23 +125,24 @@ class LocalCommandProvider(Provider):
             env = self._env(req, values)
 
             t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
             try:
-                proc = subprocess.run(
+                proc = subprocess.Popen(
                     argv,
                     cwd=str(req.project.root),
                     env=env,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    timeout=self._timeout_s,
+                    **_new_session_kwargs(),
                 )
-            except subprocess.TimeoutExpired as exc:
-                tail = _tail(exc.stderr or "")
-                raise ProviderFailure(
-                    FailureKind.timeout,
-                    f"{self.id}: command timed out after {self._timeout_s}s: "
-                    f"{argv[0]}" + (f" — {tail}" if tail else ""),
-                    detail={"argv": argv},
-                ) from exc
             except (OSError, ValueError) as exc:  # binary missing / bad argv
                 raise ProviderFailure(
                     FailureKind.invalid,
@@ -148,21 +150,34 @@ class LocalCommandProvider(Provider):
                     detail={"argv": argv,
                             "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
                 ) from exc
+            try:
+                stdout, stderr = proc.communicate(timeout=self._timeout_s)
+            except subprocess.TimeoutExpired as exc:
+                _kill_process_group(proc)  # reap the whole group, not just the child
+                stdout, stderr = _reap(proc)
+                tail = _tail(stderr or _decode(getattr(exc, "stderr", None)))
+                raise ProviderFailure(
+                    FailureKind.timeout,
+                    f"{self.id}: command timed out after {self._timeout_s}s: "
+                    f"{argv[0]}" + (f" — {tail}" if tail else ""),
+                    detail={"argv": argv},
+                ) from exc
             elapsed = round(self._clock() - t0, 3)
+            returncode = proc.returncode
 
-            if proc.returncode != 0:
+            if returncode != 0:
                 raise ProviderFailure(
                     FailureKind.provider_error,
-                    f"{self.id}: command exited {proc.returncode}: {_tail(proc.stderr)}",
-                    detail={"argv": argv, "exit_code": proc.returncode,
-                            "reason": _tail(proc.stderr),
+                    f"{self.id}: command exited {returncode}: {_tail(stderr)}",
+                    detail={"argv": argv, "exit_code": returncode,
+                            "reason": _tail(stderr),
                             "hint": "复现该命令并看 stderr;必要时在 local_cmd.command 调参"},
                 )
             if not out.exists() or out.stat().st_size == 0:
                 raise ProviderFailure(
                     FailureKind.provider_error,
                     f"{self.id}: command exited 0 but wrote no output to "
-                    f"{out.name}: {_tail(proc.stderr)}",
+                    f"{out.name}: {_tail(stderr)}",
                     detail={"argv": argv, "out": str(out)},
                 )
 
@@ -172,7 +187,7 @@ class LocalCommandProvider(Provider):
                 out,
                 params={
                     "argv": argv,
-                    "exit_code": proc.returncode,
+                    "exit_code": returncode,
                     "duration_s": elapsed,  # local: cost 0, but duration is recorded
                     "command": self.manifest.local_cmd.command,
                     "ref_delivery": self._ref_delivery(req),
@@ -280,3 +295,59 @@ def _tail(text: str, limit: int = 300) -> str:
     if not text:
         return ""
     return " ".join(text.split())[-limit:]
+
+
+def _decode(value: object) -> str:
+    """A TimeoutExpired.stderr may be bytes/str/None depending on capture — the
+    reaped ``proc.communicate()`` stderr is preferred, this is only the fallback."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _new_session_kwargs() -> dict:
+    """Put the child (and every grandchild it forks) in its OWN session +
+    process group so a timeout can signal the WHOLE group (F1). POSIX honors
+    ``start_new_session`` (a ``setsid`` in the child); Windows accepts the kwarg
+    but lacks ``os.killpg`` — the kill path below degrades to the direct child
+    there, so guard by capability, not by asserting the group exists."""
+    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        return {"start_new_session": True}
+    return {}
+
+
+def _kill_process_group(proc: "subprocess.Popen") -> None:
+    """SIGKILL the child's whole process group so a wrapper's orphaned
+    grandchildren (the leaked GPU worker in F1) die with it. Degrades to killing
+    just the direct child on a platform without ``os.killpg``/``os.getpgid``
+    (Windows) or when the group is already gone (a benign race)."""
+    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass  # group vanished or unsignalable — fall through to the child kill
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _reap(proc: "subprocess.Popen") -> tuple[str, str]:
+    """Collect the killed child's captured output without hanging — a bounded
+    second ``communicate`` after the SIGKILL. Returns ``(stdout, stderr)``,
+    empty strings if it cannot be read."""
+    for _ in range(2):
+        try:
+            out, err = proc.communicate(timeout=5)
+            return _decode(out), _decode(err)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                break
+        except (OSError, ValueError):
+            break
+    return "", ""

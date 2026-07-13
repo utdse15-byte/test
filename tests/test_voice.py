@@ -132,6 +132,51 @@ def test_synthesize_inline_b64_form(tmp_project, add_shot, tmp_path, monkeypatch
     assert media.read_bytes() == WAV_HEADER
 
 
+# ------------------------------------------------------------- F4: 429 mapping
+
+
+def test_tts_poll_429_is_rate_limited(tmp_project, add_shot, tmp_path, monkeypatch):
+    """F4: a 429 during TTS poll is retryable rate_limited. RED at HEAD: the tts
+    poll mapped ALL >=400 to provider_error — internally inconsistent with its
+    OWN submit path, which already special-cased 429 (F4 drift). Now both use the
+    shared status_to_kind."""
+    from manju.providers.base import FailureKind, ProviderFailure
+    from manju.providers.tts import get_tts_provider
+
+    monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path / "p429"))
+    monkeypatch.setenv("TTS_X_KEY", "k")
+    write_yaml(tmp_path / "p429" / "tts_p" / "provider.yaml", _tts_manifest(
+        id="tts_p",
+        poll={"url": "https://api.example.com/v1/tts/{job_id}",
+              "status_path": "$.data.status",
+              "status_map": {"DONE": "succeeded", "RUNNING": "running"}},
+    ))
+    shot = add_shot(tmp_project, "S001", dialogue={"speaker": "linxia", "text": "台词"})
+    provider = get_tts_provider("tts_p", transport=ScriptedTransport([
+        _resp({"data": {"task_id": "t1"}}),               # submit ok (async form)
+        HttpResponse(429, {}, b'{"error":"slow down"}'),  # poll 429
+    ]), sleep_fn=lambda s: None)
+    with pytest.raises(ProviderFailure) as exc:
+        provider.synthesize(tmp_project, shot, tmp_project.load_bible())
+    assert exc.value.kind is FailureKind.rate_limited
+
+
+def test_tts_submit_429_stays_rate_limited(tmp_project, add_shot, tts_env):
+    """F4 characterization: the tts submit path already classified 429 as
+    rate_limited; aligning it to the shared status_to_kind keeps that behavior
+    (guards the alignment against regression)."""
+    from manju.providers.base import FailureKind, ProviderFailure
+    from manju.providers.tts import get_tts_provider
+
+    shot = add_shot(tmp_project, "S001", dialogue={"speaker": "linxia", "text": "台词"})
+    provider = get_tts_provider(transport=ScriptedTransport([
+        HttpResponse(429, {}, b'{"error":"slow down"}'),
+    ]), sleep_fn=lambda s: None)
+    with pytest.raises(ProviderFailure) as exc:
+        provider.synthesize(tmp_project, shot, tmp_project.load_bible())
+    assert exc.value.kind is FailureKind.rate_limited
+
+
 # ------------------------------------------------------- staleness matrix
 
 

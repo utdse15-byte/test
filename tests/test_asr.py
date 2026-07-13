@@ -22,7 +22,7 @@ from manju.providers.asr import (
     parse_srt,
     segments_to_srt,
 )
-from manju.providers.base import ProviderFailure
+from manju.providers.base import FailureKind, ProviderFailure
 from manju.providers.generic_cloud import HttpResponse
 from manju.providers.manifest import ProviderManifest
 
@@ -165,6 +165,54 @@ def test_async_asr_polls_to_completion(monkeypatch, tmp_path):
     segments = provider.transcribe(media)
     assert len(segments) == 1 and segments[0].end_ms == 1500
     assert len(transport.requests) == 3
+
+
+def test_asr_submit_429_is_rate_limited(monkeypatch, tmp_path):
+    """F4: a 429 on ASR submit is retryable rate_limited (like its tts sibling),
+    NOT a generic provider_error. RED at HEAD: asr mapped every >=400 to
+    provider_error, discarding the retryable signal + throttle hint."""
+    monkeypatch.setenv("ASR_X_KEY", "k")
+    manifest = ProviderManifest.model_validate(_asr_manifest())
+    transport = ScriptedTransport([HttpResponse(429, {}, b'{"error":"slow down"}')])
+    provider = GenericAsrProvider(manifest, transport=transport, sleep_fn=lambda s: None)
+    media = tmp_path / "a.wav"
+    media.write_bytes(b"RIFFfake")
+    with pytest.raises(ProviderFailure) as exc:
+        provider.transcribe(media)
+    assert exc.value.kind is FailureKind.rate_limited
+
+
+def test_asr_poll_429_is_rate_limited(monkeypatch, tmp_path):
+    """F4: a 429 during ASR poll is retryable rate_limited, not provider_error."""
+    monkeypatch.setenv("ASR_X_KEY", "k")
+    manifest = ProviderManifest.model_validate(_asr_manifest(
+        poll={"url": "https://api.example.com/v1/asr/{job_id}",
+              "status_path": "$.data.status",
+              "status_map": {"DONE": "succeeded", "RUNNING": "running"}},
+    ))
+    transport = ScriptedTransport([
+        _resp({"data": {"task_id": "t1"}}),                 # submit ok (async)
+        HttpResponse(429, {}, b'{"error":"slow down"}'),    # poll 429
+    ])
+    provider = GenericAsrProvider(manifest, transport=transport, sleep_fn=lambda s: None)
+    media = tmp_path / "a.wav"
+    media.write_bytes(b"x")
+    with pytest.raises(ProviderFailure) as exc:
+        provider.transcribe(media)
+    assert exc.value.kind is FailureKind.rate_limited
+
+
+def test_asr_non_429_error_stays_provider_error(monkeypatch, tmp_path):
+    """F4 boundary: a non-429 error status still classifies as provider_error."""
+    monkeypatch.setenv("ASR_X_KEY", "k")
+    manifest = ProviderManifest.model_validate(_asr_manifest())
+    transport = ScriptedTransport([HttpResponse(500, {}, b'{"error":"boom"}')])
+    provider = GenericAsrProvider(manifest, transport=transport, sleep_fn=lambda s: None)
+    media = tmp_path / "a.wav"
+    media.write_bytes(b"x")
+    with pytest.raises(ProviderFailure) as exc:
+        provider.transcribe(media)
+    assert exc.value.kind is FailureKind.provider_error
 
 
 def test_malformed_segment_is_actionable(monkeypatch, tmp_path):
