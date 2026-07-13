@@ -33,12 +33,11 @@ jobs:
       - name: Run the full test suite
         run: python -m pytest -q -n auto
 
-      - name: M0 acceptance smoke (build twice = one final, 24/1 fps)
-        run: |
-          python tests/fixtures/make_sample.py /tmp/e2e --shots 6
-          cd /tmp/e2e/雨夜便利店.manju
-          manju build
-          manju build
-          test "$(ls renders/final/*.mp4 | wc -l)" = "1"
-          ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate \
-            -of default=nw=1 renders/final/final_v1.mp4 | grep -qx 'r_frame_rate=24/1'
+      # Audit TESTS F5 (DECISIONS #35): the double-build M0 smoke that used to
+      # run here duplicated what tests/test_idempotency.py pins INSIDE the
+      # suite (build twice → exactly one final, 24/1 fps) at ~30-60s per run.
+      # The ONE coverage unique to this step is the INSTALLED console-script
+      # entry point ([project.scripts] wiring) — the suite drives the app via
+      # CliRunner, never the installed `manju`. Keep exactly that check.
+      - name: Console-script entry point (the one coverage the suite lacks)
+        run: manju --help >/dev/null
