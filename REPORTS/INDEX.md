@@ -52,3 +52,5 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `FP_FCPXML_FADES.md` | Y3 DTD-sourced fades | #33 |
 | `FP_COLORSTATS_WALL.md` | Z1 Pillow defect fix | #33 |
 | `OPTIMIZATION_AUDIT_20260712.md` | the four-hour nine-dimension audit + 28-refuter panel | #33 |
+| `FP_HASH_MEMO.md` | L4 process-scoped hash_file memo (double-hash collapse) | #34 |
+| `FP_REVIEW_LAZY.md` | L3 /review subprocess-free render + lazy consistency boards | #34 |
