@@ -2007,3 +2007,37 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   8191 preflight (both judged improvement-not-defect / speculative under the
   maintenance gate by the risk lens); wholesale message translation (pinned
   strings, low value against the already-Chinese-first runtime surfaces).
+
+### 42a. UX program close-out: waves F-G + real-browser verification (2026-07-13)
+
+- Wave F: board annotate flow honesty (F16 — '当前帧' reads the OPEN compare
+  stack first; annotate updates IN PLACE with the post-write rev refreshed
+  across the shot's forms; the active tab survives in the URL hash); the
+  board renders the GUI's OWN Chinese state vocabulary with the enum on the
+  title attribute (F18 — one state, one name across both review surfaces;
+  one pin evolved with recorded intent); `manju import` expands ~/wildcards
+  exactly and only when the literal path does not exist (F11 code half — the
+  README's flagship line failed on the primary platform); pytest marker
+  `ffmpeg` on the 10 WHOLLY-gated render modules — `-m "not ffmpeg"` is the
+  honest fast loop (F43, documented in CLAUDE.md).
+- Wave G: docs/PINS.md (20 VERIFIED source-scanning pins across 15 test
+  files — invariant / test / what-trips-it / sanctioned alternative, with
+  the union-batch rule and an honest-evolution footer) + docs/PROJECT_YAML.md
+  (Chinese owner reference for all 14 ProjectConfig fields with the
+  cache-cold / fps-mirror / declared-colour consequences) + README links
+  (F23/F38); the GUI /review side column mirrors the board's media-bound
+  annotations read-only — same severity vocabulary, the ONE staleness rule
+  (Annotation.matches_media), click-to-seek onto the card player (F17 — a
+  blocker pinned to an exact frame used to vanish on the richer page).
+- REAL-BROWSER verification (headless Chromium via Playwright, driving live
+  gui + board servers on a scaffolded project with real mp4 takes): 15/15
+  checks — the F14 two-verdicts-one-card flow, sticky error toasts, HTML
+  404s, the fixed banner, in-place annotate with rev refresh, tab
+  persistence across reload, and the F17 mirror. The pass CAUGHT one real
+  defect HTTP tests could not: the client-side row insert after a take's
+  FIRST annotation was a silent no-op (.ann-list only rendered when
+  non-empty) — fixed and pinned. This also closes the W3 completion
+  report's risk item 2 (the annotate UI had never run in a real browser).
+- Disposition at close: all 46 audit findings dispositioned — landed except
+  F8/F35 (rejected under the maintenance gate, recorded in #42) and F45
+  (no-op bookkeeping). REPORTS/UX_AUDIT_2026-07-13.md is the ranked record.

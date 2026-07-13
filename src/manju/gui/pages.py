@@ -416,6 +416,52 @@ def render_review(project: Any, token: str) -> str:
         else:
             qc_html = '<p class="muted rv-qc">QC 无此镜发现 (no findings)</p>'
 
+        # UX audit F17: the board's media-bound annotations were INVISIBLE on
+        # this richer review page — a blocker pinned to an exact frame
+        # vanished when the owner came here to act on it. Read-only mirror of
+        # the board's list: the same severity vocabulary, the ONE staleness
+        # rule (Annotation.matches_media — the stored media_sha256 vs the
+        # take file's CURRENT hash), and a frame chip that seeks the player.
+        ann_html = ""
+        shot_status = getattr(shot, "status", None) if shot else None
+        anns = [a for a in (getattr(shot_status, "annotations", None) or [])
+                if selected and a.take == selected]
+        if anns:
+            from ..core.hashing import hash_file as _hash_file
+
+            current = None
+            info = project.get_take(sid, selected)
+            if (info is not None and info.media_path is not None
+                    and info.media_path.is_file()):
+                try:
+                    current = _hash_file(info.media_path)
+                except OSError:
+                    current = None
+            ann_rows = []
+            for ann in anns:
+                sev = ann.severity if ann.severity in ("note", "issue", "blocker") else "note"
+                chips = [f'<span class="badge rv-ann-{sev}">{_e(sev)}</span>']
+                if ann.frame is not None and ann.frame_rate:
+                    m = re.fullmatch(r"(\d+)(?:/(\d+))?", str(ann.frame_rate))
+                    if m:
+                        num, den = int(m.group(1)), int(m.group(2) or 1)
+                        sec = ann.frame * den / num if num else 0.0
+                        chips.append(
+                            f'<span class="rv-ann-seek" data-seek="{sec:.3f}" '
+                            f'title="点击定位 click to seek">f{ann.frame} ≈ {sec:.3f}s</span>')
+                if not ann.matches_media(current):
+                    chips.append('<span class="badge rv-ann-stale" title="绑定的媒体'
+                                 '哈希不再匹配 — 该 take 的媒体已被替换/重做,批注指向'
+                                 '旧画面">⚠ 陈旧 STALE</span>')
+                subject = (f"[{_e(ann.subject)}] " if ann.subject else "")
+                ann_rows.append(
+                    '<li class="rv-ann-item">'
+                    f'{"".join(chips)} {subject}{_e(ann.text)}'
+                    f'<div class="muted rv-ann-meta">{_e(ann.actor)} · {_e(ann.created_at)}</div>'
+                    "</li>")
+            ann_html = ('<div class="rv-anns"><span class="muted">看板批注 '
+                        f'(review annotations)</span><ul>{"".join(ann_rows)}</ul></div>')
+
         frame_html = (
             f'<div class="rv-frame"><span class="muted">QC 抽帧</span>'
             f'<img src="{_e(frame_url)}" alt=""></div>'
@@ -478,7 +524,7 @@ def render_review(project: Any, token: str) -> str:
             f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div></div>\n'
             f'  <div class="rv-body">\n'
             f'    <div class="rv-player">{player}</div>\n'
-            f'    <div class="rv-side">{qc_html}{frame_html}{alt_html}</div>\n'
+            f'    <div class="rv-side">{qc_html}{ann_html}{frame_html}{alt_html}</div>\n'
             f"  </div>\n"
             f'  <div class="rv-actions btnrow">\n'
             f'    <button class="btn" data-act="good" title="快捷键 g">好</button>\n'
@@ -1472,6 +1518,15 @@ _PAGES_CSS = """
 .rv-qc { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem; }
 .rv-qc-item { font-size: .84rem; }
 .rv-qc-sug { font-size: .8rem; margin-left: 1.2rem; }
+/* UX audit F17: the board's annotations, mirrored read-only */
+.rv-anns ul { margin: .2rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem; }
+.rv-ann-item { font-size: .84rem; }
+.rv-ann-meta { font-size: .76rem; }
+.rv-ann-note { background: #24313f; color: #9ecbff; }
+.rv-ann-issue { background: #4a3a12; color: #ffcf5c; }
+.rv-ann-blocker { background: #4d1f22; color: #ff8a90; }
+.rv-ann-stale { background: #4d1f22; color: #ff8a90; }
+.rv-ann-seek { color: var(--accent); cursor: pointer; text-decoration: underline dotted; font-size: .8rem; }
 .rv-frame img { width: 100%; border-radius: 6px; border: 1px solid var(--line); display: block; margin-top: .2rem; }
 .rv-alts-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .3rem; }
 .rv-alt { display: flex; flex-direction: column; gap: .2rem; width: 120px; }
@@ -1787,6 +1842,15 @@ _PAGES_JS = r"""
     }
 
     document.addEventListener("click", function (e) {
+      /* UX audit F17: the mirrored board-annotation frame chip seeks the
+       * card's player — the same affordance the board's own list has. */
+      var seek = e.target.closest(".rv-ann-seek");
+      if (seek) {
+        var card = seek.closest(".rv-shot");
+        var vid = card ? card.querySelector(".rv-video") : null;
+        if (vid) { vid.currentTime = parseFloat(seek.getAttribute("data-seek") || "0"); }
+        return;
+      }
       var btn = e.target.closest("[data-act]");
       if (!btn) return;
       var s = btn.closest(".rv-shot");

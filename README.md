@@ -328,6 +328,9 @@ git *is* the patch engine, why the AI is fully external, the provider protocol,
 cost guardrails, and the FFmpeg pipeline — is in
 [docs/DESIGN_v2.2.md](docs/DESIGN_v2.2.md) (current; v2.1 kept for history).
 
+- [docs/PINS.md](docs/PINS.md) — index of the source-scanning pin tests (grep-style assertions a stray comment/docstring token trips) and how to evolve one honestly.
+- [docs/PROJECT_YAML.md](docs/PROJECT_YAML.md) — 面向店主的 `project.yaml` 逐字段参考:每个 `ProjectConfig` 字段的类型 / 默认值 / 作用 / 后果。
+
 ## Frame-grid rule and idempotent finals
 
 Every clip duration is snapped to the frame grid by the timeline compiler

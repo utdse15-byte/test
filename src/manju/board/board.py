@@ -1296,7 +1296,12 @@ def _render_take_annotations(project: "Project", shot_id: str, take: Any,
                 f'<div class="ann-meta">{_esc(ann.actor)} · {_esc(ann.created_at)}</div>'
                 "</div>"
             )
-    list_html = f'<div class="ann-list">{"".join(rows)}</div>' if rows else ""
+    # Browser-verified (F16 follow-up): the container renders even when EMPTY
+    # — the client-side insert after the take's FIRST annotation targets
+    # .ann-list, and `if rows else ""` made that first insert a silent no-op
+    # (the row only appeared after a manual reload). Headless-Chromium run
+    # caught it; HTTP tests could not.
+    list_html = f'<div class="ann-list">{"".join(rows)}</div>'
     rate_attrs = (f' data-fps-num="{rate_nd[0]}" data-fps-den="{rate_nd[1]}"'
                   if rate_nd else "")
     form = (

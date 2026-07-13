@@ -557,3 +557,54 @@ def test_import_expands_wildcards_and_tilde_when_the_shell_did_not(
     res = runner.invoke(app, ["import", str(clips / "*.mov")])
     assert res.exit_code == 1
     assert "not found" in res.output + (res.stderr or "")
+
+
+# ------------------------------------------ F17: annotations visible in gui
+
+
+def test_review_page_shows_board_annotations_with_stale_honesty(
+        gui, tmp_project, add_shot, make_take):
+    """F17: annotations filed on the board (severity/frame/media binding)
+    vanished on the richer /review page — the owner opened 审片 to act on a
+    blocker and saw 'QC 无此镜发现'. The page now mirrors the board's list
+    read-only: same severity vocabulary, the ONE staleness rule
+    (Annotation.matches_media), and a click-to-seek frame chip."""
+    from manju.board.server import API_ACTIONS
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+    status, data = _post(gui, "/api/select", {"shot": "S001", "take": take.name})
+    assert status == 200, data
+
+    API_ACTIONS["annotate"](tmp_project, {
+        "shot": "S001", "take": take.name, "text": "第8帧左手穿帮",
+        "severity": "blocker", "frame": 8})
+
+    html = urllib.request.urlopen(
+        f"http://127.0.0.1:{gui.port}/review", timeout=15).read().decode("utf-8")
+    assert "第8帧左手穿帮" in html
+    assert "blocker" in html
+    assert "data-seek=" in html  # the frame chip carries the seek target
+
+    # STALE honesty: replace the take media bytes → the binding no longer
+    # matches → the page must SAY so, never silently point at new pixels.
+    info = tmp_project.get_take("S001", take.name)
+    info.media_path.write_bytes(b"totally-different-bytes")
+    html = urllib.request.urlopen(
+        f"http://127.0.0.1:{gui.port}/review", timeout=15).read().decode("utf-8")
+    assert "STALE" in html
+
+
+def test_annotation_list_container_renders_even_when_empty(
+        tmp_project, add_shot, make_take):
+    """Browser-verified F16 follow-up: the client-side insert after a take's
+    FIRST annotation targets .ann-list — when the server only rendered the
+    container for non-empty lists, that first insert was a silent no-op (the
+    row appeared only after a manual reload). Found by the real headless-
+    Chromium pass; unreachable by HTTP-level tests."""
+    from manju.board.board import render_board
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_board(tmp_project, serve=True)
+    assert 'class="ann-list"' in html  # present with zero annotations
