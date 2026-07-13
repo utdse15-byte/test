@@ -1829,3 +1829,50 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   suites green (fp_profile/contracts/ratemig1/transitions_looks/cli_snapshot
   105, c15_color+colorstats_wall 17, windows_doctor 15). Reports:
   WINDOWS_WAVE_4_{BASELINE,COMPLETION}.md.
+
+## 41. WINDOWS wave 5: conditional close-out — archive hardening, hw-encode facts, bench; C2PA rejected (2026-07-13)
+
+- Gate interval facts: run #9 (103be30, the W4 colour code) GREEN — W4 held
+  the gate. Run #10 (b20c321, a DOCS-ONLY diff) failed 1/4276 with WinError
+  10053 (loopback abort under xdist — pure environment flake): fixed as gate
+  hygiene by a bounded transient-abort retry in test_shot_lab._req (HTTP
+  statuses, even 5xx, are real results and are never retried; three aborts
+  in a row still fail loudly).
+- W5.2 archive hardening (owner manju.cli + the W1 core.idents rules):
+  pack prunes linked DIRECTORIES wholesale — Path.is_symlink() is False for
+  an NTFS junction and rglob TRAVERSES it, and a symlinked dir is equally
+  traversed on ANY OS (real-symlink proof; the inner files are not links so
+  the per-file skip never fired): one link = an entire outside tree smuggled
+  into the archive. nt probe = lstat st_file_attributes & 0x400
+  (Path.is_junction is 3.12+; floor 3.11). Pack WARNS — never blocks a
+  backup — on members our own unpack would refuse and on casefold-collision
+  groups; --json portability block, drop-when-empty. Unpack REFUSES
+  casefold-colliding members on every OS (one path after an NTFS extraction
+  — silent data loss; the W1 member-gate class). Cross-destination restore
+  pinned (a different drive is the same code path by construction).
+- W5.4 hw-encode delivered as ELIGIBILITY FACTS, never auto-enable:
+  media/ffmpeg owns HW_ENCODER_CANDIDATES (h264 amf/nvenc/qsv) +
+  encoder_inventory (one process-cached '-encoders' parse; missing ffmpeg =
+  all-absent facts) + hw_encode_eligibility (pure predicate,
+  NONE_LISTED/LISTED). LISTED ≠ VERIFIED — the authoring container itself
+  lists nvenc/qsv with NO GPU. Manifest gains the additive record-only
+  encoders block via delegation (the font-inventory precedent; a first
+  draft in the fenced module tripped the fp_toolchain boundary pin — even
+  on a comment literal, the W3 lesson repeating). doctor row informational.
+  Encode paths stay libx264, literal- and grep-pinned. REJECTED: a
+  video_encoder switch (needs the full encode lockstep + a VERIFIED canary;
+  eligibility without a consumer is deliberately inert evidence).
+- W5.3: MANJU_BENCH=1 opt-in env-gated bench (prints cold/warm/final wall
+  times, sanity floors only). REJECTED: a clock-based perf report beside
+  qc/runperf — the forbidden parallel system; §8.7 pins untouched.
+- W5.1 C2PA: REJECTED_WITH_REASON — provenance proves authorship to third
+  parties; a personal single-user archive has no distribution chain, no
+  verifier, no key lifecycle to justify a heavy c2pa dependency with no
+  consumer; integrity is already carried by MANJU_FIXITY.json + the BagIt
+  manifests. Recording the rejection is the W5.1 deliverable.
+- 20 new tests (test_windows_archive 10, red-first 6R/3pin;
+  test_windows_hwencode 9, collection-red; test_windows_bench 1 env-gated).
+  Suite: 4311 passed / 2 skipped / 0 failed. Reports:
+  WINDOWS_WAVE_5_{BASELINE,COMPLETION}.md. With W5 the plan
+  MANJU_WINDOWS_ONLY_LEAN_V3 is COMPLETE: every wave landed or
+  rejected-with-reason, on a green hard gate.

@@ -65,3 +65,5 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `WINDOWS_WAVE_3_COMPLETION.md` | W3 + gate rounds — xmeml, conform losses, annotations; gate-green addendum | #38/#39 |
 | `WINDOWS_WAVE_4_BASELINE.md` | W4 colour — audit + zscale empirical red | #40 |
 | `WINDOWS_WAVE_4_COMPLETION.md` | W4 colour loop — tags, declared transform, HDR advisory | #40 |
+| `WINDOWS_WAVE_5_BASELINE.md` | W5 close-out — audit + smuggle/LISTED≠VERIFIED evidence | #41 |
+| `WINDOWS_WAVE_5_COMPLETION.md` | W5 archive hardening, hw-encode facts, bench; C2PA rejected | #41 |
