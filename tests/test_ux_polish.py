@@ -111,6 +111,52 @@ def test_unpack_not_found_message_matches_the_house_bilingual_pattern(tmp_path, 
     assert "核对" in combined or "路径" in combined  # the cli import-style hint
 
 
+# ------------------------------------------------- F4/F7/F12/F5/F10: signposts
+
+
+def test_new_prints_the_next_step_bridge(tmp_path, monkeypatch):
+    """F7/F12: the very first state was the only unsignposted one — `new`
+    now bridges to cd + status + the creation funnel."""
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["new", "签路"])
+    assert res.exit_code == 0
+    assert "下一步" in res.output and "manju status" in res.output
+    assert "help-workflow" in res.output
+
+
+def test_funnel_hint_names_the_stage_not_itself(tmp_path, monkeypatch):
+    """F4: the synopsis hint was circular ('manju create 可生成模板' — the
+    command that printed the checklist); it must name `manju create synopsis`."""
+    from manju.build.funnel import _brief_done, _synopsis_done
+    from manju.core.container import Project
+
+    project = Project.create(tmp_path / "漏斗", git_init=False)
+    (project.root / "story" / "synopsis.md").unlink(missing_ok=True)
+    (project.root / "story" / "brief.md").unlink(missing_ok=True)
+    done, evidence = _synopsis_done(project)
+    assert done is False and "manju create synopsis" in evidence
+    done, evidence = _brief_done(project)
+    assert done is False and "manju create brief" in evidence
+
+
+def test_export_help_documents_srt_and_jianying():
+    """F5: --srt's hidden side-effect (ASS/WebVTT ride along — the thing
+    doctor's WebVTT hint relies on) must be visible in --help."""
+    res = runner.invoke(app, ["export", "--help"])
+    assert "WebVTT" in res.output
+    assert "剪映" in res.output
+
+
+def test_missing_ffmpeg_hint_names_the_pinned_version(monkeypatch, tmp_path):
+    """F10: the old hint steered Windows users to ffmpeg.org — today an 8.x
+    build, the exact colour-tag skew class the gate pins 6.1.1 against."""
+    import manju.media.ffmpeg as ff
+
+    err = ff._not_found_error(None, "render", None, ["ffmpeg", "-i", "x"])
+    assert "6.1.1" in str(err)
+    assert "ffmpeg.org 的 8.x" in str(err)
+
+
 # ------------------------------------------------------------ F30: UTF-8 stdio
 
 

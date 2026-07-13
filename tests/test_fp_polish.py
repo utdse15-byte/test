@@ -89,6 +89,8 @@ _REQUIRED_CHEAT_SHEET_TOKENS = [
     "--bagit",       # pack BagIt (RFC 8493) serialization mode
     "import-plan",   # the openclap/fcpxml/edl read-only import surfaces (x3)
     "--capcut", "--ttml", "--edl", "--fcpxml", "--pullsheet",  # export formats
+    "--xmeml",       # W3 Premiere/Resolve exit (UX audit F37: the flag the
+                     # cheat sheet silently missed — now it cannot drop again)
 ]
 
 

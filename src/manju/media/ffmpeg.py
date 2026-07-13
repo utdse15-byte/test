@@ -135,11 +135,16 @@ def _not_found_error(project: Any, step: str, subject: str | None, cmd: list[str
     # ffmpeg not on PATH — the #1 first-run blocker. Rewrite the raw
     # OSError traceback into the what/why/how-to-fix triple (clig.dev:
     # "catch errors and rewrite them for humans"), and record it too.
+    # UX audit F10: the Windows line used to send the owner to ffmpeg.org —
+    # today that is an 8.x build, the EXACT skew class the gate pins 6.1.1
+    # against (run #1: ffprobe-8 colour-tag drift vs the verified suite).
+    # Steer to the same pinned version CI verifies.
     msg = (
         "ffmpeg 没找到 (ffmpeg not on PATH) — Manju 靠 ffmpeg 合成与转码,"
         "缺了它无法出片。安装后重试:macOS `brew install ffmpeg`;"
-        "Debian/Ubuntu `apt install ffmpeg`;Windows 从 ffmpeg.org 下载并加入 PATH。"
-        "装好用 `manju doctor` 复检。"
+        "Debian/Ubuntu `apt install ffmpeg`;Windows `choco install ffmpeg "
+        "--version=6.1.1`(与验证套件同版 — ffmpeg.org 的 8.x 会偏移 ffprobe "
+        "色彩标签)。装好用 `manju doctor` 复检。"
     )
     if project is not None:
         try:

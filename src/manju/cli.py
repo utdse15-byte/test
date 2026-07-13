@@ -299,6 +299,17 @@ def new(
     else:
         append_event(project.root, ACTOR, "new", {"name": name})
         typer.secho(f"created {project.root}", fg=typer.colors.GREEN)
+    # UX audit F7/F12: the very first state was the ONLY unsignposted one —
+    # every later state prints a 下一步, but a cold owner had to already know
+    # to cd in and run the creation funnel. Two dim lines bridge the gap.
+    typer.secho(
+        f"  下一步: cd {project.root.name} && manju status(随时告诉你下一步)",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
+    typer.secho(
+        "  引导流程: manju create(七阶段创作漏斗)· 全流程见 manju help-workflow new-project",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
     if shots > 0:
         from .core.container import scaffold_shots
 
@@ -2105,9 +2116,14 @@ def frames(
 
 @app.command(rich_help_panel=PANEL_EXPORT)
 def export(
-    jianying: bool = typer.Option(False, "--jianying"),
+    jianying: bool = typer.Option(
+        False, "--jianying",
+        help="剪映草稿(pyJianYingDraft 主路 + JSON 副路,decision #8)"),
     capcut: bool = typer.Option(False, "--capcut", help="international CapCut draft (pycapcut)"),
-    srt: bool = typer.Option(False, "--srt"),
+    srt: bool = typer.Option(
+        False, "--srt",
+        help="SRT + ASS + WebVTT 字幕(captions/,同一 cue 真相 — doctor 的 "
+             "WebVTT 行即由此导出)"),
     ttml: bool = typer.Option(
         False, "--ttml",
         help="IMSC1-flavoured TTML caption sidecar (captions/captions.ttml, "

@@ -1,7 +1,8 @@
-# PROGRESS.md — append-only log
+# PROGRESS.md — CLOSED (frozen 2026-07-09)
 
-> Append entries at the bottom. Never rewrite history; corrections get a new
-> entry referencing the old one.
+> This log is closed. The record of landed work is DECISIONS.md + REPORTS/
+> (one DECISIONS entry + one REPORTS/INDEX.md row per wave — see CLAUDE.md
+> change control). Do NOT append here; entries below are history.
 
 ---
 

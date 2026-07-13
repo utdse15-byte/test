@@ -109,10 +109,15 @@ def _read_artifact(project: Project, relpath: str) -> str | None:
 # Each returns (done, evidence一句话). Pure reads — nothing here ever writes.
 
 
-def _text_stage_done(project: Project, relpath: str) -> tuple[bool, str]:
+def _text_stage_done(project: Project, relpath: str,
+                     stage: str | None = None) -> tuple[bool, str]:
     text = _read_artifact(project, relpath)
     if text is None:
-        return False, f"{relpath} 还不存在(manju create 可生成模板)"
+        # UX audit F4: name the STAGE in the hint — the generic "manju create"
+        # was circular (it told the owner to re-run the command that printed
+        # this checklist; the scaffolder is `manju create <stage>`).
+        cmd = f"manju create {stage}" if stage else "manju create"
+        return False, f"{relpath} 还不存在({cmd} 可生成模板)"
     n = _content_len(text)
     if n > _MIN_CONTENT:
         return True, f"{relpath} 已填写(约 {n} 字正文)"
@@ -120,11 +125,11 @@ def _text_stage_done(project: Project, relpath: str) -> tuple[bool, str]:
 
 
 def _brief_done(project: Project) -> tuple[bool, str]:
-    return _text_stage_done(project, "story/brief.md")
+    return _text_stage_done(project, "story/brief.md", stage="brief")
 
 
 def _synopsis_done(project: Project) -> tuple[bool, str]:
-    return _text_stage_done(project, "story/synopsis.md")
+    return _text_stage_done(project, "story/synopsis.md", stage="synopsis")
 
 
 def _beats_done(project: Project) -> tuple[bool, str]:

@@ -258,7 +258,7 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju select S002 take_03` | 选中某 take(或 `--file` 指人工素材) |
 | `manju lock / unlock <shot> <field>` | 上锁 / 解锁(**unlock 你不能调**) |
 | `manju qc / repair [--auto]` | 质检 / 修复(`--auto` 只做 auto-safe 项) |
-| `manju export --jianying/--capcut/--srt/--ttml/--otio/--edl/--fcpxml/--pullsheet` | 从编译时间线导出:剪映/CapCut 草稿、SRT/TTML 字幕、OTIO、EDL、FCPXML、拉片表(§14 兜底出口 final.mp4/SRT/OTIO 永在) |
+| `manju export --jianying/--capcut/--srt/--ttml/--otio/--edl/--fcpxml/--xmeml/--pullsheet` | 从编译时间线导出:剪映/CapCut 草稿、SRT/TTML 字幕、OTIO、EDL、FCPXML、XMEML(Premiere/Resolve)、拉片表(§14 兜底出口 final.mp4/SRT/OTIO 永在) |
 | `manju openclap/fcpxml/edl import-plan <file>` | 互换格式只读导入规划(plan-only,从不拷贝媒体、从不写项目、从不自动落轨);openclap 另有 `inspect`/`export`(.clap) |
 | `manju locale add <lang> / status` | 多语言本地化叠层(WP4):本地化文本不进画面哈希,视频段共享,只有配音/字幕随语言变 |
 | `manju board` | 生成静态 HTML 评审板 |
