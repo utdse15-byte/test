@@ -65,6 +65,24 @@ def _project(path: Optional[Path] = None) -> Project:
     return project
 
 
+def _require_shot(project: Project, shot_id: str) -> None:
+    """Fail STRUCTURED (never a raw traceback) when ``shot_id`` has no shot
+    file — the optimization audit's Quickstart defect: `select --file` used
+    to register an orphan take under media/gen/<shot>/ and THEN crash, and
+    `voice`/`redo` crashed raw, while align/impact/prompt/routing already
+    caught ProjectError cleanly. One guard, called check-THEN-act at the
+    three first-run verbs; the stable code is machine-branchable."""
+    try:
+        project.load_shot(shot_id)
+    except ProjectError as exc:
+        _fail(
+            f"{shot_id}: 镜头不存在 shot not found ({exc}) — 用 `manju status` "
+            f"看现有镜头;新镜头先写 shots/{shot_id}.yaml 并加入 "
+            "shots/index.yaml(见 `manju help-workflow new-project`)。",
+            code="unknown_shot",
+        )
+
+
 def _emit(data, as_json: bool) -> None:
     if as_json:
         typer.echo(json.dumps(data, ensure_ascii=False, indent=2, default=str))
@@ -1050,6 +1068,7 @@ def redo(
     if shot_id is None:
         _fail("redo: 要重生成哪个镜头?给一个镜头 id(`manju redo S002`),"
               "或用批量选择器 (--all-stale / --all-missing / --all / --shots S001,S003)。")
+    _require_shot(_project(), shot_id)  # audit defect 0a: no raw traceback
     try:
         takes = redo_shot(_project(), shot_id, candidates=candidates,
                           provider=provider, seed=seed, from_take=from_take,
@@ -1098,6 +1117,9 @@ def select(
         validate_safe_segment(shot_id, label="shot_id")  # goal item 11
     except UnsafeIdentifierError as exc:
         _fail(str(exc))
+    # audit defect 0a: CHECK the shot exists BEFORE registering — otherwise
+    # --file left an orphan take under media/gen/<shot>/ and crashed raw.
+    _require_shot(project, shot_id)
     with _write_lock(project):
         if file:
             from .providers.manual import register_manual_take
@@ -3322,6 +3344,12 @@ def voice(
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
+
+    # audit defect 0a: no raw traceback on unknown ids. Skipped when batch
+    # flags are ALSO present so the more precise mutual-exclusion diagnosis
+    # below keeps message precedence for that mixed-mode mistake.
+    if shot_id is not None and not (shots or all_shots or missing):
+        _require_shot(project, shot_id)
 
     if preview:
         if shot_id is None:

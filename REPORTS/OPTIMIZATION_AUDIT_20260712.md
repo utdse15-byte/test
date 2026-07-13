@@ -55,15 +55,21 @@ the R/S/T/U/V/W/X waves; this audit supersedes its performance sections.
    default `medium`; `ultrafast` saves ~10-15s across 32 files; clip bytes
    feed no pinned hash (spec_hash is literal "manual").
 
-0a. DEFECT (UX, refuter-verification pending): the README Quickstart
+0a. DEFECT — FIXED same-window (follow-up commit; refuter panel:
+   CONFIRMED): the README Quickstart
    crashes on its own step 3 — `manju select <shot> --file` on a fresh
    project registers the take BEFORE checking the shot exists, then dumps
    a raw ProjectError traceback and leaves orphan media/gen/<shot>/
    take_01.* that `manju check` never flags; `voice` and `redo` share the
    uncaught-traceback path while align/impact/prompt/routing catch it
    cleanly (the house pattern exists — apply it to the three verbs).
-   Fix candidate: check-then-register + the standard catch. S/L-effort,
-   HIGH user impact (it is the first command a new user runs wrong).
+   FIX SHIPPED: one _require_shot guard (check-THEN-register, house
+   ProjectError catch, stable code "unknown_shot", bilingual next-action
+   message) wired at select/--file, voice (yielding precedence to the
+   batch mutual-exclusion diagnosis) and redo; 6 red-first pins incl. the
+   orphan-free tooth and a no-over-refusal guard; README Quickstart
+   sequence corrected to the index-authority discipline + the refs row
+   fixed to its real sub-command form.
 0b. DEFECT (orchestrator-confirmed at all cited sites): undeclared
    Pillow — qc/colorstats.py:82 bare `from PIL import Image`, declared
    NOWHERE in pyproject (base or extras), doctor has zero PIL probes,

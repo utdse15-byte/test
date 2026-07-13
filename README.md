@@ -104,8 +104,11 @@ cd 雨夜便利店.manju
 # drop your own clips in — imports are read-only and always usable
 manju import ~/clips/*.mp4
 
-# write shots (shots/S001.yaml …), reference Bible entries, then point a shot
-# at an imported clip (registers it as a manual take):
+# write shots (shots/S001.yaml …) referencing Bible entries AND list them in
+# shots/index.yaml (index order is the one order authority) — the guided
+# version of this step is `manju help-workflow new-project`. THEN point a
+# shot at an imported clip (registers it as a manual take; an unknown shot
+# id fails with a clean pointer, never a stray take):
 manju select S001 --file media/imports/opening.mp4
 
 manju check                           # schema + references + locks + secret scan
@@ -155,7 +158,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju assets [show <id>]` | U | asset matrix over the bible: 角色/场景/道具/配音/风格 with aliases, relations, appearances |
 | `manju mentions [--check\|--apply]` | U | @角色/@场景 mentions in shot text: report or register into the spec (lock-respecting) |
 | `manju prompt <shot> [--json] / --check` | U | prompt workbench bundle: 4 prompts + refs lineage + provider trace + cost + single-action checks |
-| `manju refs <shot> [--json]` | U | reference resolution + per-provider budget allocation (selected/省略+impact) + cleanliness QC |
+| `manju refs shot <shot> [--json]` | U | reference resolution + per-provider budget allocation (selected/省略+impact) + cleanliness QC |
 | `manju repair --op voice --shot <id> [--dry-run]` | U | voice repair loop: keep footage, regen TTS, realign cues (manual cues untouched), remix via keys |
 | `manju board scene <id> [--grid 4\|9] / keyframes <shot> --n N [--scaffold]` | U | 4/9-panel storyboards; action → keyframe beats (writes only with --scaffold) |
 | `manju build --mode quality\|balanced\|speed` | U | quality modes: provider bias + retries + bounded parallel generation (gates preserved) |
