@@ -1664,3 +1664,39 @@ REPORTS/WINDOWS_WAVE_1_BASELINE.md / WINDOWS_WAVE_1_COMPLETION.md.
   Windows branches are pinned by stub/injected-constant unit tests, and
   the first windows-ci.yml execution is the real-host verdict (recorded
   here once it runs).
+
+## 37. WINDOWS wave 2: per-user installer + doctor --windows + the gate's first verdict (2026-07-13)
+
+W2 of MANJU_WINDOWS_ONLY_LEAN_V3 (§4). Reports:
+REPORTS/WINDOWS_WAVE_2_BASELINE.md / WINDOWS_WAVE_2_COMPLETION.md.
+
+- W2 (72dfa91): scripts/windows/{install,update,uninstall}-manju.ps1 —
+  per-user %LOCALAPPDATA%\Manju\App\<version>\venv with a run-time
+  pointer launcher, staging → self-test → atomic switch, previous.txt
+  rollback, uninstall that can never touch *.manju projects or ~/.manju.
+  Static safety pins (no dynamic eval / no downloads / no registry / no
+  admin / USER-scope opt-in PATH only) + a real windows-latest
+  install-smoke job in windows-ci.yml. Doctor: python row, --windows,
+  Windows probes (long-path policy READ-ONLY, NTFS/network advisories,
+  OneDrive, config writability, Edge/Chrome via new html_card.find_edge,
+  install mode + rollback visibility), all informational, UNKNOWN never
+  rendered as pass. Output hygiene: NEW supportbundle.redact_private_text
+  at doctor's one add() choke point — usernames/private roots collapse,
+  /usr system paths stay readable.
+- REJECTED_WITH_REASON — §4.1 config under %APPDATA%\Manju: the config
+  owner is ~/.manju across six modules, consistent and Windows-valid;
+  relocation risks silent data loss for zero functional gain. Doctor
+  reports the dir + writability instead. DEFERRED — Portable ZIP (§4.4,
+  plan ranks it second to the PS installer; no artifact hosting exists);
+  six-site ~/.manju consolidation (churn without a Windows deliverable).
+- The gate's FIRST verdict (run #1, W1 push): RED with real Windows
+  product bugs — 76F/4016P/35E in 9m30s. Catalogue: ass= filter
+  drive-colon escaping breaks EVERY subtitled final render (the ~60-test
+  cascade); fcntl-only recents/library/failures locks lose concurrent
+  updates; local_cmd shlex(posix) eats backslashes; ffprobe-8 color-tag
+  skew; html_card leading-backslash file URL; animatic path/None; plus
+  POSIX-assuming tests (mode bits, dir-fsync, grep-pin separators).
+  Driven down root-cause-first in the Windows-gate fix rounds (#38+).
+- Suite: 4137 → 4158 passed / 1 skipped / 0 failed. The m0 incremental
+  test was made xdist-order-safe (primes its own cache) after one
+  observed ordering flake — recorded, not silenced.
