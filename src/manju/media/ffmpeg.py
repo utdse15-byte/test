@@ -14,8 +14,10 @@ ever receives a complete file.
 from __future__ import annotations
 
 import contextvars
+import functools
 import os
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -413,3 +415,82 @@ def default_log(project_root: Path, name: str = "render") -> Callable[[str], Non
             f.write(f"[{stamp}] {line}\n")
 
     return _log
+
+# ===================================================== W5.4 encoder inventory
+# "What can THIS ffmpeg encode with" is this module's business (it owns every
+# ffmpeg invocation). core/toolchain delegates its manifest fact block here
+# (the _font_inventory→media/card precedent), and doctor reads the same owner
+# — never a second parser of `-encoders` anywhere.
+
+# The h264 HARDWARE encoder candidates on Windows (nvenc = NVIDIA, qsv = Intel
+# QuickSync, amf = AMD). h264 only — the pipeline's segment/final profile is
+# h264; other codecs are out of scope. Sorted, deterministic.
+HW_ENCODER_CANDIDATES = ("h264_amf", "h264_nvenc", "h264_qsv")
+
+_ENCODERS_TIMEOUT_S = 15.0
+
+
+def _encoder_inventory_uncached() -> dict[str, bool]:
+    """Presence FACTS for the encode profile's encoder family: parse
+    ``ffmpeg -encoders`` into ``{name: listed}`` over libx264 (the software
+    floor) + :data:`HW_ENCODER_CANDIDATES`. Absence is a fact, never an
+    error; a missing/broken ffmpeg answers all-absent. NOTE: "listed" is a
+    build fact only — a listed hw encoder can still fail at runtime without
+    its driver (that is why eligibility below never says VERIFIED)."""
+    import shutil
+
+    names = ("libx264", *HW_ENCODER_CANDIDATES)
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        return {n: False for n in names}
+    try:
+        out = subprocess.run(
+            [exe, "-hide_banner", "-encoders"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=_ENCODERS_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {n: False for n in names}
+    listed: set[str] = set()
+    for line in (out.stdout or "").splitlines():
+        parts = line.split()
+        # encoder rows: " V....D libx264  H.264 ..." — a flags column then the
+        # name; the legend's "V..... = Video" yields name "=" which can never
+        # match a real candidate, so no special-casing is needed.
+        if len(parts) >= 2 and parts[0] and parts[0][0] in "VAS":
+            listed.add(parts[1])
+    return {n: n in listed for n in names}
+
+
+@functools.lru_cache(maxsize=None)
+def encoder_inventory() -> dict[str, bool]:
+    """Process-cached :func:`_encoder_inventory_uncached` — one subprocess per
+    process, like the S4 toolchain collectors (doctor/status can both read)."""
+    return _encoder_inventory_uncached()
+
+
+def hw_encode_eligibility(inventory: dict[str, bool] | None = None) -> dict[str, Any]:
+    """PURE eligibility predicate over an encoder inventory (W5.4).
+
+    ELIGIBILITY ONLY — this never enables anything: the render/segment/
+    normalize encode profiles stay libx264 regardless of the answer (pinned in
+    tests). The honest ladder: ``NONE_LISTED`` (no hw encoder in this ffmpeg)
+    or ``LISTED`` (ffmpeg lists one — which is NOT verification: a listed
+    encoder still fails at runtime without its driver; VERIFIED would require
+    a real canary encode, deferred until something would consume it)."""
+    inv = encoder_inventory() if inventory is None else inventory
+    candidates = sorted(n for n in HW_ENCODER_CANDIDATES if inv.get(n))
+    if not candidates:
+        return {
+            "eligible": False,
+            "candidates": [],
+            "level": "NONE_LISTED",
+            "note": "此 ffmpeg 未编入任何 h264 硬件编码器 — 软件路径 libx264 是唯一路径",
+        }
+    return {
+        "eligible": True,
+        "candidates": candidates,
+        "level": "LISTED",
+        "note": "ffmpeg 列出了硬件编码器,但 LISTED ≠ VERIFIED:没有对应驱动/硬件时"
+                "运行必败;真正启用前需要真实 canary 编码验证,且本版永不自动启用"
+                "(编码路径仍是 libx264)",
+    }

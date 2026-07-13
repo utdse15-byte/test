@@ -483,7 +483,11 @@ schemas:
       compare, deletable projection; no absolute paths/hostname/username ever.
       Content-key wiring LANDED (S4) strictly opt-in via project.yaml
       cache_toolchain_keys + process-cached collector wrappers; the manifest
-      document itself stays record-only and is never read back.
+      document itself stays record-only and is never read back. W5.4 adds the
+      additive `encoders` fact block (libx264 floor + h264 nvenc/qsv/amf
+      presence, delegated to the media/ffmpeg owner) — drift-visible, still
+      record-only; hw-encode eligibility is a pure predicate (LISTED ≠
+      VERIFIED) that never flips any encode path.
 
   - id: manju.delivery-conformance/v1
     kind: schema
@@ -673,7 +677,14 @@ documents:
       transport members — MANJU_RESTORE.txt (manju-restore.1),
       MANJU_CONTRACTS.yaml (engine registry snapshot; honestly omitted when
       unavailable), MANJU_TOOLCHAIN.json — all dropped from a verified
-      restore; manju fixity --info surfaces them read-only.
+      restore; manju fixity --info surfaces them read-only. W5.2 Windows
+      hardening: pack prunes linked DIRECTORIES wholesale (junctions via the
+      reparse lstat attribute on nt, symlinked dirs on any OS — rglob
+      traverses both and one link smuggles an outside tree in) and WARNS
+      (never blocks a backup) on members our own unpack would refuse
+      (Windows-unportable names) and on casefold collisions; unpack REFUSES
+      casefold-colliding members on every OS (one path after an NTFS
+      extraction — silent data loss).
   - id: support-bundle
     kind: document
     owner: manju.core.supportbundle

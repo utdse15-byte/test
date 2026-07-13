@@ -180,6 +180,24 @@ def _optional_tool_present(name: str) -> bool:
     return shutil.which(name) is not None
 
 
+def _encoder_facts() -> dict[str, bool]:
+    """W5.4: the encode-profile encoder presence facts, DELEGATED to the one
+    owner (``media/ffmpeg.encoder_inventory`` — the module that owns "what can
+    this ffmpeg do"), exactly like ``_font_inventory`` delegates to
+    ``media/card.find_font``. Unimportable media ⇒ honest all-absent."""
+    try:
+        from ..media.ffmpeg import _encoder_inventory_uncached
+
+        # the manifest keeps probing fresh (see the S4 note below): a manifest
+        # written after a live ffmpeg swap must see the new truth mid-process.
+        return _encoder_inventory_uncached()
+    except Exception:
+        # literal mirror of ("libx264", *HW_ENCODER_CANDIDATES) — the owner
+        # module just failed to import, so its constant is unreachable too
+        return {n: False for n in
+                ("libx264", "h264_amf", "h264_nvenc", "h264_qsv")}
+
+
 def _font_inventory() -> dict[str, Any]:
     """The fonts the renderer ACTUALLY uses, as basename + content hash.
 
@@ -261,6 +279,11 @@ def toolchain_manifest(project: Any = None) -> dict[str, Any]:
             "machine": platform.machine(),
         },
         "tools": {name: _tool_version_line(name) for name in _VERSION_TOOLS},
+        # W5.4 additive fact block: which encode-profile encoders THIS ffmpeg
+        # lists (libx264 floor + the h264 hw family). Record-only like every
+        # other fact here — drift names a gained/lost hw encoder; never a
+        # build input (S4 keys read the -version line, not the manifest).
+        "encoders": _encoder_facts(),
         "optional_tools": {name: _optional_tool_present(name)
                            for name in _OPTIONAL_TOOLS},
         "deps": {dist: _dep_version(module, dist) for module, dist in _KEY_DEPS},

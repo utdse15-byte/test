@@ -4813,6 +4813,23 @@ def _unpack_bag(zf: zipfile.ZipFile, names: list[str], archive: Path, dest: Path
     )
 
 
+def _dir_is_reparse_point(path: Path) -> bool:
+    """W5.2: True when a DIRECTORY is an NTFS reparse point (junction / mount
+    point). ``Path.is_symlink()`` answers False for a junction and ``rglob``
+    happily TRAVERSES it, so without this probe a junction inside the project
+    smuggles an entire outside tree into the archive (the goal-item-14
+    smuggle, directory edition). POSIX has no junctions → always False, and
+    the pack walk is byte-identical there. ``Path.is_junction()`` is 3.12+;
+    the repo floor is 3.11, so the lstat attribute is read directly."""
+    if os.name != "nt":
+        return False
+    try:
+        attrs = path.lstat().st_file_attributes  # type: ignore[attr-defined]
+    except (OSError, AttributeError):
+        return False
+    return bool(attrs & 0x400)  # stat.FILE_ATTRIBUTE_REPARSE_POINT
+
+
 @app.command(rich_help_panel=PANEL_OPS)
 def pack(out: Optional[Path] = typer.Option(None),
          full: bool = typer.Option(False, "--full",
@@ -4839,6 +4856,18 @@ def pack(out: Optional[Path] = typer.Option(None),
     out = out or project.root.parent / (project.root.stem + ".manjupkg")
     excluded_cache = 0
     skipped_symlinks: list[str] = []
+    # W5.2: linked DIRECTORIES (symlink dirs on any OS, junctions on NTFS) are
+    # pruned WHOLESALE — rglob traverses both, and the files inside are not
+    # themselves links, so the per-file symlink skip below never fires for
+    # them: without pruning, one link smuggles an entire outside tree in.
+    pruned_link_dirs: list[str] = []
+    _pruned_roots: list[Path] = []
+    # W5.2 portability facts (warn-only — a BACKUP is never blocked): member
+    # names our own unpack would REFUSE on any OS (reserved stems, trailing
+    # dot/space, colon/ADS — the W1 gate), and casefold collisions (two files
+    # on ext4, ONE file after an NTFS restore — silent data loss).
+    unportable_members: list[str] = []
+    _ci_groups: dict[str, list[str]] = {}
     files_packed = 0
     fixity_files: dict[str, dict] = {}
     # --bagit accumulators: the payload rides under data/, hashed ONCE per file
@@ -4846,11 +4875,22 @@ def pack(out: Optional[Path] = typer.Option(None),
     bag_payload: dict[str, str] = {}  # raw in-bag path (data/…) -> bare-hex sha256
     payload_octets = 0
     payload_streams = 0
+    from .core.idents import windows_collision_key as _win_collision_key
+    from .core.idents import windows_relpath_problems as _win_relpath_problems
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
         ).encode("utf-8")
         for path in sorted(project.root.rglob("*")):
+            # W5.2: sorted(Path) yields a parent before its children, so a
+            # pruned link-dir shields everything beneath it; the ancestor
+            # check keeps rglob's traversal INTO the link from leaking files.
+            if _pruned_roots and any(root in path.parents for root in _pruned_roots):
+                continue
+            if path.is_dir() and (path.is_symlink() or _dir_is_reparse_point(path)):
+                _pruned_roots.append(path)
+                pruned_link_dirs.append(path.relative_to(project.root).as_posix())
+                continue
             if path.is_symlink():
                 if path.is_file():  # only files matter for the pack payload
                     skipped_symlinks.append(path.relative_to(project.root).as_posix())
@@ -4870,6 +4910,11 @@ def pack(out: Optional[Path] = typer.Option(None),
             if not full and any(rel.startswith(prefix) for prefix in PACK_CACHE):
                 excluded_cache += path.stat().st_size
                 continue
+            # W5.2 portability facts for every member ACTUALLY packed. Owner:
+            # core.idents (the W1 lexical rules the unpack gate enforces).
+            if _win_relpath_problems(rel):
+                unportable_members.append(rel)
+            _ci_groups.setdefault(_win_collision_key(rel), []).append(rel)
             bare = hash_file(path).removeprefix(HASH_PREFIX)  # single hash per file
             size = path.stat().st_size
             if bagit:
@@ -4940,9 +4985,20 @@ def pack(out: Optional[Path] = typer.Option(None),
                 }
             # LAST member: the in-zip fixity manifest, recording every OTHER member.
             zf.writestr(_fixity_zipinfo(), _fixity_manifest_bytes(fixity_files))
+    # W5.2: the portability verdict (drop-when-empty — a clean tree carries no
+    # block and no warning noise). Collision groups are sorted for determinism.
+    casefold_collisions = sorted(
+        sorted(group) for group in _ci_groups.values() if len(group) > 1)
+    portability: dict[str, list] = {}
+    if unportable_members:
+        portability["unportable_members"] = unportable_members
+    if casefold_collisions:
+        portability["casefold_collisions"] = casefold_collisions
+    if pruned_link_dirs:
+        portability["pruned_link_dirs"] = pruned_link_dirs
     if as_json:
         if bagit:
-            _emit({
+            doc = {
                 "packed": str(out),
                 "name": project.root.name,
                 "files": files_packed,
@@ -4952,9 +5008,9 @@ def pack(out: Optional[Path] = typer.Option(None),
                 "format": BAGIT_FORMAT,
                 "payload_oxum": f"{payload_octets}.{payload_streams}",
                 "meta_members": [nm for nm, _ in meta_members],
-            }, True)
+            }
         else:
-            _emit({
+            doc = {
                 "packed": str(out),
                 "name": project.root.name,
                 "files": files_packed,
@@ -4962,7 +5018,10 @@ def pack(out: Optional[Path] = typer.Option(None),
                 "excluded_cache_bytes": excluded_cache,
                 "fixity": FIXITY_FORMAT,
                 "meta_members": [nm for nm, _ in meta_members],
-            }, True)
+            }
+        if portability:
+            doc["portability"] = portability
+        _emit(doc, True)
         return
     if bagit:
         typer.secho(f"packed (BagIt) → {out}", fg=typer.colors.GREEN)
@@ -5007,6 +5066,29 @@ def pack(out: Optional[Path] = typer.Option(None),
             f"  ⚠ 跳过 {len(skipped_symlinks)} 个符号链接(symlink 可能指向项目外文件,"
             f"打包时永不跟随):{', '.join(skipped_symlinks[:5])}"
             + (" …" if len(skipped_symlinks) > 5 else ""),
+            fg=typer.colors.YELLOW,
+        )
+    if pruned_link_dirs:
+        typer.secho(
+            f"  ⚠ 跳过 {len(pruned_link_dirs)} 个链接目录(junction/目录符号链接会把项目外"
+            f"的整棵树走私进压缩包,打包时永不跟随):{', '.join(pruned_link_dirs[:5])}"
+            + (" …" if len(pruned_link_dirs) > 5 else ""),
+            fg=typer.colors.YELLOW,
+        )
+    if unportable_members:
+        typer.secho(
+            f"  ⚠ 便携性:{len(unportable_members)} 个成员名在 Windows 上不可移植"
+            "(保留名/结尾点或空格/冒号等 — manju unpack 会拒绝含这些成员的压缩包),"
+            f"建议改名后重新打包:{', '.join(unportable_members[:5])}"
+            + (" …" if len(unportable_members) > 5 else ""),
+            fg=typer.colors.YELLOW,
+        )
+    if casefold_collisions:
+        shown = "; ".join(" ↔ ".join(g) for g in casefold_collisions[:3])
+        typer.secho(
+            f"  ⚠ 大小写冲突:{len(casefold_collisions)} 组成员在不区分大小写的文件系统"
+            f"(NTFS)上是同一路径,恢复时互相覆盖(静默丢数据),建议改名:{shown}"
+            + (" …" if len(casefold_collisions) > 3 else ""),
             fg=typer.colors.YELLOW,
         )
 
@@ -5109,8 +5191,10 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         # up front — an archive that carries them is not a normal `.manjupkg`.
         import stat as _stat
 
+        from .core.idents import windows_collision_key as _win_ci_key
         from .core.idents import windows_relpath_problems as _win_problems
 
+        _ci_seen: dict[str, str] = {}
         for info in zf.infolist():
             nm = info.filename
             if nm.startswith("/") or nm.startswith("\\") or ".." in Path(nm).parts:
@@ -5129,6 +5213,19 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
             if mode and _stat.S_ISLNK(mode):
                 _fail(f"拒绝解包:压缩包含符号链接成员 → {nm!r}"
                       "(symlink 可越出解包目录,正常 .manjupkg 不含符号链接)")
+            # W5.2: two members that casefold to one path are ONE file after an
+            # NTFS extraction — whichever lands last silently wins (data loss).
+            # Refused up front on EVERY OS (deterministic cross-platform), the
+            # same class as the reserved-name gate above; `manju pack` warns
+            # about exactly this at pack time.
+            bare = nm.rstrip("/")
+            if bare:
+                prev = _ci_seen.get(_win_ci_key(bare))
+                if prev is not None and prev != bare:
+                    _fail(f"拒绝解包:成员大小写冲突 → {prev!r} 与 {bare!r} 在不区分"
+                          "大小写的文件系统(NTFS)上是同一路径,解包会互相覆盖"
+                          "(静默丢数据);请改名后重新打包")
+                _ci_seen[_win_ci_key(bare)] = bare
         # FP security loop: decompression preflight BEFORE extractall — a zip
         # bomb must refuse structurally, not fill the disk. Declared sizes are
         # summed (a lie-small header still cannot exceed what zipfile inflates

@@ -136,6 +136,30 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
     except ImportError:
         add("cjk_font", False, "media module unavailable", "⚠ media module unavailable")
 
+    # ---- W5.4: hardware-encoder FACTS (informational, never gates). LISTED
+    # is not VERIFIED — a listed encoder still fails without its driver (the
+    # authoring container itself lists nvenc/qsv with no GPU present); and
+    # eligibility never auto-enables anything (the encode path stays libx264).
+    # Owner: media/ffmpeg (build/ may never consult the toolchain-manifest
+    # module — its boundary pin; media is doctor's existing import surface).
+    if shutil.which("ffmpeg"):
+        try:
+            from ..media.ffmpeg import encoder_inventory, hw_encode_eligibility
+
+            verdict = hw_encode_eligibility(encoder_inventory())
+            if verdict["eligible"]:
+                names = ", ".join(verdict["candidates"])
+                add("hw_encoders", True, f"listed: {names} (LISTED ≠ VERIFIED)",
+                    f"• hw encoders: {names} — ffmpeg 已编入(LISTED),但未经真实"
+                    "编码验证,且编码路径仍是 libx264(永不自动启用)")
+            else:
+                add("hw_encoders", True, "none listed (libx264 software path)",
+                    "• hw encoders: 无 — 此 ffmpeg 未编入 h264 硬件编码器,"
+                    "软件路径 libx264")
+        except Exception as exc:
+            add("hw_encoders", True, str(exc),
+                f"⚠ hw-encoder 探测异常(信息行,不影响退出码): {exc}")
+
     # ---- toolbelt probes (§2.5 adapter wall: absence is a fact, not a failure)
     import importlib.util as _ilu
 

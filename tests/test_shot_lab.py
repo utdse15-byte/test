@@ -108,6 +108,9 @@ def _fake_image(project, rel):
 
 def _req(server, path, *, method="GET", body=None, headers=None, host=None,
          raw=False, data_bytes=None):
+    import http.client
+    import time as _time
+
     url = f"http://127.0.0.1:{server.port}{path}"
     if data_bytes is not None:
         data = data_bytes
@@ -120,18 +123,37 @@ def _req(server, path, *, method="GET", body=None, headers=None, host=None,
         req.add_header(k, v)
     if host is not None:
         req.add_header("Host", host)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            payload = resp.read()
-            return resp.status, dict(resp.headers), (payload if raw else
-                                                     json.loads(payload or b"{}"))
-    except urllib.error.HTTPError as exc:
-        payload = exc.read()
+    # Windows gate run #10: a loopback connection to the threaded test server
+    # can be ABORTED by the OS under xdist load (WinError 10053, observed on a
+    # docs-only diff — pure environment flake, 1/4276). Transient socket
+    # aborts are retried a bounded number of times; HTTP status codes (even
+    # 5xx) are REAL results and never retried, so no assertion is weakened.
+    last_exc: Exception | None = None
+    for attempt in range(3):
         try:
-            parsed = payload if raw else json.loads(payload or b"{}")
-        except json.JSONDecodeError:
-            parsed = payload
-        return exc.code, dict(exc.headers), parsed
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                payload = resp.read()
+                return resp.status, dict(resp.headers), (payload if raw else
+                                                         json.loads(payload or b"{}"))
+        except urllib.error.HTTPError as exc:
+            payload = exc.read()
+            try:
+                parsed = payload if raw else json.loads(payload or b"{}")
+            except json.JSONDecodeError:
+                parsed = payload
+            return exc.code, dict(exc.headers), parsed
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError,
+                http.client.RemoteDisconnected) as exc:
+            last_exc = exc
+            _time.sleep(0.3 * (attempt + 1))
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (ConnectionAbortedError,
+                                       ConnectionResetError, BrokenPipeError)):
+                last_exc = exc
+                _time.sleep(0.3 * (attempt + 1))
+            else:
+                raise
+    raise last_exc  # three aborts in a row is a real failure, not a flake
 
 
 def _html(server, path, **kw):
