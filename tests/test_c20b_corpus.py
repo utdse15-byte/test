@@ -56,8 +56,14 @@ def _cases(partition):
 
 
 @pytest.fixture(scope="module")
-def calibration(tmp_path_factory):
-    return run_calibration(tmp_path_factory.mktemp("c20b_calibration"))
+def calibration_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("c20b_calibration")
+    return root, run_calibration(root)
+
+
+@pytest.fixture(scope="module")
+def calibration(calibration_root):
+    return calibration_root[1]
 
 
 def test_calibration_primary_is_perfectly_calibrated(calibration):
@@ -122,16 +128,22 @@ def test_calibration_engages_drift_and_route_surfaces(calibration):
     assert s["route_vocabulary_size"] == 7 and s["routes_proposed"] == 1
 
 
-def test_calibration_is_deterministic(tmp_path):
-    a = run_calibration(tmp_path / "a")
+def test_calibration_is_deterministic(calibration, tmp_path):
+    # UX audit F44: compare the module fixture's run against ONE fresh root —
+    # the same same-inputs/same-outputs proof at half the former cost (this
+    # was the slowest non-ffmpeg test in the suite: two extra ~8s runs).
+    a = dict(calibration)
     b = run_calibration(tmp_path / "b")
     a.pop("report_path", None), b.pop("report_path", None)
     assert a == b
 
 
-def test_calibration_report_is_written_and_honest(tmp_path):
-    rep = run_calibration(tmp_path)
-    f = tmp_path / "calibration_proj.manju" / "reports" / "calibration" / "calibration.json"
+def test_calibration_report_is_written_and_honest(calibration_root):
+    # F44: consume the module fixture's own run instead of a third fresh
+    # calibration; report_path is project-relative, resolved under the root.
+    root, rep = calibration_root
+    assert Path(rep["report_path"]).as_posix() == "reports/calibration/calibration.json"
+    f = root / "calibration_proj.manju" / rep["report_path"]
     assert f.is_file()
     on_disk = json.loads(f.read_text(encoding="utf-8"))
     assert on_disk["schema"] == "manju.golden_corpus.calibration/20B"

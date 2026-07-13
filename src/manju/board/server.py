@@ -546,6 +546,19 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._serve_board()
         elif path.startswith("/media/"):
             self._serve_media(path[len("/media/"):])
+        elif "text/html" in (self.headers.get("Accept") or ""):
+            # UX audit F21: browser navigations get a page with a way home;
+            # API fetches (no text/html Accept) keep the JSON envelope.
+            body = ('<!doctype html><html lang="zh"><meta charset="utf-8">'
+                    "<title>404</title><body style=\"font-family:system-ui;"
+                    'padding:2rem\"><p>页面不存在 (not found)。</p>'
+                    '<p><a href="/">返回看板</a></p></body></html>')
+            data = body.encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         else:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 

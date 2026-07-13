@@ -187,7 +187,11 @@ _SERVE_CSS = """
 .tact { margin-top: .45rem; }
 .tact .btn { width: 100%; }
 .mj-banner {
-  display: none; background: #4d1f22; color: #ff8a90; padding: .7rem 1.6rem;
+  /* UX audit F15: viewport-fixed — the banner used to sit in normal flow at
+   * the very top, so a failed action while scrolled deep into the shot list
+   * played out as "nothing happened" (the red line rendered 3000px above). */
+  display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+  background: #4d1f22; color: #ff8a90; padding: .7rem 1.6rem;
   font-weight: 700; border-bottom: 1px solid #6b2a2e;
 }
 .mj-overlay {

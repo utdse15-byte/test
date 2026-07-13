@@ -114,7 +114,7 @@ def _signalstats(path: Path, pre_filter: str = "") -> dict[str, float] | None:
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error",
              "-i", str(path), "-vf", chain, "-frames:v", "1", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
     except Exception:
         return None

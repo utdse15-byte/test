@@ -287,7 +287,7 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
             if _transform is not None and shutil.which("ffmpeg"):
                 probe = subprocess.run(
                     ["ffmpeg", "-hide_banner", "-filters"],
-                    capture_output=True, text=True, timeout=30,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
                 )
                 has_zscale = " zscale " in probe.stdout
                 add("color_transform", True,
@@ -326,6 +326,23 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
 
 
 # ----------------------------------------------------------- Windows rows
+
+
+def _sync_dir_marker(root_str: str, env: "dict | os._Environ") -> str | None:
+    """UX audit F33: which sync client (if any) holds this project — the
+    OneDrive-only, case-sensitive check missed Dropbox and the China-common
+    clients the owner is likelier to use. Pure; substring match is deliberate
+    (an informational ⚠ row that never gates; a rare false positive beats a
+    silent sharing-violation mystery). Env detection covers the OneDrive vars
+    that point at a differently-named sync root."""
+    onedrive = env.get("OneDrive") or env.get("OneDriveConsumer")
+    if onedrive and root_str.startswith(str(onedrive)):
+        return "OneDrive"
+    folded = root_str.casefold()
+    for marker in ("OneDrive", "Dropbox", "坚果云", "Nutstore", "百度网盘"):
+        if marker.casefold() in folded:
+            return marker
+    return None
 
 
 def _add_windows_rows(add, project: Project | None) -> None:
@@ -371,13 +388,12 @@ def _add_windows_rows(add, project: Project | None) -> None:
         else:
             add("project_drive", True, "unknown(未知)", "• project drive: 未知(不猜测)")
 
-        onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
-        root_str = str(project.root)
-        if (onedrive and root_str.startswith(str(onedrive))) or "OneDrive" in root_str:
+        marker = _sync_dir_marker(str(project.root), os.environ)
+        if marker:
             add("onedrive", True,
-                "项目在 OneDrive 同步目录内 — 同步器持有文件句柄会造成 sharing violation "
-                "与占位文件问题;建议排除同步或移出",
-                "⚠ OneDrive: 项目在同步目录内 — 建议排除同步或移出")
+                f"项目在 {marker} 同步目录内 — 同步器持有文件句柄会造成 sharing "
+                "violation 与占位文件问题;建议排除同步或移出",
+                f"⚠ 同步目录: 项目在 {marker} 内 — 建议排除同步或移出")
 
     # config dir writability (~/.manju — providers/routing/recents/skills/library)
     from pathlib import Path as _Path

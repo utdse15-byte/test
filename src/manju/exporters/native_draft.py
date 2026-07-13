@@ -210,7 +210,7 @@ def capcut_cli_lint(draft_dir: Path) -> list[str] | None:
     try:
         proc = subprocess.run(
             ["capcut-cli", "lint", str(draft_dir)],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return [f"capcut-cli errored: {exc}"]

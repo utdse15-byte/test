@@ -54,6 +54,13 @@ if (-not $py) {
 }
 $pyExe = $py.Source
 $ver = & $pyExe -c "import sys; print('%d.%d' % sys.version_info[:2])"
+# UX audit F31: on stock Windows 11, `python` may be the Microsoft Store
+# App-Execution-Alias stub — it prints a Store hint and exits nonzero, so
+# $ver stays empty and the [version] cast used to die with an opaque
+# 'Cannot convert value ""' instead of naming the actual problem.
+if ($LASTEXITCODE -ne 0 -or -not $ver) {
+    throw "python probe failed (Microsoft Store alias stub?) — install real Python 3.11+ (per-user) from python.org, then re-run."
+}
 if ([version]$ver -lt [version]"3.11") {
     throw "Python $ver found at $pyExe — Manju requires >= 3.11."
 }
@@ -86,6 +93,10 @@ try {
     # ---------------------------------------------------------- venv + pip
     Write-Step "Creating venv"
     & $pyExe -m venv (Join-Path $stagingDir "venv") 2>&1 | Tee-Object -FilePath $log -Append | Out-Null
+    # UX audit F31: a swallowed venv/pip failure used to surface much later as
+    # 'manju entry point missing' — pointing away from the real cause. Name
+    # the failing step at the step.
+    if ($LASTEXITCODE -ne 0) { throw "venv creation failed (exit $LASTEXITCODE) — see log: $log" }
     $venvPy = Join-Path $stagingDir "venv\Scripts\python.exe"
 
     Write-Step "Installing Manju (pip, constrained when constraints.txt is present)"
@@ -94,6 +105,7 @@ try {
     if (Test-Path $constraints) { $pipArgs += @("-c", $constraints) }
     $pipArgs += @("$Source")
     & $venvPy @pipArgs 2>&1 | Tee-Object -FilePath $log -Append | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE) — see log: $log" }
 
     # ---------------------------------------------------------- self-test (§4.3)
     # STRICT: a failed self-test must abort BEFORE the pointer switch (the
@@ -122,6 +134,7 @@ try {
 }
 catch {
     Write-Host "Install FAILED — the previously active version (if any) is untouched." -ForegroundColor Red
+    Write-Host "Log: $log"
     if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
     throw
 }

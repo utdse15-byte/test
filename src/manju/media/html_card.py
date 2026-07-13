@@ -181,7 +181,7 @@ def render_card_png(text: str, dest_png: Path, *, width: int, height: int,
              "--hide-scrollbars", "--force-device-scale-factor=1",
              f"--window-size={width},{height}", f"--screenshot={dest_png}",
              page.as_uri()],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if proc.returncode != 0 or not Path(dest_png).exists():
             raise MediaError(

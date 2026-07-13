@@ -3,6 +3,56 @@
 Reviewed and approved in review round 1 (§3). Each entry states the design
 text, what was actually built, and why the deviation stands.
 
+索引 (index) — added 2026-07-13 so a session can find what governs a file without a full read.
+Entries are append-only below.
+
+| # | date | summary | governs (modules / files / surfaces) |
+|---|------|---------|--------------------------------------|
+| 1 | — | JianYing export emits both self-dev skeleton and native draft | exporters/native_draft, exports/jianying/ (skeleton + pyJianYingDraft native), final.mp4/SRT/OTIO fallback |
+| 2 | — | capcut-cli demoted to a lint-only adapter behind the wall | exporters/native_draft.py (capcut_cli_lint), lint_draft |
+| 3 | — | HTML caption-card self-developed on headless Chromium, drawtext floor | media/html_card.py, caption-card provider |
+| 4 | — | `auto` and `board` delivered early on the public surface | CLI: manju auto, manju board (MANJU_ACTOR=ai, SKILL.md) |
+| 5 | 2026-07-06 | `board --serve`: bounded actionable localhost board | board/ serve server (select/redo/build/qc/package/snapshot/rollback_shot) |
+| 6 | 2026-07-06 | `manju auto` drives any one-shot agent CLI | manju auto agent-resolver (MANJU_AGENT, project.yaml:agent, PATH probe) |
+| 7 | 2026-07-06 | Preset kits reversed to three neutral frame-only kits | presets/kits (blank/vertical_ai_video/horizontal_ai_video), SKILL.md |
+| 5b | — | `manju gui` ships as a pure third engine client | gui/ (manju gui) |
+| 6b | — | `ask_before` becomes an engine spend gate, not just discipline | engine spend gate (§8.3); assume_yes (--yes CLI, MCP/GUI) |
+| 8 | — | Round W meta calls: known-agent-only, constraints, _fail JSON, refactor deferred | project.yaml:agent, constraints.txt + CI, core `_fail`; deferred cli.py / build/graph.py / media/render.py |
+| 9 | — | Round Y closed the round-W accounting gap: four issues repaid | core MEDIA_EXTS / Project.takes, board/server.py, director confirm/execute/state_fingerprint, manju unpack |
+| 10 | 2026-07-08 | Review states stored; reference ownership derived, not registered | reports/ingest_batches/, core/refs.py (refs assign), checked_shot_write CAS, gui/jobs, manju evaluate |
+| 11 | 2026-07-09 | Interconnection: caption↔shot, timing sidecar, locale overlay, roundtrip | timeline/cuemap.py (CaptionLine.shot), media/align.py timing, locales/<lang>/, roundtrip (JianYing skeleton, OTIO) |
+| 12 | 2026-07-10 | DR01: timeline stays compiled truth; OpenClap only at boundary | exporters/openclap/, compiler (VideoClip.source), BuildResult.plan/--dry-run, .key.json + events.jsonl run_id |
+| 13 | 2026-07-10 | DR02: bound acceptance evidence; assurance is pure derived state | qc/expectations.py, qc/assurance.py, reports/qc_packets, qc_agent.jsonl (v2 intake) |
+| 14 | 2026-07-10 | DR03A: external shot package is a proposal, create-only, CAS apply | manju shot-package (shot-import-plan/v1), Project.save_shot |
+| 15 | 2026-07-10 | DR03B: graph diagnostics stay a read-only derived view | build/graphdiag.py, derive_build_graph, manju explain --graph (+MCP) |
+| 16 | 2026-07-10 | DR03C: one attempt stream, derived RunManifest, no new ledger | events.jsonl (stage_attempt), build/attempts, reports/runs/ RunManifest, manju tasks manifest |
+| 17 | 2026-07-10 | DR04: one provider-fact source, spend-free preflight | providers/catalog.py, providers/preflight.py, routing, manju providers catalog/check |
+| 18 | 2026-07-10 | DR06: persistent submission identity; ambiguous outcome recoverable | providers/submission.py, build/attempts.py, events.jsonl submission_state, intents table, manju tasks attach-remote-job/abandon |
+| 19 | 2026-07-10 | DR05: declared tool policy, one agent surface, opt-in unattended | mcp/policy.py (ToolPolicy), tools/list + call gate, manju serve-mcp --agent-profile, agent_surface tool |
+| 20 | 2026-07-11 | P0: paid-path evidence is a precondition before money moves | core/events.py coordinator, providers/submission (disposition, project_chain), qc/assurance, RunManifest |
+| 21 | 2026-07-11 | 07C: release baseline is evidence about exact approved bytes | reports/verifications.jsonl (release_baseline_approved), manju compare --against-baseline, exports release_assessment |
+| 22 | 2026-07-11 | 08_10_12C: creative decisions become source diffs, else derived | manju prompt --json workbench, refs transfer (params), verdict v2 decision, TakeSidecar.redo_of, first-party skills |
+| 23 | 2026-07-11 | 13C: delivery manifest states facts; sources decide cuts | build/delivery.py (delivery-manifest/v1), NLE / platform handoff, bundle |
+| 24 | 2026-07-11 | 09_11G: resume/single-host already owned — deliverable is proof | record (0 production files) — status/tasks/build-lock, tests/test_c0911_gates.py |
+| 25 | 2026-07-11 | Post-completion hardening: sixteen external gaps reproduced and repaid | ensure_submission_projection (resume consult + release gate), build/delivery base-identity resolver, submission strict identity |
+| 26 | 2026-07-11 | Final acceptance: red CI exposed a real BuildLock race | BuildLock (write-then-hardlink), submission evidence torn-line, release gate (run_id/output_sha256), write_bundle |
+| 27 | 2026-07-11 | AI_IDE 14–21G capability program: qualification through semantics | qualification ladder, qc reviewer observations, spend ladder, audio masters, series/world state, media analysis (cutdown/reframe/bridge/toolmap) |
+| 28 | 2026-07-12 | 14–21G closeout: admission truth moved off the editable report | providers.base.dispatch_bridge (manju bridge), network admission evidence, cutdown validator, variants/world state, audio masters naming |
+| 29 | 2026-07-12 | Function-perfection: governance registry first, honest media semantics | CONTRACTS.yaml + core/contracts.py, core/timebase.py, qc tech/conform/relink, toolchain-manifest, help-workflow, caption roles, unpack zip guards |
+| 30 | 2026-07-12 | Rational edit-rate migration executed; interchange continued | core/models edit_rate + wrap serializer, compiler rational spine, otio export, manju migrate, TTML/EDL writers, S4 keys, xplat.yml |
+| 31 | 2026-07-12 | T/U wave: plugin freeze, FCPXML, board compare, locale TTML, BagIt | provider-plugin-api freeze, board/ compare (.manju/frames), exporters/fcpxml.py, locales/<lang>/meta.yaml, pack --bagit, test_fp_ratemig1 rule |
+| 32 | 2026-07-12 | V-wave: FCPXML connected-audio lanes; board onion skin, scopes | exporters/fcpxml.py (audio lanes), conform doc, board/ (onion + scopes; see 32a c21g tooth) |
+| 33 | 2026-07-12 | W/X/Y/Z waves plus the four-hour optimization research program | board transport, exporters/fcpxml (import-plan/loops/fades), EDL audio/import, doctor locale probes, qc/colorstats (Pillow), REPORTS/OPTIMIZATION_AUDIT |
+| 34 | 2026-07-13 | OPT wave: six audit items implemented; CI flake killed | tail_events reader, voice probe cache (compiler), gui /review, core hash_file memo, pytest-xdist + ci.yml, help panels / SKILL.md / MCP descriptions |
+| 35 | 2026-07-13 | OPT wave 2: providers robustness, GUI/board hardening, test speed | providers (local_cmd/generic_cloud/comfyui), gui/board (safe_served_path, common.js), test fixtures, ci.yml smoke |
+| 36 | 2026-07-13 | Windows wave 1: hard gate plus file/process/lock semantics | .github/workflows/windows-ci.yml, runtime/buildlock, core/idents, core/events (msvcrt), core/yamlio, media/ffmpeg, providers/local_cmd, media/align |
+| 37 | 2026-07-13 | Windows wave 2: per-user installer, doctor --windows, first verdict | scripts/windows/*.ps1, build/doctor --windows, media/html_card.find_edge, core/supportbundle.redact_private_text, windows-ci install-smoke |
+| 38 | 2026-07-13 | Windows wave 3 + gate rounds: xmeml, filtergraph escaping, annotations | exporters/xmeml.py, media/render._escape_filter_path, core locks (recents/library/failures), providers/local_cmd split, media/card find_font, board annotations (review.annotation/v1), ffmpeg 6.1.1 |
+| 39 | 2026-07-13 | Windows hard gate GREEN: runs #5–#7, terminal verdict | qc/agent_review.py lock, media/ffmpeg _taskkill_tree, auto-agent harness, windows-ci (green), CLAUDE.md Windows lessons |
+| 40 | 2026-07-13 | Windows wave 4: opt-in colour minimal closed loop | core/models ColorSpec, media/render, media/normalize (zscale), technical_profile, qc/colorstats, build/doctor |
+| 41 | 2026-07-13 | Windows wave 5: archive hardening, hw-encode facts; C2PA rejected | manju cli pack/unpack, core.idents, media/ffmpeg (HW_ENCODER_CANDIDATES / eligibility), core/toolchain manifest, build/doctor hw row |
+| 41a | 2026-07-13 | W5 gate verdict addendum: run #11's three failures fixed | record (gate verdict) — test_mcp self-contained, pack casefold capability probe, CI green both platforms |
+
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
 Design (v2.2 §13 M1, decision 8) named pyJianYingDraft primary and
@@ -87,7 +137,9 @@ instead.
 
 <!-- From the parallel R-line (merged in round R): -->
 
-## 5. The GUI ships now, as a pure client (§1-⑦ deferral revisited)
+## 5b. The GUI ships now, as a pure client (§1-⑦ deferral revisited)
+
+(Renumbered from a duplicate '## 5.' — short citations were ambiguous; nothing cited this entry by bare number.)
 
 Design (§1-⑦) postponed a workbench GUI indefinitely: the static review board
 covered ~80% of the value at ~1/20 of the cost. As built (user-directed
@@ -101,7 +153,9 @@ avoided. The MCP dangerous-surface rule carries over verbatim: no `unlock`,
 no `gc --hard`, no `pack`/`unpack`, no arbitrary-path `import` over HTTP (§5,
 §11). The static board remains for offline/share use.
 
-## 6. ask_before becomes an engine gate, not just agent discipline (§8.3)
+## 6b. ask_before becomes an engine gate, not just agent discipline (§8.3)
+
+(Renumbered from a duplicate '## 6.' — same reason as 5b.)
 
 Design (§8.3, §10) made the agent's discipline the first spending gate:
 SKILL.md orders a stop-and-ask when a plan hits `ask_before`, and the engine
@@ -1890,3 +1944,66 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   (a5c2fa3); docstring escape-sequence DeprecationWarnings killed (597886c).
 - Verdict on a5c2fa3: **ubuntu CI green + Windows CI green** — the W5 wave
   and the plan close-out stand verified on both platforms.
+
+## 42. UX program: the three-axis usability audit + waves A-E (2026-07-13)
+
+- Mandate: the owner asked for a sustained usability/experience optimization
+  pass across three axes — the owner's daily experience, a future AI
+  session's effectiveness, and the project's own health. Method: 7 read-only
+  auditors over disjoint dimensions (CLI, cold-start, GUI/board, AI-DX,
+  Windows real-usage, docs truth, test health), every finding evidence-cited
+  (file:line or captured live output); 3 lens rankers (owner-value / ai-dx /
+  risk-maintenance) scored all 46 findings. Ranked backlog + disposition:
+  REPORTS/UX_AUDIT_2026-07-13.md (raw JSON preserved in the session).
+- Wave A (verified owner-facing defects, all red-first): status traceback on
+  hand-edited YAML + the broken --json error contract (truth_parse_error);
+  new-on-existing traceback; unpack/fixity BadZipFile traceback at the
+  disaster-recovery moment (bad_archive); nt stdout/stderr UTF-8 hardening
+  (doctor's ✓/✗/⚠/• died on GBK redirects; launcher now sets PYTHONUTF8=1);
+  Windows-pasteable repro command lines (list2cmdline on nt, POSIX
+  byte-identical); /review CAS-token refresh (the owner's second action on a
+  card was always refused 409 by their own save); the g/x keyboard hint
+  named the wrong state machine.
+- Wave B (AI-DX): CLAUDE.md gains the dev-loop commands, the STANDING
+  GREP-PINS block (comment literals trip raw-source scans — four recorded
+  burns — with exact test ids + the union-batch rule), an OWNERS map, and a
+  self-contained maintenance gate. DECISIONS gains a 44-row index and the
+  duplicate '## 5.'/'## 6.' became 5b/6b; PROGRESS.md tombstoned (frozen
+  2026-07-09 — its header still ordered sessions to fork the record).
+- Wave C (docs truth + signposts): README gains 中文速览, a Windows 快速开始
+  (installer scripts + choco ffmpeg 6.1.1 provenance + doctor --windows),
+  a Windows-real import example, 19 missing command rows (gui/watch/spend/
+  perf/evaluate/schema/unpack/... — drift was structurally invisible), the
+  --xmeml/--capcut export mentions, three W2/W3/W5 feature one-liners, and
+  the stale '14-skill' count replaced by a countless phrase. manju new now
+  bridges to cd/status/funnel; the funnel hint names `manju create <stage>`
+  (was circular); export --help documents --srt's ride-alongs; the missing-
+  ffmpeg hint steers to the PINNED 6.1.1 (ffmpeg.org is 8.x — the exact skew
+  class the gate pins); SKILL.md export row + cheat-sheet token pin gain
+  --xmeml.
+- Wave D (GUI/board/installer): board banner viewport-fixed (failures while
+  scrolled deep looked like nothing happened); error toasts sticky with
+  click-dismiss (3.6s couldn't be read; successes keep auto-dismiss); HTML
+  404 with a way home for browser navigations on both servers (Accept-header
+  scoped — API JSON envelopes byte-identical); gc --hard refusal now
+  self-explains + names the agent-safe alternative (interactive_only);
+  doctor's sync advisory covers Dropbox/坚果云/Nutstore/百度网盘, casefolded
+  (was OneDrive-only, case-sensitive); install-manju.ps1 names the failing
+  step (Store-alias python probe, venv, pip — each $LASTEXITCODE-checked)
+  and the catch prints the log path.
+- Wave E (Windows correctness, repo-wide): all 21 subprocess text=True call
+  sites missing encoding= now decode UTF-8 with errors=replace (ANSI-codepage
+  decode mojibaked tesseract's Chinese OCR → false FAILs on text that IS on
+  screen, and garbled ffmpeg stderr tails in errors); a repo-wide source-scan
+  pin keeps the class extinct. test_c20b_corpus stops re-running the ~8s
+  calibration three times (module fixture reused; ~20s saved per run).
+- Also this interval: the ubuntu #226 / Windows #11 verdicts — the test_mcp
+  order-dependence flake (made self-contained), the two pack-side casefold
+  tests whose colliding tree cannot exist on NTFS (real capability probe),
+  the docstring escape-sequence DeprecationWarnings (raw-string). All landed
+  before this entry; gates green on a5c2fa3 (#41a).
+- Tests: tests/test_ux_polish.py (24 pins, red-first per behavior). Explicitly
+  NOT done (recorded): recents in the no-project error and the local_cmd
+  8191 preflight (both judged improvement-not-defect / speculative under the
+  maintenance gate by the risk lens); wholesale message translation (pinned
+  strings, low value against the already-Chinese-first runtime surfaces).

@@ -163,7 +163,7 @@ def color_metadata(media_path: str | Path) -> dict[str, str]:
              "-show_entries",
              "stream=color_space,color_transfer,color_primaries,color_range,codec_name",
              "-of", "json", str(path)],
-            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_PROBE_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired):
         return fields
     if proc.returncode != 0:

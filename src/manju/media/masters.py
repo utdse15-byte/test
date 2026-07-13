@@ -212,7 +212,7 @@ def _render_bus(project: Project, clips: list[Any], duration_ms: int,
                    *inputs, "-filter_complex", graph, "-map", "[out]",
                    "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
                    "-ac", str(CHANNELS), str(tmp)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode != 0 or not tmp.exists():
             tail = "\n".join((proc.stderr or "").splitlines()[-8:])
             raise MastersError(f"bus render failed for {dest.name}:\n{tail}")
@@ -246,7 +246,7 @@ def _mix_files(sources: list[Path], duration_ms: int, dest: Path, *,
                    *inputs, "-filter_complex", graph, "-map", "[out]",
                    "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
                    "-ac", str(CHANNELS), str(tmp)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode != 0 or not tmp.exists():
             tail = "\n".join((proc.stderr or "").splitlines()[-8:])
             raise MastersError(f"mix failed for {dest.name}:\n{tail}")
@@ -271,7 +271,7 @@ def measure_loudness(path: Path) -> dict[str, Any]:
         proc = subprocess.run(
             [FFMPEG, "-hide_banner", "-nostats", "-i", str(path),
              "-af", "loudnorm=print_format=json", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         m = _LOUDNORM_JSON.search(proc.stderr or "")
         if m:
             data = json.loads(m.group(0))
@@ -285,7 +285,7 @@ def measure_loudness(path: Path) -> dict[str, Any]:
         proc = subprocess.run(
             [FFMPEG, "-hide_banner", "-nostats", "-i", str(path),
              "-af", "ebur128=peak=true", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         st = re.findall(r"S:\s*(-?\d+(?:\.\d+)?)", proc.stderr or "")
         vals = [float(x) for x in st if float(x) > -120.0]
         if vals:
@@ -303,7 +303,7 @@ def volume_stats(path: Path) -> dict[str, float | None]:
         proc = subprocess.run(
             [FFMPEG, "-hide_banner", "-nostats", "-i", str(path),
              "-af", "volumedetect", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         for key, tag in (("mean_volume", "mean_volume"), ("max_volume", "max_volume")):
             m = re.search(rf"{tag}:\s*(-?\d+(?:\.\d+)?) dB", proc.stderr or "")
             if m:
@@ -555,7 +555,7 @@ def render_masters(project: Project, timeline: Any, *,
                           f"atrim=duration={dur_s}",
                    "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
                    "-ac", str(CHANNELS), str(tmp)]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
             ok = proc.returncode == 0 and tmp.exists()
         if ok and ln.exists():
             loudnorm_master = {

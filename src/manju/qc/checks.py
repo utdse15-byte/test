@@ -101,7 +101,7 @@ def _ffprobe(path: Path) -> ProbeInfo | None:
                 "ffprobe", "-v", "error", "-print_format", "json",
                 "-show_format", "-show_streams", str(path),
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
     except Exception:
         return None
@@ -957,7 +957,7 @@ def _deep_detectors(report, final: Path) -> None:
             ["ffmpeg", "-hide_banner", "-i", str(final),
              "-vf", f"blackdetect=d={_BLACKDETECT_D}:pix_th=0.10",
              "-an", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
         )
         if "black_start" in proc.stderr:
             spans = re.findall(r"black_start:(\S+)\s+black_end:(\S+)", proc.stderr)
@@ -974,7 +974,7 @@ def _deep_detectors(report, final: Path) -> None:
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-i", str(final),
              "-af", "volumedetect", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
         )
         m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", proc.stderr)
         if m and float(m.group(1)) < _SILENCE_DB:

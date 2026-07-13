@@ -288,7 +288,7 @@ def _manju_version() -> str:
     try:
         out = subprocess.run(
             ["git", "describe", "--tags", "--always"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
         described = (out.stdout or "").strip()
         if out.returncode == 0 and described:
@@ -306,7 +306,7 @@ def _tool_version(name: str) -> str:
         return "missing"
     try:
         out = subprocess.run(
-            [exe, "-version"], capture_output=True, text=True, timeout=10,
+            [exe, "-version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
         return "missing"

@@ -116,7 +116,7 @@ def _manju_version() -> str:
     try:
         out = subprocess.run(
             ["git", "describe", "--tags", "--always"],
-            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_GIT_TIMEOUT_S,
         )
         described = (out.stdout or "").strip()
         if out.returncode == 0 and described:

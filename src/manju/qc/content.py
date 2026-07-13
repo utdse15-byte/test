@@ -100,7 +100,7 @@ def sample_frames(media: Path, dest_dir: Path, *, count: int = 3) -> list[Path]:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=nw=1:nk=1", str(media)],
-            capture_output=True, text=True, check=True, timeout=_PROBE_TIMEOUT_S,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, timeout=_PROBE_TIMEOUT_S,
         ).stdout.strip()
         duration = float(out)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError):
@@ -132,7 +132,7 @@ def ocr_frame(frame: Path) -> str | None:
     try:
         proc = subprocess.run(
             ["tesseract", str(frame), "stdout", "-l", "chi_sim+eng", "--psm", "6"],
-            capture_output=True, text=True, timeout=_OCR_TIMEOUT_S,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_OCR_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
         return None
@@ -170,7 +170,7 @@ def _detect(media: Path, filter_expr: str, marker: str) -> bool | None:
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-i", str(media), "-vf", filter_expr,
              "-an", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=_DETECT_TIMEOUT_S,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_DETECT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
         return None

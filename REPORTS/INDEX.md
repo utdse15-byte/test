@@ -67,3 +67,4 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `WINDOWS_WAVE_4_COMPLETION.md` | W4 colour loop — tags, declared transform, HDR advisory | #40 |
 | `WINDOWS_WAVE_5_BASELINE.md` | W5 close-out — audit + smuggle/LISTED≠VERIFIED evidence | #41 |
 | `WINDOWS_WAVE_5_COMPLETION.md` | W5 archive hardening, hw-encode facts, bench; C2PA rejected | #41 |
+| `UX_AUDIT_2026-07-13.md` | three-axis usability audit — ranked backlog + disposition | #42 |

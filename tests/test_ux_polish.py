@@ -319,3 +319,151 @@ def test_review_page_rev_refresh_and_honest_key_hint(gui, tmp_project, add_shot,
     js = urllib.request.urlopen(
         f"http://127.0.0.1:{gui.port}/pages.js", timeout=15).read().decode("utf-8")
     assert 'setAttribute("data-rev"' in js  # the JS refresh exists
+
+
+# ---------------------------------------- wave D: board/GUI/doctor/installer
+
+
+def test_gc_hard_refusal_explains_and_offers_the_alternative(tmp_project, monkeypatch):
+    """F6: the non-tty refusal was a bare English token while sibling unlock
+    explains itself — agents (the stated collaboration surface) need the
+    branchable code and the safe alternative."""
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["gc", "--hard"])
+    assert res.exit_code == 1
+    combined = res.output + (res.stderr or "")
+    assert "interactive-only" in combined
+    assert "manju gc" in combined  # the agent-safe alternative is named
+
+
+def test_sync_dir_marker_covers_the_clients_the_owner_actually_uses():
+    """F33: OneDrive-only, case-sensitive detection missed Dropbox and the
+    China-common clients; the marker helper is pure and covers them all."""
+    from manju.build.doctor import _sync_dir_marker
+
+    assert _sync_dir_marker(r"C:\Users\o\OneDrive\项目.manju", {}) == "OneDrive"
+    assert _sync_dir_marker(r"C:\Users\o\onedrive\项目.manju", {}) == "OneDrive"
+    assert _sync_dir_marker(r"D:\Dropbox\项目.manju", {}) == "Dropbox"
+    assert _sync_dir_marker(r"D:\坚果云\项目.manju", {}) == "坚果云"
+    assert _sync_dir_marker(r"D:\Nutstore\项目.manju", {}) == "Nutstore"
+    assert _sync_dir_marker(r"E:\百度网盘同步\项目.manju", {}) == "百度网盘"
+    assert _sync_dir_marker(r"C:\普通目录\项目.manju", {}) is None
+    # the env-var detection stays (OneDrive envs point at the sync root)
+    assert _sync_dir_marker(r"C:\X\项目.manju",
+                            {"OneDrive": r"C:\X"}) == "OneDrive"
+
+
+def test_unknown_url_serves_html_404_for_browsers_json_for_apis(
+        gui, tmp_project):
+    """F21: a mistyped/stale URL dead-ended in bare JSON with no way back.
+    Browser navigations (Accept: text/html) now get a small page with a link
+    home; API fetches keep the exact JSON envelope."""
+    base = f"http://127.0.0.1:{gui.port}"
+    req = urllib.request.Request(base + "/nonexistent-page")
+    req.add_header("Accept", "text/html,application/xhtml+xml")
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        raise AssertionError("expected 404")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 404
+        body = exc.read().decode("utf-8")
+        assert "text/html" in exc.headers.get("Content-Type", "")
+        assert 'href="/"' in body and "页面不存在" in body
+
+    req = urllib.request.Request(base + "/nonexistent-api")
+    req.add_header("Accept", "application/json")
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        raise AssertionError("expected 404")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 404
+        assert json.loads(exc.read())["error"] == "not found"
+
+
+def test_board_serve_404_html_for_browsers(tmp_project):
+    from manju.board.server import make_server
+
+    server = make_server(tmp_project, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_address[1]}/stale-bookmark")
+        req.add_header("Accept", "text/html")
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            raise AssertionError("expected 404")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+            assert "页面不存在" in exc.read().decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_error_toasts_are_sticky_and_success_toasts_still_autodismiss():
+    """F20: 3.6-second auto-dismiss made long English engine errors
+    unreadable; error toasts now stay until clicked (✕), successes keep the
+    quick dismiss. Source-level pin on the one shared toast()."""
+    from manju.gui.common_js import COMMON_JS
+
+    assert "ok === false" in COMMON_JS
+    # the error branch must NOT ride the same unconditional 3600ms removal
+    body = COMMON_JS.split("function toast(")[1]
+    assert "click" in body  # click-to-dismiss exists
+    assert "3600" in body   # the success path keeps the quick dismiss
+
+
+def test_board_banner_is_viewport_fixed():
+    """F15: the serve-mode banner sat in normal flow at the top of the page —
+    a failed action while scrolled deep played out as 'nothing happened'."""
+    from manju.board.board import _SERVE_CSS
+
+    banner_css = _SERVE_CSS.split(".mj-banner {")[1].split("}")[0]
+    assert "fixed" in banner_css or "sticky" in banner_css
+    assert "z-index" in banner_css
+
+
+def test_installer_names_the_failing_step():
+    """F31: the three likeliest install failures (Store-alias python, venv,
+    pip) died pointing away from the cause; the script now checks each step
+    and the catch names the log. Property pins, no execution."""
+    src = Path("scripts/windows/install-manju.ps1").read_text(encoding="utf-8")
+    assert "Store" in src              # the App-Execution-Alias trap is named
+    assert "venv creation failed" in src
+    assert "pip install failed" in src
+    assert src.count("$LASTEXITCODE") >= 4  # version probe + venv + pip + self-test
+
+
+def test_every_text_subprocess_decode_declares_utf8():
+    """F29 (repo-wide pin): on Windows, ``text=True`` without ``encoding=``
+    decodes child output with the ANSI codepage (cp936) — tesseract's UTF-8
+    stdout mojibakes and `token in text` QC checks falsely FAIL for text that
+    IS on screen; ffmpeg stderr tails ride garbled into error messages. The
+    house pattern is ``encoding="utf-8", errors="replace"`` (gitops/ffmpeg/
+    probe already do it); this scan keeps the class extinct."""
+    import re
+
+    src_root = Path(__file__).resolve().parent.parent / "src" / "manju"
+    offenders: list[str] = []
+    for py in sorted(src_root.rglob("*.py")):
+        src = py.read_text(encoding="utf-8")
+        for m in re.finditer(
+                r"(?:subprocess\.(?:run|Popen|check_output|check_call|call))\s*\(", src):
+            start, depth = m.end() - 1, 0
+            for i in range(start, min(len(src), start + 2500)):
+                if src[i] == "(":
+                    depth += 1
+                elif src[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        span = src[start:i + 1]
+                        break
+            else:
+                continue
+            if (("text=True" in span or "universal_newlines=True" in span)
+                    and "encoding=" not in span):
+                offenders.append(f"{py.relative_to(src_root)}:{src[:m.start()].count(chr(10)) + 1}")
+    assert offenders == [], (
+        "text=True without encoding= decodes with the ANSI codepage on "
+        f"Windows — add encoding='utf-8', errors='replace': {offenders}")

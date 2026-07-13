@@ -50,8 +50,17 @@ function toast(msg, ok) {
   var el = document.createElement("div");
   el.className = "toast-item " + (ok === false ? "bad" : "good");
   el.textContent = msg;
+  /* UX audit F20: errors are often long engine sentences — 3.6 s was not
+   * enough to read one, and nothing durable remained. Errors now stay until
+   * clicked (dismiss affordance); successes keep the quick auto-dismiss. */
+  if (ok === false) {
+    el.textContent = msg + "  ✕";
+    el.style.cursor = "pointer";
+    el.addEventListener("click", function () { el.remove(); });
+  } else {
+    setTimeout(function () { el.remove(); }, 3600);
+  }
   t.appendChild(el);
-  setTimeout(function () { el.remove(); }, 3600);
 }
 """
 

@@ -7181,7 +7181,11 @@ def gc(hard: bool = typer.Option(False, "--hard"),
     removes unselected takes. imports/ and final/ are NEVER touched (§14)."""
     project = _project()
     if hard and not _interactive():
-        _fail("gc --hard is interactive-only")
+        # UX audit F6: match sibling unlock's self-explaining refusal — the
+        # bare token gave an agent nothing to branch on and no alternative.
+        _fail("gc --hard is interactive-only: run it yourself in a terminal "
+              "(§5,会删除未选中 take 的媒体本体)。无 tty 时可先跑 `manju gc`"
+              "(仅清可重建缓存/代理,不碰任何 take)", code="interactive_only")
     do_hard = hard and typer.confirm(
         "删除所有未选中的 take 媒体本体?(选中、imports、final 不受影响)"
     )

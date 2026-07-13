@@ -4,6 +4,19 @@
 > Windows 11 x64 是第一平台(硬门禁 `windows-ci.yml`),详见 `CLAUDE.md` 与
 > DECISIONS #36-#38。
 
+## 中文速览(店主日常)
+
+店主日常六个命令,顺着走即可:
+
+- `manju new` —— 新建项目(自动 git init)
+- `manju import` —— 登记自己的素材(只读,永不改原件)
+- `manju check` —— 校验 schema / 引用 / 锁 / 密钥,过不了不给 build
+- `manju build` —— 一条命令:编译时间线 → 渲染 → 质检 → 导出
+- `manju select` —— 给镜头定 take(或一段手动素材)
+- `manju exports` —— 导出中心:九种交付物的状态一览
+
+拿不准下一步就 `manju status`(当前阶段 + 下一步),或 `manju help-workflow`(任务式工作流导航);偏好点击操作用 `manju gui`,审片用 `manju board --serve`,环境体检用 `manju doctor`。详细工作流已内建 —— 例如 `manju help-workflow new-project`。
+
 **A deterministic build system for video.** Not an "editor with AI bolted on" — a
 compiler. Think `make` / `ninja`: source files compile into derived artifacts,
 staleness is decided by content hashes, unchanged work is cached, and every
@@ -97,6 +110,24 @@ Everything else rests on these three invariants:
    reconstructs it from text + media. Backing up a project = copying the folder
    (or `manju pack`). There is no hidden state.
 
+## Windows 快速开始
+
+Windows 11 x64 是第一平台;全程 per-user、无需管理员。
+
+1. **装 Python 3.11+** —— 从 python.org 下载 per-user 安装包,勾选 **Add Python
+   to PATH**。
+2. **拉仓库** —— `git clone` 本仓库到任意目录。
+3. **装 Manju** —— `powershell -ExecutionPolicy Bypass -File scripts\windows\install-manju.ps1 -AddToPath`。
+   per-user、免管理员、**先自检后原子切换**,失败绝不影响现有版本;装进
+   `%LOCALAPPDATA%\Manju`,`-AddToPath` 只改**用户** PATH。更新用
+   `update-manju.ps1`,回滚上一版用 `update-manju.ps1 -Rollback`,卸载用
+   `uninstall-manju.ps1`(只删 App,绝不碰任何 `*.manju` 项目与 `~/.manju` 配置)。
+4. **装 ffmpeg** —— `choco install ffmpeg --version=6.1.1`,必须与验证套件**完全同版**:
+   ffmpeg.org 的 8.x 会偏移 ffprobe 的色彩标签,已被硬门禁实测。
+5. **体检环境** —— `manju doctor --windows` 验证 ffmpeg/字体/磁盘/项目 + Windows 环境行
+   (长路径策略、NTFS、网络盘、OneDrive、配置可写性、Edge/Chrome、安装模式)。
+6. **偏好点击操作** —— `manju gui`,浏览器工作台(与 CLI/MCP 同一引擎核)。
+
 ## Quickstart
 
 ```bash
@@ -105,8 +136,10 @@ pip install -e .                      # Python 3.11+, pulls pydantic v2 / typer 
 manju new 雨夜便利店 --vertical         # scaffold a 1080×1920 project (auto git init)
 cd 雨夜便利店.manju
 
-# drop your own clips in — imports are read-only and always usable
-manju import ~/clips/*.mp4
+# drop your own clips in — imports are read-only and always usable.
+# native exe 不做 glob/~ 展开:直接给具体路径(Windows 亦然)。
+manju import clips/开场.mp4 clips/雨夜.mp4
+# PowerShell 通配符:manju import (Get-Item ~\clips\*.mp4)
 
 # write shots (shots/S001.yaml …) referencing Bible entries AND list them in
 # shots/index.yaml (index order is the one order authority) — the guided
@@ -143,7 +176,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju tasks attach-remote-job <submission_id> <remote_job_id> [--expected-state]` | DR06 | HONEST recovery for an UNKNOWN/DISPATCHING submission once you have confirmed the remote job ran: appends an ADMITTED evidence event under the SAME submission_id, updates the projection, then poll-only on the next build — never resubmits, never claims verified ownership (you asserted it) |
 | `manju tasks abandon <submission_id> --reason … [--expected-state]` | DR06 | abandon an unresolved submission → ABANDONED_BY_USER, accepting duplicate-risk EXPLICITLY (records the reason + risk acceptance on the evidence chain); history preserved, a new submission_id is only minted by the next explicit redo/build |
 | `manju tasks manifest <run_id> [--json]` | DR03C | re-materialize + print `reports/runs/<run_id>/run.json` — the derived RunManifest projected from the run's stage_attempt events (command/target/mode, stages, costs, failures, final outputs); deletable, never a build/resume/cache input |
-| `manju export --jianying --srt --otio` | M0/M1 | JianYing draft / captions / OTIO |
+| `manju export --jianying --capcut --srt --otio` | M0/M1 | JianYing / CapCut draft · captions · OTIO |
 | `manju board [--serve] [--port]` | M0/P2 | review board: static HTML, or a live actionable workspace with --serve |
 | `manju package [--json] [--force]` | M4 | cover + teaser cut from the current final (`exports/packaging/`) |
 | `manju history [-n] [--json]` | P2 | merged change feed: events + git log, actor-attributed |
@@ -169,7 +202,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju routing explain [<shot>] [--mode]` | U | per-shot: chosen provider, why (explicit/rule/tier/fallback), full order, est cost |
 | `manju exports [--json] [--baseline] [--approve-baseline …] [--profile ID --manifest\|--bundle [--metadata F] [--output …]]` | U/07C/13C | 导出中心 status: 9 deliverables × 上新/待更新/缺失/有问题/待人工确认 + human verification log; `--json` now carries the additive `release_assessment` (blockers/ready/regression review/next safe actions from ToolPolicy); baseline approval is a human-only append-only event binding the final's exact bytes; `--manifest` derives the manju.delivery-manifest/v1 (variant/NLE/localization/credential-free platform-handoff facts — never a build input), `--bundle` packs exactly the manifest's files + SHA256SUMS into a byte-deterministic, path-safe, atomic zip (distinct from `manju pack`) |
 | `manju director propose/confirm/run/suggest [--json]` | U | the six-step AI-director contract: propose → cost → confirm → execute → diff → next |
-| `manju skills [show <id>] [--json]` | V | the 14-skill expertise library: index cheap, full text on demand (project > user > bundled) |
+| `manju skills [show <id>] [--json]` | V | the bundled expertise library (index via `manju skills`): index cheap, full text on demand (project > user > bundled) |
 | `manju create [brief\|synopsis\|beats] [--force]` | V | the creation funnel: 立意→梗概→节拍→剧本→分镜→计划→生成 checklist + guided scaffolds |
 | `manju series new/new-episode/status/sync-bible/characters/split-script` | V | multi-episode umbrella: episodes are normal projects; global bible with conservative explicit sync |
 | `manju qc brief / qc verdict --from-file` | V | agent-eyes visual QC: frames+context out, hash-bound [AI判读] findings back into run_qc |
@@ -177,9 +210,9 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju qc brief --mode consistency / qc coverage` | X | cross-shot consistency briefs (contact sheets, pair boards) + review coverage tracking |
 | `manju tasks cancel/retry <id>` | X | retry failed ledger runs; cancel is GUI-native (running jobs cancel cooperatively, ffmpeg killed) |
 | `manju import --on-duplicate skip\|import\|link` | X | import dedup against the private library with reuse suggestions |
-| `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`); `pack --bagit` writes an RFC 8493 serialized bag instead (`data/` payload + BagIt manifests as the ONE fixity authority in that mode — deterministic bag-info, no Bagging-Date, stated in the restore note), auto-detected by `unpack`/`fixity` with the same remove-on-mismatch discipline |
+| `manju pack / unpack` | M0 | single-file archive round-trip (`.manjupkg`); `pack --bagit` writes an RFC 8493 serialized bag instead (`data/` payload + BagIt manifests as the ONE fixity authority in that mode — deterministic bag-info, no Bagging-Date, stated in the restore note), auto-detected by `unpack`/`fixity` with the same remove-on-mismatch discipline; warns (never blocks) on Windows-unportable names and casefold collisions |
 | `manju events` | M0 | collaboration log |
-| `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project) |
+| `manju doctor` | M0 | environment probes (ffmpeg/fonts/disk/project)(Windows 行在 Windows 主机自动开启,或 --windows 强制) |
 | `manju gc [--hard]` | M0 | tiered cleanup (never touches imports/final; `--hard` is interactive-only) |
 | `manju rebuild-index` | M0/M2 | rebuild `.manju/` runtime (incl. the run ledger) from text + media |
 | `manju propose <title> --body …` | M2 | file a proposal — the agent's channel for locked-content changes |
@@ -207,8 +240,27 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju qc captions [--json\|--write]` | FP | caption accessibility advisories (`manju.caption-accessibility/v1`): CJK-aware CPS (UAX#11 wide=2), line length/count, duration floors, gaps/overlaps, forced-vs-nonforced, role coverage — **advisory only**, never blocks, always exits 0; optional cue `role` vocabulary flows into ASS Name + delivery rows, role-less projects stay byte-identical |
 | `manju migrate inspect/plan/apply/downgrade` | R | the registry-declared `fps int → rational edit_rate` migration, now REAL: zero-write inspect (NTSC-neighbor candidates, never auto-chosen; honest cached-segment rebuild forecast), CAS plan/apply touching ONLY project.yaml (no auto-commit — the revert command is printed), downgrade refused without `--acknowledge-loss` (structured loss rows) |
 | `manju export --ttml` / `--edl` | S | IMSC1 caption writer (roles via `ttm:*` + verbatim `x-manju:role`; positioning/RTL/vertical honestly out of scope) and CMX3600 EDL writer (FCM DROP/NON-DROP via `core/timebase`, zero-based source TC for generated media stated honestly, dissolve-family only — never a wrong dissolve); both conform-loss-classified |
-| `manju export --fcpxml` | T | FCPXML 1.9 video spine — the one NLE exit where rational time rides natively (`frameDuration="1001/24000s"` exact, times never reduced, zero drift for int AND 1001-family projects); native cross-dissolves with FCP overlap geometry, everything else a cut + in-band note; captions ride `--srt`/`--ttml`, audio honestly deferred; conform-loss-classified |
+| `manju export --fcpxml` | T | FCPXML 1.9 video spine — the one NLE exit where rational time rides natively (`frameDuration="1001/24000s"` exact, times never reduced, zero drift for int AND 1001-family projects); native cross-dissolves with FCP overlap geometry, everything else a cut + in-band note; captions ride `--srt`/`--ttml`, audio honestly deferred; conform-loss-classified. Sibling `manju export --xmeml`:W3 §5.2 的 Premiere/Resolve XMEML v4 时间线(timebase+ntsc 有理帧率、linked A/V、cross dissolve;语义损失见 conform-loss) |
 | `manju fixity PACK [--info]` | S | archive verify without extracting (streamed, header-blind); packs now self-describe with fixity-covered `MANJU_RESTORE.txt` + engine-registry & toolchain snapshots (omitted honestly when unavailable — never fabricated), all dropped from verified restores |
+| `manju gui [--workspace DIR] [--readonly] [--port]` | X | 浏览器工作台:与 CLI/MCP 同一引擎核,truth 仍在文本,危险操作(unlock/gc --hard)同样缺席;项目外自动给出工作区选择器。GUI 能做什么、刻意不做什么见 `docs/WORKBENCH.md`(上手另见 `docs/GUI.md`) |
+| `manju watch [--once] [--interval S]` | — | dev loop:truth 一变就重跑 `manju check`,只读、只 stat 文件,绝不与 build / `manju board --serve` 抢锁 |
+| `manju spend [--json]` | — | 花费视图(§8.3 事后逐笔记账):按供应商/镜头/最近运行拆分 + 估算vs实际差额;读同一份可丢弃 run ledger,ledger 没了退回 take sidecar |
+| `manju perf [RUN_ID] [--json]` | — | 运行性能报告(只读派生视图):每阶段耗时、缓存命中率、provider vs 本地耗时、成本合计、最慢阶段;无源数据的指标诚实标 unavailable,从不估算 |
+| `manju evaluate [--json]` | AA | 技能/工作流的诚实用量评估:技能实际被读取次数、redo/repair 的镜头级返工热点、AI QC 判读分布;只读,从不编造生产率数字 |
+| `manju schema [--out DIR]` | M0 | 导出每个 truth-file 模型的 JSON Schema(§4/§12) |
+| `manju unpack ARCHIVE [--dest DIR]` | M0 | 还原一个 .manjupkg:默认恢复目录取归档文件名(经消毒),从不信任 zip 注释里的路径;损坏/半拷贝的包给一行干净提示 |
+| `manju unlock SHOT FIELD` | M0 | 解锁一个字段:仅交互式终端 + 二次确认,永不经 MCP 暴露(§5);AI 请改写 proposal |
+| `manju segments REPORT [--json]` | WP2 | 从媒体分析证据派生连贯的 A/V 段落(只读) |
+| `manju rough-cut ALIGN [--json]` | WP5a | 只加注的口播粗剪提案:从不删除、可逆、从不碰 Timeline;基于词/说话人对齐证据 |
+| `manju reframe REPORT --source WxH --target WxH` | WP4 | 把 ROI 轨编译成裁剪关键帧(只读):限速、安全区感知,多主体→needs_manual,不可行→留黑 |
+| `manju ingest-batches [--json]` | AA | 列出已入库批次(新→旧),每批附评审状态计数 |
+| `manju ingest-review BATCH [--json]` | AA | 查看一个入库批次的逐项评审状态(index/name/action/target/match/review/note) |
+| `manju ingest-confirm BATCH [--item N] [--all-matched]` | AA | 确认一个/多个批次条目 —— 标记为人工已核实无误 |
+| `manju ingest-flag BATCH [--item N]` | AA | 标记一个/多个批次条目为需人工再看(不改动任何已落地文件) |
+| `manju ingest-discard BATCH [--item N]` | AA | 撤销一个/多个批次条目的评审状态;若曾自动选用 take 且此后未再选择,一并撤销该次自动选用(不删素材,§3) |
+| `manju bridge plan/run/adopt` | 14–21 | 生成式转场 bridge(同一服务 + Provider 层准入门):plan 绑定两端帧+时长,run 经门执行成 CANDIDATE take,adopt 消费已评审 Assurance 产出零写入采纳提案 |
+| `manju edl import-plan FILE [--target DIR]` | FP | CMX3600 EDL 互换适配器:只读 import-plan,只规划不落盘(从不拷贝媒体、从不写项目);写出口仍是 `manju export --edl` |
+| `manju fcpxml import-plan FILE [--target DIR]` | FP | FCPXML 互换适配器:只读 import-plan,只规划不落盘;外部素材记为 needs_relink;写出口仍是 `manju export --fcpxml` |
 
 **Rational edit rate (R-track)**: a project may declare `edit_rate: {num: 24000, den: 1001}` (fps stays the legacy int mirror; one truth, validated). Rational projects compile on an exact cumulative-boundary frame grid (total drift ≤½ms at any length — vs ~172 frames per 2h under naive per-clip rounding), render at native `-r 24000/1001` (verified on real output), carry distinct cache keys, and export integer frame values to OTIO/EDL (conform-loss drift reports `all_zero` **by construction**). Every int-fps project stays byte-identical everywhere — timelines, keys, renders, exports (pinned). Opt-in toolchain cache keys: `cache_toolchain_keys: [ffmpeg, fonts]` (only byte-affecting facts allowed; anything else is rejected at validation so irrelevant drift can never cause meaningless rebuilds). A Windows/macOS **informational** CI matrix (`xplat.yml`, allow-fail) watches the OS-portable layers; the ubuntu gate is unchanged.
 
@@ -367,6 +419,8 @@ localhost — a thin veneer over the same core functions the CLI calls:
   打包 / 快照 from the header, with a busy overlay while a build runs;
 - every click records the same event the CLI would (actor from
   `MANJU_ACTOR`, default human);
+- per-take 评审批注:severity chips、click-to-seek(点批注跳到该时间码)、
+  媒体一换就自动标 STALE;
 - the dangerous surface (`unlock`, `gc`, `pack`) is NOT reachable from the
   browser, exactly like the MCP server; media paths are traversal-guarded;
   binds 127.0.0.1 by default — a personal workspace, not a hosted product.
