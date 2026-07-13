@@ -1759,3 +1759,36 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - Suite: 4169 → 4269 passed / 1 skipped / 0 failed (100 new tests, zero
   regressions). ubuntu gate green throughout (one pre-existing
   render-clock byte-pin flake frozen in 4d1668a).
+
+## 39. WINDOWS gate GREEN: runs #5-#7, rounds 3b-4, terminal verdict (2026-07-13)
+
+- **The Windows hard gate is green.** Run #7 (commit `d2cfff7`, actions run
+  29258059991, 2026-07-13T14:39Z): full suite on windows-latest — **0 failed**,
+  plus `install-smoke` green (install → launcher `--version` → update →
+  rollback → uninstall, CJK-named project preserved). Toolchain exactly as
+  pinned in W1: choco ffmpeg 6.1.1 (the ubuntu apt version), PYTHONUTF8=1,
+  full extras, `pytest -n auto`, no skip-as-green.
+- Trajectory (each run's residue became the next round's red evidence, per
+  the plan's iterative discipline): #1 76F/35E → #3 41F/9E → #4 7F → #5 5F →
+  #6 2F → #7 0F.
+- Round 3b (`6f8c5f6`, from run #5's evidence): the dr02 lost-verdict mystery
+  was NOT the msvcrt lock (the 12-thread probe PASSED on the real host) but a
+  SECOND unserialized appender in `qc/agent_review.py` (the v2 batch path) —
+  now under the same events-coordinator lock, fail-closed. Full-duration
+  cancels: a Chocolatey shim spawns the real ffmpeg as a CHILD, so
+  `taskkill /T` must run BEFORE terminate() — killing the shim first orphans
+  the grandchild beyond /T's reach (`_taskkill_tree` in media/ffmpeg.py,
+  cancel AND timeout branches).
+- Round 4 (`d2cfff7`, from run #6's evidence): the auto-agent fake `.cmd`
+  died on cmd.exe's 8191-character command-line cap (the composed playbook
+  prompt exceeds it by design); the fake agent is now a python script invoked
+  as `{sys.executable} fake.py {prompt}` — CreateProcess runs it directly
+  (32K argv cap), byte-identical on both platforms, zero skips.
+- Windows-only lessons now encoded as pins/comments (also in CLAUDE.md):
+  CRT byte locks don't exclude same-process threads (per-name threading.Lock
+  pairs them); choco shims parent the real exe (tree-kill first); cmd.exe
+  8191 cap (don't route long argv through .cmd); PS5.1 UTF-8 BOM corrupts
+  `set /p` pointer reads (ASCII pointers); NTFS casefold moves `sorted(Path)`
+  (sort key=as_posix).
+- Suite at green: 4270 passed / 1 skipped / 0 failed on the authoring host;
+  ubuntu gate green throughout.

@@ -310,3 +310,19 @@ and the DECISIONS follow-up land in the docs commit).
 4. **The Windows font `winreg` read runs for the first time on the gate** — on
    the authoring host it is exercised only through env-redirected stores and a
    stubbed registry; casefold/NTFS nuances are unchanged from W1.
+
+## Gate verdict addendum (post-report, runs #4–#7)
+
+The report above was written before run #4 concluded; this addendum records
+the actual trajectory to green (details + per-round evidence in DECISIONS #38/#39):
+
+| Run | Triggering commit | Verdict | The next round's fix (informed by this run) |
+|---|---|---|---|
+| #4 | `597656a` (round 2) | 7 F | round 3 (`cce4e37`): `sorted(Path)` casefold on NTFS, `_snapshot` backslash keys, cp1252 reads (PYTHONUTF8 + explicit utf-8) |
+| #5 | `cce4e37` (round 3) | 5 F, install-smoke **green** | round 3b (`6f8c5f6`): the SECOND unserialized verdict appender; choco-shim tree kill (`taskkill /T` **before** terminate); the 12-thread probe acquitted the lock itself |
+| #6 | `6f8c5f6` (round 3b) | 2 F | round 4 (`d2cfff7`): `.cmd` fake agent died on cmd.exe's 8191-char command-line cap → python fake agents via `sys.executable` (CreateProcess 32K argv) |
+| #7 | `d2cfff7` (round 4) | **GREEN — 0 failed** (full suite + install-smoke, run 29258059991) | — terminal state |
+
+Risk item 3 above is hereby closed: **the Windows hard gate is green** on the
+exact pinned toolchain (windows-latest, choco ffmpeg 6.1.1, PYTHONUTF8=1,
+full suite, `-n auto`, no skips-as-green).
