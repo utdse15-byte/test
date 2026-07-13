@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -91,33 +92,25 @@ def test_auto_runs_fake_agent_with_playbook_and_ai_actor(tmp_project, tmp_path,
     """A fake agent script records its argv + env; auto must hand it the
     composed playbook prompt, MANJU_ACTOR=ai, and propagate its exit code."""
     record = tmp_path / "record.json"
-    # Windows gate round 3: a bare #!/bin/sh file is not executable there
-    # ('%1 is not a valid Win32 application') — the fake agent is a .cmd on
-    # nt so the PRIMARY platform gets real coverage, not a skip.
-    if os.name == "nt":
-        fake = tmp_path / "fakeagent.cmd"
-        fake.write_text(
-            "@echo off\r\n"
-            f"<nul set /p=\"%~1\" > \"{record}.prompt\"\r\n"
-            f"<nul set /p=\"%MANJU_ACTOR%\" > \"{record}.actor\"\r\n"
-            "exit /b 7\r\n",
-            encoding="utf-8",
-        )
-    else:
-        fake = tmp_path / "fakeagent"
-        fake.write_text(
-            "#!/bin/sh\n"
-            f"printf '%s' \"$1\" > {record}.prompt\n"
-            f"printf '%s' \"$MANJU_ACTOR\" > {record}.actor\n"
-            "exit 7\n",
-            encoding="utf-8",
-        )
-        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    # Windows gate rounds 3-4: a #!/bin/sh file is not executable on nt, and
+    # a .cmd dies on cmd.exe's 8191-char command-line cap (the composed
+    # playbook prompt is longer — run #6: 'The command line is too long').
+    # A python fake agent runs identically on BOTH platforms via CreateProcess
+    # (32K argv cap) — the primary platform gets real coverage, not a skip.
+    fake = tmp_path / "fakeagent.py"
+    fake.write_text(
+        "import os, sys\n"
+        f"open({str(record)!r} + '.prompt', 'w', encoding='utf-8').write(sys.argv[1])\n"
+        f"open({str(record)!r} + '.actor', 'w', encoding='utf-8')"
+        ".write(os.environ.get('MANJU_ACTOR', ''))\n"
+        "sys.exit(7)\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.chdir(tmp_project.root)
     monkeypatch.delenv("MANJU_AGENT", raising=False)
     result = runner.invoke(app, ["auto", "把第一镜重做一遍",
-                                 "--agent", f"{fake} {{prompt}}"])
+                                 "--agent", f"{sys.executable} {fake} {{prompt}}"])
     assert result.exit_code == 7  # the agent's exit code propagates
 
     prompt = (tmp_path / "record.json.prompt").read_text(encoding="utf-8")
@@ -130,7 +123,7 @@ def test_auto_runs_fake_agent_with_playbook_and_ai_actor(tmp_project, tmp_path,
         .strip().splitlines()[-1]
     )
     assert events["action"] == "auto"
-    assert events["detail"]["agent"] == str(fake)
+    assert events["detail"]["agent"] == sys.executable  # argv[0] of the template
 
 
 def test_auto_event_never_carries_the_full_prompt(tmp_project, tmp_path, monkeypatch):
@@ -139,13 +132,8 @@ def test_auto_event_never_carries_the_full_prompt(tmp_project, tmp_path, monkeyp
     A prompt with something secret-shaped in it must not leak into the log."""
     import hashlib
 
-    if os.name == "nt":
-        fake = tmp_path / "fakeagent2.cmd"
-        fake.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
-    else:
-        fake = tmp_path / "fakeagent2"
-        fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    fake = tmp_path / "fakeagent2.py"
+    fake.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_project.root)
     monkeypatch.delenv("MANJU_AGENT", raising=False)
@@ -158,7 +146,8 @@ def test_auto_event_never_carries_the_full_prompt(tmp_project, tmp_path, monkeyp
     secret_tail = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz"
     prompt = filler + " " + secret_tail
     assert prompt[:80].find(secret_tail) == -1  # sanity: secret is PAST char 80
-    result = runner.invoke(app, ["auto", prompt, "--agent", f"{fake} {{prompt}}"])
+    result = runner.invoke(app, ["auto", prompt,
+                                 "--agent", f"{sys.executable} {fake} {{prompt}}"])
     assert result.exit_code == 0
 
     raw_log = (tmp_project.root / "events.jsonl").read_text(encoding="utf-8")
