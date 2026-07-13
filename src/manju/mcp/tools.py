@@ -46,7 +46,19 @@ from . import policy as _P
 
 class ToolError(RuntimeError):
     """A tool-level failure. The server reports it as ``isError: true`` with a
-    ``{"error": <message>}`` payload (never a JSON-RPC-level error)."""
+    ``{"error": <message>, "code": <token>}`` payload (never a JSON-RPC-level
+    error). ``code`` (round-2 UX audit) is the stable machine token an agent
+    can branch on — the same contract the CLI's ``_fail`` documents; the
+    default ``"error"`` keeps every existing raise byte-compatible. ``payload``
+    (optional) is a FULL structured body for errors that carry evidence
+    (e.g. update_shot's rollback ships its check_errors), mirroring
+    :class:`AgentProfileDenied`."""
+
+    def __init__(self, message: str, *, code: str = "error",
+                 payload: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.payload = payload
 
 
 class AgentProfileDenied(ToolError):
@@ -292,10 +304,14 @@ def _h_update_shot(project: Project, args: dict) -> dict:
         new_errors = [e for e in after.errors if label in e and e not in before_errors]
         if new_errors:
             atomic_write_text(path, original_text)  # roll back the edit
-            return {
-                "error": f"edit rejected: it introduces check errors in {label}",
-                "check_errors": new_errors,
-            }
+            # Round-2 UX audit: RETURNING this dict stamped isError:false —
+            # an agent branching on the MCP-spec signal concluded the write
+            # landed when it was rolled back. A refusal RAISES, like every
+            # other refusal on this surface (locks, CAS, schema).
+            msg = f"edit rejected: it introduces check errors in {label}"
+            raise ToolError(msg, code="check_rejected",
+                            payload={"error": msg, "check_errors": new_errors,
+                                     "code": "check_rejected"})
 
     append_event(project.root, "ai", "mcp_update_shot", {"shot": shot_id})
     return {"ok": True, "check_warnings": after.warnings}
@@ -323,9 +339,21 @@ def _h_select_take(project: Project, args: dict) -> dict:
 
 
 def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -> dict:
+    # Round-2 UX audit (paid-safety): an unknown target fell through every
+    # phase branch — generation (spend=POSSIBLE) still ran and the requested
+    # phase was silently skipped. The CLI has guarded this exact hole forever;
+    # MCP was the one unguarded entrance. Validate against the tool's OWN
+    # advertised (byte-pinned) enum so wire contract and enforcement can
+    # never drift apart.
+    target = args.get("target", "final")
+    allowed = TOOLS["build"]["inputSchema"]["properties"]["target"]["enum"]
+    if target not in allowed:
+        raise ToolError(
+            f"unknown target: {target!r} — MCP build accepts {allowed}",
+            code="invalid_argument")
     return run_build(
         project,
-        target=args.get("target", "final"),
+        target=target,
         gen=args.get("gen", "missing"),
         regen_stale=bool(args.get("regen_stale", False)),
         dry_run=bool(args.get("dry_run", False)),
@@ -463,6 +491,12 @@ def _h_events(project: Project, args: dict) -> dict:
         n = int(n)
     except (TypeError, ValueError):
         n = 20
+    # Round-2 UX audit: n=0 dumped the ENTIRE unbounded log into one content
+    # text and a negative n hit the tail quirk. Clamp HERE only — the core
+    # tail_events semantics are pinned where they live (test_fp_events_tail).
+    if n <= 0:
+        n = 20
+    n = min(n, 1000)
     return {"events": tail_events(project.root, n)}
 
 
@@ -564,7 +598,10 @@ def _h_skill_show(project: Project, args: dict) -> dict:
     try:
         info = load_skill(project, skill_id)
     except KeyError as exc:
-        raise ToolError(str(exc)) from exc
+        # str(KeyError) is the repr of its message — the error used to arrive
+        # double-quoted on the wire (round-2 UX audit).
+        raise ToolError(exc.args[0] if exc.args else str(exc),
+                        code="not_found") from exc
     text = info.path.read_text(encoding="utf-8") if info.path else ""
     # round AA (goal item 8): content served over MCP is the same usage
     # signal core/evaluate.py reports on — best-effort, never blocks the show.
@@ -729,7 +766,9 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "build",
         "description": "One-command build: fill gaps → compile timeline → render → QC "
-        "→ exports. Never overturns an existing selection.",
+        "→ exports. Never overturns an existing selection. May call paid "
+        "providers and spend real money (生成缺口会花钱); the spend gate/budget "
+        "apply — dry_run:true to estimate first.",
         "inputSchema": _schema(
             {
                 "target": {
@@ -765,7 +804,8 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "redo",
         "description": "Force new takes for one shot (append-only; an existing "
-        "selection stands unless the shot had none).",
+        "selection stands unless the shot had none). May call paid providers "
+        "and spend real money (重做即生成,会花钱); the spend gate/budget apply.",
         "inputSchema": _schema(
             {
                 "shot_id": {"type": "string"},
@@ -1112,10 +1152,25 @@ def call_tool(
     guards each handler already runs (locks, CAS, build lock, spend gate,
     director confirm). The policy metadata is never parsed as a permission and is
     never the security boundary."""
+    # Round-2 UX audit: a non-string name used to surface as "unhashable
+    # type: 'dict'" from the registry lookup — name the actual problem.
+    if not isinstance(name, str):
+        raise ToolError(
+            f"tool name must be a string, got {type(name).__name__}",
+            code="invalid_argument")
     entry = TOOLS.get(name)
     if entry is None:
         raise ToolError(f"unknown tool: {name!r}")  # unknown-tool stays unknown-tool
     args = arguments or {}
+    # Round-2 UX audit: the advertised `required` arrays were never enforced —
+    # a missing arg surfaced as the bare KeyError text ({"error": "'shot_id'"}).
+    # Enforce the tool's OWN advertised schema at the one dispatch point.
+    missing = [k for k in entry["inputSchema"].get("required", []) if k not in args]
+    if missing:
+        raise ToolError(
+            f"missing required argument(s): {', '.join(missing)} "
+            f"(see tools/list inputSchema for {name})",
+            code="invalid_argument")
     surface = _P.resolve_agent_surface(TOOL_DEFS, profile, call_arguments=args)
     decision = surface.decide(name, args)
     if not decision.admitted:

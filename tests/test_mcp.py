@@ -442,3 +442,83 @@ def test_mcp_select_take_refuses_when_selected_take_locked(tmp_project, add_shot
     with pytest.raises(ToolError):
         handler(tmp_project, {"shot_id": "S001", "take": take.name})
     assert tmp_project.load_shot("S001").status.selected_take is None
+
+
+# ---------------------------------------------------------------------------
+# Round-2 UX audit (2026-07-13): the MCP surface's error contract, live-driven.
+
+
+def test_missing_required_argument_is_a_structured_refusal(client: MCPClient):
+    """A missing required arg used to surface as the bare KeyError text
+    ({"error": "'shot_id'"}) — the declared `required` arrays were never
+    enforced at dispatch. Now: a named, branchable refusal."""
+    result, payload = client.call_tool("get_shot", {})
+    assert result["isError"] is True
+    assert "missing required argument" in payload["error"]
+    assert "shot_id" in payload["error"]
+    assert payload.get("code") == "invalid_argument"
+
+
+def test_nonstring_tool_name_is_refused_cleanly(client: MCPClient):
+    resp = client.request("tools/call", {"name": {"evil": 1}, "arguments": {}})
+    content = resp["result"]
+    assert content["isError"] is True
+    body = json.loads(content["content"][0]["text"])
+    assert "string" in body["error"]  # not "unhashable type: 'dict'"
+
+
+def test_update_shot_rollback_is_isError_true(client: MCPClient, project: Project):
+    """The rollback path RETURNED its error dict, so the server stamped
+    isError:false — an agent branching on the MCP-spec signal concluded the
+    write landed when it was rolled back."""
+    bad = (project.root / "shots" / "S001.yaml").read_text(encoding="utf-8") \
+        .replace("characters:", "characters:\n- ghost_who_does_not_exist\n_old:")
+    # simpler: append an unknown character reference
+    result, payload = client.call_tool("update_shot", {
+        "shot_id": "S001",
+        "yaml_content": (project.root / "shots" / "S001.yaml")
+        .read_text(encoding="utf-8")
+        .replace("- linxia", "- ghost_who_does_not_exist"),
+    })
+    assert result["isError"] is True, payload
+    assert payload.get("check_errors"), payload
+    assert payload.get("code") == "check_rejected"
+
+
+def test_build_refuses_an_unknown_target(client: MCPClient):
+    """Paid-safety: a typo'd target fell through every phase branch — the
+    generation phase (spend=POSSIBLE) still ran and the requested phase was
+    silently skipped. The CLI has guarded this exact hole forever; MCP was
+    the one unguarded entrance."""
+    result, payload = client.call_tool("build", {"target": "bogus", "dry_run": True})
+    assert result["isError"] is True
+    assert "unknown target" in payload["error"]
+    assert payload.get("code") == "invalid_argument"
+
+
+def test_events_n_is_clamped(client: MCPClient):
+    """n=0 dumped the ENTIRE unbounded log into one content text; negative n
+    hit the tail-quirk. The MCP handler clamps (core tail_events semantics
+    stay untouched — they are pinned where they live)."""
+    for i in range(25):
+        client.call_tool("propose", {"title": f"e{i}", "body": "…"})
+    _, p0 = client.call_tool("events", {"n": 0})
+    assert len(p0["events"]) == 20  # the documented default, not everything
+    _, pneg = client.call_tool("events", {"n": -1})
+    assert len(pneg["events"]) == 20
+
+
+def test_skill_show_error_is_not_double_quoted(client: MCPClient):
+    result, payload = client.call_tool("skill_show", {"id": "nope"})
+    assert result["isError"] is True
+    assert not payload["error"].startswith('"')
+
+
+def test_spending_tools_say_so_in_their_descriptions(client: MCPClient):
+    """tools/list is a cold agent's ONLY surface — build/redo may spend real
+    money and their descriptions must say so (director_execute already did)."""
+    resp = client.request("tools/list", {})
+    by_name = {t["name"]: t for t in resp["result"]["tools"]}
+    for name in ("build", "redo"):
+        desc = by_name[name]["description"]
+        assert "花" in desc or "spend" in desc.lower(), (name, desc)

@@ -633,3 +633,102 @@ def test_token_refused_post_with_large_body_gets_a_clean_403(gui, tmp_project):
     src = Path("src/manju/gui/server.py").read_text(encoding="utf-8")
     gate = src.split("def do_POST")[1].split("url = urlsplit")[0]
     assert gate.count("_drain_request_body()") == 3  # host/readonly/token
+
+
+def test_python_dash_m_manju_works():
+    """Round-2 journey finding: `python -m manju` said 'No module named
+    manju.__main__' — on Windows that is THE fallback when the console-script
+    shim breaks (unactivated venv, stale PATH after a rollback)."""
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "manju", "--version"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert "manju" in proc.stdout
+
+
+# --------------------------------- round-2: error-contract consistency (F-E*)
+
+
+def test_waiting_user_is_code_branchable_on_redo(tmp_project, add_shot, monkeypatch):
+    """F-E2: the §8.3 spend-gate stop carried code:"error" on redo/voice —
+    agents had to string-match the waiting_user: prefix while lock/export
+    already shipped the token. Driven deterministically: the engine raises
+    the REAL WaitingUser; the pin is the CLI's envelope mapping."""
+    import manju.cli as cli
+    from manju.build.graph import WaitingUser
+
+    add_shot(tmp_project, "S001")
+    monkeypatch.chdir(tmp_project.root)
+
+    def _stop(*a, **kw):
+        raise WaitingUser("waiting_user: 预估花费 3.0 CNY 命中 ask_before="
+                          "expensive_generation — 确认后重试:manju redo S001 --yes",
+                          3.0, "CNY")
+
+    monkeypatch.setattr("manju.build.graph.redo_shot", _stop)
+    res = runner.invoke(app, ["redo", "S001", "--json"])
+    assert res.exit_code == 1
+    doc = json.loads(res.output)
+    assert doc["code"] == "waiting_user"
+    assert "waiting_user:" in doc["error"]
+
+
+def test_select_and_build_errors_carry_stable_codes(tmp_project, add_shot, monkeypatch):
+    add_shot(tmp_project, "S001")
+    monkeypatch.chdir(tmp_project.root)
+    doc = json.loads(runner.invoke(app, ["select", "S001", "--json"]).output)
+    assert doc["code"] == "bad_args"
+    doc = json.loads(runner.invoke(app, ["select", "S001", "take_99", "--json"]).output)
+    assert doc["code"] == "not_found"
+    doc = json.loads(runner.invoke(app, ["build", "--target", "bogus", "--json"]).output)
+    assert doc["code"] == "bad_args"
+    assert "proxy|final" in doc["error"]  # F-E3: names the valid set now
+
+
+def test_export_and_qc_survive_malformed_timeline(tmp_project, monkeypatch):
+    """F-E4/F-E5: a malformed timeline/timeline.json died as a raw
+    JSONDecodeError traceback through export and qc — and --json emitted
+    NOTHING. Now: the truth_parse_error contract, naming the rebuild."""
+    tl_dir = tmp_project.root / "timeline"
+    tl_dir.mkdir(exist_ok=True)
+    (tl_dir / "timeline.json").write_text("{bad json", encoding="utf-8")
+    monkeypatch.chdir(tmp_project.root)
+    for cmd in (["export", "--srt", "--yes", "--json"], ["qc", "--json"]):
+        res = runner.invoke(app, cmd)
+        assert res.exit_code == 1, cmd
+        combined = res.output + (res.stderr or "")
+        assert "Traceback" not in combined, cmd
+        doc = json.loads(res.output)
+        assert doc["code"] == "truth_parse_error", cmd
+        assert "manju build" in doc["error"], cmd
+
+
+def test_migrate_survives_corrupt_project_yaml(tmp_project, monkeypatch):
+    """F-E6: migrate inspect crashed raw on a hand-edited-broken project.yaml
+    while its sibling status had already been fixed — same clean line now."""
+    (tmp_project.root / "project.yaml").write_text(
+        "name: x\n  broken: [\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["migrate", "inspect", "--json"])
+    assert res.exit_code == 1
+    assert "Traceback" not in res.output + (res.stderr or "")
+    doc = json.loads(res.output)
+    assert doc["code"] == "truth_parse_error"
+
+
+def test_select_survives_malformed_shot_yaml(tmp_project, add_shot, monkeypatch):
+    """F-E7: _require_shot caught only ProjectError — a broken shots/<id>.yaml
+    escaped as a raw traceback through select/redo/voice/prompt."""
+    add_shot(tmp_project, "S001")
+    (tmp_project.root / "shots" / "S001.yaml").write_text(
+        "id: S001\n  broken: [\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["select", "S001", "take_01", "--json"])
+    assert res.exit_code == 1
+    assert "Traceback" not in res.output + (res.stderr or "")
+    doc = json.loads(res.output)
+    assert doc["code"] == "truth_parse_error"

@@ -162,9 +162,19 @@ class MCPServer:
             _log(f"agent_profile_denied [{name}] under {self._profile}")
             text = json.dumps(denied.payload, ensure_ascii=False, separators=(",", ":"))
             return {"content": [{"type": "text", "text": text}], "isError": True}
+        except tools.ToolError as exc:
+            # Round-2 UX audit: a ToolError carries a stable machine `code`
+            # (the CLI's _fail contract, additive) and may ship a FULL
+            # structured payload (e.g. update_shot's rollback evidence).
+            _log(f"tool error [{name}]: {exc}")
+            body = exc.payload if exc.payload is not None else {
+                "error": str(exc), "code": exc.code}
+            text = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+            return {"content": [{"type": "text", "text": text}], "isError": True}
         except Exception as exc:  # tool failure is an isError result, not a protocol error
             _log(f"tool error [{name}]: {exc}")
-            text = json.dumps({"error": str(exc)}, ensure_ascii=False, separators=(",", ":"))
+            text = json.dumps({"error": str(exc), "code": "error"},
+                              ensure_ascii=False, separators=(",", ":"))
             return {"content": [{"type": "text", "text": text}], "isError": True}
 
     # ---- wire helpers

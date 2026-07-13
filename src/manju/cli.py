@@ -134,8 +134,16 @@ def _require_shot(project: Project, shot_id: str) -> None:
     `voice`/`redo` crashed raw, while align/impact/prompt/routing already
     caught ProjectError cleanly. One guard, called check-THEN-act at the
     three first-run verbs; the stable code is machine-branchable."""
+    import yaml as _yaml
+
     try:
         project.load_shot(shot_id)
+    except _yaml.YAMLError as exc:
+        # Round-2 audit F-E7: a hand-edited-broken shot file escaped as a raw
+        # traceback through select/redo/voice/prompt (the status/new/unpack
+        # class, shot-file edition) — same fixer, same stable code.
+        _fail(f"shots/{shot_id}.yaml 解析失败:{exc} — 运行 `manju check` 定位并修复",
+              code="truth_parse_error")
     except ProjectError as exc:
         _fail(
             f"{shot_id}: 镜头不存在 shot not found ({exc}) — 用 `manju status` "
@@ -143,6 +151,35 @@ def _require_shot(project: Project, shot_id: str) -> None:
             "shots/index.yaml(见 `manju help-workflow new-project`)。",
             code="unknown_shot",
         )
+
+
+def _load_config_or_fail(project: Project):
+    """Round-2 audit F-E4/F-E6: a hand-edited-broken project.yaml escaped as
+    a raw traceback through export/migrate — the status class, config
+    edition; same fixer, same stable code."""
+    import yaml as _yaml
+
+    try:
+        return project.load_config()
+    except (_yaml.YAMLError, ProjectError) as exc:
+        _fail(f"真相文本解析失败:{exc} — 运行 `manju check` 定位并修复",
+              code="truth_parse_error")
+
+
+def _load_timeline_or_fail(project: Project):
+    """Round-2 audit F-E4/F-E5: a malformed timeline/timeline.json (broken
+    JSON or schema-invalid) died as a raw JSONDecodeError/ValidationError
+    traceback through export/qc. The timeline is a DERIVED artifact — the
+    honest next step is rebuilding it, and the message says so."""
+    import json as _json
+
+    from pydantic import ValidationError
+
+    try:
+        return project.load_timeline()
+    except (_json.JSONDecodeError, ValidationError, ProjectError) as exc:
+        _fail(f"timeline/timeline.json 解析失败:{exc} — 时间线是派生产物,"
+              "重新 `manju build` 即可安全重建", code="truth_parse_error")
 
 
 def _emit(data, as_json: bool) -> None:
@@ -572,7 +609,8 @@ def import_(
         for f in files:
             if not f.exists():
                 _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"
-                      "(路径相对你运行命令的位置),再 `manju import <文件>` 重试。")
+                      "(路径相对你运行命令的位置),再 `manju import <文件>` 重试。",
+                      code="not_found")
             if f.suffix.lower() in TEXT_IMPORT_SUFFIXES:
                 # story/imports/<stem>.md — a text drop the agent adapts, not media.
                 project.story_imports_dir.mkdir(parents=True, exist_ok=True)
@@ -1025,9 +1063,11 @@ def build(
     from .core.models import BUILD_MODE_NAMES
 
     if target not in ("proxy", "final", "exports", "qc", "audition", "animatic"):
-        _fail(f"unknown target: {target}")
+        _fail(f"unknown target: {target} — 可选 proxy|final|exports|qc|"
+              "audition|animatic", code="bad_args")
     if mode is not None and mode not in BUILD_MODE_NAMES:
-        _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
+        _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}",
+              code="bad_mode")
     project = _project()
     result = run_build(project, target=target, gen=gen,
                        regen_stale=regen_stale, dry_run=dry_run, force=force,
@@ -1166,7 +1206,12 @@ def redo(
                                 all_missing=all_missing, all_shots=all_shots,
                                 candidates=candidates, provider=provider, seed=seed,
                                 actor=ACTOR, assume_yes=yes)
-        except (BuildError, WaitingUser) as exc:
+        except WaitingUser as exc:
+            # Round-2 audit F-E2: the §8.3 spend-gate stop is BRANCHABLE on
+            # lock/export/package — redo used to bury it under code:"error",
+            # forcing agents to string-match the waiting_user: prefix.
+            _fail(str(exc), code="waiting_user")
+        except BuildError as exc:
             _fail(str(exc))
         if as_json:
             _emit(result.to_dict(), True)
@@ -1182,7 +1227,9 @@ def redo(
         takes = redo_shot(_project(), shot_id, candidates=candidates,
                           provider=provider, seed=seed, from_take=from_take,
                           actor=ACTOR, assume_yes=yes)
-    except (BuildError, WaitingUser) as exc:
+    except WaitingUser as exc:
+        _fail(str(exc), code="waiting_user")  # F-E2: the branchable spend stop
+    except BuildError as exc:
         _fail(str(exc))
     if as_json:
         _emit({"shot": shot_id, "takes": takes}, True)
@@ -1238,18 +1285,19 @@ def select(
         if not take:
             _fail(f"select: 没提供 take。{shot_id} 要选哪一条生成结果?"
                   f"传 take 名(`manju select {shot_id} <take>`),"
-                  "或用 --file 把一个人工文件登记成 take 再选。")
+                  "或用 --file 把一个人工文件登记成 take 再选。",
+                  code="bad_args")
         if project.get_take(shot_id, take) is None:
             # round-W #35: a media-less "ghost" sidecar is not a pickable take —
             # the listing only offers names `select` could actually accept.
             have = [t.name for t in project.takes(shot_id, skip_ghosts=True)]
             avail = ("现有 takes:" + ", ".join(have)) if have else \
                 "该镜头还没有任何 take,先 `manju build` 或 `manju redo` 生成。"
-            _fail(f"{shot_id} has no take '{take}' — {avail}")
+            _fail(f"{shot_id} has no take '{take}' — {avail}", code="not_found")
         try:
             select_take_checked(project, shot_id, take, actor=ACTOR, via="cli")
         except WriteRejected as exc:
-            _fail(str(exc))
+            _fail(str(exc), code="write_rejected")
     if as_json:
         _emit({"shot": shot_id, "take": take, "ok": True}, True)
     else:
@@ -1541,7 +1589,7 @@ def qc_main(ctx: typer.Context,
     from .qc.report import build_assurance_block, write_reports
 
     project = _project()
-    report = _run_qc(project, project.load_timeline(), deep=deep)
+    report = _run_qc(project, _load_timeline_or_fail(project), deep=deep)
 
     # DR02 WP4: derive per-shot bound-acceptance assurance (read-only) and thread
     # it into the reports + envelope. It is a SEPARATE axis from the qc gate — it
@@ -1904,7 +1952,7 @@ def _repair_op(project: Project, op: str, shot: Optional[str], take: Optional[st
     )
 
     if not shot:
-        _fail(f"--op {op} requires --shot <id>")
+        _fail(f"--op {op} requires --shot <id>", code="bad_args")
     src_take = take
     if src_take is None:
         try:
@@ -2057,7 +2105,8 @@ def repair(
         return
     plan_path = project.reports_dir / "repair_plan.yaml"
     if not plan_path.exists():
-        _fail("no repair_plan.yaml — run `manju qc` first")
+        _fail("no repair_plan.yaml — run `manju qc` first(先质检才有修复计划)",
+              code="missing_plan")
     plan = read_yaml(plan_path) or {}
     # The plan writer emits "actions" (qc/report.py); "issues" is accepted for
     # hand-written plans from before the key was pinned. Reading the wrong key
@@ -2178,7 +2227,7 @@ def export(
     fallback exits (§14)."""
     project = _project()
     # WP5: final_export gate — free, but outward-facing; require --yes when token present
-    config = project.load_config()
+    config = _load_config_or_fail(project)
     if "final_export" in (config.ask_before or []) and not yes:
         _fail(
             "waiting_user: final_export 在 ask_before 中 — 导出是外向制品确认"
@@ -2197,7 +2246,7 @@ def export(
             outputs[f"pullsheet_{kind}"] = path
         notes.append("pull sheet: CSV+MD in exports/pullsheet/ (PDF skipped — "
                      "no headless-Chromium/PDF-table path in this environment)")
-    timeline = project.load_timeline()
+    timeline = _load_timeline_or_fail(project)
     if timeline is None:
         if pullsheet and not (jianying or capcut or srt or ttml or otio or edl or fcpxml or xmeml):
             rel = {k: project.relpath(v) for k, v in outputs.items()}
@@ -2210,7 +2259,8 @@ def export(
                 for note in notes:
                     typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
             return
-        _fail("no timeline.json — run `manju build` first")
+        _fail("no timeline.json — run `manju build` first(还没有编译过时间线)",
+              code="no_timeline")
     if not (jianying or capcut or srt or ttml or otio or edl or fcpxml or xmeml or pullsheet):
         srt = otio = True
     # Which target we're building, so a mid-export failure names its subject in
@@ -2427,9 +2477,10 @@ def openclap_export(
             "(非金钱花费)。确认后重试: manju openclap export --yes …",
             code="waiting_user",
         )
-    timeline = project.load_timeline()
+    timeline = _load_timeline_or_fail(project)
     if timeline is None:
-        _fail("no timeline.json — run `manju build` first")
+        _fail("no timeline.json — run `manju build` first(还没有编译过时间线)",
+              code="no_timeline")
     try:
         out = export_openclap(project, timeline, output=output)
     except (OSError, RuntimeError) as exc:
@@ -3577,7 +3628,9 @@ def voice(
             result = voice_batch(project, shots=shot_ids, all_shots=all_shots,
                                  missing=missing, provider=provider,
                                  actor=ACTOR, assume_yes=yes)
-        except (BuildError, WaitingUser) as exc:
+        except WaitingUser as exc:
+            _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
+        except BuildError as exc:
             _fail(str(exc))
         if as_json:
             _emit(result.to_dict(), True)
@@ -3624,8 +3677,10 @@ def voice(
                 project.register_voice_take = _orig_reg  # type: ignore[method-assign]
         else:
             media = tts.synthesize(project, shot, project.load_bible())
-    except (TtsUnavailable, WaitingUser) as exc:
-        _fail(str(exc))
+    except WaitingUser as exc:
+        _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
+    except TtsUnavailable as exc:
+        _fail(str(exc), code="tts_unavailable")
     append_event(project.root, ACTOR, "voice",
                  {"shot": shot_id, "take": media.stem, "provider": tts.id})
     if as_json:
@@ -3904,7 +3959,7 @@ def transcribe(
             spend_gate(project, cost.per_call, cost.currency, assume_yes=yes,
                       hint=f"确认后重试:manju transcribe {media} --yes")
         except WaitingUser as exc:
-            _fail(str(exc))
+            _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
         segments = asr.transcribe(media_abs)
         source = asr.id
 
@@ -6587,7 +6642,9 @@ def tasks_retry(
         takes = redo_shot(project, shot_id, provider=provider,
                           seed=int(seed) if seed is not None else None,
                           actor=ACTOR, assume_yes=yes)
-    except (BuildError, WaitingUser) as exc:
+    except WaitingUser as exc:
+        _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
+    except BuildError as exc:
         _fail(str(exc))
     payload = {"ok": True, "retry_of": run_id, "shot": shot_id, "takes": takes}
     _emit(payload, as_json)
@@ -9233,6 +9290,7 @@ def migrate_inspect_cmd(as_json: bool = typer.Option(False, "--json")):
     from .core.migrate import migrate_inspect
 
     project = _project()
+    _load_config_or_fail(project)  # F-E6: broken project.yaml → clean line
     doc = migrate_inspect(project)
     if as_json:
         _emit(doc, True)
