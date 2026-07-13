@@ -31,7 +31,7 @@ jobs:
         run: pip install -c constraints.txt -e ".[dev,jianying,capcut,mcpvideo,edgetts]"
 
       - name: Run the full test suite
-        run: pytest -q
+        run: python -m pytest -q -n auto
 
       - name: M0 acceptance smoke (build twice = one final, 24/1 fps)
         run: |
