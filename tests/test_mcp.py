@@ -329,7 +329,19 @@ def test_propose_creates_numbered_markdown(client: MCPClient, project: Project):
 
 
 def test_events_reflect_ai_actions(client: MCPClient):
-    # earlier tests performed select + propose as actor "ai"
+    """SELF-CONTAINED (ubuntu run #226): this used to assert on events that
+    "earlier tests in this module" had written — but xdist's default ``load``
+    distribution may hand any single test of a module to a fresh worker,
+    where the module-scoped project is newly scaffolded and the event log is
+    EMPTY (observed 1/4311 the first time the W4/W5 test files shifted the
+    chunk boundaries). The actions are performed HERE; on a worker that
+    already ran the select/propose tests this is a harmless repeat (select
+    is idempotent, propose appends a new numbered file)."""
+    r1, p1 = client.call_tool("select_take", {"shot_id": "S001", "take": "take_02"})
+    assert r1["isError"] is False, p1
+    r2, p2 = client.call_tool("propose", {"title": "events 自证", "body": "为事件断言自备动作。"})
+    assert r2["isError"] is False, p2
+
     _, payload = client.call_tool("events", {"n": 50})
     actions = {(e.get("actor"), e.get("action")) for e in payload["events"]}
     assert ("ai", "select") in actions
