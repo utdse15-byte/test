@@ -151,6 +151,51 @@ class EditRate(ManjuModel):
 CACHE_TOOLCHAIN_TOKENS = ("ffmpeg", "fonts")
 
 
+class ColorSpec(ManjuModel):
+    """W4: the opt-in ``color:`` block in project.yaml — two independent,
+    DECLARED colour facts (nothing here probes or guesses):
+
+    * ``tag_outputs`` — stamp finals/proxies with the bt709/tv tags the
+      pipeline already produces in substance (untagged output is what players
+      and NLEs then guess at; the tag states what IS, it converts nothing);
+    * ``input_transform`` — "my sources are sRGB / Display P3": converts them
+      to bt709 at the one normalize seam (``media/normalize``). A per-project
+      declaration by the person who shot/exported the material — wrong
+      declarations produce shifted output, exactly like a wrong ``fps``.
+
+    Both fold into render cache keys ONLY when active (look/S4 precedent), so
+    a project without ``color:`` keys — and serializes — byte-identically.
+    """
+
+    tag_outputs: bool = False
+    input_transform: Literal["srgb_to_bt709", "p3_to_bt709"] | None = None
+
+    # ``color: {}`` is not a legal off switch — absent is (the S4 empty-list
+    # precedent: an all-default block only misleads a future reader into
+    # thinking colour management is ON).
+    @model_validator(mode="after")
+    def _not_a_noop(self) -> "ColorSpec":
+        if not self.tag_outputs and self.input_transform is None:
+            raise ValueError(
+                "color: {} 不是合法的关闭状态 — 要关闭就直接删掉/省略整个 color 块"
+                "(缺省 = 不打标签、不做输入变换);要开启请声明 tag_outputs: true "
+                "和/或 input_transform: srgb_to_bt709|p3_to_bt709"
+            )
+        return self
+
+    # Dump only the non-default keys (CaptionLine._drop_default_role
+    # precedent) so `color: {tag_outputs: true}` round-trips as exactly that.
+    @model_serializer(mode="wrap")
+    def _drop_defaults(self, handler):
+        data = handler(self)
+        if isinstance(data, dict):
+            if data.get("tag_outputs") is False:
+                data.pop("tag_outputs", None)
+            if data.get("input_transform") is None:
+                data.pop("input_transform", None)
+        return data
+
+
 class ProjectConfig(ManjuModel):
     name: str
     width: int = 1080
@@ -199,6 +244,12 @@ class ProjectConfig(ManjuModel):
     # cause a meaningless rebuild. An empty list is an error (absent is the off
     # switch); serialization drops None entirely (R1 edit_rate precedent).
     cache_toolchain_keys: list[str] | None = None
+    # W4: OPT-IN colour handling (see ColorSpec). Absent (None, the default) =
+    # today's behaviour everywhere: untagged output, no input conversion,
+    # byte-identical cache keys and serialization (the wrap serializer below
+    # drops the None). Consumed by media/render (_enc_params tags; segment-key
+    # fold) + media/normalize (the input transform chain) — nothing else.
+    color: ColorSpec | None = None
 
     # Round W (issue #2/#6): fps/width/height are load-bearing for frame math —
     # fps=0 divides-by-zero in the timeline compiler's frame-grid snap
@@ -270,17 +321,18 @@ class ProjectConfig(ManjuModel):
             seen.add(token)
         return v
 
-    # Byte-identity: drop a None edit_rate AND a None cache_toolchain_keys from
+    # Byte-identity: drop a None edit_rate / cache_toolchain_keys / color from
     # EVERY serialization (not only the exclude_none save paths — presets/
     # supportbundle/status dump with a plain model_dump()), so a project that
     # never sets them emits no such keys at all. Mirrors CaptionLine
-    # ._drop_default_role (wave-4b); S4 rides R1's wrap serializer (pydantic
-    # allows ONE model_serializer per model). Present values are untouched.
+    # ._drop_default_role (wave-4b); S4 + W4 ride R1's wrap serializer
+    # (pydantic allows ONE model_serializer per model). Present values are
+    # untouched.
     @model_serializer(mode="wrap")
     def _drop_default_edit_rate(self, handler):
         data = handler(self)
         if isinstance(data, dict):
-            for absent_when_none in ("edit_rate", "cache_toolchain_keys"):
+            for absent_when_none in ("edit_rate", "cache_toolchain_keys", "color"):
                 if data.get(absent_when_none) is None:
                     data.pop(absent_when_none, None)
         return data

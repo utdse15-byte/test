@@ -81,7 +81,7 @@ from pathlib import Path
 
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file, short_hash
-from ..core.models import AudioClip, LookSpec, OverlayClip, Timeline, VideoClip
+from ..core.models import AudioClip, ColorSpec, LookSpec, OverlayClip, Timeline, VideoClip
 from ..core.yamlio import atomic_write_text, read_yaml
 from .card import find_font
 from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
@@ -369,6 +369,13 @@ def _toolchain_key_component(
     return component
 
 
+def _color_spec(project: Project) -> "ColorSpec | None":
+    """W4: the project's opt-in ``color:`` block, or ``None`` (every project
+    that never declared one — every key site then appends nothing and every
+    command line stays byte-identical). A plain config read; no probing."""
+    return getattr(project.load_config(), "color", None)
+
+
 def _segment_cache_key(
     project: Project,
     clip: VideoClip,
@@ -381,6 +388,7 @@ def _segment_cache_key(
     fade_out_ms: int,
     rate_key: str | None = None,
     toolchain_key: dict[str, str] | None = None,
+    color_in: str | None = None,
 ) -> str:
     """The one segment-key formula, shared by the segment cache and the
     final content key (FIX-A) so they can never drift apart.
@@ -417,6 +425,11 @@ def _segment_cache_key(
     # project; absent (None) for every other project → byte-identical key.
     if toolchain_key is not None:
         parts.append(("toolchain", toolchain_key))
+    # W4 declared input colour transform: the normalize chain changes the
+    # segment's bytes, so it must key the segment (and, through the two
+    # neighbour keys, every boundary). Absent (None) → byte-identical key.
+    if color_in is not None:
+        parts.append(("color_in", color_in))
     return cache_key(*parts)
 
 
@@ -434,6 +447,7 @@ def _build_segment(
     rate_key: str | None = None,
     rate_arg: str | int | None = None,
     toolchain_key: dict[str, str] | None = None,
+    color_in: str | None = None,
 ) -> Path:
     """Return the cached segment path for one clip, rendering it if absent.
 
@@ -458,7 +472,7 @@ def _build_segment(
     key = _segment_cache_key(
         project, clip, width=width, height=height, fps=fps, target=target,
         fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, rate_key=rate_key,
-        toolchain_key=toolchain_key,
+        toolchain_key=toolchain_key, color_in=color_in,
     )
     enc_fps = rate_arg if rate_arg is not None else fps
     seg_path = project.segments_dir / f"{short_hash(key)}.mp4"
@@ -481,7 +495,7 @@ def _build_segment(
             src, seg_path, width=width, height=height, fps=enc_fps,
             duration_ms=clip.duration_ms,
             source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
-            source_in_ms=in_ms,
+            source_in_ms=in_ms, color_transform=color_in,
             log=log,
         )
         return seg_path
@@ -493,7 +507,7 @@ def _build_segment(
             src, base, width=width, height=height, fps=enc_fps,
             duration_ms=clip.duration_ms,
             source_gain_db=clip.source_gain_db, source_mute=clip.source_mute,
-            source_in_ms=in_ms,
+            source_in_ms=in_ms, color_transform=color_in,
             log=log,
         )
         _apply_fades(
@@ -718,7 +732,7 @@ def _plan_transitions(
 def _boundary_cache_key(
     project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
     *, width: int, height: int, fps: int, target: str, rate_key: str | None = None,
-    toolchain_key: dict[str, str] | None = None,
+    toolchain_key: dict[str, str] | None = None, color_in: str | None = None,
 ) -> str:
     """Content identity of a boundary segment: both neighbour segment keys
     (which already fold source hashes, dims, fps, durations, in-points and — R2 —
@@ -730,10 +744,10 @@ def _boundary_cache_key(
     ``rate_key`` does — None (every not-opted-in project) is byte-identical."""
     ka = _segment_cache_key(project, a, width=width, height=height, fps=fps,
                             target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key,
-                            toolchain_key=toolchain_key)
+                            toolchain_key=toolchain_key, color_in=color_in)
     kb = _segment_cache_key(project, b, width=width, height=height, fps=fps,
                             target=target, fade_in_ms=0, fade_out_ms=0, rate_key=rate_key,
-                            toolchain_key=toolchain_key)
+                            toolchain_key=toolchain_key, color_in=color_in)
     return cache_key("xfade-boundary", ka, kb, boundary.xfade,
                      boundary.duration_ms, boundary.half_ms, width, height, fps, target)
 
@@ -742,7 +756,7 @@ def _build_boundary_segment(
     project: Project, a: VideoClip, b: VideoClip, boundary: _Boundary,
     *, width: int, height: int, fps: int, target: str, log: Log,
     rate_key: str | None = None, rate_arg: str | int | None = None,
-    toolchain_key: dict[str, str] | None = None,
+    toolchain_key: dict[str, str] | None = None, color_in: str | None = None,
 ) -> Path:
     """Render (or reuse) the content-addressed boundary segment for an applied
     xfade: the outgoing tail (last half real + half tail-handle) cross-dissolved
@@ -756,7 +770,8 @@ def _build_boundary_segment(
     enc_fps = rate_arg if rate_arg is not None else fps
     key = _boundary_cache_key(project, a, b, boundary,
                               width=width, height=height, fps=fps, target=target,
-                              rate_key=rate_key, toolchain_key=toolchain_key)
+                              rate_key=rate_key, toolchain_key=toolchain_key,
+                              color_in=color_in)
     seg_path = project.segments_dir / f"xfade_{short_hash(key)}.mp4"
     if seg_path.exists():
         if probe_duration_ms(seg_path) is not None:
@@ -777,10 +792,12 @@ def _build_boundary_segment(
         # Outgoing: start half BEFORE the window end → half real + half tail-handle.
         normalize_segment(a_src, a_layer, width=width, height=height, fps=enc_fps,
                           duration_ms=layer_ms,
-                          source_in_ms=a.source_in_ms + a.duration_ms - half, log=log)
+                          source_in_ms=a.source_in_ms + a.duration_ms - half,
+                          color_transform=color_in, log=log)
         # Incoming: start half BEFORE the window start → half head-handle + half real.
         normalize_segment(b_src, b_layer, width=width, height=height, fps=enc_fps,
-                          duration_ms=layer_ms, source_in_ms=b.source_in_ms - half, log=log)
+                          duration_ms=layer_ms, source_in_ms=b.source_in_ms - half,
+                          color_transform=color_in, log=log)
         d = layer_ms / 1000.0
         fc = (
             f"[0:v][1:v]xfade=transition={boundary.xfade}:duration={d:.3f}:offset=0,"
@@ -821,7 +838,7 @@ def _assemble_video_pieces(
     boundaries: list[_Boundary], *, width: int, height: int, fps: int,
     target: str, tmp_dir: Path, log: Log,
     rate_key: str | None = None, rate_arg: str | int | None = None,
-    toolchain_key: dict[str, str] | None = None,
+    toolchain_key: dict[str, str] | None = None, color_in: str | None = None,
 ) -> list[Path]:
     """The ordered concat pieces once applied xfades restructure the track:
     each clip contributes its cached segment (untouched when it lends no handle)
@@ -851,6 +868,7 @@ def _assemble_video_pieces(
                 project, clips[idx], clips[idx + 1], b,
                 width=width, height=height, fps=fps, target=target, log=log,
                 rate_key=rate_key, rate_arg=rate_arg, toolchain_key=toolchain_key,
+                color_in=color_in,
             ))
     return pieces
 
@@ -1077,12 +1095,29 @@ def _build_audio_graph(
     return inputs, stmts, aout
 
 
-def _enc_params(target: str) -> list[str]:
+# W4: the stream/container colour tags `color.tag_outputs` stamps on finals/
+# proxies — stating what the pipeline already produces in substance (yuv420p
+# through swscale's bt709-family defaults at HD sizes, limited range), so a
+# player/NLE reads facts instead of guessing. Tags only; converts nothing.
+_COLOR_TAG_ARGS = ["-color_primaries", "bt709", "-color_trc", "bt709",
+                   "-colorspace", "bt709", "-color_range", "tv"]
+
+
+def _enc_params(target: str, color: ColorSpec | None = None) -> list[str]:
+    """The final/proxy encode tail. ``color`` (W4): ``tag_outputs`` appends the
+    bt709/tv tags — and because the final content key hashes THIS list verbatim
+    (``_final_key_payload["encoding"]``), flipping the switch honestly re-keys
+    (re-renders) the final/proxy, and switching it back returns the original
+    key byte-for-byte. No opt-in (None / tags off) → the historical literals."""
     if target == "final":
-        return ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart"]
-    return ["-c:v", "libx264", "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "96k", "-ar", "48000"]
+        params = ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+                  "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart"]
+    else:
+        params = ["-c:v", "libx264", "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                  "-c:a", "aac", "-b:a", "96k", "-ar", "48000"]
+    if color is not None and color.tag_outputs:
+        params += _COLOR_TAG_ARGS
+    return params
 
 
 def _audio_input_hashes(project: Project, timeline: Timeline) -> list[str]:
@@ -1141,6 +1176,12 @@ def _final_key_payload(
     # project config (facts are process-cached — no per-key probes). None for
     # every not-opted-in project → nothing changes anywhere below.
     toolchain_key = _toolchain_key_component(project)
+    # W4: the opt-in colour block, read ONCE per payload. input_transform rides
+    # every segment key below (it changes segment bytes); tag_outputs rides the
+    # "encoding" list (it changes final/proxy bytes). None → both absent →
+    # byte-identical payload for every project without a color: block.
+    color_spec = _color_spec(project)
+    color_in = color_spec.input_transform if color_spec is not None else None
     # Round-T: the segment fade params come from the shared boundary plan so a
     # degraded xfade's baked dip-to-black is reflected here exactly as rendered.
     # For a timeline with only fade/cut transitions the plan == _fade_params, so
@@ -1150,7 +1191,7 @@ def _final_key_payload(
         _segment_cache_key(
             project, clip, width=width, height=height, fps=fps, target=target,
             fade_in_ms=seg_fades[i][0], fade_out_ms=seg_fades[i][1], rate_key=rate_key,
-            toolchain_key=toolchain_key,
+            toolchain_key=toolchain_key, color_in=color_in,
         )
         if project.resolve(clip.source).exists()
         else f"missing:{clip.source}"
@@ -1185,7 +1226,7 @@ def _final_key_payload(
         "segments": seg_keys,
         "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
         "audio": _audio_input_hashes(project, timeline),
-        "encoding": _enc_params(target),
+        "encoding": _enc_params(target, color_spec),
         "target": target,
     }
     # Round-Q: only add the branding-image key when there ARE image overlays, so
@@ -1380,6 +1421,10 @@ def render_timeline(
     # one computation, and the built segment paths can never drift from the
     # seg keys inside the content key (FIX-A discipline).
     toolchain_key = payload.get("toolchain")
+    # W4: the same config read the payload keyed with (a plain deterministic
+    # field, so re-reading cannot drift from the seg keys inside content_key).
+    color_spec = _color_spec(project)
+    color_in = color_spec.input_transform if color_spec is not None else None
     if not force and out_path is None:
         if target == "final":
             latest = _latest_final_with_key(project)
@@ -1410,6 +1455,7 @@ def render_timeline(
                 project, clip, width=width, height=height, fps=fps, target=target,
                 fade_in_ms=fade_in_ms, fade_out_ms=fade_out_ms, log=log,
                 rate_key=rate_key, rate_arg=rate_arg, toolchain_key=toolchain_key,
+                color_in=color_in,
             )
         )
 
@@ -1463,7 +1509,7 @@ def render_timeline(
                 project, video_clips, segments, xfade_boundaries,
                 width=width, height=height, fps=fps, target=target,
                 tmp_dir=tmp_dir, log=log, rate_key=rate_key, rate_arg=rate_arg,
-                toolchain_key=toolchain_key,
+                toolchain_key=toolchain_key, color_in=color_in,
             )
         else:
             pieces = segments
@@ -1518,7 +1564,7 @@ def render_timeline(
             vchain += f",fps={rate_arg},format=yuv420p[vout]"
             filter_complex = ";".join([vchain, *audio_stmts])
 
-        enc = _enc_params(target)
+        enc = _enc_params(target, color_spec)
         # R2: a rational project also stamps the container's output frame rate
         # explicitly (-r num/den), belt-and-suspenders with the fps= node above.
         # Int projects add NO -r (byte-identical command line) — they already

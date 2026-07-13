@@ -443,6 +443,25 @@ def _diagnostics(facts: dict[str, Any], *, rate: object, rate_mode: str,
             "missing": missing,
         })
 
+    # HDR_SOURCE (W4) — warning: a PQ/HLG transfer or bt2020 primaries means
+    # this source is HDR, and the SDR bt709 pipeline will NOT tone-map it
+    # (highlights clip/wash instead). Named per axis so the reader sees WHAT
+    # is HDR; unknown axes stay COLOR_UNKNOWN's business, never guessed HDR.
+    hdr_axes = []
+    if color["transfer"] in ("smpte2084", "arib-std-b67"):
+        hdr_axes.append(f"transfer={color['transfer']}")
+    if color["primaries"] == "bt2020":
+        hdr_axes.append("primaries=bt2020")
+    if hdr_axes:
+        diags.append({
+            "code": "HDR_SOURCE",
+            "severity": "warning",
+            "detail": ("HDR source: the SDR bt709 pipeline does not tone-map — "
+                       "expect clipped/washed highlights unless the source is "
+                       "converted upstream"),
+            "axes": hdr_axes,
+        })
+
     # VFR_SUSPECTED — r_frame_rate and avg_frame_rate disagree.
     if rate_mode == "vfr_suspected":
         diags.append({

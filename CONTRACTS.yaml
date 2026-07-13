@@ -554,7 +554,13 @@ documents:
       (drop-None; tokens EXACTLY ffmpeg|fonts, validated — irrelevant facts
       rejected so they can never cause meaningless rebuilds); listed tokens
       fold those byte-affecting toolchain facts into every render cache key,
-      so flipping the field is a documented cache-cold re-render.
+      so flipping the field is a documented cache-cold re-render. W4 adds
+      OPTIONAL color {tag_outputs, input_transform srgb_to_bt709|p3_to_bt709}
+      (drop-None; all-default block rejected — absent is the off switch):
+      tag_outputs stamps finals/proxies bt709/tv (tags what IS, converts
+      nothing) and re-keys via the hashed encoding list; input_transform is a
+      DECLARED source-colour conversion at the normalize seam, folded into
+      segment/boundary keys only when active.
   - id: bible
     kind: document
     owner: manju.core.container:Project

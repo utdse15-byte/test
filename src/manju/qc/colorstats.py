@@ -242,14 +242,21 @@ def compare_to_reference(image_path: str | Path,
         "suggestions": suggestions,
         # adopting a suggestion is a HUMAN step through the existing append-only
         # repair-op path — a new derived take, never an overwrite (§10 pins).
+        # W4 honesty fix: the document used to advertise `manju repair --op
+        # grade`, an op that DOES NOT EXIST (retime|extend|trim|inout|croppad|
+        # voice) — a reader typing it got an error. UNKNOWN is never dressed as
+        # PASS and a pointer is never dressed as a command: state the fact.
         "adopt_via": {
             "path": "repair_op",
-            "command": "manju repair --op grade --from <ref> --dry-run",
+            "implemented": False,
+            "command": None,
             "append_only": True,
             "overwrites_source": False,
             "input_sha256": input_sha,
             "reference_sha256": ref_sha,
-            "note": "校色后须重新跑角色/产品文字/闪烁/交付 QC(§10),避免颜色接近但语义被破坏",
+            "note": "尚无 grade 修复操作 — 手动路径:在外部按建议校色,登记为新 take"
+                    "(追加式,绝不覆盖原 take),再重新跑角色/产品文字/闪烁/交付 QC"
+                    "(§10),避免颜色接近但语义被破坏",
         },
         "requires_confirmation": True,
         "do_not_execute_automatically": True,

@@ -24,9 +24,29 @@ ANULLSRC = "anullsrc=channel_layout=stereo:sample_rate=48000"
 
 Log = Callable[[str], None] | None
 
+# W4: the two DECLARED input→bt709 conversions (project.yaml `color.
+# input_transform`). One fixed zscale chain per token — deterministic bytes
+# for the same source bytes, never a probe-and-guess. The input side is fully
+# declared (pin/tin/min/rin): the pinned ffmpeg 6.1.1's zscale refuses
+# untagged yuv without an input matrix ("no path between colorspaces"), and
+# zimg ignores the yuv declarations for RGB frames (stills) — verified on
+# stills, untagged yuv420p, alpha PNGs and full-range mjpeg against the exact
+# CI ffmpeg. Both Display P3 and sRGB share the iec61966-2-1 transfer; they
+# differ only in primaries (smpte432 vs bt709). Output side: bt709 primaries/
+# transfer/matrix, limited (tv) range — the profile the whole pipeline
+# produces in substance.
+_COLOR_TRANSFORM_CHAINS = {
+    "srgb_to_bt709": ("zscale=pin=bt709:tin=iec61966-2-1:min=bt709:rin=limited"
+                      ":p=bt709:t=bt709:m=bt709:r=limited"),
+    "p3_to_bt709": ("zscale=pin=smpte432:tin=iec61966-2-1:min=bt709:rin=limited"
+                    ":p=bt709:t=bt709:m=bt709:r=limited"),
+}
 
-def _video_filter(width: int, height: int, fps: int, *, extend_stop_s: float | None = None) -> str:
-    """scale-to-fit → pad-to-exact (black) → setsar=1 → fps → (clone-extend) → yuv420p."""
+
+def _video_filter(width: int, height: int, fps: int, *, extend_stop_s: float | None = None,
+                  color_transform: str | None = None) -> str:
+    """scale-to-fit → pad-to-exact (black) → setsar=1 → fps → (clone-extend)
+    → (W4 declared colour transform) → yuv420p."""
     parts = [
         f"scale={width}:{height}:force_original_aspect_ratio=decrease",
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -37,6 +57,10 @@ def _video_filter(width: int, height: int, fps: int, *, extend_stop_s: float | N
         # Freeze/clone the last frame to reach the target length (§7: short
         # sources are extended, not stretched). -t trims to the exact length.
         parts.append(f"tpad=stop_mode=clone:stop_duration={extend_stop_s:.3f}")
+    if color_transform is not None:
+        # After pad (dimensions are the even project WxH here — zimg needs
+        # subsample-clean geometry), before the final format snap.
+        parts.append(_COLOR_TRANSFORM_CHAINS[color_transform])
     parts.append("format=yuv420p")
     return ",".join(parts)
 
@@ -60,6 +84,7 @@ def normalize_segment(
     source_gain_db: float = 0.0,
     source_mute: bool = False,
     source_in_ms: int = 0,
+    color_transform: str | None = None,
     log: Log = None,
 ) -> Path:
     """Normalize ``src`` into a uniform WxH/fps/stereo segment.
@@ -69,6 +94,11 @@ def normalize_segment(
     A positive value is used both for clips carrying a real in-point and, by the
     boundary compositor, to lift the handle regions (tail of A / head of B) out
     of the raw footage for a cross-dissolve.
+
+    ``color_transform`` (W4, additive) is a `_COLOR_TRANSFORM_CHAINS` token —
+    the project's DECLARED source colour, converted to bt709 here at the one
+    normalize seam. None (every project without ``color.input_transform``)
+    keeps the filter chain byte-identical.
     """
     src = Path(src)
     dest = Path(dest)
@@ -86,7 +116,7 @@ def normalize_segment(
         # Loop the still, synthesize matching silence, hold for the full length.
         args += ["-loop", "1", "-framerate", str(fps), "-t", f"{dur_s:.3f}", "-i", str(src)]
         args += ["-f", "lavfi", "-t", f"{dur_s:.3f}", "-i", ANULLSRC]
-        vf = _video_filter(width, height, fps)
+        vf = _video_filter(width, height, fps, color_transform=color_transform)
         args += ["-filter_complex", f"[0:v]{vf}[v]"]
         args += ["-map", "[v]", "-map", "1:a", "-t", f"{dur_s:.3f}"]
         with atomic_output(dest) as tmp_out:
@@ -103,7 +133,8 @@ def normalize_segment(
     if dur_s is not None and (avail is None or avail < duration_ms):
         # Short source: clone the tail generously; -t below trims to exact.
         extend_s = dur_s
-    vf = _video_filter(width, height, fps, extend_stop_s=extend_s)
+    vf = _video_filter(width, height, fps, extend_stop_s=extend_s,
+                       color_transform=color_transform)
 
     # `-ss` before `-i` seeks all streams together; combined with the `-t`
     # trim + fps filter below the window stays frame-exact.

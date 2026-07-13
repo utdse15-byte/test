@@ -250,6 +250,33 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
             f"{'ok' if report.ok else f'{len(report.errors)} errors'}")
         ok = ok and report.ok
 
+        # ---- W4: a declared color.input_transform needs zscale (libzimg) in
+        # THIS ffmpeg — some Windows builds ship without it, and the honest
+        # place to find out is doctor, not the first failed render. Probed
+        # ONLY when a project actually declares a transform (zero cost for
+        # everyone else); advisory ⚠, never gates ok (render errors loudly).
+        try:
+            import subprocess
+
+            _color = getattr(project.load_config(), "color", None)
+            _transform = getattr(_color, "input_transform", None)
+            if _transform is not None and shutil.which("ffmpeg"):
+                probe = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-filters"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                has_zscale = " zscale " in probe.stdout
+                add("color_transform", True,
+                    f"{_transform}: zscale {'available' if has_zscale else 'MISSING'}",
+                    f"{'✓' if has_zscale else '⚠'} color.input_transform "
+                    f"({_transform}): "
+                    + ("zscale 滤镜可用" if has_zscale else
+                       "此 ffmpeg 缺 zscale(libzimg)— 渲染会失败;请换带 zimg 的构建"
+                       "(gyan.dev full/essentials 均含)"))
+        except Exception as exc:
+            add("color_transform", True, str(exc),
+                f"⚠ color 探测异常(建议诊断,不影响退出码): {exc}")
+
         # ---- locale overlays (WP4) + interchange exits: ADVISORY diagnostics.
         # These rows surface health as ✓/•/⚠ exactly like the toolbelt/disk
         # probes above and NEVER touch `ok` — doctor's exit-code policy is
