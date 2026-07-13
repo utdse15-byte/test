@@ -29,6 +29,20 @@ from .core.locks import seal_lock
 app = typer.Typer(add_completion=False, no_args_is_help=True,
                   help="Manju One — a build system for video. 一键出片:manju build")
 
+# --help panels (optimization audit 11g): the ~65-command surface rendered as
+# one flat wall — `rich_help_panel` was used zero times. Group every visible
+# command + sub-app into a small set of discoverable panels. Chinese-first
+# bilingual to match the house help language. Rendering-only: no command name,
+# param, or behavior change (the cli_surface.json snapshot is unaffected).
+PANEL_SETUP = "立项与创作 Setup & creation"
+PANEL_INGEST = "素材与资产 Material & assets"
+PANEL_GENERATE = "生成与选片 Generate & select"
+PANEL_EXPORT = "时间线与导出 Timeline & export"
+PANEL_QC = "质检与修复 QC & repair"
+PANEL_COLLAB = "协作与历史 Collaboration & history"
+PANEL_OPS = "诊断与运维 Diagnostics & ops"
+PANEL_BRIDGE = "外部剪辑桥 Editor bridge & interchange"
+
 ACTOR = os.environ.get("MANJU_ACTOR", "human")
 
 # round X agent XE: touch ~/.manju/recents.json at most ONCE per process — a
@@ -184,7 +198,7 @@ def _write_lock(project: Project):
 # --------------------------------------------------------------------- new
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def new(
     name: str,
     vertical: bool = typer.Option(True, "--vertical/--horizontal"),
@@ -252,7 +266,7 @@ def new(
 # ----------------------------------------------------------------- presets
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def presets(as_json: bool = typer.Option(False, "--json")):
     """List the preset kits available to `manju new --preset` (P3)."""
     from .presets import display_width, list_presets, pad
@@ -285,7 +299,7 @@ _FUNNEL_COLOR = {"done": typer.colors.GREEN, "current": typer.colors.CYAN,
                  "todo": typer.colors.BRIGHT_BLACK}
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def create(
     stage: Optional[str] = typer.Argument(
         None, help="brief|synopsis|beats — scaffold that stage's template; "
@@ -337,7 +351,7 @@ def create(
 # ------------------------------------------------------------------ status
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def status(as_json: bool = typer.Option(False, "--json")):
     """Takeover entry point: phase, gaps, spend, next step (§10)."""
     from .build.status import project_status
@@ -384,7 +398,7 @@ def status(as_json: bool = typer.Option(False, "--json")):
 # ------------------------------------------------------------------- check
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def check(as_json: bool = typer.Option(False, "--json")):
     """Schema + references + locks + secret scan (§4, §5). The safety net."""
     report = run_check(_project())
@@ -417,7 +431,7 @@ TEXT_IMPORT_SUFFIXES = {".txt", ".md"}
 ON_DUPLICATE_STRATEGIES = ("skip", "import", "link")
 
 
-@app.command("import")
+@app.command("import", rich_help_panel=PANEL_INGEST)
 def import_(
     files: list[Path],
     as_json: bool = typer.Option(False, "--json"),
@@ -612,7 +626,7 @@ def _print_ingest_table(plan, result=None) -> None:
             typer.secho(f"    ↳ {row.library_hint}", fg=typer.colors.BRIGHT_BLACK)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_INGEST)
 def ingest(
     paths: list[Path] = typer.Argument(..., help="目录或文件列表(外部产出的一批素材)"),
     role: str = typer.Option("auto", "--role", help="auto | take | voice | ref"),
@@ -707,7 +721,7 @@ def _print_batches_table(batches: list[dict]) -> None:
                    f"{b['items']} 项  [{counts}]")
 
 
-@app.command("ingest-batches")
+@app.command("ingest-batches", rich_help_panel=PANEL_INGEST)
 def ingest_batches_cmd(as_json: bool = typer.Option(False, "--json")):
     """列出已入库批次(新→旧),每个批次附评审状态计数(round AA,goal item 2)。"""
     from .build.batches import list_batches
@@ -748,7 +762,7 @@ def _print_batch_review_table(batch_data: dict) -> None:
             typer.secho(f"       备注 note: {it['note']}", fg=typer.colors.BRIGHT_BLACK)
 
 
-@app.command("ingest-review")
+@app.command("ingest-review", rich_help_panel=PANEL_INGEST)
 def ingest_review_cmd(
     batch: str = typer.Argument(..., help="批次 id,见 `manju ingest-batches`"),
     as_json: bool = typer.Option(False, "--json"),
@@ -810,7 +824,7 @@ def _run_batch_review(batch: str, items: list[int], *, decision: str, note: str,
             typer.secho(f"[{r['index']}] {decision} ✓{undo}", fg=typer.colors.GREEN)
 
 
-@app.command("ingest-confirm")
+@app.command("ingest-confirm", rich_help_panel=PANEL_INGEST)
 def ingest_confirm_cmd(
     batch: str = typer.Argument(..., help="批次 id"),
     item: list[int] = typer.Option([], "--item", help="要确认的条目 index(可重复指定多次)"),
@@ -834,7 +848,7 @@ def ingest_confirm_cmd(
     _run_batch_review(batch, items, decision="confirm", note=note, as_json=as_json)
 
 
-@app.command("ingest-flag")
+@app.command("ingest-flag", rich_help_panel=PANEL_INGEST)
 def ingest_flag_cmd(
     batch: str = typer.Argument(..., help="批次 id"),
     item: list[int] = typer.Option([], "--item", help="要标记的条目 index(可重复指定多次)"),
@@ -845,7 +859,7 @@ def ingest_flag_cmd(
     _run_batch_review(batch, list(item), decision="flag", note=note, as_json=as_json)
 
 
-@app.command("ingest-discard")
+@app.command("ingest-discard", rich_help_panel=PANEL_INGEST)
 def ingest_discard_cmd(
     batch: str = typer.Argument(..., help="批次 id"),
     item: list[int] = typer.Option([], "--item", help="要撤销的条目 index(可重复指定多次)"),
@@ -861,7 +875,7 @@ def ingest_discard_cmd(
 # ------------------------------------------------------------------- build
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def build(
     target: str = typer.Option(
         "final",
@@ -1009,7 +1023,7 @@ def build(
 # -------------------------------------------------------------------- redo
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def redo(
     shot_id: Optional[str] = typer.Argument(None),
     shots: Optional[str] = typer.Option(
@@ -1101,7 +1115,7 @@ def _print_batch_result(result, verb: str) -> None:
 # ------------------------------------------------------------------ select
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def select(
     shot_id: str,
     take: Optional[str] = typer.Argument(None),
@@ -1150,7 +1164,7 @@ def select(
 # ------------------------------------------------------------- lock/unlock
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def lock(
     shot_id: str,
     field: str,
@@ -1190,7 +1204,7 @@ def lock(
         typer.secho(f"{shot_id}: locked {field}", fg=typer.colors.GREEN)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def unlock(shot_id: str, field: str):
     """Interactive terminal only + confirmation; never exposed over MCP (§5)."""
     if not _interactive():
@@ -1216,7 +1230,7 @@ def unlock(shot_id: str, field: str):
 # ----------------------------------------------------------------- propose
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def propose(
     title: str,
     body: Optional[str] = typer.Option(None, "--body", help="proposal body text"),
@@ -1252,7 +1266,7 @@ skills_app = typer.Typer(no_args_is_help=False,
                          help="技能库 (round V): packaged domain expertise the "
                               "driving agent loads on demand — index first, "
                               "one skill's full text via show。")
-app.add_typer(skills_app, name="skills")
+app.add_typer(skills_app, name="skills", rich_help_panel=PANEL_COLLAB)
 
 
 @skills_app.callback(invoke_without_command=True)
@@ -1330,7 +1344,7 @@ _MINI_PLAYBOOK = (
 )
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def auto(
     prompt_text: str,
     agent: Optional[str] = typer.Option(
@@ -1418,7 +1432,7 @@ qc_app = typer.Typer(
          "自身不跑视觉模型,而是出题给驱动它的 agent 用眼判读(标准见 "
          "manju skills show visual-qc-review),再把结论回填。",
 )
-app.add_typer(qc_app, name="qc")
+app.add_typer(qc_app, name="qc", rich_help_panel=PANEL_QC)
 
 
 @qc_app.callback(invoke_without_command=True)
@@ -1891,7 +1905,7 @@ def _repair_voice_cli(project: Project, shot: Optional[str], provider: Optional[
         raise typer.Exit(1)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_QC)
 def repair(
     auto: bool = typer.Option(False, "--auto"),
     op: Optional[str] = typer.Option(
@@ -1977,7 +1991,7 @@ def repair(
 # ------------------------------------------------------------------ frames
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_QC)
 def frames(
     source: str = typer.Argument(..., help="project-relative media path "
                                           "(e.g. media/gen/S001/take_01.mp4)"),
@@ -2024,7 +2038,7 @@ def frames(
 # ------------------------------------------------------------------ export
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_EXPORT)
 def export(
     jianying: bool = typer.Option(False, "--jianying"),
     capcut: bool = typer.Option(False, "--capcut", help="international CapCut draft (pycapcut)"),
@@ -2179,7 +2193,7 @@ openclap_app = typer.Typer(
          "inspect 只读体检、export 从编译时间线导出、import-plan 只规划不落盘"
          "(从不下载远端媒体、从不写入项目、从不自动选take)。",
 )
-app.add_typer(openclap_app, name="openclap")
+app.add_typer(openclap_app, name="openclap", rich_help_panel=PANEL_BRIDGE)
 
 
 def _openclap_read_or_fail(file: Path, as_json: bool):
@@ -2346,7 +2360,7 @@ fcpxml_app = typer.Typer(
          "(从不下载/拷贝媒体、从不写入项目、从不自动落轨)。写出口仍是 "
          "`manju export --fcpxml`。",
 )
-app.add_typer(fcpxml_app, name="fcpxml")
+app.add_typer(fcpxml_app, name="fcpxml", rich_help_panel=PANEL_BRIDGE)
 
 
 def _fcpxml_read_or_fail(file: Path, as_json: bool):
@@ -2440,7 +2454,7 @@ edl_app = typer.Typer(
          "(从不拷贝/取用媒体、从不写入项目、从不自动落轨)。写出口仍是 "
          "`manju export --edl`。",
 )
-app.add_typer(edl_app, name="edl")
+app.add_typer(edl_app, name="edl", rich_help_panel=PANEL_BRIDGE)
 
 
 def _edl_read_or_fail(file: Path, as_json: bool):
@@ -2528,7 +2542,7 @@ def edl_import_plan(
 # ----------------------------------------------------------------- package
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_EXPORT)
 def package(
     force: bool = typer.Option(False, "--force",
                                help="re-cut even if the content key matches"),
@@ -2599,7 +2613,7 @@ _FRESHNESS_COLOR = {
 }
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_EXPORT)
 def exports(
     as_json: bool = typer.Option(False, "--json"),
     baseline: bool = typer.Option(
@@ -2786,7 +2800,7 @@ def exports(
 # ----------------------------------------------------------------- explain
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_QC)
 def explain(
     as_json: bool = typer.Option(False, "--json"),
     cost: bool = typer.Option(
@@ -2856,7 +2870,7 @@ def explain(
 # ------------------------------------------------------------------ locale
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_EXPORT)
 def locale(
     action: str = typer.Argument(..., help="add | status"),
     lang: Optional[str] = typer.Argument(None, help="locale id e.g. en"),
@@ -2922,7 +2936,7 @@ def locale(
 # ---------------------------------------------------------------- roundtrip
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_BRIDGE)
 def roundtrip(
     edited: Path = typer.Argument(..., help="edited skeleton draft_content.json or OTIO"),
     apply: bool = typer.Option(False, "--apply", help="apply accepted rows"),
@@ -3002,7 +3016,7 @@ def _print_shot_package_plan(plan) -> None:
         typer.secho(f"  ⚠ {w}", fg=typer.colors.BRIGHT_BLACK)
 
 
-@app.command("shot-package")
+@app.command("shot-package", rich_help_panel=PANEL_BRIDGE)
 def shot_package(
     file: Path = typer.Argument(..., help="external ShotDraftPackage v1 YAML "
                                           "(schema manju.shot-draft-package/v1)"),
@@ -3062,7 +3076,7 @@ def shot_package(
         raise typer.Exit(1)
 
 
-@app.command(name="pull-sheet")
+@app.command(name="pull-sheet", rich_help_panel=PANEL_BRIDGE)
 def pull_sheet(
     file: Path = typer.Argument(..., help="an edited storyboard pull sheet "
                                           "(.csv or .md) exported by `manju export --pullsheet`"),
@@ -3120,7 +3134,7 @@ def pull_sheet(
 # ------------------------------------------------------------------- impact
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_QC)
 def impact(
     shot_id: str = typer.Argument(..., metavar="SHOT"),
     field: Optional[str] = typer.Option(
@@ -3206,7 +3220,7 @@ def _print_prompt_checks(findings: list, *, indent: str = "  ") -> None:
                 typer.echo(f"{indent}    {sub['index']}) {text}  ≈{sub['duration_ms']}ms")
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def prompt(
     shot_id: Optional[str] = typer.Argument(None, metavar="SHOT"),
     check: bool = typer.Option(
@@ -3298,7 +3312,7 @@ def prompt(
 # ------------------------------------------------------------------- voice
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def voice(
     shot_id: Optional[str] = typer.Argument(None),
     shots: Optional[str] = typer.Option(
@@ -3485,7 +3499,7 @@ def voice(
 # ------------------------------------------------------------------- align
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def align(
     shot_id: Optional[str] = typer.Argument(
         None, metavar="SHOT",
@@ -3628,7 +3642,7 @@ def align(
 # --------------------------------------------------------------- masters
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def masters(
     profile: str = typer.Option(
         "master", "--profile",
@@ -3680,7 +3694,7 @@ def masters(
 # -------------------------------------------------------------- transcribe
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_GENERATE)
 def transcribe(
     media: Path,
     provider: Optional[str] = typer.Option(None, help="asr manifest id (default: first configured)"),
@@ -3781,7 +3795,7 @@ board_app = typer.Typer(
     invoke_without_command=True,
     help="Review workbench + multi-image storyboards (round-U goal item 12).",
 )
-app.add_typer(board_app, name="board")
+app.add_typer(board_app, name="board", rich_help_panel=PANEL_QC)
 
 
 @board_app.callback(invoke_without_command=True)
@@ -3920,7 +3934,7 @@ def board_keyframes(
                     fg=typer.colors.GREEN)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def gui(
     host: str = typer.Option("127.0.0.1", help="bind address (non-local hosts print a warning)"),
     port: int = typer.Option(8321, help="port (0 = pick a free one)"),
@@ -4716,7 +4730,7 @@ def _unpack_bag(zf: zipfile.ZipFile, names: list[str], archive: Path, dest: Path
     )
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def pack(out: Optional[Path] = typer.Option(None),
          full: bool = typer.Option(False, "--full",
                                    help="include the rebuildable render caches too"),
@@ -4936,7 +4950,7 @@ UNPACK_MAX_MEMBERS = 100_000
 UNPACK_FREE_DISK_MARGIN_BYTES = 64 * 1024 * 1024
 
 
-@app.command("support-bundle")
+@app.command("support-bundle", rich_help_panel=PANEL_OPS)
 def support_bundle_cmd(
     out: Optional[Path] = typer.Option(None, "--out",
                                        help="bundle zip 输出路径(默认 support-bundle.zip)"),
@@ -4970,7 +4984,7 @@ def support_bundle_cmd(
                f"self-scan ok: {summary.get('self_scan', {}).get('ok')}")
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         None, "--dest", help="override the restored directory (default: from the archive filename)"),
         as_json: bool = typer.Option(False, "--json")):
@@ -5129,7 +5143,7 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         typer.secho("  " + fixity_note, fg=typer.colors.BRIGHT_BLACK)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def fixity(archive: Path,
            as_json: bool = typer.Option(False, "--json"),
            info: bool = typer.Option(
@@ -5226,7 +5240,7 @@ def fixity(archive: Path,
 # ----------------------------------------------------------------- relink
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def relink(
     mode: str = typer.Argument(..., help="report | plan | apply"),
     root: Optional[list[Path]] = typer.Option(
@@ -5360,7 +5374,7 @@ def relink(
 # ----------------------------------------------------------------- perf
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def perf(
     run_id: Optional[str] = typer.Argument(
         None, help="build run id(见 `manju build --json`);缺省取最近一次运行/latest"),
@@ -5437,7 +5451,7 @@ def perf(
 # ------------------------------------------------------------- appearances
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def appearances(as_json: bool = typer.Option(False, "--json")):
     """Cross-reference bible ids against the shots that use them (goal 11).
 
@@ -5487,7 +5501,7 @@ def appearances(as_json: bool = typer.Option(False, "--json")):
 # -------------------------------------------------------------- toolchain
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def toolchain(
     write: bool = typer.Option(False, "--write",
                                help="落盘 reports/toolchain/<digest>.json(派生、可删除的证据投影)"),
@@ -5566,7 +5580,7 @@ def toolchain(
 # ----------------------------------------------------------- help-workflow
 
 
-@app.command("help-workflow")
+@app.command("help-workflow", rich_help_panel=PANEL_SETUP)
 def help_workflow(
     name: Optional[str] = typer.Argument(
         None, help="workflow id(如 qc-repair);缺省列出全部工作流"),
@@ -5616,7 +5630,7 @@ def help_workflow(
 assets_app = typer.Typer(no_args_is_help=False,
                          help="Asset matrix (goal 5): the read model over bible/*.yaml — "
                               "角色/场景/道具/配音/风格,含别名·关系·参考图·出场。")
-app.add_typer(assets_app, name="assets")
+app.add_typer(assets_app, name="assets", rich_help_panel=PANEL_INGEST)
 
 _ASSET_KIND_TITLES = (
     ("character", "角色 / characters"),
@@ -5706,7 +5720,7 @@ def assets_show(asset_id: str, as_json: bool = typer.Option(False, "--json")):
 # ---------------------------------------------------------------- mentions
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_SETUP)
 def mentions(
     shot_id: Optional[str] = typer.Argument(None, help="限定单个镜头;省略=全部镜头(--apply 只处理镜头,不动 story 文本)"),
     check: bool = typer.Option(False, "--check", help="只报告已解析/未解析的 @提及(默认行为)"),
@@ -5810,7 +5824,7 @@ refs_app = typer.Typer(
     invoke_without_command=True,
     help="media/refs 归属追溯(goal item 3)+ 单镜头参考解析/预算/洁净度(goal items 9-10)。",
 )
-app.add_typer(refs_app, name="refs")
+app.add_typer(refs_app, name="refs", rich_help_panel=PANEL_INGEST)
 
 
 @refs_app.callback(invoke_without_command=True)
@@ -6068,7 +6082,7 @@ tasks_app = typer.Typer(
     help="任务 / tasks — the run-ledger JOB/QUEUE view (§8.3, goal 19). "
          "`manju tasks` alone lists recent runs; `cancel`/`retry` act on one row.",
 )
-app.add_typer(tasks_app, name="tasks")
+app.add_typer(tasks_app, name="tasks", rich_help_panel=PANEL_GENERATE)
 
 
 @tasks_app.callback(invoke_without_command=True)
@@ -6432,7 +6446,7 @@ def tasks_manifest(
 # ------------------------------------------------------------------ spend
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def spend(as_json: bool = typer.Option(False, "--json")):
     """Accumulated spend — the MONEY view (§8.3 事后逐笔记账, made visible).
 
@@ -6491,7 +6505,7 @@ def spend(as_json: bool = typer.Option(False, "--json")):
 # --------------------------------------------------------------- failures
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def failures(n: int = typer.Option(10, "-n", help="how many recent failures to show"),
              as_json: bool = typer.Option(False, "--json")):
     """Recent failures, newest first — make EVERY failure debuggable (goal 10).
@@ -6535,7 +6549,7 @@ def failures(n: int = typer.Option(10, "-n", help="how many recent failures to s
 # ------------------------------------------------------------------ evaluate
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def evaluate(as_json: bool = typer.Option(False, "--json")):
     """技能/工作流的诚实用量评估 (round AA, goal item 8)。
 
@@ -6606,7 +6620,7 @@ def _event_line(e: dict) -> str:
             f"{json.dumps(e.get('detail', {}), ensure_ascii=False)}")
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def events(n: int = typer.Option(20, "-n"), as_json: bool = typer.Option(False, "--json"),
            follow: bool = typer.Option(False, "--follow", "-f",
                                        help="live-tail the log (§10 co-presence)")):
@@ -6632,7 +6646,7 @@ def events(n: int = typer.Option(20, "-n"), as_json: bool = typer.Option(False, 
             pass
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def watch(interval: float = typer.Option(0.8, help="poll interval seconds"),
           once: bool = typer.Option(False, "--once", help="one check, then exit")):
     """Dev loop (§10): re-run `manju check` whenever truth changes — edit YAML
@@ -6667,7 +6681,7 @@ def watch(interval: float = typer.Option(0.8, help="poll interval seconds"),
 # ------------------------------------------------- history/snapshot/rollback
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def history(n: int = typer.Option(30, "-n"), as_json: bool = typer.Option(False, "--json")):
     """The merged change feed (P2 §10): events.jsonl (who did what) interleaved
     with the project's git log (committed disk state), oldest→newest. Read-only
@@ -6683,7 +6697,7 @@ def history(n: int = typer.Option(30, "-n"), as_json: bool = typer.Option(False,
             typer.echo(f"{r['ts']}  [{tag}]  {r['text']}")
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def snapshot(label: str = typer.Argument("", help="checkpoint label")):
     """Labeled git checkpoint of the truth text (git is the patch engine, §3).
     `manju rollback file --to <sha>` returns to it. A clean tree is a no-op."""
@@ -6704,7 +6718,7 @@ def snapshot(label: str = typer.Argument("", help="checkpoint label")):
                     fg=typer.colors.GREEN)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_COLLAB)
 def rollback(
     what: str = typer.Argument(..., help="'shot' or 'file'"),
     target: str = typer.Argument(..., help="shot id, or a project-relative truth-text path"),
@@ -6742,7 +6756,7 @@ def rollback(
         typer.secho(human, fg=typer.colors.GREEN)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_QC)
 def compare(
     a: Optional[str] = typer.Argument(None, help="older final name (e.g. final_v2)"),
     b: Optional[str] = typer.Argument(None, help="newer final name (e.g. final_v3)"),
@@ -6864,7 +6878,7 @@ def compare(
                         fg=typer.colors.BRIGHT_BLACK)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def doctor(as_json: bool = typer.Option(False, "--json")):
     """Environment health: ffmpeg, fonts, disk, project integrity (§14).
 
@@ -6887,7 +6901,7 @@ def doctor(as_json: bool = typer.Option(False, "--json")):
     raise typer.Exit(0 if info["ok"] else 1)
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def gc(hard: bool = typer.Option(False, "--hard"),
        as_json: bool = typer.Option(False, "--json")):
     """Reclaim space: segment cache and proxies. --hard (interactive) also
@@ -6932,7 +6946,7 @@ def gc(hard: bool = typer.Option(False, "--hard"),
                         fg=typer.colors.BRIGHT_BLACK)
 
 
-@app.command("rebuild-index")
+@app.command("rebuild-index", rich_help_panel=PANEL_OPS)
 def rebuild_index(as_json: bool = typer.Option(False, "--json")):
     """Recreate the disposable runtime dir from text + media (§3: SQLite may
     explode at any time). Rescans shot states and re-derives the run ledger
@@ -6962,7 +6976,7 @@ def rebuild_index(as_json: bool = typer.Option(False, "--json")):
         typer.echo(f"ledger: {ledger['runs']} runs, {ledger['pending_jobs']} pending jobs")
 
 
-@app.command()
+@app.command(rich_help_panel=PANEL_OPS)
 def schema(out: Optional[Path] = typer.Option(None, help="write one .schema.json per model into this directory")):
     """Export the JSON Schemas of every truth-file model (§4, §12)."""
     from .core.models import export_json_schemas
@@ -6984,7 +6998,7 @@ def schema(out: Optional[Path] = typer.Option(None, help="write one .schema.json
 lib_app = typer.Typer(no_args_is_help=True,
                       help="Private asset library (local, user-level, never uploaded). "
                            "个人素材库:内容寻址去重 + 标签 + 预览,可复用到任意项目。")
-app.add_typer(lib_app, name="lib")
+app.add_typer(lib_app, name="lib", rich_help_panel=PANEL_INGEST)
 
 
 def _lib():
@@ -7158,7 +7172,7 @@ def lib_rm(
         typer.secho(f"removed {entry['name']} from library", fg=typer.colors.YELLOW)
 
 
-@app.command("serve-mcp")
+@app.command("serve-mcp", rich_help_panel=PANEL_COLLAB)
 def serve_mcp(
     agent_profile: str = typer.Option(
         "collaborative", "--agent-profile",
@@ -7190,7 +7204,7 @@ def serve_mcp(
 
 providers_app = typer.Typer(no_args_is_help=True,
                             help="Manage provider manifests (§8.2/§8.6).")
-app.add_typer(providers_app, name="providers")
+app.add_typer(providers_app, name="providers", rich_help_panel=PANEL_GENERATE)
 
 _MASK = "***"
 # key names whose VALUE must never be shown (key_env holds an env-var NAME, not
@@ -7757,7 +7771,7 @@ def providers_qualification(
 
 route_app = typer.Typer(no_args_is_help=True,
                         help="Inspect model-routing strategies (goal 9).")
-app.add_typer(route_app, name="route")
+app.add_typer(route_app, name="route", rich_help_panel=PANEL_GENERATE)
 
 
 @route_app.command("list")
@@ -7849,7 +7863,7 @@ def route_explain_cmd(shot_id: str = typer.Argument(..., metavar="SHOT"),
 
 routing_app = typer.Typer(no_args_is_help=True,
                           help="Per-shot routing decisions + cost (goal 15).")
-app.add_typer(routing_app, name="routing")
+app.add_typer(routing_app, name="routing", rich_help_panel=PANEL_GENERATE)
 
 _WHY_CN = {"explicit": "钦定", "rule": "规则", "tier": "分级", "fallback": "兜底"}
 
@@ -7917,7 +7931,7 @@ def routing_explain_cmd(
 
 director_app = typer.Typer(no_args_is_help=True,
                            help="AI 导演协作环:提案→花费/影响→确认→执行→差异→下一步(goal 17)。")
-app.add_typer(director_app, name="director")
+app.add_typer(director_app, name="director", rich_help_panel=PANEL_COLLAB)
 
 
 def _director_actions(from_file: Optional[Path], actions_json: Optional[str]) -> tuple[list, str]:
@@ -8159,7 +8173,7 @@ series_app = typer.Typer(
     help="剧集(长片/多集)总括层(goal V-3):series.yaml 伞状目录 + 全局 bible + "
          "episodes/<eid>.manju 普通项目。分集与单项目命令完全兼容。",
 )
-app.add_typer(series_app, name="series")
+app.add_typer(series_app, name="series", rich_help_panel=PANEL_SETUP)
 
 
 def _series(path: Optional[Path] = None):
@@ -8525,7 +8539,7 @@ def series_outline_cmd(
 # / bridge is gated behind AI_IDE_14 qualification and refuses when unqualified.
 
 
-@app.command("analyze")
+@app.command("analyze", rich_help_panel=PANEL_BRIDGE)
 def analyze_cmd(
     media: Path = typer.Argument(..., help="the exact source media to bind analysis to"),
     fixture: Optional[Path] = typer.Option(None, "--fixture",
@@ -8578,7 +8592,7 @@ def analyze_cmd(
                     f"unknown_axes={ev['unknown_axes']}", fg=typer.colors.GREEN)
 
 
-@app.command("segments")
+@app.command("segments", rich_help_panel=PANEL_BRIDGE)
 def segments_cmd(
     report: Path = typer.Argument(..., help="a media-analysis report JSON"),
     as_json: bool = typer.Option(False, "--json"),
@@ -8602,7 +8616,7 @@ def segments_cmd(
                        f"risk={s['cut_risk']} dialogue_ok={s['dialogue_complete']}")
 
 
-@app.command("reframe")
+@app.command("reframe", rich_help_panel=PANEL_BRIDGE)
 def reframe_cmd(
     report: Path = typer.Argument(..., help="a media-analysis report JSON (ROI tracks)"),
     target: str = typer.Option(..., "--target", help="target WxH, e.g. 1080x1920"),
@@ -8633,7 +8647,7 @@ def reframe_cmd(
                     fg=typer.colors.GREEN if out["status"] == _rf.OK else typer.colors.YELLOW)
 
 
-@app.command("rough-cut")
+@app.command("rough-cut", rich_help_panel=PANEL_BRIDGE)
 def rough_cut_cmd(
     align: Path = typer.Argument(..., help="an AI_IDE_18 <take>.align.json evidence file"),
     as_json: bool = typer.Option(False, "--json"),
@@ -8660,7 +8674,7 @@ def rough_cut_cmd(
             typer.echo(f"  {a['kind']}  [{a['start_ms']}-{a['end_ms']}]  {a['reason']}")
 
 
-@app.command("tool")
+@app.command("tool", rich_help_panel=PANEL_BRIDGE)
 def tool_cmd(
     op: str = typer.Argument(..., help="a whitelisted edit op"),
     dry_run: bool = typer.Option(True, "--dry-run/--resolve"),
@@ -8696,7 +8710,7 @@ def tool_cmd(
 bridge_app = typer.Typer(
     no_args_is_help=True,
     help="生成式转场 bridge:plan / run / adopt(同一服务、Provider 层准入门)")
-app.add_typer(bridge_app, name="bridge")
+app.add_typer(bridge_app, name="bridge", rich_help_panel=PANEL_GENERATE)
 
 
 @bridge_app.command("plan")
@@ -8833,7 +8847,7 @@ migrate_app = typer.Typer(
     no_args_is_help=True,
     help="Rational edit-rate migration: inspect | plan | apply | downgrade "
          "(the declared project.fps int→rational move).")
-app.add_typer(migrate_app, name="migrate")
+app.add_typer(migrate_app, name="migrate", rich_help_panel=PANEL_OPS)
 
 
 def _migrate_candidate_lines(doc) -> None:

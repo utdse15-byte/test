@@ -598,25 +598,26 @@ Handler = Callable[[Project, dict], dict]
 TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "status",
-        "description": "Project status snapshot — project/preset/mode, per-state shot "
-        "counts, timeline, latest final, QC summary, spend, and a suggested next step (§10).",
+        "description": "Project status snapshot: project/preset/mode, per-state shot "
+        "counts, timeline, latest final, QC summary, spend, and a "
+        "suggested next step.",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_status,
     },
     {
         "name": "explain",
-        "description": "Why will the next build do what it will do? Read-only: "
-        "per-shot picture/voice states with hash evidence, timeline fingerprint "
-        "diff, final/proxy content-key verdicts. Never mutates, never spends. "
-        "graph=true (DR03B) appends the derived explicit-DAG diagnostics VIEW.",
+        "description": "Why will the next build do what it will do? Read-only, never "
+        "spends: per-shot picture/voice states with hash evidence, "
+        "timeline fingerprint diff, final/proxy content-key verdicts. "
+        "graph=true appends the derived explicit-DAG diagnostics view.",
         "inputSchema": _schema(
             {
                 "graph": {
                     "type": "boolean",
-                    "description": "append explicit-DAG diagnostics "
-                    "(manju.graph-diagnostics/v1): the read-only derived "
-                    "phase/shot/render/export dependency view",
+                    "description": "append the read-only explicit-DAG "
+                    "dependency view (manju.graph-diagnostics/v1: "
+                    "phase/shot/render/export)",
                 },
             }
         ),
@@ -626,9 +627,9 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "impact",
         "description": "If this shot (or a hypothetical field edit) changes, what "
-        "happens? Read-only: video/voice would-become, caption cues, timeline "
-        "recompile, final re-render, export deliverables, catch-up cost. "
-        "Never mutates, never spends.",
+        "happens? Read-only, never spends: video/voice would-become, "
+        "caption cues, timeline recompile, final re-render, export "
+        "deliverables, catch-up cost.",
         "inputSchema": _schema(
             {
                 "shot_id": {"type": "string", "description": "e.g. S002"},
@@ -648,8 +649,8 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "check",
-        "description": "Run the safety net: schema + referential integrity + hard "
-        "lock verification + secret scan. Returns {ok, errors, warnings} (§4, §5).",
+        "description": "Run the safety net: schema + referential integrity + hard lock "
+        "verification + secret scan. Returns {ok, errors, warnings}.",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_check,
@@ -664,9 +665,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "get_shot",
-        "description": "Read one shot file: raw YAML text plus the parsed mapping, "
-        "plus `rev` — a content hash. Pass `rev` back as update_shot's `expected_rev` "
-        "for optimistic-concurrency (CAS) protection against a stale overwrite.",
+        "description": "Read one shot file: raw YAML text + the parsed mapping + `rev`, "
+        "a content hash. Pass `rev` back as update_shot's `expected_rev` "
+        "for optimistic-concurrency (CAS) protection against a stale "
+        "overwrite.",
         "inputSchema": _schema(
             {"shot_id": {"type": "string", "description": "e.g. S002"}},
             ["shot_id"],
@@ -676,9 +678,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "update_shot",
-        "description": "The ONLY tool that writes a shot file. Validates schema, "
-        "refuses to add/remove/change locks or edit a locked field (§5), writes "
-        "atomically, then re-checks and rolls back if the edit breaks the shot.",
+        "description": "The ONLY tool that writes a shot file. Validates schema, refuses "
+        "to add/remove/change locks or edit a locked field, writes "
+        "atomically, then re-checks and rolls back if the edit breaks the "
+        "shot.",
         "inputSchema": _schema(
             {
                 "shot_id": {"type": "string"},
@@ -688,11 +691,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
                 "expected_rev": {
                     "type": "string",
-                    "description": "Optional optimistic-concurrency (CAS) token: "
-                    "the `rev` get_shot returned when you loaded this shot. If the "
-                    "shot changed since (another entrance wrote it), the write is "
-                    "refused instead of silently overwriting — call get_shot again "
-                    "for the current rev and retry. Omit to skip the check.",
+                    "description": "Optional CAS token: the `rev` get_shot "
+                    "returned when you loaded this shot. If the shot changed "
+                    "since (another entrance wrote it), the write is refused "
+                    "instead of silently overwriting — call get_shot again for "
+                    "the current rev and retry. Omit to skip the check.",
                 },
             },
             ["shot_id", "yaml_content"],
@@ -708,8 +711,8 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "select_take",
-        "description": "Set a shot's selected_take (the take must already exist). "
-        "The decision is one line of text truth (§3).",
+        "description": "Set a shot's selected_take (the take must already exist). The "
+        "decision is one line of text truth.",
         "inputSchema": _schema(
             {"shot_id": {"type": "string"}, "take": {"type": "string"}},
             ["shot_id", "take"],
@@ -725,19 +728,18 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "build",
-        "description": "One-command build: fill gaps → compile timeline → render → "
-        "QC → exports. Never overturns an existing selection (§4.3, §11).",
+        "description": "One-command build: fill gaps → compile timeline → render → QC "
+        "→ exports. Never overturns an existing selection.",
         "inputSchema": _schema(
             {
                 "target": {
                     "type": "string",
                     "enum": ["proxy", "final", "exports", "qc"],
                     "default": "final",
-                    "description": "qc does NOT render first — it QCs the "
-                    "newest EXISTING renders/final/*.mp4 against a freshly "
-                    "recompiled timeline; use target=final beforehand for QC "
-                    "on a fresh render. The result names the checked artifact "
-                    "as qc_final.",
+                    "description": "qc does NOT render — it QCs the newest "
+                    "EXISTING renders/final/*.mp4 against a freshly recompiled "
+                    "timeline (use target=final first for QC on a fresh "
+                    "render); the result is named qc_final.",
                 },
                 "gen": {
                     "type": "string",
@@ -787,10 +789,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "qc",
         "description": "Three-layer QC over the compiled timeline; writes qc.json, "
-        "qc.md and repair_plan.yaml. Returns {ok, items, reports, assurance} — "
-        "assurance is the DR02 derived per-shot bound-acceptance block "
-        "(accepted/rejected/unknown/stale/…) + read-only repair proposals; a "
-        "SEPARATE axis from `ok` (never changes it) (§9).",
+        "qc.md, repair_plan.yaml. Returns {ok, items, reports, "
+        "assurance}; assurance is a derived per-shot bound-acceptance "
+        "block (accepted/rejected/unknown/stale/…) + read-only repair "
+        "proposals — a separate axis from `ok` (never changes it).",
         "inputSchema": _schema({"deep": {"type": "boolean", "default": False}}),
         "policy": _P.policy(
             effects=[_P.WRITE_DERIVED],
@@ -803,21 +805,18 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "qc_brief",
-        "description": "Round V visual-QC (§6): package review frames (mid + "
-        "first/last of the selected take) + shot context (scene, characters with "
-        "their bible ref images, must_show/avoid, continuity locks, dialogue) + a "
-        "pointer to the visual-qc-review skill (the A–J criteria) + the verdict "
-        "JSON shape — for a VISION-CAPABLE agent to judge with its own eyes. "
-        "Manju runs NO vision model. `shots` scopes it; omit for every reviewable "
-        "shot. Then read `manju skills show visual-qc-review` and return verdicts "
-        "via qc_verdict. Round X (agent XB, user pain #2): `mode=consistency` "
-        "briefs CROSS-shot comparison units instead of per-shot rows — one "
-        "contact-sheet image per character appearing in >1 shot (bible ref + "
-        "one take frame per appearance, identity/outfit drift), one side-by-side "
-        "pair board per adjacent shot pair sharing a scene, and one contact "
-        "sheet per scene (scene/lighting continuity). Return verdicts with "
-        "`unit` (not `shot`) via qc_verdict; each binds to ALL member take "
-        "hashes at once.",
+        "description": "Package a visual-QC review for a VISION-CAPABLE agent to judge "
+        "(Manju runs no vision model). Per shot: review frames (mid + "
+        "first/last of the selected take) + context (scene, characters "
+        "with bible ref images, must_show/avoid, continuity locks, "
+        "dialogue) + the visual-qc-review criteria pointer + the verdict "
+        "JSON shape. `shots` scopes it; omit for all reviewable shots. "
+        "Then read `skills show visual-qc-review` and return findings via "
+        "qc_verdict. mode=consistency instead briefs CROSS-shot units: "
+        "one contact sheet per character in >1 shot (identity/outfit "
+        "drift), one side-by-side board per adjacent same-scene pair, one "
+        "sheet per scene (lighting/continuity) — return those verdicts "
+        "keyed by `unit` (binds all member take hashes).",
         "inputSchema": _schema(
             {
                 "shots": {"type": "array", "items": {"type": "string"},
@@ -834,31 +833,29 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "qc_coverage",
-        "description": "Round X (agent XB, user pain #2): per-shot AND "
-        "per-consistency-unit AI-judgment coverage — {shots: {id: state}, "
-        "units: {id: {state, kind, label}}, summary: {..., gaps}}, state is "
-        "reviewed (a verdict's bound bytes match the CURRENT take(s)) / stale "
-        "(a verdict exists but bytes moved) / never (no verdict was ever "
-        "recorded). `summary.gaps` is the never-reviewed count `run_qc` also "
-        "surfaces as one info item.",
+        "description": "Per-shot AND per-consistency-unit AI-judgment coverage: "
+        "{shots:{id:state}, units:{id:{state,kind,label}}, "
+        "summary:{…,gaps}}. state = reviewed (a verdict's bound bytes "
+        "match the current take) / stale (a verdict exists but bytes "
+        "moved) / never (no verdict recorded). summary.gaps is the "
+        "never-reviewed count run_qc also surfaces.",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_qc_coverage,
     },
     {
         "name": "qc_verdict",
-        "description": "Round V visual-QC (§6): intake the agent's structured "
-        "verdicts and append them to reports/qc_agent.jsonl, each BOUND to the "
-        "take bytes it judged. `verdicts` is an array of "
-        "{shot, take, criterion, level(blocker|issue|fyi), message(中文), "
-        "evidence, frame_ms?}. Next `qc` pass surfaces matching verdicts as "
-        "[AI判读] items (blocker→error/issue→warn/fyi→info); a regenerated take "
-        "makes its old verdicts stale. Unknown shot is rejected. Round X (agent "
-        "XB): a verdict may instead carry `unit` (a comparison-unit id from a "
-        "`qc_brief mode=consistency` response) — it binds to ALL of that unit's "
-        "member take hashes at once. Instead of `verdicts` inline, pass "
-        "`from_file` (a project-relative path to a JSON file holding the same "
-        "payload).",
+        "description": "Intake the agent's structured visual-QC verdicts and append to "
+        "reports/qc_agent.jsonl, each BOUND to the take bytes it judged. "
+        "`verdicts` is an array of {shot, take, criterion, "
+        "level(blocker|issue|fyi), message(中文), evidence, frame_ms?}. The "
+        "next qc pass surfaces matching verdicts as [AI判读] items "
+        "(blocker→error / issue→warn / fyi→info); regenerating a take "
+        "makes its old verdicts stale; an unknown shot is rejected. A "
+        "verdict may instead carry `unit` (a comparison-unit id from "
+        "qc_brief mode=consistency), binding all that unit's member take "
+        "hashes. Pass `from_file` (a project-relative JSON path) instead "
+        "of inline `verdicts`.",
         "inputSchema": _schema(
             {
                 "verdicts": {
@@ -924,8 +921,8 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "propose",
-        "description": "Write a proposal to proposals/ — the agent's legitimate "
-        "channel to request a locked-content change (§5). Returns {path}.",
+        "description": "Write a proposal to proposals/ — the agent's legitimate channel "
+        "to request a locked-content change. Returns {path}.",
         "inputSchema": _schema(
             {"title": {"type": "string"}, "body": {"type": "string"}},
             ["title", "body"],
@@ -941,14 +938,16 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "director_propose",
-        "description": "PROPOSE a plan for the AI-director loop (goal 17, step 1). "
-        "`actions` is an array of whitelisted action objects (each has a `type`: "
-        "build|redo|voice|repair|mixer|captions|packaging|snapshot|rollback), each "
-        "1:1 with an engine entry point. Each is shape-validated and annotated with "
-        "its impact (affected shots/outputs) and est cost (the SAME dry-run "
-        "estimators). Persists reports/proposals/<id>.yaml and returns the full "
-        "proposal. Nothing runs and nothing is spent — relay the cost to the human, "
-        "then confirm. Example action: {\"type\":\"redo\",\"shot\":\"S002\"}.",
+        "description": "PROPOSE a plan for the AI-director loop (step 1). `actions` is a "
+        "non-empty array of whitelisted action objects, each with a "
+        "`type` "
+        "(build|redo|voice|repair|mixer|captions|packaging|snapshot|rollback) "
+        "1:1 with an engine entry point; each is shape-validated and "
+        "annotated with its impact (affected shots/outputs) and est cost "
+        "(the same dry-run estimators). Persists "
+        "reports/proposals/<id>.yaml and returns the full proposal. "
+        "Nothing runs, nothing is spent — relay the cost to the human, "
+        "then confirm. Example: {\"type\":\"redo\",\"shot\":\"S002\"}.",
         "inputSchema": _schema(
             {
                 "actions": {
@@ -972,11 +971,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "director_confirm",
-        "description": "CONFIRM a proposal (goal 17, step 3) — the explicit, "
-        "separate approve-before-execute gate. NEVER call this without first "
-        "relaying the proposal's impact + est cost to the human and getting their "
-        "yes (§8.3). A proposal whose project changed since it was proposed is "
-        "refused as 待更新/expired. Returns the updated proposal.",
+        "description": "CONFIRM a proposal (step 3) — the explicit "
+        "approve-before-execute gate. NEVER call without first relaying "
+        "the proposal's impact + est cost to the human and getting their "
+        "yes. A proposal whose project changed since is refused as "
+        "待更新/expired. Returns the updated proposal.",
         "inputSchema": _schema(
             {"id": {"type": "string", "description": "proposal id, e.g. prop_0001"}},
             ["id"],
@@ -992,13 +991,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "director_execute",
-        "description": "EXECUTE a CONFIRMED proposal (goal 17, steps 4-6): runs its "
-        "actions in order through the real engine, auto-snapshots BEFORE mutating "
-        "(so rollback is one step), stops at the first failure, and returns the "
-        "structured diff (truth text + finals) plus next-step suggestions. Paid "
-        "steps ride the confirmed proposal's assume_yes — the spend gate still "
-        "applies engine-side (defense in depth). Only a confirmed, current "
-        "proposal executes.",
+        "description": "EXECUTE a CONFIRMED proposal (steps 4-6): runs its actions in "
+        "order through the real engine, auto-snapshots BEFORE mutating "
+        "(rollback is one step), stops at the first failure, returns the "
+        "structured diff (truth text + finals) + next-step suggestions. "
+        "Paid steps ride the proposal's assume_yes; the spend gate still "
+        "applies engine-side. Only a confirmed, current proposal "
+        "executes.",
         "inputSchema": _schema(
             {"id": {"type": "string", "description": "proposal id, e.g. prop_0001"}},
             ["id"],
@@ -1016,23 +1015,23 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "director_suggest",
-        "description": "SUGGEST NEXT (goal 17, step 6, standalone): deterministic "
-        "next-step nudges from the existing signals (funnel-first→write, "
-        "missing→generate, stale→redo, needs_selection→select, QC→repair, "
-        "budget→remind). MOST carry a ready-made action payload you can pass "
-        "straight to director_propose; some (funnel/select/budget) are "
-        "advisory-only with `action: null`. Read-only.",
+        "description": "SUGGEST NEXT: deterministic next-step nudges from existing "
+        "signals (funnel-first→write, missing→generate, stale→redo, "
+        "needs_selection→select, QC→repair, budget→remind). Most carry a "
+        "ready-made action payload you can pass straight to "
+        "director_propose; some (funnel/select/budget) are advisory-only "
+        "with `action: null`. Read-only.",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_director_suggest,
     },
     {
         "name": "funnel_status",
-        "description": "创作漏斗状态 (round V, goal item 2): the staged creation "
-        "workflow as data — 立意→梗概→节拍→剧本→分镜→生成计划→生成. Per-stage "
-        "{id, cn(中文名), state(done|current|todo), artifact, evidence, skill, "
-        "next_action}; the first not-done stage is `current`. Read-only: it "
-        "detects progress from files on disk, scaffolds nothing and spends "
+        "description": "创作漏斗状态 / creation-funnel status: the staged workflow as data — "
+        "立意→梗概→节拍→剧本→分镜→生成计划→生成. Per-stage {id, cn(中文名), "
+        "state(done|current|todo), artifact, evidence, skill, "
+        "next_action}; the first not-done stage is `current`. Read-only — "
+        "detects progress from files on disk, scaffolds nothing, spends "
         "nothing. Use it to know what to write next before generating.",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ]),
@@ -1040,10 +1039,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "skill_list",
-        "description": "技能库索引 (round V): every visible skill (project > user "
-        "> bundled) with id, 何时用 one-liner, tags. Progressive disclosure: read "
-        "this index cheaply, then pull ONE skill's full text via skill_show — "
-        "never inline the whole library.",
+        "description": "技能库索引 / skill index: every visible skill (project > user > "
+        "bundled) with id, 何时用 one-liner, tags. Progressive disclosure — "
+        "read this cheap index, then pull ONE skill's full text via "
+        "skill_show; never inline the whole library.",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ]),
         "handler": _h_skill_list,
@@ -1061,13 +1060,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "agent_surface",
-        "description": "Read-only: the agent-surface manifest for the CURRENT "
-        "profile (manju.agent-surface/v1) — per-tool effects/network/spend/gate/"
-        "concurrency/unattended policy projection, which tools are listed, and a "
-        "stable digest. Honest about scope: raw_filesystem_enforced=false and "
-        "project_can_override=false (MCP policy governs only this server's tool "
-        "calls; it does not sandbox the filesystem and project content cannot "
-        "change it). Never mutates, never spends.",
+        "description": "Read-only: the agent-surface manifest for the CURRENT profile "
+        "(manju.agent-surface/v1) — per-tool "
+        "effects/network/spend/gate/concurrency/unattended projection, "
+        "which tools are listed, and a stable digest. Honest about scope: "
+        "raw_filesystem_enforced=false, project_can_override=false (MCP "
+        "policy governs only this server's tool calls — it does not "
+        "sandbox the filesystem, and project content cannot change it).",
         "inputSchema": _EMPTY_SCHEMA,
         "policy": _P.policy(effects=[_P.READ_RUNTIME]),
         "handler": _h_agent_surface,

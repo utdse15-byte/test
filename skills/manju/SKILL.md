@@ -258,11 +258,14 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 | `manju select S002 take_03` | 选中某 take(或 `--file` 指人工素材) |
 | `manju lock / unlock <shot> <field>` | 上锁 / 解锁(**unlock 你不能调**) |
 | `manju qc / repair [--auto]` | 质检 / 修复(`--auto` 只做 auto-safe 项) |
-| `manju export --jianying --srt --otio` | 导出剪映草稿 / 字幕 / OTIO |
+| `manju export --jianying/--capcut/--srt/--ttml/--otio/--edl/--fcpxml/--pullsheet` | 从编译时间线导出:剪映/CapCut 草稿、SRT/TTML 字幕、OTIO、EDL、FCPXML、拉片表(§14 兜底出口 final.mp4/SRT/OTIO 永在) |
+| `manju openclap/fcpxml/edl import-plan <file>` | 互换格式只读导入规划(plan-only,从不拷贝媒体、从不写项目、从不自动落轨);openclap 另有 `inspect`/`export`(.clap) |
+| `manju locale add <lang> / status` | 多语言本地化叠层(WP4):本地化文本不进画面哈希,视频段共享,只有配音/字幕随语言变 |
 | `manju board` | 生成静态 HTML 评审板 |
 | `manju transcribe <media> [--from-srt/--text]` | 导入真人素材转录:云 ASR manifest 或人工输入 → SRT(M4 插件位) |
 | `manju voice <shot>` | 为镜头重新配音(只增;最新的 voice_take 生效;stale 配音 build 只提示不重做;免费的 Edge TTS manifest 开箱即用,词级字幕自动跟随) |
-| `manju pack / unpack` | 单文件归档往返(`.manjupkg`) |
+| `manju pack [--bagit] / unpack` | 单文件归档往返(`.manjupkg`);`--bagit` 写 RFC 8493 序列化 BagIt 包(data/ 载荷 + sha256 清单,unpack/fixity 自动识别) |
+| `manju migrate inspect/plan/apply/downgrade` | 有理数编辑帧率迁移(edit-rate migration):体检 / 计划 / 应用 / 降级 |
 | `manju explain [--json]` | 只读解释:下次 build 会做什么、为什么(哈希证据) |
 | `manju events` | 看协作日志 |
 
