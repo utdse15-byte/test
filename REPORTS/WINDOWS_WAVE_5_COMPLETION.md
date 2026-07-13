@@ -220,7 +220,7 @@ Targeted suites on the authoring host (Linux, full tooling):
 
 Full suite (`pytest -n auto`, authoring host): **4311 passed, 2 skipped, 0 failed (511.64s) — the 4292 W4 tip plus the 19 new W5 tests (the 20th is the env-gated bench, the second skip), zero regressions**.
 
-Windows CI (`windows-ci.yml` full suite + `install-smoke`): **run #11 triggered by the 85cdb21 push (run #9 green on the W4 code; run #10's docs-only flake is fixed by the _req retry in this very commit — verdict recorded in DECISIONS when it lands)**.
+Windows CI (`windows-ci.yml` full suite + `install-smoke`): **run #11 (tip d49845c) came back 3 F — the test_mcp order-dependence flake and the two pack-side casefold tests whose colliding TREE cannot exist on NTFS (fixed with a real capability probe; the unpack REFUSAL ran green — the Windows-side protection held). After the fixes (ccc98b3 + a5c2fa3): **ubuntu CI green + Windows CI green** on a5c2fa3 (DECISIONS #41a)**.
 Honest expectation: **green**. The junction probe is exercised for real **only**
 on the Windows host (the POSIX tests drive it stubbed + the symlink-dir case
 real); the casefold gate and the pack warnings are **OS-independent**; the

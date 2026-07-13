@@ -1876,3 +1876,17 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   WINDOWS_WAVE_5_{BASELINE,COMPLETION}.md. With W5 the plan
   MANJU_WINDOWS_ONLY_LEAN_V3 is COMPLETE: every wave landed or
   rejected-with-reason, on a green hard gate.
+
+## 41a. W5 gate verdict addendum (2026-07-13)
+
+- Run #11 (d49845c, the W5 tip): 3 F — (1) the test_mcp order-dependence
+  flake (a module-scoped test asserting on events "earlier tests" wrote;
+  xdist load distribution hands single tests to fresh workers — made
+  self-contained, ccc98b3); (2)+(3) the two pack-side casefold-warning tests
+  assumed a case-colliding tree (Take.wav + take.wav) can exist — on NTFS
+  they are ONE file (the W1 colon-directory lesson, casefold edition; the
+  Windows-side protection is the unpack REFUSAL, which ran green). Fixed
+  with a real filesystem capability probe, never an os.name assumption
+  (a5c2fa3); docstring escape-sequence DeprecationWarnings killed (597886c).
+- Verdict on a5c2fa3: **ubuntu CI green + Windows CI green** — the W5 wave
+  and the plan close-out stand verified on both platforms.
