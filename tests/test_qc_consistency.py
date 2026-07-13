@@ -24,7 +24,7 @@ import pytest
 from typer.testing import CliRunner
 
 from manju.cli import app
-from manju.core.models import TakeSidecar
+from manju.core.models import ShotSpec, TakeSidecar
 from manju.core.yamlio import write_yaml
 from manju.gui.server import create_server
 from manju.media.boards import grid_dims
@@ -111,14 +111,56 @@ def _build_consistency_project(project, add_shot):
         _select(project, sid, take.name)
 
 
+def _add_shot(project, shot_id, **overrides):
+    """Module-scope-safe twin of the function-scoped ``add_shot`` fixture
+    (tests/conftest.py), so the build-once consistency project (F2) can be
+    assembled OUTSIDE a per-test fixture. Kept in lock-step with conftest's
+    ``add_shot._add``; the ShotSpec schema is frozen, so drift risk is nil."""
+    data = {
+        "id": shot_id,
+        "scene": "convenience_store",
+        "characters": ["linxia"],
+        "dialogue": {"speaker": "linxia", "text": "这不可能。"},
+        "duration": "auto",
+    }
+    data.update(overrides)
+    shot = ShotSpec.model_validate(data)
+    project.save_shot(shot)
+    index = project.load_index()
+    if shot_id not in index.order:
+        index.order.append(shot_id)
+        project.save_index(index)
+    return shot
+
+
+@pytest.fixture(scope="module")
+def consistency_project(tmp_path_factory):
+    """F2 (build-once / read-many): the real-ffmpeg cross-shot consistency
+    project, assembled ONCE and shared by the READ-ONLY tests below — those that
+    only READ the brief / coverage / composed board / ``/review`` HTML and never
+    write a verdict, regenerate a member take, or rely on a COLD board cache.
+    Every mutating (or cold-cache-dependent) test keeps its own function-scoped
+    ``_build_consistency_project`` build for full isolation.
+
+    The only state a read-only consumer can mutate is the CONTENT-ADDRESSED board
+    cache (populated idempotently by any consistency brief call); it never
+    touches take bytes or the verdict log, so every consumer sees byte-identical
+    truth regardless of order. Under ``-n auto`` this rebuilds once per worker
+    (bounded, accepted)."""
+    from manju.core.container import Project
+
+    root = tmp_path_factory.mktemp("qc_consistency") / "雨夜便利店"
+    project = Project.create(root, git_init=False)
+    _build_consistency_project(project, _add_shot)
+    return project
+
+
 # ------------------------------------------------------- unit construction
 
 
 @needs_ffmpeg
-def test_consistency_units_character_pair_scene(tmp_project, add_shot):
-    _build_consistency_project(tmp_project, add_shot)
-
-    brief = qc_brief(tmp_project, mode="consistency")
+def test_consistency_units_character_pair_scene(consistency_project):
+    brief = qc_brief(consistency_project, mode="consistency")
     assert brief["mode"] == "consistency"
     assert brief["criteria"]["skill"] == "visual-qc-review"
 
@@ -161,10 +203,8 @@ def test_consistency_units_character_pair_scene(tmp_project, add_shot):
 
 
 @needs_ffmpeg
-def test_consistency_shots_filter_scopes_units(tmp_project, add_shot):
-    _build_consistency_project(tmp_project, add_shot)
-
-    scoped = qc_brief(tmp_project, ["S003"], mode="consistency")
+def test_consistency_shots_filter_scopes_units(consistency_project):
+    scoped = qc_brief(consistency_project, ["S003"], mode="consistency")
     ids = {u["unit"] for u in scoped["units"]}
     # every returned unit must include S003 as a member
     for u in scoped["units"]:
@@ -321,14 +361,15 @@ def test_unit_verdict_unknown_unit_rejected(tmp_project, add_shot):
 
 
 @needs_ffmpeg
-def test_unit_verdict_requires_criterion_and_message(tmp_project, add_shot):
-    _build_consistency_project(tmp_project, add_shot)
+def test_unit_verdict_requires_criterion_and_message(consistency_project):
+    # read-only: the units must EXIST (so the unit id resolves), but both calls
+    # are rejected all-or-nothing → nothing is written to the shared project.
     with pytest.raises(VerdictError):
-        record_verdicts(tmp_project, {"verdicts": [
+        record_verdicts(consistency_project, {"verdicts": [
             {"unit": "pair:S001~S002", "level": "fyi", "criterion": "", "message": "x"},
         ]})
     with pytest.raises(VerdictError):
-        record_verdicts(tmp_project, {"verdicts": [
+        record_verdicts(consistency_project, {"verdicts": [
             {"unit": "pair:S001~S002", "level": "fyi", "criterion": "C1", "message": " "},
         ]})
 
@@ -367,9 +408,8 @@ def test_qc_coverage_states(tmp_project, add_shot):
 
 
 @needs_ffmpeg
-def test_qc_coverage_summary_counts_are_consistent(tmp_project, add_shot):
-    _build_consistency_project(tmp_project, add_shot)
-    cov = qc_coverage(tmp_project)
+def test_qc_coverage_summary_counts_are_consistent(consistency_project):
+    cov = qc_coverage(consistency_project)
     s = cov["summary"]
     assert s["shots_total"] == s["shots_reviewed"] + s["shots_stale"] + s["shots_never"]
     assert s["units_total"] == s["units_reviewed"] + s["units_stale"] + s["units_never"]
@@ -417,9 +457,8 @@ def test_run_qc_no_gap_item_when_nothing_reviewable(tmp_project):
 
 
 @needs_ffmpeg
-def test_cli_qc_brief_consistency_mode(tmp_project, add_shot, monkeypatch):
-    _build_consistency_project(tmp_project, add_shot)
-    monkeypatch.chdir(tmp_project.root)
+def test_cli_qc_brief_consistency_mode(consistency_project, monkeypatch):
+    monkeypatch.chdir(consistency_project.root)
 
     result = CliRunner().invoke(app, ["qc", "brief", "--mode", "consistency", "--json"])
     assert result.exit_code == 0, result.output
@@ -434,9 +473,8 @@ def test_cli_qc_brief_consistency_mode(tmp_project, add_shot, monkeypatch):
 
 
 @needs_ffmpeg
-def test_cli_qc_coverage(tmp_project, add_shot, monkeypatch):
-    _build_consistency_project(tmp_project, add_shot)
-    monkeypatch.chdir(tmp_project.root)
+def test_cli_qc_coverage(consistency_project, monkeypatch):
+    monkeypatch.chdir(consistency_project.root)
 
     result = CliRunner().invoke(app, ["qc", "coverage", "--json"])
     assert result.exit_code == 0, result.output
@@ -519,6 +557,18 @@ def gui(tmp_project):
     server.close()
 
 
+@pytest.fixture
+def consistency_gui(consistency_project):
+    """A ``/review`` server bound to the shared, read-only F2 consistency project
+    (a fresh server per test, so port=0 stays xdist-safe; the project is shared)."""
+    server = create_server(consistency_project, host="127.0.0.1", port=0, actor="human")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.close()
+
+
 def _req(server, path, *, method="GET", body=None, headers=None, host=None, raw=False):
     url = f"http://127.0.0.1:{server.port}{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -553,10 +603,8 @@ def _post(server, path, body, token=None, **kw):
 
 
 @needs_ffmpeg
-def test_review_page_renders_consistency_section(gui, tmp_project, add_shot):
-    _build_consistency_project(tmp_project, add_shot)
-
-    status, _, body = _html(gui, "/review")
+def test_review_page_renders_consistency_section(consistency_gui):
+    status, _, body = _html(consistency_gui, "/review")
     assert status == 200
     assert "跨镜一致性 Consistency" in body
     assert 'data-unit="character:linxia"' in body

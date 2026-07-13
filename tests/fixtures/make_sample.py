@@ -105,13 +105,22 @@ def _write_bible(project: Project) -> None:
 
 
 def _make_clip(dest: Path, freq: int, clip_seconds: float) -> None:
-    """A distinct testsrc2 clip with a distinct sine tone (h264 + aac)."""
+    """A distinct testsrc2 clip with a distinct sine tone (h264 + aac).
+
+    Encoded with ``-preset ultrafast``: this is THROWAWAY source material for the
+    regression fixture. Every take made from it is registered with the literal
+    ``spec_hash="manual"`` and a hand-set probe (see ``make_sample_project``), so
+    the clip's encoded bytes feed NO pinned hash — the byte-identity/idempotency
+    pins are on the REAL render pipeline (veryfast/crf18), which is untouched.
+    Do not "restore" a slower preset here expecting it to affect any golden.
+    """
     subprocess.run(
         [
             "ffmpeg", *FF_COMMON,
             "-f", "lavfi", "-i", f"testsrc2=size=540x960:rate=24:duration={clip_seconds}",
             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration={clip_seconds}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest",
             str(dest),
         ],
         check=True,
