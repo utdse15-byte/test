@@ -47,6 +47,26 @@ def _mk_project(tmp_path: Path, name: str = "归档") -> Project:
     return project
 
 
+def _fs_case_sensitive(dirpath: Path) -> bool:
+    """Windows gate run #11: a case-COLLIDING tree (Take.wav + take.wav) is
+    unrepresentable on NTFS/APFS — the second write lands on the SAME file, so
+    the pack-side collision warning has nothing to see there (the W1
+    colon-directory lesson, casefold edition). Probe the REAL filesystem
+    instead of assuming from os.name; the warning targets POSIX-created trees,
+    and the Windows side is protected by the unpack REFUSAL tests, which use
+    zip members and run everywhere."""
+    a = dirpath / "CaseProbe.tmp"
+    b = dirpath / "caseprobe.tmp"
+    try:
+        a.write_bytes(b"A")
+        b.write_bytes(b"b")
+        sensitive = a.read_bytes() == b"A"
+    finally:
+        a.unlink(missing_ok=True)
+        b.unlink(missing_ok=True)
+    return sensitive
+
+
 # --------------------------------------------------------------------------
 # pack-side portability warnings (warn, NEVER block a backup)
 # --------------------------------------------------------------------------
@@ -73,8 +93,14 @@ def test_pack_warns_on_windows_unportable_members(tmp_path, monkeypatch):
 
 def test_pack_warns_on_casefold_collision(tmp_path, monkeypatch):
     """Two members differing only by case are ONE file after an NTFS restore —
-    silent data loss. pack warns, naming both paths; still packs both."""
+    silent data loss. pack warns, naming both paths; still packs both.
+    Skipped where the colliding TREE itself cannot exist (NTFS/APFS — probed,
+    not assumed); the unpack-refusal tests carry the Windows-side protection."""
     project = _mk_project(tmp_path)
+    if not _fs_case_sensitive(project.root / "media"):
+        pytest.skip("case-colliding tree unrepresentable on this filesystem — "
+                    "pack-side warning targets POSIX-created trees; unpack "
+                    "refusal (zip members) covers this OS")
     (project.root / "media" / "Take.wav").write_bytes(b"upper")
     (project.root / "media" / "take.wav").write_bytes(b"lower")
 
@@ -107,14 +133,22 @@ def test_pack_json_carries_portability_block_only_when_present(tmp_path, monkeyp
     assert "portability" not in clean  # absent when clean (drop-when-empty)
 
     (project.root / "media" / "CON.wav").write_bytes(b"x")
-    (project.root / "media" / "Take.wav").write_bytes(b"u")
-    (project.root / "media" / "take.wav").write_bytes(b"l")
     res = runner.invoke(app, ["pack", "--out", str(tmp_path / "b.manjupkg"), "--json"])
     doc = json.loads(res.output)
     port = doc["portability"]
     assert any("CON.wav" in m for m in port["unportable_members"])
-    assert any("Take.wav" in m or "take.wav" in m
-               for group in port["casefold_collisions"] for m in group)
+    # the casefold group rides the block ONLY where the colliding tree can
+    # exist at all (probed — run #11: NTFS collapses Take.wav/take.wav into
+    # one file, so drop-when-empty correctly omits the key there)
+    if _fs_case_sensitive(project.root / "media"):
+        (project.root / "media" / "Take.wav").write_bytes(b"u")
+        (project.root / "media" / "take.wav").write_bytes(b"l")
+        res = runner.invoke(app, ["pack", "--out", str(tmp_path / "c.manjupkg"), "--json"])
+        port = json.loads(res.output)["portability"]
+        assert any("Take.wav" in m or "take.wav" in m
+                   for group in port["casefold_collisions"] for m in group)
+    else:
+        assert "casefold_collisions" not in port  # nothing to collide with
 
 
 # --------------------------------------------------------------------------
