@@ -417,6 +417,32 @@ def run_check(project: Project) -> CheckReport:
     except Exception as exc:  # never let the refs report crash check itself
         report.warnings.append(f"media/refs 归属报告生成失败 — {' '.join(str(exc).split())}")
 
+    # ---- W1 (§3.2): Windows portability scan — WARNINGS only, never errors.
+    # Old projects must keep building unchanged (W1 completion condition); the
+    # intake gates (shotpackage path_hints, GUI upload/new-project names, pack
+    # member extraction) REJECT new hazards, while this scan surfaces the
+    # pre-existing ones a Linux-authored project would only discover the day
+    # it lands on NTFS: reserved device names / ADS colons / trailing
+    # dot-space in any leaf name, and case-fold collisions between siblings
+    # (two files Linux keeps apart that are ONE name to Windows). renders/ is
+    # skipped: compiled, regenerable output, not project truth.
+    from .idents import windows_collision_key, windows_segment_problems
+
+    seen_ci: dict[str, str] = {}
+    for path in sorted(project.root.rglob("*")):
+        rel = path.relative_to(project.root).as_posix()
+        if rel.startswith((".git/", ".manju/", "renders/")) or rel in (".git", ".manju", "renders"):
+            continue
+        for problem in windows_segment_problems(path.name):
+            report.warnings.append(f"{rel}: Windows 可移植性 — {problem}")
+        key = windows_collision_key(rel)
+        first = seen_ci.setdefault(key, rel)
+        if first != rel:
+            report.warnings.append(
+                f"{rel} 与 {first} 仅大小写不同 — Windows(NTFS)不区分大小写,"
+                "两个文件会互相覆盖;请重命名其一"
+            )
+
     # ---- secret scan (keys never enter the project directory)
     for path in project.root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in SCAN_SUFFIXES:

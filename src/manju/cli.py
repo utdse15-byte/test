@@ -5026,11 +5026,22 @@ def unpack(archive: Path, dest: Optional[Path] = typer.Option(
         # up front — an archive that carries them is not a normal `.manjupkg`.
         import stat as _stat
 
+        from .core.idents import windows_relpath_problems as _win_problems
+
         for info in zf.infolist():
             nm = info.filename
             if nm.startswith("/") or nm.startswith("\\") or ".." in Path(nm).parts:
                 _fail(f"拒绝解包:压缩包成员路径越界或为绝对路径 → {nm!r}"
                       "(不是正常的 .manjupkg,可能是恶意压缩包)")
+            # W1 (§3.2): Windows-lexical hazards refuse BEFORE extraction —
+            # a member like media/CON.wav or x.wav:stream would be unopenable
+            # (or a data stream) once this archive lands on NTFS. Owner:
+            # core.idents; dir members carry a trailing "/" which is dropped
+            # before the per-segment checks.
+            problems = _win_problems(nm.rstrip("/")) if nm.rstrip("/") else []
+            if problems:
+                _fail(f"拒绝解包:压缩包成员含 Windows 不可移植名称 → {nm!r}:"
+                      + ";".join(problems))
             mode = info.external_attr >> 16
             if mode and _stat.S_ISLNK(mode):
                 _fail(f"拒绝解包:压缩包含符号链接成员 → {nm!r}"

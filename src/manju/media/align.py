@@ -32,6 +32,19 @@ _MATCH_THRESHOLD = 0.6
 _SENT_END = re.compile(r"(?<=[。！？!?…])")
 
 
+def _inside_project(media: Path, project: Project) -> bool:
+    """Real directory containment for the foreign-source decision (W1 §3.2).
+
+    The old ``str(media).startswith(str(project.root))`` admitted the SIBLING
+    directory ``<root>_evil/`` as "inside" — the foreign file was then never
+    import-copied and ``project.relpath`` crashed on it. Resolve-based
+    containment is the same discipline as ``Project.resolve``."""
+    try:
+        return Path(media).resolve().is_relative_to(project.root.resolve())
+    except OSError:
+        return False
+
+
 def _normalize(text: str) -> str:
     """Strip punctuation/whitespace for character-level ratio matching."""
     return re.sub(r"[\s\W_]+", "", text or "", flags=re.UNICODE)
@@ -374,7 +387,7 @@ def apply_multi_shot(
         candidate = project.root / media
         media = candidate if candidate.exists() else Path(plan["media"])
     # Copy foreign source into imports first
-    if not str(media).startswith(str(project.root)):
+    if not _inside_project(media, project):
         imports = project.root / "media" / "imports"
         imports.mkdir(parents=True, exist_ok=True)
         dest_imp = imports / media.name
@@ -461,7 +474,7 @@ def apply_multi_shot(
     batch = {
         "id": batch_id,
         "kind": "align_multi",
-        "media": project.relpath(media) if str(media).startswith(str(project.root)) else str(media),
+        "media": project.relpath(media) if _inside_project(media, project) else str(media),
         "applied": applied,
         "skipped": skipped,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

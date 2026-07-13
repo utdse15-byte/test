@@ -78,15 +78,69 @@ _HEARTBEAT_CAP_S = 30.0  # never beat slower than this, however lax the stalenes
 _CORRUPT_GRACE_S = 10.0
 
 
+# W1 (§3.4): os.name is process-constant; a module flag keeps the dispatch
+# below patchable in tests without touching the global ``os`` module.
+_IS_WINDOWS = os.name == "nt"
+
+# OpenProcess access right / sentinel values for the Windows liveness probe.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259  # GetExitCodeProcess: process has not exited
+_ERROR_INVALID_PARAMETER = 87  # OpenProcess: no such pid
+
+
+def _win_kernel32():
+    """kernel32 with ``use_last_error`` so OpenProcess failures are readable
+    via ``ctypes.get_last_error``. A function (not a module constant) so tests
+    can stub the DLL surface and non-Windows platforms never load it."""
+    import ctypes
+
+    return ctypes.WinDLL("kernel32", use_last_error=True)
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    """Windows liveness probe that CANNOT kill what it probes.
+
+    ``os.kill(pid, 0)`` is NOT a probe on Windows: CPython routes any signal
+    other than CTRL_C_EVENT/CTRL_BREAK_EVENT through ``TerminateProcess`` —
+    the old code path would have KILLED a live same-user lock holder while
+    "checking" it. Instead: OpenProcess with the weakest query right, then
+    GetExitCodeProcess — STILL_ACTIVE means alive; a real exit code means the
+    pid is a corpse (possibly held open by a handle). OpenProcess refusing
+    with access-denied proves existence (someone else's process → alive);
+    invalid-parameter proves absence (→ dead). Every undecidable outcome
+    counts as ALIVE, same philosophy as the POSIX probe: a false "alive" only
+    delays stealing until the mtime backstop, a false "dead" kills a builder.
+    """
+    try:
+        import ctypes
+
+        k32 = _win_kernel32()
+        handle = k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+        try:
+            code = ctypes.c_ulong()
+            ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
+            return (not ok) or code.value == _STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:
+        return True  # defensive: the probe must never crash an acquire
+
+
 def _pid_alive(pid: int) -> bool:
-    """Best-effort liveness probe via ``os.kill(pid, 0)``.
+    """Best-effort liveness probe. POSIX: ``os.kill(pid, 0)`` (a real probe
+    there). Windows: :func:`_pid_alive_windows` — see its docstring for why
+    ``os.kill`` must never run on that branch.
 
     Only ``ProcessLookupError`` proves death. ``PermissionError`` means the
-    pid exists but belongs to someone else — alive. Any other error (Windows
-    quirks, absurd pids from a tampered file) also counts as alive: a false
-    "alive" merely delays stealing until the mtime rule kicks in, while a
-    false "dead" would delete a live builder's lock.
+    pid exists but belongs to someone else — alive. Any other error (absurd
+    pids from a tampered file) also counts as alive: a false "alive" merely
+    delays stealing until the mtime rule kicks in, while a false "dead" would
+    delete a live builder's lock.
     """
+    if _IS_WINDOWS:
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

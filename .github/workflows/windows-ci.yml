@@ -1,0 +1,65 @@
+# W1 (MANJU_WINDOWS_ONLY_LEAN_V3 §3.1): Windows is the primary platform, and
+# this workflow is its HARD gate — no continue-on-error anywhere, full suite,
+# full extras, real FFmpeg. It runs everything xplat.yml deliberately skips
+# (locks/process/file-semantics, board security, media, corpus, the whole
+# pytest surface) on windows-latest. xplat.yml stays as the macOS
+# informational watcher; ubuntu ci.yml keeps running (it is where the dev
+# loop lives) but is no longer the only formal platform.
+#
+# FFmpeg pinning (§3.1 固定版本 + SHA-256): installed via a VERSION-PINNED
+# Chocolatey package. Chocolatey verifies the package's embedded SHA-256
+# checksums against the downloaded binaries at install time (checksum
+# verification is mandatory in choco for non-local sources), so the version
+# pin below + choco's checksum enforcement give a fixed, hash-verified
+# toolchain. The version-assert step after install turns a silently-moved
+# binary into a hard red. (A direct gyan.dev/BtbN URL + hardcoded SHA-256 in
+# this file is the stricter variant; adopt it when bumping the pin — the
+# authoring environment for this wave had no route to fetch the archive and
+# hashing an artifact we never held would have been an invented fact.)
+#
+# tesseract/chi_sim and WenQuanYi are NOT installed here: the OCR/CJK-burn
+# tests skip cleanly without them (the same precedent as chromium on the
+# ubuntu gate, ci.yml). The FFmpeg presence assert below is the anti-rot
+# guard: the suite must never go green by silently skipping the ~63
+# ffmpeg-gated files.
+name: Windows CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pinned FFmpeg (choco, SHA-256-verified package)
+        run: choco install ffmpeg --version=8.1.2 --no-progress -y
+
+      - name: FFmpeg present and at the pinned version (anti-silent-skip gate)
+        run: |
+          $ff = (Get-Command ffmpeg -ErrorAction Stop).Source
+          Write-Host "ffmpeg: $ff"
+          $v = (& ffmpeg -version | Select-Object -First 1)
+          Write-Host $v
+          if ($v -notmatch "ffmpeg version 8\.1") { throw "ffmpeg is not the pinned 8.1.x build: $v" }
+          $fp = (Get-Command ffprobe -ErrorAction Stop).Source
+          Write-Host "ffprobe: $fp"
+
+      - name: Install package with all extras
+        run: pip install -c constraints.txt -e ".[dev,jianying,capcut,mcpvideo,edgetts]"
+
+      - name: Run the full test suite
+        run: python -m pytest -q -n auto
+
+      # The one coverage the suite lacks (mirrors ci.yml): the INSTALLED
+      # console-script entry point.
+      - name: Console-script entry point
+        run: manju --help | Out-Null

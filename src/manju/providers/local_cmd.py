@@ -318,11 +318,35 @@ def _new_session_kwargs() -> dict:
     return {}
 
 
+# W1 (§3.5): os.name is process-constant; a module flag keeps the Windows
+# branch below patchable in tests without touching the global ``os`` module.
+_IS_WINDOWS = os.name == "nt"
+
+
 def _kill_process_group(proc: "subprocess.Popen") -> None:
-    """SIGKILL the child's whole process group so a wrapper's orphaned
-    grandchildren (the leaked GPU worker in F1) die with it. Degrades to killing
-    just the direct child on a platform without ``os.killpg``/``os.getpgid``
-    (Windows) or when the group is already gone (a benign race)."""
+    """Kill the child's whole process TREE so a wrapper's orphaned
+    grandchildren (the leaked GPU worker in F1) die with it.
+
+    POSIX: SIGKILL the process group (byte-identical to the pre-W1 path).
+    Windows (W1 §3.5): ``taskkill /PID <pid> /T /F`` walks and force-kills the
+    child tree — the old direct-child-only degrade left grandchildren running
+    forever. The direct ``proc.kill()`` stays as the belt either way (taskkill
+    missing/refusing, tree already gone — benign races all)."""
+    if _IS_WINDOWS:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except Exception:
+            pass  # taskkill unavailable/hung — the direct kill below still runs
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        return
     if hasattr(os, "killpg") and hasattr(os, "getpgid"):
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)

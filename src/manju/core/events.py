@@ -18,8 +18,12 @@ from typing import Any
 
 try:
     import fcntl
-except ImportError:  # Windows: no fcntl — WP1 refuses an unlocked write (below).
+except ImportError:  # Windows: no fcntl — the msvcrt branch below takes over (W1).
     fcntl = None  # type: ignore[assignment]
+try:
+    import msvcrt  # W1 (§3.4): Windows byte-range lock on the SAME sibling lock file
+except ImportError:  # POSIX: fcntl above is the coordinator
+    msvcrt = None  # type: ignore[assignment]
 
 EVENTS_FILE = "events.jsonl"
 EVENTS_LOCK = "events.lock"
@@ -68,11 +72,13 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
     * timeout: ``required`` → raise :class:`EvidenceWriteError` ``lock_timeout``;
       best-effort → ``yield False`` (the caller MUST skip the write; the record is
       dropped, never torn by an unlocked append).
-    * no ``fcntl`` (Windows): ``required`` → raise
+    * no ``fcntl`` (Windows): lock byte 0 of the same sibling lock file via
+      ``msvcrt.locking`` — same non-blocking poll loop, same deadline, same
+      never-write-unlocked policy (W1 §3.4; deliberately reverses DECISIONS
+      #20's refuse-on-Windows now that Windows is the primary platform).
+    * NEITHER primitive (exotic platform): ``required`` → raise
       :class:`EvidenceWriteError` ``no_reliable_lock``; best-effort → ``yield
-      False`` (same skip-the-write drop). This CHANGES DR03C's no-fcntl
-      no-op-and-write — a best-effort record may now be dropped, but is never
-      written unlocked.
+      False`` (same skip-the-write drop) — the pre-W1 contract, unchanged.
     """
     if timeout_s is None:
         timeout_s = DEFAULT_LOCK_TIMEOUT_S
@@ -84,20 +90,45 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
             raise EvidenceWriteError("io_error") from exc
         yield False
         return
-    if fcntl is None:
+    if fcntl is None and msvcrt is None:
         if required:
             raise EvidenceWriteError("no_reliable_lock")
         yield False  # never write unlocked — drop the best-effort record
         return
     lock_path = root / lock_name
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    if fcntl is not None:
+        # POSIX: byte-identical to the pre-W1 path (flock; only a WOULDBLOCK
+        # retries — any other OSError propagates exactly as before).
+        retry_exc: tuple[type[BaseException], ...] = (BlockingIOError,)
+
+        def _try_lock() -> None:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        def _unlock() -> None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
+        # Windows: non-blocking byte-0 lock. msvcrt raises plain OSError
+        # (EACCES/EDEADLK) when the region is held, so OSError retries here.
+        retry_exc = (OSError,)
+
+        def _try_lock() -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+        def _unlock() -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+    locked = False
     try:
         deadline = time.monotonic() + timeout_s
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _try_lock()
+                locked = True
                 break
-            except BlockingIOError:
+            except retry_exc:
                 if time.monotonic() >= deadline:
                     if required:
                         raise EvidenceWriteError("lock_timeout")
@@ -106,10 +137,11 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
                 time.sleep(0.02)
         yield True
     finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
+        if locked:
+            try:
+                _unlock()
+            except OSError:
+                pass
         os.close(fd)
 
 

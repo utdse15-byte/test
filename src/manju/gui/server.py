@@ -1673,6 +1673,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     _NAME_RE = re.compile(r"^[^/\\\x00]{1,80}$")
 
+    @classmethod
+    def _fs_name_problems(cls, name: str) -> list[str]:
+        """W1 (§3.2): every filesystem name a browser can mint (project names,
+        upload filenames) also passes the Windows-lexical gate — CON/ADS/
+        trailing dot-space refuse HERE, on every platform, so a Linux-authored
+        project never carries a name Windows cannot open. Owner: core.idents."""
+        from ..core.idents import windows_segment_problems
+
+        return windows_segment_problems(name)
+
     def _act_new_project(self, body: dict[str, Any]) -> None:
         """New-project dialog in the workspace switcher (S8a): create a sibling
         <name>.manju via the SAME core the CLI's ``manju new`` calls, optionally
@@ -1685,6 +1695,11 @@ class _Handler(BaseHTTPRequestHandler):
         name = str(body.get("name") or "").strip()
         if not name or name.startswith(".") or not self._NAME_RE.fullmatch(name):
             self._send_error_json("invalid project name", 400)
+            return
+        if self._fs_name_problems(name):
+            self._send_error_json(
+                "invalid project name (Windows-unsafe): "
+                + "; ".join(self._fs_name_problems(name)), 400)
             return
         preset = body.get("preset") or None
         vertical = bool(body.get("vertical", True))
@@ -1785,6 +1800,11 @@ class _Handler(BaseHTTPRequestHandler):
         name = str(body.get("name") or "").strip()
         if not name or name.startswith(".") or not self._NAME_RE.fullmatch(name):
             self._send_error_json("invalid project name", 400)
+            return
+        if self._fs_name_problems(name):
+            self._send_error_json(
+                "invalid project name (Windows-unsafe): "
+                + "; ".join(self._fs_name_problems(name)), 400)
             return
         preset = body.get("preset") or None
         vertical = bool(body.get("vertical", True))
@@ -2154,6 +2174,11 @@ class _Handler(BaseHTTPRequestHandler):
         raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
         if not raw_name or raw_name.startswith("."):
             self._send_error_json("upload needs ?name=<filename>", 400)
+            return
+        if self._fs_name_problems(raw_name):
+            self._send_error_json(
+                "invalid upload name (Windows-unsafe): "
+                + "; ".join(self._fs_name_problems(raw_name)), 400)
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -2751,6 +2776,11 @@ class _Handler(BaseHTTPRequestHandler):
         raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
         if not raw_name or raw_name.startswith("."):
             self._send_error_json("upload needs ?name=<filename>", 400)
+            return
+        if self._fs_name_problems(raw_name):
+            self._send_error_json(
+                "invalid upload name (Windows-unsafe): "
+                + "; ".join(self._fs_name_problems(raw_name)), 400)
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -5310,6 +5340,11 @@ class _Handler(BaseHTTPRequestHandler):
         raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
         if not raw_name or raw_name.startswith("."):
             self._send_error_json("upload needs ?name=<filename>", 400)
+            return
+        if self._fs_name_problems(raw_name):
+            self._send_error_json(
+                "invalid upload name (Windows-unsafe): "
+                + "; ".join(self._fs_name_problems(raw_name)), 400)
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)

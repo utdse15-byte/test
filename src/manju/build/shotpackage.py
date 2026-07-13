@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any
 from ..core.check import SECRET_PATTERNS, run_check
 from ..core.events import append_event
 from ..core.hashing import canonical_json, hash_text, hash_value
-from ..core.idents import UnsafeIdentifierError, validate_safe_segment
+from ..core.idents import UnsafeIdentifierError, validate_safe_segment, windows_relpath_problems
 from ..core.models import SHOT_SIZES, Camera, ShotSpec
 from ..core.yamlio import atomic_write_text, dump_yaml
 
@@ -182,17 +182,16 @@ def _require_schema_major(package: dict[str, Any]) -> None:
 
 
 def _is_unsafe_path(value: Any) -> bool:
-    """True for an absolute path, a Windows drive path, a NUL byte, or any
-    ``..`` traversal segment. A path_hint is NEVER resolved or followed — an
-    unsafe one is rejected outright, so a symlink can never be used to escape."""
+    """True for an absolute path, a Windows drive path, a NUL byte, any ``..``
+    traversal segment — or (W1 §3.2) any Windows-lexical hazard: reserved
+    device names (``CON.wav``), NTFS ADS colons (``x.wav:stream``), trailing
+    dot/space segments. A path_hint is NEVER resolved or followed — an unsafe
+    one is rejected outright, so a symlink can never be used to escape, and a
+    downloaded package can never smuggle an unopenable-on-Windows name into a
+    clean project. Delegates to the ONE lexical owner, ``core.idents``."""
     if not isinstance(value, str) or not value:
         return False
-    p = value.replace("\\", "/")
-    if p.startswith("/") or "\x00" in value:
-        return True
-    if re.match(r"^[A-Za-z]:", p):
-        return True
-    return ".." in p.split("/")
+    return bool(windows_relpath_problems(value))
 
 
 def _reject_unsafe_paths(node: Any) -> None:

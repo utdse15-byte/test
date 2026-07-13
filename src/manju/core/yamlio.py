@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,38 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+# W1 (§3.3): the ONE transient Windows failure worth riding out at the replace
+# step — ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33), i.e. an AV
+# scanner or indexer briefly holding the TARGET open. Bounded and narrow on
+# purpose: access denied (5), disk full, invalid path raise on attempt one
+# (retrying those masks real, permanent misconfiguration), and after the last
+# attempt the original error propagates — with the OLD file intact either way.
+_RETRYABLE_WINERROR = frozenset({32, 33})
+_REPLACE_ATTEMPTS = 8  # ~0.7s worst case with the capped backoff below
+
+
+def replace_with_retry(src: str | Path, dst: str | Path) -> None:
+    """``os.replace`` with the §3.3 bounded Windows sharing-violation retry.
+
+    Shared by every replace-style atomic writer (this module's text helper and
+    ``media/ffmpeg.atomic_output``) so the Windows semantics can never drift
+    apart between the text and media halves of the write story. On POSIX the
+    ``winerror`` attribute is always ``None`` → single attempt, byte-identical
+    behaviour to a bare ``os.replace``.
+    """
+    delay = 0.02
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as exc:
+            transient = getattr(exc, "winerror", None) in _RETRYABLE_WINERROR
+            if not transient or attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.15)
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +100,7 @@ def atomic_write_text(path: Path, text: str) -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
         _fsync_dir(path.parent)  # #24: the rename's directory entry, not just the bytes
     except BaseException:
         try:

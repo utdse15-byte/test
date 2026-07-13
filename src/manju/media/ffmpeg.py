@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..core.yamlio import replace_with_retry
+
 FFMPEG = "ffmpeg"
 _STDERR_TAIL = 15
 _ARGV_HEAD = 12  # how many argv tokens to keep as evidence (the -i/-vf head)
@@ -341,13 +343,31 @@ def atomic_output(dest: Path, *, must_not_exist: bool = False) -> Iterator[Path]
                 f"refusing to overwrite existing {dest} (append-only invariant); "
                 "a concurrent build likely minted the same name"
             )
-        os.replace(tmp, dest)
+        _fsync_file(tmp)  # W1 §3.3: the producer (ffmpeg) never fsyncs its output
+        replace_with_retry(tmp, dest)  # W1 §3.3: bounded Windows sharing-violation ride-out
     except BaseException:
         try:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
         raise
+
+
+def _fsync_file(path: Path) -> None:
+    """Best-effort fsync of a finished media temp before the swap — the media
+    twin of ``yamlio.atomic_write_text``'s file fsync. Silent degrade on
+    filesystems that refuse (the replace still lands; only the power-loss
+    durability guarantee narrows, matching ``yamlio._fsync_dir``'s stance)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def default_log(project_root: Path, name: str = "render") -> Callable[[str], None]:
