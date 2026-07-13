@@ -68,7 +68,7 @@ CARD_STYLE_PRESETS: dict[str, dict[str, Any]] = {
 
 
 def _escape(path: Path | str) -> str:
-    """Escape a path for a filtergraph option value (drawtext textfile/fontfile).
+    r"""Escape a path for a filtergraph option value (drawtext textfile/fontfile).
 
     Windows gate round 2: delegates to render's two-level form — the old
     single-level ``C\:`` escaping died in drawtext's OWN option parser on

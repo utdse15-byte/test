@@ -324,7 +324,7 @@ _IS_WINDOWS = os.name == "nt"
 
 
 def _split_command(template: str) -> list[str]:
-    """Split the manifest command template into argv words.
+    r"""Split the manifest command template into argv words.
 
     POSIX: ``shlex.split`` exactly as before. Windows (gate round 1): POSIX
     shlex treats ``\`` as an escape character, so a template carrying a real
