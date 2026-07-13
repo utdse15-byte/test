@@ -1604,3 +1604,63 @@ CI: the batch push's verdict in the window wrap. This closes the optimization pr
 (#33) → wave 1 (#34) → wave 2 (#35); everything actionable in the audit
 is implemented, consciously deferred with reasons, or on the
 do-not-touch list.
+
+## 36. WINDOWS wave 1: the hard Windows gate + file/process semantics (2026-07-13)
+
+The user handed over MANJU_WINDOWS_ONLY_LEAN_V3 ("implement as much of this
+advice as possible") — Windows 11 becomes the primary platform, one wave at
+a time, audit-before-touch, red tests before code. W1 = §3.1–3.5 (hard CI,
+path rules, atomic writes, locks, process trees). Reports:
+REPORTS/WINDOWS_WAVE_1_BASELINE.md / WINDOWS_WAVE_1_COMPLETION.md.
+
+- W1 (b1349ec): the Windows-lethal find of the audit — BuildLock's
+  _pid_alive used os.kill(pid, 0), which CPython maps to TerminateProcess
+  on Windows: the staleness probe KILLED the live lock holder it was
+  checking. Fixed with an OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)
+  + GetExitCodeProcess probe behind an _IS_WINDOWS dispatch; POSIX path
+  and the lock-file mechanism byte-identical (the plan's
+  不要无证据重写现有锁 honoured — test_b4's real dual-process race is
+  already Windows-compatible and now actually runs on a Windows gate).
+- DECISIONS #20 partially REVERSED, deliberately: "no msvcrt lock —
+  Windows appends refuse/drop" was decided when Windows was informational.
+  Under a Windows-primary plan an evidence ledger that drops every
+  best-effort record and raises on every required one is dark exactly
+  where truth matters most. events_lock now takes an msvcrt.locking
+  byte-0 lock on the SAME sibling lock file (same poll loop, deadline and
+  never-write-unlocked policy); platforms with NEITHER primitive keep the
+  #20 refuse contract, and the flock path is byte-identical.
+- New ONE lexical owner core/idents.windows_relpath_problems (+ segment
+  variant + casefold collision key): reserved device names / ADS colons /
+  trailing dot-space / backslash / UNC / absolute / traversal. Wired as
+  REJECTION at every intake boundary (shotpackage path_hints, 5 GUI
+  name gates, unpack members) and as WARNINGS-ONLY in manju check (old
+  projects never gain errors — W1 completion condition).
+- yamlio.replace_with_retry: bounded winerror-32/33-only ride-out (8
+  attempts, capped backoff) around os.replace; access-denied/disk-full
+  stay one-attempt; old file survives every failure path.
+  media/ffmpeg.atomic_output now fsyncs the finished temp and shares the
+  same swap semantics (its bytes were never fsynced before).
+- local_cmd timeout reaping: taskkill /PID <pid> /T /F on Windows (the F1
+  grandchild leak was unreapable there); killpg path untouched.
+- media/align.py: the last str().startswith() directory-boundary check
+  replaced with resolve+is_relative_to (sibling <root>_evil/ admitted +
+  relpath crash).
+- .github/workflows/windows-ci.yml: NEW hard gate — windows-latest, no
+  continue-on-error, full extras, FULL pytest (everything xplat.yml
+  deliberately skips), pinned FFmpeg via choco 8.1.2 (checksum-verified
+  package; version + presence asserts so silent skipping can never fake
+  green). Direct-URL + hardcoded SHA-256 recorded as the upgrade at next
+  bump (unreachable from the authoring environment: gyan.dev 404,
+  github release downloads 403 by network policy). ubuntu ci.yml stays
+  (the dev loop lives there); macOS remains informational in xplat.yml.
+- Deviation recorded: 11 production files vs the plan's ≤10 — events.py
+  joined mid-wave when the ledger-dark-on-Windows fact surfaced (a green
+  Windows gate is impossible without it). Deferred with evidence: single
+  unified subprocess runner (~30 sites), Job Objects (no failing orphan
+  test), LockFileEx rewrite (no red evidence), casefold-aware
+  copy_collision_safe suffixing.
+- Suite: 4115 → 4137 passed / 1 skipped / 0 failed (18 red at HEAD → all
+  22 new green; zero regressions). Authored with NO Windows host — the
+  Windows branches are pinned by stub/injected-constant unit tests, and
+  the first windows-ci.yml execution is the real-host verdict (recorded
+  here once it runs).

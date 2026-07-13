@@ -57,3 +57,5 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `FP_PROVIDER_ROBUST.md` | M1 provider robustness (orphan kill, poll-5xx, kinds, floor) | #35 |
 | `FP_GUI_HARDENING.md` | M2 board CSP/one gate/single-eval state/lazy edit/JS dedup | #35 |
 | `FP_TEST_SPEED.md` | M3 build-once fixtures + ultrafast fixture clips | #35 |
+| `WINDOWS_WAVE_1_BASELINE.md` | W1 Windows hardening — audit + red evidence | #36 |
+| `WINDOWS_WAVE_1_COMPLETION.md` | W1 Windows hardening — hard gate + file/process semantics | #36 |
