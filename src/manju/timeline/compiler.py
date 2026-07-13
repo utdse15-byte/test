@@ -38,6 +38,7 @@ from ..core.models import (
     TimelineTracks,
     TransitionSpec,
     VideoClip,
+    VoiceTakeSidecar,
 )
 from ..core.timebase import Rate, Rounding, frames_to_ms, ms_to_frames
 from .anchors import resolve_anchor
@@ -790,22 +791,64 @@ def compile_timeline(inp: CompileInput) -> Timeline:
 # --------------------------------------------------------- project plumbing
 
 
-def _find_voice(project: Project, shot_id: str, *,
-                lang: str | None = None) -> Path | None:
-    """The NEWEST voice take wins: media is append-only (§3), so the highest
-    voice_take_NN is the latest decision. (Pre-round-B this picked the oldest
-    — sorted-first — which contradicted the append-only semantics.)
+def _find_voice_take(project: Project, shot_id: str, *,
+                     lang: str | None = None
+                     ) -> tuple[Path, VoiceTakeSidecar | None] | None:
+    """The NEWEST voice take as ``(media, sidecar)`` — media is append-only
+    (§3), so the highest voice_take_NN is the latest decision. (Pre-round-B
+    this picked the oldest — sorted-first — which contradicted the append-only
+    semantics.)
 
     ``lang`` (WP4): look under ``media/gen/<shot>/locales/<lang>/`` first;
     if empty, fall back to the base voice dir (so a partial locale still
     compiles). ``lang=None`` is the pre-WP4 path (byte-identical).
-    """
+
+    Unlike :func:`_find_voice` this keeps the sidecar, so the compiler can read
+    the synthesis-time probe cache (``VoiceTakeSidecar.probe``) instead of
+    re-ffprobing the voice file live on every compile (audit FP-L2)."""
     if lang:
         voices = project.voice_takes(shot_id, lang=lang)
         if voices:
-            return voices[-1][0]
+            return voices[-1]
     voices = project.voice_takes(shot_id)
-    return voices[-1][0] if voices else None
+    return voices[-1] if voices else None
+
+
+def _find_voice(project: Project, shot_id: str, *,
+                lang: str | None = None) -> Path | None:
+    """The NEWEST voice take's media path (see :func:`_find_voice_take` for the
+    newest-wins / locale-fallback resolution). Kept as the path-only view for
+    ``build/locale_build`` and callers that never needed the sidecar."""
+    take = _find_voice_take(project, shot_id, lang=lang)
+    return take[0] if take else None
+
+
+def _voice_duration_ms(take: tuple[Path, VoiceTakeSidecar | None] | None,
+                       probe_fn: ProbeFn) -> int | None:
+    """Voice duration for the timeline, CACHE-FIRST (audit FP-L2).
+
+    Reuse the ``duration_ms`` the synthesis path already probed into the voice
+    take's sidecar — providers/tts, providers/edge_tts and media/voicefix all
+    fill ``VoiceTakeSidecar.probe`` via ``providers.base.probe_media``, the very
+    same ffprobe read the video path caches in ``TakeSidecar.probe`` — else fall
+    back to a LIVE ``probe_fn`` call. This is byte-identical to the pre-cache
+    behaviour for a legacy take whose sidecar carries no probe:
+    ``probe_duration_ms(path)`` and ``probe_media(path).duration_ms`` are the
+    same ffprobe reading of the same bytes.
+
+    The probe cache is APPEND-ONLY project truth — a take's media never changes
+    after registration (§3) — so a cached duration can never go stale; there is
+    no invalidation path to get wrong. Mirrors the video path's
+    ``take.sidecar.probe.duration_ms`` read a few lines below."""
+    if take is None:
+        return None
+    path, sidecar = take
+    dur: int | None = None
+    if sidecar is not None and sidecar.probe is not None:
+        dur = sidecar.probe.duration_ms
+    if dur is None:
+        dur = probe_fn(path)
+    return dur
 
 
 def _load_voice_timing(voice: Path) -> list[dict] | None:
@@ -867,8 +910,12 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
         if not status.usable:
             if allow_missing_takes:
                 shot = _shot_for_compile(status.shot_id)
-                voice = _find_voice(project, status.shot_id, lang=lang)
-                voice_dur = probe_fn(voice) if voice else None
+                voice_take = _find_voice_take(project, status.shot_id, lang=lang)
+                voice = voice_take[0] if voice_take else None
+                # Cache-first (audit FP-L2): the synthesis-time sidecar probe
+                # when present, else the same live probe_fn call as before —
+                # byte-identical for legacy takes that carry no probe.
+                voice_dur = _voice_duration_ms(voice_take, probe_fn)
                 # Duration driven by voice + padding when present, else default
                 slate_dur = voice_dur or rules.timing.default_shot_ms
                 if voice_dur:
@@ -894,7 +941,8 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
             continue
         take = status.take
         assert take is not None and take.media_path is not None
-        voice = _find_voice(project, status.shot_id, lang=lang)
+        voice_take = _find_voice_take(project, status.shot_id, lang=lang)
+        voice = voice_take[0] if voice_take else None
         take_dur = take.sidecar.probe.duration_ms if take.sidecar.probe else None
         if take_dur is None:
             take_dur = probe_fn(take.media_path)
@@ -927,11 +975,14 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
         # WP4 duration policy: when a base voice exists, prefer its duration
         # for the VIDEO slot so locale builds keep segment-cache geometry;
         # locale voice still drives the voice track source/timing below.
-        voice_for_duration = voice
+        # Cache-first here too (audit FP-L2): the base voice take is reachable
+        # WITH its sidecar via _find_voice_take(..., lang=None), so the locale
+        # path reads the synthesis probe cache instead of live-probing.
+        voice_take_for_duration = voice_take
         if lang:
-            base_voice = _find_voice(project, status.shot_id, lang=None)
-            if base_voice is not None:
-                voice_for_duration = base_voice
+            base_voice_take = _find_voice_take(project, status.shot_id, lang=None)
+            if base_voice_take is not None:
+                voice_take_for_duration = base_voice_take
         shots.append(
             ShotInput(
                 shot=_shot_for_compile(status.shot_id),
@@ -939,8 +990,8 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
                 take_source=project.relpath(take.media_path),
                 take_duration_ms=take_dur,
                 voice_source=project.relpath(voice) if voice else None,
-                voice_duration_ms=(
-                    probe_fn(voice_for_duration) if voice_for_duration else None
+                voice_duration_ms=_voice_duration_ms(
+                    voice_take_for_duration, probe_fn
                 ),
                 # Locale timing from locale take when present
                 voice_timing=_load_voice_timing(voice) if voice else None,

@@ -275,14 +275,20 @@ def _mark_repaired(project: Project, shot_id: str, new_media: Path,
     and the ``voice_hash`` it satisfies. This is not a §3 violation — the media is
     append-only and untouched; we are finishing the metadata of the take THIS op
     just created (the provider's register_voice_take wrote the base sidecar)."""
+    from ..providers.base import probe_media
+
     sidecar_path = project.takes_dir(shot_id) / f"{new_media.stem}.sidecar.yaml"
     try:
         sidecar = VoiceTakeSidecar.model_validate(read_yaml(sidecar_path) or {})
     except Exception:
         # a mock/provider that did not leave a sidecar: synthesize a minimal one
-        # so the repair lineage is still recorded on disk.
+        # so the repair lineage is still recorded on disk. Cache the voice
+        # duration here too (audit FP-L2) via the same best-effort probe the
+        # synthesis path uses, so a repaired take is a first-class cached take.
+        # (The normal path above already carries the provider's synthesis probe.)
         sidecar = VoiceTakeSidecar(provider=result.provider or "repair",
-                                   voice_hash=result.voice_hash or "")
+                                   voice_hash=result.voice_hash or "",
+                                   probe=probe_media(new_media))
     sidecar.repaired_from = result.old_take
     sidecar.audio_repaired = True
     write_yaml(sidecar_path, sidecar.model_dump(exclude_none=True))

@@ -32,7 +32,7 @@ from pathlib import Path
 from ..core.container import Project
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
 from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
-from .base import FailureKind, ProviderFailure
+from .base import FailureKind, ProviderFailure, probe_media
 from .manifest import ProviderManifest
 from .tts import voice_provider_descriptor
 
@@ -120,6 +120,11 @@ class EdgeTtsProvider:
                         "voice": voice, "words": len(words)},
                 remote=RemoteJobInfo(job_id=None, cost=None,
                                      currency=self.manifest.cost.currency),
+                # Cache the voice duration at synthesis (audit FP-L2): the same
+                # best-effort probe the video path uses (providers.base.probe_media,
+                # None on failure), so the timeline compiler reads it back instead
+                # of live-ffprobing this file on every compile.
+                probe=probe_media(dest),
             )
             registered = project.register_voice_take(shot.id, dest, sidecar)
             if words:

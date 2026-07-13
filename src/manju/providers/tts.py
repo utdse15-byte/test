@@ -36,7 +36,7 @@ from ..core.container import Project
 from ..core.hashing import hash_value
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
 from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
-from .base import FailureKind, ProviderFailure
+from .base import FailureKind, ProviderFailure, probe_media
 from .jsonpath import JsonPathError, extract
 from .manifest import GENERIC_TTS_ADAPTER, ProviderManifest, load_manifests
 
@@ -195,6 +195,11 @@ class GenericTtsProvider:
                     cost=self.manifest.cost.per_call or None,
                     currency=self.manifest.cost.currency,
                 ),
+                # Cache the voice duration at synthesis (audit FP-L2): the same
+                # best-effort probe the video path uses (providers.base.probe_media,
+                # None on failure), so the timeline compiler reads it back instead
+                # of live-ffprobing this file on every compile.
+                probe=probe_media(audio),
             )
             return project.register_voice_take(shot.id, audio, sidecar)
 
