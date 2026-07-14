@@ -795,9 +795,15 @@ a.btn.ck-primary { text-decoration: none; }
   display: inline-flex; align-items: baseline; gap: .3rem; font-size: .78rem;
   padding: .12rem .55rem; border-radius: 999px; border: 1px solid var(--line);
   background: var(--panel2); color: var(--muted);
+  /* #50: the counts are clickable queues now (buttons, not spans) */
+  font-family: inherit; cursor: pointer;
 }
+.ck-scount:hover { border-color: var(--accent); color: var(--fg); }
 .ck-scount b { color: var(--fg); font-size: .84rem; }
 .ck-scount.exc { border-color: #5a4718; }
+/* 继续上次工作 (#50) — the first thing the returning owner sees */
+.ck-continue { margin: 0 0 .7rem; }
+a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-final { color: var(--muted); font-size: .8rem; }
 .ck-final .badge { margin-left: .35rem; }
 
@@ -1312,6 +1318,28 @@ _JS = r"""
       || (c.onboarding && c.onboarding.should_show);
     root.classList.toggle("fresh", !!fresh);
 
+    /* --- 继续上次工作 (#50): pure client memory (common.js records every
+     * server-page visit per project); /review restores its own position, so
+     * this chip only needs to LINK back. The engine keeps no UI state. */
+    try {
+      const lastRaw = localStorage.getItem("manju-last-" + PROJECT);
+      const last = lastRaw ? JSON.parse(lastRaw) : null;
+      if (PROJECT && last && last.page && last.page !== "/") {
+        const cont = el("div", "ck-continue");
+        let lbl = "继续上次工作:" + (last.title || last.page);
+        if (last.page === "/review") {
+          const pos = localStorage.getItem("manju-rv-pos-" + PROJECT);
+          if (pos) lbl += " · " + pos;
+        }
+        const a = document.createElement("a");
+        a.className = "btn ck-continue-btn";
+        a.href = last.page;
+        a.textContent = lbl;
+        cont.appendChild(a);
+        root.appendChild(cont);
+      }
+    } catch (err) { /* storage off — no chip, no noise */ }
+
     /* --- HERO: the state sentence + the ONE next action ------------------ */
     const hero = el("div", "ck-hero");
     const left = el("div", "ck-state");
@@ -1333,9 +1361,20 @@ _JS = r"""
       const strip = el("div", "ck-strip");
       const counts = state.shots_by_state || {};
       Object.keys(counts).forEach((k) => {
-        const chip = el("span", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+        /* 待办箱 (#50): a count is a QUEUE, not a statistic — clicking it
+         * filters the shots grid to exactly those shots and jumps there. */
+        const chip = el("button", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+        chip.type = "button";
+        chip.title = "在分镜里筛选:" + (CK_STATE_ZH[k] || k);
         chip.appendChild(el("b", null, String(counts[k])));
         chip.appendChild(document.createTextNode(" " + (CK_STATE_ZH[k] || k)));
+        chip.addEventListener("click", () => {
+          stateFilter = k;
+          saveUI({ filter: stateFilter });
+          renderShots(lastShots);
+          const sh = $("shots");
+          if (sh) sh.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
         strip.appendChild(chip);
       });
       const fin = state.final;
@@ -4846,6 +4885,27 @@ _JS = r"""
       const job = (f.detail && (f.detail.job_id || f.detail.node_id)) || null;
       if (job) bodyBox.appendChild(el("div", "fail-meta", "关联任务 (job): " + job));
       if (f.ts) bodyBox.appendChild(el("div", "fail-meta", f.ts + " · " + (f.actor || "engine")));
+      /* 复制诊断上下文 (#50): a clean task block for Claude — error, log,
+       * files, recommended step — instead of pasting the whole project. */
+      const cp = el("button", "btn ghost mini", "复制诊断上下文");
+      cp.type = "button";
+      cp.title = "复制该失败的结构化上下文(步骤/原因/日志/文件),交给 Claude 或 agent";
+      cp.addEventListener("click", async () => {
+        const lines = ["失败步骤: " + (f.step || "?")];
+        if (f.subject) lines.push("对象: " + f.subject);
+        if (f.cause) lines.push("原因: " + f.cause);
+        if (f.evidence) lines.push("证据: " + f.evidence);
+        if (f.hint) lines.push("引擎提示: " + f.hint);
+        if (f.log_path) lines.push("日志: " + f.log_path);
+        if (job) lines.push("任务: " + job);
+        if (f.subject && shotIds[f.subject]) lines.push("镜头文件: shots/" + f.subject + ".yaml");
+        lines.push("目标: (写下要 Claude 做的事)");
+        try {
+          await navigator.clipboard.writeText(lines.join("\n"));
+          toast("诊断上下文已复制 — 粘给 Claude 即可", "ok");
+        } catch (e) { toast("复制失败,请手动选择", "err"); }
+      });
+      bodyBox.appendChild(cp);
       /* retry: only where the subject is a shot in THIS project, through the
        * normal plan modal (a redo is a priced action) */
       if (!readonly && f.subject && shotIds[f.subject]) {

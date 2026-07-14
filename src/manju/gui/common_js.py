@@ -98,6 +98,19 @@ if (PROJECT) {
   }, 15000);
 }
 
+/* Direction program (#50): remember where work happened, per project — the
+ * workbench home renders its 继续上次工作 chip from this. Server pages only
+ * (the home page itself must never clobber yesterday's trail). */
+if (PROJECT && location.pathname !== "/") {
+  try {
+    window.localStorage.setItem("manju-last-" + PROJECT, JSON.stringify({
+      page: location.pathname,
+      title: (document.title || "").split(" ·")[0],
+      ts: Date.now()
+    }));
+  } catch (e) { /* best-effort */ }
+}
+
 function toast(msg, ok) {
   var t = document.getElementById("toast");
   if (!t) return;

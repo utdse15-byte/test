@@ -63,6 +63,7 @@ Entries are append-only below.
 | 48b | 2026-07-14 | Convenience wave 4: GUI bulk gaps, board confirm/in-place select, deep links | gui/pages rv-redo-stale + lab link, board redo confirm + select flip, storyboard redo/voice batch, edit→subtitles #cue anchor; gate fixes ba5348a (as_posix, named refusal) |
 | 49 | 2026-07-14 | GUI polish wave: hidden-vs-display owner (dead /create fixed), feel/motion layer, honest pollJob, exports bulk-stale | gui/page.py app.css (`.hidden`/`[hidden]` !important owner, color-scheme, transitions, mj-rise, reduced-motion, scrollbars, --accent-bg), create_page showStage class clear, exports_page xc-gen-stale + pollJob×4 adaptive, board :root color-scheme+[hidden] |
 | 49a | 2026-07-14 | GUI polish round 2: external review dispositioned — F20/F18/#45 disciplines reach the workbench, per-project UI memory, keyboard semantics | gui/page.py app.js (sticky err toast + aria-live, CK_STATE_ZH badge/filters, manju-ui-/manju-reviewed- identity keys, actAsButton, inline take-note), gui/pages.py (nav aria-current, manju-rv-pos- restore), common_js aria-live |
+| 50 | 2026-07-14 | Direction program: personal production console — review queue default+priority+undo, continue-work home, 交给 Claude handoff, six-group nav | gui/pages.py (qPriority/setQueueMode/u-undo/_NAV_GROUPS/ai-ctx + copyForAI), gui/page.py (ck-continue chip, clickable ck-scount, fail-card 复制诊断上下文), common_js (manju-last recorder) |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2418,3 +2419,55 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   class — reworded). 19/19 live wave-2 checks (real UI drives: sticky
   error through a real failing save, keyboard panel toggle, state across
   reloads, position restore); harness 21/21; full suite 4400/2/0.
+
+## 50. Direction program: the personal production console (2026-07-14)
+
+- The owner supplied a GUI direction document ("收敛成个人视频生产操作台",
+  think-independently-first mandate, 10-hour budget). Independent position
+  formed first, the document verified claim-by-claim second — several of
+  its premises were stale against this tree (the identity-key fix already
+  landed in #49a; 队列模式 has existed since round X; /edit has I/O trim;
+  the picker already sorts pinned+recency) — then the REAL convergence
+  landed: deliver the engine's existing intelligence at open-time, and
+  make the review queue the strongest surface. Full disposition:
+  REPORTS/GUI_DIRECTION_2026-07-14.md.
+- 审片 (the attention bottleneck): 队列模式 is now the DEFAULT whenever
+  unreviewed work exists (only the explicit toggle persists as a
+  preference — a default never silently becomes one); the queue walks
+  most-blocking first (needs_selection → stale → unreviewed → rest; a
+  take-less shot trails everything — nothing to judge), snapshotted at
+  load so cards never jump mid-session; 好 advances the queue exactly as
+  通过 always did; `u` 撤回 restores what the verdict overwrote (the
+  note input's defaultValue) and the card's reviewed state — one step,
+  newest only, deeper history stays in the truth files. The restore-
+  clobber found live (setQueueMode's head-sync overwrote the #49a
+  position restore) is fixed and probe-pinned.
+- 首页 (continue, don't dashboard): every server page records its visit
+  per project identity (common.js one-liner; the home page never clobbers
+  the trail); the cockpit opens with a 继续上次工作 chip that deep-links
+  back (review position rides the label); the state-strip counts became
+  BUTTONS — a count is a queue, not a statistic — clicking filters the
+  shots grid and jumps there.
+- 交给 Claude (AI stays outside, §0): /review cards copy a structured
+  task context (shot/take/states/note/files/goal template); workbench
+  failure cards copy a diagnostic block (step/cause/evidence/log/job/
+  shot file). Clipboard + toast; no chat UI, no model plumbing, no second
+  AI environment to maintain.
+- 六组导航 (use-frequency, not modules): 工作台·创作·镜头·审片·成片·
+  工具箱 as CSS hover/focus dropdowns — presentation-layer ONLY: all 17
+  links stay in the DOM (the mode pins hold verbatim), _NAV stays the one
+  label owner, PRO_ONLY/beginner behaviour unchanged, single-visible-page
+  groups collapse to that page's own pill. The #45/#49a rejections were
+  of REWRITES without an owner ask; the owner's document IS the ask, and
+  the landed form is the bounded version those rejections left room for.
+- Dispositioned-not-landed (reasons in the report): 日常/维护 mode
+  rename (mode system deeply pinned; grouped nav delivers the reduction),
+  fixed personal workflow buttons (the plan-modal build panel + cockpit
+  hero ARE those buttons), bilingual label sweep (pinned strings;
+  glossary toggle owns vocabulary), auto-advance playback/follow-build/
+  drag storyboard/virtualization (standing rejections), `manju gui
+  --app` + Windows notifications (worthwhile, deferred to a Windows
+  session — frozen CLI surface + untestable launch path here).
+- 5 new pins (test_ux_polish.py, 87 total), red-first by stash; 20/20
+  live direction checks + wave-2 probe 19/19 + harness 21/21; union GUI
+  batch 401/1/0; full suite 4405/2/0.

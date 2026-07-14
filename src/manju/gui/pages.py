@@ -86,6 +86,21 @@ _NAV = (
 # mode; mode only shapes the nav + panel visibility), so hiding is loss-free.
 PRO_ONLY_PAGES = frozenset({"/compare", "/providers", "/routing", "/doctor"})
 
+# Direction program (#50): the daily nav groups by USE-FREQUENCY, not by
+# module — 17 flat pills asked for a navigation decision on every glance.
+# PRESENTATION-layer only: every page keeps its route, every link stays in
+# the DOM (CSS dropdowns), _NAV above stays the one label owner, and the
+# PRO_ONLY/beginner behaviour is unchanged. A group whose pages are all
+# hidden in 新手 mode disappears with them.
+_NAV_GROUPS = (
+    ("工作台", ("/",)),
+    ("创作", ("/create", "/director")),
+    ("镜头", ("/storyboard", "/lab", "/ingest")),
+    ("审片", ("/review", "/compare")),
+    ("成片", ("/edit", "/subtitles", "/mixer", "/packaging", "/exports")),
+    ("工具箱", ("/library", "/providers", "/routing", "/doctor")),
+)
+
 # Head stanza every workbench surface shares so the glossary tooltip look + the
 # mode/terms chrome behave identically on the SPA and all server-rendered pages.
 GLOSSARY_HEAD = (
@@ -215,13 +230,30 @@ def nav_html(active: str, mode: str = "pro", show_terms: bool = False,
     a dismissable hint bar follows the nav; the pages themselves stay reachable by
     URL. The mode switch + 显示专业术语 toggle sit at the right on every surface."""
     beginner = mode == "beginner"
-    out = ['<nav class="pnav">']
-    for href, label in _NAV:
-        if beginner and href in PRO_ONLY_PAGES:
-            continue
+    label_of = dict(_NAV)
+
+    def page_link(href: str) -> str:
         cls = "active" if href == active else ""
         cur = ' aria-current="page"' if href == active else ""
-        out.append(f'<a class="{cls}"{cur} href="{href}">{_e(label)}</a>')
+        return f'<a class="{cls}"{cur} href="{href}">{_e(label_of[href])}</a>'
+
+    out = ['<nav class="pnav">']
+    for gname, hrefs in _NAV_GROUPS:
+        visible = [h for h in hrefs if not (beginner and h in PRO_ONLY_PAGES)]
+        if not visible:
+            continue
+        if len(visible) == 1:
+            # a one-page group renders as that page's own pill (工作台;
+            # 工具箱 collapses to 素材库 in 新手 mode)
+            out.append(page_link(visible[0]))
+            continue
+        gactive = " active" if active in visible else ""
+        menu = "".join(page_link(h) for h in visible)
+        out.append(
+            f'<span class="pnav-group">'
+            f'<a class="pnav-glabel{gactive}" href="{visible[0]}">{_e(gname)}'
+            f'<span class="pnav-caret"> ▾</span></a>'
+            f'<span class="pnav-menu">{menu}</span></span>')
     out.append(_mode_controls(mode, show_terms))
     out.append(_workspace_switcher())
     out.append("</nav>")
@@ -564,7 +596,10 @@ def render_review(project: Any, token: str) -> str:
             f"  </div>\n"
             f'  <div class="rv-noterow">'
             f'<input class="rv-note-input" placeholder="备注 / 判词 (note)" value="{note_val}">'
-            f'<button class="btn ghost mini" data-act="note">保存备注</button></div>\n'
+            f'<button class="btn ghost mini" data-act="note">保存备注</button>'
+            f'<button class="btn ghost mini" data-act="ai-ctx" '
+            f'title="复制该镜头的结构化上下文(id/状态/备注/文件),交给 Claude 或 agent">'
+            f'复制给 Claude</button></div>\n'
             f'  <div class="rv-explain muted" hidden></div>\n'
             f"</section>"
         )
@@ -581,7 +616,7 @@ def render_review(project: Any, token: str) -> str:
         '<div class="page-h"><h1>审片 Review</h1>'
         '<span class="muted">逐条审阅每个' + tooltip_html("shot") + '选用的'
         + tooltip_html("take") + ',看 ' + tooltip_html("QC")
-        + ' · 键盘 j/k 上下 · g 好 · x 弃 · a 通过 · 空格 播放/暂停</span></div>\n'
+        + ' · 键盘 j/k 上下 · g 好 · x 弃 · a 通过 · u 撤回 · 空格 播放/暂停</span></div>\n'
         + err_line
         + '<div class="rv-progress panel">'
         f'<span id="rv-progress">已审 {reviewed} / {total}</span>'
@@ -1508,6 +1543,20 @@ _PAGES_CSS = """
 }
 .pnav a.active { background: var(--accent); color: #0b1220; font-weight: 700; border-color: var(--accent); }
 .pnav a:hover { filter: brightness(1.15); }
+/* ---- #50: grouped nav — a hover/focus dropdown per use-frequency group.
+   Every page link stays in the DOM (mode pins + discoverability); only the
+   presentation nests. Same menu language as .ws-menu. */
+.pnav-group { position: relative; display: inline-block; }
+.pnav-caret { font-size: .7em; opacity: .75; }
+.pnav-menu {
+  position: absolute; top: 100%; left: 0; z-index: 70; display: none;
+  flex-direction: column; gap: 2px; min-width: 8.5em; padding: .3rem;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+}
+.pnav-group:hover .pnav-menu, .pnav-group:focus-within .pnav-menu { display: flex; }
+.pnav-menu a { border: 0; background: transparent; border-radius: 6px; white-space: nowrap; }
+.pnav-menu a.active { background: var(--accent); }
 
 /* round X (agent XD): 剧集 series-membership banner, injected by chrome()
    right after the nav on every page that passes it a project. */
@@ -1700,6 +1749,18 @@ _PAGES_JS = r"""
 
   function reloadSoon() { setTimeout(function () { location.reload(); }, 450); }
 
+  /* 交给 Claude (#50): clipboard with the house fallback (create/series). */
+  function copyForAI(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { toast("上下文已复制 — 粘给 Claude 即可", true); },
+        function () { toast("复制失败,请手动选择", false); }
+      );
+    } else {
+      toast("复制失败,请手动选择", false);
+    }
+  }
+
   var page = document.body.getAttribute("data-page");
   if (page === "/review") initReview();
   else if (page === "/compare") initCompare();
@@ -1811,6 +1872,26 @@ _PAGES_JS = r"""
     var qFilter = "all";
     var queueMode = false;
     var qIndex = 0;
+    var qModeKey = "manju-rv-queue-" + (typeof PROJECT === "string" ? PROJECT : "");
+    /* direction program (#50): the queue walks most-blocking first, not shot
+     * order. Snapshotted ONCE at load — a live re-sort would make cards jump
+     * mid-session; the next reload re-ranks. */
+    function qPriority(s) {
+      var bs = s.getAttribute("data-buildstate") || "";
+      if (s.getAttribute("data-reviewed") === "1") return 5;
+      /* nothing to JUDGE yet — a take-less shot cannot take a verdict, so it
+       * trails everything reviewable regardless of its build state. */
+      if (!s.getAttribute("data-take")) return 4;
+      if (bs === "needs_selection") return 0;
+      if (bs === "stale") return 1;
+      if ((s.getAttribute("data-review") || "needs_review") === "needs_review") return 2;
+      return 3;
+    }
+    var qOrder = shots.slice().sort(function (a, b) {
+      var d = qPriority(a) - qPriority(b);
+      return d !== 0 ? d : shots.indexOf(a) - shots.indexOf(b);
+    });
+    var lastVerdict = null;  /* {shot, take, card, prevText, prevReviewed} — U 撤回 */
 
     function updateProgress() {
       var done = document.querySelectorAll('.rv-shot[data-reviewed="1"]').length;
@@ -1838,7 +1919,21 @@ _PAGES_JS = r"""
       }
       return (s.getAttribute("data-review") || "needs_review") === qFilter;
     }
-    function filteredShots() { return shots.filter(matchesFilter); }
+    function filteredShots() { return qOrder.filter(matchesFilter); }
+
+    /* one owner for entering/leaving queue mode — the toggle click, the
+     * saved preference and the unreviewed-work default all route here. */
+    function setQueueMode(on) {
+      queueMode = !!on;
+      document.body.classList.toggle("rv-queue-on", queueMode);
+      var tg = document.getElementById("rv-queue-toggle");
+      if (tg) {
+        tg.classList.toggle("on", queueMode);
+        tg.textContent = queueMode ? "退出队列模式" : "进入队列模式";
+      }
+      qIndex = 0;
+      updateQueueUI();
+    }
     function updateQueueUI() {
       var list = filteredShots();
       var pos = document.getElementById("rv-queue-pos");
@@ -1871,6 +1966,13 @@ _PAGES_JS = r"""
       var noteBody = { shot: shot, take: take, text: label + extra };
       var rev = s.getAttribute("data-rev");
       if (rev) noteBody.expected_rev = rev;
+      /* U 撤回 (#50): remember what this verdict overwrote — the input's
+       * defaultValue is the server-rendered saved note, untouched by typing. */
+      var prevState = {
+        shot: shot, take: take, card: s,
+        prevText: noteEl ? (noteEl.defaultValue || "") : "",
+        prevReviewed: s.getAttribute("data-reviewed") || "0",
+      };
       post("/api/take-note", noteBody).then(function (res) {
         if (res.status === 200) {
           /* UX audit F14: refresh the CAS token from the response, or the
@@ -1878,11 +1980,16 @@ _PAGES_JS = r"""
           if (res.data && res.data.rev) s.setAttribute("data-rev", res.data.rev);
           s.setAttribute("data-reviewed", "1");
           s.classList.add("reviewed");
+          lastVerdict = prevState;
           updateProgress();
           toast(shot + " " + label, kind === "good");
           if (kind === "reject") {
             var alts = s.querySelector(".rv-alts");
             if (alts) alts.scrollIntoView({ behavior: "smooth", block: "center" });
+          } else if (queueMode) {
+            /* 判断后自动下一条 — the queue advances like 通过 always did */
+            qIndex++;
+            updateQueueUI();
           } else {
             setActive(active + 1);
           }
@@ -1966,6 +2073,28 @@ _PAGES_JS = r"""
           else toast((res.data && res.data.error) || "失败", false);
         });
       }
+      else if (act === "ai-ctx") {
+        /* 交给 Claude (#50): a clean, structured task context — the AI lives
+         * OUTSIDE the GUI (§0); this hands it exactly what the card knows. */
+        var cl = [
+          "镜头: " + shot,
+          "当前选用: " + (take || "(未选用)"),
+          "构建状态: " + (s.getAttribute("data-buildstate") || "?"),
+          "审片状态: " + (s.getAttribute("data-review") || "needs_review"),
+        ];
+        var nvEl = s.querySelector(".rv-note-input");
+        if (nvEl && nvEl.value.trim()) cl.push("备注: " + nvEl.value.trim());
+        cl.push("相关文件:");
+        cl.push("- shots/" + shot + ".yaml");
+        var vEl = s.querySelector("video");
+        var vsrc = vEl ? (vEl.getAttribute("src") || "") : "";
+        if (vsrc.indexOf("/media/") === 0) {
+          cl.push("- " + decodeURI(vsrc.slice("/media/".length)).split("?")[0]);
+        }
+        if (s.querySelector(".ann-list")) cl.push("- reports/annotations.jsonl(含本镜批注)");
+        cl.push("目标: (写下要 Claude 做的事)");
+        copyForAI(cl.join("\n"));
+      }
       else if (act === "route") {
         var box = s.querySelector(".rv-explain");
         fetch("/api/route-explain?shot=" + encodeURIComponent(shot))
@@ -2006,12 +2135,11 @@ _PAGES_JS = r"""
         return;
       }
       if (e.target.id === "rv-queue-toggle") {
-        queueMode = !queueMode;
-        document.body.classList.toggle("rv-queue-on", queueMode);
-        e.target.classList.toggle("on", queueMode);
-        e.target.textContent = queueMode ? "退出队列模式" : "进入队列模式";
-        qIndex = 0;
-        updateQueueUI();
+        setQueueMode(!queueMode);
+        /* persist EXPLICIT intent only — the unreviewed-work default must
+         * stay a default, not silently become a preference. */
+        try { window.localStorage.setItem(qModeKey, queueMode ? "1" : "0"); }
+        catch (err) { /* best-effort */ }
         return;
       }
       if (e.target.id === "rv-q-prev") { qIndex--; updateQueueUI(); return; }
@@ -2060,6 +2188,30 @@ _PAGES_JS = r"""
         if (ab) ab.click();
         e.preventDefault();
       }
+      else if (e.key === "u") {
+        /* 撤回刚才的好/弃 (#50): restores the note text the verdict
+         * overwrote and the card's reviewed state. One step, newest only —
+         * deeper history belongs to the truth files, not the browser. */
+        if (!lastVerdict) { toast("没有可撤回的评价", false); e.preventDefault(); return; }
+        var lv = lastVerdict;
+        lastVerdict = null;
+        var ubody = { shot: lv.shot, take: lv.take, text: lv.prevText };
+        var urev = lv.card.getAttribute("data-rev");
+        if (urev) ubody.expected_rev = urev;
+        post("/api/take-note", ubody).then(function (res) {
+          if (res.status === 200) {
+            if (res.data && res.data.rev) lv.card.setAttribute("data-rev", res.data.rev);
+            if (lv.prevReviewed !== "1") {
+              lv.card.setAttribute("data-reviewed", lv.prevReviewed);
+              lv.card.classList.remove("reviewed");
+            }
+            updateProgress();
+            updateQueueUI();
+            toast("已撤回 " + lv.shot + " 的评价", true);
+          } else { toast((res.data && res.data.error) || "撤回失败", false); }
+        });
+        e.preventDefault();
+      }
       else if (e.key === " ") {
         var v = currentVideo();
         if (v) { if (v.paused) v.play(); else v.pause(); }
@@ -2070,6 +2222,21 @@ _PAGES_JS = r"""
      * lands directly so the page does NOT auto-scroll on a fresh open;
      * j/k/setActive scrolls from here on as always. */
     shots[active].classList.add("active");
+    /* 队列默认 (#50): a saved preference wins; otherwise unreviewed work
+     * opens straight into 队列模式 — the daily task IS the queue. */
+    var savedQ = null;
+    try { savedQ = window.localStorage.getItem(qModeKey); } catch (err) { /* off */ }
+    var unreviewed = shots.filter(function (s) {
+      return s.getAttribute("data-reviewed") !== "1";
+    }).length;
+    if (savedQ === "1" || (savedQ === null && unreviewed > 0)) {
+      /* capture the restored 上次位置 card BEFORE entering queue mode —
+       * setQueueMode's updateQueueUI syncs `active` onto the queue head. */
+      var restoredCard = shots[active];
+      setQueueMode(true);
+      var ai = filteredShots().indexOf(restoredCard);
+      if (ai >= 0) { qIndex = ai; updateQueueUI(); }
+    }
   }
 
   // ------------------------------------------------------------ compare

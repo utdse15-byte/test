@@ -1585,3 +1585,89 @@ def test_workbench_keyboard_semantics():
     assert "window.prompt" not in js
     # the one nav owner marks the current page for assistive tech
     assert 'aria-current="page"' in nav_html("/review")
+
+
+# --------------------------------------------- Direction program (#50, 2026-07-14)
+# The owner-endorsed direction document, dispositioned: the GUI converges on
+# a personal production console — open-and-continue, the review queue as the
+# strongest surface, clean AI handoff, use-frequency nav. Presentation and
+# client memory only; the engine keeps no UI state.
+
+
+def test_review_queue_walks_most_blocking_first_and_supports_undo():
+    from manju.gui.pages import render_pages_js
+
+    js = render_pages_js()
+    seg = js.split("function qPriority")[1].split("var qOrder")[0]
+    # a take-less shot cannot take a verdict — it trails everything reviewable
+    assert 'if (!s.getAttribute("data-take")) return 4;' in seg
+    assert '"needs_selection"' in seg and '"stale"' in seg
+    # 好 advances the queue exactly like 通过 always did; u restores what the
+    # verdict overwrote (the input's defaultValue = the server-rendered note)
+    assert "else if (queueMode)" in js
+    assert 'e.key === "u"' in js
+    assert "defaultValue" in js and "prevReviewed" in js
+    # unreviewed work opens straight into the queue; only the explicit toggle
+    # persists as a preference (a default must never silently become one)
+    assert "manju-rv-queue-" in js
+    assert 'savedQ === "1" || (savedQ === null && unreviewed > 0)' in js
+
+
+def test_review_legend_teaches_undo(tmp_project, add_shot, make_take):
+    from manju.gui.pages import render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    assert "u 撤回" in render_review(tmp_project, "tok")
+
+
+def test_home_opens_with_continue_and_clickable_counts():
+    from manju.gui.common_js import render_common_js
+    from manju.gui.page import render_js
+
+    js = render_js()
+    # the chip reads the per-project trail…
+    assert '"manju-last-" + PROJECT' in js
+    assert "ck-continue-btn" in js
+    # …that every server page writes; the home page never clobbers it
+    cjs = render_common_js()
+    assert '"manju-last-" + PROJECT' in cjs
+    assert 'location.pathname !== "/"' in cjs
+    # the cockpit state counts are clickable queues driving the shots filter
+    assert 'el("button", "ck-scount"' in js
+    assert "stateFilter = k" in js
+
+
+def test_ai_handoff_copies_structured_context(tmp_project, add_shot, make_take):
+    from manju.gui.page import render_js
+    from manju.gui.pages import render_pages_js, render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_review(tmp_project, "tok")
+    assert 'data-act="ai-ctx"' in html and "复制给 Claude" in html
+    js = render_pages_js()
+    seg = js.split('act === "ai-ctx"')[1].split('act === "route"')[0]
+    assert '"- shots/" + shot + ".yaml"' in seg
+    assert "copyForAI" in seg
+    # the workbench failure cards hand over a diagnostic block the same way
+    ajs = render_js()
+    assert "复制诊断上下文" in ajs
+    assert 'shots/" + f.subject + ".yaml"' in ajs
+
+
+def test_nav_groups_by_frequency_and_keeps_every_link(tmp_project):
+    from manju.gui.pages import _NAV, _NAV_GROUPS, nav_html
+
+    # every page lives in exactly one group — _NAV stays the one label owner
+    grouped = [h for _, hs in _NAV_GROUPS for h in hs]
+    assert sorted(grouped) == sorted(h for h, _ in _NAV)
+    pro = nav_html("/review", mode="pro")
+    for href, _ in _NAV:  # presentation nests; the DOM keeps every link
+        assert f'href="{href}"' in pro
+    assert pro.count('class="pnav-group"') == 5  # 工作台 stays a plain pill
+    assert pro.count('aria-current="page"') == 1
+    beginner = nav_html("/review", mode="beginner")
+    assert 'href="/providers"' not in beginner
+    # 工具箱 collapses to its one visible page in 新手 mode
+    assert ">素材库</a>" in beginner and "工具箱" not in beginner
