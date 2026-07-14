@@ -1303,3 +1303,29 @@ def test_transcribe_names_the_align_chain_with_actual_values(tmp_project, monkey
     assert res.exit_code == 0, res.output
     assert "manju align --media media/imports/素材.mp4" in res.output
     assert "--from-srt captions/transcripts/素材.srt" in res.output
+
+
+# ------------------------------------------- Convenience wave 3 (2026-07-14)
+
+
+def test_review_keyboard_gains_approve_but_never_spend(tmp_project, add_shot, make_take):
+    """`a` fires the card's own 通过 button (one click path — CAS refresh and
+    queue advance stay owned there); 重做 deliberately has NO key: a spend
+    action never hides behind a single keystroke."""
+    from manju.gui.pages import render_pages_js, render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_review(tmp_project, "tok")
+    assert "a 通过" in html                       # the legend teaches it
+    js = render_pages_js()
+    assert 'e.key === "a"' in js and 'qapprove' in js
+    # no keydown branch fires the redo (spend) action
+    keyblock = js.split('addEventListener("keydown"')[1]
+    key_branches = [seg.split(")", 1)[0] for seg in keyblock.split("e.key === ")[1:]]
+    assert not any("redo" in b for b in key_branches)
+
+
+def test_package_and_masters_point_at_exports():
+    src = Path("src/manju/cli.py").read_text(encoding="utf-8")
+    assert src.count("交付状态一览: manju exports") == 2

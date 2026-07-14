@@ -578,7 +578,7 @@ def render_review(project: Any, token: str) -> str:
         '<div class="page-h"><h1>审片 Review</h1>'
         '<span class="muted">逐条审阅每个' + tooltip_html("shot") + '选用的'
         + tooltip_html("take") + ',看 ' + tooltip_html("QC")
-        + ' · 键盘 j/k 上下 · g 好 · x 弃 · 空格 播放/暂停</span></div>\n'
+        + ' · 键盘 j/k 上下 · g 好 · x 弃 · a 通过 · 空格 播放/暂停</span></div>\n'
         + err_line
         + '<div class="rv-progress panel">'
         f'<span id="rv-progress">已审 {reviewed} / {total}</span>'
@@ -2007,6 +2007,15 @@ _PAGES_JS = r"""
       else if (e.key === "k") { setActive(active - 1); e.preventDefault(); }
       else if (e.key === "g") { verdict("good"); e.preventDefault(); }
       else if (e.key === "x") { verdict("reject"); e.preventDefault(); }
+      else if (e.key === "a") {
+        /* Convenience wave 3: approve joins the keyboard flow. Fires the
+         * card's own 通过 button so the CAS-token refresh and queue
+         * advance stay in ONE place. 重做 deliberately has no key —
+         * a spend action never hides behind a single keystroke. */
+        var ab = shots[active] && shots[active].querySelector('[data-act="qapprove"]');
+        if (ab) ab.click();
+        e.preventDefault();
+      }
       else if (e.key === " ") {
         var v = currentVideo();
         if (v) { if (v.paused) v.play(); else v.pause(); }

@@ -59,6 +59,7 @@ Entries are append-only below.
 | 46 | 2026-07-14 | Continuity wave: 上次动作 anchor + backup-age doctor row | core/events humanize_age, cli status 上次动作 line, cli pack .manju/last_pack.json marker (pack stays read-only on the tree), build/doctor backup row |
 | 47 | 2026-07-14 | Convenience wave 1: shot/take shorthand resolvers, 18 commands | cli._resolve_shot_arg/_resolve_take_arg (existing-only, ambiguity=bad_args, stderr echo), select no-take candidate listing; startup-latency item measured-and-dismissed |
 | 48 | 2026-07-14 | Convenience wave 2: generate/recover/deliver verbs never dead-end | cli redo/select/voice/align/repair/tasks/exports/transcribe next-keystroke clauses; _print_batch_result tail hints; exports per-row kind→command map |
+| 48a | 2026-07-14 | Convenience wave 3: review keyboard approve; package/masters exports pointers | gui/pages pages.js `a`=qapprove + legend (redo stays keyless — spend never behind one keystroke), cli package/masters 交付状态一览 |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2263,3 +2264,17 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   (the bounded-board design, not a defect).
 - 6 new pins (test_ux_polish.py, 65 total), red-first by stash (the
   zero-work noise guard is green-by-design). Full suite green.
+
+## 48a. Convenience wave 3: the keyboard finishes the review loop (2026-07-14)
+
+- From the same audit's below-the-cut list, verified then landed: `/review`
+  gains `a` = 通过 — it fires the card's own qapprove button, so the CAS-
+  token refresh and queue advance stay owned by the one click path; the
+  legend line teaches it (j/k · g · x · a · 空格). 重做 deliberately stays
+  keyless: a spend action never hides behind a single keystroke (pinned —
+  the test walks every keydown branch and asserts none reaches redo).
+- `manju package` / `manju masters` successes now point at `manju exports`
+  (the delivery-readiness view) — the deliver loop's last two dead ends.
+- Real-browser harness grows the keyboard-approve check (17/17 passed,
+  including the stale-tab overlay and the F14/F16 flows). 2 new pins
+  (67 total), red-first by stash. Full suite 4385/2/0.

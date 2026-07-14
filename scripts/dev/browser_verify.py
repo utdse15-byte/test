@@ -200,6 +200,19 @@ def main() -> int:
         check("F17 board annotations visible in gui /review",
               "第3帧道具穿帮" in content and "看板批注" in content)
 
+        # ---------------- #48a: keyboard approve on /review (a = 通过)
+        page.goto(gui_base + "/review", wait_until="networkidle")
+        page.locator("body").press("a")
+        try:
+            page.wait_for_function(
+                "() => document.querySelector('.rv-shot').getAttribute('data-review') === 'approved'",
+                timeout=8000)
+            check("#48a keyboard a approves the active card", True)
+        except Exception:
+            state = page.locator(".rv-shot").first.get_attribute("data-review")
+            check("#48a keyboard a approves the active card", False,
+                  f"data-review={state}")
+
         # ---------------- DECISIONS #45: the stale-tab guard, for real
         # This page (/review) rendered for 浏览器验证. Simulate another tab
         # switching the SERVER to a second project via the exempt rebind

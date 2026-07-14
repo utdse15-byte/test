@@ -2907,6 +2907,7 @@ def package(
         _emit(result, True)
     else:
         typer.secho(f"封面: {result['cover']}", fg=typer.colors.GREEN)
+        typer.secho("交付状态一览: manju exports", fg=typer.colors.BRIGHT_BLACK)
         if result["teaser"]:
             typer.secho(f"预告: {result['teaser']}", fg=typer.colors.GREEN)
         if result["skipped"]:
@@ -4039,6 +4040,7 @@ def masters(
         if index.get("loudnorm_master"):
             ln = index["loudnorm_master"]
             typer.echo(f"  normalised → {ln['path']} (target {ln['target_lufs']} LUFS)")
+        typer.secho("交付状态一览: manju exports", fg=typer.colors.BRIGHT_BLACK)
 
 
 # -------------------------------------------------------------- transcribe
