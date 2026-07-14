@@ -74,3 +74,6 @@ Owners (one owner per concern — extend it, never fork a parallel one):
 - GUI project identity (stale-tab guard) → `gui/state.project_identity`;
   the `manju-project` meta is stamped ONLY by `gui/server._send_text` —
   never hand-embed it in a page shell (DECISIONS #45)
+- CLI shot/take shorthand (s14/14 → S014, 3 → take_03) →
+  `cli._resolve_shot_arg` / `cli._resolve_take_arg` — existing entities
+  only, ambiguity fails bad_args, echo on stderr (DECISIONS #47)

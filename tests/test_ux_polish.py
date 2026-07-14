@@ -1133,3 +1133,91 @@ def test_doctor_backup_row_warns_past_two_weeks(tmp_project):
     assert row["ok"] is True          # advisory: NEVER gates doctor's ok
     assert "⚠" in row["line"] and "manju pack" in row["line"]
     assert "15 天前" in row["line"]
+
+
+# ---------------------------------------------- Convenience wave (2026-07-14)
+# The 7-hour convenience mandate, wave 1: the owner types shot/take ids
+# dozens of times a day and the CLI accepted exactly one spelling. The
+# forgiving resolvers (cli._resolve_shot_arg / _resolve_take_arg — one owner
+# each) match shorthand against EXISTING entities only: s14/S14/14 → S014,
+# 3 → take_03. Ambiguity fails structured (never guess — the UNKNOWN
+# discipline applied to intent), no match passes through unchanged, and the
+# resolution echo rides STDERR so --json stdout stays machine-pure.
+
+
+def test_shot_shorthand_resolves_case_and_number(tmp_project, add_shot, make_take, monkeypatch):
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    monkeypatch.chdir(tmp_project.root)
+
+    res = runner.invoke(app, ["select", "s1", "2"])
+    assert res.exit_code == 0, res.output
+    assert tmp_project.load_shot("S001").status.selected_take == "take_02"
+
+
+def test_shot_shorthand_json_stdout_stays_pure(tmp_project, add_shot, make_take, monkeypatch):
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h1")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["select", "1", "1", "--json"])
+    assert res.exit_code == 0, res.output
+    json.loads(res.stdout)                # echo must NOT pollute stdout
+    assert "S001" in res.stderr and "take_01" in res.stderr  # taught canonically
+
+
+def test_shot_shorthand_ambiguity_fails_structured_never_guesses(
+        tmp_project, add_shot, monkeypatch):
+    add_shot(tmp_project, "S001")
+    # a second id with the same numeric part → "1" is genuinely ambiguous
+    src = (tmp_project.root / "shots" / "S001.yaml").read_text(encoding="utf-8")
+    (tmp_project.root / "shots" / "SC001.yaml").write_text(
+        src.replace("S001", "SC001"), encoding="utf-8")
+    monkeypatch.chdir(tmp_project.root)
+
+    res = runner.invoke(app, ["select", "1", "take_01", "--json"])
+    assert res.exit_code == 1
+    doc = json.loads(res.output)
+    assert doc["code"] == "bad_args"
+    assert "S001" in doc["error"] and "SC001" in doc["error"]
+
+
+def test_shot_shorthand_no_match_passes_through_unchanged(
+        tmp_project, add_shot, monkeypatch):
+    add_shot(tmp_project, "S001")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["redo", "S999", "--json"])
+    assert res.exit_code == 1
+    doc = json.loads(res.output)
+    assert "S999" in doc["error"]        # the structured not-found, untouched
+
+
+def test_resolver_units_cover_the_documented_rules(tmp_project, add_shot, make_take):
+    from manju.cli import _resolve_shot_arg, _resolve_take_arg
+
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S014")
+    make_take(tmp_project, "S014", "h")
+
+    assert _resolve_shot_arg(tmp_project, "S014") == "S014"   # exact: untouched
+    assert _resolve_shot_arg(tmp_project, "s14") == "S014"    # casefold+pad
+    assert _resolve_shot_arg(tmp_project, "14") == "S014"     # bare number
+    assert _resolve_shot_arg(tmp_project, "S05") == "S05"     # no match: as-is
+    assert _resolve_take_arg(tmp_project, "S014", "1") == "take_01"
+    assert _resolve_take_arg(tmp_project, "S014", "TAKE_01") == "take_01"
+    assert _resolve_take_arg(tmp_project, "S014", "9") == "9"  # no match: as-is
+
+
+def test_select_without_take_lists_the_candidates(tmp_project, add_shot, make_take, monkeypatch):
+    """The next keystroke must be obvious: no-take now shows the same listing
+    the bad-take branch always had, plus the numeric shorthand."""
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["select", "S001", "--json"])
+    assert res.exit_code == 1
+    doc = json.loads(res.stdout)
+    assert doc["code"] == "bad_args"
+    assert "take_01" in doc["error"] and "take_02" in doc["error"]
+    assert "select S001 1" in doc["error"]   # teaches the shorthand

@@ -12,7 +12,8 @@
 - `manju import` —— 登记自己的素材(只读,永不改原件)
 - `manju check` —— 校验 schema / 引用 / 锁 / 密钥,过不了不给 build
 - `manju build` —— 一条命令:编译时间线 → 渲染 → 质检 → 导出
-- `manju select` —— 给镜头定 take(或一段手动素材)
+- `manju select` —— 给镜头定 take(或一段手动素材);支持简写:
+  `manju select s1 2` = `manju select S001 take_02`(只匹配已存在的,歧义必报)
 - `manju exports` —— 导出中心:九种交付物的状态一览
 
 拿不准下一步就 `manju status`(当前阶段 + 每个镜头的待办,一句话一个动作),或 `manju help-workflow`(任务式工作流导航);偏好点击操作用 `manju gui`,审片用 `manju board --serve`,环境体检用 `manju doctor`。选错了不用慌:`manju rollback shot <镜头>` 撤回上一次选择(历史只增不减,永不覆盖)。详细工作流已内建 —— 例如 `manju help-workflow new-project`。

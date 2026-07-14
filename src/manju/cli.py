@@ -127,6 +127,77 @@ def _project(path: Optional[Path] = None) -> Project:
     return project
 
 
+def _resolve_shot_arg(project: Project, raw: str) -> str:
+    """Typing-convenience wave: forgive the daily shorthand — ``s14``,
+    ``S14`` and bare ``14`` all resolve to ``S014`` — by matching against
+    EXISTING shot files ONLY. Exact id → unchanged; no match → unchanged
+    (creation paths and the structured not-found keep their behaviour);
+    more than one match → structured ``bad_args`` naming every candidate
+    (the UNKNOWN-never-guessed discipline: never guess which shot was
+    meant). The resolution is echoed to STDERR, so ``--json`` stdout stays
+    pure and the owner learns the canonical form in passing."""
+    raw = (raw or "").strip()
+    if not raw:
+        return raw
+    try:
+        ids = project.shot_ids()
+    except Exception:
+        return raw  # a broken index never breaks the command using it
+    if raw in ids:
+        return raw
+    num = re.fullmatch(r"([A-Za-z]*)0*(\d+)", raw)
+    cands: list[str] = []
+    for sid in ids:
+        if sid.casefold() == raw.casefold():
+            cands.append(sid)
+            continue
+        if num:
+            sm = re.fullmatch(r"([A-Za-z]+)0*(\d+)", sid)
+            if (sm and int(sm.group(2)) == int(num.group(2))
+                    and (not num.group(1)
+                         or sm.group(1).casefold() == num.group(1).casefold())):
+                cands.append(sid)
+    cands = sorted(set(cands))
+    if len(cands) == 1:
+        typer.secho(f"镜头 {raw} → {cands[0]}",
+                    fg=typer.colors.BRIGHT_BLACK, err=True)
+        return cands[0]
+    if len(cands) > 1:
+        _fail(f"镜头 {raw} 不唯一:{', '.join(cands)} — 请用完整 id",
+              code="bad_args")
+    return raw
+
+
+def _resolve_take_arg(project: Project, shot_id: str, raw: str) -> str:
+    """The take-side twin of :func:`_resolve_shot_arg`: ``3`` → ``take_03``
+    when (and only when) exactly one existing take of ``shot_id`` carries
+    that number. Same rules — existing entities only, ambiguity fails
+    structured, no match passes through unchanged, echo on stderr."""
+    raw = (raw or "").strip()
+    if not raw:
+        return raw
+    try:
+        names = [t.name for t in project.takes(shot_id)]
+    except Exception:
+        return raw
+    if raw in names:
+        return raw
+    cands = [n for n in names if n.casefold() == raw.casefold()]
+    if not cands and re.fullmatch(r"0*\d+", raw):
+        cands = [n for n in names
+                 if (m := re.fullmatch(r"take_0*(\d+)", n))
+                 and int(m.group(1)) == int(raw)]
+    cands = sorted(set(cands))
+    if len(cands) == 1:
+        typer.secho(f"take {raw} → {cands[0]}",
+                    fg=typer.colors.BRIGHT_BLACK, err=True)
+        return cands[0]
+    if len(cands) > 1:
+        _fail(f"take {raw} 不唯一:{', '.join(cands)} — 请用完整名",
+              code="bad_args")
+    return raw
+
+
 def _require_shot(project: Project, shot_id: str) -> None:
     """Fail STRUCTURED (never a raw traceback) when ``shot_id`` has no shot
     file — the optimization audit's Quickstart defect: `select --file` used
@@ -809,6 +880,8 @@ def ingest(
     from .build.ingest import IngestError, apply_ingest, plan_ingest
 
     project = _project()
+    if shot:
+        shot = _resolve_shot_arg(project, shot)
     try:
         plan = plan_ingest(project, paths, role=role, shot=shot, on_duplicate=on_duplicate)
     except IngestError as exc:
@@ -1222,8 +1295,11 @@ def redo(
             _fail("redo: --from-take reuses ONE take's recipe — it cannot combine "
                   "with a batch selector")
         shot_ids = [s.strip() for s in shots.split(",") if s.strip()] if shots else None
+        project = _project()
+        if shot_ids:  # typing-convenience: s1,14 → S001,S014 (existing only)
+            shot_ids = [_resolve_shot_arg(project, s) for s in shot_ids]
         try:
-            result = redo_batch(_project(), shots=shot_ids, all_stale=all_stale,
+            result = redo_batch(project, shots=shot_ids, all_stale=all_stale,
                                 all_missing=all_missing, all_shots=all_shots,
                                 candidates=candidates, provider=provider, seed=seed,
                                 actor=ACTOR, assume_yes=yes)
@@ -1243,9 +1319,11 @@ def redo(
     if shot_id is None:
         _fail("redo: 要重生成哪个镜头?给一个镜头 id(`manju redo S002`),"
               "或用批量选择器 (--all-stale / --all-missing / --all / --shots S001,S003)。")
-    _require_shot(_project(), shot_id)  # audit defect 0a: no raw traceback
+    project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
+    _require_shot(project, shot_id)  # audit defect 0a: no raw traceback
     try:
-        takes = redo_shot(_project(), shot_id, candidates=candidates,
+        takes = redo_shot(project, shot_id, candidates=candidates,
                           provider=provider, seed=seed, from_take=from_take,
                           actor=ACTOR, assume_yes=yes)
     except WaitingUser as exc:
@@ -1290,6 +1368,9 @@ def select(
     from .core.writes import WriteRejected, select_take_checked
 
     project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
+    if take is not None and file is None:
+        take = _resolve_take_arg(project, shot_id, take)
     try:
         validate_safe_segment(shot_id, label="shot_id")  # goal item 11
     except UnsafeIdentifierError as exc:
@@ -1304,9 +1385,16 @@ def select(
             info = register_manual_take(project, shot_id, file)
             take = info.name
         if not take:
-            _fail(f"select: 没提供 take。{shot_id} 要选哪一条生成结果?"
-                  f"传 take 名(`manju select {shot_id} <take>`),"
-                  "或用 --file 把一个人工文件登记成 take 再选。",
+            # Convenience wave: the next keystroke should be OBVIOUS — list
+            # what there is to pick (same listing the bad-take branch always
+            # had) and teach the numeric shorthand in passing.
+            have = [t.name for t in project.takes(shot_id, skip_ghosts=True)]
+            listing = (
+                "现有 takes:" + ", ".join(have)
+                + f" — 数字即可,如 `manju select {shot_id} 1`。"
+            ) if have else "该镜头还没有任何 take,先 `manju build` 或 `manju redo` 生成。"
+            _fail(f"select: 没提供 take。{shot_id} 要选哪一条?{listing}"
+                  "(或用 --file 把一个人工文件登记成 take 再选)",
                   code="bad_args")
         if project.get_take(shot_id, take) is None:
             # round-W #35: a media-less "ghost" sidecar is not a pickable take —
@@ -1338,6 +1426,7 @@ def lock(
 ):
     """Seal a field's current value with a hash (§5). Build enforces it."""
     project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
     # WP5: make lock_change honest — when the token is in ask_before, require --yes
     config = project.load_config()
     if "lock_change" in (config.ask_before or []) and not yes:
@@ -1377,6 +1466,7 @@ def unlock(shot_id: str, field: str):
     if not typer.confirm(f"确认解锁 {shot_id}.{field}?"):
         raise typer.Exit(1)
     project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
 
     def mutate(d):
         locked = d.get("locked") or {}
@@ -2118,6 +2208,10 @@ def repair(
     from .core.yamlio import read_yaml
 
     project = _project()
+    if shot:
+        shot = _resolve_shot_arg(project, shot)
+        if take:
+            take = _resolve_take_arg(project, shot, take)
     if op is not None:
         if op == "voice":
             _repair_voice_cli(project, shot, provider, dry_run, as_json)
@@ -3364,6 +3458,7 @@ def impact(
     from .core.container import ProjectError
 
     project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
     try:
         report = impact_report(project, shot_id, field=field, new_value=value)
     except (ProjectError, ValueError, KeyError) as exc:
@@ -3448,6 +3543,8 @@ def prompt(
     checks over every shot and exits non-zero when any warning is found (a
     lint gate; nothing is spent, nothing is mutated)."""
     project = _project()
+    if shot_id:
+        shot_id = _resolve_shot_arg(project, shot_id)
 
     if check:
         from .qc.prompt_checks import check_all, has_blocking
@@ -3569,6 +3666,8 @@ def voice(
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
+    if shot_id:
+        shot_id = _resolve_shot_arg(project, shot_id)
 
     # audit defect 0a: no raw traceback on unknown ids. Skipped when batch
     # flags are ALSO present so the more precise mutual-exclusion diagnosis
@@ -3755,6 +3854,8 @@ def align(
     from .media.align import align_shot, apply_multi_shot, plan_multi_shot
 
     project = _project()
+    if shot_id:
+        shot_id = _resolve_shot_arg(project, shot_id)
 
     def _expand_shots(spec: str) -> list[str]:
         out: list[str] = []
@@ -4133,6 +4234,7 @@ def board_keyframes(
     ``--scaffold`` it writes them into ``shots/<id>.yaml`` via the normal spec
     write path, respecting locks (a sealed ``keyframes`` field is refused)."""
     project = _project()
+    shot = _resolve_shot_arg(project, shot)
     try:
         sh = project.load_shot(shot)
     except ProjectError as exc:
@@ -6117,6 +6219,8 @@ def mentions(
     写入 shot.characters / shot.scene(锁定字段绝不自动写,改为建议走 proposals/)。
     """
     project = _project()
+    if shot_id:
+        shot_id = _resolve_shot_arg(project, shot_id)
     from .core.assets import asset_matrix
     from .core.mentions import apply_mentions, mention_report
 
@@ -6271,6 +6375,7 @@ def refs_shot(shot_id: str = typer.Argument(..., help="the shot to inspect"),
     from .qc.ref_checks import check_refs
 
     project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
     try:
         shot = project.load_shot(shot_id)
     except Exception as exc:
@@ -6352,6 +6457,7 @@ def refs_assign(
     from .core.refs import RefsError, assign_ref
 
     project = _project()
+    shot = _resolve_shot_arg(project, shot)
     with _write_lock(project):
         try:
             result = assign_ref(project, relpath, shot=shot, character=character,
@@ -8211,6 +8317,7 @@ def route_explain_cmd(shot_id: str = typer.Argument(..., metavar="SHOT"),
     from .providers.routing import RoutingError, explain
 
     project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
     try:
         shot = project.load_shot(shot_id)
     except ProjectError as exc:
@@ -8279,6 +8386,8 @@ def routing_explain_cmd(
     from .providers.routing import RoutingError
 
     project = _project()
+    if shot_id:
+        shot_id = _resolve_shot_arg(project, shot_id)
     if mode is not None and mode not in BUILD_MODE_NAMES:
         _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}")
     ids = None
@@ -9161,6 +9270,8 @@ def bridge_run_cmd(
     from .providers.registry import get_provider
 
     project = _project()
+    if shot:
+        shot = _resolve_shot_arg(project, shot)
     try:
         plan = _json.loads(plan_file.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:

@@ -57,6 +57,7 @@ Entries are append-only below.
 | 44 | 2026-07-13 | Intuitiveness wave: ONE per-shot next action, everywhere | build/status (shot_next_action, todo), cli status 待办, gui/pages review cards, board serve cards, installer -CreateShortcut |
 | 45 | 2026-07-14 | GPT-analysis wave: next_step_key + stale-tab project guard | build/status next_step_key, gui/state project_identity, gui/server (_send_text stamp, do_POST 409 project_switched, /api/project-id), common_js/page/glossary JS echo + overlay |
 | 46 | 2026-07-14 | Continuity wave: 上次动作 anchor + backup-age doctor row | core/events humanize_age, cli status 上次动作 line, cli pack .manju/last_pack.json marker (pack stays read-only on the tree), build/doctor backup row |
+| 47 | 2026-07-14 | Convenience wave 1: shot/take shorthand resolvers, 18 commands | cli._resolve_shot_arg/_resolve_take_arg (existing-only, ambiguity=bad_args, stderr echo), select no-take candidate listing; startup-latency item measured-and-dismissed |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2206,3 +2207,31 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   commands).
 - 4 new pins (test_ux_polish.py, 53 total), red-first proven by stash; the
   determinism trio (fp_fixity + fp_bagit ×2) re-verified green.
+
+## 47. Convenience wave 1: type less, never guess (2026-07-14)
+
+- New 7-hour mandate: "more convenient, easier to use". Wave 1 target: the
+  single highest-frequency typing surface — shot/take ids, entered dozens
+  of times daily in exactly one accepted spelling.
+- `cli._resolve_shot_arg` / `cli._resolve_take_arg` (one owner each):
+  ``s14``/``S14``/``14`` → S014, ``3`` → take_03 — resolved by matching
+  against EXISTING entities only. Exact id → untouched; no match → passes
+  through unchanged (creation paths and structured not-founds keep byte-
+  level behaviour); MORE than one match → structured bad_args naming every
+  candidate (the UNKNOWN-never-guessed discipline applied to intent).
+  Resolution echoes on STDERR (`镜头 s1 → S001`) so --json stdout stays
+  machine-pure and the canonical form is taught in passing. Wired into 18
+  commands (select/redo incl. --shots batch, lock/unlock, voice, prompt,
+  impact, repair --shot/--take, align single-shot, board keyframes,
+  mentions, refs shot/assign, route/routing explain, bridge run, ingest
+  --shot). Batch RANGE specs (align/qc --shots) deliberately untouched.
+- `manju select S001` with no take now lists the pickable takes (same
+  listing the bad-take branch always had) and teaches `select S001 1`.
+- Measured-and-dismissed: CLI startup latency. The observed 4 s --help was
+  cold FS cache; warm is 0.84 s (--help) / ~0.4 s (status). The heavy edge
+  is pydantic model construction reached through core.container at import
+  — needed by nearly every command, so only an invasive lazy-import rewrite
+  of the 9k-line cli would shave the remainder. Fails the maintenance gate.
+- 6 new pins (test_ux_polish.py, 59 total); the no-match passthrough pin is
+  green-by-design pre-implementation (a no-regression pin); the rest proven
+  red-first by stash. Full suite 4377/2/0.
