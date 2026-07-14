@@ -81,3 +81,11 @@ the probe pins the reload-restore live.
   cannot signal the server honestly); Windows toast notifications (needs
   a real Windows session to verify).
 - 3 new pins + 1 evolved (90 total), red-first; probe 21/21.
+
+## 50b close-out (same day)
+
+- A/B loop closed: /review card → `/?compare=<shot>` → the workbench R14
+  takes overlay (object-not-id bug caught live by the probe; pinned).
+- Cockpit 待办箱 row: `N 新 take 未阅` from the same snapshot, clickable.
+- docs/GUI.md #50-era orientation section + README --app row.
+- 2 new pins (92 total), red-first; probe 24/24; harness 21/21.

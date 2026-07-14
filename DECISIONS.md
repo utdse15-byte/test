@@ -2497,3 +2497,27 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   process cannot signal the server honestly; recorded.
 - 3 new pins + 1 evolved (test_ux_polish.py, 90 total), red-first by
   stash; probe grows to 21/21; harness 21/21; full suite 4408/2/0.
+
+### 50b. Direction close-out: the A/B loop, the unread inbox row, the docs (2026-07-14)
+
+- The review loop closes end-to-end: /review cards with a selected take
+  AND alternatives link `A/B 对比` → `/?compare=<shot>` — the workbench
+  consumes the param ONCE after the first shots render and opens its
+  existing R14 takes overlay (the overlay takes the shot OBJECT — the
+  first cut passed the id string and no-opped; caught live by the probe,
+  which now pins the overlay actually appearing). /compare stays the
+  FINALS-diff page; the takes overlay stays the workbench's — the link
+  crosses surfaces, ownership does not move.
+- The 待办箱 gains its one missing row: the cockpit strip shows
+  `N 新 take 未阅` (same per-project snapshot the shots-bar chip reads;
+  cockpit fetches AFTER the state render, so the count is never stale on
+  first paint), clickable → scrolls to the grid where the 新 chips sit.
+- Docs caught up: docs/GUI.md gains the #50-era orientation section
+  (hidden owner, queue ladder + defaults, identity-keyed browser state,
+  grouped nav, AI-handoff stance, --app); README's gui row names --app.
+- One SyntaxError paid for mid-wave: the A/B link insertion broke the
+  card f-string implicit-concatenation chain (`"a" + (x) "b"` is not
+  Python) — the page-test batch caught it before any commit; the chain
+  now uses explicit `+`.
+- 2 new pins (test_ux_polish.py, 92 total), red-first by stash; probe
+  24/24; harness 21/21; full suite 4410/2/0.

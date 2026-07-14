@@ -1723,3 +1723,28 @@ def test_gui_app_window_launches_and_falls_back(monkeypatch):
 def test_gui_help_names_the_app_window():
     res = runner.invoke(app, ["gui", "--help"])
     assert "--app" in res.output
+
+
+def test_review_ab_link_deep_links_into_the_takes_overlay(tmp_project, add_shot, make_take):
+    from manju.gui.page import render_js
+    from manju.gui.pages import render_review
+
+    add_shot(tmp_project, "S001")
+    t1 = make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", t1.name))
+    # the link renders only when there IS something to compare (sel + alts)
+    assert 'href="/?compare=S001"' in render_review(tmp_project, "tok")
+    js = render_js()
+    # consumed once after the first shots render; the overlay takes the OBJECT
+    assert 'URLSearchParams(location.search).get("compare")' in js
+    assert "openCompare(target)" in js
+
+
+def test_cockpit_surfaces_unread_takes():
+    from manju.gui.page import render_js
+
+    js = render_js()
+    assert "新 take 未阅" in js
+    assert "isNewTake(snap, s.id" in js

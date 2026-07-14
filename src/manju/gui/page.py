@@ -925,6 +925,12 @@ _JS = r"""
     } catch (e) { /* storage disabled — memory just stays off */ }
   };
 
+  /* #50a: the review page deep-links /?compare=<shot> into the A/B overlay */
+  let pendingCompare = (() => {
+    try { return new URLSearchParams(location.search).get("compare") || ""; }
+    catch (e) { return ""; }
+  })();
+
   /* A click-driven header/zone becomes keyboard-operable. A real <button>
    * would be invalid around its heading/input children, so the pattern is
    * role+tabindex+keydown — Enter/Space route to the SAME click handler. */
@@ -1215,6 +1221,16 @@ _JS = r"""
     maybeEvaluate(s);   /* async, fingerprint-gated: round AA item 8 */
     $("dropzone").classList.toggle("hidden", readonly);
     updateGates();
+    /* #50a: /?compare=S001 deep-links from /review straight into the A/B
+     * takes overlay — consumed once, after the first shots render (the
+     * overlay takes the shot OBJECT). <2 takes = a silent no-op by design. */
+    if (pendingCompare && lastShots.length) {
+      const target = lastShots.find((sh) => sh.id === pendingCompare);
+      pendingCompare = "";
+      if (target) {
+        try { openCompare(target); } catch (err) { /* stays on the workbench */ }
+      }
+    }
   }
 
   /* ========================================================= cockpit ===
@@ -1356,6 +1372,19 @@ _JS = r"""
     hero.appendChild(renderHeroCTA(na));
     root.appendChild(hero);
 
+    /* --- 待办箱: 新 take 未阅 (#50a) — the same snapshot the shots bar's
+     * 未阅 chip reads; cockpit refetches AFTER the state render, so
+     * lastShots is populated by the time this runs. --------------------- */
+    let unreadTakes = 0;
+    try {
+      const snap = loadReviewSnapshot();
+      (lastShots || []).forEach((s) => {
+        (Array.isArray(s.takes) ? s.takes : []).forEach((t) => {
+          if (isNewTake(snap, s.id, String(t.name))) unreadTakes++;
+        });
+      });
+    } catch (err) { unreadTakes = 0; }
+
     /* --- STATE STRIP: shot counts by state, exceptions coloured ---------- */
     if (!blkErr(state) && state.shots_total > 0) {
       const strip = el("div", "ck-strip");
@@ -1377,6 +1406,18 @@ _JS = r"""
         });
         strip.appendChild(chip);
       });
+      if (unreadTakes > 0) {
+        const uc = el("button", "ck-scount exc");
+        uc.type = "button";
+        uc.title = "上次标记已阅之后新增的 take(卡片带「新」章)— 点击跳到分镜";
+        uc.appendChild(el("b", null, String(unreadTakes)));
+        uc.appendChild(document.createTextNode(" 新 take 未阅"));
+        uc.addEventListener("click", () => {
+          const sh = $("shots");
+          if (sh) sh.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        strip.appendChild(uc);
+      }
       const fin = state.final;
       if (fin) {
         const f = el("span", "ck-final",

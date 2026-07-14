@@ -594,7 +594,10 @@ def render_review(project: Any, token: str) -> str:
             f'    <span class="rv-repair">修:{repair_btns}</span>\n'
             f'    <button class="btn ghost" data-act="route">路由?</button>\n'
             f'    <button class="btn ghost" data-act="skip" title="快捷键 j">跳过</button>\n'
-            f"  </div>\n"
+            + (f'    <a class="btn ghost" href="/?compare={_e(sid)}" '
+               f'title="工作台 A/B 浮层:两个 take 同步播放对比">A/B 对比</a>\n'
+               if sel and alts else "")
+            + f"  </div>\n"
             f'  <div class="rv-noterow">'
             f'<input class="rv-note-input" placeholder="备注 / 判词 (note)" value="{note_val}">'
             f'<button class="btn ghost mini" data-act="note">保存备注</button>'
