@@ -220,7 +220,8 @@ def nav_html(active: str, mode: str = "pro", show_terms: bool = False,
         if beginner and href in PRO_ONLY_PAGES:
             continue
         cls = "active" if href == active else ""
-        out.append(f'<a class="{cls}" href="{href}">{_e(label)}</a>')
+        cur = ' aria-current="page"' if href == active else ""
+        out.append(f'<a class="{cls}"{cur} href="{href}">{_e(label)}</a>')
     out.append(_mode_controls(mode, show_terms))
     out.append(_workspace_switcher())
     out.append("</nav>")
@@ -1793,6 +1794,18 @@ _PAGES_JS = r"""
     var shots = Array.prototype.slice.call(document.querySelectorAll(".rv-shot"));
     if (!shots.length) return;
     var active = 0;
+    /* 从上次位置继续 (#49a): the active card survives a reload / a return
+     * days later — restored by SHOT ID (indices shift as shots come and go),
+     * keyed by the stable project identity. Best-effort only. */
+    var posKey = "manju-rv-pos-" + (typeof PROJECT === "string" ? PROJECT : "");
+    try {
+      var savedShot = window.localStorage.getItem(posKey);
+      if (savedShot) {
+        for (var si = 0; si < shots.length; si++) {
+          if (shots[si].getAttribute("data-shot") === savedShot) { active = si; break; }
+        }
+      }
+    } catch (err) { /* storage disabled — start at the top as before */ }
 
     // ---- QUEUE mode (round X agent XF, pain #7/#8: batch review by state) --
     var qFilter = "all";
@@ -1812,6 +1825,9 @@ _PAGES_JS = r"""
       active = i;
       shots[active].classList.add("active");
       shots[active].scrollIntoView({ behavior: "smooth", block: "start" });
+      try {
+        window.localStorage.setItem(posKey, shots[active].getAttribute("data-shot") || "");
+      } catch (err) { /* best-effort */ }
     }
     function currentVideo() { return shots[active].querySelector("video"); }
 
@@ -2050,7 +2066,10 @@ _PAGES_JS = r"""
         e.preventDefault();
       }
     });
-    shots[0].classList.add("active");
+    /* honour the restored 从上次位置继续 index (falls back to 0) — the class
+     * lands directly so the page does NOT auto-scroll on a fresh open;
+     * j/k/setActive scrolls from here on as always. */
+    shots[active].classList.add("active");
   }
 
   // ------------------------------------------------------------ compare

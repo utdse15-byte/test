@@ -62,6 +62,7 @@ Entries are append-only below.
 | 48a | 2026-07-14 | Convenience wave 3: review keyboard approve; package/masters exports pointers | gui/pages pages.js `a`=qapprove + legend (redo stays keyless — spend never behind one keystroke), cli package/masters 交付状态一览 |
 | 48b | 2026-07-14 | Convenience wave 4: GUI bulk gaps, board confirm/in-place select, deep links | gui/pages rv-redo-stale + lab link, board redo confirm + select flip, storyboard redo/voice batch, edit→subtitles #cue anchor; gate fixes ba5348a (as_posix, named refusal) |
 | 49 | 2026-07-14 | GUI polish wave: hidden-vs-display owner (dead /create fixed), feel/motion layer, honest pollJob, exports bulk-stale | gui/page.py app.css (`.hidden`/`[hidden]` !important owner, color-scheme, transitions, mj-rise, reduced-motion, scrollbars, --accent-bg), create_page showStage class clear, exports_page xc-gen-stale + pollJob×4 adaptive, board :root color-scheme+[hidden] |
+| 49a | 2026-07-14 | GUI polish round 2: external review dispositioned — F20/F18/#45 disciplines reach the workbench, per-project UI memory, keyboard semantics | gui/page.py app.js (sticky err toast + aria-live, CK_STATE_ZH badge/filters, manju-ui-/manju-reviewed- identity keys, actAsButton, inline take-note), gui/pages.py (nav aria-current, manju-rv-pos- restore), common_js aria-live |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2370,3 +2371,50 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - 6 new pins (test_ux_polish.py, 78 total), red-first by stash (the
   exports absent-state pin green-by-design); browser harness 21/21; full
   suite 4396/2/0.
+
+### 49a. GUI polish round 2: the second external review, dispositioned (2026-07-14)
+
+- The owner supplied another AI's GUI review mid-wave. The #45 discipline
+  applied: every claim verified in source AND live before acting. Several
+  premises were false against this repo (server-page error toasts have been
+  sticky since #42 F20; the picker DOES read pinned/last_opened; its
+  draft-recovery ask IS the v3.1 conflict banner) — but chasing them
+  exposed real, bounded gaps the earlier waves had half-covered. Full
+  ledger: REPORTS/GUI_POLISH_2026-07-14.md round-2 section.
+- The unifying find: three recorded disciplines had each landed on ONE
+  surface and never reached the workbench. F20 (sticky errors) lived on
+  server pages while the SPA — the daily surface — auto-dismissed engine
+  errors at 4s; F18 (Chinese state vocabulary, enum on title) lived on the
+  board while the workbench card/filters spoke raw enums sorted
+  alphabetically; #45's stable identity token guarded writes while
+  localStorage stayed keyed by the COLLIDING display name. All three now
+  hold everywhere: SPA errors stay until clicked (+ aria-live on both toast
+  systems), the card badge + filter chips speak CK_STATE_ZH in the #44
+  urgency order (aria-pressed, enum on title), and the reviewed-snapshot +
+  the new per-project UI memory key off the identity token (one-time legacy
+  migration).
+- 续上次: the workbench remembers the shot filter and the git/tasks/
+  proposals panel state per project (restored-open panels lazy-fetch);
+  /review reopens on the last active card by SHOT ID — indices shift —
+  without auto-scrolling a fresh open. Nothing risky persists (no batch
+  selections; storage failures degrade to old behaviour).
+- Keyboard/semantics: the three collapsible panel heads and the dropzone
+  act as buttons (role/tabindex/Enter+Space — Space stops the global play
+  shortcut; aria-expanded tracked; [role=button] joins the focus ring);
+  the one nav owner stamps aria-current="page"; the emoji verdict/note/redo
+  buttons carry aria-labels. Take notes trade window.prompt (froze
+  playback; Esc ate text) for an inline editor (Ctrl+Enter saves,
+  readonly-gated) — ingest's two rarer prompts stay, recorded.
+- Rejected with reasons (ledger): stage-based beginner nav + palette (#45
+  stands), list virtualization/keyed-patch/perf fixtures (speculative
+  scale), preload=none (blanks the thumbnail grid), take_id/created_at
+  schema additions (#45's baseline rejection + schema churn), follow-build
+  mode + auto-advance quick review (new state machines), toast duration
+  tiers (binary model is the recorded design), picker search/pin toggles
+  (already pinned-first recency; below the frequency line), blanket 24px
+  target resize (desktop-mouse platform).
+- 4 new pins (82 total), red-first by stash; the prompt-retirement pin
+  tripped on the fix's own comments first (the recorded raw-source burn
+  class — reworded). 19/19 live wave-2 checks (real UI drives: sticky
+  error through a real failing save, keyboard panel toggle, state across
+  reloads, position restore); harness 21/21; full suite 4400/2/0.

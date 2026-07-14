@@ -215,7 +215,8 @@ button.chip:hover { filter: brightness(1.15); }
 }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible,
-a:focus-visible, button:focus-visible, summary:focus-visible {
+a:focus-visible, button:focus-visible, summary:focus-visible,
+[role="button"]:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
 .btnrow { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
@@ -564,6 +565,14 @@ p.lvl-ok { color: var(--ok); }
 .btn.tiny { padding: .1rem .45rem; font-size: .85rem; line-height: 1.4; }
 .btn.tiny.on { border-color: var(--star); color: var(--star); background: rgba(255, 207, 92, .12); }
 .tnote { max-width: 190px; word-break: break-all; }
+/* inline take-note editor (#49a — replaces the page-freezing prompt dialog) */
+.tnote-edit { margin-top: .35rem; width: 100%; }
+.tnote-edit textarea {
+  width: 100%; font-family: inherit; font-size: .8rem; line-height: 1.4;
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .3rem .45rem; resize: vertical;
+}
+.tnote-edit .btnrow { margin-top: .3rem; }
 .tnote.seekable { cursor: pointer; text-decoration: underline dotted; }
 .tnote.seekable:hover { color: var(--accent); }
 .fchips { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0 .7rem; }
@@ -893,6 +902,39 @@ _JS = r"""
   let PROJECT = projMeta ? (projMeta.getAttribute("content") || "") : "";
   const $ = (id) => document.getElementById(id);
 
+  /* Per-project UI memory (external-review round, #49a): the shot filter and
+   * panel-open states survive a reload. Keyed by the STABLE project identity
+   * (#45's root-derived token) — the display NAME collides across same-named
+   * projects. Best-effort: blocked/corrupt storage never breaks the page. */
+  const uiKey = () => "manju-ui-" + (PROJECT || "unbound");
+  const loadUI = () => {
+    try { return JSON.parse(localStorage.getItem(uiKey())) || {}; }
+    catch (e) { return {}; }
+  };
+  const saveUI = (patch) => {
+    try {
+      const cur = loadUI();
+      Object.keys(patch).forEach((k) => { cur[k] = patch[k]; });
+      localStorage.setItem(uiKey(), JSON.stringify(cur));
+    } catch (e) { /* storage disabled — memory just stays off */ }
+  };
+
+  /* A click-driven header/zone becomes keyboard-operable. A real <button>
+   * would be invalid around its heading/input children, so the pattern is
+   * role+tabindex+keydown — Enter/Space route to the SAME click handler. */
+  const actAsButton = (node, label) => {
+    node.tabIndex = 0;
+    node.setAttribute("role", "button");
+    if (label) node.setAttribute("aria-label", label);
+    node.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();  /* the global Space=play shortcut must not fire */
+        node.click();
+      }
+    });
+  };
+
   /* another tab switched the server's project — block this one (its media
    * URLs now resolve inside the NEW project); reload follows the switch. */
   const projectSwitchedOverlay = (name) => {
@@ -960,11 +1002,20 @@ _JS = r"""
 
   /* ---------------------------------------------------------- toasts --- */
   const toast = (msg, kind) => {
+    const box = $("toast");
+    if (!box.hasAttribute("aria-live")) {
+      /* announce state changes to assistive tech without stealing focus */
+      box.setAttribute("role", "status");
+      box.setAttribute("aria-live", "polite");
+    }
     const cls = kind === "err" ? "toast-err" : (kind === "warn" ? "toast-warn" : "toast-ok");
     const t = el("div", "toast " + cls, msg);
     t.addEventListener("click", () => t.remove());
-    $("toast").appendChild(t);
-    setTimeout(() => t.remove(), 4000);
+    box.appendChild(t);
+    /* F20 discipline (server pages had it since #42; the SPA missed it):
+     * an error is often a long engine sentence — it stays until clicked. */
+    if (kind === "err") { t.textContent = msg + "  ✕"; }
+    else { setTimeout(() => t.remove(), 4000); }
   };
 
   /* ------------------------------------------------------------- API --- */
@@ -2662,25 +2713,34 @@ _JS = r"""
     }
   }
 
-  let stateFilter = "";  /* UX-STUDY #3: '' = all; survives re-renders */
+  let stateFilter = loadUI().filter || "";  /* '' = all; survives re-renders
+    AND reloads (per-project UI memory, #49a) */
+
+  /* most-blocking first — the #44 resolver's ladder, not the alphabet */
+  const STATE_FILTER_ORDER = ["broken", "missing", "needs_selection", "stale", "manual", "fresh"];
 
   function filterChips(shots) {
     const bar = el("div", "fchips");
     const counts = {};
     shots.forEach((s) => { counts[s.state] = (counts[s.state] || 0) + 1; });
-    const mk = (label, value, n) => {
+    const mk = (label, value, n, tip) => {
       const c = el("button",
         "chip fchip" + (stateFilter === value ? " on" : ""),
         label + (n !== undefined ? " " + n : ""));
       c.type = "button";
+      c.setAttribute("aria-pressed", stateFilter === value ? "true" : "false");
+      if (tip) c.title = tip;
       c.addEventListener("click", () => {
         stateFilter = stateFilter === value ? "" : value;
+        saveUI({ filter: stateFilter });  /* survives reload, per project */
         renderShots(lastShots);  /* state unchanged: re-render directly */
       });
       bar.appendChild(c);
     };
     mk("全部 (all)", "", shots.length);
-    Object.keys(counts).sort().forEach((st) => mk(st, st, counts[st]));
+    STATE_FILTER_ORDER.filter((st) => counts[st])
+      .concat(Object.keys(counts).filter((st) => STATE_FILTER_ORDER.indexOf(st) < 0).sort())
+      .forEach((st) => mk(CK_STATE_ZH[st] || st, st, counts[st], st));
     return bar;
   }
 
@@ -2694,12 +2754,24 @@ _JS = r"""
   let reviewSnap = null;      /* parsed snapshot for the CURRENT render pass */
   let reviewChipEl = null;    /* 未阅 N chip in the shots bar */
 
-  const reviewKey = () => "manju-reviewed-" + lastProjectName;
+  /* Keyed by the STABLE project identity when the guard meta is present —
+   * two projects can share a display NAME and used to share (and clobber)
+   * one snapshot. The old name key migrates once, then retires. */
+  const reviewKey = () =>
+    "manju-reviewed-" + (PROJECT || lastProjectName);
 
   function loadReviewSnapshot() {
-    if (!lastProjectName) return null;
+    if (!lastProjectName && !PROJECT) return null;
     try {
-      const raw = window.localStorage.getItem(reviewKey());
+      let raw = window.localStorage.getItem(reviewKey());
+      if (!raw && PROJECT && lastProjectName) {
+        const legacy = window.localStorage.getItem("manju-reviewed-" + lastProjectName);
+        if (legacy) {  /* one-time migration off the colliding name key */
+          window.localStorage.setItem(reviewKey(), legacy);
+          window.localStorage.removeItem("manju-reviewed-" + lastProjectName);
+          raw = legacy;
+        }
+      }
       if (!raw) return null;
       const snap = JSON.parse(raw);
       return (snap && typeof snap === "object" && snap.takes &&
@@ -2803,8 +2875,13 @@ _JS = r"""
     cb.addEventListener("change", () => toggleBatch(shot.id, cb.checked));
     head.appendChild(cb);
     head.appendChild(el("span", "sid", shot.id));
-    head.appendChild(el("span",
-      "badge " + (STATE_CLASS[shot.state] || "st-missing"), shot.state));
+    /* F18 discipline (the board landed it in #42a; the workbench card kept
+     * the raw enum): the GUI's own Chinese state word, enum on the title. */
+    const stBadge = el("span",
+      "badge " + (STATE_CLASS[shot.state] || "st-missing"),
+      CK_STATE_ZH[shot.state] || shot.state);
+    stBadge.title = shot.state;
+    head.appendChild(stBadge);
     if (shot.voice) {
       const vc = el("span",
         "badge " + (STATE_CLASS[shot.voice.state] || "st-missing"),
@@ -2961,6 +3038,7 @@ _JS = r"""
       const b = el("button", "btn tiny" + (t.note === value ? " on" : ""), label);
       b.type = "button";
       b.title = tip;
+      b.setAttribute("aria-label", tip);  /* the emoji face needs a name */
       roGate(b);
       b.addEventListener("click", () =>
         post(b, "/api/take-note",
@@ -2974,15 +3052,48 @@ _JS = r"""
     const noteBtn = el("button", "btn tiny", "📝");
     noteBtn.type = "button";
     noteBtn.title = "备注 (note) — 以 mm:ss 开头可点击跳转";
+    noteBtn.setAttribute("aria-label", "备注 (note)");
     roGate(noteBtn);
     noteBtn.addEventListener("click", () => {
-      const entered = window.prompt(
-        "备注 " + shot.id + "/" + t.name + "(留空删除；mm:ss 开头=可跳转):",
-        t.note || "");
-      if (entered === null) return;
-      post(noteBtn, "/api/take-note",
-        { shot: shot.id, take: t.name, text: entered },
-        entered.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注");
+      /* inline editor, not a blocking prompt dialog — that froze the whole
+       * page (playing take included) and Esc silently threw the text away.
+       * It joins the ONE editorOpen pause (like the shot-editor dialog):
+       * a fingerprint refresh mid-typing would rebuild #shots and eat the
+       * draft, so the loop pauses while a note editor is up. */
+      const openEd = box.querySelector(".tnote-edit");
+      if (openEd) { openEd.querySelector("textarea").focus(); return; }
+      document.querySelectorAll(".tnote-edit").forEach((other) => other.remove());
+      editorOpen = true;
+      const ed = el("div", "tnote-edit");
+      const ta = document.createElement("textarea");
+      ta.rows = 2;
+      ta.value = t.note || "";
+      ta.placeholder = "留空保存=删除；mm:ss 开头=可跳转；Ctrl+Enter 保存";
+      const row = el("div", "btnrow");
+      const ok = el("button", "btn mini", "保存 (save)");
+      ok.type = "button";
+      roGate(ok);
+      const cancel = el("button", "btn ghost mini", "取消");
+      cancel.type = "button";
+      const save = () => {
+        editorOpen = false;  /* BEFORE post — its refresh must not be swallowed */
+        post(ok, "/api/take-note",
+          { shot: shot.id, take: t.name, text: ta.value },
+          ta.value.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注");
+      };
+      const closeNote = () => { ed.remove(); editorClosed(); };
+      ok.addEventListener("click", save);
+      cancel.addEventListener("click", closeNote);
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        if (e.key === "Escape") { e.stopPropagation(); closeNote(); }
+      });
+      row.appendChild(ok);
+      row.appendChild(cancel);
+      ed.appendChild(ta);
+      ed.appendChild(row);
+      box.appendChild(ed);
+      ta.focus();
     });
     acts.appendChild(noteBtn);
     /* the recipe travels with the output (Runway pattern): same provider,
@@ -2992,6 +3103,7 @@ _JS = r"""
       rb.type = "button";
       rb.title = "用此参数重做 (redo with these settings"
         + (t.seed !== null && t.seed !== undefined ? ", seed " + t.seed : "") + ")";
+      rb.setAttribute("aria-label", "用此参数重做 (redo with these settings)");
       roGate(rb);
       rb.addEventListener("click", () => {
         const planParams = { shot: shot.id, provider: t.provider };
@@ -3886,6 +3998,7 @@ _JS = r"""
       input.value = "";
     });
     zone.appendChild(input);
+    actAsButton(zone, "选择或拖入素材导入 (import files)");
     zone.addEventListener("click", () => input.click());
     zone.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -3995,7 +4108,7 @@ _JS = r"""
   /* Lazily fetched: on first expand, after each commit, and after each done
    * job — never on the poll. A 500 (e.g. git endpoints not available)
    * renders one muted line inside this section only. */
-  let gitOpen = false;
+  let gitOpen = !!loadUI().git;  /* per-project memory (#49a) */
   let gitLoaded = false;
   let gitStale = true;
   let gitBusy = false;
@@ -4010,20 +4123,25 @@ _JS = r"""
     const root = $("git");
     clear(root);
     const head = el("div", "git-head");
-    const arrow = el("span", "git-arrow", "▸");
+    const arrow = el("span", "git-arrow", gitOpen ? "▾" : "▸");
     head.appendChild(arrow);
     head.appendChild(el("h2", null, "版本 (git)"));
     gitChips = el("div", "chips");
     head.appendChild(gitChips);
-    gitBody = el("div", "hidden");
+    gitBody = el("div", gitOpen ? null : "hidden");
+    actAsButton(head, "版本 (git) 面板");
+    head.setAttribute("aria-expanded", gitOpen ? "true" : "false");
     head.addEventListener("click", () => {
       gitOpen = !gitOpen;
       arrow.textContent = gitOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", gitOpen ? "true" : "false");
+      saveUI({ git: gitOpen });
       gitBody.classList.toggle("hidden", !gitOpen);
       if (gitOpen && (gitStale || !gitLoaded)) fetchGitPanel();
     });
     root.appendChild(head);
     root.appendChild(gitBody);
+    if (gitOpen && !gitLoaded) fetchGitPanel();  /* restored-open lazy load */
   }
 
   async function fetchGitPanel() {
@@ -4301,7 +4419,7 @@ _JS = r"""
    * a state refresh AT MOST once per fingerprint change (never on the raw
    * poll cadence). The count badge in the section head stays live even when
    * the body is collapsed. */
-  let propOpen = false;
+  let propOpen = !!loadUI().prop;  /* per-project memory (#49a) */
   let propBusy = false;
   let propLoaded = false;
   let propStale = false;    /* set by a done job; cleared by the next fetch */
@@ -4316,20 +4434,25 @@ _JS = r"""
     const root = $("proposals");
     clear(root);
     const head = el("div", "git-head");
-    const arrow = el("span", "git-arrow", "▸");
+    const arrow = el("span", "git-arrow", propOpen ? "▾" : "▸");
     head.appendChild(arrow);
     head.appendChild(el("h2", null, "提案 (proposals)"));
     propChips = el("div", "chips");
     head.appendChild(propChips);
-    propBody = el("div", "hidden");
+    propBody = el("div", propOpen ? null : "hidden");
+    actAsButton(head, "提案 (proposals) 面板");
+    head.setAttribute("aria-expanded", propOpen ? "true" : "false");
     head.addEventListener("click", () => {
       propOpen = !propOpen;
       arrow.textContent = propOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", propOpen ? "true" : "false");
+      saveUI({ prop: propOpen });
       propBody.classList.toggle("hidden", !propOpen);
       if (propOpen && (!propLoaded || propStale)) fetchProposals();
     });
     root.appendChild(head);
     root.appendChild(propBody);
+    if (propOpen && !propLoaded) fetchProposals();  /* restored-open lazy load */
   }
 
   function maybeProposals(s) {
@@ -4817,7 +4940,7 @@ _JS = r"""
   /* WORKBENCH row "Spend / tasks" (S8a): render `manju tasks` JSON — the
    * JOB/QUEUE view over the disposable run ledger. Collapsible like the git
    * panel; lazily fetched on expand and after a done job. */
-  let tasksOpen = false;
+  let tasksOpen = !!loadUI().tasks;  /* per-project memory (#49a) */
   let tasksLoaded = false;
   let tasksBusy = false;
   let tasksBody = null;
@@ -4827,20 +4950,25 @@ _JS = r"""
     const root = $("tasks");
     clear(root);
     const head = el("div", "git-head");
-    const arrow = el("span", "git-arrow", "▸");
+    const arrow = el("span", "git-arrow", tasksOpen ? "▾" : "▸");
     head.appendChild(arrow);
     head.appendChild(el("h2", null, "任务 · 账本 (tasks)"));
     tasksChips = el("div", "chips");
     head.appendChild(tasksChips);
-    tasksBody = el("div", "hidden");
+    tasksBody = el("div", tasksOpen ? null : "hidden");
+    actAsButton(head, "任务 · 账本 (tasks) 面板");
+    head.setAttribute("aria-expanded", tasksOpen ? "true" : "false");
     head.addEventListener("click", () => {
       tasksOpen = !tasksOpen;
       arrow.textContent = tasksOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", tasksOpen ? "true" : "false");
+      saveUI({ tasks: tasksOpen });
       tasksBody.classList.toggle("hidden", !tasksOpen);
       if (tasksOpen) fetchTasks();
     });
     root.appendChild(head);
     root.appendChild(tasksBody);
+    if (tasksOpen) fetchTasks();  /* restored-open lazy load */
   }
 
   async function fetchTasks() {

@@ -101,6 +101,11 @@ if (PROJECT) {
 function toast(msg, ok) {
   var t = document.getElementById("toast");
   if (!t) return;
+  if (!t.hasAttribute("aria-live")) {
+    /* announce state changes to assistive tech without stealing focus */
+    t.setAttribute("role", "status");
+    t.setAttribute("aria-live", "polite");
+  }
   var el = document.createElement("div");
   el.className = "toast-item " + (ok === false ? "bad" : "good");
   el.textContent = msg;

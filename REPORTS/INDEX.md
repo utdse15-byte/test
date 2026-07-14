@@ -69,4 +69,4 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `WINDOWS_WAVE_5_COMPLETION.md` | W5 archive hardening, hw-encode facts, bench; C2PA rejected | #41 |
 | `UX_AUDIT_2026-07-13.md` | three-axis usability audit — ranked backlog + disposition | #42 |
 | `CONV_AUDIT_2026-07-14.md` | 便利性计划合卷 — 两位审计员 + 逐条处置账 | #47-#48b |
-| `GUI_POLISH_2026-07-14.md` | GUI 打磨波 — hidden-vs-display 缺陷类 + 手感/视觉/轮询处置账 | #49 |
+| `GUI_POLISH_2026-07-14.md` | GUI 打磨波 — hidden-vs-display 缺陷类 + 手感/视觉/轮询处置账;round 2 外部评审处置 | #49/#49a |

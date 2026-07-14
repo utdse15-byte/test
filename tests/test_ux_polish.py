@@ -1521,3 +1521,67 @@ def test_polljob_outlives_the_serialized_queue_on_every_job_page():
         assert "tries > 1215" in js, name          # ~10min, not ~60s
         assert "tries < 20 ? 100 : 500" in js, name  # adaptive cadence
         assert "仍在排队/运行" in js, name          # null job ≠ failure
+
+
+# ------------------------------------- GUI polish wave, round 2 (2026-07-14)
+# Disposition of an owner-supplied external AI review (the #45 pattern:
+# verify every claim, land the bounded kernels, record the rejections).
+# Landed kernels: the SPA missed F20's sticky-error discipline; the workbench
+# card/filters spoke raw enums (F18 landed on the board only); localStorage
+# was keyed by the COLLIDING display name instead of #45's identity token;
+# the collapsible panel heads / dropzone were mouse-only divs; take notes
+# went through the page-freezing window.prompt.
+
+
+def test_spa_error_toast_sticky_and_toasts_announced():
+    from manju.gui.common_js import render_common_js
+    from manju.gui.page import render_js
+
+    js = render_js()
+    seg = js.split("const toast = ")[1].split("};")[0]
+    # F20 parity: an error stays until clicked; success keeps auto-dismiss
+    assert 'if (kind === "err")' in seg and "setTimeout" in seg
+    # both toast systems announce politely to assistive tech
+    assert 'setAttribute("aria-live", "polite")' in js
+    assert 'setAttribute("aria-live", "polite")' in render_common_js()
+
+
+def test_workbench_speaks_the_state_vocabulary():
+    from manju.gui.page import render_js
+
+    js = render_js()
+    # F18 discipline on the workbench card: Chinese word, enum on the title
+    assert "CK_STATE_ZH[shot.state] || shot.state" in js
+    assert "stBadge.title = shot.state" in js
+    # filters: urgency ladder (never the alphabet) + toggle semantics
+    assert "STATE_FILTER_ORDER" in js
+    seg = js.split("function filterChips")[1].split("return bar;")[0]
+    assert "aria-pressed" in seg and "CK_STATE_ZH[st] || st" in seg
+
+
+def test_client_state_is_keyed_by_project_identity():
+    from manju.gui.page import render_js
+    from manju.gui.pages import render_pages_js
+
+    js = render_js()
+    # the stable #45 token, not the colliding display name
+    assert '"manju-ui-" + (PROJECT || "unbound")' in js
+    assert '"manju-reviewed-" + (PROJECT || lastProjectName)' in js
+    # /review continues from the last position, same key discipline
+    pjs = render_pages_js()
+    assert '"manju-rv-pos-" + (typeof PROJECT === "string" ? PROJECT : "")' in pjs
+
+
+def test_workbench_keyboard_semantics():
+    from manju.gui.page import render_js
+    from manju.gui.pages import nav_html
+
+    js = render_js()
+    # panel heads and the dropzone act as buttons for the keyboard
+    assert "const actAsButton = " in js
+    assert js.count("actAsButton(") >= 4  # git/tasks/proposals heads + dropzone
+    assert 'setAttribute("aria-expanded"' in js
+    # the page-freezing window.prompt is retired from the workbench
+    assert "window.prompt" not in js
+    # the one nav owner marks the current page for assistive tech
+    assert 'aria-current="page"' in nav_html("/review")

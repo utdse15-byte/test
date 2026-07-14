@@ -75,3 +75,68 @@ now permanent harness checks.
   cheaper model against a byte-exact reference implementation and reviewed
   line-by-line here; everything judgment-bearing (audit, fixes, tests,
   docs) stayed with the session.
+
+---
+
+## Round 2 — 外部 AI 评审处置 (同日)
+
+The owner supplied a second AI's GUI review. Per the #45 precedent every
+claim was verified in source AND live before acting; several of its factual
+premises were already false against this repo (its "Toast 都是 4 秒自动消失"
+missed that server pages landed sticky errors in #42 F20 — but checking
+exposed that the SPA never got that discipline; its "picker ignores
+pinned/last_opened" is false, workspace.py reads both; its draft-recovery
+ask already shipped as the v3.1 conflict banner).
+
+### Landed (each verified-real first, live-probed after)
+
+| # | kernel | fix |
+|---|--------|-----|
+| R2-1 | SPA error toasts auto-dismissed at 4s (F20 landed on server pages only) | sticky until click + ✕ affordance; both toast containers announce via role=status aria-live=polite |
+| R2-2 | workbench card/filter spoke raw enums (F18 landed on the board only), filters alphabetical | badge + filter chips speak CK_STATE_ZH, enum on title, urgency ladder order, aria-pressed |
+| R2-3 | localStorage keyed by display NAME (same-name projects collide) | reviewed-snapshot + new UI memory keyed by #45's identity token, one-time legacy migration |
+| R2-4 | no per-project UI memory (filter/panels lost on reload) | manju-ui-<identity>: shot filter + git/tasks/proposals open state restored (lazy fetch on restore) |
+| R2-5 | /review queue always restarts at the top | 从上次位置继续: active card persisted by SHOT ID, restored without auto-scroll on fresh open |
+| R2-6 | collapsible panel heads + dropzone were mouse-only divs | actAsButton (role/tabindex/Enter+Space, Space stops the global play shortcut) + aria-expanded, focus ring for [role=button] |
+| R2-7 | nav carried no aria-current; emoji buttons unnamed | aria-current="page" in the one nav owner; aria-label on 👍/👎/📝/⟳ |
+| R2-8 | take notes via blocking window.prompt (froze playback, Esc ate text) | inline .tnote-edit editor: textarea + 保存/取消, Ctrl+Enter saves, Esc closes, readonly-gated |
+
+### Rejected / dismissed, with reasons
+
+- 阶段式新手导航 / 命令面板 — #45's recorded rejection stands; nothing new
+  in the resubmission.
+- 虚拟化长列表、keyed-patch 重渲染、10/50/200 镜头性能夹具 — speculative
+  scale work with no observed problem (signature-gated section renders
+  already skip unchanged regions); fails the maintenance gate.
+- take preload="none" + IntersectionObserver — preload="metadata" is what
+  paints the first-frame thumbnail; "none" blanks the grid (worse first
+  paint) absent a poster pipeline. Server thumbs already ride as poster
+  where they exist.
+- take_id/created_at/reviewed_at data-model additions — engine schema churn;
+  #45 already rejected review-baseline bookkeeping; the name-snapshot
+  approximation is the recorded v3.1 design.
+- 跟随构建模式、审片自动连播/限时快审 — new interaction state machines
+  past the gate; the jobs panel + fingerprint refresh already surface
+  progress live.
+- Toast 时长阶梯(警告更久/悬停暂停) — the recorded model is binary and
+  sufficient: errors sticky, successes quick; more tiers add complexity
+  without an owner ask.
+- 编辑器草稿恢复 — already shipped (v3.1 conflict banner: buffer never
+  lost, diff + 以真相为底重填).
+- 项目选择器搜索/置顶开关/重新定位 — picker already renders pinned-first
+  recency groups; the additions are below the daily-frequency line.
+- 24×24 点击目标全面加大 — desktop-mouse platform, current .mini/.tiny
+  sizes uncontested by the owner; blanket resizing is visual churn.
+
+### Round-2 verification
+
+- 4 new pins (test_ux_polish.py, 82 total), red-first by stash; the
+  window.prompt-retirement pin initially tripped on the fix's own COMMENTS —
+  the recorded raw-source-scan burn class — and the comments were reworded
+  (the pin scans render_js()).
+- 19/19 live wave-2 browser checks (chips vocabulary/order/aria, badge
+  title=enum, keyboard toggle + aria-expanded flip, filter + panel state
+  across reload, inline note save through the REAL UI, sticky error toast
+  driven by a REAL failing action surviving 4.6s then click-dismissed,
+  /review position persisted AND restored, nav aria-current, zero page
+  errors). Full harness 21/21; GUI file batch green; full suite green.
