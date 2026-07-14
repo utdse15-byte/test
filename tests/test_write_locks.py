@@ -207,9 +207,14 @@ def test_board_rollback_shot_busy_under_build_lock_no_mutation(board_project):
             except urllib.error.HTTPError as exc:
                 return exc.code, json.loads(exc.read() or b"{}")
 
-        # two selects give rollback something to return to
-        assert post("/api/select", {"shot": "S001", "take": "take_01"})[1]["ok"]
-        assert post("/api/select", {"shot": "S001", "take": "take_02"})[1]["ok"]
+        # two selects give rollback something to return to. Assert WITH the
+        # response payload — gate run f6a8c81 went red here with a bare
+        # `assert False`, leaving the actual refusal reason invisible; a
+        # future red must name it.
+        st1, d1 = post("/api/select", {"shot": "S001", "take": "take_01"})
+        assert d1.get("ok"), (st1, d1)
+        st2, d2 = post("/api/select", {"shot": "S001", "take": "take_02"})
+        assert d2.get("ok"), (st2, d2)
         assert board_project.load_shot("S001").status.selected_take == "take_02"
 
         lock = BuildLock(board_project.root, actor="human").acquire()

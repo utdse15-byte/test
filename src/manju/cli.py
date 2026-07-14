@@ -4136,7 +4136,10 @@ def transcribe(
     else:
         typer.secho(f"{rel}: {len(segments)} segments (source: {source})",
                     fg=typer.colors.GREEN)
-        typer.secho(f"对齐到镜头: manju align --media {media} "
+        # gate run f7edec4: a typer Path str()s with BACKSLASHES on Windows —
+        # print as_posix (works verbatim in pwsh/cmd, and keeps the output
+        # cross-platform deterministic, the sorted-as-posix discipline).
+        typer.secho(f"对齐到镜头: manju align --media {media.as_posix()} "
                     f"--shots <如 S001-S010> --from-srt {rel}",
                     fg=typer.colors.BRIGHT_BLACK)
 
