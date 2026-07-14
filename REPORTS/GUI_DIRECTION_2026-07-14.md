@@ -89,3 +89,7 @@ the probe pins the reload-restore live.
 - Cockpit 待办箱 row: `N 新 take 未阅` from the same snapshot, clickable.
 - docs/GUI.md #50-era orientation section + README --app row.
 - 2 new pins (92 total), red-first; probe 24/24; harness 21/21.
+- The 24 direction checks are now REPO-DURABLE:
+  scripts/dev/browser_verify_direction.py (sibling of browser_verify.py
+  — needs the two-shot scaffold + clipboard permissions the original's
+  checks don't). Re-run after touching review/cockpit/nav JS.
