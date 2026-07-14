@@ -74,8 +74,14 @@ _CSS = """
 :root {
   --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
   --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
+  /* native UA widgets (scrollbars, <video> chrome) follow the dark palette —
+   * same line the gui workbench carries (GUI polish wave). */
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
+/* hidden means hidden — the same one-owner guard as the gui's app.css:
+ * without !important any later `display:` rule at equal specificity wins. */
+[hidden] { display: none !important; }
 body {
   margin: 0; padding: 0 0 4rem; background: var(--bg); color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",

@@ -1407,3 +1407,117 @@ def test_storyboard_batch_bar_wires_redo_and_voice(tmp_project, add_shot):
     assert '"/api/" + kind + "-batch"' in seg
     assert "window.confirm" in seg
     assert "{ shots: selB }" in seg   # shots-only body — no self-approved spend
+
+
+# ------------------------------------------------ GUI polish wave (2026-07-14)
+# Usability/feel/visual pass over the workbench + server pages. The load-
+# bearing fixes: the hidden-vs-display CSS conflict class (the /create skill
+# modal shipped permanently covering the page — `.cw-modal{display:flex}`
+# beats the UA [hidden] rule), the two toast systems' diverging look, native
+# bright-grey Windows scrollbars on the dark palette, pollJob's serialized-
+# runner misreport, and the #48b-deferred /exports bulk refresh.
+
+
+def test_hidden_always_hides_and_create_stage_swap_clears_the_class():
+    from manju.gui.create_page import render_create_js
+    from manju.gui.page import render_css
+
+    css = render_css()
+    # THE one owner: both spellings of "hidden" must beat any later
+    # display: rule — per-selector `.foo.hidden` patches are retired.
+    assert ".hidden { display: none !important; }" in css
+    assert "[hidden] { display: none !important; }" in css
+    # the stage swap must clear the server-rendered hidden CLASS on the
+    # target editor (the attribute alone never unhid anything).
+    js = render_create_js()
+    assert 'classList.toggle("hidden", !match)' in js
+
+
+def test_native_widgets_and_motion_follow_the_os():
+    from manju.gui.page import render_css
+
+    css = render_css()
+    # Windows renders bright-grey UA scrollbars/controls without this.
+    assert "color-scheme: dark" in css
+    # every animation/transition is decorative — the OS preference wins.
+    assert "@media (prefers-reduced-motion: reduce)" in css
+
+
+def test_toast_systems_share_one_visual_voice():
+    from manju.gui.page import render_css
+    from manju.gui.pages import render_pages_css
+
+    app_css = render_css()
+    pages_css = render_pages_css()
+    assert "@keyframes mj-rise" in app_css
+    assert "animation: mj-rise" in app_css.split(".toast {")[1].split("}")[0]
+    assert "animation: mj-rise" in pages_css.split(".toast-item {")[1].split("}")[0]
+    assert "border-left-color: var(--ok)" in pages_css
+    assert "border-left-color: var(--err)" in pages_css
+
+
+def test_exports_bulk_updates_all_stale_free_kinds(tmp_project):
+    from manju.core.models import ShotSpec, TakeSidecar
+    from manju.core.spec import compute_spec_hash
+    from manju.exporters.srt_ass import export_captions
+    from manju.gui.exports_page import render, render_exports_js
+    from manju.media.probe import probe_duration_ms
+    from manju.timeline.compiler import compile_timeline, gather_compile_input
+
+    # a compiled project with exported captions, then a dialogue edit →
+    # srt/ass read 待更新 (the same derivation the engine test suite pins)
+    shot = ShotSpec.model_validate({
+        "id": "S001", "scene": "convenience_store", "characters": ["linxia"],
+        "dialogue": {"speaker": "linxia", "text": "这不可能。"}, "duration": 3})
+    tmp_project.save_shot(shot)
+    idx = tmp_project.load_index()
+    idx.order.append("S001")
+    tmp_project.save_index(idx)
+    h = compute_spec_hash(shot, tmp_project.load_bible())
+    src = tmp_project.root / "_src.mp4"
+    src.write_bytes(b"fakevideo")
+    info = tmp_project.register_take("S001", src, TakeSidecar(provider="test", spec_hash=h))
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", info.name))
+    tl = compile_timeline(gather_compile_input(tmp_project, probe_duration_ms))
+    tmp_project.save_timeline(tl)
+    export_captions(tmp_project, tl)
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d["dialogue"].__setitem__("text", "完全不同的一句台词"))
+
+    html = render(tmp_project, "tok")
+    assert 'id="xc-gen-stale"' in html
+    kinds = html.split('data-kinds="')[1].split('"')[0].split(",")
+    assert "srt" in kinds and "ass" in kinds
+    # priced deliverables never ride a bulk refresh (§8.3: build-only)
+    assert "final" not in kinds and "proxy" not in kinds
+
+    js = render_exports_js()
+    seg = js.split("function doGenerateAll")[1]
+    # sequential, one in flight; reload only on FULL success (partial
+    # failure keeps the sticky error toasts readable)
+    assert "chain = chain.then" in seg
+    assert "okCount === kinds.length" in seg
+
+
+def test_exports_render_without_stale_has_no_bulk_button(tmp_project):
+    from manju.gui.exports_page import render
+
+    assert 'id="xc-gen-stale"' not in render(tmp_project, "tok")
+
+
+def test_polljob_outlives_the_serialized_queue_on_every_job_page():
+    # the runner is SERIALIZED: a generate queued behind a long build takes
+    # minutes; the old ~60s cap made every page misreport it as a failure.
+    from manju.gui import exports_page, ingest_page, lab_page, series_page
+
+    for mod, js in (
+        (exports_page, exports_page._EXPORTS_JS),
+        (ingest_page, ingest_page._INGEST_JS),
+        (lab_page, lab_page._LAB_JS),
+        (series_page, series_page._SERIES_JS),
+    ):
+        name = mod.__name__
+        assert "tries > 1215" in js, name          # ~10min, not ~60s
+        assert "tries < 20 ? 100 : 500" in js, name  # adaptive cadence
+        assert "仍在排队/运行" in js, name          # null job ≠ failure

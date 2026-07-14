@@ -61,6 +61,7 @@ Entries are append-only below.
 | 48 | 2026-07-14 | Convenience wave 2: generate/recover/deliver verbs never dead-end | cli redo/select/voice/align/repair/tasks/exports/transcribe next-keystroke clauses; _print_batch_result tail hints; exports per-row kind→command map |
 | 48a | 2026-07-14 | Convenience wave 3: review keyboard approve; package/masters exports pointers | gui/pages pages.js `a`=qapprove + legend (redo stays keyless — spend never behind one keystroke), cli package/masters 交付状态一览 |
 | 48b | 2026-07-14 | Convenience wave 4: GUI bulk gaps, board confirm/in-place select, deep links | gui/pages rv-redo-stale + lab link, board redo confirm + select flip, storyboard redo/voice batch, edit→subtitles #cue anchor; gate fixes ba5348a (as_posix, named refusal) |
+| 49 | 2026-07-14 | GUI polish wave: hidden-vs-display owner (dead /create fixed), feel/motion layer, honest pollJob, exports bulk-stale | gui/page.py app.css (`.hidden`/`[hidden]` !important owner, color-scheme, transitions, mj-rise, reduced-motion, scrollbars, --accent-bg), create_page showStage class clear, exports_page xc-gen-stale + pollJob×4 adaptive, board :root color-scheme+[hidden] |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2311,3 +2312,61 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   vs real, and the named payload makes any repeat diagnosable).
 - 5 new pins (72 total), red-first by stash; browser harness 17/17; full
   suite 4390/2/0.
+
+## 49. GUI polish wave: the browser told the truth the tests could not (2026-07-14)
+
+- Mandate: "彻底优化 GUI — 可用性、响应性、交互手感、视觉打磨" (owner-directed).
+  Method: two read-only mappers (architecture + test-pin map), then a LIVE
+  audit — all 17 pages screenshotted in headless Chromium on a scaffolded
+  project, consoles collected (clean), suspicious findings verified against
+  COMPUTED STYLES. Full ledger: REPORTS/GUI_POLISH_2026-07-14.md.
+- The load-bearing find, a bug CLASS not a bug: the `hidden` attribute only
+  works via the UA rule `[hidden]{display:none}`, which ANY author
+  `display:` rule on the element overrides — and the `.hidden` CLASS loses
+  identically to any LATER display rule (the repo had already hand-patched
+  that six times, one selector at a time). Sweep verdict: 7 broken sites on
+  6 elements. Worst: **/create was entirely dead in a real browser** — the
+  skill modal (`.cw-modal{display:flex}`) rendered OPEN on load over the
+  whole viewport, blocked every click and could not be dismissed; the
+  ✎编辑 stage swap was doubly dead (attribute no-op + the server-rendered
+  hidden class never cleared). /mixer + /packaging preview `<img hidden>`
+  placeholders rendered as visible empty boxes. Every /create HTTP test
+  stayed green through all of it — markup was correct, the CASCADE was not;
+  the #43 journey only collected console errors (none fire). Fix, one
+  owner: app.css `.hidden{display:none!important}` + `[hidden]{display:
+  none!important}` (board CSS carries the same [hidden] guard); showStage
+  clears the class; the per-selector patches are obsolete by construction.
+  The real-browser harness (17→21 checks) now drives /create permanently.
+- Responsiveness honesty: the four job pages (exports/ingest/lab/series)
+  polled /api/jobs at 10 req/s and MISREPORTED any job still unfinished at
+  ~60-90s as a failure — the runner is SERIALIZED, a generate queued behind
+  a long build legitimately waits minutes. pollJob×4 now share one shape
+  (kept per-page by the #G5 divergence rule): 100ms while quick jobs land,
+  then 500ms, ~10min cap, fetch-error retry; a null job toasts 仍在排队/
+  运行(轮询超时), never 失败.
+- Feel/visual layer (all CSS, no markup churn): `color-scheme: dark` on
+  both surfaces (Windows no longer paints bright-grey UA scrollbars/form
+  controls into the dark theme) + thin dark scrollbars + `scrollbar-gutter:
+  stable`; eased hover transitions and an `:active` press dip on the button
+  family; one `mj-rise` entrance for BOTH toast systems and the accent-edge
+  language on server-page toasts (systems stay separate code — #G5);
+  `.loading` breathes; focus-visible extended to links/buttons/summary; a
+  global `prefers-reduced-motion: reduce` block (every animation here is
+  decorative). Palette hexes hand-copied across pages folded into
+  `var(--accent)` / new `--accent-bg`.
+- Usability: /exports gains 全部生成/更新待更新 (`#xc-gen-stale`) — the #48b
+  A3-7 deferral, now above the wave line. STALE free kinds only (final/
+  proxy stay build-only per §8.3; missing stays a per-card decision),
+  sequential with live progress on the button, reload only on FULL success
+  so sticky failure toasts survive to be read.
+- Rejected, with reasons (ledger P-13…P-16): replacing reload-after-action
+  with partial updates (recorded server-rendered stance, structural churn
+  past the maintenance gate); nav regrouping/command palette (#45 already
+  rejected it); mobile breakpoints for server pages (Windows 11 desktop is
+  the platform); a light theme (dark is the recorded identity, no ask).
+- Delegation under the cost rule: the three mechanical pollJob mirrors were
+  written by a cheaper model from a byte-exact reference and reviewed here
+  line-by-line; audit, fixes, tests and docs stayed with the session.
+- 6 new pins (test_ux_polish.py, 78 total), red-first by stash (the
+  exports absent-state pin green-by-design); browser harness 21/21; full
+  suite 4396/2/0.

@@ -660,15 +660,22 @@ _SERIES_JS = r"""
   // round AA4: 新建集 / sync-bible apply now run on the jobs runner
   // (Project.create scaffolding / per-episode bible writes are genuinely
   // multi-second) — same submit+poll shape every other page uses.
+  // Adaptive cadence: 100ms while a quick local job usually lands (~2s), then
+  // 500ms — the runner is SERIALIZED, so a job queued behind a long build
+  // legitimately takes minutes; the old ~60s cap misreported it as a failure.
+  // ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
     return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
       var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
-      if (tries > 600) return job || null;
-      return new Promise(function (res) { setTimeout(res, 100); }).then(function () {
-        return pollJob(jobId, tries + 1);
-      });
+      return job || null;
+    }).catch(function () { return null; }).then(function (job) {
+      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (tries > 1215) return job || null;  // 20×100ms + ~1195×500ms ≈ 10min
+      return new Promise(function (res) {
+        setTimeout(res, tries < 20 ? 100 : 500);
+      }).then(function () { return pollJob(jobId, tries + 1); });
     });
   }
 
@@ -702,7 +709,7 @@ _SERIES_JS = r"""
       }
       pollJob(res.data.job.id).then(function (job) {
         if (btn) btn.disabled = false;
-        if (!job) { toast("新建超时", false); return; }
+        if (!job) { toast("新建集任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); return; }
         if (job.state === "done") {
           var result = job.result || {};
           toast("已新建 " + eid, true);
@@ -730,7 +737,7 @@ _SERIES_JS = r"""
       }
       pollJob(res.data.job.id).then(function (job) {
         if (btn) btn.disabled = false;
-        if (!job) { toast("同步超时", false); return; }
+        if (!job) { toast("同步任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); return; }
         if (job.state === "done") {
           var result = job.result || {};
           var t = result.totals || {};

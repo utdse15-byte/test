@@ -77,11 +77,19 @@ _CSS = """
   --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
   --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
   --ok: #7ee2a8; --warn: #ffcf5c; --err: #ff8a90;
+  /* the info/hover tint behind accent-coloured text (next-step bar, unread
+   * chip, drag highlight …) — was hand-copied as #202b40 across modules. */
+  --accent-bg: #202b40;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Noto Sans Mono CJK SC", monospace;
+  /* Native UA widgets (scrollbars, form controls, <video> chrome) follow the
+   * dark palette — without this, Windows renders bright-grey scrollbars into
+   * every overflow panel of the dark workbench. */
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+html { scrollbar-gutter: stable; }
 body {
   background: var(--bg); color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -91,9 +99,27 @@ body {
 }
 main { padding: 0 1.2rem 1.2rem; max-width: 1600px; margin: 0 auto; }
 a { color: var(--accent); }
-.hidden { display: none; }
+/* THE one owner of "hidden means hidden". Both the class and the attribute
+ * lose to any later `display:` rule at equal specificity (the /create skill
+ * modal shipped broken exactly that way: `.cw-modal{display:flex}` beat
+ * [hidden] and the overlay permanently covered the page). !important retires
+ * the whole conflict class — per-selector `.foo.hidden{display:none}` patches
+ * are no longer needed and must not be re-introduced. */
+.hidden { display: none !important; }
+[hidden] { display: none !important; }
 .muted { color: var(--muted); }
-.loading { color: var(--muted); margin: 0; }
+.loading { color: var(--muted); margin: 0; animation: mj-breathe 1.2s ease-in-out infinite alternate; }
+@keyframes mj-breathe { from { opacity: .5; } to { opacity: 1; } }
+::selection { background: #2b4a75; color: var(--fg); }
+/* thin dark scrollbars on inner overflow panels (Chromium + Firefox). */
+* { scrollbar-width: thin; scrollbar-color: #3d434f transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #3d434f; border-radius: 999px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: #4d5563; background-clip: padding-box; }
 h1 { margin: 0; font-size: 1.35rem; }
 h2 {
   margin: 0 0 .6rem; font-size: 1.02rem; border-bottom: 1px solid var(--line);
@@ -144,7 +170,7 @@ button.chip:hover { filter: brightness(1.15); }
   font-size: .84rem; display: flex; gap: .6rem; justify-content: space-between;
   align-items: baseline; white-space: nowrap;
 }
-.ws-item:hover:not(:disabled) { background: #202b40; }
+.ws-item:hover:not(:disabled) { background: var(--accent-bg); }
 .ws-item:disabled { color: var(--muted); cursor: default; }
 .ws-count { color: var(--muted); font-size: .76rem; }
 .spend { color: var(--muted); font-size: .9rem; margin-top: .45rem; }
@@ -161,7 +187,7 @@ button.chip:hover { filter: brightness(1.15); }
 .bar-fill.over { background: var(--err); }
 .next-step {
   margin-top: .6rem; padding: .45rem .7rem; border-left: 3px solid var(--accent);
-  background: #202b40; color: #cfe3ff; border-radius: 0 6px 6px 0; font-size: .92rem;
+  background: var(--accent-bg); color: #cfe3ff; border-radius: 0 6px 6px 0; font-size: .92rem;
 }
 .final { margin-top: .6rem; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
 .final-link { font-size: .85rem; word-break: break-all; }
@@ -182,7 +208,14 @@ button.chip:hover { filter: brightness(1.15); }
 .btn.mini { padding: .06rem .5rem; font-size: .76rem; font-weight: 700; line-height: 1.3; }
 .btn:hover:not(:disabled) { filter: brightness(1.12); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+/* interaction feel: hovers ease instead of snapping, presses acknowledge. */
+.btn, button.chip, .chip, .pnav a, .ws-item, .tl-clip, .dropzone {
+  transition: filter .12s ease, background-color .12s ease,
+    border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible,
+a:focus-visible, button:focus-visible, summary:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
 .btnrow { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
@@ -193,7 +226,7 @@ button.chip:hover { filter: brightness(1.15); }
   padding: .35rem .8rem; margin: 1rem 0 0; font-size: .8rem; text-align: center;
   cursor: pointer; user-select: none;
 }
-.dropzone.drag { border-color: var(--accent); color: var(--accent); background: #202b40; }
+.dropzone.drag { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
 .dropzone.busy { border-style: solid; border-color: var(--accent); color: var(--fg); }
 
 /* -------------------------------------------------------- build panel -- */
@@ -507,10 +540,17 @@ p.lvl-ok { color: var(--ok); }
   border-left: 4px solid var(--accent); border-radius: 8px; padding: .55rem .8rem;
   font-size: .86rem; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); cursor: pointer;
   word-break: break-word;
+  animation: mj-rise .18s ease-out;
 }
 .toast-ok { border-left-color: var(--ok); }
 .toast-warn { border-left-color: var(--warn); }
 .toast-err { border-left-color: var(--err); }
+/* shared entrance for both toast systems (.toast here, .toast-item in
+ * pages.css) and any future overlay chrome. */
+@keyframes mj-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* ----------------------------------------------------------- responsive -- */
 @media (max-width: 900px) {
@@ -542,9 +582,9 @@ button.fchip { cursor: pointer; }
 .ed-truth .btnrow { margin-top: .5rem; }
 
 /* ---- v3.1: unread-first triage — mark-reviewed + new-take chips ---- */
-.chip.unread { color: var(--accent); border-color: #2b4a7a; background: #202b40; font-weight: 700; }
+.chip.unread { color: var(--accent); border-color: #2b4a7a; background: var(--accent-bg); font-weight: 700; }
 .chip.tk-new {
-  color: var(--accent); border-color: #2b4a7a; background: #202b40;
+  color: var(--accent); border-color: #2b4a7a; background: var(--accent-bg);
   font-size: .68rem; padding: 0 .4rem; margin-left: .35rem; vertical-align: middle;
 }
 
@@ -619,7 +659,7 @@ button.fchip { cursor: pointer; }
 .ob-step.done .ob-title { color: var(--muted); font-weight: 400; }
 .ob-hint { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
 .ob-cli {
-  font-family: var(--mono); font-size: .78rem; color: #cfe3ff; background: #202b40;
+  font-family: var(--mono); font-size: .78rem; color: #cfe3ff; background: var(--accent-bg);
   border-radius: 4px; padding: .05rem .4rem; margin-top: .25rem; display: inline-block;
   word-break: break-all;
 }
@@ -813,6 +853,16 @@ a.btn.ck-primary { text-decoration: none; }
   .btn.ck-primary { max-width: none; }
 }
 
+/* Honour the OS-level motion preference: every animation/transition above is
+ * decorative (pulse, flash, toast rise, breathe, hover easing) — none carries
+ * state, so collapsing them to a single instant frame loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
 """.strip() + "\n"
 
 # ---------------------------------------------------------------------- JS --

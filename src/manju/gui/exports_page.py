@@ -139,6 +139,17 @@ def render(project: Any, token: str) -> str:
         for k in order if counts.get(k))
     if not summary_chips:
         summary_chips = '<span class="muted">暂无产物</span>'
+    # 一键更新: every STALE free/local deliverable in one click (#48b deferred
+    # item, landed by the GUI polish wave). Priced kinds (final/proxy) stay
+    # build-only; missing kinds stay per-card decisions — stale means "was
+    # fine, upstream moved", the one state a bulk refresh cannot get wrong.
+    stale_kinds = [r["kind"] for r in rows
+                   if r["freshness"] == "stale" and r["kind"] not in _BUILD_ONLY]
+    if stale_kinds:
+        summary_chips += (
+            f'<button class="btn mini" id="xc-gen-stale" '
+            f'data-kinds="{_e(",".join(stale_kinds))}">'
+            f'全部生成 / 更新待更新 ({len(stale_kinds)})</button>')
     summary = f'<div class="xc-summary panel">{summary_chips}</div>'
 
     cards = "".join(_card(r) for r in rows)
@@ -194,17 +205,30 @@ _EXPORTS_JS = r"""
 
   function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
 
-  // Poll /api/jobs until the given job finishes (generate runs on the job runner).
+  // Poll /api/jobs until the given job finishes (generate runs on the job
+  // runner). Adaptive cadence: 100ms while a quick local job usually lands
+  // (~2s), then 500ms — the runner is SERIALIZED, so a generate queued behind
+  // a long build legitimately takes minutes; the old ~60s cap misreported it
+  // as a failure. ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
     return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
       var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
-      if (tries > 600) return job || null;  // ~60s cap
-      return new Promise(function (res) { setTimeout(res, 100); }).then(function () {
-        return pollJob(jobId, tries + 1);
-      });
+      return job || null;
+    }).catch(function () { return null; }).then(function (job) {
+      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (tries > 1215) return job || null;  // 20×100ms + ~1195×500ms ≈ 10min
+      return new Promise(function (res) {
+        setTimeout(res, tries < 20 ? 100 : 500);
+      }).then(function () { return pollJob(jobId, tries + 1); });
     });
+  }
+
+  // null job after the cap = polling gave up, NOT the job failing — say so.
+  function jobFailText(kind, job) {
+    if (!job) return kind + " 仍在排队/运行(轮询超时)— 完成后刷新本页可见";
+    return job.error || (kind + " 生成失败");
   }
 
   function setBusy(kind, busy) {
@@ -213,6 +237,8 @@ _EXPORTS_JS = r"""
   }
 
   document.addEventListener("click", function (ev) {
+    var all = ev.target.closest("#xc-gen-stale");
+    if (all) return doGenerateAll(all);
     var btn = ev.target.closest("button[data-act]");
     if (!btn) return;
     var act = btn.getAttribute("data-act");
@@ -221,22 +247,59 @@ _EXPORTS_JS = r"""
     if (act === "verify") return doVerify(kind, btn);
   });
 
-  function doGenerate(kind, btn) {
-    btn.disabled = true;
+  // one kind through submit+poll; resolves true only on a confirmed done.
+  function generateOne(kind) {
     setBusy(kind, true);
-    post("/api/exports/generate", { kind: kind }).then(function (res) {
+    return post("/api/exports/generate", { kind: kind }).then(function (res) {
       if (res.status === 202 && res.data.job) {
         return pollJob(res.data.job.id).then(function (job) {
-          if (job && job.state === "done") { toast(kind + " 已生成 / 更新", true); reloadSoon(); }
-          else {
-            btn.disabled = false; setBusy(kind, false);
-            toast((job && job.error) || (kind + " 生成失败"), false);
-          }
+          setBusy(kind, false);
+          if (job && job.state === "done") return true;
+          toast(jobFailText(kind, job), false);
+          return false;
         });
       }
-      btn.disabled = false; setBusy(kind, false);
+      setBusy(kind, false);
       toast(res.data.error || (kind + " 生成失败"), false);
-    }).catch(function () { btn.disabled = false; setBusy(kind, false); toast("网络错误", false); });
+      return false;
+    }).catch(function () { setBusy(kind, false); toast("网络错误", false); return false; });
+  }
+
+  function doGenerate(kind, btn) {
+    btn.disabled = true;
+    generateOne(kind).then(function (ok) {
+      if (ok) { toast(kind + " 已生成 / 更新", true); reloadSoon(); }
+      else { btn.disabled = false; }
+    });
+  }
+
+  // 一键更新待更新: the stale free kinds, SEQUENTIALLY (the runner is
+  // serialized anyway; one in flight keeps every toast attributable). Reload
+  // only on full success — partial failure keeps the sticky error toasts
+  // readable instead of wiping them with a refresh.
+  function doGenerateAll(btn) {
+    var kinds = (btn.getAttribute("data-kinds") || "").split(",").filter(Boolean);
+    if (!kinds.length) return;
+    var label = btn.textContent;
+    btn.disabled = true;
+    var okCount = 0;
+    var chain = Promise.resolve();
+    kinds.forEach(function (kind, i) {
+      chain = chain.then(function () {
+        btn.textContent = "生成中 " + (i + 1) + "/" + kinds.length + " — " + kind;
+        return generateOne(kind).then(function (ok) { if (ok) okCount++; });
+      });
+    });
+    chain.then(function () {
+      if (okCount === kinds.length) {
+        toast("待更新产物已全部更新(" + okCount + " 项)", true);
+        reloadSoon();
+      } else {
+        btn.textContent = label;
+        btn.disabled = false;
+        toast("完成 " + okCount + "/" + kinds.length + " 项 — 失败项见上方提示", false);
+      }
+    });
   }
 
   function doVerify(kind, btn) {

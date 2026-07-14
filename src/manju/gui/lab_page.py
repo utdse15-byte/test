@@ -850,15 +850,23 @@ _LAB_JS = r"""
 
   function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
 
+  // Poll /api/jobs until the given job finishes (generate runs on the job
+  // runner). Adaptive cadence: 100ms while a quick local job usually lands
+  // (~2s), then 500ms — the runner is SERIALIZED, so a generate queued behind
+  // a long build legitimately takes minutes; the old ~90s cap misreported it
+  // as a failure. ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
     return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
       var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
-      if (tries > 900) return job || null;
-      return new Promise(function (res) { setTimeout(res, 100); }).then(function () {
-        return pollJob(jobId, tries + 1);
-      });
+      return job || null;
+    }).catch(function () { return null; }).then(function (job) {
+      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (tries > 1215) return job || null;  // 20×100ms + ~1195×500ms ≈ 10min
+      return new Promise(function (res) {
+        setTimeout(res, tries < 20 ? 100 : 500);
+      }).then(function () { return pollJob(jobId, tries + 1); });
     });
   }
 
@@ -961,7 +969,8 @@ _LAB_JS = r"""
         return pollJob(res.data.job.id).then(function (job) {
           btn.disabled = false;
           if (job && job.state === "done") { toast("已生成候选", true); reloadSoon(); }
-          else { toast((job && job.error) || "生成失败", false); }
+          else if (!job) { toast("生成任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); }
+          else { toast(job.error || "生成失败", false); }
         });
       }
       btn.disabled = false;

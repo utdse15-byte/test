@@ -1530,9 +1530,12 @@ _PAGES_CSS = """
   background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
   padding: .45rem .8rem; border-radius: 8px; font-size: .84rem; max-width: 340px;
   box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  /* same entrance + accent-edge language as the SPA's .toast (app.css) — the
+   * two toast systems stay separate code, one visual voice. */
+  border-left-width: 4px; animation: mj-rise .18s ease-out;
 }
-.toast-item.good { border-color: #2c5a3f; }
-.toast-item.bad { border-color: #5a2c2f; color: var(--err); }
+.toast-item.good { border-color: #2c5a3f; border-left-color: var(--ok); }
+.toast-item.bad { border-color: #5a2c2f; border-left-color: var(--err); color: var(--err); }
 
 /* ---------------------------------------------------------- review -- */
 .rv-progress { display: flex; align-items: center; gap: 1rem; }
