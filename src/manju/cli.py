@@ -22,7 +22,7 @@ import typer
 
 from .core.check import run_check
 from .core.container import Project, ProjectError
-from .core.events import append_event, tail_events
+from .core.events import append_event, humanize_age, tail_events
 from .core.hashing import HASH_PREFIX, hash_file
 from .core.locks import seal_lock
 
@@ -480,6 +480,18 @@ def status(as_json: bool = typer.Option(False, "--json")):
         _emit(info, True)
         return
     typer.echo(f"项目  {info['project']}  {info['resolution']}  mode={info['mode']}")
+    # Continuity wave: the returning-owner anchor — WHEN was this project
+    # last touched, by whom, doing what. Days-later takeover starts by
+    # re-orienting; one line answers it before any state is read.
+    recent = info.get("recent_events") or []
+    if recent:
+        last = recent[-1]
+        age = humanize_age(str(last.get("ts", "")))
+        detail = last.get("detail") or {}
+        target = detail.get("shot") or detail.get("name") or ""
+        bits = " ".join(x for x in (str(last.get("action", "?")), str(target)) if x)
+        if age:
+            typer.echo(f"上次动作  {age} · {bits} ({last.get('actor', '?')})")
     typer.echo(f"镜头  共 {info['shots_total']}: " + ", ".join(
         f"{k}={len(v)}" for k, v in info["shots_by_state"].items()) if info["shots_by_state"] else "镜头  0")
     if info.get("voice_by_state"):
@@ -5140,6 +5152,25 @@ def pack(out: Optional[Path] = typer.Option(None),
         portability["casefold_collisions"] = casefold_collisions
     if pruned_link_dirs:
         portability["pruned_link_dirs"] = pruned_link_dirs
+    # Continuity wave: record "a full backup was taken" for doctor's
+    # backup-age row — in `.manju/` (PACK_EXCLUDE), NOT events.jsonl: pack
+    # must stay READ-ONLY on the tree it archives (three W5 pins hold two
+    # packs of one tree byte-identical, and an event append would change the
+    # tree between them). `.manju` is disposable by design — losing the
+    # marker degrades toward "建议备份", never toward false confidence.
+    # Best-effort: a readonly/odd filesystem never fails the pack itself.
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+
+        project.runtime_dir.mkdir(parents=True, exist_ok=True)
+        (project.runtime_dir / "last_pack.json").write_text(
+            json.dumps({
+                "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
+                "name": out.name, "files": files_packed,
+                "full": full, "bagit": bagit,
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError:
+        pass
     if as_json:
         if bagit:
             doc = {

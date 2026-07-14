@@ -234,6 +234,31 @@ def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,
     return True
 
 
+def humanize_age(ts: str, now: datetime | None = None) -> str:
+    """A record's age as the ONE Chinese phrase status/doctor print (continuity
+    wave): 刚刚 / N 分钟前 / N 小时前 / N 天前. The anchor for an owner coming
+    back after days — a raw ISO timestamp answers "when" only after mental
+    math; this answers it at a glance. Unparseable/未来 timestamps degrade to
+    "" so a hand-edited log line can never crash a status render."""
+    try:
+        then = datetime.fromisoformat(ts)
+        if then.tzinfo is None:  # naive → assume UTC (append_event writes UTC)
+            then = then.replace(tzinfo=timezone.utc)
+        ref = now if now is not None else datetime.now(timezone.utc)
+        secs = (ref - then).total_seconds()
+    except (TypeError, ValueError):
+        return ""
+    if secs < 0:
+        return ""
+    if secs < 60:
+        return "刚刚"
+    if secs < 3600:
+        return f"{int(secs // 60)} 分钟前"
+    if secs < 86400:
+        return f"{int(secs // 3600)} 小时前"
+    return f"{int(secs // 86400)} 天前"
+
+
 def append_event(project_root: Path, actor: str, action: str, detail: dict[str, Any] | None = None) -> None:
     record = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),

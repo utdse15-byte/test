@@ -56,6 +56,7 @@ Entries are append-only below.
 | 43 | 2026-07-13 | UX round 2: AI-collaboration surfaces + loop-until-dry close | mcp/tools + server (ToolError code/payload, arg prechecks), docs/PINS.md, CLAUDE.md, conftest _isolate_providers |
 | 44 | 2026-07-13 | Intuitiveness wave: ONE per-shot next action, everywhere | build/status (shot_next_action, todo), cli status 待办, gui/pages review cards, board serve cards, installer -CreateShortcut |
 | 45 | 2026-07-14 | GPT-analysis wave: next_step_key + stale-tab project guard | build/status next_step_key, gui/state project_identity, gui/server (_send_text stamp, do_POST 409 project_switched, /api/project-id), common_js/page/glossary JS echo + overlay |
+| 46 | 2026-07-14 | Continuity wave: 上次动作 anchor + backup-age doctor row | core/events humanize_age, cli status 上次动作 line, cli pack .manju/last_pack.json marker (pack stays read-only on the tree), build/doctor backup row |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2175,3 +2176,33 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - 5 new pins in tests/test_ux_polish.py (49 total), red-first proven by
   stash; the stale-tab pin asserts the refused write NEVER lands (selected
   take stays None in the switched-to project).
+
+## 46. Continuity wave: the returning owner's first two questions (2026-07-14)
+
+- The owner re-issued the intuitiveness mandate after #44/#45. The remaining
+  gap was TEMPORAL, not spatial: the surfaces answer 现在做什么 (#44) and
+  这是哪个项目 (#45), but a returning-after-days owner asks 我上次做到哪了
+  and 我的东西备份了没 first — and neither had a surface.
+- 上次动作 anchor: `manju status` (the takeover entry point) opens with ONE
+  line — "上次动作 3 天前 · select S007 (human)" — from the events tail the
+  status payload already carried but never printed. `core/events.humanize_age`
+  is the one owner of the phrase (刚刚/N 分钟前/N 小时前/N 天前; unparseable
+  or future timestamps → "" — a hand-edited log line never crashes status,
+  and time is never guessed). No events → no line, no noise.
+- Backup age: `manju pack` records `.manju/last_pack.json`; doctor (the
+  health surface, not daily status — no nagging) renders the advisory row:
+  ✓ 上次整包备份 X 前 / ⚠ over two weeks → 建议 manju pack / • no record →
+  names the command. Never gates doctor's ok.
+- The design correction this wave PAID for and pins: the first cut appended
+  a "pack" event to events.jsonl — and three W5 pins went red because two
+  packs of one tree must stay byte-identical. The deeper contract surfaced:
+  **a backup operation must be read-only on the tree it archives.** The
+  marker therefore lives in `.manju/` (PACK_EXCLUDE) — disposable by design,
+  so a wiped marker degrades toward 建议备份, never toward false confidence
+  — and the new pin asserts events.jsonl is byte-untouched across a pack.
+- Also verified-then-dropped this round: browser auto-open (already ships in
+  gui + board), empty-state sweep (every page already renders a pointered
+  empty state from earlier rounds), doctor fix-naming (rows already name
+  commands).
+- 4 new pins (test_ux_polish.py, 53 total), red-first proven by stash; the
+  determinism trio (fp_fixity + fp_bagit ×2) re-verified green.

@@ -1042,3 +1042,94 @@ def test_page_js_echoes_the_project_identity():
 
     glos = _glossary._GLOSSARY_JS
     assert 'manju-project' in glos and '"X-Manju-Project"' in glos
+
+
+# ------------------------------------------------ Continuity wave (2026-07-14)
+# The owner re-issued the intuitiveness mandate. This round's finding: the
+# surfaces answer "现在做什么" (#44) and "这是哪个项目" (#45), but not the two
+# questions a RETURNING owner asks first — "我上次做到哪了?" and "我的东西
+# 备份了没?". Both land as one-line facts on the surfaces that already own
+# them: status (the takeover entry point) and doctor (the health surface).
+
+
+def test_humanize_age_phrases():
+    from datetime import datetime, timezone
+
+    from manju.core.events import humanize_age
+
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    assert humanize_age("2026-07-14T11:59:40+00:00", now) == "刚刚"
+    assert humanize_age("2026-07-14T11:30:00+00:00", now) == "30 分钟前"
+    assert humanize_age("2026-07-14T04:00:00+00:00", now) == "8 小时前"
+    assert humanize_age("2026-07-11T12:00:00+00:00", now) == "3 天前"
+    assert humanize_age("2026-07-11T12:00:00", now) == "3 天前"  # naive → UTC
+    assert humanize_age("garbage", now) == ""     # hand-edited log line
+    assert humanize_age("2027-01-01T00:00:00+00:00", now) == ""  # 未来 = 不猜
+
+
+def test_status_shows_the_last_activity_anchor(tmp_project, monkeypatch):
+    from manju.core.events import append_event
+
+    append_event(tmp_project.root, "human", "select", {"shot": "S007"})
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["status"])
+    assert res.exit_code == 0, res.output
+    assert "上次动作" in res.output
+    assert "select S007" in res.output and "(human)" in res.output
+
+    # no history (events.jsonl gone) → no anchor line, no crash
+    (tmp_project.root / "events.jsonl").unlink()
+    res = runner.invoke(app, ["status"])
+    assert res.exit_code == 0, res.output
+    assert "上次动作" not in res.output
+
+
+def test_pack_records_the_marker_and_doctor_reads_backup_age(
+        tmp_project, tmp_path, monkeypatch):
+    """The marker lives in `.manju/` (PACK_EXCLUDE) ON PURPOSE: pack must
+    stay READ-ONLY on the tree it archives — the W5 pins hold two packs of
+    one tree byte-identical, so the record may never touch events.jsonl."""
+    from manju.build.doctor import run_doctor
+
+    monkeypatch.chdir(tmp_project.root)
+
+    # before any pack: the advisory row points at the command, never gates
+    row = next(c for c in run_doctor(tmp_project)["checks"]
+               if c["name"] == "backup")
+    assert row["ok"] is True and "manju pack" in row["line"]
+
+    events_before = (tmp_project.root / "events.jsonl").read_bytes() \
+        if (tmp_project.root / "events.jsonl").exists() else b""
+    out = tmp_path / "备份.manjupkg"
+    res = runner.invoke(app, ["pack", "--out", str(out)])
+    assert res.exit_code == 0, res.output
+
+    marker = json.loads(
+        (tmp_project.runtime_dir / "last_pack.json").read_text(encoding="utf-8"))
+    assert marker["name"] == "备份.manjupkg" and marker["ts"]
+    # read-only principle: the packed TREE is untouched by the pack itself
+    events_after = (tmp_project.root / "events.jsonl").read_bytes() \
+        if (tmp_project.root / "events.jsonl").exists() else b""
+    assert events_after == events_before
+
+    row = next(c for c in run_doctor(tmp_project)["checks"]
+               if c["name"] == "backup")
+    assert row["ok"] is True
+    assert "上次整包备份" in row["line"] and "刚刚" in row["line"]
+
+
+def test_doctor_backup_row_warns_past_two_weeks(tmp_project):
+    from datetime import datetime, timedelta, timezone
+
+    from manju.build.doctor import run_doctor
+
+    old = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat(timespec="seconds")
+    tmp_project.runtime_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.runtime_dir / "last_pack.json").write_text(
+        json.dumps({"ts": old, "name": "old.manjupkg"}, ensure_ascii=False),
+        encoding="utf-8")
+    row = next(c for c in run_doctor(tmp_project)["checks"]
+               if c["name"] == "backup")
+    assert row["ok"] is True          # advisory: NEVER gates doctor's ok
+    assert "⚠" in row["line"] and "manju pack" in row["line"]
+    assert "15 天前" in row["line"]

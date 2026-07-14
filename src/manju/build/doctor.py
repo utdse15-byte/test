@@ -267,6 +267,36 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
             add("gc_reclaimable", True, f"{cache_bytes / 1e6:.1f} MB",
                 f"• reclaimable caches: {cache_bytes / 1e6:.1f} MB "
                 "(segments/proxy/webpreview — manju gc)")
+        # Continuity wave: backup age — doctor is the health surface, and for
+        # personal data the one health fact that costs real tears is "when
+        # did I last make a full backup". Reads `.manju/last_pack.json`
+        # (written by `manju pack`; in PACK_EXCLUDE territory ON PURPOSE —
+        # pack stays read-only on the tree it archives, so the W5 two-packs-
+        # byte-identical pins hold). `.manju` is disposable, so a wiped
+        # marker degrades toward "建议备份" — never toward false confidence.
+        # Advisory ONLY (✓/⚠/•), never gates ok.
+        try:
+            import json as _json_bak
+
+            from ..core.events import humanize_age
+
+            marker = project.runtime_dir / "last_pack.json"
+            last_pack = (_json_bak.loads(marker.read_text(encoding="utf-8"))
+                         if marker.exists() else None)
+            if last_pack is not None:
+                age = humanize_age(str(last_pack.get("ts", ""))) or "时间未知"
+                pkg = last_pack.get("name", "")
+                stale = "天前" in age and int(age.split(" ")[0]) > 14
+                add("backup", True, f"last pack {last_pack.get('ts', '?')}",
+                    f"{'⚠' if stale else '✓'} backup: 上次整包备份 {age}"
+                    + (f"({pkg})" if pkg else "")
+                    + (" — 超过两周,建议 manju pack" if stale else ""))
+            else:
+                add("backup", True, "no pack marker",
+                    "• backup: 没有整包备份记录 — manju pack "
+                    "可把整个项目打成一个 .manjupkg")
+        except Exception as exc:  # the row must never take doctor down
+            add("backup", True, str(exc), f"• backup: 无法判读({exc})")
         report = run_check(project)
         add("project_check", report.ok,
             "ok" if report.ok else f"{len(report.errors)} errors",
