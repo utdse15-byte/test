@@ -904,7 +904,36 @@ _SERVE_JS = """
     if (btn.dataset.shot) body.shot = btn.dataset.shot;
     if (btn.dataset.take) body.take = btn.dataset.take;
     if (btn.dataset.target) body.target = btn.dataset.target;
-    post(btn.getAttribute("data-act"), body);
+    var act = btn.getAttribute("data-act");
+    /* convenience wave 4: redo spends money — same confirm the gui /review
+     * redo has always shown (the server-side §8.3 gate stays the authority;
+     * this stops the accidental click, not the intentional spend). */
+    if (act === "redo" &&
+        !window.confirm("重做镜头 " + (btn.dataset.shot || "") + "?将产生新的生成花费。")) {
+      return;
+    }
+    if (act === "select") {
+      /* F16 discipline: update in place — a reload dropped parked players,
+       * compare mode and scroll. Both buttons carry data-shot/data-take,
+       * so the swap is lossless and reversible on the next click. */
+      post(act, body, function () {
+        var section = btn.closest("section.shot");
+        if (!section) { location.reload(); return; }
+        section.querySelectorAll(".tact button.btn-sel").forEach(function (old) {
+          old.disabled = false;
+          old.classList.remove("btn-sel");
+          old.textContent = "选用 select";
+          old.setAttribute("data-act", "select");
+        });
+        btn.disabled = true;
+        btn.classList.add("btn-sel");
+        btn.textContent = "★ 已选用";
+        btn.removeAttribute("data-act");
+        banner("✓ 已选用 " + (btn.dataset.take || ""));
+      });
+      return;
+    }
+    post(act, body);
   });
   // FP T1: range sliders (wipe position / difference gain) via one delegated
   // input listener, mirroring the delegated click handler above.
@@ -1392,7 +1421,8 @@ def _take_action(shot_id: str, take_name: str, selected: bool) -> str:
     selection). Data-* attributes drive the delegated click handler in _SERVE_JS."""
     if selected:
         return ('<div class="tact">'
-                '<button type="button" class="btn btn-sel" disabled>★ 已选用</button>'
+                '<button type="button" class="btn btn-sel" disabled '
+                f'data-shot="{_esc(shot_id)}" data-take="{_esc(take_name)}">★ 已选用</button>'
                 "</div>")
     return ('<div class="tact">'
             '<button type="button" class="btn" data-act="select" '

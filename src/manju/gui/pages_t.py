@@ -157,7 +157,7 @@ def render_subtitles(project: Any, token: str) -> str:
 def _cue_row(c: dict[str, Any]) -> str:
     idx = c.get("index", "")
     return (
-        f'<tr class="cue-row" data-index="{_e(idx)}">'
+        f'<tr class="cue-row" id="cue-{_e(idx)}" data-index="{_e(idx)}">'
         f'<td class="cue-i">{_e(idx)}</td>'
         f'<td><input class="cue-start" type="number" min="0" step="10" value="{_e(c["start_ms"])}">'
         f'<span class="cue-tc muted">{_e(_fmt_ms(c["start_ms"]))}</span></td>'
@@ -621,6 +621,8 @@ def render_pages_t_js() -> str:
 _PAGES_T_CSS = """
 .sub-explain code, .mx-sfx code, .info code { background:#1c2230; padding:1px 5px; border-radius:4px; }
 .cue-table, .sfx-table, .ic-table { width:100%; border-collapse:collapse; }
+.cue-row.cue-flash td { background: rgba(122, 162, 247, .25);
+  transition: background 1.2s ease; }
 .cue-table th, .sfx-table th, .ic-table th { text-align:left; font-weight:600;
   color:#8b93a3; font-size:12px; padding:6px 8px; border-bottom:1px solid #262c38; }
 .cue-table td, .sfx-table td, .ic-table td { padding:5px 8px; vertical-align:top;
@@ -669,6 +671,18 @@ _PAGES_T_CSS = """
 _PAGES_T_JS = r"""
 "use strict";
 (function () {
+
+  /* convenience wave 4: the timeline's caption clips deep-link here with
+   * #cue-<n> — land ON that row (scroll + brief flash) instead of at the
+   * top of a long table. Same hash-restore discipline as the board tabs. */
+  (function landOnCue() {
+    if (!location.hash || location.hash.indexOf("#cue-") !== 0) return;
+    var row = document.getElementById(location.hash.slice(1));
+    if (!row) return;
+    row.scrollIntoView({ block: "center" });
+    row.classList.add("cue-flash");
+    setTimeout(function () { row.classList.remove("cue-flash"); }, 2400);
+  })();
 
   function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
   function warnList(el, warns) {

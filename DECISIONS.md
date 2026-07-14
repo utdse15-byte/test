@@ -60,6 +60,7 @@ Entries are append-only below.
 | 47 | 2026-07-14 | Convenience wave 1: shot/take shorthand resolvers, 18 commands | cli._resolve_shot_arg/_resolve_take_arg (existing-only, ambiguity=bad_args, stderr echo), select no-take candidate listing; startup-latency item measured-and-dismissed |
 | 48 | 2026-07-14 | Convenience wave 2: generate/recover/deliver verbs never dead-end | cli redo/select/voice/align/repair/tasks/exports/transcribe next-keystroke clauses; _print_batch_result tail hints; exports per-row kind→command map |
 | 48a | 2026-07-14 | Convenience wave 3: review keyboard approve; package/masters exports pointers | gui/pages pages.js `a`=qapprove + legend (redo stays keyless — spend never behind one keystroke), cli package/masters 交付状态一览 |
+| 48b | 2026-07-14 | Convenience wave 4: GUI bulk gaps, board confirm/in-place select, deep links | gui/pages rv-redo-stale + lab link, board redo confirm + select flip, storyboard redo/voice batch, edit→subtitles #cue anchor; gate fixes ba5348a (as_posix, named refusal) |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2278,3 +2279,35 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - Real-browser harness grows the keyboard-approve check (17/17 passed,
   including the stale-tab overlay and the F14/F16 flows). 2 new pins
   (67 total), red-first by stash. Full suite 4385/2/0.
+
+## 48b. Convenience wave 4: the GUI catches up with its own engine (2026-07-14)
+
+- Second auditor, GUI click-flow lens; every finding re-verified at both
+  cited sides before landing.
+- Bulk gaps closed by WIRING, not building: /review's queue bar gains
+  批量重做待更新 (collects the stale cards into the same /api/redo-batch the
+  workbench bulk bar uses); /storyboard's existing multi-select bar gains
+  批量重做/批量配音 (the two engine batch endpoints it never wired). BOTH
+  post shots-only — never assume_yes: a priced batch waits at the §8.3
+  gate in the jobs panel; the page confirm names that explicitly.
+- Board: redo now carries the same 确认 the /review redo always had (the
+  server-side §8.3 gate stays the authority — the confirm stops the
+  accidental click, not the intentional spend); 选用 updates IN PLACE (F16
+  discipline — a full reload dropped parked players and compare mode; the
+  ★ button now carries data-shot/data-take so the flip is lossless).
+- Round-trips: /review shot ids link into /lab?shot=…; the timeline's
+  caption clips deep-link to /subtitles#cue-N with scroll + flash (the
+  board-tab hash-restore discipline).
+- Rejected with reasons: board build/package confirms (not spend-by-
+  default — a confirm there is nagging, /review does not confirm build
+  either); /director 否决-confirm removal (a discarded proposal's
+  recoverability is unproven — the confirm stays); /exports generate-all-
+  stale deferred (medium size, weekly frequency — below this wave's line).
+- Also this push (ba5348a, gate fixes): the transcribe hint prints
+  as_posix (Windows red — a typer Path str()s with backslashes), and the
+  board-select pin's bare `assert False` now carries the response payload
+  (ubuntu red on f6a8c81 — unrelated to that commit's diff, single
+  occurrence, local suite green ×6 that day; the reran gates decide flake
+  vs real, and the named payload makes any repeat diagnosable).
+- 5 new pins (72 total), red-first by stash; browser harness 17/17; full
+  suite 4390/2/0.

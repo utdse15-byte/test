@@ -1070,7 +1070,7 @@ def _video_block(project: Any, vc: Any, total: int) -> str:
 def _caption_block(c: Any, i: int, total: int) -> str:
     dur = max(1, int(c.end_ms) - int(c.start_ms))
     return (
-        f'<a class="ed-lane-clip ed-cclip" href="/subtitles" '
+        f'<a class="ed-lane-clip ed-cclip" href="/subtitles#cue-{i}" '
         f'data-cue="{i}" data-ms-start="{int(c.start_ms)}" data-ms-dur="{dur}" '
         f'data-total="{total}" title="{_e(c.text)}">'
         f'<span class="ed-clip-t">{_e(c.text)}</span></a>')

@@ -542,7 +542,9 @@ def render_review(project: Any, token: str) -> str:
             f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}" '
             f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}" '
             f'data-rev="{_e(rev)}">\n'
-            f'  <div class="rv-head"><h2>{_e(sid)} {state_badge}{build_badge}'
+            f'  <div class="rv-head"><h2><a class="rv-lablink" '
+            f'href="/lab?shot={_e(sid)}" title="打开镜头实验室 (lab)">{_e(sid)}</a> '
+            f'{state_badge}{build_badge}'
             f'<span class="rv-idx muted">#{idx + 1}</span></h2>'
             f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div>'
             f"{next_html}</div>\n"
@@ -620,7 +622,10 @@ def _queue_bar_html() -> str:
         '<button type="button" class="btn ghost mini" id="rv-queue-toggle">进入队列模式</button>'
         '<span id="rv-queue-pos" class="rv-queue-pos muted"></span>'
         '<button type="button" class="btn ghost mini" id="rv-q-prev" title="上一条 (k)">‹ 上一条</button>'
-        '<button type="button" class="btn ghost mini" id="rv-q-next" title="下一条 (j)">下一条 ›</button>'
+'<button type="button" class="btn ghost mini" id="rv-q-next" title="下一条 (j)">下一条 ›</button>'
+        '<button type="button" class="btn ghost mini" id="rv-redo-stale" '
+        'title="把所有 待更新(stale)镜头一次性重做(走同一个批量端点与花钱闸门)">'
+        '批量重做待更新</button>'
         '</div></div>'
     )
 
@@ -1992,6 +1997,26 @@ _PAGES_JS = r"""
       }
       if (e.target.id === "rv-q-prev") { qIndex--; updateQueueUI(); return; }
       if (e.target.id === "rv-q-next") { qIndex++; updateQueueUI(); return; }
+      if (e.target.id === "rv-redo-stale") {
+        /* convenience wave 4: the stale filter showed the pile, then made the
+         * owner confirm one redo per card. Same batch endpoint the workbench
+         * bulk bar uses; NO assume_yes — a priced batch waits at the §8.3
+         * gate in the jobs panel instead of spending silently. */
+        var stale = Array.prototype.map.call(
+          document.querySelectorAll('.rv-shot[data-buildstate="stale"]'),
+          function (s) { return s.getAttribute("data-shot"); });
+        if (!stale.length) { toast("没有待更新(stale)的镜头", false); return; }
+        if (!window.confirm("批量重做 " + stale.length + " 个待更新镜头?"
+                            + "可能产生生成花费;付费部分会在工作台任务面板等待确认。")) return;
+        e.target.disabled = true;
+        post("/api/redo-batch", { shots: stale }).then(function (res) {
+          e.target.disabled = false;
+          if (res.status === 202 && res.data.job) {
+            toast("批量重做已入队 (job " + res.data.job.id + ") — 进度见工作台任务面板", true);
+          } else toast((res.data && res.data.error) || "失败", false);
+        });
+        return;
+      }
     });
 
     document.addEventListener("keydown", function (e) {

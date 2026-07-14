@@ -1329,3 +1329,81 @@ def test_review_keyboard_gains_approve_but_never_spend(tmp_project, add_shot, ma
 def test_package_and_masters_point_at_exports():
     src = Path("src/manju/cli.py").read_text(encoding="utf-8")
     assert src.count("交付状态一览: manju exports") == 2
+
+
+# ------------------------------------------- Convenience wave 4 (2026-07-14)
+# The GUI click-flow audit (second auditor, second lens), each site
+# re-verified: bulk actions the engine already served but pages never wired,
+# a spend click without the house confirm, state lost to a full reload, and
+# two cross-page round-trips that dropped their context.
+
+
+def test_review_queue_bar_offers_batch_redo_stale(tmp_project, add_shot, make_take):
+    from manju.gui.pages import render_pages_js, render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_review(tmp_project, "tok")
+    assert 'id="rv-redo-stale"' in html
+    js = render_pages_js()
+    assert '/api/redo-batch' in js
+    seg = js.split('rv-redo-stale')[1].split("rv-queue-toggle")[0]
+    # §8.3 honesty: the posted body is shots-only — the page never
+    # self-approves spend (assume_yes stays a workbench plan-modal decision)
+    assert "{ shots: stale }" in seg
+    assert "window.confirm" in seg
+
+
+def test_review_shot_id_links_into_its_lab(tmp_project, add_shot, make_take):
+    from manju.gui.pages import render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_review(tmp_project, "tok")
+    assert 'href="/lab?shot=S001"' in html
+
+
+def test_board_redo_confirms_and_select_updates_in_place(tmp_project, add_shot, make_take):
+    from manju.board.board import render_board
+    from manju.core.writes import select_take_checked
+    from manju.runtime.buildlock import build_lock
+
+    add_shot(tmp_project, "S001")
+    t1 = make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    with build_lock(tmp_project.root, actor="human"):
+        select_take_checked(tmp_project, "S001", t1.name, actor="human", via="cli")
+    served = render_board(tmp_project, serve=True)
+    # the spend click carries the house confirm; select flips in place
+    assert "将产生新的生成花费" in served
+    assert 'act === "select"' in served and "location.reload(); return;" in served
+    # the ★ button carries its identity so the flip is lossless
+    assert 'class="btn btn-sel" disabled data-shot="S001" data-take="take_01"' \
+        in served.replace("\n", "")
+
+
+def test_caption_clip_deep_links_to_its_cue_row():
+    from manju.gui.edit import _caption_block
+    from manju.gui.pages_t import _PAGES_T_JS, _cue_row
+
+    class _C:
+        start_ms, end_ms, text = 0, 1000, "你好"
+
+    assert 'href="/subtitles#cue-3"' in _caption_block(_C(), 3, 10)
+    assert 'id="cue-7"' in _cue_row({"index": 7, "start_ms": 0, "end_ms": 1,
+                                     "text": "x"})
+    assert "landOnCue" in _PAGES_T_JS and "#cue-" in _PAGES_T_JS
+
+
+def test_storyboard_batch_bar_wires_redo_and_voice(tmp_project, add_shot):
+    from manju.gui.storyboard import render, render_storyboard_js
+
+    add_shot(tmp_project, "S001")
+    html = render(tmp_project, "tok")
+    assert 'id="sb-redo-all"' in html and 'id="sb-voice-all"' in html
+    js = render_storyboard_js()
+    seg = js.split('sb-redo-all" || ev.target.id === "sb-voice-all"')[1]
+    seg = seg.split("sb-clear")[0]
+    assert '"/api/" + kind + "-batch"' in seg
+    assert "window.confirm" in seg
+    assert "{ shots: selB }" in seg   # shots-only body — no self-approved spend

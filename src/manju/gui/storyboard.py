@@ -414,6 +414,10 @@ def render(project: Any, token: str) -> str:
         '<div id="sb-batchbar" class="panel sb-batchbar hidden">'
         '<span class="sb-count"><b id="sb-n">0</b> 已选</span>'
         '<button class="btn mini" type="button" id="sb-approve-all">批量通过 (approve)</button>'
+        '<button class="btn ghost mini" type="button" id="sb-redo-all" '
+        'title="选中镜头一次性重做(付费部分在任务面板等待确认)">批量重做</button>'
+        '<button class="btn ghost mini" type="button" id="sb-voice-all" '
+        'title="选中镜头一次性重配音">批量配音</button>'
         '<span class="sb-lockgroup">批量锁定:'
         '<select id="sb-lock-field">'
         + "".join(f'<option value="{_e(p)}">{_e(lbl)}</option>' for p, lbl in _LOCKABLE)
@@ -754,6 +758,26 @@ _JS = r"""
 
   // batch bar buttons
   document.addEventListener("click", function (ev) {
+    if (ev.target.id === "sb-redo-all" || ev.target.id === "sb-voice-all") {
+      /* convenience wave 4: the multi-select machinery existed; only these
+       * two engine batch endpoints were never wired. NO assume_yes — a
+       * priced batch waits at the §8.3 gate in the workbench jobs panel. */
+      var kind = ev.target.id === "sb-redo-all" ? "redo" : "voice";
+      var selB = selected();
+      if (!selB.length) return;
+      if (kind === "redo" &&
+          !window.confirm("批量重做 " + selB.length + " 个镜头?可能产生生成花费;"
+                          + "付费部分会在工作台任务面板等待确认。")) return;
+      ev.target.disabled = true;
+      post("/api/" + kind + "-batch", { shots: selB }).then(function (res) {
+        ev.target.disabled = false;
+        if (res.status === 202 && res.data.job) {
+          toast("批量" + (kind === "redo" ? "重做" : "配音")
+                + "已入队 (job " + res.data.job.id + ") — 进度见工作台任务面板", true);
+        } else toast((res.data && res.data.error) || "失败", false);
+      }).catch(function () { toast("网络错误", false); ev.target.disabled = false; });
+      return;
+    }
     if (ev.target.id === "sb-clear") {
       document.querySelectorAll(".sb-check, #sb-all").forEach(function (c) { c.checked = false; });
       refreshBatchbar();
