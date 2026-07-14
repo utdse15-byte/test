@@ -1221,3 +1221,85 @@ def test_select_without_take_lists_the_candidates(tmp_project, add_shot, make_ta
     assert doc["code"] == "bad_args"
     assert "take_01" in doc["error"] and "take_02" in doc["error"]
     assert "select S001 1" in doc["error"]   # teaches the shorthand
+
+
+# ------------------------------------------- Convenience wave 2 (2026-07-14)
+# The friction auditor's cross-cutting finding, personally re-verified at
+# every cited site: the GENERATE/EDIT verbs (redo/select/voice/align/
+# repair) and the recovery/deliver surfaces (tasks/exports/transcribe) each
+# terminated at a fact with no next keystroke — while status/new/review
+# already speak the next-command idiom. One clause each, same idiom.
+
+
+def test_select_success_names_the_build_step(tmp_project, add_shot, make_take, monkeypatch):
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h1")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["select", "S001", "take_01"])
+    assert res.exit_code == 0, res.output
+    assert "manju build" in res.output      # the change must reach the film
+
+
+def test_redo_batch_summary_names_the_pick_step(capsys):
+    from manju.cli import _print_batch_result
+
+    class _R:
+        ran = ["S001"]
+        skipped: list = []
+        failed: list = []
+        takes = {"S001": ["take_03"]}
+        estimated_cost = 0.0
+        currency = None
+
+    _print_batch_result(_R(), "redo")
+    assert "manju select" in capsys.readouterr().out
+    _print_batch_result(_R(), "voice")
+    assert "manju build" in capsys.readouterr().out
+    _R.ran = []
+    _print_batch_result(_R(), "redo")   # nothing ran → no hint noise
+    assert "manju select" not in capsys.readouterr().out
+
+
+def test_tasks_failed_row_prints_the_verbatim_retry(tmp_project, add_shot, monkeypatch):
+    from manju.runtime.state import RuntimeState
+
+    add_shot(tmp_project, "S001")
+    with RuntimeState(tmp_project.root) as st:
+        rid = st.record_run(shot="S001", provider="cloud_test",
+                            status="failed", error="boom")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["tasks"])
+    assert res.exit_code == 0, res.output
+    assert f"manju tasks retry {rid}" in res.output
+
+
+def test_exports_missing_rows_name_their_command(tmp_project, monkeypatch):
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["exports"])
+    assert res.exit_code == 0, res.output
+    assert "→ manju build --target final" in res.output
+    assert "→ manju export --srt" in res.output
+
+
+def test_repair_auto_zero_work_stays_noise_free(tmp_project, monkeypatch):
+    tmp_project.reports_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.reports_dir / "repair_plan.yaml").write_text(
+        "actions: []\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["repair", "--auto"])
+    assert res.exit_code == 0, res.output
+    assert "repaired 0" in res.output
+    assert "manju build" not in res.output   # hints only when something happened
+
+
+def test_transcribe_names_the_align_chain_with_actual_values(tmp_project, monkeypatch):
+    (tmp_project.root / "media" / "imports").mkdir(parents=True, exist_ok=True)
+    (tmp_project.root / "media" / "imports" / "素材.mp4").write_bytes(b"x")
+    srt = tmp_project.root / "手打.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n你好\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["transcribe", "media/imports/素材.mp4",
+                              "--from-srt", str(srt)])
+    assert res.exit_code == 0, res.output
+    assert "manju align --media media/imports/素材.mp4" in res.output
+    assert "--from-srt captions/transcripts/素材.srt" in res.output

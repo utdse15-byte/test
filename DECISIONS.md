@@ -58,6 +58,7 @@ Entries are append-only below.
 | 45 | 2026-07-14 | GPT-analysis wave: next_step_key + stale-tab project guard | build/status next_step_key, gui/state project_identity, gui/server (_send_text stamp, do_POST 409 project_switched, /api/project-id), common_js/page/glossary JS echo + overlay |
 | 46 | 2026-07-14 | Continuity wave: 上次动作 anchor + backup-age doctor row | core/events humanize_age, cli status 上次动作 line, cli pack .manju/last_pack.json marker (pack stays read-only on the tree), build/doctor backup row |
 | 47 | 2026-07-14 | Convenience wave 1: shot/take shorthand resolvers, 18 commands | cli._resolve_shot_arg/_resolve_take_arg (existing-only, ambiguity=bad_args, stderr echo), select no-take candidate listing; startup-latency item measured-and-dismissed |
+| 48 | 2026-07-14 | Convenience wave 2: generate/recover/deliver verbs never dead-end | cli redo/select/voice/align/repair/tasks/exports/transcribe next-keystroke clauses; _print_batch_result tail hints; exports per-row kind→command map |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2235,3 +2236,30 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - 6 new pins (test_ux_polish.py, 59 total); the no-match passthrough pin is
   green-by-design pre-implementation (a no-regression pin); the rest proven
   red-first by stash. Full suite 4377/2/0.
+
+## 48. Convenience wave 2: no verb dead-ends (2026-07-14)
+
+- A dedicated friction auditor swept five daily loops with one lens (typing/
+  clicks/dead-end outputs); every cited site was personally re-verified
+  before landing. The cross-cutting defect: status/new/review already speak
+  the next-command idiom, but the GENERATE/EDIT verbs terminated at facts.
+- Landed, one clause each: redo (single + batch tail) → `manju select <镜头>
+  <数字>`; select → `manju build`; voice (single + batch) → `manju build`;
+  align single-shot → `manju build`; align plan-only mode → names `--apply`
+  (and `--rows`); transcribe → the verbatim `manju align --media … --from-srt
+  …` chain with ACTUAL paths; repair --auto → rerender + `manju failures`
+  pointers (suppressed at zero work — no noise); `manju tasks` failed rows →
+  verbatim `manju tasks retry <id>` (the unresolved-submission block always
+  had its recovery commands; real failures never did); `manju exports`
+  缺失/待更新 rows → the ONE command for that kind (final/proxy→build,
+  captions/NLE→export flags, cover/teaser→package) — release-level
+  next_actions stay the blockers' owner.
+- Rejected from the same audit, with reasons: build-failure "re-run build"
+  echo (the diagnosis pointer `manju failures` is already printed; the verb
+  is self-evident); "build ok" next-step line (状态阶梯的 owner 是 status —
+  duplicating it forks the one owner); review 跳过-button tooltip "快捷键 j"
+  (the auditor misread — the skip handler IS setActive(+1), exactly what j
+  does; the hint is correct); board-serve subtitle panel terminal strings
+  (the bounded-board design, not a defect).
+- 6 new pins (test_ux_polish.py, 65 total), red-first by stash (the
+  zero-work noise guard is green-by-design). Full suite green.

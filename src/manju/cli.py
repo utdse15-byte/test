@@ -1333,7 +1333,9 @@ def redo(
     if as_json:
         _emit({"shot": shot_id, "takes": takes}, True)
     else:
-        typer.secho(f"{shot_id}: new takes {', '.join(takes)}", fg=typer.colors.GREEN)
+        typer.secho(f"{shot_id}: new takes {', '.join(takes)}"
+                    f" — 挑选: manju select {shot_id} <数字>(gui /review 可预览)",
+                    fg=typer.colors.GREEN)
 
 
 def _print_batch_result(result, verb: str) -> None:
@@ -1351,6 +1353,12 @@ def _print_batch_result(result, verb: str) -> None:
         f"{verb}: {len(result.ran)} ran, {len(result.skipped)} skipped, "
         f"{len(result.failed)} failed; 预估 {result.estimated_cost} "
         f"{result.currency or ''}".rstrip())
+    # Convenience wave 2: the generate verbs never dead-end — name the
+    # next keystroke (the same one-idiom the single-shot paths gained).
+    if result.ran:
+        typer.secho("挑选: manju select <镜头> <数字>(gui /review 可预览)"
+                    if verb == "redo" else "让新配音进成片: manju build",
+                    fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------ select
@@ -1410,7 +1418,8 @@ def select(
     if as_json:
         _emit({"shot": shot_id, "take": take, "ok": True}, True)
     else:
-        typer.secho(f"{shot_id}: selected {take}", fg=typer.colors.GREEN)
+        typer.secho(f"{shot_id}: selected {take} — 让改动落到成片: manju build",
+                    fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------- lock/unlock
@@ -2244,7 +2253,9 @@ def repair(
     if as_json:
         _emit({"repaired": done, "remaining": left}, True)
     else:
-        typer.echo(f"repaired {done}, remaining for human review: {left}")
+        typer.echo(f"repaired {done}, remaining for human review: {left}"
+                   + (" — 重渲染: manju build" if done else "")
+                   + (";剩余原因: manju failures" if left else ""))
 
 
 # ------------------------------------------------------------------ frames
@@ -3080,6 +3091,25 @@ def exports(
         typer.secho(f"      └ {row['basis']}", fg=typer.colors.BRIGHT_BLACK)
         if row["path"]:
             typer.secho(f"        {row['path']}", fg=typer.colors.BRIGHT_BLACK)
+        # Convenience wave 2: a 缺失/待更新 row names ITS one command —
+        # the release-level next_actions below cover blockers, not rows.
+        if row["freshness"] in ("missing", "stale"):
+            cmd = {
+                "final": "manju build --target final",
+                "proxy": "manju build --target proxy",
+                "srt": "manju export --srt",
+                "ass": "manju export --srt(ASS 随行)",
+                "ttml": "manju export --ttml",
+                "otio": "manju export --otio",
+                "edl": "manju export --edl",
+                "xmeml": "manju export --xmeml",
+                "jianying": "manju export --jianying",
+                "capcut": "manju export --capcut",
+                "cover": "manju package",
+                "teaser": "manju package",
+            }.get(row["kind"])
+            if cmd:
+                typer.secho(f"        → {cmd}", fg=typer.colors.BRIGHT_BLACK)
     counts = "  ".join(f"{k}:{v}" for k, v in sorted(data["counts"].items()))
     typer.secho(f"合计 / by state:  {counts}", fg=typer.colors.BRIGHT_BLACK)
 
@@ -3807,7 +3837,8 @@ def voice(
         _emit({"shot": shot_id, "take": media.stem,
                "media": project.relpath(media)}, True)
     else:
-        typer.secho(f"{shot_id}: 新配音 {media.stem} ({tts.id})", fg=typer.colors.GREEN)
+        typer.secho(f"{shot_id}: 新配音 {media.stem} ({tts.id})"
+                    " — 让新配音进成片: manju build", fg=typer.colors.GREEN)
 
 
 # ------------------------------------------------------------------- align
@@ -3927,6 +3958,8 @@ def align(
             if plan.get("unmatched"):
                 typer.secho(f"  unmatched: {', '.join(plan['unmatched'])}",
                             fg=typer.colors.YELLOW)
+            typer.secho("这只是计划(未写入)— 加 --apply 应用;"
+                        "--rows 1,3-5 可只应用部分行", fg=typer.colors.BRIGHT_BLACK)
         return
 
     if shot_id is None:
@@ -3948,7 +3981,8 @@ def align(
     else:
         typer.secho(
             f"{report['shot']}: timing → {report['timing']}  "
-            f"({report['cues']} cues, source={report['source']})",
+            f"({report['cues']} cues, source={report['source']})"
+            " — 重编字幕/成片: manju build",
             fg=typer.colors.GREEN,
         )
         for a in report.get("advisories") or []:
@@ -4100,6 +4134,9 @@ def transcribe(
     else:
         typer.secho(f"{rel}: {len(segments)} segments (source: {source})",
                     fg=typer.colors.GREEN)
+        typer.secho(f"对齐到镜头: manju align --media {media} "
+                    f"--shots <如 S001-S010> --from-srt {rel}",
+                    fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------- board
@@ -6684,6 +6721,9 @@ def tasks(ctx: typer.Context,
                    + (f"  {t['take']}" if t["take"] else ""))
         if t["reason"]:
             typer.secho(f"        ↳ {t['reason']}", fg=typer.colors.BRIGHT_BLACK)
+        if t["status"] == "failed":
+            typer.secho(f"        ↳ 重试: manju tasks retry {t['id']}",
+                        fg=typer.colors.BRIGHT_BLACK)
     if pending_out:
         typer.secho("进行中 / in-flight (submit 后仍在续轮询):", fg=typer.colors.BRIGHT_BLACK)
         for p in pending_out:
