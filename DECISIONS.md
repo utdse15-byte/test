@@ -52,6 +52,10 @@ Entries are append-only below.
 | 40 | 2026-07-13 | Windows wave 4: opt-in colour minimal closed loop | core/models ColorSpec, media/render, media/normalize (zscale), technical_profile, qc/colorstats, build/doctor |
 | 41 | 2026-07-13 | Windows wave 5: archive hardening, hw-encode facts; C2PA rejected | manju cli pack/unpack, core.idents, media/ffmpeg (HW_ENCODER_CANDIDATES / eligibility), core/toolchain manifest, build/doctor hw row |
 | 41a | 2026-07-13 | W5 gate verdict addendum: run #11's three failures fixed | record (gate verdict) — test_mcp self-contained, pack casefold capability probe, CI green both platforms |
+| 42 | 2026-07-13 | UX program waves A-E: 46-finding audit, top defects fixed | cli (_fail codes, status/new/unpack guards), gui/server (drain-before-refuse), gui/pages review, board banner/anns, installer probes, REPORTS/UX_AUDIT_2026-07-13.md |
+| 43 | 2026-07-13 | UX round 2: AI-collaboration surfaces + loop-until-dry close | mcp/tools + server (ToolError code/payload, arg prechecks), docs/PINS.md, CLAUDE.md, conftest _isolate_providers |
+| 44 | 2026-07-13 | Intuitiveness wave: ONE per-shot next action, everywhere | build/status (shot_next_action, todo), cli status 待办, gui/pages review cards, board serve cards, installer -CreateShortcut |
+| 45 | 2026-07-14 | GPT-analysis wave: next_step_key + stale-tab project guard | build/status next_step_key, gui/state project_identity, gui/server (_send_text stamp, do_POST 409 project_switched, /api/project-id), common_js/page/glossary JS echo + overlay |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2123,3 +2127,51 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   next-action already carry the coherence); redesigning bare `manju` output
   (help panels already group 82 commands sanely).
 - tests/test_ux_polish.py grows to 44 pins; full suite 4362/2/0.
+
+## 45. GPT-analysis wave: the two real kernels of an external review (2026-07-14)
+
+- The owner supplied a second AI's product review ("Manju Continuity": six
+  P0/P1 programs — ActionSpec registry, project-scoped routing, JobSpec
+  resume, Agent Inbox, six-domain IA, change-driven review). Dispositioned
+  against the maintenance gate: most of it is framework-scale product
+  engineering for a multi-user tool this is not, or already landed in
+  #42-#44 in bounded form (its "next_action stable id" ask IS the todo-key
+  contract; its "failure center" IS the status 待办 ladder; its "Director
+  loop as protocol" stays a page, not a framework). Two kernels were real
+  and bounded; both landed here.
+- `next_step_key` (from its P0-2): `project_status` now carries a STABLE
+  machine token beside the Chinese `next_step` sentence
+  (create_shots/build_missing/select/fix_broken/build_timeline/build_final/
+  fix_qc/redo_stale/done) — completing the key+text contract the per-shot
+  `todo` entries set in #44. Agents and GUIs branch on keys; prose can be
+  reworded freely. Additive, mirrored into /api/state.
+- Stale-tab project guard (the data-confusion bug inside its P0-3, minus
+  the routing rewrite): the workspace server binds ONE switchable project,
+  so a tab rendered for 甲 kept resolving /media/ and landing POSTs in
+  whatever project any OTHER tab switched to. Now: `gui/state
+  .project_identity` (root-derived 12-char token, the one owner — NOT a
+  nonce, so same-project tabs never conflict and switching back
+  re-validates old tabs); `_send_text` stamps it into every served HTML
+  document as a `manju-project` meta anchored on the token meta all ten
+  shells already embed (zero per-shell threading, future shells covered);
+  common.js / app.js / glossary.js echo it as `X-Manju-Project` on mutating
+  POSTs; do_POST refuses a mismatch 409 `{code: project_switched}` naming
+  the server's current project (switch/open/new stay exempt — that intent
+  is project-independent; header-less clients keep old behaviour). Read
+  side: a 15 s constant-time `/api/project-id` watchdog + the SPA's
+  /api/state compare overlay the page ("已停止读写 — 刷新跟随当前项目")
+  instead of silently repainting as the other project. The SPA adopts the
+  new identity ONLY from its own intentional /api/switch response.
+- Explicitly rejected from the same document, with reasons: project-scoped
+  URL routing rewrite (server is single-owner localhost; the guard closes
+  the trust gap at ~1% of the surface churn), ActionSpec code-generation
+  layer (three surfaces already share one core; a registry adds a fourth
+  representation to keep honest), JobSpec lossless resume/reconciliation
+  (paid providers are off by default on this personal setup; jobs.jsonl
+  already records interruptions honestly rather than guessing), six-domain
+  nav rewrite + command palette, Agent Task Inbox, review baseline
+  fingerprints, journey-test framework + local metrics (browser_verify.py
+  is the journey harness this repo actually runs).
+- 5 new pins in tests/test_ux_polish.py (49 total), red-first proven by
+  stash; the stale-tab pin asserts the refused write NEVER lands (selected
+  take stays None in the switched-to project).

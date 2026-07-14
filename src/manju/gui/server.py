@@ -350,6 +350,24 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send_text(self, body: str, content_type: str, status: int = 200,
                    extra: dict[str, str] | None = None) -> None:
+        # GPT-analysis wave (stale-tab guard): THE one owner that stamps the
+        # bound project's identity into every HTML document this server
+        # serves. Anchored on the manju-token meta every page shell embeds,
+        # so ten shells (and any future one that follows the token pattern)
+        # need no per-module threading; common.js / app.js read it back and
+        # echo it as X-Manju-Project on mutating POSTs. The picker (no
+        # project bound) and non-HTML bodies pass through untouched.
+        if (content_type.startswith("text/html")
+                and self.server.project is not None
+                and '<meta name="manju-token"' in body
+                and '<meta name="manju-project"' not in body):
+            from .state import project_identity
+
+            body = body.replace(
+                '<meta name="manju-token"',
+                f'<meta name="manju-project" '
+                f'content="{project_identity(self.server.project)}">\n'
+                '<meta name="manju-token"', 1)
         raw = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -432,6 +450,24 @@ class _Handler(BaseHTTPRequestHandler):
                                 "application/javascript; charset=utf-8")
             elif path == "/api/workspace/recents":
                 self._workspace_recents()
+            elif path == "/api/project-id":
+                # GPT-analysis wave: the stale-tab poller's tiny read — WHICH
+                # project is bound right now (identity token + display name).
+                # Deliberately above the None gate: an unbound server answers
+                # token "" so a page from a previous binding overlays instead
+                # of 404-spamming. Never scans state; must stay this cheap.
+                from .state import project_identity
+
+                proj = self.server.project
+                if proj is None:
+                    self._send_json({"token": "", "name": None})
+                else:
+                    try:
+                        pname = proj.load_config().name
+                    except Exception:
+                        pname = proj.root.name
+                    self._send_json({"token": project_identity(proj),
+                                     "name": pname})
             elif self.server.project is None:
                 # round X: everything else needs a bound project — the picker
                 # (served above at `/`) is the only way forward from here.
@@ -445,8 +481,14 @@ class _Handler(BaseHTTPRequestHandler):
                 if cached is not None and cached[0] == fp:
                     payload = cached[1]
                 else:
+                    from .state import project_identity
+
                     payload = build_state(self.server.project, self.server.runner)
                     payload["fp"] = fp
+                    # stale-tab guard: the SPA compares this against the
+                    # identity it rendered with (adopting it ONLY on its own
+                    # intentional /api/switch) and overlays on mismatch.
+                    payload["project_token"] = project_identity(self.server.project)
                     payload["readonly"] = self.server.readonly
                     payload["workspace"] = (
                         {"active": self.server.active_slug,
@@ -676,6 +718,35 @@ class _Handler(BaseHTTPRequestHandler):
             return
         url = urlsplit(self.path)
         path = url.path
+        # GPT-analysis wave: the server binds ONE switchable project, so a
+        # tab rendered for project A would otherwise WRITE into whatever
+        # project is bound NOW. Pages embed their project's identity token
+        # (gui/state.project_identity — the one owner) and the shared JS
+        # echoes it back; a mismatch refuses with 409 project_switched
+        # instead of silently mutating the wrong project. Header-less
+        # clients (tests, curl) keep the old behaviour; the switch/open/new
+        # actions are exempt — their intent is project-independent.
+        claimed = self.headers.get("X-Manju-Project")
+        if (claimed and self.server.project is not None
+                and path not in ("/api/switch", "/api/new-project")
+                and not path.startswith("/api/workspace/")):
+            from .state import project_identity
+
+            current = project_identity(self.server.project)
+            if claimed != current:
+                try:
+                    name = self.server.project.load_config().name
+                except Exception:
+                    name = self.server.project.root.name
+                self._drain_request_body()
+                self._send_json({
+                    "error": (f"项目已切换 (project switched) — 服务器当前项目是"
+                              f"「{name}」,本页属于另一个项目;请刷新页面"),
+                    "code": "project_switched",
+                    "project": name,
+                    "project_token": current,
+                }, 409)
+                return
         try:
             if path == "/api/upload":
                 self._act_upload(parse_qs(url.query))
@@ -1717,7 +1788,12 @@ class _Handler(BaseHTTPRequestHandler):
         except KeyError:
             self._send_error_json(f"unknown project: {slug}", 404)
             return
-        self._send_json({"ok": True, "slug": slug, "root": str(project.root)})
+        from .state import project_identity
+
+        # project_token: the switching tab ADOPTS the new identity from this
+        # response (stale-tab guard) — it re-renders in place, no reload.
+        self._send_json({"ok": True, "slug": slug, "root": str(project.root),
+                         "project_token": project_identity(project)})
 
     _NAME_RE = re.compile(r"^[^/\\\x00]{1,80}$")
 

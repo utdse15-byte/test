@@ -71,3 +71,6 @@ Owners (one owner per concern — extend it, never fork a parallel one):
   `core/models._drop_default_edit_rate` (pydantic allows ONE
   model_serializer per model; the compat corpus pins byte-identity for
   projects that never set the field)
+- GUI project identity (stale-tab guard) → `gui/state.project_identity`;
+  the `manju-project` meta is stamped ONLY by `gui/server._send_text` —
+  never hand-embed it in a page shell (DECISIONS #45)

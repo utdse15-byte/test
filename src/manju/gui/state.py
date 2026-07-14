@@ -18,7 +18,7 @@ from urllib.parse import quote
 from ..build.stale import evaluate_all
 from ..build.status import project_status
 from ..core.events import tail_events
-from ..core.hashing import short_hash
+from ..core.hashing import hash_text, short_hash
 from ..core.yamlio import read_json
 
 if TYPE_CHECKING:
@@ -26,9 +26,29 @@ if TYPE_CHECKING:
 
     from .jobs import JobRunner
 
-__all__ = ["build_state", "media_urls_for_rel", "project_fingerprint"]
+__all__ = ["build_state", "media_urls_for_rel", "project_fingerprint",
+           "project_identity"]
 
 _EVENTS_TAIL = 15
+
+
+def project_identity(project: "Project | None") -> str:
+    """THE stable identity token of a bound project (GPT-analysis wave).
+
+    The workspace server binds ONE project and can be re-bound from any tab
+    (switcher / picker), so a stale tab's requests would otherwise read and
+    WRITE whatever project is bound NOW — not the one the tab rendered for.
+    Every rendered page embeds this token (``manju-project`` meta), the shared
+    page JS echoes it back as ``X-Manju-Project`` on mutating POSTs, and
+    ``do_POST`` refuses a mismatch with 409 ``project_switched``.
+
+    Root-derived (not a per-bind nonce) ON PURPOSE: two tabs on the same
+    project can never conflict, and switching BACK to a project re-validates
+    its old tabs for free. Not a secret (the CSRF gate is X-Manju-Token).
+    """
+    if project is None:
+        return ""
+    return short_hash(hash_text(str(project.root)), 12)
 
 
 def project_fingerprint(project: "Project", runner: "JobRunner") -> str:
@@ -336,6 +356,7 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
             "limit": status["budget_limit"],
         },
         "next_step": status["next_step"],
+        "next_step_key": status.get("next_step_key"),
         "shots_by_state": status["shots_by_state"],
         "voice_by_state": status["voice_by_state"],
         "timeline": status["timeline"],

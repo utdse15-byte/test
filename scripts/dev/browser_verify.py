@@ -20,6 +20,10 @@ real (tiny) mp4 takes — the flows the audit could only exercise over raw HTTP:
   F20 — an ERROR toast stays past the old 3.6s auto-dismiss (click-dismiss).
   F21 — navigating to a bad URL renders the HTML 404 page with a way home.
   F15 — the board banner is viewport-fixed (computed style position: fixed).
+  #45 — stale-tab guard: after ANOTHER tab rebinds the server to a second
+        project, a click on the old /review page must be refused (409
+        project_switched) and the full-page overlay must appear — the write
+        never lands in the wrong project.
 """
 
 import os
@@ -195,6 +199,30 @@ def main() -> int:
         content = page.content()
         check("F17 board annotations visible in gui /review",
               "第3帧道具穿帮" in content and "看板批注" in content)
+
+        # ---------------- DECISIONS #45: the stale-tab guard, for real
+        # This page (/review) rendered for 浏览器验证. Simulate another tab
+        # switching the SERVER to a second project via the exempt rebind
+        # action, then click a verdict here — the shared post() carries the
+        # stale X-Manju-Project, the server answers 409 project_switched and
+        # common.js raises the full-page overlay instead of writing.
+        proj2 = Project.create(ROOT / "第二项目", git_init=False)
+        page.evaluate(
+            "(p) => fetch('/api/workspace/open', {method: 'POST',"
+            " headers: {'Content-Type': 'application/json',"
+            " 'X-Manju-Token': window.TOKEN},"
+            " body: JSON.stringify({path: p})})",
+            str(proj2.root))
+        time.sleep(0.8)  # let the rebind land server-side
+        page.locator(".rv-shot").first.locator('[data-act="good"]').click()
+        try:
+            page.wait_for_selector("#mj-proj-switched", timeout=8000)
+            overlay_txt = page.locator("#mj-proj-switched").inner_text()
+            check("#45 stale-tab click blocked by overlay",
+                  "已停止读写" in overlay_txt, overlay_txt[:60])
+        except Exception:
+            check("#45 stale-tab click blocked by overlay", False,
+                  "overlay never appeared")
 
         page.screenshot(path=str(ROOT / "review.png"), full_page=True)
         browser.close()

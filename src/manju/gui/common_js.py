@@ -31,17 +31,71 @@ COMMON_JS = r"""
 // these globals instead of re-defining the byte-identical block.
 var META = document.querySelector('meta[name="manju-token"]');
 var TOKEN = META ? META.getAttribute("content") : "";
+/* GPT-analysis wave (stale-tab guard): the identity of the project this
+ * DOCUMENT was rendered for. Echoed back on every mutating POST as
+ * X-Manju-Project — the server refuses a mismatch (409 project_switched)
+ * so a tab left open across a project switch can never write into the
+ * wrong project. Empty (picker / older pages) = guard off, old behaviour. */
+var PROJ_META = document.querySelector('meta[name="manju-project"]');
+var PROJECT = PROJ_META ? (PROJ_META.getAttribute("content") || "") : "";
+
+/* Full-page block once THIS tab's project is no longer the bound one —
+ * reading on is as dangerous as writing (media URLs resolve in the NEW
+ * project). Refresh adopts the server's current project. */
+function projectSwitchedOverlay(name) {
+  if (document.getElementById("mj-proj-switched")) return;
+  var ov = document.createElement("div");
+  ov.id = "mj-proj-switched";
+  ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,18,24,.92);" +
+    "color:#fff;display:flex;flex-direction:column;align-items:center;" +
+    "justify-content:center;gap:1rem;text-align:center;padding:2rem";
+  var msg = document.createElement("div");
+  msg.style.cssText = "font-size:1.05rem;max-width:34em";
+  msg.textContent = name
+    ? ("服务器已切换到项目「" + name + "」— 本页属于另一个项目,已停止读写。")
+    : "服务器已切换/关闭项目 — 本页属于另一个项目,已停止读写。";
+  var btn = document.createElement("button");
+  btn.textContent = "刷新,跟随当前项目 (reload)";
+  btn.style.cssText = "font-size:1rem;padding:.5em 1.2em;cursor:pointer";
+  btn.addEventListener("click", function () { location.reload(); });
+  ov.appendChild(msg);
+  ov.appendChild(btn);
+  document.body.appendChild(ov);
+}
 
 function post(url, body) {
+  var headers = { "Content-Type": "application/json", "X-Manju-Token": TOKEN };
+  if (PROJECT) headers["X-Manju-Project"] = PROJECT;
   return fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Manju-Token": TOKEN },
+    headers: headers,
     body: JSON.stringify(body || {})
   }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
+      if (r.status === 409 && d && d.code === "project_switched") {
+        projectSwitchedOverlay(d.project);
+      }
       return { status: r.status, data: d };
     });
   });
+}
+
+/* The read-side watchdog: mutating POSTs are refused server-side, but an
+ * already-rendered page keeps SHOWING (and its <video> tags keep fetching)
+ * relative media paths that now resolve inside the newly bound project.
+ * /api/project-id is a constant-time read; 15 s keeps the window small
+ * without adding real load. Errors are ignored — a dead server is the
+ * browser's problem to report, not this watchdog's. */
+if (PROJECT) {
+  setInterval(function () {
+    fetch("/api/project-id").then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && typeof d.token === "string" && d.token !== PROJECT) {
+          projectSwitchedOverlay(d.name);
+        }
+      })
+      .catch(function () {});
+  }, 15000);
 }
 
 function toast(msg, ok) {

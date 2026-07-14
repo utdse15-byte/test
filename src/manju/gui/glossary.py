@@ -232,10 +232,16 @@ _GLOSSARY_JS = r"""
 (function () {
   var meta = document.querySelector('meta[name="manju-token"]');
   var TOKEN = meta ? (meta.getAttribute("content") || "") : "";
+  /* stale-tab guard: echo the document's project identity (absent on the
+   * picker) so mode/glossary toggles can't land in a switched project. */
+  var pmeta = document.querySelector('meta[name="manju-project"]');
+  var PROJECT_ID = pmeta ? (pmeta.getAttribute("content") || "") : "";
   function post(url, body) {
+    var headers = { "Content-Type": "application/json", "X-Manju-Token": TOKEN };
+    if (PROJECT_ID) headers["X-Manju-Project"] = PROJECT_ID;
     return fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Manju-Token": TOKEN },
+      headers: headers,
       body: JSON.stringify(body || {})
     });
   }

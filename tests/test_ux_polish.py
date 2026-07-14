@@ -889,3 +889,156 @@ def test_installer_offers_the_click_first_entry():
     assert '"gui"' in src  # the shortcut opens the workbench, not a bare shell
     block = src.split("if ($CreateShortcut)")[1].split("# ---")[0]
     assert "reg" not in block.lower().replace("programs", "")  # no registry path
+
+
+# ---------------------------------------------- GPT-analysis wave (2026-07-14)
+# Two kernels distilled from the owner-supplied external analysis, everything
+# else in it was already landed or rejected (DECISIONS #45):
+#   * `next_step_key` — the project-level 下一步 gets a STABLE machine token
+#     next to its Chinese sentence, completing the key+text contract the
+#     per-shot `todo` entries already follow (agents never parse prose).
+#   * stale-tab guard — the workspace server binds ONE switchable project, so
+#     a tab rendered for project 甲 could silently READ and WRITE project 乙
+#     after any other tab switched. Pages now carry their project identity
+#     (`manju-project` meta, stamped by the ONE owner in _send_text), the
+#     shared JS echoes it as X-Manju-Project, and do_POST refuses a mismatch
+#     with 409 project_switched instead of mutating the wrong project.
+
+
+def test_next_step_key_is_the_stable_machine_token(tmp_project, add_shot, make_take):
+    from manju.build.status import project_status
+
+    assert project_status(tmp_project)["next_step_key"] == "create_shots"
+
+    add_shot(tmp_project, "S001")
+    assert project_status(tmp_project)["next_step_key"] == "build_missing"
+
+    make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    st = project_status(tmp_project)
+    assert st["next_step_key"] == "select"
+    # the key and the sentence describe the SAME rung
+    assert "manju select" in st["next_step"]
+
+
+def test_state_payload_carries_next_step_key(gui, tmp_project, add_shot):
+    add_shot(tmp_project, "S001")
+    data = json.loads(urllib.request.urlopen(
+        f"http://127.0.0.1:{gui.port}/api/state", timeout=15).read())
+    assert data["next_step_key"] == "build_missing"
+
+
+def _get_raw(server, path):
+    with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.port}{path}", timeout=15) as resp:
+        return resp.status, resp.read().decode("utf-8")
+
+
+def test_project_identity_is_stamped_into_every_html_page(gui, tmp_project, add_shot):
+    from manju.gui.state import project_identity
+
+    tok = project_identity(tmp_project)
+    assert tok and len(tok) == 12
+    add_shot(tmp_project, "S001")
+    for path in ("/", "/review"):
+        _, html = _get_raw(gui, path)
+        assert f'<meta name="manju-project" content="{tok}">' in html, path
+
+    _, body = _get_raw(gui, "/api/project-id")
+    data = json.loads(body)
+    assert data["token"] == tok and data["name"]
+
+    _, body = _get_raw(gui, "/api/state")
+    assert json.loads(body)["project_token"] == tok
+
+
+def _post_h(server, path, body, headers):
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}{path}",
+        data=json.dumps(body).encode("utf-8"), method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Manju-Token", server.token)
+    for k, v in headers.items():
+        req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")
+
+
+def test_stale_tab_write_is_refused_after_project_switch(tmp_path, add_shot, make_take):
+    """The trust question the external analysis put best: 我正在审核 A 项目,
+    屏幕上这次点击到底落进了哪个项目?A stale tab's write must be REFUSED,
+    never silently applied to whatever project is bound now."""
+    from manju.core.container import Project
+    from manju.gui.server import create_server, discover_workspace
+    from manju.gui.state import project_identity
+
+    ws = tmp_path / "studio"
+    ws.mkdir()
+    a = Project.create(ws / "甲", git_init=False)
+    b = Project.create(ws / "乙", git_init=False)
+    server = create_server(a, host="127.0.0.1", port=0,
+                           workspace=discover_workspace(ws))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        tok_a, tok_b = project_identity(a), project_identity(b)
+        assert tok_a != tok_b
+
+        # the switch response hands the SPA its new identity to adopt
+        status, data = _post_h(server, "/api/switch", {"slug": "乙"}, {})
+        assert status == 200 and data["project_token"] == tok_b
+
+        # a tab still holding 甲's identity: its write is refused, named, coded
+        add_shot(b, "S001")
+        take = make_take(b, "S001", "h")
+        status, data = _post_h(server, "/api/select",
+                               {"shot": "S001", "take": take.name},
+                               {"X-Manju-Project": tok_a})
+        assert status == 409 and data["code"] == "project_switched"
+        assert "乙" in data["error"]  # names where the server actually is
+        assert b.load_shot("S001").status.selected_take is None  # nothing landed
+
+        # the same write with the CURRENT identity goes through
+        status, data = _post_h(server, "/api/select",
+                               {"shot": "S001", "take": take.name},
+                               {"X-Manju-Project": tok_b})
+        assert status == 200
+
+        # switching is exempt — a stale tab may always ask to switch/open
+        status, _ = _post_h(server, "/api/switch", {"slug": "甲"},
+                            {"X-Manju-Project": tok_b})
+        assert status == 200
+
+        # header-less clients (tests, curl, older pages) keep the old behaviour
+        status, _ = _post_h(server, "/api/lock",
+                            {"shot": "S001", "field": "dialogue.text"}, {})
+        assert status != 409
+    finally:
+        server.shutdown()
+        server.close()
+
+
+def test_page_js_echoes_the_project_identity():
+    """Source pins: all three JS owners (shared page helpers, the SPA, the
+    glossary/mode script) read the manju-project meta, echo it on mutating
+    POSTs and block the page once the server's project no longer matches."""
+    from manju.gui.common_js import render_common_js
+    from manju.gui import glossary as _glossary
+    from manju.gui.page import render_js
+
+    common = render_common_js()
+    assert 'manju-project' in common
+    assert '"X-Manju-Project"' in common
+    assert 'project_switched' in common
+    assert '/api/project-id' in common  # the read-side watchdog poll
+
+    spa = render_js()
+    assert 'manju-project' in spa
+    assert '"X-Manju-Project"' in spa
+    assert 'project_switched' in spa
+
+    glos = _glossary._GLOSSARY_JS
+    assert 'manju-project' in glos and '"X-Manju-Project"' in glos

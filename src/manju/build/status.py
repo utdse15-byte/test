@@ -261,25 +261,40 @@ def project_status(project: Project, *, statuses: Any = None,
         except (json.JSONDecodeError, OSError):
             qc_summary = {"ok": None, "note": "qc.json unreadable"}
 
-    # suggested next step, in build order
+    # suggested next step, in build order. `next_step_key` is the STABLE
+    # machine token for the same ladder (GPT-analysis wave): agents and GUIs
+    # branch on the key, never on the Chinese text — rewording a sentence
+    # must not break automation (the per-shot `todo` entries already follow
+    # this key+text contract).
     if not statuses:
         next_step = "创作阶段:先写 shots/(引擎不编故事,§2)"
+        next_step_key = "create_shots"
     elif by_state.get("missing"):
         next_step = f"manju build(补齐缺失镜头:{', '.join(by_state['missing'][:5])}…)" \
             if len(by_state.get("missing", [])) > 5 else \
             f"manju build(补齐缺失镜头:{', '.join(by_state['missing'])})"
+        next_step_key = "build_missing"
     elif by_state.get("needs_selection"):
         next_step = f"manju select(待挑选:{', '.join(by_state['needs_selection'])})"
+        next_step_key = "select"
     elif by_state.get("broken"):
         next_step = f"修复 broken 镜头:{', '.join(by_state['broken'])}"
+        next_step_key = "fix_broken"
     elif timeline is None:
         next_step = "manju build(编译时间线并渲染)"
+        next_step_key = "build_timeline"
     elif final is None:
         next_step = "manju build --target final"
+        next_step_key = "build_final"
     elif qc_summary and qc_summary.get("errors"):
         next_step = "manju repair / 处理 reports/qc.md 中的错误"
+        next_step_key = "fix_qc"
+    elif by_state.get("stale"):
+        next_step = "已可出片;stale 镜头可用 manju redo 重做"
+        next_step_key = "redo_stale"
     else:
-        next_step = "已可出片;stale 镜头可用 manju redo 重做" if by_state.get("stale") else "完成 ✅"
+        next_step = "完成 ✅"
+        next_step_key = "done"
 
     # Preset label + advisory qc_focus (P3): purely a record the preset wrote
     # at `manju new` time; surfaced here so a takeover sees what to watch for.
@@ -312,6 +327,7 @@ def project_status(project: Project, *, statuses: Any = None,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
         "next_step": next_step,
+        "next_step_key": next_step_key,
         # Intuitiveness wave: the per-shot answers (ONE actionable sentence
         # per shot that needs anything) — additive; agents branch on `key`.
         "todo": next_actions(project, statuses=statuses, voices=voices),

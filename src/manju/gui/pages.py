@@ -2079,8 +2079,10 @@ _PAGES_JS = r"""
     if (up) up.addEventListener("change", function () {
       var f = up.files[0];
       if (!f) return;
+      var upHeaders = { "X-Manju-Token": TOKEN };
+      if (PROJECT) upHeaders["X-Manju-Project"] = PROJECT;
       fetch("/api/lib/upload?name=" + encodeURIComponent(f.name), {
-        method: "POST", headers: { "X-Manju-Token": TOKEN }, body: f
+        method: "POST", headers: upHeaders, body: f
       }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (d) {
           return { status: r.status, data: d };

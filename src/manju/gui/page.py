@@ -835,7 +835,36 @@ _JS = r"""
 (() => {
   const tokenMeta = document.querySelector('meta[name="manju-token"]');
   const TOKEN = tokenMeta ? (tokenMeta.getAttribute("content") || "") : "";
+  /* stale-tab guard: the project this document rendered for. Mutable ON
+   * PURPOSE — doSwitch() adopts the new identity from its own /api/switch
+   * response (an INTENTIONAL switch, no reload); the passive refresh() poll
+   * never adopts, it overlays on mismatch instead. */
+  const projMeta = document.querySelector('meta[name="manju-project"]');
+  let PROJECT = projMeta ? (projMeta.getAttribute("content") || "") : "";
   const $ = (id) => document.getElementById(id);
+
+  /* another tab switched the server's project — block this one (its media
+   * URLs now resolve inside the NEW project); reload follows the switch. */
+  const projectSwitchedOverlay = (name) => {
+    if (document.getElementById("mj-proj-switched")) return;
+    const ov = document.createElement("div");
+    ov.id = "mj-proj-switched";
+    ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,18,24,.92);" +
+      "color:#fff;display:flex;flex-direction:column;align-items:center;" +
+      "justify-content:center;gap:1rem;text-align:center;padding:2rem";
+    const msg = document.createElement("div");
+    msg.style.cssText = "font-size:1.05rem;max-width:34em";
+    msg.textContent = name
+      ? ("服务器已切换到项目「" + name + "」— 本页属于另一个项目,已停止读写。")
+      : "服务器已切换/关闭项目 — 本页属于另一个项目,已停止读写。";
+    const btn = document.createElement("button");
+    btn.textContent = "刷新,跟随当前项目 (reload)";
+    btn.style.cssText = "font-size:1rem;padding:.5em 1.2em;cursor:pointer";
+    btn.addEventListener("click", () => location.reload());
+    ov.appendChild(msg);
+    ov.appendChild(btn);
+    document.body.appendChild(ov);
+  };
 
   /* ------------------------------------------------------------- DOM --- */
   /* Every dynamic node gets its text via textContent — never innerHTML. */
@@ -894,6 +923,7 @@ _JS = r"""
    * api() keeps the v1 throw-on-!ok contract for everything else. */
   const apiRaw = async (method, path, body) => {
     const opts = { method, headers: { "X-Manju-Token": TOKEN } };
+    if (PROJECT) opts.headers["X-Manju-Project"] = PROJECT;
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
@@ -901,6 +931,9 @@ _JS = r"""
     const res = await fetch(path, opts);
     let data = null;
     try { data = await res.json(); } catch (e) { data = null; }
+    if (res.status === 409 && data && data.code === "project_switched") {
+      projectSwitchedOverlay(data.project);
+    }
     return { ok: res.ok, status: res.status, data };
   };
   const api = async (method, path, body) => {
@@ -1016,6 +1049,13 @@ _JS = r"""
     try {
       const s = await api("GET", "/api/state");
       pollFailed = false;
+      /* stale-tab guard: another tab switched the server's project. Never
+       * silently repaint as the new project — overlay and stop rendering. */
+      if (PROJECT && s && typeof s.project_token === "string" &&
+          s.project_token && s.project_token !== PROJECT) {
+        projectSwitchedOverlay(s.project && s.project.name);
+        return;
+      }
       render(s);
     } catch (err) {
       if (!pollFailed) {
@@ -1736,6 +1776,9 @@ _JS = r"""
   async function doSwitch(slug) {
     try {
       const d = await api("POST", "/api/switch", { slug });
+      /* INTENTIONAL switch: this tab adopts the new project identity so the
+       * stale-tab guard keeps protecting every OTHER tab, not this one. */
+      if (d && d.project_token) PROJECT = d.project_token;
       toast("已切换项目 (switched): " + ((d && d.slug) || slug), "ok");
       resetAfterSwitch();
       refresh();
@@ -3733,9 +3776,11 @@ _JS = r"""
 
   async function uploadOne(file) {
     /* RAW bytes as the body — not JSON, not multipart (server contract) */
+    const upHeaders = { "X-Manju-Token": TOKEN, "Content-Type": "application/octet-stream" };
+    if (PROJECT) upHeaders["X-Manju-Project"] = PROJECT;
     const res = await fetch("/api/upload?name=" + encodeURIComponent(file.name), {
       method: "POST",
-      headers: { "X-Manju-Token": TOKEN, "Content-Type": "application/octet-stream" },
+      headers: upHeaders,
       body: file,
     });
     let data = null;
