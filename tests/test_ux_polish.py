@@ -1600,8 +1600,10 @@ def test_review_queue_walks_most_blocking_first_and_supports_undo():
     js = render_pages_js()
     seg = js.split("function qPriority")[1].split("var qOrder")[0]
     # a take-less shot cannot take a verdict — it trails everything reviewable
-    assert 'if (!s.getAttribute("data-take")) return 4;' in seg
+    # (evolved same-wave: QC-error findings joined the ladder after stale)
+    assert 'if (!s.getAttribute("data-take")) return 5;' in seg
     assert '"needs_selection"' in seg and '"stale"' in seg
+    assert 'getAttribute("data-qc") === "1"' in seg
     # 好 advances the queue exactly like 通过 always did; u restores what the
     # verdict overwrote (the input's defaultValue = the server-rendered note)
     assert "else if (queueMode)" in js
@@ -1671,3 +1673,53 @@ def test_nav_groups_by_frequency_and_keeps_every_link(tmp_project):
     assert 'href="/providers"' not in beginner
     # 工具箱 collapses to its one visible page in 新手 mode
     assert ">素材库</a>" in beginner and "工具箱" not in beginner
+
+
+# ------------------------------------------------- #50a follow-through items
+
+
+def test_review_remembers_playback_and_flags_qc(tmp_project, add_shot, make_take):
+    from manju.gui.pages import render_pages_js, render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    # every card carries its QC-error flag for the queue ladder
+    assert 'data-qc="0"' in render_review(tmp_project, "tok")
+    js = render_pages_js()
+    # playback memory: per-project key, applied on load, captured on change
+    # (media events do not bubble — the capture-phase listeners are the point)
+    assert "manju-rv-av-" in js
+    assert 'addEventListener("ratechange", saveAV, true)' in js
+    assert 'addEventListener("volumechange", saveAV, true)' in js
+
+
+def test_gui_app_window_launches_and_falls_back(monkeypatch):
+    import subprocess
+    import webbrowser
+
+    from manju import cli as cli_mod
+
+    calls = []
+
+    class _P:
+        def __init__(self, args, **kw):
+            calls.append(list(args))
+
+    monkeypatch.setattr(cli_mod, "_app_browser_candidates", lambda: ["/fake/msedge"])
+    monkeypatch.setattr(subprocess, "Popen", _P)
+    cli_mod._open_gui_window("http://127.0.0.1:1/x", True)
+    assert calls == [["/fake/msedge", "--app=http://127.0.0.1:1/x"]]
+
+    opened = []
+    monkeypatch.setattr(cli_mod, "_app_browser_candidates", lambda: [])
+    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u))
+    cli_mod._open_gui_window("http://y", True)   # no browser → named fallback
+    assert opened == ["http://y"]
+    opened.clear()
+    cli_mod._open_gui_window("http://z", False)  # --app off → plain default
+    assert opened == ["http://z"]
+
+
+def test_gui_help_names_the_app_window():
+    res = runner.invoke(app, ["gui", "--help"])
+    assert "--app" in res.output

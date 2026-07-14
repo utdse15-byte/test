@@ -574,6 +574,7 @@ def render_review(project: Any, token: str) -> str:
             f'<section class="rv-shot panel" id="rv-{_e(sid)}" data-shot="{_e(sid)}" '
             f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}" '
             f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}" '
+            f'data-qc="{"1" if any(str(f.get("level")) == "error" for f in findings) else "0"}" '
             f'data-rev="{_e(rev)}">\n'
             f'  <div class="rv-head"><h2><a class="rv-lablink" '
             f'href="/lab?shot={_e(sid)}" title="打开镜头实验室 (lab)">{_e(sid)}</a> '
@@ -1873,19 +1874,43 @@ _PAGES_JS = r"""
     var queueMode = false;
     var qIndex = 0;
     var qModeKey = "manju-rv-queue-" + (typeof PROJECT === "string" ? PROJECT : "");
+    /* 播放记忆 (#50a): rate/volume/muted survive reloads, per project —
+     * review sessions keep the owner's chosen speed without re-setting it
+     * on every card. Applies to every card + alt preview on load; any
+     * user change on any <video> becomes the new remembered value. */
+    var avKey = "manju-rv-av-" + (typeof PROJECT === "string" ? PROJECT : "");
+    var av = null;
+    try { av = JSON.parse(window.localStorage.getItem(avKey) || "null"); } catch (err) { av = null; }
+    function applyAV(v) {
+      if (!av || !v) return;
+      if (typeof av.rate === "number" && av.rate > 0) v.playbackRate = av.rate;
+      if (typeof av.vol === "number") v.volume = Math.min(1, Math.max(0, av.vol));
+      if (typeof av.muted === "boolean") v.muted = av.muted;
+    }
+    function saveAV(e) {
+      var v = e.target;
+      if (!v || v.tagName !== "VIDEO") return;
+      av = { rate: v.playbackRate, vol: v.volume, muted: v.muted };
+      try { window.localStorage.setItem(avKey, JSON.stringify(av)); } catch (err) { /* off */ }
+    }
+    Array.prototype.slice.call(document.querySelectorAll(".rv-shot video")).forEach(applyAV);
+    /* media events do not bubble — capture phase catches them all */
+    document.addEventListener("ratechange", saveAV, true);
+    document.addEventListener("volumechange", saveAV, true);
     /* direction program (#50): the queue walks most-blocking first, not shot
      * order. Snapshotted ONCE at load — a live re-sort would make cards jump
      * mid-session; the next reload re-ranks. */
     function qPriority(s) {
       var bs = s.getAttribute("data-buildstate") || "";
-      if (s.getAttribute("data-reviewed") === "1") return 5;
+      if (s.getAttribute("data-reviewed") === "1") return 6;
       /* nothing to JUDGE yet — a take-less shot cannot take a verdict, so it
        * trails everything reviewable regardless of its build state. */
-      if (!s.getAttribute("data-take")) return 4;
+      if (!s.getAttribute("data-take")) return 5;
       if (bs === "needs_selection") return 0;
       if (bs === "stale") return 1;
-      if ((s.getAttribute("data-review") || "needs_review") === "needs_review") return 2;
-      return 3;
+      if (s.getAttribute("data-qc") === "1") return 2;   /* QC error findings */
+      if ((s.getAttribute("data-review") || "needs_review") === "needs_review") return 3;
+      return 4;
     }
     var qOrder = shots.slice().sort(function (a, b) {
       var d = qPriority(a) - qPriority(b);

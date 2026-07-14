@@ -67,3 +67,17 @@ the probe pins the reload-restore live.
   chip target + position, strip-count filter click); wave-2 probe 19/19
   re-green after the restore-clobber fix; harness 21/21.
 - Union GUI batch 401/1/0; full suite green (count in DECISIONS #50).
+
+## 50a follow-through (same day)
+
+- QC error findings joined the queue ladder (`data-qc` on every card;
+  rank: select → stale → QC → unreviewed → rest → take-less → reviewed).
+- 播放记忆: rate/volume/muted per project on /review, capture-phase
+  listeners, live-probed across reload.
+- `manju gui --app` landed (deferral reversed — the launch path is
+  testable cross-platform): Edge/Chrome/Chromium discovery incl. the two
+  off-PATH Windows install locations, chromeless `--app=` window, named
+  fallback. NOT built: close-window-stops-server (a detached browser
+  cannot signal the server honestly); Windows toast notifications (needs
+  a real Windows session to verify).
+- 3 new pins + 1 evolved (90 total), red-first; probe 21/21.

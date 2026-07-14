@@ -2471,3 +2471,29 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - 5 new pins (test_ux_polish.py, 87 total), red-first by stash; 20/20
   live direction checks + wave-2 probe 19/19 + harness 21/21; union GUI
   batch 401/1/0; full suite 4405/2/0.
+
+### 50a. Direction follow-through: QC joins the queue, playback memory, the app shell (2026-07-14)
+
+- Same 10-hour mandate, remaining budget. Three deferred/bounded items
+  re-examined and landed:
+- QC in the review ladder: /review cards now carry `data-qc` (any
+  level=error finding) and the queue ranks them AFTER stale, BEFORE
+  generic unreviewed — the document's ladder position, wired to the QC
+  data the card already rendered. The take-less demotion renumbered
+  (return 5) — pin evolved same-wave with recorded intent.
+- 播放记忆: /review remembers playbackRate/volume/muted per project
+  (manju-rv-av-<identity>) — applied to every card + alt preview on load,
+  captured via CAPTURE-phase ratechange/volumechange (media events do not
+  bubble). Live-probed: 1.5× survives a reload.
+- `manju gui --app` (the 桌面薄壳, deferral reversed): the launch path IS
+  implementable cross-platform — `_app_browser_candidates` probes PATH
+  (msedge/chrome/chromium) plus the two canonical Windows install
+  locations that live off PATH; `_open_gui_window` spawns `--app=<url>`
+  (chromeless window, every byte of the GUI reused) and falls back to the
+  default browser with a NAMED notice, never failing the server. The
+  optional flag leaves the frozen CLI surface green (snapshot tracks
+  required params; verified, no regen needed). The document's
+  close-window-stops-server half stays NOT built — a detached browser
+  process cannot signal the server honestly; recorded.
+- 3 new pins + 1 evolved (test_ux_polish.py, 90 total), red-first by
+  stash; probe grows to 21/21; harness 21/21; full suite 4408/2/0.
