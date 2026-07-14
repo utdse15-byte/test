@@ -15,6 +15,123 @@ from ..core.events import tail_events
 from .stale import evaluate_all
 
 
+def _qc_error_shots(project: Project) -> frozenset[str]:
+    """Shot ids with level=error findings in the LAST qc report — read the
+    same derived report the status surface already summarizes (advice for a
+    human, never a build input). Unreadable/absent → empty, never a crash."""
+    try:
+        doc = json.loads((project.root / "reports" / "qc.json")
+                         .read_text(encoding="utf-8"))
+        return frozenset(
+            str(item.get("shot"))
+            for item in doc.get("items", [])
+            if item.get("level") == "error" and item.get("shot"))
+    except Exception:
+        return frozenset()
+
+
+def shot_next_action(project: Project, shot_id: str, *, state: str,
+                     selected_take: str | None,
+                     voice_state: str | None = None,
+                     qc_error_shots: frozenset[str] = frozenset()) -> dict[str, str]:
+    """Intuitiveness wave: ONE question, one answer — 这个镜头现在需要我做什么?
+
+    A shot carries four-plus parallel state machines (build state, per-take
+    verdicts, review annotations, QC findings, voice) and the owner's real
+    task was diffing them in their head. This folds them into a single
+    actionable sentence, most-blocking first, always naming the EXACT command
+    — and the undo (`manju rollback shot`) wherever a choice can be wrong.
+    Pure derivation over facts the surfaces already hold; no new state.
+
+    Returns ``{"shot", "key", "action"}`` where ``key`` is the stable rung
+    token (broken/missing/select/blocker/qc/voice/stale/review/ok) an agent
+    can branch on, and ``action`` is the owner's sentence."""
+    sid = shot_id
+
+    def _r(key: str, action: str) -> dict[str, str]:
+        return {"shot": sid, "key": key, "action": action}
+
+    if state == "broken":
+        return _r("broken",
+                  f"修复:选中 take 的媒体不可用 — manju redo {sid} 重生成,"
+                  f"或 manju select {sid} <take> 换选(选错可 manju rollback shot {sid})")
+    if state == "missing":
+        return _r("missing", f"生成:manju build 补齐(单镜 manju redo {sid})")
+    if state == "needs_selection":
+        return _r("select",
+                  f"挑选:manju select {sid} <take>(对比看板 manju board --serve;"
+                  f"选错可 manju rollback shot {sid})")
+
+    # blocker annotations bound to the CURRENT selected media only — a STALE
+    # binding (media since replaced) is the board's ⚠ 陈旧 business, never a nag.
+    if selected_take:
+        try:
+            from ..core.hashing import hash_file  # process-cached
+
+            shot = project.load_shot(sid)
+            anns = [a for a in (shot.status.annotations or [])
+                    if a.take == selected_take and a.severity == "blocker"]
+            if anns:
+                info = project.get_take(sid, selected_take)
+                current = (hash_file(info.media_path)
+                           if info is not None and info.media_path is not None
+                           and info.media_path.is_file() else None)
+                live = [a for a in anns if a.matches_media(current)]
+                if live:
+                    frames = ", ".join(f"f{a.frame}" for a in live if a.frame is not None)
+                    where = f"(定位 {frames})" if frames else ""
+                    return _r("blocker",
+                              f"处理阻断批注:{len(live)} 条 blocker 指着当前媒体"
+                              f"{where} — manju board --serve 查看,改后重选或重做")
+        except Exception:
+            pass  # annotation advice must never break the takeover surface
+
+    if sid in qc_error_shots:
+        return _r("qc", "QC 错误:manju repair,或按 reports/qc.md 处理后重跑 manju qc")
+    if voice_state in ("missing", "stale"):
+        return _r("voice", f"配音:manju voice {sid}")
+    if state == "stale":
+        return _r("stale",
+                  f"spec 已变:manju redo {sid} 重做,或保留现选(现选依然可用,§4.3)")
+
+    try:
+        review = getattr(project.load_shot(sid).status, "review", None)
+    except Exception:
+        review = None
+    if review in ("needs_review", "in_progress") and selected_take:
+        return _r("review", "审片:manju gui 的审片页好/弃,或看板批注后 通过")
+    return _r("ok", "无需动作 ✅")
+
+
+def next_actions(project: Project, *, statuses: Any = None,
+                 voices: Any = None) -> list[dict[str, str]]:
+    """The full per-shot pass for the takeover surfaces (`manju status` +
+    JSON `todo`): one entry per shot whose answer is NOT 无需动作, in index
+    order. Same precomputed-pass parameters as :func:`project_status`."""
+    if statuses is None:
+        statuses = evaluate_all(project)
+    voice_by_shot: dict[str, str] = {}
+    try:
+        from .voice import VoiceState, evaluate_all_voices
+
+        for vs in (voices if voices is not None else evaluate_all_voices(project)):
+            if vs.state != VoiceState.NOT_NEEDED:
+                voice_by_shot[vs.shot_id] = vs.state.value
+    except Exception:
+        pass
+    qc_errors = _qc_error_shots(project)
+    todo: list[dict[str, str]] = []
+    for st in statuses:
+        act = shot_next_action(
+            project, st.shot_id, state=st.state.value,
+            selected_take=st.selected_take,
+            voice_state=voice_by_shot.get(st.shot_id),
+            qc_error_shots=qc_errors)
+        if act["key"] != "ok":
+            todo.append(act)
+    return todo
+
+
 def project_status(project: Project, *, statuses: Any = None,
                    voices: Any = None) -> dict[str, Any]:
     """``statuses`` / ``voices`` (G2): a caller that already ran
@@ -195,5 +312,8 @@ def project_status(project: Project, *, statuses: Any = None,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
         "next_step": next_step,
+        # Intuitiveness wave: the per-shot answers (ONE actionable sentence
+        # per shot that needs anything) — additive; agents branch on `key`.
+        "todo": next_actions(project, statuses=statuses, voices=voices),
         "build_lock": build_lock_info,
     }

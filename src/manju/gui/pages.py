@@ -363,6 +363,16 @@ def render_review(project: Any, token: str) -> str:
         build_states = {st.shot_id: st.state.value for st in evaluate_all(project)}
     except Exception:
         build_states = {}
+    # Intuitiveness wave: the ONE per-shot answer (build/status.py owner) —
+    # computed with the same facts this page already renders; QC errors read
+    # once for the whole page.
+    try:
+        from ..build.status import _qc_error_shots, shot_next_action
+
+        _qc_errs = _qc_error_shots(project)
+    except Exception:  # advice must never break the review page
+        shot_next_action = None  # type: ignore[assignment]
+        _qc_errs = frozenset()
 
     # round AA item 5 (#1): CAS token per shot — the note input below is
     # pre-filled with the CURRENT note text at render time (a human may sit on
@@ -512,6 +522,19 @@ def render_review(project: Any, token: str) -> str:
         dialogue = _e(shot.dialogue.text) if shot else ""
         reviewed_attr = "1" if take_notes else "0"
 
+        # the ONE per-shot answer, only when there IS something to do
+        next_html = ""
+        if shot_next_action is not None:
+            try:
+                act = shot_next_action(project, sid, state=build_state,
+                                       selected_take=selected,
+                                       qc_error_shots=_qc_errs)
+                if act["key"] != "ok":
+                    next_html = (f'<div class="rv-next">下一步:'
+                                 f'{_e(act["action"])}</div>')
+            except Exception:
+                next_html = ""
+
         rev = shot_text_hash(project, sid) if shot else ""
 
         cards.append(
@@ -521,7 +544,8 @@ def render_review(project: Any, token: str) -> str:
             f'data-rev="{_e(rev)}">\n'
             f'  <div class="rv-head"><h2>{_e(sid)} {state_badge}{build_badge}'
             f'<span class="rv-idx muted">#{idx + 1}</span></h2>'
-            f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div></div>\n'
+            f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div>'
+            f"{next_html}</div>\n"
             f'  <div class="rv-body">\n'
             f'    <div class="rv-player">{player}</div>\n'
             f'    <div class="rv-side">{qc_html}{ann_html}{frame_html}{alt_html}</div>\n'
@@ -1518,6 +1542,7 @@ _PAGES_CSS = """
 .rv-qc { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem; }
 .rv-qc-item { font-size: .84rem; }
 .rv-qc-sug { font-size: .8rem; margin-left: 1.2rem; }
+.rv-next { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
 /* UX audit F17: the board's annotations, mirrored read-only */
 .rv-anns ul { margin: .2rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem; }
 .rv-ann-item { font-size: .84rem; }

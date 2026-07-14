@@ -732,3 +732,160 @@ def test_select_survives_malformed_shot_yaml(tmp_project, add_shot, monkeypatch)
     assert "Traceback" not in res.output + (res.stderr or "")
     doc = json.loads(res.output)
     assert doc["code"] == "truth_parse_error"
+
+
+# ------------------------- intuitiveness wave: the ONE per-shot next action
+
+
+def _st(project, sid):
+    from manju.build.stale import evaluate_all
+
+    return {s.shot_id: s for s in evaluate_all(project)}[sid]
+
+
+def test_next_action_ladder_missing_select_ok(tmp_project, add_shot, make_take):
+    """The owner's real question — 这个镜头现在需要我做什么 — answered by ONE
+    resolver folding the per-shot state machines, most-blocking first, always
+    naming the exact command (and the undo, where a choice can be wrong)."""
+    from manju.build.status import shot_next_action
+
+    add_shot(tmp_project, "S001")
+    st = _st(tmp_project, "S001")
+    current_spec = st.spec_hash  # MISSING reports the CURRENT spec hash
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take)
+    assert act["key"] == "missing"
+    assert "manju build" in act["action"]
+
+    t1 = make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    st = _st(tmp_project, "S001")
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take)
+    assert act["key"] == "select"
+    assert f"manju select S001" in act["action"]
+    assert "rollback shot" in act["action"]  # the undo is named where it applies
+
+    from manju.core.writes import select_take_checked
+    from manju.runtime.buildlock import build_lock
+
+    with build_lock(tmp_project.root, actor="human"):
+        select_take_checked(tmp_project, "S001", t1.name, actor="human", via="cli")
+    st = _st(tmp_project, "S001")
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take)
+    # fake takes carry an arbitrary spec_hash → honestly STALE, and the rung
+    # says so while noting the selection still stands (§4.3)
+    assert act["key"] == "stale"
+    assert "manju redo S001" in act["action"]
+    assert "现选依然可用" in act["action"]
+
+    # the fallthrough: a fresh shot with nothing pending → 无需动作 (the
+    # state parameter is a plain string by design — every surface passes its
+    # own already-computed value; drive the rung directly)
+    del current_spec  # the sidecar-vs-computed comparison form is generation's
+    act = shot_next_action(tmp_project, "S001", state="fresh",
+                           selected_take=t1.name)
+    assert act["key"] == "ok"
+    assert "无需动作" in act["action"]
+
+
+def test_next_action_blocker_annotation_outranks_review(tmp_project, add_shot, make_take):
+    """A blocker annotation bound to the CURRENT selected media is the most
+    actionable fact after the build states — and a STALE one (media since
+    replaced) must NOT nag."""
+    from manju.board.server import API_ACTIONS
+    from manju.build.status import shot_next_action
+    from manju.core.writes import select_take_checked
+    from manju.runtime.buildlock import build_lock
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+    with build_lock(tmp_project.root, actor="human"):
+        select_take_checked(tmp_project, "S001", take.name, actor="human", via="cli")
+    API_ACTIONS["annotate"](tmp_project, {
+        "shot": "S001", "take": take.name, "text": "第2帧穿帮", "severity": "blocker",
+        "frame": 2})
+    st = _st(tmp_project, "S001")
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take)
+    assert act["key"] == "blocker"
+    assert "blocker" in act["action"]
+
+    # replace the media bytes → the binding is stale → no nag from it
+    info = tmp_project.get_take("S001", take.name)
+    info.media_path.write_bytes(b"replaced-bytes")
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take)
+    assert act["key"] != "blocker"
+
+
+def test_next_action_qc_and_voice_rungs(tmp_project, add_shot, make_take):
+    from manju.build.status import shot_next_action
+    from manju.core.writes import select_take_checked
+    from manju.runtime.buildlock import build_lock
+
+    add_shot(tmp_project, "S001")
+    take = make_take(tmp_project, "S001", "h")
+    with build_lock(tmp_project.root, actor="human"):
+        select_take_checked(tmp_project, "S001", take.name, actor="human", via="cli")
+    st = _st(tmp_project, "S001")
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take,
+                           qc_error_shots=frozenset({"S001"}))
+    assert act["key"] == "qc"
+    assert "manju repair" in act["action"]
+
+    act = shot_next_action(tmp_project, "S001", state=st.state.value,
+                           selected_take=st.selected_take, voice_state="missing")
+    assert act["key"] == "voice"
+    assert "manju voice S001" in act["action"]
+
+
+def test_status_cli_lists_the_todo_lines(tmp_project, add_shot, make_take, monkeypatch):
+    """`manju status` — the takeover surface — now answers per shot, not only
+    per project: a 待办 section naming each shot's ONE action (and the JSON
+    envelope gains an additive `todo` list for agents)."""
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "a")
+    make_take(tmp_project, "S001", "b")
+    monkeypatch.chdir(tmp_project.root)
+    res = runner.invoke(app, ["status"])
+    assert res.exit_code == 0
+    assert "待办" in res.output
+    assert "manju select S001" in res.output
+
+    doc = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    todo = {t["shot"]: t for t in doc["todo"]}
+    assert todo["S001"]["key"] == "select"
+
+
+def test_review_and_board_cards_show_the_next_action(gui, tmp_project, add_shot, make_take):
+    from manju.board.board import render_board
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "a")
+    make_take(tmp_project, "S001", "b")
+
+    html = urllib.request.urlopen(
+        f"http://127.0.0.1:{gui.port}/review", timeout=15).read().decode("utf-8")
+    assert "下一步" in html and "manju select S001" in html
+
+    served = render_board(tmp_project, serve=True)
+    assert "下一步" in served and "manju select S001" in served
+    # static board (the shareable handoff) intentionally does NOT carry the
+    # owner's workbench todo line
+    static = render_board(tmp_project, serve=False)
+    assert "下一步" not in static
+
+
+def test_installer_offers_the_click_first_entry():
+    """Intuitiveness wave: a click-first owner needs a Start-Menu entry —
+    opt-in (-CreateShortcut), a per-user .lnk FILE (no registry, §4.2),
+    targeting the launcher's gui mode (workspace picker outside a project)."""
+    src = Path("scripts/windows/install-manju.ps1").read_text(encoding="utf-8")
+    assert "$CreateShortcut" in src
+    assert "Start Menu" in src
+    assert '"gui"' in src  # the shortcut opens the workbench, not a bare shell
+    block = src.split("if ($CreateShortcut)")[1].split("# ---")[0]
+    assert "reg" not in block.lower().replace("programs", "")  # no registry path

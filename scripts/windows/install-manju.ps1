@@ -20,7 +20,8 @@
 [CmdletBinding()]
 param(
     [string]$Source = "",
-    [switch]$AddToPath
+    [switch]$AddToPath,
+    [switch]$CreateShortcut
 )
 
 Set-StrictMode -Version Latest
@@ -158,6 +159,25 @@ set /p MANJU_VER=<"%MANJU_APP%\current.txt"
 endlocal
 "@
 Set-Content -Path (Join-Path $BinDir "manju.cmd") -Value $launcher -Encoding ASCII
+
+# ------------------------------------------------------- shortcut (opt-in ONLY)
+# Intuitiveness wave: the click-first daily entry. A per-user Start-Menu .lnk
+# is a FILE under %APPDATA% (no registry, §4.2 honoured) pointing at the
+# launcher's gui mode — outside any project `manju gui` opens the workspace
+# picker (recent projects), so a double-click always lands somewhere sane.
+if ($CreateShortcut) {
+    $smDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+    New-Item -ItemType Directory -Force -Path $smDir | Out-Null
+    $lnkPath = Join-Path $smDir "Manju 工作台.lnk"
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($lnkPath)
+    $lnk.TargetPath = Join-Path $BinDir "manju.cmd"
+    $lnk.Arguments = "gui"
+    $lnk.WorkingDirectory = $env:USERPROFILE
+    $lnk.Description = "Manju 本地工作台(打开浏览器工作区选择器)"
+    $lnk.Save()
+    Write-Step "Start-menu shortcut: $lnkPath  (双击 = manju gui 工作区选择器)"
+}
 
 # ---------------------------------------------------------------- PATH (opt-in ONLY)
 if ($AddToPath) {

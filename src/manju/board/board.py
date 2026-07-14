@@ -195,6 +195,7 @@ _SERVE_CSS = """
 .shot-actions { display: flex; gap: .5rem; margin-top: .75rem; flex-wrap: wrap; }
 .tact { margin-top: .45rem; }
 .tact .btn { width: 100%; }
+.shot-next { color: #9aa0aa; font-size: .82rem; margin: .3rem 0 .1rem; }
 .mj-banner {
   /* UX audit F15: viewport-fixed — the banner used to sit in normal flow at
    * the very top, so a failed action while scrolled deep into the shot list
@@ -1449,6 +1450,21 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
     except Exception:
         voice_html = ""
 
+    # Intuitiveness wave: the ONE per-shot answer, SERVE MODE only (the
+    # static board is the shareable review handoff — the owner's workbench
+    # todo line stays off it, keeping static bytes untouched).
+    next_html = ""
+    if serve:
+        try:
+            from ..build.status import shot_next_action
+
+            act = shot_next_action(project, shot_id, state=state_val,
+                                   selected_take=selected)
+            if act["key"] != "ok":
+                next_html = f'<div class="shot-next">下一步:{_esc(act["action"])}</div>'
+        except Exception:
+            next_html = ""
+
     head = (
         '<div class="shot-head">'
         f'<span class="sid">{_esc(shot_id)}</span>'
@@ -1457,6 +1473,7 @@ def _render_shot(project: "Project", shot_id: str, status: Any,
         f"{voice_html}"
         f'<span class="action">{_esc(action)}</span>'
         "</div>"
+        f"{next_html}"
     )
     dialogue = ""
     if dtext or speaker:

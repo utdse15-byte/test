@@ -506,6 +506,15 @@ def status(as_json: bool = typer.Option(False, "--json")):
         typer.secho(f"最近失败  {len(recent_failures)} — manju failures 看原因",
                     fg=typer.colors.RED)
     typer.secho(f"下一步  {info['next_step']}", fg=typer.colors.CYAN)
+    # Intuitiveness wave: per-shot answers — each line IS the action, so the
+    # owner never diffs five state machines in their head. Capped for signal;
+    # the full list rides --json (`todo`).
+    todo = info.get("todo") or []
+    for item in todo[:6]:
+        typer.secho(f"待办  {item['shot']}  {item['action']}", fg=typer.colors.YELLOW)
+    if len(todo) > 6:
+        typer.secho(f"待办  …共 {len(todo)} 项(manju status --json 看全部)",
+                    fg=typer.colors.BRIGHT_BLACK)
 
 
 # ------------------------------------------------------------------- check

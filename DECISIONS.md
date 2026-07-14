@@ -2094,3 +2094,32 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - Suites at close: 4356 passed / 2 skipped / 0 failed local; both gates
   green through 2cc258a (wave H) and the conftest hardening (3634148)
   verdict pending on the gate at entry-writing time.
+
+## 44. Intuitiveness wave: one question, one answer per shot (2026-07-13)
+
+- The owner's mandate ("make it feel more intuitive") after two dry finder
+  rounds → the remaining value was CONCEPTUAL: a shot carries four-plus
+  parallel state machines (build state, per-take verdicts, review
+  annotations, QC findings, voice) and the owner's real daily task was
+  diffing them in their head.
+- Landed: `build/status.shot_next_action` — the ONE resolver folding all
+  machines into a single actionable sentence per shot (most-blocking first:
+  broken→missing→select→blocker→qc→voice→stale→review→ok), always naming
+  the exact command and the UNDO (`manju rollback shot`) wherever a choice
+  can be wrong; blocker annotations count only when bound to the CURRENT
+  selected media (a stale binding never nags). Pure derivation, no new
+  state. Surfaced: `manju status` 待办 lines (capped 6; full list in the
+  additive `todo` JSON key), gui /review cards, board SERVE cards (the
+  static board is the shareable handoff — workbench todo stays off it).
+- Also: installer `-CreateShortcut` opt-in (per-user Start-Menu .lnk FILE →
+  `manju gui` workspace picker — the click-first daily entry; no registry,
+  §4.2 honoured); README 中文速览 names the undo.
+- Measured-and-dismissed: /review per-load media hashing (hash_file is
+  process-cached — 40MB first hash 38ms, repeat 0ms); cross-server deep
+  links between gui and board (two ad-hoc ports — brittle; the resolver's
+  hints NAME the other surface instead).
+- Rejected-with-reason: converging the two review surfaces into one (a
+  structural refactor far past the maintenance gate; vocabulary + mirrors +
+  next-action already carry the coherence); redesigning bare `manju` output
+  (help panels already group 82 commands sanely).
+- tests/test_ux_polish.py grows to 44 pins; full suite 4362/2/0.

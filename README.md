@@ -15,7 +15,7 @@
 - `manju select` —— 给镜头定 take(或一段手动素材)
 - `manju exports` —— 导出中心:九种交付物的状态一览
 
-拿不准下一步就 `manju status`(当前阶段 + 下一步),或 `manju help-workflow`(任务式工作流导航);偏好点击操作用 `manju gui`,审片用 `manju board --serve`,环境体检用 `manju doctor`。详细工作流已内建 —— 例如 `manju help-workflow new-project`。
+拿不准下一步就 `manju status`(当前阶段 + 每个镜头的待办,一句话一个动作),或 `manju help-workflow`(任务式工作流导航);偏好点击操作用 `manju gui`,审片用 `manju board --serve`,环境体检用 `manju doctor`。选错了不用慌:`manju rollback shot <镜头>` 撤回上一次选择(历史只增不减,永不覆盖)。详细工作流已内建 —— 例如 `manju help-workflow new-project`。
 
 **A deterministic build system for video.** Not an "editor with AI bolted on" — a
 compiler. Think `make` / `ninja`: source files compile into derived artifacts,
