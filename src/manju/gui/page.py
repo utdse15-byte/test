@@ -1227,8 +1227,13 @@ _JS = r"""
     if (pendingCompare && lastShots.length) {
       const target = lastShots.find((sh) => sh.id === pendingCompare);
       pendingCompare = "";
+      /* #50c: strip the param so F5 / the project-switch 刷新 button can
+       * never replay the overlay (worst case: onto a same-named shot in a
+       * DIFFERENT project after a switch). */
+      try { history.replaceState(null, "", location.pathname); } catch (err) { /* keep */ }
       if (target) {
         try { openCompare(target); } catch (err) { /* stays on the workbench */ }
+        if (!cmpOverlay) toast("该镜头可对比的视频 take 不足两个", "warn");
       }
     }
   }
@@ -2901,6 +2906,10 @@ _JS = r"""
     }
     try { renderShots(lastShots); } catch (err) { /* chips are advisory */ }
     updateReviewChip();
+    /* #50c: the cockpit's 新 take 未阅 row reads the SAME snapshot — repaint
+     * it now, or the one-glance home contradicts the shots bar until the
+     * next fingerprint change. */
+    try { if (cockData) renderCockpit(); } catch (err) { /* advisory */ }
   }
 
   function updateReviewChip() {
@@ -2914,6 +2923,12 @@ _JS = r"""
   function renderShots(shots) {
     reviewSnap = loadReviewSnapshot();   /* one parse per grid render */
     const root = $("shots");
+    /* #50c (review find #1): a DIRECT re-render (filter chip, cockpit count,
+     * 标记已阅, batch bar) while an inline note editor is open destroys the
+     * editor node WITHOUT editorClosed() — editorOpen would leak true and
+     * silently freeze the whole poll loop + keyboard. The draft is forfeit
+     * (the user asked for a repaint); the pause must never leak. */
+    if (editorOpen && root.querySelector(".tnote-edit")) editorOpen = false;
     clear(root);
     if (!shots.length) {
       const empty = el("div", "empty");
@@ -2927,10 +2942,12 @@ _JS = r"""
       root.appendChild(filterChips(shots));  /* chips only when they filter */
     } else if (stateFilter) {
       stateFilter = "";  /* single-state grid: a stale filter must not hide it */
+      saveUI({ filter: "" });  /* #50c: the reset must reach the memory too */
     }
     const visible = stateFilter ? shots.filter((s) => s.state === stateFilter) : shots;
     if (!visible.length) {
       stateFilter = "";
+      saveUI({ filter: "" });  /* #50c: ditto — never restore a dead filter */
       renderShots(shots);  /* the filtered state vanished: reset, re-render */
       return;
     }
@@ -3159,7 +3176,13 @@ _JS = r"""
         editorOpen = false;  /* BEFORE post — its refresh must not be swallowed */
         post(ok, "/api/take-note",
           { shot: shot.id, take: t.name, text: ta.value },
-          ta.value.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注");
+          ta.value.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注"
+        ).then((res) => {
+          /* #50c (review find #2): a FAILED save runs no refresh, so nothing
+           * re-arms the paused loop. Keep the draft + the pause invariant
+           * (editor still in the DOM) — 重试/取消 both resume normally. */
+          if (res === null) editorOpen = true;
+        });
       };
       const closeNote = () => { ed.remove(); editorClosed(); };
       ok.addEventListener("click", save);

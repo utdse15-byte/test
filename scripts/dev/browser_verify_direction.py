@@ -143,6 +143,27 @@ def main() -> int:
         on = page.locator('.fchips .fchip[aria-pressed="true"]')
         check("strip click filters shots grid", on.count() == 1)
 
+        # ---------------- #50c: the editorOpen pause must never leak ------
+        # (review find #1: destroying an open inline note editor via a
+        # direct re-render used to freeze the poll loop + keyboard forever)
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector(".fchips .fchip", timeout=10000)
+        page.locator(".fchips .fchip").first.click()  # 全部 — the strip click
+        time.sleep(0.6)                               # above left 缺失 filtered
+        page.wait_for_selector('#shots .take .btn.tiny[aria-label="备注 (note)"]',
+                               timeout=10000)
+        page.locator('#shots .take .btn.tiny[aria-label="备注 (note)"]').first.click()
+        page.wait_for_selector(".tnote-edit", timeout=8000)
+        page.locator("button.ck-scount").first.click()   # direct re-render
+        time.sleep(0.8)
+        check("re-render closes the note editor", page.locator(".tnote-edit").count() == 0)
+        page.keyboard.press("?")   # a leaked editorOpen would swallow this
+        time.sleep(0.4)
+        check("keyboard alive after editor destruction",
+              page.evaluate("() => !document.getElementById('kbdhint')"
+                            ".classList.contains('hidden')"))
+        page.keyboard.press("?")   # leave the hint bar as we found it
+
         # ---------------- #50a/b: A/B deep-link, unread row, AV memory ----
         page.goto(base + "/review", wait_until="networkidle")
         ab = page.locator('a[href="/?compare=S001"]')

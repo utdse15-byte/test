@@ -93,3 +93,14 @@ the probe pins the reload-restore live.
   scripts/dev/browser_verify_direction.py (sibling of browser_verify.py
   — needs the two-shot scaffold + clipboard permissions the original's
   checks don't). Re-run after touching review/cockpit/nav JS.
+
+## 50c reviewer round (same day)
+
+An independent adversarial reviewer swept the session's six commits; ten
+findings, all re-verified then fixed — the two real bugs (a leaked
+editorOpen freezing the workbench via direct re-renders; a failed note
+save never re-arming the paused loop) plus eight edges (u-undo vs saved
+notes, filtered-queue skip, alt-preview unmute, stale cockpit unread row,
+?compare= replay, unretryable undo, cli helper hygiene, key-fallback
+unification). Clean areas recorded. Direction harness grows to 26 checks
+(including the freeze regression driven live).

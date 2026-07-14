@@ -1567,9 +1567,11 @@ def test_client_state_is_keyed_by_project_identity():
     # the stable #45 token, not the colliding display name
     assert '"manju-ui-" + (PROJECT || "unbound")' in js
     assert '"manju-reviewed-" + (PROJECT || lastProjectName)' in js
-    # /review continues from the last position, same key discipline
+    # /review continues from the last position, same key discipline (#50c
+    # evolved the fallback to "unbound" — never "" — matching uiKey())
     pjs = render_pages_js()
-    assert '"manju-rv-pos-" + (typeof PROJECT === "string" ? PROJECT : "")' in pjs
+    assert ('"manju-rv-pos-" + ((typeof PROJECT === "string" && PROJECT) '
+            '? PROJECT : "unbound")') in pjs
 
 
 def test_workbench_keyboard_semantics():

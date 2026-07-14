@@ -2521,3 +2521,43 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   now uses explicit `+`.
 - 2 new pins (test_ux_polish.py, 92 total), red-first by stash; probe
   24/24; harness 21/21; full suite 4410/2/0.
+
+### 50c. The reviewer's teeth: ten findings against my own six commits (2026-07-14)
+
+- Close-out discipline: an independent adversarial reviewer swept the
+  session's cumulative diff (≈1800 lines) hunting real-browser defects;
+  every finding was re-verified here before fixing. Two were REAL BUGS
+  this session introduced — both ended in a silently frozen workbench:
+  (1) a DIRECT re-render (filter chip, cockpit count, 标记已阅, batch
+  bar) destroyed an open inline note editor without the editorClosed()
+  reset — editorOpen leaked true, the poll loop and the whole keyboard
+  died until F5; renderShots now clears the flag when it is about to
+  destroy a note editor (the draft is forfeit — the user asked for the
+  repaint; the pause must never leak). (2) a FAILED note save ran no
+  refresh and nothing re-armed the paused loop — the editor now stays
+  (draft kept) and editorOpen is restored, so 重试/取消 both resume.
+  Both are pinned live in browser_verify_direction (26 checks): destroy
+  the editor via a cockpit-chip click, then prove the keyboard answers.
+- Edge fixes from the same sweep: 保存备注 now updates the input's
+  defaultValue (u-undo restored PRE-PAGE-LOAD text, silently discarding
+  a note saved minutes earlier); queue advance (通过 AND 好) increments
+  only while the card still matches the active filter (a filtered-out
+  card slid the next one into place and qIndex++ skipped it — latent
+  pre-#50, put on the daily path by the queue default); 播放记忆 reads/
+  writes the MAIN player only (alt previews are deliberately muted
+  server-side; the memory unmuted them into double audio); 标记已阅
+  repaints the cockpit's 新 take 未阅 row (one-glance home no longer
+  contradicts the shots bar); /?compare= strips via replaceState after
+  consumption (F5 / the switch-overlay 刷新 replayed the overlay, worst
+  case onto a same-named shot in ANOTHER project) and a <2-video-takes
+  target now toasts instead of dead-ending; a failed u-undo keeps the
+  undo retryable; _app_browser_candidates dedupes + uses the module
+  shutil; the rv-pos/queue/av key fallbacks unified on "unbound" (the
+  "" fallback could have shared one key across same-named projects);
+  the dead-filter auto-reset now reaches the persisted memory.
+- Verified clean by the same sweep (recorded): every hidden-guard show
+  path, nav grouping/z-index/label coverage, exports bulk chain, pollJob
+  bounds, actAsButton no-double-fire, continue-chip guards, repo law
+  (no inline handlers/innerHTML/edit_rate; all pinned tokens intact).
+- 1 pin evolved (key fallback), 92 total green; direction harness 26/26;
+  original harness 21/21; full suite 4410/2/0.

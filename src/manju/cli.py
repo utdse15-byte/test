@@ -4319,15 +4319,14 @@ def board_keyframes(
 
 def _app_browser_candidates() -> list[str]:
     """Chromium-family binaries able to host an ``--app=`` window, in
-    preference order. Windows installs routinely keep Edge/Chrome OFF the
-    PATH, so the two canonical install locations are probed explicitly
-    (Windows-first, §platform)."""
-    import shutil
-
+    preference order, deduplicated (a PATH hit and an explicit install-path
+    probe can name the same binary). Windows installs routinely keep
+    Edge/Chrome OFF the PATH, so the canonical install locations are probed
+    explicitly (Windows-first, §platform)."""
     out: list[str] = []
     for name in ("msedge", "chrome", "chromium", "chromium-browser"):
         found = shutil.which(name)
-        if found:
+        if found and found not in out:
             out.append(found)
     if os.name == "nt":
         for env in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
@@ -4336,9 +4335,9 @@ def _app_browser_candidates() -> list[str]:
                 continue
             for rel in (r"Microsoft\Edge\Application\msedge.exe",
                         r"Google\Chrome\Application\chrome.exe"):
-                cand = Path(base) / rel
-                if cand.exists():
-                    out.append(str(cand))
+                cand = str(Path(base) / rel)
+                if Path(cand).exists() and cand not in out:
+                    out.append(cand)
     return out
 
 

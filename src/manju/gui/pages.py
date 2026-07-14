@@ -1862,7 +1862,7 @@ _PAGES_JS = r"""
     /* 从上次位置继续 (#49a): the active card survives a reload / a return
      * days later — restored by SHOT ID (indices shift as shots come and go),
      * keyed by the stable project identity. Best-effort only. */
-    var posKey = "manju-rv-pos-" + (typeof PROJECT === "string" ? PROJECT : "");
+    var posKey = "manju-rv-pos-" + ((typeof PROJECT === "string" && PROJECT) ? PROJECT : "unbound");
     try {
       var savedShot = window.localStorage.getItem(posKey);
       if (savedShot) {
@@ -1876,12 +1876,12 @@ _PAGES_JS = r"""
     var qFilter = "all";
     var queueMode = false;
     var qIndex = 0;
-    var qModeKey = "manju-rv-queue-" + (typeof PROJECT === "string" ? PROJECT : "");
+    var qModeKey = "manju-rv-queue-" + ((typeof PROJECT === "string" && PROJECT) ? PROJECT : "unbound");
     /* 播放记忆 (#50a): rate/volume/muted survive reloads, per project —
      * review sessions keep the owner's chosen speed without re-setting it
      * on every card. Applies to every card + alt preview on load; any
      * user change on any <video> becomes the new remembered value. */
-    var avKey = "manju-rv-av-" + (typeof PROJECT === "string" ? PROJECT : "");
+    var avKey = "manju-rv-av-" + ((typeof PROJECT === "string" && PROJECT) ? PROJECT : "unbound");
     var av = null;
     try { av = JSON.parse(window.localStorage.getItem(avKey) || "null"); } catch (err) { av = null; }
     function applyAV(v) {
@@ -1892,11 +1892,14 @@ _PAGES_JS = r"""
     }
     function saveAV(e) {
       var v = e.target;
-      if (!v || v.tagName !== "VIDEO") return;
+      /* #50c: alt previews are deliberately muted server-side (they must
+       * never double the audio) — only the MAIN player reads/writes memory */
+      if (!v || v.tagName !== "VIDEO" || !v.closest(".rv-player")) return;
       av = { rate: v.playbackRate, vol: v.volume, muted: v.muted };
       try { window.localStorage.setItem(avKey, JSON.stringify(av)); } catch (err) { /* off */ }
     }
-    Array.prototype.slice.call(document.querySelectorAll(".rv-shot video")).forEach(applyAV);
+    Array.prototype.slice.call(
+      document.querySelectorAll(".rv-shot .rv-player video")).forEach(applyAV);
     /* media events do not bubble — capture phase catches them all */
     document.addEventListener("ratechange", saveAV, true);
     document.addEventListener("volumechange", saveAV, true);
@@ -2015,8 +2018,9 @@ _PAGES_JS = r"""
             var alts = s.querySelector(".rv-alts");
             if (alts) alts.scrollIntoView({ behavior: "smooth", block: "center" });
           } else if (queueMode) {
-            /* 判断后自动下一条 — the queue advances like 通过 always did */
-            qIndex++;
+            /* 判断后自动下一条 — advance only while the card still matches
+             * the active filter (same #50c rule as 通过) */
+            if (filteredShots().indexOf(s) >= 0) qIndex++;
             updateQueueUI();
           } else {
             setActive(active + 1);
@@ -2056,6 +2060,10 @@ _PAGES_JS = r"""
         post("/api/take-note", noteBody2).then(function (res) {
           if (res.status === 200) {
             if (res.data && res.data.rev) s.setAttribute("data-rev", res.data.rev);
+            /* #50c: defaultValue = the last SAVED text — u-undo restores
+             * exactly this, so a saved note is never silently discarded. */
+            var nEl2 = s.querySelector(".rv-note-input");
+            if (nEl2) nEl2.defaultValue = val;
             toast("备注已存", true);
             if (val) { s.setAttribute("data-reviewed", "1"); updateProgress(); }
           } else { toast((res.data && res.data.error) || "失败", false); }
@@ -2078,7 +2086,13 @@ _PAGES_JS = r"""
             s.setAttribute("data-review", "approved");
             toast(shot + " 已通过", true);
             updateQueueUI();
-            if (queueMode) { qIndex++; updateQueueUI(); }
+            /* #50c: only advance when the approved card STILL matches the
+             * active filter — under 待审 the card leaves the list and the
+             * next one slides into this index; qIndex++ would skip it. */
+            if (queueMode) {
+              if (filteredShots().indexOf(s) >= 0) qIndex++;
+              updateQueueUI();
+            }
           } else toast((res.data && res.data.error) || "失败", false);
         });
       }
@@ -2236,7 +2250,10 @@ _PAGES_JS = r"""
             updateProgress();
             updateQueueUI();
             toast("已撤回 " + lv.shot + " 的评价", true);
-          } else { toast((res.data && res.data.error) || "撤回失败", false); }
+          } else {
+            lastVerdict = lv;  /* #50c: a transient failure keeps u retryable */
+            toast((res.data && res.data.error) || "撤回失败", false);
+          }
         });
         e.preventDefault();
       }
