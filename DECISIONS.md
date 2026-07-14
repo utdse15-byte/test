@@ -64,6 +64,7 @@ Entries are append-only below.
 | 49 | 2026-07-14 | GUI polish wave: hidden-vs-display owner (dead /create fixed), feel/motion layer, honest pollJob, exports bulk-stale | gui/page.py app.css (`.hidden`/`[hidden]` !important owner, color-scheme, transitions, mj-rise, reduced-motion, scrollbars, --accent-bg), create_page showStage class clear, exports_page xc-gen-stale + pollJob×4 adaptive, board :root color-scheme+[hidden] |
 | 49a | 2026-07-14 | GUI polish round 2: external review dispositioned — F20/F18/#45 disciplines reach the workbench, per-project UI memory, keyboard semantics | gui/page.py app.js (sticky err toast + aria-live, CK_STATE_ZH badge/filters, manju-ui-/manju-reviewed- identity keys, actAsButton, inline take-note), gui/pages.py (nav aria-current, manju-rv-pos- restore), common_js aria-live |
 | 50 | 2026-07-14 | Direction program: personal production console — review queue default+priority+undo, continue-work home, 交给 Claude handoff, six-group nav | gui/pages.py (qPriority/setQueueMode/u-undo/_NAV_GROUPS/ai-ctx + copyForAI), gui/page.py (ck-continue chip, clickable ck-scount, fail-card 复制诊断上下文), common_js (manju-last recorder) |
+| 51 | 2026-07-14 | Exhaustive bug hunt: 22 fixes — edit Tier-2 unreachable, board select overlay lock, freeze-guard re-arm, pollJob cap honesty, 413 drain, readonly GETs | gui/page.py, gui/pages.py, gui/edit.py, gui/server.py, gui/state.py, gui/cockpit.py, board/board.py, 4× pollJob pages |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2561,3 +2562,75 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   (no inline handlers/innerHTML/edit_rate; all pinned tokens intact).
 - 1 pin evolved (key fallback), 92 total green; direction harness 26/26;
   original harness 21/21; full suite 4410/2/0.
+
+## 51. The exhaustive hunt: five finders, one smoke run, 22 fixes (2026-07-14)
+
+- Mandate: "find all bug". Method: five parallel finder agents over DISJOINT
+  surfaces (review-page JS / workbench SPA / gui server / the other ten page
+  modules / board + backend read-models) — every reported finding re-verified
+  here in source (and live where drivable) before any fix; plus my own
+  30-step live interaction smoke (storyboard/subtitles/mixer/packaging/edit/
+  lab/ingest/director/exports/create + mode/terms/workspace toggles): clean,
+  its three suspects were probe artifacts, not app bugs. Full ledger:
+  REPORTS/GUI_DIRECTION_2026-07-14.md hunt section.
+- The headline finds, all REAL and all pre-dating today unless noted:
+  - **/edit Tier-2 preview could never be shown** — the tier divs rendered
+    the `hidden` ATTRIBUTE while setTier toggles the `hidden` CLASS; the
+    reveal was a no-op since round X. The tiers now render the class.
+  - **board 选用 left the busy overlay up forever** — the in-place select
+    (#48b) omitted `overlay(false)`; a successful select locked the whole
+    board until F5. Also: its success banner rendered in ERROR styling
+    (missing ok flag), and only the clicked button flipped — the same
+    take's TWIN button in the compare grid now flips too (data-shot
+    scoped, SAFE_SEGMENT ids).
+  - **the #50c freeze guard left the loop dead** (this session) — clearing
+    the leaked editorOpen never re-armed schedule(); auto-refresh stayed
+    off until any mutating click. The guard now re-arms.
+  - **pollJob's 10-min cap misclassified a STILL-RUNNING job as failed**
+    (this session) — at the cap a live job is truthy, so the 仍在排队/运行
+    branch never fired; the cap now returns null (any survivor is
+    non-terminal by construction).
+  - **the one refusal that skipped the Windows drain** — _read_body's 413
+    answered without draining (the exact run-#20 RST class); plus the three
+    upload handlers' 400/413 refusals, and /api/upload dispatched BEFORE
+    the unbound-project guard (picker-stage upload → NoneType 500).
+  - **two GETs wrote/spawned in readonly mode** — /api/create/skill
+    appended skill_used to events.jsonl; /api/edit/playback-manifest
+    submitted webpreview jobs. Both now honour readonly.
+- The full fix list (22): the above plus — ai-ctx checked the BOARD's
+  .ann-list so the annotations line never rode the Claude handoff (.rv-anns
+  now); the ✓ checkmark keyed on a class the server never stamped (count
+  and checkmarks disagreed); fresh-open queue landed on shots[0]'s rank
+  instead of the queue head; the alt-preview ▶ scroll-jumped the page
+  (generic setActive now skips it); failed u-undo lost the undo state
+  (retryable now); a saved-then-verdicted note undid to PRE-PAGE-LOAD text
+  (保存备注 now updates defaultValue); 播放记忆 unmuted the deliberately-
+  muted alt previews (main player only now); timeline/cockpit navigation
+  errored on filter-hidden shots (navigation clears the filter); kbMove
+  walked filter-hidden cards; an unchanged note save orphaned the inline
+  editor (signature-identical repaint skipped); the build estimate printed
+  raw floats (fmtMoney); s.finals missing from the header signature (stale
+  version-stack metadata); retry of a failed audition build 400ed
+  ("unknown target"); a corrupt project.yaml 500ed the board via its ONE
+  unguarded load_config (the <title>); a crafted #mjtab hash killed every
+  board listener (try/caught); a bare-list qc.json lost all findings in
+  the SPA (dict|list accepted, board parity); a hand-edited non-numeric
+  budget collapsed the whole cockpit risks block (row-local guard);
+  lib/refs toasts printed literal "undefined" on field-less responses.
+- Dismissed with recorded reasons: mid-build progress "missing" from the
+  fingerprint (the SPA polls at 1.5s whenever a job is active — progress
+  rides that, not the watch); maybeEvaluate "lagging" (a done job bumps
+  runner.revision which IS in the fingerprint); git diff ?path=
+  containment (gitops _safe_rel + `--`); TTS poll outliving the editor
+  (autoplay-blocked, self-limiting); batchbar/kbdhint fixed-bottom overlap
+  (cosmetic, rare combo — recorded, not fixed); jobs-list eviction of a
+  finished job before its poll (needs 50 newer jobs in one session);
+  500-body exception text (deliberate: the owner debugs locally).
+- One pin evolution, caught by the definitive run: test_edit_v3's two
+  tier pins froze the BUGGY hidden-ATTRIBUTE markup (they went red on the
+  fix, exactly as pins should) — they now pin the class form with the
+  same teeth (visible tier bare, hidden tier carries the class), intent
+  recorded here per the PINS.md honest-evolution footer.
+- Verification: 92 ux pins green; harness 21/21 + direction harness
+  26/26; affected GUI batches 198/1 + 214 + 41; full suite 4410/2/0
+  after the pin evolution.

@@ -1204,7 +1204,7 @@ _JS = r"""
     section("header",
       [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
        s.latest_final_note, s.build_lock, s.readonly, s.workspace,
-       (s.shots || []).length],
+       s.finals, (s.shots || []).length],
       () => renderHeader(s));
     section("jobs", jobs, () => renderJobs(jobs));
     section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
@@ -2299,7 +2299,7 @@ _JS = r"""
         const cur = ((data.result.plan || [])
           .map((it) => it.currency).find(Boolean)) || "";
         buildBtn.textContent = cost > 0
-          ? "构建 (Build) ≈" + cost + (cur ? " " + cur : "")
+          ? "构建 (Build) ≈" + fmtMoney(cost) + (cur ? " " + cur : "")
           : "构建 (Build)";
         buildBtn.classList.toggle("spendy", cost > 0);
       } catch (err) { /* advisory only: the button stays plain */ }
@@ -2754,7 +2754,15 @@ _JS = r"""
   }
 
   function focusShot(id) {
-    const card = cardById(id);
+    let card = cardById(id);
+    if (!card && stateFilter) {
+      /* bug-hunt #51: the timeline/cockpit navigate by shot id regardless of
+       * the grid's state filter — navigation wins, the filter clears. */
+      stateFilter = "";
+      saveUI({ filter: "" });
+      renderShots(lastShots);
+      card = cardById(id);
+    }
     if (card) flashCard(card);
     else toast("镜头卡片未找到 (shot card not found): " + id, "err");
   }
@@ -2928,7 +2936,12 @@ _JS = r"""
      * editor node WITHOUT editorClosed() — editorOpen would leak true and
      * silently freeze the whole poll loop + keyboard. The draft is forfeit
      * (the user asked for a repaint); the pause must never leak. */
-    if (editorOpen && root.querySelector(".tnote-edit")) editorOpen = false;
+    if (editorOpen && root.querySelector(".tnote-edit")) {
+      editorOpen = false;
+      /* bug-hunt #51: clearing the flag alone left the loop DEAD — nothing
+       * re-arms it (schedule/refresh only chain off each other). */
+      schedule();
+    }
     clear(root);
     if (!shots.length) {
       const empty = el("div", "empty");
@@ -3181,7 +3194,11 @@ _JS = r"""
           /* #50c (review find #2): a FAILED save runs no refresh, so nothing
            * re-arms the paused loop. Keep the draft + the pause invariant
            * (editor still in the DOM) — 重试/取消 both resume normally. */
-          if (res === null) editorOpen = true;
+          if (res === null) { editorOpen = true; return; }
+          /* bug-hunt #51: an UNCHANGED note leaves the shots signature
+           * identical — section() skips the repaint that would sweep the
+           * editor. Remove it explicitly when it survived the refresh. */
+          if (ed.isConnected) ed.remove();
         });
       };
       const closeNote = () => { ed.remove(); editorClosed(); };
@@ -4654,7 +4671,11 @@ _JS = r"""
   }
 
   function kbMove(delta) {
-    const ids = lastShots.map((s) => s.id);
+    /* bug-hunt #51: walk only the VISIBLE grid — with a state filter on,
+     * focus used to land on cards that are not rendered at all. */
+    const pool = stateFilter
+      ? lastShots.filter((s) => s.state === stateFilter) : lastShots;
+    const ids = pool.map((s) => s.id);
     if (!ids.length) return;
     const i = ids.indexOf(kbFocusId);
     let next;

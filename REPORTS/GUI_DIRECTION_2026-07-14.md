@@ -104,3 +104,16 @@ notes, filtered-queue skip, alt-preview unmute, stale cockpit unread row,
 ?compare= replay, unretryable undo, cli helper hygiene, key-fallback
 unification). Clean areas recorded. Direction harness grows to 26 checks
 (including the freeze regression driven live).
+
+## #51 exhaustive hunt (same day)
+
+"find all bug": five disjoint-surface finder agents + a 30-step live
+interaction smoke; every finding re-verified before fixing. 22 fixes —
+headline: /edit Tier-2 preview was unreachable since round X (hidden
+attr vs class), board 选用 left the busy overlay locked until F5 (#48b),
+the #50c freeze guard never re-armed the poll loop, pollJob's cap called
+a still-running job "failed", the 413 refusal skipped the Windows drain,
+and two GETs wrote/spawned in readonly. Seven findings dismissed with
+recorded reasons (fingerprint/progress, evaluate lag, git path
+containment, TTS poll, overlap cosmetic, eviction edge, 500 bodies).
+Suites: pins 92, harnesses 21/21 + 26/26, full suite 4410/2/0.

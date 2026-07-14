@@ -385,6 +385,10 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
         if length > _MAX_BODY:
+            # bug-hunt #51: the ONE refusal that skipped the Windows drain
+            # discipline (run #20) — an undrained 413 RSTs on nt and the
+            # client sees WinError 10053 instead of the clean status.
+            self._drain_request_body()
             self._send_error_json("request body too large", 413)
             return None
         raw = self.rfile.read(length) if length else b"{}"
@@ -748,6 +752,15 @@ class _Handler(BaseHTTPRequestHandler):
                 }, 409)
                 return
         try:
+            if path in ("/api/upload", "/api/lib/upload", "/api/ingest/upload"):
+                # bug-hunt #51: these dispatch BEFORE the unbound-project
+                # fallthrough below — on a picker-stage server they crashed
+                # into `None.runtime_dir` (500) with the body undrained.
+                if self.server.project is None:
+                    self._drain_request_body()
+                    self._send_error_json(
+                        "尚未打开项目 (no project bound) — 先在工作区选择器打开", 404)
+                    return
             if path == "/api/upload":
                 self._act_upload(parse_qs(url.query))
                 return
@@ -1558,7 +1571,9 @@ class _Handler(BaseHTTPRequestHandler):
 
             target = str(params.get("target") or "final")
             gen = str(params.get("gen") or "missing")
-            if target not in ("proxy", "final", "exports", "qc"):
+            # bug-hunt #51: keep in lockstep with _act_build's accepted set —
+            # a failed audition build was un-retryable ("unknown target").
+            if target not in ("proxy", "final", "exports", "qc", "audition"):
                 raise ValueError(f"unknown target: {target}")
             if gen not in GEN_MODES:
                 raise ValueError(f"unknown gen mode: {gen}")
@@ -2297,9 +2312,11 @@ class _Handler(BaseHTTPRequestHandler):
         # basename across both separators; no dotfiles; keep CJK
         raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
         if not raw_name or raw_name.startswith("."):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json("upload needs ?name=<filename>", 400)
             return
         if self._fs_name_problems(raw_name):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json(
                 "invalid upload name (Windows-unsafe): "
                 + "; ".join(self._fs_name_problems(raw_name)), 400)
@@ -2312,6 +2329,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("Content-Length required", 411)
             return
         if length > self._UPLOAD_MAX:
+            self._drain_request_body()  # bounded, best-effort
             self._send_error_json("file too large (max 4 GiB)", 413)
             return
 
@@ -2899,9 +2917,11 @@ class _Handler(BaseHTTPRequestHandler):
         raw_name = (query.get("name", [""])[0] or "").strip()
         raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
         if not raw_name or raw_name.startswith("."):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json("upload needs ?name=<filename>", 400)
             return
         if self._fs_name_problems(raw_name):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json(
                 "invalid upload name (Windows-unsafe): "
                 + "; ".join(self._fs_name_problems(raw_name)), 400)
@@ -2914,6 +2934,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("Content-Length required", 411)
             return
         if length > self._UPLOAD_MAX:
+            self._drain_request_body()  # bounded, best-effort
             self._send_error_json("file too large (max 4 GiB)", 413)
             return
         holder = self.server.project.runtime_dir / "upload-tmp" / _uuid.uuid4().hex
@@ -3151,6 +3172,10 @@ class _Handler(BaseHTTPRequestHandler):
         manifest = edit.playback_manifest(project)
         pending = manifest.get("pending_sources") or []
         job_info = None
+        # bug-hunt #51: a GET carries no readonly gate — this one SUBMITS a
+        # webpreview job; a readonly workbench serves the manifest as-is.
+        if pending and self.server.readonly:
+            pending = []
         if pending:
             active = [j for j in self.server.runner.list()
                      if j.kind == self._EDIT_PREVIEW_JOB_KIND and j.active]
@@ -5188,11 +5213,14 @@ class _Handler(BaseHTTPRequestHandler):
                 return True
             # round AA (goal item 8): the skill modal serves full SKILL.md
             # content, same "skill_used" usage signal as CLI/MCP show.
-            try:
-                append_event(self.server.project.root, self.server.actor,
-                            "skill_used", {"skill": sid, "via": "gui"})
-            except Exception:
-                pass
+            # bug-hunt #51: a GET carries no readonly gate — the one GET that
+            # WRITES truth (events.jsonl) must honour readonly itself.
+            if not self.server.readonly:
+                try:
+                    append_event(self.server.project.root, self.server.actor,
+                                "skill_used", {"skill": sid, "via": "gui"})
+                except Exception:
+                    pass
             self._send_json(payload)
             return True
         return False
@@ -5465,14 +5493,17 @@ class _Handler(BaseHTTPRequestHandler):
 
         batch = (query.get("batch", [""])[0] or "").strip()
         if not is_safe_segment(batch):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json("upload needs a valid ?batch=<id>", 400)
             return
         raw_name = (query.get("name", [""])[0] or "").strip()
         raw_name = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
         if not raw_name or raw_name.startswith("."):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json("upload needs ?name=<filename>", 400)
             return
         if self._fs_name_problems(raw_name):
+            self._drain_request_body()  # bug-hunt #51: refusal drains
             self._send_error_json(
                 "invalid upload name (Windows-unsafe): "
                 + "; ".join(self._fs_name_problems(raw_name)), 400)
@@ -5485,6 +5516,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("Content-Length required", 411)
             return
         if length > self._UPLOAD_MAX:
+            self._drain_request_body()  # bounded, best-effort
             self._send_error_json("file too large (max 4 GiB)", 413)
             return
 

@@ -210,7 +210,7 @@ _INGEST_JS = r"""
       return job || null;
     }).catch(function () { return null; }).then(function (job) {
       if (job && (job.state === "done" || job.state === "failed")) return job;
-      if (tries > 1215) return job || null;  // 20×100ms + ~1195×500ms ≈ 10min
+      if (tries > 1215) return null;  /* alive at the cap = still running, never "failed" */  // 20×100ms + ~1195×500ms ≈ 10min
       return new Promise(function (res) {
         setTimeout(res, tries < 20 ? 100 : 500);
       }).then(function () { return pollJob(jobId, tries + 1); });

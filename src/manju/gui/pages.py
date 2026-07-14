@@ -571,7 +571,8 @@ def render_review(project: Any, token: str) -> str:
         rev = shot_text_hash(project, sid) if shot else ""
 
         cards.append(
-            f'<section class="rv-shot panel" id="rv-{_e(sid)}" data-shot="{_e(sid)}" '
+            f'<section class="rv-shot panel{" reviewed" if reviewed_attr == "1" else ""}" '
+            f'id="rv-{_e(sid)}" data-shot="{_e(sid)}" '
             f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}" '
             f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}" '
             f'data-qc="{"1" if any(str(f.get("level")) == "error" for f in findings) else "0"}" '
@@ -1863,11 +1864,16 @@ _PAGES_JS = r"""
      * days later — restored by SHOT ID (indices shift as shots come and go),
      * keyed by the stable project identity. Best-effort only. */
     var posKey = "manju-rv-pos-" + ((typeof PROJECT === "string" && PROJECT) ? PROJECT : "unbound");
+    var restoredPos = false;  /* bug-hunt #51: fresh opens keep the queue head */
     try {
       var savedShot = window.localStorage.getItem(posKey);
       if (savedShot) {
         for (var si = 0; si < shots.length; si++) {
-          if (shots[si].getAttribute("data-shot") === savedShot) { active = si; break; }
+          if (shots[si].getAttribute("data-shot") === savedShot) {
+            active = si;
+            restoredPos = true;
+            break;
+          }
         }
       }
     } catch (err) { /* storage disabled — start at the top as before */ }
@@ -2043,9 +2049,11 @@ _PAGES_JS = r"""
       if (!btn) return;
       var s = btn.closest(".rv-shot");
       if (!s) return;
-      var i = shots.indexOf(s);
-      if (i >= 0 && i !== active) setActive(i);
       var act = btn.getAttribute("data-act");
+      var i = shots.indexOf(s);
+      /* the alt ▶ (data-act=preview) belongs to its OWN listener — activating
+       * here scroll-jumped the page on every lazy preview (bug-hunt #51) */
+      if (act !== "preview" && i >= 0 && i !== active) setActive(i);
       var shot = s.getAttribute("data-shot");
       if (act === "good") verdict("good");
       else if (act === "reject") verdict("reject");
@@ -2065,7 +2073,11 @@ _PAGES_JS = r"""
             var nEl2 = s.querySelector(".rv-note-input");
             if (nEl2) nEl2.defaultValue = val;
             toast("备注已存", true);
-            if (val) { s.setAttribute("data-reviewed", "1"); updateProgress(); }
+            if (val) {
+              s.setAttribute("data-reviewed", "1");
+              s.classList.add("reviewed");  /* the ✓ keys on the class */
+              updateProgress();
+            }
           } else { toast((res.data && res.data.error) || "失败", false); }
         });
       }
@@ -2133,7 +2145,7 @@ _PAGES_JS = r"""
         if (vsrc.indexOf("/media/") === 0) {
           cl.push("- " + decodeURI(vsrc.slice("/media/".length)).split("?")[0]);
         }
-        if (s.querySelector(".ann-list")) cl.push("- reports/annotations.jsonl(含本镜批注)");
+        if (s.querySelector(".rv-anns")) cl.push("- reports/annotations.jsonl(含本镜批注)");
         cl.push("目标: (写下要 Claude 做的事)");
         copyForAI(cl.join("\n"));
       }
@@ -2279,8 +2291,10 @@ _PAGES_JS = r"""
        * setQueueMode's updateQueueUI syncs `active` onto the queue head. */
       var restoredCard = shots[active];
       setQueueMode(true);
-      var ai = filteredShots().indexOf(restoredCard);
-      if (ai >= 0) { qIndex = ai; updateQueueUI(); }
+      if (restoredPos) {  /* only a REAL saved position re-pins the queue */
+        var ai = filteredShots().indexOf(restoredCard);
+        if (ai >= 0) { qIndex = ai; updateQueueUI(); }
+      }
     }
   }
 
@@ -2326,7 +2340,7 @@ _PAGES_JS = r"""
       var act = btn.getAttribute("data-act");
       if (act === "use") {
         post("/api/lib/use", { hash: hash, as: btn.getAttribute("data-as") || "refs" }).then(function (res) {
-          if (res.status === 200) toast("已用到项目 → " + res.data.dest, true);
+          if (res.status === 200) toast("已用到项目 → " + (res.data.dest || "media/refs"), true);
           else toast((res.data && res.data.error) || "失败", false);
         });
       } else if (act === "tag") {
@@ -2380,7 +2394,7 @@ _PAGES_JS = r"""
       body[kind] = id;
       post("/api/refs/assign", body).then(function (res) {
         if (res.status === 200 && res.data.ok) {
-          toast("已关联 (assigned) → " + res.data.new, true);
+          toast("已关联 (assigned) → " + (res.data.new || "已更新"), true);
           reloadSoon();
         } else {
           var msg = (res.data && res.data.error) || "关联失败 (assign failed)";

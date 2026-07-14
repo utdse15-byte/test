@@ -306,6 +306,10 @@ def _risks(project: Project, status: Any, spend: Any) -> dict[str, Any]:
     if isinstance(spend, dict):
         limit = spend.get("budget_limit")
         total = spend.get("total") or 0.0
+        try:  # a hand-edited non-numeric budget degrades THIS row only (#51)
+            _t, _l = float(total), float(limit) if limit else 0.0
+        except (TypeError, ValueError):
+            limit = None
         if limit and float(total) >= 0.8 * float(limit):
             over = float(total) >= float(limit)
             cur = spend.get("currency") or ""
