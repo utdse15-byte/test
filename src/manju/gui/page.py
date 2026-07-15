@@ -2817,6 +2817,9 @@ _JS = r"""
         cancelBtn.addEventListener("click", () =>
           post(cancelBtn, "/api/jobs/cancel", { job_id: j.id }, "已请求取消 (cancel requested)"));
         row.appendChild(cancelBtn);
+      } else if (j.state === "running" || j.state === "canceling") {
+        /* C30: honest absence of cancel — do not leave users guessing. */
+        row.appendChild(el("span", "muted jnote", "运行中不可中途取消"));
       }
       if (j.retryable) {
         const retryBtn = el("button", "btn mini ghost", "重试");

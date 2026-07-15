@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from manju.providers.asr import GenericAsrProvider
-from manju.providers.base import FailureKind, ProviderFailure
+from manju.providers.base import ProviderCanceled, ProviderFailure
 from manju.providers.generic_cloud import HttpResponse
 from manju.providers.manifest import GENERIC_ASR_ADAPTER, ProviderManifest
 
@@ -89,11 +89,11 @@ def test_asr_async_poll_cancel(tmp_path: Path) -> None:
         n["i"] += 1
         return n["i"] >= 2  # allow first poll GET, cancel on re-entry
 
-    with pytest.raises(ProviderFailure) as ei:
+    with pytest.raises(ProviderCanceled) as ei:
         provider.transcribe(media, should_cancel=cancel_after_first_poll_check)
-    assert ei.value.kind == FailureKind.provider_error
-    assert ei.value.detail.get("canceled") is True
-    assert "j1" in str(ei.value)
+    assert ei.value.job_id == "j1"
+    assert ei.value.provider_id == "asr_test"
+    assert not isinstance(ei.value, ProviderFailure)
 
 
 def test_asr_async_poll_succeeds_without_cancel(tmp_path: Path) -> None:

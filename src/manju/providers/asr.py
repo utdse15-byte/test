@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .base import FailureKind, ProviderFailure, status_to_kind
+from .base import FailureKind, ProviderCanceled, ProviderFailure, status_to_kind
 from .jsonpath import JsonPathError, extract
 from .manifest import (
     GENERIC_ASR_ADAPTER,
@@ -216,13 +216,10 @@ class GenericAsrProvider:
         assert poll_cfg is not None
         elapsed, i = 0.0, 0
         while True:
-            # C23: cooperative cancel BETWEEN poll sleeps (never mid-HTTP).
+            # C23/C30: cooperative cancel BETWEEN poll sleeps (never mid-HTTP).
+            # ProviderCanceled (not ProviderFailure) matches TTS/cloud/ComfyUI.
             if should_cancel is not None and should_cancel():
-                raise ProviderFailure(
-                    FailureKind.provider_error,
-                    f"{self.id}: poll canceled for job {job_id}",
-                    detail={"job_id": job_id, "canceled": True},
-                )
+                raise ProviderCanceled(self.id, job_id)
             resp = self._transport(
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
