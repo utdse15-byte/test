@@ -333,7 +333,7 @@ _INGEST_JS = r"""
     // (a large batch of big video files is genuinely multi-second) — submit
     // + poll, same shape as doApply() below.
     post("/api/ingest/plan", { batch: batchId, role: rs.role, shot: rs.shot }).then(function (res) {
-      if (res.status !== 202 || !res.data.job) {
+      if (!(res.status === 202 || res.status === 200) || !res.data || !res.data.job) {
         if (planBtn) planBtn.disabled = false;
         toast((res.data && res.data.error) || "生成计划失败", false);
         return;
@@ -375,7 +375,7 @@ _INGEST_JS = r"""
     post("/api/ingest/apply",
       { batch: batchId, role: rs.role, shot: rs.shot, overrides: overrides }
     ).then(function (res) {
-      if (res.status !== 202 || !res.data.job) {
+      if (!(res.status === 202 || res.status === 200) || !res.data || !res.data.job) {
         if (btn) btn.disabled = false;
         toast((res.data && res.data.error) || "入库失败", false);
         return;

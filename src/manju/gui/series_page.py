@@ -707,7 +707,7 @@ _SERIES_JS = r"""
     if (btn) btn.disabled = true;
     if (out) out.textContent = "新建中…";
     post("/api/series/new-episode", { eid: eid, title: title }).then(function (res) {
-      if (res.status !== 202 || !res.data.job) {
+      if (!(res.status === 202 || res.status === 200) || !res.data || !res.data.job) {
         if (btn) btn.disabled = false;
         if (out) out.textContent = (res.data && res.data.error) || "失败";
         toast((res.data && res.data.error) || "失败", false);
@@ -739,7 +739,7 @@ _SERIES_JS = r"""
     if (btn) btn.disabled = true;
     if (out) out.textContent = "同步中…";
     post("/api/series/sync-bible/apply", {}).then(function (res) {
-      if (res.status !== 202 || !res.data.job) {
+      if (!(res.status === 202 || res.status === 200) || !res.data || !res.data.job) {
         if (btn) btn.disabled = false;
         if (out) out.textContent = (res.data && res.data.error) || "失败";
         toast((res.data && res.data.error) || "失败", false);

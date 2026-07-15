@@ -373,6 +373,9 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
         raise ToolError(
             f"unknown target: {target!r} — MCP build accepts {allowed}",
             code="invalid_argument")
+    lang = args.get("lang")
+    if lang is not None:
+        lang = str(lang)
     return run_build(
         project,
         target=target,
@@ -381,6 +384,7 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
         dry_run=bool(args.get("dry_run", False)),
         actor="ai",
         agent_profile=profile,  # AI_IDE_16 §10 keyframe spend gate
+        lang=lang,
     ).to_dict()
 
 
@@ -832,6 +836,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
                 "regen_stale": {"type": "boolean", "default": False},
                 "dry_run": {"type": "boolean", "default": False},
+                "lang": {
+                    "type": "string",
+                    "description": "Optional locale id (WP4) — voice+captions+final "
+                    "under locales/<lang>/; only target final|qc",
+                },
             }
         ),
         "policy": _P.policy(
