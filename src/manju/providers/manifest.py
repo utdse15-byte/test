@@ -775,6 +775,7 @@ def reachability_probe(
     ``None`` when there is nothing free to probe (the probe is skipped, never a
     failure). ``opener(url) -> response`` is injectable for tests."""
     import urllib.error
+    import urllib.parse
     import urllib.request
 
     if manifest.adapter == COMFYUI_ADAPTER:
@@ -784,7 +785,19 @@ def reachability_probe(
     else:
         return None, "no zero-cost ping endpoint (set ping_url) — live probe skipped"
 
-    _open = opener or (lambda u: urllib.request.urlopen(u, timeout=timeout))
+    def _default_open(u: str):
+        # C36: same loopback no-proxy rule as generic_cloud.default_transport —
+        # ComfyUI live probe must not go through corporate HTTP_PROXY.
+        from .generic_cloud import _is_loopback_host
+
+        host = urllib.parse.urlsplit(u).hostname
+        if _is_loopback_host(host):
+            return urllib.request.build_opener(
+                urllib.request.ProxyHandler({})
+            ).open(u, timeout=timeout)
+        return urllib.request.urlopen(u, timeout=timeout)
+
+    _open = opener or _default_open
     try:
         resp = _open(url)
     except urllib.error.HTTPError as exc:
