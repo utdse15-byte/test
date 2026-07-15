@@ -136,3 +136,8 @@ Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
 - Tests: test_cycle7_cancel_honesty_20260715.py
 - Verify: cycle7_tests.log
 
+
+---
+## Cycles 8-9
+- C8 `c44af71`: funnel plan_done locale-only
+- C9 `90e4479`: director suggest_next locale-only honesty
