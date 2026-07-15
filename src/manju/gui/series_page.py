@@ -715,7 +715,11 @@ _SERIES_JS = r"""
       }
       pollJob(res.data.job.id).then(function (job) {
         if (btn) btn.disabled = false;
-        if (!job) { toast("新建集任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); return; }
+        if (!job) {
+          if (out) out.textContent = "仍在排队/运行(超时)— 刷新本页查看";
+          toast("新建集任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false);
+          return;
+        }
         if (job.state === "done") {
           var result = job.result || {};
           toast("已新建 " + eid, true);
@@ -743,7 +747,11 @@ _SERIES_JS = r"""
       }
       pollJob(res.data.job.id).then(function (job) {
         if (btn) btn.disabled = false;
-        if (!job) { toast("同步任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); return; }
+        if (!job) {
+          if (out) out.textContent = "仍在排队/运行(超时)— 刷新本页查看";
+          toast("同步任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false);
+          return;
+        }
         if (job.state === "done") {
           var result = job.result || {};
           var t = result.totals || {};

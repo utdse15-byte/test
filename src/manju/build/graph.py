@@ -1562,7 +1562,7 @@ def _run_build_phases(
             try:
                 gen_paths = synthesize_locale_voices(
                     project, voice_plan, lang=lang, actor=actor,
-                    hold_lock=False,
+                    hold_lock=False, should_cancel=should_cancel,
                 )
                 result.generated.extend(gen_paths)
             except Exception as exc:

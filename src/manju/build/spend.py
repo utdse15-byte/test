@@ -243,6 +243,35 @@ def _from_sidecars(project: Project) -> dict:
                     "estimated_cost": None,
                 }
             )
+        # C2: voice takes (base + locales) carry TTS cost on the sidecar.
+        from ..runtime.state import _iter_voice_media
+
+        for media, vsc, take_label in _iter_voice_media(project, shot_id):
+            if vsc is None:
+                continue
+            takes_seen += 1
+            remote = vsc.remote
+            cost = 0.0
+            currency = None
+            if remote is not None and remote.cost:
+                cost = float(remote.cost)
+                currency = remote.currency
+                currency_totals[currency] = currency_totals.get(currency, 0.0) + cost
+            total += cost
+            provider_pairs.append((vsc.provider, cost))
+            shot_pairs.append((shot_id, cost))
+            recent.append(
+                {
+                    "ts": vsc.created_at,
+                    "shot": shot_id,
+                    "provider": vsc.provider,
+                    "take": take_label,
+                    "cost": cost,
+                    "currency": currency,
+                    "status": "succeeded",
+                    "estimated_cost": None,
+                }
+            )
 
     if takes_seen == 0:
         return {

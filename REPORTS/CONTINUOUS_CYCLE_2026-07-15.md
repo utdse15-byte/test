@@ -7,35 +7,48 @@
 | **Branch** | `claude/fable-opus-task-division-wv97i6` |
 | **Scratch** | `C:\Users\ADMINI~1\AppData\Local\Temp\grok-goal-bd93d317b808\implementer` |
 
-## Residual risks after R2 (do not re-open closed items unless re-broken)
+## Residual risks after R2 (baseline)
 
-- exports/`--lang` still write shared `exports/` tree (R2-P1-2 partial: only proxy refused)
-- funnel / exportstatus always `newest_final_path()` base
-- GUI job UX still depends on status===202 after post fix (verify contract tests)
-- gui_state 30s stale steal (known P2)
-- board vs GUI residual paths
-- Silent `except Exception` soft paths in graph beyond locale voice (already hardened)
+- exports/`--lang` pollute base (addressed C1)
+- empty locale plan → 母语 film (addressed C1)
+- funnel/exportstatus base-only final (C2+)
+- voice spend not in ledger rebuild (C2+)
+- locale TTS cancel (C2+)
 
 ---
 
 ## Cycle 1
 
 ### 1A Scan
-_(in progress)_
+- Engine: empty locale plan hard-fail gap; exports pollution; voice spend; cancel; funnel base final; MCP qc base
+- GUI: review/storyboard redo without assume_yes dead-end; edit cancel→success; TTS false 不可用; skill half-open; series sticky status
 
-### 1B Fixes
-_(pending)_
+### 1B Fixes (SHA `0ee1e7e`)
+- `graph.py`: hard-fail 有译文无配音; early refuse lang+proxy|exports; skip base NLE exports on locale final
+- `pages.py` / `storyboard.py`: assume_yes after confirm
+- `edit.py`: canceled/interrupted not success
+- Tests: `tests/test_cycle1_bugfix_20260715.py`
 
-### 1C UX
-_(pending)_
+### 1C UX (same SHA)
+- Storyboard approve toast; kbd hint **n**; job badge **待确认花费**; TTS timeout honest copy
 
 ### 1D Re-verify
-_(pending)_
+- pytest: `test_cycle1*` + bugfix* + merge_blockers + job_cancel → **69 passed** (re-logged to scratch)
 
 ---
 
 ## Cycle 2
 
+### 2A Scan
+_(in progress)_
+
+### 2B Fixes
+_(pending)_
+
+### 2C UX
+_(pending)_
+
+### 2D Re-verify
 _(pending)_
 
 ---

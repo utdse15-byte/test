@@ -205,6 +205,19 @@ def _produce_done(project: Project) -> tuple[bool, str]:
     parallel staleness path."""
     final = project.newest_final_path()
     if final is None:
+        # C2 honesty: locale-only finals live under renders/final/locales/.
+        locales_root = project.final_dir / "locales"
+        locale_hits: list[str] = []
+        if locales_root.is_dir():
+            for d in sorted(locales_root.iterdir()):
+                if d.is_dir() and any(d.glob("final_v*.mp4")):
+                    locale_hits.append(d.name)
+        if locale_hits:
+            return False, (
+                "还没有 base 成片(renders/final/),但已有 locale 成片: "
+                + ", ".join(locale_hits)
+                + " — funnel 按 base final 计;locale 交付用 manju build --lang"
+            )
         return False, "还没有成片:manju build 生成 final"
     from .exportstatus import Freshness, deliverables
 

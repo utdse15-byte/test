@@ -553,6 +553,8 @@ _CREATE_JS = r"""
       } else {
         bodyEl.textContent = (res.data && res.data.error) || "技能读取失败";
       }
+    }).catch(function () {
+      bodyEl.textContent = "网络错误,无法加载技能";
     });
   }
   function closeModal() {

@@ -60,6 +60,23 @@ if TYPE_CHECKING:  # avoid an import cycle; only needed for type hints
     from ..core.container import Project
 
 STALE_PENDING_JOB_DAYS = 7  # §3: pending jobs older than this are pruned on rebuild
+
+
+def _iter_voice_media(project: "Project", shot_id: str):
+    """Yield ``(media_path, sidecar|None, take_label)`` for base + locale voices."""
+    for media, sc in project.voice_takes(shot_id):
+        yield media, sc, media.stem
+    locales_root = project.takes_dir(shot_id) / "locales"
+    if not locales_root.is_dir():
+        return
+    for lang_dir in sorted(locales_root.iterdir()):
+        if not lang_dir.is_dir():
+            continue
+        lang = lang_dir.name
+        for media, sc in project.voice_takes(shot_id, lang=lang):
+            yield media, sc, f"locales/{lang}/{media.stem}"
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -665,6 +682,37 @@ class RuntimeState:
                             currency,
                             job_id,
                             take.name,
+                        ),
+                    )
+                    run_count += 1
+                # C2: voice takes (base + locales/*) also carry remote.cost —
+                # omit them and manju spend after rebuild undercounts TTS.
+                for media, vsc, take_label in _iter_voice_media(project, shot_id):
+                    if vsc is None:
+                        continue
+                    remote = vsc.remote
+                    cost = 0.0
+                    currency = None
+                    job_id = None
+                    if remote is not None:
+                        job_id = remote.job_id
+                        if remote.cost is not None:
+                            cost = float(remote.cost)
+                            currency = remote.currency
+                    self._conn.execute(
+                        "INSERT INTO runs "
+                        "(ts, shot, provider, params, status, failure_kind, cost, "
+                        " currency, remote_job_id, take, error, estimated_cost) "
+                        "VALUES (?, ?, ?, ?, 'succeeded', NULL, ?, ?, ?, ?, NULL, NULL)",
+                        (
+                            vsc.created_at or self._ts(),
+                            shot_id,
+                            vsc.provider,
+                            _dumps(dict(vsc.params) or None),
+                            cost,
+                            currency,
+                            job_id,
+                            take_label,
                         ),
                     )
                     run_count += 1

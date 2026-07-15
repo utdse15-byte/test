@@ -82,6 +82,7 @@ def synthesize_locale_voices(
     lang: str,
     actor: str = "engine",
     hold_lock: bool = True,
+    should_cancel: "Callable[[], bool] | None" = None,
 ) -> list[str]:
     """Run TTS for locale plan rows; register under locales/<lang>/.
 
@@ -89,8 +90,12 @@ def synthesize_locale_voices(
     ``manju voice --lang`` cannot race another writer (P1-5). When called
     from ``run_build`` (which already holds the lock), pass ``hold_lock=False``
     — ``BuildLock`` is not reentrant (R2-P0-1 regression).
+
+    ``should_cancel`` (C2): checked between shots; raises :class:`BuildCanceled`
+    when set so GUI cancel stops locale dub mid-batch.
     """
     import contextlib
+    from typing import Callable
 
     from ..core.events import append_event
     from ..core.locale import validate_lang
@@ -107,6 +112,15 @@ def synthesize_locale_voices(
     )
     with lock_cm:
         for item in plan:
+            if should_cancel is not None and should_cancel():
+                from .graph import BuildCanceled
+
+                raise BuildCanceled(
+                    f"已取消(locale voice:{lang})",
+                    generated=list(generated),
+                    spent=0.0,
+                    currency=None,
+                )
             sid = item["shot"]
             shot = overlay_shot_for_voice(project, project.load_shot(sid), lang)
             if not shot.dialogue.text:
