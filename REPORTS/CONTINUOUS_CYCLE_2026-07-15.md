@@ -695,3 +695,31 @@ Loop continues...
 - 194 commits since 81d6206
 - Broad suite: 206 passed
 - Still looping toward ~10h
+
+
+## Wrap-up (user: 收个尾) (2026-07-15T07:13:54.718855)
+
+Continuous infinite loop stopped by user request.
+
+### Session slice summary
+- Cycles landed this continuation: **C22–C113** (product fixes + pins + ledger)
+- Commits since continuous base `81d6206`: **~195**
+- Latest broad suite snapshot: **206 passed** (cycle* + bugfix + merge_blockers + no_proxy)
+- Cycle-pin suite: **100+** green
+
+### Main themes
+1. **Cancel honesty** — ComfyUI/ASR/TTS/Edge/local_cmd polls; GUI voice/redo/lab/preview; export/repair cancel_scope; run_qc batches; roundtrip rows; handle_rebuild
+2. **Locale honesty** — GUI build/QC lang; language select; next_step build_locale; cockpit hero; multi-locale QC toast
+3. **Spend-gate honesty** — MCP/GUI WaitingUser → waiting_user; spend banner multi-kind; assume_yes on MCP build/redo
+4. **Windows proxy** — loopback default_transport + reachability no-proxy
+
+### Evidence
+- Ledger: `REPORTS/CONTINUOUS_CYCLE_2026-07-15.md`
+- Residual scan: `REPORTS/CONTINUOUS_RESIDUAL_SCAN_C22_C54_2026-07-15.md`
+- Branch: `claude/fable-opus-task-division-wv97i6` (pushed)
+
+### Still open (not blocking wrap)
+- series_new_episode mid-create cancel (short path; intentionally not running-cancelable)
+- Multi-locale QC still queues first lang only (+ toast notes rest)
+- Some ffmpeg/job_cancel tests flake on this host (WinError 50 env)
+- Remote TTS cancel may still bill (§8.1)
