@@ -461,3 +461,12 @@ Loop continues...
 - Broad suite: **179 passed**, 1 skipped (cycle* + bugfix + merge_blockers + no_proxy)
 - Commits since 81d6206: 138
 - Loop continues toward ~10h
+
+## Cycles 86-87
+- C86 redo ProviderCanceled pin
+- C87 BatchResult.canceled to_dict pin
+- Broad suite: 179 passed
+
+## Continuous (2026-07-15T06:55:01.7427969-07:00)
+- 140 commits since 81d6206
+- Still looping toward ~10h wall-clock
