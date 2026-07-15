@@ -1213,9 +1213,31 @@ def suggest_next(project: Project) -> list[Suggestion]:
         final = project.newest_final_path()
     except Exception:
         final = None
+    locale_finals: list[str] = []
+    try:
+        locales_root = project.final_dir / "locales"
+        if locales_root.is_dir():
+            locale_finals = [
+                d.name for d in sorted(locales_root.iterdir())
+                if d.is_dir() and any(d.glob("final_v*.mp4"))
+            ]
+    except Exception:
+        locale_finals = []
     if final is None and statuses and not by_state.get(ShotState.MISSING.value):
-        out.append(Suggestion(kind="generate", text="还没有成片 final — 建议构建",
-                              action={"type": "build", "target": "final"}))
+        if locale_finals:
+            # C9: do not yell "no final" when locale deliverables already exist.
+            out.append(Suggestion(
+                kind="generate",
+                text=(
+                    "尚无 base 成片,但已有 locale 成片("
+                    + ", ".join(locale_finals)
+                    + ") — 若要 base final 请 manju build --target final"
+                ),
+                action={"type": "build", "target": "final"},
+            ))
+        else:
+            out.append(Suggestion(kind="generate", text="还没有成片 final — 建议构建",
+                                  action={"type": "build", "target": "final"}))
     elif final is not None:
         cover = project.exports_dir / "packaging" / "cover.png"
         try:
