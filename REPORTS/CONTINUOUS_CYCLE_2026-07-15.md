@@ -294,3 +294,10 @@ Loop continues...
 - 147 passed (cycle* + bugfix + merge_blockers + no_proxy)
 - Commits since 81d6206: 77+
 - Still looping toward ~10h wall-clock
+
+## Cycles 51-52
+- C51 `fde0261` handle_rebuild cancelable
+- C52 roundtrip apply cancel between rows
+
+## Continuous (2026-07-15T06:35:55.1005986-07:00)
+- Still looping toward ~10h; 80+ commits since 81d6206
