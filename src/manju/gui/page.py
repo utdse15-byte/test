@@ -2647,9 +2647,15 @@ _JS = r"""
       const lf = lastLocaleFinals || {};
       const langs = Object.keys(lf).sort();
       if (langs.length) body.lang = langs[0];
-      const msg = body.lang
-        ? ("QC 任务已入队 (locale " + body.lang + ")")
-        : "QC 任务已入队 (qc queued)";
+      /* C70: multi-locale honesty — first sorted + note remaining. */
+      let msg = "QC 任务已入队 (qc queued)";
+      if (body.lang) {
+        msg = "QC 任务已入队 (locale " + body.lang + ")";
+        if (langs.length > 1) {
+          msg += " · 另有 " + (langs.length - 1) + " 种 locale 未检"
+            + " (CLI: manju qc --lang …)";
+        }
+      }
       post(btn, "/api/qc", body, msg);
     });
     mkBtn("检查 (Check)", "ghost", async (btn) => {
