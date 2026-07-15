@@ -44,3 +44,7 @@
 - Cycle pin tests C22–C54 suite: 64+ passed in batch
 - Broader suite snapshots: 147–165 passed (cycle* + bugfix + GUI subset)
 - Continuous ledger: `REPORTS/CONTINUOUS_CYCLE_2026-07-15.md`
+
+
+## Cycles 90-91 (MCP cancel honesty)
+- MCP build/redo map BuildCanceled/ProviderCanceled → ToolError canceled
