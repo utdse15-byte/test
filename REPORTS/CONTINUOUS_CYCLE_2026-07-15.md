@@ -147,3 +147,7 @@ Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
 - C10 `bdacdb2`/`81c93b2`: Build/QC job-running tooltips
 - C11 `a9b0e42`: export center locale final rows
 Loop continues...
+
+## Cycle 12
+- `c198b6f` TTS poll should_cancel
+
