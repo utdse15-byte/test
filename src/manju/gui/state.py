@@ -411,6 +411,8 @@ def build_state(project: "Project", runner: "JobRunner",
     if status.get("latest_final"):
         latest_final = {"path": status["latest_final"],
                         "url": media_url(status["latest_final"])}
+    # C14: pass locale_finals through GUI state for cockpit/status strip.
+    locale_finals = status.get("locale_finals") or {}
 
     # version stack (Frame.io pattern): newest first, append-only lineage.
     # Round W (issue #70): sort NUMERICALLY (final_v10 beats final_v9) — a
@@ -461,6 +463,7 @@ def build_state(project: "Project", runner: "JobRunner",
         "latest_final": latest_final,
         "finals": finals,
         "latest_final_note": status.get("latest_final_note"),
+        "locale_finals": locale_finals,
         "build_lock": status.get("build_lock"),
         "qc": _qc_summary(project),
         "failures": _failures(project),

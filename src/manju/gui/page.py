@@ -1971,6 +1971,13 @@ _JS = r"""
     if (s.latest_final_note) {   /* crashed-render honesty (§3) */
       root.appendChild(el("div", "final-note", "⚠ 成片提示 (final note): " + s.latest_final_note));
     }
+    if (s.locale_finals && typeof s.locale_finals === "object") {
+      const langs = Object.keys(s.locale_finals);
+      if (langs.length) {
+        root.appendChild(el("div", "muted",
+          "locale 成片: " + langs.map((k) => k + "=" + s.locale_finals[k]).join(" · ")));
+      }
+    }
 
     if (s.next_step) root.appendChild(el("div", "next-step", "下一步 (next): " + s.next_step));
 
