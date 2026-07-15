@@ -2377,19 +2377,26 @@ _JS = r"""
     (Array.isArray(gate.errors) && gate.errors.length ? gate.errors[0]
       : "waiting_user: 需要确认预估花费 (spend confirmation required)");
 
-  /* jobs-driven: the NEWEST build job finishing with result.waiting_user
-   * raises the banner; 确认 resends that job's EXACT params + assume_yes. */
+  /* jobs-driven: NEWEST waiting_user job (build/redo/voice/…) raises banner;
+   * 确认 resends that job's EXACT params + assume_yes (C67: not build-only). */
+  const SPEND_KINDS = {
+    build: "/api/build",
+    redo: "/api/redo",
+    voice: "/api/voice",
+    redo_batch: "/api/redo-batch",
+    voice_batch: "/api/voice-batch",
+  };
   function renderSpend(jobs) {
     if (!spendBox) return;
-    const builds = jobs.filter((j) => j.kind === "build")
+    const gated = jobs.filter((j) => SPEND_KINDS[j.kind])
       .sort((a, b) => String(b.created).localeCompare(String(a.created)));
-    const j = builds[0];
-    const waiting = !!(j && j.state === "done" && j.result &&
-      j.result.waiting_user === true && !spendDismissed[j.id]);
+    const j = gated.find((x) => x.state === "done" && x.result &&
+      x.result.waiting_user === true && !spendDismissed[x.id]);
+    const waiting = !!j;
     if (waiting) {
       if (spendSig !== "job:" + j.id) {
         spendSig = "job:" + j.id;
-        showSpendBanner(spendText(j.result), j.params || {}, j.id);
+        showSpendBanner(spendText(j.result), j.params || {}, j.id, j.kind);
       }
       return;
     }
@@ -2401,20 +2408,24 @@ _JS = r"""
     }
   }
 
-  function showSpendBanner(text, params, key) {
+  function showSpendBanner(text, params, key, kind) {
     clear(spendBox);
     const box = el("div", "spendbanner");
     box.appendChild(el("div", "sb-text", "⚠ " + text));
     const row = el("div", "btnrow");
     if (!readonly) {
-      const ok = el("button", "btn confirm", "确认花费并构建 (Confirm & build)");
+      const api = SPEND_KINDS[kind] || "/api/build";
+      const okLabel = kind && kind !== "build"
+        ? "确认花费并继续 (Confirm & continue)"
+        : "确认花费并构建 (Confirm & build)";
+      const ok = el("button", "btn confirm", okLabel);
       ok.type = "button";
       ok.addEventListener("click", async () => {
         const body = Object.assign({}, params, { assume_yes: true, dry_run: false });
         spendDismissed[key] = true;
         spendSig = null;
-        const data = await post(ok, "/api/build", body,
-          "已确认花费,构建已重新入队 (confirmed — build re-queued)");
+        const data = await post(ok, api, body,
+          "已确认花费,任务已重新入队 (confirmed — re-queued)");
         if (data) clear(spendBox);
         else spendDismissed[key] = false;  /* resend failed: keep it retryable */
       });
