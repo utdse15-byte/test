@@ -2112,11 +2112,11 @@ _PAGES_JS = r"""
         });
       }
       else if (act === "redo") {
-        // existing redo flow — confirmed client-side since it spends money
-        // the moment the jobs runner picks it up (round X agent XF queue mode).
-        if (!window.confirm("重做镜头 " + shot + "？将产生新的生成花费。")) return;
-        post("/api/redo", { shot: shot }).then(function (res) {
-          if (res.status === 202) toast("重做已排队 (queued)", true);
+        // C1: confirm dialog IS the spend gate (personal workbench) — pass
+        // assume_yes so the job does not fail as WaitingUser with a green toast.
+        if (!window.confirm("重做镜头 " + shot + "？将产生新的生成花费(确认即批准花费)。")) return;
+        post("/api/redo", { shot: shot, assume_yes: true }).then(function (res) {
+          if (res.status === 202 || (res.data && res.data.job)) toast("重做已排队 (queued)", true);
           else toast((res.data && res.data.error) || "失败", false);
         });
       }
@@ -2201,20 +2201,18 @@ _PAGES_JS = r"""
       if (e.target.id === "rv-q-prev") { qIndex--; updateQueueUI(); return; }
       if (e.target.id === "rv-q-next") { qIndex++; updateQueueUI(); return; }
       if (e.target.id === "rv-redo-stale") {
-        /* convenience wave 4: the stale filter showed the pile, then made the
-         * owner confirm one redo per card. Same batch endpoint the workbench
-         * bulk bar uses; NO assume_yes — a priced batch waits at the §8.3
-         * gate in the jobs panel instead of spending silently. */
+        /* C1: confirm dialog is the spend gate — assume_yes after explicit yes
+         * (jobs panel has no waiting_user UI for redo_batch). */
         var stale = Array.prototype.map.call(
           document.querySelectorAll('.rv-shot[data-buildstate="stale"]'),
           function (s) { return s.getAttribute("data-shot"); });
         if (!stale.length) { toast("没有待更新(stale)的镜头", false); return; }
         if (!window.confirm("批量重做 " + stale.length + " 个待更新镜头?"
-                            + "可能产生生成花费;付费部分会在工作台任务面板等待确认。")) return;
+                            + "可能产生生成花费;确认即批准花费。")) return;
         e.target.disabled = true;
-        post("/api/redo-batch", { shots: stale }).then(function (res) {
+        post("/api/redo-batch", { shots: stale, assume_yes: true }).then(function (res) {
           e.target.disabled = false;
-          if (res.status === 202 && res.data.job) {
+          if ((res.status === 202 || res.status === 200) && res.data && res.data.job) {
             toast("批量重做已入队 (job " + res.data.job.id + ") — 进度见工作台任务面板", true);
           } else toast((res.data && res.data.error) || "失败", false);
         });

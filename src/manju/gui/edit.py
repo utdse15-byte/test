@@ -1882,8 +1882,12 @@ _EDIT_JS = r"""
         btn.disabled = false;
         var out = insp.querySelector(".ed-trim-out");
         if (!job) { toast("裁剪超时", false); return; }
-        if (job.state === "failed") { toast(job.error || "裁剪失败", false); return; }
+        if (job.state === "failed" || job.state === "canceled" || job.state === "interrupted") {
+          toast(job.error || ("裁剪" + (job.state === "failed" ? "失败" : "已取消")), false);
+          return;
+        }
         var nm = job.result && job.result.new_take;
+        if (!nm) { toast("裁剪完成但无新 take", false); return; }
         toast("新 take " + nm, true);
         // offer to select the new take (respect human selection judgment)
         out.textContent = "";
@@ -2529,10 +2533,14 @@ _EDIT_JS = r"""
           var sid = seamState.out; closeSeam();
           pollJob(r2.data.job.id, function (job) {
             if (!job) { toast("补拍手柄超时", false); return; }
-            if (job.state === "failed") { toast(job.error || "补拍手柄失败", false); return; }
+            if (job.state === "failed" || job.state === "canceled" || job.state === "interrupted") {
+              toast(job.error || ("补拍手柄" + (job.state === "failed" ? "失败" : "已取消")), false);
+              return;
+            }
             var nm = job.result && job.result.trim_take;
+            if (!nm) { toast("补拍手柄完成但无新 take", false); return; }
             toast("已补拍手柄 · take " + nm + "(重建以应用转场)", true);
-            if (nm) post("/api/select", { shot: sid, take: nm }).then(function () { reloadSoon(); });
+            post("/api/select", { shot: sid, take: nm }).then(function () { reloadSoon(); });
           });
         });
     });

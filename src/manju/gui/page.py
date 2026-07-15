@@ -2754,8 +2754,11 @@ _JS = r"""
        * queued/running job — see gui/jobs.py's JobRunner.interrupted()) gets
        * its own 中文 chip, never the raw English state word every other
        * state renders as-is. */
-      row.appendChild(el("span", "badge jb-" + j.state,
-        j.state === "interrupted" ? "已中断" : j.state));
+      /* C1 UX: waiting_user builds are state=done with a flag — show 待确认 not plain done. */
+      const waitSpend = j.kind === "build" && j.result && j.result.waiting_user === true;
+      const stateLabel = j.state === "interrupted" ? "已中断"
+        : (waitSpend ? "待确认花费" : j.state);
+      row.appendChild(el("span", "badge jb-" + (waitSpend ? "waiting" : j.state), stateLabel));
       const secs = jobSeconds(j);
       if (secs) row.appendChild(el("span", "muted", secs));
       /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
@@ -4308,20 +4311,25 @@ _JS = r"""
               if (found && (found.state === "failed" || found.state === "canceled"
                   || found.state === "interrupted")) {
                 const err = found.error
-                  || (found.result && found.result.error) || "TTS 不可用";
+                  || (found.result && found.result.error) || "试听失败";
                 toast(err, "err");
                 return;
               }
             }
           }
           const res = (job && job.result) || {};
+          if (job && (job.state === "queued" || job.state === "running"
+              || job.state === "canceling")) {
+            toast("试听仍在排队/运行 — 稍后再点试听,或看任务面板", "err");
+            return;
+          }
           if (res.ok === false || res.code === "tts_unavailable") {
             toast(res.error || "TTS 不可用", "err");
             return;
           }
           const path = res.preview;
           if (!path) {
-            toast("TTS 不可用", "err");
+            toast("试听未返回预览(超时或未完成) — 看任务面板,勿重复连点", "err");
             return;
           }
           aud.src = "/preview/" + encodeURI(path);
@@ -5770,6 +5778,7 @@ _JS = r"""
     [["j/k", " 上/下一个镜头 (next/prev shot)"],
      ["e", " 编辑 (edit)"],
      ["f", " 单条审片 (single-item review)"],
+     ["n", " 备注 (note)"],
      ["1-9", " 选用 take (select take)"],
      ["Space", " 播放/暂停 (play/pause)"],
      ["r", " 刷新 (refresh)"],

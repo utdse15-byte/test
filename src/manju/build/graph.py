@@ -827,6 +827,15 @@ def run_build(
             result.ok = False
             result.errors.append(str(exc))
             return result
+        # C1: refuse targets that still write into shared base trees.
+        if target in ("proxy", "exports"):
+            result = BuildResult()
+            result.ok = False
+            result.errors.append(
+                f"--lang 与 --target {target} 会污染 base 树,已拒绝;"
+                "请用 manju build --lang <lang> --target final|qc"
+            )
+            return result
 
     # Boundary for "failures recorded during THIS build": every structured
     # record carries a UTC iso-seconds ts in the same format, so a string >= is a
@@ -1611,6 +1620,30 @@ def _run_build_phases(
                 append_event(project.root, actor, "voice",
                              {"shot": shot.id, "take": media.stem,
                               "provider": item["provider"]})
+    # C1: locale text without locale voice must not silently compile to 母语成片
+    # (empty voice_plan when TTS absent previously skipped R2-P1-4 hard-fail).
+    if lang and gen != "off" and target in ("final", "exports", "qc", "proxy"):
+        from ..core.locale import load_lines
+
+        lines = load_lines(project, lang)
+        need_voice = [
+            sid for sid in project.shot_ids()
+            if str((lines.get(sid) or {}).get("text") or "").strip()
+            and not project.voice_takes(sid, lang=lang)
+        ]
+        if need_voice:
+            result.ok = False
+            result.errors.append(
+                f"locale {lang}: 有译文无配音 — {', '.join(need_voice)} "
+                "(拒绝母语音频+外语字幕假本地化;配置 TTS 后 manju voice --missing "
+                f"--lang {lang} --yes,或填齐 locale takes)"
+            )
+            _record(project, "voice", lang or "locale",
+                    "locale 有译文无配音(计划为空或 TTS 不可用)",
+                    evidence=f"need_voice={need_voice}",
+                    hint=f"配置 TTS 后 manju voice --missing --lang {lang} --yes",
+                    actor=actor)
+            return _finish_run(result)
     try:
         from .voice import VoiceState, evaluate_all_voices
 
@@ -1858,7 +1891,7 @@ def _run_build_phases(
         if target != "final":
             result.ok = False
             result.errors.append(
-                f"--lang 仅支持 --target final|qc|exports 的字幕/成片路径;"
+                f"--lang 仅支持 --target final|qc 的字幕/成片路径;"
                 f"当前 target={target!r} 会污染 base 树,已拒绝。"
                 "请用 manju build --lang <lang> --target final"
             )
@@ -2044,45 +2077,62 @@ def _run_build_phases(
 
     # ---- 7. draft exports
     if target in ("final", "exports"):
-        _phase("exports")
-        profiles = set(config.export_profiles)
-        if "otio" in profiles:
-            from ..exporters.otio import export_otio
-
-            result.exports["otio"] = project.relpath(export_otio(project, timeline))
-        if "jianying" in profiles:
-            from ..exporters.jianying import export_jianying
-
-            result.exports["jianying"] = project.relpath(export_jianying(project, timeline))
-            # dual-path (decision 8): native pyJianYingDraft draft is primary;
-            # its absence is a note, never a build failure (§14 fallback exits)
-            try:
-                from ..exporters.native_draft import export_jianying_native
-
-                result.exports["jianying_native"] = project.relpath(
-                    export_jianying_native(project, timeline)
+        # C1: locale timeline must not clobber base NLE drafts under exports/.
+        if lang:
+            if target == "exports":
+                result.ok = False
+                result.errors.append(
+                    f"--lang 与 --target exports 尚未命名空间化(会覆盖 base "
+                    f"exports/ 草稿),已拒绝;请用 --target final 出 locales/"
+                    f"<lang>/ 成片,或无 --lang 导 base 草稿"
                 )
-            except Exception as exc:
-                result.warnings.append(f"jianying native draft skipped: {exc}")
-                _record(project, "export", "jianying_native",
-                        "剪映原生草稿导出被跳过(降级到骨架草稿)",
-                        evidence=" ".join(str(exc).split())[:600],
-                        hint="安装 pyJianYingDraft 可启用原生草稿;final.mp4/SRT 仍是兜底出口(§14)",
-                        level="info", actor=actor)
-        if "capcut" in profiles:
-            try:
-                from ..exporters.native_draft import export_capcut_native
+                return _finish_run(result)
+            result.warnings.append(
+                f"locale --lang {lang}: 跳过 base NLE exports(otio/jianying/capcut)"
+                " 以免污染共享 exports/ 树;成片已在 renders/final/locales/"
+            )
+        else:
+            _phase("exports")
+            profiles = set(config.export_profiles)
+            if "otio" in profiles:
+                from ..exporters.otio import export_otio
 
-                result.exports["capcut"] = project.relpath(
-                    export_capcut_native(project, timeline)
+                result.exports["otio"] = project.relpath(export_otio(project, timeline))
+            if "jianying" in profiles:
+                from ..exporters.jianying import export_jianying
+
+                result.exports["jianying"] = project.relpath(
+                    export_jianying(project, timeline)
                 )
-            except Exception as exc:
-                result.warnings.append(f"capcut draft skipped: {exc}")
-                _record(project, "export", "capcut",
-                        "CapCut 原生草稿导出被跳过(降级)",
-                        evidence=" ".join(str(exc).split())[:600],
-                        hint="安装 pycapcut 可启用;final.mp4/SRT 仍是兜底出口(§14)",
-                        level="info", actor=actor)
+                # dual-path (decision 8): native pyJianYingDraft draft is primary;
+                # its absence is a note, never a build failure (§14 fallback exits)
+                try:
+                    from ..exporters.native_draft import export_jianying_native
+
+                    result.exports["jianying_native"] = project.relpath(
+                        export_jianying_native(project, timeline)
+                    )
+                except Exception as exc:
+                    result.warnings.append(f"jianying native draft skipped: {exc}")
+                    _record(project, "export", "jianying_native",
+                            "剪映原生草稿导出被跳过(降级到骨架草稿)",
+                            evidence=" ".join(str(exc).split())[:600],
+                            hint="安装 pyJianYingDraft 可启用原生草稿;final.mp4/SRT 仍是兜底出口(§14)",
+                            level="info", actor=actor)
+            if "capcut" in profiles:
+                try:
+                    from ..exporters.native_draft import export_capcut_native
+
+                    result.exports["capcut"] = project.relpath(
+                        export_capcut_native(project, timeline)
+                    )
+                except Exception as exc:
+                    result.warnings.append(f"capcut draft skipped: {exc}")
+                    _record(project, "export", "capcut",
+                            "CapCut 原生草稿导出被跳过(降级)",
+                            evidence=" ".join(str(exc).split())[:600],
+                            hint="安装 pycapcut 可启用;final.mp4/SRT 仍是兜底出口(§14)",
+                            level="info", actor=actor)
 
     build_detail: dict[str, Any] = {
         "target": target, "ok": result.ok, "render": result.render_path,

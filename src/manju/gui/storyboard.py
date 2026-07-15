@@ -687,8 +687,11 @@ _JS = r"""
     var next = REVIEW_NEXT[cur] || "needs_review";
     btn.disabled = true;
     post("/api/storyboard/approve", { shot: shot, review: next }).then(function (res) {
-      if (res.status === 200 && res.data.ok) { reloadSoon(); }
-      else { toast(res.data.error || "审批失败", false); btn.disabled = false; }
+      if (res.status === 200 && res.data && res.data.ok) {
+        toast(shot + " → " + next, true);
+        reloadSoon();
+      }
+      else { toast((res.data && res.data.error) || "审批失败", false); btn.disabled = false; }
     }).catch(function () { toast("网络错误", false); btn.disabled = false; });
   }
 
@@ -761,19 +764,17 @@ _JS = r"""
   // batch bar buttons
   document.addEventListener("click", function (ev) {
     if (ev.target.id === "sb-redo-all" || ev.target.id === "sb-voice-all") {
-      /* convenience wave 4: the multi-select machinery existed; only these
-       * two engine batch endpoints were never wired. NO assume_yes — a
-       * priced batch waits at the §8.3 gate in the workbench jobs panel. */
+      /* C1: confirm = spend gate; assume_yes after yes (no waiting_user panel
+       * for redo_batch/voice_batch). */
       var kind = ev.target.id === "sb-redo-all" ? "redo" : "voice";
       var selB = selected();
       if (!selB.length) return;
-      if (kind === "redo" &&
-          !window.confirm("批量重做 " + selB.length + " 个镜头?可能产生生成花费;"
-                          + "付费部分会在工作台任务面板等待确认。")) return;
+      if (!window.confirm("批量" + (kind === "redo" ? "重做" : "配音") + " "
+                          + selB.length + " 个镜头?可能产生生成花费;确认即批准花费。")) return;
       ev.target.disabled = true;
-      post("/api/" + kind + "-batch", { shots: selB }).then(function (res) {
+      post("/api/" + kind + "-batch", { shots: selB, assume_yes: true }).then(function (res) {
         ev.target.disabled = false;
-        if (res.status === 202 && res.data.job) {
+        if ((res.status === 202 || res.status === 200) && res.data && res.data.job) {
           toast("批量" + (kind === "redo" ? "重做" : "配音")
                 + "已入队 (job " + res.data.job.id + ") — 进度见工作台任务面板", true);
         } else toast((res.data && res.data.error) || "失败", false);
@@ -790,8 +791,10 @@ _JS = r"""
       if (!sel.length) return;
       ev.target.disabled = true;
       post("/api/storyboard/approve", { shots: sel, review: "approved" }).then(function (res) {
-        if (res.status === 200 && res.data.ok) { toast("已批量通过 " + (res.data.changed || sel.length), true); reloadSoon(); }
-        else { toast(res.data.error || "批量通过失败", false); ev.target.disabled = false; }
+        if (res.status === 200 && res.data && res.data.ok) {
+          toast("已批量通过 " + (res.data.changed || sel.length), true); reloadSoon();
+        }
+        else { toast((res.data && res.data.error) || "批量通过失败", false); ev.target.disabled = false; }
       }).catch(function () { toast("网络错误", false); ev.target.disabled = false; });
       return;
     }
