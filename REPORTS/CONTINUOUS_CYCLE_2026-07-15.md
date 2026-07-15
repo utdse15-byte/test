@@ -361,3 +361,10 @@ Loop continues...
 - 105 commits since 81d6206
 - 78 cycle-pin tests green (C22–C67)
 - Still looping toward ~10h wall-clock
+
+## Cycle 68
+- `f34984f` dismiss any waiting_user on project switch
+
+## Continuous (2026-07-15T06:46:04.5361404-07:00)
+- 107 commits since 81d6206
+- Still looping toward ~10h wall-clock
