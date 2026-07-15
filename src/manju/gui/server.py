@@ -1609,9 +1609,17 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 # C62: spend gate → waiting_user result (not failed job).
                 from ..build.graph import WaitingUser
+                from ..providers.base import ProviderCanceled
                 if isinstance(exc, WaitingUser):
                     return {
                         "waiting_user": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                        "shot": shot_id,
+                    }
+                # C84: mid-generate cancel → canceled.
+                if isinstance(exc, ProviderCanceled):
+                    return {
+                        "canceled": True,
                         "errors": [" ".join(str(exc).split())[:500]],
                         "shot": shot_id,
                     }
