@@ -3034,22 +3034,53 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_qc(self, body: dict[str, Any]) -> None:
         project = self.server.project
         deep = bool(body.get("deep"))
+        # C37: optional lang — probe locale final (never silently QC base).
+        lang_raw = body.get("lang")
+        lang: str | None = None
+        if lang_raw is not None and str(lang_raw).strip():
+            from ..core.locale import validate_lang
+            try:
+                lang = validate_lang(str(lang_raw).strip())
+            except Exception as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+                return
 
         def fn(job) -> dict[str, Any]:
             from ..qc.checks import run_qc
             from ..qc.report import write_reports
 
             with _optional_build_lock(project.root, self.server.actor):
-                report = run_qc(project, project.load_timeline(), deep=deep)
+                timeline = project.load_timeline()
+                final_path = None
+                if lang:
+                    from ..build.locale_build import (
+                        apply_locale_overlay,
+                        newest_locale_final,
+                    )
+
+                    fp = newest_locale_final(project, lang)
+                    if fp is None:
+                        raise RuntimeError(
+                            f"locale {lang}: 无 locale 成片可 QC"
+                            f"(renders/final/locales/{lang}/)—"
+                            f"先 manju build --lang {lang} --target final"
+                        )
+                    final_path = fp
+                    if timeline is not None:
+                        timeline = apply_locale_overlay(project, timeline, lang)
+                report = run_qc(
+                    project, timeline, deep=deep, final_path=final_path)
                 paths = write_reports(project, report)
             return {
                 "ok": report.ok,
                 "errors": sum(1 for i in report.items if i.level == "error"),
                 "warnings": sum(1 for i in report.items if i.level == "warn"),
                 "reports": {k: project.relpath(v) for k, v in paths.items()},
+                "lang": lang,
             }
 
-        job = self.server.runner.submit("qc", {"deep": deep}, fn)
+        job = self.server.runner.submit(
+            "qc", {"deep": deep, "lang": lang}, fn)
         self._send_json({"job": job.to_dict()}, 202)
 
     # =================================================================
