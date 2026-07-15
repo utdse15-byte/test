@@ -2832,6 +2832,11 @@ _JS = r"""
         voice_preview: "试听",
       };
       row.appendChild(el("span", "jkind", KIND_ZH[j.kind] || j.kind || "?"));
+      /* C42: show locale tag when job params/result carry lang (build/qc). */
+      const jobLang = (j.params && j.params.lang) || (j.result && j.result.lang) || "";
+      if (jobLang) {
+        row.appendChild(el("span", "muted jlang", "·" + String(jobLang)));
+      }
       /* C1 UX: waiting_user builds are state=done with a flag — show 待确认 not plain done. */
       const waitSpend = j.kind === "build" && j.result && j.result.waiting_user === true;
       const STATE_ZH = {
