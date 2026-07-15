@@ -399,8 +399,10 @@ class JobRunner:
             # Exactly one exit sentinel — only on the OPEN→CLOSING transition.
             self._queue.put(None)
 
-        join_timeout = 0.0 if timeout is None else float(timeout)
-        self._worker.join(join_timeout)
+        if timeout is None:
+            self._worker.join()
+        else:
+            self._worker.join(float(timeout))
         stopped = not self._worker.is_alive()
         if stopped:
             with self._lock:

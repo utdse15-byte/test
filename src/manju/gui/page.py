@@ -900,10 +900,10 @@ _JS = r"""
 (() => {
   const tokenMeta = document.querySelector('meta[name="manju-token"]');
   const TOKEN = tokenMeta ? (tokenMeta.getAttribute("content") || "") : "";
-  /* stale-tab guard: the project this document rendered for. Mutable ON
-   * PURPOSE — doSwitch() adopts the new identity from its own /api/switch
-   * response (an INTENTIONAL switch, no reload); the passive refresh() poll
-   * never adopts, it overlays on mismatch instead. */
+  /* stale-tab guard: the project this document rendered for.
+   * Session is immutable — PROJECT is only rewritten when the server returns
+   * next_action.kind === "reload_current" (first bind). Never on open/create
+   * of another project. */
   const projMeta = document.querySelector('meta[name="manju-project"]');
   let PROJECT = projMeta ? (projMeta.getAttribute("content") || "") : "";
   const $ = (id) => document.getElementById(id);
@@ -1031,19 +1031,36 @@ _JS = r"""
   };
 
   /* ------------------------------------------------------------- API --- */
-  /* apiRaw never throws on HTTP errors — callers that need the error BODY
-   * (the shot editor renders 409 {"errors":[...]} in place) use it directly;
-   * api() keeps the v1 throw-on-!ok contract for everything else. */
+  /* Uses /webclient.js requestJson when available; falls back to local
+   * implementation that still preserves the full error JSON body. */
+  const apiOptions = () => ({ token: TOKEN, projectId: PROJECT || "" });
   const apiRaw = async (method, path, body) => {
-    const opts = { method, headers: { "X-Manju-Token": TOKEN } };
+    try {
+      if (typeof requestJson === "function") {
+        const data = await requestJson(method, path, body, apiOptions());
+        return { ok: true, status: 200, data };
+      }
+    } catch (err) {
+      if (err && err.name === "ManjuApiError") {
+        if (err.status === 409 && err.data && err.data.code === "project_switched") {
+          projectSwitchedOverlay(err.data.project);
+        }
+        return { ok: false, status: err.status, data: err.data || {} };
+      }
+      throw err;
+    }
+    const opts = { method, headers: { "X-Manju-Token": TOKEN, "Accept": "application/json" } };
     if (PROJECT) opts.headers["X-Manju-Project"] = PROJECT;
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
     const res = await fetch(path, opts);
-    let data = null;
-    try { data = await res.json(); } catch (e) { data = null; }
+    let data = {};
+    try {
+      const text = await res.text();
+      if (text) data = JSON.parse(text);
+    } catch (e) { data = {}; }
     if (res.status === 409 && data && data.code === "project_switched") {
       projectSwitchedOverlay(data.project);
     }
@@ -1052,7 +1069,14 @@ _JS = r"""
   const api = async (method, path, body) => {
     const r = await apiRaw(method, path, body);
     if (!r.ok) {
-      throw new Error(r.data && r.data.error ? r.data.error : "HTTP " + r.status + " (" + path + ")");
+      if (typeof ManjuApiError === "function") {
+        throw new ManjuApiError(r.status, r.data || {}, path);
+      }
+      const err = new Error(r.data && r.data.error ? r.data.error : "HTTP " + r.status + " (" + path + ")");
+      err.status = r.status;
+      err.code = r.data && r.data.code;
+      err.data = r.data || {};
+      throw err;
     }
     return r.data;
   };
@@ -1959,27 +1983,57 @@ _JS = r"""
     });
   }
 
-  async function doSwitch(slug) {
+  async function requestOpenProject(slug) {
+    /* Never rewrites PROJECT / resetAfterSwitch unless reload_current. */
     try {
-      const d = await api("POST", "/api/switch", { slug });
-      /* Session is immutable — a 2xx with open_in_new_window is unexpected
-       * but treat like the 409 path below. */
-      if (d && d.open_in_new_window) {
-        toast((d.error || "请在新窗口打开") + (d.cli ? (" — " + d.cli) : ""), "err");
+      const data = await api("POST", "/api/workspace/open", { slug });
+      handleSpaProjectAction(data);
+    } catch (err) {
+      if (err && err.data && err.data.next_action) {
+        handleSpaProjectAction(err.data);
         return;
       }
-      if (d && d.project_token) PROJECT = d.project_token;
-      toast("已切换项目 (switched): " + ((d && d.slug) || slug), "ok");
+      /* Fall back to legacy /api/switch (same immutable response). */
+      try {
+        const data = await api("POST", "/api/switch", { slug });
+        handleSpaProjectAction(data);
+      } catch (err2) {
+        if (err2 && err2.data && err2.data.next_action) {
+          handleSpaProjectAction(err2.data);
+          return;
+        }
+        toast("打开项目失败：" + errMsg(err2 || err), "err");
+      }
+    }
+  }
+
+  function handleSpaProjectAction(data) {
+    if (!data) return;
+    const next = data.next_action || {};
+    if (next.kind === "reload_current") {
+      if (data.project_token) PROJECT = data.project_token;
+      else if (data.project && data.project.id) PROJECT = data.project.id;
       resetAfterSwitch();
       refresh();
-    } catch (err) {
-      const m = errMsg(err);
-      toast(
-        (m.indexOf("immutable") >= 0 || m.indexOf("新窗口") >= 0)
-          ? m
-          : ("切换失败 (switch failed): " + m),
-        "err");
+      return;
     }
+    if (typeof handleProjectAction === "function") {
+      handleProjectAction(data, {
+        onReload: () => {
+          if (data.project_token) PROJECT = data.project_token;
+          resetAfterSwitch();
+          refresh();
+        }
+      });
+      return;
+    }
+    /* Fallback without project-action.js */
+    toast((data.error || "请在新窗口打开其他项目") +
+      (data.cli ? (" — " + data.cli) : ""), "err");
+  }
+
+  async function doSwitch(slug) {
+    await requestOpenProject(slug);
   }
 
   /* every per-project cache must die with the old project */
@@ -2094,11 +2148,19 @@ _JS = r"""
         const body = { name: nm, vertical: orient.value !== "horizontal" };
         if (preset.value) body.preset = preset.value;
         const d = await api("POST", "/api/new-project", body);
-        toast("已创建并切换到 (created) " + ((d && d.name) || nm), "ok");
-        closeEditor();          /* fires editorClosed → refresh */
-        resetAfterSwitch();     /* server already switched to the new project */
-        refresh();
+        const pname = (d && d.project && d.project.name) || (d && d.name) || nm;
+        toast("项目已创建：" + pname, "ok");
+        closeEditor();
+        /* Do NOT resetAfterSwitch / rewrite PROJECT — session stays put. */
+        handleSpaProjectAction(d);
       } catch (err) {
+        if (err && err.data && err.data.next_action) {
+          const pname = (err.data.project && err.data.project.name) || nm;
+          toast("项目已创建：" + pname, "ok");
+          closeEditor();
+          handleSpaProjectAction(err.data);
+          return;
+        }
         errBox.appendChild(el("p", "ed-err-title", "创建失败 (create failed): " + errMsg(err)));
         create.disabled = false;
         cancel.disabled = false;
@@ -5276,6 +5338,44 @@ _JS = r"""
   initTasksPanel();
   $("editor").addEventListener("close", editorClosed);
   $("planmodal").addEventListener("close", () => { planOpen = false; clear($("planmodal")); });
+
+  /* Safe quit: explicit button only — never cancel jobs from beforeunload. */
+  async function requestAppQuit(mode) {
+    try {
+      await api("POST", "/api/app/quit", { mode: mode || "after_current" });
+      toast("正在退出…", "ok");
+    } catch (err) {
+      toast("退出失败：" + errMsg(err), "err");
+    }
+  }
+  async function promptAppQuit() {
+    try {
+      const st = await api("GET", "/api/app/status");
+      if (st.running_job || (st.queued_count || 0) > 0) {
+        if (typeof showQuitDialog === "function") {
+          showQuitDialog(st, (mode) => requestAppQuit(mode));
+          return;
+        }
+      }
+      await requestAppQuit("after_current");
+    } catch (err) {
+      toast("无法读取任务状态：" + errMsg(err), "err");
+    }
+  }
+  try {
+    api("GET", "/api/app/status").then((st) => {
+      if (!st) return;
+      const host = $("header") || document.body;
+      if (!host || document.getElementById("mj-quit-btn")) return;
+      const btn = el("button", "btn ghost mini", "退出");
+      btn.type = "button";
+      btn.id = "mj-quit-btn";
+      btn.title = "安全退出 (finish or cancel jobs)";
+      btn.addEventListener("click", () => promptAppQuit());
+      host.appendChild(btn);
+    }).catch(() => {});
+  } catch (e) { /* boot continues */ }
+
   refresh();
 })();
 """.strip() + "\n"
@@ -5309,7 +5409,7 @@ def render_page(project_name: str, token: str) -> str:
         f"<title>{name} · manju gui</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'  # round-S: shared page chrome (S8b)
-        + GLOSSARY_HEAD                                 # round U: glossary + mode chrome
+        + GLOSSARY_HEAD                                 # round U: glossary + mode + webclient
         + '<script src="/app.js" defer></script>\n'
         "</head>\n"
         # round-S (S8b): nav to the server-rendered workbench pages so every

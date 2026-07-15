@@ -4366,6 +4366,9 @@ def _open_gui_window(url: str, app_window: bool) -> None:
 
 @app.command(rich_help_panel=PANEL_COLLAB)
 def gui(
+    project_path: Optional[Path] = typer.Argument(
+        None, metavar="PROJECT",
+        help="project directory to open (default: find from cwd)"),
     host: str = typer.Option("127.0.0.1", help="bind address (non-local hosts print a warning)"),
     port: int = typer.Option(8321, help="port (0 = pick a free one)"),
     open_browser: bool = typer.Option(True, "--open/--no-open",
@@ -4387,12 +4390,20 @@ def gui(
     Round X (agent XE, user pain #6/#8): OUTSIDE a project (and without
     ``--workspace``) this no longer fails — it serves a WORKSPACE PICKER
     instead (recents list with per-project status, 按路径打开/新建项目 forms).
-    Opening a project from the picker rebinds this SAME server to it."""
+    Opening a project from the picker binds this server once (immutable session);
+    other projects open in a separate window (``manju gui <path> --app --port 0``).
+    """
     from .gui.server import create_server, discover_workspace
 
     projects: Optional[dict] = None
     project: Optional[Project] = None
-    if workspace is not None:
+    if project_path is not None:
+        try:
+            project = Project(Path(project_path).expanduser().resolve())
+            _touch_recents_once(project)
+        except ProjectError as exc:
+            _fail(str(exc))
+    elif workspace is not None:
         projects = discover_workspace(workspace)
         if not projects:
             _fail(f"no manju projects found under {workspace}")
@@ -4416,7 +4427,8 @@ def gui(
                     fg=typer.colors.YELLOW)
     try:
         server = create_server(project, host=host, port=port, actor=ACTOR,
-                               readonly=readonly, workspace=projects)
+                               readonly=readonly, workspace=projects,
+                               app_mode=app_window)
     except OSError as exc:
         _fail(f"cannot bind {host}:{port} — {exc} (try --port 0 for a free port)")
     typer.secho(f"manju gui → {server.url}  (Ctrl-C to stop)", fg=typer.colors.GREEN)

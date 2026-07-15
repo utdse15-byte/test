@@ -30,11 +30,13 @@ locks guard content, not processes — see runtime/buildlock).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -44,11 +46,18 @@ from ..core.container import Project, ProjectError
 from ..core.events import append_event, tail_events
 from ..core.idents import SAFE_SEGMENT_PATTERN, is_safe_segment
 from ..runtime.buildlock import BuildLocked, build_lock
-from .jobs import JobRunner, RunnerClosed
+from .jobs import JobRunner, RunnerClosed, RunnerState
+from .project_action import (
+    gui_launch_command,
+    project_next_action,
+    project_public_dict,
+)
 from .session import ProjectSession
 from .state import build_state, project_identity
 
 __all__ = ["GuiServer", "create_server", "serve"]
+
+_log = logging.getLogger("manju.gui.server")
 
 # Only these project subtrees are ever served over HTTP (read-only).
 # WP2: `.manju/webpreview/` is disposable preview cache (tts 试听 + browser
@@ -167,12 +176,17 @@ class GuiServer(ThreadingHTTPServer):
 
     def __init__(self, project: Project | None, host: str, port: int, actor: str,
                  readonly: bool = False,
-                 workspace: dict[str, Project] | None = None):
+                 workspace: dict[str, Project] | None = None,
+                 app_mode: bool = False):
         # round X (agent XE): `project` is Optional — `manju gui` OUTSIDE a
         # project starts UNBOUND (workspace picker) until bind_project_once().
         self._session: ProjectSession | None = None
         self._session_lock = threading.Lock()
         self.closing = threading.Event()
+        self.app_mode = bool(app_mode)
+        self._quit_mode: str | None = None
+        self._quit_thread: threading.Thread | None = None
+        self._quit_lock = threading.Lock()
         # Ephemeral runner only used while unbound (no jobs.jsonl); replaced
         # by the session runner on first bind. Never shared across projects.
         self._unbound_runner = JobRunner(None, project_id="")
@@ -267,13 +281,124 @@ class GuiServer(ThreadingHTTPServer):
         shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
         return f"http://{shown}:{self.port}/"
 
-    def close(self) -> None:
-        self.closing.set()
-        # Cancel queued work; do not force-kill a running job on short timeout.
+    def app_status(self) -> dict[str, Any]:
+        """Snapshot for GET /api/app/status (readable while closing)."""
+        runner = self.runner
+        running: dict[str, Any] | None = None
+        queued = 0
+        for job in runner.list():
+            if job.state in ("running", "canceling"):
+                if running is None:
+                    running = {"id": job.id, "kind": job.kind, "state": job.state}
+            elif job.state == "queued":
+                queued += 1
         try:
-            self.runner.shutdown(timeout=1.0, cancel_queued=True, cancel_running=False)
+            rstate = runner.state().value
         except Exception:
-            pass
+            rstate = "unknown"
+        return {
+            "app_mode": self.app_mode,
+            "closing": self.closing.is_set(),
+            "quit_mode": self._quit_mode,
+            "runner_state": rstate,
+            "running_job": running,
+            "queued_count": queued,
+        }
+
+    def request_shutdown(self, mode: str = "after_current") -> dict[str, Any]:
+        """Begin coordinated quit. Idempotent; does not block the HTTP thread.
+
+        mode:
+          - ``after_current``: cancel queued, let running finish
+          - ``cancel_running``: cancel queued + cooperative cancel of running
+        """
+        if mode not in ("after_current", "cancel_running"):
+            mode = "after_current"
+        with self._quit_lock:
+            already = self.closing.is_set()
+            self.closing.set()
+            self._quit_mode = mode
+            if self._quit_thread is not None and self._quit_thread.is_alive():
+                return {
+                    "ok": True,
+                    "code": "quit_already_in_progress",
+                    "mode": self._quit_mode,
+                    "status": self.app_status(),
+                }
+            # Kick runner into CLOSING immediately (cancel queued; optional running).
+            report = self.runner.shutdown(
+                timeout=0,
+                cancel_queued=True,
+                cancel_running=(mode == "cancel_running"),
+            )
+            thr = threading.Thread(
+                target=self._finish_shutdown,
+                name="manju-gui-quit",
+                daemon=False,
+            )
+            self._quit_thread = thr
+            thr.start()
+            return {
+                "ok": True,
+                "code": "quit_started" if not already else "quit_already_in_progress",
+                "mode": mode,
+                "shutdown_report": {
+                    "stopped": report.stopped,
+                    "canceled_queued": list(report.canceled_queued),
+                    "running_job_id": report.running_job_id,
+                },
+                "status": self.app_status(),
+            }
+
+    def _finish_shutdown(self) -> None:
+        """Background: wait for runner, then stop accepting HTTP."""
+        try:
+            # Brief pause so the /api/app/quit response can flush before we
+            # tear down the listening socket (idempotent second quit must
+            # still reach the handler when the runner is already idle).
+            time.sleep(0.2)
+            report = self.runner.shutdown(
+                timeout=None,
+                cancel_queued=True,
+                cancel_running=(self._quit_mode == "cancel_running"),
+            )
+            if not report.stopped:
+                _log.warning(
+                    "gui shutdown: runner still alive after wait "
+                    "(running=%s canceled_queued=%s)",
+                    report.running_job_id, report.canceled_queued)
+                # One more short attempt before tearing down the socket.
+                report = self.runner.shutdown(timeout=30.0, cancel_queued=True,
+                                              cancel_running=True)
+                if not report.stopped:
+                    _log.error(
+                        "gui shutdown: runner did not stop; forcing server_close")
+            try:
+                self.shutdown()
+            except Exception as exc:
+                _log.warning("gui HTTP shutdown(): %s", exc)
+            try:
+                self.server_close()
+            except Exception as exc:
+                _log.warning("gui server_close(): %s", exc)
+        except Exception:
+            _log.exception("gui _finish_shutdown failed")
+
+    def close(self) -> None:
+        """CLI/KeyboardInterrupt path: cancel queued, wait briefly, close socket.
+
+        Does not swallow runner failures silently — logs on timeout.
+        """
+        self.closing.set()
+        if self._quit_mode is None:
+            self._quit_mode = "after_current"
+        report = self.runner.shutdown(
+            timeout=1.0, cancel_queued=True, cancel_running=False)
+        if not report.stopped:
+            _log.warning(
+                "gui close: runner still running after 1s (job=%s); "
+                "server_close proceeds",
+                report.running_job_id)
         self.server_close()
 
 
@@ -306,10 +431,11 @@ def discover_workspace(root: Path) -> dict[str, Project]:
 
 def create_server(project: Project | None, host: str = "127.0.0.1", port: int = 0,
                   actor: str | None = None, readonly: bool = False,
-                  workspace: dict[str, Project] | None = None) -> GuiServer:
+                  workspace: dict[str, Project] | None = None,
+                  app_mode: bool = False) -> GuiServer:
     actor = actor or os.environ.get("MANJU_ACTOR", "human")
     server = GuiServer(project, host, port, actor, readonly=readonly,
-                       workspace=workspace)
+                       workspace=workspace, app_mode=app_mode)
     if project is not None:  # server startup: touch recents (round X, once)
         try:
             from ..core.recents import touch_recent
@@ -537,6 +663,20 @@ class _Handler(BaseHTTPRequestHandler):
 
                 self._send_text(render_common_js(),
                                 "application/javascript; charset=utf-8")
+            elif path == "/webclient.js":
+                from .webclient import render_webclient_js
+
+                self._send_text(render_webclient_js(),
+                                "application/javascript; charset=utf-8")
+            elif path == "/project-action.js":
+                from .project_action import render_project_action_js
+
+                self._send_text(render_project_action_js(),
+                                "application/javascript; charset=utf-8")
+            elif path == "/project-action.css":
+                from .project_action import render_project_action_css
+
+                self._send_text(render_project_action_css(), "text/css; charset=utf-8")
             elif path == "/workspace.css":
                 from . import workspace as _ws
 
@@ -546,6 +686,9 @@ class _Handler(BaseHTTPRequestHandler):
 
                 self._send_text(_ws.render_workspace_js(),
                                 "application/javascript; charset=utf-8")
+            elif path == "/api/app/status":
+                # Readable while closing — front-end quit dialog polls this.
+                self._send_json(self.server.app_status())
             elif path == "/api/workspace/recents":
                 self._workspace_recents()
             elif path == "/api/project-id":
@@ -830,7 +973,10 @@ class _Handler(BaseHTTPRequestHandler):
         session = self.server.session
         url = urlsplit(self.path)
         path = url.path
-        if self.server.closing.is_set() and path not in _readonly_ok:
+        # Closing: reject mutating POSTs except the quit endpoint itself.
+        if (self.server.closing.is_set()
+                and path not in _readonly_ok
+                and path != "/api/app/quit"):
             self._drain_request_body()
             self._send_json(
                 {"error": "server is closing", "code": "server_closing"}, 503)
@@ -916,6 +1062,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/packaging": self._act_packaging_save,
                 "/api/switch": self._act_switch,
                 "/api/new-project": self._act_new_project,
+                "/api/app/quit": self._act_app_quit,
                 "/api/onboarding/dismiss": self._act_onboarding_dismiss,
                 "/api/take-note": self._act_take_note,
                 "/api/validate": self._act_validate,
@@ -1922,6 +2069,47 @@ class _Handler(BaseHTTPRequestHandler):
                           "active": slug == self.server.active_slug})
         self._send_json({"projects": items, "workspace": bool(self.server.workspace)})
 
+    def _project_action_payload(
+        self,
+        project: Project,
+        *,
+        ok: bool,
+        code: str,
+        status: int = 200,
+        extra: dict[str, Any] | None = None,
+        next_kind: str | None = None,
+    ) -> None:
+        """Unified project open/create response shape (next_action contract)."""
+        pub = project_public_dict(project)
+        if next_kind is None:
+            next_kind = "reload_current" if ok and code.endswith("bound") else "open_in_new_window"
+            if code in ("project_bound", "project_created_and_bound"):
+                next_kind = "reload_current"
+            elif code in ("project_created", "project_session_immutable", "open_in_new_window"):
+                next_kind = "open_in_new_window"
+        next_act = project_next_action(project, kind=next_kind)
+        payload: dict[str, Any] = {
+            "ok": ok,
+            "code": code,
+            "project": pub,
+            "next_action": next_act,
+            # legacy aliases (tests / older clients)
+            "name": pub["name"],
+            "root": pub["root"],
+            "project_token": pub["id"],
+            "open_in_new_window": next_kind == "open_in_new_window",
+            "cli": next_act.get("display_command") or gui_launch_command(project.root),
+        }
+        if not ok:
+            payload["error"] = (
+                "当前窗口已经绑定项目，请在新窗口打开"
+                if next_kind == "open_in_new_window"
+                else payload.get("error", code)
+            )
+        if extra:
+            payload.update(extra)
+        self._send_json(payload, status)
+
     def _act_switch(self, body: dict[str, Any]) -> None:
         """Project session is immutable — refuse in-process switch (409).
 
@@ -1936,18 +2124,19 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(f"unknown project: {slug}", 404)
             return
         target = self.server.workspace.get(slug) if slug else None
-        cli = (
-            f'manju gui "{target.root}" --app'
-            if target is not None else "manju gui <project> --app"
-        )
-        self._send_json({
-            "error": ("项目会话不可切换 (project session immutable) — "
-                      "请在新窗口打开其他项目"),
-            "code": "project_session_immutable",
-            "open_in_new_window": True,
-            "cli": cli,
-            "root": str(target.root) if target is not None else None,
-        }, 409)
+        if target is None:
+            self._send_json({
+                "ok": False,
+                "error": ("项目会话不可切换 (project session immutable) — "
+                          "请在新窗口打开其他项目"),
+                "code": "project_session_immutable",
+                "open_in_new_window": True,
+                "next_action": {"kind": "open_in_new_window", "launch_supported": False},
+            }, 409)
+            return
+        self._project_action_payload(
+            target, ok=False, code="project_session_immutable", status=409,
+            extra={"error": "当前窗口已经绑定项目，请在新窗口打开", "slug": slug})
 
     _NAME_RE = re.compile(r"^[^/\\\x00]{1,80}$")
 
@@ -2010,16 +2199,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.server.workspace[slug] = project
         # Session is immutable: register the new project in the catalog but
         # do not rebind this server — client opens it in a new window.
-        self._send_json({
-            "ok": True,
-            "slug": slug,
-            "name": name,
-            "root": str(project.root),
-            "preset": (spec.name if spec else None),
-            "open_in_new_window": True,
-            "cli": f'manju gui "{project.root}" --app',
-            "code": "open_in_new_window",
-        }, 201)
+        self._project_action_payload(
+            project, ok=True, code="project_created", status=201,
+            extra={"slug": slug, "preset": (spec.name if spec else None)})
 
     # -------------------------------------------------- workspace picker (round X)
 
@@ -2052,6 +2234,7 @@ class _Handler(BaseHTTPRequestHandler):
         handler = {
             "/api/workspace/open": self._act_workspace_open,
             "/api/workspace/new": self._act_workspace_new,
+            "/api/workspace/launch": self._act_workspace_launch,
         }.get(path)
         if handler is None:
             return False
@@ -2059,47 +2242,42 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
     def _act_workspace_open(self, body: dict[str, Any]) -> None:
-        """Open a project by path: first bind if unbound; else open_in_new_window."""
+        """Open a project by path (or workspace slug): bind once or new window."""
         raw = str(body.get("path") or "").strip()
-        if not raw:
-            self._send_error_json("path is required", 400)
-            return
-        try:
-            project = Project(Path(raw).expanduser())
-        except ProjectError as exc:
-            self._send_error_json(str(exc), 404)
+        slug = str(body.get("slug") or "").strip()
+        project: Project | None = None
+        if slug and self.server.workspace:
+            project = self.server.workspace.get(slug)
+            if project is None:
+                self._send_error_json(f"unknown project: {slug}", 404)
+                return
+        elif raw:
+            try:
+                project = Project(Path(raw).expanduser())
+            except ProjectError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+        else:
+            self._send_error_json("path or slug is required", 400)
             return
         if self.server.session is not None:
-            # Already bound — never hot-swap; tell the client to open another window.
-            self._send_json({
-                "ok": False,
-                "error": ("当前窗口已绑定项目 (session immutable) — "
-                          "请在新窗口打开其他项目"),
-                "code": "open_in_new_window",
-                "open_in_new_window": True,
-                "root": str(project.root),
-                "cli": f'manju gui "{project.root}" --app',
-            }, 409)
+            self._project_action_payload(
+                project, ok=False, code="project_session_immutable", status=409,
+                extra={"error": "当前窗口已经绑定项目，请在新窗口打开"})
             return
         try:
             self.server.bind_project_once(project)
         except RuntimeError as exc:
             if "project_session_immutable" in str(exc):
-                self._send_json({
-                    "ok": False,
-                    "error": "项目会话不可切换",
-                    "code": "project_session_immutable",
-                    "open_in_new_window": True,
-                    "root": str(project.root),
-                    "cli": f'manju gui "{project.root}" --app',
-                }, 409)
+                self._project_action_payload(
+                    project, ok=False, code="project_session_immutable", status=409,
+                    extra={"error": "当前窗口已经绑定项目，请在新窗口打开"})
                 return
             raise
-        self._send_json({"ok": True, "root": str(project.root)})
+        self._project_action_payload(project, ok=True, code="project_bound", status=200)
 
     def _act_workspace_new(self, body: dict[str, Any]) -> None:
-        """新建项目 — first bind if unbound; if already bound, create on disk
-        but return open_in_new_window (do not rebind this server)."""
+        """新建项目 — first bind if unbound; if bound, create + open_in_new_window."""
         name = str(body.get("name") or "").strip()
         if not name or name.startswith(".") or not self._NAME_RE.fullmatch(name):
             self._send_error_json("invalid project name", 400)
@@ -2132,32 +2310,94 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(" ".join(str(exc).split()), 400)
             return
         if self.server.session is not None:
-            self._send_json({
-                "ok": True,
-                "name": name,
-                "root": str(project.root),
-                "preset": (spec.name if spec else None),
-                "open_in_new_window": True,
-                "code": "open_in_new_window",
-                "cli": f'manju gui "{project.root}" --app',
-            }, 201)
+            self._project_action_payload(
+                project, ok=True, code="project_created", status=201,
+                extra={"preset": (spec.name if spec else None)})
             return
         try:
             self.server.bind_project_once(project)
         except RuntimeError as exc:
             if "project_session_immutable" in str(exc):
-                self._send_json({
-                    "ok": True,
-                    "name": name,
-                    "root": str(project.root),
-                    "open_in_new_window": True,
-                    "code": "project_session_immutable",
-                    "cli": f'manju gui "{project.root}" --app',
-                }, 201)
+                self._project_action_payload(
+                    project, ok=True, code="project_created", status=201,
+                    extra={"preset": (spec.name if spec else None)})
                 return
             raise
-        self._send_json({"ok": True, "name": name, "root": str(project.root),
-                         "preset": (spec.name if spec else None)}, 201)
+        self._project_action_payload(
+            project, ok=True, code="project_created_and_bound", status=201,
+            extra={"preset": (spec.name if spec else None)})
+
+    def _act_workspace_launch(self, body: dict[str, Any]) -> None:
+        """Spawn a separate ``manju gui <root> --app --port 0`` process.
+
+        Never executes browser-supplied shell strings — only validated project
+        paths / ids, via argv list + shell=False.
+        """
+        import subprocess
+        import sys
+
+        raw = str(body.get("path") or "").strip()
+        pid = str(body.get("project_id") or "").strip()
+        project: Project | None = None
+        if raw:
+            try:
+                project = Project(Path(raw).expanduser().resolve())
+            except ProjectError as exc:
+                self._send_error_json(str(exc), 404)
+                return
+        elif pid:
+            # Resolve from workspace catalog or current session only.
+            for p in list(self.server.workspace.values()) + (
+                    [self.server.session.project] if self.server.session else []):
+                if project_identity(p) == pid:
+                    project = p
+                    break
+            if project is None:
+                self._send_error_json("unknown project_id", 404)
+                return
+        else:
+            self._send_error_json("path or project_id is required", 400)
+            return
+
+        argv = [
+            sys.executable, "-m", "manju", "gui",
+            str(project.root),
+            "--app", "--port", "0",
+        ]
+        kwargs: dict[str, Any] = {
+            "shell": False,
+            "close_fds": True,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — outlive parent GUI.
+            kwargs["creationflags"] = 0x00000008 | 0x00000200
+            kwargs["close_fds"] = False  # not supported the same way on Windows
+        try:
+            proc = subprocess.Popen(argv, **kwargs)
+        except OSError as exc:
+            self._send_error_json(f"failed to launch gui: {exc}", 500)
+            return
+        self._send_json({
+            "ok": True,
+            "code": "launched",
+            "message": "已启动新窗口",
+            "pid": proc.pid,
+            "project": project_public_dict(project),
+            "argv": argv[3:],  # manju gui … (no interpreter path)
+        })
+
+    def _act_app_quit(self, body: dict[str, Any]) -> None:
+        """POST /api/app/quit — coordinated safe exit (non-blocking)."""
+        mode = str(body.get("mode") or "after_current").strip()
+        if mode not in ("after_current", "cancel_running"):
+            self._send_error_json(
+                "mode must be after_current or cancel_running", 400)
+            return
+        result = self.server.request_shutdown(mode)
+        self._send_json(result)
 
     # ---------------------------------------------------------- watch/lists
 

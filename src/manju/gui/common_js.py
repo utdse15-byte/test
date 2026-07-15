@@ -64,6 +64,22 @@ function projectSwitchedOverlay(name) {
 }
 
 function post(url, body) {
+  /* Prefer shared requestJson (preserves full error JSON); keep {status,data}
+   * return shape for existing server-rendered pages. */
+  if (typeof requestJson === "function") {
+    return requestJson("POST", url, body || {}, {
+      token: TOKEN, projectId: PROJECT || ""
+    }).then(function (d) {
+      return { status: 200, data: d };
+    }).catch(function (err) {
+      var d = (err && err.data) || {};
+      var status = (err && err.status) || 0;
+      if (status === 409 && d && d.code === "project_switched") {
+        projectSwitchedOverlay(d.project);
+      }
+      return { status: status, data: d };
+    });
+  }
   var headers = { "Content-Type": "application/json", "X-Manju-Token": TOKEN };
   if (PROJECT) headers["X-Manju-Project"] = PROJECT;
   return fetch(url, {

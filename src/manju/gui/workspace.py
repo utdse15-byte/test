@@ -272,6 +272,9 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
         "<title>Manju 工作区 · workspace</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/workspace.css">\n'
+        '<link rel="stylesheet" href="/project-action.css">\n'
+        '<script src="/webclient.js" defer></script>\n'
+        '<script src="/project-action.js" defer></script>\n'
         '<script src="/workspace.js" defer></script>\n'
         "</head>\n"
         '<body data-page="/workspace">\n'
@@ -324,8 +327,8 @@ _WORKSPACE_CSS = """
 
 _WORKSPACE_JS = r"""
 "use strict";
-/* manju gui — workspace picker actions (round X agent XE). CSP-safe: external
- * file, no inline handlers; every mutating POST carries X-Manju-Token. */
+/* manju gui — workspace picker actions. Depends on /webclient.js +
+ * /project-action.js. Only reload_current navigates to `/`. */
 (function () {
   var meta = document.querySelector('meta[name="manju-token"]');
   var TOKEN = meta ? (meta.getAttribute("content") || "") : "";
@@ -333,31 +336,56 @@ _WORKSPACE_JS = r"""
 
   function showErr(msg) { if (errBox) errBox.textContent = msg || ""; }
 
+  function apiOpts() {
+    return (typeof manjuApiOptions === "function")
+      ? manjuApiOptions({ token: TOKEN })
+      : { token: TOKEN };
+  }
+
   function post(url, body) {
+    if (typeof requestJson === "function") {
+      return requestJson("POST", url, body || {}, apiOpts());
+    }
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Manju-Token": TOKEN },
       body: JSON.stringify(body || {})
     }).then(function (resp) {
       return resp.json().catch(function () { return {}; }).then(function (data) {
-        if (!resp.ok) throw new Error((data && data.error) || ("HTTP " + resp.status));
+        if (!resp.ok) {
+          var e = new Error((data && data.error) || ("HTTP " + resp.status));
+          e.data = data; e.status = resp.status; e.code = data && data.code;
+          throw e;
+        }
         return data;
       });
     });
   }
 
+  function onAction(data) {
+    if (typeof handleProjectAction === "function") {
+      handleProjectAction(data, {
+        onReload: function () { window.location.href = "/"; }
+      });
+      return;
+    }
+    var next = (data && data.next_action) || {};
+    if (next.kind === "reload_current") {
+      window.location.href = "/";
+    }
+  }
+
   function openPath(path) {
     showErr("");
     post("/api/workspace/open", { path: path })
-      .then(function (data) {
-        if (data && data.open_in_new_window) {
-          showErr((data.error || "请在新窗口打开")
-            + (data.cli ? (" — " + data.cli) : ""));
+      .then(onAction)
+      .catch(function (err) {
+        if (err && err.data && err.data.next_action) {
+          onAction(err.data);
           return;
         }
-        window.location.href = "/";
-      })
-      .catch(function (err) { showErr("打开失败 (open failed): " + err.message); });
+        showErr("打开失败 (open failed): " + ((err && err.message) || String(err)));
+      });
   }
 
   document.querySelectorAll(".ws-row[data-path]").forEach(function (btn) {
@@ -390,8 +418,14 @@ _WORKSPACE_JS = r"""
       var parent = (document.getElementById("ws-new-path") || {}).value || "";
       if (parent.trim()) body.path = parent.trim();
       post("/api/workspace/new", body)
-        .then(function () { window.location.href = "/"; })
-        .catch(function (err) { showErr("创建失败 (create failed): " + err.message); });
+        .then(onAction)
+        .catch(function (err) {
+          if (err && err.data && err.data.next_action) {
+            onAction(err.data);
+            return;
+          }
+          showErr("创建失败 (create failed): " + ((err && err.message) || String(err)));
+        });
     });
   }
 })();

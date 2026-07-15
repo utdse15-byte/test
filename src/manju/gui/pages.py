@@ -105,6 +105,9 @@ _NAV_GROUPS = (
 # mode/terms chrome behave identically on the SPA and all server-rendered pages.
 GLOSSARY_HEAD = (
     '<link rel="stylesheet" href="/glossary.css">\n'
+    '<link rel="stylesheet" href="/project-action.css">\n'
+    '<script src="/webclient.js" defer></script>\n'
+    '<script src="/project-action.js" defer></script>\n'
     '<script src="/glossary.js" defer></script>\n'
 )
 

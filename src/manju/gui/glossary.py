@@ -227,8 +227,8 @@ _GLOSSARY_JS = r"""
 "use strict";
 /* manju gui — 新手/专业 mode switch + 显示专业术语 toggle (round U).
  * Loaded on every surface; a strict `script-src 'self'` allows it because it is
- * an external file with no inline handlers. Every POST carries X-Manju-Token
- * read from the <meta name="manju-token"> tag. */
+ * an external file with no inline handlers. Depends on /webclient.js +
+ * /project-action.js (loaded first via GLOSSARY_HEAD). */
 (function () {
   var meta = document.querySelector('meta[name="manju-token"]');
   var TOKEN = meta ? (meta.getAttribute("content") || "") : "";
@@ -236,13 +236,31 @@ _GLOSSARY_JS = r"""
    * picker) so mode/glossary toggles can't land in a switched project. */
   var pmeta = document.querySelector('meta[name="manju-project"]');
   var PROJECT_ID = pmeta ? (pmeta.getAttribute("content") || "") : "";
+  function apiOpts() {
+    return (typeof manjuApiOptions === "function")
+      ? manjuApiOptions({ token: TOKEN, projectId: PROJECT_ID })
+      : { token: TOKEN, projectId: PROJECT_ID };
+  }
   function post(url, body) {
+    if (typeof requestJson === "function") {
+      return requestJson("POST", url, body || {}, apiOpts());
+    }
+    /* fallback without webclient */
     var headers = { "Content-Type": "application/json", "X-Manju-Token": TOKEN };
     if (PROJECT_ID) headers["X-Manju-Project"] = PROJECT_ID;
     return fetch(url, {
       method: "POST",
       headers: headers,
       body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) {
+          var e = new Error((d && d.error) || ("HTTP " + r.status));
+          e.data = d; e.status = r.status; e.code = d && d.code;
+          throw e;
+        }
+        return d;
+      });
     });
   }
 
@@ -274,11 +292,8 @@ _GLOSSARY_JS = r"""
   }
 
   /* -------------------------------------------- project switcher (round X) */
-  /* Always present in the shared nav (pages.py's `_workspace_switcher`) once
-   * a project is bound — lazily fetches /api/workspace/recents on first open,
-   * groups by series, and opens a pick via POST /api/workspace/open (a full
-   * server REBIND — see gui/server.py's GuiServer.bind_project), then reloads
-   * to `/` so the freshly bound project's SPA loads. */
+  /* Opens other projects via next_action (open_in_new_window dialog) —
+   * never rebinds the current session. */
   var wsBtn = document.getElementById("mj-ws-btn");
   var wsMenu = document.getElementById("mj-ws-menu");
 
@@ -308,22 +323,21 @@ _GLOSSARY_JS = r"""
     if (wsMenu) wsMenu.classList.add("hidden");
     post("/api/workspace/open", { path: path })
       .then(function (resp) {
-        /* Bound session is immutable: server returns open_in_new_window + CLI. */
-        if (resp && (resp.open_in_new_window || resp.code === "open_in_new_window"
-            || resp.code === "project_session_immutable")) {
-          var msg = (resp.error || "请在新窗口打开其他项目")
-            + (resp.cli ? ("\n\n" + resp.cli) : "");
-          try { window.alert(msg); } catch (e) { /* headless */ }
-          return;
+        if (typeof handleProjectAction === "function") {
+          handleProjectAction(resp);
+        } else if (resp && resp.next_action && resp.next_action.kind === "reload_current") {
+          window.location.href = "/";
         }
-        if (resp && resp.ok === false) return;
-        window.location.href = "/";
       })
       .catch(function (err) {
-        /* 409 open_in_new_window may surface as a thrown Error from post(). */
-        var m = (err && err.message) ? String(err.message) : "";
-        if (m.indexOf("新窗口") >= 0 || m.indexOf("immutable") >= 0) {
-          try { window.alert(m); } catch (e) { /* headless */ }
+        if (err && err.data && err.data.next_action &&
+            typeof handleProjectAction === "function") {
+          handleProjectAction(err.data);
+          return;
+        }
+        /* Non-action errors only — never alert for normal new-window flows. */
+        if (typeof toast === "function") {
+          toast("打开项目失败：" + ((err && err.message) || String(err)), false);
         }
       });
   }
