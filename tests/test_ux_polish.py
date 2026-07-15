@@ -1407,3 +1407,353 @@ def test_storyboard_batch_bar_wires_redo_and_voice(tmp_project, add_shot):
     assert '"/api/" + kind + "-batch"' in seg
     assert "window.confirm" in seg
     assert "{ shots: selB }" in seg   # shots-only body — no self-approved spend
+
+
+# ------------------------------------------------ GUI polish wave (2026-07-14)
+# Usability/feel/visual pass over the workbench + server pages. The load-
+# bearing fixes: the hidden-vs-display CSS conflict class (the /create skill
+# modal shipped permanently covering the page — `.cw-modal{display:flex}`
+# beats the UA [hidden] rule), the two toast systems' diverging look, native
+# bright-grey Windows scrollbars on the dark palette, pollJob's serialized-
+# runner misreport, and the #48b-deferred /exports bulk refresh.
+
+
+def test_hidden_always_hides_and_create_stage_swap_clears_the_class():
+    from manju.gui.create_page import render_create_js
+    from manju.gui.page import render_css
+
+    css = render_css()
+    # THE one owner: both spellings of "hidden" must beat any later
+    # display: rule — per-selector `.foo.hidden` patches are retired.
+    assert ".hidden { display: none !important; }" in css
+    assert "[hidden] { display: none !important; }" in css
+    # the stage swap must clear the server-rendered hidden CLASS on the
+    # target editor (the attribute alone never unhid anything).
+    js = render_create_js()
+    assert 'classList.toggle("hidden", !match)' in js
+
+
+def test_native_widgets_and_motion_follow_the_os():
+    from manju.gui.page import render_css
+
+    css = render_css()
+    # Windows renders bright-grey UA scrollbars/controls without this.
+    assert "color-scheme: dark" in css
+    # every animation/transition is decorative — the OS preference wins.
+    assert "@media (prefers-reduced-motion: reduce)" in css
+
+
+def test_toast_systems_share_one_visual_voice():
+    from manju.gui.page import render_css
+    from manju.gui.pages import render_pages_css
+
+    app_css = render_css()
+    pages_css = render_pages_css()
+    assert "@keyframes mj-rise" in app_css
+    assert "animation: mj-rise" in app_css.split(".toast {")[1].split("}")[0]
+    assert "animation: mj-rise" in pages_css.split(".toast-item {")[1].split("}")[0]
+    assert "border-left-color: var(--ok)" in pages_css
+    assert "border-left-color: var(--err)" in pages_css
+
+
+def test_exports_bulk_updates_all_stale_free_kinds(tmp_project):
+    from manju.core.models import ShotSpec, TakeSidecar
+    from manju.core.spec import compute_spec_hash
+    from manju.exporters.srt_ass import export_captions
+    from manju.gui.exports_page import render, render_exports_js
+    from manju.media.probe import probe_duration_ms
+    from manju.timeline.compiler import compile_timeline, gather_compile_input
+
+    # a compiled project with exported captions, then a dialogue edit →
+    # srt/ass read 待更新 (the same derivation the engine test suite pins)
+    shot = ShotSpec.model_validate({
+        "id": "S001", "scene": "convenience_store", "characters": ["linxia"],
+        "dialogue": {"speaker": "linxia", "text": "这不可能。"}, "duration": 3})
+    tmp_project.save_shot(shot)
+    idx = tmp_project.load_index()
+    idx.order.append("S001")
+    tmp_project.save_index(idx)
+    h = compute_spec_hash(shot, tmp_project.load_bible())
+    src = tmp_project.root / "_src.mp4"
+    src.write_bytes(b"fakevideo")
+    info = tmp_project.register_take("S001", src, TakeSidecar(provider="test", spec_hash=h))
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", info.name))
+    tl = compile_timeline(gather_compile_input(tmp_project, probe_duration_ms))
+    tmp_project.save_timeline(tl)
+    export_captions(tmp_project, tl)
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d["dialogue"].__setitem__("text", "完全不同的一句台词"))
+
+    html = render(tmp_project, "tok")
+    assert 'id="xc-gen-stale"' in html
+    kinds = html.split('data-kinds="')[1].split('"')[0].split(",")
+    assert "srt" in kinds and "ass" in kinds
+    # priced deliverables never ride a bulk refresh (§8.3: build-only)
+    assert "final" not in kinds and "proxy" not in kinds
+
+    js = render_exports_js()
+    seg = js.split("function doGenerateAll")[1]
+    # sequential, one in flight; reload only on FULL success (partial
+    # failure keeps the sticky error toasts readable)
+    assert "chain = chain.then" in seg
+    assert "okCount === kinds.length" in seg
+
+
+def test_exports_render_without_stale_has_no_bulk_button(tmp_project):
+    from manju.gui.exports_page import render
+
+    assert 'id="xc-gen-stale"' not in render(tmp_project, "tok")
+
+
+def test_polljob_outlives_the_serialized_queue_on_every_job_page():
+    # the runner is SERIALIZED: a generate queued behind a long build takes
+    # minutes; the old ~60s cap made every page misreport it as a failure.
+    from manju.gui import exports_page, ingest_page, lab_page, series_page
+
+    for mod, js in (
+        (exports_page, exports_page._EXPORTS_JS),
+        (ingest_page, ingest_page._INGEST_JS),
+        (lab_page, lab_page._LAB_JS),
+        (series_page, series_page._SERIES_JS),
+    ):
+        name = mod.__name__
+        assert "tries > 1215" in js, name          # ~10min, not ~60s
+        assert "tries < 20 ? 100 : 500" in js, name  # adaptive cadence
+        assert "仍在排队/运行" in js, name          # null job ≠ failure
+
+
+# ------------------------------------- GUI polish wave, round 2 (2026-07-14)
+# Disposition of an owner-supplied external AI review (the #45 pattern:
+# verify every claim, land the bounded kernels, record the rejections).
+# Landed kernels: the SPA missed F20's sticky-error discipline; the workbench
+# card/filters spoke raw enums (F18 landed on the board only); localStorage
+# was keyed by the COLLIDING display name instead of #45's identity token;
+# the collapsible panel heads / dropzone were mouse-only divs; take notes
+# went through the page-freezing window.prompt.
+
+
+def test_spa_error_toast_sticky_and_toasts_announced():
+    from manju.gui.common_js import render_common_js
+    from manju.gui.page import render_js
+
+    js = render_js()
+    seg = js.split("const toast = ")[1].split("};")[0]
+    # F20 parity: an error stays until clicked; success keeps auto-dismiss
+    assert 'if (kind === "err")' in seg and "setTimeout" in seg
+    # both toast systems announce politely to assistive tech
+    assert 'setAttribute("aria-live", "polite")' in js
+    assert 'setAttribute("aria-live", "polite")' in render_common_js()
+
+
+def test_workbench_speaks_the_state_vocabulary():
+    from manju.gui.page import render_js
+
+    js = render_js()
+    # F18 discipline on the workbench card: Chinese word, enum on the title
+    assert "CK_STATE_ZH[shot.state] || shot.state" in js
+    assert "stBadge.title = shot.state" in js
+    # filters: urgency ladder (never the alphabet) + toggle semantics
+    assert "STATE_FILTER_ORDER" in js
+    seg = js.split("function filterChips")[1].split("return bar;")[0]
+    assert "aria-pressed" in seg and "CK_STATE_ZH[st] || st" in seg
+
+
+def test_client_state_is_keyed_by_project_identity():
+    from manju.gui.page import render_js
+    from manju.gui.pages import render_pages_js
+
+    js = render_js()
+    # the stable #45 token, not the colliding display name
+    assert '"manju-ui-" + (PROJECT || "unbound")' in js
+    assert '"manju-reviewed-" + (PROJECT || lastProjectName)' in js
+    # /review continues from the last position, same key discipline (#50c
+    # evolved the fallback to "unbound" — never "" — matching uiKey())
+    pjs = render_pages_js()
+    assert ('"manju-rv-pos-" + ((typeof PROJECT === "string" && PROJECT) '
+            '? PROJECT : "unbound")') in pjs
+
+
+def test_workbench_keyboard_semantics():
+    from manju.gui.page import render_js
+    from manju.gui.pages import nav_html
+
+    js = render_js()
+    # panel heads and the dropzone act as buttons for the keyboard
+    assert "const actAsButton = " in js
+    assert js.count("actAsButton(") >= 4  # git/tasks/proposals heads + dropzone
+    assert 'setAttribute("aria-expanded"' in js
+    # the page-freezing window.prompt is retired from the workbench
+    assert "window.prompt" not in js
+    # the one nav owner marks the current page for assistive tech
+    assert 'aria-current="page"' in nav_html("/review")
+
+
+# --------------------------------------------- Direction program (#50, 2026-07-14)
+# The owner-endorsed direction document, dispositioned: the GUI converges on
+# a personal production console — open-and-continue, the review queue as the
+# strongest surface, clean AI handoff, use-frequency nav. Presentation and
+# client memory only; the engine keeps no UI state.
+
+
+def test_review_queue_walks_most_blocking_first_and_supports_undo():
+    from manju.gui.pages import render_pages_js
+
+    js = render_pages_js()
+    seg = js.split("function qPriority")[1].split("var qOrder")[0]
+    # a take-less shot cannot take a verdict — it trails everything reviewable
+    # (evolved same-wave: QC-error findings joined the ladder after stale)
+    assert 'if (!s.getAttribute("data-take")) return 5;' in seg
+    assert '"needs_selection"' in seg and '"stale"' in seg
+    assert 'getAttribute("data-qc") === "1"' in seg
+    # 好 advances the queue exactly like 通过 always did; u restores what the
+    # verdict overwrote (the input's defaultValue = the server-rendered note)
+    assert "else if (queueMode)" in js
+    assert 'e.key === "u"' in js
+    assert "defaultValue" in js and "prevReviewed" in js
+    # unreviewed work opens straight into the queue; only the explicit toggle
+    # persists as a preference (a default must never silently become one)
+    assert "manju-rv-queue-" in js
+    assert 'savedQ === "1" || (savedQ === null && unreviewed > 0)' in js
+
+
+def test_review_legend_teaches_undo(tmp_project, add_shot, make_take):
+    from manju.gui.pages import render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    assert "u 撤回" in render_review(tmp_project, "tok")
+
+
+def test_home_opens_with_continue_and_clickable_counts():
+    from manju.gui.common_js import render_common_js
+    from manju.gui.page import render_js
+
+    js = render_js()
+    # the chip reads the per-project trail…
+    assert '"manju-last-" + PROJECT' in js
+    assert "ck-continue-btn" in js
+    # …that every server page writes; the home page never clobbers it
+    cjs = render_common_js()
+    assert '"manju-last-" + PROJECT' in cjs
+    assert 'location.pathname !== "/"' in cjs
+    # the cockpit state counts are clickable queues driving the shots filter
+    assert 'el("button", "ck-scount"' in js
+    assert "stateFilter = k" in js
+
+
+def test_ai_handoff_copies_structured_context(tmp_project, add_shot, make_take):
+    from manju.gui.page import render_js
+    from manju.gui.pages import render_pages_js, render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    html = render_review(tmp_project, "tok")
+    assert 'data-act="ai-ctx"' in html and "复制给 Claude" in html
+    js = render_pages_js()
+    seg = js.split('act === "ai-ctx"')[1].split('act === "route"')[0]
+    assert '"- shots/" + shot + ".yaml"' in seg
+    assert "copyForAI" in seg
+    # the workbench failure cards hand over a diagnostic block the same way
+    ajs = render_js()
+    assert "复制诊断上下文" in ajs
+    assert 'shots/" + f.subject + ".yaml"' in ajs
+
+
+def test_nav_groups_by_frequency_and_keeps_every_link(tmp_project):
+    from manju.gui.pages import _NAV, _NAV_GROUPS, nav_html
+
+    # every page lives in exactly one group — _NAV stays the one label owner
+    grouped = [h for _, hs in _NAV_GROUPS for h in hs]
+    assert sorted(grouped) == sorted(h for h, _ in _NAV)
+    pro = nav_html("/review", mode="pro")
+    for href, _ in _NAV:  # presentation nests; the DOM keeps every link
+        assert f'href="{href}"' in pro
+    assert pro.count('class="pnav-group"') == 5  # 工作台 stays a plain pill
+    assert pro.count('aria-current="page"') == 1
+    beginner = nav_html("/review", mode="beginner")
+    assert 'href="/providers"' not in beginner
+    # 工具箱 collapses to its one visible page in 新手 mode
+    assert ">素材库</a>" in beginner and "工具箱" not in beginner
+
+
+# ------------------------------------------------- #50a follow-through items
+
+
+def test_review_remembers_playback_and_flags_qc(tmp_project, add_shot, make_take):
+    from manju.gui.pages import render_pages_js, render_review
+
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "h")
+    # every card carries its QC-error flag for the queue ladder
+    assert 'data-qc="0"' in render_review(tmp_project, "tok")
+    js = render_pages_js()
+    # playback memory: per-project key, applied on load, captured on change
+    # (media events do not bubble — the capture-phase listeners are the point)
+    assert "manju-rv-av-" in js
+    assert 'addEventListener("ratechange", saveAV, true)' in js
+    assert 'addEventListener("volumechange", saveAV, true)' in js
+
+
+def test_gui_app_window_launches_and_falls_back(monkeypatch):
+    import subprocess
+    import webbrowser
+
+    from manju import cli as cli_mod
+
+    calls = []
+
+    class _P:
+        def __init__(self, args, **kw):
+            calls.append(list(args))
+
+    monkeypatch.setattr(cli_mod, "_app_browser_candidates", lambda: ["/fake/msedge"])
+    monkeypatch.setattr(subprocess, "Popen", _P)
+    cli_mod._open_gui_window("http://127.0.0.1:1/x", True)
+    assert calls == [["/fake/msedge", "--app=http://127.0.0.1:1/x"]]
+
+    opened = []
+    monkeypatch.setattr(cli_mod, "_app_browser_candidates", lambda: [])
+    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u))
+    cli_mod._open_gui_window("http://y", True)   # no browser → named fallback
+    assert opened == ["http://y"]
+    opened.clear()
+    cli_mod._open_gui_window("http://z", False)  # --app off → plain default
+    assert opened == ["http://z"]
+
+
+def test_gui_help_names_the_app_window():
+    # Pin the SURFACE, not the rendering: rich box-wraps --help at the CI
+    # runners' 80 columns (with ANSI) and the literal token never survived —
+    # the branch's ONE red on both gates. The registered option IS what
+    # --help prints, terminal-independent.
+    from typer.main import get_command
+
+    gui_cmd = get_command(app).commands["gui"]
+    opts = [o for p in gui_cmd.params for o in getattr(p, "opts", [])]
+    assert "--app" in opts
+
+
+def test_review_ab_link_deep_links_into_the_takes_overlay(tmp_project, add_shot, make_take):
+    from manju.gui.page import render_js
+    from manju.gui.pages import render_review
+
+    add_shot(tmp_project, "S001")
+    t1 = make_take(tmp_project, "S001", "h1")
+    make_take(tmp_project, "S001", "h2")
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", t1.name))
+    # the link renders only when there IS something to compare (sel + alts)
+    assert 'href="/?compare=S001"' in render_review(tmp_project, "tok")
+    js = render_js()
+    # consumed once after the first shots render; the overlay takes the OBJECT
+    assert 'URLSearchParams(location.search).get("compare")' in js
+    assert "openCompare(target)" in js
+
+
+def test_cockpit_surfaces_unread_takes():
+    from manju.gui.page import render_js
+
+    js = render_js()
+    assert "新 take 未阅" in js
+    assert "isNewTake(snap, s.id" in js

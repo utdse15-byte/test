@@ -206,7 +206,7 @@ body.mj-show-terms .mj-en { display: inline; }
 /* ---- fresh-user hint bar (dismissable) -------------------------------- */
 .mj-mode-hint {
   display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
-  padding: .4rem 1.2rem; background: #202b40; color: #cfe3ff;
+  padding: .4rem 1.2rem; background: var(--accent-bg); color: #cfe3ff;
   border-bottom: 1px solid var(--line); font-size: .82rem;
 }
 .mj-mode-hint button {

@@ -1440,7 +1440,7 @@ def _playback_section(project: Any, timeline: Any) -> str:
 
     # ---- Tier 1: play the render (v2 §D) ----
     t1_hidden = "" if default_tier == 1 else " hidden"
-    parts.append(f'<div class="ed-tier1" id="ed-tier1"{t1_hidden}>')
+    parts.append(f'<div class="ed-tier1{t1_hidden}" id="ed-tier1">')
     if has_t1:
         kind_label = "成片 final" if src["kind"] == "final" else "预览版 proxy"
         # G3: a lazy slot (hidden) — /edit.js reveals it after /api/edit/dirty,
@@ -1462,7 +1462,7 @@ def _playback_section(project: Any, timeline: Any) -> str:
 
     # ---- Tier 2 (round X §A): sequence per-clip previews of the timeline ----
     t2_hidden = "" if default_tier == 2 else " hidden"
-    parts.append(f'<div class="ed-tier2" id="ed-tier2"{t2_hidden}>')
+    parts.append(f'<div class="ed-tier2{t2_hidden}" id="ed-tier2">')
     if has_t2:
         pool = "".join(
             f'<video class="ed-t2-video" data-slot="{i}" playsinline preload="auto"></video>'

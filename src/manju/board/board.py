@@ -74,8 +74,14 @@ _CSS = """
 :root {
   --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
   --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
+  /* native UA widgets (scrollbars, <video> chrome) follow the dark palette —
+   * same line the gui workbench carries (GUI polish wave). */
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
+/* hidden means hidden — the same one-owner guard as the gui's app.css:
+ * without !important any later `display:` rule at equal specificity wins. */
+[hidden] { display: none !important; }
 body {
   margin: 0; padding: 0 0 4rem; background: var(--bg); color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -506,12 +512,14 @@ _SERVE_JS = """
     try { history.replaceState(null, "", "#mjtab-" + key); } catch (e) {}
   }
   (function restoreTab(){
-    if (location.hash && location.hash.indexOf("#mjtab-") === 0){
-      var key = location.hash.slice(7);
-      if (document.querySelector('.mj-tab[data-tab="' + key + '"]')){
-        switchTab(key);
+    try {  /* a malformed hash must never kill the listeners below (bug-hunt #51) */
+      if (location.hash && location.hash.indexOf("#mjtab-") === 0){
+        var key = location.hash.slice(7);
+        if (document.querySelector('.mj-tab[data-tab="' + key + '"]')){
+          switchTab(key);
+        }
       }
-    }
+    } catch (e) { /* ignore */ }
   })();
   function toggleCompare(btn){
     var section = btn.closest("section.shot"); if(!section) return;
@@ -917,19 +925,33 @@ _SERVE_JS = """
        * compare mode and scroll. Both buttons carry data-shot/data-take,
        * so the swap is lossless and reversible on the next click. */
       post(act, body, function () {
+        overlay(false);  /* bug-hunt #51: success left the busy overlay up forever */
         var section = btn.closest("section.shot");
         if (!section) { location.reload(); return; }
-        section.querySelectorAll(".tact button.btn-sel").forEach(function (old) {
+        var sid = btn.getAttribute("data-shot") || "";
+        var take = btn.getAttribute("data-take") || "";
+        /* the same take renders TWO buttons (take card + compare cell) —
+         * swap every twin, not just the clicked one (data-shot scoped) */
+        var scope = sid ? document : section;
+        var oldSel = sid
+          ? '.tact button.btn-sel[data-shot="' + sid + '"]'
+          : ".tact button.btn-sel";
+        scope.querySelectorAll(oldSel).forEach(function (old) {
           old.disabled = false;
           old.classList.remove("btn-sel");
           old.textContent = "选用 select";
           old.setAttribute("data-act", "select");
         });
-        btn.disabled = true;
-        btn.classList.add("btn-sel");
-        btn.textContent = "★ 已选用";
-        btn.removeAttribute("data-act");
-        banner("✓ 已选用 " + (btn.dataset.take || ""));
+        var twins = (sid && take)
+          ? scope.querySelectorAll('.tact button[data-shot="' + sid + '"][data-take="' + take + '"]')
+          : [btn];
+        twins.forEach(function (b) {
+          b.disabled = true;
+          b.classList.add("btn-sel");
+          b.textContent = "★ 已选用";
+          b.removeAttribute("data-act");
+        });
+        banner("✓ 已选用 " + take, true);
       });
       return;
     }
@@ -2039,6 +2061,18 @@ def _render_qc(project: "Project") -> str:
     )
 
 
+def _title_name(project) -> str:
+    """<title> text: config name, degrading to the folder name on a corrupt
+    project.yaml — the same fallback _render_header has always used (a broken
+    file must never 500 the whole board; bug-hunt #51)."""
+    try:
+        if (project.root / "project.yaml").exists():
+            return project.load_config().name
+    except Exception:
+        pass
+    return project.root.name
+
+
 def _render_header(project: "Project", serve: bool = False) -> str:
     try:
         config = project.load_config()
@@ -2422,7 +2456,7 @@ def render_board(project: "Project", serve: bool = False, token: str = "") -> st
         '<html lang="zh"><head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{_esc(project.load_config().name if (project.root / 'project.yaml').exists() else project.root.name)} · manju board</title>\n"
+        f"<title>{_esc(_title_name(project))} · manju board</title>\n"
         f"<style>{css}</style>\n"
         "</head><body>\n"
         f"{body_extras}"

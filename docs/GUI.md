@@ -367,3 +367,28 @@ take、锁定字段)、**QC 面板**(最近一次 `reports/qc.json` 的错误与
   Still open: cancel for running jobs (ffmpeg is atomic per artifact, so v1
   builds run to completion); build-lock coverage over the quick text
   mutations (see the honest limits above).
+
+## #50 方向计划之后 / After the direction program (2026-07-14)
+
+The GUI converged on a **personal production console** (DECISIONS #49–#50a,
+REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
+
+- **hidden 即隐藏**:app.css 以 `!important` 钉死 `.hidden`/`[hidden]` —
+  永远不要再写 `.foo.hidden{display:none}` 补丁,也不要让作者 `display:`
+  规则去对抗 `hidden` 属性(docs/PINS.md 有对应 pin)。
+- **审片是最强页面**:有未审内容时默认进入队列模式(显式开关才持久化);
+  队列按 待挑选→待更新→QC 错误→未审→其余→无 take→已审 排序,载入时快照;
+  `g` 判定后自动下一条,`u` 撤回上一次好/弃;播放倍速/音量/静音按项目记忆。
+- **首页先"继续"再看数据**:common.js 在每个 server 页写
+  `manju-last-<identity>`;cockpit 渲染 继续上次工作 chip 与可点击的状态
+  计数(点击=筛选分镜网格);新 take 未阅数来自同一本地快照。
+- **所有 per-project 浏览器状态**一律以 #45 的稳定身份令牌为键
+  (`manju-ui-/-reviewed-/-rv-pos-/-rv-queue-/-rv-av-/-last-<identity>`),
+  绝不用显示名。引擎不保存任何 UI 状态。
+- **导航按使用频率分六组**(工作台·创作·镜头·审片·成片·工具箱),纯呈现层
+  CSS 下拉:全部 17 条链接始终在 DOM 里(模式 pin 依赖这一点),_NAV 是
+  唯一标签 owner。
+- **AI 在 GUI 外**(§0):/review 卡片 复制给 Claude、失败卡 复制诊断上下文
+  只递结构化文本;不要在 GUI 里内建聊天/模型管理。
+- **`manju gui --app`**:Edge/Chrome `--app=` 无边框窗口,找不到浏览器时
+  具名回退默认浏览器;关窗不停服务(分离进程无法诚实通知)。

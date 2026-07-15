@@ -288,8 +288,10 @@ def test_edit_page_defaults_to_tier2_when_only_timeline_exists(gui, tmp_project,
     status, _, body = _html(gui, "/edit")
     assert status == 200
     assert 'data-default-tier="2"' in body
-    assert 'id="ed-tier2">' in body            # visible (no "hidden" attr)
-    assert 'id="ed-tier1" hidden' in body       # Tier 1 present but hidden
+    # #51: hidden is the CLASS setTier actually toggles — the old attribute
+    # form kept Tier 2 permanently invisible in a real browser
+    assert 'class="ed-tier2" id="ed-tier2">' in body    # visible (no hidden class)
+    assert 'class="ed-tier1 hidden" id="ed-tier1">' in body  # present but hidden
     assert body.count('class="ed-t2-video"') == 3   # TIER2_POOL_SIZE
     assert 'data-pool-size="3"' in body
     assert 'id="ed-play-tier-toggle"' not in body    # only one tier truly available
@@ -304,8 +306,8 @@ def test_edit_page_defaults_to_tier1_with_toggle_when_final_exists(gui, tmp_proj
     status, _, body = _html(gui, "/edit")
     assert status == 200
     assert 'data-default-tier="1"' in body
-    assert 'id="ed-tier1">' in body
-    assert 'id="ed-tier2" hidden' in body
+    assert 'class="ed-tier1" id="ed-tier1">' in body
+    assert 'class="ed-tier2 hidden" id="ed-tier2">' in body  # #51: class, not attr
     assert 'id="ed-play-tier-toggle"' in body   # both tiers exist → offer the toggle
     assert 'id="ed-preview-video"' in body
     assert 'src="/media/renders/final/final_v1.mp4"' in body

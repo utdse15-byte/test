@@ -77,11 +77,19 @@ _CSS = """
   --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
   --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
   --ok: #7ee2a8; --warn: #ffcf5c; --err: #ff8a90;
+  /* the info/hover tint behind accent-coloured text (next-step bar, unread
+   * chip, drag highlight …) — was hand-copied as #202b40 across modules. */
+  --accent-bg: #202b40;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Noto Sans Mono CJK SC", monospace;
+  /* Native UA widgets (scrollbars, form controls, <video> chrome) follow the
+   * dark palette — without this, Windows renders bright-grey scrollbars into
+   * every overflow panel of the dark workbench. */
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+html { scrollbar-gutter: stable; }
 body {
   background: var(--bg); color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -91,9 +99,27 @@ body {
 }
 main { padding: 0 1.2rem 1.2rem; max-width: 1600px; margin: 0 auto; }
 a { color: var(--accent); }
-.hidden { display: none; }
+/* THE one owner of "hidden means hidden". Both the class and the attribute
+ * lose to any later `display:` rule at equal specificity (the /create skill
+ * modal shipped broken exactly that way: `.cw-modal{display:flex}` beat
+ * [hidden] and the overlay permanently covered the page). !important retires
+ * the whole conflict class — per-selector `.foo.hidden{display:none}` patches
+ * are no longer needed and must not be re-introduced. */
+.hidden { display: none !important; }
+[hidden] { display: none !important; }
 .muted { color: var(--muted); }
-.loading { color: var(--muted); margin: 0; }
+.loading { color: var(--muted); margin: 0; animation: mj-breathe 1.2s ease-in-out infinite alternate; }
+@keyframes mj-breathe { from { opacity: .5; } to { opacity: 1; } }
+::selection { background: #2b4a75; color: var(--fg); }
+/* thin dark scrollbars on inner overflow panels (Chromium + Firefox). */
+* { scrollbar-width: thin; scrollbar-color: #3d434f transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #3d434f; border-radius: 999px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: #4d5563; background-clip: padding-box; }
 h1 { margin: 0; font-size: 1.35rem; }
 h2 {
   margin: 0 0 .6rem; font-size: 1.02rem; border-bottom: 1px solid var(--line);
@@ -144,7 +170,7 @@ button.chip:hover { filter: brightness(1.15); }
   font-size: .84rem; display: flex; gap: .6rem; justify-content: space-between;
   align-items: baseline; white-space: nowrap;
 }
-.ws-item:hover:not(:disabled) { background: #202b40; }
+.ws-item:hover:not(:disabled) { background: var(--accent-bg); }
 .ws-item:disabled { color: var(--muted); cursor: default; }
 .ws-count { color: var(--muted); font-size: .76rem; }
 .spend { color: var(--muted); font-size: .9rem; margin-top: .45rem; }
@@ -161,7 +187,7 @@ button.chip:hover { filter: brightness(1.15); }
 .bar-fill.over { background: var(--err); }
 .next-step {
   margin-top: .6rem; padding: .45rem .7rem; border-left: 3px solid var(--accent);
-  background: #202b40; color: #cfe3ff; border-radius: 0 6px 6px 0; font-size: .92rem;
+  background: var(--accent-bg); color: #cfe3ff; border-radius: 0 6px 6px 0; font-size: .92rem;
 }
 .final { margin-top: .6rem; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
 .final-link { font-size: .85rem; word-break: break-all; }
@@ -182,7 +208,15 @@ button.chip:hover { filter: brightness(1.15); }
 .btn.mini { padding: .06rem .5rem; font-size: .76rem; font-weight: 700; line-height: 1.3; }
 .btn:hover:not(:disabled) { filter: brightness(1.12); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+/* interaction feel: hovers ease instead of snapping, presses acknowledge. */
+.btn, button.chip, .chip, .pnav a, .ws-item, .tl-clip, .dropzone {
+  transition: filter .12s ease, background-color .12s ease,
+    border-color .12s ease, color .12s ease, opacity .12s ease;
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible,
+a:focus-visible, button:focus-visible, summary:focus-visible,
+[role="button"]:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
 .btnrow { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
@@ -193,7 +227,7 @@ button.chip:hover { filter: brightness(1.15); }
   padding: .35rem .8rem; margin: 1rem 0 0; font-size: .8rem; text-align: center;
   cursor: pointer; user-select: none;
 }
-.dropzone.drag { border-color: var(--accent); color: var(--accent); background: #202b40; }
+.dropzone.drag { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
 .dropzone.busy { border-style: solid; border-color: var(--accent); color: var(--fg); }
 
 /* -------------------------------------------------------- build panel -- */
@@ -507,10 +541,17 @@ p.lvl-ok { color: var(--ok); }
   border-left: 4px solid var(--accent); border-radius: 8px; padding: .55rem .8rem;
   font-size: .86rem; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); cursor: pointer;
   word-break: break-word;
+  animation: mj-rise .18s ease-out;
 }
 .toast-ok { border-left-color: var(--ok); }
 .toast-warn { border-left-color: var(--warn); }
 .toast-err { border-left-color: var(--err); }
+/* shared entrance for both toast systems (.toast here, .toast-item in
+ * pages.css) and any future overlay chrome. */
+@keyframes mj-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* ----------------------------------------------------------- responsive -- */
 @media (max-width: 900px) {
@@ -524,6 +565,14 @@ p.lvl-ok { color: var(--ok); }
 .btn.tiny { padding: .1rem .45rem; font-size: .85rem; line-height: 1.4; }
 .btn.tiny.on { border-color: var(--star); color: var(--star); background: rgba(255, 207, 92, .12); }
 .tnote { max-width: 190px; word-break: break-all; }
+/* inline take-note editor (#49a — replaces the page-freezing prompt dialog) */
+.tnote-edit { margin-top: .35rem; width: 100%; }
+.tnote-edit textarea {
+  width: 100%; font-family: inherit; font-size: .8rem; line-height: 1.4;
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .3rem .45rem; resize: vertical;
+}
+.tnote-edit .btnrow { margin-top: .3rem; }
 .tnote.seekable { cursor: pointer; text-decoration: underline dotted; }
 .tnote.seekable:hover { color: var(--accent); }
 .fchips { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0 .7rem; }
@@ -542,9 +591,9 @@ button.fchip { cursor: pointer; }
 .ed-truth .btnrow { margin-top: .5rem; }
 
 /* ---- v3.1: unread-first triage — mark-reviewed + new-take chips ---- */
-.chip.unread { color: var(--accent); border-color: #2b4a7a; background: #202b40; font-weight: 700; }
+.chip.unread { color: var(--accent); border-color: #2b4a7a; background: var(--accent-bg); font-weight: 700; }
 .chip.tk-new {
-  color: var(--accent); border-color: #2b4a7a; background: #202b40;
+  color: var(--accent); border-color: #2b4a7a; background: var(--accent-bg);
   font-size: .68rem; padding: 0 .4rem; margin-left: .35rem; vertical-align: middle;
 }
 
@@ -619,7 +668,7 @@ button.fchip { cursor: pointer; }
 .ob-step.done .ob-title { color: var(--muted); font-weight: 400; }
 .ob-hint { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
 .ob-cli {
-  font-family: var(--mono); font-size: .78rem; color: #cfe3ff; background: #202b40;
+  font-family: var(--mono); font-size: .78rem; color: #cfe3ff; background: var(--accent-bg);
   border-radius: 4px; padding: .05rem .4rem; margin-top: .25rem; display: inline-block;
   word-break: break-all;
 }
@@ -746,9 +795,15 @@ a.btn.ck-primary { text-decoration: none; }
   display: inline-flex; align-items: baseline; gap: .3rem; font-size: .78rem;
   padding: .12rem .55rem; border-radius: 999px; border: 1px solid var(--line);
   background: var(--panel2); color: var(--muted);
+  /* #50: the counts are clickable queues now (buttons, not spans) */
+  font-family: inherit; cursor: pointer;
 }
+.ck-scount:hover { border-color: var(--accent); color: var(--fg); }
 .ck-scount b { color: var(--fg); font-size: .84rem; }
 .ck-scount.exc { border-color: #5a4718; }
+/* 继续上次工作 (#50) — the first thing the returning owner sees */
+.ck-continue { margin: 0 0 .7rem; }
+a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-final { color: var(--muted); font-size: .8rem; }
 .ck-final .badge { margin-left: .35rem; }
 
@@ -813,6 +868,16 @@ a.btn.ck-primary { text-decoration: none; }
   .btn.ck-primary { max-width: none; }
 }
 
+/* Honour the OS-level motion preference: every animation/transition above is
+ * decorative (pulse, flash, toast rise, breathe, hover easing) — none carries
+ * state, so collapsing them to a single instant frame loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
 """.strip() + "\n"
 
 # ---------------------------------------------------------------------- JS --
@@ -842,6 +907,45 @@ _JS = r"""
   const projMeta = document.querySelector('meta[name="manju-project"]');
   let PROJECT = projMeta ? (projMeta.getAttribute("content") || "") : "";
   const $ = (id) => document.getElementById(id);
+
+  /* Per-project UI memory (external-review round, #49a): the shot filter and
+   * panel-open states survive a reload. Keyed by the STABLE project identity
+   * (#45's root-derived token) — the display NAME collides across same-named
+   * projects. Best-effort: blocked/corrupt storage never breaks the page. */
+  const uiKey = () => "manju-ui-" + (PROJECT || "unbound");
+  const loadUI = () => {
+    try { return JSON.parse(localStorage.getItem(uiKey())) || {}; }
+    catch (e) { return {}; }
+  };
+  const saveUI = (patch) => {
+    try {
+      const cur = loadUI();
+      Object.keys(patch).forEach((k) => { cur[k] = patch[k]; });
+      localStorage.setItem(uiKey(), JSON.stringify(cur));
+    } catch (e) { /* storage disabled — memory just stays off */ }
+  };
+
+  /* #50a: the review page deep-links /?compare=<shot> into the A/B overlay */
+  let pendingCompare = (() => {
+    try { return new URLSearchParams(location.search).get("compare") || ""; }
+    catch (e) { return ""; }
+  })();
+
+  /* A click-driven header/zone becomes keyboard-operable. A real <button>
+   * would be invalid around its heading/input children, so the pattern is
+   * role+tabindex+keydown — Enter/Space route to the SAME click handler. */
+  const actAsButton = (node, label) => {
+    node.tabIndex = 0;
+    node.setAttribute("role", "button");
+    if (label) node.setAttribute("aria-label", label);
+    node.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();  /* the global Space=play shortcut must not fire */
+        node.click();
+      }
+    });
+  };
 
   /* another tab switched the server's project — block this one (its media
    * URLs now resolve inside the NEW project); reload follows the switch. */
@@ -910,11 +1014,20 @@ _JS = r"""
 
   /* ---------------------------------------------------------- toasts --- */
   const toast = (msg, kind) => {
+    const box = $("toast");
+    if (!box.hasAttribute("aria-live")) {
+      /* announce state changes to assistive tech without stealing focus */
+      box.setAttribute("role", "status");
+      box.setAttribute("aria-live", "polite");
+    }
     const cls = kind === "err" ? "toast-err" : (kind === "warn" ? "toast-warn" : "toast-ok");
     const t = el("div", "toast " + cls, msg);
     t.addEventListener("click", () => t.remove());
-    $("toast").appendChild(t);
-    setTimeout(() => t.remove(), 4000);
+    box.appendChild(t);
+    /* F20 discipline (server pages had it since #42; the SPA missed it):
+     * an error is often a long engine sentence — it stays until clicked. */
+    if (kind === "err") { t.textContent = msg + "  ✕"; }
+    else { setTimeout(() => t.remove(), 4000); }
   };
 
   /* ------------------------------------------------------------- API --- */
@@ -1091,7 +1204,7 @@ _JS = r"""
     section("header",
       [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
        s.latest_final_note, s.build_lock, s.readonly, s.workspace,
-       (s.shots || []).length],
+       s.finals, (s.shots || []).length],
       () => renderHeader(s));
     section("jobs", jobs, () => renderJobs(jobs));
     section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
@@ -1108,6 +1221,21 @@ _JS = r"""
     maybeEvaluate(s);   /* async, fingerprint-gated: round AA item 8 */
     $("dropzone").classList.toggle("hidden", readonly);
     updateGates();
+    /* #50a: /?compare=S001 deep-links from /review straight into the A/B
+     * takes overlay — consumed once, after the first shots render (the
+     * overlay takes the shot OBJECT). <2 takes = a silent no-op by design. */
+    if (pendingCompare && lastShots.length) {
+      const target = lastShots.find((sh) => sh.id === pendingCompare);
+      pendingCompare = "";
+      /* #50c: strip the param so F5 / the project-switch 刷新 button can
+       * never replay the overlay (worst case: onto a same-named shot in a
+       * DIFFERENT project after a switch). */
+      try { history.replaceState(null, "", location.pathname); } catch (err) { /* keep */ }
+      if (target) {
+        try { openCompare(target); } catch (err) { /* stays on the workbench */ }
+        if (!cmpOverlay) toast("该镜头可对比的视频 take 不足两个", "warn");
+      }
+    }
   }
 
   /* ========================================================= cockpit ===
@@ -1211,6 +1339,28 @@ _JS = r"""
       || (c.onboarding && c.onboarding.should_show);
     root.classList.toggle("fresh", !!fresh);
 
+    /* --- 继续上次工作 (#50): pure client memory (common.js records every
+     * server-page visit per project); /review restores its own position, so
+     * this chip only needs to LINK back. The engine keeps no UI state. */
+    try {
+      const lastRaw = localStorage.getItem("manju-last-" + PROJECT);
+      const last = lastRaw ? JSON.parse(lastRaw) : null;
+      if (PROJECT && last && last.page && last.page !== "/") {
+        const cont = el("div", "ck-continue");
+        let lbl = "继续上次工作:" + (last.title || last.page);
+        if (last.page === "/review") {
+          const pos = localStorage.getItem("manju-rv-pos-" + PROJECT);
+          if (pos) lbl += " · " + pos;
+        }
+        const a = document.createElement("a");
+        a.className = "btn ck-continue-btn";
+        a.href = last.page;
+        a.textContent = lbl;
+        cont.appendChild(a);
+        root.appendChild(cont);
+      }
+    } catch (err) { /* storage off — no chip, no noise */ }
+
     /* --- HERO: the state sentence + the ONE next action ------------------ */
     const hero = el("div", "ck-hero");
     const left = el("div", "ck-state");
@@ -1227,16 +1377,52 @@ _JS = r"""
     hero.appendChild(renderHeroCTA(na));
     root.appendChild(hero);
 
+    /* --- 待办箱: 新 take 未阅 (#50a) — the same snapshot the shots bar's
+     * 未阅 chip reads; cockpit refetches AFTER the state render, so
+     * lastShots is populated by the time this runs. --------------------- */
+    let unreadTakes = 0;
+    try {
+      const snap = loadReviewSnapshot();
+      (lastShots || []).forEach((s) => {
+        (Array.isArray(s.takes) ? s.takes : []).forEach((t) => {
+          if (isNewTake(snap, s.id, String(t.name))) unreadTakes++;
+        });
+      });
+    } catch (err) { unreadTakes = 0; }
+
     /* --- STATE STRIP: shot counts by state, exceptions coloured ---------- */
     if (!blkErr(state) && state.shots_total > 0) {
       const strip = el("div", "ck-strip");
       const counts = state.shots_by_state || {};
       Object.keys(counts).forEach((k) => {
-        const chip = el("span", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+        /* 待办箱 (#50): a count is a QUEUE, not a statistic — clicking it
+         * filters the shots grid to exactly those shots and jumps there. */
+        const chip = el("button", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+        chip.type = "button";
+        chip.title = "在分镜里筛选:" + (CK_STATE_ZH[k] || k);
         chip.appendChild(el("b", null, String(counts[k])));
         chip.appendChild(document.createTextNode(" " + (CK_STATE_ZH[k] || k)));
+        chip.addEventListener("click", () => {
+          stateFilter = k;
+          saveUI({ filter: stateFilter });
+          renderShots(lastShots);
+          const sh = $("shots");
+          if (sh) sh.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
         strip.appendChild(chip);
       });
+      if (unreadTakes > 0) {
+        const uc = el("button", "ck-scount exc");
+        uc.type = "button";
+        uc.title = "上次标记已阅之后新增的 take(卡片带「新」章)— 点击跳到分镜";
+        uc.appendChild(el("b", null, String(unreadTakes)));
+        uc.appendChild(document.createTextNode(" 新 take 未阅"));
+        uc.addEventListener("click", () => {
+          const sh = $("shots");
+          if (sh) sh.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        strip.appendChild(uc);
+      }
       const fin = state.final;
       if (fin) {
         const f = el("span", "ck-final",
@@ -2113,7 +2299,7 @@ _JS = r"""
         const cur = ((data.result.plan || [])
           .map((it) => it.currency).find(Boolean)) || "";
         buildBtn.textContent = cost > 0
-          ? "构建 (Build) ≈" + cost + (cur ? " " + cur : "")
+          ? "构建 (Build) ≈" + fmtMoney(cost) + (cur ? " " + cur : "")
           : "构建 (Build)";
         buildBtn.classList.toggle("spendy", cost > 0);
       } catch (err) { /* advisory only: the button stays plain */ }
@@ -2568,7 +2754,15 @@ _JS = r"""
   }
 
   function focusShot(id) {
-    const card = cardById(id);
+    let card = cardById(id);
+    if (!card && stateFilter) {
+      /* bug-hunt #51: the timeline/cockpit navigate by shot id regardless of
+       * the grid's state filter — navigation wins, the filter clears. */
+      stateFilter = "";
+      saveUI({ filter: "" });
+      renderShots(lastShots);
+      card = cardById(id);
+    }
     if (card) flashCard(card);
     else toast("镜头卡片未找到 (shot card not found): " + id, "err");
   }
@@ -2612,25 +2806,34 @@ _JS = r"""
     }
   }
 
-  let stateFilter = "";  /* UX-STUDY #3: '' = all; survives re-renders */
+  let stateFilter = loadUI().filter || "";  /* '' = all; survives re-renders
+    AND reloads (per-project UI memory, #49a) */
+
+  /* most-blocking first — the #44 resolver's ladder, not the alphabet */
+  const STATE_FILTER_ORDER = ["broken", "missing", "needs_selection", "stale", "manual", "fresh"];
 
   function filterChips(shots) {
     const bar = el("div", "fchips");
     const counts = {};
     shots.forEach((s) => { counts[s.state] = (counts[s.state] || 0) + 1; });
-    const mk = (label, value, n) => {
+    const mk = (label, value, n, tip) => {
       const c = el("button",
         "chip fchip" + (stateFilter === value ? " on" : ""),
         label + (n !== undefined ? " " + n : ""));
       c.type = "button";
+      c.setAttribute("aria-pressed", stateFilter === value ? "true" : "false");
+      if (tip) c.title = tip;
       c.addEventListener("click", () => {
         stateFilter = stateFilter === value ? "" : value;
+        saveUI({ filter: stateFilter });  /* survives reload, per project */
         renderShots(lastShots);  /* state unchanged: re-render directly */
       });
       bar.appendChild(c);
     };
     mk("全部 (all)", "", shots.length);
-    Object.keys(counts).sort().forEach((st) => mk(st, st, counts[st]));
+    STATE_FILTER_ORDER.filter((st) => counts[st])
+      .concat(Object.keys(counts).filter((st) => STATE_FILTER_ORDER.indexOf(st) < 0).sort())
+      .forEach((st) => mk(CK_STATE_ZH[st] || st, st, counts[st], st));
     return bar;
   }
 
@@ -2644,12 +2847,24 @@ _JS = r"""
   let reviewSnap = null;      /* parsed snapshot for the CURRENT render pass */
   let reviewChipEl = null;    /* 未阅 N chip in the shots bar */
 
-  const reviewKey = () => "manju-reviewed-" + lastProjectName;
+  /* Keyed by the STABLE project identity when the guard meta is present —
+   * two projects can share a display NAME and used to share (and clobber)
+   * one snapshot. The old name key migrates once, then retires. */
+  const reviewKey = () =>
+    "manju-reviewed-" + (PROJECT || lastProjectName);
 
   function loadReviewSnapshot() {
-    if (!lastProjectName) return null;
+    if (!lastProjectName && !PROJECT) return null;
     try {
-      const raw = window.localStorage.getItem(reviewKey());
+      let raw = window.localStorage.getItem(reviewKey());
+      if (!raw && PROJECT && lastProjectName) {
+        const legacy = window.localStorage.getItem("manju-reviewed-" + lastProjectName);
+        if (legacy) {  /* one-time migration off the colliding name key */
+          window.localStorage.setItem(reviewKey(), legacy);
+          window.localStorage.removeItem("manju-reviewed-" + lastProjectName);
+          raw = legacy;
+        }
+      }
       if (!raw) return null;
       const snap = JSON.parse(raw);
       return (snap && typeof snap === "object" && snap.takes &&
@@ -2699,6 +2914,10 @@ _JS = r"""
     }
     try { renderShots(lastShots); } catch (err) { /* chips are advisory */ }
     updateReviewChip();
+    /* #50c: the cockpit's 新 take 未阅 row reads the SAME snapshot — repaint
+     * it now, or the one-glance home contradicts the shots bar until the
+     * next fingerprint change. */
+    try { if (cockData) renderCockpit(); } catch (err) { /* advisory */ }
   }
 
   function updateReviewChip() {
@@ -2712,6 +2931,17 @@ _JS = r"""
   function renderShots(shots) {
     reviewSnap = loadReviewSnapshot();   /* one parse per grid render */
     const root = $("shots");
+    /* #50c (review find #1): a DIRECT re-render (filter chip, cockpit count,
+     * 标记已阅, batch bar) while an inline note editor is open destroys the
+     * editor node WITHOUT editorClosed() — editorOpen would leak true and
+     * silently freeze the whole poll loop + keyboard. The draft is forfeit
+     * (the user asked for a repaint); the pause must never leak. */
+    if (editorOpen && root.querySelector(".tnote-edit")) {
+      editorOpen = false;
+      /* bug-hunt #51: clearing the flag alone left the loop DEAD — nothing
+       * re-arms it (schedule/refresh only chain off each other). */
+      schedule();
+    }
     clear(root);
     if (!shots.length) {
       const empty = el("div", "empty");
@@ -2725,10 +2955,12 @@ _JS = r"""
       root.appendChild(filterChips(shots));  /* chips only when they filter */
     } else if (stateFilter) {
       stateFilter = "";  /* single-state grid: a stale filter must not hide it */
+      saveUI({ filter: "" });  /* #50c: the reset must reach the memory too */
     }
     const visible = stateFilter ? shots.filter((s) => s.state === stateFilter) : shots;
     if (!visible.length) {
       stateFilter = "";
+      saveUI({ filter: "" });  /* #50c: ditto — never restore a dead filter */
       renderShots(shots);  /* the filtered state vanished: reset, re-render */
       return;
     }
@@ -2753,8 +2985,13 @@ _JS = r"""
     cb.addEventListener("change", () => toggleBatch(shot.id, cb.checked));
     head.appendChild(cb);
     head.appendChild(el("span", "sid", shot.id));
-    head.appendChild(el("span",
-      "badge " + (STATE_CLASS[shot.state] || "st-missing"), shot.state));
+    /* F18 discipline (the board landed it in #42a; the workbench card kept
+     * the raw enum): the GUI's own Chinese state word, enum on the title. */
+    const stBadge = el("span",
+      "badge " + (STATE_CLASS[shot.state] || "st-missing"),
+      CK_STATE_ZH[shot.state] || shot.state);
+    stBadge.title = shot.state;
+    head.appendChild(stBadge);
     if (shot.voice) {
       const vc = el("span",
         "badge " + (STATE_CLASS[shot.voice.state] || "st-missing"),
@@ -2911,6 +3148,7 @@ _JS = r"""
       const b = el("button", "btn tiny" + (t.note === value ? " on" : ""), label);
       b.type = "button";
       b.title = tip;
+      b.setAttribute("aria-label", tip);  /* the emoji face needs a name */
       roGate(b);
       b.addEventListener("click", () =>
         post(b, "/api/take-note",
@@ -2924,15 +3162,58 @@ _JS = r"""
     const noteBtn = el("button", "btn tiny", "📝");
     noteBtn.type = "button";
     noteBtn.title = "备注 (note) — 以 mm:ss 开头可点击跳转";
+    noteBtn.setAttribute("aria-label", "备注 (note)");
     roGate(noteBtn);
     noteBtn.addEventListener("click", () => {
-      const entered = window.prompt(
-        "备注 " + shot.id + "/" + t.name + "(留空删除；mm:ss 开头=可跳转):",
-        t.note || "");
-      if (entered === null) return;
-      post(noteBtn, "/api/take-note",
-        { shot: shot.id, take: t.name, text: entered },
-        entered.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注");
+      /* inline editor, not a blocking prompt dialog — that froze the whole
+       * page (playing take included) and Esc silently threw the text away.
+       * It joins the ONE editorOpen pause (like the shot-editor dialog):
+       * a fingerprint refresh mid-typing would rebuild #shots and eat the
+       * draft, so the loop pauses while a note editor is up. */
+      const openEd = box.querySelector(".tnote-edit");
+      if (openEd) { openEd.querySelector("textarea").focus(); return; }
+      document.querySelectorAll(".tnote-edit").forEach((other) => other.remove());
+      editorOpen = true;
+      const ed = el("div", "tnote-edit");
+      const ta = document.createElement("textarea");
+      ta.rows = 2;
+      ta.value = t.note || "";
+      ta.placeholder = "留空保存=删除；mm:ss 开头=可跳转；Ctrl+Enter 保存";
+      const row = el("div", "btnrow");
+      const ok = el("button", "btn mini", "保存 (save)");
+      ok.type = "button";
+      roGate(ok);
+      const cancel = el("button", "btn ghost mini", "取消");
+      cancel.type = "button";
+      const save = () => {
+        editorOpen = false;  /* BEFORE post — its refresh must not be swallowed */
+        post(ok, "/api/take-note",
+          { shot: shot.id, take: t.name, text: ta.value },
+          ta.value.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注"
+        ).then((res) => {
+          /* #50c (review find #2): a FAILED save runs no refresh, so nothing
+           * re-arms the paused loop. Keep the draft + the pause invariant
+           * (editor still in the DOM) — 重试/取消 both resume normally. */
+          if (res === null) { editorOpen = true; return; }
+          /* bug-hunt #51: an UNCHANGED note leaves the shots signature
+           * identical — section() skips the repaint that would sweep the
+           * editor. Remove it explicitly when it survived the refresh. */
+          if (ed.isConnected) ed.remove();
+        });
+      };
+      const closeNote = () => { ed.remove(); editorClosed(); };
+      ok.addEventListener("click", save);
+      cancel.addEventListener("click", closeNote);
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        if (e.key === "Escape") { e.stopPropagation(); closeNote(); }
+      });
+      row.appendChild(ok);
+      row.appendChild(cancel);
+      ed.appendChild(ta);
+      ed.appendChild(row);
+      box.appendChild(ed);
+      ta.focus();
     });
     acts.appendChild(noteBtn);
     /* the recipe travels with the output (Runway pattern): same provider,
@@ -2942,6 +3223,7 @@ _JS = r"""
       rb.type = "button";
       rb.title = "用此参数重做 (redo with these settings"
         + (t.seed !== null && t.seed !== undefined ? ", seed " + t.seed : "") + ")";
+      rb.setAttribute("aria-label", "用此参数重做 (redo with these settings)");
       roGate(rb);
       rb.addEventListener("click", () => {
         const planParams = { shot: shot.id, provider: t.provider };
@@ -3836,6 +4118,7 @@ _JS = r"""
       input.value = "";
     });
     zone.appendChild(input);
+    actAsButton(zone, "选择或拖入素材导入 (import files)");
     zone.addEventListener("click", () => input.click());
     zone.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -3945,7 +4228,7 @@ _JS = r"""
   /* Lazily fetched: on first expand, after each commit, and after each done
    * job — never on the poll. A 500 (e.g. git endpoints not available)
    * renders one muted line inside this section only. */
-  let gitOpen = false;
+  let gitOpen = !!loadUI().git;  /* per-project memory (#49a) */
   let gitLoaded = false;
   let gitStale = true;
   let gitBusy = false;
@@ -3960,20 +4243,25 @@ _JS = r"""
     const root = $("git");
     clear(root);
     const head = el("div", "git-head");
-    const arrow = el("span", "git-arrow", "▸");
+    const arrow = el("span", "git-arrow", gitOpen ? "▾" : "▸");
     head.appendChild(arrow);
     head.appendChild(el("h2", null, "版本 (git)"));
     gitChips = el("div", "chips");
     head.appendChild(gitChips);
-    gitBody = el("div", "hidden");
+    gitBody = el("div", gitOpen ? null : "hidden");
+    actAsButton(head, "版本 (git) 面板");
+    head.setAttribute("aria-expanded", gitOpen ? "true" : "false");
     head.addEventListener("click", () => {
       gitOpen = !gitOpen;
       arrow.textContent = gitOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", gitOpen ? "true" : "false");
+      saveUI({ git: gitOpen });
       gitBody.classList.toggle("hidden", !gitOpen);
       if (gitOpen && (gitStale || !gitLoaded)) fetchGitPanel();
     });
     root.appendChild(head);
     root.appendChild(gitBody);
+    if (gitOpen && !gitLoaded) fetchGitPanel();  /* restored-open lazy load */
   }
 
   async function fetchGitPanel() {
@@ -4251,7 +4539,7 @@ _JS = r"""
    * a state refresh AT MOST once per fingerprint change (never on the raw
    * poll cadence). The count badge in the section head stays live even when
    * the body is collapsed. */
-  let propOpen = false;
+  let propOpen = !!loadUI().prop;  /* per-project memory (#49a) */
   let propBusy = false;
   let propLoaded = false;
   let propStale = false;    /* set by a done job; cleared by the next fetch */
@@ -4266,20 +4554,25 @@ _JS = r"""
     const root = $("proposals");
     clear(root);
     const head = el("div", "git-head");
-    const arrow = el("span", "git-arrow", "▸");
+    const arrow = el("span", "git-arrow", propOpen ? "▾" : "▸");
     head.appendChild(arrow);
     head.appendChild(el("h2", null, "提案 (proposals)"));
     propChips = el("div", "chips");
     head.appendChild(propChips);
-    propBody = el("div", "hidden");
+    propBody = el("div", propOpen ? null : "hidden");
+    actAsButton(head, "提案 (proposals) 面板");
+    head.setAttribute("aria-expanded", propOpen ? "true" : "false");
     head.addEventListener("click", () => {
       propOpen = !propOpen;
       arrow.textContent = propOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", propOpen ? "true" : "false");
+      saveUI({ prop: propOpen });
       propBody.classList.toggle("hidden", !propOpen);
       if (propOpen && (!propLoaded || propStale)) fetchProposals();
     });
     root.appendChild(head);
     root.appendChild(propBody);
+    if (propOpen && !propLoaded) fetchProposals();  /* restored-open lazy load */
   }
 
   function maybeProposals(s) {
@@ -4378,7 +4671,11 @@ _JS = r"""
   }
 
   function kbMove(delta) {
-    const ids = lastShots.map((s) => s.id);
+    /* bug-hunt #51: walk only the VISIBLE grid — with a state filter on,
+     * focus used to land on cards that are not rendered at all. */
+    const pool = stateFilter
+      ? lastShots.filter((s) => s.state === stateFilter) : lastShots;
+    const ids = pool.map((s) => s.id);
     if (!ids.length) return;
     const i = ids.indexOf(kbFocusId);
     let next;
@@ -4673,6 +4970,27 @@ _JS = r"""
       const job = (f.detail && (f.detail.job_id || f.detail.node_id)) || null;
       if (job) bodyBox.appendChild(el("div", "fail-meta", "关联任务 (job): " + job));
       if (f.ts) bodyBox.appendChild(el("div", "fail-meta", f.ts + " · " + (f.actor || "engine")));
+      /* 复制诊断上下文 (#50): a clean task block for Claude — error, log,
+       * files, recommended step — instead of pasting the whole project. */
+      const cp = el("button", "btn ghost mini", "复制诊断上下文");
+      cp.type = "button";
+      cp.title = "复制该失败的结构化上下文(步骤/原因/日志/文件),交给 Claude 或 agent";
+      cp.addEventListener("click", async () => {
+        const lines = ["失败步骤: " + (f.step || "?")];
+        if (f.subject) lines.push("对象: " + f.subject);
+        if (f.cause) lines.push("原因: " + f.cause);
+        if (f.evidence) lines.push("证据: " + f.evidence);
+        if (f.hint) lines.push("引擎提示: " + f.hint);
+        if (f.log_path) lines.push("日志: " + f.log_path);
+        if (job) lines.push("任务: " + job);
+        if (f.subject && shotIds[f.subject]) lines.push("镜头文件: shots/" + f.subject + ".yaml");
+        lines.push("目标: (写下要 Claude 做的事)");
+        try {
+          await navigator.clipboard.writeText(lines.join("\n"));
+          toast("诊断上下文已复制 — 粘给 Claude 即可", "ok");
+        } catch (e) { toast("复制失败,请手动选择", "err"); }
+      });
+      bodyBox.appendChild(cp);
       /* retry: only where the subject is a shot in THIS project, through the
        * normal plan modal (a redo is a priced action) */
       if (!readonly && f.subject && shotIds[f.subject]) {
@@ -4767,7 +5085,7 @@ _JS = r"""
   /* WORKBENCH row "Spend / tasks" (S8a): render `manju tasks` JSON — the
    * JOB/QUEUE view over the disposable run ledger. Collapsible like the git
    * panel; lazily fetched on expand and after a done job. */
-  let tasksOpen = false;
+  let tasksOpen = !!loadUI().tasks;  /* per-project memory (#49a) */
   let tasksLoaded = false;
   let tasksBusy = false;
   let tasksBody = null;
@@ -4777,20 +5095,25 @@ _JS = r"""
     const root = $("tasks");
     clear(root);
     const head = el("div", "git-head");
-    const arrow = el("span", "git-arrow", "▸");
+    const arrow = el("span", "git-arrow", tasksOpen ? "▾" : "▸");
     head.appendChild(arrow);
     head.appendChild(el("h2", null, "任务 · 账本 (tasks)"));
     tasksChips = el("div", "chips");
     head.appendChild(tasksChips);
-    tasksBody = el("div", "hidden");
+    tasksBody = el("div", tasksOpen ? null : "hidden");
+    actAsButton(head, "任务 · 账本 (tasks) 面板");
+    head.setAttribute("aria-expanded", tasksOpen ? "true" : "false");
     head.addEventListener("click", () => {
       tasksOpen = !tasksOpen;
       arrow.textContent = tasksOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", tasksOpen ? "true" : "false");
+      saveUI({ tasks: tasksOpen });
       tasksBody.classList.toggle("hidden", !tasksOpen);
       if (tasksOpen) fetchTasks();
     });
     root.appendChild(head);
     root.appendChild(tasksBody);
+    if (tasksOpen) fetchTasks();  /* restored-open lazy load */
   }
 
   async function fetchTasks() {

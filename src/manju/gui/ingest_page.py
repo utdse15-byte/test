@@ -197,15 +197,23 @@ _INGEST_JS = r"""
 
   var batchId = null;
 
+  // Poll /api/jobs until the given job finishes (plan/apply run on the job
+  // runner). Adaptive cadence: 100ms while a quick local job usually lands
+  // (~2s), then 500ms — the runner is SERIALIZED, so an ingest queued behind
+  // a long build legitimately takes minutes; the old ~60s cap misreported it
+  // as a failure. ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
     return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
       var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
-      if (tries > 600) return job || null;
-      return new Promise(function (res) { setTimeout(res, 100); }).then(function () {
-        return pollJob(jobId, tries + 1);
-      });
+      return job || null;
+    }).catch(function () { return null; }).then(function (job) {
+      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (tries > 1215) return null;  /* alive at the cap = still running, never "failed" */  // 20×100ms + ~1195×500ms ≈ 10min
+      return new Promise(function (res) {
+        setTimeout(res, tries < 20 ? 100 : 500);
+      }).then(function () { return pollJob(jobId, tries + 1); });
     });
   }
   function newBatchId() {
@@ -326,7 +334,7 @@ _INGEST_JS = r"""
       }
       pollJob(res.data.job.id).then(function (job) {
         if (planBtn) planBtn.disabled = false;
-        if (!job) { toast("生成计划超时", false); return; }
+        if (!job) { toast("计划生成任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); return; }
         if (job.state === "done") {
           var plan = job.result || {};
           renderTable(plan);
@@ -368,7 +376,7 @@ _INGEST_JS = r"""
       }
       pollJob(res.data.job.id).then(function (job) {
         if (btn) btn.disabled = false;
-        if (!job) { toast("入库超时", false); return; }
+        if (!job) { toast("批量入库任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); return; }
         var result = job.result || {};
         paintStatus(result.results);
         if (job.state === "done" && (result.stopped_at === null || result.stopped_at === undefined)) {

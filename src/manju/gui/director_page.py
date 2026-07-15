@@ -313,7 +313,7 @@ _DIRECTOR_CSS = """
 .dg-sugg { display:flex; align-items:center; gap:10px; padding:6px 0;
   border-bottom:1px solid #1a1f29; flex-wrap:wrap; }
 .dg-sugg:last-child { border-bottom:none; }
-.dg-kind { font-size:11px; color:#6ea8fe; text-transform:uppercase;
+.dg-kind { font-size:11px; color:var(--accent); text-transform:uppercase;
   min-width:70px; }
 .dg-sugg-text { flex:1; min-width:200px; }
 .mini { font-size:12px; }
@@ -326,7 +326,7 @@ _DIRECTOR_CSS = """
 .dg-total { color:#e0af68; margin-left:auto; }
 .dg-why { color:#9aa4b5; margin:6px 0; }
 .dg-chip { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:600; }
-.d-proposed { background:#1c2a44; color:#6ea8fe; }
+.d-proposed { background:#1c2a44; color:var(--accent); }
 .d-confirmed { background:#183a2a; color:#7ee787; }
 .d-executing { background:#3a3418; color:#e0af68; }
 .d-done { background:#173a1f; color:#7ee787; }
@@ -337,7 +337,7 @@ _DIRECTOR_CSS = """
 .dg-acts th { text-align:left; font-size:12px; color:#8b93a3; padding:5px 8px;
   border-bottom:1px solid #262c38; }
 .dg-acts td { padding:6px 8px; vertical-align:top; border-bottom:1px solid #1a1f29; }
-.dg-i { color:#6ea8fe; font-variant-numeric:tabular-nums; }
+.dg-i { color:var(--accent); font-variant-numeric:tabular-nums; }
 .dg-type { font-weight:600; }
 .dg-cost { color:#e0af68; }
 .dg-res.ok { color:#7ee787; } .dg-res.bad { color:#ff7b72; }

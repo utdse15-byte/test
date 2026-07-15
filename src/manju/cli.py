@@ -4317,12 +4317,63 @@ def board_keyframes(
                     fg=typer.colors.GREEN)
 
 
+def _app_browser_candidates() -> list[str]:
+    """Chromium-family binaries able to host an ``--app=`` window, in
+    preference order, deduplicated (a PATH hit and an explicit install-path
+    probe can name the same binary). Windows installs routinely keep
+    Edge/Chrome OFF the PATH, so the canonical install locations are probed
+    explicitly (Windows-first, §platform)."""
+    out: list[str] = []
+    for name in ("msedge", "chrome", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found and found not in out:
+            out.append(found)
+    if os.name == "nt":
+        for env in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
+            base = os.environ.get(env)
+            if not base:
+                continue
+            for rel in (r"Microsoft\Edge\Application\msedge.exe",
+                        r"Google\Chrome\Application\chrome.exe"):
+                cand = str(Path(base) / rel)
+                if Path(cand).exists() and cand not in out:
+                    out.append(cand)
+    return out
+
+
+def _open_gui_window(url: str, app_window: bool) -> None:
+    """The direction program's 桌面薄壳 (#50a): ``--app`` opens a chromeless
+    app-mode window — visually a desktop program, reusing every byte of the
+    served GUI. Falls back to the default browser HONESTLY (named notice)
+    when no Chromium-family binary is found; never fails the server."""
+    import webbrowser
+
+    if app_window:
+        import subprocess
+
+        for exe in _app_browser_candidates():
+            try:
+                subprocess.Popen([exe, f"--app={url}"],
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                return
+            except OSError:
+                continue
+        typer.secho("未找到 Edge/Chrome/Chromium —— 退回默认浏览器打开 "
+                    "(--app fallback)", fg=typer.colors.YELLOW)
+    webbrowser.open(url)
+
+
 @app.command(rich_help_panel=PANEL_COLLAB)
 def gui(
     host: str = typer.Option("127.0.0.1", help="bind address (non-local hosts print a warning)"),
     port: int = typer.Option(8321, help="port (0 = pick a free one)"),
     open_browser: bool = typer.Option(True, "--open/--no-open",
                                       help="open the page in the default browser"),
+    app_window: bool = typer.Option(
+        False, "--app",
+        help="以独立窗口打开(Edge/Chrome --app 模式,无地址栏;"
+             "找不到 Chromium 系浏览器则退回默认浏览器)"),
     readonly: bool = typer.Option(False, "--readonly",
                                   help="review-only: every mutating request is refused"),
     workspace: Optional[Path] = typer.Option(
@@ -4371,9 +4422,9 @@ def gui(
     typer.secho(f"manju gui → {server.url}  (Ctrl-C to stop)", fg=typer.colors.GREEN)
     if open_browser:
         import threading
-        import webbrowser
 
-        threading.Timer(0.4, lambda: webbrowser.open(server.url)).start()
+        threading.Timer(
+            0.4, lambda: _open_gui_window(server.url, app_window)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

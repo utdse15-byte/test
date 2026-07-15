@@ -24,6 +24,9 @@ real (tiny) mp4 takes — the flows the audit could only exercise over raw HTTP:
         project, a click on the old /review page must be refused (409
         project_switched) and the full-page overlay must appear — the write
         never lands in the wrong project.
+  polish — /create is alive: the skill modal starts hidden (computed style,
+        not just the attribute — the [hidden] app.css guard), opens from a
+        chip, closes on Escape, and the page underneath accepts clicks.
 """
 
 import os
@@ -212,6 +215,39 @@ def main() -> int:
             state = page.locator(".rv-shot").first.get_attribute("data-review")
             check("#48a keyboard a approves the active card", False,
                   f"data-review={state}")
+
+        # ---------------- GUI polish wave: /create is ALIVE in a real browser.
+        # It shipped with the skill modal permanently covering the page —
+        # `.cw-modal{display:flex}` beat the UA [hidden] rule, so the overlay
+        # rendered on load, blocked every click and could not be dismissed.
+        # The app.css `[hidden]{display:none!important}` guard owns the fix.
+        page.goto(gui_base + "/create", wait_until="load")
+        time.sleep(0.5)
+        disp = page.evaluate(
+            "() => getComputedStyle(document.getElementById('cw-modal')).display")
+        check("polish /create modal starts hidden", disp == "none", f"display={disp}")
+        page.locator(".cw-skillchip").first.click()
+        try:
+            page.wait_for_function(
+                "() => getComputedStyle(document.getElementById('cw-modal'))"
+                ".display !== 'none'", timeout=8000)
+            check("polish skill modal opens on chip click", True)
+        except Exception:
+            check("polish skill modal opens on chip click", False)
+        page.keyboard.press("Escape")
+        time.sleep(0.3)
+        disp = page.evaluate(
+            "() => getComputedStyle(document.getElementById('cw-modal')).display")
+        check("polish skill modal closes on Escape", disp == "none", f"display={disp}")
+        # with the overlay truly gone, the page accepts clicks again
+        page.locator('button[data-act="save"]').first.click()
+        try:
+            page.wait_for_selector("#toast .toast-item.good", timeout=8000)
+            check("polish /create page clickable (save lands + toasts)", True)
+        except Exception:
+            check("polish /create page clickable (save lands + toasts)", False)
+        # the #45 block below assumes the tab sits on /review — restore that
+        page.goto(gui_base + "/review", wait_until="networkidle")
 
         # ---------------- DECISIONS #45: the stale-tab guard, for real
         # This page (/review) rendered for 浏览器验证. Simulate another tab

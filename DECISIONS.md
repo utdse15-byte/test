@@ -61,6 +61,10 @@ Entries are append-only below.
 | 48 | 2026-07-14 | Convenience wave 2: generate/recover/deliver verbs never dead-end | cli redo/select/voice/align/repair/tasks/exports/transcribe next-keystroke clauses; _print_batch_result tail hints; exports per-row kind→command map |
 | 48a | 2026-07-14 | Convenience wave 3: review keyboard approve; package/masters exports pointers | gui/pages pages.js `a`=qapprove + legend (redo stays keyless — spend never behind one keystroke), cli package/masters 交付状态一览 |
 | 48b | 2026-07-14 | Convenience wave 4: GUI bulk gaps, board confirm/in-place select, deep links | gui/pages rv-redo-stale + lab link, board redo confirm + select flip, storyboard redo/voice batch, edit→subtitles #cue anchor; gate fixes ba5348a (as_posix, named refusal) |
+| 49 | 2026-07-14 | GUI polish wave: hidden-vs-display owner (dead /create fixed), feel/motion layer, honest pollJob, exports bulk-stale | gui/page.py app.css (`.hidden`/`[hidden]` !important owner, color-scheme, transitions, mj-rise, reduced-motion, scrollbars, --accent-bg), create_page showStage class clear, exports_page xc-gen-stale + pollJob×4 adaptive, board :root color-scheme+[hidden] |
+| 49a | 2026-07-14 | GUI polish round 2: external review dispositioned — F20/F18/#45 disciplines reach the workbench, per-project UI memory, keyboard semantics | gui/page.py app.js (sticky err toast + aria-live, CK_STATE_ZH badge/filters, manju-ui-/manju-reviewed- identity keys, actAsButton, inline take-note), gui/pages.py (nav aria-current, manju-rv-pos- restore), common_js aria-live |
+| 50 | 2026-07-14 | Direction program: personal production console — review queue default+priority+undo, continue-work home, 交给 Claude handoff, six-group nav | gui/pages.py (qPriority/setQueueMode/u-undo/_NAV_GROUPS/ai-ctx + copyForAI), gui/page.py (ck-continue chip, clickable ck-scount, fail-card 复制诊断上下文), common_js (manju-last recorder) |
+| 51 | 2026-07-14 | Exhaustive bug hunt: 22 fixes — edit Tier-2 unreachable, board select overlay lock, freeze-guard re-arm, pollJob cap honesty, 413 drain, readonly GETs | gui/page.py, gui/pages.py, gui/edit.py, gui/server.py, gui/state.py, gui/cockpit.py, board/board.py, 4× pollJob pages |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -2311,3 +2315,341 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   vs real, and the named payload makes any repeat diagnosable).
 - 5 new pins (72 total), red-first by stash; browser harness 17/17; full
   suite 4390/2/0.
+
+## 49. GUI polish wave: the browser told the truth the tests could not (2026-07-14)
+
+- Mandate: "彻底优化 GUI — 可用性、响应性、交互手感、视觉打磨" (owner-directed).
+  Method: two read-only mappers (architecture + test-pin map), then a LIVE
+  audit — all 17 pages screenshotted in headless Chromium on a scaffolded
+  project, consoles collected (clean), suspicious findings verified against
+  COMPUTED STYLES. Full ledger: REPORTS/GUI_POLISH_2026-07-14.md.
+- The load-bearing find, a bug CLASS not a bug: the `hidden` attribute only
+  works via the UA rule `[hidden]{display:none}`, which ANY author
+  `display:` rule on the element overrides — and the `.hidden` CLASS loses
+  identically to any LATER display rule (the repo had already hand-patched
+  that six times, one selector at a time). Sweep verdict: 7 broken sites on
+  6 elements. Worst: **/create was entirely dead in a real browser** — the
+  skill modal (`.cw-modal{display:flex}`) rendered OPEN on load over the
+  whole viewport, blocked every click and could not be dismissed; the
+  ✎编辑 stage swap was doubly dead (attribute no-op + the server-rendered
+  hidden class never cleared). /mixer + /packaging preview `<img hidden>`
+  placeholders rendered as visible empty boxes. Every /create HTTP test
+  stayed green through all of it — markup was correct, the CASCADE was not;
+  the #43 journey only collected console errors (none fire). Fix, one
+  owner: app.css `.hidden{display:none!important}` + `[hidden]{display:
+  none!important}` (board CSS carries the same [hidden] guard); showStage
+  clears the class; the per-selector patches are obsolete by construction.
+  The real-browser harness (17→21 checks) now drives /create permanently.
+- Responsiveness honesty: the four job pages (exports/ingest/lab/series)
+  polled /api/jobs at 10 req/s and MISREPORTED any job still unfinished at
+  ~60-90s as a failure — the runner is SERIALIZED, a generate queued behind
+  a long build legitimately waits minutes. pollJob×4 now share one shape
+  (kept per-page by the #G5 divergence rule): 100ms while quick jobs land,
+  then 500ms, ~10min cap, fetch-error retry; a null job toasts 仍在排队/
+  运行(轮询超时), never 失败.
+- Feel/visual layer (all CSS, no markup churn): `color-scheme: dark` on
+  both surfaces (Windows no longer paints bright-grey UA scrollbars/form
+  controls into the dark theme) + thin dark scrollbars + `scrollbar-gutter:
+  stable`; eased hover transitions and an `:active` press dip on the button
+  family; one `mj-rise` entrance for BOTH toast systems and the accent-edge
+  language on server-page toasts (systems stay separate code — #G5);
+  `.loading` breathes; focus-visible extended to links/buttons/summary; a
+  global `prefers-reduced-motion: reduce` block (every animation here is
+  decorative). Palette hexes hand-copied across pages folded into
+  `var(--accent)` / new `--accent-bg`.
+- Usability: /exports gains 全部生成/更新待更新 (`#xc-gen-stale`) — the #48b
+  A3-7 deferral, now above the wave line. STALE free kinds only (final/
+  proxy stay build-only per §8.3; missing stays a per-card decision),
+  sequential with live progress on the button, reload only on FULL success
+  so sticky failure toasts survive to be read.
+- Rejected, with reasons (ledger P-13…P-16): replacing reload-after-action
+  with partial updates (recorded server-rendered stance, structural churn
+  past the maintenance gate); nav regrouping/command palette (#45 already
+  rejected it); mobile breakpoints for server pages (Windows 11 desktop is
+  the platform); a light theme (dark is the recorded identity, no ask).
+- Delegation under the cost rule: the three mechanical pollJob mirrors were
+  written by a cheaper model from a byte-exact reference and reviewed here
+  line-by-line; audit, fixes, tests and docs stayed with the session.
+- 6 new pins (test_ux_polish.py, 78 total), red-first by stash (the
+  exports absent-state pin green-by-design); browser harness 21/21; full
+  suite 4396/2/0.
+
+### 49a. GUI polish round 2: the second external review, dispositioned (2026-07-14)
+
+- The owner supplied another AI's GUI review mid-wave. The #45 discipline
+  applied: every claim verified in source AND live before acting. Several
+  premises were false against this repo (server-page error toasts have been
+  sticky since #42 F20; the picker DOES read pinned/last_opened; its
+  draft-recovery ask IS the v3.1 conflict banner) — but chasing them
+  exposed real, bounded gaps the earlier waves had half-covered. Full
+  ledger: REPORTS/GUI_POLISH_2026-07-14.md round-2 section.
+- The unifying find: three recorded disciplines had each landed on ONE
+  surface and never reached the workbench. F20 (sticky errors) lived on
+  server pages while the SPA — the daily surface — auto-dismissed engine
+  errors at 4s; F18 (Chinese state vocabulary, enum on title) lived on the
+  board while the workbench card/filters spoke raw enums sorted
+  alphabetically; #45's stable identity token guarded writes while
+  localStorage stayed keyed by the COLLIDING display name. All three now
+  hold everywhere: SPA errors stay until clicked (+ aria-live on both toast
+  systems), the card badge + filter chips speak CK_STATE_ZH in the #44
+  urgency order (aria-pressed, enum on title), and the reviewed-snapshot +
+  the new per-project UI memory key off the identity token (one-time legacy
+  migration).
+- 续上次: the workbench remembers the shot filter and the git/tasks/
+  proposals panel state per project (restored-open panels lazy-fetch);
+  /review reopens on the last active card by SHOT ID — indices shift —
+  without auto-scrolling a fresh open. Nothing risky persists (no batch
+  selections; storage failures degrade to old behaviour).
+- Keyboard/semantics: the three collapsible panel heads and the dropzone
+  act as buttons (role/tabindex/Enter+Space — Space stops the global play
+  shortcut; aria-expanded tracked; [role=button] joins the focus ring);
+  the one nav owner stamps aria-current="page"; the emoji verdict/note/redo
+  buttons carry aria-labels. Take notes trade window.prompt (froze
+  playback; Esc ate text) for an inline editor (Ctrl+Enter saves,
+  readonly-gated) — ingest's two rarer prompts stay, recorded.
+- Rejected with reasons (ledger): stage-based beginner nav + palette (#45
+  stands), list virtualization/keyed-patch/perf fixtures (speculative
+  scale), preload=none (blanks the thumbnail grid), take_id/created_at
+  schema additions (#45's baseline rejection + schema churn), follow-build
+  mode + auto-advance quick review (new state machines), toast duration
+  tiers (binary model is the recorded design), picker search/pin toggles
+  (already pinned-first recency; below the frequency line), blanket 24px
+  target resize (desktop-mouse platform).
+- 4 new pins (82 total), red-first by stash; the prompt-retirement pin
+  tripped on the fix's own comments first (the recorded raw-source burn
+  class — reworded). 19/19 live wave-2 checks (real UI drives: sticky
+  error through a real failing save, keyboard panel toggle, state across
+  reloads, position restore); harness 21/21; full suite 4400/2/0.
+
+## 50. Direction program: the personal production console (2026-07-14)
+
+- The owner supplied a GUI direction document ("收敛成个人视频生产操作台",
+  think-independently-first mandate, 10-hour budget). Independent position
+  formed first, the document verified claim-by-claim second — several of
+  its premises were stale against this tree (the identity-key fix already
+  landed in #49a; 队列模式 has existed since round X; /edit has I/O trim;
+  the picker already sorts pinned+recency) — then the REAL convergence
+  landed: deliver the engine's existing intelligence at open-time, and
+  make the review queue the strongest surface. Full disposition:
+  REPORTS/GUI_DIRECTION_2026-07-14.md.
+- 审片 (the attention bottleneck): 队列模式 is now the DEFAULT whenever
+  unreviewed work exists (only the explicit toggle persists as a
+  preference — a default never silently becomes one); the queue walks
+  most-blocking first (needs_selection → stale → unreviewed → rest; a
+  take-less shot trails everything — nothing to judge), snapshotted at
+  load so cards never jump mid-session; 好 advances the queue exactly as
+  通过 always did; `u` 撤回 restores what the verdict overwrote (the
+  note input's defaultValue) and the card's reviewed state — one step,
+  newest only, deeper history stays in the truth files. The restore-
+  clobber found live (setQueueMode's head-sync overwrote the #49a
+  position restore) is fixed and probe-pinned.
+- 首页 (continue, don't dashboard): every server page records its visit
+  per project identity (common.js one-liner; the home page never clobbers
+  the trail); the cockpit opens with a 继续上次工作 chip that deep-links
+  back (review position rides the label); the state-strip counts became
+  BUTTONS — a count is a queue, not a statistic — clicking filters the
+  shots grid and jumps there.
+- 交给 Claude (AI stays outside, §0): /review cards copy a structured
+  task context (shot/take/states/note/files/goal template); workbench
+  failure cards copy a diagnostic block (step/cause/evidence/log/job/
+  shot file). Clipboard + toast; no chat UI, no model plumbing, no second
+  AI environment to maintain.
+- 六组导航 (use-frequency, not modules): 工作台·创作·镜头·审片·成片·
+  工具箱 as CSS hover/focus dropdowns — presentation-layer ONLY: all 17
+  links stay in the DOM (the mode pins hold verbatim), _NAV stays the one
+  label owner, PRO_ONLY/beginner behaviour unchanged, single-visible-page
+  groups collapse to that page's own pill. The #45/#49a rejections were
+  of REWRITES without an owner ask; the owner's document IS the ask, and
+  the landed form is the bounded version those rejections left room for.
+- Dispositioned-not-landed (reasons in the report): 日常/维护 mode
+  rename (mode system deeply pinned; grouped nav delivers the reduction),
+  fixed personal workflow buttons (the plan-modal build panel + cockpit
+  hero ARE those buttons), bilingual label sweep (pinned strings;
+  glossary toggle owns vocabulary), auto-advance playback/follow-build/
+  drag storyboard/virtualization (standing rejections), `manju gui
+  --app` + Windows notifications (worthwhile, deferred to a Windows
+  session — frozen CLI surface + untestable launch path here).
+- 5 new pins (test_ux_polish.py, 87 total), red-first by stash; 20/20
+  live direction checks + wave-2 probe 19/19 + harness 21/21; union GUI
+  batch 401/1/0; full suite 4405/2/0.
+
+### 50a. Direction follow-through: QC joins the queue, playback memory, the app shell (2026-07-14)
+
+- Same 10-hour mandate, remaining budget. Three deferred/bounded items
+  re-examined and landed:
+- QC in the review ladder: /review cards now carry `data-qc` (any
+  level=error finding) and the queue ranks them AFTER stale, BEFORE
+  generic unreviewed — the document's ladder position, wired to the QC
+  data the card already rendered. The take-less demotion renumbered
+  (return 5) — pin evolved same-wave with recorded intent.
+- 播放记忆: /review remembers playbackRate/volume/muted per project
+  (manju-rv-av-<identity>) — applied to every card + alt preview on load,
+  captured via CAPTURE-phase ratechange/volumechange (media events do not
+  bubble). Live-probed: 1.5× survives a reload.
+- `manju gui --app` (the 桌面薄壳, deferral reversed): the launch path IS
+  implementable cross-platform — `_app_browser_candidates` probes PATH
+  (msedge/chrome/chromium) plus the two canonical Windows install
+  locations that live off PATH; `_open_gui_window` spawns `--app=<url>`
+  (chromeless window, every byte of the GUI reused) and falls back to the
+  default browser with a NAMED notice, never failing the server. The
+  optional flag leaves the frozen CLI surface green (snapshot tracks
+  required params; verified, no regen needed). The document's
+  close-window-stops-server half stays NOT built — a detached browser
+  process cannot signal the server honestly; recorded.
+- 3 new pins + 1 evolved (test_ux_polish.py, 90 total), red-first by
+  stash; probe grows to 21/21; harness 21/21; full suite 4408/2/0.
+
+### 50b. Direction close-out: the A/B loop, the unread inbox row, the docs (2026-07-14)
+
+- The review loop closes end-to-end: /review cards with a selected take
+  AND alternatives link `A/B 对比` → `/?compare=<shot>` — the workbench
+  consumes the param ONCE after the first shots render and opens its
+  existing R14 takes overlay (the overlay takes the shot OBJECT — the
+  first cut passed the id string and no-opped; caught live by the probe,
+  which now pins the overlay actually appearing). /compare stays the
+  FINALS-diff page; the takes overlay stays the workbench's — the link
+  crosses surfaces, ownership does not move.
+- The 待办箱 gains its one missing row: the cockpit strip shows
+  `N 新 take 未阅` (same per-project snapshot the shots-bar chip reads;
+  cockpit fetches AFTER the state render, so the count is never stale on
+  first paint), clickable → scrolls to the grid where the 新 chips sit.
+- Docs caught up: docs/GUI.md gains the #50-era orientation section
+  (hidden owner, queue ladder + defaults, identity-keyed browser state,
+  grouped nav, AI-handoff stance, --app); README's gui row names --app.
+- One SyntaxError paid for mid-wave: the A/B link insertion broke the
+  card f-string implicit-concatenation chain (`"a" + (x) "b"` is not
+  Python) — the page-test batch caught it before any commit; the chain
+  now uses explicit `+`.
+- 2 new pins (test_ux_polish.py, 92 total), red-first by stash; probe
+  24/24; harness 21/21; full suite 4410/2/0.
+
+### 50c. The reviewer's teeth: ten findings against my own six commits (2026-07-14)
+
+- Close-out discipline: an independent adversarial reviewer swept the
+  session's cumulative diff (≈1800 lines) hunting real-browser defects;
+  every finding was re-verified here before fixing. Two were REAL BUGS
+  this session introduced — both ended in a silently frozen workbench:
+  (1) a DIRECT re-render (filter chip, cockpit count, 标记已阅, batch
+  bar) destroyed an open inline note editor without the editorClosed()
+  reset — editorOpen leaked true, the poll loop and the whole keyboard
+  died until F5; renderShots now clears the flag when it is about to
+  destroy a note editor (the draft is forfeit — the user asked for the
+  repaint; the pause must never leak). (2) a FAILED note save ran no
+  refresh and nothing re-armed the paused loop — the editor now stays
+  (draft kept) and editorOpen is restored, so 重试/取消 both resume.
+  Both are pinned live in browser_verify_direction (26 checks): destroy
+  the editor via a cockpit-chip click, then prove the keyboard answers.
+- Edge fixes from the same sweep: 保存备注 now updates the input's
+  defaultValue (u-undo restored PRE-PAGE-LOAD text, silently discarding
+  a note saved minutes earlier); queue advance (通过 AND 好) increments
+  only while the card still matches the active filter (a filtered-out
+  card slid the next one into place and qIndex++ skipped it — latent
+  pre-#50, put on the daily path by the queue default); 播放记忆 reads/
+  writes the MAIN player only (alt previews are deliberately muted
+  server-side; the memory unmuted them into double audio); 标记已阅
+  repaints the cockpit's 新 take 未阅 row (one-glance home no longer
+  contradicts the shots bar); /?compare= strips via replaceState after
+  consumption (F5 / the switch-overlay 刷新 replayed the overlay, worst
+  case onto a same-named shot in ANOTHER project) and a <2-video-takes
+  target now toasts instead of dead-ending; a failed u-undo keeps the
+  undo retryable; _app_browser_candidates dedupes + uses the module
+  shutil; the rv-pos/queue/av key fallbacks unified on "unbound" (the
+  "" fallback could have shared one key across same-named projects);
+  the dead-filter auto-reset now reaches the persisted memory.
+- Verified clean by the same sweep (recorded): every hidden-guard show
+  path, nav grouping/z-index/label coverage, exports bulk chain, pollJob
+  bounds, actAsButton no-double-fire, continue-chip guards, repo law
+  (no inline handlers/innerHTML/edit_rate; all pinned tokens intact).
+- 1 pin evolved (key fallback), 92 total green; direction harness 26/26;
+  original harness 21/21; full suite 4410/2/0.
+
+## 51. The exhaustive hunt: five finders, one smoke run, 22 fixes (2026-07-14)
+
+- Mandate: "find all bug". Method: five parallel finder agents over DISJOINT
+  surfaces (review-page JS / workbench SPA / gui server / the other ten page
+  modules / board + backend read-models) — every reported finding re-verified
+  here in source (and live where drivable) before any fix; plus my own
+  30-step live interaction smoke (storyboard/subtitles/mixer/packaging/edit/
+  lab/ingest/director/exports/create + mode/terms/workspace toggles): clean,
+  its three suspects were probe artifacts, not app bugs. Full ledger:
+  REPORTS/GUI_DIRECTION_2026-07-14.md hunt section.
+- The headline finds, all REAL and all pre-dating today unless noted:
+  - **/edit Tier-2 preview could never be shown** — the tier divs rendered
+    the `hidden` ATTRIBUTE while setTier toggles the `hidden` CLASS; the
+    reveal was a no-op since round X. The tiers now render the class.
+  - **board 选用 left the busy overlay up forever** — the in-place select
+    (#48b) omitted `overlay(false)`; a successful select locked the whole
+    board until F5. Also: its success banner rendered in ERROR styling
+    (missing ok flag), and only the clicked button flipped — the same
+    take's TWIN button in the compare grid now flips too (data-shot
+    scoped, SAFE_SEGMENT ids).
+  - **the #50c freeze guard left the loop dead** (this session) — clearing
+    the leaked editorOpen never re-armed schedule(); auto-refresh stayed
+    off until any mutating click. The guard now re-arms.
+  - **pollJob's 10-min cap misclassified a STILL-RUNNING job as failed**
+    (this session) — at the cap a live job is truthy, so the 仍在排队/运行
+    branch never fired; the cap now returns null (any survivor is
+    non-terminal by construction).
+  - **the one refusal that skipped the Windows drain** — _read_body's 413
+    answered without draining (the exact run-#20 RST class); plus the three
+    upload handlers' 400/413 refusals, and /api/upload dispatched BEFORE
+    the unbound-project guard (picker-stage upload → NoneType 500).
+  - **two GETs wrote/spawned in readonly mode** — /api/create/skill
+    appended skill_used to events.jsonl; /api/edit/playback-manifest
+    submitted webpreview jobs. Both now honour readonly.
+- The full fix list (22): the above plus — ai-ctx checked the BOARD's
+  .ann-list so the annotations line never rode the Claude handoff (.rv-anns
+  now); the ✓ checkmark keyed on a class the server never stamped (count
+  and checkmarks disagreed); fresh-open queue landed on shots[0]'s rank
+  instead of the queue head; the alt-preview ▶ scroll-jumped the page
+  (generic setActive now skips it); failed u-undo lost the undo state
+  (retryable now); a saved-then-verdicted note undid to PRE-PAGE-LOAD text
+  (保存备注 now updates defaultValue); 播放记忆 unmuted the deliberately-
+  muted alt previews (main player only now); timeline/cockpit navigation
+  errored on filter-hidden shots (navigation clears the filter); kbMove
+  walked filter-hidden cards; an unchanged note save orphaned the inline
+  editor (signature-identical repaint skipped); the build estimate printed
+  raw floats (fmtMoney); s.finals missing from the header signature (stale
+  version-stack metadata); retry of a failed audition build 400ed
+  ("unknown target"); a corrupt project.yaml 500ed the board via its ONE
+  unguarded load_config (the <title>); a crafted #mjtab hash killed every
+  board listener (try/caught); a bare-list qc.json lost all findings in
+  the SPA (dict|list accepted, board parity); a hand-edited non-numeric
+  budget collapsed the whole cockpit risks block (row-local guard);
+  lib/refs toasts printed literal "undefined" on field-less responses.
+- Dismissed with recorded reasons: mid-build progress "missing" from the
+  fingerprint (the SPA polls at 1.5s whenever a job is active — progress
+  rides that, not the watch); maybeEvaluate "lagging" (a done job bumps
+  runner.revision which IS in the fingerprint); git diff ?path=
+  containment (gitops _safe_rel + `--`); TTS poll outliving the editor
+  (autoplay-blocked, self-limiting); batchbar/kbdhint fixed-bottom overlap
+  (cosmetic, rare combo — recorded, not fixed); jobs-list eviction of a
+  finished job before its poll (needs 50 newer jobs in one session);
+  500-body exception text (deliberate: the owner debugs locally).
+- One pin evolution, caught by the definitive run: test_edit_v3's two
+  tier pins froze the BUGGY hidden-ATTRIBUTE markup (they went red on the
+  fix, exactly as pins should) — they now pin the class form with the
+  same teeth (visible tier bare, hidden tier carries the class), intent
+  recorded here per the PINS.md honest-evolution footer.
+- Verification: 92 ux pins green; harness 21/21 + direction harness
+  26/26; affected GUI batches 198/1 + 214 + 41; full suite 4410/2/0
+  after the pin evolution.
+
+### 51a. Pre-merge acceptance: the gates' verdicts, one pin repaired (2026-07-14)
+
+- Acceptance sweep before merge: branch inventory (8 commits, 28 files,
+  +2141/−132), frozen surfaces byte-untouched (PROGRESS.md, CONTRACTS.yaml,
+  cli_surface.json — the --app Option adds no required param, snapshot
+  green), no model identifiers in the tree, fresh local suite 4410/2/0,
+  harnesses 21/21 + 26/26.
+- The gates said NO and were right to: both CI runs were red from #50a's
+  push onward — ONE test, test_gui_help_names_the_app_window, asserted the
+  literal "--app" in rendered --help; the CI runners' 80-column rich box
+  (with ANSI) never carries the token, both platforms failed on exactly
+  and only it (ubuntu 4409 green beside it, windows 4391/20). Repaired by
+  pinning the SURFACE instead of the rendering: the option registered on
+  the click command — terminal-independent, same teeth.
+- The branch's only other gate red, first push (23c128e) Windows:
+  test_fp_board_compare2 serve smoke httpx.ReadTimeout — single
+  occurrence, same code green on the next two Windows runs; classified
+  flake per the #48b rerun-decides precedent.

@@ -472,7 +472,7 @@ _CREATE_CSS = """
 .cw-prop { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .84rem; }
 .cw-pid { font-family: var(--mono); }
 .cw-pchip { font-size: .72rem; padding: .1rem .5rem; border-radius: 999px; font-weight: 600; }
-.cw-p-proposed { background: #1c2a44; color: #6ea8fe; }
+.cw-p-proposed { background: #1c2a44; color: var(--accent); }
 .cw-p-confirmed, .cw-p-done { background: #173a1f; color: #7ee787; }
 .cw-p-executing, .cw-p-expired { background: #3a2c18; color: #e0af68; }
 .cw-p-failed { background: #3a1c1c; color: #ff7b72; }
@@ -513,6 +513,10 @@ _CREATE_JS = r"""
     var found = false;
     for (var i = 0; i < editors.length; i++) {
       var match = editors[i].getAttribute("data-stage") === stage;
+      /* the server marks inactive editors with the hidden CLASS — the swap
+       * must clear that class on the target, not only flip the attribute
+       * (the attribute alone never unhid anything; GUI polish wave). */
+      editors[i].classList.toggle("hidden", !match);
       editors[i].hidden = !match;
       if (match) found = true;
     }

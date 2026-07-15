@@ -262,7 +262,14 @@ def _qc_summary(project: "Project") -> dict[str, Any] | None:
         return {"ok": None, "errors": 0, "warnings": 0, "items": [
             {"level": "error", "message": "qc.json is unreadable", "shot": None,
              "suggestion": "re-run manju qc"}]}
-    items_raw = data.get("items", []) if isinstance(data, dict) else []
+    # a bare-list qc.json is the older shape the board still reads — accept
+    # both here too instead of silently dropping every finding (bug-hunt #51)
+    if isinstance(data, dict):
+        items_raw = data.get("items", [])
+    elif isinstance(data, list):
+        items_raw = data
+    else:
+        items_raw = []
     items = []
     for it in items_raw:
         if not isinstance(it, dict):
