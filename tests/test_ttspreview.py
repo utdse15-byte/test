@@ -36,7 +36,7 @@ def test_preview_voice_cached_and_never_registers_take(tmp_project, add_shot, mo
 
     monkeypatch.setattr("manju.media.voicefix._resolve_tts", fake_resolve)
 
-    def fake_edge(provider, text, voice_id, dest):
+    def fake_edge(provider, text, voice_id, dest, **_kw):
         calls["n"] += 1
         dest.write_bytes(b"ID3fake-audio-" + text.encode("utf-8")[:20])
 
