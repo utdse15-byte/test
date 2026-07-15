@@ -376,3 +376,11 @@ Loop continues...
 ## Continuous (2026-07-15T06:47:05.0668397-07:00)
 - 111 commits since 81d6206
 - Still looping toward ~10h
+
+## Cycles 71-72
+- C71 multi-locale QC toast pin
+- C72 voice_preview waiting_user + spend banner
+
+## Continuous (2026-07-15T06:47:50.1676254-07:00)
+- 114 commits since 81d6206
+- Still looping toward ~10h
