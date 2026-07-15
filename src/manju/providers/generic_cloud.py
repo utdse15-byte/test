@@ -138,18 +138,25 @@ def default_transport(method: str, url: str, headers: dict[str, str],
 
 
 def _write_bytes_atomic(dest: Path, data: bytes) -> None:
-    """Write ``data`` to ``dest`` via temp-file + ``os.replace`` (#43/#44) —
-    a killed process mid-write can never leave a half-written result file at
-    the path the pipeline trusts. Shared by every provider download path
-    (generic_cloud/tts/comfyui) so the durability guarantee is consistent."""
+    """Write ``data`` to ``dest`` via temp-file + durable replace (P2-2).
+
+    Same crash-safety story as ``yamlio.atomic_write_text`` / ffmpeg
+    ``atomic_output``: fsync the temp, then ``replace_with_retry`` for Windows
+    AV/indexer sharing violations. Shared by generic_cloud/tts/comfyui.
+    """
     import uuid
+
+    from ..core.yamlio import replace_with_retry
 
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f".{dest.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:6]}")
     try:
-        tmp.write_bytes(data)
-        os.replace(tmp, dest)
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        replace_with_retry(tmp, dest)
     except BaseException:
         try:
             tmp.unlink(missing_ok=True)

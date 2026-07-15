@@ -865,10 +865,10 @@ _LAB_JS = r"""
       : fetch("/api/jobs").then(function (r) { return r.json(); });
     return p.then(function (d) {
       var job = ((d && d.jobs) || []).filter(function (j) { return j.id === jobId; })[0];
-      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (job && (job.state === "done" || job.state === "failed" || job.state === "canceled" || job.state === "interrupted")) return job;
       return job || null;
     }).catch(function () { return null; }).then(function (job) {
-      if (job && (job.state === "done" || job.state === "failed")) return job;
+      if (job && (job.state === "done" || job.state === "failed" || job.state === "canceled" || job.state === "interrupted")) return job;
       if (tries > 1215) return null;  /* alive at the cap = still running, never "failed" */  // 20×100ms + ~1195×500ms ≈ 10min
       return new Promise(function (res) {
         setTimeout(res, tries < 20 ? 100 : 500);

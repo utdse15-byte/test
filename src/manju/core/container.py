@@ -12,6 +12,7 @@ be deleted at any time. Three disciplines are enforced here at the API level:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -551,12 +552,17 @@ class Project:
 
     def _voice_takes_dir(self, shot_id: str, lang: str | None = None) -> Path:
         """Base voice dir is ``media/gen/<shot>/`` (byte-identical default).
-        Locale overlay: ``media/gen/<shot>/locales/<lang>/`` (WP4)."""
+        Locale overlay: ``media/gen/<shot>/locales/<lang>/`` (WP4).
+
+        ``lang`` is validated via :func:`core.locale.validate_lang` so a raw
+        ``..`` / path separator can never escape the shot tree (P0-3).
+        """
         base = self.takes_dir(shot_id)
         if not lang:
             return base
-        # Safe segment only (reuse shot id validation spirit)
-        safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(lang))
+        from .locale import validate_lang
+
+        safe = validate_lang(str(lang))
         return base / "locales" / safe
 
     def voice_takes(self, shot_id: str, *,
@@ -618,11 +624,37 @@ class Project:
             raise ProjectError(f"voice media not found: {media_file}")
         tdir = self._voice_takes_dir(shot_id, lang)
         tdir.mkdir(parents=True, exist_ok=True)
-        name = self.next_voice_take_name(shot_id, lang=lang)
-        dest = tdir / (name + media_file.suffix.lower())
-        if dest.exists():
-            raise ProjectError(f"refusing to overwrite existing voice take: {dest}")
-        shutil.copy2(media_file, dest)
+        suffix = media_file.suffix.lower()
+        # Exclusive create closes the check-then-copy race (P1-5): two
+        # concurrent register_voice_take calls can no longer both pass
+        # ``if dest.exists()`` and then overwrite via shutil.copy2.
+        dest: Path | None = None
+        name = ""
+        data = media_file.read_bytes()
+        for _ in range(32):
+            name = self.next_voice_take_name(shot_id, lang=lang)
+            candidate = tdir / (name + suffix)
+            try:
+                fd = os.open(str(candidate), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                continue
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    out.write(data)
+                    out.flush()
+                    os.fsync(out.fileno())
+            except BaseException:
+                try:
+                    candidate.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            dest = candidate
+            break
+        if dest is None:
+            raise ProjectError(
+                f"could not allocate exclusive voice take name under {tdir}"
+            )
         sidecar.created_at = sidecar.created_at or datetime.now(timezone.utc).isoformat(
             timespec="seconds"
         )

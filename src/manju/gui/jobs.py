@@ -41,6 +41,7 @@ from typing import Any, Callable
 __all__ = [
     "Job",
     "JobRunner",
+    "RETRYABLE_KINDS",
     "RunnerClosed",
     "RunnerState",
     "ShutdownReport",
@@ -48,6 +49,12 @@ __all__ = [
 
 # Keep this many finished jobs around for the UI; older ones are dropped.
 _HISTORY_CAP = 50
+
+# Job kinds for which ``_build_retry_fn`` can rebuild the work closure (P1-9).
+# Keep in lockstep with ``gui/server.py`` ``_build_retry_fn`` allow-list.
+RETRYABLE_KINDS = frozenset({
+    "build", "redo", "voice", "redo_batch", "voice_batch",
+})
 
 # jobs.jsonl (round AA4): disposable operational history, capped/rewritten to
 # this many newest lines on every JobRunner construction — see module
@@ -174,7 +181,12 @@ class Job:
             # convenience for the GUI: whether a cancel/retry click is even
             # meaningful right now, without the client re-deriving the rule.
             "cancelable": self.state in ("queued", "running"),
-            "retryable": self.state in ("failed", "canceled"),
+            # P1-9: only kinds _build_retry_fn actually supports — avoid a
+            # dead-end "重试" button that always 400s for qc/export/repair/…
+            "retryable": (
+                self.state in ("failed", "canceled")
+                and self.kind in RETRYABLE_KINDS
+            ),
         }
 
     @property

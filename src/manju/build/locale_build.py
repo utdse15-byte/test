@@ -22,19 +22,26 @@ from ..core.yamlio import atomic_write_text
 
 
 def locale_captions_dir(project: Project, lang: str) -> Path:
-    d = project.captions_dir / "locales" / lang
+    from ..core.locale import validate_lang
+
+    d = project.captions_dir / "locales" / validate_lang(lang)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def locale_final_dir(project: Project, lang: str) -> Path:
-    d = project.final_dir / "locales" / lang
+    from ..core.locale import validate_lang
+
+    d = project.final_dir / "locales" / validate_lang(lang)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def plan_locale_voice(project: Project, lang: str, *, gen: str = "missing") -> list[dict[str, Any]]:
     """Voice plan for a locale: shots with overlay text but no locale take."""
+    from ..core.locale import validate_lang
+
+    lang = validate_lang(lang)
     if gen == "off":
         return []
     try:
@@ -75,34 +82,42 @@ def synthesize_locale_voices(
     lang: str,
     actor: str = "engine",
 ) -> list[str]:
-    """Run TTS for locale plan rows; register under locales/<lang>/."""
-    from ..core.events import append_event
-    from ..providers.tts import get_tts_provider
+    """Run TTS for locale plan rows; register under locales/<lang>/.
 
+    Holds ``build_lock`` for the whole batch so concurrent voice / GUI / CLI
+    cannot mint the same ``voice_take_NN`` (project bug scan P1-5).
+    """
+    from ..core.events import append_event
+    from ..core.locale import validate_lang
+    from ..providers.tts import get_tts_provider
+    from ..runtime.buildlock import build_lock
+
+    lang = validate_lang(lang)
     generated: list[str] = []
     bible = project.load_bible()
-    for item in plan:
-        sid = item["shot"]
-        shot = overlay_shot_for_voice(project, project.load_shot(sid), lang)
-        if not shot.dialogue.text:
-            continue
-        tts = get_tts_provider(item.get("provider"))
-        orig = project.register_voice_take
+    with build_lock(project.root, actor=actor):
+        for item in plan:
+            sid = item["shot"]
+            shot = overlay_shot_for_voice(project, project.load_shot(sid), lang)
+            if not shot.dialogue.text:
+                continue
+            tts = get_tts_provider(item.get("provider"))
+            orig = project.register_voice_take
 
-        def _reg(shot_id, media_file, sidecar, **kw):
-            kw.setdefault("lang", lang)
-            return orig(shot_id, media_file, sidecar, **kw)
+            def _reg(shot_id, media_file, sidecar, **kw):
+                kw.setdefault("lang", lang)
+                return orig(shot_id, media_file, sidecar, **kw)
 
-        project.register_voice_take = _reg  # type: ignore[method-assign]
-        try:
-            media = tts.synthesize(project, shot, bible)
-        finally:
-            project.register_voice_take = orig  # type: ignore[method-assign]
-        generated.append(f"{sid}/locales/{lang}/{media.stem}")
-        append_event(project.root, actor, "voice", {
-            "shot": sid, "take": media.stem, "lang": lang,
-            "provider": getattr(tts, "id", item.get("provider")),
-        })
+            project.register_voice_take = _reg  # type: ignore[method-assign]
+            try:
+                media = tts.synthesize(project, shot, bible)
+            finally:
+                project.register_voice_take = orig  # type: ignore[method-assign]
+            generated.append(f"{sid}/locales/{lang}/{media.stem}")
+            append_event(project.root, actor, "voice", {
+                "shot": sid, "take": media.stem, "lang": lang,
+                "provider": getattr(tts, "id", item.get("provider")),
+            })
     return generated
 
 

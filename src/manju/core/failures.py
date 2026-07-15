@@ -42,12 +42,14 @@ from typing import Any, Iterator
 
 try:
     import fcntl
-except ImportError:  # Windows: no fcntl — the lock degrades to a no-op below
+except ImportError:  # Windows: no fcntl — the msvcrt branch below takes over
     fcntl = None  # type: ignore[assignment]
 try:
     import msvcrt  # Windows byte-range lock — the fcntl twin (gate round 1)
 except ImportError:  # POSIX: fcntl above is the coordinator
     msvcrt = None  # type: ignore[assignment]
+
+import threading as _threading
 
 # reports/ is the project's report surface (qc.md/json live here too); failures
 # ride alongside as an append-only jsonl.
@@ -55,30 +57,34 @@ FAILURES_FILE = "reports/failures.jsonl"
 ROTATE_BYTES = 1_000_000  # ~1MB: rename the active log aside, start a fresh one
 _LOCK_TIMEOUT_S = 15.0
 
+# Same-process thread lock (Windows): msvcrt.locking does NOT exclude other
+# threads of the same process — events.jsonl already learned this (P1-3).
+_THREAD_LOCKS: dict[str, "_threading.Lock"] = {}
+_THREAD_LOCKS_GUARD = _threading.Lock()
+
+
+def _name_thread_lock(lock_name: str) -> "_threading.Lock":
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(lock_name)
+        if lock is None:
+            lock = _THREAD_LOCKS[lock_name] = _threading.Lock()
+        return lock
+
 
 @contextlib.contextmanager
-def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[None]:
-    """Cross-process mutex around the rotate-then-append sequence (round W,
-    #50). A single ``write()`` of one short JSON line is already POSIX-atomic
-    (append-mode, under PIPE_BUF) on a local filesystem, but the ROTATE check
-    (stat size → maybe ``os.replace`` the active file aside) is NOT: two
-    processes racing the same rotation boundary can both decide to rotate,
-    or one can append to a file the other is mid-rename on. ``fcntl.flock``
-    on a sibling ``failures.lock`` serializes the whole thing, so a
-    multi-process build (CLI + MCP + a GUI job) never interleaves or drops a
-    line. Same degrade-not-hang stance as ``core/library.py``'s index lock:
-    a platform without ``fcntl`` (Windows) no-ops rather than blocking
-    forever, and a stuck holder times out to a clear error instead of a wedge.
+def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[bool]:
+    """Cross-process/-thread mutex around the rotate-then-append sequence.
+
+    Yields ``True`` when the lock is held (safe to rotate+append). Yields
+    ``False`` on timeout / no primitive — caller MUST skip the write (never
+    unlocked rotate+append; P1-3 mirrors events_lock policy).
     """
     reports_dir.mkdir(parents=True, exist_ok=True)
     if fcntl is None and msvcrt is None:
-        yield  # no lock primitive at all (exotic platform): degrade unlocked
+        yield False  # no reliable lock — skip write, never tear the log
         return
     lock_path = reports_dir / "failures.lock"
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    # Windows gate round 1: the fcntl-only lock no-opped on Windows and the
-    # gate's first run proved dropped lines (12 records -> 10). The msvcrt
-    # byte-0 branch mirrors core/events.events_lock; POSIX path unchanged.
     if fcntl is not None:
         retry_exc: tuple[type[BaseException], ...] = (BlockingIOError,)
 
@@ -89,14 +95,24 @@ def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> It
             fcntl.flock(fd, fcntl.LOCK_UN)
     else:
         retry_exc = (OSError,)
+        _thread_lock = _name_thread_lock("failures.lock")
 
         def _try() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            if not _thread_lock.acquire(blocking=False):
+                raise OSError(13, "thread lock held (same-process contention)")
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                _thread_lock.release()
+                raise
 
         def _unlock() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            finally:
+                _thread_lock.release()
 
     locked = False
     try:
@@ -108,11 +124,10 @@ def _ledger_lock(reports_dir: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> It
                 break
             except retry_exc:
                 if time.monotonic() >= deadline:
-                    # Best-effort: a wedged lock must never lose the failure
-                    # record itself — proceed unlocked rather than drop it.
-                    break
+                    yield False  # never fall through to unlocked write
+                    return
                 time.sleep(0.02)
-        yield
+        yield True
     finally:
         if locked:
             try:
@@ -364,33 +379,29 @@ def record_failure(project: Any, failure: Failure) -> dict[str, Any]:
     path = root / FAILURES_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # #50: rotate-check + rotate + append is ONE critical section across
-    # processes — an exclusive lock on a sibling failures.lock (best-effort,
-    # times out to unlocked rather than ever dropping the record; see
-    # _ledger_lock) so two processes never both decide to rotate the same
-    # boundary or interleave a line mid-rotate.
-    with _ledger_lock(path.parent):
-        # Rotate BEFORE appending so the active file never grows unbounded. A
-        # rename is atomic on the same filesystem; a same-second second
-        # rotation gets a numeric suffix so we never clobber an
-        # already-rotated slice.
-        try:
-            if path.exists() and path.stat().st_size >= ROTATE_BYTES:
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-                rotated = path.with_name(f"failures.{stamp}.jsonl")
-                n = 1
-                while rotated.exists():
-                    rotated = path.with_name(f"failures.{stamp}.{n}.jsonl")
-                    n += 1
-                os.replace(path, rotated)
-        except OSError:
-            pass  # a rotation hiccup must never lose the failure we came to record
+    # #50 / P1-3: rotate-check + rotate + append is ONE critical section.
+    # Lock timeout → skip the on-disk write (never unlocked rotate+append);
+    # the collaboration log mirror below still records best-effort.
+    with _ledger_lock(path.parent) as held:
+        if held:
+            # Rotate BEFORE appending so the active file never grows unbounded.
+            try:
+                if path.exists() and path.stat().st_size >= ROTATE_BYTES:
+                    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                    rotated = path.with_name(f"failures.{stamp}.jsonl")
+                    n = 1
+                    while rotated.exists():
+                        rotated = path.with_name(f"failures.{stamp}.{n}.jsonl")
+                        n += 1
+                    os.replace(path, rotated)
+            except OSError:
+                pass  # a rotation hiccup must never lose the failure we came to record
 
-        line = json.dumps(record, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+            line = json.dumps(record, ensure_ascii=False)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
 
     # Mirror to the collaboration log — best-effort, never fatal.
     try:

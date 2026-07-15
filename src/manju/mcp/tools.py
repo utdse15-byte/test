@@ -243,6 +243,10 @@ def _h_update_shot(project: Project, args: dict) -> dict:
     except ValidationError as exc:
         raise ToolError(f"schema invalid: {exc}") from exc
 
+    # Early lock pre-check (outside build_lock): reject obvious violations
+    # without blocking a build. The authoritative re-check runs INSIDE the
+    # lock against live disk (P0-1) so a human seal between pre-check and
+    # write cannot be erased.
     current_data = read_yaml(path) or {}
     if not isinstance(current_data, dict):
         current_data = {}
@@ -291,6 +295,24 @@ def _h_update_shot(project: Project, args: dict) -> dict:
             raise ToolError(
                 f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)——"
                 "请刷新后重试(重新调用 get_shot 获取最新 rev 再保存)"
+            )
+
+        # P0-1: re-validate §5 locks against LIVE disk inside the lock.
+        live = read_yaml(path) or {}
+        if not isinstance(live, dict):
+            live = {}
+        live_locked = _coerce_locked(live.get("locked"))
+        if _coerce_locked(new_data.get("locked")) != live_locked:
+            raise ToolError(
+                "locks may not be added, removed, or changed over MCP — sealing/"
+                "unsealing a lock is human CLI work (§5); write a proposal instead"
+                " (live lock map changed since pre-check)"
+            )
+        live_violations = verify_locks(new_data, live_locked, label)
+        if live_violations:
+            raise ToolError(
+                "locked field(s) would change (a locked field cannot be edited over "
+                "MCP, §5): " + "; ".join(str(v) for v in live_violations)
             )
 
         before = run_check(project)

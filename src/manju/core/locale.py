@@ -42,7 +42,7 @@ def locales_dir(project: Project) -> Path:
 
 
 def locale_dir(project: Project, lang: str) -> Path:
-    return locales_dir(project) / lang
+    return locales_dir(project) / validate_lang(lang)
 
 
 def base_text_hash(text: str) -> str:
@@ -50,8 +50,18 @@ def base_text_hash(text: str) -> str:
 
 
 def validate_lang(lang: str) -> str:
+    """Refuse anything that is not a safe single path segment (BCP-47-ish).
+
+    Every locale path joiner (``locales/<lang>/``, captions/finals overlays,
+    voice take dirs) must call this — a raw ``--lang ..`` must never escape
+    the intended tree (project-wide bug scan 2026-07-15 P0-3).
+    """
     lang = (lang or "").strip()
-    if not lang or not _LANG_RE.match(lang):
+    if not lang or lang in (".", "..") or "/" in lang or "\\" in lang:
+        raise ProjectError(
+            f"locale id 非法: {lang!r} — 使用 BCP-47 风格如 en / en-US / ja"
+        )
+    if not _LANG_RE.match(lang):
         raise ProjectError(
             f"locale id 非法: {lang!r} — 使用 BCP-47 风格如 en / en-US / ja"
         )

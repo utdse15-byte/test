@@ -1276,12 +1276,19 @@ _JS = r"""
     else schedule();         /* timeout lapsed unchanged: just re-arm */
   }
 
+  let refreshGen = 0;  /* P1-8: drop out-of-order /api/state responses */
+
   async function refresh() {
     if (timer) clearTimeout(timer);
     stopWatch();                  /* a direct refresh supersedes the watch */
     if (editorOpen) return;       /* paused; editorClosed() resumes */
+    const gen = ++refreshGen;
     try {
       const s = await api("GET", "/api/state");
+      /* Post-await guards (P1-8): user may have opened an editor mid-fetch;
+       * a slower older response must never paint over a newer one. */
+      if (gen !== refreshGen) return;
+      if (editorOpen) { schedule(); return; }
       pollFailed = false;
       /* stale-tab guard: another tab switched the server's project. Never
        * silently repaint as the new project — overlay and stop rendering. */
@@ -1292,6 +1299,7 @@ _JS = r"""
       }
       render(s);
     } catch (err) {
+      if (gen !== refreshGen) return;
       if (!pollFailed) {
         toast("刷新失败 (refresh failed): " + errMsg(err), "err");
       }
@@ -1302,7 +1310,9 @@ _JS = r"""
 
   function render(s) {
     const jobs = Array.isArray(s.jobs) ? s.jobs : [];
-    anyActive = jobs.some((j) => j.state === "queued" || j.state === "running");
+    /* P1-11: include canceling — Job.active does; gates/poll must too. */
+    anyActive = jobs.some((j) =>
+      j.state === "queued" || j.state === "running" || j.state === "canceling");
     readonly = s.readonly === true;
     lastFp = (typeof s.fp === "string" && s.fp) ? s.fp : null;
     lastShots = Array.isArray(s.shots) ? s.shots : [];
@@ -2190,7 +2200,8 @@ _JS = r"""
 
   /* new-project dialog (S8a) — reuses the #editor <dialog> as a generic modal
    * (its close handler resumes the poll loop). Name + preset (from `manju
-   * presets`) + orientation; the server creates a sibling and switches to it. */
+   * presets`) + orientation; the server creates a sibling and returns
+   * open_in_new_window (frozen session — never rebinds this process). */
   async function openNewProjectDialog() {
     const dlg = $("editor");
     clear(dlg);
@@ -3629,6 +3640,7 @@ _JS = r"""
       if (openEd) { openEd.querySelector("textarea").focus(); return; }
       document.querySelectorAll(".tnote-edit").forEach((other) => other.remove());
       editorOpen = true;
+      pauseLive();  /* P1-8: abort in-flight watch; join editorOpen pause fully */
       const ed = el("div", "tnote-edit");
       const ta = document.createElement("textarea");
       ta.rows = 2;

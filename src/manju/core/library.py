@@ -337,6 +337,45 @@ class Library:
             self._save_index(index)
             return entry
 
+    # ---------------------------------------------------------- tag / note
+
+    def set_tags(self, hash8: str, tags: list[str] | None = None) -> dict[str, Any]:
+        """Replace an asset's tags under the cross-process index lock (P1-2).
+
+        GUI and CLI must call this instead of load→mutate→_save_index so a
+        concurrent ``lib add`` cannot last-writer-win the whole index.
+        """
+        tags = _clean_tags(tags)
+        with _index_lock(self.root):
+            index = self.load_index()
+            entry = self._find_in_index(index, hash8)
+            if entry is None:
+                raise LibraryError(f"no asset with hash {hash8!r} in the library")
+            entry["tags"] = tags
+            self._save_index(index)
+            return entry
+
+    def set_note(self, hash8: str, note: str = "") -> dict[str, Any]:
+        """Set an asset's free-text note under the cross-process index lock."""
+        with _index_lock(self.root):
+            index = self.load_index()
+            entry = self._find_in_index(index, hash8)
+            if entry is None:
+                raise LibraryError(f"no asset with hash {hash8!r} in the library")
+            entry["note"] = (note or "").strip()
+            self._save_index(index)
+            return entry
+
+    def _find_in_index(self, index: dict[str, Any], hash8: str) -> dict[str, Any] | None:
+        needle = hash8.strip().removeprefix("sha256:").lower()
+        if not needle:
+            raise LibraryError("empty hash handle")
+        matches = [e for e in index["assets"] if _hex(e["hash"]).startswith(needle)]
+        if len(matches) > 1:
+            ids = ", ".join(_hex(e["hash"])[:12] for e in matches)
+            raise LibraryError(f"ambiguous hash {needle!r} — matches: {ids}")
+        return matches[0] if matches else None
+
 
 def _clean_tags(tags: list[str] | None) -> list[str]:
     """De-duplicate and trim tags, preserving first-seen order."""

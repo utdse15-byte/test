@@ -1445,9 +1445,9 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_lock(self, body: dict[str, Any]) -> None:
         """NO CAS (round AA item 5, #1 audit): the click carries only shot +
         field; the digest it seals is computed FRESH from `load_shot_raw`
-        inside this very critical section (below), never from a value the
-        client rendered earlier — there is no client-held snapshot that
-        could go stale, so CAS has nothing to protect here."""
+        INSIDE the build lock (P1-1), never from a value the client rendered
+        earlier — there is no client-held snapshot that could go stale.
+        """
         from ..core.locks import seal_lock
         from ..runtime.buildlock import BuildLocked
 
@@ -1456,24 +1456,29 @@ class _Handler(BaseHTTPRequestHandler):
         if not shot_id or not fieldpath:
             self._send_error_json("shot and field are required", 400)
             return
+        digest = ""
         with self.server.quick_mutex:
             try:
-                raw = project.load_shot_raw(shot_id)
-                digest = seal_lock(raw, fieldpath)
+                with _optional_build_lock(project.root, self.server.actor):
+                    # Seal under the lock so the hash matches the bytes we write
+                    # (batch lock path already did this; single-field did not).
+                    raw = project.load_shot_raw(shot_id)
+                    digest = seal_lock(raw, fieldpath)
+
+                    def mutate(d: dict[str, Any]) -> None:
+                        locked = d.get("locked")
+                        if not isinstance(locked, dict):
+                            locked = (
+                                {str(p): "" for p in locked}
+                                if isinstance(locked, list) else {}
+                            )
+                        locked[fieldpath] = digest
+                        d["locked"] = locked
+
+                    project.update_shot_raw(shot_id, mutate)
             except (KeyError, IndexError, ProjectError) as exc:
                 self._send_error_json(f"cannot lock: {exc}", 400)
                 return
-
-            def mutate(d: dict[str, Any]) -> None:
-                locked = d.get("locked")
-                if not isinstance(locked, dict):
-                    locked = {str(p): "" for p in locked} if isinstance(locked, list) else {}
-                locked[fieldpath] = digest
-                d["locked"] = locked
-
-            try:
-                with _optional_build_lock(project.root, self.server.actor):
-                    project.update_shot_raw(shot_id, mutate)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
                 return
@@ -2129,9 +2134,9 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_new_project(self, body: dict[str, Any]) -> None:
         """New-project dialog in the workspace switcher (S8a): create a sibling
         <name>.manju via the SAME core the CLI's ``manju new`` calls, optionally
-        pre-filled from a preset (`manju presets`), then register it in the
-        workspace and switch to it. Workspace-mode only — mirrors switch/§5:
-        there is no switcher to land a new project in otherwise."""
+        pre-filled from a preset (`manju presets`), then register it and return
+        ``open_in_new_window`` (frozen session — never rebinds this process).
+        Workspace-mode only — there is no switcher outside workspace mode."""
         if not self.server.workspace:
             self._send_error_json("not in workspace mode (start with --workspace)", 400)
             return
@@ -3355,7 +3360,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _act_lib_tag(self, body: dict[str, Any]) -> None:
         """Replace an asset's tags (comma string or list) in the library index."""
-        from ..core.library import Library, LibraryError, _clean_tags
+        from ..core.library import Library, LibraryError
 
         hash8 = str(body.get("hash") or "")
         raw = body.get("tags")
@@ -3368,16 +3373,13 @@ class _Handler(BaseHTTPRequestHandler):
         lib = Library()
         with self.server.quick_mutex:
             try:
-                index = lib.load_index()
+                # P1-2: Library.set_tags holds cross-process _index_lock for RMW.
+                entry = lib.set_tags(hash8, tags)
             except LibraryError as exc:
-                self._send_error_json(str(exc), 400)
+                msg = str(exc)
+                code = 404 if "no asset" in msg else 400
+                self._send_error_json(msg, code)
                 return
-            entry = self._lib_find_entry(index, hash8)
-            if entry is None:
-                self._send_error_json(f"no asset with hash {hash8!r}", 404)
-                return
-            entry["tags"] = _clean_tags(tags)
-            lib._save_index(index)
             append_event(self.server.project.root, self.server.actor, "lib_tag",
                          {"hash": entry["hash"], "tags": entry["tags"], "via": "gui"})
         self._send_json({"ok": True, "hash": entry["hash"], "tags": entry["tags"]})
@@ -3394,16 +3396,13 @@ class _Handler(BaseHTTPRequestHandler):
         lib = Library()
         with self.server.quick_mutex:
             try:
-                index = lib.load_index()
+                # P1-2: Library.set_note holds cross-process _index_lock for RMW.
+                entry = lib.set_note(hash8, note)
             except LibraryError as exc:
-                self._send_error_json(str(exc), 400)
+                msg = str(exc)
+                code = 404 if "no asset" in msg else 400
+                self._send_error_json(msg, code)
                 return
-            entry = self._lib_find_entry(index, hash8)
-            if entry is None:
-                self._send_error_json(f"no asset with hash {hash8!r}", 404)
-                return
-            entry["note"] = note.strip()
-            lib._save_index(index)
             append_event(self.server.project.root, self.server.actor, "lib_note",
                          {"hash": entry["hash"], "via": "gui"})
         self._send_json({"ok": True, "hash": entry["hash"], "note": entry["note"]})
@@ -4137,20 +4136,6 @@ class _Handler(BaseHTTPRequestHandler):
         value = body.get("value")
         value = "" if value is None else value
         with self.server.quick_mutex:
-            try:
-                raw = project.load_shot_raw(shot_id)
-            except ProjectError as exc:
-                self._send_error_json(str(exc), 404)
-                return
-            locked = raw.get("locked") or {}
-            if isinstance(locked, list):
-                locked = {str(p): "" for p in locked}
-            conflict = lock_conflict(locked, field)
-            if conflict is not None:
-                self._send_error_json(
-                    f"字段 {field} 被锁定({conflict})— 已封印,不写入锁定路径"
-                    "(解锁请用命令行 manju unlock)", 409)
-                return
             is_list = field in LIST_FIELDS
             if is_list:
                 new_val: Any = [ln.strip() for ln in str(value).splitlines() if ln.strip()]
@@ -4167,6 +4152,21 @@ class _Handler(BaseHTTPRequestHandler):
 
             try:
                 with _optional_build_lock(project.root, self.server.actor):
+                    # P0-2: re-check §5 locks INSIDE the lock against live disk.
+                    try:
+                        live = project.load_shot_raw(shot_id)
+                    except ProjectError as exc:
+                        self._send_error_json(str(exc), 404)
+                        return
+                    live_locked = live.get("locked") or {}
+                    if isinstance(live_locked, list):
+                        live_locked = {str(p): "" for p in live_locked}
+                    conflict = lock_conflict(live_locked, field)
+                    if conflict is not None:
+                        self._send_error_json(
+                            f"字段 {field} 被锁定({conflict})— 已封印,不写入锁定路径"
+                            "(解锁请用命令行 manju unlock)", 409)
+                        return
                     if expected_rev is not None and shot_text_hash(project, shot_id) != expected_rev:
                         self._send_error_json(
                             f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)"
@@ -4399,14 +4399,6 @@ class _Handler(BaseHTTPRequestHandler):
             return
         refs = [r.strip() for r in refs if r.strip()]
         with self.server.quick_mutex:
-            raw = project.load_shot_raw(shot_id)
-            locker = lab_page.field_locked(raw, "generation.params.refs")
-            if locker:
-                self._send_error_json(
-                    f"generation.params.refs 已锁定(§5):字段 {locker} 已封存,"
-                    "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
-                return
-
             def mutate(d: dict[str, Any]) -> None:
                 params = self._coerce_dict(self._coerce_dict(d, "generation"), "params")
                 if refs:
@@ -4416,6 +4408,14 @@ class _Handler(BaseHTTPRequestHandler):
 
             try:
                 with _optional_build_lock(project.root, actor):
+                    # P0-2: re-check locks inside build_lock against live disk.
+                    live = project.load_shot_raw(shot_id)
+                    locker = lab_page.field_locked(live, "generation.params.refs")
+                    if locker:
+                        self._send_error_json(
+                            f"generation.params.refs 已锁定(§5):字段 {locker} 已封存,"
+                            "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
+                        return
                     project.update_shot_raw(shot_id, mutate)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
@@ -4445,14 +4445,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("prompt_override too long (max 5000 chars)", 400)
             return
         with self.server.quick_mutex:
-            raw = project.load_shot_raw(shot_id)
-            locker = lab_page.field_locked(raw, "generation.prompt_override")
-            if locker:
-                self._send_error_json(
-                    f"generation.prompt_override 已锁定(§5):字段 {locker} 已封存,"
-                    "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
-                return
-
             def mutate(d: dict[str, Any]) -> None:
                 gen = self._coerce_dict(d, "generation")
                 if text.strip():
@@ -4462,6 +4454,14 @@ class _Handler(BaseHTTPRequestHandler):
 
             try:
                 with _optional_build_lock(project.root, actor):
+                    # P0-2: re-check locks inside build_lock against live disk.
+                    live = project.load_shot_raw(shot_id)
+                    locker = lab_page.field_locked(live, "generation.prompt_override")
+                    if locker:
+                        self._send_error_json(
+                            f"generation.prompt_override 已锁定(§5):字段 {locker} 已封存,"
+                            "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
+                        return
                     project.update_shot_raw(shot_id, mutate)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
@@ -4630,13 +4630,6 @@ class _Handler(BaseHTTPRequestHandler):
         # dest == "refs": the frame cache is disposable (§3, `manju gc` wipes it),
         # so copy it into media/refs (a durable project asset) before declaring it.
         with self.server.quick_mutex:
-            raw = project.load_shot_raw(shot_id)
-            locker = lab_page.field_locked(raw, "generation.params.refs")
-            if locker:
-                self._send_error_json(
-                    f"generation.params.refs 已锁定(§5):字段 {locker} 已封存,"
-                    "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
-                return
             refs_dir = project.refs_dir
             refs_dir.mkdir(parents=True, exist_ok=True)
             base = f"{shot_id}_{take}_{at_ms}ms"
@@ -4661,6 +4654,14 @@ class _Handler(BaseHTTPRequestHandler):
 
             try:
                 with _optional_build_lock(project.root, actor):
+                    # P0-2: re-check locks inside build_lock against live disk.
+                    live = project.load_shot_raw(shot_id)
+                    locker = lab_page.field_locked(live, "generation.params.refs")
+                    if locker:
+                        self._send_error_json(
+                            f"generation.params.refs 已锁定(§5):字段 {locker} 已封存,"
+                            "GUI 不会覆盖锁定;先在终端 `manju unlock` 再改", 409)
+                        return
                     project.update_shot_raw(shot_id, mutate)
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)

@@ -721,8 +721,12 @@ def _plan_generation(project: Project, statuses: list[ShotBuildStatus], *,
                      else_bias: str | None = None) -> list[dict[str, Any]]:
     rules = project.load_rules()
     plan: list[dict[str, Any]] = []
+    # ``auto`` = missing + stale (P1-6): operators/agents who pick auto expect
+    # the engine to refresh outdated takes, not silently behave like missing.
+    # Explicit ``--regen-stale`` still forces stale regen under gen=missing.
+    want_stale = bool(regen_stale) or gen == "auto"
     for st in statuses:
-        needs = st.state == ShotState.MISSING or (regen_stale and st.state == ShotState.STALE)
+        needs = st.state == ShotState.MISSING or (want_stale and st.state == ShotState.STALE)
         if not needs or gen == "off":
             continue
         shot = project.load_shot(st.shot_id)
@@ -810,6 +814,18 @@ def run_build(
             "off,为避免在没打算生成时误触发付费生成,构建已直接停止;检查拼写"
         )
         return result
+
+    if lang:
+        from ..core.locale import validate_lang
+        from ..core.container import ProjectError as _PE
+
+        try:
+            lang = validate_lang(lang)
+        except _PE as exc:
+            result = BuildResult()
+            result.ok = False
+            result.errors.append(str(exc))
+            return result
 
     # Boundary for "failures recorded during THIS build": every structured
     # record carries a UTC iso-seconds ts in the same format, so a string >= is a
@@ -1036,12 +1052,19 @@ def _run_build_phases(
         _materialize()
         return res
 
-    def _cancel_check(where: str, *, remote_pending: bool = False) -> None:
+    def _cancel_check(where: str, *, remote_pending: bool = False,
+                      force: bool = False) -> None:
         """Raise :class:`BuildCanceled` iff ``should_cancel()`` trips. The one
         choke point every checkpoint below calls, so the honest message shape
         (what was generated, what was spent, whether a remote job may still
-        be billing) is built in exactly one place."""
-        if should_cancel is None or not should_cancel():
+        be billing) is built in exactly one place.
+
+        ``force=True`` (P1-7): raise from an *already observed* cancel
+        (e.g. ``gen_canceled`` / ``ProviderCanceled``) without re-sampling
+        the predicate — a non-sticky flag must not let the build continue
+        with generation holes.
+        """
+        if not force and (should_cancel is None or not should_cancel()):
             return
         total = spent_so_far["total"]
         currency = spent_so_far["currency"]
@@ -1440,7 +1463,9 @@ def _run_build_phases(
                 if res.get("canceled"):
                     # This shot's own poll loop stopped waiting — raise now
                     # rather than waiting for the next iteration's pre-check.
-                    _cancel_check(f"生成:{item['shot']}", remote_pending=True)
+                    # force=True: do not re-sample should_cancel() (P1-7).
+                    _cancel_check(f"生成:{item['shot']}", remote_pending=True,
+                                  force=True)
         else:
             # #8: which provider's manifest max_concurrent should gate each
             # shot's worker slot — resolved the SAME way generate_with_fallback
@@ -1466,12 +1491,14 @@ def _run_build_phases(
                 if res is not None:
                     _commit_one(res)
             if gen_canceled:
-                # goal: honest job cancellation — should_cancel() tripped
+                # goal: honest job cancellation — cancel already observed
                 # (either between submissions or inside one shot's poll loop);
                 # every already-committed result above is real (generated +
                 # cached), everything else was never submitted or never billed.
+                # force=True: do not re-sample should_cancel() (P1-7).
                 remote_pending = any(bool(r.get("canceled")) for r in done.values())
-                _cancel_check("生成(并发提交已停止)", remote_pending=remote_pending)
+                _cancel_check("生成(并发提交已停止)", remote_pending=remote_pending,
+                              force=True)
             if tripped:
                 unsub = [it["shot"] for it in video_plan if it["shot"] not in done]
                 # §80 honesty: the trip stops NEW submissions only — shots already

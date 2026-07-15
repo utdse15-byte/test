@@ -1763,7 +1763,7 @@ _EDIT_JS = r"""
     (function tick() {
       (typeof requestJson==="function"?requestJson("GET","/api/jobs",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/jobs").then(function(r){return r.json();})).then(function (d) {
         var job = (d.jobs || []).filter(function (j) { return j.id === id; })[0];
-        if (job && (job.state === "done" || job.state === "failed")) { done(job); return; }
+        if (job && (job.state === "done" || job.state === "failed" || job.state === "canceled" || job.state === "interrupted")) { done(job); return; }
         if (Date.now() > deadline) { done(null); return; }
         setTimeout(tick, 500);
       }).catch(function () { setTimeout(tick, 700); });

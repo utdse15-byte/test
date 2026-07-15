@@ -698,6 +698,8 @@ def import_(
                     continue
             _expanded.append(f)
         files = _expanded
+        from .core.idents import windows_segment_problems
+
         for f in files:
             if not f.exists():
                 _fail(f"not found: {f} — 这个路径上没有文件。核对拼写和当前目录"
@@ -705,8 +707,13 @@ def import_(
                       code="not_found")
             if f.suffix.lower() in TEXT_IMPORT_SUFFIXES:
                 # story/imports/<stem>.md — a text drop the agent adapts, not media.
+                # P1-12: refuse Windows reserved / trailing-dot basenames (GUI already).
+                story_base = f"{f.stem}.md"
+                problems = windows_segment_problems(story_base)
+                if problems:
+                    _fail(f"import 拒绝: {'; '.join(problems)}", code="bad_name")
                 project.story_imports_dir.mkdir(parents=True, exist_ok=True)
-                dest = project.story_imports_dir / f"{f.stem}.md"
+                dest = project.story_imports_dir / story_base
                 n = 2
                 while dest.exists():  # never overwritten, same as media imports
                     dest = project.story_imports_dir / f"{f.stem}_{n}.md"
@@ -758,10 +765,19 @@ def import_(
                     )
             except Exception:
                 pass
+            # P1-12: refuse Windows reserved device names / trailing-dot-space
+            # basenames before copy (same gate as GUI upload).
+            problems = windows_segment_problems(f.name)
+            if problems:
+                _fail(f"import 拒绝: {'; '.join(problems)}", code="bad_name")
             dest = project.imports_dir / f.name
             n = 2
             while dest.exists():  # imports are never overwritten either
-                dest = project.imports_dir / f"{f.stem}_{n}{f.suffix}"
+                alt = f"{f.stem}_{n}{f.suffix}"
+                problems = windows_segment_problems(alt)
+                if problems:
+                    _fail(f"import 拒绝: {'; '.join(problems)}", code="bad_name")
+                dest = project.imports_dir / alt
                 n += 1
             shutil.copy2(copy_src, dest)
             registered.append(project.relpath(dest))
@@ -1163,6 +1179,14 @@ def build(
         _fail(f"--mode must be one of {BUILD_MODE_NAMES}, got {mode!r}",
               code="bad_mode")
     project = _project()
+    if lang:
+        from .core.container import ProjectError as _PE
+        from .core.locale import validate_lang
+
+        try:
+            lang = validate_lang(lang)
+        except _PE as exc:
+            _fail(str(exc), code="bad_lang")
     result = run_build(project, target=target, gen=gen,
                        regen_stale=regen_stale, dry_run=dry_run, force=force,
                        actor=ACTOR, assume_yes=yes, mode=mode,
@@ -3697,6 +3721,14 @@ def voice(
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
+    if lang:
+        from .core.container import ProjectError as _PE
+        from .core.locale import validate_lang
+
+        try:
+            lang = validate_lang(lang)
+        except _PE as exc:
+            _fail(str(exc), code="bad_lang")
     if shot_id:
         shot_id = _resolve_shot_arg(project, shot_id)
 
@@ -3813,21 +3845,23 @@ def voice(
             spend_gate(project, cost.per_call, cost.currency, assume_yes=yes,
                        hint=f"确认后重试:manju voice {shot_id} --yes"
                             + (f" --lang {lang}" if lang else ""))
-        # WP4: inject lang into register_voice_take without forking providers
-        if lang:
-            _orig_reg = project.register_voice_take
+        # P1-5: single-shot voice under build_lock (batch paths already lock).
+        # WP4: inject lang into register_voice_take without forking providers.
+        with _write_lock(project):
+            if lang:
+                _orig_reg = project.register_voice_take
 
-            def _reg_lang(sid, media_file, sidecar, **kw):
-                kw.setdefault("lang", lang)
-                return _orig_reg(sid, media_file, sidecar, **kw)
+                def _reg_lang(sid, media_file, sidecar, **kw):
+                    kw.setdefault("lang", lang)
+                    return _orig_reg(sid, media_file, sidecar, **kw)
 
-            project.register_voice_take = _reg_lang  # type: ignore[method-assign]
-            try:
+                project.register_voice_take = _reg_lang  # type: ignore[method-assign]
+                try:
+                    media = tts.synthesize(project, shot, project.load_bible())
+                finally:
+                    project.register_voice_take = _orig_reg  # type: ignore[method-assign]
+            else:
                 media = tts.synthesize(project, shot, project.load_bible())
-            finally:
-                project.register_voice_take = _orig_reg  # type: ignore[method-assign]
-        else:
-            media = tts.synthesize(project, shot, project.load_bible())
     except WaitingUser as exc:
         _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
     except TtsUnavailable as exc:
@@ -4124,10 +4158,24 @@ def transcribe(
     if not segments:
         _fail("no transcript segments produced")
     out = out or project.captions_dir / "transcripts" / (media_abs.stem + ".srt")
+    # P2-1: keep --out project-contained (media already goes through resolve).
+    out = Path(out)
+    try:
+        out_resolved = out if out.is_absolute() else (project.root / out)
+        out_resolved = out_resolved.resolve()
+        if not out_resolved.is_relative_to(project.root.resolve()):
+            _fail(
+                f"--out 必须落在项目内: {out} (拒绝项目外写入; 默认 captions/transcripts/)",
+                code="out_of_project",
+            )
+        out = out_resolved
+    except (OSError, ValueError) as exc:
+        _fail(f"--out 路径无效: {out} ({exc})", code="bad_out")
     from .core.yamlio import atomic_write_text
 
+    out.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(out, segments_to_srt(segments))
-    rel = project.relpath(out) if out.is_relative_to(project.root) else str(out)
+    rel = project.relpath(out)
     append_event(project.root, ACTOR, "transcribe",
                  {"media": str(media), "source": source, "segments": len(segments),
                   "out": rel})

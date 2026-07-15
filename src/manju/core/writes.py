@@ -68,11 +68,13 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import yaml
+
 from .check import run_check
 from .container import Project
 from .events import append_event
 from .hashing import hash_text
-from .yamlio import atomic_write_text
+from .yamlio import atomic_write_text, write_yaml
 
 
 class WriteRejected(RuntimeError):
@@ -132,10 +134,26 @@ def checked_shot_write(
 
     Returns ``{"ok": True, "shot": shot_id, "check_warnings": [...]}``.
     Raises :class:`WriteRejected` — never partially applies a mutation.
+
+    The mutate target is parsed from the CAS'd ``original_text`` bytes (not a
+    second disk reload), so without an outer ``build_lock`` the write still
+    binds to the text the CAS decision observed (P1-4).
     """
     path = project.shot_path(shot_id)
     label = project.relpath(path)
-    raw = project.load_shot_raw(shot_id)
+    original_text = path.read_text(encoding="utf-8")
+
+    if expected_text_hash is not None and hash_text(original_text) != expected_text_hash:
+        raise WriteRejected(
+            f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)——请刷新后重试"
+        )
+
+    try:
+        raw = yaml.safe_load(original_text)
+    except yaml.YAMLError as exc:
+        raise WriteRejected(f"{shot_id}: shot YAML unreadable: {exc}") from exc
+    if not isinstance(raw, dict):
+        raw = {}
 
     if guard_paths:
         locked = _coerce_locked(raw.get("locked"))
@@ -146,17 +164,11 @@ def checked_shot_write(
                 f"(人工 `manju unlock {shot_id} {blocking}` 或改走 proposals/)"
             ))
 
-    original_text = path.read_text(encoding="utf-8")
-
-    if expected_text_hash is not None and hash_text(original_text) != expected_text_hash:
-        raise WriteRejected(
-            f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)——请刷新后重试"
-        )
-
     before = run_check(project)
     before_errors = {e for e in before.errors if label in e}
 
-    project.update_shot_raw(shot_id, mutate)
+    mutate(raw)
+    write_yaml(path, raw)
 
     after = run_check(project)
     new_errors = [e for e in after.errors if label in e and e not in before_errors]
