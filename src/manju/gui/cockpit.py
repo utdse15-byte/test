@@ -177,7 +177,11 @@ def _phase(status: dict[str, Any]) -> tuple[str, str]:
     if not tl.get("exists"):
         return ("compile", "合成")
     if not status.get("latest_final"):
-        return ("render", "出片")
+        # C15: locale-only deliverables already count as "has film" for phase.
+        if status.get("locale_finals"):
+            pass  # fall through toward done/qc/stale
+        else:
+            return ("render", "出片")
     if qc.get("errors"):
         return ("qc", "质检")
     if by.get("stale"):
@@ -188,6 +192,15 @@ def _phase(status: dict[str, Any]) -> tuple[str, str]:
 def _final_summary(status: dict[str, Any], deliv: Any) -> dict[str, Any] | None:
     lf = status.get("latest_final")
     if not lf:
+        # C15: show a locale path when base is empty.
+        locs = status.get("locale_finals") or {}
+        if locs:
+            lang = sorted(locs)[0]
+            return {
+                "path": locs[lang], "version": None, "freshness": None,
+                "freshness_zh": None, "basis": None,
+                "note": status.get("latest_final_note") or f"locale {lang}",
+            }
         return None
     out = {
         "path": lf, "version": None, "freshness": None,
