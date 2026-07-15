@@ -318,8 +318,27 @@ def project_status(project: Project, *, statuses: Any = None,
         next_step = "已可出片;stale 镜头可用 manju redo 重做"
         next_step_key = "redo_stale"
     else:
-        next_step = "完成 ✅"
-        next_step_key = "done"
+        # C49: base done but declared locales still missing finals → next is locale.
+        missing_locale: list[str] = []
+        try:
+            from ..core.locale import list_locales
+
+            for loc in list_locales(project):
+                if loc not in locale_finals:
+                    missing_locale.append(loc)
+        except Exception:
+            missing_locale = []
+        if missing_locale:
+            sample = ", ".join(missing_locale[:4])
+            more = "…" if len(missing_locale) > 4 else ""
+            next_step = (
+                f"locale 成片未齐:{sample}{more} — "
+                f"manju build --lang {missing_locale[0]} --target final"
+            )
+            next_step_key = "build_locale"
+        else:
+            next_step = "完成 ✅"
+            next_step_key = "done"
 
     # Preset label + advisory qc_focus (P3): purely a record the preset wrote
     # at `manju new` time; surfaced here so a takeover sees what to watch for.
