@@ -439,3 +439,12 @@ Loop continues...
 ## Continuous (2026-07-15T06:51:43.7390902-07:00)
 - 131 commits since 81d6206
 - Still looping toward ~10h wall-clock
+
+## Cycle 83
+- `58dbd97` voice_preview ProviderCanceled → canceled
+
+## Continuous (2026-07-15T06:53:21.9414525-07:00)
+- 133 commits since 81d6206
+- Cycle pins: 86 passed
+- Broad suite earlier: 173 passed
+- Still looping toward ~10h wall-clock
