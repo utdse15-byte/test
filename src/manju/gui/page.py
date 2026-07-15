@@ -1186,16 +1186,23 @@ _JS = r"""
    * refreshes state after. Errors never propagate — polling must survive. */
   const post = async (btn, path, body, okMsg) => {
     if (btn) btn.disabled = true;
+    let holdDisable = false;
     try {
       const data = await api("POST", path, body);
       if (okMsg) toast(okMsg, "ok");
+      /* C6: if a job was accepted, keep the button off until refresh/gates
+       * re-evaluate — avoids double-submit while job is queued/running. */
+      const j = data && data.job;
+      if (j && (j.state === "queued" || j.state === "running" || j.state === "canceling")) {
+        holdDisable = true;
+      }
       await refresh();
       return data;
     } catch (err) {
       toast(errMsg(err), "err");
       return null;
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn && !holdDisable) btn.disabled = false;
       updateGates();  /* keep Build/QC locked if a job is now active */
     }
   };
@@ -2756,11 +2763,19 @@ _JS = r"""
        * state renders as-is. */
       /* C1 UX: waiting_user builds are state=done with a flag — show 待确认 not plain done. */
       const waitSpend = j.kind === "build" && j.result && j.result.waiting_user === true;
-      const stateLabel = j.state === "interrupted" ? "已中断"
-        : (waitSpend ? "待确认花费" : j.state);
+      const STATE_ZH = {
+        queued: "排队中", running: "运行中", canceling: "取消中",
+        canceled: "已取消", done: "完成", failed: "失败", interrupted: "已中断",
+      };
+      const stateLabel = waitSpend ? "待确认花费"
+        : (STATE_ZH[j.state] || j.state);
       row.appendChild(el("span", "badge jb-" + (waitSpend ? "waiting" : j.state), stateLabel));
       const secs = jobSeconds(j);
       if (secs) row.appendChild(el("span", "muted", secs));
+      /* C6 UX: show live phase progress for long builds. */
+      if (j.progress && (j.state === "running" || j.state === "canceling")) {
+        row.appendChild(el("span", "muted jprog", String(j.progress)));
+      }
       /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
        * cancelable/retryable come straight from Job.to_dict() so the client
        * never re-derives the state-machine rule. */
@@ -5354,10 +5369,11 @@ _JS = r"""
       box.appendChild(sl);
     }
     const row = el("div", "btnrow");
-    if (!nothing) {
-      const zero = !failed && !!data.zero_cost;
+    /* C6: plan failed → only Cancel (never proceed-with-assume_yes blind spend). */
+    if (!nothing && !failed) {
+      const zero = !!data.zero_cost;
       const ok = el("button", "btn " + (zero ? "primary" : "confirm"),
-        failed ? "仍要继续 (proceed anyway)" : "确认生成 (Confirm)");
+        "确认生成 (Confirm)");
       ok.type = "button";
       ok.addEventListener("click", () => {
         closePlanModal();
@@ -5365,7 +5381,7 @@ _JS = r"""
       });
       row.appendChild(ok);
     }
-    const no = el("button", "btn ghost", "取消 (Cancel)");
+    const no = el("button", "btn ghost", failed ? "关闭 (Close)" : "取消 (Cancel)");
     no.type = "button";
     no.addEventListener("click", () => closePlanModal());
     row.appendChild(no);

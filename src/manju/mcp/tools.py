@@ -412,17 +412,26 @@ def _h_qc(project: Project, args: dict) -> dict:
 
 
 def _h_qc_locked(project: Project, args: dict) -> dict:
-    # C3: optional final_path / lang so agent QC hits locale film (graph already does).
+    # C3/C6: optional final_path / lang so agent QC hits locale film.
+    # Contain final_path under project root; never fall back to base final when
+    # lang is set; use locale overlay timeline for parity with graph.
+    from pathlib import Path
+
     final_path = args.get("final_path")
     lang = args.get("lang")
+    timeline = project.load_timeline()
+    fp = None
     if final_path:
-        from pathlib import Path
+        from ..core.container import ProjectError as _PE
 
-        fp = Path(str(final_path))
-        if not fp.is_absolute():
-            fp = project.root / fp
+        try:
+            fp = project.resolve(str(final_path))
+        except _PE as exc:
+            raise ToolError(str(exc), code="out_of_project") from exc
+        except Exception as exc:
+            raise ToolError(f"final_path 无效: {final_path} ({exc})") from exc
     elif lang:
-        from ..build.locale_build import newest_locale_final
+        from ..build.locale_build import apply_locale_overlay, newest_locale_final
         from ..core.locale import validate_lang
 
         try:
@@ -430,10 +439,20 @@ def _h_qc_locked(project: Project, args: dict) -> dict:
         except Exception as exc:
             raise ToolError(str(exc)) from exc
         fp = newest_locale_final(project, lang)
-    else:
-        fp = None
+        if fp is None:
+            raise ToolError(
+                f"locale {lang}: 无 locale 成片可 QC"
+                f"(renders/final/locales/{lang}/)—"
+                "不会回退 base final",
+                code="no_locale_final",
+            )
+        if timeline is not None:
+            try:
+                timeline = apply_locale_overlay(project, timeline, lang)
+            except Exception:
+                pass  # overlay best-effort; final_path still locale
     report = run_qc(
-        project, project.load_timeline(), deep=bool(args.get("deep", False)),
+        project, timeline, deep=bool(args.get("deep", False)),
         final_path=fp,
     )
     # DR02 WP4: derive the read-only assurance block exactly as the CLI does and

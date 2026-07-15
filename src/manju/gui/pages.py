@@ -2126,7 +2126,7 @@ _PAGES_JS = r"""
         if (btn.getAttribute("data-ms")) b.ms = parseInt(btn.getAttribute("data-ms"), 10);
         if (btn.getAttribute("data-mode")) b.mode = btn.getAttribute("data-mode");
         post("/api/repair", b).then(function (res) {
-          if (res.status === 202) toast("修复排队: " + b.op, true);
+          if (res.status === 202 || (res.data && res.data.job)) toast("修复排队: " + b.op, true);
           else toast((res.data && res.data.error) || "失败", false);
         });
       }

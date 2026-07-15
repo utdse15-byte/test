@@ -112,3 +112,16 @@ System proxy was hijacking `urllib` to localhost â†’ false 502. Fixed via:
 - pin `tests/test_http_no_proxy_fixture.py`
 
 Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
+
+---
+
+## Cycle 6 (continuous loop)
+
+### 6A Scan
+- Locale cancel swallowed as failed; lang QC base fallback; MCP qc path/timeline; cancelable lie; plan-failed still proceed; edit 180s poll
+
+### 6B+C Fixes
+- graph BuildCanceled re-raise; lang QC hard fail no base; MCP resolve+overlay; CANCELABLE_RUNNING_KINDS; plan modal no ÈÔÒª¼ÌÐø; edit 600s poll; job ZH+progress; exportstatus locale note; SPA post holdDisable
+- Tests: test_cycle6_bugfix_20260715.py
+- Verify: 63 passed (c6+subset+gui) ¡ú cycle6_tests.log
+

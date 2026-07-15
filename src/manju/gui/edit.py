@@ -1759,7 +1759,8 @@ _EDIT_JS = r"""
   function errText(res) { return (res.data && res.data.error) || "失败"; }
 
   function pollJob(id, done) {
-    var deadline = Date.now() + 180000;
+    /* C6: align with lab/exports (~10 min) — 180s false-timeouted long trims. */
+    var deadline = Date.now() + 600000;
     (function tick() {
       (typeof requestJson==="function"?requestJson("GET","/api/jobs",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/jobs").then(function(r){return r.json();})).then(function (d) {
         var job = (d.jobs || []).filter(function (j) { return j.id === id; })[0];
@@ -1876,7 +1877,9 @@ _EDIT_JS = r"""
     if (isNaN(inMs) || isNaN(outMs)) { toast("入/出点需为毫秒数", false); return; }
     btn.disabled = true;
     post("/api/edit/trim", { shot: sid, in_ms: inMs, out_ms: outMs }).then(function (res) {
-      if (res.status !== 202) { btn.disabled = false; toast(errText(res), false); return; }
+      if (!(res.status === 202 || res.status === 200) || !res.data || !res.data.job) {
+        btn.disabled = false; toast(errText(res), false); return;
+      }
       toast("裁剪排队…", true);
       pollJob(res.data.job.id, function (job) {
         btn.disabled = false;
@@ -2530,7 +2533,9 @@ _EDIT_JS = r"""
       post("/api/edit/handle-rebuild",
         { shot: seamState.out, assume_yes: true, provider: pl.provider })
         .then(function (r2) {
-          if (r2.status !== 202) { toast(errText(r2), false); return; }
+          if (!(r2.status === 202 || r2.status === 200) || !r2.data || !r2.data.job) {
+            toast(errText(r2), false); return;
+          }
           toast("补拍手柄排队…", true);
           var sid = seamState.out; closeSeam();
           pollJob(r2.data.job.id, function (job) {

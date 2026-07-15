@@ -1565,6 +1565,16 @@ def _run_build_phases(
                     hold_lock=False, should_cancel=should_cancel,
                 )
                 result.generated.extend(gen_paths)
+            except BuildCanceled as exc:
+                # C6: cancel must stay canceled (not swallowed as failed).
+                # Attach honest spend/run_id then re-raise for outer handler.
+                raise BuildCanceled(
+                    str(exc),
+                    generated=list(result.generated) + list(getattr(exc, "generated", []) or []),
+                    spent=float(spent_so_far.get("total") or 0.0),
+                    currency=spent_so_far.get("currency"),
+                    run_id=run_id,
+                ) from exc
             except Exception as exc:
                 result.ok = False
                 result.errors.append(
@@ -1599,7 +1609,16 @@ def _run_build_phases(
             from ..providers.tts import get_tts_provider
 
             bible = project.load_bible()
+            voice_budget_skipped: list[str] = []
             for item in voice_plan:
+                # C6: mid-run budget also stops NEW voice submissions (video trip
+                # alone still left TTS spending).
+                if (
+                    budget is not None
+                    and spent_so_far["total"] > float(budget)
+                ):
+                    voice_budget_skipped.append(item["shot"])
+                    continue
                 # goal: honest job cancellation — same "between per-shot
                 # submissions" checkpoint as the video generation loop above;
                 # should_cancel=None (default) makes this a no-op.
@@ -1617,9 +1636,25 @@ def _run_build_phases(
                             actor=actor, detail={"provider": item["provider"]})
                     continue
                 result.generated.append(f"{shot.id}/{media.stem}")
+                # Attribute TTS cost into spent_so_far when the take sidecar has it.
+                try:
+                    takes = project.voice_takes(shot.id)
+                    if takes:
+                        sc = takes[-1][1]
+                        if sc is not None and sc.remote is not None and sc.remote.cost:
+                            spent_so_far["total"] += float(sc.remote.cost)
+                            if spent_so_far["currency"] is None and sc.remote.currency:
+                                spent_so_far["currency"] = sc.remote.currency
+                except Exception:
+                    pass
                 append_event(project.root, actor, "voice",
                              {"shot": shot.id, "take": media.stem,
                               "provider": item["provider"]})
+            if voice_budget_skipped:
+                result.warnings.append(
+                    f"预算已到上限:跳过配音 {', '.join(voice_budget_skipped)} "
+                    f"(实际花费 {spent_so_far['total']} > budget.limit={budget})"
+                )
     # C1: locale text without locale voice must not silently compile to 母语成片
     # (empty voice_plan when TTS absent previously skipped R2-P1-4 hard-fail).
     if lang and gen != "off" and target in ("final", "exports", "qc", "proxy"):
@@ -2042,11 +2077,20 @@ def _run_build_phases(
         if target in ("proxy", "final"):
             qc_final = result.render_path  # the render this exact call just made
         elif lang:
-            # R2-P0-2: target=qc --lang must probe locale final, not base.
+            # R2-P0-2 / C6: target=qc --lang must probe locale final, NEVER base.
             from .locale_build import newest_locale_final
 
             final_path = newest_locale_final(project, lang)
-            qc_final = project.relpath(final_path) if final_path else None
+            if final_path is None:
+                result.ok = False
+                result.errors.append(
+                    f"locale {lang}: 无 locale 成片可 QC"
+                    f"(renders/final/locales/{lang}/ 空)—"
+                    "不会回退检查 base final;先 manju build --lang "
+                    f"{lang} --target final"
+                )
+                return _finish_run(result)
+            qc_final = project.relpath(final_path)
         else:
             final_path = project.newest_final_path()
             qc_final = project.relpath(final_path) if final_path else None

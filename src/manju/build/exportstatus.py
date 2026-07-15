@@ -398,10 +398,31 @@ def mark_verified(project: Project, kind: str, actor: str, note: str = "") -> di
 # ------------------------------------------------------------------- rows
 
 
+def _locale_final_langs(project: Project) -> list[str]:
+    """Languages with at least one final_v*.mp4 under renders/final/locales/."""
+    root = project.final_dir / "locales"
+    if not root.is_dir():
+        return []
+    out: list[str] = []
+    for d in sorted(root.iterdir()):
+        if d.is_dir() and any(d.glob("final_v*.mp4")):
+            out.append(d.name)
+    return out
+
+
 def _final_row(ctx: _Ctx) -> DeliverableRow:
     project = ctx.project
     newest = ctx.newest_final
     if newest is None:
+        # C6: do not pretend "no film" when only locale finals exist.
+        langs = _locale_final_langs(project)
+        if langs:
+            return DeliverableRow(
+                "final", "成片 Final", None, Freshness.MISSING,
+                "无 base 成片(renders/final/),但有 locale 成片: "
+                + ", ".join(langs)
+                + " — 导出中心按 base 计;locale 用 manju build --lang",
+            )
         return DeliverableRow("final", "成片 Final", None, Freshness.MISSING,
                               "从未渲染成片(renders/final 无 final_v*)")
     rel = project.relpath(newest)

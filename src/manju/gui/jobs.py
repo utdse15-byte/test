@@ -56,6 +56,14 @@ RETRYABLE_KINDS = frozenset({
     "build", "redo", "voice", "redo_batch", "voice_batch",
 })
 
+# C6: only kinds that actually honor should_cancel / cancel_event mid-run.
+# Other kinds still accept cancel on queued jobs, but running cancel is a lie.
+CANCELABLE_RUNNING_KINDS = frozenset({
+    "build", "redo_batch", "voice_batch",
+    "ingest_plan", "ingest_apply", "series_new_episode", "series_sync",
+    "edit_preview",
+})
+
 # jobs.jsonl (round AA4): disposable operational history, capped/rewritten to
 # this many newest lines on every JobRunner construction — see module
 # docstring for why this is a plain cap rather than a byte-size rotation.
@@ -180,7 +188,12 @@ class Job:
             "project_id": self.project_id,
             # convenience for the GUI: whether a cancel/retry click is even
             # meaningful right now, without the client re-deriving the rule.
-            "cancelable": self.state in ("queued", "running"),
+            # C6: queued always cancelable; running only when the work fn
+            # cooperates (else UI 取消中… then done = spend honesty lie).
+            "cancelable": (
+                self.state == "queued"
+                or (self.state == "running" and self.kind in CANCELABLE_RUNNING_KINDS)
+            ),
             # P1-9: only kinds _build_retry_fn actually supports — avoid a
             # dead-end "重试" button that always 400s for qc/export/repair/…
             "retryable": (

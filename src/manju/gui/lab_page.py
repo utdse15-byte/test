@@ -920,7 +920,9 @@ _LAB_JS = r"""
   // -------- upload a new ref via the existing /api/upload machinery --------
   function uploadRef(file) {
     var url = "/api/upload?name=" + encodeURIComponent(file.name);
-    fetch(url, { method: "POST", headers: { "X-Manju-Token": TOKEN }, body: file })
+    var upHeaders = { "X-Manju-Token": TOKEN };
+    if (typeof PROJECT === "string" && PROJECT) upHeaders["X-Manju-Project"] = PROJECT;
+    fetch(url, { method: "POST", headers: upHeaders, body: file })
       .then(function (r) { return r.json().then(function (d) { return { status: r.status, data: d }; }); })
       .then(function (res) {
         if (res.status === 200 && res.data.imported) {
