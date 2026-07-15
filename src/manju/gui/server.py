@@ -3095,19 +3095,19 @@ class _Handler(BaseHTTPRequestHandler):
                     project, timeline, deep=deep, final_path=final_path,
                     # C46: cooperative cancel between QC check batches.
                     should_cancel=job.should_cancel)
-                paths = write_reports(project, report)
                 canceled = any(
                     (getattr(i, "message", "") or "").startswith("QC 已取消")
                     for i in report.items
                 )
-            if canceled:
-                # Honest canceled terminal for JobRunner (result.canceled).
-                return {
-                    "ok": False,
-                    "canceled": True,
-                    "errors": ["QC 已取消"],
-                    "lang": lang,
-                }
+                if canceled:
+                    # C48: do not overwrite full QC reports with a partial cancel run.
+                    return {
+                        "ok": False,
+                        "canceled": True,
+                        "errors": ["QC 已取消"],
+                        "lang": lang,
+                    }
+                paths = write_reports(project, report)
             return {
                 "ok": report.ok,
                 "errors": sum(1 for i in report.items if i.level == "error"),
