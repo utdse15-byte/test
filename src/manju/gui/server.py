@@ -1764,16 +1764,23 @@ class _Handler(BaseHTTPRequestHandler):
                   "candidates": candidates, "assume_yes": assume_yes}
 
         def fn(job) -> dict[str, Any]:
-            from ..build.graph import redo_batch
+            from ..build.graph import WaitingUser, redo_batch
 
-            return redo_batch(
-                project, shots=list(shots),
-                candidates=int(candidates) if candidates else None,
-                provider=str(provider) if provider else None,
-                seed=int(seed) if seed is not None else None,
-                actor=actor, assume_yes=assume_yes,
-                # goal: honest job cancellation — between-shot checkpoint
-                should_cancel=job.should_cancel).to_dict()
+            try:
+                return redo_batch(
+                    project, shots=list(shots),
+                    candidates=int(candidates) if candidates else None,
+                    provider=str(provider) if provider else None,
+                    seed=int(seed) if seed is not None else None,
+                    actor=actor, assume_yes=assume_yes,
+                    # goal: honest job cancellation — between-shot checkpoint
+                    should_cancel=job.should_cancel).to_dict()
+            except WaitingUser as exc:
+                # C63: batch spend gate → waiting_user result.
+                return {
+                    "waiting_user": True,
+                    "errors": [" ".join(str(exc).split())[:500]],
+                }
 
         job = self.server.runner.submit("redo_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
@@ -1789,14 +1796,21 @@ class _Handler(BaseHTTPRequestHandler):
         params = {"shots": list(shots), "provider": provider, "assume_yes": assume_yes}
 
         def fn(job) -> dict[str, Any]:
-            from ..build.graph import voice_batch
+            from ..build.graph import WaitingUser, voice_batch
 
-            return voice_batch(
-                project, shots=list(shots),
-                provider=str(provider) if provider else None,
-                actor=actor, assume_yes=assume_yes,
-                # goal: honest job cancellation — between-shot checkpoint
-                should_cancel=job.should_cancel).to_dict()
+            try:
+                return voice_batch(
+                    project, shots=list(shots),
+                    provider=str(provider) if provider else None,
+                    actor=actor, assume_yes=assume_yes,
+                    # goal: honest job cancellation — between-shot checkpoint
+                    should_cancel=job.should_cancel).to_dict()
+            except WaitingUser as exc:
+                # C63: batch voice spend gate → waiting_user result.
+                return {
+                    "waiting_user": True,
+                    "errors": [" ".join(str(exc).split())[:500]],
+                }
 
         job = self.server.runner.submit("voice_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
