@@ -2387,6 +2387,8 @@ _JS = r"""
     redo_batch: "/api/redo-batch",
     voice_batch: "/api/voice-batch",
     voice_preview: "/api/voice/preview",
+    /* C74: 补拍手柄 spend gate confirm re-posts handle-rebuild. */
+    handle_rebuild: "/api/edit/handle-rebuild",
   };
   function renderSpend(jobs) {
     if (!spendBox) return;
