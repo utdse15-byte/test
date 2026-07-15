@@ -1653,6 +1653,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         def fn(job) -> dict[str, Any]:
+            import inspect
+
             from ..build.graph import spend_gate
             from ..providers.tts import get_tts_provider
 
@@ -1663,9 +1665,17 @@ class _Handler(BaseHTTPRequestHandler):
                 spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
                           hint=f"确认后重试:GUI 配音带 assume_yes,"
                                f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+            # C24: thread job cancel into async TTS poll when adapter supports it.
+            synth_kwargs: dict[str, Any] = {}
+            try:
+                if "should_cancel" in inspect.signature(tts.synthesize).parameters:
+                    synth_kwargs["should_cancel"] = job.should_cancel
+            except (TypeError, ValueError):
+                pass
             with _optional_build_lock(project.root, actor):
-                media = tts.synthesize(project, project.load_shot(shot_id),
-                                       project.load_bible())
+                media = tts.synthesize(
+                    project, project.load_shot(shot_id),
+                    project.load_bible(), **synth_kwargs)
             append_event(project.root, actor, "voice",
                          {"shot": shot_id, "take": media.stem, "provider": tts.id,
                           "via": "gui"})
@@ -1909,6 +1919,8 @@ class _Handler(BaseHTTPRequestHandler):
             assume_yes = bool(params.get("assume_yes"))
 
             def fn(job) -> dict[str, Any]:
+                import inspect
+
                 from ..build.graph import spend_gate
                 from ..providers.tts import get_tts_provider
 
@@ -1919,9 +1931,17 @@ class _Handler(BaseHTTPRequestHandler):
                     spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
                               hint=f"确认后重试:GUI 配音带 assume_yes,"
                                    f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+                # C24: same cancel wire as _act_voice (retry path parity).
+                synth_kwargs: dict[str, Any] = {}
+                try:
+                    if "should_cancel" in inspect.signature(tts.synthesize).parameters:
+                        synth_kwargs["should_cancel"] = job.should_cancel
+                except (TypeError, ValueError):
+                    pass
                 with _optional_build_lock(project.root, actor):
-                    media = tts.synthesize(project, project.load_shot(shot_id),
-                                           project.load_bible())
+                    media = tts.synthesize(
+                        project, project.load_shot(shot_id),
+                        project.load_bible(), **synth_kwargs)
                 append_event(project.root, actor, "voice",
                              {"shot": shot_id, "take": media.stem, "provider": tts.id,
                               "via": "gui"})

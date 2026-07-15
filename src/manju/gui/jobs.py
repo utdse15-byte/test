@@ -60,6 +60,9 @@ RETRYABLE_KINDS = frozenset({
 # Other kinds still accept cancel on queued jobs, but running cancel is a lie.
 CANCELABLE_RUNNING_KINDS = frozenset({
     "build", "redo_batch", "voice_batch",
+    # C24: single-shot voice threads should_cancel into GenericTtsProvider
+    # poll when the adapter signature supports it (see gui/server.py).
+    "voice",
     "ingest_plan", "ingest_apply", "series_new_episode", "series_sync",
     "edit_preview",
 })
