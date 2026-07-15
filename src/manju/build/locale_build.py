@@ -155,7 +155,16 @@ def synthesize_locale_voices(
 
             project.register_voice_take = _reg  # type: ignore[method-assign]
             try:
-                media = tts.synthesize(project, shot, bible)
+                # C21: thread should_cancel into async TTS poll when supported.
+                import inspect
+
+                kwargs = {}
+                if (
+                    should_cancel is not None
+                    and "should_cancel" in inspect.signature(tts.synthesize).parameters
+                ):
+                    kwargs["should_cancel"] = should_cancel
+                media = tts.synthesize(project, shot, bible, **kwargs)
             finally:
                 project.register_voice_take = orig  # type: ignore[method-assign]
             generated.append(f"{sid}/locales/{lang}/{media.stem}")

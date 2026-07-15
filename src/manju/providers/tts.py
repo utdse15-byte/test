@@ -151,9 +151,14 @@ class GenericTtsProvider:
         _write_bytes_atomic(dest, resp.body)
         return dest
 
-    def synthesize(self, project: Project, shot: ShotSpec, bible: dict) -> Path:
+    def synthesize(self, project: Project, shot: ShotSpec, bible: dict,
+                   *, should_cancel=None) -> Path:
         """Synthesize the shot's line and register it as the next voice take.
-        Returns the registered media path."""
+        Returns the registered media path.
+
+        ``should_cancel`` (C21): optional cooperative cancel predicate threaded
+        into async ``_poll`` so GUI cancel can stop mid-wait.
+        """
         from .generic_cloud import render_body
 
         if not shot.dialogue.text:
@@ -180,7 +185,7 @@ class GenericTtsProvider:
         job_id: str | None = None
         if self.manifest.poll is not None:  # async form
             job_id = str(extract(data, cfg.job_id_path))
-            data = self._poll(job_id)
+            data = self._poll(job_id, should_cancel=should_cancel)
 
         with tempfile.TemporaryDirectory(prefix=f"tts_{shot.id}_") as tmp:
             audio = self._audio_from(data, dest_dir=Path(tmp))
