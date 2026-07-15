@@ -529,9 +529,15 @@ _INGEST_JS = r"""
   function loadBatchDetail(batchIdToLoad) {
     if (!batchIdToLoad) return Promise.resolve();
     var opts = (typeof manjuApiOptions === "function") ? manjuApiOptions() : {};
+    opts = Object.assign({}, opts, { returnStatus: true });
     var p = (typeof requestJson === "function")
       ? requestJson("GET", "/api/ingest/batch?id=" + encodeURIComponent(batchIdToLoad), undefined, opts)
-          .then(function (d) { return { status: 200, data: d }; })
+          .then(function (r) {
+            if (r && typeof r === "object" && "data" in r && "status" in r) {
+              return { status: r.status, data: r.data };
+            }
+            return { status: 200, data: r };
+          })
           .catch(function (err) {
             return { status: (err && err.status) || 500, data: (err && err.data) || {} };
           })

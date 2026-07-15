@@ -938,7 +938,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._drain_request_body()
             self._send_error_json("readonly mode — 只读工作台,操作请回到项目机器", 403)
             return
-        if self.headers.get("X-Manju-Token") != self.server.token:
+        import secrets as _secrets
+
+        got = self.headers.get("X-Manju-Token") or ""
+        # R2-P2-2: constant-time compare (board already uses compare_digest).
+        if not (got and _secrets.compare_digest(got, self.server.token)):
             self._drain_request_body()
             self._send_error_json("missing or invalid X-Manju-Token", 403)
             return
@@ -1385,19 +1389,26 @@ class _Handler(BaseHTTPRequestHandler):
                     status.pop("take_notes", None)
 
             try:
+                from ..core.writes import WriteRejected, checked_shot_write
+
                 with _optional_build_lock(project.root, self.server.actor):
-                    if expected_rev is not None and shot_text_hash(project, shot_id) != expected_rev:
-                        self._send_error_json(
-                            f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)"
-                            "——请刷新后重试", 409)
-                        return
-                    project.update_shot_raw(shot_id, mutate)
+                    # R2-P1-8: guard status.take_notes (+ post-check) via checked path.
+                    checked_shot_write(
+                        project, shot_id, mutate,
+                        guard_paths=("status.take_notes", "status"),
+                        expected_text_hash=(
+                            str(expected_rev) if expected_rev is not None else None
+                        ),
+                    )
                     # UX audit F14: hand the POST-write hash back so the page
                     # can refresh its data-rev — without it, the owner's very
                     # next action on the same card was refused 409 by a stale
                     # token their OWN save had just invalidated (the message
                     # then blamed "其他入口" — their own click of 2s earlier).
                     new_rev = shot_text_hash(project, shot_id)
+            except WriteRejected as exc:
+                self._send_error_json(str(exc), 409)
+                return
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
                 return
@@ -2785,17 +2796,24 @@ class _Handler(BaseHTTPRequestHandler):
             if ok:
                 payload["shot"] = shot_id
                 if payload["created"]:
-                    # creating via the GUI means the user wants it in the cut:
-                    # index it at the end (the engine would only APPEND it
-                    # implicitly and warn on every check until someone did)
-                    index = project.load_index()
-                    if shot_id not in index.order:
-                        index.order.append(shot_id)
-                        project.save_index(index)
-                        payload["warnings"] = [
-                            w for w in payload["warnings"]
-                            if not (shot_id in w and "index.yaml" in w)
-                        ]
+                    # R2-P2-3: index append under the same build_lock as create
+                    # when possible (re-acquire: gated_save released it).
+                    try:
+                        with _optional_build_lock(project.root, self.server.actor):
+                            index = project.load_index()
+                            if shot_id not in index.order:
+                                index.order.append(shot_id)
+                                project.save_index(index)
+                    except BuildLocked:
+                        # Fall back under quick_mutex only (still better than nothing).
+                        index = project.load_index()
+                        if shot_id not in index.order:
+                            index.order.append(shot_id)
+                            project.save_index(index)
+                    payload["warnings"] = [
+                        w for w in payload["warnings"]
+                        if not (shot_id in w and "index.yaml" in w)
+                    ]
                 append_event(project.root, self.server.actor, "edit_shot",
                              {"shot": shot_id, "created": payload["created"],
                               "via": "gui"})
@@ -2855,14 +2873,37 @@ class _Handler(BaseHTTPRequestHandler):
             if received != length:
                 self._send_error_json("upload truncated", 400)
                 return
-            with self.server.quick_mutex:
-                dest = project.imports_dir / raw_name
-                stem, suffix = dest.stem, dest.suffix
-                n = 2
-                while dest.exists():  # imports are never overwritten (§3)
-                    dest = project.imports_dir / f"{stem}_{n}{suffix}"
-                    n += 1
-                shutil.move(str(tmp), dest)
+            # R2-P1-6: build_lock + exclusive land (parity with CLI import).
+            try:
+                with self.server.quick_mutex, _optional_build_lock(
+                    project.root, self.server.actor
+                ):
+                    project.imports_dir.mkdir(parents=True, exist_ok=True)
+                    dest = project.imports_dir / raw_name
+                    stem, suffix = dest.stem, dest.suffix
+                    n = 2
+                    while dest.exists():  # imports are never overwritten (§3)
+                        dest = project.imports_dir / f"{stem}_{n}{suffix}"
+                        n += 1
+                    # Exclusive create claim then replace from tmp.
+                    try:
+                        fd = os.open(
+                            str(dest), os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                        )
+                        os.close(fd)
+                    except FileExistsError:
+                        # Lost race — re-suffix once more under the lock.
+                        while dest.exists():
+                            dest = project.imports_dir / f"{stem}_{n}{suffix}"
+                            n += 1
+                        fd = os.open(
+                            str(dest), os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                        )
+                        os.close(fd)
+                    os.replace(str(tmp), str(dest))
+            except BuildLocked as exc:
+                self._send_error_json(str(exc), 409)
+                return
             rel = project.relpath(dest)
             preview_rel = None
             try:
@@ -3330,21 +3371,26 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(f"library blob missing: {entry['blob']}", 400)
             return
         project, actor = self.server.project, self.server.actor
-        with self.server.quick_mutex:
-            dest_dir = project.imports_dir if as_ == "imports" else project.refs_dir
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            ext = Path(entry["blob"]).suffix
-            stem = Path(entry["name"]).stem or "asset"
-            dest = dest_dir / f"{stem}{ext}"
-            n = 2
-            while dest.exists():  # no-overwrite suffixing (§3), like `lib use`
-                dest = dest_dir / f"{stem}_{n}{ext}"
-                n += 1
-            shutil.copy2(blob, dest)
-            rel = project.relpath(dest)
-            append_event(project.root, actor, "lib_use",
-                         {"hash": entry["hash"], "name": entry["name"],
-                          "as": as_, "dest": rel, "via": "gui"})
+        try:
+            with self.server.quick_mutex, _optional_build_lock(project.root, actor):
+                # R2-P1-6: same project lock as CLI so concurrent import cannot clobber.
+                dest_dir = project.imports_dir if as_ == "imports" else project.refs_dir
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                ext = Path(entry["blob"]).suffix
+                stem = Path(entry["name"]).stem or "asset"
+                dest = dest_dir / f"{stem}{ext}"
+                n = 2
+                while dest.exists():  # no-overwrite suffixing (§3), like `lib use`
+                    dest = dest_dir / f"{stem}_{n}{ext}"
+                    n += 1
+                shutil.copy2(blob, dest)
+                rel = project.relpath(dest)
+                append_event(project.root, actor, "lib_use",
+                             {"hash": entry["hash"], "name": entry["name"],
+                              "as": as_, "dest": rel, "via": "gui"})
+        except BuildLocked as exc:
+            self._send_error_json(str(exc), 409)
+            return
         self._send_json({"ok": True, "dest": rel, "as": as_, "name": entry["name"]})
 
     def _lib_find_entry(self, index: dict[str, Any], hash8: str) -> dict[str, Any] | None:
@@ -4216,6 +4262,8 @@ class _Handler(BaseHTTPRequestHandler):
                 with _optional_build_lock(project.root, self.server.actor):  # one hold, whole batch
                     from ..core.writes import shot_text_hash
 
+                    from ..core.writes import WriteRejected, checked_shot_write
+
                     for sid in ids:
                         if (not self._SHOT_ID_RE.fullmatch(sid)
                                 or not project.shot_path(sid).exists()):
@@ -4230,7 +4278,17 @@ class _Handler(BaseHTTPRequestHandler):
                             status["approved"] = review == "approved"
                             d["status"] = status
 
-                        project.update_shot_raw(sid, mutate)
+                        try:
+                            # R2-P1-8: refuse if status.review / status is sealed.
+                            checked_shot_write(
+                                project, sid, mutate,
+                                guard_paths=(
+                                    "status.review", "status.approved", "status",
+                                ),
+                            )
+                        except WriteRejected as exc:
+                            skipped.append({"shot": sid, "reason": str(exc)})
+                            continue
                         changed.append(sid)
                         # UX audit F14: approving rewrites the shot file and
                         # silently staled the review card's CAS token — hand

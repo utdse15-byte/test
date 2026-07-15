@@ -81,12 +81,17 @@ def synthesize_locale_voices(
     *,
     lang: str,
     actor: str = "engine",
+    hold_lock: bool = True,
 ) -> list[str]:
     """Run TTS for locale plan rows; register under locales/<lang>/.
 
-    Holds ``build_lock`` for the whole batch so concurrent voice / GUI / CLI
-    cannot mint the same ``voice_take_NN`` (project bug scan P1-5).
+    ``hold_lock`` (default True): take ``build_lock`` for the batch so CLI
+    ``manju voice --lang`` cannot race another writer (P1-5). When called
+    from ``run_build`` (which already holds the lock), pass ``hold_lock=False``
+    — ``BuildLock`` is not reentrant (R2-P0-1 regression).
     """
+    import contextlib
+
     from ..core.events import append_event
     from ..core.locale import validate_lang
     from ..providers.tts import get_tts_provider
@@ -95,7 +100,12 @@ def synthesize_locale_voices(
     lang = validate_lang(lang)
     generated: list[str] = []
     bible = project.load_bible()
-    with build_lock(project.root, actor=actor):
+    lock_cm = (
+        build_lock(project.root, actor=actor)
+        if hold_lock
+        else contextlib.nullcontext()
+    )
+    with lock_cm:
         for item in plan:
             sid = item["shot"]
             shot = overlay_shot_for_voice(project, project.load_shot(sid), lang)

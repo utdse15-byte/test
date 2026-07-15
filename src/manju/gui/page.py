@@ -1123,8 +1123,12 @@ _JS = r"""
   const apiRaw = async (method, path, body) => {
     try {
       if (typeof requestJson === "function") {
-        const data = await requestJson(method, path, body, apiOptions());
-        return { ok: true, status: 200, data };
+        const r = await requestJson(method, path, body,
+          Object.assign({}, apiOptions(), { returnStatus: true }));
+        if (r && typeof r === "object" && "data" in r && "status" in r) {
+          return { ok: true, status: r.status, data: r.data };
+        }
+        return { ok: true, status: 200, data: r };
       }
     } catch (err) {
       if (err && err.name === "ManjuApiError") {
@@ -3616,7 +3620,8 @@ _JS = r"""
       roGate(b);
       b.addEventListener("click", () =>
         post(b, "/api/take-note",
-          { shot: shot.id, take: t.name, text: t.note === value ? "" : value },
+          { shot: shot.id, take: t.name, text: t.note === value ? "" : value,
+            expected_rev: shot.rev || undefined },
           (t.note === value ? "已清除评价 " : "已标记" + value + " ")
             + shot.id + "/" + t.name));
       acts.appendChild(b);
@@ -3655,7 +3660,8 @@ _JS = r"""
       const save = () => {
         editorOpen = false;  /* BEFORE post — its refresh must not be swallowed */
         post(ok, "/api/take-note",
-          { shot: shot.id, take: t.name, text: ta.value },
+          { shot: shot.id, take: t.name, text: ta.value,
+            expected_rev: shot.rev || undefined },
           ta.value.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注"
         ).then((res) => {
           /* #50c (review find #2): a FAILED save runs no refresh, so nothing
@@ -4298,8 +4304,11 @@ _JS = r"""
                 job = found;
                 break;
               }
-              if (found && (found.state === "failed" || found.state === "error")) {
-                const err = (found.result && found.result.error) || "TTS 不可用";
+              /* R2-P2-6: canceled/interrupted are terminal (no "error" state). */
+              if (found && (found.state === "failed" || found.state === "canceled"
+                  || found.state === "interrupted")) {
+                const err = found.error
+                  || (found.result && found.result.error) || "TTS 不可用";
                 toast(err, "err");
                 return;
               }
@@ -4444,8 +4453,9 @@ _JS = r"""
         }
         form.classList.add("hidden");
         input.value = "";
+        /* R2-P1-9: pass rev so Save CAS refuses concurrent overwrite. */
         showShotEditor(id, yamlText, (data && data.locked) || [], isNew,
-          !data || data.in_index !== false);
+          !data || data.in_index !== false, (data && data.rev) || "");
       } catch (err) {
         toast("无法打开编辑器 (cannot open editor): " + errMsg(err), "err");
       } finally {

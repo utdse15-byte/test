@@ -96,25 +96,31 @@ def _hex(content_hash: str) -> str:
 
 _INDEX_LOCK_TIMEOUT_S = 30.0
 
+# R2-P1-5: msvcrt.locking does not exclude same-process threads — pair with a
+# threading.Lock (same pattern as events_lock / failures._ledger_lock).
+import threading as _threading
+
+_THREAD_LOCKS: dict[str, "_threading.Lock"] = {}
+_THREAD_LOCKS_GUARD = _threading.Lock()
+
+
+def _name_thread_lock(lock_name: str) -> "_threading.Lock":
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(lock_name)
+        if lock is None:
+            lock = _THREAD_LOCKS[lock_name] = _threading.Lock()
+        return lock
+
 
 @contextlib.contextmanager
 def _index_lock(root: Path, *, timeout_s: float = _INDEX_LOCK_TIMEOUT_S) -> Iterator[None]:
-    """Cross-process mutex around the index read-modify-write (round W, #42).
+    """Cross-process/-thread mutex around the index read-modify-write (round W, #42).
 
-    ``add``/``remove`` (and any future ``tag``) are read-whole-index → mutate
-    → write-whole-index; two processes (two `manju lib add` invocations, or a
-    CLI run racing a GUI asset-page action) doing that concurrently can lose
-    one side's update — the later writer's snapshot never saw the earlier
-    writer's row. ``fcntl.flock`` on a sibling ``index.lock`` serializes the
-    whole read-modify-write, so no add/remove/tag is ever computed against a
-    stale snapshot.
-
-    Advisory + POSIX-only: on a platform without ``fcntl`` (Windows) this
-    degrades to a no-op rather than blocking forever — the same "a missing OS
-    primitive degrades, never hangs" stance as the rest of this project
-    (§14). ``timeout_s`` bounds the wait so a crashed holder cannot wedge
-    every future library command; a timeout is a clear `LibraryError`, not a
-    hang.
+    ``add``/``remove``/``set_tags``/``set_note`` are read-whole-index → mutate
+    → write-whole-index; two processes (or GUI threads on Windows) racing that
+    RMW can last-writer-win and drop rows. ``fcntl.flock`` / ``msvcrt`` +
+    in-process thread lock on a sibling ``index.lock`` serialize the whole
+    critical section.
     """
     root.mkdir(parents=True, exist_ok=True)
     if fcntl is None and msvcrt is None:
@@ -122,9 +128,6 @@ def _index_lock(root: Path, *, timeout_s: float = _INDEX_LOCK_TIMEOUT_S) -> Iter
         return
     lock_path = root / "index.lock"
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    # Windows gate round 1: the fcntl-only lock no-opped on Windows and the
-    # gate's first run proved the lost update (6 adds -> 5 rows). The msvcrt
-    # byte-0 branch mirrors core/events.events_lock; POSIX path unchanged.
     if fcntl is not None:
         retry_exc: tuple[type[BaseException], ...] = (BlockingIOError,)
 
@@ -135,14 +138,24 @@ def _index_lock(root: Path, *, timeout_s: float = _INDEX_LOCK_TIMEOUT_S) -> Iter
             fcntl.flock(fd, fcntl.LOCK_UN)
     else:
         retry_exc = (OSError,)
+        _thread_lock = _name_thread_lock("index.lock")
 
         def _try() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            if not _thread_lock.acquire(blocking=False):
+                raise OSError(13, "thread lock held (same-process contention)")
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                _thread_lock.release()
+                raise
 
         def _unlock() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            finally:
+                _thread_lock.release()
 
     locked = False
     try:

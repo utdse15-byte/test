@@ -65,12 +65,19 @@ function projectSwitchedOverlay(name) {
 
 function post(url, body) {
   /* Prefer shared requestJson (preserves full error JSON); keep {status,data}
-   * return shape for existing server-rendered pages. */
+   * return shape for existing server-rendered pages.
+   * R2-P0-3: must preserve real HTTP status (202 Accepted for jobs) — never
+   * hardcode 200 or lab/export/ingest/edit all treat success as failure. */
   if (typeof requestJson === "function") {
     return requestJson("POST", url, body || {}, {
-      token: TOKEN, projectId: PROJECT || ""
-    }).then(function (d) {
-      return { status: 200, data: d };
+      token: TOKEN, projectId: PROJECT || "",
+      returnStatus: true
+    }).then(function (r) {
+      /* requestJson with returnStatus → {status, data}; plain → body only. */
+      if (r && typeof r === "object" && "data" in r && "status" in r) {
+        return { status: r.status, data: r.data };
+      }
+      return { status: 200, data: r };
     }).catch(function (err) {
       var d = (err && err.data) || {};
       var status = (err && err.status) || 0;

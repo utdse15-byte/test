@@ -230,7 +230,14 @@ def run_qc(
     *,
     deep: bool = False,
     extract_frames: bool = True,
+    final_path: Path | str | None = None,
 ) -> QCReport:
+    """Run QC.
+
+    ``final_path`` (R2-P0-2): optional explicit final render to probe (e.g.
+    locale ``renders/final/locales/<lang>/final_vN.mp4``). When omitted, uses
+    the newest base final under ``renders/final/``.
+    """
     report = QCReport()
     config = project.load_config()
     if timeline is None:
@@ -268,7 +275,7 @@ def run_qc(
         _technical_voice_audio(project, report, timeline, astats)
     _packaging_checks(project, report, timeline)
     _technical_take_resolution(project, report, config, selected)
-    _final_render(project, report, config, timeline, deep)
+    _final_render(project, report, config, timeline, deep, final_path=final_path)
     if extract_frames:
         _content_frames(project, report, selected)
     _content_checkers(project, report, statuses, deep)
@@ -904,8 +911,18 @@ def _technical_voice_audio(project, report, timeline: Timeline, astats) -> None:
             )
 
 
-def _final_render(project, report, config: ProjectConfig, timeline, deep: bool) -> None:
-    final = _newest_final(project)
+def _final_render(project, report, config: ProjectConfig, timeline, deep: bool,
+                  *, final_path: Path | str | None = None) -> None:
+    if final_path is not None:
+        final = Path(final_path)
+        if not final.is_absolute():
+            final = project.root / final
+        if not final.exists():
+            report.add("error", "technical", "final",
+                       f"final render not found: {final.name}")
+            return
+    else:
+        final = _newest_final(project)
     if final is None:
         return
     info = _probe_info(final)

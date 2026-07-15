@@ -449,21 +449,28 @@ class JobRunner:
                 self._rev += 1  # queued->running must move the fingerprint too
             self._persist(job)
             try:
-                job.result = fn(job)
+                result = fn(job)
                 # goal A: some engine calls never RAISE for cancellation —
                 # a dict result that self-reports canceled=True is ALSO cancel.
-                if isinstance(job.result, dict) and job.result.get("canceled") is True:
-                    job.state = "canceled"
-                    errs = job.result.get("errors")
-                    job.error = (errs[0] if isinstance(errs, list) and errs else None) or "已取消"
-                else:
-                    job.state = "done"
-            except Exception as exc:  # any engine failure -> one-line finding
-                job.state = "canceled" if job.cancel_event.is_set() else "failed"
-                job.error = " ".join(str(exc).split()) or exc.__class__.__name__
-            finally:
-                job.finished = _now()
+                # R2-P2-1: publish terminal fields under _lock (no half-read).
                 with self._lock:
+                    job.result = result
+                    if isinstance(result, dict) and result.get("canceled") is True:
+                        job.state = "canceled"
+                        errs = result.get("errors")
+                        job.error = (
+                            (errs[0] if isinstance(errs, list) and errs else None)
+                            or "已取消"
+                        )
+                    else:
+                        job.state = "done"
+                    job.finished = _now()
+                    self._rev += 1
+            except Exception as exc:  # any engine failure -> one-line finding
+                with self._lock:
+                    job.state = "canceled" if job.cancel_event.is_set() else "failed"
+                    job.error = " ".join(str(exc).split()) or exc.__class__.__name__
+                    job.finished = _now()
                     self._rev += 1
             self._persist(job)
 

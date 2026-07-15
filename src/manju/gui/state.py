@@ -254,6 +254,14 @@ def _shot_cards(project: "Project", statuses: Any = None,
             voice=voice_payload,
             voice_takes=voice_takes,
         )
+        # R2-P1-10: full-file CAS token for take-note / verdict (≠ ui_rev).
+        text_rev = ""
+        try:
+            from ..core.writes import shot_text_hash
+
+            text_rev = shot_text_hash(project, st.shot_id)
+        except Exception:
+            text_rev = ""
         cards.append({
             "id": st.shot_id,
             "state": st.state.value,
@@ -268,6 +276,7 @@ def _shot_cards(project: "Project", statuses: Any = None,
             "takes": takes,
             "voice_takes": voice_takes,
             "ui_rev": ui_rev,
+            "rev": text_rev,
         })
     return cards
 

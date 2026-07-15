@@ -527,20 +527,55 @@ class Project:
     def register_take(self, shot_id: str, media_file: Path, sidecar: TakeSidecar, *,
                       move: bool = False) -> TakeInfo:
         """Append-only registration: always mints a fresh take name; never
-        overwrites. `move=False` copies (imports are never consumed)."""
+        overwrites. `move=False` copies (imports are never consumed).
+
+        R2-P1-7: exclusive create (``O_EXCL``) closes the check-then-copy race
+        (same discipline as :meth:`register_voice_take`).
+        """
         media_file = Path(media_file)
         if not media_file.exists():
             raise ProjectError(f"take media not found: {media_file}")
         tdir = self.takes_dir(shot_id)
         tdir.mkdir(parents=True, exist_ok=True)
-        name = self.next_take_name(shot_id)
-        dest = tdir / (name + media_file.suffix.lower())
-        if dest.exists():  # paranoia: append-only means never clobber
-            raise ProjectError(f"refusing to overwrite existing take media: {dest}")
-        if move and self.imports_dir not in media_file.parents:
-            shutil.move(str(media_file), dest)
-        else:
-            shutil.copy2(media_file, dest)
+        suffix = media_file.suffix.lower()
+        use_move = bool(move and self.imports_dir not in media_file.parents)
+        dest: Path | None = None
+        name = ""
+        data: bytes | None = None if use_move else media_file.read_bytes()
+        for _ in range(32):
+            name = self.next_take_name(shot_id)
+            candidate = tdir / (name + suffix)
+            try:
+                fd = os.open(str(candidate), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                continue
+            try:
+                if use_move:
+                    os.close(fd)
+                    # Claimed the name exclusively; now move into place.
+                    try:
+                        candidate.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    shutil.move(str(media_file), candidate)
+                else:
+                    assert data is not None
+                    with os.fdopen(fd, "wb") as out:
+                        out.write(data)
+                        out.flush()
+                        os.fsync(out.fileno())
+            except BaseException:
+                try:
+                    candidate.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            dest = candidate
+            break
+        if dest is None:
+            raise ProjectError(
+                f"could not allocate exclusive take name under {tdir}"
+            )
         sidecar.created_at = sidecar.created_at or datetime.now(timezone.utc).isoformat(
             timespec="seconds"
         )

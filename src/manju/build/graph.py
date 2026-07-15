@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from ..core.check import run_check
@@ -1454,9 +1455,14 @@ def _run_build_phases(
             # serial — generate then commit per shot, in plan order. The
             # cancel checkpoint sits BEFORE each new submission (goal: honest
             # job cancellation, "between per-shot generation submissions") —
-            # should_cancel=None (the default) makes _cancel_check a no-op,
-            # so this loop is byte-identical to before.
+            # should_cancel=None (the default) makes _cancel_check a no-op.
+            # R2-P1-1: mid-run budget.limit trip (parity with concurrent path)
+            # — check BEFORE each new submission against actual spent_so_far.
+            serial_budget_skipped: list[str] = []
             for item in video_plan:
+                if budget is not None and spent_so_far["total"] > float(budget):
+                    serial_budget_skipped.append(item["shot"])
+                    continue
                 _cancel_check(f"生成:{item['shot']}(尚未开始)")
                 res = _gen_one(item)
                 _commit_one(res)
@@ -1466,6 +1472,21 @@ def _run_build_phases(
                     # force=True: do not re-sample should_cancel() (P1-7).
                     _cancel_check(f"生成:{item['shot']}", remote_pending=True,
                                   force=True)
+            if serial_budget_skipped:
+                result.warnings.append(
+                    f"预算已到上限:不再提交新任务(串行生成:实际花费 "
+                    f"{spent_so_far['total']} 已超 budget.limit={budget},§8.3)。"
+                    f"不再提交的镜头 {', '.join(serial_budget_skipped)} "
+                    "— 已生成的镜头不受影响;提高 budget.limit 或缩减计划后重跑"
+                )
+                _record(project, "generate", "budget",
+                        "串行生成触发预算熔断,未提交的镜头被跳过",
+                        evidence=(
+                            f"running_cost={spent_so_far['total']} > budget={budget}; "
+                            f"skipped={serial_budget_skipped}"
+                        ),
+                        hint="提高 project.yaml budget.limit 或缩减计划",
+                        level="info", actor=actor)
         else:
             # #8: which provider's manifest max_concurrent should gate each
             # shot's worker slot — resolved the SAME way generate_with_fallback
@@ -1528,18 +1549,42 @@ def _run_build_phases(
         _phase("voice")
         if lang:
             from .locale_build import synthesize_locale_voices
+            # R2-P0-1: run_build already holds build_lock — do not re-acquire.
             try:
                 gen_paths = synthesize_locale_voices(
                     project, voice_plan, lang=lang, actor=actor,
+                    hold_lock=False,
                 )
                 result.generated.extend(gen_paths)
             except Exception as exc:
-                result.warnings.append(f"locale voice batch failed — {exc}")
+                result.ok = False
+                result.errors.append(
+                    f"locale voice batch failed ({lang}): "
+                    + " ".join(str(exc).split())[:500]
+                )
                 _record(project, "voice", lang or "locale",
                         f"locale 配音失败({lang})",
                         evidence=" ".join(str(exc).split())[:800],
                         hint=f"manju voice <shot> --lang {lang} --yes",
                         actor=actor)
+                return _finish_run(result)
+            # R2-P1-4: plan non-empty → every planned shot must have a locale take.
+            missing_loc = [
+                p["shot"] for p in voice_plan
+                if not project.voice_takes(p["shot"], lang=lang)
+            ]
+            if missing_loc:
+                result.ok = False
+                result.errors.append(
+                    f"locale {lang}: 配音计划未全部落地 — 缺失 "
+                    f"{', '.join(missing_loc)} (拒绝带着母语音频出外语成片)"
+                )
+                _record(project, "voice", lang or "locale",
+                        "locale 配音计划未全部落地",
+                        evidence=f"missing={missing_loc}",
+                        hint=f"manju voice --missing --lang {lang} --yes",
+                        actor=actor)
+                return _finish_run(result)
         else:
             from ..providers.base import ProviderFailure as _PF
             from ..providers.tts import get_tts_provider
@@ -1807,9 +1852,19 @@ def _run_build_phases(
         )
         append_event(project.root, actor, "render",
                      {"target": "animatic", "output": result.render_path})
-    elif target in ("proxy", "final") and lang and target == "final":
+    elif target in ("proxy", "final") and lang:
+        # R2-P1-2: only final is namespaced under locales/<lang>/; refuse
+        # proxy (would poison base proxy cache with locale audio/captions).
+        if target != "final":
+            result.ok = False
+            result.errors.append(
+                f"--lang 仅支持 --target final|qc|exports 的字幕/成片路径;"
+                f"当前 target={target!r} 会污染 base 树,已拒绝。"
+                "请用 manju build --lang <lang> --target final"
+            )
+            return _finish_run(result)
         _phase("render:final:locale")
-        from ..media.ffmpeg import MediaError as _MediaError
+        from ..media.ffmpeg import MediaCanceled, MediaError as _MediaError, cancel_scope
         from ..media.render import (
             _read_key_sidecar, _write_key_sidecar, final_content_key, render_timeline,
         )
@@ -1831,15 +1886,29 @@ def _run_build_phases(
                 )
             else:
                 out_path = next_locale_final_path(project, lang)
-                out = render_timeline(
-                    project, timeline, target="final", out_path=out_path,
-                    ass_file=ass_path, force=True,
-                )
+                # R2-P1-3: same cancel_scope as base final render.
+                try:
+                    with cancel_scope(should_cancel):
+                        out = render_timeline(
+                            project, timeline, target="final", out_path=out_path,
+                            ass_file=ass_path, force=True,
+                        )
+                except MediaCanceled:
+                    _cancel_check(f"渲染:final:{lang}(ffmpeg 已终止)", force=True)
+                    raise BuildCanceled(
+                        f"已取消(渲染:final:{lang})",
+                        generated=list(result.generated),
+                        spent=spent_so_far["total"],
+                        currency=spent_so_far["currency"],
+                        run_id=run_id,
+                    )
                 _write_key_sidecar(out, key, f"final:{lang}")
                 result.warnings.append(
                     f"locale --lang {lang}: rendered {project.relpath(out)}; "
                     "video segment cache shared with base (only ASS+audio differ)"
                 )
+        except BuildCanceled:
+            raise
         except _MediaError as exc:
             result.ok = False
             result.errors.append(f"locale render: {' '.join(str(exc).split())}")
@@ -1939,11 +2008,21 @@ def _run_build_phases(
         # this round took instead: name the artifact QC'd, honestly.
         if target in ("proxy", "final"):
             qc_final = result.render_path  # the render this exact call just made
+        elif lang:
+            # R2-P0-2: target=qc --lang must probe locale final, not base.
+            from .locale_build import newest_locale_final
+
+            final_path = newest_locale_final(project, lang)
+            qc_final = project.relpath(final_path) if final_path else None
         else:
             final_path = project.newest_final_path()
             qc_final = project.relpath(final_path) if final_path else None
         result.qc_final = qc_final
-        qc = run_qc(project, timeline)
+        # R2-P0-2: pass explicit final so duration/res checks hit the right file.
+        qc_path = None
+        if qc_final:
+            qc_path = project.root / qc_final if not Path(qc_final).is_absolute() else Path(qc_final)
+        qc = run_qc(project, timeline, final_path=qc_path)
         result.qc_ok = qc.ok
         result.qc_reports = {k: project.relpath(v) for k, v in write_reports(project, qc).items()}
         # DR03C: the run ran QC — attach the qc report refs to the run-level

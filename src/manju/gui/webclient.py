@@ -39,8 +39,8 @@ class ManjuProtocolError extends Error {
  * @param {string} method
  * @param {string} path
  * @param {object|undefined} body
- * @param {{token?: string, projectId?: string}} options
- * @returns {Promise<object>}
+ * @param {{token?: string, projectId?: string, returnStatus?: boolean}} options
+ * @returns {Promise<object>} body only, or ``{status, data}`` when returnStatus
  */
 async function requestJson(method, path, body, options) {
   var opts = options || {};
@@ -85,7 +85,12 @@ async function requestJson(method, path, body, options) {
   if (!response.ok) {
     throw new ManjuApiError(response.status, data, path);
   }
-  return data || {};
+  data = data || {};
+  /* R2-P0-3: optional envelope so post() can keep real 202 (job submit). */
+  if (opts.returnStatus) {
+    return { status: response.status, data: data };
+  }
+  return data;
 }
 
 /** Default options from the document's meta tags (token + project identity). */
