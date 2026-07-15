@@ -27,7 +27,7 @@ import yaml
 from pydantic import ValidationError
 
 from ..board.board import generate_board
-from ..build.graph import redo_shot, run_build
+from ..build.graph import WaitingUser, redo_shot, run_build
 from ..build.stale import evaluate_all
 from ..build.status import project_status
 from ..core.check import run_check
@@ -385,32 +385,46 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
             raise ToolError(" ".join(str(exc).split()), code="invalid_argument") from exc
     else:
         lang = None
-    return run_build(
-        project,
-        target=target,
-        gen=args.get("gen", "missing"),
-        regen_stale=bool(args.get("regen_stale", False)),
-        dry_run=bool(args.get("dry_run", False)),
-        actor="ai",
-        agent_profile=profile,  # AI_IDE_16 §10 keyframe spend gate
-        lang=lang,
-        # C60: spend gate confirm (parity with GUI / redo).
-        assume_yes=bool(args.get("assume_yes", False)),
-    ).to_dict()
+    try:
+        return run_build(
+            project,
+            target=target,
+            gen=args.get("gen", "missing"),
+            regen_stale=bool(args.get("regen_stale", False)),
+            dry_run=bool(args.get("dry_run", False)),
+            actor="ai",
+            agent_profile=profile,  # AI_IDE_16 §10 keyframe spend gate
+            lang=lang,
+            # C60: spend gate confirm (parity with GUI / redo).
+            assume_yes=bool(args.get("assume_yes", False)),
+        ).to_dict()
+    except WaitingUser as exc:
+        # C61: structured waiting_user so agents re-call with assume_yes.
+        raise ToolError(
+            " ".join(str(exc).split())[:500],
+            code="waiting_user",
+        ) from exc
 
 
 def _h_redo(project: Project, args: dict) -> dict:
     # C59: assume_yes must reach spend_gate — agents otherwise always hit
     # WaitingUser on priced providers with no way to confirm mid-tool.
-    takes = redo_shot(
-        project,
-        args["shot_id"],
-        candidates=args.get("candidates"),
-        provider=args.get("provider"),
-        seed=args.get("seed"),
-        actor="ai",
-        assume_yes=bool(args.get("assume_yes", False)),
-    )
+    try:
+        takes = redo_shot(
+            project,
+            args["shot_id"],
+            candidates=args.get("candidates"),
+            provider=args.get("provider"),
+            seed=args.get("seed"),
+            actor="ai",
+            assume_yes=bool(args.get("assume_yes", False)),
+        )
+    except WaitingUser as exc:
+        # C61: same structured gate as build.
+        raise ToolError(
+            " ".join(str(exc).split())[:500],
+            code="waiting_user",
+        ) from exc
     return {"takes": takes}
 
 
