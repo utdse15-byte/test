@@ -2769,11 +2769,11 @@ _JS = r"""
 
     function renderJobRow(j) {
       const row = el("div", "job");
-      row.appendChild(el("span", "jkind", j.kind));
-      /* round AA item 6: an interrupted job (a past GUI process's dangling
-       * queued/running job — see gui/jobs.py's JobRunner.interrupted()) gets
-       * its own 中文 chip, never the raw English state word every other
-       * state renders as-is. */
+      const KIND_ZH = {
+        build: "构建", redo: "重做", voice: "配音", redo_batch: "批量重做",
+        voice_batch: "批量配音", qc: "质检", repair: "修复", export: "导出",
+      };
+      row.appendChild(el("span", "jkind", KIND_ZH[j.kind] || j.kind || "?"));
       /* C1 UX: waiting_user builds are state=done with a flag — show 待确认 not plain done. */
       const waitSpend = j.kind === "build" && j.result && j.result.waiting_user === true;
       const STATE_ZH = {
@@ -2788,14 +2788,6 @@ _JS = r"""
       /* C6 UX: show live phase progress for long builds. */
       if (j.progress && (j.state === "running" || j.state === "canceling")) {
         row.appendChild(el("span", "muted jprog", String(j.progress)));
-      }
-      if (j.kind) {
-        const KIND_ZH = {
-          build: "构建", redo: "重做", voice: "配音", redo_batch: "批量重做",
-          voice_batch: "批量配音", qc: "质检", repair: "修复", export: "导出",
-        };
-        const klab = KIND_ZH[j.kind] || j.kind;
-        row.appendChild(el("span", "chip", klab));
       }
       /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
        * cancelable/retryable come straight from Job.to_dict() so the client
