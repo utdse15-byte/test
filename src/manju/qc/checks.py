@@ -231,13 +231,19 @@ def run_qc(
     deep: bool = False,
     extract_frames: bool = True,
     final_path: Path | str | None = None,
+    should_cancel: "Callable[[], bool] | None" = None,
 ) -> QCReport:
     """Run QC.
 
     ``final_path`` (R2-P0-2): optional explicit final render to probe (e.g.
     locale ``renders/final/locales/<lang>/final_vN.mp4``). When omitted, uses
     the newest base final under ``renders/final/``.
+
+    ``should_cancel`` (C46): optional cooperative cancel between major check
+    batches so GUI cancel can stop a deep QC without finishing every probe.
     """
+    from typing import Callable
+
     report = QCReport()
     config = project.load_config()
     if timeline is None:
@@ -258,26 +264,47 @@ def run_qc(
             astats_cache[path] = _probe_audio_stats(path)
         return astats_cache[path]
 
+    def _trip() -> bool:
+        return should_cancel is not None and should_cancel()
+
     selected: dict[str, tuple[Path, ProbeInfo | None]] = {}
 
     _existence_shots(project, report, statuses, probe, selected)
+    if _trip():
+        report.add("info", "system", "canceled", "QC 已取消(存在性检查后)")
+        return report
     _staleness_info(report, statuses)
     _voice_info(project, report)
     _transition_override_advisories(project, report)
+    if _trip():
+        report.add("info", "system", "canceled", "QC 已取消(状态检查后)")
+        return report
     if timeline is not None:
         _existence_timeline(project, report, timeline, probe)
         _existence_audio_policy(project, report, timeline)
         _audio_advisories(project, report, timeline)
+        if _trip():
+            report.add("info", "system", "canceled", "QC 已取消(时间线检查后)")
+            return report
         _technical_clips(project, report, timeline, probe)
         _technical_captions(project, report, timeline)
         _technical_timeline_conflicts(project, report, timeline)
         _technical_garbled_captions(project, report, timeline)
         _technical_voice_audio(project, report, timeline, astats)
+    if _trip():
+        report.add("info", "system", "canceled", "QC 已取消(技术检查后)")
+        return report
     _packaging_checks(project, report, timeline)
     _technical_take_resolution(project, report, config, selected)
     _final_render(project, report, config, timeline, deep, final_path=final_path)
+    if _trip():
+        report.add("info", "system", "canceled", "QC 已取消(成片检查后)")
+        return report
     if extract_frames:
         _content_frames(project, report, selected)
+    if _trip():
+        report.add("info", "system", "canceled", "QC 已取消(内容抽帧后)")
+        return report
     _content_checkers(project, report, statuses, deep)
     _content_agent_verdicts(project, report)
     _content_qc_coverage(project, report)

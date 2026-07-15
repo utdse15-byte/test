@@ -76,6 +76,8 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     "export",
     # C34: repair wraps ffmpeg repair_ops in cancel_scope.
     "repair",
+    # C46: run_qc samples should_cancel between major check batches.
+    "qc",
     # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 

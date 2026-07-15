@@ -3092,8 +3092,22 @@ class _Handler(BaseHTTPRequestHandler):
                     if timeline is not None:
                         timeline = apply_locale_overlay(project, timeline, lang)
                 report = run_qc(
-                    project, timeline, deep=deep, final_path=final_path)
+                    project, timeline, deep=deep, final_path=final_path,
+                    # C46: cooperative cancel between QC check batches.
+                    should_cancel=job.should_cancel)
                 paths = write_reports(project, report)
+                canceled = any(
+                    (getattr(i, "message", "") or "").startswith("QC 已取消")
+                    for i in report.items
+                )
+            if canceled:
+                # Honest canceled terminal for JobRunner (result.canceled).
+                return {
+                    "ok": False,
+                    "canceled": True,
+                    "errors": ["QC 已取消"],
+                    "lang": lang,
+                }
             return {
                 "ok": report.ok,
                 "errors": sum(1 for i in report.items if i.level == "error"),
