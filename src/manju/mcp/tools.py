@@ -394,6 +394,8 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
         actor="ai",
         agent_profile=profile,  # AI_IDE_16 §10 keyframe spend gate
         lang=lang,
+        # C60: spend gate confirm (parity with GUI / redo).
+        assume_yes=bool(args.get("assume_yes", False)),
     ).to_dict()
 
 
@@ -867,6 +869,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
                 "regen_stale": {"type": "boolean", "default": False},
                 "dry_run": {"type": "boolean", "default": False},
+                "assume_yes": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Confirm spend gate after dry_run estimate (§8.3)",
+                },
                 "lang": {
                     "type": "string",
                     "description": "Optional locale id (WP4) — voice+captions+final "
