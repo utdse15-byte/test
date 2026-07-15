@@ -571,6 +571,13 @@ def status(as_json: bool = typer.Option(False, "--json")):
     tl = info["timeline"]
     typer.echo(f"时间线  {'✓ ' + str(tl['duration_ms']) + 'ms (' + str(tl['mode']) + ')' if tl['exists'] else '—'}")
     typer.echo(f"成片  {info['latest_final'] or '—'}")
+    if info.get("locale_finals"):
+        typer.echo(
+            "  locale  "
+            + ", ".join(f"{k}={v}" for k, v in info["locale_finals"].items())
+        )
+    if info.get("latest_final_note"):
+        typer.echo(f"  注  {info['latest_final_note']}")
     if info["qc"]:
         typer.echo(f"QC   errors={info['qc'].get('errors')} warnings={info['qc'].get('warnings')}")
     # goal 79: never print a currency-mislabeled number — when spend spans

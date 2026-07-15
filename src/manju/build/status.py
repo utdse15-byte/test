@@ -246,6 +246,31 @@ def project_status(project: Project, *, statuses: Any = None,
     latest_final_note = None
     if final is not None and not final.with_suffix(".key.json").exists():
         latest_final_note = "final may be incomplete (no content-key sidecar; crashed render?)"
+    # C13: surface locale finals at takeover so locale-only projects aren't "无成片".
+    locale_finals: dict[str, str] = {}
+    try:
+        locales_root = project.final_dir / "locales"
+        if locales_root.is_dir():
+            for d in sorted(locales_root.iterdir()):
+                if not d.is_dir():
+                    continue
+                best = None
+                best_n = -1
+                for p in d.glob("final_v*.mp4"):
+                    import re as _re
+                    m = _re.match(r"final_v(\d+)$", p.stem)
+                    if m and int(m.group(1)) > best_n:
+                        best_n = int(m.group(1))
+                        best = p
+                if best is not None:
+                    locale_finals[d.name] = project.relpath(best)
+    except Exception:
+        locale_finals = {}
+    if final is None and locale_finals and not latest_final_note:
+        latest_final_note = (
+            "无 base 成片,已有 locale: "
+            + ", ".join(f"{k}={v}" for k, v in locale_finals.items())
+        )
 
     qc_summary = None
     qc_path = project.reports_dir / "qc.json"
@@ -317,6 +342,7 @@ def project_status(project: Project, *, statuses: Any = None,
         },
         "latest_final": project.relpath(final) if final else None,
         "latest_final_note": latest_final_note,
+        "locale_finals": locale_finals,
         "qc": qc_summary,
         "total_cost": total_cost,
         "currency": currency,
