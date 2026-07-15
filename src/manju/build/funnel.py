@@ -181,6 +181,19 @@ def _plan_done(project: Project) -> tuple[bool, str]:
     final = project.newest_final_path()
     if final is not None:
         return True, f"已有成片 {project.relpath(final)}(生成计划已落地)"
+    # C8: locale-only projects still have deliverable finals under locales/.
+    locales_root = project.final_dir / "locales"
+    if locales_root.is_dir():
+        hits = [
+            d.name for d in sorted(locales_root.iterdir())
+            if d.is_dir() and any(d.glob("final_v*.mp4"))
+        ]
+        if hits:
+            return True, (
+                "尚无 base 成片,但已有 locale 成片: "
+                + ", ".join(hits)
+                + "(locale 交付已落地;base 仍可用 manju build)"
+            )
     from .director import list_proposals, state_fingerprint
 
     approved = [p for p in list_proposals(project)
