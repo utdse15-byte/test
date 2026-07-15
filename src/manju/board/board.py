@@ -2199,6 +2199,9 @@ def _render_project_panel(project: "Project") -> str:
         ("花费 spend", spend),
         ("时间线 timeline", tl_txt),
         ("成片 latest final", st.get("latest_final") or "—"),
+        ("locale finals", ", ".join(
+            f"{k}={v}" for k, v in (st.get("locale_finals") or {}).items()
+        ) or "—"),
         ("QC", qc_txt),
     ]
     dl = "".join(f"<dt>{_esc(k)}</dt><dd>{_esc(v)}</dd>" for k, v in rows)
