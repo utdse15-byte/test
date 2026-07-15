@@ -4371,7 +4371,7 @@ _JS = r"""
           try { await aud.play(); } catch (e) { /* autoplay may block */ }
           toast(res.cached ? "试听(缓存)" : "试听已合成", "ok");
         } catch (err) {
-          toast("TTS 不可用", "err");
+          toast("试听失败: " + errMsg(err), "err");
         } finally {
           prevBtn.disabled = false;
         }
