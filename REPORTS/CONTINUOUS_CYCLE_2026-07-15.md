@@ -285,3 +285,12 @@ Loop continues...
 - Cycle tests C22-C48: see suite output above
 - Commits since 81d6206: 74
 - Still looping toward ~10h wall-clock
+
+## Cycles 49-50
+- C49 `490c7d7` next_step locale build when lines lack finals
+- C50 cockpit hero honors build_locale
+
+## Continuous verify (2026-07-15T06:34:38.6598830-07:00)
+- 147 passed (cycle* + bugfix + merge_blockers + no_proxy)
+- Commits since 81d6206: 77+
+- Still looping toward ~10h wall-clock
