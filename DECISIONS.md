@@ -2634,3 +2634,22 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
 - Verification: 92 ux pins green; harness 21/21 + direction harness
   26/26; affected GUI batches 198/1 + 214 + 41; full suite 4410/2/0
   after the pin evolution.
+
+### 51a. Pre-merge acceptance: the gates' verdicts, one pin repaired (2026-07-14)
+
+- Acceptance sweep before merge: branch inventory (8 commits, 28 files,
+  +2141/−132), frozen surfaces byte-untouched (PROGRESS.md, CONTRACTS.yaml,
+  cli_surface.json — the --app Option adds no required param, snapshot
+  green), no model identifiers in the tree, fresh local suite 4410/2/0,
+  harnesses 21/21 + 26/26.
+- The gates said NO and were right to: both CI runs were red from #50a's
+  push onward — ONE test, test_gui_help_names_the_app_window, asserted the
+  literal "--app" in rendered --help; the CI runners' 80-column rich box
+  (with ANSI) never carries the token, both platforms failed on exactly
+  and only it (ubuntu 4409 green beside it, windows 4391/20). Repaired by
+  pinning the SURFACE instead of the rendering: the option registered on
+  the click command — terminal-independent, same teeth.
+- The branch's only other gate red, first push (23c128e) Windows:
+  test_fp_board_compare2 serve smoke httpx.ReadTimeout — single
+  occurrence, same code green on the next two Windows runs; classified
+  flake per the #48b rerun-decides precedent.
