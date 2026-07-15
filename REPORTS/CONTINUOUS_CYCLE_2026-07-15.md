@@ -413,3 +413,12 @@ Loop continues...
 - Commits since 81d6206: 124
 - Broad suite earlier: 173 passed
 - Loop continues toward ~10h wall-clock
+
+## Cycles 78-79
+- C78 handle_rebuild shot key pin
+- C79 spend_gate WaitingUser functional pin
+- Cycle pins: 86 passed
+
+## Continuous (2026-07-15T06:50:47.0858291-07:00)
+- 126 commits since 81d6206
+- Still looping toward ~10h
