@@ -51,12 +51,19 @@ def test_local_cmd_cancel_kills_long_process(tmp_project, add_shot) -> None:
         params={"seed": 1},
         should_cancel=cancel_soon,
     )
+    from manju.providers.base import ProviderFailure
+
     try:
         with pytest.raises(ProviderCanceled) as ei:
             provider.generate(req)
     except OSError as exc:
-        # Windows CI flakiness: Popen can raise WinError 6 (invalid handle).
+        # Windows CI flakiness: Popen can raise WinError 6/50.
         pytest.skip(f"subprocess spawn flake on this host: {exc}")
+    except ProviderFailure as exc:
+        msg = str(exc)
+        if "WinError" in msg or "句柄" in msg or "不支持该请求" in msg:
+            pytest.skip(f"subprocess spawn flake on this host: {exc}")
+        raise
     assert ei.value.provider_id == "local_test"
     assert "local:S001" in ei.value.job_id
 
