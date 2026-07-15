@@ -894,6 +894,30 @@ def deliverables(project: Project) -> list[DeliverableRow]:
         _cover_row(ctx),
         _teaser_row(ctx),
     ]
+    # C11: list locale finals as openable deliverable rows (existence honesty).
+    for lang in _locale_final_langs(project):
+        d = project.final_dir / "locales" / lang
+        newest = None
+        nums = []
+        for p in d.glob("final_v*.mp4"):
+            m = re.match(r"final_v(\d+)$", p.stem)
+            if m:
+                nums.append((int(m.group(1)), p))
+        if nums:
+            newest = max(nums, key=lambda t: t[0])[1]
+        if newest is None:
+            continue
+        rel = project.relpath(newest)
+        rows.append(DeliverableRow(
+            f"final_locale_{lang}",
+            f"成片 Final ({lang})",
+            rel,
+            Freshness.NEEDS_MANUAL,
+            f"locale 成片存在(内容键比对未接):{rel} — 用 manju build --lang {lang}",
+            openable=True,
+            open_hint=rel,
+            version=_version_of(newest),
+        ))
     vtt = _vtt_row(ctx)
     if vtt is not None:
         rows.append(vtt)
