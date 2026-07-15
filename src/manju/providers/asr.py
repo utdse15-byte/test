@@ -153,7 +153,15 @@ class GenericAsrProvider:
                 ) from exc
         return [s for s in segments if s.text and s.end_ms > s.start_ms]
 
-    def transcribe(self, media: Path) -> list[TranscriptSegment]:
+    def transcribe(self, media: Path, *,
+                   should_cancel: Callable[[], bool] | None = None,
+                   ) -> list[TranscriptSegment]:
+        """Transcribe ``media`` via the configured ASR endpoint.
+
+        ``should_cancel`` (C23): optional cooperative cancel predicate checked
+        between async poll rounds so GUI/CLI cancel can stop mid-wait without
+        sitting out the full 600s budget.
+        """
         from .generic_cloud import _max_response_bytes, render_body
 
         cfg = self.manifest.submit
@@ -198,8 +206,23 @@ class GenericAsrProvider:
         # async form: same loop shape as generic_cloud, but the transcript
         # lives in the final poll body itself, so we keep the raw JSON
         job_id = str(extract(data, cfg.job_id_path))
+        return self._poll_segments(job_id, should_cancel=should_cancel)
+
+    def _poll_segments(self, job_id: str, *,
+                       should_cancel: Callable[[], bool] | None = None,
+                       ) -> list[TranscriptSegment]:
+        """Async ASR poll loop. ``should_cancel`` (C23) checked between rounds."""
+        poll_cfg = self.manifest.poll
+        assert poll_cfg is not None
         elapsed, i = 0.0, 0
         while True:
+            # C23: cooperative cancel BETWEEN poll sleeps (never mid-HTTP).
+            if should_cancel is not None and should_cancel():
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: poll canceled for job {job_id}",
+                    detail={"job_id": job_id, "canceled": True},
+                )
             resp = self._transport(
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
