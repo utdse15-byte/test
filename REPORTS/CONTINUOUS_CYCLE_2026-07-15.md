@@ -422,3 +422,11 @@ Loop continues...
 ## Continuous (2026-07-15T06:50:47.0858291-07:00)
 - 126 commits since 81d6206
 - Still looping toward ~10h
+
+## Cycles 80-81
+- C80 GUI voice ProviderCanceled → canceled
+- C81 pin
+
+## Continuous (2026-07-15T06:51:13.6001607-07:00)
+- 129 commits since 81d6206
+- Still looping toward ~10h
