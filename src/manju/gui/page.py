@@ -2327,7 +2327,11 @@ _JS = r"""
     const gate = (btn, queueLocked) => {
       if (!btn) return;
       btn.disabled = (queueLocked && anyActive) || readonly;
-      btn.title = readonly ? RO_TIP : "";
+      if (readonly) btn.title = RO_TIP;
+      else if (queueLocked && anyActive) {
+        /* C10 UX: disabled Build/QC while a job runs — say why, not blank. */
+        btn.title = "任务运行中 — 完成后可再点 (job running)";
+      } else btn.title = "";
     };
     gate(buildBtn, true);
     gate(qcBtn, true);
