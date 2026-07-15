@@ -1732,14 +1732,49 @@ app.add_typer(qc_app, name="qc", rich_help_panel=PANEL_QC)
 @qc_app.callback(invoke_without_command=True)
 def qc_main(ctx: typer.Context,
             deep: bool = typer.Option(False),
+            lang: Optional[str] = typer.Option(
+                None, "--lang", help="只质检该语言 locale(如 --lang ja)"),
+            all_locales: bool = typer.Option(
+                False, "--all-locales", help="质检所有已声明 locale,汇总一个总判"),
             as_json: bool = typer.Option(False, "--json")):
-    """Three-layer QC; writes reports/qc.json, qc.md, repair_plan.yaml (§9)."""
+    """Three-layer QC; writes reports/qc.json, qc.md, repair_plan.yaml (§9).
+
+    Multi-locale (P1 item 7): with --lang X only that locale is checked; with
+    --all-locales every declared locale is checked; a project that declares more
+    than one locale is checked across ALL of them by default. Each locale yields
+    an independent result and the aggregate fails if any locale fails.
+    """
     if ctx.invoked_subcommand is not None:
         return
     from .qc.checks import run_qc as _run_qc
     from .qc.report import build_assurance_block, write_reports
 
     project = _project()
+
+    # Multi-locale path: engaged when the owner selects a locale, asks for all,
+    # or the project simply declares more than one locale. Base-only /
+    # single-locale projects with no flags fall through to the unchanged path.
+    from .core.locale import list_locales as _list_locales
+
+    if lang or all_locales or len(_list_locales(project)) > 1:
+        from .qc.multilocale import run_multilocale_qc
+
+        ml = run_multilocale_qc(project, lang=lang, all_locales=all_locales,
+                                deep=deep)
+        if as_json:
+            _emit(ml.to_dict(), True)
+        else:
+            typer.secho(f"QC 多语言汇总 aggregate={ml.aggregate}",
+                        fg=typer.colors.GREEN if ml.aggregate == "pass"
+                        else typer.colors.RED)
+            for lg, r in ml.locales.items():
+                color = typer.colors.GREEN if r.status == "pass" else typer.colors.RED
+                extra = f" — {', '.join(r.issues)}" if r.issues else ""
+                typer.secho(f"  {lg}: {r.status}{extra}", fg=color)
+        if ml.aggregate == "fail":
+            raise typer.Exit(1)
+        return
+
     report = _run_qc(project, _load_timeline_or_fail(project), deep=deep)
 
     # DR02 WP4: derive per-shot bound-acceptance assurance (read-only) and thread
