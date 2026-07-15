@@ -63,6 +63,9 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     # C24: single-shot voice threads should_cancel into GenericTtsProvider
     # poll when the adapter signature supports it (see gui/server.py).
     "voice",
+    # C25: single-shot redo threads should_cancel into GenerationRequest
+    # (cloud/ComfyUI poll) via redo_shot(..., should_cancel=...).
+    "redo",
     "ingest_plan", "ingest_apply", "series_new_episode", "series_sync",
     "edit_preview",
 })

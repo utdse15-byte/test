@@ -127,13 +127,15 @@ def test_plan_modal_no_proceed_on_failed() -> None:
 def test_cancelable_running_kinds_export() -> None:
     from manju.gui.jobs import CANCELABLE_RUNNING_KINDS, Job
 
+    # C25: redo is now cancelable (should_cancel → GenerationRequest poll).
     j = Job(id="1", kind="redo", params={}, project_id="p")
     j.state = "running"
-    assert j.to_dict()["cancelable"] is False
+    assert j.to_dict()["cancelable"] is True
     j2 = Job(id="2", kind="build", params={}, project_id="p")
     j2.state = "running"
     assert j2.to_dict()["cancelable"] is True
     assert "build" in CANCELABLE_RUNNING_KINDS
+    assert "redo" in CANCELABLE_RUNNING_KINDS
 
 
 def test_edit_poll_ten_minutes() -> None:

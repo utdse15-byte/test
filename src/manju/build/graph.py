@@ -2200,7 +2200,8 @@ def _run_build_phases(
 def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
               provider: str | None = None, seed: int | None = None,
               from_take: str | None = None,
-              actor: str = "engine", assume_yes: bool = False) -> list[str]:
+              actor: str = "engine", assume_yes: bool = False,
+              should_cancel: "Callable[[], bool] | None" = None) -> list[str]:
     """`manju redo S002` — force new takes (append-only), regardless of
     staleness. Selection is only touched when the shot had none.
 
@@ -2213,14 +2214,20 @@ def redo_shot(project: Project, shot_id: str, *, candidates: int | None = None,
     A priced redo raises :class:`WaitingUser` unless ``assume_yes`` — the same
     §8.3 ask_before gate as ``build`` (the R7 spend-gate hole closure). Holds
     the process build lock like a full build (a redo mutates takes and the
-    ledger); contention raises :class:`~manju.runtime.buildlock.BuildLocked`."""
+    ledger); contention raises :class:`~manju.runtime.buildlock.BuildLocked`.
+
+    ``should_cancel`` (C25): threaded onto :class:`GenerationRequest` so cloud /
+    ComfyUI poll loops can stop WAITING mid-redo (same contract as run_build).
+    Default ``None`` is byte-identical for CLI paths without a GUI job.
+    """
     from ..runtime.buildlock import build_lock
 
     with build_lock(project.root, actor=actor):
         return _redo_shot_locked(project, shot_id, candidates=candidates,
                                  provider=provider, seed=seed,
                                  from_take=from_take, actor=actor,
-                                 assume_yes=assume_yes)
+                                 assume_yes=assume_yes,
+                                 should_cancel=should_cancel)
 
 
 @dataclass
@@ -2276,7 +2283,8 @@ def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
 
 
 def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
-              actor: str) -> list[str]:
+              actor: str,
+              should_cancel: "Callable[[], bool] | None" = None) -> list[str]:
     """Generate a redo from a priced plan — no lock, no spend gate (the caller
     owns both). Append-only: mints fresh takes and only fills an *empty*
     selection, never overturning an existing one (§4.3)."""
@@ -2307,6 +2315,8 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
         refs=resolve_refs(project, shot, bible, params=plan.params),
         # 08_10_12C WP3: explicit-redo lineage travels to the take sidecar.
         redo_of=plan.redo_of,
+        # C25: cooperative cancel during cloud/ComfyUI poll waits.
+        should_cancel=should_cancel,
     )
     takes = generate_with_fallback(req, fallback_chain(shot))
     if not shot.status.selected_take and takes:
@@ -2339,7 +2349,8 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
 def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None = None,
                       provider: str | None = None, seed: int | None = None,
                       from_take: str | None = None,
-                      actor: str = "engine", assume_yes: bool = False) -> list[str]:
+                      actor: str = "engine", assume_yes: bool = False,
+                      should_cancel: "Callable[[], bool] | None" = None) -> list[str]:
     rules = project.load_rules()
     bible = project.load_bible()
     plan = _plan_redo(project, shot_id, candidates=candidates, provider=provider,
@@ -2347,7 +2358,8 @@ def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None 
     # §8.3 事前: price this redo and gate it just like build before any spend.
     spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
                hint=f"确认后重试:manju redo {shot_id} --yes(或 MCP/GUI 带 assume_yes)")
-    return _run_redo(project, plan, bible=bible, rules=rules, actor=actor)
+    return _run_redo(project, plan, bible=bible, rules=rules, actor=actor,
+                     should_cancel=should_cancel)
 
 
 # ============================================================ batch operations
@@ -2589,10 +2601,21 @@ def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
             )
             break
         try:
-            result.takes[sid] = _run_redo(project, plans[sid], bible=bible,
-                                          rules=rules, actor=actor)
+            result.takes[sid] = _run_redo(
+                project, plans[sid], bible=bible, rules=rules, actor=actor,
+                # C25: also honor cancel mid-poll of THIS shot (not only between).
+                should_cancel=should_cancel)
             result.ran.append(sid)
         except Exception as exc:  # ProviderFailure/NeedsHumanInput/MediaError/…
+            # ProviderCanceled mid-poll: batch stops as canceled, not failed.
+            from ..providers.base import ProviderCanceled
+            if isinstance(exc, ProviderCanceled):
+                result.canceled = True
+                result.errors.append(
+                    f"已取消等待:{sid} 生成中止(远程/本地任务可能仍在进行;"
+                    f"job id 已记录,后续可恢复轮询) — {exc}"
+                )
+                break
             result.failed.append({"shot": sid, "reason": _failure_reason(exc)})
 
     result.actual_cost = _sum_actual_take_cost(project, result.takes)

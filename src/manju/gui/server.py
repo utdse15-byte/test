@@ -1581,8 +1581,12 @@ class _Handler(BaseHTTPRequestHandler):
                 seed=int(seed) if seed is not None else None,
                 actor=actor)
             # assume_yes rides the same spend gate as build (round-r/spend)
-            if "assume_yes" in inspect.signature(redo_shot).parameters:
+            sig = inspect.signature(redo_shot).parameters
+            if "assume_yes" in sig:
                 kwargs["assume_yes"] = assume_yes
+            # C25: wire job cancel into cloud/ComfyUI poll via GenerationRequest.
+            if "should_cancel" in sig:
+                kwargs["should_cancel"] = job.should_cancel
             takes = redo_shot(project, shot_id, **kwargs)
             return {"shot": shot_id, "takes": takes}
 
@@ -1900,8 +1904,12 @@ class _Handler(BaseHTTPRequestHandler):
                     provider=str(provider) if provider else None,
                     seed=int(seed) if seed is not None else None,
                     actor=actor)
-                if "assume_yes" in inspect.signature(redo_shot).parameters:
+                sig = inspect.signature(redo_shot).parameters
+                if "assume_yes" in sig:
                     kwargs["assume_yes"] = assume_yes
+                # C25: retry path parity with _act_redo cancel wire.
+                if "should_cancel" in sig:
+                    kwargs["should_cancel"] = job.should_cancel
                 takes = redo_shot(project, shot_id, **kwargs)
                 return {"shot": shot_id, "takes": takes}
 
@@ -4638,8 +4646,12 @@ class _Handler(BaseHTTPRequestHandler):
 
             kwargs: dict[str, Any] = dict(
                 provider=str(provider) if provider else None, actor=actor)
-            if "assume_yes" in inspect.signature(redo_shot).parameters:
+            sig = inspect.signature(redo_shot).parameters
+            if "assume_yes" in sig:
                 kwargs["assume_yes"] = assume_yes
+            # C25: lab generate is a redo job — same cancel wire.
+            if "should_cancel" in sig:
+                kwargs["should_cancel"] = job.should_cancel
             takes = redo_shot(project, shot_id, **kwargs)
             return {"shot": shot_id, "quality": quality, "provider": provider,
                     "takes": takes}
