@@ -66,13 +66,20 @@ def _resolve_text_and_voice(
     return line, str(voice_id), desc
 
 
-def _synthesize_edge(provider: Any, text: str, voice_id: str, dest: Path) -> None:
+def _synthesize_edge(provider: Any, text: str, voice_id: str, dest: Path,
+                     *, should_cancel=None) -> None:
     try:
         import edge_tts
     except ImportError as exc:
         raise PreviewUnavailable(
             "TTS 不可用: edge-tts 未安装 — pip install 'manju[edgetts]'"
         ) from exc
+
+    from ..providers.base import ProviderCanceled
+
+    # C31: pre-start cancel before any network stream.
+    if should_cancel is not None and should_cancel():
+        raise ProviderCanceled(getattr(provider, "id", "edge"), "preview")
 
     async def _run() -> None:
         communicate = edge_tts.Communicate(
@@ -81,11 +88,15 @@ def _synthesize_edge(provider: Any, text: str, voice_id: str, dest: Path) -> Non
         )
         with open(dest, "wb") as audio:
             async for chunk in communicate.stream():
+                if should_cancel is not None and should_cancel():
+                    raise ProviderCanceled(getattr(provider, "id", "edge"), "preview")
                 if chunk["type"] == "audio":
                     audio.write(chunk["data"])
 
     try:
         asyncio.run(_run())
+    except ProviderCanceled:
+        raise
     except Exception as exc:
         raise PreviewUnavailable(
             f"TTS 不可用: {' '.join(str(exc).split())[:300]}"
@@ -95,13 +106,15 @@ def _synthesize_edge(provider: Any, text: str, voice_id: str, dest: Path) -> Non
 
 
 def _synthesize_generic(provider: Any, project: Project, shot: ShotSpec,
-                        text: str, dest: Path) -> None:
+                        text: str, dest: Path, *, should_cancel=None) -> None:
     """Reuse GenericTtsProvider's transport by temporarily overriding dialogue
     text on a copy and synthesizing into a temp dir, then copying out —
     WITHOUT calling register_voice_take."""
+    import inspect
     from copy import deepcopy
 
     from ..core.models import ShotSpec as SS
+    from ..providers.base import ProviderCanceled
 
     data = shot.model_dump()
     data["dialogue"] = {**(data.get("dialogue") or {}), "text": text}
@@ -124,7 +137,19 @@ def _synthesize_generic(provider: Any, project: Project, shot: ShotSpec,
 
     try:
         project.register_voice_take = _capture  # type: ignore[method-assign]
-        provider.synthesize(project, hypo, bible)
+        # C31: thread cancel into synthesize when the adapter supports it.
+        kwargs = {}
+        try:
+            if (
+                should_cancel is not None
+                and "should_cancel" in inspect.signature(provider.synthesize).parameters
+            ):
+                kwargs["should_cancel"] = should_cancel
+        except (TypeError, ValueError):
+            pass
+        provider.synthesize(project, hypo, bible, **kwargs)
+    except ProviderCanceled:
+        raise
     except Exception as exc:
         raise PreviewUnavailable(
             f"TTS 不可用: {' '.join(str(exc).split())[:300]}"
@@ -143,11 +168,13 @@ def preview_voice(
     voice: str | None = None,
     provider: str | None = None,
     assume_yes: bool = False,
+    should_cancel=None,
 ) -> dict[str, Any]:
     """Synthesize a disposable preview. Returns
     ``{"preview": relpath, "cached": bool, "path": Path}``.
 
     Priced TTS goes through spend_gate (per_call). Edge is free.
+    ``should_cancel`` (C31): cooperative cancel during synthesis/poll.
     """
     try:
         shot = project.load_shot(shot_id)
@@ -194,12 +221,13 @@ def preview_voice(
         # Edge path vs generic
         adapter = getattr(manifest, "adapter", "") if manifest else ""
         if "edge_tts" in str(type(tts).__module__) or "edge" in str(adapter).lower():
-            _synthesize_edge(tts, line, voice_id, tmp_dest)
+            _synthesize_edge(tts, line, voice_id, tmp_dest, should_cancel=should_cancel)
         elif hasattr(tts, "synthesize"):
             # write as mp3/wav then copy; generic may use other formats
             fmt = (getattr(getattr(manifest, "tts", None), "audio_format", None) or "mp3")
             tmp_dest = Path(tmp) / f"preview.{str(fmt).lstrip('.')}"
-            _synthesize_generic(tts, project, shot, line, tmp_dest)
+            _synthesize_generic(
+                tts, project, shot, line, tmp_dest, should_cancel=should_cancel)
         else:
             raise PreviewUnavailable("TTS 不可用: 供应商没有 synthesize 接口")
 

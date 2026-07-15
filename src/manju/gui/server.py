@@ -1614,6 +1614,8 @@ class _Handler(BaseHTTPRequestHandler):
                     text=str(text) if text is not None else None,
                     provider=str(provider) if provider else None,
                     assume_yes=assume_yes,
+                    # C31: cooperative cancel during preview synthesis.
+                    should_cancel=job.should_cancel,
                 )
             except PreviewUnavailable as exc:
                 return {"ok": False, "error": str(exc), "code": "tts_unavailable"}

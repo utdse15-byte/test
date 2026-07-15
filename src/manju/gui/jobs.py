@@ -70,6 +70,8 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     # (was ingest_apply / series_sync / edit_preview — wrong aliases).
     "ingest_plan", "ingest", "series_sync_bible",
     "edit_preview_batch",
+    # C31: voice_preview threads should_cancel into ttspreview synthesize.
+    "voice_preview",
     # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 
