@@ -2386,6 +2386,7 @@ _JS = r"""
     voice: "/api/voice",
     redo_batch: "/api/redo-batch",
     voice_batch: "/api/voice-batch",
+    voice_preview: "/api/voice/preview",
   };
   function renderSpend(jobs) {
     if (!spendBox) return;

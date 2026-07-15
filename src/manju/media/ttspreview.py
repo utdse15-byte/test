@@ -208,13 +208,17 @@ def preview_voice(
     manifest = getattr(tts, "manifest", None)
     cost = getattr(manifest, "cost", None) if manifest is not None else None
     if cost is not None and float(getattr(cost, "per_call", 0) or 0) > 0:
-        from ..build.graph import spend_gate
+        from ..build.graph import WaitingUser, spend_gate
 
-        spend_gate(
-            project, float(cost.per_call), cost.currency,
-            assume_yes=assume_yes,
-            hint=f"确认后重试: manju voice {shot_id} --preview --yes",
-        )
+        try:
+            spend_gate(
+                project, float(cost.per_call), cost.currency,
+                assume_yes=assume_yes,
+                hint=f"确认后重试: manju voice {shot_id} --preview --yes",
+            )
+        except WaitingUser:
+            # C72: re-raise for GUI voice_preview job to map to waiting_user.
+            raise
 
     with tempfile.TemporaryDirectory(prefix=f"ttsprev_{shot_id}_") as tmp:
         tmp_dest = Path(tmp) / "preview.mp3"

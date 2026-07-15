@@ -1634,6 +1634,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         def fn(job) -> dict[str, Any]:
+            from ..build.graph import WaitingUser
             from ..media.ttspreview import PreviewUnavailable, preview_voice
 
             try:
@@ -1645,6 +1646,13 @@ class _Handler(BaseHTTPRequestHandler):
                     # C31: cooperative cancel during preview synthesis.
                     should_cancel=job.should_cancel,
                 )
+            except WaitingUser as exc:
+                # C72: priced preview spend gate → waiting_user.
+                return {
+                    "waiting_user": True,
+                    "errors": [" ".join(str(exc).split())[:500]],
+                    "shot": shot_id,
+                }
             except PreviewUnavailable as exc:
                 return {"ok": False, "error": str(exc), "code": "tts_unavailable"}
             return {
@@ -1656,7 +1664,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         job = self.server.runner.submit(
             "voice_preview",
-            {"shot": shot_id, "text": text, "provider": provider},
+            {"shot": shot_id, "text": text, "provider": provider, "assume_yes": assume_yes},
             fn,
         )
         self._send_json({"job": job.to_dict()}, 202)
