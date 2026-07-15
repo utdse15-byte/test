@@ -256,6 +256,19 @@ def _next_action(project: Project, status: Any, sugg: Any) -> dict[str, Any]:
                 "action": None, "shot": None, "kind": "story",
                 "human_label": human, "funnel": funnel}
 
+    # C50: status next_step_key build_locale wins when base is done but
+    # locale lines still lack finals (see build/status.py C49).
+    if isinstance(status, dict) and status.get("next_step_key") == "build_locale":
+        return {
+            "verb": "build",
+            "text": human or "构建 locale 成片 (build locale final)",
+            "action": {"type": "build", "target": "final"},
+            "shot": None,
+            "kind": "build_locale",
+            "human_label": human,
+            "funnel": funnel,
+        }
+
     items = list(sugg or [])
     primary = next((s for s in items if s.action is not None), None)
     if primary is None and items:
