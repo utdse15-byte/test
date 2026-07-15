@@ -1884,6 +1884,10 @@ class _Handler(BaseHTTPRequestHandler):
             regen_stale = bool(params.get("regen_stale"))
             force = bool(params.get("force"))
             assume_yes = bool(params.get("assume_yes"))
+            # C43: preserve locale lang on retry (parity with _act_build).
+            lang = params.get("lang") or None
+            if lang is not None:
+                lang = str(lang).strip() or None
 
             def fn(job) -> dict[str, Any]:
                 import inspect
@@ -1900,6 +1904,8 @@ class _Handler(BaseHTTPRequestHandler):
                     kwargs["on_phase"] = lambda ph: setattr(job, "progress", ph)
                 if "should_cancel" in params_sig:
                     kwargs["should_cancel"] = job.should_cancel
+                if lang is not None and "lang" in params_sig:
+                    kwargs["lang"] = lang
                 return run_build(project, **kwargs).to_dict()
 
             return fn
