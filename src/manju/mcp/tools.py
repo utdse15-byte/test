@@ -374,8 +374,17 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
             f"unknown target: {target!r} — MCP build accepts {allowed}",
             code="invalid_argument")
     lang = args.get("lang")
-    if lang is not None:
-        lang = str(lang)
+    if lang is not None and str(lang).strip():
+        # C44: validate before run_build so bad lang is invalid_argument, not
+        # a mid-phase BuildError after possible spend planning.
+        from ..core.locale import validate_lang
+
+        try:
+            lang = validate_lang(str(lang).strip())
+        except Exception as exc:
+            raise ToolError(" ".join(str(exc).split()), code="invalid_argument") from exc
+    else:
+        lang = None
     return run_build(
         project,
         target=target,
