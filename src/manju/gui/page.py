@@ -1133,6 +1133,9 @@ _JS = r"""
         }
         return { ok: false, status: err.status, data: err.data || {} };
       }
+      if (err && err.name === "ManjuProtocolError") {
+        return { ok: false, status: 502, data: { error: err.message || "invalid JSON" } };
+      }
       throw err;
     }
     const opts = { method, headers: { "X-Manju-Token": TOKEN, "Accept": "application/json" } };
@@ -1145,7 +1148,15 @@ _JS = r"""
     let data = {};
     try {
       const text = await res.text();
-      if (text) data = JSON.parse(text);
+      if (text && text.trim()) {
+        try { data = JSON.parse(text); }
+        catch (e) {
+          if (res.ok) {
+            return { ok: false, status: 502, data: { error: "服务器返回了无效 JSON" } };
+          }
+          data = {};
+        }
+      }
     } catch (e) { data = {}; }
     if (res.status === 409 && data && data.code === "project_switched") {
       projectSwitchedOverlay(data.project);
@@ -3228,6 +3239,14 @@ _JS = r"""
   function renderShots(shots) {
     const t0 = (typeof performance !== "undefined" && performance.now)
       ? performance.now() : Date.now();
+    /* Per-render snapshot — counters are not cumulative across polls. */
+    renderStats.shots_created = 0;
+    renderStats.shots_reused = 0;
+    renderStats.shots_replaced = 0;
+    renderStats.shots_removed = 0;
+    renderStats.media_nodes_created = 0;
+    renderStats.media_nodes_reused = 0;
+    renderStats.media_activated = 0;
     reviewSnap = loadReviewSnapshot();   /* one parse per grid render */
     const root = $("shots");
     /* #50c (review find #1): a DIRECT re-render (filter chip, cockpit count,
@@ -3356,13 +3375,26 @@ _JS = r"""
       pendingHydrateShot = "";
       if (visible.some((s) => s.id === want)) kbSetFocus(want);
     }
-    try {
-      saveUI({ shotsScroll: root.scrollTop });
-    } catch (e) { /* */ }
+    /* Do NOT saveUI({shotsScroll}) here — renderShots runs on every poll and
+     * would spam POST /api/ui-state. Scroll is persisted on scrollend only. */
     const t1 = (typeof performance !== "undefined" && performance.now)
       ? performance.now() : Date.now();
     renderStats.render_duration_ms = Math.round(t1 - t0);
   }
+
+  /* Debounced scroll persistence (cross-port restore). */
+  (() => {
+    const root = $("shots");
+    if (!root || root.dataset.scrollBound) return;
+    root.dataset.scrollBound = "1";
+    let t = null;
+    root.addEventListener("scroll", () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        try { saveUI({ shotsScroll: root.scrollTop }); } catch (e) { /* */ }
+      }, 400);
+    }, { passive: true });
+  })();
 
   function shotCard(shot, idx, total) {
     const card = el("section", "shot");

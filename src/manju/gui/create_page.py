@@ -126,7 +126,9 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/create.css">\n'
         + GLOSSARY_HEAD
-        + '<script src="/common.js" defer></script>\n<script src="/create.js" defer></script>\n'
+        + '<script src="/webclient.js" defer></script>\n'
+        + '<script src="/common.js" defer></script>\n'
+        + '<script src="/create.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="{_e(active)}" class="{bcls}">\n'
         + nav

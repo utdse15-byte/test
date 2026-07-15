@@ -63,7 +63,9 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/director.css">\n'
-        '<script src="/common.js" defer></script>\n<script src="/director.js" defer></script>\n'
+        '<script src="/webclient.js" defer></script>\n'
+        '<script src="/common.js" defer></script>\n'
+        '<script src="/director.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="{_e(active)}">\n'
         + nav_html(active)

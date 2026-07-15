@@ -343,19 +343,18 @@ class GuiServer(ThreadingHTTPServer):
         if self.runner.worker_alive:
             _log.warning(
                 "gui close: runner still alive after coordinator grace; "
-                "server_close proceeds (write ops remain rejected via closing)")
-            # Cancel queued one more time; do not force-kill a writing worker.
+                "refusing to pretend clean exit — canceling queued only, "
+                "then closing listen socket (worker may still finish current job)")
             try:
                 self.runner.shutdown(timeout=0.5, cancel_queued=True,
                                      cancel_running=False)
             except Exception as exc:
                 _log.warning("gui close runner.shutdown: %s", exc)
         try:
-            if not self._quit.stuck:
-                self.server_close()
-            else:
-                # stuck: keep socket open for status; still try close on CLI exit
-                self.server_close()
+            # Always close the listen socket on CLI exit so the process can end.
+            # Worker is daemon=True so process can exit after; project writes
+            # from a still-running job remain a residual risk — logged above.
+            self.server_close()
         except Exception as exc:
             _log.warning("gui close server_close: %s", exc)
 
