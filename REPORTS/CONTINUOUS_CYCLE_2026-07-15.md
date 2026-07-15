@@ -141,3 +141,9 @@ Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
 ## Cycles 8-9
 - C8 `c44af71`: funnel plan_done locale-only
 - C9 `90e4479`: director suggest_next locale-only honesty
+
+---
+## Cycles 10-11
+- C10 `bdacdb2`/`81c93b2`: Build/QC job-running tooltips
+- C11 `a9b0e42`: export center locale final rows
+Loop continues...
