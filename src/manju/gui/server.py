@@ -5228,6 +5228,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         def fn(job) -> dict[str, Any]:
+            from ..build.graph import WaitingUser
             from .edit_engine import HandleRebuildError, run_handle_rebuild
 
             try:
@@ -5237,6 +5238,13 @@ class _Handler(BaseHTTPRequestHandler):
                     actor=actor, assume_yes=assume_yes,
                     # C51: cancel mid-generate / mid-trim.
                     should_cancel=job.should_cancel)
+            except WaitingUser as exc:
+                # C64: spend gate → waiting_user (not failed).
+                return {
+                    "waiting_user": True,
+                    "errors": [" ".join(str(exc).split())[:500]],
+                    "shot": shot_id,
+                }
             except HandleRebuildError as exc:
                 # C54: cancel phrasing → JobRunner canceled when cancel_event set.
                 msg = " ".join(str(exc).split())

@@ -288,8 +288,15 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
         # in-memory shot's duration (never written back — a redo is append-only).
         plan.shot.duration = extended_ms / 1000.0
         plan.cost, plan.currency = _estimate_shot_cost(plan.shot, extended_ms)
-        spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
-                   hint=f"确认后补拍手柄:{shot_id}(带 assume_yes / --yes)")
+        try:
+            spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
+                       hint=f"确认后补拍手柄:{shot_id}(带 assume_yes / --yes)")
+        except Exception as exc:
+            # C64: re-raise WaitingUser for GUI to map to waiting_user result.
+            from ..build.graph import WaitingUser
+            if isinstance(exc, WaitingUser):
+                raise
+            raise
         # C51: thread cancel into redo generate (cloud/ComfyUI poll).
         try:
             gen_takes = _run_redo(
