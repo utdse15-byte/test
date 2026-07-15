@@ -1653,8 +1653,18 @@ class _Handler(BaseHTTPRequestHandler):
                     "errors": [" ".join(str(exc).split())[:500]],
                     "shot": shot_id,
                 }
-            except PreviewUnavailable as exc:
-                return {"ok": False, "error": str(exc), "code": "tts_unavailable"}
+            except Exception as exc:
+                # C83: mid-preview cancel → canceled (not failed / unavailable).
+                from ..providers.base import ProviderCanceled
+                if isinstance(exc, ProviderCanceled):
+                    return {
+                        "canceled": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                        "shot": shot_id,
+                    }
+                if isinstance(exc, PreviewUnavailable):
+                    return {"ok": False, "error": str(exc), "code": "tts_unavailable"}
+                raise
             return {
                 "ok": True,
                 "preview": info["preview"],
