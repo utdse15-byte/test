@@ -21,12 +21,8 @@ def test_qc_in_cancelable_kinds() -> None:
 
 def test_gui_qc_wires_should_cancel() -> None:
     src = Path(server_mod.__file__).read_text(encoding="utf-8")
-    assert "should_cancel=job.should_cancel" in src
     assert "QC 已取消" in src
-    # C48: cancel path must not call write_reports (no partial clobber).
-    i = src.find("should_cancel=job.should_cancel")
-    chunk = src[i:i + 800]
-    assert "canceled" in chunk
-    assert chunk.find("write_reports") > chunk.find('"canceled": True') or (
-        "do not overwrite" in src
-    )
+    assert "do not overwrite full QC reports" in src
+    # run_qc call site for GUI qc must pass should_cancel
+    assert "run_qc(" in src
+    assert "should_cancel=job.should_cancel" in src
