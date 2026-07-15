@@ -183,3 +183,7 @@ Loop continues...
 - C18 job kind single ZH label
 - C19 locale voice skip on budget trip
 
+
+## Cycle 20
+- `a0856f9` TTS preview catch honesty
+
