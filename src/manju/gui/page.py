@@ -2774,6 +2774,9 @@ _JS = r"""
          * both false straight off the same dict, so nothing below adds them. */
         row.appendChild(el("span", "jnote", j.note));
       }
+      if (j.state === "canceling") {
+        row.appendChild(el("span", "muted", "取消中…"));
+      }
       if (j.cancelable) {
         const cancelBtn = el("button", "btn mini ghost", "取消");
         cancelBtn.type = "button";

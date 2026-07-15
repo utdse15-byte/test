@@ -379,7 +379,7 @@ _DIRECTOR_JS = r"""
     post("/api/director/confirm", { id: id }).then(function (res) {
       if (res.status === 200) { toast("已确认 " + id + " — 现在可执行", true); reloadSoon(); }
       else toast((res.data && res.data.error) || "确认失败", false);
-    });
+    }).catch(function () { toast("网络错误", false); });
   }
   function doRun(id, btn) {
     if (btn) { btn.disabled = true; btn.textContent = "执行中…"; }
@@ -392,6 +392,9 @@ _DIRECTOR_JS = r"""
         if (btn) { btn.disabled = false; btn.textContent = "执行 execute"; }
         toast((res.data && res.data.error) || "执行失败", false);
       }
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = "执行 execute"; }
+      toast("网络错误", false);
     });
   }
   function doReject(id) {

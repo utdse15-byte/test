@@ -257,7 +257,7 @@ _EXPORTS_JS = r"""
   function generateOne(kind) {
     setBusy(kind, true);
     return post("/api/exports/generate", { kind: kind }).then(function (res) {
-      if (res.status === 202 && res.data.job) {
+      if ((res.status === 202 || res.status === 200) && res.data && res.data.job) {
         return pollJob(res.data.job.id).then(function (job) {
           setBusy(kind, false);
           if (job && job.state === "done") return true;
