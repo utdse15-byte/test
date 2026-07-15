@@ -1604,7 +1604,18 @@ class _Handler(BaseHTTPRequestHandler):
             # C25: wire job cancel into cloud/ComfyUI poll via GenerationRequest.
             if "should_cancel" in sig:
                 kwargs["should_cancel"] = job.should_cancel
-            takes = redo_shot(project, shot_id, **kwargs)
+            try:
+                takes = redo_shot(project, shot_id, **kwargs)
+            except Exception as exc:
+                # C62: spend gate → waiting_user result (not failed job).
+                from ..build.graph import WaitingUser
+                if isinstance(exc, WaitingUser):
+                    return {
+                        "waiting_user": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                        "shot": shot_id,
+                    }
+                raise
             return {"shot": shot_id, "takes": takes}
 
         job = self.server.runner.submit("redo", params, fn)
@@ -1685,9 +1696,20 @@ class _Handler(BaseHTTPRequestHandler):
             manifest = getattr(tts, "manifest", None)
             cost = getattr(manifest, "cost", None) if manifest is not None else None
             if cost is not None:
-                spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
-                          hint=f"确认后重试:GUI 配音带 assume_yes,"
-                               f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+                try:
+                    spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
+                              hint=f"确认后重试:GUI 配音带 assume_yes,"
+                                   f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+                except Exception as exc:
+                    # C62: spend gate → waiting_user (not failed).
+                    from ..build.graph import WaitingUser
+                    if isinstance(exc, WaitingUser):
+                        return {
+                            "waiting_user": True,
+                            "errors": [" ".join(str(exc).split())[:500]],
+                            "shot": shot_id,
+                        }
+                    raise
             # C24: thread job cancel into async TTS poll when adapter supports it.
             synth_kwargs: dict[str, Any] = {}
             try:

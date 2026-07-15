@@ -2853,8 +2853,8 @@ _JS = r"""
       if (jobLang) {
         row.appendChild(el("span", "muted jlang", "·" + String(jobLang)));
       }
-      /* C1 UX: waiting_user builds are state=done with a flag — show 待确认 not plain done. */
-      const waitSpend = j.kind === "build" && j.result && j.result.waiting_user === true;
+      /* C1/C62 UX: waiting_user jobs (build/redo/voice…) show 待确认 not plain done. */
+      const waitSpend = j.result && j.result.waiting_user === true;
       const STATE_ZH = {
         queued: "排队中", running: "运行中", canceling: "取消中",
         canceled: "已取消", done: "完成", failed: "失败", interrupted: "已中断",
