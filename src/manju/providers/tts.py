@@ -36,7 +36,13 @@ from ..core.container import Project
 from ..core.hashing import hash_value
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
 from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
-from .base import FailureKind, ProviderFailure, probe_media, status_to_kind
+from .base import (
+    FailureKind,
+    ProviderCanceled,
+    ProviderFailure,
+    probe_media,
+    status_to_kind,
+)
 from .jsonpath import JsonPathError, extract
 from .manifest import GENERIC_TTS_ADAPTER, ProviderManifest, load_manifests
 
@@ -215,13 +221,11 @@ class GenericTtsProvider:
         assert poll_cfg is not None
         elapsed, i = 0.0, 0
         while True:
-            # C12: cooperative cancel between poll rounds (locale/GUI cancel).
+            # C12/C27: cooperative cancel between poll rounds (locale/GUI cancel).
+            # ProviderCanceled (not ProviderFailure) so run_build locale path and
+            # generate_with_fallback treat this as stop-waiting, not a failed spend.
             if should_cancel is not None and should_cancel():
-                raise ProviderFailure(
-                    FailureKind.provider_error,
-                    f"{self.id}: poll canceled for job {job_id}",
-                    detail={"job_id": job_id, "canceled": True},
-                )
+                raise ProviderCanceled(self.id, job_id)
             resp = self._transport(
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )

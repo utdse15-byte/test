@@ -165,6 +165,20 @@ def synthesize_locale_voices(
                 ):
                     kwargs["should_cancel"] = should_cancel
                 media = tts.synthesize(project, shot, bible, **kwargs)
+            except Exception as exc:
+                # C27: mid-poll cancel must surface as BuildCanceled, never as
+                # a locale voice "failed" spend (graph except Exception path).
+                from ..providers.base import ProviderCanceled
+                from .graph import BuildCanceled
+
+                if isinstance(exc, ProviderCanceled):
+                    raise BuildCanceled(
+                        f"已取消(locale voice:{lang}):{exc}",
+                        generated=list(generated),
+                        spent=0.0,
+                        currency=None,
+                    ) from exc
+                raise
             finally:
                 project.register_voice_take = orig  # type: ignore[method-assign]
             generated.append(f"{sid}/locales/{lang}/{media.stem}")
