@@ -156,3 +156,7 @@ Loop continues...
 ## Cycles 12-13
 - C12 TTS poll should_cancel
 - C13 status locale_finals + CLI display
+
+## Cycle 14
+- `571ba0e` GUI locale_finals in state+strip
+
