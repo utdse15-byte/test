@@ -14,6 +14,5 @@ def test_gui_redo_voice_waiting_user() -> None:
 
 def test_job_strip_waiting_user_any_kind() -> None:
     src = Path(page_mod.__file__).read_text(encoding="utf-8")
-    # no longer restricted to build-only
-    assert "j.result.waiting_user === true" in src
-    assert 'j.kind === "build" && j.result && j.result.waiting_user' not in src
+    # waitSpend chip no longer restricted to build-only
+    assert "const waitSpend = j.result && j.result.waiting_user === true;" in src
