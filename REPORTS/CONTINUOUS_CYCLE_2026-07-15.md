@@ -389,3 +389,13 @@ Loop continues...
 - Broad suite: **173 passed** (cycle* + bugfix + merge_blockers + no_proxy)
 - Commits since 81d6206: 116
 - HEAD continuous; loop continues toward ~10h
+
+## Cycles 73-75
+- C73 voice_preview spend pin
+- C74 handle_rebuild SPEND_KINDS
+- C75 pin handle_rebuild spend path
+- Broad suite: 173 passed
+
+## Continuous (2026-07-15T06:49:01.1031053-07:00)
+- 119 commits since 81d6206
+- Still looping toward ~10h
