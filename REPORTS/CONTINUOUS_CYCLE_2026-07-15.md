@@ -121,9 +121,9 @@ Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
 - Locale cancel swallowed as failed; lang QC base fallback; MCP qc path/timeline; cancelable lie; plan-failed still proceed; edit 180s poll
 
 ### 6B+C Fixes
-- graph BuildCanceled re-raise; lang QC hard fail no base; MCP resolve+overlay; CANCELABLE_RUNNING_KINDS; plan modal no ÈÔÒª¼ÌÐø; edit 600s poll; job ZH+progress; exportstatus locale note; SPA post holdDisable
+- graph BuildCanceled re-raise; lang QC hard fail no base; MCP resolve+overlay; CANCELABLE_RUNNING_KINDS; plan modal no ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½; edit 600s poll; job ZH+progress; exportstatus locale note; SPA post holdDisable
 - Tests: test_cycle6_bugfix_20260715.py
-- Verify: 63 passed (c6+subset+gui) ¡ú cycle6_tests.log
+- Verify: 63 passed (c6+subset+gui) ï¿½ï¿½ cycle6_tests.log
 
 
 ---
@@ -167,7 +167,7 @@ Loop continues...
 
 
 ## Cycle 17
-- `7181c01` job kind ÖÐÎÄ chips
+- `7181c01` job kind ï¿½ï¿½ï¿½ï¿½ chips
 
 
 ## Cycles 18-19
@@ -191,11 +191,11 @@ Loop continues...
 ## Continuous loop status (2026-07-15T06:08:42.7765602-07:00)
 - HEAD `117f999`
 - Commits since 81d6206: 34
-- Latest suite: 60 passed (cycle pins + merge_blockers + job_cancel + no_proxy) ¡ú `{SCRATCH}/cycle_tests.log`
-- Still looping: scan ¡ú fix ¡ú UX ¡ú re-verify
+- Latest suite: 60 passed (cycle pins + merge_blockers + job_cancel + no_proxy) ï¿½ï¿½ `{SCRATCH}/cycle_tests.log`
+- Still looping: scan ï¿½ï¿½ fix ï¿½ï¿½ UX ï¿½ï¿½ re-verify
 
 ## Cycle 21
-- `9175687` TTS synthesize should_cancel ¡ú poll
+- `9175687` TTS synthesize should_cancel ï¿½ï¿½ poll
 
 
 ## Cycle 22
