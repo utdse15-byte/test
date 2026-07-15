@@ -99,6 +99,18 @@ def _read_capped(resp, url: str, max_bytes: int | None) -> bytes:
     return b"".join(chunks)
 
 
+def _is_loopback_host(host: str | None) -> bool:
+    """True for localhost / 127.0.0.1 / ::1 — must never go through HTTP_PROXY.
+
+    C35: corporate Windows proxies commonly break ComfyUI and other local
+    adapters (502 via 127.0.0.1:proxy) when urlopen inherits env proxies.
+    """
+    if not host:
+        return False
+    h = host.strip().lower().strip("[]")
+    return h in ("localhost", "127.0.0.1", "::1") or h.startswith("127.")
+
+
 def default_transport(method: str, url: str, headers: dict[str, str],
                       body: bytes | None) -> HttpResponse:
     scheme = urllib.parse.urlsplit(url).scheme.lower()
@@ -113,8 +125,15 @@ def default_transport(method: str, url: str, headers: dict[str, str],
         )
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     max_bytes = _max_response_bytes()
+    host = urllib.parse.urlsplit(url).hostname
+    # C35: loopback must bypass system HTTP(S)_PROXY (personal Windows proxy).
+    if _is_loopback_host(host):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        open_url = opener.open
+    else:
+        open_url = urllib.request.urlopen
     try:
-        with urllib.request.urlopen(request, timeout=60) as resp:
+        with open_url(request, timeout=60) as resp:
             return HttpResponse(resp.status, dict(resp.headers),
                                 _read_capped(resp, url, max_bytes))
     except urllib.error.HTTPError as exc:  # still a response — classify upstream
