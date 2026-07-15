@@ -2789,6 +2789,14 @@ _JS = r"""
       if (j.progress && (j.state === "running" || j.state === "canceling")) {
         row.appendChild(el("span", "muted jprog", String(j.progress)));
       }
+      if (j.kind) {
+        const KIND_ZH = {
+          build: "构建", redo: "重做", voice: "配音", redo_batch: "批量重做",
+          voice_batch: "批量配音", qc: "质检", repair: "修复", export: "导出",
+        };
+        const klab = KIND_ZH[j.kind] || j.kind;
+        row.appendChild(el("span", "chip", klab));
+      }
       /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
        * cancelable/retryable come straight from Job.to_dict() so the client
        * never re-derives the state-machine rule. */
