@@ -398,6 +398,8 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
 
 
 def _h_redo(project: Project, args: dict) -> dict:
+    # C59: assume_yes must reach spend_gate — agents otherwise always hit
+    # WaitingUser on priced providers with no way to confirm mid-tool.
     takes = redo_shot(
         project,
         args["shot_id"],
@@ -405,6 +407,7 @@ def _h_redo(project: Project, args: dict) -> dict:
         provider=args.get("provider"),
         seed=args.get("seed"),
         actor="ai",
+        assume_yes=bool(args.get("assume_yes", False)),
     )
     return {"takes": takes}
 
@@ -887,13 +890,18 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "name": "redo",
         "description": "Force new takes for one shot (append-only; an existing "
         "selection stands unless the shot had none). May call paid providers "
-        "and spend real money (重做即生成,会花钱); the spend gate/budget apply.",
+        "and spend real money (重做即生成,会花钱); the spend gate/budget apply. "
+        "Pass assume_yes=true only after the human confirmed the estimate.",
         "inputSchema": _schema(
             {
                 "shot_id": {"type": "string"},
                 "candidates": {"type": "integer"},
                 "provider": {"type": "string"},
                 "seed": {"type": "integer"},
+                "assume_yes": {
+                    "type": "boolean",
+                    "description": "Confirm spend gate (§8.3); default false",
+                },
             },
             ["shot_id"],
         ),
