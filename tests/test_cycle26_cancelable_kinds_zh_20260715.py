@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from manju.gui import page as page_mod
+from manju.core import jobkinds
 from manju.gui.jobs import CANCELABLE_RUNNING_KINDS, Job
 
 
@@ -34,8 +32,9 @@ def test_ingest_running_is_cancelable() -> None:
 
 
 def test_kind_zh_covers_ingest_and_series() -> None:
-    src = Path(page_mod.__file__).read_text(encoding="utf-8")
-    assert "ingest_plan: \"导入计划\"" in src or "ingest_plan: '导入计划'" in src
-    assert "series_sync_bible" in src
-    assert "导入应用" in src
-    assert "同步设定" in src
+    # Behavioral (P1 item 2/4): the labels resolve from the authoritative
+    # registry, not a hard-coded frontend map.
+    labels = jobkinds.display_labels()
+    assert labels["ingest_plan"] == "导入计划"
+    assert labels["ingest"] == "导入应用"
+    assert labels["series_sync_bible"] == "同步设定"

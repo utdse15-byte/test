@@ -38,6 +38,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core import jobkinds as _jobkinds
+
 __all__ = [
     "Job",
     "JobRunner",
@@ -50,40 +52,22 @@ __all__ = [
 # Keep this many finished jobs around for the UI; older ones are dropped.
 _HISTORY_CAP = 50
 
-# Job kinds for which ``_build_retry_fn`` can rebuild the work closure (P1-9).
-# Keep in lockstep with ``gui/server.py`` ``_build_retry_fn`` allow-list.
-RETRYABLE_KINDS = frozenset({
-    "build", "redo", "voice", "redo_batch", "voice_batch",
-})
-
-# C6: only kinds that actually honor should_cancel / cancel_event mid-run.
-# Other kinds still accept cancel on queued jobs, but running cancel is a lie.
-CANCELABLE_RUNNING_KINDS = frozenset({
-    "build", "redo_batch", "voice_batch",
-    # C24: single-shot voice threads should_cancel into GenericTtsProvider
-    # poll when the adapter signature supports it (see gui/server.py).
-    "voice",
-    # C25: single-shot redo threads should_cancel into GenerationRequest
-    # (cloud/ComfyUI poll) via redo_shot(..., should_cancel=...).
-    "redo",
-    # C26: kind strings must match JobRunner.submit() exactly
-    # (was ingest_apply / series_sync / edit_preview — wrong aliases).
-    "ingest_plan", "ingest", "series_sync_bible",
-    "edit_preview_batch",
-    # C31: voice_preview threads should_cancel into ttspreview synthesize.
-    "voice_preview",
-    # C33: export wraps packaging ffmpeg in cancel_scope(job.should_cancel).
-    "export",
-    # C34: repair wraps ffmpeg repair_ops in cancel_scope.
-    "repair",
-    # C46: run_qc samples should_cancel between major check batches.
-    "qc",
-    # C51: handle_rebuild threads should_cancel into redo + ffmpeg trim.
-    "handle_rebuild",
-    # C52: roundtrip apply checks cancel between selected rows.
-    "roundtrip",
-    # series_new_episode deliberately omitted: fn does not sample should_cancel.
-})
+# Both sets are now DERIVED from the single authoritative registry
+# (``core.jobkinds``) — job-kind metadata is declared exactly once there and
+# these are views onto it. The contents are byte-identical to the historical
+# hand-maintained frozensets (pinned by tests/test_project_bugfix_20260715.py
+# and the cycle-* cancel tests); to change membership, edit the registry.
+#
+# RETRYABLE_KINDS: kinds for which ``gui/server.py`` ``_build_retry_fn`` can
+# rebuild the work closure (P1-9); kept in lockstep with that allow-list by
+# tests/test_jobkinds_registry.py.
+#
+# CANCELABLE_RUNNING_KINDS (C6): only kinds that actually honor should_cancel /
+# cancel_event mid-run. Other kinds still accept cancel on a queued job, but
+# calling running-cancel a success would be a lie. series_new_episode and
+# edit_preview are deliberately absent (their fns do not sample should_cancel).
+RETRYABLE_KINDS = _jobkinds.retryable_kinds()
+CANCELABLE_RUNNING_KINDS = _jobkinds.cancelable_running_kinds()
 
 # jobs.jsonl (round AA4): disposable operational history, capped/rewritten to
 # this many newest lines on every JobRunner construction — see module
