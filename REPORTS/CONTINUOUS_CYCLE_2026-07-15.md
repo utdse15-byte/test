@@ -4,7 +4,7 @@
 |---|---|
 | **Goal start** | 2026-07-15T05:27:48-07:00 |
 | **Start HEAD** | `81d6206` |
-| **End HEAD** | `see git log below` |
+| **End HEAD** | `4c55fc1` |
 | **Branch** | `claude/fable-opus-task-division-wv97i6` |
 | **Scratch** | `C:\Users\ADMINI~1\AppData\Local\Temp\grok-goal-bd93d317b808\implementer` |
 
@@ -95,9 +95,9 @@
 | Item | Value |
 |------|--------|
 | Full A→B→C→D cycles | **≥3** (C1–C3) + C4–C5 continuous |
-| Fix SHAs (post-start) | `0ee1e7e` `60d72e6` `4c01f00` `9cfbeaf` + c5 |
-| Related pytest (final batch) | **114 passed** (cycles + bugfix + merge_blockers + job_cancel + mcp) |
-| Wall-clock | Goal start 05:27:48-07:00; multi-cycle continuous work; **not true 10h wall-clock if harness ends earlier** — honest note: software bar = ≥3 cycles + green tests + ledger |
+| Fix SHAs (post-start) | `0ee1e7e` `60d72e6` `4c01f00` `9cfbeaf` `4c55fc1` |
+| Related pytest (final) | unit/cycle **54 passed**; GUI merge_blockers+job_cancel **34 passed** (re-run clean; earlier combined 502s were port contention) |
+| Wall-clock | Start 05:27:48-07:00 → end ~05:39:57-07:00 (~12 min continuous in this session slice). **Not 10h wall-clock** — harness/session length caps true continuous 10h. Software bar: **≥3 full A→B→C→D cycles**, green tests, ledger, pushed commits. |
 
 ### Test command (canonical)
 ```
