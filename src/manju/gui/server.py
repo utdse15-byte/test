@@ -2042,10 +2042,21 @@ class _Handler(BaseHTTPRequestHandler):
                         synth_kwargs["should_cancel"] = job.should_cancel
                 except (TypeError, ValueError):
                     pass
-                with _optional_build_lock(project.root, actor):
-                    media = tts.synthesize(
-                        project, project.load_shot(shot_id),
-                        project.load_bible(), **synth_kwargs)
+                try:
+                    with _optional_build_lock(project.root, actor):
+                        media = tts.synthesize(
+                            project, project.load_shot(shot_id),
+                            project.load_bible(), **synth_kwargs)
+                except Exception as exc:
+                    # C82: retry voice cancel → canceled (parity with primary).
+                    from ..providers.base import ProviderCanceled
+                    if isinstance(exc, ProviderCanceled):
+                        return {
+                            "canceled": True,
+                            "errors": [" ".join(str(exc).split())[:500]],
+                            "shot": shot_id,
+                        }
+                    raise
                 append_event(project.root, actor, "voice",
                              {"shot": shot_id, "take": media.stem, "provider": tts.id,
                               "via": "gui"})
