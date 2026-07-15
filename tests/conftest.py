@@ -57,6 +57,28 @@ def _isolate_providers(monkeypatch, tmp_path):
     monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path / "_providers_conftest"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_http_proxy(monkeypatch):
+    """GUI HTTP tests hit 127.0.0.1; system HTTP_PROXY (e.g. 127.0.0.1:10090)
+    hijacks urllib and returns 502. Clear proxy env for every test and install
+    a no-proxy opener so localhost never routes through a broken corporate
+    proxy (continuous-goal skeptic failure on merge_blockers/job_cancel)."""
+    import urllib.request
+
+    for key in (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "all_proxy",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    urllib.request.install_opener(opener)
+    yield
+    # Restore default opener after the test so nothing bleeds into other tools.
+    urllib.request.install_opener(urllib.request.build_opener())
+
+
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Project:
     """A freshly scaffolded project with a minimal, valid Bible.

@@ -484,8 +484,10 @@ def _request(server, path, *, method="GET", body=None, headers=None):
     req.add_header("Content-Type", "application/json")
     for k, v in (headers or {}).items():
         req.add_header(k, v)
+    # Never honor system HTTP_PROXY for loopback GUI tests (502 via proxy).
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with opener.open(req, timeout=15) as resp:
             payload = resp.read()
             return resp.status, json.loads(payload or b"{}")
     except urllib.error.HTTPError as exc:

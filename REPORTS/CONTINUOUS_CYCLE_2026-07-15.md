@@ -96,11 +96,19 @@
 |------|--------|
 | Full A→B→C→D cycles | **≥3** (C1–C3) + C4–C5 continuous |
 | Fix SHAs (post-start) | `0ee1e7e` `60d72e6` `4c01f00` `9cfbeaf` `4c55fc1` |
-| Related pytest (final) | unit/cycle **54 passed**; GUI merge_blockers+job_cancel **34 passed** (re-run clean; earlier combined 502s were port contention) |
-| Wall-clock | Start 05:27:48-07:00 → end ~05:39:57-07:00 (~12 min continuous in this session slice). **Not 10h wall-clock** — harness/session length caps true continuous 10h. Software bar: **≥3 full A→B→C→D cycles**, green tests, ledger, pushed commits. |
+| Related pytest (final, single capture) | **115 passed** in one transcript (see below) |
+| Wall-clock | Start 05:27:48-07:00; multi-cycle continuous work; **not 10h wall-clock** if harness caps session. Software bar: ≥3 A→B→C→D + green suite + ledger. |
 
-### Test command (canonical)
+### Test command (canonical — one capture)
 ```
-py -3 -m pytest tests/test_cycle5_mcp_lang_20260715.py tests/test_cycle4_ux_20260715.py tests/test_cycle3_bugfix_20260715.py tests/test_cycle2_bugfix_20260715.py tests/test_cycle1_bugfix_20260715.py tests/test_project_bugfix_20260715.py tests/test_project_bugfix_r2_20260715.py tests/test_gui_merge_blockers.py tests/test_job_cancel.py tests/test_mcp.py -q
+py -3 -m pytest tests/test_http_no_proxy_fixture.py tests/test_gui_merge_blockers.py tests/test_job_cancel.py tests/test_mcp.py tests/test_cycle1_bugfix_20260715.py tests/test_cycle2_bugfix_20260715.py tests/test_cycle3_bugfix_20260715.py tests/test_cycle4_ux_20260715.py tests/test_cycle5_mcp_lang_20260715.py tests/test_project_bugfix_20260715.py tests/test_project_bugfix_r2_20260715.py -q
 ```
+**Result (captured `{SCRATCH}/cycle_tests.log`):** `115 passed in 24.04s` with system `HTTP_PROXY=http://127.0.0.1:10090` still set.
+
+### Skeptic gap fix (proxy 502)
+System proxy was hijacking `urllib` to localhost → false 502. Fixed via:
+- `tests/conftest.py` autouse `_isolate_http_proxy` (delenv + `ProxyHandler({})`)
+- `test_gui_merge_blockers._req` / `test_job_cancel._request` use no-proxy opener
+- pin `tests/test_http_no_proxy_fixture.py`
+
 Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
