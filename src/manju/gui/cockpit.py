@@ -259,10 +259,21 @@ def _next_action(project: Project, status: Any, sugg: Any) -> dict[str, Any]:
     # C50: status next_step_key build_locale wins when base is done but
     # locale lines still lack finals (see build/status.py C49).
     if isinstance(status, dict) and status.get("next_step_key") == "build_locale":
+        # C55: extract first lang from next_step text for hero build params.
+        lang_hint = None
+        label = human or ""
+        if "--lang " in label:
+            try:
+                lang_hint = label.split("--lang ", 1)[1].split()[0].strip()
+            except Exception:
+                lang_hint = None
+        action = {"type": "build", "target": "final"}
+        if lang_hint:
+            action["lang"] = lang_hint
         return {
             "verb": "build",
             "text": human or "构建 locale 成片 (build locale final)",
-            "action": {"type": "build", "target": "final"},
+            "action": action,
             "shot": None,
             "kind": "build_locale",
             "human_label": human,

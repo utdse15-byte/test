@@ -1665,11 +1665,18 @@ _JS = r"""
       regen_stale: !!action.regen_stale,
       force: !!action.force,
     };
+    /* C55: locale next-step hero carries action.lang into plan + build. */
+    if (action.lang) params.lang = action.lang;
     showPlanModal("build", params, {
-      title: "构建前计划 (plan before build)",
+      title: params.lang
+        ? ("构建前计划 · locale " + params.lang)
+        : "构建前计划 (plan before build)",
       onConfirm: async () => {
         const confirmed = Object.assign({}, params, { dry_run: false, assume_yes: true });
-        const data = await post(null, "/api/build", confirmed, "构建任务已入队 (build queued)");
+        const msg = params.lang
+          ? ("构建任务已入队 (locale " + params.lang + ")")
+          : "构建任务已入队 (build queued)";
+        const data = await post(null, "/api/build", confirmed, msg);
         const gate = spendGateOf(data);   /* SYNCHRONOUS waiting_user, if any */
         if (gate) {
           spendSig = "sync:" + Date.now();

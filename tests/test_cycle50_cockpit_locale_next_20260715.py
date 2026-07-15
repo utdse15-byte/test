@@ -9,3 +9,5 @@ def test_cockpit_honors_build_locale_key() -> None:
     src = Path(cockpit_mod.__file__).read_text(encoding="utf-8")
     assert "build_locale" in src
     assert 'next_step_key") == "build_locale"' in src or "build_locale" in src
+    # C55: hero action may carry lang
+    assert 'action["lang"]' in src or "lang_hint" in src
