@@ -2763,6 +2763,18 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
 
     bible = project.load_bible()
     tts = get_tts_provider(provider_id)
+    # C28: mid-poll cancel for adapters that accept should_cancel (GenericTts).
+    import inspect
+
+    synth_kwargs: dict[str, Any] = {}
+    try:
+        if (
+            should_cancel is not None
+            and "should_cancel" in inspect.signature(tts.synthesize).parameters
+        ):
+            synth_kwargs["should_cancel"] = should_cancel
+    except (TypeError, ValueError):
+        pass
     for sid in to_run:
         # goal: honest job cancellation — same "before the next item" checkpoint
         # as redo_batch above.
@@ -2775,12 +2787,22 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
             )
             break
         try:
-            media = tts.synthesize(project, project.load_shot(sid), bible)
+            media = tts.synthesize(
+                project, project.load_shot(sid), bible, **synth_kwargs)
             result.takes[sid] = [media.stem]
             result.ran.append(sid)
             append_event(project.root, actor, "voice",
                          {"shot": sid, "take": media.stem, "provider": provider_id})
         except Exception as exc:
+            # C28: mid-poll ProviderCanceled is batch cancel, not a failed shot.
+            from ..providers.base import ProviderCanceled
+            if isinstance(exc, ProviderCanceled):
+                result.canceled = True
+                result.errors.append(
+                    f"已取消等待:{sid} 配音中止(远程任务可能仍在进行;"
+                    f"job id 已记录) — {exc}"
+                )
+                break
             result.failed.append({"shot": sid, "reason": _failure_reason(exc)})
 
     result.actual_cost = _sum_actual_voice_cost(project, result.takes)
