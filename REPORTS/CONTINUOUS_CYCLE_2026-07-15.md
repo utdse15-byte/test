@@ -258,3 +258,13 @@ Loop continues...
 ## Continuous (2026-07-15T06:28:24.1581362-07:00)
 - Commits since 81d6206: 64+
 - Loop continues scan → fix → UX → re-verify
+
+## Cycles 43-45
+- C43 `3e209f6` build retry preserves lang
+- C44 `6ccf969` MCP build validates lang
+- C45 declared locales in GUI state + lang select marks
+
+## Continuous (2026-07-15T06:30:43.2366845-07:00)
+- 165 passed (cycle* + bugfix + merge_blockers + no_proxy + mcp) pre-C45
+- Commits since 81d6206: 68+
+- Still looping toward ~10h
