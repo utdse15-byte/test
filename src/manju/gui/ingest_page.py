@@ -204,8 +204,12 @@ _INGEST_JS = r"""
   // as a failure. ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
-    return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
-      var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
+    var opts = (typeof manjuApiOptions === "function") ? manjuApiOptions() : {};
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/jobs", undefined, opts)
+      : fetch("/api/jobs").then(function (r) { return r.json(); });
+    return p.then(function (d) {
+      var job = ((d && d.jobs) || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
       return job || null;
     }).catch(function () { return null; }).then(function (job) {
@@ -497,7 +501,7 @@ _INGEST_JS = r"""
   function loadBatches(preferId) {
     var sel = document.getElementById("ing-rv-batch");
     if (!sel) return Promise.resolve();
-    return fetch("/api/ingest/batches").then(function (r) { return r.json(); }).then(function (d) {
+    return (typeof requestJson==="function"?requestJson("GET","/api/ingest/batches",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/ingest/batches").then(function(r){return r.json();})).then(function (d) {
       var batches = d.batches || [];
       sel.innerHTML = "";
       batches.forEach(function (b) {
@@ -520,11 +524,19 @@ _INGEST_JS = r"""
 
   function loadBatchDetail(batchIdToLoad) {
     if (!batchIdToLoad) return Promise.resolve();
-    return fetch("/api/ingest/batch?id=" + encodeURIComponent(batchIdToLoad)).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (d) {
-        return { status: r.status, data: d };
-      });
-    }).then(function (res) {
+    var opts = (typeof manjuApiOptions === "function") ? manjuApiOptions() : {};
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/ingest/batch?id=" + encodeURIComponent(batchIdToLoad), undefined, opts)
+          .then(function (d) { return { status: 200, data: d }; })
+          .catch(function (err) {
+            return { status: (err && err.status) || 500, data: (err && err.data) || {} };
+          })
+      : fetch("/api/ingest/batch?id=" + encodeURIComponent(batchIdToLoad)).then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (d) {
+            return { status: r.status, data: d };
+          });
+        });
+    return p.then(function (res) {
       if (res.status !== 200) {
         toast((res.data && res.data.error) || "加载批次失败", false);
         return;

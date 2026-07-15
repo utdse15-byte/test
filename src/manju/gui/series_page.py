@@ -666,8 +666,12 @@ _SERIES_JS = r"""
   // ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
-    return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
-      var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
+    var opts = (typeof manjuApiOptions === "function") ? manjuApiOptions() : {};
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/jobs", undefined, opts)
+      : fetch("/api/jobs").then(function (r) { return r.json(); });
+    return p.then(function (d) {
+      var job = ((d && d.jobs) || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
       return job || null;
     }).catch(function () { return null; }).then(function (job) {

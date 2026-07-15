@@ -857,8 +857,12 @@ _LAB_JS = r"""
   // as a failure. ~10min cap; a transient fetch error retries, never rejects.
   function pollJob(jobId, tries) {
     tries = tries || 0;
-    return fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
-      var job = (d.jobs || []).filter(function (j) { return j.id === jobId; })[0];
+    var opts = (typeof manjuApiOptions === "function") ? manjuApiOptions() : {};
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/jobs", undefined, opts)
+      : fetch("/api/jobs").then(function (r) { return r.json(); });
+    return p.then(function (d) {
+      var job = ((d && d.jobs) || []).filter(function (j) { return j.id === jobId; })[0];
       if (job && (job.state === "done" || job.state === "failed")) return job;
       return job || null;
     }).catch(function () { return null; }).then(function (job) {
@@ -948,7 +952,7 @@ _LAB_JS = r"""
     var prov = document.getElementById("lab-gen-provider");
     var q = "shot=" + encodeURIComponent(SHOT);
     if (prov && prov.value.trim()) q += "&provider=" + encodeURIComponent(prov.value.trim());
-    fetch("/api/lab/generate-plan?" + q).then(function (r) { return r.json(); }).then(function (d) {
+    (typeof requestJson==="function"?requestJson("GET","/api/lab/generate-plan?"+q,undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/lab/generate-plan?"+q).then(function(r){return r.json();})).then(function (d) {
       var el = document.getElementById("lab-gendelta");
       if (!el || !d || !d.draft) return;
       var cur = quality === "draft" ? d.draft : d.final;

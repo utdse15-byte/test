@@ -1040,8 +1040,7 @@ _PAGES_T_JS = r"""
     var coverSect = document.querySelector('[data-section="cover"]');
     var final = coverSect ? coverSect.getAttribute("data-final") : "";
     if (final) {
-      fetch("/api/strip?src=" + encodeURIComponent(final) + "&count=12")
-        .then(function (r) { return r.json(); })
+      (typeof requestJson==="function"?requestJson("GET","/api/strip?src="+encodeURIComponent(final)+"&count=12",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/strip?src="+encodeURIComponent(final)+"&count=12").then(function(r){return r.json();}))
         .then(function (d) {
           buildStrip("cover-strip", d.frames, function (ms) { setCoverMs(ms); markStrip("cover-strip", ms); });
           buildTeaserStrip(d.frames);

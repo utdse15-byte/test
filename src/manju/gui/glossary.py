@@ -388,8 +388,9 @@ _GLOSSARY_JS = r"""
       wsMenu.appendChild(loading);
       wsMenu.classList.remove("hidden");
       wsBtn.setAttribute("aria-expanded", "true");
-      fetch("/api/workspace/recents")
-        .then(function (r) { return r.json(); })
+      (typeof requestJson === "function"
+        ? requestJson("GET", "/api/workspace/recents", undefined, apiOpts())
+        : fetch("/api/workspace/recents").then(function (r) { return r.json(); }))
         .then(wsRender)
         .catch(function () {
           wsClear(wsMenu);

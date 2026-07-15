@@ -53,6 +53,7 @@ from .project_action import (
     project_public_dict,
 )
 from .session import ProjectSession
+from .shutdown import AppShutdownCoordinator
 from .state import build_state, project_identity
 
 __all__ = ["GuiServer", "create_server", "serve"]
@@ -184,9 +185,7 @@ class GuiServer(ThreadingHTTPServer):
         self._session_lock = threading.Lock()
         self.closing = threading.Event()
         self.app_mode = bool(app_mode)
-        self._quit_mode: str | None = None
-        self._quit_thread: threading.Thread | None = None
-        self._quit_lock = threading.Lock()
+        self._quit = AppShutdownCoordinator(self)
         # Ephemeral runner only used while unbound (no jobs.jsonl); replaced
         # by the session runner on first bind. Never shared across projects.
         self._unbound_runner = JobRunner(None, project_id="")
@@ -310,7 +309,8 @@ class GuiServer(ThreadingHTTPServer):
         return {
             "app_mode": self.app_mode,
             "closing": self.closing.is_set(),
-            "quit_mode": self._quit_mode,
+            "quit_mode": self._quit.mode,
+            "quit_in_progress": self._quit.in_progress,
             "runner_state": rstate,
             "running_job": running,
             "queued_count": queued,
@@ -318,83 +318,8 @@ class GuiServer(ThreadingHTTPServer):
         }
 
     def request_shutdown(self, mode: str = "after_current") -> dict[str, Any]:
-        """Begin coordinated quit. Idempotent; does not block the HTTP thread.
-
-        mode:
-          - ``after_current``: cancel queued, let running finish
-          - ``cancel_running``: cancel queued + cooperative cancel of running
-        """
-        if mode not in ("after_current", "cancel_running"):
-            mode = "after_current"
-        with self._quit_lock:
-            already = self.closing.is_set()
-            self.closing.set()
-            self._quit_mode = mode
-            if self._quit_thread is not None and self._quit_thread.is_alive():
-                return {
-                    "ok": True,
-                    "code": "quit_already_in_progress",
-                    "mode": self._quit_mode,
-                    "status": self.app_status(),
-                }
-            # Kick runner into CLOSING immediately (cancel queued; optional running).
-            report = self.runner.shutdown(
-                timeout=0,
-                cancel_queued=True,
-                cancel_running=(mode == "cancel_running"),
-            )
-            thr = threading.Thread(
-                target=self._finish_shutdown,
-                name="manju-gui-quit",
-                daemon=False,
-            )
-            self._quit_thread = thr
-            thr.start()
-            return {
-                "ok": True,
-                "code": "quit_started" if not already else "quit_already_in_progress",
-                "mode": mode,
-                "shutdown_report": {
-                    "stopped": report.stopped,
-                    "canceled_queued": list(report.canceled_queued),
-                    "running_job_id": report.running_job_id,
-                },
-                "status": self.app_status(),
-            }
-
-    def _finish_shutdown(self) -> None:
-        """Background: wait for runner, then stop accepting HTTP."""
-        try:
-            # Brief pause so the /api/app/quit response can flush before we
-            # tear down the listening socket (idempotent second quit must
-            # still reach the handler when the runner is already idle).
-            time.sleep(0.2)
-            report = self.runner.shutdown(
-                timeout=None,
-                cancel_queued=True,
-                cancel_running=(self._quit_mode == "cancel_running"),
-            )
-            if not report.stopped:
-                _log.warning(
-                    "gui shutdown: runner still alive after wait "
-                    "(running=%s canceled_queued=%s)",
-                    report.running_job_id, report.canceled_queued)
-                # One more short attempt before tearing down the socket.
-                report = self.runner.shutdown(timeout=30.0, cancel_queued=True,
-                                              cancel_running=True)
-                if not report.stopped:
-                    _log.error(
-                        "gui shutdown: runner did not stop; forcing server_close")
-            try:
-                self.shutdown()
-            except Exception as exc:
-                _log.warning("gui HTTP shutdown(): %s", exc)
-            try:
-                self.server_close()
-            except Exception as exc:
-                _log.warning("gui server_close(): %s", exc)
-        except Exception:
-            _log.exception("gui _finish_shutdown failed")
+        """Begin coordinated quit via :class:`AppShutdownCoordinator`."""
+        return self._quit.request(mode)
 
     def close(self) -> None:
         """CLI/KeyboardInterrupt path: cancel queued, wait briefly, close socket.
@@ -402,8 +327,6 @@ class GuiServer(ThreadingHTTPServer):
         Does not swallow runner failures silently — logs on timeout.
         """
         self.closing.set()
-        if self._quit_mode is None:
-            self._quit_mode = "after_current"
         report = self.runner.shutdown(
             timeout=1.0, cancel_queued=True, cancel_running=False)
         if not report.stopped:

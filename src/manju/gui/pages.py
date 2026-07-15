@@ -2154,8 +2154,7 @@ _PAGES_JS = r"""
       }
       else if (act === "route") {
         var box = s.querySelector(".rv-explain");
-        fetch("/api/route-explain?shot=" + encodeURIComponent(shot))
-          .then(function (r) { return r.json(); })
+        (typeof requestJson==="function"?requestJson("GET","/api/route-explain?shot="+encodeURIComponent(shot),undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/route-explain?shot="+encodeURIComponent(shot)).then(function(r){return r.json();}))
           .then(function (d) {
             box.hidden = false;
             box.textContent = "";
@@ -2436,8 +2435,7 @@ _PAGES_JS = r"""
     if (exp) exp.addEventListener("click", function () {
       var sel = document.getElementById("rt-explain-shot");
       var box = document.getElementById("rt-explain-out");
-      fetch("/api/route-explain?shot=" + encodeURIComponent(sel.value))
-        .then(function (r) { return r.json(); })
+      (typeof requestJson==="function"?requestJson("GET","/api/route-explain?shot="+encodeURIComponent(sel.value),undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/route-explain?shot="+encodeURIComponent(sel.value)).then(function(r){return r.json();}))
         .then(function (d) {
           box.textContent = "";
           if (d.error) { box.textContent = d.error; return; }

@@ -104,8 +104,10 @@ function post(url, body) {
  * browser's problem to report, not this watchdog's. */
 if (PROJECT) {
   setInterval(function () {
-    fetch("/api/project-id").then(function (r) { return r.json(); })
-      .then(function (d) {
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/project-id", undefined, { token: TOKEN || "" })
+      : fetch("/api/project-id").then(function (r) { return r.json(); });
+    p.then(function (d) {
         if (d && typeof d.token === "string" && d.token !== PROJECT) {
           projectSwitchedOverlay(d.name);
         }

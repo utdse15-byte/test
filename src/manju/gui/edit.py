@@ -1761,7 +1761,7 @@ _EDIT_JS = r"""
   function pollJob(id, done) {
     var deadline = Date.now() + 180000;
     (function tick() {
-      fetch("/api/jobs").then(function (r) { return r.json(); }).then(function (d) {
+      (typeof requestJson==="function"?requestJson("GET","/api/jobs",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/jobs").then(function(r){return r.json();})).then(function (d) {
         var job = (d.jobs || []).filter(function (j) { return j.id === id; })[0];
         if (job && (job.state === "done" || job.state === "failed")) { done(job); return; }
         if (Date.now() > deadline) { done(null); return; }
@@ -2262,7 +2262,7 @@ _EDIT_JS = r"""
     });
   }
   function t2LoadManifest(cb) {
-    fetch("/api/edit/playback-manifest").then(function (r) { return r.json(); })
+    (typeof requestJson==="function"?requestJson("GET","/api/edit/playback-manifest",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/edit/playback-manifest").then(function(r){return r.json();}))
       .then(function (d) {
         t2Manifest = d;
         t2RenderClipStatus();
@@ -2436,7 +2436,7 @@ _EDIT_JS = r"""
     var note = document.getElementById("ed-sync-note");
     var list = document.getElementById("ed-synchints-list");
     if (!list) return;
-    fetch("/api/edit/synchints").then(function (r) { return r.json(); }).then(function (d) {
+    (typeof requestJson==="function"?requestJson("GET","/api/edit/synchints",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/edit/synchints").then(function(r){return r.json();})).then(function (d) {
       window.__edHints = d.hints || [];
       placeHintMarks();
       list.textContent = "";
@@ -2688,7 +2688,7 @@ _EDIT_JS = r"""
     });
   }
   function undoLoad() {
-    fetch("/api/edit/undo").then(function (r) { return r.json(); }).then(function (d) {
+    (typeof requestJson==="function"?requestJson("GET","/api/edit/undo",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/edit/undo").then(function(r){return r.json();})).then(function (d) {
       undoRender(d.events || []);
     }).catch(function () {});
   }
@@ -2727,7 +2727,7 @@ _EDIT_JS = r"""
   // Ctrl+Z / Ctrl+Shift+Z: honest git-backed undo/redo of the last edit (redo is
   // the same op on the newest event — a revert is itself an event, §C).
   function revertNewest() {
-    fetch("/api/edit/undo").then(function (r) { return r.json(); }).then(function (d) {
+    (typeof requestJson==="function"?requestJson("GET","/api/edit/undo",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/edit/undo").then(function(r){return r.json();})).then(function (d) {
       var items = d.events || [], top = null;
       for (var i = 0; i < items.length; i++) { if (items[i].revertable) { top = items[i]; break; } }
       if (!top) { toast("没有可撤销的改动", false); return; }
@@ -2782,7 +2782,7 @@ _EDIT_JS = r"""
   // endpoint (the page GET no longer recompiles via build.explain for them) —
   // the same lazy idiom the review boards use. A fetch failure leaves the
   // badges hidden (an honest "unknown"), never a blank or an error.
-  fetch("/api/edit/dirty").then(function (r) { return r.json(); }).then(function (d) {
+  (typeof requestJson==="function"?requestJson("GET","/api/edit/dirty",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/edit/dirty").then(function(r){return r.json();})).then(function (d) {
     if (!d || !d.unbuilt) return;
     var chip = document.getElementById("ed-dirty-chip");
     if (chip) { chip.hidden = false; if (d.why) chip.title = d.why; }

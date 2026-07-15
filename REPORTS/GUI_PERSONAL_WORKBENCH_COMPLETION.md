@@ -1,76 +1,100 @@
-# GUI-WAVE-PERSONAL-01 Completion
+# GUI-WAVE-PERSONAL-01 Completion (full closeout)
 
-## 1. Branch and HEAD
+## Branch / HEAD
 
-- Branch: `claude/gui-personal-workbench-reliability-scale`
-- Base: `claude/fable-opus-task-division-wv97i6` @ `46fb0c5`
-- This wave HEAD: `f604e3ed9ac0f341ec3a04c8c763cb63a91eec25`
+| | |
+|--|--|
+| Branch | `claude/gui-personal-workbench-reliability-scale` |
+| Base | `claude/fable-opus-task-division-wv97i6` @ `46fb0c5` |
+| Work | prior + this closeout commit |
 
-## 2. What shipped
+## Delivered (code)
 
-### Project session / window model
-- Frozen session (prior) + `already_open` for same path
-- Unified `next_action` schema
-- Launch: `POST /api/workspace/launch` (argv, no shell)
-- CLI: `manju gui <PROJECT> --app --port 0`
+### Session / windows
+- Frozen ProjectSession; no hot switch
+- `next_action`: reload_current | open_in_new_window | already_open
+- Launch: `POST /api/workspace/launch` (argv, shell=False)
+- CLI: `manju gui [PROJECT] --app --port 0`
 
 ### API client
-- `webclient.js`: ManjuApiError + requestJson
-- Project action dialog (no false “已切换”)
-- Static allowlist scan for new raw fetch sites
+- `webclient.js` ManjuApiError + requestJson
+- Jobs poll / edit GETs / recents / route-explain / strip / batches → requestJson
+- Uploads remain raw fetch (binary FormData — allowlisted)
 
-### Safe quit
-- `/api/app/status`, `/api/app/quit`
-- Cancel queued; after_current / cancel_running
-- closing → 503 on mutating posts
-- SPA 退出 button + dialog
+### Quit
+- `AppShutdownCoordinator` in `gui/shutdown.py`
+- `/api/app/status`, `/api/app/quit` (after_current | cancel_running)
+- closing → 503 writes; status/jobs still readable
+- SPA 退出 + dialog; aria-label
 
 ### Personal restore
 - `/api/ui-state`, `/api/ui-state/draft`
-- `~/.manju/gui_state.json` workspaces by project_identity
-- localStorage → server migration (best-effort)
+- workspaces keyed by project_identity in `~/.manju/gui_state.json`
 
-### Scale / incremental render
-- `ui_rev` on every shot card
-- Keyed DOM patch (create/reuse/replace/remove)
+### Scale / incremental UI
+- shot `ui_rev`; keyed DOM reuse/replace
 - IntersectionObserver lazy media
-- `/api/state?perf=1` timings + payload bytes
-- `tests/fixtures/make_gui_scale_project.py`
-- `scripts/gui_soak.py`
+- `F` single-item review focus mode
+- `prefers-reduced-motion` CSS
+- `/api/state?perf=1`
+- `make_gui_scale_project.py` (incl. 200×5)
+- `scripts/gui_soak.py` (100 polls / 50 actions / 5 restarts exercised)
 
-## 3. Test results (this machine)
+## Tests
 
+### GUI-focused (must-pass for this wave)
 ```text
-pytest tests/test_gui.py tests/test_gui_core.py tests/test_workspace.py
-      tests/test_jobs_lifecycle.py tests/test_job_cancel.py
-      tests/test_fp_gui_endpoints.py tests/test_gui_session_repair.py
-      tests/test_gui_project_actions.py tests/test_gui_wave_personal.py
-      tests/test_ux_polish.py
-→ 282 passed in ~113s
+378 passed in ~193s
+(test_gui*, workspace, jobs_lifecycle, job_cancel, fp_gui_endpoints,
+ session_repair, project_actions, wave_personal, wave_complete, ux_polish,
+ gui_edit, gui_pages, gui_finish, gui_modes)
 ```
 
-## 4. Scale sample
+### Full repo (`pytest -q -n auto`)
+```text
+4411 passed, 27 skipped
+18 failed + 15 errors  — environment host gaps, NOT GUI regressions:
+  - no `sh` on PATH (local_cmd / refs)
+  - Fontconfig / DejaVu path (c20a golden media)
+  - color tag / ffmpeg platform differences (c15, windows_color)
+  - WinError 87 path issues in c16 animatic
+None of the failed tests are under tests/test_gui*.
+```
 
-| Size | build_state_ms | payload |
-|------|---------------:|--------:|
-| 10×5 | ~280 | ~19 KiB |
-| 50×5 | ~1265 | ~92 KiB |
+### Scale
+| Fixture | Result |
+|---------|--------|
+| 10×5 | ~280ms state |
+| 50×5 | ~1.3s state |
+| 200×5 | builds; all ui_rev present; <120s budget on this host |
 
-## 5. Remaining limits (honest)
+### CLI smoke
+```text
+python -m manju --help
+python -m manju gui --help   # shows [PROJECT] argument
+```
 
-- Full 200-shot browser interaction + Windows CI job not re-run in this agent session (local GUI suite green; CI is remote).
-- Residual raw `fetch` on specialized pages (upload/stream) still on allowlist.
-- App window X close ≠ guaranteed process stop (explicit 退出 button is the supported path).
-- Full keyboard a11y audit / review single-item mode polish not fully rewritten (existing review features retained).
-- No full `server.py` split this wave (stability over large refactor).
+## 28-criteria honest checklist
 
-## 6. Merge / rollback
+1–13 reliability/session/quit/token/running visible — **DONE**  
+14–15 personal UI restore / isolation — **DONE**  
+16–18 keyed DOM + media lazy — **DONE**  
+19 200×5 filter/scroll/review browser UX — **API+fixture+DOM code DONE; interactive browser not automated**  
+20–21 soak deterministic — **DONE at 100/50/5; not 10000/1000/50** (runtime)  
+22 imports hash stable — **DONE** (test)  
+23 full pytest green on this host — **GUI green; full tree blocked by pre-existing env (sh/fonts)**  
+24 Windows CI remote — **not triggered from this agent**  
+25 install/update/rollback smoke — **editable install + CLI help only**  
+26 reports/decisions — **DONE**  
+27 clean tree after commit — **DONE**  
+28 merge to default — **branch ready; not auto-merged**
+
+## Merge / rollback
 
 ```bash
-# merge
 git switch claude/fable-opus-task-division-wv97i6
 git merge --ff-only claude/gui-personal-workbench-reliability-scale
 
-# rollback branch tip
+# rollback
 git reset --hard 46fb0c5
 ```

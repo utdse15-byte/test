@@ -371,6 +371,19 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
   padding: 1rem 1.1rem;
 }
 .shot.kb-focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Single-item review: dim non-active cards (F toggles). */
+#shots.review-focus section.shot:not(.rf-active) {
+  opacity: 0.28; filter: grayscale(0.4); max-height: 3.2rem; overflow: hidden;
+  pointer-events: none;
+}
+#shots.review-focus section.shot.rf-active {
+  opacity: 1; filter: none; outline: 2px solid var(--accent); outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jb-queued, .jb-running, .jb-canceling, .shot.kb-focus {
+    animation: none !important;
+  }
+}
 .shot-head { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; }
 .mvbtns { margin-left: auto; display: inline-flex; gap: .3rem; }
 .sid { font-size: 1.05rem; font-weight: 700; }
@@ -4941,10 +4954,29 @@ _JS = r"""
 
   /* --------------------------------------------- review keyboard mode --- */
   /* "?" toggles the hint bar; j/k walk the shot cards, e opens the editor,
-   * 1-9 select take N, space toggles the selected take's <video>. All of it
-   * is inert while an input/select/textarea or the editor dialog has focus. */
+   * 1-9 select take N, space toggles the selected take's <video>.
+   * F toggles single-item review focus (only the focused card stays expanded).
+   * All of it is inert while an input/select/textarea or the editor dialog has focus. */
   let kbFocusId = null;
   let kbHintOn = false;
+  let reviewFocusMode = false;  /* single-card review presentation */
+
+  function applyReviewFocusMode() {
+    const root = $("shots");
+    if (!root) return;
+    root.classList.toggle("review-focus", !!reviewFocusMode);
+    if (!reviewFocusMode) return;
+    root.querySelectorAll("section.shot").forEach((c) => {
+      const on = c.dataset.sid === kbFocusId;
+      c.classList.toggle("rf-active", on);
+      c.setAttribute("aria-hidden", on ? "false" : "true");
+      if (!on) {
+        c.querySelectorAll("video").forEach((v) => {
+          try { if (!v.paused) v.pause(); } catch (e) { /* */ }
+        });
+      }
+    });
+  }
 
   function kbHint() {
     kbHintOn = !kbHintOn;
@@ -4957,6 +4989,10 @@ _JS = r"""
       c.classList.toggle("kb-focus", c.dataset.sid === kbFocusId));
     const card = kbFocusId ? cardById(kbFocusId) : null;
     if (card) flashCard(card);   /* scroll + flash, like timeline clicks */
+    applyReviewFocusMode();
+    try {
+      saveUI({ lastShot: id || "", reviewPos: id || "" });
+    } catch (e) { /* */ }
   }
 
   function kbMove(delta) {
@@ -5498,6 +5534,23 @@ _JS = r"""
       if (kbFocusId && !readonly) openEditorFor(kbFocusId, null);
       return;
     }
+    if (k === "f" || k === "F") {
+      reviewFocusMode = !reviewFocusMode;
+      applyReviewFocusMode();
+      toast(reviewFocusMode
+        ? "单条审片模式 (single-item review)"
+        : "总览模式 (overview)", "ok");
+      return;
+    }
+    if (k === "n" || k === "N") {
+      /* jump to note editor on focused shot's selected take */
+      if (kbFocusId) {
+        const card = cardById(kbFocusId);
+        const noteBtn = card && card.querySelector(".tnote-edit-btn, .tacts .btn");
+        if (noteBtn) noteBtn.click();
+      }
+      return;
+    }
     /* keys with a native meaning stay native on interactive elements */
     if (tag === "button" || tag === "a" || tag === "video" ||
         tag === "audio" || tag === "summary") return;
@@ -5514,6 +5567,7 @@ _JS = r"""
     clear(hint);
     [["j/k", " 上/下一个镜头 (next/prev shot)"],
      ["e", " 编辑 (edit)"],
+     ["f", " 单条审片 (single-item review)"],
      ["1-9", " 选用 take (select take)"],
      ["Space", " 播放/暂停 (play/pause)"],
      ["r", " 刷新 (refresh)"],
@@ -5565,6 +5619,7 @@ _JS = r"""
       btn.type = "button";
       btn.id = "mj-quit-btn";
       btn.title = "安全退出 (finish or cancel jobs)";
+      btn.setAttribute("aria-label", "安全退出 Manju");
       btn.addEventListener("click", () => promptAppQuit());
       host.appendChild(btn);
     }).catch(() => {});
