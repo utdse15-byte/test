@@ -2106,7 +2106,16 @@ def _run_build_phases(
         qc_path = None
         if qc_final:
             qc_path = project.root / qc_final if not Path(qc_final).is_absolute() else Path(qc_final)
-        qc = run_qc(project, timeline, final_path=qc_path)
+        # C47: honor should_cancel during build --target qc phase batches.
+        qc = run_qc(project, timeline, final_path=qc_path, should_cancel=should_cancel)
+        if any((getattr(i, "message", "") or "").startswith("QC 已取消") for i in qc.items):
+            raise BuildCanceled(
+                "已取消(QC 阶段)",
+                generated=list(result.generated),
+                spent=float(spent_so_far.get("total") or 0.0),
+                currency=spent_so_far.get("currency"),
+                run_id=run_id,
+            )
         result.qc_ok = qc.ok
         result.qc_reports = {k: project.relpath(v) for k, v in write_reports(project, qc).items()}
         # DR03C: the run ran QC — attach the qc report refs to the run-level
