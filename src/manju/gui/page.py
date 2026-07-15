@@ -1228,6 +1228,7 @@ _JS = r"""
   let lastShots = [];      /* last state.shots (new-shot template needs the
                               first scene id; keyboard mode + reorder too) */
   let lastJobs = [];       /* last state.jobs (spend banner, switch cleanup) */
+  let lastLocaleFinals = {}; /* C38: locale finals for QC button lang pick */
   let lastDoneCount = -1;  /* done-job count: a finished job invalidates the
                               timeline fingerprint, git panel and proposals */
   let watchCtl = null;            /* AbortController of the in-flight watch */
@@ -1332,6 +1333,9 @@ _JS = r"""
     lastShots = Array.isArray(s.shots) ? s.shots : [];
     lastProjectName = (s.project && s.project.name) ? String(s.project.name) : "";
     lastJobs = jobs;
+    /* C38: remember locale finals for the QC button (no global STATE). */
+    lastLocaleFinals = (s.locale_finals && typeof s.locale_finals === "object")
+      ? s.locale_finals : {};
     const doneCount = jobs.filter((j) => j.state === "done").length;
     if (lastDoneCount >= 0 && doneCount > lastDoneCount) {
       tlForce = true;    /* a build may have recompiled the timeline */
@@ -2571,8 +2575,19 @@ _JS = r"""
         },
       });
     });
-    qcBtn = mkBtn("QC", "ghost", (btn) =>
-      post(btn, "/api/qc", {}, "QC 任务已入队 (qc queued)"));
+    qcBtn = mkBtn("QC", "ghost", (btn) => {
+      /* C38: when locale finals exist, probe the first lang — never silently
+       * QC base while only locale film is what the author shipped. Multi-lang
+       * projects get the sorted first key; CLI still supports --lang all. */
+      const body = {};
+      const lf = lastLocaleFinals || {};
+      const langs = Object.keys(lf).sort();
+      if (langs.length) body.lang = langs[0];
+      const msg = body.lang
+        ? ("QC 任务已入队 (locale " + body.lang + ")")
+        : "QC 任务已入队 (qc queued)";
+      post(btn, "/api/qc", body, msg);
+    });
     mkBtn("检查 (Check)", "ghost", async (btn) => {
       btn.disabled = true;
       try { renderCheck(out, await api("GET", "/api/check")); }
