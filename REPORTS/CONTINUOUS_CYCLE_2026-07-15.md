@@ -219,3 +219,14 @@ Loop continues...
 ## Continuous loop status (2026-07-15T06:14:49.7635232-07:00)
 - HEAD continuous; still looping scan → fix → UX → re-verify
 - Wall-clock session slice ongoing toward ~10h target
+
+## Cycles 28-31
+- C28 `f770e42` voice_batch mid-poll cancel + ProviderCanceled
+- C29 `2c6177d` Edge TTS should_cancel mid-stream; wider jkind
+- C30 `e39833d` non-cancelable honesty note; ASR ProviderCanceled
+- C31 `0b3ad25`/`a0b38ca` voice_preview cancelable + ttspreview wire
+
+## Continuous verify (2026-07-15T06:18:24.5807567-07:00)
+- Suite: 180 passed (cycle* + bugfix + merge_blockers + job_cancel + ttspreview + edge + comfyui + asr)
+- Commits since 81d6206: 49
+- Still looping toward ~10h wall-clock
