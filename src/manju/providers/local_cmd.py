@@ -58,6 +58,7 @@ from .base import (
     FailureKind,
     GenerationRequest,
     Provider,
+    ProviderCanceled,
     ProviderFailure,
     record_provider_failure,
 )
@@ -150,8 +151,25 @@ class LocalCommandProvider(Provider):
                     detail={"argv": argv,
                             "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
                 ) from exc
+            # C32: poll communicate in short slices so should_cancel can kill
+            # a long local generator without waiting for the full timeout_s.
+            stdout, stderr = "", ""
+            deadline = t0 + float(self._timeout_s)
             try:
-                stdout, stderr = proc.communicate(timeout=self._timeout_s)
+                while True:
+                    if req.should_cancel is not None and req.should_cancel():
+                        _kill_process_group(proc)
+                        _reap(proc)
+                        raise ProviderCanceled(self.id, f"local:{req.shot.id}")
+                    remaining = deadline - self._clock()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, self._timeout_s)
+                    slice_s = min(0.5, remaining)
+                    try:
+                        stdout, stderr = proc.communicate(timeout=slice_s)
+                        break  # process exited
+                    except subprocess.TimeoutExpired:
+                        continue
             except subprocess.TimeoutExpired as exc:
                 _kill_process_group(proc)  # reap the whole group, not just the child
                 stdout, stderr = _reap(proc)
