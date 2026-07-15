@@ -2493,6 +2493,29 @@ _JS = r"""
     };
     const target = mkSelect("目标 (target)", ["final", "proxy", "exports", "qc"]);
     const gen = mkSelect("生成 (gen)", ["missing", "auto", "off"]);
+    /* C40: language select — empty = base; locale ids for multi-lang builds.
+     * Preset common codes so first locale build is possible before any final. */
+    const lang = mkSelect("语言 (lang)", [""]);
+    lang.options[0].textContent = "base (母语)";
+    const LANG_PRESETS = ["en", "en-US", "ja", "ko", "zh-TW", "zh-HK"];
+    const refreshLangOptions = () => {
+      const cur = lang.value;
+      const known = Object.keys(lastLocaleFinals || {});
+      const all = [];
+      LANG_PRESETS.forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      known.sort().forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      while (lang.options.length > 1) lang.remove(1);
+      all.forEach((k) => {
+        const o = document.createElement("option");
+        o.value = k;
+        o.textContent = k + (known.indexOf(k) >= 0 ? " ✓" : "");
+        lang.appendChild(o);
+      });
+      if (cur && Array.from(lang.options).some((o) => o.value === cur)) {
+        lang.value = cur;
+      }
+    };
+    refreshLangOptions();
     const regen = mkCheck("重做过期 (regen stale)");
     const force = mkCheck("强制 (force)");
     root.appendChild(row);
@@ -2502,6 +2525,7 @@ _JS = r"""
     let estSeq = 0;
     updateEstimate = async () => {
       if (readonly || !buildBtn) return;
+      refreshLangOptions();
       const seq = ++estSeq;
       try {
         const data = await api("POST", "/api/build", buildBody(true));
@@ -2515,17 +2539,22 @@ _JS = r"""
         buildBtn.classList.toggle("spendy", cost > 0);
       } catch (err) { /* advisory only: the button stays plain */ }
     };
-    [target, gen, regen, force].forEach((c) =>
+    [target, gen, lang, regen, force].forEach((c) =>
       c.addEventListener("change", () => updateEstimate()));
 
     const out = el("div", "panel-out");
-    const buildBody = (dry) => ({
-      target: target.value,
-      gen: gen.value,
-      regen_stale: regen.checked,
-      force: force.checked,
-      dry_run: dry,
-    });
+    const buildBody = (dry) => {
+      const body = {
+        target: target.value,
+        gen: gen.value,
+        regen_stale: regen.checked,
+        force: force.checked,
+        dry_run: dry,
+      };
+      /* C40: only send lang when non-base so default path stays byte-identical. */
+      if (lang.value) body.lang = lang.value;
+      return body;
+    };
 
     const btns = el("div", "btnrow");
     const mkBtn = (label, cls, fn) => {
