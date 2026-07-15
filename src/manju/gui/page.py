@@ -2838,6 +2838,7 @@ _JS = r"""
         series_new_episode: "新建集", series_sync_bible: "同步设定",
         edit_preview: "剪辑预览", edit_preview_batch: "批量预览",
         voice_preview: "试听",
+        handle_rebuild: "补拍手柄", roundtrip: "外部回写",
       };
       row.appendChild(el("span", "jkind", KIND_ZH[j.kind] || j.kind || "?"));
       /* C42: show locale tag when job params/result carry lang (build/qc). */

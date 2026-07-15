@@ -5194,9 +5194,12 @@ class _Handler(BaseHTTPRequestHandler):
         def fn(job) -> dict[str, Any]:
             from .edit_engine import run_handle_rebuild
 
-            return run_handle_rebuild(project, shot_id, transition_ms=transition_ms,
-                                      provider=proposed_provider,
-                                      actor=actor, assume_yes=assume_yes)
+            return run_handle_rebuild(
+                project, shot_id, transition_ms=transition_ms,
+                provider=proposed_provider,
+                actor=actor, assume_yes=assume_yes,
+                # C51: cancel mid-generate / mid-trim.
+                should_cancel=job.should_cancel)
 
         job = self.server.runner.submit(
             "handle_rebuild", {"shot": shot_id}, fn)

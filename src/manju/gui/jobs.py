@@ -78,6 +78,8 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     "repair",
     # C46: run_qc samples should_cancel between major check batches.
     "qc",
+    # C51: handle_rebuild threads should_cancel into redo + ffmpeg trim.
+    "handle_rebuild",
     # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 

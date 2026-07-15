@@ -235,7 +235,8 @@ def handle_rebuild_proposal(project: Any, shot_id: str, *,
 
 def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None = None,
                        provider: str | None = None,
-                       actor: str = "human", assume_yes: bool = False) -> dict[str, Any]:
+                       actor: str = "human", assume_yes: bool = False,
+                       should_cancel=None) -> dict[str, Any]:
     """Execute 补拍手柄: regenerate ``shot_id`` at the extended duration through
     the existing redo path, then virtual-trim back to the centred content span.
 
@@ -289,7 +290,10 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
         plan.cost, plan.currency = _estimate_shot_cost(plan.shot, extended_ms)
         spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
                    hint=f"确认后补拍手柄:{shot_id}(带 assume_yes / --yes)")
-        gen_takes = _run_redo(project, plan, bible=bible, rules=rules, actor=actor)
+        # C51: thread cancel into redo generate (cloud/ComfyUI poll).
+        gen_takes = _run_redo(
+            project, plan, bible=bible, rules=rules, actor=actor,
+            should_cancel=should_cancel)
         if not gen_takes:
             raise HandleRebuildError(f"{shot_id}: 生成失败,没有可裁剪的加长素材")
         gen_take = gen_takes[-1]
@@ -309,7 +313,13 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
         keep = max(1, min(clip_ms, real_ms - 2))
         in_ms = max(0, (real_ms - keep) // 2)
         out_ms = in_ms + keep
-        trim = set_inout_take(project, shot_id, gen_take, in_ms, out_ms, mode="virtual")
+        from ..media.ffmpeg import MediaCanceled, cancel_scope
+        with cancel_scope(should_cancel):
+            try:
+                trim = set_inout_take(
+                    project, shot_id, gen_take, in_ms, out_ms, mode="virtual")
+            except MediaCanceled as exc:
+                raise HandleRebuildError(f"已取消补拍手柄: {exc}") from exc
 
         append_event(project.root, actor, "handle_rebuild",
                      {"shot": shot_id, "gen_take": gen_take, "trim_take": trim.name,
