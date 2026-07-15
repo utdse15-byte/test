@@ -4759,7 +4759,7 @@ class _Handler(BaseHTTPRequestHandler):
         def fn(job) -> dict[str, Any]:
             import inspect
 
-            from ..build.graph import redo_shot
+            from ..build.graph import WaitingUser, redo_shot
 
             kwargs: dict[str, Any] = dict(
                 provider=str(provider) if provider else None, actor=actor)
@@ -4769,7 +4769,17 @@ class _Handler(BaseHTTPRequestHandler):
             # C25: lab generate is a redo job — same cancel wire.
             if "should_cancel" in sig:
                 kwargs["should_cancel"] = job.should_cancel
-            takes = redo_shot(project, shot_id, **kwargs)
+            try:
+                takes = redo_shot(project, shot_id, **kwargs)
+            except WaitingUser as exc:
+                # C65: lab generate spend gate → waiting_user (not failed).
+                return {
+                    "waiting_user": True,
+                    "errors": [" ".join(str(exc).split())[:500]],
+                    "shot": shot_id,
+                    "quality": quality,
+                    "provider": provider,
+                }
             return {"shot": shot_id, "quality": quality, "provider": provider,
                     "takes": takes}
 
