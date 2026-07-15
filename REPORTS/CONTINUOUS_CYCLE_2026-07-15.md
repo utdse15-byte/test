@@ -197,3 +197,25 @@ Loop continues...
 ## Cycle 21
 - `9175687` TTS synthesize should_cancel ¡ú poll
 
+
+## Cycle 22
+- `a1e43cd` ComfyUI /history poll should_cancel via ProviderCanceled
+
+## Cycle 23
+- `1af980d` ASR async poll should_cancel
+
+## Cycle 24
+- `8bb7c52` single-shot voice cancelable + TTS should_cancel wire
+
+## Cycle 25
+- `8e51638` redo_shot should_cancel; redo cancelable in GUI
+
+## Cycle 26
+- `96297e6` cancelable kind names match submit(); KIND_ZH ingest/series
+
+## Cycle 27
+- TTS ProviderCanceled + locale BuildCanceled map
+
+## Continuous loop status (2026-07-15T06:14:49.7635232-07:00)
+- HEAD continuous; still looping scan â†’ fix â†’ UX â†’ re-verify
+- Wall-clock session slice ongoing toward ~10h target
