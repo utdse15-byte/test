@@ -11,6 +11,7 @@ not by restaging video.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 from typing import Any

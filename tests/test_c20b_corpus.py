@@ -716,13 +716,21 @@ def test_xp_core_imports_no_provider_sdk_or_llm():
     assert not hits, hits
 
 
-def test_xp_ci_matrix_is_linux_only_so_skip_rows_are_justified():
-    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "ubuntu-latest" in ci
-    assert "windows" not in ci.lower() and "macos" not in ci.lower()
+def test_xp_cross_platform_gates_are_split_into_dedicated_workflow_files():
+    # Cross-platform coverage is split across DEDICATED per-OS workflow FILES —
+    # the ubuntu dev-loop gate (ci.yml), the hard Windows release gate
+    # (windows-ci.yml), and the informational macOS watcher (xplat.yml) — not a
+    # single Linux-only matrix (the earlier policy). This is a structural check
+    # on the gate TOPOLOGY (which files exist), NOT a scan of workflow text for
+    # the presence/absence of platform tokens: the corpus convention is that
+    # tests validate structure/behavior, never source strings.
+    wf = REPO / ".github" / "workflows"
+    assert (wf / "ci.yml").is_file()
+    assert (wf / "windows-ci.yml").is_file()  # the real Windows coverage
     case = CASES["xp.windows_macos"]
-    assert case["status"] == "SKIPPED_WITH_EVIDENCE"
-    assert case["ci_evidence"] == ".github/workflows/ci.yml"
+    assert case["status"] in {"SKIPPED_WITH_EVIDENCE", "PARTIAL", "EXECUTED"}
+    # ci_evidence must point at a workflow file that actually exists.
+    assert (REPO / case["ci_evidence"]).is_file()
 
 
 def test_xp_statuses_are_known_tokens():

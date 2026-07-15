@@ -1,28 +1,35 @@
-# Cross-platform INFORMATIONAL matrix (FP continuation, user item 3 / roadmap §8.8).
+# macOS INFORMATIONAL watcher (never a gate).
 #
-# Purpose: surface Windows/macOS breakage in the OS-portable layers (path
-# handling, YAML/JSON contracts, rational-time math, CLI surface freeze,
-# registry consistency) WITHOUT gating merges — ubuntu ci.yml remains the one
-# acceptance gate. Jobs are continue-on-error: a red row here is a signal to
-# read, never a block. The subset deliberately excludes everything that needs
-# ffmpeg/tesseract/chromium or renders media — those stay Linux-CI-only until
-# a real cross-platform toolchain story exists (recorded in DECISIONS).
-name: xplat-informational
+# Role in the validation model (see STATE.md): "macOS / exploratory
+# cross-platform checks — manual or scheduled." It surfaces macOS breakage in
+# the OS-portable layers (path handling, YAML/JSON contracts, rational-time
+# math, CLI surface freeze, registry consistency) WITHOUT gating merges.
+# continue-on-error: a red row here is a signal to read, never a block.
+#
+# Scope note (cross-platform policy cleanup): Windows is NO LONGER run here.
+# It has its own HARD gate (windows-ci.yml) that runs the full suite with real
+# FFmpeg on every merge/release candidate, so mirroring a pure subset of it in
+# this informational matrix was outdated. This watcher is macOS-only now. The
+# subset still excludes everything that needs ffmpeg/tesseract/chromium or
+# renders media — those stay on the real-toolchain gates (recorded in DECISIONS).
+name: xplat-informational (macOS)
 
 on:
-  push:
-    branches: ["claude/cost-optimization-strategy-cjfmn5", "main"]
+  # Scheduled + manual only — informational, not per-commit. (Weekly, Monday
+  # 06:00 UTC.) No push/PR triggers: this must never sit in the merge queue.
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pure-suites:
-    name: ${{ matrix.os }} (informational)
-    runs-on: ${{ matrix.os }}
+    name: macos-latest (informational)
+    runs-on: macos-latest
     continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
