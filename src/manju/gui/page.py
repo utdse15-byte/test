@@ -1229,6 +1229,7 @@ _JS = r"""
                               first scene id; keyboard mode + reorder too) */
   let lastJobs = [];       /* last state.jobs (spend banner, switch cleanup) */
   let lastLocaleFinals = {}; /* C38: locale finals for QC button lang pick */
+  let lastLocales = [];      /* C45: declared locales (lines.yaml) for lang select */
   let lastDoneCount = -1;  /* done-job count: a finished job invalidates the
                               timeline fingerprint, git panel and proposals */
   let watchCtl = null;            /* AbortController of the in-flight watch */
@@ -1336,6 +1337,8 @@ _JS = r"""
     /* C38: remember locale finals for the QC button (no global STATE). */
     lastLocaleFinals = (s.locale_finals && typeof s.locale_finals === "object")
       ? s.locale_finals : {};
+    /* C45: declared locales (lines.yaml) for build lang select. */
+    lastLocales = Array.isArray(s.locales) ? s.locales.slice() : [];
     const doneCount = jobs.filter((j) => j.state === "done").length;
     if (lastDoneCount >= 0 && doneCount > lastDoneCount) {
       tlForce = true;    /* a build may have recompiled the timeline */
@@ -2500,15 +2503,20 @@ _JS = r"""
     const LANG_PRESETS = ["en", "en-US", "ja", "ko", "zh-TW", "zh-HK"];
     const refreshLangOptions = () => {
       const cur = lang.value;
-      const known = Object.keys(lastLocaleFinals || {});
+      const finals = Object.keys(lastLocaleFinals || {});
+      const declared = Array.isArray(lastLocales) ? lastLocales.slice() : [];
       const all = [];
       LANG_PRESETS.forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
-      known.sort().forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      declared.sort().forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      finals.sort().forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
       while (lang.options.length > 1) lang.remove(1);
       all.forEach((k) => {
         const o = document.createElement("option");
         o.value = k;
-        o.textContent = k + (known.indexOf(k) >= 0 ? " ✓" : "");
+        let mark = "";
+        if (finals.indexOf(k) >= 0) mark = " ✓成片";
+        else if (declared.indexOf(k) >= 0) mark = " ·台词";
+        o.textContent = k + mark;
         lang.appendChild(o);
       });
       if (cur && Array.from(lang.options).some((o) => o.value === cur)) {
