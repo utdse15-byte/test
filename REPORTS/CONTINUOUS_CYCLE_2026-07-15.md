@@ -169,3 +169,12 @@ Loop continues...
 ## Cycle 17
 - `7181c01` job kind ÖÐÎÄ chips
 
+
+## Cycles 18-19
+- C18 job kind single ZH label
+- C19 locale voice skip on budget trip
+## Progress
+- HEAD continuous from 81d6206; 30+ commits
+- Latest full capture: 101+ passed in cycle_tests.log
+- Wall-clock still session-bound; loop continues while session lives
+

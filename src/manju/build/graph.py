@@ -1559,11 +1559,18 @@ def _run_build_phases(
         if lang:
             from .locale_build import synthesize_locale_voices
             # R2-P0-1: run_build already holds build_lock — do not re-acquire.
+            # C19: if video already blew past budget, skip locale voice spends too.
+            if budget is not None and spent_so_far["total"] > float(budget):
+                result.warnings.append(
+                    f"预算已到上限:跳过 locale 配音 {len(voice_plan)} 条"
+                    f"(实际花费 {spent_so_far['total']} > budget.limit={budget})"
+                )
+                voice_plan = []
             try:
                 gen_paths = synthesize_locale_voices(
                     project, voice_plan, lang=lang, actor=actor,
                     hold_lock=False, should_cancel=should_cancel,
-                )
+                ) if voice_plan else []
                 result.generated.extend(gen_paths)
             except BuildCanceled as exc:
                 # C6: cancel must stay canceled (not swallowed as failed).
