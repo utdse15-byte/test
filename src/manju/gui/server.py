@@ -5192,14 +5192,21 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         def fn(job) -> dict[str, Any]:
-            from .edit_engine import run_handle_rebuild
+            from .edit_engine import HandleRebuildError, run_handle_rebuild
 
-            return run_handle_rebuild(
-                project, shot_id, transition_ms=transition_ms,
-                provider=proposed_provider,
-                actor=actor, assume_yes=assume_yes,
-                # C51: cancel mid-generate / mid-trim.
-                should_cancel=job.should_cancel)
+            try:
+                return run_handle_rebuild(
+                    project, shot_id, transition_ms=transition_ms,
+                    provider=proposed_provider,
+                    actor=actor, assume_yes=assume_yes,
+                    # C51: cancel mid-generate / mid-trim.
+                    should_cancel=job.should_cancel)
+            except HandleRebuildError as exc:
+                # C54: cancel phrasing → JobRunner canceled when cancel_event set.
+                msg = " ".join(str(exc).split())
+                if "已取消" in msg:
+                    return {"canceled": True, "errors": [msg], "shot": shot_id}
+                raise
 
         job = self.server.runner.submit(
             "handle_rebuild", {"shot": shot_id}, fn)

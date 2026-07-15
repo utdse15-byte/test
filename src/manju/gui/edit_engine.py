@@ -291,9 +291,16 @@ def run_handle_rebuild(project: Any, shot_id: str, *, transition_ms: int | None 
         spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
                    hint=f"确认后补拍手柄:{shot_id}(带 assume_yes / --yes)")
         # C51: thread cancel into redo generate (cloud/ComfyUI poll).
-        gen_takes = _run_redo(
-            project, plan, bible=bible, rules=rules, actor=actor,
-            should_cancel=should_cancel)
+        try:
+            gen_takes = _run_redo(
+                project, plan, bible=bible, rules=rules, actor=actor,
+                should_cancel=should_cancel)
+        except Exception as exc:
+            # C54: mid-poll cancel is cancel, not a failed rebuild.
+            from ..providers.base import ProviderCanceled
+            if isinstance(exc, ProviderCanceled):
+                raise HandleRebuildError(f"已取消补拍手柄: {exc}") from exc
+            raise
         if not gen_takes:
             raise HandleRebuildError(f"{shot_id}: 生成失败,没有可裁剪的加长素材")
         gen_take = gen_takes[-1]
