@@ -944,7 +944,10 @@ _LAB_JS = r"""
     var n = document.getElementById("lab-scaffold-n");
     post("/api/lab/scaffold", { shot: SHOT, n: n ? parseInt(n.value, 10) : 4 })
       .then(function (res) {
-        if (res.status === 200 && res.data.ok) { toast("已写入关键帧", true); }
+        if (res.status === 200 && res.data && res.data.ok) {
+          toast("已写入关键帧", true);
+          reloadSoon();  /* C3: model must refresh so panels show new keyframes */
+        }
         else { toast((res.data && res.data.error) || "应用失败", false); }
       }).catch(function () { toast("网络错误", false); });
   }
@@ -971,12 +974,14 @@ _LAB_JS = r"""
       provider: prov && prov.value.trim() ? prov.value.trim() : null,
       assume_yes: true
     }).then(function (res) {
-      if (res.status === 202 && res.data.job) {
-        return pollJob(res.data.job.id).then(function (job) {
+      /* C3: accept real 202 or any envelope carrying a job (defense in depth). */
+      var job = res.data && res.data.job;
+      if ((res.status === 202 || res.status === 200) && job) {
+        return pollJob(job.id).then(function (job2) {
           btn.disabled = false;
-          if (job && job.state === "done") { toast("已生成候选", true); reloadSoon(); }
-          else if (!job) { toast("生成任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); }
-          else { toast(job.error || "生成失败", false); }
+          if (job2 && job2.state === "done") { toast("已生成候选", true); reloadSoon(); }
+          else if (!job2) { toast("生成任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); }
+          else { toast(job2.error || "生成失败", false); }
         });
       }
       btn.disabled = false;

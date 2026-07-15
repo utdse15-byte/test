@@ -56,17 +56,38 @@ def plan_locale_voice(project: Project, lang: str, *, gen: str = "missing") -> l
         return []
     lines = load_lines(project, lang)
     plan: list[dict[str, Any]] = []
+    bible = project.load_bible()
     for sid in project.shot_ids():
         entry = lines.get(sid) or {}
         text = str(entry.get("text") or "").strip()
         if not text:
             continue
-        if project.voice_takes(sid, lang=lang):
-            continue  # has a locale take
+        voices = project.voice_takes(sid, lang=lang)
+        reason = "missing"
+        if voices:
+            # C3: gen=auto also re-plans STALE locale voice (text/hash moved).
+            if gen != "auto":
+                continue
+            media, sc = voices[-1]
+            if sc is None:
+                continue  # manual voice never auto-staled
+            try:
+                from ..core.spec import VOICE_VERSION, compute_voice_hash
+
+                shot = overlay_shot_for_voice(project, project.load_shot(sid), lang)
+                current = compute_voice_hash(
+                    shot, bible, version=VOICE_VERSION,
+                    provider=getattr(sc, "provider", None),
+                )
+                if sc.voice_hash == current:
+                    continue  # fresh
+                reason = "stale"
+            except Exception:
+                continue
         plan.append({
             "shot": sid,
             "kind": "voice",
-            "reason": "missing",
+            "reason": reason,
             "provider": provider_id,
             "estimated_cost": float(manifest.cost.per_call or 0),
             "currency": manifest.cost.currency,

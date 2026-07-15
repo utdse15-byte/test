@@ -408,7 +408,30 @@ def _h_qc(project: Project, args: dict) -> dict:
 
 
 def _h_qc_locked(project: Project, args: dict) -> dict:
-    report = run_qc(project, project.load_timeline(), deep=bool(args.get("deep", False)))
+    # C3: optional final_path / lang so agent QC hits locale film (graph already does).
+    final_path = args.get("final_path")
+    lang = args.get("lang")
+    if final_path:
+        from pathlib import Path
+
+        fp = Path(str(final_path))
+        if not fp.is_absolute():
+            fp = project.root / fp
+    elif lang:
+        from ..build.locale_build import newest_locale_final
+        from ..core.locale import validate_lang
+
+        try:
+            lang = validate_lang(str(lang))
+        except Exception as exc:
+            raise ToolError(str(exc)) from exc
+        fp = newest_locale_final(project, lang)
+    else:
+        fp = None
+    report = run_qc(
+        project, project.load_timeline(), deep=bool(args.get("deep", False)),
+        final_path=fp,
+    )
     # DR02 WP4: derive the read-only assurance block exactly as the CLI does and
     # thread it into the reports + result. Separate axis from `ok` (never changes
     # it); degrade gracefully — any failure simply omits the block.
@@ -854,8 +877,22 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "qc.md, repair_plan.yaml. Returns {ok, items, reports, "
         "assurance}; assurance is a derived per-shot bound-acceptance "
         "block (accepted/rejected/unknown/stale/…) + read-only repair "
-        "proposals — a separate axis from `ok` (never changes it).",
-        "inputSchema": _schema({"deep": {"type": "boolean", "default": False}}),
+        "proposals — a separate axis from `ok` (never changes it). "
+        "Pass `lang` or `final_path` to probe a locale final under "
+        "renders/final/locales/<lang>/ instead of the base final.",
+        "inputSchema": _schema({
+            "deep": {"type": "boolean", "default": False},
+            "lang": {
+                "type": "string",
+                "description": "Optional locale id — QC newest final under "
+                "renders/final/locales/<lang>/",
+            },
+            "final_path": {
+                "type": "string",
+                "description": "Optional project-relative or absolute final "
+                "mp4 to probe (overrides lang)",
+            },
+        }),
         "policy": _P.policy(
             effects=[_P.WRITE_DERIVED],
             gate=[_P.GATE_BUILD_LOCK],

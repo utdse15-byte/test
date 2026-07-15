@@ -2031,9 +2031,11 @@ _EDIT_JS = r"""
     if (!pendingBuild) { closeModal(); return; }
     post("/api/build", { target: "final", gen: "missing", assume_yes: true })
       .then(function (res) {
-        closeModal();
-        if (res.status === 202) toast("构建已排队 (queued)", true);
-        else toast(errText(res), false);
+        /* C3: keep plan modal open on failure so user need not re-open. */
+        if (res.status === 202 || (res.data && res.data.job)) {
+          closeModal();
+          toast("构建已排队 (queued)", true);
+        } else toast(errText(res), false);
       });
   });
   var rebuild = document.getElementById("ed-rebuild");
