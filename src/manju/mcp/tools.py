@@ -404,6 +404,15 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
             " ".join(str(exc).split())[:500],
             code="waiting_user",
         ) from exc
+    except Exception as exc:
+        # C90: cooperative cancel mid-build (BuildCanceled).
+        from ..build.graph import BuildCanceled
+        if isinstance(exc, BuildCanceled):
+            raise ToolError(
+                " ".join(str(exc).split())[:500],
+                code="canceled",
+            ) from exc
+        raise
 
 
 def _h_redo(project: Project, args: dict) -> dict:
@@ -425,6 +434,15 @@ def _h_redo(project: Project, args: dict) -> dict:
             " ".join(str(exc).split())[:500],
             code="waiting_user",
         ) from exc
+    except Exception as exc:
+        # C90: mid-poll cancel during redo.
+        from ..providers.base import ProviderCanceled
+        if isinstance(exc, ProviderCanceled):
+            raise ToolError(
+                " ".join(str(exc).split())[:500],
+                code="canceled",
+            ) from exc
+        raise
     return {"takes": takes}
 
 
