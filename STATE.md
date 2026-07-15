@@ -24,10 +24,19 @@ Last full-green Ubuntu SHA: pending — see REPORTS/LAST_GREEN.yaml (CI-stamped)
 ## Current structural work
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
-- Shared operation semantics — `core/outcomes.py` (`OperationOutcome`).
-- Shared execution context — `core/execctx.py` (`ExecutionContext`).
-- Replace source-text tests with behavioral tests (in progress; see
-  tests/CONVENTIONS.md — new tests must not scan source or report strings).
+- Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,
+  `classify_exception`, `CancelRecord`); MCP `_h_build` adapts via it.
+- Shared execution context — DONE: `core/execctx.py`
+  (`ExecutionContext`, `CancelToken`). Migrate call sites incrementally.
+- Multi-locale QC — DONE: `qc/multilocale.py` + `manju qc --lang/--all-locales`.
+- Replace source-text tests with behavioral tests — new tests follow
+  tests/CONVENTIONS.md (no source/report scanning); several legacy
+  `inspect.getsource` / page.py pins already converted, more remain.
+- DEFERRED (needs Windows+Ubuntu green on the same commit FIRST, per the
+  "refactor only after behavior is covered" rule): splitting oversized modules
+  (gui/server.py → routes/, build/graph.py → phases/). New models are already
+  extracted; the big file split is intentionally not started until the full
+  gates pass on one commit.
 
 ## Do not regress
 - Text is the source of truth.
