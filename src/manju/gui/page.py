@@ -2217,9 +2217,10 @@ _JS = r"""
     cockErr = null;
     renderCockpit();
     /* a waiting_user banner from the OLD project must not be confirmable
-     * against the new one — the resend would target the active project */
+     * against the new one — the resend would target the active project.
+     * C68: any kind (build/redo/voice/…), not build-only. */
     lastJobs.forEach((j) => {
-      if (j.kind === "build" && j.result && j.result.waiting_user === true) {
+      if (j.result && j.result.waiting_user === true) {
         spendDismissed[j.id] = true;
       }
     });
