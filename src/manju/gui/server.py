@@ -3286,6 +3286,7 @@ class _Handler(BaseHTTPRequestHandler):
         factor, ms, mode = body.get("factor"), body.get("ms"), body.get("mode")
 
         def fn(job) -> dict[str, Any]:
+            from ..media.ffmpeg import MediaCanceled, cancel_scope
             from ..media.repair_ops import (
                 crop_pad_take,
                 extend_take,
@@ -3293,18 +3294,22 @@ class _Handler(BaseHTTPRequestHandler):
                 trim_take,
             )
 
-            with _optional_build_lock(project.root, actor):
-                if op == "retime":
-                    new = retime_take(project, shot_id, take,
-                                      float(factor if factor is not None else 1.0))
-                elif op == "extend":
-                    new = extend_take(project, shot_id, take, int(ms or 0),
-                                      mode=str(mode or "freeze"))
-                elif op == "trim":
-                    new = trim_take(project, shot_id, take, int(ms or 0))
-                else:
-                    new = crop_pad_take(project, shot_id, take,
-                                        mode=str(mode or "center_crop"))
+            # C34: repair is ffmpeg-heavy — honor job cancel mid-cut.
+            with _optional_build_lock(project.root, actor), cancel_scope(job.should_cancel):
+                try:
+                    if op == "retime":
+                        new = retime_take(project, shot_id, take,
+                                          float(factor if factor is not None else 1.0))
+                    elif op == "extend":
+                        new = extend_take(project, shot_id, take, int(ms or 0),
+                                          mode=str(mode or "freeze"))
+                    elif op == "trim":
+                        new = trim_take(project, shot_id, take, int(ms or 0))
+                    else:
+                        new = crop_pad_take(project, shot_id, take,
+                                            mode=str(mode or "center_crop"))
+                except MediaCanceled as exc:
+                    raise RuntimeError(f"已取消修复: {exc}") from exc
             append_event(project.root, actor, "repair",
                          {"shot": shot_id, "op": op, "source_take": take,
                           "new_take": new.name, "via": "gui"})
@@ -4808,10 +4813,15 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         def fn(job) -> dict[str, Any]:
+            from ..media.ffmpeg import MediaCanceled, cancel_scope
             from ..media.repair_ops import set_inout_take
 
-            with _optional_build_lock(project.root, actor):
-                new = set_inout_take(project, shot_id, take, in_ms, out_ms)
+            # C34: inout repair is also ffmpeg — same cancel wire.
+            with _optional_build_lock(project.root, actor), cancel_scope(job.should_cancel):
+                try:
+                    new = set_inout_take(project, shot_id, take, in_ms, out_ms)
+                except MediaCanceled as exc:
+                    raise RuntimeError(f"已取消修复: {exc}") from exc
             append_event(project.root, actor, "repair",
                          {"shot": shot_id, "op": "inout", "source_take": take,
                           "new_take": new.name, "in_ms": in_ms, "out_ms": out_ms,

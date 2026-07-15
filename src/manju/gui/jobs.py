@@ -74,6 +74,8 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     "voice_preview",
     # C33: export wraps packaging ffmpeg in cancel_scope(job.should_cancel).
     "export",
+    # C34: repair wraps ffmpeg repair_ops in cancel_scope.
+    "repair",
     # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 
