@@ -5300,8 +5300,17 @@ class _Handler(BaseHTTPRequestHandler):
                     return {"canceled": True, "errors": [msg], "shot": shot_id}
                 raise
 
+        # C76: persist full params so spend-banner reconfirm can re-post honestly.
         job = self.server.runner.submit(
-            "handle_rebuild", {"shot": shot_id}, fn)
+            "handle_rebuild",
+            {
+                "shot": shot_id,
+                "transition_ms": transition_ms,
+                "provider": proposed_provider,
+                "assume_yes": assume_yes,
+            },
+            fn,
+        )
         self._send_json({"job": job.to_dict()}, 202)
 
     def _act_edit_look(self, body: dict[str, Any]) -> None:
