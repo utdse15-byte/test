@@ -11,9 +11,11 @@ from __future__ import annotations
 from manju.build.graph import BuildCanceled, WaitingUser
 from manju.core.outcomes import (
     BillingState,
+    CancelRecord,
     OperationOutcome,
     OutcomeCode,
     classify_exception,
+    may_have_billed,
 )
 from manju.providers.base import ProviderCanceled
 
@@ -113,3 +115,43 @@ def test_ok_outcome_across_surfaces() -> None:
     assert o.to_gui_dict()["shot"] == "S001"
     assert o.to_mcp()["ok"] is True and o.to_mcp()["code"] == "ok"
     assert o.to_cli()["exit_code"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Item 8: explicit cancellation billing disposition
+# --------------------------------------------------------------------------- #
+
+def test_may_have_billed_by_disposition() -> None:
+    assert may_have_billed(BillingState.CONFIRMED_CANCELED) is False
+    assert may_have_billed(BillingState.NOT_BILLED) is False
+    assert may_have_billed(None) is False
+    assert may_have_billed(BillingState.CANCEL_REQUESTED_UNKNOWN) is True
+    assert may_have_billed(BillingState.COMPLETED_BEFORE_CANCEL) is True
+    assert may_have_billed(BillingState.NOT_SUPPORTED) is True
+
+
+def test_cancel_record_from_provider_canceled_is_uncertain_and_no_auto_resubmit() -> None:
+    rec = CancelRecord.from_provider_canceled(
+        ProviderCanceled("cloudx", "job-9"), cancel_requested_at="2026-07-15T00:00:00Z")
+    assert rec.provider_job_id == "job-9"
+    assert rec.cancel_disposition == BillingState.CANCEL_REQUESTED_UNKNOWN
+    assert rec.may_have_billed is True
+    assert rec.automatic_resubmit is False
+
+
+def test_cancel_record_confirmed_canceled_is_not_billed() -> None:
+    rec = CancelRecord.for_disposition(BillingState.CONFIRMED_CANCELED)
+    assert rec.may_have_billed is False
+    assert rec.automatic_resubmit is False  # still never auto-resubmit a cancel
+
+
+def test_cancel_record_serializes_to_the_specified_shape() -> None:
+    rec = CancelRecord.from_provider_canceled(
+        ProviderCanceled("cloudx", "abc"), cancel_requested_at="2026-07-15T12:00:00Z")
+    assert rec.to_dict() == {
+        "provider_job_id": "abc",
+        "cancel_requested_at": "2026-07-15T12:00:00Z",
+        "cancel_disposition": "cancel_requested_unknown",
+        "may_have_billed": True,
+        "automatic_resubmit": False,
+    }

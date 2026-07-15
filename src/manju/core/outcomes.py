@@ -46,6 +46,72 @@ class BillingState(StrEnum):
     NOT_SUPPORTED = "not_supported"                 # provider cannot cancel
 
 
+# The four explicit cancellation dispositions the task calls out (item 8). Only
+# CONFIRMED_CANCELED proves no charge; the rest may have billed.
+_CANCEL_DISPOSITIONS = frozenset({
+    BillingState.CONFIRMED_CANCELED,
+    BillingState.CANCEL_REQUESTED_UNKNOWN,
+    BillingState.NOT_SUPPORTED,
+    BillingState.COMPLETED_BEFORE_CANCEL,
+})
+
+
+def may_have_billed(disposition: str | None) -> bool:
+    """True unless the disposition PROVES no charge. A local cancel request does
+    not prove the remote provider stopped before billing, so anything other than
+    CONFIRMED_CANCELED / NOT_BILLED is treated as possibly-billed."""
+    return disposition not in (
+        BillingState.CONFIRMED_CANCELED, BillingState.NOT_BILLED, None)
+
+
+@dataclass(frozen=True, slots=True)
+class CancelRecord:
+    """Persistable record of a cancellation's billing disposition (item 8).
+
+    Serializes to exactly the shape the task specifies. ``automatic_resubmit``
+    is ALWAYS False for any cancellation — a possibly-billed or deliberately
+    stopped request must never be silently re-submitted; retrying it requires an
+    explicit owner confirmation.
+    """
+
+    provider_job_id: str | None
+    cancel_requested_at: str | None
+    cancel_disposition: str
+    may_have_billed: bool
+    automatic_resubmit: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider_job_id": self.provider_job_id,
+            "cancel_requested_at": self.cancel_requested_at,
+            "cancel_disposition": self.cancel_disposition,
+            "may_have_billed": self.may_have_billed,
+            "automatic_resubmit": self.automatic_resubmit,
+        }
+
+    @classmethod
+    def for_disposition(cls, disposition: str, *, provider_job_id: str | None = None,
+                        cancel_requested_at: str | None = None) -> CancelRecord:
+        return cls(
+            provider_job_id=provider_job_id,
+            cancel_requested_at=cancel_requested_at,
+            cancel_disposition=disposition,
+            may_have_billed=may_have_billed(disposition),
+            automatic_resubmit=False,  # never auto-resubmit a canceled request
+        )
+
+    @classmethod
+    def from_provider_canceled(cls, exc: BaseException, *,
+                               cancel_requested_at: str | None = None) -> CancelRecord:
+        """Build the record for a ProviderCanceled: the remote may still bill
+        (uncertain), so may_have_billed=True and automatic_resubmit=False."""
+        return cls.for_disposition(
+            BillingState.CANCEL_REQUESTED_UNKNOWN,
+            provider_job_id=getattr(exc, "job_id", None),
+            cancel_requested_at=cancel_requested_at,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class OperationOutcome:
     """One semantic result, shared by the business layer.

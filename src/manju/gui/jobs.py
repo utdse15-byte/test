@@ -105,6 +105,36 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _cancel_billing(job: "Job", result: Any, *, exc: BaseException | None = None
+                    ) -> dict[str, Any] | None:
+    """The billing disposition (P1-8) for a job that landed in ``canceled``.
+
+    An explicit disposition on the result wins; a ProviderCanceled carries the
+    remote job id and is inherently uncertain; any other cancel of a PAID kind
+    came out of a remote provider whose stop-before-billing is unprovable, so it
+    too is uncertain. A non-paid (purely local, e.g. ffmpeg) cancel has no remote
+    charge to worry about → None.
+    """
+    from ..core import jobkinds
+    from ..core.outcomes import BillingState, CancelRecord
+
+    if isinstance(result, dict) and result.get("billing_state"):
+        return CancelRecord.for_disposition(
+            str(result["billing_state"]),
+            provider_job_id=result.get("provider_job_id"),
+            cancel_requested_at=_now(),
+        ).to_dict()
+    if exc is not None:
+        from ..providers.base import ProviderCanceled
+        if isinstance(exc, ProviderCanceled):
+            return CancelRecord.from_provider_canceled(
+                exc, cancel_requested_at=_now()).to_dict()
+    if job.kind in jobkinds.paid_kinds():
+        return CancelRecord.for_disposition(
+            BillingState.CANCEL_REQUESTED_UNKNOWN, cancel_requested_at=_now()).to_dict()
+    return None
+
+
 def _summarize_params(params: dict[str, Any]) -> dict[str, Any]:
     """Compact ``params`` for a jobs.jsonl line — a batch kind's ``shots``
     list (redo_batch/voice_batch/…) could run to hundreds of ids, and this
@@ -176,6 +206,11 @@ class Job:
     # comparisons or logs.
     cancel_event: threading.Event = field(default_factory=threading.Event,
                                           repr=False, compare=False)
+    # P1-8: cancellation billing disposition (core.outcomes.CancelRecord shape),
+    # set when a paid remote job unwound as canceled and its billing is
+    # uncertain. None means "no billing uncertainty to report". The GUI reads
+    # this to warn instead of showing a clean "已取消".
+    billing: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +221,7 @@ class Job:
             "progress": self.progress,
             "error": self.error,
             "result": self.result,
+            "billing": self.billing,
             "created": self.created,
             "started": self.started,
             "finished": self.finished,
@@ -480,6 +516,11 @@ class JobRunner:
                             (errs[0] if isinstance(errs, list) and errs else None)
                             or "已取消"
                         )
+                        # P1-8: a paid kind that self-reported canceled came out
+                        # of a remote provider whose stop-before-billing is NOT
+                        # provable — record the uncertain disposition (unless the
+                        # result already carried an explicit one).
+                        job.billing = _cancel_billing(job, result)
                     else:
                         job.state = "done"
                         # C7: cancel was clicked but work finished anyway —
@@ -495,6 +536,10 @@ class JobRunner:
                 with self._lock:
                     job.state = "canceled" if job.cancel_event.is_set() else "failed"
                     job.error = " ".join(str(exc).split()) or exc.__class__.__name__
+                    # P1-8: a ProviderCanceled unwinding here means a remote job
+                    # was abandoned mid-poll — it may still complete and bill.
+                    if job.state == "canceled":
+                        job.billing = _cancel_billing(job, None, exc=exc)
                     job.finished = _now()
                     self._rev += 1
             self._persist(job)

@@ -2904,6 +2904,18 @@ _JS = r"""
       const stateLabel = waitSpend ? "待确认花费"
         : (STATE_ZH[j.state] || j.state);
       row.appendChild(el("span", "badge jb-" + (waitSpend ? "waiting" : j.state), stateLabel));
+      /* P1-8: a canceled job whose remote/provider cancellation result is
+       * UNKNOWN must NOT read as a clean 已取消 — the remote may have completed
+       * and billed. Surface the uncertainty + possible billing explicitly. */
+      if (j.state === "canceled" && j.billing && j.billing.may_have_billed === true) {
+        const warn = el("span", "badge jb-warn",
+          "远程取消未确认 · 可能已计费");
+        if (j.billing.provider_job_id) {
+          warn.title = "远程任务 " + j.billing.provider_job_id
+            + " 可能仍在运行并计费;后续构建会恢复轮询,不会重复提交。重试需你显式确认。";
+        }
+        row.appendChild(warn);
+      }
       const secs = jobSeconds(j);
       if (secs) row.appendChild(el("span", "muted", secs));
       /* C6 UX: show live phase progress for long builds. */
