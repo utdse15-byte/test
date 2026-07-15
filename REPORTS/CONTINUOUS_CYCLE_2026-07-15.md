@@ -320,3 +320,11 @@ Loop continues...
 
 ## Continuous (2026-07-15T06:40:00.9168207-07:00)
 - ~92 commits since 81d6206; still looping toward ~10h
+
+## Cycles 61
+- C61 `bb53e4c` MCP WaitingUser → ToolError waiting_user
+
+## Continuous (2026-07-15T06:41:15.7872302-07:00)
+- 94 commits since 81d6206
+- Cycle pins C22-C61: see suite above
+- Still looping toward ~10h wall-clock
