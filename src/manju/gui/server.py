@@ -1958,7 +1958,7 @@ class _Handler(BaseHTTPRequestHandler):
             def fn(job) -> dict[str, Any]:
                 import inspect
 
-                from ..build.graph import redo_shot
+                from ..build.graph import WaitingUser, redo_shot
 
                 kwargs: dict[str, Any] = dict(
                     candidates=int(candidates) if candidates else None,
@@ -1971,7 +1971,15 @@ class _Handler(BaseHTTPRequestHandler):
                 # C25: retry path parity with _act_redo cancel wire.
                 if "should_cancel" in sig:
                     kwargs["should_cancel"] = job.should_cancel
-                takes = redo_shot(project, shot_id, **kwargs)
+                try:
+                    takes = redo_shot(project, shot_id, **kwargs)
+                except WaitingUser as exc:
+                    # C66: retry redo spend gate → waiting_user.
+                    return {
+                        "waiting_user": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                        "shot": shot_id,
+                    }
                 return {"shot": shot_id, "takes": takes}
 
             return fn
@@ -1990,16 +1998,24 @@ class _Handler(BaseHTTPRequestHandler):
             def fn(job) -> dict[str, Any]:
                 import inspect
 
-                from ..build.graph import spend_gate
+                from ..build.graph import WaitingUser, spend_gate
                 from ..providers.tts import get_tts_provider
 
                 tts = get_tts_provider(str(provider) if provider else None)
                 manifest = getattr(tts, "manifest", None)
                 cost = getattr(manifest, "cost", None) if manifest is not None else None
                 if cost is not None:
-                    spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
-                              hint=f"确认后重试:GUI 配音带 assume_yes,"
-                                   f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+                    try:
+                        spend_gate(project, cost.per_call, cost.currency, assume_yes=assume_yes,
+                                  hint=f"确认后重试:GUI 配音带 assume_yes,"
+                                       f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
+                    except WaitingUser as exc:
+                        # C66: retry voice spend gate → waiting_user.
+                        return {
+                            "waiting_user": True,
+                            "errors": [" ".join(str(exc).split())[:500]],
+                            "shot": shot_id,
+                        }
                 # C24: same cancel wire as _act_voice (retry path parity).
                 synth_kwargs: dict[str, Any] = {}
                 try:
@@ -2028,15 +2044,22 @@ class _Handler(BaseHTTPRequestHandler):
             assume_yes = bool(params.get("assume_yes"))
 
             def fn(job) -> dict[str, Any]:
-                from ..build.graph import redo_batch
+                from ..build.graph import WaitingUser, redo_batch
 
-                return redo_batch(
-                    project, shots=list(shots),
-                    candidates=int(candidates) if candidates else None,
-                    provider=str(provider) if provider else None,
-                    seed=int(seed) if seed is not None else None,
-                    actor=actor, assume_yes=assume_yes,
-                    should_cancel=job.should_cancel).to_dict()
+                try:
+                    return redo_batch(
+                        project, shots=list(shots),
+                        candidates=int(candidates) if candidates else None,
+                        provider=str(provider) if provider else None,
+                        seed=int(seed) if seed is not None else None,
+                        actor=actor, assume_yes=assume_yes,
+                        should_cancel=job.should_cancel).to_dict()
+                except WaitingUser as exc:
+                    # C66: retry batch redo spend gate → waiting_user.
+                    return {
+                        "waiting_user": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                    }
 
             return fn
 
@@ -2048,13 +2071,20 @@ class _Handler(BaseHTTPRequestHandler):
             assume_yes = bool(params.get("assume_yes"))
 
             def fn(job) -> dict[str, Any]:
-                from ..build.graph import voice_batch
+                from ..build.graph import WaitingUser, voice_batch
 
-                return voice_batch(
-                    project, shots=list(shots),
-                    provider=str(provider) if provider else None,
-                    actor=actor, assume_yes=assume_yes,
-                    should_cancel=job.should_cancel).to_dict()
+                try:
+                    return voice_batch(
+                        project, shots=list(shots),
+                        provider=str(provider) if provider else None,
+                        actor=actor, assume_yes=assume_yes,
+                        should_cancel=job.should_cancel).to_dict()
+                except WaitingUser as exc:
+                    # C66: retry batch voice spend gate → waiting_user.
+                    return {
+                        "waiting_user": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                    }
 
             return fn
 
