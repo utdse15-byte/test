@@ -276,3 +276,12 @@ Loop continues...
 - Commits since 81d6206: 70
 - Suite snapshots: 165+ passed recently
 - Loop continues
+
+## Cycles 47-48
+- C47 `42fb8f8` build QC phase should_cancel
+- C48 `228388f`/`3961d2a` cancel QC no report clobber
+
+## Continuous (2026-07-15T06:33:45.0971930-07:00)
+- Cycle tests C22-C48: see suite output above
+- Commits since 81d6206: 74
+- Still looping toward ~10h wall-clock
