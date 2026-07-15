@@ -239,3 +239,13 @@ Loop continues...
 
 ## Continuous (2026-07-15T06:23:32.1432539-07:00)
 - HEAD continuous; still looping scan → fix → UX → re-verify toward ~10h
+
+## Cycles 36-39
+- C36 `fa9fd22` reachability loopback no-proxy
+- C37 `adc1f66` GUI QC lang (no base fallback)
+- C38 `47f85ce` QC button prefers locale final
+- C39 GUI build lang
+
+## Continuous verify
+- 134 passed (cycle* + bugfix + merge_blockers + no_proxy) before C39
+- Still looping toward ~10h wall-clock (2026-07-15T06:26:45.4082548-07:00)
