@@ -230,3 +230,12 @@ Loop continues...
 - Suite: 180 passed (cycle* + bugfix + merge_blockers + job_cancel + ttspreview + edge + comfyui + asr)
 - Commits since 81d6206: 49
 - Still looping toward ~10h wall-clock
+
+## Cycles 32-35
+- C32 `7549a4b` local_cmd should_cancel during subprocess wait
+- C33 `75e381b` export cancelable + packaging cancel_scope
+- C34 `53578a1` repair cancelable via cancel_scope
+- C35 loopback no-proxy transport
+
+## Continuous (2026-07-15T06:23:32.1432539-07:00)
+- HEAD continuous; still looping scan → fix → UX → re-verify toward ~10h
