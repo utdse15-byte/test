@@ -686,3 +686,12 @@ Loop continues...
 ## Continuous (2026-07-15T07:12:50.078201)
 - 192 commits since 81d6206
 - Still looping toward ~10h wall-clock
+
+
+## Cycle 113
+- pin tts ProviderCanceled source
+
+## Continuous (2026-07-15T07:13:06.957807)
+- 194 commits since 81d6206
+- Broad suite: 206 passed
+- Still looping toward ~10h
