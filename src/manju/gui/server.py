@@ -6084,8 +6084,14 @@ class _Handler(BaseHTTPRequestHandler):
                 project, plan,
                 rows=[int(r) for r in rows] if rows is not None else None,
                 actor=actor,
+                # C52: cancel between selected rows.
+                should_cancel=job.should_cancel,
             )
-            return {"plan": plan, "apply": result}
+            out = {"plan": plan, "apply": result}
+            if result.get("canceled"):
+                out["canceled"] = True
+                out["errors"] = ["roundtrip 已取消(已应用行保留)"]
+            return out
 
         job = self.server.runner.submit(
             "roundtrip", {"path": path, "rows": rows}, fn,

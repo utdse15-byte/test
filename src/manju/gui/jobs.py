@@ -80,6 +80,8 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     "qc",
     # C51: handle_rebuild threads should_cancel into redo + ffmpeg trim.
     "handle_rebuild",
+    # C52: roundtrip apply checks cancel between selected rows.
+    "roundtrip",
     # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 

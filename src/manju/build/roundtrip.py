@@ -673,8 +673,13 @@ def apply_roundtrip(
     *,
     rows: list[int] | None = None,
     actor: str = "human",
+    should_cancel=None,
 ) -> dict[str, Any]:
-    """Apply accepted rows under one build_lock. Per-row isolation."""
+    """Apply accepted rows under one build_lock. Per-row isolation.
+
+    ``should_cancel`` (C52): checked before each selected row so GUI cancel
+    stops mid-batch without undoing already-applied rows.
+    """
     from ..runtime.buildlock import build_lock
 
     all_rows = plan.get("rows") or []
@@ -684,11 +689,21 @@ def apply_roundtrip(
     }
     applied = []
     skipped = []
+    canceled = False
     with build_lock(project.root, actor=actor):
         for i, row in enumerate(all_rows):
             if i not in indices:
                 skipped.append({"index": i, "reason": "not selected"})
                 continue
+            # C52: cooperative cancel between selected rows.
+            if should_cancel is not None and should_cancel():
+                canceled = True
+                remaining = sum(1 for j in indices if j >= i)
+                skipped.append({
+                    "index": i,
+                    "reason": f"已取消:{len(applied)} 行已应用,{remaining} 行未处理",
+                })
+                break
             if row.get("state") == "conflict":
                 skipped.append({"index": i, "reason": "conflict — truth moved since export"})
                 continue
@@ -879,4 +894,9 @@ def apply_roundtrip(
         "actor": actor,
     }
     write_yaml(batch_dir / f"{batch_id}.yaml", batch)
-    return {"batch": batch_id, "applied": applied, "skipped": skipped}
+    return {
+        "batch": batch_id,
+        "applied": applied,
+        "skipped": skipped,
+        "canceled": canceled,
+    }
