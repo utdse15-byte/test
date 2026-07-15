@@ -2769,9 +2769,13 @@ _JS = r"""
 
     function renderJobRow(j) {
       const row = el("div", "job");
+      /* C26: every JobRunner kind has a short ZH chip (no raw snake_case). */
       const KIND_ZH = {
         build: "构建", redo: "重做", voice: "配音", redo_batch: "批量重做",
         voice_batch: "批量配音", qc: "质检", repair: "修复", export: "导出",
+        ingest_plan: "导入计划", ingest: "导入应用",
+        series_new_episode: "新建集", series_sync_bible: "同步设定",
+        edit_preview: "剪辑预览", edit_preview_batch: "批量预览",
       };
       row.appendChild(el("span", "jkind", KIND_ZH[j.kind] || j.kind || "?"));
       /* C1 UX: waiting_user builds are state=done with a flag — show 待确认 not plain done. */

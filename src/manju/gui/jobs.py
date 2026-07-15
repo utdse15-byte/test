@@ -66,8 +66,11 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     # C25: single-shot redo threads should_cancel into GenerationRequest
     # (cloud/ComfyUI poll) via redo_shot(..., should_cancel=...).
     "redo",
-    "ingest_plan", "ingest_apply", "series_new_episode", "series_sync",
-    "edit_preview",
+    # C26: kind strings must match JobRunner.submit() exactly
+    # (was ingest_apply / series_sync / edit_preview — wrong aliases).
+    "ingest_plan", "ingest", "series_sync_bible",
+    "edit_preview_batch",
+    # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 
 # jobs.jsonl (round AA4): disposable operational history, capped/rewritten to
