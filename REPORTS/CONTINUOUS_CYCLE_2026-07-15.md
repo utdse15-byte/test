@@ -249,3 +249,12 @@ Loop continues...
 ## Continuous verify
 - 134 passed (cycle* + bugfix + merge_blockers + no_proxy) before C39
 - Still looping toward ~10h wall-clock (2026-07-15T06:26:45.4082548-07:00)
+
+## Cycles 40-42
+- C40 `995cbaf` build panel language select
+- C41 `b3387ba` plan modal lang honesty
+- C42 `b52808e` job strip locale tag
+
+## Continuous (2026-07-15T06:28:24.1581362-07:00)
+- Commits since 81d6206: 64+
+- Loop continues scan → fix → UX → re-verify
