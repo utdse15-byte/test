@@ -165,3 +165,7 @@ Loop continues...
 - C15 cockpit locale phase
 - C16 board locale finals row
 
+
+## Cycle 17
+- `7181c01` job kind жпнд chips
+
