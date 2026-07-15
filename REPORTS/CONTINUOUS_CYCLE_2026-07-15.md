@@ -448,3 +448,11 @@ Loop continues...
 - Cycle pins: 86 passed
 - Broad suite earlier: 173 passed
 - Still looping toward ~10h wall-clock
+
+## Cycles 84-85
+- C84 redo ProviderCanceled → canceled
+- C85 retry/lab redo ProviderCanceled → canceled
+
+## Continuous (2026-07-15T06:53:49.4260828-07:00)
+- 136 commits since 81d6206
+- Still looping toward ~10h
