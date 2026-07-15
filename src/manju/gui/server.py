@@ -4014,12 +4014,14 @@ class _Handler(BaseHTTPRequestHandler):
 
         def fn(job) -> dict[str, Any]:
             from ..core.events import append_event
+            from ..media.ffmpeg import MediaCanceled, cancel_scope
 
             # Round Z (agent ZA): these writers share captions/ with a
             # concurrent build's own captions phase (and cover/teaser share
             # media.packaging with build's packaging-card phase) — the
             # cross-process build lock keeps a GUI export from landing mid-build.
-            with _optional_build_lock(project.root, actor):
+            # C33: cancel_scope so cover/teaser ffmpeg cuts honor job cancel.
+            with _optional_build_lock(project.root, actor), cancel_scope(job.should_cancel):
                 if kind in ("srt", "ass", "otio", "jianying", "capcut"):
                     timeline = project.load_timeline()
                     if timeline is None:
@@ -4068,7 +4070,11 @@ class _Handler(BaseHTTPRequestHandler):
                 else:  # cover / teaser
                     from ..media.packaging import make_package
 
-                    result = make_package(project)
+                    try:
+                        result = make_package(project)
+                    except MediaCanceled as exc:
+                        # JobRunner maps cancel_event + exception → canceled.
+                        raise RuntimeError(f"已取消导出: {exc}") from exc
                     append_event(project.root, actor, "package",
                                  {k: result[k] for k in ("cover", "teaser", "skipped")
                                   if k in result} | {"via": "gui"})

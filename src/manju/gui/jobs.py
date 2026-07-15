@@ -72,6 +72,8 @@ CANCELABLE_RUNNING_KINDS = frozenset({
     "edit_preview_batch",
     # C31: voice_preview threads should_cancel into ttspreview synthesize.
     "voice_preview",
+    # C33: export wraps packaging ffmpeg in cancel_scope(job.should_cancel).
+    "export",
     # series_new_episode deliberately omitted: fn does not sample should_cancel.
 })
 
