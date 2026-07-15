@@ -1091,11 +1091,13 @@ _JS = r"""
     return m ? m[0] : String(ts || "");
   };
   const jobSeconds = (job) => {
-    if (!job.started || !job.finished) return "";
+    if (!job.started) return "";
     const a = Date.parse(job.started);
-    const b = Date.parse(job.finished);
-    if (isNaN(a) || isNaN(b) || b < a) return "";
-    return ((b - a) / 1000).toFixed(1) + "s";
+    if (isNaN(a)) return "";
+    /* C7: show live elapsed for running/canceling, not only finished jobs. */
+    const end = job.finished ? Date.parse(job.finished) : Date.now();
+    if (isNaN(end) || end < a) return "";
+    return ((end - a) / 1000).toFixed(1) + "s";
   };
 
   /* ---------------------------------------------------------- toasts --- */
@@ -2807,6 +2809,9 @@ _JS = r"""
         retryBtn.addEventListener("click", () =>
           post(retryBtn, "/api/jobs/retry", { job_id: j.id }, "已重新提交 (retried)"));
         row.appendChild(retryBtn);
+      }
+      if (j.state === "done" && j.error) {
+        row.appendChild(el("span", "jnote", j.error));
       }
       if (j.state === "done" && j.result) {
         const r = j.result;

@@ -125,3 +125,14 @@ Evidence: `{SCRATCH}/cycle_tests.log`, `{SCRATCH}/cycle_ledger_audit.txt`
 - Tests: test_cycle6_bugfix_20260715.py
 - Verify: 63 passed (c6+subset+gui) ¡ú cycle6_tests.log
 
+
+---
+
+## Cycle 7 (continuous loop)
+
+### 7A/B/C
+- Cancel-finished honesty (error note on done after cancel_event)
+- Live job elapsed seconds while running
+- Tests: test_cycle7_cancel_honesty_20260715.py
+- Verify: cycle7_tests.log
+

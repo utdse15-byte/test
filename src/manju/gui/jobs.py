@@ -477,6 +477,13 @@ class JobRunner:
                         )
                     else:
                         job.state = "done"
+                        # C7: cancel was clicked but work finished anyway —
+                        # honest note so UI never pretends spend stopped mid-run.
+                        if job.cancel_event.is_set():
+                            job.error = (
+                                "取消请求未中断:任务已完成"
+                                "(该类型不支持中途取消或已越过取消点)"
+                            )
                     job.finished = _now()
                     self._rev += 1
             except Exception as exc:  # any engine failure -> one-line finding
