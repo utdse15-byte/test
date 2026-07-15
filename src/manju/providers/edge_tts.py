@@ -32,7 +32,7 @@ from pathlib import Path
 from ..core.container import Project
 from ..core.models import RemoteJobInfo, ShotSpec, VoiceTakeSidecar
 from ..core.spec import VOICE_VERSION, compute_voice_hash, voice_payload
-from .base import FailureKind, ProviderFailure, probe_media
+from .base import FailureKind, ProviderCanceled, ProviderFailure, probe_media
 from .manifest import ProviderManifest
 from .tts import voice_provider_descriptor
 
@@ -57,11 +57,21 @@ class EdgeTtsProvider:
         default = getattr(self.manifest.tts, "default_voice", None)
         return str(default) if default else "zh-CN-XiaoxiaoNeural"
 
-    def synthesize(self, project: Project, shot: ShotSpec, bible: dict) -> Path:
+    def synthesize(self, project: Project, shot: ShotSpec, bible: dict,
+                   *, should_cancel=None) -> Path:
+        """Synthesize dialogue via Edge TTS and register a voice take.
+
+        ``should_cancel`` (C29): optional cooperative cancel predicate checked
+        before start and between stream chunks so GUI cancel can stop mid-stream
+        without waiting for the full line to finish.
+        """
         if not shot.dialogue.text:
             raise ProviderFailure(
                 FailureKind.invalid, f"{self.id}: shot {shot.id} has no dialogue to voice"
             )
+        # C29: honor cancel before any network spend.
+        if should_cancel is not None and should_cancel():
+            raise ProviderCanceled(self.id, f"edge:{shot.id}")
         try:
             import edge_tts
         except ImportError as exc:
@@ -86,6 +96,9 @@ class EdgeTtsProvider:
             words: list[dict] = []
             with open(dest, "wb") as audio:
                 async for chunk in communicate.stream():
+                    # C29: cooperative cancel between stream chunks.
+                    if should_cancel is not None and should_cancel():
+                        raise ProviderCanceled(self.id, f"edge:{shot.id}")
                     if chunk["type"] == "audio":
                         audio.write(chunk["data"])
                     elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
@@ -100,6 +113,8 @@ class EdgeTtsProvider:
             dest = Path(tmp) / f"voice.{fmt}"
             try:
                 words = asyncio.run(_run(dest))
+            except ProviderCanceled:
+                raise  # C29: never reclassify cancel as provider_error
             except Exception as exc:  # network/TLS/service — classify, keep reason
                 raise ProviderFailure(
                     FailureKind.provider_error,

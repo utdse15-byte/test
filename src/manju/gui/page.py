@@ -305,7 +305,8 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
 }
 .job:last-child { border-bottom: 0; }
 .job .btn.mini { flex: 0 0 auto; }
-.jkind { font-weight: 700; min-width: 3.5rem; }
+/* C29: longer ZH labels (导入计划 / 同步设定 / 批量预览) need more than 3.5rem. */
+.jkind { font-weight: 700; min-width: 4.5rem; white-space: nowrap; }
 .jsum { color: var(--muted); font-size: .8rem; word-break: break-all; }
 .job details { width: 100%; font-size: .8rem; }
 .job summary { cursor: pointer; color: var(--err); }
