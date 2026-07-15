@@ -193,3 +193,7 @@ Loop continues...
 - Commits since 81d6206: 34
 - Latest suite: 60 passed (cycle pins + merge_blockers + job_cancel + no_proxy) ¡ú `{SCRATCH}/cycle_tests.log`
 - Still looping: scan ¡ú fix ¡ú UX ¡ú re-verify
+
+## Cycle 21
+- `9175687` TTS synthesize should_cancel ¡ú poll
+
