@@ -943,6 +943,7 @@ _JS = r"""
         if (patch.filter !== undefined) serverPatch.shot_status_filter = patch.filter;
         if (patch.lastShot !== undefined) serverPatch.last_shot_id = patch.lastShot;
         if (patch.reviewPos !== undefined) serverPatch.review_position = patch.reviewPos;
+        if (patch.shotsScroll !== undefined) serverPatch.shots_scroll = patch.shotsScroll;
         if (Object.keys(serverPatch).length) {
           requestJson("POST", "/api/ui-state", { ui: serverPatch },
             { token: TOKEN, projectId: PROJECT || "" }).catch(() => {});
@@ -951,23 +952,64 @@ _JS = r"""
     } catch (e2) { /* never block UI */ }
   };
 
-  /* One-shot migrate localStorage → server UI state (best-effort). */
-  try {
-    if (PROJECT && typeof requestJson === "function") {
+  /* Hydrate from server BEFORE first paint of shots — localStorage is only
+   * a legacy cache / same-origin helper; random --port 0 windows need server. */
+  let workspaceUIReady = false;
+  let stateFilter = "";  /* re-bound after hydrate; default empty until ready */
+  let pendingHydrateShot = "";
+
+  async function bootstrapWorkspaceUI() {
+    if (!PROJECT || typeof requestJson !== "function") {
+      workspaceUIReady = true;
       const loc = loadUI();
-      const opts = { token: TOKEN, projectId: PROJECT || "" };
-      requestJson("GET", "/api/ui-state", undefined, opts).then((data) => {
-        const ui = (data && data.ui) || {};
-        if (ui.migrated_from_localstorage) return;
-        const patch = {
-          migrated_from_localstorage: true,
-          shot_status_filter: loc.filter || ui.shot_status_filter || "",
-          last_shot_id: loc.lastShot || ui.last_shot_id || "",
-        };
-        return requestJson("POST", "/api/ui-state", { ui: patch }, opts);
-      }).catch(() => {});
+      stateFilter = loc.filter || "";
+      pendingHydrateShot = loc.lastShot || "";
+      return;
     }
-  } catch (e) { /* */ }
+    const opts = { token: TOKEN, projectId: PROJECT || "" };
+    const loc = loadUI();
+    let ui = {};
+    try {
+      const data = await requestJson("GET", "/api/ui-state", undefined, opts);
+      ui = (data && data.ui) || {};
+    } catch (e) { ui = {}; }
+    /* Merge: server wins when present; local fills gaps; migrate once. */
+    if (!ui.migrated_from_localstorage) {
+      const patch = {
+        migrated_from_localstorage: true,
+        shot_status_filter: ui.shot_status_filter || loc.filter || "",
+        last_shot_id: ui.last_shot_id || loc.lastShot || "",
+        review_position: ui.review_position || loc.reviewPos || "",
+        playback_rate: ui.playback_rate,
+        volume: ui.volume,
+        muted: ui.muted,
+        autoplay_review: ui.autoplay_review,
+        shots_scroll: ui.shots_scroll,
+      };
+      try {
+        const saved = await requestJson("POST", "/api/ui-state", { ui: patch }, opts);
+        ui = (saved && saved.ui) || Object.assign({}, ui, patch);
+      } catch (e) {
+        ui = Object.assign({}, ui, patch);
+      }
+    }
+    stateFilter = ui.shot_status_filter || loc.filter || "";
+    pendingHydrateShot = ui.last_shot_id || ui.review_position || loc.lastShot || "";
+    if (typeof ui.shots_scroll === "number") {
+      try {
+        const root = $("shots");
+        if (root) root.scrollTop = ui.shots_scroll;
+      } catch (e) { /* */ }
+    }
+    try {
+      localStorage.setItem(uiKey(), JSON.stringify({
+        filter: stateFilter,
+        lastShot: pendingHydrateShot,
+        reviewPos: ui.review_position || pendingHydrateShot,
+      }));
+    } catch (e) { /* */ }
+    workspaceUIReady = true;
+  }
 
   /* #50a: the review page deep-links /?compare=<shot> into the A/B overlay */
   let pendingCompare = (() => {
@@ -2948,8 +2990,7 @@ _JS = r"""
     }
   }
 
-  let stateFilter = loadUI().filter || "";  /* '' = all; survives re-renders
-    AND reloads (per-project UI memory, #49a) */
+  /* stateFilter declared earlier; hydrated from /api/ui-state on boot */
 
   /* most-blocking first — the #44 resolver's ladder, not the alphabet */
   const STATE_FILTER_ORDER = ["broken", "missing", "needs_selection", "stale", "manual", "fresh"];
@@ -3105,6 +3146,85 @@ _JS = r"""
     }
   } catch (e) { mediaIO = null; }
 
+  function disposeShotNode(node) {
+    if (!node) return;
+    node.querySelectorAll("video, img, [data-lazy-media]").forEach((media) => {
+      try {
+        if (mediaIO) mediaIO.unobserve(media);
+      } catch (e) { /* */ }
+      if (media.tagName === "VIDEO") {
+        try { if (!media.paused) media.pause(); } catch (e2) { /* */ }
+      }
+    });
+  }
+
+  function captureFocusIdentity() {
+    const el0 = document.activeElement;
+    if (!el0 || !el0.closest) return null;
+    const card = el0.closest("section.shot[data-sid]");
+    if (!card) return null;
+    const take = el0.closest(".take");
+    return {
+      shotId: card.dataset.sid || "",
+      take: take && take.dataset ? (take.dataset.tname || "") : "",
+      action: el0.dataset ? (el0.dataset.action || "") : "",
+      role: el0.getAttribute("role") || "",
+      tag: (el0.tagName || "").toLowerCase(),
+      cls: el0.className || "",
+    };
+  }
+
+  function restoreFocusIdentity(id) {
+    if (!id || !id.shotId) return;
+    const card = document.querySelector(
+      'section.shot[data-sid="' + id.shotId + '"]');
+    if (!card) return;
+    let target = null;
+    if (id.action) {
+      const scope = id.take
+        ? card.querySelector('.take[data-tname="' + id.take + '"]') || card
+        : card;
+      target = scope.querySelector('[data-action="' + id.action + '"]');
+    }
+    if (!target && id.take) {
+      target = card.querySelector('.take[data-tname="' + id.take + '"] video')
+        || card.querySelector('.take[data-tname="' + id.take + '"]');
+    }
+    if (!target) target = card;
+    try { target.focus({ preventScroll: true }); } catch (e) {
+      try { target.focus(); } catch (e2) { /* */ }
+    }
+  }
+
+  function filterSignature(shots) {
+    const counts = {};
+    (shots || []).forEach((s) => {
+      counts[s.state] = (counts[s.state] || 0) + 1;
+    });
+    return JSON.stringify(counts) + "|" + (stateFilter || "");
+  }
+
+  function ensureFilterChips(root, shots) {
+    const states = Object.keys(shots.reduce((a, s) => (a[s.state] = 1, a), {}));
+    let chips = root.querySelector(".shot-filters");
+    if (states.length <= 1) {
+      if (chips && chips.parentNode) chips.parentNode.removeChild(chips);
+      if (stateFilter) {
+        stateFilter = "";
+        saveUI({ filter: "" });
+      }
+      return;
+    }
+    const sig = filterSignature(shots);
+    if (!chips || chips.dataset.sig !== sig) {
+      const fresh = filterChips(shots);
+      fresh.classList.add("shot-filters");
+      fresh.dataset.sig = sig;
+      if (chips && chips.parentNode) chips.parentNode.replaceChild(fresh, chips);
+      else root.insertBefore(fresh, root.firstChild);
+    }
+  }
+
   function renderShots(shots) {
     const t0 = (typeof performance !== "undefined" && performance.now)
       ? performance.now() : Date.now();
@@ -3130,18 +3250,7 @@ _JS = r"""
       root.appendChild(empty);
       return;
     }
-    if (Object.keys(shots.reduce((a, s) => (a[s.state] = 1, a), {})).length > 1) {
-      /* filter chips: keep one host at top */
-      let chips = root.querySelector(".shot-filters");
-      if (!chips) {
-        chips = filterChips(shots);
-        chips.classList.add("shot-filters");
-        root.insertBefore(chips, root.firstChild);
-      }
-    } else if (stateFilter) {
-      stateFilter = "";  /* single-state grid: a stale filter must not hide it */
-      saveUI({ filter: "" });  /* #50c: the reset must reach the memory too */
-    }
+    ensureFilterChips(root, shots);
     const visible = stateFilter ? shots.filter((s) => s.state === stateFilter) : shots;
     if (!visible.length) {
       stateFilter = "";
@@ -3152,7 +3261,7 @@ _JS = r"""
 
     /* Keyed patch by shot.id + ui_rev — never clear+rebuild the whole grid. */
     const scrollTop = root.scrollTop;
-    const prevFocus = document.activeElement;
+    const focusId = captureFocusIdentity();
     const byId = new Map();
     Array.from(root.querySelectorAll("section.shot[data-sid]")).forEach((node) => {
       byId.set(node.dataset.sid, node);
@@ -3180,10 +3289,13 @@ _JS = r"""
         orderHost.appendChild(existing);
         keep.add(shot.id);
         renderStats.shots_reused++;
+        existing.querySelectorAll("video, img").forEach(() => {
+          renderStats.media_nodes_reused++;
+        });
         return;
       }
       if (existing) {
-        /* Capture media playback before replace. */
+        /* Capture media playback before replace; dispose old observer targets. */
         const playState = [];
         existing.querySelectorAll("video").forEach((v) => {
           playState.push({
@@ -3193,6 +3305,7 @@ _JS = r"""
             muted: v.muted, rate: v.playbackRate,
           });
         });
+        disposeShotNode(existing);
         const card = shotCard(shot, idx, total);
         card.dataset.uiRev = rev;
         orderHost.appendChild(card);
@@ -3221,11 +3334,7 @@ _JS = r"""
     /* Remove shots no longer visible. */
     byId.forEach((node, sid) => {
       if (!keep.has(sid)) {
-        if (mediaIO) {
-          node.querySelectorAll("video, img").forEach((m) => {
-            try { mediaIO.unobserve(m); } catch (e) { /* */ }
-          });
-        }
+        disposeShotNode(node);
         if (node.parentNode) node.parentNode.removeChild(node);
         renderStats.shots_removed++;
       }
@@ -3235,15 +3344,21 @@ _JS = r"""
       const n = frag.firstChild;
       frag.removeChild(n);
       if (n.dataset && n.dataset.sid && !keep.has(n.dataset.sid)) {
+        disposeShotNode(n);
         renderStats.shots_removed++;
       }
     }
     try { root.scrollTop = scrollTop; } catch (e) { /* */ }
-    if (prevFocus && document.contains(prevFocus) && prevFocus.focus) {
-      try { prevFocus.focus({ preventScroll: true }); } catch (e) {
-        try { prevFocus.focus(); } catch (e2) { /* */ }
-      }
+    restoreFocusIdentity(focusId);
+    applyReviewFocusMode();
+    if (pendingHydrateShot && !kbFocusId) {
+      const want = pendingHydrateShot;
+      pendingHydrateShot = "";
+      if (visible.some((s) => s.id === want)) kbSetFocus(want);
     }
+    try {
+      saveUI({ shotsScroll: root.scrollTop });
+    } catch (e) { /* */ }
     const t1 = (typeof performance !== "undefined" && performance.now)
       ? performance.now() : Date.now();
     renderStats.render_duration_ms = Math.round(t1 - t0);
@@ -3384,6 +3499,7 @@ _JS = r"""
       img.decoding = "async";
       img.alt = t.name || "take";
       /* Selected: set src immediately; others use lazy dataset + observer. */
+      img.dataset.lazyMedia = "1";
       if (t.selected) {
         img.src = t.url;
         renderStats.media_nodes_created++;
@@ -3399,6 +3515,7 @@ _JS = r"""
       v.controls = true;
       v.width = 180;
       /* Selected / current review take: metadata; off-screen others: none. */
+      v.dataset.lazyMedia = "1";
       if (t.selected || (shot.id === kbFocusId)) {
         v.preload = "metadata";
         v.src = t.url;
@@ -3446,11 +3563,13 @@ _JS = r"""
     const acts = el("div", "tacts");
     /* one-key verdicts (UX-STUDY #4): 好/弃 are just take_notes values —
      * one reviewable YAML line, clicking the active verdict clears it */
-    const verdict = (label, value, tip) => {
+    const verdict = (label, value, tip, action) => {
       const b = el("button", "btn tiny" + (t.note === value ? " on" : ""), label);
       b.type = "button";
       b.title = tip;
       b.setAttribute("aria-label", tip);  /* the emoji face needs a name */
+      b.dataset.action = action;  /* NEVER use positional .tacts .btn for shortcuts */
+      b.dataset.take = t.name || "";
       roGate(b);
       b.addEventListener("click", () =>
         post(b, "/api/take-note",
@@ -3459,12 +3578,14 @@ _JS = r"""
             + shot.id + "/" + t.name));
       acts.appendChild(b);
     };
-    verdict("👍", "好", "标记 好 (approve)");
-    verdict("👎", "弃", "标记 弃 (reject)");
+    verdict("👍", "好", "标记 好 (approve)", "verdict-good");
+    verdict("👎", "弃", "标记 弃 (reject)", "verdict-reject");
     const noteBtn = el("button", "btn tiny", "📝");
     noteBtn.type = "button";
     noteBtn.title = "备注 (note) — 以 mm:ss 开头可点击跳转";
     noteBtn.setAttribute("aria-label", "备注 (note)");
+    noteBtn.dataset.action = "edit-note";
+    noteBtn.dataset.take = t.name || "";
     roGate(noteBtn);
     noteBtn.addEventListener("click", () => {
       /* inline editor, not a blocking prompt dialog — that froze the whole
@@ -4964,15 +5085,36 @@ _JS = r"""
   function applyReviewFocusMode() {
     const root = $("shots");
     if (!root) return;
+    const cards = root.querySelectorAll("section.shot");
     root.classList.toggle("review-focus", !!reviewFocusMode);
-    if (!reviewFocusMode) return;
-    root.querySelectorAll("section.shot").forEach((c) => {
+    if (!reviewFocusMode) {
+      /* MUST clear per-card hide state — otherwise AT still treats cards as hidden. */
+      cards.forEach((c) => {
+        c.classList.remove("rf-active");
+        c.removeAttribute("aria-hidden");
+        try { c.inert = false; } catch (e) {
+          c.removeAttribute("inert");
+        }
+      });
+      return;
+    }
+    /* Move focus off a card that is about to become inert. */
+    const activeEl = document.activeElement;
+    const activeCard = kbFocusId ? cardById(kbFocusId) : null;
+    if (activeEl && activeCard && !activeCard.contains(activeEl)) {
+      try { activeCard.focus({ preventScroll: true }); } catch (e) { /* */ }
+    }
+    cards.forEach((c) => {
       const on = c.dataset.sid === kbFocusId;
       c.classList.toggle("rf-active", on);
       c.setAttribute("aria-hidden", on ? "false" : "true");
+      try { c.inert = !on; } catch (e) {
+        if (on) c.removeAttribute("inert");
+        else c.setAttribute("inert", "");
+      }
       if (!on) {
         c.querySelectorAll("video").forEach((v) => {
-          try { if (!v.paused) v.pause(); } catch (e) { /* */ }
+          try { if (!v.paused) v.pause(); } catch (err) { /* */ }
         });
       }
     });
@@ -5543,11 +5685,17 @@ _JS = r"""
       return;
     }
     if (k === "n" || k === "N") {
-      /* jump to note editor on focused shot's selected take */
+      /* ONLY the semantic note button — never fall back to first .tacts .btn
+       * (that used to click 好 and silently write a verdict). */
       if (kbFocusId) {
         const card = cardById(kbFocusId);
-        const noteBtn = card && card.querySelector(".tnote-edit-btn, .tacts .btn");
+        if (!card) return;
+        const sel = card.querySelector(".take.selected");
+        const scope = sel || card;
+        const noteBtn = scope.querySelector('[data-action="edit-note"]')
+          || card.querySelector('[data-action="edit-note"]');
         if (noteBtn) noteBtn.click();
+        else toast("当前镜头没有备注按钮", "warn");
       }
       return;
     }
@@ -5587,6 +5735,11 @@ _JS = r"""
   $("editor").addEventListener("close", editorClosed);
   $("planmodal").addEventListener("close", () => { planOpen = false; clear($("planmodal")); });
 
+  /* Boot: hydrate personal UI from server, then start polling. */
+  bootstrapWorkspaceUI().then(() => {
+    try { refresh(); } catch (e) { /* first paint best-effort */ }
+  }).catch(() => { try { refresh(); } catch (e2) { /* */ } });
+
   /* Safe quit: explicit button only — never cancel jobs from beforeunload. */
   async function requestAppQuit(mode) {
     try {
@@ -5625,7 +5778,7 @@ _JS = r"""
     }).catch(() => {});
   } catch (e) { /* boot continues */ }
 
-  refresh();
+  /* refresh() is started by bootstrapWorkspaceUI() after hydrate */
 })();
 """.strip() + "\n"
 

@@ -343,6 +343,11 @@ class JobRunner:
         with self._lock:
             return self._state
 
+    @property
+    def worker_alive(self) -> bool:
+        """Whether the daemon worker thread is still running."""
+        return self._worker.is_alive()
+
     def shutdown(
         self,
         timeout: float | None = 5.0,

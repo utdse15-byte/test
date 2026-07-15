@@ -26,6 +26,15 @@ class ManjuApiError extends Error {
   }
 }
 
+class ManjuProtocolError extends Error {
+  constructor(message, path, raw) {
+    super(message || "服务器返回了无效 JSON");
+    this.name = "ManjuProtocolError";
+    this.path = path || "";
+    this.raw_response = raw || "";
+  }
+}
+
 /**
  * @param {string} method
  * @param {string} path
@@ -54,13 +63,22 @@ async function requestJson(method, path, body, options) {
   }
   var response = await fetch(path, init);
   var data = {};
-  if (response.status !== 204) {
-    try {
-      var text = await response.text();
-      if (text) {
-        try { data = JSON.parse(text); } catch (e) { data = {}; }
+  if (response.status === 204) {
+    data = {};
+  } else {
+    var text = "";
+    try { text = await response.text(); } catch (e) { text = ""; }
+    if (text && text.trim()) {
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        if (response.ok) {
+          throw new ManjuProtocolError(
+            "服务器返回了无效 JSON", path, text.slice(0, 1000));
+        }
+        data = { error: "服务器返回了无效 JSON", raw_response: text.slice(0, 1000) };
       }
-    } catch (e) {
+    } else {
       data = {};
     }
   }

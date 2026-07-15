@@ -172,7 +172,7 @@ function showProjectActionDialog(data) {
     btnLaunch.disabled = true;
     status.textContent = "正在启动…";
     requestJson("POST", "/api/workspace/launch",
-      { path: root, project_id: proj.id || "" },
+      { project_id: proj.id || "", path: root },
       manjuApiOptions())
       .then(function (resp) {
         status.textContent = (resp && resp.message) || "已启动新窗口";

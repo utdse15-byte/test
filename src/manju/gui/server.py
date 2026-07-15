@@ -306,35 +306,58 @@ class GuiServer(ThreadingHTTPServer):
             connected = max(0, threading.active_count() - 2)
         except Exception:
             connected = 0
-        return {
+        status = {
             "app_mode": self.app_mode,
             "closing": self.closing.is_set(),
             "quit_mode": self._quit.mode,
             "quit_in_progress": self._quit.in_progress,
+            "shutdown_state": (
+                "stuck" if self._quit.stuck
+                else ("closing" if self.closing.is_set() and self._quit.in_progress
+                      else ("closed" if self.closing.is_set() else "open"))),
             "runner_state": rstate,
             "running_job": running,
             "queued_count": queued,
             "connected_clients": connected,
         }
+        if self._quit.stuck:
+            status["message"] = (
+                "当前任务没有响应取消请求 — 写操作已拒绝，状态/日志仍可读")
+        return status
 
     def request_shutdown(self, mode: str = "after_current") -> dict[str, Any]:
         """Begin coordinated quit via :class:`AppShutdownCoordinator`."""
         return self._quit.request(mode)
 
     def close(self) -> None:
-        """CLI/KeyboardInterrupt path: cancel queued, wait briefly, close socket.
+        """CLI/KeyboardInterrupt path — always enters the quit coordinator.
 
-        Does not swallow runner failures silently — logs on timeout.
+        Waits briefly for the coordinator thread; if the worker is still alive
+        after a short grace, logs and closes the listening socket without
+        pretending the runner stopped cleanly.
         """
-        self.closing.set()
-        report = self.runner.shutdown(
-            timeout=1.0, cancel_queued=True, cancel_running=False)
-        if not report.stopped:
+        self.request_shutdown("after_current")
+        thr = getattr(self._quit, "_thread", None)
+        if thr is not None and thr.is_alive():
+            thr.join(timeout=2.0)
+        if self.runner.worker_alive:
             _log.warning(
-                "gui close: runner still running after 1s (job=%s); "
-                "server_close proceeds",
-                report.running_job_id)
-        self.server_close()
+                "gui close: runner still alive after coordinator grace; "
+                "server_close proceeds (write ops remain rejected via closing)")
+            # Cancel queued one more time; do not force-kill a writing worker.
+            try:
+                self.runner.shutdown(timeout=0.5, cancel_queued=True,
+                                     cancel_running=False)
+            except Exception as exc:
+                _log.warning("gui close runner.shutdown: %s", exc)
+        try:
+            if not self._quit.stuck:
+                self.server_close()
+            else:
+                # stuck: keep socket open for status; still try close on CLI exit
+                self.server_close()
+        except Exception as exc:
+            _log.warning("gui close server_close: %s", exc)
 
 
 def discover_workspace(root: Path) -> dict[str, Project]:
@@ -2298,33 +2321,49 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_workspace_launch(self, body: dict[str, Any]) -> None:
         """Spawn a separate ``manju gui <root> --app --port 0`` process.
 
-        Never executes browser-supplied shell strings — only validated project
-        paths / ids, via argv list + shell=False.
+        Prefer catalog ``project_id`` / ``slug``. Arbitrary browser paths are
+        only accepted when they match an already-known project (workspace
+        catalog, current session, or recents) — never an unrestricted open.
         """
         import subprocess
         import sys
 
+        from ..core.recents import load_recents
+
         raw = str(body.get("path") or "").strip()
         pid = str(body.get("project_id") or "").strip()
+        slug = str(body.get("slug") or "").strip()
         project: Project | None = None
-        if raw:
-            try:
-                project = Project(Path(raw).expanduser().resolve())
-            except ProjectError as exc:
-                self._send_error_json(str(exc), 404)
-                return
-        elif pid:
-            # Resolve from workspace catalog or current session only.
-            for p in list(self.server.workspace.values()) + (
-                    [self.server.session.project] if self.server.session else []):
-                if project_identity(p) == pid:
+        known: list[Project] = list(self.server.workspace.values())
+        if self.server.session is not None:
+            known.append(self.server.session.project)
+        try:
+            for e in load_recents().entries:
+                try:
+                    known.append(Project(Path(e["path"])))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        def _match(p: Project) -> bool:
+            if pid and project_identity(p) == pid:
+                return True
+            if raw and Path(raw).expanduser().resolve() == p.root.resolve():
+                return True
+            return False
+
+        if slug and self.server.workspace:
+            project = self.server.workspace.get(slug)
+        if project is None and (pid or raw):
+            for p in known:
+                if _match(p):
                     project = p
                     break
-            if project is None:
-                self._send_error_json("unknown project_id", 404)
-                return
-        else:
-            self._send_error_json("path or project_id is required", 400)
+        if project is None:
+            self._send_error_json(
+                "project_id/slug/path must refer to a known project "
+                "(workspace catalog, current session, or recents)", 404)
             return
 
         argv = [
