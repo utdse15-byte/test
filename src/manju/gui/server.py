@@ -1512,17 +1512,31 @@ class _Handler(BaseHTTPRequestHandler):
         force = bool(body.get("force"))
         assume_yes = bool(body.get("assume_yes"))
         project, actor = self.server.project, self.server.actor
+        # C39: optional lang for locale build (same validate as QC / MCP).
+        lang: str | None = None
+        lang_raw = body.get("lang")
+        if lang_raw is not None and str(lang_raw).strip():
+            from ..core.locale import validate_lang
+            try:
+                lang = validate_lang(str(lang_raw).strip())
+            except Exception as exc:
+                self._send_error_json(" ".join(str(exc).split()), 400)
+                return
 
         if body.get("dry_run"):
             from ..build.graph import run_build
 
-            result = run_build(project, target=target, gen=gen, regen_stale=regen_stale,
-                               dry_run=True, force=force, actor=actor)
+            kwargs_dry: dict[str, Any] = dict(
+                target=target, gen=gen, regen_stale=regen_stale,
+                dry_run=True, force=force, actor=actor)
+            if lang is not None:
+                kwargs_dry["lang"] = lang
+            result = run_build(project, **kwargs_dry)
             self._send_json({"dry_run": True, "result": result.to_dict()})
             return
 
         params = {"target": target, "gen": gen, "regen_stale": regen_stale,
-                  "force": force, "assume_yes": assume_yes}
+                  "force": force, "assume_yes": assume_yes, "lang": lang}
 
         def fn(job) -> dict[str, Any]:
             import inspect
@@ -1549,6 +1563,9 @@ class _Handler(BaseHTTPRequestHandler):
             # an older core that has not landed should_cancel yet.
             if "should_cancel" in params_sig:
                 kwargs["should_cancel"] = job.should_cancel
+            # C39: locale build through GUI.
+            if lang is not None and "lang" in params_sig:
+                kwargs["lang"] = lang
             return run_build(project, **kwargs).to_dict()
 
         job = self.server.runner.submit("build", params, fn)
