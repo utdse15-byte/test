@@ -205,11 +205,18 @@ class GenericTtsProvider:
             )
             return project.register_voice_take(shot.id, audio, sidecar)
 
-    def _poll(self, job_id: str) -> dict:
+    def _poll(self, job_id: str, *, should_cancel=None) -> dict:
         poll_cfg = self.manifest.poll
         assert poll_cfg is not None
         elapsed, i = 0.0, 0
         while True:
+            # C12: cooperative cancel between poll rounds (locale/GUI cancel).
+            if should_cancel is not None and should_cancel():
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: poll canceled for job {job_id}",
+                    detail={"job_id": job_id, "canceled": True},
+                )
             resp = self._transport(
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
