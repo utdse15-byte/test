@@ -488,3 +488,11 @@ Loop continues...
 - Cycle pins: 91+ green
 - Broad suite: 179 passed
 - Still looping toward ~10h wall-clock
+
+## Cycles 90-91
+- C90 MCP cancel → ToolError canceled
+- C91 pin
+
+## Continuous (2026-07-15T06:56:32.6353240-07:00)
+- 147 commits since 81d6206
+- Still looping toward ~10h
