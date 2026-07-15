@@ -2017,6 +2017,15 @@ class _Handler(BaseHTTPRequestHandler):
                         "errors": [" ".join(str(exc).split())[:500]],
                         "shot": shot_id,
                     }
+                except Exception as exc:
+                    from ..providers.base import ProviderCanceled
+                    if isinstance(exc, ProviderCanceled):
+                        return {
+                            "canceled": True,
+                            "errors": [" ".join(str(exc).split())[:500]],
+                            "shot": shot_id,
+                        }
+                    raise
                 return {"shot": shot_id, "takes": takes}
 
             return fn
@@ -4858,6 +4867,16 @@ class _Handler(BaseHTTPRequestHandler):
                     "quality": quality,
                     "provider": provider,
                 }
+            except Exception as exc:
+                # C85: lab generate cancel mid-poll.
+                from ..providers.base import ProviderCanceled
+                if isinstance(exc, ProviderCanceled):
+                    return {
+                        "canceled": True,
+                        "errors": [" ".join(str(exc).split())[:500]],
+                        "shot": shot_id,
+                    }
+                raise
             return {"shot": shot_id, "quality": quality, "provider": provider,
                     "takes": takes}
 
