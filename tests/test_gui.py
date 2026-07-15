@@ -615,11 +615,13 @@ def test_workspace_mode(tmp_path):
         assert len(active) == 1 and active[0]["slug"] == "甲"
         _, _, state = _request(server, "/api/state")
         assert state["workspace"]["active"] == "甲"
-        # switch and confirm state follows
+        # Session immutable: switch refuses and does not rebind
         status, _, data = _post(server, "/api/switch", {"slug": "乙"})
-        assert status == 200 and data["ok"] is True
+        assert status == 409
+        assert data.get("code") == "project_session_immutable"
+        assert data.get("open_in_new_window") is True
         _, _, state = _request(server, "/api/state")
-        assert state["project"]["name"] == "乙"
+        assert state["project"]["name"] == "甲"
         assert _post(server, "/api/switch", {"slug": "nope"})[0] == 404
     finally:
         server.shutdown()

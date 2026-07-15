@@ -12,38 +12,17 @@ server) — but round AA4 adds a durable, best-effort TRANSITION LOG,
 ``.manju/jobs.jsonl`` (one JSON line per submit/start/cancel/finish), so a GUI
 crash/restart can honestly say "this job was still running when the GUI died,
 its actual outcome is unknown" instead of silently forgetting it ever existed.
-This log is operational history for THIS process's job queue, not the durable
-collaboration log — that role stays events.jsonl/the run ledger, and the
-result of a job is still whatever dict the engine call returned, so the
-front-end renders the same payload the CLI would have printed with --json.
 
-``jobs.jsonl`` schema — one JSON object per line, UTF-8, newest last::
+Each :class:`JobRunner` is bound to exactly one ``project_id`` for its whole
+lifetime (GUI repair plan 2026-07-15). Jobs carry that id; retry refuses a
+mismatch; logs never silently cross projects.
 
-    {"ts": "<iso8601 UTC>", "id": "<job id>", "kind": "<job kind>",
-     "state": "queued|running|canceling|canceled|done|failed|interrupted",
-     "params_summary": {...}, "error": "<str | null>"}
+Runner lifecycle (OPEN → CLOSING → CLOSED):
 
-``params_summary`` is ``params`` with long lists/strings truncated (see
-:func:`_summarize_params`) — this log is capped at :data:`_JOBS_LOG_CAP`
-lines (rewritten to the newest N on every :class:`JobRunner` construction,
-mirroring the simplest existing precedent for a disposable, single-writer,
-single-process log — unlike ``events.jsonl``/``failures.jsonl``, which are
-durable multi-process collaboration/ledger logs and get either no rotation or
-a byte-size rotation behind a cross-process lock, ``jobs.jsonl`` is written by
-exactly one process's one worker thread, so a plain startup cap is enough).
-``state="interrupted"`` is synthetic — see :meth:`JobRunner.interrupted`.
-
-**Cross-process honesty**: an MCP tool call or a CLI invocation (``manju
-build`` run directly in a terminal) is a SEPARATE OS process with its own
-Python interpreter — it never touches this module's in-memory queue or this
-GUI's ``jobs.jsonl``. The GUI's job queue can never see, list, cancel, or
-report on a build/redo/voice/qc run started via the CLI or an MCP tool call,
-and vice versa: cancelling a GUI job has zero effect on a concurrent CLI
-process (they are only ever kept from CORRUPTING data by the cross-process
-``.manju/build.lock`` — see runtime/buildlock.py — never by shared visibility
-into each other's progress or cancel state). A user running both at once sees
-two independent queues/histories; this is a real limitation, not a bug to
-paper over.
+- ``submit`` only while OPEN; otherwise raises :class:`RunnerClosed`.
+- ``shutdown`` cancels queued jobs (default), optional cooperative cancel of
+  the running job, then posts a single exit sentinel — queued work never
+  executes after shutdown begins.
 """
 
 from __future__ import annotations
@@ -55,10 +34,17 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
-__all__ = ["Job", "JobRunner"]
+__all__ = [
+    "Job",
+    "JobRunner",
+    "RunnerClosed",
+    "RunnerState",
+    "ShutdownReport",
+]
 
 # Keep this many finished jobs around for the UI; older ones are dropped.
 _HISTORY_CAP = 50
@@ -87,6 +73,11 @@ _INTERRUPTED_ERROR = (
 # still available.
 _INTERRUPTED_RETRY_NOTE = (
     "中断任务无法原样重试(参数摘要有损)——请从原页面重新发起"
+)
+
+_LEGACY_UNSCOPED_NOTE = (
+    "旧版本任务，项目归属未记录——"
+    + "无法原样重试(参数摘要有损)——请从原页面重新发起"
 )
 
 
@@ -119,6 +110,25 @@ def _summarize_params(params: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+class RunnerState(Enum):
+    OPEN = "open"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
+class RunnerClosed(RuntimeError):
+    """Raised when :meth:`JobRunner.submit` is called after shutdown began."""
+
+
+@dataclass(frozen=True)
+class ShutdownReport:
+    """Structured result of :meth:`JobRunner.shutdown` (never silent timeout)."""
+
+    stopped: bool
+    canceled_queued: tuple[str, ...]
+    running_job_id: str | None
+
+
 @dataclass
 class Job:
     id: str
@@ -135,6 +145,8 @@ class Job:
     # goal B (retry): the job id this one was retried FROM, or None for a
     # fresh submit — lineage the queue panel renders as "retry of #<id>".
     retry_of: str | None = None
+    # Fixed at submit from the runner's project_id; callers cannot override.
+    project_id: str = ""
     # goal A (cancel): the cooperative cancel flag. A work function that wants
     # to be cancelable is handed this Job (submit()'s contract already passes
     # it) and checks ``job.cancel_event.is_set`` (or the job's own
@@ -158,6 +170,7 @@ class Job:
             "started": self.started,
             "finished": self.finished,
             "retry_of": self.retry_of,
+            "project_id": self.project_id,
             # convenience for the GUI: whether a cancel/retry click is even
             # meaningful right now, without the client re-deriving the rule.
             "cancelable": self.state in ("queued", "running"),
@@ -175,21 +188,21 @@ class Job:
         return self.cancel_event.is_set()
 
 
-def _interrupted_job_dict(rec: dict[str, Any]) -> dict[str, Any]:
+def _interrupted_job_dict(
+    rec: dict[str, Any],
+    *,
+    created: str | None = None,
+    started: str | None = None,
+    finished: str | None = None,
+    legacy_unscoped: bool = False,
+) -> dict[str, Any]:
     """A jobs.jsonl record (freshly detected as dangling, OR already
     ``state="interrupted"`` from an earlier construction) rendered in the
-    SAME shape :meth:`Job.to_dict` produces (plus one extra key, ``note``),
+    SAME shape :meth:`Job.to_dict` produces (plus ``note`` / legacy flags),
     so the GUI queue panel can render a dangling job with almost the exact
     same row renderer as a live one — it is read-only data, never a live
-    :class:`Job` (see :meth:`JobRunner.interrupted`).
-
-    ``retryable`` is always ``False`` here (round AA item 6): unlike a
-    ``failed``/``canceled`` live :class:`Job`, whose ``params`` dict is the
-    exact one it ran with, this record only ever has ``params_summary`` —
-    already lossy on write (:func:`_summarize_params`) — so a resubmit built
-    from it could silently run a smaller/different job than the one that was
-    interrupted. ``note`` carries the 中文 explanation the queue panel shows
-    in place of a retry button (:data:`_INTERRUPTED_RETRY_NOTE`)."""
+    :class:`Job` (see :meth:`JobRunner.interrupted`)."""
+    note = _LEGACY_UNSCOPED_NOTE if legacy_unscoped else _INTERRUPTED_RETRY_NOTE
     return {
         "id": rec.get("id"),
         "kind": rec.get("kind"),
@@ -198,32 +211,37 @@ def _interrupted_job_dict(rec: dict[str, Any]) -> dict[str, Any]:
         "progress": None,
         "error": rec.get("error") or _INTERRUPTED_ERROR,
         "result": None,
-        "created": None,
-        "started": None,
-        "finished": rec.get("ts"),
+        "created": created,
+        "started": started,
+        "finished": finished if finished is not None else rec.get("ts"),
         "retry_of": None,
+        "project_id": rec.get("project_id") or "",
         "cancelable": False,
         "retryable": False,
-        "note": _INTERRUPTED_RETRY_NOTE,
+        "legacy_unscoped": legacy_unscoped,
+        "note": note,
     }
 
 
 class JobRunner:
-    """One daemon worker thread; submit() returns immediately with a Job."""
+    """One daemon worker thread; submit() returns immediately with a Job.
 
-    def __init__(self, runtime_dir: "Path | str | None" = None) -> None:
-        """``runtime_dir`` (round AA4) is the project's ``.manju`` directory
-        (``Project.runtime_dir`` — threaded in from gui/server.py's
-        construction site). ``None`` (the default — every bare ``JobRunner()``
-        a test constructs, and any server started unbound with no project
-        yet) disables jobs.jsonl persistence entirely: no file is ever
-        written or read, and :meth:`interrupted` always returns ``[]``. This
-        keeps the runner usable standalone (tests, an unbound workspace
-        picker) exactly as before this round."""
+    Bound to a single ``project_id`` for its lifetime. ``runtime_dir`` is the
+    project's ``.manju`` directory (or ``None`` to disable jobs.jsonl).
+    """
+
+    def __init__(
+        self,
+        runtime_dir: "Path | str | None" = None,
+        *,
+        project_id: str = "",
+    ) -> None:
+        self.project_id = project_id or ""
         self._queue: "queue.Queue[tuple[Job, Callable[[Job], dict[str, Any]]] | None]" = queue.Queue()
         self._jobs: dict[str, Job] = {}
         self._order: list[str] = []  # insertion order, oldest first
         self._lock = threading.Lock()
+        self._state = RunnerState.OPEN
         self._rev = 0  # bumps on submit and on completion — cheap change signal
         self._jobs_log_path: "Path | None" = (
             Path(runtime_dir) / _JOBS_LOG_FILE if runtime_dir is not None else None
@@ -246,15 +264,19 @@ class JobRunner:
         ``job.should_cancel()`` / ``job.cancel_event`` at their own
         checkpoints if they support cooperative cancellation (goal A).
 
-        ``retry_of`` (goal B) tags this as a FRESH re-submit of a failed/
-        canceled job — a new id, same kind/params, lineage recorded so the
-        queue panel can render "retry of #<id>". JobRunner itself never
-        re-derives ``fn`` from a kind — the caller (gui/server.py) rebuilds
-        the SAME closure a fresh submit of this kind would use, re-running
-        that kind's own validation in the process (goal: refuse a retry
-        whose params no longer validate)."""
-        job = Job(id=uuid.uuid4().hex[:12], kind=kind, params=params, retry_of=retry_of)
+        Raises :class:`RunnerClosed` if the runner is closing or closed.
+        ``project_id`` is always taken from the runner — callers cannot set it.
+        """
+        job = Job(
+            id=uuid.uuid4().hex[:12],
+            kind=kind,
+            params=params,
+            retry_of=retry_of,
+            project_id=self.project_id,
+        )
         with self._lock:
+            if self._state is not RunnerState.OPEN:
+                raise RunnerClosed("job runner is closing/closed")
             self._jobs[job.id] = job
             self._order.append(job.id)
             self._rev += 1
@@ -273,15 +295,8 @@ class JobRunner:
           spends anything.
         - **running**: the cancel flag is set and the state moves to
           ``canceling``; the job's own work function observes the flag at
-          ITS checkpoints (today: ``run_build(should_cancel=...)`` and every
-          batch kind's between-item checkpoint) and unwinds honestly,
-          landing on ``canceled``. Cancellation is cooperative, never forced
-          — a work function that does not check the flag simply finishes on
-          its own (lands on ``done``/``failed`` as usual; the cancel request
-          had no effect beyond being recorded).
-        - **already terminal** (done/failed/canceled) or **unknown id**: a
-          no-op — returns the job (or ``None`` for an unknown id) unchanged,
-          so a stale double-click from the UI is harmless.
+          ITS checkpoints and unwinds honestly, landing on ``canceled``.
+        - **already terminal** or **unknown id**: no-op.
         """
         changed = False
         with self._lock:
@@ -317,36 +332,84 @@ class JobRunner:
             return [self._jobs[i] for i in reversed(self._order)]
 
     def interrupted(self) -> list[dict[str, Any]]:
-        """Jobs a PAST GUI process left dangling — non-terminal (queued/
-        running/canceling) the moment this process's jobs.jsonl tail was last
-        written, meaning the previous process died (crash or plain restart)
-        before that job ever reached done/failed/canceled. Its real outcome
-        (did the ffmpeg encode finish? did the provider call land?) is
-        genuinely unknown — see :data:`_INTERRUPTED_ERROR`.
-
-        Computed ONCE at construction (see :meth:`_scan_interrupted`); these
-        are read-only, :meth:`Job.to_dict`-shaped dicts, NOT live
-        :class:`Job` objects — they are never resurrected into the runnable
-        queue (cancel()/get() do not see them). Unlike a normal failed/
-        canceled job, one of these is NOT retryable (round AA item 6):
-        jobs.jsonl only ever recorded this job's ``params_summary``, a
-        LOSSY compaction (:func:`_summarize_params` truncates long lists/
-        strings), so ``gui/server.py``'s ``_act_jobs_retry`` refuses a
-        resubmit built from it (a 中文 4xx, never a silent
-        smaller-than-intended re-run) — every dict here carries
-        ``retryable=False`` plus a ``note`` explaining that, and the queue
-        panel points the human back at the page that started the job
-        instead of offering a retry button."""
+        """Jobs a PAST GUI process left dangling — see module docstring."""
         return list(self._interrupted)
 
     def busy(self) -> bool:
         with self._lock:
             return any(self._jobs[i].active for i in self._order)
 
-    def shutdown(self, timeout: float = 5.0) -> None:
-        """Stop the worker after the current job (tests / server close)."""
-        self._queue.put(None)
-        self._worker.join(timeout)
+    def state(self) -> RunnerState:
+        with self._lock:
+            return self._state
+
+    def shutdown(
+        self,
+        timeout: float | None = 5.0,
+        *,
+        cancel_queued: bool = True,
+        cancel_running: bool = False,
+    ) -> ShutdownReport:
+        """Stop the worker. Cancels queued jobs by default so they never run.
+
+        Idempotent: a second call waits again / reports current state.
+        Returns a structured :class:`ShutdownReport` (``stopped=False`` if
+        the worker is still alive after ``timeout``).
+        """
+        canceled: list[str] = []
+        running_id: str | None = None
+        with self._lock:
+            if self._state is RunnerState.CLOSED:
+                return ShutdownReport(
+                    stopped=True, canceled_queued=(), running_job_id=None)
+            first_close = self._state is RunnerState.OPEN
+            self._state = RunnerState.CLOSING
+            if first_close and cancel_queued:
+                for jid in list(self._order):
+                    job = self._jobs[jid]
+                    if job.state == "queued":
+                        job.state = "canceled"
+                        job.error = "已取消:服务器关闭时取消排队任务,从未运行"
+                        job.finished = _now()
+                        canceled.append(jid)
+                        self._rev += 1
+            if cancel_running:
+                for jid in self._order:
+                    job = self._jobs[jid]
+                    if job.state in ("running", "canceling"):
+                        job.cancel_event.set()
+                        if job.state == "running":
+                            job.state = "canceling"
+                            self._rev += 1
+            for jid in self._order:
+                if self._jobs[jid].state in ("running", "canceling"):
+                    running_id = jid
+                    break
+
+        for jid in canceled:
+            job = self.get(jid)
+            if job is not None:
+                self._persist(job)
+        if cancel_running and running_id:
+            job = self.get(running_id)
+            if job is not None:
+                self._persist(job)
+
+        if first_close:
+            # Exactly one exit sentinel — only on the OPEN→CLOSING transition.
+            self._queue.put(None)
+
+        join_timeout = 0.0 if timeout is None else float(timeout)
+        self._worker.join(join_timeout)
+        stopped = not self._worker.is_alive()
+        if stopped:
+            with self._lock:
+                self._state = RunnerState.CLOSED
+        return ShutdownReport(
+            stopped=stopped,
+            canceled_queued=tuple(canceled),
+            running_job_id=running_id,
+        )
 
     # --------------------------------------------------------------- worker
 
@@ -354,15 +417,13 @@ class JobRunner:
         while True:
             item = self._queue.get()
             if item is None:
+                with self._lock:
+                    self._state = RunnerState.CLOSED
                 return
             job, fn = item
             with self._lock:
                 if job.state == "canceled":
-                    # goal A: canceled while still queued (cancel() ran
-                    # before the worker dequeued it) — it never runs, so
-                    # there is nothing to unwind and nothing was spent.
-                    # cancel() already persisted this transition; no second
-                    # line needed here.
+                    # canceled while still queued (cancel()/shutdown) — never runs
                     continue
                 job.state = "running"
                 job.started = _now()
@@ -370,15 +431,8 @@ class JobRunner:
             self._persist(job)
             try:
                 job.result = fn(job)
-                # goal A: some engine calls (build/graph.py: run_build) never
-                # RAISE for a cancellation — like BuildLocked, a canceled
-                # build is a clean, honest result envelope
-                # (BuildResult(ok=False, canceled=True, errors=[...])), not an
-                # exception. A dict result that self-reports canceled=True is
-                # therefore ALSO cancellation, even though fn() returned
-                # normally — checked generically (a bare dict key, not an
-                # engine type) so this runner stays kind-agnostic (module
-                # docstring: it never imports engine code).
+                # goal A: some engine calls never RAISE for cancellation —
+                # a dict result that self-reports canceled=True is ALSO cancel.
                 if isinstance(job.result, dict) and job.result.get("canceled") is True:
                     job.state = "canceled"
                     errs = job.result.get("errors")
@@ -386,13 +440,6 @@ class JobRunner:
                 else:
                     job.state = "done"
             except Exception as exc:  # any engine failure -> one-line finding
-                # goal A: an exception raised while the cancel flag was set is
-                # the work function's own honest cancellation unwind (e.g. a
-                # provider/ffmpeg-level cancel that DOES raise) — report it as
-                # "canceled", not "failed", regardless of the exact exception
-                # type each job kind happens to raise (kind-agnostic by
-                # design, see the module docstring: this runner never imports
-                # engine code).
                 job.state = "canceled" if job.cancel_event.is_set() else "failed"
                 job.error = " ".join(str(exc).split()) or exc.__class__.__name__
             finally:
@@ -415,12 +462,7 @@ class JobRunner:
     # ------------------------------------------------------- jobs.jsonl (AA4)
 
     def _persist(self, job: Job) -> None:
-        """Append one jobs.jsonl transition line for ``job``'s CURRENT state
-        — called at submit/start/cancel/finish. Best-effort: a disk hiccup
-        must never break the in-memory job queue (mirrors
-        ``core.events.append_event``'s stance, just scoped to this process's
-        disposable operational history rather than the durable collaboration
-        log — see the module docstring)."""
+        """Append one jobs.jsonl transition line for ``job``'s CURRENT state."""
         if self._jobs_log_path is None:
             return
         record = {
@@ -430,6 +472,10 @@ class JobRunner:
             "state": job.state,
             "params_summary": _summarize_params(job.params),
             "error": job.error,
+            "project_id": job.project_id,
+            "created": job.created,
+            "started": job.started,
+            "finished": job.finished,
         }
         self._append_records([record])
 
@@ -445,18 +491,12 @@ class JobRunner:
                     f.flush()
                     # G6: NO os.fsync — jobs.jsonl is self-declared disposable
                     # operational history (module docstring), not the durable
-                    # collaboration log. submit() persists on the POST/click
-                    # thread before the 202, so an fsync there put disk-sync
-                    # latency on the user's click path for a rewritten-capped,
-                    # rebuild-irrelevant log. flush() keeps the bytes honest;
-                    # durability of THIS file is explicitly not promised.
+                    # collaboration log.
         except OSError:
-            pass  # operational history only — never blocks a job (module docstring)
+            pass  # operational history only — never blocks a job
 
     def _rewrite_log(self, records: list[dict[str, Any]]) -> None:
-        """Cap/rotate: replace jobs.jsonl with exactly ``records`` (the newest
-        :data:`_JOBS_LOG_CAP` lines) — see the module docstring for why a
-        plain startup rewrite is enough for this single-process log."""
+        """Cap/rotate: replace jobs.jsonl with exactly ``records``."""
         if self._jobs_log_path is None:
             return
         try:
@@ -470,19 +510,12 @@ class JobRunner:
             pass  # a rotation hiccup must never block GUI startup
 
     def _scan_interrupted(self) -> list[dict[str, Any]]:
-        """On construction: read jobs.jsonl, cap it to the newest
-        :data:`_JOBS_LOG_CAP` lines (rewriting the file if it was longer),
-        then find every job id whose LAST record is still non-terminal — a
-        previous GUI process died with that job queued/running/canceling.
+        """On construction: read jobs.jsonl, cap it, find dangling jobs.
 
-        Each freshly-found dangling job gets exactly ONE synthetic
-        ``state="interrupted"`` record appended to jobs.jsonl, so a LATER
-        construction (another GUI restart) recognizes it as already-flagged
-        and does not append a second one — but it STILL surfaces in this
-        construction's return value (and every later one, via the
-        ``elif`` branch below), so the job stays visible in the queue panel
-        across restarts until the user retries/dismisses it, rather than
-        silently vanishing after the first restart that notices it."""
+        For each job id, keep first and last records so interrupted entries
+        recover ``created`` / ``started`` / ``finished`` timestamps instead
+        of all-null created (which sorted ahead of live running jobs).
+        """
         if self._jobs_log_path is None or not self._jobs_log_path.exists():
             return []
         try:
@@ -498,27 +531,39 @@ class JobRunner:
             try:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
-                continue  # a torn write must not brick the scan (mirrors events.py)
+                continue  # a torn write must not brick the scan
 
         if len(records) > _JOBS_LOG_CAP:
             records = records[-_JOBS_LOG_CAP:]
             self._rewrite_log(records)
 
+        first_by_id: dict[str, dict[str, Any]] = {}
         last_by_id: dict[str, dict[str, Any]] = {}
+        first_running_ts: dict[str, str] = {}
         order: list[str] = []
         for rec in records:
             jid = rec.get("id")
             if not jid:
                 continue
-            if jid not in last_by_id:
+            if jid not in first_by_id:
                 order.append(jid)
+                first_by_id[jid] = rec
             last_by_id[jid] = rec
+            if rec.get("state") == "running" and jid not in first_running_ts:
+                ts = rec.get("ts") or rec.get("started")
+                if ts:
+                    first_running_ts[jid] = str(ts)
 
         interrupted: list[dict[str, Any]] = []
         new_records: list[dict[str, Any]] = []
         for jid in order:
             rec = last_by_id[jid]
             state = rec.get("state")
+            first = first_by_id[jid]
+            created = first.get("created") or first.get("ts")
+            started = first_running_ts.get(jid) or rec.get("started")
+            pid = rec.get("project_id") or first.get("project_id") or ""
+            legacy = not bool(pid)
             if state in ("queued", "running", "canceling"):
                 synth = {
                     "ts": _now(),
@@ -527,13 +572,28 @@ class JobRunner:
                     "state": "interrupted",
                     "params_summary": rec.get("params_summary"),
                     "error": _INTERRUPTED_ERROR,
+                    "project_id": pid,
+                    "created": created,
+                    "started": started,
+                    "finished": _now(),
                 }
-                interrupted.append(_interrupted_job_dict(synth))
+                interrupted.append(_interrupted_job_dict(
+                    synth,
+                    created=created,
+                    started=started,
+                    finished=synth["finished"],
+                    legacy_unscoped=legacy,
+                ))
                 new_records.append(synth)
             elif state == "interrupted":
-                interrupted.append(_interrupted_job_dict(rec))
-            # any other terminal state (done/failed/canceled) -> not dangling,
-            # nothing to surface.
+                finished = rec.get("finished") or rec.get("ts")
+                interrupted.append(_interrupted_job_dict(
+                    rec,
+                    created=rec.get("created") or created,
+                    started=rec.get("started") or started,
+                    finished=finished,
+                    legacy_unscoped=legacy,
+                ))
 
         if new_records:
             self._append_records(new_records)

@@ -349,7 +349,14 @@ _WORKSPACE_JS = r"""
   function openPath(path) {
     showErr("");
     post("/api/workspace/open", { path: path })
-      .then(function () { window.location.href = "/"; })
+      .then(function (data) {
+        if (data && data.open_in_new_window) {
+          showErr((data.error || "请在新窗口打开")
+            + (data.cli ? (" — " + data.cli) : ""));
+          return;
+        }
+        window.location.href = "/";
+      })
       .catch(function (err) { showErr("打开失败 (open failed): " + err.message); });
   }
 

@@ -397,38 +397,39 @@ def test_workspace_post_blocked_in_readonly(tmp_project):
         server.close()
 
 
-def test_workspace_open_rebinds_already_bound_server(tmp_project, tmp_path):
+def test_workspace_open_already_bound_refuses_hot_switch(tmp_project, tmp_path):
+    """Bound session is immutable — open another project returns open_in_new_window
+    and does not rebind (GUI repair plan 2026-07-15)."""
     other = _mk_project(tmp_path, "sibling_project")
     server = create_server(tmp_project, host="127.0.0.1", port=0)
     _serve(server)
     try:
         status, _, data = _post(server, "/api/workspace/open", {"path": str(other.root)})
-        assert status == 200
+        assert status == 409
+        assert data.get("open_in_new_window") is True
+        assert data.get("code") in ("open_in_new_window", "project_session_immutable")
         status, _, state = _request(server, "/api/state")
-        assert state["project"]["name"] == other.load_config().name
-
-        status, _, recents = _request(server, "/api/workspace/recents")
-        paths = {r["path"]: r for r in recents["recents"]}
-        assert paths[str(other.root)]["current"] is True
-        assert str(tmp_project.root) in paths  # the previously-bound project is remembered too
+        # Still the original project
+        assert state["project"]["name"] == tmp_project.load_config().name
     finally:
         server.shutdown()
         server.close()
 
 
 def test_workspace_does_not_trigger_legacy_workspace_chip(tmp_project, tmp_path):
-    """Round X's recents-based rebind must stay independent of the OLDER
-    --workspace directory-scan feature (`self.server.workspace`) — otherwise
-    the SPA's pre-existing workspace chip would pop up a second, redundant
-    switcher any time a recents-based open happens outside --workspace mode."""
+    """Recents open of another project must not invent the --workspace catalog
+    chip, and must not rebind the frozen session."""
     other = _mk_project(tmp_path, "sibling_two")
     server = create_server(tmp_project, host="127.0.0.1", port=0)
     _serve(server)
     try:
-        _post(server, "/api/workspace/open", {"path": str(other.root)})
+        status, _, data = _post(server, "/api/workspace/open", {"path": str(other.root)})
+        assert status == 409
+        assert data.get("open_in_new_window") is True
         status, _, state = _request(server, "/api/state")
         assert status == 200
         assert state["workspace"] is None
+        assert state["project"]["name"] == tmp_project.load_config().name
     finally:
         server.shutdown()
         server.close()

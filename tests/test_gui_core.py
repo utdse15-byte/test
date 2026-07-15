@@ -421,9 +421,10 @@ def test_new_project_creates_via_preset(tmp_path):
         # created on disk as a sibling, via the SAME core (preset recorded)
         newp = Project(ws / "乙.manju")
         assert newp.load_config().preset == pname
-        # the server switched to it, and it joins the workspace list
+        # Session immutable: stays on 甲; new project joins catalog for a new window
+        assert data.get("open_in_new_window") is True
         _, _, state = _request(server, "/api/state")
-        assert state["project"]["name"] == "乙"
+        assert state["project"]["name"] == "甲"
         _, _, plist = _request(server, "/api/projects")
         assert any(p["name"] == "乙" for p in plist["projects"])
         # orientation honoured (no preset -> plain 16:9)

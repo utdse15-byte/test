@@ -33,6 +33,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -42,8 +43,10 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from ..core.container import Project, ProjectError
 from ..core.events import append_event, tail_events
 from ..core.idents import SAFE_SEGMENT_PATTERN, is_safe_segment
-from .jobs import JobRunner
-from .state import build_state
+from ..runtime.buildlock import BuildLocked, build_lock
+from .jobs import JobRunner, RunnerClosed
+from .session import ProjectSession
+from .state import build_state, project_identity
 
 __all__ = ["GuiServer", "create_server", "serve"]
 
@@ -74,21 +77,13 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 
 def _optional_build_lock(root: Path, actor: str):
-    """The per-project process build lock (§5 dual-actor race), feature-detected.
+    """Hold the project build lock. Never degrades to a no-op.
 
-    R2's ``runtime/buildlock`` is an engine-side change that may or may not be
-    present on this line yet: when it is, voice/qc jobs hold the same lock every
-    other surface does; when it is absent this degrades to a no-op context
-    manager, so the GUI is green standalone and lights up the moment the lock
-    module lands (the ``build_lock`` status field fills in the same way)."""
-    try:
-        from ..runtime.buildlock import build_lock
-
-        return build_lock(root, actor=actor)
-    except Exception:  # module absent, or an unexpected signature — never block
-        import contextlib
-
-        return contextlib.nullcontext()
+    Only :class:`BuildLocked` is an expected business conflict (callers catch
+    it and return 409). Import errors, TypeError, and other program faults
+    must propagate as 500 — silent unlocked writes are forbidden.
+    """
+    return build_lock(root, actor=actor)
 
 
 def _empty_spend(project: Project) -> dict[str, Any]:
@@ -160,84 +155,107 @@ def _packaging_warnings(project: Project, spec: Any) -> list[str]:
 
 
 class GuiServer(ThreadingHTTPServer):
-    """ThreadingHTTPServer carrying the project, token and job runner."""
+    """ThreadingHTTPServer carrying a frozen project session and job runner.
+
+    Architecture (GUI repair 2026-07-15): one process lifetime = one project
+    session = one JobRunner. Unbound servers may bind exactly once; after
+    that, opening another project returns ``open_in_new_window`` instead of
+    hot-swapping in-process state.
+    """
 
     daemon_threads = True
 
     def __init__(self, project: Project | None, host: str, port: int, actor: str,
                  readonly: bool = False,
                  workspace: dict[str, Project] | None = None):
-        # round X (agent XE): `project` is now Optional — `manju gui` OUTSIDE a
-        # project (and without --workspace) starts the server UNBOUND, serving
-        # the workspace picker (gui/workspace.py) at `/` until bind_project()
-        # rebinds it. Every project-dependent route is gated on this in do_GET/
-        # do_POST (see the `self.project is None` branches there).
-        self.project = project
+        # round X (agent XE): `project` is Optional — `manju gui` OUTSIDE a
+        # project starts UNBOUND (workspace picker) until bind_project_once().
+        self._session: ProjectSession | None = None
+        self._session_lock = threading.Lock()
+        self.closing = threading.Event()
+        # Ephemeral runner only used while unbound (no jobs.jsonl); replaced
+        # by the session runner on first bind. Never shared across projects.
+        self._unbound_runner = JobRunner(None, project_id="")
         self.actor = actor
         self.readonly = readonly
         self.token = secrets.token_urlsafe(24)
-        # round AA4: jobs.jsonl persistence needs the project's runtime dir —
-        # only available when the server starts already bound to a project.
-        # An unbound server (no project, no --workspace pick yet) starts with
-        # persistence disabled (JobRunner(None) — see its own docstring);
-        # bind_project()/switch_project() deliberately do NOT re-point an
-        # already-running runner at a different project's jobs.jsonl (jobs
-        # already queued/running keep referencing whatever project they
-        # closed over, exactly like every other per-job project reference in
-        # this file — see bind_project's own docstring).
-        self.runner = JobRunner(project.runtime_dir if project is not None else None)
         # select/lock are quick read-modify-write cycles on one YAML file;
         # serialize them among themselves so two clicks can't interleave.
         self.quick_mutex = threading.Lock()
         # /api/state cache keyed by the project fingerprint: polling a large
         # project must not re-scan every shot when nothing changed
         self.state_cache: tuple[str, dict[str, Any]] | None = None
-        # workspace mode (--workspace): slug -> Project; ONE active project
-        # per server (self.project), switchable via POST /api/switch. Jobs
-        # already running keep their closed-over project — a switch never
-        # retargets in-flight work.
+        # workspace mode (--workspace): slug -> Project catalog for listing.
+        # Active project is frozen in the session; /api/switch no longer
+        # mutates the session (returns project_session_immutable).
         self.workspace = workspace or {}
-        self.active_slug = next(
-            (slug for slug, p in self.workspace.items()
-             if project is not None and p.root == project.root), None)
+        self.active_slug: str | None = None
         self.allowed_hosts = set(_LOCAL_HOSTS)
         if host not in ("", "0.0.0.0", "::"):
             self.allowed_hosts.add(host)
         super().__init__((host, port), _Handler)
+        if project is not None:
+            # Construction-time bind is the only multi-arg entry; same once
+            # semantics as bind_project_once (session starts empty).
+            self.bind_project_once(project)
+
+    @property
+    def session(self) -> ProjectSession | None:
+        return self._session
+
+    @property
+    def project(self) -> Project | None:
+        s = self._session
+        return s.project if s is not None else None
+
+    @property
+    def runner(self) -> JobRunner:
+        s = self._session
+        return s.runner if s is not None else self._unbound_runner
 
     def switch_project(self, slug: str) -> Project:
-        target = self.workspace.get(slug)
-        if target is None:
-            raise KeyError(slug)
-        with self.quick_mutex:
-            self.project = target
-            self.active_slug = slug
-            self.state_cache = None
-        return target
+        """Disabled: project session is immutable after bind.
 
-    def bind_project(self, project: Project) -> None:
-        """Round X: rebind this SAME server to `project` — from the workspace
-        picker (no project was bound yet) or from the in-chrome switcher (a
-        different project than the currently bound one). Deliberately does
-        NOT touch `self.workspace` (the --workspace DIRECTORY-SCAN dict, a
-        separate, older feature): mutating it here would make the SPA's
-        pre-existing workspace chip (`state.workspace` truthy -> `/api/state`)
-        pop up a SECOND, redundant switcher any time a recents-based open
-        happens outside --workspace mode. The two stay independent; the round-X
-        switcher (gui/pages.py's nav + /api/workspace/*) is the only UI for
-        recents-based switching. Jobs already running keep their closed-over
-        project, exactly like switch_project."""
-        with self.quick_mutex:
-            self.project = project
+        Raises :class:`RuntimeError` with code ``project_session_immutable``
+        so HTTP handlers can map to 409. Unknown slugs still raise KeyError.
+        """
+        if slug not in self.workspace:
+            raise KeyError(slug)
+        raise RuntimeError("project_session_immutable")
+
+    def bind_project_once(self, project: Project) -> None:
+        """Bind this server to ``project`` exactly once; create its JobRunner.
+
+        Raises :class:`RuntimeError` (``project_session_immutable``) if a
+        session already exists. Does not mutate ``self.workspace`` (the
+        --workspace directory-scan catalog stays independent of recents open).
+        """
+        pid = project_identity(project)
+        with self._session_lock:
+            if self._session is not None:
+                raise RuntimeError("project_session_immutable")
+            runner = JobRunner(project.runtime_dir, project_id=pid)
+            self._session = ProjectSession(
+                project=project, project_id=pid, runner=runner)
             self.active_slug = next(
-                (slug for slug, p in self.workspace.items() if p.root == project.root), None)
+                (slug for slug, p in self.workspace.items()
+                 if p.root == project.root), None)
             self.state_cache = None
+        # Retire the unbound placeholder so close() only waits on the real one.
+        try:
+            self._unbound_runner.shutdown(timeout=0.5, cancel_queued=True)
+        except Exception:
+            pass
         try:
             from ..core.recents import touch_recent
 
             touch_recent(project)
         except Exception:
             pass  # recents is a convenience shelf, never load-bearing (§3)
+
+    def bind_project(self, project: Project) -> None:
+        """Alias for :meth:`bind_project_once` (legacy call sites / tests)."""
+        self.bind_project_once(project)
 
     @property
     def port(self) -> int:
@@ -250,7 +268,12 @@ class GuiServer(ThreadingHTTPServer):
         return f"http://{shown}:{self.port}/"
 
     def close(self) -> None:
-        self.runner.shutdown(timeout=1.0)
+        self.closing.set()
+        # Cancel queued work; do not force-kill a running job on short timeout.
+        try:
+            self.runner.shutdown(timeout=1.0, cancel_queued=True, cancel_running=False)
+        except Exception:
+            pass
         self.server_close()
 
 
@@ -335,39 +358,49 @@ class _Handler(BaseHTTPRequestHandler):
             hostname = host[: host.index("]") + 1]
         return hostname.lower() in self.server.allowed_hosts
 
-    def _send_json(self, data: Any, status: int = 200) -> None:
+    def _send_json(self, data: Any, status: int = 200,
+                   extra_headers: dict[str, str] | None = None) -> None:
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
     def _send_error_json(self, message: str, status: int) -> None:
         self._send_json({"error": message}, status)
 
+    def _reject_and_close(self, message: str, status: int) -> None:
+        """Refuse a bad request and force connection close (no hang / reuse)."""
+        self.close_connection = True
+        self._send_json(
+            {"error": message},
+            status,
+            extra_headers={"Connection": "close"},
+        )
+
     def _send_text(self, body: str, content_type: str, status: int = 200,
-                   extra: dict[str, str] | None = None) -> None:
+                   extra: dict[str, str] | None = None,
+                   project_token: str | None = None) -> None:
         # GPT-analysis wave (stale-tab guard): THE one owner that stamps the
         # bound project's identity into every HTML document this server
-        # serves. Anchored on the manju-token meta every page shell embeds,
-        # so ten shells (and any future one that follows the token pattern)
-        # need no per-module threading; common.js / app.js read it back and
-        # echo it as X-Manju-Project on mutating POSTs. The picker (no
-        # project bound) and non-HTML bodies pass through untouched.
+        # serves. Prefer an explicit project_token from the same session used
+        # to render the page; fall back to the frozen session identity.
         if (content_type.startswith("text/html")
-                and self.server.project is not None
                 and '<meta name="manju-token"' in body
                 and '<meta name="manju-project"' not in body):
-            from .state import project_identity
-
-            body = body.replace(
-                '<meta name="manju-token"',
-                f'<meta name="manju-project" '
-                f'content="{project_identity(self.server.project)}">\n'
-                '<meta name="manju-token"', 1)
+            token = project_token
+            if token is None and self.server.project is not None:
+                token = project_identity(self.server.project)
+            if token:
+                body = body.replace(
+                    '<meta name="manju-token"',
+                    f'<meta name="manju-project" content="{token}">\n'
+                    '<meta name="manju-token"', 1)
         raw = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -379,19 +412,80 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _read_body(self) -> dict[str, Any] | None:
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length > _MAX_BODY:
-            # bug-hunt #51: the ONE refusal that skipped the Windows drain
-            # discipline (run #20) — an undrained 413 RSTs on nt and the
-            # client sees WinError 10053 instead of the clean status.
-            self._drain_request_body()
-            self._send_error_json("request body too large", 413)
+    def _content_length_or_reject(self) -> int | None:
+        """Parse Content-Length strictly. Returns None after sending an error.
+
+        Rules (GUI repair commit 4): missing → 0; duplicate conflicting values,
+        non-numeric, negative → 400 + close; Transfer-Encoding (non-identity)
+        → 400 + close; over ``_MAX_BODY`` → 413 + close. Never silent-coerce
+        illegal lengths to 0.
+        """
+        te = (self.headers.get("Transfer-Encoding") or "").strip().lower()
+        if te and te != "identity":
+            self._reject_and_close("Transfer-Encoding not supported", 400)
             return None
-        raw = self.rfile.read(length) if length else b"{}"
+        raw_vals = self.headers.get_all("Content-Length")
+        if not raw_vals:
+            return 0
+        stripped = [v.strip() for v in raw_vals if v is not None]
+        if len(set(stripped)) > 1:
+            self._reject_and_close("conflicting Content-Length headers", 400)
+            return None
+        try:
+            length = int(stripped[0])
+        except (TypeError, ValueError):
+            self._reject_and_close("invalid Content-Length", 400)
+            return None
+        if length < 0:
+            self._reject_and_close("negative Content-Length", 400)
+            return None
+        if length > _MAX_BODY:
+            # Bounded drain of already-available bytes only — never wait for
+            # the attacker's declared length forever.
+            self._drain_request_body(max_bytes=min(length, 64 * 1024))
+            self._reject_and_close("request body too large", 413)
+            return None
+        return length
+
+    def _read_body(self) -> dict[str, Any] | None:
+        length = self._content_length_or_reject()
+        if length is None:
+            return None
+        prev_timeout = None
+        try:
+            try:
+                prev_timeout = self.connection.gettimeout()
+                # Short deadline so a short/truncated body cannot hang the thread
+                # (client may wait for our response while we wait for more bytes).
+                self.connection.settimeout(3.0)
+            except (OSError, AttributeError):
+                prev_timeout = None
+            chunks: list[bytes] = []
+            remaining = length
+            while remaining > 0:
+                try:
+                    chunk = self.rfile.read(remaining)
+                except (TimeoutError, OSError, socket.timeout):
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+        except (TimeoutError, OSError):
+            self._reject_and_close("request body read failed", 400)
+            return None
+        finally:
+            if prev_timeout is not None:
+                try:
+                    self.connection.settimeout(prev_timeout)
+                except (OSError, AttributeError):
+                    pass
+        if length and len(raw) < length:
+            self._reject_and_close("incomplete request body", 400)
+            return None
+        if not raw:
+            raw = b"{}"
         try:
             data = json.loads(raw.decode("utf-8") or "{}")
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -460,19 +554,17 @@ class _Handler(BaseHTTPRequestHandler):
                 # Deliberately above the None gate: an unbound server answers
                 # token "" so a page from a previous binding overlays instead
                 # of 404-spamming. Never scans state; must stay this cheap.
-                from .state import project_identity
-
-                proj = self.server.project
-                if proj is None:
+                session = self.server.session
+                if session is None:
                     self._send_json({"token": "", "name": None})
                 else:
                     try:
-                        pname = proj.load_config().name
+                        pname = session.project.load_config().name
                     except Exception:
-                        pname = proj.root.name
-                    self._send_json({"token": project_identity(proj),
+                        pname = session.project.root.name
+                    self._send_json({"token": session.project_id,
                                      "name": pname})
-            elif self.server.project is None:
+            elif self.server.session is None:
                 # round X: everything else needs a bound project — the picker
                 # (served above at `/`) is the only way forward from here.
                 self._send_error_json(
@@ -480,19 +572,17 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/state":
                 from .state import project_fingerprint
 
-                fp = project_fingerprint(self.server.project, self.server.runner)
+                session = self.server.session
+                assert session is not None
+                fp = project_fingerprint(session.project, session.runner)
                 cached = self.server.state_cache
                 if cached is not None and cached[0] == fp:
                     payload = cached[1]
                 else:
-                    from .state import project_identity
-
-                    payload = build_state(self.server.project, self.server.runner)
+                    payload = build_state(session.project, session.runner)
                     payload["fp"] = fp
-                    # stale-tab guard: the SPA compares this against the
-                    # identity it rendered with (adopting it ONLY on its own
-                    # intentional /api/switch) and overlays on mismatch.
-                    payload["project_token"] = project_identity(self.server.project)
+                    # Same session: fingerprint, state, and token share one bind.
+                    payload["project_token"] = session.project_id
                     payload["readonly"] = self.server.readonly
                     payload["workspace"] = (
                         {"active": self.server.active_slug,
@@ -509,9 +599,10 @@ class _Handler(BaseHTTPRequestHandler):
                 # edit/series/exports pages, which all match by job id) is
                 # unaffected; the queue panel renders the extra entries with
                 # a distinct chip + note (page.py renderJobs).
+                runner = self.server.runner
                 self._send_json({
-                    "jobs": [j.to_dict() for j in self.server.runner.list()]
-                    + self.server.runner.interrupted(),
+                    "jobs": [j.to_dict() for j in runner.list()]
+                    + runner.interrupted(),
                 })
             elif path == "/api/check":
                 from ..core.check import run_check
@@ -675,7 +766,7 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-    def _drain_request_body(self) -> None:
+    def _drain_request_body(self, max_bytes: int | None = None) -> None:
         """Windows gate run #20: an early refusal (host/readonly/token) that
         answered WITHOUT reading the request body left unread bytes on the
         socket — Windows then RSTs the connection and the CLIENT saw
@@ -690,8 +781,16 @@ class _Handler(BaseHTTPRequestHandler):
             declared = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
             return
-        remaining = min(declared, 16 * 1024 * 1024)
+        cap = max_bytes if max_bytes is not None else 16 * 1024 * 1024
+        remaining = min(max(declared, 0), cap)
+        # Short socket timeout so a hostile slow-loris cannot pin the thread.
+        prev_timeout = None
         try:
+            try:
+                prev_timeout = self.connection.gettimeout()
+                self.connection.settimeout(2.0)
+            except (OSError, AttributeError):
+                prev_timeout = None
             while remaining > 0:
                 chunk = self.rfile.read(min(65536, remaining))
                 if not chunk:
@@ -699,6 +798,12 @@ class _Handler(BaseHTTPRequestHandler):
                 remaining -= len(chunk)
         except OSError:
             pass
+        finally:
+            if prev_timeout is not None:
+                try:
+                    self.connection.settimeout(prev_timeout)
+                except (OSError, AttributeError):
+                    pass
 
     def do_POST(self) -> None:  # noqa: N802
         if not self._host_allowed():
@@ -720,28 +825,30 @@ class _Handler(BaseHTTPRequestHandler):
             self._drain_request_body()
             self._send_error_json("missing or invalid X-Manju-Token", 403)
             return
+        # Capture frozen session once for this request (defense in depth;
+        # session is immutable after bind, so re-reads agree).
+        session = self.server.session
         url = urlsplit(self.path)
         path = url.path
-        # GPT-analysis wave: the server binds ONE switchable project, so a
-        # tab rendered for project A would otherwise WRITE into whatever
-        # project is bound NOW. Pages embed their project's identity token
-        # (gui/state.project_identity — the one owner) and the shared JS
-        # echoes it back; a mismatch refuses with 409 project_switched
-        # instead of silently mutating the wrong project. Header-less
-        # clients (tests, curl) keep the old behaviour; the switch/open/new
-        # actions are exempt — their intent is project-independent.
+        if self.server.closing.is_set() and path not in _readonly_ok:
+            self._drain_request_body()
+            self._send_json(
+                {"error": "server is closing", "code": "server_closing"}, 503)
+            return
+        # Stale-tab guard: pages embed project identity; mismatch → 409.
+        # Session is frozen, so this is defense for leftover multi-tab pages
+        # rather than support for hot-switch. Header-less clients (tests,
+        # curl) keep the old behaviour; workspace open/new stay exempt.
         claimed = self.headers.get("X-Manju-Project")
-        if (claimed and self.server.project is not None
+        if (claimed and session is not None
                 and path not in ("/api/switch", "/api/new-project")
                 and not path.startswith("/api/workspace/")):
-            from .state import project_identity
-
-            current = project_identity(self.server.project)
+            current = session.project_id
             if claimed != current:
                 try:
-                    name = self.server.project.load_config().name
+                    name = session.project.load_config().name
                 except Exception:
-                    name = self.server.project.root.name
+                    name = session.project.root.name
                 self._drain_request_body()
                 self._send_json({
                     "error": (f"项目已切换 (project switched) — 服务器当前项目是"
@@ -756,7 +863,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # bug-hunt #51: these dispatch BEFORE the unbound-project
                 # fallthrough below — on a picker-stage server they crashed
                 # into `None.runtime_dir` (500) with the body undrained.
-                if self.server.project is None:
+                if session is None:
                     self._drain_request_body()
                     self._send_error_json(
                         "尚未打开项目 (no project bound) — 先在工作区选择器打开", 404)
@@ -773,11 +880,10 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             if body is None:
                 return
-            if self.server.project is None:
+            if session is None:
                 # round X: no project bound yet — only the workspace-picker
                 # actions (open by path / create new) make sense here; both
-                # REBIND the server (see GuiServer.bind_project) instead of
-                # requiring every other route to guard a None project.
+                # bind_project_once the server (exactly once).
                 if self._workspace_post(path, body):
                     return
                 self._send_error_json(
@@ -846,6 +952,12 @@ class _Handler(BaseHTTPRequestHandler):
             handler(body)
         except BrokenPipeError:
             pass
+        except RunnerClosed:
+            try:
+                self._send_json(
+                    {"error": "server is closing", "code": "server_closing"}, 503)
+            except Exception:
+                pass
         except Exception as exc:
             try:
                 self._send_error_json(" ".join(str(exc).split()), 500)
@@ -1530,41 +1642,61 @@ class _Handler(BaseHTTPRequestHandler):
         queue), so without this guard a human clicking retry on one would
         just see an opaque, English "unknown job" instead of the real reason
         (jobs.jsonl's ``params_summary`` is lossy — a faithful resubmit is
-        not possible in general; see gui/jobs.py's ``_INTERRUPTED_RETRY_NOTE``)."""
+        not possible in general; see gui/jobs.py's ``_INTERRUPTED_RETRY_NOTE``).
+
+        Project isolation: ``orig.project_id`` must match the frozen session
+        project_id; retry rebuilds closures against that session only.
+        """
+        session = self.server.session
+        if session is None:
+            self._send_error_json("尚未打开项目 (no project open)", 404)
+            return
         job_id = str(body.get("job_id") or "")
         if not job_id:
             self._send_error_json("job_id is required", 400)
             return
-        if any(rec.get("id") == job_id for rec in self.server.runner.interrupted()):
+        if any(rec.get("id") == job_id for rec in session.runner.interrupted()):
+            rec = next(r for r in session.runner.interrupted() if r.get("id") == job_id)
+            if rec.get("legacy_unscoped"):
+                self._send_error_json(
+                    f"任务 {job_id} 是旧版本任务,项目归属未记录,不可重试", 409)
+                return
             self._send_error_json(
                 f"任务 {job_id} 是中断任务,无法原样重试(参数摘要有损)——请从原页面重新发起",
                 409)
             return
-        orig = self.server.runner.get(job_id)
+        orig = session.runner.get(job_id)
         if orig is None:
             self._send_error_json(f"unknown job: {job_id}", 404)
+            return
+        if orig.project_id != session.project_id:
+            self._send_error_json(
+                f"任务 {job_id} 不属于当前项目,拒绝重试 (project mismatch)", 409)
             return
         if orig.state not in ("failed", "canceled"):
             self._send_error_json(
                 f"只能重试已失败/已取消的任务(job {job_id} 当前状态: {orig.state})", 409)
             return
         try:
-            fn = self._build_retry_fn(orig.kind, dict(orig.params))
+            fn = self._build_retry_fn(session, orig.kind, dict(orig.params))
         except ValueError as exc:
             self._send_error_json(str(exc), 400)
             return
-        job = self.server.runner.submit(orig.kind, dict(orig.params), fn, retry_of=orig.id)
+        try:
+            job = session.runner.submit(
+                orig.kind, dict(orig.params), fn, retry_of=orig.id)
+        except RunnerClosed:
+            self._send_json(
+                {"error": "server is closing", "code": "server_closing"}, 503)
+            return
         self._send_json({"job": job.to_dict()}, 202)
 
-    def _build_retry_fn(self, kind: str, params: dict[str, Any]):
-        """Rebuild the work-function closure for ``kind``+``params`` — the
-        SAME shape each ``_act_*`` handler above builds from a fresh request
-        body, sourced from a past job's recorded params instead. Raises
-        ``ValueError`` (caught by the caller, surfaced as a 400) for params
-        that no longer validate — never silently retries something that
-        cannot possibly succeed the same way it could not have been submitted
-        fresh."""
-        project, actor = self.server.project, self.server.actor
+    def _build_retry_fn(self, session: ProjectSession, kind: str, params: dict[str, Any]):
+        """Rebuild the work-function closure for ``kind``+``params`` against
+        the explicit session project — never re-read ``self.server.project``.
+        Raises ``ValueError`` (caught by the caller, surfaced as a 400) for
+        params that no longer validate."""
+        project, actor = session.project, self.server.actor
 
         if kind == "build":
             from ..build.graph import GEN_MODES
@@ -1791,24 +1923,31 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json({"projects": items, "workspace": bool(self.server.workspace)})
 
     def _act_switch(self, body: dict[str, Any]) -> None:
-        """Swap the server's ACTIVE project (workspace mode). One active
-        project per server — in-flight jobs keep the project they closed
-        over; the page reloads its state after switching."""
+        """Project session is immutable — refuse in-process switch (409).
+
+        Workspace mode still lists projects via GET /api/projects; opening
+        another project requires a new GUI window / process.
+        """
         slug = str(body.get("slug") or "")
         if not self.server.workspace:
             self._send_error_json("not in workspace mode (start with --workspace)", 400)
             return
-        try:
-            project = self.server.switch_project(slug)
-        except KeyError:
+        if slug and slug not in self.server.workspace:
             self._send_error_json(f"unknown project: {slug}", 404)
             return
-        from .state import project_identity
-
-        # project_token: the switching tab ADOPTS the new identity from this
-        # response (stale-tab guard) — it re-renders in place, no reload.
-        self._send_json({"ok": True, "slug": slug, "root": str(project.root),
-                         "project_token": project_identity(project)})
+        target = self.server.workspace.get(slug) if slug else None
+        cli = (
+            f'manju gui "{target.root}" --app'
+            if target is not None else "manju gui <project> --app"
+        )
+        self._send_json({
+            "error": ("项目会话不可切换 (project session immutable) — "
+                      "请在新窗口打开其他项目"),
+            "code": "project_session_immutable",
+            "open_in_new_window": True,
+            "cli": cli,
+            "root": str(target.root) if target is not None else None,
+        }, 409)
 
     _NAME_RE = re.compile(r"^[^/\\\x00]{1,80}$")
 
@@ -1869,10 +2008,18 @@ class _Handler(BaseHTTPRequestHandler):
                 slug = f"{base}_{n}"
                 n += 1
             self.server.workspace[slug] = project
-        self.server.switch_project(slug)
-        self._send_json({"ok": True, "slug": slug, "name": name,
-                         "root": str(project.root),
-                         "preset": (spec.name if spec else None)}, 201)
+        # Session is immutable: register the new project in the catalog but
+        # do not rebind this server — client opens it in a new window.
+        self._send_json({
+            "ok": True,
+            "slug": slug,
+            "name": name,
+            "root": str(project.root),
+            "preset": (spec.name if spec else None),
+            "open_in_new_window": True,
+            "cli": f'manju gui "{project.root}" --app',
+            "code": "open_in_new_window",
+        }, 201)
 
     # -------------------------------------------------- workspace picker (round X)
 
@@ -1900,10 +2047,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(_ws.recents_payload(current))
 
     def _workspace_post(self, path: str, body: dict[str, Any]) -> bool:
-        """POST dispatch for the workspace-picker actions. Works with or
-        without a project already bound — both REBIND the server via
-        GuiServer.bind_project. Same token/readonly gates as every other
-        mutating POST (checked in do_POST before us)."""
+        """POST dispatch for workspace-picker actions. Unbound: first bind.
+        Bound: open/new of another project returns open_in_new_window."""
         handler = {
             "/api/workspace/open": self._act_workspace_open,
             "/api/workspace/new": self._act_workspace_new,
@@ -1914,8 +2059,7 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
     def _act_workspace_open(self, body: dict[str, Any]) -> None:
-        """Open (by absolute/relative path) a project the recents list points
-        at, or any other manju project — REBINDS this server to it."""
+        """Open a project by path: first bind if unbound; else open_in_new_window."""
         raw = str(body.get("path") or "").strip()
         if not raw:
             self._send_error_json("path is required", 400)
@@ -1925,17 +2069,37 @@ class _Handler(BaseHTTPRequestHandler):
         except ProjectError as exc:
             self._send_error_json(str(exc), 404)
             return
-        self.server.bind_project(project)
+        if self.server.session is not None:
+            # Already bound — never hot-swap; tell the client to open another window.
+            self._send_json({
+                "ok": False,
+                "error": ("当前窗口已绑定项目 (session immutable) — "
+                          "请在新窗口打开其他项目"),
+                "code": "open_in_new_window",
+                "open_in_new_window": True,
+                "root": str(project.root),
+                "cli": f'manju gui "{project.root}" --app',
+            }, 409)
+            return
+        try:
+            self.server.bind_project_once(project)
+        except RuntimeError as exc:
+            if "project_session_immutable" in str(exc):
+                self._send_json({
+                    "ok": False,
+                    "error": "项目会话不可切换",
+                    "code": "project_session_immutable",
+                    "open_in_new_window": True,
+                    "root": str(project.root),
+                    "cli": f'manju gui "{project.root}" --app',
+                }, 409)
+                return
+            raise
         self._send_json({"ok": True, "root": str(project.root)})
 
     def _act_workspace_new(self, body: dict[str, Any]) -> None:
-        """新建项目 from the picker/switcher — the SAME core `manju new`/the
-        --workspace `/api/new-project` action uses (Project.create + optional
-        preset), then REBINDS the server to the fresh project. Unlike
-        `_act_new_project` this works with NO project bound yet, and its
-        parent directory is explicit (`path`) or defaults to the server
-        process's cwd (mirrors the CLI's `manju new --path`/cwd default),
-        never a sibling of `self.server.project` (which may not exist)."""
+        """新建项目 — first bind if unbound; if already bound, create on disk
+        but return open_in_new_window (do not rebind this server)."""
         name = str(body.get("name") or "").strip()
         if not name or name.startswith(".") or not self._NAME_RE.fullmatch(name):
             self._send_error_json("invalid project name", 400)
@@ -1967,7 +2131,31 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_error_json(" ".join(str(exc).split()), 400)
             return
-        self.server.bind_project(project)
+        if self.server.session is not None:
+            self._send_json({
+                "ok": True,
+                "name": name,
+                "root": str(project.root),
+                "preset": (spec.name if spec else None),
+                "open_in_new_window": True,
+                "code": "open_in_new_window",
+                "cli": f'manju gui "{project.root}" --app',
+            }, 201)
+            return
+        try:
+            self.server.bind_project_once(project)
+        except RuntimeError as exc:
+            if "project_session_immutable" in str(exc):
+                self._send_json({
+                    "ok": True,
+                    "name": name,
+                    "root": str(project.root),
+                    "open_in_new_window": True,
+                    "code": "project_session_immutable",
+                    "cli": f'manju gui "{project.root}" --app',
+                }, 201)
+                return
+            raise
         self._send_json({"ok": True, "name": name, "root": str(project.root),
                          "preset": (spec.name if spec else None)}, 201)
 

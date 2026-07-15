@@ -308,11 +308,24 @@ _GLOSSARY_JS = r"""
     if (wsMenu) wsMenu.classList.add("hidden");
     post("/api/workspace/open", { path: path })
       .then(function (resp) {
+        /* Bound session is immutable: server returns open_in_new_window + CLI. */
+        if (resp && (resp.open_in_new_window || resp.code === "open_in_new_window"
+            || resp.code === "project_session_immutable")) {
+          var msg = (resp.error || "请在新窗口打开其他项目")
+            + (resp.cli ? ("\n\n" + resp.cli) : "");
+          try { window.alert(msg); } catch (e) { /* headless */ }
+          return;
+        }
         if (resp && resp.ok === false) return;
         window.location.href = "/";
       })
-      .catch(function () { /* the switcher is a convenience — a failed open
-        just leaves the menu closed; the picker page (below) has full errors */ });
+      .catch(function (err) {
+        /* 409 open_in_new_window may surface as a thrown Error from post(). */
+        var m = (err && err.message) ? String(err.message) : "";
+        if (m.indexOf("新窗口") >= 0 || m.indexOf("immutable") >= 0) {
+          try { window.alert(m); } catch (e) { /* headless */ }
+        }
+      });
   }
 
   function wsRender(data) {

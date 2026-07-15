@@ -968,9 +968,11 @@ def _post_h(server, path, body, headers):
 
 
 def test_stale_tab_write_is_refused_after_project_switch(tmp_path, add_shot, make_take):
-    """The trust question the external analysis put best: 我正在审核 A 项目,
-    屏幕上这次点击到底落进了哪个项目?A stale tab's write must be REFUSED,
-    never silently applied to whatever project is bound now."""
+    """The trust question: a tab's write must target the bound project only.
+
+    Session is now immutable (no hot switch). Switch returns 409 open_in_new_window;
+    a tab holding a foreign project token is still refused with project_switched.
+    """
     from manju.core.container import Project
     from manju.gui.server import create_server, discover_workspace
     from manju.gui.state import project_identity
@@ -987,30 +989,35 @@ def test_stale_tab_write_is_refused_after_project_switch(tmp_path, add_shot, mak
         tok_a, tok_b = project_identity(a), project_identity(b)
         assert tok_a != tok_b
 
-        # the switch response hands the SPA its new identity to adopt
+        # switch no longer mutates the session
         status, data = _post_h(server, "/api/switch", {"slug": "乙"}, {})
-        assert status == 200 and data["project_token"] == tok_b
+        assert status == 409
+        assert data.get("code") == "project_session_immutable"
+        assert data.get("open_in_new_window") is True
+        assert server.session.project_id == tok_a
 
-        # a tab still holding 甲's identity: its write is refused, named, coded
-        add_shot(b, "S001")
-        take = make_take(b, "S001", "h")
+        # a tab still holding 乙's identity against a server bound to 甲: refused
+        add_shot(a, "S001")
+        take = make_take(a, "S001", "h")
         status, data = _post_h(server, "/api/select",
                                {"shot": "S001", "take": take.name},
-                               {"X-Manju-Project": tok_a})
+                               {"X-Manju-Project": tok_b})
         assert status == 409 and data["code"] == "project_switched"
-        assert "乙" in data["error"]  # names where the server actually is
-        assert b.load_shot("S001").status.selected_take is None  # nothing landed
+        assert "甲" in data["error"]  # names where the server actually is
+        assert a.load_shot("S001").status.selected_take is None  # nothing landed
 
         # the same write with the CURRENT identity goes through
         status, data = _post_h(server, "/api/select",
                                {"shot": "S001", "take": take.name},
-                               {"X-Manju-Project": tok_b})
+                               {"X-Manju-Project": tok_a})
         assert status == 200
 
-        # switching is exempt — a stale tab may always ask to switch/open
-        status, _ = _post_h(server, "/api/switch", {"slug": "甲"},
-                            {"X-Manju-Project": tok_b})
-        assert status == 200
+        # switch/open remain reachable without project header, but session
+        # is immutable — they return 409 open_in_new_window, not 403 token.
+        status, data = _post_h(server, "/api/switch", {"slug": "乙"},
+                               {"X-Manju-Project": tok_b})
+        assert status == 409
+        assert data.get("code") == "project_session_immutable"
 
         # header-less clients (tests, curl, older pages) keep the old behaviour
         status, _ = _post_h(server, "/api/lock",

@@ -1962,14 +1962,23 @@ _JS = r"""
   async function doSwitch(slug) {
     try {
       const d = await api("POST", "/api/switch", { slug });
-      /* INTENTIONAL switch: this tab adopts the new project identity so the
-       * stale-tab guard keeps protecting every OTHER tab, not this one. */
+      /* Session is immutable — a 2xx with open_in_new_window is unexpected
+       * but treat like the 409 path below. */
+      if (d && d.open_in_new_window) {
+        toast((d.error || "请在新窗口打开") + (d.cli ? (" — " + d.cli) : ""), "err");
+        return;
+      }
       if (d && d.project_token) PROJECT = d.project_token;
       toast("已切换项目 (switched): " + ((d && d.slug) || slug), "ok");
       resetAfterSwitch();
       refresh();
     } catch (err) {
-      toast("切换失败 (switch failed): " + errMsg(err), "err");
+      const m = errMsg(err);
+      toast(
+        (m.indexOf("immutable") >= 0 || m.indexOf("新窗口") >= 0)
+          ? m
+          : ("切换失败 (switch failed): " + m),
+        "err");
     }
   }
 
@@ -2528,16 +2537,40 @@ _JS = r"""
   }
 
   /* ------------------------------------------------------ jobs strip --- */
+  /* Grouped visibility (GUI repair): never sort-then-slice(0,8) — a long
+   * queue of newer queued jobs was hiding the actual running job. */
+  function jobTime(j) {
+    return j.created || j.started || j.finished || "";
+  }
+  function pickJobs(jobs, states, limit) {
+    return jobs.filter((j) => states.indexOf(j.state) >= 0)
+      .sort((a, b) => String(jobTime(b)).localeCompare(String(jobTime(a))))
+      .slice(0, limit);
+  }
   function renderJobs(jobs) {
     const root = $("jobs");
     clear(root);
     if (!jobs.length) { root.classList.add("hidden"); return; }
     root.classList.remove("hidden");
     root.appendChild(el("h2", null, "任务 (jobs)"));
-    const sorted = jobs.slice().sort(
-      (a, b) => String(b.created).localeCompare(String(a.created)));
+    const running = pickJobs(jobs, ["running", "canceling"], 99);  /* always show */
+    const queued = pickJobs(jobs, ["queued"], 3);
+    const need = pickJobs(jobs, ["failed", "interrupted"], 5);
+    const recent = pickJobs(jobs, ["done", "canceled"], 5);
+    const groups = [
+      { title: "正在运行 (running)", items: running },
+      { title: "接下来 (queued)", items: queued },
+      { title: "需要处理 (needs attention)", items: need },
+      { title: "最近完成 (recent)", items: recent },
+    ];
     let expandedOne = false;  /* UX-STUDY #5: auto-expand only the newest failure */
-    sorted.slice(0, 8).forEach((j) => {
+    groups.forEach((g) => {
+      if (!g.items.length) return;
+      root.appendChild(el("div", "muted jgroup", g.title));
+      g.items.forEach((j) => renderJobRow(j));
+    });
+
+    function renderJobRow(j) {
       const row = el("div", "job");
       row.appendChild(el("span", "jkind", j.kind));
       /* round AA item 6: an interrupted job (a past GUI process's dangling
@@ -2636,7 +2669,7 @@ _JS = r"""
         row.appendChild(det);
       }
       root.appendChild(row);
-    });
+    }
   }
 
   /* --------------------------------------------------- timeline strip --- */
