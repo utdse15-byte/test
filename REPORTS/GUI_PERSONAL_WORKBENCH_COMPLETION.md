@@ -4,7 +4,7 @@
 
 - Branch: `claude/gui-personal-workbench-reliability-scale`
 - Base: `claude/fable-opus-task-division-wv97i6` @ `46fb0c5`
-- This wave HEAD: (see git after commit)
+- This wave HEAD: `f604e3ed9ac0f341ec3a04c8c763cb63a91eec25`
 
 ## 2. What shipped
 
