@@ -289,13 +289,24 @@ class GuiServer(ThreadingHTTPServer):
         for job in runner.list():
             if job.state in ("running", "canceling"):
                 if running is None:
-                    running = {"id": job.id, "kind": job.kind, "state": job.state}
+                    running = {
+                        "id": job.id,
+                        "kind": job.kind,
+                        "state": job.state,
+                        "summary": job.progress or job.kind,
+                    }
             elif job.state == "queued":
                 queued += 1
         try:
             rstate = runner.state().value
         except Exception:
             rstate = "unknown"
+        # ThreadingHTTPServer has no precise client count; approximate via
+        # active threads minus the main server thread (diagnostic only).
+        try:
+            connected = max(0, threading.active_count() - 2)
+        except Exception:
+            connected = 0
         return {
             "app_mode": self.app_mode,
             "closing": self.closing.is_set(),
@@ -303,6 +314,7 @@ class GuiServer(ThreadingHTTPServer):
             "runner_state": rstate,
             "running_job": running,
             "queued_count": queued,
+            "connected_clients": connected,
         }
 
     def request_shutdown(self, mode: str = "after_current") -> dict[str, Any]:
@@ -689,6 +701,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/app/status":
                 # Readable while closing — front-end quit dialog polls this.
                 self._send_json(self.server.app_status())
+            elif path == "/api/ui-state":
+                self._ui_state_get()
             elif path == "/api/workspace/recents":
                 self._workspace_recents()
             elif path == "/api/project-id":
@@ -717,12 +731,20 @@ class _Handler(BaseHTTPRequestHandler):
 
                 session = self.server.session
                 assert session is not None
+                q = parse_qs(url.query)
+                want_timing = (q.get("perf", ["0"])[0] or "0") in ("1", "true", "yes")
                 fp = project_fingerprint(session.project, session.runner)
+                # Fingerprint does not include timing flag; recompute when perf=1.
                 cached = self.server.state_cache
-                if cached is not None and cached[0] == fp:
+                if (not want_timing and cached is not None and cached[0] == fp):
                     payload = cached[1]
                 else:
-                    payload = build_state(session.project, session.runner)
+                    import json as _json
+                    import time as _time
+
+                    t0 = _time.perf_counter()
+                    payload = build_state(
+                        session.project, session.runner, include_timing=want_timing)
                     payload["fp"] = fp
                     # Same session: fingerprint, state, and token share one bind.
                     payload["project_token"] = session.project_id
@@ -731,7 +753,14 @@ class _Handler(BaseHTTPRequestHandler):
                         {"active": self.server.active_slug,
                          "count": len(self.server.workspace)}
                         if self.server.workspace else None)
-                    self.server.state_cache = (fp, payload)
+                    if want_timing:
+                        raw = _json.dumps(payload, ensure_ascii=False, default=str)
+                        perf = payload.setdefault("perf", {})
+                        perf["state_payload_bytes"] = len(raw.encode("utf-8"))
+                        perf["project_fingerprint_ms"] = round(
+                            (_time.perf_counter() - t0) * 1000, 2)
+                    else:
+                        self.server.state_cache = (fp, payload)
                 self._send_json(payload)
             elif path == "/api/jobs":
                 # round AA item 6: JobRunner.interrupted() (a past GUI
@@ -1063,6 +1092,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/switch": self._act_switch,
                 "/api/new-project": self._act_new_project,
                 "/api/app/quit": self._act_app_quit,
+                "/api/ui-state": self._act_ui_state_patch,
+                "/api/ui-state/draft": self._act_ui_draft,
                 "/api/onboarding/dismiss": self._act_onboarding_dismiss,
                 "/api/take-note": self._act_take_note,
                 "/api/validate": self._act_validate,
@@ -2261,6 +2292,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json("path or slug is required", 400)
             return
         if self.server.session is not None:
+            # Same project already bound → already_open (no state change).
+            if project.root.resolve() == self.server.session.project.root.resolve():
+                pub = project_public_dict(project)
+                self._send_json({
+                    "ok": True,
+                    "code": "already_open",
+                    "project": pub,
+                    "next_action": {"kind": "already_open"},
+                    "name": pub["name"],
+                    "root": pub["root"],
+                    "project_token": pub["id"],
+                    "open_in_new_window": False,
+                })
+                return
             self._project_action_payload(
                 project, ok=False, code="project_session_immutable", status=409,
                 extra={"error": "当前窗口已经绑定项目，请在新窗口打开"})
@@ -2398,6 +2443,74 @@ class _Handler(BaseHTTPRequestHandler):
             return
         result = self.server.request_shutdown(mode)
         self._send_json(result)
+
+    def _ui_state_get(self) -> None:
+        """GET /api/ui-state — personal restore (not project truth)."""
+        from .userstate import get_editor_draft, get_workspace_ui
+
+        session = self.server.session
+        if session is None:
+            self._send_json({"workspace_id": "", "ui": {}, "draft": None})
+            return
+        wid = session.project_id
+        draft_path = None
+        # optional ?draft=shots/S001.yaml
+        url = urlsplit(self.path)
+        q = parse_qs(url.query)
+        draft_path = (q.get("draft", [None])[0] or None)
+        draft = get_editor_draft(wid, draft_path) if draft_path else None
+        self._send_json({
+            "workspace_id": wid,
+            "ui": get_workspace_ui(wid),
+            "draft": draft,
+        })
+
+    def _act_ui_state_patch(self, body: dict[str, Any]) -> None:
+        """POST /api/ui-state — merge personal UI prefs for this workspace."""
+        from .userstate import get_workspace_ui, patch_workspace_ui
+
+        session = self.server.session
+        if session is None:
+            self._send_error_json("尚未打开项目", 404)
+            return
+        patch = body.get("ui") if isinstance(body.get("ui"), dict) else body
+        if not isinstance(patch, dict):
+            self._send_error_json("ui object required", 400)
+            return
+        # Never accept secrets.
+        for forbidden in ("token", "password", "secret", "api_key"):
+            patch.pop(forbidden, None)
+        ui = patch_workspace_ui(session.project_id, patch)
+        self._send_json({"ok": True, "workspace_id": session.project_id, "ui": ui})
+
+    def _act_ui_draft(self, body: dict[str, Any]) -> None:
+        """POST /api/ui-state/draft — save or clear editor draft (never auto-writes truth)."""
+        from .userstate import clear_editor_draft, get_editor_draft, set_editor_draft
+
+        session = self.server.session
+        if session is None:
+            self._send_error_json("尚未打开项目", 404)
+            return
+        rel = str(body.get("relative_file_path") or body.get("path") or "").strip()
+        if not rel or ".." in rel.replace("\\", "/").split("/"):
+            self._send_error_json("relative_file_path required", 400)
+            return
+        action = str(body.get("action") or "save").strip()
+        wid = session.project_id
+        if action == "clear":
+            clear_editor_draft(wid, rel)
+            self._send_json({"ok": True, "cleared": True})
+            return
+        text = body.get("draft_text")
+        if not isinstance(text, str):
+            self._send_error_json("draft_text required", 400)
+            return
+        set_editor_draft(
+            wid, rel,
+            expected_rev=str(body.get("expected_rev") or "") or None,
+            draft_text=text,
+        )
+        self._send_json({"ok": True, "draft": get_editor_draft(wid, rel)})
 
     # ---------------------------------------------------------- watch/lists
 

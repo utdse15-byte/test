@@ -49,7 +49,20 @@ __all__ = [
     "set_show_pro_terms",
     "is_snap_enabled",
     "set_snap_enabled",
+    "get_workspace_ui",
+    "patch_workspace_ui",
+    "get_editor_draft",
+    "set_editor_draft",
+    "clear_editor_draft",
 ]
+
+# Per-workspace UI memory (GUI-WAVE-PERSONAL-01). Not build input.
+_WORKSPACE_UI_KEYS = (
+    "last_page", "last_shot_id", "review_queue_filter", "review_position",
+    "review_take_id", "shot_status_filter", "expanded_panels", "playback_rate",
+    "volume", "muted", "autoplay_review", "final_preview_expanded",
+    "timeline_scroll", "shots_scroll", "migrated_from_localstorage",
+)
 
 _VERSION = 1
 
@@ -203,4 +216,102 @@ def set_snap_enabled(enabled: bool = True) -> None:
     an unwritable home is a shrug, exactly like the other preferences here."""
     state = load_gui_state()
     state["edit_snap"] = bool(enabled)
+    save_gui_state(state)
+
+
+# ------------------------------------------------ workspace UI (personal restore)
+
+
+def get_workspace_ui(workspace_id: str) -> dict[str, Any]:
+    """Per-project UI memory keyed by stable project identity (not display name)."""
+    state = load_gui_state()
+    store = state.get("workspaces")
+    if not isinstance(store, dict):
+        return {"schema_version": 1, "workspace_id": workspace_id}
+    entry = store.get(workspace_id)
+    if not isinstance(entry, dict):
+        return {"schema_version": 1, "workspace_id": workspace_id}
+    out = {"schema_version": 1, "workspace_id": workspace_id}
+    for k in _WORKSPACE_UI_KEYS:
+        if k in entry:
+            out[k] = entry[k]
+    return out
+
+
+def patch_workspace_ui(workspace_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge allowed UI fields for one workspace. Never stores secrets/tokens."""
+    if not workspace_id or not isinstance(patch, dict):
+        return get_workspace_ui(workspace_id or "")
+    state = load_gui_state()
+    store = state.setdefault("workspaces", {})
+    if not isinstance(store, dict):
+        store = {}
+        state["workspaces"] = store
+    cur = store.get(workspace_id)
+    if not isinstance(cur, dict):
+        cur = {}
+    for k, v in patch.items():
+        if k not in _WORKSPACE_UI_KEYS:
+            continue
+        # Refuse oversized blobs (drafts go to drafts map, not here).
+        if isinstance(v, str) and len(v) > 4000:
+            continue
+        cur[k] = v
+    cur["schema_version"] = 1
+    store[workspace_id] = cur
+    save_gui_state(state)
+    return get_workspace_ui(workspace_id)
+
+
+def get_editor_draft(workspace_id: str, relative_path: str) -> dict[str, Any] | None:
+    state = load_gui_state()
+    drafts = state.get("drafts")
+    if not isinstance(drafts, dict):
+        return None
+    key = f"{workspace_id}::{relative_path}"
+    d = drafts.get(key)
+    return d if isinstance(d, dict) else None
+
+
+def set_editor_draft(
+    workspace_id: str,
+    relative_path: str,
+    *,
+    expected_rev: str | None,
+    draft_text: str,
+) -> None:
+    if not workspace_id or not relative_path:
+        return
+    if len(draft_text) > 200_000:
+        draft_text = draft_text[:200_000]
+    state = load_gui_state()
+    drafts = state.setdefault("drafts", {})
+    if not isinstance(drafts, dict):
+        drafts = {}
+        state["drafts"] = drafts
+    key = f"{workspace_id}::{relative_path}"
+    drafts[key] = {
+        "workspace_id": workspace_id,
+        "relative_file_path": relative_path,
+        "expected_rev": expected_rev,
+        "draft_text": draft_text,
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    # Cap total drafts to avoid unbounded growth.
+    if len(drafts) > 40:
+        ordered = sorted(
+            drafts.items(),
+            key=lambda kv: str((kv[1] or {}).get("updated_at") or ""),
+        )
+        for old_k, _ in ordered[: len(drafts) - 40]:
+            drafts.pop(old_k, None)
+    save_gui_state(state)
+
+
+def clear_editor_draft(workspace_id: str, relative_path: str) -> None:
+    state = load_gui_state()
+    drafts = state.get("drafts")
+    if not isinstance(drafts, dict):
+        return
+    drafts.pop(f"{workspace_id}::{relative_path}", None)
     save_gui_state(state)

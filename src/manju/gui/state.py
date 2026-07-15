@@ -233,6 +233,27 @@ def _shot_cards(project: "Project", statuses: Any = None,
             pass  # a broken shot file still gets a card (state says why)
 
         voice = voice_map.get(st.shot_id)
+        takes = [_take_card(project, st.shot_id, t, st.selected_take, take_notes)
+                 for t in project.takes(st.shot_id)]
+        voice_takes = _voice_cards(project, st.shot_id)
+        voice_payload = ({"state": voice.state.value, "why": voice.note or None}
+                         if voice is not None else None)
+        # ui_rev: stable content fingerprint for keyed DOM reuse (no time/pid).
+        ui_rev = _shot_ui_rev(
+            shot_id=st.shot_id,
+            state=st.state.value,
+            note=st.note or "",
+            action=action,
+            speaker=speaker,
+            dialogue=dialogue,
+            selected_take=st.selected_take or "",
+            spec_hash=st.spec_hash or "",
+            locked=locked,
+            take_notes=take_notes,
+            takes=takes,
+            voice=voice_payload,
+            voice_takes=voice_takes,
+        )
         cards.append({
             "id": st.shot_id,
             "state": st.state.value,
@@ -243,13 +264,66 @@ def _shot_cards(project: "Project", statuses: Any = None,
             "selected_take": st.selected_take,
             "spec_hash": short_hash(st.spec_hash, 12),
             "locked": locked,
-            "voice": ({"state": voice.state.value, "why": voice.note or None}
-                      if voice is not None else None),
-            "takes": [_take_card(project, st.shot_id, t, st.selected_take, take_notes)
-                      for t in project.takes(st.shot_id)],
-            "voice_takes": _voice_cards(project, st.shot_id),
+            "voice": voice_payload,
+            "takes": takes,
+            "voice_takes": voice_takes,
+            "ui_rev": ui_rev,
         })
     return cards
+
+
+def _shot_ui_rev(
+    *,
+    shot_id: str,
+    state: str,
+    note: str,
+    action: str,
+    speaker: str,
+    dialogue: str,
+    selected_take: str,
+    spec_hash: str,
+    locked: list[str],
+    take_notes: dict[str, str],
+    takes: list[dict[str, Any]],
+    voice: dict[str, Any] | None,
+    voice_takes: list[dict[str, Any]],
+) -> str:
+    """Stable short hash of all fields that affect a shot card's interactive UI."""
+    import json as _json
+
+    payload = {
+        "id": shot_id,
+        "state": state,
+        "note": note,
+        "action": action,
+        "speaker": speaker,
+        "dialogue": dialogue,
+        "selected_take": selected_take,
+        "spec_hash": spec_hash,
+        "locked": list(locked),
+        "take_notes": {k: take_notes[k] for k in sorted(take_notes)},
+        "takes": [
+            {
+                "name": t.get("name"),
+                "provider": t.get("provider"),
+                "spec_hash": t.get("spec_hash"),
+                "duration_ms": t.get("duration_ms"),
+                "url": t.get("url"),
+                "poster": t.get("poster"),
+                "selected": t.get("selected"),
+                "ext": t.get("ext"),
+                "note": t.get("note"),
+                "seed": t.get("seed"),
+            }
+            for t in takes
+        ],
+        "voice": voice,
+        "voice_takes": [
+            {"name": v.get("name"), "url": v.get("url"), "manual": v.get("manual")}
+            for v in voice_takes
+        ],
+    }
+    return short_hash(hash_text(_json.dumps(payload, ensure_ascii=False, sort_keys=True)), 16)
 
 
 def _qc_summary(project: "Project") -> dict[str, Any] | None:
@@ -302,11 +376,15 @@ def _failures(project: "Project") -> list[dict[str, Any]]:
         return []
 
 
-def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
+def build_state(project: "Project", runner: "JobRunner",
+                *, include_timing: bool = False) -> dict[str, Any]:
     # G2: run the stale + voice evaluation ONCE and thread the results through
     # BOTH project_status(...) and _shot_cards(...) — before, each recomputed
     # them independently (evaluate_all + evaluate_all_voices ran twice per
     # build). Pure plumbing: the /api/state payload shape is identical.
+    import time as _time
+
+    t0 = _time.perf_counter()
     statuses = evaluate_all(project)
     voices: Any = None
     try:
@@ -318,6 +396,7 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
 
     status = project_status(project, statuses=statuses, voices=voices)
     config = project.load_config()
+    t_status = _time.perf_counter()
 
     latest_final = None
     if status.get("latest_final"):
@@ -348,7 +427,10 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
             "has_key": p.with_suffix(".key.json").exists(),  # crashed-render honesty
         })
 
-    return {
+    shots = _shot_cards(project, statuses=statuses, voices=voices)
+    jobs = [j.to_dict() for j in runner.list()] + runner.interrupted()
+    t_done = _time.perf_counter()
+    out: dict[str, Any] = {
         "project": {
             "name": status["project"],
             "resolution": status["resolution"],
@@ -373,12 +455,25 @@ def build_state(project: "Project", runner: "JobRunner") -> dict[str, Any]:
         "build_lock": status.get("build_lock"),
         "qc": _qc_summary(project),
         "failures": _failures(project),
-        "shots": _shot_cards(project, statuses=statuses, voices=voices),
+        "shots": shots,
         "events": tail_events(project.root, _EVENTS_TAIL),
         # round AA item 6: interrupted() (a past GUI process's dangling
         # queued/running/canceling jobs, computed once at JobRunner
         # construction) merged into the SAME list as the live jobs,
         # distinguished only by state="interrupted" — the SPA's jobs strip
         # (page.py renderJobs) already iterates this list generically.
-        "jobs": [j.to_dict() for j in runner.list()] + runner.interrupted(),
+        "jobs": jobs,
     }
+    # Diagnostic timings only — never build inputs (GUI-WAVE-PERSONAL-01).
+    if include_timing:
+        take_count = sum(len(s.get("takes") or []) for s in shots)
+        voice_take_count = sum(len(s.get("voice_takes") or []) for s in shots)
+        out["perf"] = {
+            "build_state_ms": round((t_done - t0) * 1000, 2),
+            "status_ms": round((t_status - t0) * 1000, 2),
+            "shot_count": len(shots),
+            "take_count": take_count,
+            "voice_take_count": voice_take_count,
+            "job_count": len(jobs),
+        }
+    return out

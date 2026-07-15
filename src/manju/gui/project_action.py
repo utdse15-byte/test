@@ -73,6 +73,11 @@ function handleProjectAction(data, hooks) {
   var next = data.next_action || {};
   var kind = next.kind || "";
 
+  if (kind === "already_open") {
+    /* Same project already bound — no navigation, no dialog. */
+    return;
+  }
+
   if (kind === "reload_current") {
     if (typeof hooks.onReload === "function") {
       hooks.onReload(data);

@@ -2653,3 +2653,24 @@ implementation agents on disjoint owners (xmeml+conform / fonts / board)
   test_fp_board_compare2 serve smoke httpx.ReadTimeout — single
   occurrence, same code green on the next two Windows runs; classified
   flake per the #48b rerun-decides precedent.
+
+## GUI-WAVE-PERSONAL-01 (2026-07-15)
+
+Personal workbench reliability / scale wave on branch
+claude/gui-personal-workbench-reliability-scale.
+
+### Decisions
+
+1. **One project, one process, one window** — no in-process hot switch; open other projects via launch / CLI.
+2. **Unified project action schema** — 
+ext_action.kind in {reload_current, open_in_new_window, already_open}.
+3. **JSON client** — single 
+equestJson/ManjuApiError owner (gui/webclient.py); structured errors preserved.
+4. **Launch** — argv only (python -m manju gui <root> --app --port 0), never browser-supplied shell strings.
+5. **Quit coordinator** — non-blocking HTTP; cancels queued; optional cooperative cancel; logs timeouts.
+6. **Personal UI state** — ~/.manju/gui_state.json workspaces keyed by project_identity; not build input.
+7. **Shot ui_rev** — stable content hash for keyed DOM reuse; incremental patch in SPA.
+8. **Media** — selected take metadata preload; off-screen takes none + IntersectionObserver.
+9. **Scale fixtures / soak** — offline PNG takes; scripts/gui_soak.py deterministic HTTP soak.
+10. **No Electron/React/SaaS** — stay stdlib + vanilla JS; Windows-first personal tool.
+

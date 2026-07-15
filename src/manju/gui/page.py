@@ -923,7 +923,38 @@ _JS = r"""
       Object.keys(patch).forEach((k) => { cur[k] = patch[k]; });
       localStorage.setItem(uiKey(), JSON.stringify(cur));
     } catch (e) { /* storage disabled — memory just stays off */ }
+    /* Durable per-workspace restore (server ~/.manju/gui_state.json). */
+    try {
+      if (PROJECT && typeof requestJson === "function") {
+        const serverPatch = {};
+        if (patch.filter !== undefined) serverPatch.shot_status_filter = patch.filter;
+        if (patch.lastShot !== undefined) serverPatch.last_shot_id = patch.lastShot;
+        if (patch.reviewPos !== undefined) serverPatch.review_position = patch.reviewPos;
+        if (Object.keys(serverPatch).length) {
+          requestJson("POST", "/api/ui-state", { ui: serverPatch },
+            { token: TOKEN, projectId: PROJECT || "" }).catch(() => {});
+        }
+      }
+    } catch (e2) { /* never block UI */ }
   };
+
+  /* One-shot migrate localStorage → server UI state (best-effort). */
+  try {
+    if (PROJECT && typeof requestJson === "function") {
+      const loc = loadUI();
+      const opts = { token: TOKEN, projectId: PROJECT || "" };
+      requestJson("GET", "/api/ui-state", undefined, opts).then((data) => {
+        const ui = (data && data.ui) || {};
+        if (ui.migrated_from_localstorage) return;
+        const patch = {
+          migrated_from_localstorage: true,
+          shot_status_filter: loc.filter || ui.shot_status_filter || "",
+          last_shot_id: loc.lastShot || ui.last_shot_id || "",
+        };
+        return requestJson("POST", "/api/ui-state", { ui: patch }, opts);
+      }).catch(() => {});
+    }
+  } catch (e) { /* */ }
 
   /* #50a: the review page deep-links /?compare=<shot> into the A/B overlay */
   let pendingCompare = (() => {
@@ -2010,6 +2041,9 @@ _JS = r"""
   function handleSpaProjectAction(data) {
     if (!data) return;
     const next = data.next_action || {};
+    if (next.kind === "already_open" || data.code === "already_open") {
+      return;  /* no token rewrite, no reset */
+    }
     if (next.kind === "reload_current") {
       if (data.project_token) PROJECT = data.project_token;
       else if (data.project && data.project.id) PROJECT = data.project.id;
@@ -3023,7 +3057,44 @@ _JS = r"""
     reviewChipEl.classList.toggle("hidden", n <= 0);
   }
 
+  /* Debug counters for keyed patch (tests / soak read window.__manjuRenderStats). */
+  const renderStats = {
+    shots_created: 0, shots_reused: 0, shots_replaced: 0, shots_removed: 0,
+    media_nodes_created: 0, media_nodes_reused: 0, media_activated: 0,
+    render_duration_ms: 0,
+  };
+  try { window.__manjuRenderStats = renderStats; } catch (e) { /* non-browser */ }
+
+  /* Media IO: activate src when near viewport; keep selected/review takes ready. */
+  let mediaIO = null;
+  try {
+    if (typeof IntersectionObserver === "function") {
+      mediaIO = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          const node = en.target;
+          if (!node || !node.dataset) return;
+          if (en.isIntersecting) {
+            if (node.dataset.lazySrc && !node.src) {
+              node.src = node.dataset.lazySrc;
+              renderStats.media_activated++;
+            }
+            if (node.tagName === "VIDEO" && node.preload === "none"
+                && node.dataset.wantPreload === "1") {
+              node.preload = "metadata";
+            }
+          } else if (node.tagName === "VIDEO" && !node.dataset.keepAlive) {
+            try {
+              if (!node.paused) node.pause();
+            } catch (err) { /* ignore */ }
+          }
+        });
+      }, { root: null, rootMargin: "200px 0px", threshold: 0.01 });
+    }
+  } catch (e) { mediaIO = null; }
+
   function renderShots(shots) {
+    const t0 = (typeof performance !== "undefined" && performance.now)
+      ? performance.now() : Date.now();
     reviewSnap = loadReviewSnapshot();   /* one parse per grid render */
     const root = $("shots");
     /* #50c (review find #1): a DIRECT re-render (filter chip, cockpit count,
@@ -3037,8 +3108,8 @@ _JS = r"""
        * re-arms it (schedule/refresh only chain off each other). */
       schedule();
     }
-    clear(root);
     if (!shots.length) {
+      clear(root);
       const empty = el("div", "empty");
       empty.appendChild(el("p", null, "还没有分镜 (no shots yet)。"));
       empty.appendChild(el("p", "muted",
@@ -3047,7 +3118,13 @@ _JS = r"""
       return;
     }
     if (Object.keys(shots.reduce((a, s) => (a[s.state] = 1, a), {})).length > 1) {
-      root.appendChild(filterChips(shots));  /* chips only when they filter */
+      /* filter chips: keep one host at top */
+      let chips = root.querySelector(".shot-filters");
+      if (!chips) {
+        chips = filterChips(shots);
+        chips.classList.add("shot-filters");
+        root.insertBefore(chips, root.firstChild);
+      }
     } else if (stateFilter) {
       stateFilter = "";  /* single-state grid: a stale filter must not hide it */
       saveUI({ filter: "" });  /* #50c: the reset must reach the memory too */
@@ -3059,8 +3136,104 @@ _JS = r"""
       renderShots(shots);  /* the filtered state vanished: reset, re-render */
       return;
     }
-    visible.forEach((shot) =>
-      root.appendChild(shotCard(shot, shots.indexOf(shot), shots.length)));
+
+    /* Keyed patch by shot.id + ui_rev — never clear+rebuild the whole grid. */
+    const scrollTop = root.scrollTop;
+    const prevFocus = document.activeElement;
+    const byId = new Map();
+    Array.from(root.querySelectorAll("section.shot[data-sid]")).forEach((node) => {
+      byId.set(node.dataset.sid, node);
+    });
+    const keep = new Set();
+    const frag = document.createDocumentFragment();
+    let orderHost = root.querySelector(".shot-list");
+    if (!orderHost) {
+      orderHost = el("div", "shot-list");
+      root.appendChild(orderHost);
+    }
+    /* Move existing nodes into fragment for reordering without destroying. */
+    while (orderHost.firstChild) frag.appendChild(orderHost.firstChild);
+
+    visible.forEach((shot, idx) => {
+      const total = shots.length;
+      const existing = byId.get(shot.id);
+      const rev = shot.ui_rev || "";
+      if (existing && existing.dataset.uiRev === rev) {
+        /* Reuse node; update keyboard focus class only. */
+        existing.classList.toggle("kb-focus", shot.id === kbFocusId);
+        /* Batch checkbox may have changed without ui_rev — sync cheaply. */
+        const cb = existing.querySelector("input.shot-check");
+        if (cb) cb.checked = batchSel.has(shot.id);
+        orderHost.appendChild(existing);
+        keep.add(shot.id);
+        renderStats.shots_reused++;
+        return;
+      }
+      if (existing) {
+        /* Capture media playback before replace. */
+        const playState = [];
+        existing.querySelectorAll("video").forEach((v) => {
+          playState.push({
+            name: (v.closest(".take") || {}).dataset
+              ? (v.closest(".take").dataset.tname || "") : "",
+            t: v.currentTime, paused: v.paused, vol: v.volume,
+            muted: v.muted, rate: v.playbackRate,
+          });
+        });
+        const card = shotCard(shot, idx, total);
+        card.dataset.uiRev = rev;
+        orderHost.appendChild(card);
+        /* Restore playback on matching take name if present. */
+        playState.forEach((ps) => {
+          const v = card.querySelector(
+            ps.name ? ('.take[data-tname="' + ps.name + '"] video') : "video");
+          if (!v) return;
+          try {
+            v.volume = ps.vol; v.muted = ps.muted; v.playbackRate = ps.rate || 1;
+            if (ps.t > 0) v.currentTime = ps.t;
+            if (!ps.paused && v.play) v.play().catch(() => {});
+          } catch (err) { /* autoplay / seek may fail */ }
+        });
+        keep.add(shot.id);
+        renderStats.shots_replaced++;
+        return;
+      }
+      const card = shotCard(shot, idx, total);
+      card.dataset.uiRev = rev;
+      orderHost.appendChild(card);
+      keep.add(shot.id);
+      renderStats.shots_created++;
+    });
+
+    /* Remove shots no longer visible. */
+    byId.forEach((node, sid) => {
+      if (!keep.has(sid)) {
+        if (mediaIO) {
+          node.querySelectorAll("video, img").forEach((m) => {
+            try { mediaIO.unobserve(m); } catch (e) { /* */ }
+          });
+        }
+        if (node.parentNode) node.parentNode.removeChild(node);
+        renderStats.shots_removed++;
+      }
+    });
+    /* Drop leftover frag nodes (orphans). */
+    while (frag.firstChild) {
+      const n = frag.firstChild;
+      frag.removeChild(n);
+      if (n.dataset && n.dataset.sid && !keep.has(n.dataset.sid)) {
+        renderStats.shots_removed++;
+      }
+    }
+    try { root.scrollTop = scrollTop; } catch (e) { /* */ }
+    if (prevFocus && document.contains(prevFocus) && prevFocus.focus) {
+      try { prevFocus.focus({ preventScroll: true }); } catch (e) {
+        try { prevFocus.focus(); } catch (e2) { /* */ }
+      }
+    }
+    const t1 = (typeof performance !== "undefined" && performance.now)
+      ? performance.now() : Date.now();
+    renderStats.render_duration_ms = Math.round(t1 - t0);
   }
 
   function shotCard(shot, idx, total) {
@@ -3189,23 +3362,44 @@ _JS = r"""
 
   function takeCard(shot, t) {
     const box = el("div", "take" + (t.selected ? " selected" : ""));
+    box.dataset.tname = t.name || "";
     const ext = String(t.ext || "").toLowerCase();
     if (t.url && IMAGE_EXT[ext]) {
       /* image takes render as a real <img> — v2 gave them a dead <video> */
       const img = document.createElement("img");
       img.loading = "lazy";
       img.decoding = "async";
-      img.src = t.url;
       img.alt = t.name || "take";
+      /* Selected: set src immediately; others use lazy dataset + observer. */
+      if (t.selected) {
+        img.src = t.url;
+        renderStats.media_nodes_created++;
+      } else {
+        img.dataset.lazySrc = t.url;
+        img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        renderStats.media_nodes_created++;
+        if (mediaIO) mediaIO.observe(img);
+      }
       box.appendChild(img);
     } else if (t.url) {
       const v = document.createElement("video");
       v.controls = true;
-      v.preload = "metadata";
       v.width = 180;
-      v.src = t.url;
+      /* Selected / current review take: metadata; off-screen others: none. */
+      if (t.selected || (shot.id === kbFocusId)) {
+        v.preload = "metadata";
+        v.src = t.url;
+        v.dataset.keepAlive = "1";
+        v.dataset.wantPreload = "1";
+      } else {
+        v.preload = "none";
+        v.dataset.lazySrc = t.url;
+        v.dataset.wantPreload = "0";
+      }
       if (t.poster) v.poster = t.poster;   /* server thumb rides as poster */
       box.appendChild(v);
+      renderStats.media_nodes_created++;
+      if (mediaIO && !t.selected) mediaIO.observe(v);
     } else {
       box.appendChild(el("div", "nomedia", "no media"));
     }
