@@ -2573,14 +2573,22 @@ _JS = r"""
        * confirm that passes assume_yes — never a silent spend. The spend banner
        * below stays as a belt-and-braces fallback for a synchronous gate. */
       const body = buildBody(false);
-      showPlanModal("build", {
+      /* C41: plan modal must see the same lang as the real build POST. */
+      const planParams = {
         target: body.target, gen: body.gen,
         regen_stale: body.regen_stale, force: body.force,
-      }, {
-        title: "构建前计划 (plan before build)",
+      };
+      if (body.lang) planParams.lang = body.lang;
+      showPlanModal("build", planParams, {
+        title: body.lang
+          ? ("构建前计划 · locale " + body.lang)
+          : "构建前计划 (plan before build)",
         onConfirm: async () => {
           const confirmed = Object.assign({}, body, { assume_yes: true });
-          const data = await post(btn, "/api/build", confirmed, "构建任务已入队 (build queued)");
+          const msg = body.lang
+            ? ("构建任务已入队 (locale " + body.lang + ")")
+            : "构建任务已入队 (build queued)";
+          const data = await post(btn, "/api/build", confirmed, msg);
           const gate = spendGateOf(data);  /* SYNCHRONOUS waiting_user, if any */
           if (gate) {
             spendSig = "sync:" + Date.now();
