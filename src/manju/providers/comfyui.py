@@ -73,6 +73,7 @@ from .base import (
     FailureKind,
     GenerationRequest,
     Provider,
+    ProviderCanceled,
     ProviderFailure,
     record_provider_failure,
 )
@@ -136,7 +137,9 @@ class ComfyUIProvider(Provider):
 
         t0 = self._clock()
         prompt_id = self._submit(workflow)
-        outputs = self._poll(prompt_id)
+        # C22: honor GenerationRequest.should_cancel between /history polls
+        # (same contract as CloudProvider._poll_to_completion → ProviderCanceled).
+        outputs = self._poll(prompt_id, should_cancel=req.should_cancel)
         chosen = self._select_output(outputs)
         if chosen is None:
             raise ProviderFailure(
@@ -403,9 +406,15 @@ class ComfyUIProvider(Provider):
             ) from exc
         return str(prompt_id)
 
-    def _poll(self, prompt_id: str) -> dict:
+    def _poll(self, prompt_id: str, *,
+              should_cancel: Callable[[], bool] | None = None) -> dict:
         start = self._clock()
         while True:
+            # C22: cooperative cancel BETWEEN poll rounds (never mid-HTTP).
+            # Raise ProviderCanceled (not ProviderFailure) so build/graph treats
+            # this as stop-waiting, not a degraded fallback to the next provider.
+            if should_cancel is not None and should_cancel():
+                raise ProviderCanceled(self.id, prompt_id)
             resp = self._http("GET", f"{self._base}/history/{prompt_id}")
             # F6: a transient 5xx (a ComfyUI/proxy blip) during ONE poll GET is
             # NOT a terminal job failure — the graph may still be executing. Keep
