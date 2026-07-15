@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from manju.build.graph import ShotState
 from manju.build.status import project_status
 from manju.core.locale import locale_dir
 from manju.core.models import Timeline, TimelineMeta
 from manju.core.yamlio import write_yaml
-from manju.build.graph import ShotState
 
 
 def test_next_step_build_locale_when_lines_no_final(tmp_project, monkeypatch):
@@ -22,7 +22,17 @@ def test_next_step_build_locale_when_lines_no_final(tmp_project, monkeypatch):
     d.mkdir(parents=True, exist_ok=True)
     write_yaml(d / "lines.yaml", {"S001": {"text": "hello"}})
 
-    fake = [SimpleNamespace(shot_id="S001", state=ShotState.FRESH, note=None)]
+    fake = [SimpleNamespace(
+        shot_id="S001",
+        state=ShotState.FRESH,
+        note=None,
+        selected_take="take_01",
+        take=None,
+    )]
+    monkeypatch.setattr(
+        "manju.build.status.next_actions",
+        lambda *a, **k: [],
+    )
     st = project_status(tmp_project, statuses=fake)
     assert st.get("latest_final")
     assert st.get("timeline", {}).get("exists") is True
