@@ -43,6 +43,19 @@ where = ["src"]
 [tool.setuptools.package-data]
 "manju.presets" = ["data/*.yaml"]
 
+# Incremental static checking (task 13): the lint gate is the OBVIOUS-ERROR
+# subset only (syntax / undefined names / bug-prone patterns) — deliberately
+# NOT a repo-wide style or strict-typing rewrite. This config makes a local
+# `ruff check src` behave exactly like the CI `static` job (ci.yml). Newly
+# introduced models (JobKindSpec, OperationOutcome/OutcomeCode/CancelRecord,
+# ExecutionContext/CancelToken) are written fully type-annotated so a future
+# opt-in strict typecheck can start from them without a large cleanup.
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # UX audit F43: `-m "not ffmpeg"` is the fast dev loop (~3x quicker). Honest
