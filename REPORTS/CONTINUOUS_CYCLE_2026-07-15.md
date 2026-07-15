@@ -160,3 +160,8 @@ Loop continues...
 ## Cycle 14
 - `571ba0e` GUI locale_finals in state+strip
 
+
+## Cycles 15-16
+- C15 cockpit locale phase
+- C16 board locale finals row
+
