@@ -33,6 +33,13 @@
 - job_cancel ffmpeg subprocess WinError flakes on some hosts (env)
 - Paid cloud TTS cancel still may bill remote job (§8.1 documented)
 
+## Later cycles (C55–C69 themes)
+- Locale hero/build plan lang (C55); roundtrip/run_qc functional pins
+- MCP assume_yes + WaitingUser ToolError (C59–C61)
+- GUI WaitingUser honesty for redo/voice/batch/lab/retry/handle_rebuild (C62–C66)
+- Spend banner multi-kind + project-switch dismiss (C67–C69)
+- 109 commits since continuous base 81d6206; loop continues
+
 ## Evidence
 - Cycle pin tests C22–C54 suite: 64+ passed in batch
 - Broader suite snapshots: 147–165 passed (cycle* + bugfix + GUI subset)
