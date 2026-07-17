@@ -297,18 +297,21 @@ def _write_tts_manifest(tmp_path, monkeypatch):
 def test_voice_endpoint_gated_like_cli(gui, tmp_project, add_shot, tmp_path, monkeypatch):
     """Goal 61: the GUI's single-shot voice action routes through the SAME
     §8.3 ask_before gate the CLI ``manju voice`` uses — a priced synthesis
-    without an explicit ``assume_yes`` fails the job as waiting_user and
-    spends nothing (previously this endpoint called the TTS provider
-    directly with no gate at all)."""
+    without an explicit ``assume_yes`` stops as waiting_user and spends
+    nothing (previously this endpoint called the TTS provider directly with
+    no gate at all). C62 evolved the job SHAPE: the gate is a waiting_user
+    RESULT (the UI's 待确认花费 chip), not a failed job — the substance
+    (nothing spent, nothing written, re-runnable with assume_yes) is what
+    this test pins."""
     _write_tts_manifest(tmp_path, monkeypatch)
     add_shot(tmp_project, "S001")
 
-    # no assume_yes -> waiting_user, nothing spent, no voice take written
+    # no assume_yes -> waiting_user result, nothing spent, no voice take written
     status, _, data = _post(gui, "/api/voice", {"shot": "S001"})
     assert status == 202
     job = _wait_job(gui, data["job"]["id"])
-    assert job["state"] == "failed"
-    assert "waiting_user" in (job["error"] or "")
+    assert (job.get("result") or {}).get("waiting_user") is True
+    assert job["state"] != "failed"  # C62: a gate stop is not a failure
     assert tmp_project.voice_takes("S001") == []
 
     # assume_yes -> proceeds through the (offline, no real network) provider
@@ -319,7 +322,8 @@ def test_voice_endpoint_gated_like_cli(gui, tmp_project, add_shot, tmp_path, mon
     job2 = _wait_job(gui, data2["job"]["id"])
     # a real network call will fail in this offline test env; the gate itself
     # is proven by the FIRST call's waiting_user + the fact this one is not
-    # rejected as waiting_user.
+    # stopped as waiting_user (C62: the gate signal lives on the result).
+    assert (job2.get("result") or {}).get("waiting_user") is not True
     assert "waiting_user" not in (job2.get("error") or "")
 
 
