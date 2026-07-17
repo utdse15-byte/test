@@ -1116,6 +1116,16 @@ def _run_build_phases(
             except Exception:
                 pass
 
+    def _progress(label: str) -> None:
+        """UX wave 2 item 2: WITHIN-phase progress ("gen:S003 (3/12)") — pure
+        advisory emit, NO cancel checkpoint (the loops own their own cancel
+        points; doubling them here would skew the checkpoint honesty)."""
+        if on_phase is not None:
+            try:
+                on_phase(label)
+            except Exception:
+                pass
+
     _phase("check")
     # ---- 0. check: the hard gate (locks included, §5)
     report = run_check(project)
@@ -1468,11 +1478,13 @@ def _run_build_phases(
             # R2-P1-1: mid-run budget.limit trip (parity with concurrent path)
             # — check BEFORE each new submission against actual spent_so_far.
             serial_budget_skipped: list[str] = []
-            for item in video_plan:
+            for gen_i, item in enumerate(video_plan, start=1):
                 if budget is not None and spent_so_far["total"] > float(budget):
                     serial_budget_skipped.append(item["shot"])
                     continue
                 _cancel_check(f"生成:{item['shot']}(尚未开始)")
+                # item 2: the long wait is HERE — say which shot, n of m.
+                _progress(f"gen:{item['shot']} ({gen_i}/{len(video_plan)})")
                 res = _gen_one(item)
                 _commit_one(res)
                 if res.get("canceled"):
@@ -1516,9 +1528,13 @@ def _run_build_phases(
                 video_plan, _gen_one, max_workers=max_workers, budget_limit=budget,
                 head_provider=lambda it: head_provider_by_shot.get(it["shot"]),
                 should_cancel=should_cancel)
+            committed_n = 0
             for item in video_plan:
                 res = done.get(item["shot"])
                 if res is not None:
+                    committed_n += 1
+                    # item 2: commit order is plan order — n/m is meaningful.
+                    _progress(f"gen:{item['shot']} ({committed_n}/{len(video_plan)})")
                     _commit_one(res)
             if gen_canceled:
                 # goal: honest job cancellation — cancel already observed

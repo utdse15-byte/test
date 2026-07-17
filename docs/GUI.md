@@ -57,7 +57,9 @@ never mutate the project or make it slower.
 functions `render_page` / `render_css` / `render_js` returning strings served
 at `/`, `/app.css`, `/app.js`. Vanilla JS, no framework; all DOM is built via
 `textContent`. It polls `/api/state` every 1.5 s while jobs are active, 5 s
-when idle, and pauses when the tab is hidden.
+when idle. A hidden tab with an ACTIVE job keeps a slow 20 s job check (so a
+long build can notify on completion — system notification, `(N 完成)` title
+badge, optional sound); a hidden idle tab pauses entirely.
 
 ```text
 browser (vanilla JS, textContent, polling)

@@ -109,6 +109,23 @@ def _empty_spend(project: Project) -> dict[str, Any]:
             "by_provider": [], "by_shot": [], "recent": [], "source": "empty"}
 
 
+def _reveal_argv(target: Path, platform: str | None = None) -> list[str]:
+    """The file-manager argv for "Show in Folder" (UX wave 2 item 6). Windows
+    first: ``explorer /select,<path>`` highlights the FILE. macOS ``open -R``
+    does the same; elsewhere fall back to opening the containing directory
+    (xdg-open has no select verb). Pure — separated so tests can pin each
+    platform's argv without launching anything."""
+    plat = platform if platform is not None else os.name
+    if plat == "nt":
+        return ["explorer", f"/select,{target}"]
+    import sys
+
+    mac = (platform == "darwin") if platform is not None else sys.platform == "darwin"
+    if mac:
+        return ["open", "-R", str(target)]
+    return ["xdg-open", str(target.parent if target.is_file() else target)]
+
+
 def _deep_merge_packaging(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     """One-level merge of a packaging section patch onto the current spec dump.
     Nested section dicts (intro/cover/logo/…) merge key-by-key; lists
@@ -934,7 +951,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._drain_request_body()
             self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
             return
-        _readonly_ok = {"/api/validate", "/api/impact", "/api/review/consistency"}
+        _readonly_ok = {"/api/validate", "/api/impact", "/api/review/consistency",
+                        "/api/reveal"}  # reveal opens the OS file manager; no write
         if self.server.readonly and urlsplit(self.path).path not in _readonly_ok:
             # /api/validate and /api/impact are pure (no write) — readonly
             # editors keep live checks and impact previews (WP1, R22 precedent);
@@ -1054,6 +1072,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/api/take-note": self._act_take_note,
                 "/api/validate": self._act_validate,
                 "/api/impact": self._act_impact,
+                "/api/reveal": self._act_reveal,
                 "/api/refs/assign": self._act_refs_assign,
             }.get(path)
             if handler is None:
@@ -1313,6 +1332,38 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # pydantic ValidationError -> one-line finding
             errors = [" ".join(str(exc).split())[:500]]
         self._send_json({"ok": not errors, "errors": errors})
+
+    def _act_reveal(self, body: dict[str, Any]) -> None:
+        """UX wave 2 item 6: "Show in Folder" — open the OS file manager with
+        the given PROJECT file selected (Windows: ``explorer /select,``; the
+        owner's daily final-video → upload flow always passes through the file
+        manager). Strictly scoped: the path must resolve INSIDE the project
+        root and exist; never mutates the project (readonly-exempt)."""
+        raw = str(body.get("path") or "").strip()
+        if not raw:
+            self._send_error_json("path is required", 400)
+            return
+        root = self.server.project.root
+        target = (root / raw).resolve()
+        try:
+            inside = target.is_relative_to(root)
+        except (OSError, ValueError):
+            inside = False
+        if not inside:
+            self._send_error_json("path escapes the project (refused)", 400)
+            return
+        if not target.exists():
+            self._send_error_json(f"no such file in project: {raw}", 404)
+            return
+        import subprocess
+
+        try:
+            subprocess.Popen(_reveal_argv(target),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            self._send_error_json(f"file manager launch failed: {exc}", 500)
+            return
+        self._send_json({"ok": True, "revealed": raw})
 
     def _act_impact(self, body: dict[str, Any]) -> None:
         """WP1 interconnection spine: pure read — what a shot edit would

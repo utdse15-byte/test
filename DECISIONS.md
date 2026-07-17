@@ -2674,3 +2674,52 @@ equestJson/ManjuApiError owner (gui/webclient.py); structured errors preserved.
 9. **Scale fixtures / soak** — offline PNG takes; scripts/gui_soak.py deterministic HTTP soak.
 10. **No Electron/React/SaaS** — stay stdlib + vanilla JS; Windows-first personal tool.
 
+
+## UX-WAVE-2 (2026-07-17)
+
+Owner-experience wave on branch claude/ci-validation-improvements-rsmjpf
+(stacked on the CI/validation wave), from the owner's ranked 13-item audit.
+Report: REPORTS/UX_WAVE_2_2026-07-17.md.
+
+### Decisions
+
+1. **Completion must reach an absent owner** — a hidden tab with an ACTIVE
+   job keeps a slow 20 s job check (a hidden idle tab still pauses fully);
+   job terminal transitions while hidden fire a Web Notification (permission
+   asked on the first job-submitting click, never at load), a `(N 完成)`
+   title badge, and an OPT-IN localStorage-persisted sound. No new deps.
+2. **Within-phase progress is advisory-only** — `gen:S00X (n/m)` rides the
+   existing on_phase channel via a `_progress` emitter that never doubles as
+   a cancel checkpoint (checkpoint honesty stays where it was). FFmpeg
+   `time=`-based percent within one render segment: assessed, DEFERRED —
+   it needs a progress channel through media/render's log plumbing; noted
+   as follow-up, not landed half-way.
+3. **did-you-mean** — the root Typer group suggests close commands via the
+   same difflib technique as core/mentions.py's @role hints. Duck-typed
+   UsageError re-raise (this typer VENDORS click as typer._click).
+4. **Shell completion ON as opt-in (#48)** — add_completion=True adds only
+   the two app-level eager options; the frozen LEAF surface
+   (cli_surface.json: leaf commands + required params) is untouched —
+   verified by the snapshot suite, no regeneration needed. Nothing changes
+   until the owner runs `manju --install-completion` once.
+5. **Show in Folder** — POST /api/reveal, strictly inside-project paths,
+   readonly-exempt (it writes nothing); `explorer /select,` on Windows,
+   `open -R` on macOS, xdg-open (dir) elsewhere. Argv builder is pure and
+   platform-pinned in tests.
+6. **Voice comparison set** — `manju voice S00X --preview --voices a,b,c`:
+   one disposable preview per candidate voice, same line, each cache-keyed
+   by text+voice (the existing WP2 cache). Single-preview JSON envelope
+   unchanged; --voices without --preview refuses.
+7. **The built-in demo (`manju new --demo`)** — 雨夜便利店, 12 shots, TEXT
+   truth only, every shot pinned to caption_card so a full build is
+   provably zero-spend (dry-run estimate == 0 is a test). Mutually
+   exclusive with --preset/--shots. The engine still never invents content
+   at build time — the demo is owner-authored fixture text.
+8. **REPORTS hygiene** — the closed AI_IDE_* era (46 files) moved to
+   REPORTS/archive/; INDEX.md notes the move and keeps the era record.
+9. **Deferred with reasons** — Ctrl-K palette (larger JS feature, wants the
+   static-file split first), mobile review package + LAN mode (threat-model
+   change → its own DECISIONS process), MCP export-tool coverage (own
+   wave), cli.py/page.py/server.py splits and app.js/app.css extraction
+   (still gated on both platform gates green on one commit, per the
+   standing "refactor only after behavior is covered" rule).
