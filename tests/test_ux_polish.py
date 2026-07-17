@@ -1355,10 +1355,13 @@ def test_review_queue_bar_offers_batch_redo_stale(tmp_project, add_shot, make_ta
     js = render_pages_js()
     assert '/api/redo-batch' in js
     seg = js.split('rv-redo-stale')[1].split("rv-queue-toggle")[0]
-    # §8.3 honesty: the posted body is shots-only — the page never
-    # self-approves spend (assume_yes stays a workbench plan-modal decision)
-    assert "{ shots: stale }" in seg
+    # §8.3 honesty, C1 contract: window.confirm IS the explicit spend gate —
+    # assume_yes is posted ONLY after the owner clicks yes on a dialog that
+    # declares the spend (确认即批准花费), never silently.
     assert "window.confirm" in seg
+    assert "assume_yes: true" in seg
+    assert seg.index("window.confirm") < seg.index("assume_yes: true")
+    assert "确认即批准花费" in seg  # the dialog names the spend it approves
 
 
 def test_review_shot_id_links_into_its_lab(tmp_project, add_shot, make_take):
@@ -1412,8 +1415,12 @@ def test_storyboard_batch_bar_wires_redo_and_voice(tmp_project, add_shot):
     seg = js.split('sb-redo-all" || ev.target.id === "sb-voice-all"')[1]
     seg = seg.split("sb-clear")[0]
     assert '"/api/" + kind + "-batch"' in seg
+    # §8.3 honesty, C1 contract: confirm-before-spend — assume_yes only after
+    # an explicit dialog that declares the spend, never silently.
     assert "window.confirm" in seg
-    assert "{ shots: selB }" in seg   # shots-only body — no self-approved spend
+    assert "assume_yes: true" in seg
+    assert seg.index("window.confirm") < seg.index("assume_yes: true")
+    assert "确认即批准花费" in seg
 
 
 # ------------------------------------------------ GUI polish wave (2026-07-14)

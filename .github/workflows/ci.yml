@@ -1,11 +1,51 @@
-name: CI
+# Ubuntu CI — the DEV-LOOP gate (REQUIRED check).
+#
+# Role in the validation model (see STATE.md / REPORTS/INDEX.md):
+#   * Every commit + PR head: compilation + lint (static job) and the FULL
+#     Ubuntu suite (test job).
+# This is where the day-to-day dev loop lives. It is a REQUIRED gate, but it
+# is NOT the release gate — windows-ci.yml is the HARD release gate and must
+# never be weakened. macOS is informational only, on a schedule (xplat.yml).
+name: CI (ubuntu — dev-loop gate)
 
 on:
   push:
     branches: ["**"]
   pull_request:
 
+# Only the latest run for a given workflow+ref stays active; superseded runs
+# on the same branch are canceled, so pushing again never queues a second
+# full suite behind the stale one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # "Every commit: compilation + linting." Cheap and fast, so a syntax error
+  # or an undefined name goes red in seconds instead of minutes behind the
+  # full suite. Ruff runs ONLY the obvious-error / bug-prone rule subset
+  # (pyflakes F + syntax/runtime E9), NOT a repo-wide style rewrite — the repo
+  # is deliberately not strict-typed or strict-styled wholesale (see task 13,
+  # incremental static checking).
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Byte-compile every source file (compilation gate)
+        run: python -m compileall -q src
+      - name: Install ruff
+        run: pip install "ruff>=0.6"
+      # Obvious-error subset only: E9 syntax, F63 assert/comparison bugs, F7
+      # misplaced statements, F82 undefined names. Style / unused-import
+      # cleanup (F401, F811, isort, …) is deliberately NOT gated here — the
+      # repo is migrated incrementally (task 13), not rewritten in one sweep.
+      - name: Ruff — obvious errors, bug-prone patterns
+        run: ruff check --select E9,F63,F7,F82 src
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30

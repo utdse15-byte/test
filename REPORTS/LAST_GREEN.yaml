@@ -1,0 +1,27 @@
+# REPORTS/LAST_GREEN.yaml — the latest fully validated commit (Priority 0 item 3).
+#
+# INFORMATIONAL ONLY. This file is a DERIVED status record, not truth:
+#   * It MUST NOT be a build input (nothing under src/ reads it).
+#   * It MUST NOT affect runtime behavior.
+#   * It MUST NOT be treated as the source of truth (git + CI are).
+#   * No test asserts anything by scanning THIS file's text.
+#
+# It is meant to be written by CI when a single commit passes BOTH the full
+# Ubuntu suite (ci.yml) and the full Windows suite (windows-ci.yml) — see
+# scripts/dev/update_last_green.py for a generator. The values below are the
+# SEED/placeholder: they are honestly marked "pending" because no commit has
+# yet been through the new gates end-to-end on both platforms. Do NOT hand-edit
+# them to "success" — that would make this file lie. Let CI stamp it.
+
+commit: null              # the SHA that went green on BOTH platforms
+ubuntu:
+  workflow_run: null      # ci.yml run id
+  result: pending         # success | failure | pending
+  test_count: null
+windows:
+  workflow_run: null      # windows-ci.yml run id
+  result: pending         # success | failure | pending
+  test_count: null
+ffmpeg:
+  result: pending         # pinned 6.1.1 present + suite not silently skipped
+generated_at: null        # ISO-8601 timestamp stamped by the generator

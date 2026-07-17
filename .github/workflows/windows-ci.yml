@@ -1,10 +1,19 @@
 # W1 (MANJU_WINDOWS_ONLY_LEAN_V3 §3.1): Windows is the primary platform, and
-# this workflow is its HARD gate — no continue-on-error anywhere, full suite,
-# full extras, real FFmpeg. It runs everything xplat.yml deliberately skips
-# (locks/process/file-semantics, board security, media, corpus, the whole
-# pytest surface) on windows-latest. xplat.yml stays as the macOS
-# informational watcher; ubuntu ci.yml keeps running (it is where the dev
-# loop lives) but is no longer the only formal platform.
+# this workflow is its HARD RELEASE gate — no continue-on-error anywhere, full
+# suite, full extras, real FFmpeg. It runs everything xplat.yml deliberately
+# skips (locks/process/file-semantics, board security, media, corpus, the
+# whole pytest surface) on windows-latest. xplat.yml stays as the macOS
+# informational watcher; ubuntu ci.yml is the dev-loop gate (it is where the
+# dev loop lives).
+#
+# Validation model (see STATE.md): this hard gate fires on MERGE candidates
+# (every pull_request) and RELEASE candidates (push to main + version tags),
+# plus manual dispatch so any single commit can be proven green on Windows
+# before it is merged. It deliberately does NOT run on every feature-branch
+# push — that is the dev-loop gate's job (ci.yml) — which keeps the Windows
+# queue clear for the commits that actually gate a merge or release. This is
+# a trigger-scope change, NOT a weakening: the gate is still required and
+# still full-suite for every merge and release candidate.
 #
 # FFmpeg pinning (§3.1 固定版本 + SHA-256): installed via a VERSION-PINNED
 # Chocolatey package. Chocolatey verifies the package's embedded SHA-256
@@ -22,12 +31,20 @@
 # ubuntu gate, ci.yml). The FFmpeg presence assert below is the anti-rot
 # guard: the suite must never go green by silently skipping the ~63
 # ffmpeg-gated files.
-name: Windows CI
+name: Windows CI (hard release gate)
 
 on:
-  push:
-    branches: ["**"]
   pull_request:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+# Only the latest run for a given workflow+ref stays active; a new push to a
+# PR head cancels the superseded Windows run so the queue never backs up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Python UTF-8 mode everywhere on the gate: the suite's truth files are UTF-8
 # by design and gate run #3 proved the cp1252 default still bites test-side

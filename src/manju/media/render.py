@@ -81,7 +81,15 @@ from pathlib import Path
 
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file, short_hash
-from ..core.models import AudioClip, ColorSpec, LookSpec, OverlayClip, Timeline, VideoClip
+from ..core.models import (
+    AudioClip,
+    ColorSpec,
+    LookSpec,
+    OverlayClip,
+    ProjectConfig,
+    Timeline,
+    VideoClip,
+)
 from ..core.yamlio import atomic_write_text, read_yaml
 from .card import find_font
 from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg

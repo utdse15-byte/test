@@ -398,20 +398,18 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
             # C60: spend gate confirm (parity with GUI / redo).
             assume_yes=bool(args.get("assume_yes", False)),
         ).to_dict()
-    except WaitingUser as exc:
-        # C61: structured waiting_user so agents re-call with assume_yes.
-        raise ToolError(
-            " ".join(str(exc).split())[:500],
-            code="waiting_user",
-        ) from exc
     except Exception as exc:
-        # C90: cooperative cancel mid-build (BuildCanceled).
-        from ..build.graph import BuildCanceled
-        if isinstance(exc, BuildCanceled):
-            raise ToolError(
-                " ".join(str(exc).split())[:500],
-                code="canceled",
-            ) from exc
+        # P1 item 5: adapt via the shared classifier instead of re-deriving the
+        # exception→code mapping here. WaitingUser → waiting_user (C61: agents
+        # re-call with assume_yes); BuildCanceled/ProviderCanceled → canceled
+        # (C90: cooperative mid-build cancel). Anything the classifier calls
+        # FAILED (an unknown/real error) propagates UNCHANGED — it must not be
+        # silently reshaped into a soft ToolError.
+        from ..core.outcomes import OutcomeCode, classify_exception
+
+        outcome = classify_exception(exc)
+        if outcome.code in (OutcomeCode.WAITING_USER, OutcomeCode.CANCELED):
+            raise ToolError(outcome.message, code=str(outcome.code)) from exc
         raise
 
 

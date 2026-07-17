@@ -802,6 +802,13 @@ class _Handler(BaseHTTPRequestHandler):
                 from ..core.models import export_json_schemas
 
                 self._send_json({"schemas": export_json_schemas()})
+            elif path == "/api/meta/job-kinds":
+                # Read-only registry snapshot (Priority 1 item 4). The frontend
+                # consumes this instead of a hard-coded kind→label map, so job
+                # metadata lives in exactly one place (core.jobkinds).
+                from ..core.jobkinds import job_kinds_metadata
+
+                self._send_json({"job_kinds": job_kinds_metadata()})
             elif path == "/api/timeline":
                 timeline = self.server.project.load_timeline()
                 self._send_json({"timeline": timeline.model_dump() if timeline else None})

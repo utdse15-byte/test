@@ -495,15 +495,17 @@ def priced(monkeypatch):
 
 
 def test_generate_confirm_gate_blocks_silent_spend(gui, tmp_project, add_shot, priced):
-    """A priced generate WITHOUT assume_yes fails the job as waiting_user and
-    spends nothing (§8.3) — the confirm-before-spend boundary."""
+    """A priced generate WITHOUT assume_yes stops as waiting_user and spends
+    nothing (§8.3) — the confirm-before-spend boundary. C62 evolved the job
+    SHAPE: the gate is a waiting_user RESULT (待确认花费), not a failed job —
+    the substance (nothing spent or written) is what this pins."""
     add_shot(tmp_project, "S001")
     status, _, data = _post(gui, "/api/lab/generate",
                             {"shot": "S001", "quality": "draft", "assume_yes": False})
     assert status == 202
     job = _wait_job(gui, data["job"]["id"])
-    assert job["state"] == "failed"
-    assert "waiting_user" in (job["error"] or "")
+    assert (job.get("result") or {}).get("waiting_user") is True
+    assert job["state"] != "failed"  # C62: a gate stop is not a failure
     assert not tmp_project.takes("S001")  # nothing spent or written
 
 

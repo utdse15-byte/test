@@ -38,6 +38,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from ..core import jobkinds as _jobkinds
+
 __all__ = [
     "Job",
     "JobRunner",
@@ -50,40 +52,22 @@ __all__ = [
 # Keep this many finished jobs around for the UI; older ones are dropped.
 _HISTORY_CAP = 50
 
-# Job kinds for which ``_build_retry_fn`` can rebuild the work closure (P1-9).
-# Keep in lockstep with ``gui/server.py`` ``_build_retry_fn`` allow-list.
-RETRYABLE_KINDS = frozenset({
-    "build", "redo", "voice", "redo_batch", "voice_batch",
-})
-
-# C6: only kinds that actually honor should_cancel / cancel_event mid-run.
-# Other kinds still accept cancel on queued jobs, but running cancel is a lie.
-CANCELABLE_RUNNING_KINDS = frozenset({
-    "build", "redo_batch", "voice_batch",
-    # C24: single-shot voice threads should_cancel into GenericTtsProvider
-    # poll when the adapter signature supports it (see gui/server.py).
-    "voice",
-    # C25: single-shot redo threads should_cancel into GenerationRequest
-    # (cloud/ComfyUI poll) via redo_shot(..., should_cancel=...).
-    "redo",
-    # C26: kind strings must match JobRunner.submit() exactly
-    # (was ingest_apply / series_sync / edit_preview — wrong aliases).
-    "ingest_plan", "ingest", "series_sync_bible",
-    "edit_preview_batch",
-    # C31: voice_preview threads should_cancel into ttspreview synthesize.
-    "voice_preview",
-    # C33: export wraps packaging ffmpeg in cancel_scope(job.should_cancel).
-    "export",
-    # C34: repair wraps ffmpeg repair_ops in cancel_scope.
-    "repair",
-    # C46: run_qc samples should_cancel between major check batches.
-    "qc",
-    # C51: handle_rebuild threads should_cancel into redo + ffmpeg trim.
-    "handle_rebuild",
-    # C52: roundtrip apply checks cancel between selected rows.
-    "roundtrip",
-    # series_new_episode deliberately omitted: fn does not sample should_cancel.
-})
+# Both sets are now DERIVED from the single authoritative registry
+# (``core.jobkinds``) — job-kind metadata is declared exactly once there and
+# these are views onto it. The contents are byte-identical to the historical
+# hand-maintained frozensets (pinned by tests/test_project_bugfix_20260715.py
+# and the cycle-* cancel tests); to change membership, edit the registry.
+#
+# RETRYABLE_KINDS: kinds for which ``gui/server.py`` ``_build_retry_fn`` can
+# rebuild the work closure (P1-9); kept in lockstep with that allow-list by
+# tests/test_jobkinds_registry.py.
+#
+# CANCELABLE_RUNNING_KINDS (C6): only kinds that actually honor should_cancel /
+# cancel_event mid-run. Other kinds still accept cancel on a queued job, but
+# calling running-cancel a success would be a lie. series_new_episode and
+# edit_preview are deliberately absent (their fns do not sample should_cancel).
+RETRYABLE_KINDS = _jobkinds.retryable_kinds()
+CANCELABLE_RUNNING_KINDS = _jobkinds.cancelable_running_kinds()
 
 # jobs.jsonl (round AA4): disposable operational history, capped/rewritten to
 # this many newest lines on every JobRunner construction — see module
@@ -119,6 +103,36 @@ _LEGACY_UNSCOPED_NOTE = (
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _cancel_billing(job: "Job", result: Any, *, exc: BaseException | None = None
+                    ) -> dict[str, Any] | None:
+    """The billing disposition (P1-8) for a job that landed in ``canceled``.
+
+    An explicit disposition on the result wins; a ProviderCanceled carries the
+    remote job id and is inherently uncertain; any other cancel of a PAID kind
+    came out of a remote provider whose stop-before-billing is unprovable, so it
+    too is uncertain. A non-paid (purely local, e.g. ffmpeg) cancel has no remote
+    charge to worry about → None.
+    """
+    from ..core import jobkinds
+    from ..core.outcomes import BillingState, CancelRecord
+
+    if isinstance(result, dict) and result.get("billing_state"):
+        return CancelRecord.for_disposition(
+            str(result["billing_state"]),
+            provider_job_id=result.get("provider_job_id"),
+            cancel_requested_at=_now(),
+        ).to_dict()
+    if exc is not None:
+        from ..providers.base import ProviderCanceled
+        if isinstance(exc, ProviderCanceled):
+            return CancelRecord.from_provider_canceled(
+                exc, cancel_requested_at=_now()).to_dict()
+    if job.kind in jobkinds.paid_kinds():
+        return CancelRecord.for_disposition(
+            BillingState.CANCEL_REQUESTED_UNKNOWN, cancel_requested_at=_now()).to_dict()
+    return None
 
 
 def _summarize_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -192,6 +206,11 @@ class Job:
     # comparisons or logs.
     cancel_event: threading.Event = field(default_factory=threading.Event,
                                           repr=False, compare=False)
+    # P1-8: cancellation billing disposition (core.outcomes.CancelRecord shape),
+    # set when a paid remote job unwound as canceled and its billing is
+    # uncertain. None means "no billing uncertainty to report". The GUI reads
+    # this to warn instead of showing a clean "已取消".
+    billing: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -202,6 +221,7 @@ class Job:
             "progress": self.progress,
             "error": self.error,
             "result": self.result,
+            "billing": self.billing,
             "created": self.created,
             "started": self.started,
             "finished": self.finished,
@@ -496,6 +516,11 @@ class JobRunner:
                             (errs[0] if isinstance(errs, list) and errs else None)
                             or "已取消"
                         )
+                        # P1-8: a paid kind that self-reported canceled came out
+                        # of a remote provider whose stop-before-billing is NOT
+                        # provable — record the uncertain disposition (unless the
+                        # result already carried an explicit one).
+                        job.billing = _cancel_billing(job, result)
                     else:
                         job.state = "done"
                         # C7: cancel was clicked but work finished anyway —
@@ -511,6 +536,10 @@ class JobRunner:
                 with self._lock:
                     job.state = "canceled" if job.cancel_event.is_set() else "failed"
                     job.error = " ".join(str(exc).split()) or exc.__class__.__name__
+                    # P1-8: a ProviderCanceled unwinding here means a remote job
+                    # was abandoned mid-poll — it may still complete and bill.
+                    if job.state == "canceled":
+                        job.billing = _cancel_billing(job, None, exc=exc)
                     job.finished = _now()
                     self._rev += 1
             self._persist(job)

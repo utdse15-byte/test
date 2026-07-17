@@ -32,6 +32,7 @@ from .models import (
     TakeSidecar,
     Timeline,
     TimelineRules,
+    VoiceTakeSidecar,
 )
 from .timebase import Rate
 from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml

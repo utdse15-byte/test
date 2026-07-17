@@ -1732,14 +1732,49 @@ app.add_typer(qc_app, name="qc", rich_help_panel=PANEL_QC)
 @qc_app.callback(invoke_without_command=True)
 def qc_main(ctx: typer.Context,
             deep: bool = typer.Option(False),
+            lang: Optional[str] = typer.Option(
+                None, "--lang", help="只质检该语言 locale(如 --lang ja)"),
+            all_locales: bool = typer.Option(
+                False, "--all-locales", help="质检所有已声明 locale,汇总一个总判"),
             as_json: bool = typer.Option(False, "--json")):
-    """Three-layer QC; writes reports/qc.json, qc.md, repair_plan.yaml (§9)."""
+    """Three-layer QC; writes reports/qc.json, qc.md, repair_plan.yaml (§9).
+
+    Multi-locale (P1 item 7): with --lang X only that locale is checked; with
+    --all-locales every declared locale is checked; a project that declares more
+    than one locale is checked across ALL of them by default. Each locale yields
+    an independent result and the aggregate fails if any locale fails.
+    """
     if ctx.invoked_subcommand is not None:
         return
     from .qc.checks import run_qc as _run_qc
     from .qc.report import build_assurance_block, write_reports
 
     project = _project()
+
+    # Multi-locale path: engaged when the owner selects a locale, asks for all,
+    # or the project simply declares more than one locale. Base-only /
+    # single-locale projects with no flags fall through to the unchanged path.
+    from .core.locale import list_locales as _list_locales
+
+    if lang or all_locales or len(_list_locales(project)) > 1:
+        from .qc.multilocale import run_multilocale_qc
+
+        ml = run_multilocale_qc(project, lang=lang, all_locales=all_locales,
+                                deep=deep)
+        if as_json:
+            _emit(ml.to_dict(), True)
+        else:
+            typer.secho(f"QC 多语言汇总 aggregate={ml.aggregate}",
+                        fg=typer.colors.GREEN if ml.aggregate == "pass"
+                        else typer.colors.RED)
+            for lg, r in ml.locales.items():
+                color = typer.colors.GREEN if r.status == "pass" else typer.colors.RED
+                extra = f" — {', '.join(r.issues)}" if r.issues else ""
+                typer.secho(f"  {lg}: {r.status}{extra}", fg=color)
+        if ml.aggregate == "fail":
+            raise typer.Exit(1)
+        return
+
     report = _run_qc(project, _load_timeline_or_fail(project), deep=deep)
 
     # DR02 WP4: derive per-shot bound-acceptance assurance (read-only) and thread
@@ -7532,16 +7567,47 @@ def compare(
                         fg=typer.colors.BRIGHT_BLACK)
 
 
+def _render_usage_report(report: dict) -> None:
+    """Human rendering of build/usage_report.usage_report (local-only)."""
+    typer.secho("本地自用报告 (usage report) — 只读本地历史,绝不上传",
+                fg=typer.colors.CYAN)
+    typer.echo(f"分析任务数: {report.get('jobs_analyzed', 0)}")
+    dur = report.get("duration_by_kind") or {}
+    if dur:
+        typer.echo("各任务耗时 (p50 / p95 秒):")
+        for kind, d in sorted(dur.items()):
+            typer.echo(f"  {kind}: p50={d['p50_s']} p95={d['p95_s']} (n={d['count']})")
+    canc = report.get("cancellations") or {}
+    typer.echo(f"取消总数: {canc.get('total', 0)} "
+               f"(confirmed/unknown 需 Job.billing,未持久化)")
+    typer.echo(f"可能重复计费(上界): {report.get('possibly_billed_more_than_once', 0)}")
+    fc = report.get("provider_failure_categories") or {}
+    if fc:
+        typer.echo("Provider 失败分类: "
+                   + ", ".join(f"{k}={v}" for k, v in sorted(fc.items())))
+    typer.echo(f"QC 失败数: {report.get('qc_failure_count', 0)}")
+    typer.secho(report.get("unavailable_notes", ""), fg=typer.colors.YELLOW)
+    typer.secho("telemetry: 无 — 本地生成,不做任何网络传输", fg=typer.colors.GREEN)
+
+
 @app.command(rich_help_panel=PANEL_OPS)
 def doctor(as_json: bool = typer.Option(False, "--json"),
            windows: bool = typer.Option(
                False, "--windows",
                help="强制输出 Windows 环境行(Windows 主机上自动开启;"
-                    "非 Windows 主机诚实标注已跳过)")):
+                    "非 Windows 主机诚实标注已跳过)"),
+           usage_report: bool = typer.Option(
+               False, "--usage-report",
+               help="本地自用报告:各任务耗时 p50/p95、取消/失败分类等,"
+                    "只读本地历史,绝不上传")):
     """Environment health: ffmpeg, fonts, disk, project integrity (§14).
 
     The probe logic lives in build/doctor.py — one engine core (§2) — this
     command only finds the project (if any) and renders the checks it returns.
+
+    ``--usage-report`` (P2 item 11) instead prints a LOCAL-ONLY owner-friction
+    report derived from existing local history (jobs/failures logs): no
+    telemetry, no network, no build effect.
     """
     from .build.doctor import run_doctor
 
@@ -7549,6 +7615,19 @@ def doctor(as_json: bool = typer.Option(False, "--json"),
         project: Optional[Project] = Project.find(Path.cwd())
     except ProjectError:
         project = None
+
+    if usage_report:
+        if project is None:
+            _fail("usage-report 需要在项目内运行", code="no_project")
+        from .build.usage_report import usage_report as _usage_report
+
+        report = _usage_report(project)
+        if as_json:
+            _emit(report, True)
+        else:
+            _render_usage_report(report)
+        raise typer.Exit(0)
+
     info = run_doctor(project, windows=True if windows else None)
     if as_json:
         _emit({"checks": [{"name": c["name"], "ok": c["ok"], "detail": c["detail"]}
