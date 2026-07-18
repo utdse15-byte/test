@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading as _threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -63,6 +64,25 @@ try:
     import msvcrt  # Windows byte-range lock — the fcntl twin (gate round 1)
 except ImportError:  # POSIX: fcntl above is the coordinator
     msvcrt = None  # type: ignore[assignment]
+
+# The msvcrt byte lock does NOT exclude two threads in the SAME process (each
+# opens its own fd; both msvcrt.locking() calls succeed — DECISIONS #38, proven
+# by test_events_lock_serializes_twelve_threads_required). So the Windows branch
+# must pair the byte lock with an in-process threading.Lock, exactly as the other
+# three quartet members do (library._index_lock, events.events_lock,
+# failures._ledger_lock). recents was the one member left without it — a real
+# lost-update hole for the multi-threaded GUI/MCP server on Windows.
+_THREAD_LOCKS: dict[str, "_threading.Lock"] = {}
+_THREAD_LOCKS_GUARD = _threading.Lock()
+
+
+def _name_thread_lock(lock_name: str) -> "_threading.Lock":
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(lock_name)
+        if lock is None:
+            lock = _THREAD_LOCKS[lock_name] = _threading.Lock()
+        return lock
+
 
 __all__ = ["recents_path", "load_recents", "touch_recent", "RecentsResult", "MAX_ENTRIES"]
 
@@ -106,14 +126,27 @@ def _lock(path: Path, *, timeout_s: float = _LOCK_TIMEOUT_S) -> Iterator[None]:
             fcntl.flock(fd, fcntl.LOCK_UN)
     else:
         retry_exc = (OSError,)
+        _thread_lock = _name_thread_lock("recents.lock")
 
         def _try() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            # msvcrt alone does not exclude same-process threads — gate the byte
+            # lock behind the in-process thread lock first (mirrors the sibling
+            # library._index_lock / failures._ledger_lock exactly).
+            if not _thread_lock.acquire(blocking=False):
+                raise OSError(13, "thread lock held (same-process contention)")
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                _thread_lock.release()
+                raise
 
         def _unlock() -> None:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            finally:
+                _thread_lock.release()
 
     locked = False
     try:
@@ -226,8 +259,14 @@ def touch_recent(project: Project) -> None:
             # cap: evict the oldest (tail-most) UNPINNED entries first; a
             # pathological all-pinned list is allowed to exceed the cap
             # rather than ever evict something the user explicitly pinned.
+            # Stop at index 1: the just-opened project sits at index 0 and is
+            # the NEWEST, never the oldest — evicting it (the old ``i >= 0``,
+            # which happened when indices 1..MAX were all pinned) silently
+            # dropped the very project touch_recent was called to record. It is
+            # protected here, so the store exceeds the cap instead (same stance
+            # as the all-pinned case).
             i = len(entries) - 1
-            while len(entries) > MAX_ENTRIES and i >= 0:
+            while len(entries) > MAX_ENTRIES and i >= 1:
                 if not entries[i].get("pinned"):
                     entries.pop(i)
                 i -= 1

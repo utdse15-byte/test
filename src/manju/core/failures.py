@@ -432,9 +432,18 @@ def _iter_active(project: Any):
     path = _root(project) / FAILURES_FILE
     if not path.exists():
         return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            raw = raw.strip()
+    # Read BYTES and decode per line, so a torn write mid-multibyte-char (a
+    # Ctrl-C / OOM / power loss during an append — the primary-platform reality
+    # events.py already defends against) skips that ONE line instead of raising
+    # UnicodeDecodeError out of the whole read. Text-mode iteration decoded in
+    # the `for` itself, OUTSIDE the try, so the comment's "mirrors events" claim
+    # was false; this makes it true. A valid UTF-8 log reads byte-identically.
+    with open(path, "rb") as f:
+        for raw_bytes in f:
+            try:
+                raw = raw_bytes.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                continue  # torn multibyte write — skip the line (mirrors events)
             if not raw:
                 continue
             try:

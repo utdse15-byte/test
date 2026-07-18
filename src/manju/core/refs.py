@@ -368,8 +368,23 @@ def refs_report(project: Project) -> dict[str, Any]:
     "no owner resolves and nothing pins it" contract).
     """
     refs_dir = project.refs_dir
+
+    def _contained(p: Path) -> bool:
+        # project.relpath()s .resolve() follows symlinks/junctions; a link under
+        # media/refs whose target resolves OUTSIDE the root makes relative_to()
+        # raise ValueError — which used to crash the sort key below (and thus
+        # `manju refs`). Such a file is not a contained project ref, so it is
+        # excluded from this report; containment enforcement lives elsewhere.
+        # For every normal (contained) ref this is True, so the list is
+        # unchanged.
+        try:
+            project.relpath(p)
+            return True
+        except (ValueError, OSError):
+            return False
+
     files = sorted(
-        (p for p in refs_dir.rglob("*") if p.is_file()),
+        (p for p in refs_dir.rglob("*") if p.is_file() and _contained(p)),
         key=lambda p: project.relpath(p),
     ) if refs_dir.exists() else []
 
