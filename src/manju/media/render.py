@@ -129,11 +129,16 @@ def _escape_filter_path(path: Path | str) -> str:
     Backslashes become forward slashes (every ffmpeg filter accepts them on
     Windows; backslash is the escape character at both levels and doubling it
     twice over is exactly the fragility that broke). A literal apostrophe
-    close-escape-reopens, shell-style. Plain POSIX paths (no ``\\``/``:``/``'``
-    — every Linux tmp path) return UNCHANGED, byte-identical to the
-    historical output, so existing command lines and logs never shift."""
+    close-escape-reopens, shell-style. The single-quote wrapping ALSO neutralizes
+    the graph parser's other metacharacters — ``,`` (ends a filter), ``;`` (ends
+    a chain), ``[``/``]`` (pad-label delimiters) and ``=`` (name/option split) —
+    which reach these values whenever the project root carries one
+    (``~/作品,集/x.manju``); none is level-1 special, so quoting alone suffices.
+    Plain POSIX paths carrying none of these characters (every Linux tmp path)
+    return UNCHANGED, byte-identical to the historical output, so existing
+    command lines and logs never shift."""
     p = str(path)
-    if "\\" not in p and ":" not in p and "'" not in p:
+    if not any(c in p for c in "\\:'[],;="):
         return p
     p = p.replace("\\", "/")
     p = p.replace(":", "\\:")
