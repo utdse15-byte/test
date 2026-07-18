@@ -268,6 +268,17 @@ def test_revert_refuses_append_only_and_bad_index(gui, tmp_project, add_shot):
     assert _post(gui, "/api/edit/revert", {"index": "nope"})[0] == 400
 
 
+def test_handle_rebuild_bad_transition_ms_is_400_not_500(gui, tmp_project, add_shot):
+    """A non-integer transition_ms must be a clean 400 (like the read-only plan
+    sibling and the revert endpoint), not a raw-exception HTTP 500 — the parse
+    used to run a bare int() OUTSIDE the handler's try block."""
+    add_shot(tmp_project, "S001")
+    for bad in ("x", "1.5", [1]):
+        status = _post(gui, "/api/edit/handle-rebuild",
+                       {"shot": "S001", "transition_ms": bad})[0]
+        assert status == 400, f"transition_ms={bad!r} gave {status}, expected 400"
+
+
 def test_undo_marks_append_only_takes_non_revertable(gui, tmp_project, add_shot):
     """A trim/handle-rebuild event (mints a NEW take) is append-only: the undo
     panel says 选择版本, never offers a destructive revert (§C)."""

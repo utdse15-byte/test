@@ -5370,7 +5370,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(f"unknown shot: {shot_id}", 404)
             return
         tm = body.get("transition_ms")
-        transition_ms = int(tm) if tm is not None else None
+        try:
+            transition_ms = int(tm) if tm is not None else None
+        except (TypeError, ValueError) as exc:
+            # A non-integer transition_ms is a client error (400), not a raw HTTP
+            # 500 — the read-only sibling _act_edit_handle_rebuild_plan and the
+            # revert endpoint both return a clean 400 for a bad numeric param.
+            # (The bare int() sat OUTSIDE the handle_rebuild_proposal try below.)
+            self._send_error_json(" ".join(str(exc).split()), 400)
+            return
         assume_yes = bool(body.get("assume_yes"))
         proposed_provider = body.get("provider") or None
         # refuse up front (no job) when the provider can't be told a duration.
