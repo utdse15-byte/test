@@ -52,9 +52,18 @@ def test_valid_commands_are_unaffected() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_completion_options_exist() -> None:
-    r = CliRunner().invoke(app, ["--help"])
-    assert "--install-completion" in r.output
-    assert "--show-completion" in r.output
+    # Pin the REGISTERED option surface, not the rendered --help text (DECISIONS
+    # #51a precedent): CI runners render --help in an 80-column ANSI box that
+    # wraps/truncates long option names, so scanning r.output for the literal
+    # token is terminal-dependent and flakes. The click command's params are
+    # terminal-independent and are the real contract.
+    from typer.main import get_command
+
+    opts: set[str] = set()
+    for p in get_command(app).params:
+        opts.update(getattr(p, "opts", []) or [])
+    assert "--install-completion" in opts
+    assert "--show-completion" in opts
 
 
 # --------------------------------------------------------------------------- #
