@@ -192,7 +192,10 @@ def _ranges(cutdown: dict, key: str) -> list[tuple[int, int | None]]:
         try:
             a = int(r[0])
             b = None if r[1] is None else int(r[1])
-        except (TypeError, ValueError, IndexError):
+        except (TypeError, ValueError, IndexError, KeyError):
+            # KeyError: a dict-shaped entry (e.g. {"start_ms": 0, "end_ms": 100})
+            # makes r[0] raise KeyError — an Agent/hand-authored payload that must
+            # become the clean CutdownError below, never leak uncaught.
             raise CutdownError(f"cutdown.{key} entries must be [start_ms, end_ms]")
         out.append((a, b))
     return out
@@ -234,7 +237,18 @@ def _overlap_diags(ranges: list[tuple[int, int]], key: str) -> list[dict[str, An
 
 
 def _hashable(x: Any) -> Any:
-    return tuple(x) if isinstance(x, list) else x
+    """A stable HASHABLE key for a reorder entry (the REORDER_IDENTITY check
+    de-dups via ``set()``). Recurse so a NESTED list-of-ranges becomes a tuple of
+    tuples and a DICT-shaped entry (an Agent/hand-authored payload) becomes a
+    sorted tuple of items — the old ``tuple(x) if isinstance(x, list)`` converted
+    only a top-level list, so a dict or a nested list stayed unhashable and
+    ``set(keys)`` raised a raw TypeError out of validate_cutdown. Now the
+    validator reports on the shape instead of crashing."""
+    if isinstance(x, list):
+        return tuple(_hashable(v) for v in x)
+    if isinstance(x, dict):
+        return tuple(sorted((str(k), _hashable(v)) for k, v in x.items()))
+    return x
 
 
 def validate_cutdown(cutdown: dict[str, Any], *,

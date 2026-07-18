@@ -701,7 +701,19 @@ def _register_manual_voice_take(project: Project, shot_id: str, file: Path) -> P
     dest = tdir / (name + file.suffix.lower())
     if dest.exists():  # paranoia: append-only means never clobber
         raise IngestError(f"拒绝覆盖已存在的配音 take: {dest}")
-    shutil.copy2(file, dest)
+    try:
+        shutil.copy2(file, dest)
+    except BaseException:
+        # Crash-safety (mirrors container.register_take / register_voice_take): a
+        # copy that fails partway (media/gen ENOSPC, source EIO) must NOT leave a
+        # truncated voice_take_NN.wav. A voice media file WITHOUT a sidecar is the
+        # MANUAL convention (§4.3) that build never auto-invalidates, so a partial
+        # file would be encoded into the film as truth on the next build.
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return dest
 
 
