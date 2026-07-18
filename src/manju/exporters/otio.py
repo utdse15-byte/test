@@ -229,12 +229,34 @@ def _audio_clip(project: "Project", clip: AudioClip, times: "_Times", kind: str)
     # the exact nearest whole frame (ms_to_frames — integer, not float ms×fps),
     # and on the int path it is today's float ms×fps/1000 (byte-identical). Both
     # go through ``times`` so the two paths share one code path here.
+    # The in-point becomes the source_range start (0 by default -> byte-stable).
+    # available_range must CONTAIN that range: the _video_clip path widens its
+    # media to in-point + window for exactly this reason, and the audio path must
+    # too, or a bed with a non-zero in-point emits a source_range that reads past
+    # its own declared media — violating this module's stated self-consistency
+    # invariant. Built from the SAME two values the source_range uses, so
+    # containment is EXACT on both the int and rational grids; a zero in-point is
+    # byte-identical to before (available end = 0 + window).
+    source_range = _time_range(times, clip.start_offset_ms, clip.duration_ms)
+    available_range = {
+        "OTIO_SCHEMA": "TimeRange.1",
+        "start_time": times.from_ms(0),
+        "duration": {
+            **source_range["duration"],
+            "value": source_range["start_time"]["value"]
+            + source_range["duration"]["value"],
+        },
+    }
     return {
         "OTIO_SCHEMA": "Clip.1",
         "name": name,
-        # The in-point becomes the source_range start (0 by default -> byte-stable).
-        "source_range": _time_range(times, clip.start_offset_ms, clip.duration_ms),
-        "media_reference": _external_reference(times, clip.source, clip.duration_ms),
+        "source_range": source_range,
+        "media_reference": {
+            "OTIO_SCHEMA": "ExternalReference.1",
+            "target_url": clip.source,
+            "available_range": available_range,
+            "metadata": {},
+        },
         "metadata": {"manju": meta},
     }
 

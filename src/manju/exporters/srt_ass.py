@@ -175,6 +175,16 @@ def compile_vtt(timeline: Timeline, *, max_chars_per_line: int | None = None) ->
     for i, cap in enumerate(timeline.tracks.captions, start=1):
         text = _normalize_newlines(cap.text).strip("\n")
         text = break_lines(text, max_chars_per_line)
+        # WebVTT cue text has grammar: a bare ``<`` opens a cue-span tag and a
+        # bare ``&`` opens a character reference. Unescaped, a caption like
+        # ``价格 < 100元`` renders as ``价格 `` — the ``<`` eats the rest of the
+        # line. Escape the two significant characters (``&`` first, so we never
+        # double-escape); ``>`` is legal literal text and is left untouched.
+        # Captions with neither character (the common CJK/plain case, and every
+        # existing fixture) are byte-identical. Parallels the TTML sibling's
+        # ``xml.sax.saxutils.escape`` (SRT deliberately does NOT escape — it has
+        # no override grammar, see compile_srt).
+        text = text.replace("&", "&amp;").replace("<", "&lt;")
         parts.append(str(i))
         parts.append(f"{ms_to_vtt(cap.start_ms)} --> {ms_to_vtt(cap.end_ms)}")
         parts.append(text)

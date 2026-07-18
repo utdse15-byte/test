@@ -244,7 +244,14 @@ def parse_edl(source: str | Path) -> ParsedEdl:
             continue
 
         tokens = stripped.split()
-        if tokens and tokens[0].isdigit():
+        # ``isdecimal()`` (not ``isdigit()``): the row is entered only when the
+        # first token is convertible by ``int()`` below. ``str.isdigit()`` also
+        # accepts Unicode digit-likes (superscript ², circled ②, …) that ``int()``
+        # rejects — those used to raise an uncaught ValueError that aborted the
+        # WHOLE parse (losing every event/note), violating this module's "never a
+        # crash / counted in unknown_rows" contract. ASCII/decimal digits are
+        # unchanged, so every real CMX3600 row still parses byte-identically.
+        if tokens and tokens[0].isdecimal():
             row = _parse_event_row(tokens, stripped)
             if row is not None:
                 events.append(row)
@@ -282,7 +289,11 @@ def _parse_event_row(tokens: list[str], raw: str) -> EdlEventRow | None:
     reel, channel, edit_type = tokens[1], tokens[2], tokens[3]
     middle = tokens[4:-4]
     transition_frames: int | None = None
-    if middle and middle[0].isdigit():
+    # ``isdecimal()`` gates the ``int()`` below for the same reason as the row
+    # entry check: ``isdigit()`` admits Unicode digit-likes ``int()`` rejects.
+    # A non-decimal transition token is simply not read as a frame count (the
+    # row still parses) rather than crashing the whole document.
+    if middle and middle[0].isdecimal():
         transition_frames = int(middle[0])
     return EdlEventRow(
         num=int(tokens[0]), reel=reel, channel=channel, edit_type=edit_type,

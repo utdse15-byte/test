@@ -142,6 +142,23 @@ def _secs(frames: int, rate: Rate) -> str:
     return f"{frames * rate.denominator}/{rate.numerator}s"
 
 
+def _comment(text: str) -> ET.Element:
+    """THE one owner of ``<!-- … -->`` emission in this module — every note goes
+    through here so it is always well-formed. XML forbids ``--`` inside a comment
+    and forbids a comment ending in ``-`` (XML §2.5). User-controlled names (shot
+    ids, audio-source basenames) flow verbatim into these informational notes; a
+    name like ``a--b`` or one ending in ``-`` otherwise produces a not-well-formed
+    FCPXML document that FCP cannot open and that the sibling ``fcpxml_import``
+    parser rejects. A note containing neither is emitted UNCHANGED, so
+    every existing export stays byte-identical (round-trip identity lives in the
+    real ``name`` attributes, never in these comments)."""
+    if "--" in text:
+        text = text.replace("--", "—")  # em dash — kills every ASCII ``--`` run
+    if text.endswith("-"):
+        text += " "
+    return ET.Comment(text)
+
+
 def _clip_frames(clip: "VideoClip", rate: Rate) -> int:
     """The clip's EXACT whole-frame length. Consumes the compiler's rational
     ``duration_frames`` stamp when present (R2/R4 truth — the ms grid cannot hold
@@ -584,7 +601,7 @@ def compile_fcpxml(
             })
         elif _is_degraded(i):
             t = c.transition_out
-            spine.append(ET.Comment(
+            spine.append(_comment(
                 f" MANJU: transition '{t.type}' ({t.duration_ms}ms) at {c.shot} "
                 "approximated as a hard cut (no clean FCPXML cross-dissolve "
                 "mapping) "))
@@ -614,10 +631,10 @@ def compile_fcpxml(
                 clip, item.dur_f, bus, item.name, rate)
             _emit_adjust_volume(child, clip, rate, fi_f, fo_f)
             for note in clamp_notes:  # honest note when an over-long fade clamped
-                parent.append(ET.Comment(note))
+                parent.append(_comment(note))
             # fades ARE expressed here, so no gain-only fade note; ducking unchanged.
             for note in _audio_approx_notes(clip, bus, item.name, fades_expressed=True):
-                parent.append(ET.Comment(note))
+                parent.append(_comment(note))
         elif item.kind == "loop":
             # One materialized whole-source pass — same asset-clip shape as a
             # written clip, but ``start`` is always 0 (the source repeats from the
@@ -639,12 +656,12 @@ def compile_fcpxml(
             # _emit_adjust_volume with no fade frames is byte-identical to V1/W1.
             _emit_adjust_volume(child, clip, rate)
             if item.note:  # first pass only
-                parent.append(ET.Comment(item.note))
+                parent.append(_comment(item.note))
                 # fades NOT expressed on the passes → the honest fade note (if any).
                 for note in _audio_approx_notes(clip, bus, item.name):
-                    parent.append(ET.Comment(note))
+                    parent.append(_comment(note))
         else:  # honest omission (loop bed / unresolvable duration) — a note only
-            parent.append(ET.Comment(item.note))
+            parent.append(_comment(item.note))
 
     ET.indent(fcpxml, space="  ")
     body = ET.tostring(fcpxml, encoding="unicode")
