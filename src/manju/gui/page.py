@@ -1189,6 +1189,9 @@ _JS = r"""
    * refreshes state after. Errors never propagate — polling must survive. */
   const post = async (btn, path, body, okMsg) => {
     if (btn) btn.disabled = true;
+    /* item 1: first job-submitting click = the user gesture browsers require
+     * for a Notification permission prompt (asked once; 'default' only). */
+    ensureNotifyPermission();
     let holdDisable = false;
     try {
       const data = await api("POST", path, body);
@@ -1257,7 +1260,15 @@ _JS = r"""
 
   const schedule = () => {
     if (timer) clearTimeout(timer);
-    if (document.hidden) return;  /* paused; visibilitychange resumes */
+    if (document.hidden) {
+      /* UX wave 2 item 1: a hidden tab no longer goes fully dark while a job
+       * is ACTIVE — long builds finish while the owner is elsewhere, and a
+       * full stop meant coming back to stale state and no completion signal.
+       * Compromise poll: one slow 20s state check, jobs stay fresh enough to
+       * notify on completion; a hidden IDLE tab still pauses entirely. */
+      if (anyActive) timer = setTimeout(refresh, 20000);
+      return;
+    }
     if (editorOpen) return;       /* paused; editorClosed() resumes */
     if (anyActive) { timer = setTimeout(refresh, 1500); return; }
     if (!lastFp || Date.now() < watchFallbackUntil) {
@@ -1290,6 +1301,73 @@ _JS = r"""
     if (ctl.signal.aborted || document.hidden || editorOpen) return;  /* paused meanwhile */
     if (changed) refresh();  /* refresh() re-arms via schedule() */
     else schedule();         /* timeout lapsed unchanged: just re-arm */
+  }
+
+  /* ============================================== job notifications ===
+   * UX wave 2 item 1: system notification + title badge + optional sound
+   * when a long job finishes while the owner is away. Permission is asked
+   * on FIRST USE (the first job-submitting click — a user gesture, which
+   * browsers require), never at page load. Sound is opt-in, persisted in
+   * localStorage (mj-notify-sound); the beep is WebAudio, no asset. */
+  const BASE_TITLE = document.title;
+  let unseenDone = 0;   /* completions while the tab was hidden */
+  const clearDoneBadge = () => {
+    unseenDone = 0;
+    if (document.title !== BASE_TITLE) document.title = BASE_TITLE;
+  };
+  const notifySoundOn = () => {
+    try { return localStorage.getItem("mj-notify-sound") === "1"; }
+    catch (err) { return false; }
+  };
+  function ensureNotifyPermission() {
+    /* called from job-submitting clicks (user gesture) — first use only */
+    try {
+      if (window.Notification && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    } catch (err) { /* unsupported — badge + sound still work */ }
+  }
+  function playDoneBeep() {
+    if (!notifySoundOn()) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.start(); osc.stop(ctx.currentTime + 0.4);
+    } catch (err) { /* audio blocked — never break the poll loop */ }
+  }
+  const NOTIFY_STATE_ZH = { done: "完成", failed: "失败", canceled: "已取消",
+                            interrupted: "已中断" };
+  function notifyJobTransitions(jobs, prevJobs) {
+    /* fire once per job transition active -> terminal; only when the owner
+     * is away (hidden tab) — a visible tab already shows the jobs panel. */
+    if (!prevJobs || !prevJobs.length) return;
+    const prev = {};
+    prevJobs.forEach((j) => { prev[j.id] = j.state; });
+    jobs.forEach((j) => {
+      const was = prev[j.id];
+      const terminal = NOTIFY_STATE_ZH[j.state];
+      if (!terminal || !was || was === j.state) return;
+      if (was !== "queued" && was !== "running" && was !== "canceling") return;
+      if (!document.hidden) return;
+      unseenDone += 1;
+      document.title = "(" + unseenDone + " 完成) " + BASE_TITLE;
+      playDoneBeep();
+      try {
+        if (window.Notification && Notification.permission === "granted") {
+          const kindZh = (JOB_KIND_LABELS || {})[j.kind] || j.kind || "任务";
+          const waiting = j.result && j.result.waiting_user === true;
+          const body = waiting ? "待确认花费 — 回到工作台确认"
+            : (j.state === "done" ? "已完成" : terminal
+               + (j.error ? ":" + String(j.error).slice(0, 120) : ""));
+          new Notification("Manju · " + kindZh + " " + terminal, { body: body });
+        }
+      } catch (err) { /* notification blocked — badge already updated */ }
+    });
   }
 
   let refreshGen = 0;  /* P1-8: drop out-of-order /api/state responses */
@@ -1326,6 +1404,7 @@ _JS = r"""
 
   function render(s) {
     const jobs = Array.isArray(s.jobs) ? s.jobs : [];
+    notifyJobTransitions(jobs, lastJobs);  /* item 1: before lastJobs is replaced */
     /* P1-11: include canceling — Job.active does; gates/poll must too. */
     anyActive = jobs.some((j) =>
       j.state === "queued" || j.state === "running" || j.state === "canceling");
@@ -2021,6 +2100,16 @@ _JS = r"""
       a.href = fin.url;
       wrap.appendChild(btn);
       wrap.appendChild(a);
+      /* item 6: the upload flow always passes through the file manager —
+       * one click opens it with the final selected (Windows explorer /select). */
+      if (fin.path) {
+        const rev = el("button", "btn ghost", "📂 在文件夹中显示");
+        rev.type = "button";
+        rev.title = "打开文件管理器并选中该成片 (Show in Folder)";
+        rev.addEventListener("click", () =>
+          post(rev, "/api/reveal", { path: fin.path }, "已在文件夹中显示"));
+        wrap.appendChild(rev);
+      }
       wrap.appendChild(holder);
       /* version stack (Frame.io pattern): newest on top, append-only —
        * every final_vN is one click away; a missing key sidecar is flagged */
@@ -2863,7 +2952,19 @@ _JS = r"""
     clear(root);
     if (!jobs.length) { root.classList.add("hidden"); return; }
     root.classList.remove("hidden");
-    root.appendChild(el("h2", null, "任务 (jobs)"));
+    const h = el("h2", null, "任务 (jobs)");
+    /* item 1: opt-in completion beep (persisted; label doubles as state). */
+    const snd = el("button", "btn jobs-sound",
+                   notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关");
+    snd.title = "任务完成时播放提示音(仅本机,localStorage 记忆)";
+    snd.addEventListener("click", () => {
+      try {
+        localStorage.setItem("mj-notify-sound", notifySoundOn() ? "0" : "1");
+      } catch (err) { /* private mode — toggle just won't persist */ }
+      snd.textContent = notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关";
+    });
+    h.appendChild(snd);
+    root.appendChild(h);
     const running = pickJobs(jobs, ["running", "canceling"], 99);  /* always show */
     const queued = pickJobs(jobs, ["queued"], 3);
     const need = pickJobs(jobs, ["failed", "interrupted"], 5);
@@ -5875,7 +5976,10 @@ _JS = r"""
     if (document.hidden) {
       pauseLive();   /* clears the timer AND aborts the in-flight watch, so
                         a stale long-poll response can never clobber */
+      schedule();    /* item 1: re-arms the slow 20s job check iff a job is
+                        active — a hidden idle tab stays fully paused */
     } else {
+      clearDoneBadge();  /* back on the tab: the (N 完成) title badge is seen */
       refresh();
     }
   });

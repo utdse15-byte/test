@@ -27,7 +27,8 @@ from manju.cli import app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "README.md"
-COMPLETION_19 = REPO_ROOT / "REPORTS" / "AI_IDE_19_COMPLETION.md"
+# UX wave 2 item 13: the closed AI_IDE_* era lives under REPORTS/archive/.
+COMPLETION_19 = REPO_ROOT / "REPORTS" / "archive" / "AI_IDE_19_COMPLETION.md"
 
 # normalized command strings that are prose, not real invocations. Empty today.
 ALLOWLIST: frozenset[str] = frozenset()

@@ -54,7 +54,41 @@ if os.name == "nt":  # pragma: no cover — the guard is driven directly in test
     _utf8_harden_stdio()
 
 
-app = typer.Typer(add_completion=False, no_args_is_help=True,
+class _SuggestingGroup(typer.core.TyperGroup):
+    """UX wave 2 item 3: a mistyped command gets "did you mean" suggestions
+    instead of a bare "No such command" — with 127 commands this is table
+    stakes. Same difflib technique as core/mentions.py's @role correction."""
+
+    def resolve_command(self, ctx, args):  # type: ignore[override]
+        try:
+            return super().resolve_command(ctx, args)
+        except Exception as exc:
+            # Duck-typed on purpose: this typer VENDORS click (typer._click),
+            # so `import click` may not resolve to the class actually raised.
+            # A UsageError (whichever click it came from) is re-raised as the
+            # same type with the suggestion appended; anything else propagates.
+            if type(exc).__name__ != "UsageError" or not hasattr(exc, "format_message"):
+                raise
+            import difflib
+
+            typo = str(args[0]) if args else ""
+            matches = difflib.get_close_matches(
+                typo, self.list_commands(ctx), n=3, cutoff=0.5)
+            if not matches:
+                raise
+            tip = " / ".join(f"manju {m}" for m in matches)
+            raise type(exc)(
+                f"{exc.format_message()}\n你是想输入 {tip} 吗?(did you mean)",
+                ctx) from exc
+
+
+# UX wave 2 item 4 (DECISIONS UX-WAVE-2 §4): shell completion is ON as an
+# explicit opt-in — nothing changes until the owner runs `manju --install-completion`
+# once (PowerShell Tab for the 127 commands + args). Only the two app-level
+# eager options are added; the frozen LEAF-command surface
+# (tests/fixtures/cli_surface.json records leaf commands + required params)
+# is untouched, verified by the snapshot suite.
+app = typer.Typer(add_completion=True, no_args_is_help=True, cls=_SuggestingGroup,
                   help="Manju One — a build system for video. 一键出片:manju build")
 
 
@@ -363,6 +397,10 @@ def new(
         None, "--preset", help="pre-fill from a preset kit (see `manju presets`)"
     ),
     shots: int = typer.Option(0, "--shots", help="scaffold N skeleton shots (S001…)"),
+    demo: bool = typer.Option(
+        False, "--demo",
+        help="内置样片: 雨夜便利店 12 镜微型故事(caption_card 零花费)— "
+             "创建后 manju build --yes 即可零成本出完整成片(需 ffmpeg)"),
     check_hook: bool = typer.Option(
         False, "--check-hook",
         help="install a git pre-commit hook running manju check",
@@ -379,6 +417,8 @@ def new(
     gate so broken truth cannot enter history (§1-②).
     """
     dest = (path or Path.cwd()) / name
+    if demo and (preset is not None or shots > 0):
+        _fail("new --demo 与 --preset/--shots 互斥(样片自带完整故事与 12 个镜头)")
     spec = None
     if preset is not None:
         from .presets import PresetError, load_preset
@@ -404,6 +444,18 @@ def new(
             f"created {project.root}  [preset: {spec.name} · {cfg.width}x{cfg.height}]",
             fg=typer.colors.GREEN,
         )
+    elif demo:
+        from .presets.demo import scaffold_demo
+
+        demo_shots = scaffold_demo(project)
+        append_event(project.root, ACTOR, "new", {"name": name, "demo": True})
+        typer.secho(
+            f"created {project.root}  [demo: 雨夜便利店 · {len(demo_shots)} 镜 · "
+            "caption_card 零花费]", fg=typer.colors.GREEN)
+        typer.secho(
+            f"  零成本出片: cd {project.root.name} && manju build --yes"
+            "(本地 caption_card,只需 ffmpeg,不花一分钱)",
+            fg=typer.colors.BRIGHT_BLACK)
     else:
         append_event(project.root, ACTOR, "new", {"name": name})
         typer.secho(f"created {project.root}", fg=typer.colors.GREEN)
@@ -3733,6 +3785,11 @@ def voice(
              "(never a take; cache-keyed by text+voice — WP2/R19)"),
     text: Optional[str] = typer.Option(
         None, "--text", help="--preview: override the dialogue text for this sample"),
+    voices: Optional[str] = typer.Option(
+        None, "--voices",
+        help="--preview 对比组: comma-separated voice ids (a,b,c) — synthesize "
+             "the SAME line once per voice for side-by-side listening "
+             "(each sample cache-keyed by text+voice, UX wave 2 item 7)"),
     lang: Optional[str] = typer.Option(
         None, "--lang",
         help="WP4 locale overlay: synthesize into media/gen/<shot>/locales/<lang>/ "
@@ -3780,28 +3837,50 @@ def voice(
     if shot_id is not None and not (shots or all_shots or missing):
         _require_shot(project, shot_id)
 
+    if voices and not preview:
+        _fail("voice --voices 只在 --preview 下有效(对比组是试听功能)")
     if preview:
         if shot_id is None:
             _fail("voice --preview: 要试听哪个镜头?给一个镜头 id")
         from .media.ttspreview import PreviewUnavailable, preview_voice
 
-        try:
-            info = preview_voice(
-                project, shot_id, text=text, provider=provider, assume_yes=yes,
-            )
-        except WaitingUser as exc:
-            _fail(str(exc), code="waiting_user")
-            return
-        except PreviewUnavailable as exc:
-            _fail(str(exc), code="tts_unavailable")
-            return
+        # item 7: the real selection workflow is "same line, N candidate
+        # voices, compare" — one preview per voice id (each cache-keyed by
+        # text+voice, so re-runs are free). None = the shot's own voice.
+        voice_ids: list[Optional[str]] = (
+            [v.strip() for v in voices.split(",") if v.strip()] if voices
+            else [None])
+        if voices and not voice_ids:
+            _fail("voice --voices: 没有可用的 voice id(逗号分隔,如 a,b,c)")
+        results = []
+        for vid in voice_ids:
+            try:
+                info = preview_voice(
+                    project, shot_id, text=text, voice=vid,
+                    provider=provider, assume_yes=yes,
+                )
+            except WaitingUser as exc:
+                _fail(str(exc), code="waiting_user")
+                return
+            except PreviewUnavailable as exc:
+                _fail(str(exc), code="tts_unavailable")
+                return
+            results.append({"voice": vid, "preview": info["preview"],
+                            "cached": info["cached"],
+                            "provider": info.get("provider")})
         if as_json:
-            _emit({"preview": info["preview"], "cached": info["cached"],
-                   "provider": info.get("provider")}, True)
+            if voices:
+                _emit({"previews": results}, True)
+            else:
+                _emit({"preview": results[0]["preview"],
+                       "cached": results[0]["cached"],
+                       "provider": results[0].get("provider")}, True)
         else:
-            tag = "缓存命中" if info["cached"] else "新合成"
-            typer.secho(f"{shot_id}: 试听 {info['preview']} ({tag})",
-                        fg=typer.colors.GREEN)
+            for r in results:
+                tag = "缓存命中" if r["cached"] else "新合成"
+                who = f"[{r['voice']}] " if r["voice"] else ""
+                typer.secho(f"{shot_id}: 试听 {who}{r['preview']} ({tag})",
+                            fg=typer.colors.GREEN)
         return
 
     batch_flags = [bool(shots), all_shots, missing]
