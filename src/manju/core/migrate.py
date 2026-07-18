@@ -282,6 +282,22 @@ def migrate_plan(project: Project, target: Rate) -> dict[str, Any]:
             f"to {target.nominal_int} first if that is really the intent, or pick a "
             f"candidate whose nominal_int is {config.fps} (see `manju migrate inspect`)."
         )
+    # Precision-loss guard: the project already declares a GENUINE rational rate
+    # (exact_int is None — an NTSC 1001-family rate), and the target is a whole
+    # integer (24/1). Overwriting it here via a plain "apply" would SILENTLY
+    # discard the exact NTSC timing — no loss report, no acknowledgement — the
+    # very loss the acknowledged downgrade path exists to gate. Dropping a
+    # rational rate is a downgrade; refuse and route the caller there.
+    current = config.frame_rate
+    if current.exact_int is None and target.exact_int is not None:
+        raise MigrateError(
+            f"the project already declares the exact rational rate {current} "
+            f"(cumulative-drift-free NTSC timing); applying the whole-integer rate "
+            f"{target} here would SILENTLY discard it. Dropping a rational rate is "
+            f"a downgrade — run `manju migrate downgrade` (it reports the loss and "
+            f"requires acknowledgement), then re-apply {target} if you still want "
+            f"the explicit whole-integer form."
+        )
     return _build_plan(project, "apply", target)
 
 
@@ -293,6 +309,15 @@ def downgrade_plan(project: Project) -> dict[str, Any]:
         raise MigrateError(
             f"nothing to downgrade — the project declares no rational rate; it is "
             f"already plain int fps={config.fps}."
+        )
+    # A whole-integer declared rate loses nothing when removed (it IS the int
+    # fps); refuse it, consistent with downgrade_loss_report and migrate_inspect's
+    # downgrade_available (both gate on exact_int is None).
+    if config.frame_rate.exact_int is not None:
+        raise MigrateError(
+            f"nothing to downgrade — the declared rate {config.frame_rate} is "
+            f"whole-integer-equivalent (≡ fps {config.fps}); removing it changes "
+            f"and loses nothing (matches `manju migrate inspect`)."
         )
     return _build_plan(project, "downgrade", None)
 
@@ -315,6 +340,19 @@ def downgrade_loss_report(project: Project) -> dict[str, Any]:
         )
     rate = config.frame_rate
     fps = config.fps
+    # A whole-integer declared rate (e.g. 24/1) is not a genuine rational: it is
+    # byte-for-byte the int fps, so removing it loses NOTHING. Reporting the NTSC
+    # / drift-free-grid / interchange losses below for it FABRICATES losses that
+    # do not exist and forces an --acknowledge-loss for a semantic no-op. Refuse
+    # it, exactly as migrate_inspect already advertises
+    # (downgrade_available = declared AND exact_int is None).
+    if rate.exact_int is not None:
+        raise MigrateError(
+            f"nothing to downgrade — the declared rate {rate} is whole-integer-"
+            f"equivalent (≡ fps {fps}), so there is no exact-NTSC timing, drift-"
+            f"free grid or interchange precision to give up. This matches "
+            f"`manju migrate inspect` (downgrade_available=false)."
+        )
     df_legal = rate.fraction in _DF_LEGAL
 
     loss = [
