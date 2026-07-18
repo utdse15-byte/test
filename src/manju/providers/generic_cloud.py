@@ -519,7 +519,12 @@ class GenericCloudProvider(CloudProvider):
         try:
             data = resp.json()
             raw_status = str(extract(data, cfg.status_path))
-        except (JsonPathError, json.JSONDecodeError) as exc:
+        except (JsonPathError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # UnicodeDecodeError is a ValueError SIBLING of json.JSONDecodeError,
+            # not a subclass, so it was NOT caught here — a 2xx poll of an
+            # already-billed job whose body is not valid UTF-8 (a corporate proxy
+            # interstitial, a truncated multibyte chunk) crashed generate()/the
+            # build instead of returning the graceful provider_error below.
             return "failed", {"failure_kind": FailureKind.provider_error.value,
                               "reason": f"cannot read status: {exc}; body={text[:500]}"}
         status = cfg.status_map.get(raw_status, raw_status.lower())
