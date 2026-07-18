@@ -11,6 +11,7 @@ Rules:
 
 from __future__ import annotations
 
+import datetime as _datetime
 import hashlib
 import json
 import os
@@ -43,9 +44,23 @@ def _reset_hash_cache() -> None:
         _hash_cache.clear()
 
 
+def _json_default(o: Any) -> str:
+    """Serialize the non-JSON scalars that ``yaml.safe_load`` routinely produces
+    from truth files. An unquoted YAML date/time (``aired: 2026-07-18``) parses
+    to a ``datetime.date``/``datetime`` which ``json.dumps`` cannot serialize —
+    a value-hash lock over such a field used to raise an uncaught ``TypeError``
+    and crash ``run_check`` (and thus every build). ISO-8601 is deterministic
+    and stable, so the lock now hashes reproducibly. Only reached for otherwise
+    unserializable values, so every currently-hashable value is byte-identical."""
+    if isinstance(o, (_datetime.date, _datetime.time)):  # date covers datetime
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def canonical_json(value: Any) -> str:
     """Deterministic JSON serialization: sorted keys, compact, non-ASCII kept."""
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"), default=_json_default)
 
 
 def hash_value(value: Any) -> str:

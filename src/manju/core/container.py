@@ -522,6 +522,20 @@ class Project:
 
     def next_take_name(self, shot_id: str) -> str:
         existing = [t.name for t in self.takes(shot_id)]
+        # Also count ORPHAN media — a ``take_NN.<ext>`` with no sidecar, left by
+        # a crash between the media write and the sidecar write in register_take
+        # (or a hand-dropped file). ``takes()`` numbers from ``*.yaml`` sidecars
+        # only, but register_take's O_EXCL reservation collides on the media
+        # file; without counting it here the number never advances and
+        # register_take permanently fails ("could not allocate exclusive take
+        # name"). Append-only: an occupied slot is never reused. When media and
+        # sidecar are paired (the normal case) this adds no new numbers.
+        tdir = self.takes_dir(shot_id)
+        if tdir.exists():
+            existing += [
+                p.stem for p in tdir.glob("take_*")
+                if p.suffix.lower() in MEDIA_EXTS
+            ]
         nums = [int(m.group(1)) for n in existing if (m := re.match(r"take_(\d+)$", n))]
         return f"take_{(max(nums, default=0) + 1):02d}"
 
