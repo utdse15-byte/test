@@ -290,17 +290,34 @@ def _load_text(source: str | Path) -> str:
     path below is byte-identical to before."""
     if isinstance(source, Path):
         _guard_file_size(source)
-        return _guard_text(source.read_text(encoding="utf-8"))
+        return _guard_text(_read_utf8(source))
     if isinstance(source, str):
         if source.lstrip().startswith("<"):
             return _guard_text(source)
         p = Path(source)
         _guard_file_size(p)
-        return _guard_text(p.read_text(encoding="utf-8"))
+        return _guard_text(_read_utf8(p))
     raise FcpxmlImportError(
         "parse_fcpxml expects a filesystem path or an XML string",
         [{"severity": "error", "code": "bad_input", "path": "",
           "message": f"unsupported source type {type(source).__name__}"}])
+
+
+def _read_utf8(p: Path) -> str:
+    """Read a file as UTF-8, turning a non-UTF-8 file into the module's
+    documented structured :class:`FcpxmlImportError` instead of letting a raw
+    ``UnicodeDecodeError`` escape ``parse_fcpxml`` (whose only ``try`` catches
+    ``ET.ParseError``). An FCPXML exported by another tool in a legacy codepage
+    is exactly the untrusted intake this parser promises to reject gracefully.
+    A valid UTF-8 file reads byte-identically to before."""
+    try:
+        return p.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise FcpxmlImportError(
+            f"FCPXML file is not valid UTF-8: {p}",
+            [{"severity": "error", "code": "bad_encoding", "path": str(p),
+              "message": f"UTF-8 decode failed at byte {exc.start}: {exc.reason}"}],
+        ) from exc
 
 
 def _guard_file_size(p: Path) -> None:

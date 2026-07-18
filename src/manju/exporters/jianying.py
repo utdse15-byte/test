@@ -183,7 +183,13 @@ def _build_draft(project: "Project", timeline: Timeline) -> dict[str, Any]:
                 "type": "audio",
                 "material_name": Path(clip.source).name,
                 "path": _abs_path(project, clip.source, label=f"{kind}[{idx}]"),
-                "duration": dur_us,
+                # Round-W (#10) for audio: the segment's source_timerange starts
+                # at the in-point (start_offset_ms), so the declared material
+                # length must be widened to cover in-point + window — exactly as
+                # the video material is (``in_us + dur_us``) — or a bed with a
+                # non-zero in-point reads past the material length JianYing
+                # declares. Default 0 in-point keeps this byte-identical.
+                "duration": _us(clip.start_offset_ms) + dur_us,
             }
         )
         seg: dict[str, Any] = {
@@ -288,6 +294,19 @@ def _iter_segments(track: dict[str, Any]) -> list[dict[str, Any]]:
     return segs if isinstance(segs, list) else []
 
 
+def _as_us(v: Any) -> int:
+    """Coerce a draft timerange scalar to an int microsecond value, defaulting
+    to 0 for a missing/None/non-numeric/wrong-typed value. ``lint_draft`` runs
+    over a possibly HAND-EDITED draft; it already catches unreadable JSON and a
+    non-object root, so a stray ``"start": "oops"`` (or a list) must produce a
+    problem list, not an uncaught ``ValueError``/``TypeError`` that aborts the
+    whole lint. A normal integer value is returned unchanged."""
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def lint_draft(draft_path: Path, project: "Project") -> list[str]:
     """Return a list of problems with a draft (empty list == clean).
 
@@ -314,7 +333,7 @@ def lint_draft(draft_path: Path, project: "Project") -> list[str]:
             if not isinstance(mat, dict):
                 continue
             path = mat.get("path")
-            if not path:
+            if not isinstance(path, str) or not path:
                 problems.append(f"material {mat.get('id')}: missing 'path'")
                 continue
             p = Path(path)
@@ -336,9 +355,11 @@ def lint_draft(draft_path: Path, project: "Project") -> list[str]:
         for seg in _iter_segments(track):
             if not isinstance(seg, dict):
                 continue
-            tr = seg.get("target_timerange") or {}
-            start = int(tr.get("start", 0) or 0)
-            dur = int(tr.get("duration", 0) or 0)
+            tr = seg.get("target_timerange")
+            if not isinstance(tr, dict):
+                tr = {}
+            start = _as_us(tr.get("start"))
+            dur = _as_us(tr.get("duration"))
             end = start + dur
             max_end_us = max(max_end_us, end)
             if 0 < dur < MIN_PLAUSIBLE_US:
@@ -356,7 +377,7 @@ def lint_draft(draft_path: Path, project: "Project") -> list[str]:
                 )
 
     # 4) declared duration vs actual last segment end -------------------
-    declared = int(draft.get("duration", 0) or 0)
+    declared = _as_us(draft.get("duration"))
     if 0 < declared < MIN_PLAUSIBLE_US:
         problems.append(
             f"draft duration {declared}µs is suspiciously small (looks like ms, not µs)"
