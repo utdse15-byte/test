@@ -347,18 +347,31 @@ def _split_command(template: str) -> list[str]:
     POSIX: ``shlex.split`` exactly as before. Windows (gate round 1): POSIX
     shlex treats ``\`` as an escape character, so a template carrying a real
     Windows path (``sh C:\\Users\\me\\gen.sh --out {out}``) lost every
-    backslash (``C:Usersme...`` → exit 127). Split in non-POSIX mode there —
-    backslashes survive — then strip one layer of matching outer quotes per
-    word (non-POSIX shlex keeps them), preserving the "quoted phrase = one
-    argv word" contract the placeholder substitution relies on."""
+    backslash (``C:Usersme...`` → exit 127).
+
+    The fix DOUBLES every backslash — a Windows backslash is a PATH SEPARATOR,
+    not an escape — then splits in POSIX mode, which un-escapes each ``\\`` back
+    to a single ``\`` so paths survive. POSIX mode (unlike the earlier non-POSIX
+    + strip-outer-quotes hack) also groups a quoted value ATTACHED to a key
+    correctly: ``key="a b"`` → ``key=a b``. The old non-POSIX path word-split
+    that at the internal space and leaked the quotes (``key="a`` + ``b"``),
+    corrupting the common ``key="value with spaces"`` template form. A standalone
+    quoted phrase (``"two words"`` → ``two words``) and UNC paths
+    (``\\server\share``) are byte-identical to before."""
     if not _IS_WINDOWS:
         return shlex.split(template)
-    words = []
-    for word in shlex.split(template, posix=False):
-        if len(word) >= 2 and word[0] == word[-1] and word[0] in ("'", '"'):
-            word = word[1:-1]
-        words.append(word)
-    return words
+    try:
+        return shlex.split(template.replace("\\", "\\\\"), posix=True)
+    except ValueError:
+        # A malformed template (e.g. an unclosed quote) that POSIX shlex rejects
+        # is handled EXACTLY as the pre-fix non-POSIX path did — tolerated, never
+        # a new hard error from this owner.
+        words = []
+        for word in shlex.split(template, posix=False):
+            if len(word) >= 2 and word[0] == word[-1] and word[0] in ("'", '"'):
+                word = word[1:-1]
+            words.append(word)
+        return words
 
 
 def _kill_process_group(proc: "subprocess.Popen") -> None:

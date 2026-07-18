@@ -219,6 +219,30 @@ def test_split_command_posix_unchanged():
             == ["sh", "/tmp/gen.sh", "--prompt", "two words", "--out", "{out}"])
 
 
+def test_split_command_windows_attached_quoted_value(monkeypatch):
+    """A quoted value ATTACHED to a key — the common ``key="value with spaces"``
+    manifest template form — must stay ONE argv word with the quotes stripped.
+    The pre-fix non-POSIX path word-split it at the internal space and leaked the
+    quotes (``key="a`` + ``b"``), corrupting the command."""
+    import manju.providers.local_cmd as local_cmd
+
+    monkeypatch.setattr(local_cmd, "_IS_WINDOWS", True)
+    assert local_cmd._split_command('tool --flag key="a b" --out {out}') == [
+        "tool", "--flag", "key=a b", "--out", "{out}"]
+    # backslash path AND an attached quoted value in the same template
+    assert local_cmd._split_command('sh C:\\proj\\x.sh key="a b"') == [
+        "sh", "C:\\proj\\x.sh", "key=a b"]
+
+
+def test_split_command_windows_malformed_quote_is_tolerated(monkeypatch):
+    """An unclosed quote (a malformed template) must NOT become a new hard error
+    from this owner — it degrades exactly as the pre-fix non-POSIX path did."""
+    import manju.providers.local_cmd as local_cmd
+
+    monkeypatch.setattr(local_cmd, "_IS_WINDOWS", True)
+    assert local_cmd._split_command('tool key="unclosed') == ["tool", 'key="unclosed']
+
+
 def test_events_lock_serializes_twelve_threads_required():
     """Cross-platform coordinator probe (gate round 3): 12 threads append 12
     lines under required=True — every line lands intact or the lock RAISES
