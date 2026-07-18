@@ -30,7 +30,30 @@ from ..core.locale import list_locales, validate_lang
 
 # Sentinel locale key for a project that declares no locales at all — QC still
 # runs once, against the base final.
-BASE = "base"
+class _BaseSentinel:
+    """Marker for the unlocalized base final. A DISTINCT object, never a locale
+    id string — so it can never collide with a real locale, even one literally
+    named "base" (``validate_lang('base')`` is legal). Its ``str`` is "base" so
+    it reads naturally as a result key."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "base"
+
+    def __str__(self) -> str:
+        return "base"
+
+
+# Sentinel (identity-compared with ``is``) for "check the project base final,
+# not a locale overlay". Only ever selected when NO locale is declared.
+BASE = _BaseSentinel()
+
+
+def _result_key(lg: "str | _BaseSentinel") -> str:
+    """The JSON/display key for a selected locale — 'base' for the sentinel,
+    else the locale id itself."""
+    return "base" if lg is BASE else str(lg)
 
 
 @dataclass(frozen=True)
@@ -56,7 +79,7 @@ class MultiLocaleQCReport:
 
 
 def select_locales(project: Project, *, lang: str | None = None,
-                   all_locales: bool = False) -> list[str]:
+                   all_locales: bool = False) -> "list[str | _BaseSentinel]":
     """Which locales this QC run must check — the anti-``sorted()[0]`` policy.
 
     Order of precedence: an explicit ``--lang`` wins (check only that one);
@@ -74,9 +97,9 @@ def select_locales(project: Project, *, lang: str | None = None,
     return declared  # every declared locale, never just the first
 
 
-def _locale_final_path(project: Project, lang: str) -> Path | None:
-    """Newest ``final_vN.mp4`` for ``lang`` (base final when ``lang == BASE``)."""
-    if lang == BASE:
+def _locale_final_path(project: Project, lang: "str | _BaseSentinel") -> Path | None:
+    """Newest ``final_vN.mp4`` for ``lang`` (base final for the BASE sentinel)."""
+    if lang is BASE:
         return project.newest_final_path()
     d = project.final_dir / "locales" / lang
     if not d.exists():
@@ -112,18 +135,19 @@ def run_multilocale_qc(
     results: dict[str, LocaleQCResult] = {}
 
     for lg in langs:
+        key = _result_key(lg)
         final_path = _locale_final_path(project, lg)
-        if lg != BASE and final_path is None:
+        if lg is not BASE and final_path is None:
             # A declared locale with no rendered final: honest failure, never a
             # silent fall-back to the base final.
-            results[lg] = LocaleQCResult(lg, "fail", ["missing_final"])
+            results[key] = LocaleQCResult(key, "fail", ["missing_final"])
             continue
         report = qc_runner(project, timeline, deep=deep, final_path=final_path)
         status = "pass" if report.ok else "fail"
         issues = sorted({
             f"{it.area}:{it.subject}" for it in report.items if it.level == "error"
         })
-        results[lg] = LocaleQCResult(lg, status, issues)
+        results[key] = LocaleQCResult(key, status, issues)
 
     aggregate = "fail" if any(r.status == "fail" for r in results.values()) else "pass"
     return MultiLocaleQCReport(aggregate=aggregate, locales=results)
