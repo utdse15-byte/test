@@ -455,6 +455,21 @@ def append_submission_event(
         return {}
 
 
+def _decode_jsonl_line(raw_bytes: bytes) -> str | None:
+    """One JSONL ledger line decoded from BYTES, or None when the bytes are not
+    valid UTF-8 — a write torn mid-multibyte-char at EOF (a crash during an
+    append, the acknowledged torn-tail source; CJK prompts/shots on the primary
+    Windows platform make this real). The strict text-mode ``for raw in f`` used
+    to decode eagerly and raise UnicodeDecodeError out of the whole reader,
+    bricking the projection; the callers count a None as a malformed line
+    exactly as they already count a JSONDecodeError, mirroring the hardened
+    ``core.events`` line decode."""
+    try:
+        return raw_bytes.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+
+
 def read_submission_events(project: Any, submission_id: str | None = None
                            ) -> tuple[list[dict], int]:
     """Project the submission-state events out of ``events.jsonl`` (ruling 1/4).
@@ -471,9 +486,12 @@ def read_submission_events(project: Any, submission_id: str | None = None
     malformed = 0
     if not path.exists():
         return records, malformed
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            raw = raw.strip()
+    with open(path, "rb") as f:
+        for raw_bytes in f:
+            raw = _decode_jsonl_line(raw_bytes)
+            if raw is None:
+                malformed += 1  # torn mid-multibyte write — count, never crash
+                continue
             if not raw:
                 continue
             try:
@@ -591,10 +609,10 @@ def read_run_lifecycle(project: Any, run_id: str) -> dict[str, list[dict]]:
         return out
     keys = {RUN_STARTED_ACTION: "started", RUN_TERMINAL_ACTION: "terminals",
             ATTEMPT_STARTED_ACTION: "attempt_started"}
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            raw = raw.strip()
-            if not raw:
+    with open(path, "rb") as f:
+        for raw_bytes in f:
+            raw = _decode_jsonl_line(raw_bytes)
+            if not raw:  # None (torn mid-multibyte) or blank — skip, never crash
                 continue
             try:
                 rec = json.loads(raw)
@@ -826,9 +844,12 @@ def read_attempts(project: Any, run_id: str | None = None) -> tuple[list[dict], 
     malformed = 0
     if not path.exists():
         return records, malformed
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            raw = raw.strip()
+    with open(path, "rb") as f:
+        for raw_bytes in f:
+            raw = _decode_jsonl_line(raw_bytes)
+            if raw is None:
+                malformed += 1  # torn mid-multibyte write — count, never crash
+                continue
             if not raw:
                 continue
             try:

@@ -400,6 +400,17 @@ def _resolve_head_provider(project: Project, shot, else_bias: str | None) -> str
         return None
 
 
+import threading as _threading
+
+# Guards the per-build semaphore-cache POPULATE below. The old unsynchronized
+# check-then-set spanned a GIL-releasing get_manifest() disk read, so two workers
+# in the initial burst of a concurrent build could both miss the cache, build
+# SEPARATE Semaphore objects, and gate on different instances — exceeding the
+# declared max_concurrent cap. One module-level lock serializes only the brief
+# populate (not the provider calls), so every worker shares the SAME semaphore.
+_PROVIDER_SEMAPHORE_LOCK = _threading.Lock()
+
+
 def _provider_semaphore(name: str | None, cache: dict):
     """The shared :class:`threading.Semaphore` gating concurrent calls to
     provider ``name`` (goal 8), sized by its manifest's
@@ -410,18 +421,17 @@ def _provider_semaphore(name: str | None, cache: dict):
     ``name`` so every worker in one build shares the SAME semaphore object."""
     if name is None:
         return None
-    if name not in cache:
-        import threading
+    with _PROVIDER_SEMAPHORE_LOCK:
+        if name not in cache:
+            try:
+                from ..providers.registry import get_manifest
 
-        try:
-            from ..providers.registry import get_manifest
-
-            manifest = get_manifest(name)
-        except Exception:
-            manifest = None
-        limit = manifest.limits.max_concurrent if manifest is not None else None
-        cache[name] = threading.Semaphore(limit) if limit and limit > 0 else None
-    return cache[name]
+                manifest = get_manifest(name)
+            except Exception:
+                manifest = None
+            limit = manifest.limits.max_concurrent if manifest is not None else None
+            cache[name] = _threading.Semaphore(limit) if limit and limit > 0 else None
+        return cache[name]
 
 
 def _concurrent_generate(items, gen_one, *, max_workers: int,
