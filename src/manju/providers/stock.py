@@ -131,7 +131,26 @@ class PexelsStockProvider(Provider):
                 f"{self.id}: search failed with HTTP {resp.status}",
                 detail={"query": query, "body": resp.text()[:500]},
             )
-        videos = (resp.json() or {}).get("videos", [])
+        # A 2xx whose body is not readable JSON (UnicodeDecodeError /
+        # JSONDecodeError — both ValueError) or is valid JSON but not an OBJECT
+        # (a bare array/string -> no ``.get``) must become a RECORDED
+        # ProviderFailure, not an uncaught crash that bypasses the failures.jsonl
+        # contract (F2) and aborts the build.
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: search response was not readable JSON",
+                detail={"query": query, "body": resp.text()[:500]},
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: search response was not a JSON object",
+                detail={"query": query, "body": resp.text()[:500]},
+            )
+        videos = payload.get("videos", [])
         if not videos:
             raise ProviderFailure(
                 FailureKind.provider_error,
@@ -145,7 +164,13 @@ class PexelsStockProvider(Provider):
                 chosen = self._pick_file(video, width=config.width, height=config.height)
                 if chosen is None:
                     continue
-                dl = self._transport("GET", chosen["link"], {}, None)
+                # A rendition entry may omit (or null) "link"; read it defensively
+                # and skip this candidate rather than KeyError-crashing the whole
+                # generate() (and bypassing failure recording).
+                link = chosen.get("link")
+                if not link:
+                    continue
+                dl = self._transport("GET", link, {}, None)
                 if dl.status >= 400 or not dl.body:
                     continue
                 # F11: a 200 that is actually an HTML/error page (an expired CDN
@@ -155,7 +180,7 @@ class PexelsStockProvider(Provider):
                 # ProviderFailure(provider_error) with a verbatim snippet, so the
                 # failure is diagnosable from evidence instead of silently
                 # poisoning the shot with an HTML "video".
-                reject_html_error_page(dl, chosen["link"], self.id)
+                reject_html_error_page(dl, link, self.id)
                 dest = Path(tmp) / f"stock_{i:02d}.mp4"
                 dest.write_bytes(dl.body)
                 takes.append(self._register(

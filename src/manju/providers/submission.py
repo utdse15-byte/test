@@ -273,7 +273,15 @@ def _canon(value: Any, project_root: Path | None, *, drop_secret_keys: bool = Fa
     if isinstance(value, str):
         return {"__t": "str", "v": strip_url_query(value)}
     if isinstance(value, (list, tuple)):
-        return [_canon(v, project_root) for v in value]
+        # Propagate drop_secret_keys into list/tuple elements too — without it a
+        # dict nested inside a list (e.g. params={"loras": [{"access_token": …}]})
+        # kept its secret-named keys, so the credential rode the submission
+        # identity and perturbed request_digest, breaking the §7.5 "a secret-named
+        # param hashes IDENTICALLY to one without it" contract (and resume
+        # correlation across a secret rotation). The dict branch already
+        # propagates it; the list branch must match.
+        return [_canon(v, project_root, drop_secret_keys=drop_secret_keys)
+                for v in value]
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for k in sorted(value, key=str):
