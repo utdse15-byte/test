@@ -139,3 +139,25 @@ def test_explicit_lang_checks_only_that_locale(tmp_project) -> None:
     report = run_multilocale_qc(tmp_project, lang="en", qc_runner=runner)
     assert set(report.locales) == {"en"}
     assert report.aggregate == "pass"  # ja's failure is not in scope
+
+
+def test_locale_literally_named_base_is_not_the_base_final(tmp_project) -> None:
+    # "base" is a validate_lang-legal locale id, so a project may declare a
+    # locale literally named "base". It must probe locales/base/final — NOT the
+    # project's unlocalized base final — and must report missing_final when its
+    # own locale final is absent (regression: the "base" sentinel string
+    # collided with a real locale, silently passing a broken locale on the
+    # project base final).
+    add_locale(tmp_project, "base")
+    add_locale(tmp_project, "en")
+    _make_final(tmp_project, "en")
+    _make_final(tmp_project, None)          # a PROJECT base final exists...
+    # ...but locales/base/ has NO rendered final.
+    runner = _runner(fail_langs=set())      # the fake runner passes anything it runs
+    report = run_multilocale_qc(tmp_project, qc_runner=runner)
+
+    assert report.locales["base"].status == "fail"
+    assert report.locales["base"].issues == ["missing_final"]
+    # it must NOT have fallen back to the project base final for "base".
+    assert (tmp_project.final_dir / "final_v1.mp4") not in runner.calls  # type: ignore[attr-defined]
+    assert report.aggregate == "fail"
