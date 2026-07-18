@@ -53,6 +53,21 @@ def test_escape_filter_path_colon_and_quote():
     assert _escape_filter_path("/tmp/o'brien/f.ass") == "'/tmp/o'\\''brien/f.ass'"
 
 
+def test_escape_filter_path_graph_metacharacters_are_quoted():
+    """A path may carry filtergraph-significant characters even when it has no
+    drive colon, backslash or apostrophe — a comma in the project root
+    (``~/作品,集/x.manju``) reaches the ``ass=``/``textfile=`` value verbatim.
+    ``,`` ends a filter, ``;`` a chain, ``[``/``]`` delimit pad labels and ``=``
+    splits name from options; unquoted, any of them corrupts the graph. Each
+    must come back single-quote wrapped (one token to the graph parser), while
+    the value inside is otherwise unchanged — none of these is level-1 special,
+    so no per-character escaping is added."""
+    assert _escape_filter_path("/tmp/a,b/sub.ass") == "'/tmp/a,b/sub.ass'"
+    assert _escape_filter_path("/tmp/a;b/sub.ass") == "'/tmp/a;b/sub.ass'"
+    assert _escape_filter_path("/tmp/a[b]/sub.ass") == "'/tmp/a[b]/sub.ass'"
+    assert _escape_filter_path("/tmp/a=b/sub.ass") == "'/tmp/a=b/sub.ass'"
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 @pytest.mark.skipif(os.name == "nt",
                     reason="colon DIRECTORIES are unrepresentable on NTFS — the "
