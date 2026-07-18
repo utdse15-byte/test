@@ -364,6 +364,26 @@ def _split_caption(text: str, max_chars: int, max_lines: int) -> list[str]:
     return [c for c in chunks if c]
 
 
+def _is_valid_word_timing(words: Any) -> bool:
+    """A well-formed word-timing list: non-empty, and EVERY entry a dict carrying
+    a ``text`` plus numeric ``start_ms``/``end_ms`` — the exact keys
+    :func:`_timed_captions` indexes (``word["text"]``,
+    ``group[0]["start_ms"]``, ``group[-1]["end_ms"]``). Word-timing is an
+    ENHANCEMENT, never a gate (see ``_align_words_to_text``): a legacy /
+    hand-edited / partially-written / older-format ``<take>.timing.json`` whose
+    entries are malformed must DEGRADE to the weighted-split fallback, never
+    crash the compile/build with a KeyError/TypeError downstream."""
+    return (
+        isinstance(words, list) and bool(words)
+        and all(
+            isinstance(w, dict) and "text" in w
+            and isinstance(w.get("start_ms"), (int, float))
+            and isinstance(w.get("end_ms"), (int, float))
+            for w in words
+        )
+    )
+
+
 def _align_words_to_text(words: list[dict], text: str) -> list[dict]:
     """Reattach the punctuation the TTS word stream drops (Edge zh boundaries
     carry no ",。?"): walk the original dialogue text, match each word token
@@ -598,7 +618,7 @@ def compile_timeline(inp: CompileInput) -> Timeline:
             else:
                 cap_start = cursor
                 cap_total = duration_ms
-            if s.voice_timing and s.voice_duration_ms:
+            if _is_valid_word_timing(s.voice_timing) and s.voice_duration_ms:
                 # word-timed captions (round M): cue boundaries come from the
                 # TTS engine's word boundaries — captions snap to real speech
                 tracks.captions.extend(
@@ -862,9 +882,11 @@ def _load_voice_timing(voice: Path) -> list[dict] | None:
         return None
     try:
         words = json.loads(timing_path.read_text(encoding="utf-8"))
-        return words if isinstance(words, list) and words else None
     except (json.JSONDecodeError, OSError):
         return None
+    # Only a WELL-FORMED word list is handed on; a malformed/legacy sidecar
+    # degrades to None (weighted-split fallback) rather than crashing the compile.
+    return words if _is_valid_word_timing(words) else None
 
 
 def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
