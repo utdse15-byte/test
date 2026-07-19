@@ -86,7 +86,14 @@ def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S) -> Pro
 
     width = int(video["width"]) if video and video.get("width") is not None else None
     height = int(video["height"]) if video and video.get("height") is not None else None
-    fps = _parse_fps(video.get("r_frame_rate") or video.get("avg_frame_rate")) if video else None
+    # r_frame_rate is preferred, but it can be the truthy-but-unusable string
+    # "0/0" (a `... or ...` would short-circuit on it and never consult the
+    # fallback), so fall through to avg_frame_rate only when the first is unusable.
+    fps = None
+    if video:
+        fps = _parse_fps(video.get("r_frame_rate"))
+        if fps is None:
+            fps = _parse_fps(video.get("avg_frame_rate"))
 
     return ProbeInfo(
         duration_ms=duration_ms,

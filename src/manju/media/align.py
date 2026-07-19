@@ -424,8 +424,12 @@ def apply_multi_shot(
                 "-ss", str(ss), "-t", str(dur), "-i", str(media),
                 "-ac", "1", "-ar", "44100", str(out),
             ]
-            subprocess.run(cmd, check=False, capture_output=True)
-            if not out.exists() or out.stat().st_size == 0:
+            proc = subprocess.run(cmd, check=False, capture_output=True)
+            # Gate on the return code: subprocess.run(check=False) does not raise
+            # on a non-zero exit, and a failed encode can leave a partial (non-empty)
+            # file, so output-existence alone would register a corrupt slice as a
+            # MANUAL voice take (append-only, never auto-invalidated).
+            if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
                 skipped.append({"index": i, "shot": sid, "reason": "ffmpeg slice failed"})
                 continue
             shot = project.load_shot(sid)
