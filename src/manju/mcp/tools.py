@@ -227,7 +227,15 @@ def _h_update_shot(project: Project, args: dict) -> dict:
         raise ToolError(f"shot not found: {shot_id}")
     label = project.relpath(path)
 
-    # (1) parse — must be a mapping
+    # (1) parse — must be a mapping. A non-string yaml_content (a JSON object or
+    # number the wire can carry for the declared "string" field — e.g. an agent
+    # round-tripping get_shot's dict) makes yaml.safe_load call stream.read() and
+    # raise AttributeError, which `except yaml.YAMLError` does NOT catch — so it
+    # leaked as a raw internal error instead of a structured ToolError.
+    if not isinstance(yaml_content, str):
+        raise ToolError(
+            "yaml_content must be a string (the shot spec as YAML/JSON text)",
+            code="invalid_argument")
     try:
         new_data = yaml.safe_load(yaml_content)
     except yaml.YAMLError as exc:
@@ -395,8 +403,12 @@ def _h_build(project: Project, args: dict, *, profile: str = _P.COLLABORATIVE) -
             actor="ai",
             agent_profile=profile,  # AI_IDE_16 §10 keyframe spend gate
             lang=lang,
-            # C60: spend gate confirm (parity with GUI / redo).
-            assume_yes=bool(args.get("assume_yes", False)),
+            # C60: spend gate confirm (parity with GUI / redo). Fail-CLOSED
+            # `is True` (not bool()): a JSON string "false"/"0"/"no" is truthy,
+            # so bool() would silently APPROVE a paid provider the caller never
+            # confirmed. Only a real JSON true confirms — the same idiom
+            # policy.decide() uses for dry_run (UNKNOWN never guessed into PASS).
+            assume_yes=args.get("assume_yes") is True,
         ).to_dict()
     except Exception as exc:
         # P1 item 5: adapt via the shared classifier instead of re-deriving the
@@ -424,7 +436,9 @@ def _h_redo(project: Project, args: dict) -> dict:
             provider=args.get("provider"),
             seed=args.get("seed"),
             actor="ai",
-            assume_yes=bool(args.get("assume_yes", False)),
+            # fail-CLOSED `is True` (see _h_build): a truthy non-bool argument
+            # (JSON "false"/"0"/"no") must NOT approve the paid spend gate.
+            assume_yes=args.get("assume_yes") is True,
         )
     except WaitingUser as exc:
         # C61: same structured gate as build.
