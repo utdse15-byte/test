@@ -316,8 +316,13 @@ def ffmpeg_crop_expr(compiled: dict[str, Any], *, fps: int) -> str:
     kfs = compiled["keyframes"]
     cw, ch = kfs[0]["w"], kfs[0]["h"]
     times_s = [k["t_ms"] / 1000.0 for k in kfs]
-    x_expr = _pl_expr(times_s, [float(k["x"]) for k in kfs])
-    y_expr = _pl_expr(times_s, [float(k["y"]) for k in kfs])
+    # The piecewise x/y expressions carry commas (if(lt(t,T),A,B)); those reach a
+    # comma-joined -vf filtergraph, whose graph parser splits filters on commas —
+    # so a bare expression comma is read as a filter separator ("Filter not
+    # found"). Escape every expression comma as "\," so the graph parser passes it
+    # through as a literal into the crop filter's own expression parser.
+    x_expr = _pl_expr(times_s, [float(k["x"]) for k in kfs]).replace(",", "\\,")
+    y_expr = _pl_expr(times_s, [float(k["y"]) for k in kfs]).replace(",", "\\,")
     return f"crop={cw}:{ch}:{x_expr}:{y_expr}"
 
 
