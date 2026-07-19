@@ -146,6 +146,17 @@ def _escape_filter_path(path: Path | str) -> str:
     return f"'{p}'"
 
 
+def _ass_filter(ass_file: Path | str) -> str:
+    """The subtitle-burn filter for a compiled ``.ass``. Uses the KEYED form
+    ``ass=filename=<escaped>`` (not the positional ``ass=<escaped>``): a path
+    carrying ``=`` (e.g. a project under ``D:\\剪辑\\项目=2026\\...``) survives
+    the graph parser's quotes, but the ass filter's own option parser then splits
+    a POSITIONAL value at the first ``=`` ("Option not found" → the whole
+    subtitled render fails). Keying the value as ``filename=`` lands the path —
+    ``=`` and all — inside the value, exactly as ``textfile=``/``fontfile=`` do."""
+    return f"ass=filename={_escape_filter_path(ass_file)}"
+
+
 def _text_overlay_style(ov: OverlayClip, *, out_w: int) -> list[str]:
     """The middle drawtext options (colour/size/position/box) for one TEXT
     overlay, keyed on ``kind``. The title_card/info_card branches reproduce the
@@ -1545,7 +1556,7 @@ def render_timeline(
         if look_chain:
             vchain += "," + look_chain
         if ass_file is not None:
-            vchain += f",ass={_escape_filter_path(ass_file)}"
+            vchain += f",{_ass_filter(ass_file)}"
         if text_overlays:
             font = find_font()
             for filt in _title_card_filters(
