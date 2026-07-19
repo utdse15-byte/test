@@ -64,6 +64,7 @@ from ..build.attempts import (
     SKIPPED_CACHE_HIT,
     SUCCEEDED,
     _cost_of,  # the ONE money rule (prefer actual, never double-count) — reused
+    _decode_jsonl_line,  # the ONE hardened torn-tail line decoder for this stream
     _root,
     build_run_manifest,
 )
@@ -208,9 +209,14 @@ def _latest_run_id(project: Any) -> str | None:
     if not path.exists():
         return None
     latest: str | None = None
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            raw = raw.strip()
+    # Read BYTES + decode per line: a write torn mid-multibyte-char at EOF (CJK
+    # prompts on the primary Windows platform make this real) used to raise
+    # UnicodeDecodeError straight out of the strict text-mode `for raw in f`,
+    # crashing the default `manju perf` path. _decode_jsonl_line returns None on
+    # a torn line, counted exactly like a JSONDecodeError below.
+    with open(path, "rb") as f:
+        for raw_bytes in f:
+            raw = _decode_jsonl_line(raw_bytes)
             if not raw:
                 continue
             try:

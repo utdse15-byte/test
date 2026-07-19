@@ -305,7 +305,10 @@ def accessibility_for_project(project: Any) -> dict[str, Any]:
     if rules is not None and rules.mode == "manual" and srt_path.exists():
         from ..providers.asr import parse_srt
 
-        human = parse_srt(srt_path.read_text(encoding="utf-8"))
+        # errors="replace": a human-authored SRT may be saved non-UTF-8 (GBK on
+        # a Windows box); undecodable bytes become U+FFFD rather than crashing
+        # the report generator (this function must never raise; CLAUDE.md mandate).
+        human = parse_srt(srt_path.read_text(encoding="utf-8", errors="replace"))
         cues = [CaptionLine(start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
                 for s in human]
         return captions_accessibility(

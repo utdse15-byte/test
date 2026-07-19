@@ -1064,7 +1064,7 @@ def _content_frames(project, report, selected) -> None:
 def _extract_frame(media_path: Path, dest: Path, mid_s: float) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-ss", f"{mid_s:.3f}", "-i", str(media_path),
              "-frames:v", "1", "-q:v", "3", str(dest)],
@@ -1072,7 +1072,14 @@ def _extract_frame(media_path: Path, dest: Path, mid_s: float) -> bool:
         )
     except Exception:
         return False
-    return dest.exists()
+    # Gate on the return code, mirroring content.sample_frames: subprocess.run
+    # does NOT raise on a non-zero exit, so a failed decode falls through here.
+    # dest is a STABLE per-shot path (reports/frames/<shot>.jpg) that is never
+    # cleaned, so a stale frame from a prior take — or a -y-truncated partial —
+    # would make a bare dest.exists() report a failed extraction as a fresh
+    # "frame for visual review", pointing the agent's content judgment at the
+    # wrong take (UNKNOWN guessed into a green result).
+    return proc.returncode == 0 and dest.exists()
 
 
 # --------------------------------------------------------------- staleness

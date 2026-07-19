@@ -1585,7 +1585,10 @@ def read_v2_records(project: "Project") -> tuple[list[dict], int]:
     if not path.exists():
         return [], 0
     try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
+        # errors="replace": an invalid-UTF-8 byte must not raise out of this
+        # reader ("Never raises"); it becomes U+FFFD, json.loads then fails and
+        # the line is counted malformed (CLAUDE.md errors="replace" mandate).
+        raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return [], 0
     records: list[dict] = []
@@ -1642,7 +1645,10 @@ def _read_records(project: "Project") -> tuple[list[dict], int]:
     records: list[dict] = []
     malformed = 0
     try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
+        # errors="replace": an invalid-UTF-8 byte must not raise out of this
+        # legacy reader ("Never raises"); it becomes U+FFFD, json.loads then
+        # fails and the line is counted malformed (CLAUDE.md mandate).
+        raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return [], 0
     for raw in raw_lines:

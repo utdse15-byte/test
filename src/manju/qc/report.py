@@ -147,6 +147,12 @@ def _repair_plan(project: Project, qc: QCReport, generated_at: str) -> dict:
     return {"generated_at": generated_at, "ok": qc.ok, "actions": actions}
 
 
+# QC subjects that name a whole-render / track, NOT a shot — a redo_new_seed
+# repair (which redo_shot's `subject`) is inapplicable to these.
+_NON_SHOT_SUBJECTS = frozenset(
+    {"final", "timeline", "voice", "music", "sfx", "ambient"})
+
+
 def _derive_action(project: Project, item: QCItem, fallback_cache: dict[str, bool]):
     """Map an error/warn item to a concrete repair action (§9), mechanically."""
     if item.level not in ("error", "warn"):
@@ -167,8 +173,16 @@ def _derive_action(project: Project, item: QCItem, fallback_cache: dict[str, boo
     if "caption" in msg:
         return make("human_review", False)
 
-    # duration mismatch -> redo (§9)
-    if "duration" in msg or "shorter than the clip" in msg:
+    # duration mismatch -> redo (§9). Gate on the subject being a real shot:
+    # the "duration" word also appears on non-shot items — final-render drift
+    # ("final duration ... differs from timeline ...", subject "final") and a
+    # negative audio-clip duration (subject "voice"/"music"/"sfx"/"ambient").
+    # Deriving an auto-safe redo_new_seed on those makes `manju repair --auto`
+    # redo_shot a non-existent shot, masking the real re-render / timeline-edit
+    # fix — so route them to human_review (the per-shot "shorter than the clip"
+    # deficit, subject=shot, still redoes).
+    if ("duration" in msg or "shorter than the clip" in msg) and \
+            subject not in _NON_SHOT_SUBJECTS:
         return make("redo_new_seed", True)
 
     # missing / unreadable media -> degrade_fallback if the shot has a fallback,
