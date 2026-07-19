@@ -237,9 +237,17 @@ def preview_voice(
 
         # Atomic place into cache
         dest.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(tmp_dest, dest) if tmp_dest.suffix == dest.suffix else (
+        try:
+            if tmp_dest.suffix == dest.suffix:
+                os.replace(tmp_dest, dest)
+            else:
+                dest.write_bytes(tmp_dest.read_bytes())
+        except OSError:
+            # temp (system TemporaryDirectory) and the project can live on
+            # different filesystems (temp on C:, project on D:; tmpfs; a mount) —
+            # os.replace then raises a cross-device OSError (EXDEV / WinError 17).
+            # Fall back to a plain byte copy; tmp_dest is still intact.
             dest.write_bytes(tmp_dest.read_bytes())
-        )
 
     return {
         "preview": project.relpath(dest),

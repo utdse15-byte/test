@@ -85,7 +85,10 @@ def _fc_match(query: str) -> Path | None:
     try:
         proc = subprocess.run(
             ["fc-match", "-f", "%{file}", query],
-            capture_output=True, text=True, encoding="utf-8",
+            # errors="replace": a font path with non-UTF-8 bytes must degrade to
+            # None (find_font contract), not raise UnicodeDecodeError out of the
+            # decode (CLAUDE.md errors="replace" mandate on every subprocess decode).
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
         return None
@@ -104,7 +107,8 @@ def _fc_match_family(family: str) -> Path | None:
     try:
         proc = subprocess.run(
             ["fc-match", "-f", "%{family}|%{file}", family],
-            capture_output=True, text=True, encoding="utf-8",
+            # errors="replace": see _fc_match — never raise out of find_font.
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
         return None

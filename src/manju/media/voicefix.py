@@ -134,7 +134,10 @@ def _current_cues(project: Project, timeline: Timeline | None,
 
         srt = project.captions_dir / "captions.srt"
         try:
-            segs = parse_srt(srt.read_text(encoding="utf-8"))
+            # errors="replace": a human-authored SRT may be non-UTF-8 (GBK on a
+            # Windows box); undecodable bytes become U+FFFD rather than raising
+            # UnicodeDecodeError (not an OSError) out of repair_voice.
+            segs = parse_srt(srt.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             segs = []
         cues = [{"start_ms": s.start_ms, "end_ms": s.end_ms, "text": s.text}
