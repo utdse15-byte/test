@@ -548,15 +548,30 @@ def render_masters(project: Project, timeline: Any, *,
         ln = out / "raw_stem_sum.loudnorm.wav"
         dur_s = max(0.001, duration_ms / 1000.0)
         ok = False
-        with atomic_output(ln) as tmp:
-            cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                   "-i", str(stem_sum),
-                   "-af", f"loudnorm=I={loudness_target_lufs}:TP={tp}:LRA=11,"
-                          f"atrim=duration={dur_s}",
-                   "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
-                   "-ac", str(CHANNELS), str(tmp)]
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-            ok = proc.returncode == 0 and tmp.exists()
+        try:
+            with atomic_output(ln) as tmp:
+                cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                       "-i", str(stem_sum),
+                       "-af", f"loudnorm=I={loudness_target_lufs}:TP={tp}:LRA=11,"
+                              f"atrim=duration={dur_s}",
+                       "-c:a", "pcm_s16le", "-ar", str(SAMPLE_RATE),
+                       "-ac", str(CHANNELS), str(tmp)]
+                proc = subprocess.run(cmd, capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace")
+                if proc.returncode != 0 or not tmp.exists():
+                    # RAISE (don't just flag ok=False): atomic_output finalizes on
+                    # any NORMAL block exit — its cleanup is exception-driven, and a
+                    # non-zero ffmpeg exit is not a Python exception — so the old
+                    # non-raising path let it PUBLISH a truncated .loudnorm.wav.
+                    # Raising takes atomic_output's failure path (unlink temp, leave
+                    # dest untouched), mirroring _render_bus / _mix_files.
+                    tail = "\n".join((proc.stderr or "").splitlines()[-8:])
+                    raise MastersError(f"loudnorm master failed:\n{tail}")
+            ok = ln.exists()
+        except MastersError:
+            # the loudnorm sum master is OPTIONAL — a failure omits it (with NO
+            # partial file left behind), it never aborts the whole master render.
+            ok = False
         if ok and ln.exists():
             loudnorm_master = {
                 "role": "RAW_STEM_SUM",
