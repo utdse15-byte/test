@@ -196,7 +196,7 @@ def align_shot(
                     assume_yes=assume_yes,
                     hint=f"确认后重试: manju align {shot_id} --asr --yes",
                 )
-            segs = provider.transcribe(media)
+            segs = provider.transcribe(media, project_root=project.root)
             segments = [
                 {"start_ms": s.start_ms, "end_ms": s.end_ms, "text": s.text}
                 for s in segs

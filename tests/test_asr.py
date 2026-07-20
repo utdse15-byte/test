@@ -182,8 +182,11 @@ def test_asr_submit_429_is_rate_limited(monkeypatch, tmp_path):
     assert exc.value.kind is FailureKind.rate_limited
 
 
-def test_asr_poll_429_is_rate_limited(monkeypatch, tmp_path):
-    """F4: a 429 during ASR poll is retryable rate_limited, not provider_error."""
+def test_asr_poll_429_retries_the_same_job_never_resubmits(monkeypatch, tmp_path):
+    """Audit finding 10: a 429 while POLLING an ACCEPTED job must keep polling
+    the SAME job id, NOT abandon it — the old code raised rate_limited, and a
+    higher-level retry then submitted (and paid for) a whole new job. The poll
+    loop now retries the transient and there is only ever ONE submit POST."""
     monkeypatch.setenv("ASR_X_KEY", "k")
     manifest = ProviderManifest.model_validate(_asr_manifest(
         poll={"url": "https://api.example.com/v1/asr/{job_id}",
@@ -192,14 +195,17 @@ def test_asr_poll_429_is_rate_limited(monkeypatch, tmp_path):
     ))
     transport = ScriptedTransport([
         _resp({"data": {"task_id": "t1"}}),                 # submit ok (async)
-        HttpResponse(429, {}, b'{"error":"slow down"}'),    # poll 429
+        HttpResponse(429, {}, b'{"error":"slow down"}'),    # poll 429 → retried
+        _resp({"data": {"status": "DONE", "segments": [
+            {"begin": 0.0, "end": 1.0, "text": "hi"}]}}),   # poll DONE
     ])
     provider = GenericAsrProvider(manifest, transport=transport, sleep_fn=lambda s: None)
     media = tmp_path / "a.wav"
     media.write_bytes(b"x")
-    with pytest.raises(ProviderFailure) as exc:
-        provider.transcribe(media)
-    assert exc.value.kind is FailureKind.rate_limited
+    segs = provider.transcribe(media)
+    assert [s.text for s in segs] == ["hi"]
+    posts = [r for r in transport.requests if r[0] == "POST"]
+    assert len(posts) == 1  # the paid submit happened exactly once
 
 
 def test_asr_non_429_error_stays_provider_error(monkeypatch, tmp_path):

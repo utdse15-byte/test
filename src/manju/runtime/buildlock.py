@@ -62,6 +62,7 @@ import os
 import socket
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -200,6 +201,14 @@ class BuildLock:
         self.heartbeat_interval_s = heartbeat_interval_s
         self.path = self.project_root / LOCK_DIR / f"{name}.lock"
         self._hostname = socket.gethostname()
+        # A unique per-acquisition token. Identity by (pid, hostname) ALONE has
+        # an ABA hole: after this instance's lock is stolen (stale) and a
+        # SUCCESSOR re-minted by the SAME pid+hostname, a bare pid/host match
+        # let release() delete — and the heartbeat refresh — the successor's
+        # lock, so two builders could believe they held it. The token pins the
+        # holder to THIS acquisition; release/heartbeat verify it. It also names
+        # the staging temp file so two threads of one process never share one.
+        self._token = uuid.uuid4().hex
         self._stop: threading.Event | None = None
         self._heartbeat: threading.Thread | None = None
 
@@ -287,11 +296,17 @@ class BuildLock:
             "actor": self.actor,
             "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "hostname": self._hostname,
+            "token": self._token,  # pins this exact acquisition (ABA guard)
         }
         payload = json.dumps(holder, ensure_ascii=False).encode("utf-8")
-        tmp = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
+        # Per-ACQUISITION staging name (the token, not the pid): two threads of
+        # one process were minting the SAME `.<pid>.tmp`, opening it O_TRUNC, so
+        # A could link B's payload and either could unlink the file the other
+        # still needed. A unique name + O_EXCL gives each acquisition its own
+        # staging inode.
+        tmp = self.path.with_name(self.path.name + f".{self._token}.tmp")
         try:
-            fd = os.open(tmp, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             try:
                 os.write(fd, payload)
                 os.fsync(fd)
@@ -372,6 +387,14 @@ class BuildLock:
         (buggy) steal, and the heartbeat must die silently, never raise."""
         try:
             while not stop.wait(self._interval_s()):
+                # Only refresh the mtime while the lock is STILL OURS — a lock
+                # our token no longer owns (stolen-as-stale then re-minted by a
+                # successor, possibly same pid+host) must not be kept alive by
+                # our heartbeat. A read hiccup errs toward touching (a transient
+                # unreadable lock should not orphan a live build).
+                holder = self._read_holder()
+                if holder is not None and holder.get("token") not in (None, self._token):
+                    return  # someone else owns it now — stop beating, silently
                 try:
                     os.utime(self.path)
                 except OSError:
@@ -392,6 +415,7 @@ class BuildLock:
         holder = self._read_holder()
         if (
             holder is not None
+            and holder.get("token") == self._token
             and holder.get("pid") == os.getpid()
             and holder.get("hostname") == self._hostname
         ):

@@ -38,6 +38,23 @@ class AsrUnavailable(RuntimeError):
     pass
 
 
+def _find_project_root(media: Path) -> "Path | None":
+    """Walk up from a media path to the containing project (the dir with
+    project.yaml). ASR media is always project-internal, so this normally
+    resolves; ``None`` when it cannot, in which case the durable remote-job
+    journal is skipped rather than written to a wrong place."""
+    from ..core.container import PROJECT_FILE
+
+    try:
+        p = Path(media).resolve()
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        if (cand / PROJECT_FILE).exists():
+            return cand
+    return None
+
+
 @dataclass
 class TranscriptSegment:
     start_ms: int
@@ -86,17 +103,36 @@ def distribute_text(text: str, duration_ms: int, *, gap_ms: int = 120,
     pieces = [p.strip() for p in re.split(r"[\n。!?!?…]+", text) if p.strip()]
     if not pieces or duration_ms <= 0:
         return []
-    total_gap = gap_ms * (len(pieces) - 1)
-    usable = max(len(pieces) * min_segment_ms, duration_ms - total_gap)
+    n = len(pieces)
+    gap = max(0, gap_ms)
+    min_seg = max(1, min_segment_ms)
+    # If the minimum spans + gaps cannot fit the media, scale them down so the
+    # whole distribution stays inside [0, duration_ms]. Finding 18: the old
+    # `max(n*min_segment_ms, duration - gaps)` forced `usable` ABOVE the media
+    # duration for a short recording, so the last cue started/ended AFTER the
+    # media had finished (invalid SRT timing).
+    need = n * min_seg + (n - 1) * gap
+    if need > duration_ms:
+        scale = duration_ms / need
+        min_seg = max(1, int(min_seg * scale))
+        gap = int(gap * scale)
+    total_gap = (n - 1) * gap
+    usable = max(n, duration_ms - total_gap)
     weights = [len(p) for p in pieces]
-    total_weight = sum(weights)
+    total_weight = sum(weights) or n
     segments: list[TranscriptSegment] = []
     cursor = 0
-    for piece, weight in zip(pieces, weights):
-        span = max(min_segment_ms, int(round(usable * weight / total_weight)))
-        end = min(cursor + span, duration_ms) if duration_ms > cursor else cursor + span
-        segments.append(TranscriptSegment(cursor, max(end, cursor + 1), piece))
-        cursor = end + gap_ms
+    for idx, (piece, weight) in enumerate(zip(pieces, weights)):
+        remaining_after = n - idx - 1  # pieces still to place after this one
+        span = max(min_seg, int(round(usable * weight / total_weight)))
+        # never let a cue (or the room it must leave for later cues) exceed the
+        # media: clamp to duration minus 1ms + gap per remaining piece.
+        latest_end = duration_ms - remaining_after * (gap + 1)
+        end = min(cursor + span, latest_end, duration_ms)
+        if end <= cursor:
+            end = min(cursor + 1, duration_ms)
+        segments.append(TranscriptSegment(cursor, end, piece))
+        cursor = min(end + gap, duration_ms)
     return segments
 
 
@@ -128,6 +164,8 @@ class GenericAsrProvider:
         return GenericCloudProvider._headers(self, extra)  # same auth semantics (§8.2)
 
     def _segments_from(self, data) -> list[TranscriptSegment]:
+        import math
+
         cfg = self.manifest.asr
         try:
             raw_segments = extract(data, cfg.segments_path)
@@ -136,31 +174,60 @@ class GenericAsrProvider:
                 FailureKind.provider_error,
                 f"{self.id}: cannot read transcript segments ({exc})",
             ) from exc
+        # The container must be a LIST of mappings. `{"segments": null}` used to
+        # reach `for seg in None` → raw TypeError; a scalar/str is equally wrong.
+        if not isinstance(raw_segments, list):
+            raise ProviderFailure(
+                FailureKind.provider_error,
+                f"{self.id}: transcript segments is {type(raw_segments).__name__}, "
+                "expected a list — check asr.segments_path",
+            )
         scale = 1000.0 if cfg.time_unit == "s" else 1.0
         segments = []
         for seg in raw_segments:
+            if not isinstance(seg, dict):
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: transcript segment is {type(seg).__name__}, "
+                    "expected an object — check asr.segments_path",
+                )
             try:
+                start = float(seg[cfg.start_key]) * scale
+                end = float(seg[cfg.end_key]) * scale
+                # non-finite (inf/nan) → int(round(...)) raises OverflowError/
+                # ValueError; catch both here so a bad number fails structured.
+                if not (math.isfinite(start) and math.isfinite(end)):
+                    raise ValueError("non-finite timestamp")
                 segments.append(TranscriptSegment(
-                    start_ms=int(round(float(seg[cfg.start_key]) * scale)),
-                    end_ms=int(round(float(seg[cfg.end_key]) * scale)),
+                    start_ms=max(0, int(round(start))),   # clamp negatives to 0
+                    end_ms=max(0, int(round(end))),
                     text=str(seg[cfg.text_key]).strip(),
                 ))
-            except (KeyError, TypeError, ValueError) as exc:
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
                 raise ProviderFailure(
                     FailureKind.provider_error,
                     f"{self.id}: malformed segment {seg!r} ({exc}) — check the "
                     "asr.text_key/start_key/end_key/time_unit config",
                 ) from exc
-        return [s for s in segments if s.text and s.end_ms > s.start_ms]
+        # sorted + only real spans: an out-of-order provider must not yield an
+        # out-of-order transcript (invalid SRT downstream).
+        good = [s for s in segments if s.text and s.end_ms > s.start_ms]
+        good.sort(key=lambda s: (s.start_ms, s.end_ms))
+        return good
 
     def transcribe(self, media: Path, *,
                    should_cancel: Callable[[], bool] | None = None,
+                   project_root: "Path | None" = None,
                    ) -> list[TranscriptSegment]:
         """Transcribe ``media`` via the configured ASR endpoint.
 
         ``should_cancel`` (C23): optional cooperative cancel predicate checked
         between async poll rounds so GUI/CLI cancel can stop mid-wait without
         sitting out the full 600s budget.
+
+        ``project_root`` (audit finding 9): where to DURABLY journal an accepted
+        async remote job id before polling. Defaults to walking up from ``media``
+        to the containing project (ASR media is always project-internal).
         """
         from .generic_cloud import _max_response_bytes, render_body
 
@@ -190,6 +257,12 @@ class GenericAsrProvider:
                           ensure_ascii=False).encode("utf-8")
         # submit carries the manifest-declared extra_headers (mirrors
         # generic_cloud.submit / the tts sibling — they were silently dropped)
+        from .generic_cloud import (
+            journal_remote_submit,
+            parse_json_response,
+            require_remote_id,
+        )
+
         resp = self._transport(cfg.method, cfg.url, self._headers(cfg.extra_headers), body)
         if resp.status >= 400:
             # F4: shared status→kind so ASR classifies a 429 as retryable
@@ -199,24 +272,35 @@ class GenericAsrProvider:
                 f"{self.id}: transcribe failed with HTTP {resp.status}",
                 detail={"body": resp.text()[:2000]},
             )
-        data = resp.json()
+        data = parse_json_response(resp, self.id, post_submit=True)
 
         poll_cfg = self.manifest.poll
         if poll_cfg is None:  # sync API: submit IS the result (§8.4)
             return self._segments_from(data)
 
-        # async form: same loop shape as generic_cloud, but the transcript
-        # lives in the final poll body itself, so we keep the raw JSON
-        job_id = str(extract(data, cfg.job_id_path))
+        # async form: a real non-empty id (never "/None"), DURABLY journaled
+        # before polling (fail-closed) — same paid-safety contract as TTS.
+        job_id = require_remote_id(extract(data, cfg.job_id_path), self.id)
+        root = project_root or _find_project_root(media_path)
+        if root is not None:
+            journal_remote_submit(root, self.id, job_id,
+                                  {"capability": "asr", "media": str(media)})
         return self._poll_segments(job_id, should_cancel=should_cancel)
 
     def _poll_segments(self, job_id: str, *,
                        should_cancel: Callable[[], bool] | None = None,
                        ) -> list[TranscriptSegment]:
         """Async ASR poll loop. ``should_cancel`` (C23) checked between rounds."""
+        from .generic_cloud import (
+            is_transient_status,
+            parse_json_response,
+            retry_after_seconds,
+        )
+
         poll_cfg = self.manifest.poll
         assert poll_cfg is not None
-        elapsed, i = 0.0, 0
+        deadline = time.monotonic() + 600.0  # real wall-clock budget (finding 11)
+        i = 0
         while True:
             # C23/C30: cooperative cancel BETWEEN poll sleeps (never mid-HTTP).
             # ProviderCanceled (not ProviderFailure) matches TTS/cloud/ComfyUI.
@@ -226,14 +310,18 @@ class GenericAsrProvider:
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
             if resp.status >= 400:
-                # F4: a 429 during poll is retryable rate_limited — shared
-                # classification, no sibling drift.
+                if is_transient_status(resp.status) and time.monotonic() < deadline:
+                    # 429 / 5xx polling an ACCEPTED job: keep the SAME id
+                    # (finding 10) — abandoning it lets a retry pay for a new one.
+                    self._sleep(retry_after_seconds(resp.headers, min(0.5 * (2 ** i), 8.0)))
+                    i += 1
+                    continue
                 raise ProviderFailure(
                     status_to_kind(resp.status),
                     f"{self.id}: poll failed with HTTP {resp.status}",
                     detail={"job_id": job_id, "body": resp.text()[:2000]},
                 )
-            data = resp.json()
+            data = parse_json_response(resp, self.id, post_submit=False)
             raw_status = str(extract(data, poll_cfg.status_path))
             status = poll_cfg.status_map.get(raw_status, raw_status.lower())
             if status == "succeeded":
@@ -245,14 +333,13 @@ class GenericAsrProvider:
                     detail={"job_id": job_id, "body": resp.text()[:2000]},
                 )
             delay = min(0.5 * (2 ** i), 8.0)
-            if elapsed + delay > 600.0:
+            if time.monotonic() + delay > deadline:
                 raise ProviderFailure(
                     FailureKind.timeout,
                     f"{self.id}: job {job_id} did not finish within 600s",
                     detail={"job_id": job_id},
                 )
             self._sleep(delay)
-            elapsed += delay
             i += 1
 
 

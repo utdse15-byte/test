@@ -135,6 +135,30 @@ def _cancel_billing(job: "Job", result: Any, *, exc: BaseException | None = None
     return None
 
 
+def _is_cancellation_exc(exc: BaseException) -> bool:
+    """True only for an exception that REPRESENTS cooperative cancellation —
+    the three types an engine fn raises when it honors a cancel request
+    (ProviderCanceled / BuildCanceled / MediaCanceled). Any other exception,
+    even one that races a cancel click, is a genuine failure. Imports are lazy
+    (this is the failure path, not hot) and each is guarded so a package that
+    is not present on a given install never turns a real failure into a fake
+    cancel."""
+    for mod, name in (
+        ("manju.providers.base", "ProviderCanceled"),
+        ("manju.build.graph", "BuildCanceled"),
+        ("manju.media.ffmpeg", "MediaCanceled"),
+    ):
+        try:
+            import importlib
+
+            cls = getattr(importlib.import_module(mod), name)
+        except Exception:
+            continue
+        if isinstance(exc, cls):
+            return True
+    return False
+
+
 def _summarize_params(params: dict[str, Any]) -> dict[str, Any]:
     """Compact ``params`` for a jobs.jsonl line — a batch kind's ``shots``
     list (redo_batch/voice_batch/…) could run to hundreds of ids, and this
@@ -145,19 +169,30 @@ def _summarize_params(params: dict[str, Any]) -> dict[str, Any]:
     for k, v in (params or {}).items():
         try:
             if isinstance(v, (list, tuple)):
-                seq = list(v)
-                out[k] = seq if len(seq) <= 8 else seq[:8] + [f"...(+{len(seq) - 8} more)"]
-            elif isinstance(v, str) and len(v) > 200:
-                out[k] = v[:200] + "…(truncated)"
-            elif isinstance(v, (str, int, float, bool)) or v is None:
-                out[k] = v
-            elif isinstance(v, dict):
-                out[k] = f"<dict:{len(v)} keys>"
+                seq = [_summarize_scalar(x) for x in list(v)[:8]]
+                out[k] = seq if len(v) <= 8 else seq + [f"...(+{len(v) - 8} more)"]
             else:
-                out[k] = str(type(v).__name__)
+                out[k] = _summarize_scalar(v)
         except Exception:
             out[k] = "<unrepresentable>"
     return out
+
+
+def _summarize_scalar(v: Any) -> Any:
+    """One value → a JSON-safe summary. A non-JSON-serializable element (a
+    ``Path`` inside a short ``files`` list, a model object) MUST NOT reach
+    ``json.dumps`` verbatim — that raised ``TypeError`` and, because
+    ``submit()`` persists BEFORE queuing, stranded the admitted job unqueued.
+    Every branch returns str/int/float/bool/None only."""
+    if isinstance(v, bool) or isinstance(v, (int, float)) or v is None:
+        return v
+    if isinstance(v, str):
+        return v if len(v) <= 200 else v[:200] + "…(truncated)"
+    if isinstance(v, dict):
+        return f"<dict:{len(v)} keys>"
+    if isinstance(v, (list, tuple)):
+        return f"<list:{len(v)} items>"
+    return str(type(v).__name__)
 
 
 class RunnerState(Enum):
@@ -347,10 +382,17 @@ class JobRunner:
             self._order.append(job.id)
             self._rev += 1
             self._trim_locked()
-        # persisted BEFORE the job is even queued for execution, so the
-        # "queued" line in jobs.jsonl always precedes its own "running" line.
-        self._persist(job)
-        self._queue.put((job, fn))
+            # Admission, persistence AND queue insertion are ONE atomic step
+            # under the lock. Previously the lock was released between admission
+            # and _queue.put(); shutdown() (noncanceling mode) could acquire it
+            # in that gap, post the exit sentinel first, and the worker would
+            # exit before this job ever reached the queue — a permanently
+            # queued job that never ran. Persist stays BEFORE enqueue so the
+            # "queued" line precedes its own "running" line, and _persist is
+            # genuinely non-throwing (see _append_records), so holding the lock
+            # across it cannot strand a job either.
+            self._persist(job)
+            self._queue.put((job, fn))
         return job
 
     def cancel(self, job_id: str) -> Job | None:
@@ -534,7 +576,14 @@ class JobRunner:
                     self._rev += 1
             except Exception as exc:  # any engine failure -> one-line finding
                 with self._lock:
-                    job.state = "canceled" if job.cancel_event.is_set() else "failed"
+                    # Classify as "canceled" ONLY for a genuine cooperative-
+                    # cancellation exception. The old rule — canceled iff the
+                    # cancel flag was set — misclassified an UNRELATED failure
+                    # (a ValueError invariant, a provider error) that happened
+                    # to race a cancel click as a clean user cancellation,
+                    # corrupting failure metrics, retry, and billing readings.
+                    is_cancel = job.cancel_event.is_set() and _is_cancellation_exc(exc)
+                    job.state = "canceled" if is_cancel else "failed"
                     job.error = " ".join(str(exc).split()) or exc.__class__.__name__
                     # P1-8: a ProviderCanceled unwinding here means a remote job
                     # was abandoned mid-poll — it may still complete and bill.
@@ -579,16 +628,21 @@ class JobRunner:
         if self._jobs_log_path is None or not records:
             return
         try:
+            # Serialize FIRST, outside the file handle: a non-JSON-safe record
+            # (TypeError/ValueError from json.dumps) must degrade to a dropped
+            # line, never propagate — this is disposable operational history and
+            # persistence must never break the job that triggered it.
+            lines = [json.dumps(rec, ensure_ascii=False) + "\n" for rec in records]
             with self._persist_lock:
                 self._jobs_log_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self._jobs_log_path, "a", encoding="utf-8") as f:
-                    for rec in records:
-                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    for line in lines:
+                        f.write(line)
                     f.flush()
                     # G6: NO os.fsync — jobs.jsonl is self-declared disposable
                     # operational history (module docstring), not the durable
                     # collaboration log.
-        except OSError:
+        except (OSError, TypeError, ValueError):
             pass  # operational history only — never blocks a job
 
     def _rewrite_log(self, records: list[dict[str, Any]]) -> None:
@@ -631,9 +685,19 @@ class JobRunner:
             if not line:
                 continue
             try:
-                records.append(json.loads(line))
+                rec = json.loads(line)
             except json.JSONDecodeError:
                 continue  # a torn write must not brick the scan
+            # A syntactically-valid but WRONG-SHAPE line (`[]`, `42`, `"x"`, or
+            # an object whose `id` is an array) must not brick GUI startup: the
+            # loop below assumes a mapping keyed by a scalar `id`. Accept only a
+            # dict whose `id` is a non-empty string; quarantine everything else.
+            if not isinstance(rec, dict):
+                continue
+            rid = rec.get("id")
+            if not isinstance(rid, str) or not rid:
+                continue
+            records.append(rec)
 
         if len(records) > _JOBS_LOG_CAP:
             records = records[-_JOBS_LOG_CAP:]

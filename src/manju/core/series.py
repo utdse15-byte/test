@@ -356,24 +356,31 @@ def new_episode(series: Series, eid: str, *, title: str = "", preset: str | None
     concurrent ``new_episode``/``split_script`` call reads-modifies-writes —
     two racing calls could each load it before either saves, and whichever
     saves LAST would silently drop the other's registration (a classic lost
-    update). The NEW episode directory itself needs no lock (``Project.create``
-    + the bible seed write into a path nothing else can know about until this
-    call returns), so only the register step — load config, append, save,
-    all INSIDE the series root's own ``BuildLock`` — is locked; that is the
-    one write here that touches something already known to other processes.
-    A busy series lock leaves the new project directory ON DISK but
-    UNREGISTERED — honestly reported (never silently dropped): ``Series.
-    episode_ids()`` already folds in on-disk-but-unregistered ``*.manju``
-    dirs, so a retry (or ``manju series episodes``) finds it either way.
+    update).
+
+    Audit 2026-07-20 (findings 21/22): the OLD comment claimed the episode
+    directory "needs no lock (a path nothing else can know about until this
+    call returns)". That is FALSE when two callers pass the SAME public ``eid``
+    — ``episode_project_dir(eid)`` is the same path for both, so both raced the
+    pre-check and both scaffolded it, clobbering (series.yaml title vs
+    project.yaml name diverge). And a series-lock-busy-after-scaffold left an
+    unregistered directory that a retry could never complete (it hit "already
+    exists"). Both are closed here:
+
+    * a PER-EID reservation lock (``newep-<eid>``) wraps the check + scaffold,
+      so two same-eid callers can never both scaffold (the loser gets an
+      immediate clean ``BuildLocked``); DIFFERENT eids use different lock files
+      and never contend.
+    * registration is RESUMABLE: an on-disk-but-unregistered directory (a prior
+      attempt whose series-lock register step failed) is COMPLETED on retry —
+      the scaffold is never re-run (it would clobber a bible the owner may have
+      started editing), only the series.yaml row is appended.
     """
     if not _EID_RE.match(eid):
         raise SeriesError(
             f"invalid episode id {eid!r}: use E01/E02… or a lowercase slug (a-z0-9_-)"
         )
     ep_dir = series.episode_project_dir(eid)
-    config = series.load_config()
-    if any(e.id == eid for e in config.episodes) or (ep_dir / PROJECT_FILE).exists():
-        raise SeriesError(f"episode already exists: {eid}")
 
     # Resolve the preset up-front so a bad name fails before we scaffold anything.
     spec = None
@@ -385,42 +392,63 @@ def new_episode(series: Series, eid: str, *, title: str = "", preset: str | None
         except PresetError as exc:
             raise SeriesError(str(exc)) from exc
 
-    project = Project.create(ep_dir, name=title or eid, git_init=git_init)
-    if spec is not None:
-        from ..presets import apply_preset
-
-        apply_preset(project, spec)
-
-    _seed_episode_bible(series, project)
-
     from ..runtime.buildlock import BuildLocked, build_lock
 
+    # Per-eid reservation: only ONE creator of THIS eid at a time. eid already
+    # matched _EID_RE (filename-safe), so it is a safe lock-file name segment.
     try:
-        with build_lock(series.root, actor=actor):
-            # re-read INSIDE the lock: another new_episode may have landed
-            # between our pre-check above and here — never silently clobber
-            # a concurrent registration.
-            config = series.load_config()
-            if not any(e.id == eid for e in config.episodes):
-                config.episodes.append(EpisodeRef(id=eid, title=title))
-                series.save_config(config)
+        reservation = build_lock(series.root, actor=actor, name=f"newep-{eid}")
+        reservation.__enter__()
     except BuildLocked as exc:
-        # NOTE: the project directory + its seeded bible are ALREADY on disk
-        # and safe (never rolled back — nothing else could see them yet
-        # anyway); only the series.yaml registration step failed. Re-running
-        # new_episode(eid) would now hit the "episode already exists" guard
-        # above (the directory is there), so recovery is either wait for the
-        # lock to free and hand-append {id, title} to series.yaml, or just
-        # use the project — `Series.episode_ids()` already folds in an
-        # on-disk-but-unregistered `*.manju` dir, so `manju series episodes`
-        # / `series-status` see it either way.
         raise SeriesError(
-            f"{eid} 的项目目录与 bible 已创建,但 series.yaml 正被其它进程占用"
-            f"(build_lock),未能登记 —— 等锁释放后手动在 series.yaml 里补一条 "
-            f"{{id: {eid}, title: ...}} 即可(目录已存在,重跑 new-episode 会报"
-            "\"already exists\");`manju series episodes` 已能看到这个未登记的目录。"
-            f"{' '.join(str(exc).split())}"
+            f"{eid} 正在被另一个进程创建(newep 锁被占用)—— 稍后重试即可"
+            f"({' '.join(str(exc).split())})"
         ) from exc
+    try:
+        config = series.load_config()
+        if any(e.id == eid for e in config.episodes):
+            raise SeriesError(f"episode already exists: {eid}")
+        if (ep_dir / PROJECT_FILE).exists():
+            # RESUME (finding 22): scaffolded by a prior attempt whose register
+            # step failed. Complete registration ONLY — never re-scaffold /
+            # re-seed the bible (the owner may already be editing it).
+            project = Project(ep_dir)
+            if not title:
+                # a retry with no --title must not register an empty title over
+                # the name the first attempt already wrote to project.yaml
+                try:
+                    title = project.load_config().name or ""
+                except Exception:
+                    title = ""
+        else:
+            project = Project.create(ep_dir, name=title or eid, git_init=git_init)
+            if spec is not None:
+                from ..presets import apply_preset
+
+                apply_preset(project, spec)
+            _seed_episode_bible(series, project)
+
+        try:
+            with build_lock(series.root, actor=actor):
+                # re-read INSIDE the lock: another writer (split_script,
+                # sync) may have touched series.yaml — never clobber it.
+                config = series.load_config()
+                if not any(e.id == eid for e in config.episodes):
+                    config.episodes.append(EpisodeRef(id=eid, title=title))
+                    series.save_config(config)
+        except BuildLocked as exc:
+            # The directory + seeded bible are ALREADY on disk and safe; only
+            # the series.yaml register step failed. Retry now COMPLETES the
+            # registration (the resume branch above), so the guidance finally
+            # matches reality: just re-run new-episode once the lock frees.
+            raise SeriesError(
+                f"{eid} 的目录与 bible 已就绪,但 series.yaml 正被其它进程占用"
+                f"(build_lock),未能登记 —— 等锁释放后重跑 new-episode 即可"
+                "自动补登记(不会重建目录);`manju series episodes` 也已能看到"
+                f"这个未登记的目录。{' '.join(str(exc).split())}"
+            ) from exc
+    finally:
+        reservation.__exit__(None, None, None)
 
     append_event(series.root, actor, "series_new_episode",
                  {"episode": eid, "title": title, "preset": preset})

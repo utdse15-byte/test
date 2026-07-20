@@ -135,12 +135,11 @@ def test_synthesize_inline_b64_form(tmp_project, add_shot, tmp_path, monkeypatch
 # ------------------------------------------------------------- F4: 429 mapping
 
 
-def test_tts_poll_429_is_rate_limited(tmp_project, add_shot, tmp_path, monkeypatch):
-    """F4: a 429 during TTS poll is retryable rate_limited. RED at HEAD: the tts
-    poll mapped ALL >=400 to provider_error — internally inconsistent with its
-    OWN submit path, which already special-cased 429 (F4 drift). Now both use the
-    shared status_to_kind."""
-    from manju.providers.base import FailureKind, ProviderFailure
+def test_tts_poll_429_retries_the_same_job(tmp_path, monkeypatch):
+    """Audit finding 10: a 429 while POLLING an accepted TTS job keeps polling
+    the SAME job (honoring Retry-After), never abandons it — the old code raised
+    rate_limited from the poll loop, and a higher-level retry then re-submitted
+    (double charge). Driven at the _poll seam so no audio download is needed."""
     from manju.providers.tts import get_tts_provider
 
     monkeypatch.setenv("MANJU_PROVIDERS_DIR", str(tmp_path / "p429"))
@@ -151,14 +150,15 @@ def test_tts_poll_429_is_rate_limited(tmp_project, add_shot, tmp_path, monkeypat
               "status_path": "$.data.status",
               "status_map": {"DONE": "succeeded", "RUNNING": "running"}},
     ))
-    shot = add_shot(tmp_project, "S001", dialogue={"speaker": "linxia", "text": "台词"})
-    provider = get_tts_provider("tts_p", transport=ScriptedTransport([
-        _resp({"data": {"task_id": "t1"}}),               # submit ok (async form)
-        HttpResponse(429, {}, b'{"error":"slow down"}'),  # poll 429
-    ]), sleep_fn=lambda s: None)
-    with pytest.raises(ProviderFailure) as exc:
-        provider.synthesize(tmp_project, shot, tmp_project.load_bible())
-    assert exc.value.kind is FailureKind.rate_limited
+    transport = ScriptedTransport([
+        HttpResponse(429, {"Retry-After": "0"}, b'{"error":"slow down"}'),  # retried
+        _resp({"data": {"status": "DONE", "audio_url": "https://cdn/x.wav"}}),
+    ])
+    provider = get_tts_provider("tts_p", transport=transport, sleep_fn=lambda s: None)
+    data = provider._poll("t1")
+    assert data["data"]["status"] == "DONE"
+    gets = [r for r in transport.requests if r[0] == "GET"]
+    assert len(gets) == 2  # 429 poll then the DONE poll — same job, no resubmit
 
 
 def test_tts_submit_429_stays_rate_limited(tmp_project, add_shot, tts_env):

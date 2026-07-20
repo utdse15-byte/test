@@ -111,7 +111,17 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
         yield False  # never write unlocked — drop the best-effort record
         return
     lock_path = root / lock_name
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        # WP1 contract: a best-effort append NEVER raises out — a caller that has
+        # already committed media/project state must not be told it failed just
+        # because the lock file could not be opened (a read-only .manju, an AV
+        # handle, a full disk). required → structured EvidenceWriteError.
+        if required:
+            raise EvidenceWriteError("io_error") from exc
+        yield False
+        return
     if fcntl is not None:
         # POSIX: byte-identical to the pre-W1 path (flock; only a WOULDBLOCK
         # retries — any other OSError propagates exactly as before).
@@ -167,6 +177,15 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
                     yield False  # WP1: never fall through to an unlocked write
                     return
                 time.sleep(0.02)
+            except OSError as exc:
+                # An UNEXPECTED lock error (not the WOULDBLOCK/held retry above)
+                # must obey the same never-raise contract as the open() gate —
+                # else a best-effort append could still throw out of the lock
+                # acquisition. (On Windows retry_exc already covers OSError.)
+                if required:
+                    raise EvidenceWriteError("io_error") from exc
+                yield False
+                return
         yield True
     finally:
         if locked:
@@ -174,7 +193,10 @@ def events_lock(project_root: Any, *, timeout_s: float | None = None,
                 _unlock()
             except OSError:
                 pass
-        os.close(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,

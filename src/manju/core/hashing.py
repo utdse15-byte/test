@@ -108,7 +108,11 @@ def hash_file(path: Path, chunk_size: int = 1 << 20) -> str:
     bytes take a new path / grow the size), and truth files are small and cheap
     to re-hash anyway — the window is not engineered away, it is bounded and
     documented. ``MANJU_NO_HASH_CACHE=1`` bypasses the memo entirely for any
-    caller that cannot tolerate even the theoretical window.
+    caller that cannot tolerate even the theoretical window. Additionally, a
+    miss re-stats after the read and admits the digest to the memo only if
+    ``st_size``/``st_mtime_ns`` are unchanged — a file mutated mid-read returns
+    its (possibly torn) digest exactly as the uncached path would, but is never
+    cached, so the memo can never PERSIST a torn snapshot.
 
     Memory is bounded by an LRU cap (``_HASH_CACHE_MAXSIZE``, 4096 entries) so a
     long GUI session cannot grow the memo without bound. Thread-safety: gui/jobs
@@ -137,6 +141,20 @@ def hash_file(path: Path, chunk_size: int = 1 << 20) -> str:
 
     # Miss: hash OUTSIDE the lock (CPU-bound; must not serialize other threads).
     digest = _hash_file_stream(path, chunk_size)
+
+    # TOCTOU admission gate: re-stat AFTER the read. If the file changed while we
+    # streamed it (size or mtime_ns moved, or it vanished — Windows-real: an
+    # external copy/indexer/sync touching a media dir mid-read), the digest may
+    # be a torn snapshot. Return it (byte-parity with the uncached path, which
+    # returns the same torn read) but never ADMIT it to the memo, so a mixed
+    # digest can never be served for the pre-read (path, size, mtime_ns). A hit
+    # pays nothing; a miss pays one extra stat (~µs, noise beside the full read).
+    try:
+        st_after = os.stat(path)
+    except OSError:
+        return digest  # vanished mid-read: nothing coherent to cache
+    if (st_after.st_size, st_after.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+        return digest  # changed mid-read: do not poison the memo
 
     with _hash_cache_lock:
         _hash_cache[key] = digest

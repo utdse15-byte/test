@@ -4300,7 +4300,7 @@ def transcribe(
                       hint=f"确认后重试:manju transcribe {media} --yes")
         except WaitingUser as exc:
             _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
-        segments = asr.transcribe(media_abs)
+        segments = asr.transcribe(media_abs, project_root=project.root)
         source = asr.id
 
     if not segments:
