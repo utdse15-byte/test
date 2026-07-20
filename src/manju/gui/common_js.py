@@ -16,6 +16,15 @@ glossary/workspace ``post`` (a different return contract — raw fetch / throw o
 error). Those stay in their own modules. The ``toast`` auto-dismiss delay, which
 varied cosmetically (3400/3600/4000 ms), is unified to 3600 ms.
 
+UX-WAVE-3 adds the global task bar: jobs belong to the APP window, not to the
+page that submitted them, but every server-rendered page only polled the job it
+had itself just started — navigate away and a running build became invisible
+until you found its page again. The bar (bottom-right, absent when idle) polls
+``/api/jobs``, shows active jobs with 取消, and when a job it observed active
+finishes it leaves a short-lived chip with the kind's follow-up link (审片/导出
+中心/…). The SPA home does NOT load common.js — its queue panel + hidden-tab
+notifications (UX-WAVE-2) already cover the home surface, so no double bar.
+
 The GUI has no byte-golden on any rendered JS (audit negative result), so this is
 behaviour-pinned by the full GUI test set, not a golden.
 """
@@ -135,6 +144,233 @@ if (PROJECT && location.pathname !== "/") {
     }));
   } catch (e) { /* best-effort */ }
 }
+
+/* ---- 全局任务条 UX-WAVE-3 ------------------------------------------------
+ * Read-only presentation over the existing runner — no new task system. The
+ * only client state is "which job ids were seen active on THIS page". Kind
+ * labels come lazily from /api/meta/job-kinds (the one registry — never a
+ * hard-coded kind→label copy); until it resolves the raw kind shows. Node
+ * styling is per-element cssText (CSSOM) because the pages' CSP carries
+ * style-src 'self' — a JS-injected <style> would be blocked. The 中文 state
+ * words mirror the SPA's local STATE_ZH (a fixed runner enum, not registry
+ * metadata). Polling pauses while the tab is hidden; the SPA owns the
+ * hidden-tab Web Notification channel (UX-WAVE-2), not this bar. */
+var MJ_TASKBAR_STATE_ZH = {
+  queued: "排队中", running: "运行中", canceling: "取消中",
+  canceled: "已取消", done: "完成", failed: "失败"
+};
+/* kind → [href, 中文] follow-up for "任务完成后直接给出下一步" — a
+ * presentation choice, so the map lives here in the GUI layer. */
+var MJ_TASKBAR_NEXT = {
+  build: ["/exports", "查看成片"],
+  redo: ["/review", "去审片"],
+  redo_batch: ["/review", "去审片"],
+  voice: ["/review", "去审片"],
+  voice_batch: ["/review", "去审片"],
+  qc: ["/review", "查看质检"],
+  repair: ["/review", "去审片"],
+  export: ["/exports", "打开导出中心"],
+  ingest_plan: ["/ingest", "查看导入计划"],
+  ingest: ["/storyboard", "查看分镜"],
+  handle_rebuild: ["/edit", "回剪辑"],
+  roundtrip: ["/edit", "回剪辑"],
+  edit_preview: ["/edit", "回剪辑"],
+  edit_preview_batch: ["/edit", "回剪辑"]
+};
+
+(function () {
+  if (!PROJECT) return;   /* unbound page (picker) — no runner to poll */
+  var POLL_MS = 5000;
+  var seenActive = Object.create(null);   /* id → true: observed active HERE */
+  var doneChips = [];                     /* {job, until} short-lived closers */
+  var kindLabels = null, kindLoading = false;
+  var bar = null;
+  var lastActive = [];
+  var first = true;   /* first poll only SEEDS seenActive — jobs that finished
+                         before this page opened must not "complete" now */
+
+  function loadKindLabels() {
+    if (kindLabels !== null || kindLoading) return;
+    kindLoading = true;
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/meta/job-kinds", undefined, { token: TOKEN || "" })
+      : fetch("/api/meta/job-kinds").then(function (r) { return r.json(); });
+    p.then(function (d) {
+      var map = {};
+      (((d || {}).job_kinds) || []).forEach(function (s) {
+        if (s && s.kind) map[s.kind] = s.display_name_zh || s.kind;
+      });
+      kindLabels = map;
+    }).catch(function () { kindLabels = {}; });
+  }
+
+  function ensureBar() {
+    if (bar && document.body.contains(bar)) return bar;
+    bar = document.createElement("div");
+    bar.id = "mj-taskbar";
+    bar.style.cssText = "position:fixed;right:.8rem;bottom:.8rem;z-index:800;" +
+      "display:flex;flex-direction:column;gap:.35rem;align-items:flex-end;" +
+      "font-size:.82rem;max-width:26rem;pointer-events:none";
+    document.body.appendChild(bar);
+    return bar;
+  }
+
+  function rowShell() {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:.5rem;" +
+      "background:var(--panel2, #1d222b);border:1px solid var(--line, #39404d);" +
+      "border-radius:8px;padding:.3rem .6rem;box-shadow:0 2px 8px rgba(0,0,0,.35);" +
+      "color:var(--fg, #e8eaf0);pointer-events:auto;max-width:100%";
+    return row;
+  }
+
+  function chipBtn(label, title) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    if (title) b.title = title;
+    b.style.cssText = "font-size:.78rem;cursor:pointer;background:transparent;" +
+      "border:1px solid var(--line, #39404d);border-radius:6px;" +
+      "color:inherit;padding:.1rem .5rem";
+    return b;
+  }
+
+  function mjSpan(text, css) {
+    var s = document.createElement("span");
+    s.textContent = text;
+    if (css) s.style.cssText = css;
+    return s;
+  }
+
+  function jobLabel(j) {
+    var kind = (kindLabels || {})[j.kind] || j.kind || "任务";
+    var extra = "";
+    if (j.params && typeof j.params.shot === "string") extra = " " + j.params.shot;
+    else if (j.params && typeof j.params.lang === "string") extra = " " + j.params.lang;
+    return kind + extra;
+  }
+
+  function renderTaskbar() {
+    var host = ensureBar();
+    while (host.firstChild) host.removeChild(host.firstChild);
+    var now = Date.now();
+    doneChips = doneChips.filter(function (c) { return c.until > now; });
+    if (!lastActive.length && !doneChips.length) {
+      host.style.display = "none";
+      return;
+    }
+    host.style.display = "flex";
+
+    doneChips.forEach(function (c) {
+      var j = c.job;
+      var row = rowShell();
+      var waiting = !!(j.result && j.result.waiting_user === true);
+      var failed = j.state === "failed";
+      var mark = failed ? "✗" : (waiting ? "⏸" : (j.state === "canceled" ? "◌" : "✓"));
+      row.appendChild(mjSpan(
+        mark + " " + jobLabel(j) + " · "
+          + (waiting ? "待确认花费" : (MJ_TASKBAR_STATE_ZH[j.state] || j.state)),
+        failed ? "color:var(--err, #ff7b72)" : ""));
+      if (failed && j.error) {
+        var e = mjSpan(String(j.error).slice(0, 90),
+          "color:var(--muted, #98a1b3);max-width:14rem;overflow:hidden;" +
+          "text-overflow:ellipsis;white-space:nowrap");
+        e.title = String(j.error);
+        row.appendChild(e);
+      }
+      /* 完成后的下一步: waiting_user outranks the kind map — the spend plan
+       * needs CONFIRMING back on the home panel, not admiring. Failed gets
+       * 重试, not a link. A link to the page we are already on is noise. */
+      var next = waiting ? ["/", "查看计划,确认"] : (failed ? null : MJ_TASKBAR_NEXT[j.kind]);
+      if (next && location.pathname !== next[0]) {
+        var a = document.createElement("a");
+        a.href = next[0];
+        a.textContent = next[1] + " →";
+        a.style.cssText = "color:var(--accent, #6ea8fe);text-decoration:none";
+        row.appendChild(a);
+      }
+      if (failed && j.retryable) {
+        var rb = chipBtn("重试", "重新提交同一任务 (retry)");
+        rb.addEventListener("click", function () {
+          rb.disabled = true;
+          post("/api/jobs/retry", { job_id: j.id }).then(function (r) {
+            if (r.status >= 400) {
+              toast("重试失败: " + ((r.data || {}).error || r.status), false);
+              rb.disabled = false;
+            } else { c.until = 0; mjTaskbarTick(); }
+          });
+        });
+        row.appendChild(rb);
+      }
+      var x = chipBtn("✕", "关闭 (dismiss)");
+      x.addEventListener("click", function () { c.until = 0; renderTaskbar(); });
+      row.appendChild(x);
+      host.appendChild(row);
+    });
+
+    lastActive.forEach(function (j) {
+      var row = rowShell();
+      var txt = jobLabel(j) + " · " + (MJ_TASKBAR_STATE_ZH[j.state] || j.state)
+        + (j.progress ? " · " + j.progress : "");
+      row.appendChild(mjSpan((j.state === "running" ? "⏳ " : "⌛ ") + txt));
+      if (j.cancelable) {
+        var cb = chipBtn("取消", "取消该任务 (cancel)");
+        cb.addEventListener("click", function () {
+          cb.disabled = true;
+          post("/api/jobs/cancel", { job_id: j.id }).then(function (r) {
+            if (r.status >= 400) {
+              toast("取消失败: " + ((r.data || {}).error || r.status), false);
+              cb.disabled = false;
+            } else mjTaskbarTick();
+          });
+        });
+        row.appendChild(cb);
+      }
+      host.appendChild(row);
+    });
+  }
+
+  function handleJobs(jobs) {
+    var active = [];
+    jobs.forEach(function (j) {
+      if (!j || !j.id) return;
+      if (j.state === "queued" || j.state === "running" || j.state === "canceling") {
+        active.push(j);
+        seenActive[j.id] = true;
+        return;
+      }
+      if (first) return;   /* pre-existing history: never announce */
+      if (seenActive[j.id]
+          && (j.state === "done" || j.state === "failed" || j.state === "canceled")) {
+        delete seenActive[j.id];
+        var sticky = j.state === "failed"
+          || !!(j.result && j.result.waiting_user === true);
+        /* failed / 待确认花费 need ACTION — they stay (10 min or ✕);
+         * plain completions self-dismiss after 12 s. */
+        doneChips.push({ job: j, until: Date.now() + (sticky ? 600000 : 12000) });
+      }
+    });
+    first = false;
+    if (active.length || doneChips.length) loadKindLabels();
+    lastActive = active;
+    renderTaskbar();
+  }
+
+  function mjTaskbarTick() {
+    if (document.hidden) return;
+    var p = (typeof requestJson === "function")
+      ? requestJson("GET", "/api/jobs", undefined, { token: TOKEN || "" })
+      : fetch("/api/jobs").then(function (r) { return r.json(); });
+    p.then(function (d) { handleJobs((d && d.jobs) || []); })
+     .catch(function () { /* dead server is the browser's problem */ });
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) mjTaskbarTick();
+  });
+  setInterval(mjTaskbarTick, POLL_MS);
+  mjTaskbarTick();
+})();
 
 function toast(msg, ok) {
   var t = document.getElementById("toast");

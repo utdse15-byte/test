@@ -437,6 +437,16 @@ dialog.editor::backdrop { background: rgba(8, 9, 12, .72); }
 }
 .ed-errors { margin-top: .5rem; }
 .ed-errors:empty { display: none; }
+/* 草稿保护 (UX-WAVE-3): the restore-offer bar shown ABOVE the textarea when a
+   surviving draft differs from the on-disk text. Calm amber — an offer, not
+   an error; restoring is one click and always explicit. */
+.ed-draft {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  border: 1px solid #5a4718; background: #241d10; border-radius: 8px;
+  padding: .35rem .6rem; margin-top: .5rem; font-size: .8rem;
+}
+.ed-draft-msg { color: var(--warn); }
+.ed-draft-warn { color: var(--err); font-size: .76rem; }
 .ed-err-title { color: var(--err); font-weight: 700; margin: .2rem 0; font-size: .88rem; }
 .ed-err { color: var(--err); margin: .15rem 0; font-size: .84rem; white-space: pre-wrap; }
 /* live validation strip (debounced /api/validate): a persistent, advisory
@@ -2566,6 +2576,7 @@ _JS = r"""
         label,
         hints,
         validate: { kind: vkind },   /* live keystroke validation for this truth file */
+        draftPath: label,   /* UX-WAVE-3: TRUTH_LABELS values ARE the相对路径 */
       });
     } catch (err) {
       toast("无法加载 (cannot load) " + label + ": " + errMsg(err), "err");
@@ -4294,6 +4305,7 @@ _JS = r"""
       validate: { kind: "shot", id },   /* live keystroke validation for this shot */
       impact: { shot: id },   /* WP1: debounced chain-reaction preview on dialogue */
       rev,   /* round AA item 5 (#1): CAS token, echoed back on Save below */
+      draftPath: "shots/" + id + ".yaml",   /* UX-WAVE-3: crash-loss draft识别键 */
     });
   }
 
@@ -4393,6 +4405,80 @@ _JS = r"""
     ta.spellcheck = false;
     ta.value = opts.yaml;   /* property assignment — arbitrary text is safe */
     dlg.appendChild(ta);
+
+    /* ---- 草稿保护 (UX-WAVE-3): the /api/ui-state/draft store existed with
+     * ZERO consumers — twenty minutes of typing died with a crash or a
+     * mis-click. While typing, the buffer is mirrored (debounced 900 ms)
+     * into the personal UI store — NEVER into project truth. On reopen, a
+     * surviving draft that differs from the on-disk text is OFFERED for
+     * one-click restore (never auto-applied); a successful Save clears it.
+     * Everything is best-effort: a failed draft call never blocks editing. */
+    const draftPath = (typeof opts.draftPath === "string" && opts.draftPath) || null;
+    let draftTimer = null;
+    let draftDone = false;   /* save succeeded / dialog reused: stop mirroring */
+    const draftPost = (body) => {
+      body.relative_file_path = draftPath;
+      return apiRaw("POST", "/api/ui-state/draft", body).catch(() => null);
+    };
+    const scheduleDraft = () => {
+      if (!draftPath || draftDone) return;
+      if (draftTimer) clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => {
+        draftTimer = null;
+        if (draftDone) return;
+        if (ta.value === opts.yaml) { draftPost({ action: "clear" }); return; }
+        const b = { draft_text: ta.value };
+        if (opts.rev !== undefined && opts.rev !== null) b.expected_rev = opts.rev;
+        draftPost(b);
+      }, 900);
+    };
+    const settleDraft = () => {   /* the ONE save-success hook */
+      draftDone = true;
+      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+      if (draftPath) draftPost({ action: "clear" });
+    };
+    if (draftPath) {
+      ta.addEventListener("input", scheduleDraft);
+      api("GET", "/api/ui-state?draft=" + encodeURIComponent(draftPath)).then((d) => {
+        const dr = d && d.draft;
+        if (!dr || typeof dr.draft_text !== "string") return;
+        if (draftDone || !ta.isConnected) return;   /* dialog already gone */
+        if (dr.draft_text === ta.value) {
+          draftPost({ action: "clear" });   /* buffer == draft: nothing to offer */
+          return;
+        }
+        const bar = el("div", "ed-draft");
+        const when = String(dr.updated_at || "").replace("T", " ").slice(0, 16);
+        bar.appendChild(el("span", "ed-draft-msg",
+          "检测到未保存草稿 (unsaved draft)" + (when ? " · " + when : "")));
+        if (opts.rev && dr.expected_rev && dr.expected_rev !== opts.rev) {
+          bar.appendChild(el("span", "ed-draft-warn",
+            "当前文件在草稿之后已变化 (the file changed since this draft)"));
+        }
+        const use = el("button", "btn mini", "恢复草稿 (restore)");
+        use.type = "button";
+        use.addEventListener("click", () => {
+          if (ta.value !== opts.yaml && !window.confirm(
+            "编辑区已有改动,确定用草稿覆盖? (buffer has edits — replace with the draft?)")) {
+            return;
+          }
+          ta.value = dr.draft_text;   /* buffer only — Save 仍走同一 CAS 闸门 */
+          bar.remove();
+          scheduleDraft();
+          ta.focus();
+        });
+        const drop = el("button", "btn ghost mini", "删除草稿 (discard)");
+        drop.type = "button";
+        drop.addEventListener("click", () => {
+          draftPost({ action: "clear" });
+          bar.remove();
+          ta.focus();
+        });
+        bar.appendChild(use);
+        bar.appendChild(drop);
+        dlg.insertBefore(bar, ta);
+      }).catch(() => { /* draft read is advisory — the editor stands alone */ });
+    }
 
     /* ---- live validation strip (VS Code settings.json debounce pattern) ----
      * On each typing pause we POST /api/validate {kind, yaml, id?} and render a
@@ -4657,6 +4743,7 @@ _JS = r"""
         const r = await apiRaw("POST", opts.saveUrl, saveBody);
         if (r.ok) {
           const d = r.data || {};
+          settleDraft();   /* UX-WAVE-3: truth updated — the mirror is stale */
           toast(d.created ? "已创建 " + opts.label + " (created)"
             : "已保存 " + opts.label + " (saved)", "ok");
           const warns = Array.isArray(d.warnings) ? d.warnings : [];
