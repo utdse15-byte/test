@@ -4124,10 +4124,12 @@ def align(
             typer.echo(f"align plan  media={plan.get('media')}  "
                        f"duration={plan.get('duration_ms')}ms  source={plan.get('source')}")
             for i, r in enumerate(plan.get("rows") or [], 1):
+                # collapse newlines: a multi-line dialogue must not break the row
+                preview = " ".join((r.get("matched_text") or "").split())[:30]
                 typer.echo(
                     f"  {i}. {r['shot']}  [{r.get('start_ms')}-{r.get('end_ms')}]ms  "
                     f"conf={r.get('confidence')}  state={r.get('state')}  "
-                    f"{(r.get('matched_text') or '')[:30]}"
+                    f"{preview}"
                 )
             if plan.get("unmatched"):
                 typer.secho(f"  unmatched: {', '.join(plan['unmatched'])}",
