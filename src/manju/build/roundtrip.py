@@ -53,24 +53,38 @@ def detect_kind(data: Any, path: Path) -> str:
 
 
 def find_baseline(project: Project, edited: Path) -> Path | None:
-    """Locate exports/<kind>/.baseline/<stem>.json near the edited file."""
+    """Locate exports/<kind>/.baseline/<name>.json near the edited file.
+
+    Two real layouts (see the exporters):
+
+    - OTIO:     exports/otio/<name>.otio        + exports/otio/.baseline/<name>.json
+      → the edited file's own STEM names the baseline;
+    - JianYing: exports/jianying/<name>/draft_content.json
+                + exports/jianying/.baseline/<name>.json
+      → the DRAFT DIRECTORY's name (not the file stem) names the baseline,
+      one level further up. The old stem-only walk never matched it, silently
+      disabling caption-edit detection and truth-moved conflict refusal for
+      the whole JianYing round-trip.
+    """
     edited = Path(edited)
-    # Walk up looking for .baseline sibling
+    # candidate baseline file names, most specific first
+    names = [f"{edited.stem}.json"]
+    if edited.parent.name and edited.parent.name != edited.stem:
+        names.append(f"{edited.parent.name}.json")  # draft-dir mapping (JianYing)
+    # Walk up looking for a .baseline sibling
     for parent in [edited.parent, *edited.parents]:
-        base = parent / ".baseline" / f"{edited.stem}.json"
-        if base.exists():
-            return base
-        # also try draft_content stem mapping
-        base2 = parent / ".baseline" / f"{parent.name}.json"
-        if base2.exists() and parent.name:
-            return base2
+        for name in names:
+            cand = parent / ".baseline" / name
+            if cand.exists():
+                return cand
     # Project-wide search under exports/
     exports = project.root / "exports"
     if exports.exists():
-        for p in exports.rglob(".baseline"):
-            cand = p / f"{edited.stem}.json"
-            if cand.exists():
-                return cand
+        for p in sorted(exports.rglob(".baseline"), key=lambda q: q.as_posix()):
+            for name in names:
+                cand = p / name
+                if cand.exists():
+                    return cand
     return None
 
 
@@ -507,7 +521,27 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
         else:
             cues = _captions_from_jianying(data)
             base_cues = _captions_from_jianying(baseline_doc) if baseline_doc else None
-        if cues and base_cues:
+        if cues and base_cues and len(cues) != len(base_cues):
+            # Insert/delete in the NLE: the diff below is PURELY POSITIONAL
+            # (zip + index patch) — with shifted pairs every later cue reads
+            # as "edited" and --apply would rewrite captions.srt into
+            # duplicated/lost cues. v1 honestly supports text/timing edits
+            # only; a count change is surfaced as a non-appliable conflict
+            # instead of corrupting truth.
+            rows.append({
+                "class": "caption_edit",
+                "state": "conflict",
+                "evidence": {
+                    "why": (f"字幕条数变化({len(base_cues)} → {len(cues)}):"
+                            "v1 round-trip 不支持增删字幕,逐条对位会错位覆写;"
+                            "请直接编辑 captions/captions.srt(或 GUI /subtitles)"),
+                    "baseline_cues": len(base_cues),
+                    "edited_cues": len(cues),
+                },
+                "target": "captions/captions.srt",
+                "action": None,
+            })
+        elif cues and base_cues:
             for i, (c, b) in enumerate(zip(cues, base_cues)):
                 if (c.get("text") != b.get("text")
                         or c.get("start_ms") != b.get("start_ms")
@@ -623,15 +657,37 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                 meta = seg.get("manju") or {}
                 if not isinstance(meta, dict):
                     meta = {}
-                # Also derive mute/gain from JianYing volume field if manju absent
-                if "source_mute" not in meta and seg.get("muted"):
+                # The LIVE JianYing fields (muted / volume) override the manju
+                # export stamps: the stamps are frozen at export time, so for a
+                # clip exported with non-default gain/mute they would forever
+                # SHADOW the user's later volume/un-mute edits (the stamp equals
+                # the baseline stamp → no diff row → edit silently dropped).
+                # Stamps remain the fallback when the live fields are absent.
+                if "muted" in seg:
+                    meta = {**meta, "source_mute": bool(seg.get("muted"))}
+                elif "source_mute" not in meta and seg.get("muted"):
                     meta = {**meta, "source_mute": True}
-                if "source_gain_db" not in meta and "volume" in seg and not seg.get("muted"):
+                if "volume" in seg and not seg.get("muted"):
                     try:
                         vol = float(seg["volume"])
                         if vol > 0:
                             import math
-                            meta = {**meta, "source_gain_db": round(20 * math.log10(vol), 2)}
+
+                            # tolerance 0.005 linear: a hand-written volume 0.5
+                            # "meaning" the stamp's -6.0dB (exact would be
+                            # 0.50119) must read UNMOVED — the stamp is the
+                            # precise value; only a clearly different volume
+                            # (a real drag in JianYing) overrides it.
+                            stamp = meta.get("source_gain_db")
+                            unmoved = (
+                                isinstance(stamp, (int, float))
+                                and not isinstance(stamp, bool)
+                                and abs(min(2.0, 10 ** (float(stamp) / 20.0)) - vol) < 0.005
+                            )
+                            if not unmoved:  # volume actually moved → live wins
+                                meta = {**meta,
+                                        "source_gain_db": round(20 * math.log10(vol), 2)}
+                            meta = {**meta, "source_mute": False}
                     except Exception:
                         pass
                 shot = _normalize_shot_id(meta.get("shot"))
@@ -883,9 +939,15 @@ def apply_roundtrip(
             except Exception as exc:
                 skipped.append({"index": i, "reason": str(exc)[:200]})
 
-    batch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    base_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     batch_dir = project.root / "reports" / "roundtrip_batches"
     batch_dir.mkdir(parents=True, exist_ok=True)
+    # two applies inside the same second (scripted/MCP-driven) must not
+    # overwrite each other's audit record — probe a free suffix
+    batch_id, serial = base_id, 2
+    while (batch_dir / f"{batch_id}.yaml").exists():
+        batch_id = f"{base_id}-{serial}"
+        serial += 1
     batch = {
         "id": batch_id, "kind": "roundtrip",
         "applied": applied, "skipped": skipped,

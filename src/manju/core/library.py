@@ -316,7 +316,19 @@ class Library:
             blob_name = _hex(content_hash) + ext
             blob = self.root / blob_name
             if not blob.exists():  # content-addressed: identical bytes, identical name
-                shutil.copy2(src, blob)
+                # Atomic publish: an interrupted copy must never leave a torn
+                # file AT the content-addressed name — this exists() guard (and
+                # every later reader) trusts that name unconditionally, so a
+                # partial blob would be reused, and propagated into projects,
+                # forever. Temp sibling + os.replace = complete-or-absent.
+                tmp = blob.with_name(blob.name + f".{os.getpid()}.part")
+                try:
+                    shutil.copy2(src, tmp)
+                    os.replace(tmp, blob)
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        tmp.unlink()
+                    raise
             entry: dict[str, Any] = {
                 "hash": content_hash,
                 "blob": blob_name,
@@ -459,6 +471,10 @@ def suggest_from_library(project: Any, shot: Any, *,
         bible = {}
 
     candidates: set[str] = set()
+    shot_id = getattr(shot, "id", None)
+    if shot_id:  # the shot's own id is a documented match key (docstring above)
+        candidates.add(str(shot_id))
+        candidates |= _entry_tag_candidates(bible.get(str(shot_id)))
     scene = getattr(shot, "scene", None)
     if scene:
         candidates.add(str(scene))

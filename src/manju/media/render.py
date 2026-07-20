@@ -1047,11 +1047,15 @@ def _build_audio_graph(
         inputs += ["-i", str(project.resolve(clip.source))]
         chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
         chain += _bed_seek_head(clip)  # round-T in-point (byte-stable when 0)
+        # fade-in BEFORE adelay: afade st=0 after adelay ramps the INSERTED
+        # silence, so a bed starting at start_ms>0 entered at full volume with
+        # its fade already spent. Fading the source head first, then delaying,
+        # puts the audible ramp where the bed actually enters.
+        chain += _bed_fade_in(clip)  # round-T fade-in (byte-stable when 0)
         if clip.start_ms > 0:
             chain.append(f"adelay={clip.start_ms}:all=1")
         if clip.gain_db:
             chain.append(f"volume={clip.gain_db}dB")
-        chain += _bed_fade_in(clip)  # round-T fade-in (byte-stable when 0)
         chain.append("apad")
         chain.append(f"atrim=0:{total_s:.3f}")
         if clip.fade_out_ms > 0:
@@ -1080,11 +1084,12 @@ def _build_audio_graph(
             inputs += ["-i", str(project.resolve(clip.source))]
         chain = ["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
         chain += _bed_seek_head(clip)  # round-T in-point (byte-stable when 0)
+        # fade-in BEFORE adelay — same reasoning as the music lane above
+        chain += _bed_fade_in(clip)  # round-T fade-in (byte-stable when 0)
         if clip.start_ms > 0:
             chain.append(f"adelay={clip.start_ms}:all=1")
         if clip.gain_db:
             chain.append(f"volume={clip.gain_db}dB")
-        chain += _bed_fade_in(clip)  # round-T fade-in (byte-stable when 0)
         chain.append("apad")
         chain.append(f"atrim=0:{total_s:.3f}")
         if clip.fade_out_ms > 0:
@@ -1326,7 +1331,7 @@ def _read_key_sidecar(media_path: Path) -> str | None:
     try:
         data = json.loads(sidecar.read_text(encoding="utf-8"))
         return str(data.get("final_key", "")) or None
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
 
 

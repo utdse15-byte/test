@@ -68,8 +68,16 @@ class AppShutdownCoordinator:
         with self._lock:
             already = self._server.closing.is_set()
             self._server.closing.set()
+            upgraded = (mode == "cancel_running" and self._mode == "after_current")
             self._mode = mode
             if self._thread is not None and self._thread.is_alive():
+                if upgraded:
+                    # 「等它跑完再退」升级为「取消并退出」必须真的取消:光改
+                    # self._mode 只换了应答里的标签,运行中的任务会继续跑完。
+                    # runner.shutdown 是幂等的,cancel_running 分支在任何一次
+                    # 调用都会置 cancel 标志(见 jobs.py)。
+                    self._last_report = self._server.runner.shutdown(
+                        timeout=0, cancel_queued=True, cancel_running=True)
                 return self._payload(
                     code="quit_already_in_progress" if not self._stuck else "quit_stuck",
                     mode=self._mode or mode,

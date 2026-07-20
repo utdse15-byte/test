@@ -17,6 +17,7 @@ Three on-ramps (mirroring ``manju transcribe``):
 from __future__ import annotations
 
 import json
+import os
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -386,13 +387,24 @@ def apply_multi_shot(
     if not media.is_absolute():
         candidate = project.root / media
         media = candidate if candidate.exists() else Path(plan["media"])
-    # Copy foreign source into imports first
+    # Copy foreign source into imports first — via a temp sibling + os.replace:
+    # media/imports is append-only truth, and a torn direct copy would be
+    # REUSED on the next run by the exists() guard (complete-or-absent only).
     if not _inside_project(media, project):
         imports = project.root / "media" / "imports"
         imports.mkdir(parents=True, exist_ok=True)
         dest_imp = imports / media.name
         if not dest_imp.exists():
-            shutil.copy2(media, dest_imp)
+            tmp_imp = dest_imp.with_name(dest_imp.name + f".{os.getpid()}.part")
+            try:
+                shutil.copy2(media, tmp_imp)
+                os.replace(tmp_imp, dest_imp)
+            except BaseException:
+                try:
+                    tmp_imp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
         media = dest_imp
 
     all_rows = plan.get("rows") or []
@@ -452,9 +464,39 @@ def apply_multi_shot(
             # .sidecar.yaml (MANUAL), WITH .timing.json.
             tdir = project.takes_dir(sid)
             tdir.mkdir(parents=True, exist_ok=True)
-            name = project.next_voice_take_name(sid)
-            dest = tdir / f"{name}.wav"
-            shutil.copy2(out, dest)
+            # Exclusive-create + fsync publish (the register_voice_take
+            # discipline): a bare copy2 at the final voice_take_NN.wav name
+            # could (a) tear on interruption — and a sidecar-less torn wav is
+            # MANUAL voice truth, never auto-invalidated — and (b) collide
+            # with a concurrent registration minting the same number.
+            data = out.read_bytes()
+            dest = None
+            name = ""
+            for _ in range(32):
+                name = project.next_voice_take_name(sid)
+                candidate = tdir / f"{name}.wav"
+                try:
+                    fd = os.open(str(candidate),
+                                 os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                except FileExistsError:
+                    continue
+                try:
+                    with os.fdopen(fd, "wb") as fh:
+                        fh.write(data)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                except BaseException:
+                    try:
+                        candidate.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+                dest = candidate
+                break
+            if dest is None:
+                skipped.append({"index": i, "shot": sid,
+                                "reason": "could not allocate voice take name"})
+                continue
             # timing shifted to slice-local (start at 0)
             local_words = [{
                 "start_ms": 0,
@@ -472,9 +514,14 @@ def apply_multi_shot(
             })
 
     # Batch record (ingest-style)
-    batch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    base_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     batch_dir = project.root / "reports" / "ingest_batches"
     batch_dir.mkdir(parents=True, exist_ok=True)
+    # same-second applies must not overwrite each other's audit record
+    batch_id, serial = base_id, 2
+    while (batch_dir / f"{batch_id}.yaml").exists():
+        batch_id = f"{base_id}-{serial}"
+        serial += 1
     batch = {
         "id": batch_id,
         "kind": "align_multi",

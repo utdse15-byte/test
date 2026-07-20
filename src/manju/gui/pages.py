@@ -2132,10 +2132,13 @@ _PAGES_JS = r"""
       }
       else if (act === "ai-ctx") {
         /* 交给 Claude (#50): a clean, structured task context — the AI lives
-         * OUTSIDE the GUI (§0); this hands it exactly what the card knows. */
+         * OUTSIDE the GUI (§0); this hands it exactly what the card knows.
+         * NB: read data-take HERE — the hoisted `var take` from the note
+         * branch is undefined on this path and always copied "(未选用)". */
+        var ctxTake = s.getAttribute("data-take");
         var cl = [
           "镜头: " + shot,
-          "当前选用: " + (take || "(未选用)"),
+          "当前选用: " + (ctxTake || "(未选用)"),
           "构建状态: " + (s.getAttribute("data-buildstate") || "?"),
           "审片状态: " + (s.getAttribute("data-review") || "needs_review"),
         ];

@@ -882,7 +882,10 @@ def _load_voice_timing(voice: Path) -> list[dict] | None:
         return None
     try:
         words = json.loads(timing_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
+        # ValueError covers BOTH bad JSON and a torn-multibyte UnicodeDecodeError
+        # — either way the malformed sidecar degrades to the weighted-split
+        # fallback, never crashes the compile.
         return None
     # Only a WELL-FORMED word list is handed on; a malformed/legacy sidecar
     # degrades to None (weighted-split fallback) rather than crashing the compile.

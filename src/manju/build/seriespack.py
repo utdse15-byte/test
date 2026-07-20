@@ -566,10 +566,19 @@ def export_template_pack(project: Project, out_zip: Path | str, *,
         {"sel": selections, "media": media_index,
          "members": sorted(seen)})
     manifest_text = dump_yaml(manifest)
-    for pattern in SECRET_PATTERNS:  # the ONE token list — a pack never carries a key
-        if pattern.search(manifest_text):
-            raise SeriesPackError("模板包含类 API key 的 token — 拒绝导出")
     _add("manifest.yaml", manifest_text.encode("utf-8"))
+    # the ONE token list — a pack never carries a key. Scan EVERY text member
+    # (bible entries, style, rules, delivery/voice profiles, the manifest):
+    # a key pasted into a bible note must refuse the export exactly like one
+    # in the manifest. Content-addressed media blobs stay unscanned (binary).
+    for arcname, data in members:
+        if arcname.startswith("media/"):
+            continue
+        text = data.decode("utf-8", errors="replace")
+        for pattern in SECRET_PATTERNS:
+            if pattern.search(text):
+                raise SeriesPackError(
+                    f"模板成员 {arcname} 含类 API key 的 token — 拒绝导出")
 
     members.sort(key=lambda t: t[0])  # stable order
     sums: list[str] = []
@@ -671,7 +680,15 @@ def import_template_pack(project: Project, zip_path: Path | str, *,
                 if on_conflict == "skip":
                     conflicts.append({"id": aid, "action": "skipped_local_kept"})
                     continue
+                # NEVER a silent overwrite (ruling 6) — `<id>_imported` may
+                # itself already exist (a re-import of the same pack, or a
+                # second pack sharing ids): probe upward until a free id.
+                taken = set(local_bible) | {fid for fid, _a, _e in plan}
                 new_id = f"{aid}_imported"
+                serial = 2
+                while new_id in taken:
+                    new_id = f"{aid}_imported_{serial}"
+                    serial += 1
                 conflicts.append({"id": aid, "action": "renamed", "to": new_id})
                 plan.append((new_id, "rename", entry))
             else:

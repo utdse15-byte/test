@@ -1399,9 +1399,15 @@ def test_caption_clip_deep_links_to_its_cue_row():
     class _C:
         start_ms, end_ms, text = 0, 1000, "你好"
 
-    assert 'href="/subtitles#cue-3"' in _caption_block(_C(), 3, 10)
+    # /subtitles rows are id'd 1-BASED (captions_edit numbers cues from 1), so
+    # the lane's 0-based enumerate index i must link to cue-(i+1) — the old
+    # pin asserted href cue-3 for i=3, which landed every link one row early
+    # (and made the first cue's link dead).
+    assert 'href="/subtitles#cue-4"' in _caption_block(_C(), 3, 10)
     assert 'id="cue-7"' in _cue_row({"index": 7, "start_ms": 0, "end_ms": 1,
                                      "text": "x"})
+    # the two sides agree: the block for enumerate-index 6 targets row id cue-7
+    assert 'href="/subtitles#cue-7"' in _caption_block(_C(), 6, 10)
     assert "landOnCue" in _PAGES_T_JS and "#cue-" in _PAGES_T_JS
 
 

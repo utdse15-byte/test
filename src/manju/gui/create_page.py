@@ -98,14 +98,24 @@ def skill_payload(project: Any, skill_id: str) -> dict[str, Any]:
             "text": skill_text(project, skill_id)}
 
 
+# Sentinel: the file EXISTS but its bytes could not be read faithfully. This
+# must be distinguishable from "absent" — the editor renders absent as an empty
+# "保存即创建" textarea whose save then OVERWRITES the real file. With
+# errors="ignore" a GBK-saved story file also used to lose every non-UTF-8 byte
+# (all its Chinese) on the way INTO the textarea, so a save destroyed the truth.
+_UNREADABLE = "__manju_unreadable__"
+
+
 def _read(project: Any, relpath: str) -> str | None:
     path = project.root / relpath
     if not path.exists():
         return None
     try:
-        return path.read_text(encoding="utf-8", errors="ignore")
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return _UNREADABLE
     except OSError:
-        return None
+        return _UNREADABLE
 
 
 # ------------------------------------------------------------------ shell
@@ -190,6 +200,20 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
     sid, cn = s["id"], s["cn"]
     relpath = files[sid]
     text = _read(project, relpath)
+    if text == _UNREADABLE:
+        # refuse the editor outright: rendering an empty/mangled textarea over
+        # an existing file invites a save that destroys it
+        return (
+            f'<section class="cw-editor{"" if active else " hidden"}" '
+            f'data-stage="{_e(sid)}">'
+            f'<div class="cw-eh"><h2>{_e(cn)} '
+            f'<span class="muted">· {_e(relpath)}</span></h2></div>'
+            f'<p class="err">{_e(relpath)} 存在但无法按 UTF-8 读取'
+            '(可能是 GBK/ANSI 编码,或被其他程序占用)。'
+            '为避免覆盖丢失内容,本页不提供编辑;请把文件另存为 UTF-8 '
+            '(VS Code/记事本另存为 → UTF-8)后刷新。</p>'
+            '</section>'
+        )
     exists = text is not None
     scaffoldable = sid in SCAFFOLDS
 

@@ -257,7 +257,9 @@ def _caption_impact(
                     {"start_ms": s.start_ms, "end_ms": s.end_ms, "text": s.text}
                     for s in segs
                 ]
-            except OSError:
+            except (OSError, UnicodeDecodeError, ValueError):
+                # a GBK/ANSI-saved or malformed manual SRT degrades this
+                # ADVISORY report to "no cues", never crashes the whole impact
                 cue_list = []
         manual_note = (
             "人工接管字幕不会自动移动;修改台词后需人工校准这些字幕的时间轴"

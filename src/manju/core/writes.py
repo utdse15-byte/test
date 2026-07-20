@@ -182,6 +182,20 @@ def checked_shot_write(
     return {"ok": True, "shot": shot_id, "check_warnings": after.warnings}
 
 
+def ensure_mapping(d: dict, key: str) -> dict:
+    """``d[key]`` as a dict, coercing a non-mapping value to ``{}`` in place.
+
+    Text is truth: hand-edited shot YAML is a first-class input, and a bare
+    ``status:`` / ``camera:`` key parses to ``None`` — ``setdefault(key, {})``
+    then returns that ``None`` and the caller crashes. Every raw-dict writer
+    that needs a nested mapping goes through here (the one owner)."""
+    cur = d.get(key)
+    if not isinstance(cur, dict):
+        cur = {}
+        d[key] = cur
+    return cur
+
+
 # One dotted-path family guards every selected_take write: a lock recorded as
 # either the leaf ("status.selected_take") or its parent ("status") blocks.
 _SELECTED_TAKE_GUARD = ("status", "status.selected_take")
@@ -209,10 +223,13 @@ def select_take_checked(
     if project.get_take(shot_id, take) is None:
         raise WriteRejected(f"{shot_id} has no take '{take}'")
 
+    def _set_selected(d: dict) -> None:
+        ensure_mapping(d, "status")["selected_take"] = take
+
     result = checked_shot_write(
         project,
         shot_id,
-        lambda d: d.setdefault("status", {}).__setitem__("selected_take", take),
+        _set_selected,
         guard_paths=_SELECTED_TAKE_GUARD,
         on_locked=(
             f"{shot_id}.status.selected_take is locked (已锁定) — 拒绝自动/写入口改选;"

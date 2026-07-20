@@ -1069,8 +1069,11 @@ def _video_block(project: Any, vc: Any, total: int) -> str:
 
 def _caption_block(c: Any, i: int, total: int) -> str:
     dur = max(1, int(c.end_ms) - int(c.start_ms))
+    # /subtitles rows are id'd 1-BASED (captions_edit numbers cues from 1):
+    # a 0-based anchor made the first cue's link dead and every other link
+    # land on the previous cue. data-cue stays 0-based (lane-internal index).
     return (
-        f'<a class="ed-lane-clip ed-cclip" href="/subtitles#cue-{i}" '
+        f'<a class="ed-lane-clip ed-cclip" href="/subtitles#cue-{i + 1}" '
         f'data-cue="{i}" data-ms-start="{int(c.start_ms)}" data-ms-dur="{dur}" '
         f'data-total="{total}" title="{_e(c.text)}">'
         f'<span class="ed-clip-t">{_e(c.text)}</span></a>')
@@ -1207,19 +1210,30 @@ def _inspector(project: Any, sid: str, rel: str | None, sel: str | None,
     # --- Trim (scrub strip + in/out) ---
     p.append('<div class="ed-block"><h3>裁剪 Trim</h3>')
     if rel:
-        p.append('<div class="ed-scrub">')
+        # the selected take's cached probe duration (sidecar, no ffmpeg on a
+        # page GET) lets the scrub clicks convert frame-fraction → real ms
+        dur_ms: int | None = None
+        if sel:
+            try:
+                t = project.get_take(sid, sel)
+                if t is not None and t.sidecar.probe and t.sidecar.probe.duration_ms:
+                    dur_ms = int(t.sidecar.probe.duration_ms)
+            except Exception:
+                dur_ms = None
+        p.append(f'<div class="ed-scrub" data-dur-ms="{dur_ms if dur_ms else ""}">')
         for i in range(STRIP_COUNT):
             src = ("/edit/strip?take=" + quote(rel, safe="")
                    + f"&i={i}&n={STRIP_COUNT}&w=140")
             p.append(f'<img class="ed-scrub-f" loading="lazy" alt="" '
                      f'data-i="{i}" src="{_e(src)}">')
         p.append("</div>")
+        out_default = dur_ms if dur_ms else 1000
         p.append(
             '<div class="ed-trim-row">'
             f'<label>入点 in (ms) <input class="ed-in ed-num" type="number" '
             'min="0" step="10" value="0"></label>'
             f'<label>出点 out (ms) <input class="ed-out ed-num" type="number" '
-            'min="0" step="10" value="1000"></label>'
+            f'min="0" step="10" value="{out_default}"></label>'
             f'<button class="btn ed-trim" data-shot="{_e(sid)}">裁剪成新 take</button>'
             "</div>")
         p.append('<p class="muted ed-hint">追加式:裁剪生成新 take,原 take 不动;'
@@ -1852,20 +1866,30 @@ _EDIT_JS = r"""
     var n = frames.length;
     var idx = parseInt(img.getAttribute("data-i"), 10);
     var inEl = insp.querySelector(".ed-in"), outEl = insp.querySelector(".ed-out");
-    // proportional guess across the strip; the user refines the exact ms field.
+    // frac → REAL ms into the in/out fields (the trim reads .value — a
+    // dataset-only frac was never read by anything, so the marks silently
+    // had no effect and the trim ran on the stale defaults). data-dur-ms is
+    // the take's cached probe duration; without it the fields are untouched
+    // and the toast says so honestly.
+    var strip = insp.querySelector(".ed-scrub");
+    var durMs = strip ? parseInt(strip.getAttribute("data-dur-ms") || "", 10) : NaN;
     var stage = insp.getAttribute("data-scrub-stage") || "in";
     if (stage === "in") {
       frames.forEach(function (f) { f.classList.remove("mark-in"); });
       img.classList.add("mark-in");
-      inEl.dataset.frac = (idx / n).toFixed(4);
+      if (!isNaN(durMs) && durMs > 0) inEl.value = Math.round(durMs * idx / n);
       insp.setAttribute("data-scrub-stage", "out");
-      toast("入点标在第 " + (idx + 1) + " 格,再点一格设出点", true);
+      toast(!isNaN(durMs) && durMs > 0
+        ? "入点标在第 " + (idx + 1) + " 格(已填入 " + inEl.value + "ms),再点一格设出点"
+        : "入点标在第 " + (idx + 1) + " 格 — 无缓存时长,请手动填入毫秒", true);
     } else {
       frames.forEach(function (f) { f.classList.remove("mark-out"); });
       img.classList.add("mark-out");
-      outEl.dataset.frac = ((idx + 1) / n).toFixed(4);
+      if (!isNaN(durMs) && durMs > 0) outEl.value = Math.round(durMs * (idx + 1) / n);
       insp.setAttribute("data-scrub-stage", "in");
-      toast("出点标在第 " + (idx + 1) + " 格。核对毫秒后点裁剪", true);
+      toast(!isNaN(durMs) && durMs > 0
+        ? "出点标在第 " + (idx + 1) + " 格(已填入 " + outEl.value + "ms)。核对后点裁剪"
+        : "出点标在第 " + (idx + 1) + " 格 — 无缓存时长,请手动填入毫秒。核对后点裁剪", true);
     }
   }
 

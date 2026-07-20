@@ -456,6 +456,19 @@ class GenericCloudProvider(CloudProvider):
             if exc.disposition is None:
                 exc.disposition = NOT_DISPATCHED  # pre-transport = provably not sent
             raise
+        except Exception as exc:
+            # A RAW exception here (a bad auth.header template's KeyError, an
+            # unserializable rendered body's TypeError, …) is STILL provably
+            # pre-send — letting it escape meant base.py's choke-point default
+            # classified it OUTCOME_UNKNOWN and permanently fail-closed the
+            # shot ("may be billing remotely") over a local config typo.
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"{self.id}: submit preparation failed before any network "
+                f"({type(exc).__name__}: {exc})",
+                detail={"error_class": type(exc).__name__},
+                disposition=NOT_DISPATCHED,
+            ) from exc
         resp = self._transport(cfg.method, cfg.url, headers, body)
         # From here the send boundary is crossed — a failure's disposition is
         # DEFINITELY_REJECTED only for a MANIFEST-DECLARED status, else UNKNOWN
@@ -641,7 +654,8 @@ class GenericCloudProvider(CloudProvider):
             if items:
                 self._guard_readable(items)  # local refs must exist (pre-submit)
                 if rc.image_mode == "base64_field":
-                    values = [base64_ref(it, data_uri=rc.data_uri, mime=rc.mime)
+                    values = [base64_ref(self._require_local(it, rc.image_mode),
+                                         data_uri=rc.data_uri, mime=rc.mime)
                               for it in items]
                     assign(body, rc.field, _one_or_list(values, rc.max_images))
                 elif rc.image_mode == "url_field":
@@ -649,7 +663,7 @@ class GenericCloudProvider(CloudProvider):
                     assign(body, rc.field, _one_or_list(urls, rc.max_images))
                 elif rc.image_mode == "multipart":
                     for i, it in enumerate(items):
-                        assert it.path is not None
+                        it = self._require_local(it, rc.image_mode)
                         fld = rc.multipart_field if len(items) == 1 \
                             else f"{rc.multipart_field}{i}"
                         files.append((fld, it.path.name, it.path.read_bytes()))
@@ -805,6 +819,21 @@ class GenericCloudProvider(CloudProvider):
                 f"reference the URL, or use refs.image_mode base64_field/multipart",
             )
         return item.ref
+
+    def _require_local(self, item: RefItem, mode: str) -> RefItem:
+        """The symmetric guard to :meth:`_require_url`: a URL ref routed into a
+        bytes-delivery mode (base64_field/multipart) has no local bytes. The
+        old bare ``assert item.path`` crashed with AssertionError, which base's
+        raw-exception default then fail-closed as OUTCOME_UNKNOWN — a permanent
+        block over a pre-send config/content mismatch."""
+        if item.is_url or item.path is None:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"{self.id}: refs.image_mode is {mode!r} (needs local bytes) but "
+                f"reference {item.ref!r} (tier: {item.tier}) is a URL — download "
+                f"it into the project first, or use refs.image_mode url_field",
+            )
+        return item
 
     # ------------------------------------------------------------- helpers
 

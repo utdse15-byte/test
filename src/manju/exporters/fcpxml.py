@@ -731,6 +731,14 @@ def export_fcpxml(
     config = project.load_config()
     for c in timeline.tracks.video:
         _require_contained_source(project, c.source, label=f"{c.shot}/{c.take}")
+    # audio buses too — "the SAME containment semantics render/OTIO enforce"
+    # (otio._audio_clip checks every bus clip; only checking video let an
+    # out-of-project audio path ride verbatim into the document)
+    for bus in _AUDIO_BUSES:
+        for ac in getattr(timeline.tracks, bus):
+            _require_contained_source(
+                project, ac.source,
+                label=f"{bus}:{Path(ac.source).stem or bus}")
     rate = timeline.frame_rate
     loop_lengths = _probe_loop_lengths(project, timeline)
     text = compile_fcpxml(timeline, rate=rate, name=config.name,

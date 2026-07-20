@@ -168,17 +168,40 @@ def _load_text(source: str | Path) -> str:
     or one opening with a CMX header keyword, is treated as content; anything
     else is a filesystem path."""
     if isinstance(source, Path):
-        return source.read_text(encoding="utf-8")
+        return _read_edl_file(source)
     if isinstance(source, str):
         head = source.lstrip()
         if "\n" in source or head[:5].upper() in ("TITLE", "FCM: ") or \
                 head[:4].upper() == "FCM:":
             return source
-        return Path(source).read_text(encoding="utf-8")
+        return _read_edl_file(Path(source))
     raise EdlImportError(
         "parse_edl expects a filesystem path or EDL text",
         [{"severity": "error", "code": "bad_input", "path": "",
           "message": f"unsupported source type {type(source).__name__}"}])
+
+
+def _read_edl_file(p: Path) -> str:
+    """Read an EDL file with the module's documented structured refusals — the
+    ``fcpxml_import._read_utf8`` twin. An EDL is FOREIGN intake from another
+    tool: a legacy-codepage (GBK/Latin-1) save or a typo'd path used to escape
+    as a raw UnicodeDecodeError / FileNotFoundError traceback, though the CLI
+    wrapper only speaks :class:`EdlImportError`."""
+    try:
+        return p.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise EdlImportError(
+            f"EDL file is not valid UTF-8: {p}",
+            [{"severity": "error", "code": "bad_encoding", "path": str(p),
+              "message": f"UTF-8 decode failed at byte {exc.start}: {exc.reason} — "
+                         "用编辑器把 .edl 另存为 UTF-8 后重试"}],
+        ) from exc
+    except OSError as exc:
+        raise EdlImportError(
+            f"cannot read EDL file: {p}",
+            [{"severity": "error", "code": "unreadable", "path": str(p),
+              "message": " ".join(str(exc).split())}],
+        ) from exc
 
 
 def _parse_tc(token: str) -> EdlTimecode | None:

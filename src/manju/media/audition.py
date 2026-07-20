@@ -15,6 +15,7 @@ Slate clips are lavfi color + drawtext shot id, generated under
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Callable
@@ -64,31 +65,47 @@ def ensure_slate(
         f"drawtext=text='{label}':fontsize=48:fontcolor=white:"
         f"x=(w-text_w)/2:y=(h-text_h)/2"
     )
+    # ffmpeg writes a TEMP sibling; only a fully-finished encode is published
+    # (os.replace) at the content-addressed name. Writing dest directly let a
+    # killed/failed encode leave a partial >0-byte file that the size>0 reuse
+    # gate above then trusted FOREVER (and every rebuild re-served it).
+    tmp = dest.with_name(dest.name + f".{os.getpid()}.part.mp4")
     args = [
         "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s={width}x{height}:d={dur_s}:r={fps}",
         "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={dur_s}",
         "-vf", vf,
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-tune", "stillimage",
         "-c:a", "aac", "-shortest",
-        str(dest),
+        str(tmp),
     ]
     try:
-        run_ffmpeg(args, log_name="audition", subject=f"slate-{shot_id}")
-    except Exception:
-        # Floor: no drawtext (font may be missing on minimal hosts)
-        args_plain = [
-            "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s={width}x{height}:d={dur_s}:r={fps}",
-            "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={dur_s}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-tune", "stillimage",
-            "-c:a", "aac", "-shortest",
-            str(dest),
-        ]
         try:
-            run_ffmpeg(args_plain, log_name="audition", subject=f"slate-{shot_id}")
-        except Exception as exc2:
-            raise MediaError(
-                f"audition slate 生成失败: {' '.join(str(exc2).split())[:300]}"
-            ) from exc2
+            run_ffmpeg(args, log_name="audition", subject=f"slate-{shot_id}")
+        except Exception:
+            # Floor: no drawtext (font may be missing on minimal hosts)
+            tmp.unlink(missing_ok=True)
+            args_plain = [
+                "-f", "lavfi", "-i",
+                f"color=c=0x1a1a2e:s={width}x{height}:d={dur_s}:r={fps}",
+                "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={dur_s}",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-tune", "stillimage",
+                "-c:a", "aac", "-shortest",
+                str(tmp),
+            ]
+            try:
+                run_ffmpeg(args_plain, log_name="audition", subject=f"slate-{shot_id}")
+            except Exception as exc2:
+                raise MediaError(
+                    f"audition slate 生成失败: {' '.join(str(exc2).split())[:300]}"
+                ) from exc2
+        if not tmp.exists() or tmp.stat().st_size == 0:
+            raise MediaError(f"audition slate 生成失败: ffmpeg 未产出 {tmp.name}")
+        os.replace(tmp, dest)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
     return dest
 
 
@@ -191,7 +208,7 @@ def _read_key(path: Path) -> str | None:
     try:
         data = json.loads(sc.read_text(encoding="utf-8"))
         return str(data.get("final_key") or "") or None
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
 
 

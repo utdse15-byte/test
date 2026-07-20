@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -148,8 +149,23 @@ def history(project: Project, n: int = 30) -> list[dict[str, Any]]:
                     sha, ts, subject = parts
                     rows.append(HistoryRow(ts=ts, source="git", actor="git",
                                            text=subject, detail={"sha": sha}))
-    rows.sort(key=lambda r: r.ts)
+    rows.sort(key=_ts_sort_key)
     return [r.as_dict() for r in rows[-n:]]
+
+
+def _ts_sort_key(row: HistoryRow):
+    """Chronological sort key across the two feeds. events.jsonl stamps UTC
+    (+00:00) while git %cI carries the committer's LOCAL offset (+08:00 for a
+    CN-locale owner) — a plain string sort misorders the merged feed for any
+    non-UTC user. Parse to an aware datetime; an unparseable ts falls back to
+    the string form (sorted after all parsed rows, deterministically)."""
+    try:
+        dt = datetime.fromisoformat(row.ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (0, dt.astimezone(timezone.utc).isoformat(), row.ts)
+    except ValueError:
+        return (1, row.ts, row.ts)
 
 
 # ------------------------------------------------------------ rollback: shot
@@ -196,8 +212,10 @@ def rollback_shot(project: Project, shot_id: str) -> dict[str, Any]:
         raise HistoryError(
             f"the previously selected take '{previous}' no longer exists on disk"
         )
+    from .writes import ensure_mapping
+
     project.update_shot_raw(
-        shot_id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", previous)
+        shot_id, lambda d: ensure_mapping(d, "status").__setitem__("selected_take", previous)
     )
     append_event(project.root, _actor(), "rollback_shot",
                  {"shot": shot_id, "take": previous, "was": current})

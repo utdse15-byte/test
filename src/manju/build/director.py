@@ -44,6 +44,7 @@ first-class, persistent, human-editable thing instead of scattered pieces:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -405,8 +406,12 @@ def _validate_action(project: Project, action: Any) -> dict[str, Any]:
         if action.get("take") is not None:
             out["take"] = str(action["take"])
         if op == "retime":
-            out["factor"] = float(action.get("factor", 1.0))
-            if out["factor"] <= 0:
+            try:
+                out["factor"] = float(action.get("factor", 1.0))
+            except (TypeError, ValueError):
+                raise DirectorError("repair retime.factor must be a number > 0")
+            if not (out["factor"] > 0) or math.isinf(out["factor"]):
+                # `not (x > 0)` (rather than x <= 0) also rejects NaN
                 raise DirectorError("repair retime.factor must be > 0")
         elif op in ("extend", "trim"):
             try:
@@ -723,6 +728,29 @@ def execute(project: Project, proposal_id: str, actor: str | None = None,
             results.append({"index": i, "type": pa.action["type"], "ok": False,
                             "error": pa.result["error"], "failure_id": failure.get("id")})
             break
+        except BaseException as exc:
+            # Any non-ActionError escaping a handler (BuildLocked raised inside
+            # a _LOCKED_INTERNALLY engine call, an unexpected bug, Ctrl+C) used
+            # to leave the proposal PERMANENTLY stuck in 'executing' on disk —
+            # execute() requires 'confirmed' and reject() refuses 'executing',
+            # so there was no recovery path. Record the failure state first,
+            # then re-raise unchanged (an unexpected error still surfaces).
+            pa.result = {"ok": False, "error": " ".join(str(exc).split())[:500]}
+            proposal.state = "failed"
+            proposal.outcome = {
+                "ok": False, "snapshot": snapshot_info,
+                "results": results + [{"index": i, "type": pa.action["type"],
+                                       "ok": False, "error": pa.result["error"]}],
+                "failure": {"subject": pa.action.get("shot") or pa.action["type"],
+                            "error": pa.result["error"],
+                            "unexpected": type(exc).__name__},
+                "diff": None,
+            }
+            _save(project, proposal)
+            append_event(project.root, actor, "director_execute_done",
+                         {"id": proposal_id, "ok": False,
+                          "unexpected": type(exc).__name__})
+            raise
         pa.result = {"ok": True, **result}
         results.append({"index": i, "type": pa.action["type"], "ok": True, **result})
 
@@ -776,7 +804,7 @@ def _final_keys(project: Project) -> dict[str, str | None]:
         if sidecar.exists():
             try:
                 key = json.loads(sidecar.read_text(encoding="utf-8")).get("final_key")
-            except (json.JSONDecodeError, OSError):
+            except (ValueError, OSError):
                 key = None
         out[p.stem] = key
     return out
@@ -897,11 +925,17 @@ def _run_action(project: Project, action: dict, actor: str, on_phase,
     # on a runtime COPY (never mutate/persist the proposal's own action).
     if atype == "build":
         action = {**action, "_agent_profile": agent_profile}
-    if atype in _LOCKED_INTERNALLY:
-        return handler(project, action, actor, on_phase)
-
     from ..runtime.buildlock import BuildLocked
     from ..runtime.buildlock import build_lock as _build_lock
+
+    if atype in _LOCKED_INTERNALLY:
+        try:
+            return handler(project, action, actor, on_phase)
+        except BuildLocked as exc:
+            # The engine call takes the lock itself; contention there is the
+            # same business conflict as below — a clean ActionError, never an
+            # escaping exception that strands the proposal in 'executing'.
+            raise ActionError(str(exc), subject=action.get("shot") or atype) from exc
 
     try:
         with _build_lock(project.root, actor=actor):
@@ -1261,7 +1295,7 @@ def _qc_suggestions(project: Project) -> list[Suggestion]:
         return []
     try:
         data = json.loads(qc_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return []
     items = data.get("items", []) if isinstance(data, dict) else []
     out: list[Suggestion] = []
@@ -1311,7 +1345,7 @@ def _assurance_suggestions(project: Project) -> list[Suggestion]:
         return []
     try:
         data = json.loads(qc_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return []
     block = data.get("assurance") if isinstance(data, dict) else None
     if not isinstance(block, dict):

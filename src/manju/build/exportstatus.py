@@ -248,7 +248,10 @@ def _latest_verification(project: Project, kind: str) -> dict[str, Any] | None:
         return None
     latest: dict[str, Any] | None = None
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        # errors="replace": a torn multibyte tail (crash mid-append) must land
+        # in the per-line JSON skip below, not raise UnicodeDecodeError and
+        # take down the export center / release assessment.
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -390,8 +393,17 @@ def mark_verified(project: Project, kind: str, actor: str, note: str = "") -> di
 
     dest = _verifications_path(project)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    append_jsonl_line(project.reports_dir, record, durable=True, required=False,
-                      file_name=VERIFICATIONS_FILE, lock_name=VERIFICATIONS_LOCK)
+    written = append_jsonl_line(project.reports_dir, record, durable=True,
+                                required=False, file_name=VERIFICATIONS_FILE,
+                                lock_name=VERIFICATIONS_LOCK)
+    if not written:
+        # The record IS this call's deliverable: a dropped append (lock busy /
+        # disk error) silently losing the human's "yes, the draft opens" is
+        # worse than failing loudly — the row would fall back to 待人工确认
+        # with no hint why.
+        raise ExportStatusError(
+            f"{kind} 的人工确认没能写入 reports/{VERIFICATIONS_FILE}"
+            "(锁被占用或磁盘写入失败)——请重试一次")
     return record
 
 

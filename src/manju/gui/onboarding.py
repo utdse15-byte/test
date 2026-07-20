@@ -32,7 +32,10 @@ def _story_written(project: Any) -> bool:
     for name in _STORY_FILES:
         path = project.root / "story" / name
         try:
-            text = path.read_text(encoding="utf-8")
+            # errors="replace": a GBK/ANSI-saved story file still answers the
+            # only question asked here ("is there prose?") — it must degrade,
+            # not 500 the /api/onboarding endpoint.
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         text = _COMMENT_RE.sub("", text)

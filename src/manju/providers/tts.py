@@ -101,10 +101,10 @@ class GenericTtsProvider:
         self._transport = transport or default_transport
         self._sleep = sleep_fn
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         from .generic_cloud import GenericCloudProvider
 
-        return GenericCloudProvider._headers(self)  # same auth semantics (§8.2)
+        return GenericCloudProvider._headers(self, extra)  # same auth semantics (§8.2)
 
     # ------------------------------------------------------------ synthesis
 
@@ -177,7 +177,10 @@ class GenericTtsProvider:
             render_body(cfg.body_template, self._placeholders(shot, bible)),
             ensure_ascii=False,
         ).encode("utf-8")
-        resp = self._transport(cfg.method, cfg.url, self._headers(), body)
+        # submit carries the manifest-declared extra_headers, mirroring
+        # generic_cloud.submit (they were silently dropped before — a declared
+        # version/tenant header never reached the API)
+        resp = self._transport(cfg.method, cfg.url, self._headers(cfg.extra_headers), body)
         if resp.status >= 400:
             # F4: shared status→kind so a 429 stays retryable rate_limited and
             # every sibling adapter classifies identically (no drift).
@@ -191,6 +194,21 @@ class GenericTtsProvider:
         job_id: str | None = None
         if self.manifest.poll is not None:  # async form
             job_id = str(extract(data, cfg.job_id_path))
+            # DR06 spirit ("persisted first"): the PAID remote job id must hit
+            # durable ground BEFORE we start polling — a cancel, crash or poll
+            # failure used to orphan it entirely (the id only landed in the
+            # voice sidecar on full success), leaving no way to reconcile the
+            # spend or re-attach the job. Best-effort append (never blocks the
+            # synthesis itself).
+            from ..core.events import append_event
+
+            append_event(project.root, "engine", "tts_remote_submit", {
+                "provider": self.id,
+                "shot": shot.id,
+                "remote_job_id": job_id,
+                "cost": self.manifest.cost.per_call or None,
+                "currency": self.manifest.cost.currency,
+            })
             data = self._poll(job_id, should_cancel=should_cancel)
 
         with tempfile.TemporaryDirectory(prefix=f"tts_{shot.id}_") as tmp:

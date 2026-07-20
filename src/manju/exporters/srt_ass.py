@@ -13,6 +13,7 @@ may override font / size / margin_v / primary_colour.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +76,14 @@ def ms_to_vtt(ms: int) -> str:
 
 def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _collapse_blank_lines(text: str) -> str:
+    """An INTERIOR blank line in cue text would structurally terminate the
+    SRT/VTT cue mid-text — every line after it reads as stray cue garbage in a
+    real player/NLE. Collapse runs of newlines to one; single-line and normal
+    multi-line cues are byte-identical."""
+    return re.sub(r"\n[ \t]*\n+", "\n", text)
 
 
 # ---------------------------------------------------------- ASS injection guard
@@ -150,7 +159,7 @@ def compile_srt(timeline: Timeline, *, max_chars_per_line: int | None = None) ->
     """
     parts: list[str] = []
     for i, cap in enumerate(timeline.tracks.captions, start=1):
-        text = _normalize_newlines(cap.text).strip("\n")
+        text = _collapse_blank_lines(_normalize_newlines(cap.text).strip("\n"))
         text = break_lines(text, max_chars_per_line)
         parts.append(str(i))
         parts.append(f"{ms_to_srt(cap.start_ms)} --> {ms_to_srt(cap.end_ms)}")
@@ -173,7 +182,7 @@ def compile_vtt(timeline: Timeline, *, max_chars_per_line: int | None = None) ->
     the required ``WEBVTT`` signature; text is arbitrary UTF-8 (CJK safe)."""
     parts = ["WEBVTT", ""]
     for i, cap in enumerate(timeline.tracks.captions, start=1):
-        text = _normalize_newlines(cap.text).strip("\n")
+        text = _collapse_blank_lines(_normalize_newlines(cap.text).strip("\n"))
         text = break_lines(text, max_chars_per_line)
         # WebVTT cue text has grammar: a bare ``<`` opens a cue-span tag and a
         # bare ``&`` opens a character reference. Unescaped, a caption like
@@ -210,6 +219,21 @@ def _ass_name_field(cap: Any) -> str:
     return escape_ass_text(safe)
 
 
+def _style_int(value: Any, field: str) -> int:
+    """A hand-edited style value must fail as ONE clean line naming the field
+    (bible/style.yaml is human truth — `size: 大` is a plausible edit), not a
+    raw ValueError traceback out of caption export."""
+    from ..core.container import ProjectError
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ProjectError(
+            f"字幕样式 {field} 不是整数(得到 {value!r})——"
+            "检查 bible/style.yaml / timeline/rules.yaml 的 captions 配置"
+        ) from None
+
+
 def _resolve_style(
     style: dict[str, Any] | None, width: int, height: int
 ) -> dict[str, Any]:
@@ -217,7 +241,7 @@ def _resolve_style(
     font = str(style.get("font") or DEFAULT_FONT)
     size = style.get("size")
     if size:
-        size = int(size)  # an explicit size is user truth — never overridden
+        size = _style_int(size, "size")  # an explicit size is user truth — never overridden
     else:
         size = max(36, height // 22)
         # The declared chars-per-line must actually FIT one rendered line —
@@ -227,18 +251,18 @@ def _resolve_style(
         max_chars = style.get("max_chars_per_line")
         if max_chars:
             usable = width - 2 * max(20, width // 20)
-            size = min(size, max(24, usable // int(max_chars)))
+            size = min(size, max(24, usable // _style_int(max_chars, "max_chars_per_line")))
     margin_v = style.get("margin_v")
-    margin_v = int(margin_v) if margin_v else max(1, height // 12)  # safe area §7④
+    margin_v = _style_int(margin_v, "margin_v") if margin_v else max(1, height // 12)  # §7④
     primary = str(style.get("primary_colour") or WHITE)
     # Round X (agent XG): outline width + alignment were hard-coded (3 / 2,
     # bottom-centre) — now an explicit style key overrides them, an ABSENT key
     # keeps the exact same historical constant, so an untouched project's ASS
     # output stays byte-identical (pinned in tests/test_edit_v3.py).
     outline = style.get("outline")
-    outline = int(outline) if outline not in (None, "") else 3
+    outline = _style_int(outline, "outline") if outline not in (None, "") else 3
     alignment = style.get("alignment")
-    alignment = int(alignment) if alignment not in (None, "") else 2
+    alignment = _style_int(alignment, "alignment") if alignment not in (None, "") else 2
     return {"font": font, "size": size, "margin_v": margin_v, "primary": primary,
             "outline": outline, "alignment": alignment}
 

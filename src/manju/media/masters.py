@@ -643,5 +643,5 @@ def load_index(project: Project) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None

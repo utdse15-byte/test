@@ -1811,8 +1811,19 @@ def qc_main(ctx: typer.Context,
     if lang or all_locales or len(_list_locales(project)) > 1:
         from .qc.multilocale import run_multilocale_qc
 
-        ml = run_multilocale_qc(project, lang=lang, all_locales=all_locales,
-                                deep=deep)
+        try:
+            ml = run_multilocale_qc(project, lang=lang, all_locales=all_locales,
+                                    deep=deep,
+                                    timeline=_load_timeline_or_fail(project))
+        except ProjectError as exc:  # e.g. an illegal --lang segment
+            _fail(str(exc), code="bad_args")
+        # The command's documented contract ("writes reports/qc.json, qc.md,
+        # repair_plan.yaml") must hold on the multi-locale path too — before
+        # this, the branch returned WITHOUT rewriting them, so `manju repair
+        # --auto` replayed a STALE plan (spending on already-fixed shots).
+        # The merged report carries every checked locale's items ([lang]-
+        # prefixed) + a missing_final error row per unrendered locale.
+        write_reports(project, ml.merged_report())
         if as_json:
             _emit(ml.to_dict(), True)
         else:
@@ -1984,7 +1995,14 @@ def qc_verdict_cmd(
 
     project = _project()
     if from_file == "-":
-        text = sys.stdin.read()
+        # decode stdin BYTES as UTF-8 explicitly: on Windows sys.stdin follows
+        # the console/ANSI code page (GBK on a CN system), so a UTF-8 JSON
+        # pipe with Chinese verdict text was mojibake'd straight into the
+        # append-only reports/qc_agent.jsonl (or crashed mid-read).
+        try:
+            text = sys.stdin.buffer.read().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            _fail(f"stdin 不是 UTF-8(Windows 控制台管道请用 UTF-8 编码输出):{exc}")
     else:
         try:
             text = Path(from_file).read_text(encoding="utf-8")
@@ -4106,10 +4124,12 @@ def align(
             typer.echo(f"align plan  media={plan.get('media')}  "
                        f"duration={plan.get('duration_ms')}ms  source={plan.get('source')}")
             for i, r in enumerate(plan.get("rows") or [], 1):
+                # collapse newlines: a multi-line dialogue must not break the row
+                preview = " ".join((r.get("matched_text") or "").split())[:30]
                 typer.echo(
                     f"  {i}. {r['shot']}  [{r.get('start_ms')}-{r.get('end_ms')}]ms  "
                     f"conf={r.get('confidence')}  state={r.get('state')}  "
-                    f"{(r.get('matched_text') or '')[:30]}"
+                    f"{preview}"
                 )
             if plan.get("unmatched"):
                 typer.secho(f"  unmatched: {', '.join(plan['unmatched'])}",
@@ -4252,7 +4272,14 @@ def transcribe(
     if from_srt:
         if not from_srt.exists():
             _fail(f"not found: {from_srt}")
-        segments = parse_srt(from_srt.read_text(encoding="utf-8"))
+        try:
+            srt_text = from_srt.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            # GBK/ANSI-saved SRT (the Windows notepad legacy default) — a
+            # clean refusal beats a raw traceback OR mojibake'd truth
+            _fail(f"{from_srt} 不是 UTF-8(可能是 GBK/ANSI)——"
+                  "用编辑器另存为 UTF-8 后重试")
+        segments = parse_srt(srt_text)
         source = "manual_srt"
     elif text is not None:
         from .media.probe import probe_duration_ms
@@ -4474,7 +4501,10 @@ def board_keyframes(
         return
 
     try:
-        kfs = scaffold_keyframes(project, shot, beats)
+        # §9 round W discipline: --scaffold mutates shots/<id>.yaml — same
+        # write lock every other mutating CLI entrance takes.
+        with _write_lock(project):
+            kfs = scaffold_keyframes(project, shot, beats)
     except KeyframeScaffoldError as exc:
         _fail(str(exc))
     append_event(project.root, ACTOR, "board_keyframes",
@@ -6102,7 +6132,7 @@ def relink(
         _fail(f"计划文件不存在: {plan_file}", code="plan_not_found")
     try:
         plan = json.loads(plan_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         _fail(f"计划文件不可读/不是 JSON: {plan_file} — {exc}", code="plan_unreadable")
         return  # unreachable; keeps the type checker happy
     with _write_lock(project):
@@ -6501,7 +6531,11 @@ def mentions(
     matrix = asset_matrix(project)
 
     if apply:
-        results = apply_mentions(project, matrix, shot_id)
+        # §9 round W discipline (_write_lock docstring): every mutating CLI
+        # command that does not route through build_lock takes the write lock
+        # — apply_mentions does raw shot read-modify-writes.
+        with _write_lock(project):
+            results = apply_mentions(project, matrix, shot_id)
         changed = [r for r in results if r.get("changed")]
         for r in changed:
             append_event(project.root, ACTOR, "mentions_apply",
@@ -7734,19 +7768,35 @@ def gc(hard: bool = typer.Option(False, "--hard"),
     )
     freed = 0
     ghost_sidecars = 0
+    skipped_busy: list[str] = []
     with _write_lock(project):
         for d in (project.segments_dir, project.proxy_dir):
             for f in d.glob("*"):
                 if f.is_file():
-                    freed += f.stat().st_size
-                    f.unlink()
+                    try:
+                        size = f.stat().st_size
+                        f.unlink()
+                        freed += size
+                    except OSError:
+                        # Windows: a proxy still open in a player/preview holds
+                        # a sharing lock — skip it, keep collecting the rest
+                        skipped_busy.append(project.relpath(f))
         if do_hard:
             for sid in project.shot_ids():
                 shot = project.load_shot(sid)
                 for take in project.takes(sid):
                     if take.name != shot.status.selected_take and take.media_path:
-                        freed += take.media_path.stat().st_size
-                        take.media_path.unlink()
+                        try:
+                            size = take.media_path.stat().st_size
+                            take.media_path.unlink()
+                        except OSError:
+                            # e.g. the GUI is streaming this take right now —
+                            # one busy file must not abort the whole gc mid-way
+                            # (and the sidecar must then STAY, or the media
+                            # would become an unnumbered orphan)
+                            skipped_busy.append(project.relpath(take.media_path))
+                            continue
+                        freed += size
                         # round-W #35: the sidecar (which also carries the
                         # take's virtual-trim / timing fields) rides along —
                         # otherwise a media-less "ghost take" sidecar lingers
@@ -7756,14 +7806,20 @@ def gc(hard: bool = typer.Option(False, "--hard"),
                             take.sidecar_path.unlink()
                             ghost_sidecars += 1
         append_event(project.root, ACTOR, "gc",
-                     {"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars})
+                     {"freed_bytes": freed, "hard": hard,
+                      "sidecars_removed": ghost_sidecars,
+                      **({"skipped_busy": len(skipped_busy)} if skipped_busy else {})})
     if as_json:
-        _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars}, True)
+        _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars,
+               "skipped_busy": skipped_busy}, True)
     else:
         typer.secho(f"freed {freed / 1e6:.1f} MB", fg=typer.colors.GREEN)
         if ghost_sidecars:
             typer.secho(f"  同步删除 {ghost_sidecars} 个 take sidecar(避免残留 ghost take)",
                         fg=typer.colors.BRIGHT_BLACK)
+        for rel in skipped_busy:
+            typer.secho(f"  跳过(被占用,关闭播放器后重试): {rel}",
+                        fg=typer.colors.YELLOW)
 
 
 @app.command("rebuild-index", rich_help_panel=PANEL_OPS)

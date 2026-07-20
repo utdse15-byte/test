@@ -481,27 +481,47 @@ class Project:
         infos: list[TakeInfo] = []
         for sidecar_path in sorted(tdir.glob("take_*.yaml")):
             name = sidecar_path.stem
-            raw = read_yaml(sidecar_path) or {}
             error: str | None = None
             try:
-                sidecar = TakeSidecar.model_validate(raw)
-            except ValidationError as exc:
-                # Round W (issue #22): TakeSidecar's model validator rejects an
-                # illegal source_in_ms/source_out_ms window (negative in-point,
-                # reversed/zero-length window). Re-validate WITHOUT those two
-                # fields — everything else on TakeSidecar is unconstrained, so
-                # this always succeeds — to get a SAFE (whole-file) sidecar
-                # instead of dropping the take or crashing every caller of
-                # Project.takes()/get_take() (build/status/GUI polling all
-                # call this). The reason rides on TakeInfo.error for `manju
-                # check` / QC to surface as a real finding (core/check.py,
-                # qc/checks.py) instead of silently tolerating the bad data.
-                error = " ".join(str(exc).split())
+                raw = read_yaml(sidecar_path) or {}
+            except Exception as exc:  # unparseable YAML: degrade, never crash
+                raw, error = {}, f"take sidecar 无法解析: {' '.join(str(exc).split())}"
+            if not isinstance(raw, dict):
+                raw, error = {}, "take sidecar 不是映射 (not a mapping)"
+            sidecar: TakeSidecar | None = None
+            if error is None:
+                try:
+                    sidecar = TakeSidecar.model_validate(raw)
+                except ValidationError as exc:
+                    # Round W (issue #22): TakeSidecar's model validator rejects an
+                    # illegal source_in_ms/source_out_ms window (negative in-point,
+                    # reversed/zero-length window). Re-validate WITHOUT those two
+                    # fields to get a SAFE (whole-file) sidecar instead of dropping
+                    # the take or crashing every caller of Project.takes()/
+                    # get_take() (build/status/GUI polling all call this). The
+                    # reason rides on TakeInfo.error for `manju check` / QC to
+                    # surface as a real finding (core/check.py, qc/checks.py).
+                    error = " ".join(str(exc).split())
+            if sidecar is None:
                 safe_raw = {
                     k: v for k, v in raw.items()
                     if k not in ("source_in_ms", "source_out_ms")
                 }
-                sidecar = TakeSidecar.model_validate(safe_raw)
+                try:
+                    sidecar = TakeSidecar.model_validate(safe_raw)
+                except ValidationError:
+                    # Required fields (provider/spec_hash) missing or mistyped —
+                    # a truncated/hand-broken sidecar. A placeholder keeps the
+                    # take VISIBLE (with the error recorded) instead of taking
+                    # down `manju check`/status/build staleness/GUI polling.
+                    sidecar = TakeSidecar.model_validate({
+                        k: v for k, v in {
+                            "provider": str(raw.get("provider") or "unknown"),
+                            "spec_hash": str(raw.get("spec_hash") or "unknown"),
+                            "created_at": raw.get("created_at")
+                            if isinstance(raw.get("created_at"), str) else None,
+                        }.items() if v is not None
+                    })
             # Round Y (review #4): resolve media by MEDIA_EXTS PRIORITY ORDER,
             # deterministic across processes. If more than one media file exists
             # for this stem the pick is still stable (first by priority) AND the
@@ -567,12 +587,27 @@ class Project:
             try:
                 if use_move:
                     os.close(fd)
-                    # Claimed the name exclusively; now move into place.
+                    # Claimed the name exclusively; move into place WITHOUT
+                    # releasing the claim: unlink-then-move would reopen the
+                    # exact allocation race O_EXCL closed (a concurrent
+                    # register could re-mint the freed name and be silently
+                    # overwritten by our move). Move to a temp sibling, then
+                    # os.replace over our own placeholder — atomic on both
+                    # POSIX and Windows, and the name is never unclaimed.
+                    tmp_move = candidate.with_name(candidate.name + f".{os.getpid()}.moving")
                     try:
-                        candidate.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-                    shutil.move(str(media_file), candidate)
+                        shutil.move(str(media_file), tmp_move)
+                        os.replace(tmp_move, candidate)
+                    except BaseException:
+                        # never lose the source: put a completed temp move back
+                        try:
+                            if tmp_move.exists() and not media_file.exists():
+                                shutil.move(str(tmp_move), media_file)
+                            else:
+                                tmp_move.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        raise
                 else:
                     assert data is not None
                     with os.fdopen(fd, "wb") as out:
@@ -632,7 +667,17 @@ class Project:
             return []
         results: list[tuple[Path, VoiceTakeSidecar | None]] = []
         audio_exts = (".wav", ".mp3", ".m4a", ".flac")
-        for media in sorted(tdir.glob("voice_take_*.*")) + sorted(tdir.glob("voice.*")):
+
+        def _num_key(p: Path) -> tuple[int, str]:
+            # NUMERIC take order: "newest wins" consumers read [-1], and a
+            # lexicographic sort puts voice_take_100 BEFORE voice_take_99 —
+            # the same class as the final_v9-over-final_v10 round-N finding
+            # (see newest_final_path). Non-matching names keep a stable tail.
+            m = re.match(r"voice_take_(\d+)$", p.stem)
+            return (int(m.group(1)) if m else (1 << 30), p.name)
+
+        for media in sorted(tdir.glob("voice_take_*.*"), key=_num_key) \
+                + sorted(tdir.glob("voice.*")):
             if media.suffix.lower() not in audio_exts:
                 continue
             # Skip nested locales/* when scanning base (lang=None)

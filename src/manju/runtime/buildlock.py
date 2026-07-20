@@ -219,16 +219,60 @@ class BuildLock:
             holder = self._read_holder()
             if not self._is_stale(holder):
                 raise BuildLocked(holder or {}, self.path)
-            try:
-                self.path.unlink()
-            except FileNotFoundError:
-                pass  # released between our check and the steal — fine
+            if not self._steal_stale():
+                # another contender is mid-steal (or the lock re-minted fresh
+                # while we queued for the steal mutex) — their win, our clean
+                # immediate BuildLocked, same no-wait contract as ever.
+                raise BuildLocked(self._read_holder() or holder or {}, self.path)
             try:
                 self._create()
             except FileExistsError:
                 raise BuildLocked(self._read_holder() or {}, self.path) from None
         self._start_heartbeat()
         return self
+
+    def _steal_stale(self) -> bool:
+        """Unlink a stale lock under a short-lived STEAL MUTEX (`.steal`,
+        O_EXCL) — returns True when the stale lock was removed by US.
+
+        The old blind ``unlink()`` raced two stealers: A unlinks + re-creates,
+        then B's unlink deletes A's FRESH lock and B creates too — dual
+        ownership of the one-per-project mutex. Under the mutex, staleness is
+        RE-CHECKED before the unlink, so a lock re-minted in the window is
+        never deleted."""
+        steal = self.path.with_name(self.path.name + ".steal")
+        try:
+            fd = os.open(str(steal), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            try:  # a stealer that died mid-steal must not wedge acquires forever
+                if time.time() - steal.stat().st_mtime > _CORRUPT_GRACE_S:
+                    steal.unlink()
+            except OSError:
+                pass
+            return False
+        except OSError:
+            return False
+        try:
+            # RE-CHECK under the mutex — _is_stale also protects a fresh
+            # corrupt (mid-acquire O_EXCL fallback) lock via the corrupt-grace.
+            if not self._is_stale(self._read_holder()):
+                return False  # re-minted fresh while we took the mutex
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass  # released between check and steal — fine, name is free
+            except OSError:
+                return False
+            return True
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                steal.unlink()
+            except OSError:
+                pass
 
     def _create(self) -> None:
         """The atomic acquire: holder JSON is FULLY written (+fsynced) to a

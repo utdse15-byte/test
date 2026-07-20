@@ -545,7 +545,10 @@ def _read_evidence_stream(project: Any) -> tuple[list[dict], int]:
     malformed = 0
     if not path.exists():
         return records, malformed
-    with open(path, "r", encoding="utf-8") as f:
+    # errors="replace": a torn multibyte tail must count as ONE malformed line
+    # (the F1 discipline below), not raise UnicodeDecodeError mid-iteration and
+    # crash every qualification reader.
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         for raw in f:
             raw = raw.strip()
             if not raw:
@@ -1169,7 +1172,11 @@ def qualify(
 
     fixture = load_fixture(capability, fixtures_dir=fixtures_dir)
     currency = getattr(getattr(manifest, "cost", None), "currency", None)
-    duration_ms = int(fixture.get("duration_ms") or 0)
+    # SAME default as _run_canary's actual request (`or 1000`): estimating a
+    # missing fixture duration as 0 priced a per-second provider's canary at
+    # 0, waving it past --max-cost and the ask_before gate while the real
+    # submission carried 1000ms.
+    duration_ms = int(fixture.get("duration_ms") or 1000)
     estimate = (estimate_cost(manifest, duration_ms, candidates=1)
                 if manifest is not None else 0.0)
 
@@ -1252,9 +1259,14 @@ def qualify(
 
 def _dry_run_evidence(declared: dict, fixture: dict, estimate: float,
                       currency: str | None, now: str) -> dict:
-    """DRY_RUN_VALID evidence — config passed + estimate computed, NO network."""
+    """DRY_RUN_VALID evidence — config passed + estimate computed, NO network.
+
+    An INVALID config earns UNTESTED, not CONFIG_VALID: recorded evidence
+    claiming a rung the dry run just disproved would prop the derived level at
+    CONFIG_VALID (``_max_level(floor, ev_level)``) even while the live doctor
+    keeps failing."""
     return {
-        "level": DRY_RUN_VALID if declared.get("config_ok") else CONFIG_VALID,
+        "level": DRY_RUN_VALID if declared.get("config_ok") else UNTESTED,
         "transport": "none",
         "provider_profile_digest": declared.get("provider_profile_digest"),
         "adapter_semantic_digest": declared.get("adapter_semantic_digest"),
@@ -1272,8 +1284,11 @@ def _run_evidence(declared: dict, fixture: dict, run: dict, estimate: float,
     level = CANARY_SUBMIT_PASSED
     if run["artifact_checks"]["ok"]:
         level = CANARY_ARTIFACT_PASSED
-    if run.get("recovery", {}).get("passed"):
-        level = RECOVERY_PASSED
+        # the ladder is MONOTONIC: recovery can only promote a run whose
+        # artifact checks passed — a failed artifact must never reach
+        # RECOVERY_PASSED (nor, via a real transport, PRODUCTION_READY)
+        if run.get("recovery", {}).get("passed"):
+            level = RECOVERY_PASSED
     # PRODUCTION_READY is minted ONLY from a genuinely real transport that
     # cleared every rung — never from the scripted path (addendum honesty).
     if transport_kind == "real" and level == RECOVERY_PASSED:

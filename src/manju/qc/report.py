@@ -173,6 +173,14 @@ def _derive_action(project: Project, item: QCItem, fallback_cache: dict[str, boo
     if "caption" in msg:
         return make("human_review", False)
 
+    # A check that declared its own item auto_safe (today: the OCR must_show
+    # FAIL, content.py) promised "可由 `manju repair --auto` 自动修复" in
+    # qc.md — the plan must map it to an actually-auto action, or the two
+    # derived artifacts contradict each other and --auto silently never does
+    # the promised repair. Shot-subject only (redo_shot needs a real shot).
+    if item.auto_safe and subject not in _NON_SHOT_SUBJECTS:
+        return make("redo_new_seed", True)
+
     # duration mismatch -> redo (§9). Gate on the subject being a real shot:
     # the "duration" word also appears on non-shot items — final-render drift
     # ("final duration ... differs from timeline ...", subject "final") and a

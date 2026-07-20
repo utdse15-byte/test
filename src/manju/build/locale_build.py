@@ -264,7 +264,7 @@ def apply_locale_overlay(
                                 "shot": sid,
                             })
                         continue
-                except (json.JSONDecodeError, OSError):
+                except (ValueError, OSError):
                     pass
         new_caps.append({
             "start_ms": start, "end_ms": max(end, start + 1),

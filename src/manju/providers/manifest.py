@@ -426,7 +426,13 @@ class ProviderManifest(ManjuModel):
                 if "{out}" not in cmd:
                     problems.append("local_cmd.command must contain the {out} placeholder")
                 try:
-                    words = shlex.split(cmd)
+                    # the ONE command-splitting owner (providers/local_cmd) —
+                    # the doctor probing with POSIX shlex mangled Windows paths
+                    # (`C:\tools\gen.exe` → `C:toolsgen.exe`), reporting a
+                    # working provider as "binary not found on PATH"
+                    from .local_cmd import _split_command
+
+                    words = _split_command(cmd)
                 except ValueError as exc:
                     words = []
                     problems.append(f"local_cmd.command is not valid shell syntax: {exc}")
