@@ -120,18 +120,33 @@ class GenericTtsProvider:
         return values
 
     def _audio_from(self, data, *, dest_dir: Path) -> Path:
-        from .generic_cloud import _write_bytes_atomic, reject_html_error_page
+        from .generic_cloud import (
+            _write_bytes_atomic,
+            reject_html_error_page,
+            safe_audio_ext,
+        )
 
         cfg = self.manifest.tts
-        dest = dest_dir / f"voice.{cfg.audio_format.lstrip('.')}"
+        # audio_format is an EXTENSION, never a path (§path-traversal guard):
+        # `x/../../escaped.bin` must not write outside the staging dir.
+        dest = dest_dir / f"voice.{safe_audio_ext(cfg.audio_format, self.id)}"
         if cfg.audio_b64_path:
             try:
-                blob = base64.b64decode(str(extract(data, cfg.audio_b64_path)))
+                raw_b64 = str(extract(data, cfg.audio_b64_path))
+                # validate=True: a corrupt payload ("AAAA!!!!") must RAISE, not
+                # silently drop the invalid chars and register 3 junk bytes as a
+                # voice take. Strip whitespace/newlines a provider may wrap it in.
+                blob = base64.b64decode("".join(raw_b64.split()), validate=True)
             except (JsonPathError, binascii.Error, ValueError) as exc:
                 raise ProviderFailure(
                     FailureKind.provider_error,
                     f"{self.id}: cannot read inline audio ({exc}) — check tts.audio_b64_path",
                 ) from exc
+            if not blob:
+                raise ProviderFailure(
+                    FailureKind.provider_error,
+                    f"{self.id}: inline audio decoded to zero bytes — provider returned no audio",
+                )
             _write_bytes_atomic(dest, blob)
             return dest
         try:
@@ -165,7 +180,12 @@ class GenericTtsProvider:
         ``should_cancel`` (C21): optional cooperative cancel predicate threaded
         into async ``_poll`` so GUI cancel can stop mid-wait.
         """
-        from .generic_cloud import render_body
+        from .generic_cloud import (
+            journal_remote_submit,
+            parse_json_response,
+            render_body,
+            require_remote_id,
+        )
 
         if not shot.dialogue.text:
             raise ProviderFailure(
@@ -189,23 +209,19 @@ class GenericTtsProvider:
                 f"{self.id}: synthesis failed with HTTP {resp.status}",
                 detail={"body": resp.text()[:2000]},
             )
-        data = resp.json()
+        # a 2xx whose body is not readable JSON is OUTCOME_UNKNOWN post-submit
+        # (the paid request may have been accepted): structured, never raw.
+        data = parse_json_response(resp, self.id, post_submit=True)
 
         job_id: str | None = None
         if self.manifest.poll is not None:  # async form
-            job_id = str(extract(data, cfg.job_id_path))
-            # DR06 spirit ("persisted first"): the PAID remote job id must hit
-            # durable ground BEFORE we start polling — a cancel, crash or poll
-            # failure used to orphan it entirely (the id only landed in the
-            # voice sidecar on full success), leaving no way to reconcile the
-            # spend or re-attach the job. Best-effort append (never blocks the
-            # synthesis itself).
-            from ..core.events import append_event
-
-            append_event(project.root, "engine", "tts_remote_submit", {
-                "provider": self.id,
-                "shot": shot.id,
-                "remote_job_id": job_id,
+            # only a real non-empty id — null/array/object never become "/None".
+            job_id = require_remote_id(extract(data, cfg.job_id_path), self.id)
+            # The PAID remote job id must hit DURABLE ground BEFORE we poll —
+            # fail-closed: if it cannot be journaled, surface the id + mark the
+            # outcome unknown instead of silently orphaning the spend.
+            journal_remote_submit(project.root, self.id, job_id, {
+                "capability": "tts", "shot": shot.id,
                 "cost": self.manifest.cost.per_call or None,
                 "currency": self.manifest.cost.currency,
             })
@@ -235,9 +251,19 @@ class GenericTtsProvider:
             return project.register_voice_take(shot.id, audio, sidecar)
 
     def _poll(self, job_id: str, *, should_cancel=None) -> dict:
+        from .generic_cloud import (
+            is_transient_status,
+            parse_json_response,
+            retry_after_seconds,
+        )
+
         poll_cfg = self.manifest.poll
         assert poll_cfg is not None
-        elapsed, i = 0.0, 0
+        # A monotonic deadline bounds REAL wall time (finding 11): the old
+        # `elapsed += delay` counted only our sleeps, so a slow/long transport
+        # could run far past the advertised 600s budget.
+        deadline = time.monotonic() + 600.0
+        i = 0
         while True:
             # C12/C27: cooperative cancel between poll rounds (locale/GUI cancel).
             # ProviderCanceled (not ProviderFailure) so run_build locale path and
@@ -248,14 +274,20 @@ class GenericTtsProvider:
                 "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
             )
             if resp.status >= 400:
-                # F4: a 429 during poll is retryable rate_limited, not a generic
-                # provider_error — shared classification, no sibling drift.
+                if is_transient_status(resp.status) and time.monotonic() < deadline:
+                    # 429 / 5xx while polling an ACCEPTED job: keep polling the
+                    # SAME id (finding 10) — raising here abandoned the remote
+                    # job and a higher-level retry would submit (and pay for) a
+                    # NEW one. Honor Retry-After, bounded backoff.
+                    self._sleep(retry_after_seconds(resp.headers, min(0.5 * (2 ** i), 8.0)))
+                    i += 1
+                    continue
                 raise ProviderFailure(
                     status_to_kind(resp.status),
                     f"{self.id}: poll failed with HTTP {resp.status}",
                     detail={"job_id": job_id},
                 )
-            data = resp.json()
+            data = parse_json_response(resp, self.id, post_submit=False)
             raw_status = str(extract(data, poll_cfg.status_path))
             status = poll_cfg.status_map.get(raw_status, raw_status.lower())
             if status == "succeeded":
@@ -267,13 +299,12 @@ class GenericTtsProvider:
                     detail={"job_id": job_id, "body": resp.text()[:2000]},
                 )
             delay = min(0.5 * (2 ** i), 8.0)
-            if elapsed + delay > 600.0:
+            if time.monotonic() + delay > deadline:
                 raise ProviderFailure(
                     FailureKind.timeout,
                     f"{self.id}: job {job_id} did not finish within 600s",
                 )
             self._sleep(delay)
-            elapsed += delay
             i += 1
 
 

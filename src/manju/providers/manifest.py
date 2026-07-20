@@ -379,10 +379,20 @@ class ProviderManifest(ManjuModel):
         if self.adapter == GENERIC_TTS_ADAPTER:
             if self.submit is None:
                 problems.append("submit section is required for generic_tts")
-            if not (self.tts.audio_url_path or self.tts.audio_b64_path):
-                problems.append(
-                    "tts.audio_url_path or tts.audio_b64_path is required for generic_tts"
-                )
+            # EXACTLY one audio source (XOR), not just "at least one": a manifest
+            # setting BOTH used to validate silently while _audio_from gave the
+            # base64 path precedence, so an apparently-unused audio_url_path did
+            # nothing and doctor never flagged the ambiguity.
+            if bool(self.tts.audio_url_path) == bool(self.tts.audio_b64_path):
+                if self.tts.audio_url_path:
+                    problems.append(
+                        "set EXACTLY one of tts.audio_url_path / tts.audio_b64_path "
+                        "(both are set — base64 would silently win)"
+                    )
+                else:
+                    problems.append(
+                        "tts.audio_url_path or tts.audio_b64_path is required for generic_tts"
+                    )
             if self.poll is not None and "{job_id}" not in self.poll.url:
                 problems.append("poll.url must contain {job_id}")
         if self.adapter == GENERIC_ASR_ADAPTER:

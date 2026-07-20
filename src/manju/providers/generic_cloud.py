@@ -46,6 +46,138 @@ class HttpResponse(NamedTuple):
         return json.loads(self.body.decode("utf-8"))
 
 
+# --------------------------------------------------------------- shared guards
+# One home for the parse/validate steps every generic adapter (video / tts /
+# asr) must run on an UNTRUSTED provider response, so a malformed 2xx can never
+# leak a raw UnicodeDecodeError / TypeError / fabricated id out of a paid path.
+
+def parse_json_response(resp: "HttpResponse", provider_id: str, *,
+                        post_submit: bool = False):
+    """``resp.json()`` with provider-level error conversion. A 2xx whose body is
+    not valid UTF-8 / not valid JSON raises a structured :class:`ProviderFailure`
+    instead of a raw ``UnicodeDecodeError``/``JSONDecodeError``. ``post_submit``
+    marks the disposition ``OUTCOME_UNKNOWN`` — the remote side may have accepted
+    the (paid) request even though we cannot read its reply, so it must never be
+    treated as a safe not-happened failure."""
+    try:
+        return json.loads(resp.body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        detail = {"status": resp.status, "body": resp.text()[:2000]}
+        disposition = None
+        if post_submit:
+            from .submission import OUTCOME_UNKNOWN_DISPOSITION
+            disposition = OUTCOME_UNKNOWN_DISPOSITION
+            detail["disposition"] = OUTCOME_UNKNOWN_DISPOSITION
+        raise ProviderFailure(
+            FailureKind.provider_error,
+            f"{provider_id}: response was not readable JSON ({exc})",
+            detail=detail, disposition=disposition,
+        ) from exc
+
+
+def require_remote_id(value, provider_id: str, *, field: str = "job id",
+                      post_submit: bool = True) -> str:
+    """Validate a value extracted as a remote job id (or any identifier that
+    becomes a URL path segment). ``str(extract(...))`` used to coerce JSON
+    ``null``/objects/arrays/booleans into ``"None"``/``"{...}"``/``"['x']"``/
+    ``"True"`` and then poll ``/jobs/None`` — orphaning the real accepted job.
+    Only a non-empty, non-whitespace string (or a plain int) is a real id;
+    everything else means the response was malformed AFTER a paid submit →
+    ``OUTCOME_UNKNOWN``."""
+    ok = (isinstance(value, str) and value.strip()) or (
+        isinstance(value, int) and not isinstance(value, bool))
+    if ok:
+        return str(value).strip() if isinstance(value, str) else str(value)
+    disposition = None
+    detail = {"raw": repr(value)[:200]}
+    if post_submit:
+        from .submission import OUTCOME_UNKNOWN_DISPOSITION
+        disposition = OUTCOME_UNKNOWN_DISPOSITION
+        detail["disposition"] = OUTCOME_UNKNOWN_DISPOSITION
+    raise ProviderFailure(
+        FailureKind.provider_error,
+        f"{provider_id}: response carried no usable {field} "
+        f"(got {type(value).__name__}) — the request may have been accepted remotely",
+        detail=detail, disposition=disposition,
+    )
+
+
+def journal_remote_submit(project_root, provider_id: str, job_id: str,
+                          detail: dict) -> None:
+    """DURABLY record an accepted async remote job id BEFORE polling it — the
+    fail-closed submission journal (audit findings 8/9). A best-effort
+    ``append_event`` could silently drop (lock busy) or raise (open failure) the
+    id AFTER the paid request was accepted, orphaning the spend so a retry
+    double-charges. This fsyncs the id and, if the durable write cannot be made,
+    raises a ``ProviderFailure`` that STILL surfaces the id and marks the outcome
+    ``OUTCOME_UNKNOWN`` — never silently continue, never lose the id."""
+    from datetime import datetime, timezone
+
+    from ..core.events import EvidenceWriteError, append_jsonl_line
+    from .submission import OUTCOME_UNKNOWN_DISPOSITION
+
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "actor": "engine",
+        "action": "provider_remote_submit",
+        "detail": {"provider": provider_id, "remote_job_id": job_id, **detail},
+    }
+    try:
+        append_jsonl_line(project_root, record, durable=True, required=True)
+    except EvidenceWriteError as exc:
+        raise ProviderFailure(
+            FailureKind.provider_error,
+            f"{provider_id}: paid remote job {job_id} was accepted but its id "
+            f"could not be durably journaled ({exc.reason}) — the remote job MAY "
+            f"be running/billing; reconcile job_id={job_id} before retrying",
+            detail={"remote_job_id": job_id, "job_id": job_id,
+                    "disposition": OUTCOME_UNKNOWN_DISPOSITION,
+                    "journal_error": exc.reason},
+            disposition=OUTCOME_UNKNOWN_DISPOSITION,
+        ) from exc
+
+
+def is_transient_status(status: int) -> bool:
+    """A polling response worth retrying against the SAME accepted job: rate
+    limiting (429) or a server-side transient (5xx). A non-retryable 4xx (404
+    job-not-found, 401/403 auth) is terminal."""
+    return status == 429 or 500 <= status < 600
+
+
+def retry_after_seconds(headers: dict, default: float) -> float:
+    """Parse a ``Retry-After`` header (delta-seconds form) into a bounded sleep;
+    fall back to ``default`` when absent/unparseable. Capped at 60s so a hostile
+    header cannot wedge the poll loop."""
+    ra = (headers or {}).get("Retry-After") or (headers or {}).get("retry-after")
+    if ra:
+        try:
+            return max(0.0, min(float(str(ra).strip()), 60.0))
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+_SAFE_AUDIO_EXTS = frozenset({"wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"})
+
+
+def safe_audio_ext(fmt: str, provider_id: str) -> str:
+    """A manifest's ``tts.audio_format`` is an EXTENSION, never a path. The
+    destination used to be ``dest_dir / f"voice.{fmt.lstrip('.')}"`` with no
+    separator/`..`/drive checks, so ``audio_format: x/../../escaped.bin`` wrote
+    OUTSIDE the staging dir. Accept only a short alnum extension from the
+    allowlist; refuse anything with a separator, ``..``, a colon/drive or
+    unexpected characters."""
+    raw = str(fmt or "").strip().lstrip(".").lower()
+    if raw in _SAFE_AUDIO_EXTS:
+        return raw
+    raise ProviderFailure(
+        FailureKind.invalid,
+        f"{provider_id}: tts.audio_format {fmt!r} is not a permitted audio "
+        f"extension (one of {sorted(_SAFE_AUDIO_EXTS)}) — it names a file "
+        "extension, not a path",
+    )
+
+
 # transport(method, url, headers, body) -> HttpResponse; never raises on HTTP
 # error statuses — status classification is the provider's job, not urllib's.
 Transport = Callable[[str, str, dict[str, str], bytes | None], HttpResponse]
