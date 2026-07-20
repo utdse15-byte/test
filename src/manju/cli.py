@@ -6130,7 +6130,7 @@ def relink(
         _fail(f"计划文件不存在: {plan_file}", code="plan_not_found")
     try:
         plan = json.loads(plan_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         _fail(f"计划文件不可读/不是 JSON: {plan_file} — {exc}", code="plan_unreadable")
         return  # unreachable; keeps the type checker happy
     with _write_lock(project):
@@ -7766,19 +7766,35 @@ def gc(hard: bool = typer.Option(False, "--hard"),
     )
     freed = 0
     ghost_sidecars = 0
+    skipped_busy: list[str] = []
     with _write_lock(project):
         for d in (project.segments_dir, project.proxy_dir):
             for f in d.glob("*"):
                 if f.is_file():
-                    freed += f.stat().st_size
-                    f.unlink()
+                    try:
+                        size = f.stat().st_size
+                        f.unlink()
+                        freed += size
+                    except OSError:
+                        # Windows: a proxy still open in a player/preview holds
+                        # a sharing lock — skip it, keep collecting the rest
+                        skipped_busy.append(project.relpath(f))
         if do_hard:
             for sid in project.shot_ids():
                 shot = project.load_shot(sid)
                 for take in project.takes(sid):
                     if take.name != shot.status.selected_take and take.media_path:
-                        freed += take.media_path.stat().st_size
-                        take.media_path.unlink()
+                        try:
+                            size = take.media_path.stat().st_size
+                            take.media_path.unlink()
+                        except OSError:
+                            # e.g. the GUI is streaming this take right now —
+                            # one busy file must not abort the whole gc mid-way
+                            # (and the sidecar must then STAY, or the media
+                            # would become an unnumbered orphan)
+                            skipped_busy.append(project.relpath(take.media_path))
+                            continue
+                        freed += size
                         # round-W #35: the sidecar (which also carries the
                         # take's virtual-trim / timing fields) rides along —
                         # otherwise a media-less "ghost take" sidecar lingers
@@ -7788,14 +7804,20 @@ def gc(hard: bool = typer.Option(False, "--hard"),
                             take.sidecar_path.unlink()
                             ghost_sidecars += 1
         append_event(project.root, ACTOR, "gc",
-                     {"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars})
+                     {"freed_bytes": freed, "hard": hard,
+                      "sidecars_removed": ghost_sidecars,
+                      **({"skipped_busy": len(skipped_busy)} if skipped_busy else {})})
     if as_json:
-        _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars}, True)
+        _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars,
+               "skipped_busy": skipped_busy}, True)
     else:
         typer.secho(f"freed {freed / 1e6:.1f} MB", fg=typer.colors.GREEN)
         if ghost_sidecars:
             typer.secho(f"  同步删除 {ghost_sidecars} 个 take sidecar(避免残留 ghost take)",
                         fg=typer.colors.BRIGHT_BLACK)
+        for rel in skipped_busy:
+            typer.secho(f"  跳过(被占用,关闭播放器后重试): {rel}",
+                        fg=typer.colors.YELLOW)
 
 
 @app.command("rebuild-index", rich_help_panel=PANEL_OPS)

@@ -783,3 +783,47 @@ def test_buildlock_respects_a_contenders_steal_mutex(tmp_project):
     steal.unlink()
     lock.acquire()                                        # now OUR steal wins
     lock.release()
+
+
+# ===================================================== wave-7 (second pass)
+
+
+def test_torn_voice_timing_json_degrades_never_crashes_compile(tmp_path):
+    """A timing.json torn mid-multibyte-char must degrade to the weighted-split
+    fallback (None) — UnicodeDecodeError used to escape the JSON/OSError net
+    and crash the whole compile."""
+    from manju.timeline.compiler import _load_voice_timing
+
+    voice = tmp_path / "voice_take_01.wav"
+    voice.write_bytes(b"riff")
+    timing = tmp_path / "voice_take_01.timing.json"
+    timing.write_bytes('[{"start_ms": 0, "end_ms": 100, "text": "你好'
+                       .encode("utf-8")[:-1])  # torn CJK tail
+    assert _load_voice_timing(voice) is None
+
+
+def test_perf_report_timestamps_never_mix_naive_and_aware():
+    """A hand-edited/legacy naive stamp must normalize to UTC at the parse
+    boundary — naive-vs-aware max()/subtraction raises TypeError and crashed
+    the whole derived report."""
+    from manju.build.usage_report import _parse_ts as usage_parse
+    from manju.qc.runperf import _parse_ts as perf_parse
+
+    for parse in (perf_parse, usage_parse):
+        aware = parse("2026-07-19T10:00:00+00:00")
+        naive = parse("2026-07-19T09:00:00")  # hand-edited: no offset
+        assert aware is not None and naive is not None
+        assert (aware - naive).total_seconds() == 3600  # comparable, ordered
+
+
+def test_roundtrip_batch_records_never_overwrite_within_one_second(tmp_project):
+    """Two applies in the same wall-clock second must land TWO audit records."""
+    from manju.build import roundtrip as RT
+
+    plan = {"kind": "jianying", "edited": "", "rows": []}
+    first = RT.apply_roundtrip(tmp_project, plan, actor="test")
+    second = RT.apply_roundtrip(tmp_project, plan, actor="test")
+    batch_dir = tmp_project.root / "reports" / "roundtrip_batches"
+    files = sorted(p.name for p in batch_dir.glob("*.yaml"))
+    assert len(files) == 2, files
+    assert first["batch"] != second["batch"]

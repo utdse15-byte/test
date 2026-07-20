@@ -514,9 +514,14 @@ def apply_multi_shot(
             })
 
     # Batch record (ingest-style)
-    batch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    base_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     batch_dir = project.root / "reports" / "ingest_batches"
     batch_dir.mkdir(parents=True, exist_ok=True)
+    # same-second applies must not overwrite each other's audit record
+    batch_id, serial = base_id, 2
+    while (batch_dir / f"{batch_id}.yaml").exists():
+        batch_id = f"{base_id}-{serial}"
+        serial += 1
     batch = {
         "id": batch_id,
         "kind": "align_multi",

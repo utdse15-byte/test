@@ -155,7 +155,7 @@ def _read_key_full(final_path: Path) -> dict | None:
     try:
         data = json.loads(sidecar.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else None
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
 
 

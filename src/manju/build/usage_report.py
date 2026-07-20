@@ -17,7 +17,7 @@ are reported as unavailable rather than guessed.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +45,14 @@ def _parse_ts(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        # naive legacy stamp → UTC — mixing naive and aware datetimes in a
+        # subtraction raises TypeError and would crash the derived report
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _percentile(sorted_vals: list[float], pct: float) -> float | None:

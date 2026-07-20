@@ -231,7 +231,7 @@ def project_status(project: Project, *, statuses: Any = None,
         try:
             holder = json.loads(lock_path.read_text(encoding="utf-8"))
             build_lock_info = holder if isinstance(holder, dict) else {}
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             build_lock_info = {"note": "lock file unreadable"}
 
     timeline = project.load_timeline()
@@ -283,7 +283,7 @@ def project_status(project: Project, *, statuses: Any = None,
                 "errors": sum(1 for i in items if i.get("level") == "error"),
                 "warnings": sum(1 for i in items if i.get("level") == "warn"),
             }
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             qc_summary = {"ok": None, "note": "qc.json unreadable"}
 
     # suggested next step, in build order. `next_step_key` is the STABLE

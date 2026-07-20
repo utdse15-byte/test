@@ -804,7 +804,7 @@ def _final_keys(project: Project) -> dict[str, str | None]:
         if sidecar.exists():
             try:
                 key = json.loads(sidecar.read_text(encoding="utf-8")).get("final_key")
-            except (json.JSONDecodeError, OSError):
+            except (ValueError, OSError):
                 key = None
         out[p.stem] = key
     return out
@@ -1295,7 +1295,7 @@ def _qc_suggestions(project: Project) -> list[Suggestion]:
         return []
     try:
         data = json.loads(qc_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return []
     items = data.get("items", []) if isinstance(data, dict) else []
     out: list[Suggestion] = []
@@ -1345,7 +1345,7 @@ def _assurance_suggestions(project: Project) -> list[Suggestion]:
         return []
     try:
         data = json.loads(qc_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return []
     block = data.get("assurance") if isinstance(data, dict) else None
     if not isinstance(block, dict):

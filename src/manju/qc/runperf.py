@@ -54,7 +54,7 @@ the output is byte-stable for a given ``events.jsonl``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -115,9 +115,15 @@ def _parse_ts(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        # a legacy/hand-edited naive stamp reads as UTC (the writer's zone) —
+        # mixing naive and aware datetimes in max()/subtraction raises
+        # TypeError and would crash the whole derived report
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _duration_ms(rec: dict) -> int | None:

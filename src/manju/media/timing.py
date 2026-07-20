@@ -129,7 +129,7 @@ def read_evidence(media: Path) -> dict[str, Any] | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
     return data if isinstance(data, dict) else None
 

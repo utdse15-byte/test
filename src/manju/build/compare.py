@@ -110,7 +110,7 @@ def _load_snapshot(final_path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(snap.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else None
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
 
 
@@ -120,7 +120,7 @@ def _load_key(final_path: Path) -> str | None:
         return None
     try:
         return str(json.loads(sidecar.read_text(encoding="utf-8")).get("final_key") or "") or None
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
 
 
@@ -133,7 +133,7 @@ def _created_at(final_path: Path) -> str | None:
             ts = json.loads(sidecar.read_text(encoding="utf-8")).get("created_at")
             if ts:
                 return str(ts)
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             pass
     try:
         from datetime import datetime, timezone

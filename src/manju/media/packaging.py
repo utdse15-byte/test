@@ -194,7 +194,7 @@ def _read_key(media_path: Path) -> str | None:
         return None
     try:
         return str(json.loads(sidecar.read_text(encoding="utf-8")).get("key", "")) or None
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
 
 
