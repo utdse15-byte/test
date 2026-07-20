@@ -71,6 +71,43 @@ def _lock_path() -> Path:
     return p.with_name(p.name + ".lock")
 
 
+def _steal_stale_lock(lock_path: Path) -> None:
+    """Remove a stale lock under a short-lived STEAL MUTEX (`.steal` O_EXCL).
+
+    A blind `unlink(); continue` let two windows both observe the same stale
+    lock and race: A unlinks + re-creates, then B's unlink deletes A's FRESH
+    lock — dual ownership of a store that promises multi-window safety. Only
+    the steal-mutex holder may unlink, and it re-checks staleness inside the
+    mutex, so a freshly minted lock can never be deleted."""
+    steal = lock_path.with_name(lock_path.name + ".steal")
+    try:
+        fd = os.open(str(steal), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            if time.time() - steal.stat().st_mtime > _LOCK_STALE_S:
+                steal.unlink(missing_ok=True)  # a dead stealer's leftovers
+        except OSError:
+            pass
+        return  # someone else is mid-steal — let the outer loop re-poll
+    except OSError:
+        return
+    try:
+        try:
+            if time.time() - lock_path.stat().st_mtime > _LOCK_STALE_S:
+                lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            steal.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _acquire_cross_process_lock(timeout: float = _LOCK_WAIT_S) -> int:
     """Exclusive lock via O_EXCL create. Returns open fd (caller must close)."""
     lock_path = _lock_path()
@@ -88,7 +125,7 @@ def _acquire_cross_process_lock(timeout: float = _LOCK_WAIT_S) -> int:
             try:
                 age = time.time() - lock_path.stat().st_mtime
                 if age > _LOCK_STALE_S:
-                    lock_path.unlink(missing_ok=True)
+                    _steal_stale_lock(lock_path)
                     continue
             except OSError:
                 pass
@@ -105,32 +142,72 @@ def _release_cross_process_lock(fd: int) -> None:
     except OSError:
         pass
     try:
+        # Owner check: if THIS process was suspended past _LOCK_STALE_S, a
+        # sibling window may have legitimately stolen and re-minted the lock —
+        # unlinking blindly would release *their* lock and re-open the race.
+        content = lock_path.read_text(encoding="ascii", errors="replace").strip()
+        if content and content != str(os.getpid()):
+            return
+    except OSError:
+        pass
+    try:
         lock_path.unlink(missing_ok=True)
     except OSError:
         pass
 
 
+def _quarantine_corrupt(path: Path, exc: Exception) -> dict[str, Any]:
+    """Back a REALLY corrupt store aside and start fresh. A transient OSError
+    must never land here — treating "briefly unreadable" (antivirus/backup
+    holding the file on Windows) as corruption renamed the whole store away,
+    and the next save then overwrote every draft/preference with defaults."""
+    try:
+        bak = path.with_name(
+            f"{path.name}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
+        path.replace(bak)
+        _log.warning("gui_state corrupt; backed up to %s (%s)", bak, exc)
+    except OSError:
+        _log.warning("gui_state unparseable: %s", exc)
+    return {"version": _VERSION, "onboarding_dismissed": {}}
+
+
 def _load_unlocked() -> dict[str, Any]:
     path = gui_state_path()
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _read_with_retry(path)
+    except FileNotFoundError:
+        return {"version": _VERSION, "onboarding_dismissed": {}}  # first run
+    except UnicodeDecodeError as exc:  # non-UTF-8 bytes ARE corruption
+        return _quarantine_corrupt(path, exc)
+    try:
         data = json.loads(raw)
-    except (OSError, ValueError) as exc:
-        if path.exists():
-            try:
-                bak = path.with_name(
-                    f"{path.name}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
-                path.replace(bak)
-                _log.warning("gui_state corrupt; backed up to %s (%s)", bak, exc)
-            except OSError:
-                _log.warning("gui_state unreadable: %s", exc)
-        return {"version": _VERSION, "onboarding_dismissed": {}}
+    except ValueError as exc:
+        return _quarantine_corrupt(path, exc)
     if not isinstance(data, dict):
         return {"version": _VERSION, "onboarding_dismissed": {}}
     data.setdefault("version", _VERSION)
     if not isinstance(data.get("onboarding_dismissed"), dict):
         data["onboarding_dismissed"] = {}
     return data
+
+
+def _read_with_retry(path: Path, tries: int = 3, delay_s: float = 0.05) -> str:
+    """Strict-UTF-8 read with a short retry for TRANSIENT OSErrors (Windows
+    sharing violations). FileNotFoundError propagates immediately (first run);
+    a persistent OSError propagates after the retries — the caller's
+    read-modify-write then fails WITHOUT clobbering the store with defaults."""
+    last: OSError | None = None
+    for i in range(tries):
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            last = exc
+            if i + 1 < tries:
+                time.sleep(delay_s)
+    assert last is not None
+    raise last
 
 
 def _save_unlocked(state: dict[str, Any]) -> None:

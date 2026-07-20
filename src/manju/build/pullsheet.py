@@ -179,7 +179,15 @@ def compile_pull_sheet_csv(project: "Project", timeline: "Timeline | None" = Non
 
 
 def _md_cell(v: str) -> str:
-    return str(v).replace("|", "\\|").replace("\n", " ")
+    # Newlines encode REVERSIBLY as <br> (Markdown renderers show a line break;
+    # _decode_md_cell restores "\n" on import). The old lossy `\n → " "` made an
+    # UNEDITED export diff dirty against truth, and --apply then rewrote every
+    # multi-line dialogue/action to its flattened form.
+    return str(v).replace("|", "\\|").replace("\n", "<br>")
+
+
+def _decode_md_cell(v: str) -> str:
+    return str(v).replace("<br>", "\n")
 
 
 def compile_pull_sheet_md(project: "Project", timeline: "Timeline | None" = None) -> str:
@@ -247,7 +255,7 @@ def _parse_md(text: str) -> list[dict[str, str]]:
             continue
         if len(cells) != len(header):
             continue
-        rows.append(dict(zip(header, cells)))
+        rows.append({k: _decode_md_cell(c) for k, c in zip(header, cells)})
     return rows
 
 
@@ -327,22 +335,20 @@ def _apply_editable(raw: dict[str, Any], fields: dict[str, Any]) -> None:
         raw["characters"] = fields["characters"]
     if "duration" in fields:
         raw["duration"] = fields["duration"]
+    from ..core.writes import ensure_mapping
+
     if "camera" in fields:
-        raw.setdefault("camera", {})
-        raw["camera"].update(fields["camera"])
+        ensure_mapping(raw, "camera").update(fields["camera"])
     if "action_main" in fields:
-        raw.setdefault("action", {})
-        raw["action"]["main"] = fields["action_main"]
+        ensure_mapping(raw, "action")["main"] = fields["action_main"]
     if "dialogue" in fields:
-        raw.setdefault("dialogue", {})
-        raw["dialogue"]["speaker"] = fields["dialogue"]["speaker"]
-        raw["dialogue"]["text"] = fields["dialogue"]["text"]
+        dlg = ensure_mapping(raw, "dialogue")
+        dlg["speaker"] = fields["dialogue"]["speaker"]
+        dlg["text"] = fields["dialogue"]["text"]
     if "must_show" in fields:
-        raw.setdefault("quality", {})
-        raw["quality"]["must_show"] = fields["must_show"]
+        ensure_mapping(raw, "quality")["must_show"] = fields["must_show"]
     if "avoid" in fields:
-        raw.setdefault("quality", {})
-        raw["quality"]["avoid"] = fields["avoid"]
+        ensure_mapping(raw, "quality")["avoid"] = fields["avoid"]
 
 
 def _new_shot_package(project: "Project", new_rows: list[dict[str, str]]) -> dict[str, Any] | None:

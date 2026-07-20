@@ -297,7 +297,20 @@ def plan_ingest(
         if should_cancel is not None and should_cancel():
             canceled = True
             break
-        h = hash_file(f)
+        try:
+            h = hash_file(f)
+        except OSError as exc:
+            # One unreadable file (Windows sharing violation while another app
+            # holds it, a vanished path, a permission wall) degrades to ONE
+            # skipped row — it must never crash the whole batch plan.
+            rows.append(IngestRow(
+                file=str(f), name=f.name, hash="", action="skip_unreadable",
+                target="(不落地)",
+                reason=("文件无法读取(可能被其他程序占用/无权限),已跳过:"
+                        f"{' '.join(str(exc).split())[:200]}"),
+                match="unmatched",
+            ))
+            continue
         if h in existing_index:
             rows.append(IngestRow(
                 file=str(f), name=f.name, hash=h, action="skip_duplicate",
@@ -889,7 +902,7 @@ def apply_ingest(
             canceled = True
             break
         eff = _apply_override(row, overrides.get(i))
-        if eff.action == "skip_duplicate":
+        if eff.action in ("skip_duplicate", "skip_unreadable"):
             results.append(IngestRowResult(row=eff, ok=True, detail={"skipped": True}))
             append_event(project.root, actor, "ingest_row", {
                 "index": i, "file": eff.name, "action": eff.action,

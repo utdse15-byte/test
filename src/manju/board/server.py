@@ -436,7 +436,9 @@ def _api_annotate(project: Project, body: dict) -> dict:
     record = annotation.model_dump(exclude_none=True)
 
     def mutate(d: dict) -> None:
-        status = d.setdefault("status", {})
+        from ..core.writes import ensure_mapping
+
+        status = ensure_mapping(d, "status")
         anns = status.get("annotations")
         if not isinstance(anns, list):
             anns = []
@@ -745,30 +747,40 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.CONFLICT,
                             {"ok": False, "error": "busy — another action is running"})
             return
+        # The response is sent AFTER the lock is released (the action itself is
+        # complete either way): sending inside the locked region let a client
+        # that just received its response fire the NEXT click while this
+        # thread sat preempted between send and release — a spurious 409
+        # "busy" for a strictly sequential clicker (surfaced as a rare xdist
+        # flake; on a loaded desktop it hits real fast clicks too).
         try:
-            result = handler(self._project, body)
-            payload: dict[str, Any] = {"ok": True}
-            if result:
-                payload.update(result)
-            self._send_json(HTTPStatus.OK, payload)
-        except _BadRequest as exc:
-            # malformed INPUT (Wave 3 annotate validation) — a real 400, same
-            # one-line envelope as everything else.
-            self._send_json(HTTPStatus.BAD_REQUEST,
-                            {"ok": False, "error": _one_line(str(exc))})
-        except _ApiError as exc:
-            self._send_json(HTTPStatus.OK, {"ok": False, "error": _one_line(str(exc))})
-        except BuildLocked as exc:
-            # Round Z (agent ZA): a SEPARATE process (CLI `manju build`, or
-            # another manju surface) holds the cross-process build lock — the
-            # SAME "busy" shape mutation_lock's own contention returns above,
-            # so the board's client-side handling needs no new branch.
-            self._send_json(HTTPStatus.CONFLICT,
-                            {"ok": False, "error": _one_line(str(exc))})
-        except Exception as exc:  # any core failure → clean one-line envelope, never a 500 stack
-            self._send_json(HTTPStatus.OK, {"ok": False, "error": _one_line(str(exc))})
+            try:
+                result = handler(self._project, body)
+                payload: dict[str, Any] = {"ok": True}
+                if result:
+                    payload.update(result)
+                status = HTTPStatus.OK
+            except _BadRequest as exc:
+                # malformed INPUT (Wave 3 annotate validation) — a real 400, same
+                # one-line envelope as everything else.
+                status, payload = HTTPStatus.BAD_REQUEST, \
+                    {"ok": False, "error": _one_line(str(exc))}
+            except _ApiError as exc:
+                status, payload = HTTPStatus.OK, \
+                    {"ok": False, "error": _one_line(str(exc))}
+            except BuildLocked as exc:
+                # Round Z (agent ZA): a SEPARATE process (CLI `manju build`, or
+                # another manju surface) holds the cross-process build lock — the
+                # SAME "busy" shape mutation_lock's own contention returns above,
+                # so the board's client-side handling needs no new branch.
+                status, payload = HTTPStatus.CONFLICT, \
+                    {"ok": False, "error": _one_line(str(exc))}
+            except Exception as exc:  # any core failure → clean one-line envelope, never a 500 stack
+                status, payload = HTTPStatus.OK, \
+                    {"ok": False, "error": _one_line(str(exc))}
         finally:
             lock.release()
+        self._send_json(status, payload)
 
     # ---- body / response helpers
 

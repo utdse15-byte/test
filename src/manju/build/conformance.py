@@ -232,8 +232,15 @@ def _color_check(vid: dict, facts: dict | None, artifact_id: str) -> dict:
         return _row("color", artifact_id, UNKNOWN, expected=target, observed=observed,
                     detail="color is unknown on the media (one or more color axes absent, "
                            "not guessed) — the required color tags cannot be verified")
+    declared_axes = [ax for ax in axes if ax in target]
+    if not declared_axes:
+        # a target with NO recognized axis keys verifies nothing — an empty
+        # all() reading as PASS would guess UNKNOWN into PASS (§disciplines)
+        return _row("color", artifact_id, UNKNOWN, expected=target, observed=observed,
+                    detail="the declared color target names no recognized axis "
+                           f"({'/'.join(axes)}) — nothing to verify, not guessed")
     ok = all(str(target.get(ax, "")).strip().lower() == str(observed.get(ax, "")).strip().lower()
-             for ax in axes if ax in target)
+             for ax in declared_axes)
     return _row("color", artifact_id, PASS if ok else FAIL, expected=target, observed=observed,
                 detail="" if ok else "one or more color axes differ from the declared target")
 

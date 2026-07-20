@@ -2133,6 +2133,9 @@ _JS = r"""
       }
       root.appendChild(wrap);
     }
+    /* the safe-quit button lives in #header: clear(root) above destroyed the
+     * boot-time append-once button on the first re-render — re-ensure here */
+    if (window.__mjEnsureQuitBtn) window.__mjEnsureQuitBtn();
   }
 
   /* ---------------------------------------------- workspace switcher --- */
@@ -3274,11 +3277,17 @@ _JS = r"""
    * other; post() handles the disable + toast + refresh. */
   let reorderBusy = false;
 
-  async function moveShot(i, delta, btn) {
+  async function moveShot(shotId, delta, btn) {
+    /* Resolve the position AT CLICK TIME by shot id: the card's render-time
+     * index went stale two ways — a state filter made it a FILTERED-list
+     * index swapped into the FULL order, and the keyed-patch renderer reuses
+     * card nodes (same ui_rev) whose closures still hold pre-reorder
+     * indexes. Both silently swapped the WRONG pair into shots/index.yaml. */
     if (reorderBusy || readonly) return;
     const order = lastShots.map((s) => s.id);
+    const i = order.indexOf(shotId);
     const j = i + delta;
-    if (i < 0 || i >= order.length || j < 0 || j >= order.length) return;
+    if (i < 0 || j < 0 || j >= order.length) return;
     const moved = order[i];
     order[i] = order[j];
     order[j] = moved;
@@ -3730,16 +3739,20 @@ _JS = r"""
       head.appendChild(cmp);
     }
     const mv = el("span", "mvbtns");
+    /* edges follow the FULL index order (a filtered view's first card may
+     * still legally move up within shots/index.yaml) */
+    const fullOrder = lastShots.map((s) => s.id);
+    const fullIdx = fullOrder.indexOf(shot.id);
     const mkMove = (label, delta, edge, tip) => {
       const b = el("button", "btn ghost mini", label);
       b.type = "button";
       b.title = tip;
       if (!roGate(b) && edge) b.disabled = true;   /* first ↑ / last ↓ stay off */
-      b.addEventListener("click", () => moveShot(idx, delta, b));
+      b.addEventListener("click", () => moveShot(shot.id, delta, b));
       mv.appendChild(b);
     };
-    mkMove("↑", -1, idx === 0, "上移 (move up)");
-    mkMove("↓", 1, idx === total - 1, "下移 (move down)");
+    mkMove("↑", -1, fullIdx <= 0, "上移 (move up)");
+    mkMove("↓", 1, fullIdx < 0 || fullIdx === fullOrder.length - 1, "下移 (move down)");
     head.appendChild(mv);
     card.appendChild(head);
 
@@ -4558,7 +4571,11 @@ _JS = r"""
         prevBtn.disabled = true;
         try {
           const text = parseDialogueText(ta.value);
-          const body = { shot: ispec.shot, assume_yes: true };
+          /* NO assume_yes on the first click: a priced TTS preview must pass
+           * the §8.3 ask_before gate — the server answers waiting_user and
+           * the 「确认花费」 banner (SPEND_KINDS.voice_preview) re-posts these
+           * exact params WITH assume_yes after the human confirms. */
+          const body = { shot: ispec.shot };
           if (text !== null) body.text = text;
           const r = await apiRaw("POST", "/api/voice/preview", body);
           if (!r || !r.ok) {
@@ -4592,6 +4609,10 @@ _JS = r"""
           if (job && (job.state === "queued" || job.state === "running"
               || job.state === "canceling")) {
             toast("试听仍在排队/运行 — 稍后再点试听,或看任务面板", "err");
+            return;
+          }
+          if (res.waiting_user === true) {
+            toast("试听是付费合成,需先确认花费 — 请在构建面板的「确认花费」横幅点确认", "err");
             return;
           }
           if (res.ok === false || res.code === "tts_unavailable") {
@@ -6101,18 +6122,28 @@ _JS = r"""
       toast("无法读取任务状态：" + errMsg(err), "err");
     }
   }
+  function ensureQuitBtn() {
+    /* renderHeader does clear($("header")) on every header re-render — an
+     * append-once button was destroyed by the FIRST refresh and never came
+     * back. Re-ensure after every header render instead (window.__mjQuit
+     * is set once /api/app/status confirms app mode). */
+    if (!window.__mjQuit) return;
+    const host = $("header") || document.body;
+    if (!host || document.getElementById("mj-quit-btn")) return;
+    const btn = el("button", "btn ghost mini", "退出");
+    btn.type = "button";
+    btn.id = "mj-quit-btn";
+    btn.title = "安全退出 (finish or cancel jobs)";
+    btn.setAttribute("aria-label", "安全退出 Manju");
+    btn.addEventListener("click", () => promptAppQuit());
+    host.appendChild(btn);
+  }
+  window.__mjEnsureQuitBtn = ensureQuitBtn;
   try {
     api("GET", "/api/app/status").then((st) => {
       if (!st) return;
-      const host = $("header") || document.body;
-      if (!host || document.getElementById("mj-quit-btn")) return;
-      const btn = el("button", "btn ghost mini", "退出");
-      btn.type = "button";
-      btn.id = "mj-quit-btn";
-      btn.title = "安全退出 (finish or cancel jobs)";
-      btn.setAttribute("aria-label", "安全退出 Manju");
-      btn.addEventListener("click", () => promptAppQuit());
-      host.appendChild(btn);
+      window.__mjQuit = true;
+      ensureQuitBtn();
     }).catch(() => {});
   } catch (e) { /* boot continues */ }
 

@@ -971,17 +971,24 @@ _LAB_JS = r"""
   function doGenerate(btn) {
     var prov = document.getElementById("lab-gen-provider");
     btn.disabled = true;
+    /* NO assume_yes on the first click: 生成候选 is a priced redo and must
+     * pass the §8.3 ask_before gate. A waiting_user result is confirmed on
+     * the workbench's 「确认花费」 banner (the ONE approval surface), which
+     * re-posts this job's exact params with assume_yes. */
     post("/api/lab/generate", {
       shot: SHOT, quality: quality,
-      provider: prov && prov.value.trim() ? prov.value.trim() : null,
-      assume_yes: true
+      provider: prov && prov.value.trim() ? prov.value.trim() : null
     }).then(function (res) {
       /* C3: accept real 202 or any envelope carrying a job (defense in depth). */
       var job = res.data && res.data.job;
       if ((res.status === 202 || res.status === 200) && job) {
         return pollJob(job.id).then(function (job2) {
           btn.disabled = false;
-          if (job2 && job2.state === "done") { toast("已生成候选", true); reloadSoon(); }
+          var r2 = (job2 && job2.result) || {};
+          if (job2 && job2.state === "done" && r2.waiting_user === true) {
+            toast("生成是付费动作,需先确认花费 — 回工作台在「确认花费」横幅点确认", false);
+          }
+          else if (job2 && job2.state === "done") { toast("已生成候选", true); reloadSoon(); }
           else if (!job2) { toast("生成任务仍在排队/运行(轮询超时)— 完成后刷新本页可见", false); }
           else { toast(job2.error || "生成失败", false); }
         });

@@ -167,7 +167,10 @@ def _cue_row(c: dict[str, Any]) -> str:
         f'<span class="cue-tc muted">{_e(_fmt_ms(c["end_ms"]))}</span></td>'
         f'<td><input class="cue-speaker" type="text" value="{_e(c.get("speaker", ""))}" '
         'placeholder="—" readonly></td>'
-        f'<td><input class="cue-text" type="text" value="{_e(c["text"])}"></td>'
+        # textarea, NOT <input type=text>: an input strips CR/LF from its value
+        # per the HTML spec, so a multi-line SRT cue (standard bilingual/CJK
+        # layout) was silently flattened by merely opening + saving this page
+        f'<td><textarea class="cue-text" rows="2">{_e(c["text"])}</textarea></td>'
         '<td class="cue-ops">'
         '<button class="btn mini ghost" data-act="preview">看</button>'
         '<button class="btn mini ghost" data-act="split">拆分</button>'
@@ -727,7 +730,7 @@ _PAGES_T_JS = r"""
       e.className = "cue-end"; e.value = c.end_ms; cell().appendChild(e);
       var sp = document.createElement("input"); sp.type = "text"; sp.className = "cue-speaker";
       sp.value = c.speaker || ""; sp.readOnly = true; cell().appendChild(sp);
-      var tx = document.createElement("input"); tx.type = "text"; tx.className = "cue-text";
+      var tx = document.createElement("textarea"); tx.className = "cue-text"; tx.rows = 2;
       tx.value = c.text || ""; cell().appendChild(tx);
       var ops = cell("cue-ops");
       [["preview", "看"], ["split", "拆分"], ["merge", "合并↓"], ["del", "删"]].forEach(function (o) {

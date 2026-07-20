@@ -448,6 +448,17 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- plumbing
 
+    def handle_one_request(self) -> None:
+        # per-request flag: has a response's header block already gone out?
+        # (see do_GET's catch-all — a second send_response mid-body would
+        # corrupt the HTTP framing on this keep-alive connection)
+        self._headers_sent = False
+        super().handle_one_request()
+
+    def end_headers(self) -> None:
+        self._headers_sent = True
+        super().end_headers()
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         pass  # a polling UI would drown the terminal; errors go via responses
 
@@ -552,14 +563,16 @@ class _Handler(BaseHTTPRequestHandler):
         if length is None:
             return None
         prev_timeout = None
+        restore_timeout = False
         try:
             try:
                 prev_timeout = self.connection.gettimeout()
                 # Short deadline so a short/truncated body cannot hang the thread
                 # (client may wait for our response while we wait for more bytes).
                 self.connection.settimeout(3.0)
+                restore_timeout = True
             except (OSError, AttributeError):
-                prev_timeout = None
+                restore_timeout = False
             chunks: list[bytes] = []
             remaining = length
             while remaining > 0:
@@ -576,7 +589,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._reject_and_close("request body read failed", 400)
             return None
         finally:
-            if prev_timeout is not None:
+            # A blocking-mode socket reports gettimeout() None — `prev_timeout
+            # is not None` would then SKIP the restore and leave the 3s deadline
+            # poisoning this keep-alive connection forever (later reads AND
+            # sendall of a big response on the same connection start timing
+            # out). Track "we changed it" explicitly instead.
+            if restore_timeout:
                 try:
                     self.connection.settimeout(prev_timeout)
                 except (OSError, AttributeError):
@@ -902,6 +920,14 @@ class _Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass  # client went away mid-response (video seeks do this constantly)
         except Exception as exc:
+            if getattr(self, "_headers_sent", False):
+                # A response already started (e.g. _serve_file died mid-body on
+                # a Windows sharing violation): injecting a second status line
+                # would corrupt the framing of the NEXT response on this
+                # keep-alive connection. Drop the connection instead — the
+                # client sees a truncated body, which is the honest signal.
+                self.close_connection = True
+                return
             try:
                 self._send_error_json(" ".join(str(exc).split()), 500)
             except Exception:
@@ -1112,6 +1138,9 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         except Exception as exc:
+            if getattr(self, "_headers_sent", False):
+                self.close_connection = True  # same discipline as do_GET
+                return
             try:
                 self._send_error_json(" ".join(str(exc).split()), 500)
             except Exception:
@@ -1433,7 +1462,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             def mutate(d: dict[str, Any]) -> None:
-                status = d.setdefault("status", {})
+                from ..core.writes import ensure_mapping
+
+                status = ensure_mapping(d, "status")
                 notes = status.get("take_notes")
                 if not isinstance(notes, dict):
                     notes = {}
@@ -5156,13 +5187,19 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error_json("duration seconds must be > 0 (or 'auto')", 400)
                 return
             val = f"{f:g}"
+        from ..core.hashing import hash_text
         from .edit import set_duration_in_text
 
         with self.server.quick_mutex:
             text = project.shot_path(shot_id).read_text(encoding="utf-8")
+            # CAS on the text we just read: this read happens OUTSIDE the
+            # cross-process build_lock _gated_save takes, so a CLI/MCP write
+            # landing in the window would otherwise be silently reverted by
+            # our transformed stale text. A mismatch is the designed 409.
             ok, payload, status = self._gated_save(
                 project.shot_path(shot_id), set_duration_in_text(text, val),
-                label=f"shots/{shot_id}.yaml")
+                label=f"shots/{shot_id}.yaml",
+                expected_text_hash=hash_text(text))
             if ok:
                 payload["shot"] = shot_id
                 append_event(project.root, self.server.actor, "edit_shot",
@@ -5642,7 +5679,10 @@ class _Handler(BaseHTTPRequestHandler):
         project = self.server.project
         fname = query.get("file", [None])[0]
         if fname:
-            if "/" in fname or "\\" in fname or ".." in fname or not fname.endswith(".jpg"):
+            # ":" closes the Windows drive-relative hole: pathlib joins
+            # "C:secret.jpg" by REPLACING the anchor, escaping the cache dir.
+            if ("/" in fname or "\\" in fname or ".." in fname or ":" in fname
+                    or not fname.endswith(".jpg")):
                 self._send_error_json("bad frame file", 400)
                 return
             target = frames_cache_dir(project.root) / fname

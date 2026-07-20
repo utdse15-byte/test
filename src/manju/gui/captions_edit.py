@@ -20,6 +20,7 @@ editor and the burner agree on the wire format byte-for-byte.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..core.container import Project
@@ -145,6 +146,9 @@ def cues_to_srt(cues: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for i, c in enumerate(cues, start=1):
         text = str(c["text"]).replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        # an INTERIOR blank line would structurally terminate the SRT cue
+        # mid-text (same guard as exporters/srt_ass._collapse_blank_lines)
+        text = re.sub(r"\n[ \t]*\n+", "\n", text)
         parts.append(str(i))
         parts.append(f"{ms_to_srt(c['start_ms'])} --> {ms_to_srt(c['end_ms'])}")
         parts.append(text)

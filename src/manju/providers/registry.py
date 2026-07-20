@@ -217,12 +217,26 @@ def generate_with_fallback(
     # file so `--mode speed/quality` still biases the else branch. With no
     # routing file AND no mode bias the passed chain (or the freshly computed
     # one) drives the order EXACTLY as §8.4 did — byte-identical (pinned).
-    routed = routing.load_routing(req.project)
-    bias = getattr(req, "routing_bias", None)
-    if routed is not None or bias is not None:
-        config = routed or routing._default_config()
-        order = routing.resolve(req.project, req.shot, config, else_bias=bias).order
-    else:
+    try:
+        routed = routing.load_routing(req.project)
+        bias = getattr(req, "routing_bias", None)
+        if routed is not None or bias is not None:
+            config = routed or routing._default_config()
+            order = routing.resolve(req.project, req.shot, config, else_bias=bias).order
+    except routing.RoutingError as exc:
+        # a hand-edited routing.yaml typo (bad YAML, unknown strategy) is a
+        # PRE-SPEND config error: surface it as the structured per-shot
+        # failure every caller already handles (graph catches ProviderFailure)
+        # instead of crashing the whole build with a raw traceback.
+        from .submission import NOT_DISPATCHED
+
+        raise ProviderFailure(
+            FailureKind.invalid,
+            f"routing.yaml 配置错误(修好后重跑;`manju route explain` 可诊断): "
+            f"{' '.join(str(exc).split())}",
+            disposition=NOT_DISPATCHED,  # nothing was ever sent
+        ) from exc
+    if routed is None and bias is None:
         if chain is None:
             chain = fallback_chain(req.shot)
         order = ([preferred] if preferred else [])

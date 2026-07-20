@@ -615,7 +615,13 @@ class JobRunner:
         if self._jobs_log_path is None or not self._jobs_log_path.exists():
             return []
         try:
-            raw_lines = self._jobs_log_path.read_text(encoding="utf-8").splitlines()
+            # errors="replace": jobs.jsonl is written WITHOUT fsync (G6 —
+            # disposable operational history), so a torn multibyte tail is an
+            # expected crash artifact; it must fall into the per-line JSON
+            # skip below, not UnicodeDecodeError JobRunner construction (which
+            # bricked GUI startup for the project).
+            raw_lines = self._jobs_log_path.read_text(
+                encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return []
 

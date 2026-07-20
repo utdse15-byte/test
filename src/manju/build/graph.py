@@ -2373,8 +2373,10 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
                     f"`manju unlock {shot.id} {blocking}`",
                     level="info", actor=actor)
         else:
+            from ..core.writes import ensure_mapping
+
             project.update_shot_raw(
-                shot.id, lambda d: d.setdefault("status", {}).__setitem__("selected_take", choice)
+                shot.id, lambda d: ensure_mapping(d, "status").__setitem__("selected_take", choice)
             )
     _record_local_runs(project, takes, {"redo": True}, {shot.id: plan.cost})
     append_event(project.root, actor, "redo", {"shot": shot.id, "takes": [t.name for t in takes]})

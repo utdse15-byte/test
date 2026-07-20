@@ -122,10 +122,10 @@ class GenericAsrProvider:
         self._transport = transport or default_transport
         self._sleep = sleep_fn
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         from .generic_cloud import GenericCloudProvider
 
-        return GenericCloudProvider._headers(self)  # same auth semantics (§8.2)
+        return GenericCloudProvider._headers(self, extra)  # same auth semantics (§8.2)
 
     def _segments_from(self, data) -> list[TranscriptSegment]:
         cfg = self.manifest.asr
@@ -188,7 +188,9 @@ class GenericAsrProvider:
         }
         body = json.dumps(render_body(cfg.body_template, values),
                           ensure_ascii=False).encode("utf-8")
-        resp = self._transport(cfg.method, cfg.url, self._headers(), body)
+        # submit carries the manifest-declared extra_headers (mirrors
+        # generic_cloud.submit / the tts sibling — they were silently dropped)
+        resp = self._transport(cfg.method, cfg.url, self._headers(cfg.extra_headers), body)
         if resp.status >= 400:
             # F4: shared status→kind so ASR classifies a 429 as retryable
             # rate_limited exactly like its tts sibling (was always provider_error).

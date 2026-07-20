@@ -74,6 +74,22 @@ class _Blank(dict):
         return ""
 
 
+def _sorted_keys(d: dict) -> list:
+    """Deterministic key order for hand-written YAML mappings whose keys may
+    MIX types (a bible entry with a stray ``1:`` int key beside strings made
+    ``sorted(dict)`` raise TypeError, aborting the whole compile). Numbers
+    sort first (numerically), everything else after (by string form); pure
+    str-keyed dicts keep exactly the old order."""
+    def key(k: Any):
+        if isinstance(k, bool):
+            return (1, str(k))
+        if isinstance(k, (int, float)):
+            return (0, k)
+        return (1, str(k))
+
+    return sorted(d, key=key)
+
+
 def _fmt(value: Any) -> str:
     """Render a Bible value to a flat, deterministic string."""
     if value is None:
@@ -84,7 +100,7 @@ def _fmt(value: Any) -> str:
         return ", ".join(s for s in (_fmt(v) for v in value) if s)
     if isinstance(value, dict):
         return ", ".join(
-            f"{k}: {_fmt(value[k])}" for k in sorted(value) if _fmt(value[k])
+            f"{k}: {_fmt(value[k])}" for k in _sorted_keys(value) if _fmt(value[k])
         )
     return str(value).strip()
 
@@ -95,7 +111,7 @@ def _excerpt(entry: Any, *, skip: tuple[str, ...] = ("locked",)) -> str:
     if not isinstance(entry, dict):
         return ""
     parts = []
-    for key in sorted(entry):
+    for key in _sorted_keys(entry):
         if key in skip:
             continue
         rendered = _fmt(entry[key])

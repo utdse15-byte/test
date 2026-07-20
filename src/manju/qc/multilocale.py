@@ -70,12 +70,44 @@ class LocaleQCResult:
 class MultiLocaleQCReport:
     aggregate: str  # "pass" | "fail"
     locales: dict[str, LocaleQCResult]
+    # the FULL per-locale run_qc report objects (result key → QCReport) — NOT
+    # serialized in to_dict (the --json envelope stays byte-stable); the CLI
+    # merges them so reports/qc.json + repair_plan.yaml keep being written on
+    # the multi-locale path (the command's documented contract).
+    reports: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "aggregate": self.aggregate,
             "locales": {lg: r.to_dict() for lg, r in self.locales.items()},
         }
+
+    def merged_report(self):
+        """One union QCReport across every checked locale: each locale's items
+        (messages prefixed ``[lang]`` for non-base locales, so qc.md/repair
+        rows say which film they are about), plus a synthetic error item per
+        ``missing_final`` locale. The aggregate stays exactly ``aggregate``
+        (an error item exists iff some locale failed)."""
+        from .checks import QCItem, QCReport
+
+        merged = QCReport()
+        for key in self.locales:
+            rep = self.reports.get(key)
+            prefix = "" if key == "base" else f"[{key}] "
+            if rep is not None:
+                for it in rep.items:
+                    merged.items.append(QCItem(
+                        it.level, it.area, it.subject,
+                        f"{prefix}{it.message}" if prefix else it.message,
+                        suggestion=it.suggestion, auto_safe=it.auto_safe,
+                    ))
+            elif "missing_final" in self.locales[key].issues:
+                merged.items.append(QCItem(
+                    "error", "existence", "final",
+                    f"{prefix}locale 无成片(missing_final)— "
+                    f"`manju build --lang {key}` 渲染后重跑 qc",
+                ))
+        return merged
 
 
 def select_locales(project: Project, *, lang: str | None = None,
@@ -119,20 +151,26 @@ def run_multilocale_qc(
     all_locales: bool = False,
     deep: bool = False,
     qc_runner: Callable[..., object] | None = None,
+    timeline: object | None = None,
 ) -> MultiLocaleQCReport:
     """Run QC across the selected locales and aggregate the results.
 
     ``qc_runner(project, timeline, *, deep, final_path)`` defaults to
     :func:`manju.qc.checks.run_qc`; it is injectable so the selection/aggregation
-    logic is testable without a real ffmpeg probe.
+    logic is testable without a real ffmpeg probe. ``timeline`` lets the CLI
+    pass its already-guarded timeline (a corrupt timeline.json then fails with
+    the same clean message as the single-locale path, not a raw traceback);
+    ``None`` loads it here exactly as before.
     """
     if qc_runner is None:
         from .checks import run_qc
         qc_runner = run_qc
 
     langs = select_locales(project, lang=lang, all_locales=all_locales)
-    timeline = project.load_timeline()
+    if timeline is None:
+        timeline = project.load_timeline()
     results: dict[str, LocaleQCResult] = {}
+    reports: dict[str, object] = {}
 
     for lg in langs:
         key = _result_key(lg)
@@ -148,6 +186,7 @@ def run_multilocale_qc(
             f"{it.area}:{it.subject}" for it in report.items if it.level == "error"
         })
         results[key] = LocaleQCResult(key, status, issues)
+        reports[key] = report
 
     aggregate = "fail" if any(r.status == "fail" for r in results.values()) else "pass"
-    return MultiLocaleQCReport(aggregate=aggregate, locales=results)
+    return MultiLocaleQCReport(aggregate=aggregate, locales=results, reports=reports)

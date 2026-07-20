@@ -762,9 +762,15 @@ def _platform_handoff(project: Project, config: Any, profile: dict, variant_kind
     frame = profile.get("frame") or {}
     fw, fh = frame.get("width"), frame.get("height")
     if fw and fh:
+        try:
+            ok = int(fw) > 0 and int(fh) > 0
+        except (TypeError, ValueError):
+            # hand-edited profile with a non-numeric width/height: a FAIL row,
+            # never a raw TypeError taking down the whole handoff manifest
+            ok = False
         checks.append({
             "code": "ASPECT_RATIO",
-            "status": "PASS" if (fw > 0 and fh > 0) else "FAIL",
+            "status": "PASS" if ok else "FAIL",
             "detail": f"{fw}x{fh}",
         })
     max_ms = profile.get("max_duration_ms")

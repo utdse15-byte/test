@@ -1811,8 +1811,19 @@ def qc_main(ctx: typer.Context,
     if lang or all_locales or len(_list_locales(project)) > 1:
         from .qc.multilocale import run_multilocale_qc
 
-        ml = run_multilocale_qc(project, lang=lang, all_locales=all_locales,
-                                deep=deep)
+        try:
+            ml = run_multilocale_qc(project, lang=lang, all_locales=all_locales,
+                                    deep=deep,
+                                    timeline=_load_timeline_or_fail(project))
+        except ProjectError as exc:  # e.g. an illegal --lang segment
+            _fail(str(exc), code="bad_args")
+        # The command's documented contract ("writes reports/qc.json, qc.md,
+        # repair_plan.yaml") must hold on the multi-locale path too — before
+        # this, the branch returned WITHOUT rewriting them, so `manju repair
+        # --auto` replayed a STALE plan (spending on already-fixed shots).
+        # The merged report carries every checked locale's items ([lang]-
+        # prefixed) + a missing_final error row per unrendered locale.
+        write_reports(project, ml.merged_report())
         if as_json:
             _emit(ml.to_dict(), True)
         else:
@@ -1984,7 +1995,14 @@ def qc_verdict_cmd(
 
     project = _project()
     if from_file == "-":
-        text = sys.stdin.read()
+        # decode stdin BYTES as UTF-8 explicitly: on Windows sys.stdin follows
+        # the console/ANSI code page (GBK on a CN system), so a UTF-8 JSON
+        # pipe with Chinese verdict text was mojibake'd straight into the
+        # append-only reports/qc_agent.jsonl (or crashed mid-read).
+        try:
+            text = sys.stdin.buffer.read().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            _fail(f"stdin 不是 UTF-8(Windows 控制台管道请用 UTF-8 编码输出):{exc}")
     else:
         try:
             text = Path(from_file).read_text(encoding="utf-8")
@@ -4252,7 +4270,14 @@ def transcribe(
     if from_srt:
         if not from_srt.exists():
             _fail(f"not found: {from_srt}")
-        segments = parse_srt(from_srt.read_text(encoding="utf-8"))
+        try:
+            srt_text = from_srt.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            # GBK/ANSI-saved SRT (the Windows notepad legacy default) — a
+            # clean refusal beats a raw traceback OR mojibake'd truth
+            _fail(f"{from_srt} 不是 UTF-8(可能是 GBK/ANSI)——"
+                  "用编辑器另存为 UTF-8 后重试")
+        segments = parse_srt(srt_text)
         source = "manual_srt"
     elif text is not None:
         from .media.probe import probe_duration_ms
@@ -4474,7 +4499,10 @@ def board_keyframes(
         return
 
     try:
-        kfs = scaffold_keyframes(project, shot, beats)
+        # §9 round W discipline: --scaffold mutates shots/<id>.yaml — same
+        # write lock every other mutating CLI entrance takes.
+        with _write_lock(project):
+            kfs = scaffold_keyframes(project, shot, beats)
     except KeyframeScaffoldError as exc:
         _fail(str(exc))
     append_event(project.root, ACTOR, "board_keyframes",
@@ -6501,7 +6529,11 @@ def mentions(
     matrix = asset_matrix(project)
 
     if apply:
-        results = apply_mentions(project, matrix, shot_id)
+        # §9 round W discipline (_write_lock docstring): every mutating CLI
+        # command that does not route through build_lock takes the write lock
+        # — apply_mentions does raw shot read-modify-writes.
+        with _write_lock(project):
+            results = apply_mentions(project, matrix, shot_id)
         changed = [r for r in results if r.get("changed")]
         for r in changed:
             append_event(project.root, ACTOR, "mentions_apply",
