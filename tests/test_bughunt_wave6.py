@@ -827,3 +827,33 @@ def test_roundtrip_batch_records_never_overwrite_within_one_second(tmp_project):
     files = sorted(p.name for p in batch_dir.glob("*.yaml"))
     assert len(files) == 2, files
     assert first["batch"] != second["batch"]
+
+
+# ====================================================== wave-8 (third pass)
+
+
+def test_edl_import_refuses_non_utf8_and_missing_files_structurally(tmp_path):
+    """An EDL is FOREIGN intake (another NLE's save): a GBK/legacy-codepage
+    file or a typo'd path must surface as the module's structured
+    EdlImportError — the CLI wrapper only speaks that — never a raw
+    UnicodeDecodeError/FileNotFoundError traceback."""
+    from manju.exporters.edl_import import EdlImportError, parse_edl
+
+    gbk = tmp_path / "老工程.edl"
+    gbk.write_bytes("TITLE: 雨夜便利店\n001  卷带A V C 00:00:00:00 "
+                    .encode("gb2312"))
+    with pytest.raises(EdlImportError) as exc:
+        parse_edl(gbk)
+    assert any(d.get("code") == "bad_encoding" for d in exc.value.diagnostics)
+
+    with pytest.raises(EdlImportError) as exc2:
+        parse_edl(tmp_path / "不存在.edl")
+    assert any(d.get("code") == "unreadable" for d in exc2.value.diagnostics)
+
+
+def test_fcpxml_import_refuses_a_missing_file_structurally(tmp_path):
+    from manju.exporters.fcpxml_import import FcpxmlImportError, parse_fcpxml
+
+    with pytest.raises(FcpxmlImportError) as exc:
+        parse_fcpxml(tmp_path / "不存在.fcpxml")
+    assert any(d.get("code") == "unreadable" for d in exc.value.diagnostics)

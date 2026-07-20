@@ -318,6 +318,15 @@ def _read_utf8(p: Path) -> str:
             [{"severity": "error", "code": "bad_encoding", "path": str(p),
               "message": f"UTF-8 decode failed at byte {exc.start}: {exc.reason}"}],
         ) from exc
+    except OSError as exc:
+        # a typo'd/unreadable path is the same untrusted-intake refusal — the
+        # CLI wrapper only speaks FcpxmlImportError, so a raw FileNotFoundError
+        # escaped as a traceback
+        raise FcpxmlImportError(
+            f"cannot read FCPXML file: {p}",
+            [{"severity": "error", "code": "unreadable", "path": str(p),
+              "message": " ".join(str(exc).split())}],
+        ) from exc
 
 
 def _guard_file_size(p: Path) -> None:
