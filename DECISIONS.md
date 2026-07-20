@@ -2723,3 +2723,52 @@ Report: REPORTS/UX_WAVE_2_2026-07-17.md.
    wave), cli.py/page.py/server.py splits and app.js/app.css extraction
    (still gated on both platform gates green on one commit, per the
    standing "refactor only after behavior is covered" rule).
+
+## UX-WAVE-3 (2026-07-20)
+
+An external AI produced a full personal-UX plan (MANJU_PERSONAL_UX_PLAN.md,
+not committed — derived report, never a build input). Every item was checked
+against the code before anything landed; most of its P0 list turned out to
+be ALREADY BUILT (six-group nav, 继续上次工作 chip, workspace UI memory,
+review queue, hidden-tab completion notifications, /api/reveal). Two items
+were real gaps and landed; the rest are recorded rejections/deferrals so the
+next session doesn't re-litigate them. Report:
+REPORTS/UX_WAVE_3_2026-07-20.md.
+
+### Decisions
+
+1. **草稿保护 closes its loop** — `/api/ui-state/draft` existed with ZERO
+   client consumers: a crash or mis-click discarded any typing in the
+   shot/bible/rules editor (data-loss class, the maintenance gate's own
+   words). The SPA editor now mirrors the buffer into the personal store
+   (debounced 900 ms), OFFERS restore on reopen when a surviving draft
+   differs from disk (never auto-applies; warns when the file changed since
+   the draft), and clears the draft on save-success. Truth files are never
+   written by the draft path — pinned by test.
+2. **全局任务条** — jobs belong to the app window, but each server-rendered
+   page only polled the job it had itself submitted; navigating away made a
+   running build invisible until you found its page again. /common.js now
+   renders a bottom-right bar (absent when idle): active jobs with 取消,
+   short-lived completion chips with per-kind follow-up links (审片/导出
+   中心/…), sticky chips for failed (重试 via the existing endpoint) and
+   待确认花费 (link home to confirm — never rendered as a plain 完成).
+   Read-only over the existing runner; kind labels fetched lazily from
+   /api/meta/job-kinds (the ONE registry — a hard-coded copy is pinned
+   against); per-element cssText styling because pages carry
+   style-src 'self'. The SPA home does not load common.js (its queue panel
+   + UX-WAVE-2 notifications own that surface) — pinned by test.
+3. **Rejected, with reasons** — P0-5 confirmation tiering by personal cost
+   threshold (touches paid-safety interaction; the engine gate stays the
+   only authority and a UI threshold that pre-answers it is a new spend
+   semantic, not a presentation change); P0-2 pinned "我的导航" and P0-6
+   hide-mode-switch (the six-group nav + pro mode already deliver the
+   value; personalization machinery for one user who can already reach
+   everything is speculative); P0-3 cross-page shot drawer (10-page
+   refactor, speculative under maintenance mode).
+4. **Deferred, unchanged from plan** — P1-1 auto-load new take as review
+   candidate (unread-take detection already flags them), P1-3 remembered
+   generate/export defaults (workspace UI keys cover part; extend when a
+   real repeat-annoyance shows), P1-5 cross-page G-shortcuts + Ctrl-K
+   palette (UX-WAVE-2 already deferred the palette on the static-file
+   split), P2-1 Claude file-change bridge (new watch surface → its own
+   wave), P2-4 density memory.
