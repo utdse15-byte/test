@@ -79,7 +79,7 @@ from .base import (
 )
 from .generic_cloud import Transport, default_transport, render_body
 from .manifest import COMFYUI_ADAPTER, ProviderManifest
-from .refs import encode_multipart, unreadable_ref_message
+from .refs import RefItem, encode_multipart, read_ref_bytes, unreadable_ref_message
 
 _UPLOAD_PLACEHOLDER = "{image_upload}"
 
@@ -283,7 +283,9 @@ class ComfyUIProvider(Provider):
                 f"{self.id}: input_map uses {_UPLOAD_PLACEHOLDER} but shot "
                 f"{req.shot.id} has no usable local reference image{detail}",
             )
-        name, subfolder = self._upload_image(primary)
+        item = refset.primary_image_item
+        assert item is not None  # primary is not None <=> the item exists
+        name, subfolder = self._upload_image(item)
         values["image_upload"] = f"{subfolder}/{name}" if subfolder else name
         return {
             "image_mode": "upload",
@@ -295,13 +297,28 @@ class ComfyUIProvider(Provider):
             **budget_block,
         }
 
-    def _upload_image(self, path: Path) -> tuple[str, str]:
+    def _upload_image(self, item: RefItem) -> tuple[str, str]:
         """Real ComfyUI ``POST /upload/image`` (multipart). Returns
         ``(name, subfolder)`` from the response — the file now lives in ComfyUI's
-        ``input/`` dir and can be referenced by a LoadImage node."""
+        ``input/`` dir and can be referenced by a LoadImage node.
+
+        Takes the :class:`RefItem`, not a bare path: ref bytes are read through
+        :func:`refs.read_ref_bytes`, the one verified front door (PROVIDER-REF-001).
+        A TOCTOU swap of the ref between resolution and upload surfaces as a typed
+        ``invalid`` failure instead of a raw ``SafeOutError``."""
+        from ..core.safeio import SafeOutError
+
+        path = item.path
+        assert path is not None  # an image item always carries a local path
+        try:
+            payload = read_ref_bytes(item)
+        except SafeOutError as exc:
+            raise ProviderFailure(
+                FailureKind.invalid, f"{self.id}: {exc}", detail={"path": str(path)}
+            ) from exc
         content_type, body = encode_multipart(
             {"type": "input", "overwrite": "true"},
-            [("image", path.name, path.read_bytes())],
+            [("image", path.name, payload)],
         )
         resp = self._http("POST", f"{self._base}/upload/image", body,
                           headers={"Content-Type": content_type})

@@ -1465,7 +1465,11 @@ class CloudProvider(Provider):
             pass
 
     def _backoff(self, i: int) -> float:
-        return min(self._base_delay * (2 ** i), self._max_delay)
+        # the exponent is clamped for the same reason generic_cloud.poll_backoff
+        # clamps its own (PROVIDER-POLL-002): 2**i is evaluated EAGERLY, so a
+        # four-digit round count raises a bare OverflowError out of the middle of
+        # an already-paid job. 2**60 is far above every cap, so no real delay moves.
+        return min(self._base_delay * (2 ** min(max(i, 0), 60)), self._max_delay)
 
     def _poll_to_completion(self, job_id: str, *,
                             should_cancel: Callable[[], bool] | None = None) -> dict:
@@ -1562,3 +1566,262 @@ class CloudProvider(Provider):
             return takes
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# PROVIDER-SUBMISSION-001 — the DR06 admission handshake for the NON-shot paid
+# capabilities (TTS / ASR).
+#
+# ``GenericTtsProvider.synthesize`` and ``GenericAsrProvider.transcribe`` are not
+# CloudProvider subclasses (they produce a voice take / a transcript, not shot
+# takes), so they used to fire the paid POST as their FIRST side effect and only
+# journal anything AFTER the response parsed. A network blip AFTER the provider
+# accepted the job therefore left NO durable trace at all: the next run saw a
+# clean slate, re-submitted, and paid a second time — the owner's ordinary path,
+# no adversary needed.
+#
+# Rather than invent a second mechanism, these two classes lend the EXISTING
+# machinery to those capabilities: the same PREPARED -> DISPATCHING fail-closed
+# admission gate, the same content-addressed request_digest, the same
+# per-submission hash chain, the same OUTCOME_UNKNOWN fail-close on the re-run,
+# and therefore the same `manju tasks attach-remote-job` / `manju tasks abandon`
+# recovery. Only the IDENTITY differs — a voice line has no compiled prompt and
+# no reference images — so the shim overrides exactly that one method.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CapabilityRequest:
+    """The minimal ``GenerationRequest`` surface the admission handshake reads.
+
+    Deliberately NOT a real :class:`GenerationRequest`: ASR has no shot at all,
+    and building a synthetic :class:`ShotSpec` just to satisfy a type would put a
+    fake shot into project truth's namespace. ``scope`` is the correlation key
+    the intents/events rows carry in the ``shot`` column — for TTS the real shot
+    id (so a voice submission joins its shot), for ASR a stable, project-relative
+    media token."""
+
+    project: Any
+    shot: Any
+    params: dict = field(default_factory=dict)
+    estimated_cost: float | None = None
+    submission_id: str | None = None
+    submission_idempotency_key: str | None = None
+    evidence: Any = None
+
+
+@dataclass(frozen=True)
+class _CapabilityScope:
+    """``req.shot``-shaped stand-in carrying only the correlation id."""
+
+    id: str
+
+
+class _CapabilitySubmissionProvider(CloudProvider):
+    """A CloudProvider that exists ONLY to lend its admission handshake.
+
+    ``submit``/``poll``/``download`` are never reached — the caller drives the
+    handshake step by step around its OWN transport call — but they stay
+    implemented (loudly) so the class is concrete and any future misuse is a
+    crash, not a silent no-op."""
+
+    kind = "cloud"
+
+    def __init__(self, provider_id: str, *, capability: str,
+                 manifest: Any = None, spec_hash: str | None = None,
+                 identity_params: dict | None = None):
+        super().__init__()
+        self.id = provider_id
+        self.manifest = manifest
+        self._capability = capability
+        self._spec_hash = spec_hash
+        self._identity_params = dict(identity_params or {})
+
+    def _submission_capability(self, req) -> str:
+        return self._capability
+
+    def _build_identity(self, req) -> tuple[dict, str]:
+        """The capability identity: the caller's own result-affecting facts.
+
+        The shot pipeline's ``strict`` gate (compile the prompt, resolve and hash
+        every reference image, fail closed on any of it) is deliberately NOT
+        inherited: a voice line has no refs and no compiled prompt, so inheriting
+        it would fail-close a perfectly good synthesis on an unrelated missing
+        shot reference. The facts that DO move a TTS/ASR result — the text /
+        speaker / language / format, or the audio's content hash — are supplied
+        by the caller and hashed here exactly like the shot path hashes its own.
+        """
+        from . import submission as S
+        from .catalog import descriptor_for_manifest, provider_profile_digest
+
+        cache = getattr(req, "_dr06_identity_cache", None)
+        if cache is None:
+            cache = req._dr06_identity_cache = {}
+        if self.id in cache:
+            return cache[self.id]
+
+        descriptor = (descriptor_for_manifest(self.manifest)
+                      if self.manifest is not None else None)
+        identity = S.build_submission_identity(
+            shot_id=req.shot.id, spec_hash=self._spec_hash, provider_id=self.id,
+            provider_profile_digest=provider_profile_digest(
+                self.id, self._capability, descriptor=descriptor),
+            capability=self._capability, duration_ms=None, candidates=1,
+            seed=self._identity_params.get("seed"), params=self._identity_params,
+            compiled_prompt=None, ref_refs=[],
+            project_root=getattr(req.project, "root", None))
+        result = (identity, S.request_digest(identity))
+        cache[self.id] = result
+        return result
+
+    # never reached — the caller owns its own transport (see the class docstring)
+    def submit(self, req):  # pragma: no cover - guarded by construction
+        raise NotImplementedError(f"{self.id}: capability submissions drive their own transport")
+
+    def poll(self, job_id):  # pragma: no cover
+        raise NotImplementedError(f"{self.id}: capability submissions drive their own poll")
+
+    def download(self, job_id, dest_dir):  # pragma: no cover
+        raise NotImplementedError(f"{self.id}: capability submissions drive their own download")
+
+
+class CapabilitySubmission:
+    """The handshake handle a TTS/ASR call wraps its paid POST in.
+
+    Usage (the whole contract)::
+
+        with CapabilitySubmission(...) as guard:
+            resp = self._transport(...)      # the PAID call
+            guard.admitted(remote_job_id)    # a 2xx came back
+            ...                              # poll / download / register
+            guard.succeeded()
+
+    Anything raised inside the block is classified before it propagates: an
+    explicitly NOT_DISPATCHED failure records REJECTED_PRE_DISPATCH (safe to
+    retry), everything else defaults to OUTCOME_UNKNOWN — the same conservative
+    choke-point default ``CloudProvider.generate`` applies, because a failure
+    past the send boundary may have been billed.
+
+    ``degraded`` is True when no durable ground exists (ASR on media outside any
+    project): the handshake becomes a no-op rather than refusing work that was
+    never journaled before either. Every project-resident call gets the real gate.
+    """
+
+    def __init__(self, provider_id: str, *, capability: str, project: Any,
+                 scope: str, spec_hash: str | None = None,
+                 identity_params: dict | None = None, manifest: Any = None,
+                 estimated_cost: float | None = None):
+        self.degraded = project is None
+        self._provider = _CapabilitySubmissionProvider(
+            provider_id, capability=capability, manifest=manifest,
+            spec_hash=spec_hash, identity_params=identity_params)
+        self._req = _CapabilityRequest(
+            project=project, shot=_CapabilityScope(scope),
+            params=dict(identity_params or {}), estimated_cost=estimated_cost)
+        self._state = None
+        self._sub: _SubmissionContext | None = None
+        self._closed = False
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def __enter__(self) -> "CapabilitySubmission":
+        return self.open()
+
+    def open(self) -> "CapabilitySubmission":
+        """Consult the prior submissions, then take the PREPARED + DISPATCHING
+        admission claim. Raises BEFORE the caller's paid transport call when an
+        earlier outcome is unknown, when the evidence chain is corrupt, or when
+        the claim cannot be made durable."""
+        from . import submission as S
+
+        if self.degraded:
+            return self
+        p, req = self._provider, self._req
+        self._state = p._open_state(req)
+        try:
+            p._flag_dangling_intents(self._state, req)
+            action, job_id, sub = p._resolve_resume(self._state, req)
+            if action == "resume":
+                # An ADMITTED submission for this exact request is already paid
+                # for. This surface has no generic re-poll entry point (a sync
+                # TTS response IS the audio), so resuming it automatically is not
+                # possible — refuse loudly with the same recovery verbs instead of
+                # paying twice.
+                raise p._unknown_outcome_failure(req, {
+                    "submission_id": getattr(sub, "submission_id", None),
+                    "state": S.ADMITTED, "remote_job_id": job_id})
+            if sub is None:
+                sub = p._prepare_submission(self._state, req)
+            else:
+                p._redispatch(sub)
+            self._sub = sub
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc is not None and not self.degraded:
+            self.failed(exc)
+        self.close()
+        return False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._state is not None:
+            self._provider._close_state(self._state)
+            self._state = None
+
+    # -- transitions -------------------------------------------------------
+
+    def admitted(self, remote_job_id: str | None = None) -> None:
+        """The provider answered 2xx: the spend is real and provable. Recorded
+        evidence-first, exactly like the shot path's ADMITTED transition."""
+        from . import submission as S
+
+        if self._sub is None or self._sub.current_state != S.DISPATCHING:
+            return
+        self._sub.transition(S.ADMITTED, reason_code="submit_accepted",
+                             remote_job_id=remote_job_id)
+
+    def succeeded(self) -> None:
+        """The result is on durable ground (take registered / transcript
+        returned) — resolve the submission so the next run starts fresh."""
+        from . import submission as S
+
+        if self._sub is None or self._sub.current_state != S.ADMITTED:
+            return
+        self._sub.transition(S.TERMINAL_SUCCESS, reason_code="completed")
+
+    def failed(self, exc: BaseException) -> None:
+        """Classify a failure onto the submission. Unclassified == unknown."""
+        from . import submission as S
+
+        if self._sub is None:
+            return
+        if isinstance(exc, ProviderFailure):
+            failure = exc
+            if failure.disposition is None:
+                failure.disposition = S.OUTCOME_UNKNOWN_DISPOSITION
+                failure.detail.setdefault("disposition_defaulted", "submit_phase")
+            failure.detail.setdefault("submission_id", self._sub.submission_id)
+        else:
+            failure = ProviderFailure(
+                FailureKind.provider_error,
+                f"{self._provider.id}: unclassified failure past the send "
+                f"boundary ({type(exc).__name__}: {exc}) — outcome unknown",
+                detail={"error_class": type(exc).__name__,
+                        "submission_id": self._sub.submission_id},
+                disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+            )
+        if self._sub.current_state == S.ADMITTED:
+            # already billed: a post-admission failure is terminal for THIS
+            # submission, never an ambiguity the next run has to resolve.
+            try:
+                self._sub.transition(S.TERMINAL_FAILURE, reason_code=failure.kind.value)
+            except Exception:
+                pass
+            return
+        self._provider._classify_submit_failure(self._sub, failure)
