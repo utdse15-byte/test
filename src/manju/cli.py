@@ -21,7 +21,7 @@ from typing import Optional
 import typer
 
 from .core.check import run_check
-from .core.container import Project, ProjectError
+from .core.container import Project, ProjectError, ProjectNameError
 from .core.events import append_event, humanize_age, tail_events
 from .core.hashing import HASH_PREFIX, hash_file
 from .core.locks import seal_lock
@@ -430,8 +430,16 @@ def new(
 
     # UX audit F2: re-running new on an existing name is a routine slip for a
     # single owner juggling projects — a one-line error, never a traceback.
+    # CLI-P1-004: `Project.create` OWNS both refusals (the existing-project
+    # collision AND the Windows path-segment legality check) — the CLI
+    # re-implements neither, it only surfaces them. The name refusal is its own
+    # subclass, so it must be caught BEFORE the parent: the "已存在" hint is
+    # false for an illegal name and would send the owner looking for a project
+    # that was never created.
     try:
         project = Project.create(dest, name=name, vertical=vertical)
+    except ProjectNameError as exc:
+        _fail(str(exc), code="bad_name")
     except ProjectError as exc:
         _fail(f"{exc} — 已存在;换个名字,或直接 cd 进去继续用", code="exists")
     if spec is not None:
@@ -805,10 +813,24 @@ def import_(
                         skipped_lib.append(f.name)
                         continue
                     if on_duplicate == "link" and lib is not None:
-                        blob = lib.blob_path(lib_hit)
-                        if blob.exists():
-                            copy_src = blob
+                        # INGEST-P0-002: the index row's blob path/bytes are
+                        # UNTRUSTED — a forged row can claim this hash while
+                        # pointing at an external secret. Source the copy from
+                        # the library ONLY after re-verifying the blob is
+                        # contained, link-free and actually hashes to ``fh``;
+                        # otherwise keep the dropped file (byte-identical,
+                        # honest provenance) — same fail-closed fallback as
+                        # build/ingest.py.
+                        try:
+                            verified = lib.find_verified_blob(fh)
+                        except LibraryError:
+                            verified = None
+                        if verified is not None:
+                            copy_src = verified
                             note += " — 已从素材库复制(provenance: library)"
+                        else:
+                            note += (" — 素材库 blob 校验失败/缺失,改用拖入的文件"
+                                     "(provenance: dropped)")
                     lib_notes.append(note)
 
             # duplicate-content advisory (§3: imports are sacred, dedup is never
@@ -1798,6 +1820,7 @@ def qc_main(ctx: typer.Context,
     """
     if ctx.invoked_subcommand is not None:
         return
+    from .core.safeio import SafeOutError
     from .qc.checks import run_qc as _run_qc
     from .qc.report import build_assurance_block, write_reports
 
@@ -1823,7 +1846,13 @@ def qc_main(ctx: typer.Context,
         # --auto` replayed a STALE plan (spending on already-fixed shots).
         # The merged report carries every checked locale's items ([lang]-
         # prefixed) + a missing_final error row per unrendered locale.
-        write_reports(project, ml.merged_report())
+        # QC-P0: `reports/` is refused when any segment of the chain is a
+        # symlink/junction (it would publish outside the project) — envelope,
+        # never a traceback.
+        try:
+            write_reports(project, ml.merged_report())
+        except SafeOutError as exc:
+            _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
         if as_json:
             _emit(ml.to_dict(), True)
         else:
@@ -1854,7 +1883,10 @@ def qc_main(ctx: typer.Context,
         if not as_json:
             typer.secho(f"⚠ 验收(assurance)计算跳过:{exc}", fg=typer.colors.YELLOW, err=True)
 
-    paths = write_reports(project, report, assurance=assurance)
+    try:
+        paths = write_reports(project, report, assurance=assurance)
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     if as_json:
         envelope = report.to_dict()
         if assurance is not None:
@@ -2503,8 +2535,16 @@ def export(
     notes: list[str] = []
     if pullsheet:
         from .build.pullsheet import export_pull_sheet
+        from .core.safeio import SafeOutError
 
-        for kind, path in export_pull_sheet(project).items():
+        # PULLSHEET-P0-001: the sheet's leaf is derived from the project NAME,
+        # so a separator/absolute/reserved name is sanitized and re-validated by
+        # the safeio owner — a refusal is an envelope, never a traceback.
+        try:
+            sheets = export_pull_sheet(project)
+        except SafeOutError as exc:
+            _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
+        for kind, path in sheets.items():
             outputs[f"pullsheet_{kind}"] = path
         notes.append("pull sheet: CSV+MD in exports/pullsheet/ (PDF skipped — "
                      "no headless-Chromium/PDF-table path in this environment)")
@@ -6094,6 +6134,7 @@ def relink(
         apply_relink,
         missing_media_report,
         relink_plan,
+        write_relink_plan,
     )
 
     if mode not in ("report", "plan", "apply"):
@@ -6128,8 +6169,17 @@ def relink(
         plan = relink_plan(project, list(root),
                            max_files=max_files or DEFAULT_MAX_FILES)
         if out is not None:
-            out.write_text(json.dumps(plan, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
+            # RELINK-P0-001: `plan` is ZERO-WRITE except this one file, so the
+            # destination goes through the plan writer (the safeio owner) —
+            # inside the project only exports/|reports/, never a link/dir/
+            # special leaf or a linked ancestor, and the bytes land via an
+            # exclusive temp + atomic replace (失败零写入).
+            from .core.safeio import SafeOutError
+
+            try:
+                out = write_relink_plan(project, plan, out)
+            except SafeOutError as exc:
+                _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
         if as_json:
             _emit(plan, True)
         else:
@@ -6352,8 +6402,16 @@ def toolchain(
             _fail(f"旧清单不是工具链清单 / not a toolchain manifest: {exc}",
                   code="toolchain_diff_unreadable")
     if write:
+        from .core.safeio import SafeOutError
+
         project = _project()
-        path = write_toolchain_manifest(project, doc)
+        # TOOLCHAIN-P0-002: a linked reports/ (or reports/toolchain/) ancestor
+        # would publish the manifest off-project — the writer refuses; surface
+        # it as the stable envelope, never a traceback.
+        try:
+            path = write_toolchain_manifest(project, doc)
+        except SafeOutError as exc:
+            _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
         payload["written"] = path.relative_to(project.root).as_posix()
     if as_json:
         _emit(payload, True)
@@ -7100,10 +7158,17 @@ def tasks_retry(
     whose shot no longer exists — never silently retries something that can
     no longer validate."""
     project = _project()
+    from .core.safeio import SafeOutError
     from .runtime.state import RuntimeState
 
-    with RuntimeState(project.root) as state:
-        row = state.get_run(run_id)
+    # STATE-P0-001: opening the ledger refuses a linked `.manju` chain or a
+    # symlinked/hardlinked state.sqlite — surface that as the stable envelope
+    # (never a traceback), same as every other output refusal.
+    try:
+        with RuntimeState(project.root) as state:
+            row = state.get_run(run_id)
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     if row is None:
         _fail(f"没有 id 为 {run_id} 的任务记录(见 `manju tasks`)")
     if row.get("status") != "failed":
@@ -7154,27 +7219,33 @@ def tasks_attach_remote_job(
     it NEVER claims verified ownership itself (you asserted it) and NEVER
     resubmits. The provider is taken from the submission row (you cannot attach a
     job from a different provider)."""
+    from .core.safeio import SafeOutError
     from .providers import submission as S
     from .runtime.state import RuntimeState
 
     project = _project()
-    with RuntimeState(project.root) as state:
-        row = _load_submission(state, submission_id)
-        st = S.normalize_state(row.get("state"))
-        if expected_state and st != expected_state:
-            _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
-        # P0 WP3: the RECOVERY_EVIDENCE_CORRUPT sentinel is attachable too — a
-        # corrupt-evidence submission resolves ONLY via attach/abandon.
-        if st not in (S.OUTCOME_UNKNOWN, S.DISPATCHING, S.RECOVERY_EVIDENCE_CORRUPT):
-            _fail(f"只能给 UNKNOWN/DISPATCHING/EVIDENCE_CORRUPT 的 submission 关联"
-                  f"远程任务(当前 {st});已 ADMITTED/terminal 的无需关联")
-        try:
-            _emit_recovery_transition(
-                project, state, row, S.ADMITTED, reason_code="attach_remote_job",
-                remote_job_id=remote_job_id,
-                detail={"attached_by": ACTOR, "claimed_verified_ownership": False})
-        except S.IllegalTransition as exc:
-            _fail(str(exc))
+    # STATE-P0-001: a refused ledger path (linked `.manju`, symlinked/hardlinked
+    # state.sqlite) is an envelope refusal, never a traceback.
+    try:
+        with RuntimeState(project.root) as state:
+            row = _load_submission(state, submission_id)
+            st = S.normalize_state(row.get("state"))
+            if expected_state and st != expected_state:
+                _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
+            # P0 WP3: the RECOVERY_EVIDENCE_CORRUPT sentinel is attachable too — a
+            # corrupt-evidence submission resolves ONLY via attach/abandon.
+            if st not in (S.OUTCOME_UNKNOWN, S.DISPATCHING, S.RECOVERY_EVIDENCE_CORRUPT):
+                _fail(f"只能给 UNKNOWN/DISPATCHING/EVIDENCE_CORRUPT 的 submission 关联"
+                      f"远程任务(当前 {st});已 ADMITTED/terminal 的无需关联")
+            try:
+                _emit_recovery_transition(
+                    project, state, row, S.ADMITTED, reason_code="attach_remote_job",
+                    remote_job_id=remote_job_id,
+                    detail={"attached_by": ACTOR, "claimed_verified_ownership": False})
+            except S.IllegalTransition as exc:
+                _fail(str(exc))
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     payload = {"ok": True, "submission_id": submission_id, "state": S.ADMITTED,
                "remote_job_id": remote_job_id, "note": "poll-only on next build; "
                "no resubmit; ownership asserted by operator, not verified"}
@@ -7199,24 +7270,30 @@ def tasks_abandon(
     the risk acceptance, and stops the submission blocking the shot+provider. The
     history is preserved (append-only); a NEW submission_id is only ever minted by
     the next explicit redo/build — abandon itself never resubmits."""
+    from .core.safeio import SafeOutError
     from .providers import submission as S
     from .runtime.state import RuntimeState
 
     project = _project()
-    with RuntimeState(project.root) as state:
-        row = _load_submission(state, submission_id)
-        st = S.normalize_state(row.get("state"))
-        if expected_state and st != expected_state:
-            _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
-        if st in S.TERMINAL_STATES:
-            _fail(f"submission {submission_id} 已是终态 {st},无需 abandon")
-        try:
-            _emit_recovery_transition(
-                project, state, row, S.ABANDONED_BY_USER, reason_code="abandoned_by_user",
-                detail={"reason": S.redact_reason(reason), "abandoned_by": ACTOR,
-                        "duplicate_risk_accepted": True})
-        except S.IllegalTransition as exc:
-            _fail(str(exc))
+    # STATE-P0-001: same envelope discipline as attach-remote-job above.
+    try:
+        with RuntimeState(project.root) as state:
+            row = _load_submission(state, submission_id)
+            st = S.normalize_state(row.get("state"))
+            if expected_state and st != expected_state:
+                _fail(f"submission {submission_id} 当前状态 {st} ≠ 期望 {expected_state}")
+            if st in S.TERMINAL_STATES:
+                _fail(f"submission {submission_id} 已是终态 {st},无需 abandon")
+            try:
+                _emit_recovery_transition(
+                    project, state, row, S.ABANDONED_BY_USER,
+                    reason_code="abandoned_by_user",
+                    detail={"reason": S.redact_reason(reason), "abandoned_by": ACTOR,
+                            "duplicate_risk_accepted": True})
+            except S.IllegalTransition as exc:
+                _fail(str(exc))
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     payload = {"ok": True, "submission_id": submission_id, "state": S.ABANDONED_BY_USER,
                "reason": reason, "duplicate_risk_accepted": True}
     _emit(payload, as_json)
@@ -8070,7 +8147,15 @@ def lib_use(
     while dest.exists():  # project no-overwrite suffixing (§3), same as import
         dest = dest_dir / f"{stem}_{n}{suffix}"
         n += 1
-    shutil.copy2(blob, dest)
+    # LIBRARY-P0-002: the index is a machine-local catalogue, so its ``blob``
+    # string is never a trusted read location — `use_into` copies ONLY from the
+    # verified descriptor (contained, no-follow, bytes re-hashed against the
+    # recorded hash), so a forged row can neither aim the project copy at an
+    # external secret nor smuggle substituted bytes in under a library hash.
+    try:
+        lib.use_into(entry, dest)
+    except LibraryError as exc:
+        _fail(str(exc))
     rel = project.relpath(dest)
     append_event(project.root, ACTOR, "lib_use",
                  {"hash": entry["hash"], "name": entry["name"], "as": as_, "dest": rel})
@@ -9053,6 +9138,12 @@ def director_run(proposal_id: str, as_json: bool = typer.Option(False, "--json")
         _fail(str(exc))
     if as_json:
         _emit(outcome.to_dict(), True)
+        # WINCLI-P1-021: a run that stopped at a failed step exited 0, so a
+        # script/agent chaining on `&&` treated the failure as success. The
+        # JSON body is unchanged (``ok`` was always honest there) — only the
+        # process status now agrees with it, same as qc / relink apply.
+        if not outcome.ok:
+            raise typer.Exit(1)
         return
     mark = "✓ 完成" if outcome.ok else "✗ 失败(第一处失败即停)"
     color = typer.colors.GREEN if outcome.ok else typer.colors.RED
@@ -9078,6 +9169,8 @@ def director_run(proposal_id: str, as_json: bool = typer.Option(False, "--json")
         for s in outcome.suggestions:
             hint = "（可转为新提案）" if s.get("action") else ""
             typer.echo(f"    · [{s['kind']}] {s['text']}{hint}")
+    if not outcome.ok:  # WINCLI-P1-021: same non-zero status on the human path
+        raise typer.Exit(1)
 
 
 @director_app.command("suggest")
@@ -9663,9 +9756,7 @@ def bridge_plan_cmd(
 ):
     """Bind the bridge inputs: BOTH endpoint frames as real files (hashed here),
     duration, direction, description. Zero-write unless --out."""
-    import json as _json
-
-    from .build.bridge import BridgeError, plan_bridge
+    from .build.bridge import BridgeError, plan_bridge, write_bridge_plan
 
     project = _project()
     try:
@@ -9676,8 +9767,15 @@ def bridge_plan_cmd(
         _fail(str(exc), code="bad_plan")
         return
     if out is not None:
-        out.write_text(_json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
-                       encoding="utf-8")
+        # BRIDGE-P0-001: same zero-write discipline as relink plan — the ONE
+        # plan writer validates the destination (exports/|reports/ inside the
+        # project, no link/dir/special leaf) and publishes atomically.
+        from .core.safeio import SafeOutError
+
+        try:
+            out = write_bridge_plan(plan, out, project.root)
+        except SafeOutError as exc:
+            _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     if as_json:
         _emit(plan, True)
         return
