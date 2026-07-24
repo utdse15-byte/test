@@ -239,3 +239,60 @@ history**。这把 `PROVIDER-PRIV-001`(签名 URL 未脱敏落盘)从"本地报�
 `GUI-HTTP-P1-004` 是跟着 `LIBRARY-P0-002` 的 GUI 面一起落的:同一个文件、同一次
 复核。修法刻意**照抄** `_read_body` 已有的 `restore_timeout` 布尔量写法,而不是
 另发明一种——同一个仓库里对同一个陷阱有两种写法,下一次还会漏掉其中一处。
+
+## 第三批:非标准 ID 那 21 条真 bug 的落地
+
+| 提交 | 内容 | 覆盖条目 |
+|---|---|---|
+| `eac46a6` | manifest 成本不再能解除花费闸门;字幕时间单位收成闭集 | PROVIDER-MANIFEST-001/008 |
+| `eccc94d` | 重试不再重复授权花费;两个窗口不再互相说谎;退出一定返回 | GUI-JOB-008、GUI-EDIT-P1-001、GUI-INDEX-P1-001、GUI-SHUTDOWN-P1-001/002、GUI-MULTI-P1-001、GUI-READONLY-P1-001 |
+| `05ee1db` | NaN 预算不是预算,外加三处 fail-open | CORE-BUDGET-001、PROVIDER-STATE-P1-001、PROVIDER-JSONPATH-P1-001、SECRET-JSONL |
+| `ba9c64d` | 付费调用不再是第一个副作用 | PROVIDER-SUBMISSION-001、DOWNLOAD-001/002、NET-001、POLL-002、PRIV-001 |
+
+### `ba9c64d`:没有发明第二套机制
+
+TTS / ASR 不是 `CloudProvider` 的子类(它们产出的是配音 take 和转写文本,不是镜头
+take),所以它们**把付费 POST 当成第一个副作用**,直到响应解析完才记录任何东西。
+提交被接受之后的一次网络抖动,留下的痕迹是**零**:下一次运行看到干净的白板,
+重新提交,付第二次钱。
+
+修法上刻意没有为这两条路径新写一套记账:它们借用**已有的** DR06 准入握手——同样的
+PREPARED → DISPATCHING fail-closed 认领(在进入 transport **之前**落durable)、
+同样的内容寻址 `request_digest`、同样的逐提交哈希链、同样的
+`manju tasks attach-remote-job` / `abandon` 恢复动词。只有**身份**不同(一句配音
+没有编译后的 prompt、没有参考图),所以垫片只覆写那一个方法。
+
+镜头流水线的 `strict` 参考图闸门**故意不继承**——继承它会让一次完全正常的配音,
+因为某个无关镜头缺参考图而 fail-closed。
+
+### 一条本波次自己造出来的回归
+
+`21a1e2e` 给 `core/check.py` 加了 `path: Path` 注解却没加 import。
+`from __future__ import annotations` 让它不会在运行时抛错,测试也一直是绿的——
+但仓库自己的 ruff 配置 `select = ["E9","F63","F7","F82"]` 包含 F821,
+`ci.yml` 会红。在审计基线 `4007a33` 上验证过是干净的,确认是本波次引入,已修。
+
+同类的还有一条:`91fa9f0` 的 BRIDGE-P0-002 magic 嗅探**正确地**拒绝了
+`tests/test_closeout_c2.py` 里那些 `.png` 夹具——它们从来装的就是
+`b"PREV-FRAME-BYTES-1"` 这样的占位文本。改的是夹具,不是闸门:真实的端点帧
+本来就该以 PNG 签名开头。
+
+## 全部提交(基线 `4007a33` 起)
+
+P0 十提交:`dad955a` `269bb55` `e8ed82b` `bd00e71` `91fa9f0` `b67e8d1`
+`21a1e2e` `a44b782` `fc145f8`,加抽样 P1 的 `468459e`。
+P1 及以下:`4a5c0a5` `6ae9457` `9329d9f` `823f8dc` `56f494e` `44e0a5a`
+`cf59541` `27c62ca` `7d3505f` `8b99dfc` `eac46a6` `eccc94d` `05ee1db` `ba9c64d`。
+
+## 没有做的事,以及为什么
+
+- **没有动 `CONTRACTS.yaml`**,也没有改任何 schema id。收紧一个字段的取值范围
+  不是契约变更(契约钉的是 id)。
+- **没有碰 `PROGRESS.md`**(2026-07-09 起冻结)。
+- **没有弱化任何既有测试**。本波次只改了两个既有测试,都在提交信息里写明了
+  理由:`test_f8_tts_journal_is_fail_closed` 的目标被 `PROVIDER-SUBMISSION-001`
+  挪到了更早的闸门,所以把注入的失败**收窄**到它原本瞄准的那次写入,并新增一条
+  钉住更强的新行为(付费调用根本没发生);`test_closeout_c2` 的夹具见上。
+- **P1/P2/P3 没有逐条修**。774 条标准 ID 按抽样结果推算,真 bug 约 15%,
+  且绝大多数属于"可维护性/错误协议打磨"。按 CLAUDE.md 的维护期验收门,
+  只修在自己正常路径上 fail-open 或丢数据的那些——**投机性的改动一律不做**。

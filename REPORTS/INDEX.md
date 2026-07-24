@@ -77,3 +77,4 @@ reporting window stays visible; the era table keeps their record intact.
 | `GUI_DIRECTION_2026-07-14.md` | GUI 方向计划 — 个人生产操作台:审片队列/继续工作/交给 Claude/六组导航 处置账 | #50-#51 |
 | `UX_WAVE_2_2026-07-17.md` | UX wave 2 — 通知/进度/did-you-mean/补全/文件夹/对比试听/--demo 样片/归档;deferred 项留档 | UX-WAVE-2 |
 | `UX_WAVE_3_2026-07-20.md` | UX wave 3 日常闭环 — 外部方案逐条对账;草稿保护闭环 + 全局任务条;拒/留档处置 | UX-WAVE-3 |
+| `AUDIT_LEDGER_WAVE_2026-07-24.md` | 外部审计总账 908 条逐条/抽样处置 — 真 bug 判据、十二种误报模式、P0 全修 + 付费安全闭环 | AUDIT-LEDGER-WAVE |
