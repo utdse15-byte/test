@@ -63,6 +63,7 @@ from typing import Any
 
 from ..core.container import MEDIA_EXTS, Project
 from ..core.hashing import hash_file
+from ..core.safeio import checked_out_path, publish_text, publish_tmp
 
 # The plan document's schema id (§4 contract governance; registered in
 # CONTRACTS.yaml as experimental — an inspect/apply plan file, internal).
@@ -94,6 +95,15 @@ _SOURCE_TRACKS = ("video", "overlay", "voice", "music", "sfx", "ambient")
 class RelinkError(ValueError):
     """A relink workflow error (malformed plan, wrong schema). Per-ROW
     problems never raise — they land as structured refusals in the result."""
+
+
+class _RestoreAbort(Exception):
+    """Carry a structured per-row refusal OUT of the publish_tmp context so the
+    temp is deleted (失败零写入) and the target is never replaced (RELINK-P0-002)."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        super().__init__(result.get("reason"))
+        self.result = result
 
 
 # --------------------------------------------------------------------- lineage
@@ -565,27 +575,30 @@ def _apply_row(project: Project, row: Any, *,
                     row_id=row_id, candidate=str(cand_path), expected=expected,
                     written=None)
 
-    # ---- restore: temp write → hash the WRITTEN bytes → rename into place
-    tmp = target_abs.with_name(target_abs.name + ".relink_tmp")
+    # ---- restore: temp write → hash the WRITTEN bytes → atomic publish.
+    # RELINK-P0-002: the sibling temp is a RANDOM O_EXCL name (safeio.publish_tmp),
+    # never the predictable "<name>.relink_tmp" — a pre-planted hardlink/symlink
+    # at that fixed name could otherwise capture shutil.copyfile and write the
+    # candidate bytes THROUGH it into project truth (and the row still reports
+    # success). publish_tmp deletes the temp on any failure (失败零写入) and only
+    # atomically replaces the target on clean exit.
+    written_hash: str | None = None
     try:
-        target_abs.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(cand_path, tmp)
-        written_hash = hash_file(tmp)
-        if written_hash != apply_hash:
-            tmp.unlink(missing_ok=True)
-            return _res("refused", "written_bytes_mismatch", target=norm_rel,
-                        row_id=row_id, candidate=str(cand_path),
-                        expected=expected, written=written_hash)
-        if target_abs.exists():  # raced in while we copied — still never clobber
-            tmp.unlink(missing_ok=True)
-            return _res("refused", "target_already_present", target=norm_rel,
-                        row_id=row_id, candidate=str(cand_path), expected=expected)
-        os.replace(tmp, target_abs)
+        with publish_tmp(target_abs) as tmp:
+            shutil.copyfile(cand_path, tmp)
+            written_hash = hash_file(tmp)
+            if written_hash != apply_hash:
+                raise _RestoreAbort(_res(
+                    "refused", "written_bytes_mismatch", target=norm_rel,
+                    row_id=row_id, candidate=str(cand_path),
+                    expected=expected, written=written_hash))
+            if target_abs.exists():  # raced in while we copied — never clobber
+                raise _RestoreAbort(_res(
+                    "refused", "target_already_present", target=norm_rel,
+                    row_id=row_id, candidate=str(cand_path), expected=expected))
+    except _RestoreAbort as ab:
+        return ab.result
     except OSError as exc:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
         return _res("refused", f"io_error: {exc}", target=norm_rel, row_id=row_id,
                     candidate=str(cand_path), expected=expected)
 
@@ -593,3 +606,25 @@ def _apply_row(project: Project, row: Any, *,
     return _res(status, None, target=norm_rel, row_id=row_id,
                 candidate=str(cand_path), expected=expected,
                 written=written_hash, verified=is_verified_row)
+
+
+# ------------------------------------------------------------------- plan --out
+
+
+def write_relink_plan(project: Project, plan: dict[str, Any], out: Path) -> Path:
+    """Validate a caller-chosen ``--out`` and atomically publish the plan JSON
+    (RELINK-P0-001). ``relink plan`` is ZERO-WRITE except for this one file, so
+    the destination must never be able to truncate project truth/imports/config:
+    :func:`core.safeio.checked_out_path` refuses an inside-project target outside
+    ``exports/``|``reports/``, a link/dir/special-file leaf, or a linked ancestor,
+    and :func:`publish_text` writes via a random exclusive temp (失败零写入).
+
+    Raises :class:`core.safeio.SafeOutError` (``reason="bad_out"``) — the CLI
+    surfaces it through its ``--json`` ``_fail(..., code="bad_out")`` envelope."""
+    import json as _json
+
+    target = checked_out_path(out, project_root=project.root,
+                              inside_roots=("exports", "reports"),
+                              kind="relink 计划")
+    publish_text(target, _json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+    return target
