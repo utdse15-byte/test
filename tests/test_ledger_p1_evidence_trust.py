@@ -249,6 +249,9 @@ def test_roundtrip_cli_corrupt_baseline_is_a_json_envelope(
     assert res.exit_code == 1
     payload = json.loads(res.stdout.strip().splitlines()[-1])
     assert "roundtrip_baseline_corrupt" in json.dumps(payload, ensure_ascii=False)
+    # …and it is the machine token, not just prose an agent would have to parse:
+    # the handler forwards exc.reason, so a corrupt baseline is branchable.
+    assert payload.get("code") == "roundtrip_baseline_corrupt"
 
 
 # ======================================================== SERIES-P1-002

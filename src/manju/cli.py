@@ -3471,7 +3471,10 @@ def roundtrip(
     try:
         plan = plan_roundtrip(project, edited)
     except ProjectError as exc:
-        _fail(str(exc))
+        # RoundtripBaselineError subclasses ProjectError and carries .reason, so
+        # a corrupt export baseline gets its own machine token here instead of
+        # being flattened into the generic envelope with every other refusal.
+        _fail(str(exc), code=getattr(exc, "reason", "error"))
         return
     if apply:
         sel = None
@@ -7326,20 +7329,19 @@ def tasks_manifest(
     # write outside (the CLI's post-write relpath() only raised AFTER the
     # overwrite had happened). Sanitize run_id to a single safe leaf, then refuse
     # any linked ancestor / symlink leaf via the safeio owner before writing.
-    if (not run_id or run_id in (".", "..")
-            or any(c in run_id for c in ("/", "\\", ":", "\x00"))
-            or len(run_id) > 128):
-        _fail(f"run id 非法: {run_id!r} — 仅允许单段安全名(见 manju build --json 的 run id)",
-              code="bad_args")
-    from .core.safeio import SafeOutError, checked_out_path
+    # materialize_run_manifest now owns both halves (the safe-leaf check and the
+    # linked-ancestor refusal, both before it derives or writes anything), so the
+    # CLI carries the envelope and not a second copy of the rule — a duplicated
+    # policy is a policy with two owners, and the service is the one that has to
+    # hold when the GUI or MCP calls it. Validation still precedes read_attempts,
+    # which would otherwise read reports/runs/<id>/ at an unchecked path.
+    from .core.safeio import SafeOutError
     try:
-        checked_out_path(project.reports_dir / "runs" / run_id / "run.json",
-                         project_root=project.root, inside_roots=("reports",))
+        path = materialize_run_manifest(project, run_id)
     except SafeOutError as exc:
         _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
-
+        return
     _records, _malformed = read_attempts(project, run_id)
-    path = materialize_run_manifest(project, run_id)
     rel = project.relpath(path)
     data = json.loads(path.read_text(encoding="utf-8"))
     if as_json:
