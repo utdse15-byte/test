@@ -1812,13 +1812,29 @@ _EDIT_JS = r"""
       document.querySelectorAll(".ed-card"),
       function (c) { return c.getAttribute("data-shot"); });
   }
+  /* GUI-INDEX-P1-001: the cut-order CAS token. permute_index only checks the
+   * ids are a PERMUTATION of the current shots — which this page and the SPA
+   * shot list ALWAYS both satisfy — so without a token whichever ↑/↓ landed
+   * second silently reverted the other, with no error and nothing in the diff
+   * to recover from. Seeded once from /api/state (this page does not poll it)
+   * and refreshed from every /api/index reply, success or 409. Still null =
+   * no token sent = the server's historical last-write-wins, so an older
+   * server and the very first click before the seed lands both still work. */
+  var indexRev = null;
+  (typeof requestJson==="function"?requestJson("GET","/api/state",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/state").then(function(r){return r.json();}))
+    .then(function (d) { if (d && typeof d.index_rev === "string") indexRev = d.index_rev; })
+    .catch(function () { /* no seed → unguarded, exactly as before */ });
+
   function reorder(sid, dir) {
     var order = currentOrder();
     var i = order.indexOf(sid);
     var j = i + dir;
     if (i < 0 || j < 0 || j >= order.length) return;
     var tmp = order[i]; order[i] = order[j]; order[j] = tmp;
-    post("/api/index", { order: order }).then(function (res) {
+    var body = { order: order };
+    if (indexRev !== null) body.expected_rev = indexRev;
+    post("/api/index", body).then(function (res) {
+      if (res.data && typeof res.data.rev === "string") indexRev = res.data.rev;
       if (res.status === 200) { toast("顺序已存", true); reloadSoon(); }
       else toast(errText(res), false);
     });

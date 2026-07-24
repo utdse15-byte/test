@@ -96,6 +96,31 @@ def _optional_build_lock(root: Path, actor: str):
     return build_lock(root, actor=actor)
 
 
+def _text_rev(text: str | None) -> str:
+    """The CAS token for a whole-file editor (GUI-EDIT-P1-001).
+
+    ONE definition of the token so every truth-file GET and its save agree:
+    the hash of the exact on-disk text, and ``""`` for a file that does not
+    exist yet — byte-identical to what ``_gated_save`` compares against
+    (``hash_text(before) if before is not None else ""``), so a "saving
+    creates it" round trip is never a spurious 409.
+    """
+    from ..core.hashing import hash_text
+
+    return hash_text(text) if text is not None else ""
+
+
+def _index_rev(project: Project) -> str:
+    """CAS token for ``shots/index.yaml`` (GUI-INDEX-P1-001) — the same
+    text-hash contract :func:`_text_rev` defines for the whole-file editors,
+    read straight off disk so it never reflects a model round trip."""
+    path = project.shots_dir / "index.yaml"
+    try:
+        return _text_rev(path.read_text(encoding="utf-8") if path.exists() else None)
+    except OSError:
+        return ""
+
+
 def _empty_spend(project: Project) -> dict[str, Any]:
     """The §8.3 事后 spend report's empty-project shape, served when the
     ``build.spend`` module (round-r/spend) has not landed yet. Matches the real
@@ -729,6 +754,12 @@ class _Handler(BaseHTTPRequestHandler):
                     # Same session: fingerprint, state, and token share one bind.
                     payload["project_token"] = session.project_id
                     payload["readonly"] = self.server.readonly
+                    # GUI-INDEX-P1-001: the cut-order CAS token a reorder
+                    # echoes back as expected_rev. Lives on the payload the
+                    # reorder clients already poll, so no extra round trip;
+                    # index.yaml is inside project_fingerprint's shots_dir
+                    # scan, so the cache above can never serve a stale one.
+                    payload["index_rev"] = _index_rev(session.project)
                     payload["workspace"] = (
                         {"active": self.server.active_slug,
                          "count": len(self.server.workspace)}
@@ -813,15 +844,21 @@ class _Handler(BaseHTTPRequestHandler):
                 self._presets_get()
             elif path == "/api/rules":
                 rules_path = self.server.project.rules_path
+                text = rules_path.read_text(encoding="utf-8") if rules_path.exists() else ""
                 self._send_json({
                     "exists": rules_path.exists(),
-                    "yaml": rules_path.read_text(encoding="utf-8") if rules_path.exists() else "",
+                    "yaml": text,
+                    # GUI-EDIT-P1-001: the CAS token the editor echoes back as
+                    # expected_rev (same contract as /api/shot/<id>'s rev).
+                    "rev": _text_rev(text if rules_path.exists() else None),
                 })
             elif path == "/api/packaging":
                 pkg_path = self.server.project.packaging_path
+                text = pkg_path.read_text(encoding="utf-8") if pkg_path.exists() else ""
                 self._send_json({
                     "exists": pkg_path.exists(),
-                    "yaml": pkg_path.read_text(encoding="utf-8") if pkg_path.exists() else "",
+                    "yaml": text,
+                    "rev": _text_rev(text if pkg_path.exists() else None),
                 })
             elif path.startswith("/api/bible/"):
                 self._bible_get(unquote(path[len("/api/bible/"):]))
@@ -986,8 +1023,19 @@ class _Handler(BaseHTTPRequestHandler):
             self._drain_request_body()
             self._send_error_json("host not allowed (DNS-rebinding guard)", 403)
             return
-        _readonly_ok = {"/api/validate", "/api/impact", "/api/review/consistency",
-                        "/api/reveal"}  # reveal opens the OS file manager; no write
+        # Pure (no-write) POSTs — the set the CLOSING gate below also honours.
+        _pure_ok = {"/api/validate", "/api/impact", "/api/review/consistency",
+                    "/api/reveal"}  # reveal opens the OS file manager; no write
+        # GUI-READONLY-P1-001: the readonly allow-list is the pure set PLUS the
+        # two window-level actions. Neither writes project truth, and without
+        # them a readonly workbench was unusable: started UNBOUND (`manju gui
+        # --readonly` with no project) the picker's 打开 was the only way
+        # forward and it 403'd, so the window could open NOTHING; and 退出 in
+        # the --app window always failed, leaving Ctrl-C in the terminal as the
+        # only exit. Opening binds a session (a read-scoped view; every
+        # mutating POST after it still 403s here) and quit is the coordinated
+        # shutdown, which touches no project file.
+        _readonly_ok = _pure_ok | {"/api/workspace/open", "/api/app/quit"}
         if self.server.readonly and urlsplit(self.path).path not in _readonly_ok:
             # /api/validate and /api/impact are pure (no write) — readonly
             # editors keep live checks and impact previews (WP1, R22 precedent);
@@ -1012,8 +1060,11 @@ class _Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         path = url.path
         # Closing: reject mutating POSTs except the quit endpoint itself.
+        # Deliberately the PURE set, not _readonly_ok: binding a project
+        # (/api/workspace/open) while the coordinator is shutting down would
+        # hand a dying process a fresh session.
         if (self.server.closing.is_set()
-                and path not in _readonly_ok
+                and path not in _pure_ok
                 and path != "/api/app/quit"):
             self._drain_request_body()
             self._send_json(
@@ -2031,14 +2082,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(
                 f"只能重试已失败/已取消的任务(job {job_id} 当前状态: {orig.state})", 409)
             return
+        # GUI-JOB-008: a retry NEVER inherits the spend confirmation. Every
+        # retryable kind is a PAID kind (core.jobkinds: retryable ⊆ paid), and
+        # `assume_yes` is what the §8.3 spend gate reads — replaying it turned
+        # ONE 确认 click into a re-clickable authorization the queue panel could
+        # fire indefinitely (retry a retry a retry…), each one really spending.
+        # Dropping it here (not per-kind in _build_retry_fn) is the single
+        # choke point: the closure re-derives from these same params, and the
+        # gate then returns waiting_user — the human confirms again, per run.
+        retry_params = dict(orig.params)
+        retry_params.pop("assume_yes", None)
         try:
-            fn = self._build_retry_fn(session, orig.kind, dict(orig.params))
+            fn = self._build_retry_fn(session, orig.kind, dict(retry_params))
         except ValueError as exc:
             self._send_error_json(str(exc), 400)
             return
         try:
             job = session.runner.submit(
-                orig.kind, dict(orig.params), fn, retry_of=orig.id)
+                orig.kind, dict(retry_params), fn, retry_of=orig.id)
         except RunnerClosed:
             self._send_json(
                 {"error": "server is closing", "code": "server_closing"}, 503)
@@ -2518,6 +2579,36 @@ class _Handler(BaseHTTPRequestHandler):
         handler(body)
         return True
 
+    def _refuse_if_live_owner(self, project: Project) -> bool:
+        """409 if ANOTHER live process already drives ``project``.
+
+        GUI-MULTI-P1-001. Two windows on one project is not a permissions
+        question, it is a single-writer question: the engine assumes one
+        writer (gui/jobs.py module docstring), and the second instance also
+        rewrote the first one's live job records as ``interrupted``. The stamp
+        is advisory and self-verifying — ``live_foreign_owner`` re-checks the
+        recorded pid, so a crash leaves nothing to clean up by hand, and a
+        stamp written by THIS process never blocks (in-process rebinds and
+        tests are unaffected).
+        """
+        from .jobs import live_foreign_owner
+
+        try:
+            owner = live_foreign_owner(project.runtime_dir)
+        except Exception:
+            return False  # a probe hiccup must never lock the owner out
+        if owner is None:
+            return False
+        self._project_action_payload(
+            project, ok=False, code="project_already_open", status=409,
+            extra={
+                "error": "该项目已在另一个 manju GUI 窗口中打开"
+                         f"(进程 {owner.get('pid')})——请切换到那个窗口，"
+                         "或先关闭它再重试",
+                "owner_pid": owner.get("pid"),
+            })
+        return True
+
     def _act_workspace_open(self, body: dict[str, Any]) -> None:
         """Open a project by path (or workspace slug): bind once or new window."""
         raw = str(body.get("path") or "").strip()
@@ -2555,6 +2646,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._project_action_payload(
                 project, ok=False, code="project_session_immutable", status=409,
                 extra={"error": "当前窗口已经绑定项目，请在新窗口打开"})
+            return
+        if self._refuse_if_live_owner(project):
             return
         try:
             self.server.bind_project_once(project)
@@ -2664,6 +2757,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(
                 "project_id/slug/path must refer to a known project "
                 "(workspace catalog, current session, or recents)", 404)
+            return
+        # GUI-MULTI-P1-001: spawning a window over a project another live
+        # process already drives is the same single-writer violation as
+        # binding it here — refuse before Popen, not after.
+        if self._refuse_if_live_owner(project):
             return
 
         argv = [
@@ -2852,10 +2950,15 @@ class _Handler(BaseHTTPRequestHandler):
         INSIDE this same ``build_lock`` hold, right before the write (never a
         snapshot from before the lock-acquire race). A mismatch is refused
         with the SAME (ok=False, 409) shape as a check regression, so it also
-        needs no per-caller rendering change. Only the shot editor passes it
-        today (§ audit: it is the one truth-file form here whose client holds
-        a FULL raw-text snapshot a human may sit on before saving — bible/
-        rules/packaging callers stay ``None``, byte-for-byte unaffected)."""
+        needs no per-caller rendering change.
+
+        GUI-EDIT-P1-001: the bible/rules/packaging editors now pass it too.
+        They are the SAME shape as the shot editor — a textarea holding the
+        WHOLE file, which a human may sit on for twenty minutes — so with two
+        tabs open (or the editor next to a CLI/MCP write) the later save
+        silently clobbered the earlier one, with no diff and no event trail to
+        recover from. It stays OPTIONAL: a client that sends no token keeps
+        the historical last-write-wins behaviour, byte-for-byte."""
         from ..core.check import run_check
         from ..core.hashing import hash_text
         from ..core.yamlio import atomic_write_text
@@ -2868,8 +2971,8 @@ class _Handler(BaseHTTPRequestHandler):
                 current_hash = hash_text(before) if before is not None else ""
                 if expected_text_hash is not None and current_hash != expected_text_hash:
                     return False, {
-                        "error": "该镜头在你加载后已被其他入口修改(乐观锁校验失败)"
-                                 "——请刷新后重试",
+                        "error": f"{label} 在你加载后已被其他入口修改"
+                                 "(乐观锁校验失败)——请刷新后重试",
                         "current": before if before is not None else "",
                     }, 409
                 baseline = set(run_check(project).errors)
@@ -2889,8 +2992,15 @@ class _Handler(BaseHTTPRequestHandler):
                     return False, {"error": f"check failed — {label} 已回滚 (reverted)",
                                    "errors": new_errors,
                                    "current": before if before is not None else ""}, 409
+                # `rev` (GUI-EDIT-P1-001): the post-write CAS token, so a
+                # dialog that stays open can save twice in a row without a
+                # refetch — the take-note precedent (F14), where returning no
+                # rev made the SECOND action a misleading 乐观锁 409.
                 return True, {"ok": True, "created": before is None,
-                              "warnings": report.warnings}, 200
+                              "warnings": report.warnings,
+                              "rev": _text_rev(
+                                  path.read_text(encoding="utf-8")
+                                  if path.exists() else None)}, 200
         except BuildLocked as exc:
             return False, {"error": str(exc)}, 409
 
@@ -2917,11 +3027,31 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(f"unknown bible file: {name}", 404)
             return
         path = self.server.project.root / "bible" / f"{name}.yaml"
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
         self._send_json({
             "name": name,
             "exists": path.exists(),
-            "yaml": path.read_text(encoding="utf-8") if path.exists() else "",
+            "yaml": text,
+            # GUI-EDIT-P1-001: CAS token — echoed back as expected_rev.
+            "rev": _text_rev(text if path.exists() else None),
         })
+
+    @staticmethod
+    def _expected_rev_of(body: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Read the optional CAS token off a whole-file save body.
+
+        Returns ``(expected_text_hash, error)``. Absent → ``(None, None)``:
+        the guard is opt-in, so older pages and curl keep working. A
+        non-string is a client bug, not a stale buffer — 400, never a silent
+        overwrite (an ignored malformed token would fail OPEN, which is the
+        whole failure mode GUI-EDIT-P1-001 is about).
+        """
+        raw = body.get("expected_rev")
+        if raw is None:
+            return None, None
+        if not isinstance(raw, str):
+            return None, "expected_rev must be a string"
+        return raw, None
 
     def _act_bible_save(self, name: str, body: dict[str, Any]) -> None:
         if name not in self._BIBLE_FILES:
@@ -2931,11 +3061,15 @@ class _Handler(BaseHTTPRequestHandler):
         if err:
             self._send_error_json(err, 400)
             return
+        expected_rev, err = self._expected_rev_of(body)
+        if err:
+            self._send_error_json(err, 400)
+            return
         project = self.server.project
         with self.server.quick_mutex:
             ok, payload, status = self._gated_save(
                 project.root / "bible" / f"{name}.yaml", body["yaml"],
-                label=f"bible/{name}.yaml")
+                label=f"bible/{name}.yaml", expected_text_hash=expected_rev)
             if ok:
                 append_event(project.root, self.server.actor, "edit_bible",
                              {"file": name, "via": "gui"})
@@ -2946,10 +3080,15 @@ class _Handler(BaseHTTPRequestHandler):
         if err:
             self._send_error_json(err, 400)
             return
+        expected_rev, err = self._expected_rev_of(body)
+        if err:
+            self._send_error_json(err, 400)
+            return
         project = self.server.project
         with self.server.quick_mutex:
             ok, payload, status = self._gated_save(
-                project.rules_path, body["yaml"], label="timeline/rules.yaml")
+                project.rules_path, body["yaml"], label="timeline/rules.yaml",
+                expected_text_hash=expected_rev)
             if ok:
                 append_event(project.root, self.server.actor, "edit_rules",
                              {"via": "gui"})
@@ -2971,10 +3110,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(
                 "packaging 校验失败 (invalid): " + " ".join(str(exc).split())[:500], 400)
             return
+        expected_rev, err = self._expected_rev_of(body)
+        if err:
+            self._send_error_json(err, 400)
+            return
         project = self.server.project
         with self.server.quick_mutex:
             ok, payload, status = self._gated_save(
-                project.packaging_path, body["yaml"], label="timeline/packaging.yaml")
+                project.packaging_path, body["yaml"], label="timeline/packaging.yaml",
+                expected_text_hash=expected_rev)
             if ok:
                 append_event(project.root, self.server.actor, "edit_packaging",
                              {"via": "gui"})
@@ -2985,7 +3129,16 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_index(self, body: dict[str, Any]) -> None:
         """Reorder shots — the cut order is one reviewable line of YAML (§3).
         Shared writer: :func:`core.writes.permute_index` (also used by
-        roundtrip apply)."""
+        roundtrip apply).
+
+        GUI-INDEX-P1-001: ``expected_rev`` (optional, echoing ``index_rev``
+        from /api/state) is the compare-and-swap. ``permute_index`` only
+        checks that the ids are a PERMUTATION of the current shots, which two
+        tabs showing the same shot set always satisfy — so the second tab's
+        ↑/↓ silently reverted the first tab's reorder with no error and no
+        recoverable diff. The token is compared INSIDE the build_lock, right
+        before the write, exactly like ``_gated_save`` does for the whole-file
+        editors. Absent → historical last-write-wins (older pages, CLI)."""
         from ..core.writes import WriteRejected, permute_index
         from ..runtime.buildlock import BuildLocked
 
@@ -2994,9 +3147,22 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(order, list) or not all(isinstance(s, str) for s in order):
             self._send_error_json("order must be a list of shot ids", 400)
             return
+        expected_rev, err = self._expected_rev_of(body)
+        if err:
+            self._send_error_json(err, 400)
+            return
         with self.server.quick_mutex:
             try:
                 with _optional_build_lock(project.root, self.server.actor):
+                    if (expected_rev is not None
+                            and _index_rev(project) != expected_rev):
+                        self._send_json({
+                            "error": "shots/index.yaml 在你加载后已被其他入口修改"
+                                     "(乐观锁校验失败)——请刷新后重试",
+                            "order": list(project.load_index().order),
+                            "rev": _index_rev(project),
+                        }, 409)
+                        return
                     permute_index(
                         project, list(order),
                         actor=self.server.actor, via="gui",
@@ -3007,7 +3173,7 @@ class _Handler(BaseHTTPRequestHandler):
             except BuildLocked as exc:
                 self._send_error_json(str(exc), 409)
                 return
-        self._send_json({"ok": True, "order": order})
+        self._send_json({"ok": True, "order": order, "rev": _index_rev(project)})
 
     # ---------------------------------------------------------- shot editor
 

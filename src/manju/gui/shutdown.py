@@ -1,8 +1,19 @@
 """Coordinated GUI application shutdown (one quit thread, structured reports).
 
-``cancel_running`` is *bounded*: if a job ignores cooperative cancel, the
-coordinator reports ``shutdown_state=stuck`` and keeps HTTP readable instead
-of hanging forever on an unbounded join.
+BOTH modes are bounded (GUI-SHUTDOWN-P1-001): if a job ignores cooperative
+cancel — or simply never returns, which is what a wedged provider HTTP call
+looks like — the coordinator reports ``shutdown_state=stuck`` and keeps HTTP
+readable instead of hanging forever on an unbounded join. ``after_current``
+gets the longer ceiling of the two (a real render legitimately runs for
+hours), but it does get one: "wait for the job" must not mean "wait forever".
+
+The quit thread is a DAEMON. It used to be non-daemon, which meant the
+interpreter itself joined it at exit: clicking 退出 (or pressing Ctrl-C) while
+a wedged job held the worker never returned the prompt, and Task Manager was
+the only way out — on the owner's primary platform, where the GUI is usually
+the ``--app`` window. Daemon is safe here because nothing in ``_finish``
+writes project truth: the job worker owns that, and this thread only waits on
+it and closes sockets.
 """
 
 from __future__ import annotations
@@ -23,9 +34,26 @@ _log = logging.getLogger("manju.gui.shutdown")
 # How long cancel_running waits for a cooperative job to finish before stuck.
 # Override with MANJU_QUIT_CANCEL_TIMEOUT for tests.
 _CANCEL_RUNNING_TIMEOUT_S = float(os.environ.get("MANJU_QUIT_CANCEL_TIMEOUT", "60"))
+# GUI-SHUTDOWN-P1-001: after_current's ceiling. Generous on purpose — the
+# whole point of the mode is "let the current job finish", and a final render
+# can legitimately take a long time — but FINITE, because "the provider call
+# never returns" is indistinguishable from "still working" to this thread, and
+# an infinite wait was reported as neither done nor stuck, forever. On expiry
+# the job is NOT killed: the coordinator reports stuck (writes already
+# refused, status/logs still readable) and the human can escalate to
+# cancel_running or end the process. Override with
+# MANJU_QUIT_AFTER_CURRENT_TIMEOUT for tests.
+_AFTER_CURRENT_TIMEOUT_S = float(
+    os.environ.get("MANJU_QUIT_AFTER_CURRENT_TIMEOUT", "3600"))
 # after_current: long jobs may run a while; still poll so status stays fresh.
 _AFTER_CURRENT_POLL_S = 0.25
 _CANCEL_POLL_S = 0.25
+
+
+def _timeout_for(mode: str) -> float:
+    """The wait ceiling for ``mode`` — one owner for the two constants."""
+    return (_CANCEL_RUNNING_TIMEOUT_S if mode == "cancel_running"
+            else _AFTER_CURRENT_TIMEOUT_S)
 
 
 @dataclass(frozen=True)
@@ -95,7 +123,10 @@ class AppShutdownCoordinator:
             thr = threading.Thread(
                 target=self._finish,
                 name="manju-gui-quit",
-                daemon=False,
+                # GUI-SHUTDOWN-P1-001: daemon — see the module docstring. A
+                # non-daemon quit thread is joined by the interpreter, so a
+                # wedged job made 退出/Ctrl-C hang the whole process.
+                daemon=True,
             )
             self._thread = thr
             thr.start()
@@ -135,38 +166,44 @@ class AppShutdownCoordinator:
                 "closing" if self.in_progress else "done"),
         }
 
-    def _wait_runner(self, runner: JobRunner, *, timeout: float | None) -> ShutdownReport:
-        """Poll join until stopped or deadline (never unbounded hang)."""
+    def _wait_runner(self, runner: JobRunner, *, timeout: float | None = None
+                     ) -> ShutdownReport:
+        """Poll join until stopped or deadline (never unbounded hang).
+
+        GUI-SHUTDOWN-P1-002: ``mode`` is re-read on EVERY pass, not once.
+        ``request()`` can upgrade after_current → cancel_running while this
+        loop is already running; reading the mode once meant the loop kept
+        polling with ``cancel_running=False`` against the after_current
+        ceiling, so the 60s cancel deadline was never established and the
+        状态 stayed ``closing`` instead of ever reaching ``stuck`` — the
+        upgrade looked like it did nothing. An upgrade now re-issues the
+        cancel flags and restarts the deadline at the new mode's ceiling.
+
+        ``timeout`` pins the initial ceiling (tests / explicit callers);
+        omitted, it comes from the current mode.
+        """
         mode = self._mode or "after_current"
+        deadline = time.monotonic() + float(
+            timeout if timeout is not None else _timeout_for(mode))
         # Re-issue cancel flags each poll for cancel_running.
         if mode == "cancel_running":
             runner.shutdown(timeout=0, cancel_queued=True, cancel_running=True)
 
-        if timeout is None:
-            # after_current: wait for natural finish, but still poll so we can
-            # re-check cancel flags if mode was upgraded (not used today).
-            while runner.worker_alive:
-                report = runner.shutdown(
-                    timeout=_AFTER_CURRENT_POLL_S,
-                    cancel_queued=True,
-                    cancel_running=False,
-                )
-                self._last_report = report
-                if report.stopped:
-                    return report
-            return ShutdownReport(
-                stopped=True,
-                canceled_queued=(),
-                running_job_id=None,
-            )
-
-        deadline = time.monotonic() + float(timeout)
         while runner.worker_alive:
+            current = self._mode or "after_current"
+            if current != mode:
+                mode = current
+                deadline = time.monotonic() + _timeout_for(mode)
+                if mode == "cancel_running":
+                    runner.shutdown(
+                        timeout=0, cancel_queued=True, cancel_running=True)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
+            poll = (_CANCEL_POLL_S if mode == "cancel_running"
+                    else _AFTER_CURRENT_POLL_S)
             report = runner.shutdown(
-                timeout=min(_CANCEL_POLL_S, remaining),
+                timeout=min(poll, remaining),
                 cancel_queued=True,
                 cancel_running=(mode == "cancel_running"),
             )
@@ -199,26 +236,30 @@ class AppShutdownCoordinator:
         try:
             time.sleep(0.2)  # flush /api/app/quit response
             runner: JobRunner = self._server.runner
-            mode = self._mode or "after_current"
-            timeout = None if mode == "after_current" else _CANCEL_RUNNING_TIMEOUT_S
-            report = self._wait_runner(runner, timeout=timeout)
+            # GUI-SHUTDOWN-P1-002: no `mode` snapshot is taken before the
+            # wait. _wait_runner tracks upgrades itself, and the mode is
+            # re-read AFTER it returns so the stuck report describes the mode
+            # that actually expired.
+            report = self._wait_runner(runner)
             self._last_report = report
+            mode = self._mode or "after_current"
 
             if not report.stopped:
-                if mode == "cancel_running":
-                    self._stuck = True
-                    self._stuck_message = (
-                        "当前任务没有响应取消请求 — 写操作已拒绝，"
-                        "状态/日志仍可读；可继续等待或强制结束进程")
-                    _log.error(
-                        "gui shutdown STUCK: worker alive after %.0fs cancel_running "
-                        "(job=%s)", _CANCEL_RUNNING_TIMEOUT_S, report.running_job_id)
-                    # Do NOT server_close while worker may still write project files.
-                    return
-                _log.warning(
-                    "gui shutdown: after_current still running (job=%s) — "
-                    "keeping wait (should not reach here)", report.running_job_id)
-                report = self._wait_runner(runner, timeout=None)
+                # GUI-SHUTDOWN-P1-001: both modes end here. after_current used
+                # to fall through to an unbounded re-wait, so a wedged job left
+                # the coordinator neither done nor stuck, forever.
+                self._stuck = True
+                self._stuck_message = (
+                    "当前任务没有响应取消请求 — 写操作已拒绝，"
+                    "状态/日志仍可读；可继续等待或强制结束进程"
+                    if mode == "cancel_running" else
+                    "当前任务仍未结束 — 写操作已拒绝，状态/日志仍可读；"
+                    "可选择「取消并退出」或强制结束进程")
+                _log.error(
+                    "gui shutdown STUCK: worker alive after %.0fs %s (job=%s)",
+                    _timeout_for(mode), mode, report.running_job_id)
+                # Do NOT server_close while worker may still write project files.
+                return
 
             try:
                 self._server.shutdown()
