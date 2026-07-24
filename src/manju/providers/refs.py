@@ -24,10 +24,18 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import os
+import stat
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any
+
+from ..core.safeio import (
+    SafeOutError,
+    refuse_linked_within,
+    refuse_unsafe_regular_file,
+)
 
 if TYPE_CHECKING:  # only for type hints — never imported at runtime (no cycle)
     from ..core.container import Project
@@ -87,6 +95,12 @@ class RefItem:
     subject_ref: str | None = None
     declared_transfer: bool = False
     transfer_errors: tuple = ()
+    # The containment boundary this ref was accepted against. Carried on the
+    # item so the pre-upload re-verification (:func:`open_verified_ref`) can
+    # re-check containment without importing the container — the stored path
+    # alone is never trusted at read time. ``None`` disables only the
+    # containment half; the no-follow / regular-file half always applies.
+    root: Path | None = None
 
 
 @dataclass
@@ -146,13 +160,30 @@ class RefSet:
         return first.tier if first is not None else TIER_NONE
 
     def primary_image_path_str(self) -> str:
-        """The first image ref as a raw path string (existing or not), for the
-        comfyui/local_cmd ``{image}`` path-based workflows — mirrors the old
-        ``_resolve_ref_image`` which passed an authored path through unchanged."""
+        """The primary image as a raw path string, for the comfyui/local_cmd
+        ``{image}`` path-based workflows.
+
+        Both accessors name the SAME item: the first EXISTING image (what
+        :attr:`primary_image` and :attr:`primary_image_source` report), so the
+        lineage a take records can never claim a different ref than the one
+        delivered. With nothing usable it degrades to the first image ref that
+        was NOT refused — a containment-blocked path (absolute / escaping the
+        project) is never handed to a local command or recorded as the primary
+        path."""
+        first = _first_existing_image(self.items)
+        if first is not None:
+            return str(first.path) if first.path is not None else first.ref
         for it in self.items:
-            if it.kind == "image":
+            if it.kind == "image" and not it.blocked_reason:
                 return str(it.path) if it.path is not None else it.ref
         return ""
+
+    @property
+    def primary_image_item(self) -> RefItem | None:
+        """The RefItem behind :attr:`primary_image` — the ONE verified item every
+        accessor names. A caller that uploads bytes needs the item (not the bare
+        path) so the read goes through :func:`read_ref_bytes`."""
+        return _first_existing_image(self.items)
 
     @property
     def primary_video(self) -> Path | None:
@@ -243,10 +274,48 @@ def _collect_bible(project: "Project", shot: "ShotSpec", bible: dict,
                 items.append(_make_item(project, val, TIER_BIBLE, "video"))
 
 
+def refs_dir_intake_reason(path: Path, root: Path) -> str | None:
+    """The media/refs intake guard: ``None`` when ``path`` may be read and
+    uploaded as a reference, else a ready-to-surface 中文 refusal.
+
+    The fallback tier is the ONE ref source that does not pass through
+    :func:`resolve_local_ref`, so containment has to be enforced here or not at
+    all. Reuses the ``core.safeio`` owner rather than forking a third policy:
+    no link (symlink/junction/reparse point) on any segment from ``root`` down
+    to the leaf, a regular file only (a directory/FIFO/device is never opened —
+    an open of a FIFO would block), and no second hard-link name (a hardlink
+    reads an outside file with no link flag to betray it). The realpath is
+    re-checked against ``root`` afterwards as the closing containment claim.
+    """
+    try:
+        refuse_linked_within(path, root, kind="参考")
+        refuse_unsafe_regular_file(path, kind="参考文件")
+    except SafeOutError as exc:
+        return (
+            f"media/refs 条目被拒绝,不作为参考也不会上传: {exc} — "
+            "把真实文件复制进项目(manju import)再引用。"
+        )
+    try:
+        real = Path(os.path.realpath(path))
+        real.relative_to(Path(os.path.realpath(root)))
+    except (OSError, ValueError):
+        return (
+            f"media/refs 条目解析后落在项目外,拒绝读取与上传: {path} — "
+            "把真实文件复制进项目(manju import)再引用。"
+        )
+    return None
+
+
 def _collect_refs_dir(project: "Project", items: list[RefItem]) -> None:
     """media/refs fallback — only contributes a kind when NO existing declared
     ref of that kind was found (mirrors kenburns' tier (c): fallback only when
-    nothing more specific resolved)."""
+    nothing more specific resolved).
+
+    Selection is by no-follow lstat, never ``Path.is_file()`` (which FOLLOWS a
+    link and made a planted symlink a valid primary reference). A refused entry
+    is skipped AND recorded as a ``blocked_reason`` item placed after the
+    usable one, so the refusal stays auditable in the lineage instead of
+    vanishing."""
     have_image = any(it.kind == "image" and it.exists for it in items)
     have_video = any(it.kind == "video" and it.exists for it in items)
     if have_image and have_video:
@@ -254,19 +323,35 @@ def _collect_refs_dir(project: "Project", items: list[RefItem]) -> None:
     refs_dir = project.refs_dir
     if not refs_dir.exists():
         return
-    files = sorted((p for p in refs_dir.glob("*") if p.is_file()), key=lambda p: p.name)
+    try:
+        files = sorted(refs_dir.glob("*"), key=lambda p: p.as_posix())
+    except OSError:
+        return
     if not have_image:
-        for p in files:
-            if p.suffix.lower() in _IMAGE_EXTS:
-                items.append(RefItem(ref=_ref_str(project, p), tier=TIER_REFS_DIR,
-                                     kind="image", path=p, is_url=False, exists=True))
-                break
+        _pick_refs_dir(project, files, _IMAGE_EXTS, "image", items)
     if not have_video:
-        for p in files:
-            if p.suffix.lower() in _VIDEO_EXTS:
-                items.append(RefItem(ref=_ref_str(project, p), tier=TIER_REFS_DIR,
-                                     kind="video", path=p, is_url=False, exists=True))
-                break
+        _pick_refs_dir(project, files, _VIDEO_EXTS, "video", items)
+
+
+def _pick_refs_dir(project: "Project", files: list[Path], exts: tuple[str, ...],
+                   kind: str, items: list[RefItem]) -> None:
+    root = project.root
+    blocked: list[tuple[Path, str]] = []
+    for p in files:
+        if p.suffix.lower() not in exts:
+            continue
+        reason = refs_dir_intake_reason(p, root)
+        if reason is not None:
+            blocked.append((p, reason))
+            continue
+        items.append(RefItem(ref=_ref_str(project, p), tier=TIER_REFS_DIR,
+                             kind=kind, path=p, is_url=False, exists=True,
+                             root=root))
+        break
+    for p, reason in blocked:
+        items.append(RefItem(ref=_ref_str(project, p), tier=TIER_REFS_DIR,
+                             kind=kind, path=p, is_url=False, exists=False,
+                             blocked_reason=reason, root=root))
 
 
 # ------------------------------------------------------- delivery helpers
@@ -276,20 +361,79 @@ def unreadable_ref_message(items: list[RefItem]) -> str | None:
     """Return a one-line error for the first local ref that is missing or
     unreadable, naming the path AND the tier it came from — the pre-submit,
     zero-cost validation (goal reliability #3). ``None`` when every local ref is
-    readable. URL refs are not checked here (they resolve remotely)."""
+    readable. URL refs are not checked here (they resolve remotely).
+
+    A refused media/refs entry is a SAFETY-NET refusal, not a declaration: it
+    only becomes the error when no usable ref of that kind survived, so a stray
+    link in media/refs cannot turn every generation into a hard failure while a
+    real fallback image sits right next to it."""
+    usable = {it.kind for it in items
+              if it.exists and (it.is_url or it.path is not None)}
     for it in items:
         if it.is_url:
+            continue
+        if it.tier == TIER_REFS_DIR and it.blocked_reason and it.kind in usable:
             continue
         if it.blocked_reason:
             return it.blocked_reason
         if it.path is None or not it.path.exists():
             return f"reference file not found: {it.ref} (tier: {it.tier})"
         try:
-            with open(it.path, "rb"):
+            with open_verified_ref(it):
                 pass
-        except OSError as exc:
+        except (OSError, SafeOutError) as exc:
             return f"reference file unreadable: {it.ref} (tier: {it.tier}): {exc}"
     return None
+
+
+def open_verified_ref(item: RefItem) -> IO[bytes]:
+    """No-follow open of a local ref, re-verified on the OPEN descriptor.
+
+    上传前重新校验:resolution and upload are separated in time, so the stored
+    ``item.path`` is never trusted on its own — the fstat that proves regular
+    file / single hard-link name runs on the SAME descriptor the caller then
+    reads, and (when the item carries a ``root``) containment is re-asserted
+    against that boundary. Same shape as ``core.library.open_verified_blob``.
+    Raises :class:`SafeOutError` before any byte is read."""
+    if item.path is None:
+        raise SafeOutError(f"引用没有本地文件可读取: {item.ref}")
+    path = Path(item.path)
+    if item.root is not None:
+        refuse_linked_within(path, item.root, kind="参考")
+    elif path.is_symlink():
+        raise SafeOutError(f"引用是链接(symlink/junction),拒绝读取与上传: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)  # a racing FIFO must never block the open
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise SafeOutError(f"引用不是普通文件,拒绝读取与上传: {path}")
+        if st.st_nlink > 1:
+            raise SafeOutError(
+                f"引用有 {st.st_nlink} 个硬链接名 — 可能读取到项目外文件身份,"
+                f"拒绝上传: {path}"
+            )
+        if item.root is not None:
+            real = Path(os.path.realpath(path))
+            try:
+                real.relative_to(Path(os.path.realpath(item.root)))
+            except ValueError as exc:
+                raise SafeOutError(
+                    f"引用解析后落在项目外,拒绝读取与上传: {path}"
+                ) from exc
+    except BaseException:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, "rb")
+
+
+def read_ref_bytes(item: RefItem) -> bytes:
+    """The ONE front door for reading a reference's bytes for delivery — every
+    provider that uploads ref bytes reads through this, never ``read_bytes()``
+    on the stored path (PROVIDER-REF-001)."""
+    with open_verified_ref(item) as f:
+        return f.read()
 
 
 def base64_ref(item: RefItem, *, data_uri: bool = True, mime: str | None = None) -> str:
@@ -297,7 +441,7 @@ def base64_ref(item: RefItem, *, data_uri: bool = True, mime: str | None = None)
     (Runway ``promptImage`` style); ``False`` yields the raw base64 string
     (Kling ``image_url`` explicitly forbids the data-URI prefix)."""
     assert item.path is not None
-    raw = item.path.read_bytes()
+    raw = read_ref_bytes(item)
     b64 = base64.b64encode(raw).decode("ascii")
     if not data_uri:
         return b64
@@ -479,7 +623,7 @@ def _make_item(project: "Project", value: Any, tier: str, kind: str) -> RefItem:
     p, reason = resolve_local_ref(project, s)
     exists = bool(p and p.exists() and p.is_file())
     return RefItem(ref=s, tier=tier, kind=kind, path=p, is_url=False, exists=exists,
-                   blocked_reason=reason, **extra)
+                   blocked_reason=reason, root=project.root, **extra)
 
 
 def _classify(project: "Project", value: Any, tier: str) -> RefItem:
