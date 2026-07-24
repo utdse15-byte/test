@@ -1088,7 +1088,15 @@ def verify_outputs(project: Any, run_id: str) -> list[dict]:
                 continue
             rel = out.get("path")
             expected = out.get("sha256")
-            if not rel or not expected:
+            if not rel:
+                continue  # nothing identifiable to verify against
+            if not expected:
+                # a recorded output with NO recorded hash is unverifiable, and
+                # unverifiable must never read as verified (UNKNOWN is never
+                # guessed into PASS) — surface it instead of skipping.
+                mismatches.append({"attempt_id": d.get("attempt_id"), "path": rel,
+                                   "expected_sha256": "<unrecorded>",
+                                   "actual_sha256": "<unverifiable>"})
                 continue
             fpath = root / rel
             if not fpath.exists():

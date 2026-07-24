@@ -346,7 +346,11 @@ def _decode_and_parse(raw: bytes) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(line)
-    except json.JSONDecodeError:
+    except ValueError:
+        # JSONDecodeError subclasses ValueError, but json.loads can also raise
+        # a BARE ValueError (e.g. the int-str digit limit on a huge number
+        # literal, Py3.11+) — either way the invariant is the same: a bad line
+        # never bricks the tail (EVENTS-P1-003).
         return None
 
 
@@ -545,8 +549,8 @@ def follow_events(
                     continue
                 try:
                     record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # skip torn/invalid, like tail_events
+                except ValueError:
+                    continue  # skip torn/invalid/huge-int, like tail_events
                 yield record
                 yielded += 1
                 if max_events is not None and yielded >= max_events:

@@ -2570,7 +2570,9 @@ def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
     rules = project.load_rules()
     bible = project.load_bible()
     by_id = {s.shot_id: s for s in evaluate_all(project)}
-    considered = shots if mode == "shots" else project.shot_ids()
+    # paid-safety (same shape as the voice batch): duplicate ids in an explicit
+    # `--shots` list must not become duplicate paid generations.
+    considered = list(dict.fromkeys(shots)) if mode == "shots" else project.shot_ids()
 
     result = BatchResult(requested=list(considered))
     to_run: list[str] = []
@@ -2737,7 +2739,10 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
     from .voice import VoiceState, evaluate_all_voices
 
     by_id = {v.shot_id: v for v in evaluate_all_voices(project)}
-    considered = shots if mode == "shots" else project.shot_ids()
+    # paid-safety (VOICE-P1-002): an explicit list is de-duped order-preserving —
+    # `--shots S001,S001` is one decision stated twice, never two paid syntheses
+    # (the second would also silently overwrite the first take's record).
+    considered = list(dict.fromkeys(shots)) if mode == "shots" else project.shot_ids()
 
     result = BatchResult(requested=list(considered))
     to_run: list[str] = []
