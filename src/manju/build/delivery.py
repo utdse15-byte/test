@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,12 @@ STALE = "STALE"
 MISSING = "MISSING"
 INVALID = "INVALID"
 BLOCKED = "BLOCKED"
+
+# The two states that CLAIM proven bytes. A row may only sit in one of them
+# while it really carries a sha256 + a size taken from a regular file; without
+# that proof it downgrades to INVALID (README: UNKNOWN is never guessed into
+# PASS). INVALID is an EXISTING contract state — no enum is extended here.
+_BYTE_PROVEN_STATES = (TECHNICALLY_VERIFIED, HUMAN_VERIFIED)
 
 # Only the deliverable kinds Manju REALLY produces map to a role. VTT captions,
 # textless / M&E masters and dialogue/music/sfx/full-mix stems are NOT produced
@@ -390,7 +397,11 @@ def _caption_role_counts(timeline: Any) -> dict[str, int]:
 
 
 def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | None = None,
-                       caption_roles: dict[str, int] | None = None) -> dict:
+                       caption_roles: dict[str, int] | None = None,
+                       ) -> tuple[dict, list[dict]]:
+    """Returns ``(artifact, diagnostics)``. A DECLARED-EXISTING artifact whose
+    bytes cannot be proven never keeps a byte-proven state: it downgrades and
+    emits a blocking diagnostic (same shape as NLE_PROJECT_UNVERIFIABLE)."""
     kind = row.kind
     role = _ROLE_BY_KIND.get(kind, "OTHER_DECLARED")
     freshness = row.freshness.value
@@ -413,18 +424,45 @@ def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | No
             "evidence_refs": [],
         },
     }
+    diagnostics: list[dict] = []
+    unverifiable: str | None = None
     if row.path:
         try:
             abspath = project.resolve(row.path)
         except ProjectError:
             abspath = None
-        if abspath is not None and abspath.exists() and abspath.stat().st_size > 0:
+            unverifiable = "its path does not resolve inside the project"
+        if abspath is not None:
             try:
-                art["sha256"] = hash_file(abspath)
-                art["bytes"] = abspath.stat().st_size
+                st = os.lstat(abspath)
             except OSError:
-                pass
-            art["content_key"] = _content_key(kind, abspath)
+                st = None
+            if st is None:
+                unverifiable = "it no longer exists on disk"
+            elif not stat.S_ISREG(st.st_mode):
+                # A directory / symlink / device carries no byte identity, so it
+                # can never stand as delivered bytes.
+                unverifiable = "it is not a regular file"
+            elif st.st_size <= 0:
+                unverifiable = "it is empty"
+            else:
+                try:
+                    art["sha256"] = hash_file(abspath)
+                    art["bytes"] = st.st_size
+                except OSError:
+                    unverifiable = "its bytes could not be hashed"
+                art["content_key"] = _content_key(kind, abspath)
+    # Only a row that CLAIMS proven bytes is downgraded: MISSING/STALE/
+    # problematic rows already state the truth and keep their own state.
+    if unverifiable is not None and state in _BYTE_PROVEN_STATES:
+        art["state"] = INVALID
+        art["verification"]["technical"] = "FAILED"
+        diagnostics.append({
+            "code": "ARTIFACT_UNVERIFIABLE",
+            "severity": "blocking",
+            "detail": f"deliverable {row.path} is reported as {freshness} but "
+                      f"{unverifiable} — its bytes cannot be proven (fail closed)",
+        })
     if freshness == "verified" and row.verified_by:
         art["verification"]["evidence_refs"].append({
             "kind": "human_verification",
@@ -465,7 +503,7 @@ def _artifact_from_row(project: Project, row: Any, masters: dict[str, dict] | No
     # bytes carry no role; the truth lives in timeline.json).
     if caption_roles and role in _CAPTION_ARTIFACT_ROLES:
         art["caption_roles"] = dict(caption_roles)
-    return art
+    return art, diagnostics
 
 
 def _technical_verdict(freshness: str) -> str:
@@ -829,7 +867,12 @@ def _release_section(project: Project, rows: list, artifacts: list[dict],
     required_ok = True
     for role in required_roles:
         a = present_roles.get(role)
-        if a is None or a["state"] not in (TECHNICALLY_VERIFIED, HUMAN_VERIFIED):
+        if a is None or a["state"] not in _BYTE_PROVEN_STATES:
+            required_ok = False
+            break
+        # A required role is satisfied by PROVEN BYTES, not by a freshness-
+        # derived state alone: a declared path with no sha256/size never counts.
+        if a.get("path") and not (a.get("sha256") and a.get("bytes")):
             required_ok = False
             break
 
@@ -1065,8 +1108,13 @@ def build_manifest(project: Project, profile_id: str = "master", *,
     # FP loop I (§5.5): one role-count pass over the SAME gathered timeline —
     # {} (→ no caption_roles key anywhere) for every role-less project.
     caption_roles = _caption_role_counts(ctx.timeline)
-    artifacts = [_artifact_from_row(project, r, masters, caption_roles=caption_roles)
-                 for r in rows]
+    artifacts = []
+    artifact_diags: list[dict] = []
+    for r in rows:
+        art, art_diags = _artifact_from_row(project, r, masters,
+                                            caption_roles=caption_roles)
+        artifacts.append(art)
+        artifact_diags += art_diags
 
     nle, nle_diags = _nle_section(project, config, ctx.timeline, rows_by_kind)
 
@@ -1088,7 +1136,7 @@ def build_manifest(project: Project, profile_id: str = "master", *,
     # Credential CONTENT still never enters the output (boolean + diagnostics).
     artifacts += _metadata_artifact(project, platform_handoff)
 
-    diagnostics = variant_diags + nle_diags + loc_diags + ph_diags
+    diagnostics = variant_diags + artifact_diags + nle_diags + loc_diags + ph_diags
     blocking = any(d.get("severity") == "blocking" for d in diagnostics)
 
     required_roles = _required_roles(profile, variant_kind)

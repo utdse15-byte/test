@@ -242,23 +242,70 @@ class Series:
             raise SeriesError(f"series already exists: {root}")
         name = name or root.name
 
-        for sub in SERIES_DIRS:
-            (root / sub).mkdir(parents=True, exist_ok=True)
-        # The GLOBAL series bible: the SAME file set as a project bible (§4),
-        # empty scaffolds. new_episode seeds an episode's bible from these.
-        for bible_file in BIBLE_FILES:
-            bpath = root / "bible" / f"{bible_file}.yaml"
-            if not bpath.exists():
-                write_yaml(bpath, {})
+        bible_paths = [root / "bible" / f"{f}.yaml" for f in BIBLE_FILES]
 
-        config = SeriesConfig(
-            name=name,
-            format=SERIES_FORMAT,  # SERIES-P0-001 identity marker
-            description=description,
-            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        )
-        write_yaml(root / SERIES_FILE, config.model_dump(exclude_none=True))
-        (root / "events.jsonl").touch()
+        # Precheck EVERY planned path before the first write, so a blocked
+        # scaffold never leaves a half-built series behind. All blockers are
+        # reported at once (a per-path abort would only reveal the first).
+        blockers: list[str] = []
+        if root.exists() and not root.is_dir():
+            blockers.append(f"{root} 不是目录")
+        for sub in SERIES_DIRS:
+            p = root / sub
+            if p.exists() and not p.is_dir():
+                blockers.append(f"{sub} 已存在且不是目录")
+        for bpath in bible_paths:
+            if bpath.exists() and not bpath.is_file():
+                blockers.append(f"bible/{bpath.name} 已存在且不是普通文件")
+        events_path = root / "events.jsonl"
+        if events_path.exists() and not events_path.is_file():
+            blockers.append("events.jsonl 已存在且不是普通文件")
+        if blockers:
+            raise SeriesError(
+                f"无法在 {root} 建立剧集(未做任何写入): " + "; ".join(blockers))
+
+        # Everything this call creates, in creation order — an error rolls the
+        # list back in reverse so a failure leaves ZERO residue.
+        created: list[Path] = []
+
+        def _mkdir(p: Path) -> None:
+            if not p.exists():
+                p.mkdir(parents=True)
+                created.append(p)
+
+        try:
+            _mkdir(root)
+            for sub in SERIES_DIRS:
+                _mkdir(root / sub)
+            # The GLOBAL series bible: the SAME file set as a project bible (§4),
+            # empty scaffolds. new_episode seeds an episode's bible from these.
+            for bpath in bible_paths:
+                if not bpath.exists():
+                    write_yaml(bpath, {})
+                    created.append(bpath)
+
+            config = SeriesConfig(
+                name=name,
+                format=SERIES_FORMAT,  # SERIES-P0-001 identity marker
+                description=description,
+                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+            series_path = root / SERIES_FILE
+            write_yaml(series_path, config.model_dump(exclude_none=True))
+            created.append(series_path)
+            if not events_path.exists():
+                events_path.touch()
+                created.append(events_path)
+        except (OSError, ValueError, ValidationError) as exc:
+            for p in reversed(created):
+                try:
+                    if p.is_dir():
+                        p.rmdir()
+                    else:
+                        p.unlink()
+                except OSError:
+                    pass
+            raise SeriesError(f"建立剧集失败,已回滚 {root}: {exc}") from exc
 
         if git_init and shutil.which("git") and not (root / ".git").exists():
             subprocess.run(["git", "init", "-q"], cwd=root, check=False, capture_output=True)

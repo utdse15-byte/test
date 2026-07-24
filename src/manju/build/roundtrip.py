@@ -23,8 +23,44 @@ from ..core.events import append_event
 from ..core.yamlio import atomic_write_text, read_yaml, write_yaml
 
 
+#: Stable machine token for "the baseline file EXISTS but cannot be used".
+#: That is a different state from "there is no baseline" and the two may never
+#: be merged: no-baseline is a legal mode, an unusable baseline is a refusal.
+BASELINE_CORRUPT = "roundtrip_baseline_corrupt"
+
+
+class RoundtripBaselineError(ProjectError):
+    """Subclass so every existing ``except ProjectError`` site (CLI, GUI) keeps
+    catching it unchanged, while carrying the stable ``reason`` token."""
+
+    def __init__(self, message: str, *, reason: str = BASELINE_CORRUPT) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 def _load_json(path: Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _read_baseline(path: Path) -> dict[str, Any]:
+    """Read a baseline payload, failing CLOSED. Only callable when the file is
+    known to exist — an unreadable/unparsable/wrong-shaped payload refuses."""
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError) as exc:
+        raise RoundtripBaselineError(
+            f"{BASELINE_CORRUPT}: 基线文件存在但无法解析: {path} ({exc})"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RoundtripBaselineError(
+            f"{BASELINE_CORRUPT}: 基线文件内容不是合法的基线负载: {path}"
+        )
+    doc = payload.get("document", payload)
+    if not isinstance(doc, dict):
+        raise RoundtripBaselineError(
+            f"{BASELINE_CORRUPT}: 基线文件缺少可用的 document: {path}"
+        )
+    return payload
 
 
 def detect_kind(data: Any, path: Path) -> str:
@@ -281,19 +317,17 @@ def _full_caption_baseline(
             pass
     # Baseline document captions
     if baseline_path and Path(baseline_path).exists():
-        try:
-            b = _load_json(baseline_path)
-            doc = b.get("document", b)
-            if isinstance(doc, dict):
-                cues = _captions_from_otio(doc) or _captions_from_jianying(doc)
-                if cues:
-                    return [
-                        {"start_ms": c["start_ms"], "end_ms": c["end_ms"],
-                         "text": c["text"], "speaker": c.get("speaker", "")}
-                        for c in cues
-                    ]
-        except Exception:
-            pass
+        # Present-but-unusable refuses here too (_read_baseline); a cue list
+        # that simply is not in the baseline falls through to the timeline.
+        b = _read_baseline(Path(baseline_path))
+        doc = b.get("document", b)
+        cues = _captions_from_otio(doc) or _captions_from_jianying(doc)
+        if cues:
+            return [
+                {"start_ms": c["start_ms"], "end_ms": c["end_ms"],
+                 "text": c["text"], "speaker": c.get("speaker", "")}
+                for c in cues
+            ]
     tl = project.load_timeline()
     if tl is not None:
         return [
@@ -459,13 +493,15 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
     baseline_path = find_baseline(project, edited_path)
     baseline_doc = None
     compiled_from = ""
+    baseline_cap_hash = None
+    # ONE read: absent baseline stays the legal no-baseline mode; a baseline
+    # that is present but unusable refuses instead of silently diffing the
+    # edit against current truth.
     if baseline_path and baseline_path.exists():
-        try:
-            b = _load_json(baseline_path)
-            baseline_doc = b.get("document", b)
-            compiled_from = str(b.get("compiled_from") or "")
-        except Exception:
-            baseline_doc = None
+        b = _read_baseline(baseline_path)
+        baseline_doc = b.get("document", b)
+        compiled_from = str(b.get("compiled_from") or "")
+        baseline_cap_hash = b.get("captions_hash")
 
     # Truth moved since export?
     truth_moved = False
@@ -475,13 +511,6 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
             truth_moved = True
     # Captions truth moved since export? (manual SRT edited in Manju after T0)
     captions_conflict = False
-    baseline_cap_hash = None
-    if baseline_path and Path(baseline_path).exists():
-        try:
-            braw = _load_json(baseline_path)
-            baseline_cap_hash = braw.get("captions_hash")
-        except Exception:
-            baseline_cap_hash = None
     if baseline_cap_hash:
         now_hash = _captions_file_hash(project)
         if now_hash and now_hash != baseline_cap_hash:
