@@ -25,6 +25,8 @@ try:
 except ImportError:  # POSIX: fcntl above is the coordinator
     msvcrt = None  # type: ignore[assignment]
 
+from .safeio import SafeOutError, open_append_nofollow
+
 EVENTS_FILE = "events.jsonl"
 EVENTS_LOCK = "events.lock"
 
@@ -228,15 +230,22 @@ def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,
             raise EvidenceWriteError("io_error") from exc
         return False
     path = root / file_name
+    payload = line.encode("utf-8")
     with events_lock(root, required=required, lock_name=lock_name) as locked:
         if not locked:
             return False  # best-effort under an unavailable lock: drop, never tear
         try:
-            with open(path, "a", encoding="utf-8") as f:
+            # EVENTS-P0-001: the shared no-follow append front door refuses a
+            # symlink/junction/non-regular/multi-hardlink target, so an append
+            # can never follow a link outside the project or write THROUGH a
+            # hardlink into project truth (project.yaml). SafeOutError is folded
+            # into the same best-effort/required contract as an I/O error: a
+            # best-effort record is dropped, a required one fails closed.
+            with open_append_nofollow(path) as f:
                 # the true EOF under our exclusive lock — the rollback anchor.
                 start = os.fstat(f.fileno()).st_size
                 try:
-                    f.write(line)
+                    f.write(payload)
                     f.flush()
                     if durable:
                         os.fsync(f.fileno())
@@ -249,7 +258,7 @@ def append_jsonl_line(project_root: Any, record: dict, *, durable: bool,
                     except OSError:
                         pass
                     raise
-        except OSError as exc:
+        except (OSError, SafeOutError) as exc:
             if required:
                 raise EvidenceWriteError("io_error") from exc
             return False

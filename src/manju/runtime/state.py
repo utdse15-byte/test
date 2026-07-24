@@ -167,7 +167,18 @@ class RuntimeState:
     ):
         self.root = Path(project_root)
         self.db_path = self.root / ".manju" / "state.sqlite"
+        # STATE-P0-001: sqlite3.connect opens its OWN handle, so it cannot ride
+        # the no-follow append helper. Guard the path instead: refuse a linked
+        # ``.manju`` directory chain (a symlinked .manju would host the db
+        # outside the project) BEFORE mkdir, then refuse a symlinked or
+        # hardlinked state.sqlite (a hardlink to an external db grows Manju
+        # tables THROUGH the second name). Fail closed — never auto-initialize
+        # an external target — before any connection is opened.
+        from ..core.safeio import refuse_linked_within, refuse_unsafe_regular_file
+
+        refuse_linked_within(self.db_path.parent, self.root, kind=".manju 目录")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        refuse_unsafe_regular_file(self.db_path, kind="state.sqlite")
         self._now: Callable[[], datetime] = now_fn or (lambda: datetime.now(timezone.utc))
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

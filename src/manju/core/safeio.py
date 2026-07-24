@@ -51,6 +51,8 @@ __all__ = [
     "publish_text",
     "publish_tmp",
     "open_append_nofollow",
+    "refuse_linked_within",
+    "refuse_unsafe_regular_file",
 ]
 
 
@@ -141,6 +143,67 @@ def checked_out_path(
                     reason="bad_out",
                 )
     return target
+
+
+def refuse_linked_within(
+    path: Path | str,
+    project_root: Path | str,
+    *,
+    kind: str = "输出",
+) -> Path:
+    """Refuse a symlink/junction on ANY segment from ``project_root`` (exclusive)
+    down to ``path`` (inclusive), and return ``path`` absolute.
+
+    A linked directory anywhere on that chain redirects a would-be in-project
+    write outside the project — the dir-symlink shape the ledger (FAILURES),
+    QC (``reports/``) and funnel (``story/``) P0s all share: a leaf-only
+    ``os.replace`` still lands wherever the linked PARENT resolves. ``path``
+    must resolve inside ``project_root``; a not-yet-existing segment passes (it
+    is created as a real directory), an EXISTING link fails closed."""
+    root = Path(os.path.abspath(Path(project_root)))
+    target = Path(os.path.abspath(Path(path)))
+    if target != root:
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise SafeOutError(
+                f"{kind}路径落在项目外,拒绝: {target}", reason="bad_out"
+            ) from exc
+    node = target
+    while node != root:
+        if node.is_symlink() or _is_reparse_point(node):
+            raise SafeOutError(
+                f"{kind}路径含链接段(symlink/junction),拒绝写入: {node}",
+                reason="bad_out",
+            )
+        parent = node.parent
+        if parent == node:  # reached the filesystem root without meeting project_root
+            break
+        node = parent
+    return target
+
+
+def refuse_unsafe_regular_file(path: Path | str, *, kind: str = "文件") -> None:
+    """Pre-open guard for consumers that CANNOT go through
+    :func:`open_append_nofollow` — notably ``sqlite3.connect`` (STATE P0), which
+    opens its own handle. Refuses a symlink/junction, a non-regular file, or an
+    existing file carrying more than one hard link at ``path`` (a hardlink to an
+    external db writes Manju tables THROUGH the second name). A missing file
+    passes (the caller creates it fresh). Raises :class:`SafeOutError`; the
+    caller has not opened anything yet, so nothing is written."""
+    path = Path(path)
+    if path.is_symlink() or _is_reparse_point(path):
+        raise SafeOutError(f"{kind}是链接(symlink/junction),拒绝: {path}")
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return  # missing — the caller creates it fresh
+    if not stat.S_ISREG(st.st_mode):
+        raise SafeOutError(f"{kind}不是普通文件,拒绝: {path}")
+    if st.st_nlink > 1:
+        raise SafeOutError(
+            f"{kind}有 {st.st_nlink} 个硬链接名 — 可能写穿到另一文件身份,拒绝: {path}"
+        )
 
 
 @contextmanager
