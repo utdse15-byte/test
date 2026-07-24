@@ -49,13 +49,21 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 from ..core.container import Project, ProjectError
-from ..core.events import append_event
+from ..core.events import (
+    EvidenceWriteError,
+    append_event,
+    append_jsonl_line,
+    events_lock,
+    tail_events,
+)
 from ..core.hashing import hash_value
-from ..core.yamlio import read_yaml, write_yaml
+from ..core.safeio import SafeOutError, checked_out_path, publish_text
+from ..core.yamlio import dump_yaml, read_yaml
 from .stale import ShotState, evaluate_all
 
 __all__ = [
@@ -161,6 +169,16 @@ class Proposal(BaseModel):
     currency: str | None = None
     confirmed_at: str | None = None
     confirmed_by: str | None = None
+    # DIRECTOR-P0-002: the action-payload digest bound at confirm time. Truth is
+    # editable (§3), but the confirmation is bound to CONTENT — execute recomputes
+    # this and cross-checks the append-only events credential; a post-confirm
+    # action/estimate swap changes the digest and is refused. Optional so a
+    # hand-edited / pre-P0 proposal still round-trips.
+    confirmed_digest: str | None = None
+    # DIRECTOR-P0-003: the single-execution claim token stamped when execute() wins
+    # the atomic confirmed->executing CAS. Its presence on a non-executing state is
+    # informational only (the state machine + claim lock are the real guard).
+    execution_token: str | None = None
     executed_at: str | None = None
     outcome: dict[str, Any] | None = None
 
@@ -250,9 +268,19 @@ def _next_id(project: Project) -> str:
 
 
 def _save(project: Project, proposal: Proposal) -> None:
-    d = proposals_dir(project)
-    d.mkdir(parents=True, exist_ok=True)
-    write_yaml(d / f"{proposal.id}.yaml", proposal.model_dump())
+    # DIRECTOR-P0-001: the destination is derived from the VALIDATED id only,
+    # never from raw document content. _proposal_path re-checks the id against
+    # _ID_RE (prop_NNNN), so a hand-edited `id: ../../project` inside the YAML can
+    # never redirect this write over project.yaml or any other writable path;
+    # safeio adds no-follow containment to reports/ + an exclusive atomic replace
+    # (a pre-planted symlink at the leaf is refused; 失败零写入).
+    try:
+        path = _proposal_path(project, proposal.id)
+        target = checked_out_path(path, project_root=project.root,
+                                  inside_roots=("reports",), kind="提案")
+        publish_text(target, dump_yaml(proposal.model_dump()))
+    except SafeOutError as exc:
+        raise DirectorError(f"提案保存路径被拒: {exc}") from exc
 
 
 def load_proposal(project: Project, proposal_id: str) -> Proposal:
@@ -262,6 +290,14 @@ def load_proposal(project: Project, proposal_id: str) -> Proposal:
     data = read_yaml(path)
     if not isinstance(data, dict):
         raise DirectorError(f"proposal file is not a mapping: {path.name}")
+    # DIRECTOR-P0-001: the internal id must equal the requested id (== filename
+    # stem). Otherwise a file `prop_0001.yaml` carrying `id: ../../project` (or
+    # `id: prop_9999`) would round-trip through _save to a DIFFERENT path — the
+    # traversal / overwrite vector. A mismatch is a tampered/foreign file: refuse.
+    if data.get("id") != proposal_id:
+        raise DirectorError(
+            f"proposal {proposal_id} 文件内部 id 与文件名不一致(id={data.get('id')!r})"
+            " — 拒绝加载(防止用内部 id 拼出越界写入路径)")
     try:
         return Proposal.model_validate(data)
     except Exception as exc:  # a hand-broken proposal → one clean line, never a stack
@@ -278,7 +314,10 @@ def list_proposals(project: Project) -> list[Proposal]:
     for f in sorted(d.glob("prop_*.yaml"), reverse=True):
         try:
             data = read_yaml(f)
-            if isinstance(data, dict):
+            # DIRECTOR-P0-001: only trust a file whose internal id equals its
+            # filename stem — a foreign `id:` (traversal/spoof) is skipped, never
+            # surfaced under someone else's identity.
+            if isinstance(data, dict) and data.get("id") == f.stem:
                 out.append(Proposal.model_validate(data))
         except Exception:
             continue  # a torn/foreign file never bricks the list
@@ -323,6 +362,100 @@ def state_fingerprint(project: Project) -> str:
 
 def _is_current(project: Project, proposal: Proposal) -> bool:
     return proposal.fingerprint == state_fingerprint(project)
+
+
+# --------------------------------------------- confirmation content-binding
+
+# DIRECTOR-P0-002: a "confirmed_by: human" field in the proposal YAML is truth
+# an agent can hand-edit, and it is NOT bound to the action content — so an agent
+# could forge a confirmed proposal, or confirm a free snapshot and then swap the
+# actions for a 9999-USD build before run. Two mechanisms close this: the digest
+# below binds an approval to the EXACT action payloads it approved, and confirm()
+# lands that digest in events.jsonl — the append-only, msvcrt/flock-serialized
+# ledger — as an approval credential that is separate from the editable truth.
+# execute() recomputes the digest and requires a MATCHING ledger credential
+# (human, for priced plans); any byte/semantic change to the actions, or a forged
+# confirmed state with no credential, is refused.
+
+
+def _action_digest(proposal: Proposal) -> str:
+    """The content digest a confirmation is bound to (DIRECTOR-P0-002): the
+    normalized action payloads PLUS their priced figures, so swapping an action
+    OR inflating an estimate after confirm changes the digest. Canonical (sorted
+    keys) via the shared hasher, so it is stable across a YAML round-trip."""
+    payload = [
+        {"action": pa.action,
+         "estimated_cost": pa.estimated_cost, "currency": pa.currency}
+        for pa in proposal.actions
+    ]
+    return hash_value({"id": proposal.id, "actions": payload})
+
+
+def _write_confirm_credential(project: Project, actor: str, proposal_id: str,
+                              digest: str, fingerprint: str) -> None:
+    """Append the confirmation credential to events.jsonl (DIRECTOR-P0-002).
+
+    ``required=True`` (durable): a confirmation that cannot be written to the
+    append-only ledger fails LOUDLY rather than leaving a confirmed proposal with
+    no anti-forge credential — execute would then refuse it, so a silent drop
+    would only surface later as an unexplained refusal. The record shape matches
+    ``append_event`` so the collaboration tail still renders it."""
+    record = {
+        "ts": _now(),
+        "actor": actor,  # "human" | "ai"
+        "action": "director_confirm",
+        "detail": {"id": proposal_id, "digest": digest, "fingerprint": fingerprint},
+    }
+    try:
+        append_jsonl_line(project.root, record, durable=True, required=True)
+    except EvidenceWriteError as exc:
+        raise DirectorError(
+            f"无法向 events 账本 durable 写入确认凭据({exc.reason})——"
+            "拒绝在没有防篡改确认记录的情况下确认提案(付费确认必须落进 append-only 账本)"
+        ) from exc
+
+
+def _confirm_credentials(project: Project, proposal_id: str) -> list[dict[str, Any]]:
+    """Every director_confirm credential for ``proposal_id`` from the append-only
+    events ledger, as ``[{digest, actor}, ...]`` (DIRECTOR-P0-002). Reads the log
+    (never raises — a missing/torn log yields ``[]``); a poisoned/absent ledger
+    means no matching credential, so execute fails closed."""
+    creds: list[dict[str, Any]] = []
+    try:
+        events = tail_events(project.root, 0)  # n<=0 -> the whole log, oldest first
+    except Exception:
+        return creds
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("action") != "director_confirm":
+            continue
+        detail = ev.get("detail") or {}
+        if detail.get("id") != proposal_id:
+            continue
+        creds.append({"digest": detail.get("digest"), "actor": ev.get("actor")})
+    return creds
+
+
+def _verify_confirmation(project: Project, proposal: Proposal) -> None:
+    """Refuse execution unless the current action content matches a confirmation
+    credential in the append-only events ledger (DIRECTOR-P0-002).
+
+    Recomputes the digest of the proposal's CURRENT actions and requires a
+    matching director_confirm credential; a priced plan additionally requires the
+    matching credential to be a HUMAN one. Catches: a forged ``confirmed`` state
+    (no credential at all) and a post-confirm action/estimate swap (the digest no
+    longer matches any credential)."""
+    digest = _action_digest(proposal)
+    creds = _confirm_credentials(project, proposal.id)
+    matching = [c for c in creds if c.get("digest") == digest]
+    if not matching:
+        raise DirectorError(
+            f"proposal {proposal.id} 缺少与当前动作匹配的确认凭据 — events.jsonl"
+            "(append-only 账本)里没有本次动作 digest 的 confirm 记录。"
+            "可能是 confirmed 状态被手改伪造,或确认后动作/估值被替换;请重新 confirm 后再执行")
+    if _has_priced_action(proposal) and not any(c.get("actor") == "human" for c in matching):
+        raise DirectorError(
+            f"proposal {proposal.id} 含付费动作,但账本中匹配的确认凭据不是 human 确认 —"
+            "付费提案必须由人类确认(且确认绑定到当前动作内容)后才能执行")
 
 
 # ----------------------------------------------------------- action validation
@@ -645,11 +778,18 @@ def confirm(project: Project, proposal_id: str, actor: str | None = None) -> Pro
         raise DirectorError(
             f"proposal {proposal_id} 待更新 (expired): the project changed since it "
             "was proposed — re-propose against the current state")
+    # DIRECTOR-P0-002: bind this approval to the EXACT action content and land an
+    # anti-forge credential in the append-only events ledger BEFORE marking the
+    # proposal confirmed. If the credential cannot be written durably, confirm
+    # fails (fail-closed) rather than producing a confirmed proposal with no
+    # ledger proof (which execute would refuse anyway).
+    digest = _action_digest(proposal)
+    _write_confirm_credential(project, actor, proposal_id, digest, proposal.fingerprint)
     proposal.state = "confirmed"
     proposal.confirmed_at = _now()
     proposal.confirmed_by = actor
+    proposal.confirmed_digest = digest
     _save(project, proposal)
-    append_event(project.root, actor, "director_confirm", {"id": proposal_id})
     return proposal
 
 
@@ -668,6 +808,58 @@ def reject(project: Project, proposal_id: str, actor: str | None = None) -> Prop
 # ------------------------------------------------------------------- execute
 
 
+def _claim_confirmed(project: Project, proposal_id: str, actor: str) -> Proposal:
+    """Atomically claim a confirmed proposal for a SINGLE execution (DIRECTOR-P0-003).
+
+    load → state/human/confirmation/expiry checks → the ``confirmed → executing``
+    CAS → save all run while holding ONE cross-process/-thread exclusive claim
+    lock (the same msvcrt/flock coordinator the events ledger uses, keyed on a
+    per-proposal sibling lock file, so it never contends with the events append).
+    A second concurrent ``run()`` blocks here, then reads ``state == executing``
+    and is refused — a confirmed proposal's paid actions can never be
+    double-submitted. Fail-closed: if the exclusive claim lock cannot be acquired
+    at all, execution is refused (an error beats a possible double charge)."""
+    lock_name = f"director_{proposal_id}.claim"
+    try:
+        with events_lock(project.root, lock_name=lock_name, required=True) as locked:
+            if not locked:  # required=True raises instead of yielding False
+                raise DirectorError(
+                    f"proposal {proposal_id}: 无法获得执行独占锁,拒绝执行以避免重复付费")
+            proposal = load_proposal(project, proposal_id)
+            if proposal.state != "confirmed":
+                raise DirectorError(
+                    f"proposal {proposal_id} is {proposal.state} — only a confirmed "
+                    "proposal can execute (confirm it first — confirm is a separate step)")
+            # Round Y (review #15) belt: even a proposal already marked confirmed
+            # must have been confirmed BY A HUMAN if it spends — catches a
+            # hand-edited file that set confirmed_by to an ai actor.
+            if _has_priced_action(proposal) and proposal.confirmed_by != "human":
+                raise DirectorError(
+                    f"proposal {proposal_id} 含付费动作,但确认人不是 human"
+                    f"(confirmed_by={proposal.confirmed_by!r})——付费提案只能由人类确认后执行")
+            # DIRECTOR-P0-002: the approval must be bound to the CURRENT action
+            # content via a matching append-only ledger credential (forged-confirm
+            # / post-confirm action-swap guard).
+            _verify_confirmation(project, proposal)
+            if not _is_current(project, proposal):
+                proposal.state = "expired"
+                _save(project, proposal)
+                append_event(project.root, actor, "director_expire", {"id": proposal_id})
+                raise DirectorError(
+                    f"proposal {proposal_id} 待更新 (expired): the project changed since it "
+                    "was confirmed — re-propose against the current state")
+            # CAS confirmed -> executing, persisted under the lock: THE claim.
+            proposal.state = "executing"
+            proposal.executed_at = _now()
+            proposal.execution_token = uuid4().hex
+            _save(project, proposal)
+            return proposal
+    except EvidenceWriteError as exc:
+        raise DirectorError(
+            f"proposal {proposal_id}: 无法获得执行独占锁({exc.reason})——拒绝执行以避免重复付费"
+        ) from exc
+
+
 def execute(project: Project, proposal_id: str, actor: str | None = None,
             on_phase=None, *, agent_profile: str = "collaborative") -> Outcome:
     """EXECUTE (step 4) + SHOW DIFF (step 5) + SUGGEST NEXT (step 6).
@@ -684,29 +876,11 @@ def execute(project: Project, proposal_id: str, actor: str | None = None,
     comes ONLY from the proposal's confirmed state — a proposal must be
     ``confirmed`` (and current) to execute, and only then is the gate released."""
     actor = _actor(actor)
-    proposal = load_proposal(project, proposal_id)
-    if proposal.state != "confirmed":
-        raise DirectorError(
-            f"proposal {proposal_id} is {proposal.state} — only a confirmed "
-            "proposal can execute (confirm it first — confirm is a separate step)")
-    # Round Y (review #15) belt-and-suspenders: even a proposal already marked
-    # confirmed must have been confirmed BY A HUMAN if it spends — catches a
-    # hand-edited/tampered proposal file that set confirmed_by to an ai actor.
-    if _has_priced_action(proposal) and proposal.confirmed_by != "human":
-        raise DirectorError(
-            f"proposal {proposal_id} 含付费动作,但确认人不是 human"
-            f"(confirmed_by={proposal.confirmed_by!r})——付费提案只能由人类确认后执行")
-    if not _is_current(project, proposal):
-        proposal.state = "expired"
-        _save(project, proposal)
-        append_event(project.root, actor, "director_expire", {"id": proposal_id})
-        raise DirectorError(
-            f"proposal {proposal_id} 待更新 (expired): the project changed since it "
-            "was confirmed — re-propose against the current state")
-
-    proposal.state = "executing"
-    proposal.executed_at = _now()
-    _save(project, proposal)
+    # DIRECTOR-P0-003 + P0-002: atomically CLAIM the confirmed proposal (single
+    # execution) after verifying the human, content-bound approval — all under one
+    # exclusive claim lock. A second concurrent run() blocks, then sees
+    # state=executing and is refused (no paid double-submit).
+    proposal = _claim_confirmed(project, proposal_id, actor)
     append_event(project.root, actor, "director_execute_start",
                  {"id": proposal_id, "actions": len(proposal.actions)})
 
