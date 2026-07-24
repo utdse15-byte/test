@@ -678,13 +678,25 @@ class Project:
         media_file = Path(media_file)
         if not media_file.exists():
             raise ProjectError(f"take media not found: {media_file}")
+        suffix = media_file.suffix.lower()
+        # CORE-002: `takes()` resolves a take's media STRICTLY through
+        # MEDIA_EXTS, so registering any other extension mints a take whose
+        # media_path is None forever — inside the append-only namespace, where
+        # it is painful to clean up. Refuse BEFORE anything is written (the
+        # check belongs in core, not only in the provider doctor: a misfilled
+        # local_cmd `output_ext`, a hand-passed .gif/.webp/.avi and every other
+        # caller must hit the same wall).
+        if suffix not in MEDIA_EXTS:
+            raise ProjectError(
+                f"take media 扩展名 {suffix or '(无)'} 不是可识别的媒体类型 "
+                f"({', '.join(MEDIA_EXTS)}):{media_file} — 注册后 takes() 永远"
+                f"解析不到它的媒体文件,已拒绝写入 media/gen(append-only,难以清理)"
+            )
         tdir = self.takes_dir(shot_id)
         tdir.mkdir(parents=True, exist_ok=True)
-        suffix = media_file.suffix.lower()
         use_move = bool(move and self.imports_dir not in media_file.parents)
         dest: Path | None = None
         name = ""
-        data: bytes | None = None if use_move else media_file.read_bytes()
         for _ in range(32):
             name = self.next_take_name(shot_id)
             candidate = tdir / (name + suffix)
@@ -717,9 +729,16 @@ class Project:
                             pass
                         raise
                 else:
-                    assert data is not None
+                    # CORE-001: STREAM the copy. Reading the source into one
+                    # bytes object first made peak RSS track file size, and the
+                    # copy path is the DEFAULT (imports are never consumed) —
+                    # a multi-GiB camera/render take paged or OOM'd the box
+                    # AFTER generation had already succeeded. The O_EXCL fd is
+                    # wrapped (not re-opened), so the no-overwrite claim on the
+                    # take name is exactly the one made above.
                     with os.fdopen(fd, "wb") as out:
-                        out.write(data)
+                        with open(media_file, "rb") as src:
+                            shutil.copyfileobj(src, out, 1 << 20)
                         out.flush()
                         os.fsync(out.fileno())
             except BaseException:
@@ -834,7 +853,6 @@ class Project:
         # ``if dest.exists()`` and then overwrite via shutil.copy2.
         dest: Path | None = None
         name = ""
-        data = media_file.read_bytes()
         for _ in range(32):
             name = self.next_voice_take_name(shot_id, lang=lang)
             candidate = tdir / (name + suffix)
@@ -843,8 +861,12 @@ class Project:
             except FileExistsError:
                 continue
             try:
+                # CORE-001 (same finding as register_take): stream through the
+                # exclusively-created fd instead of materializing the whole
+                # source in RAM — a long dubbing/ASR-sliced wav is not small.
                 with os.fdopen(fd, "wb") as out:
-                    out.write(data)
+                    with open(media_file, "rb") as src:
+                        shutil.copyfileobj(src, out, 1 << 20)
                     out.flush()
                     os.fsync(out.fileno())
             except BaseException:

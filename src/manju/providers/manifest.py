@@ -337,6 +337,19 @@ class LocalCmdConfig(ManjuModel):
     output_ext: str = ".mp4"  # extension of the file the tool writes to {out}
 
 
+# CORE-002: which media extensions each declared provider ``type`` may write.
+# This is a GROUPING of `core.container.MEDIA_EXTS` (still the one canonical
+# list — membership is always tested against it first), not a second list of
+# legal extensions: an extension that is in MEDIA_EXTS but in no group here has
+# no declared type opinion and is accepted, so adding one to MEDIA_EXTS can
+# never silently start failing manifests that this file was never taught about.
+_TYPE_MEDIA_GROUPS: dict[str, tuple[str, ...]] = {
+    "video": (".mp4", ".mov", ".mkv", ".webm", ".m4v"),
+    "image": (".png", ".jpg", ".jpeg"),
+    "tts": (".wav", ".mp3", ".m4a", ".flac"),
+}
+
+
 class ProviderManifest(ManjuModel):
     id: str
     type: str = "video"  # video | image | tts | asr | vision
@@ -449,6 +462,7 @@ class ProviderManifest(ManjuModel):
                 # doctor probe (§scope): the command head must exist on PATH
                 if words and not shutil.which(words[0]):
                     problems.append(f"local_cmd.command binary {words[0]!r} not found on PATH")
+            problems.extend(self._output_ext_problems())
         for section, url in (("submit", self.submit and self.submit.url),
                              ("poll", self.poll and self.poll.url)):
             if url and not url.startswith(("http://", "https://")):
@@ -456,6 +470,40 @@ class ProviderManifest(ManjuModel):
         if self.auth.key_env and not os.environ.get(self.auth.key_env):
             problems.append(f"auth.key_env {self.auth.key_env} is not set in the environment")
         return problems
+
+    def _output_ext_problems(self) -> list[str]:
+        """``local_cmd.output_ext`` sanity (CORE-002). The extension goes
+        straight into the append-only take namespace, and ``Project.takes()``
+        resolves a take's media STRICTLY through ``MEDIA_EXTS`` — so an
+        ``output_ext`` outside that list (``.gif`` / ``.webp`` / ``.avi``) makes
+        the local generator register SUCCESSFULLY and then report
+        ``media_path=None`` forever, with the junk take stuck in append-only
+        space. An extension contradicting the declared ``type`` (a ``video``
+        provider writing ``.png``) is the same class of misfill. Both fail here,
+        at `manju doctor` / `manju providers check`, instead of at first run."""
+        # the ONE canonical media-extension list (core/container) — never a
+        # second copy of it here.
+        from ..core.container import MEDIA_EXTS
+
+        raw = self.local_cmd.output_ext or ".mp4"
+        # mirrors the normalization LocalCommandProvider.__init__ already does
+        # (dot-prefix only, no stripping), so a working dotless fill
+        # (`output_ext: mp4`) is not reported as bad — while a fill the adapter
+        # would mangle into a broken suffix still is.
+        ext = (raw if raw.startswith(".") else "." + raw).lower()
+        if ext not in MEDIA_EXTS:
+            return [
+                f"local_cmd.output_ext {raw!r} 不是可识别的媒体扩展名"
+                f"({', '.join(MEDIA_EXTS)})— 生成的 take 会写进 media/gen,"
+                f"但 takes() 永远解析不到它的媒体文件"
+            ]
+        expected = _TYPE_MEDIA_GROUPS.get(self.type)
+        if expected and ext not in expected:
+            return [
+                f"local_cmd.output_ext {raw!r} 与 provider type '{self.type}' 不符"
+                f"— 该类型应输出 {', '.join(expected)}"
+            ]
+        return []
 
     def _refs_problems(self) -> list[str]:
         """Reference-delivery config sanity (goal item 7). A bad `refs:` fill
@@ -759,6 +807,11 @@ _FIX_HINTS: tuple[tuple[str, str], ...] = (
      "add {out} to local_cmd.command — the tool must write the result there"),
     ("not found on PATH",
      "install the tool or fix its name so it resolves on PATH"),
+    ("不是可识别的媒体扩展名",
+     "把 local_cmd.output_ext 改成引擎能识别的扩展名(视频 .mp4/.mov,图片 .png/.jpg,"
+     "音频 .wav/.mp3),否则生成的 take 读不回来"),
+    ("与 provider type",
+     "让 local_cmd.output_ext 与 type 对上:video -> .mp4/.mov,image -> .png/.jpg"),
     ("does not look like an HTTP(S) URL",
      "use a full http:// or https:// URL"),
     ("first_frame_field AND refs.last_frame_field",
