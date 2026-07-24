@@ -1027,15 +1027,20 @@ class _Handler(BaseHTTPRequestHandler):
         _pure_ok = {"/api/validate", "/api/impact", "/api/review/consistency",
                     "/api/reveal"}  # reveal opens the OS file manager; no write
         # GUI-READONLY-P1-001: the readonly allow-list is the pure set PLUS the
-        # two window-level actions. Neither writes project truth, and without
-        # them a readonly workbench was unusable: started UNBOUND (`manju gui
-        # --readonly` with no project) the picker's 打开 was the only way
-        # forward and it 403'd, so the window could open NOTHING; and 退出 in
-        # the --app window always failed, leaving Ctrl-C in the terminal as the
-        # only exit. Opening binds a session (a read-scoped view; every
-        # mutating POST after it still 403s here) and quit is the coordinated
-        # shutdown, which touches no project file.
-        _readonly_ok = _pure_ok | {"/api/workspace/open", "/api/app/quit"}
+        # window-level actions that write no project truth. 退出 always: it is
+        # the coordinated shutdown, and without it the --app window's only exit
+        # was Ctrl-C in a terminal the owner may not even be looking at.
+        _readonly_ok = _pure_ok | {"/api/app/quit"}
+        # 打开 only while this server is still UNBOUND. `manju gui --readonly`
+        # outside a project serves the workspace picker (cli.gui: project stays
+        # None), and the picker's 打开 was the one way forward — 403 there meant
+        # the window could open NOTHING at all. Once BOUND, readonly keeps
+        # refusing it: which project a review session is looking at is part of
+        # what --readonly freezes, and test_workspace_post_blocked_in_readonly
+        # pins exactly that. Binding from the picker yields a read-scoped view —
+        # every mutating POST after it still 403s right here.
+        if self.server.project is None:
+            _readonly_ok = _readonly_ok | {"/api/workspace/open"}
         if self.server.readonly and urlsplit(self.path).path not in _readonly_ok:
             # /api/validate and /api/impact are pure (no write) — readonly
             # editors keep live checks and impact previews (WP1, R22 precedent);

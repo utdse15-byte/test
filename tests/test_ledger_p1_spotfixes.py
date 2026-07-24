@@ -44,6 +44,28 @@ def test_output_row_without_recorded_hash_is_unverifiable_not_verified(tmp_path:
     assert mism[0]["actual_sha256"] == "<unverifiable>"
 
 
+def test_cache_hit_take_refs_are_not_reported_as_unverifiable(tmp_path: Path) -> None:
+    """The other side of the same rule: a take ref that binds identity by NAME +
+    spec_hash INSTEAD of a hash is by design, not a fixity problem.
+
+    build/graph.py's ``skipped_cache_hit`` records exactly this shape and says
+    why at the call site — re-hashing every fresh take on every build is the I/O
+    the incremental path exists to avoid. Reporting it would make every ordinary
+    incremental build show a permanent integrity failure, i.e. train the owner to
+    ignore the verifier. A row claiming NEITHER is still refused (above)."""
+    run_id = "run_cachehit"
+    rel = "media/gen/S001/take_01.mp4"
+    (tmp_path / "media" / "gen" / "S001").mkdir(parents=True)
+    (tmp_path / rel).write_bytes(b"take bytes")
+    ev = A.RunEvidence(tmp_path, run_id)
+    ev.attempt("generate", {"kind": "shot", "shot": "S001"}, "cache_hit"
+               ).skipped_cache_hit(outputs=[
+                   {"role": "take", "take": "take_01",
+                    "spec_hash": "sha256:spec", "path": rel}])
+    ev.run_succeeded()
+    assert A.verify_outputs(tmp_path, run_id) == []
+
+
 def test_explicit_batch_shot_lists_are_deduped_order_preserving() -> None:
     # the two batch entry points share the selector shape; pin the de-dup at
     # the source-text level AND the semantic level via the helper expression

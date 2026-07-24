@@ -1131,13 +1131,28 @@ def verify_outputs(project: Any, run_id: str) -> list[dict]:
             if not isinstance(out, dict):
                 continue
             rel = out.get("path")
-            expected = out.get("sha256")
             if not rel:
                 continue  # nothing identifiable to verify against
+            if "sha256" not in out and out.get("spec_hash"):
+                # This output declares an ALTERNATIVE identity binding instead of
+                # a hash. The cache-hit take refs (build/graph.py, the
+                # `skipped_cache_hit` call) bind identity by take NAME +
+                # spec_hash and deliberately skip the media re-hash — re-hashing
+                # every fresh take on every build is exactly the I/O the
+                # incremental path exists to avoid, and that choice is documented
+                # at the call site. Flagging them would make every ordinary
+                # incremental build report a permanent integrity problem, which
+                # is noise, not fixity. A row with NEITHER a hash NOR a spec_hash
+                # claims nothing at all and still falls through to the refusal
+                # below.
+                continue
+            expected = out.get("sha256")
             if not expected:
-                # a recorded output with NO recorded hash is unverifiable, and
-                # unverifiable must never read as verified (UNKNOWN is never
-                # guessed into PASS) — surface it instead of skipping.
+                # An output that promised verifiability and cannot deliver it:
+                # either a torn/hand-written row carrying a path and nothing
+                # else, or an output_ref whose hashing failed (it always sets the
+                # key, ""-on-failure). Unverifiable must never read as verified —
+                # UNKNOWN is never guessed into PASS — so surface it.
                 mismatches.append({"attempt_id": d.get("attempt_id"), "path": rel,
                                    "expected_sha256": "<unrecorded>",
                                    "actual_sha256": "<unverifiable>"})
