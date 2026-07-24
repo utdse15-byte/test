@@ -31,14 +31,18 @@ truth file (temp + rename). It is also the schema the GUI asset page reads.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import shutil
+import stat
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import IO, Any, Iterator
 
-from .hashing import hash_file
+from .hashing import HASH_PREFIX, hash_file
+from .safeio import (SafeOutError, _is_reparse_point, open_append_nofollow,
+                     publish_tmp)
 from .yamlio import atomic_write_text, read_json
 
 try:
@@ -94,6 +98,21 @@ def _hex(content_hash: str) -> str:
     return content_hash.removeprefix("sha256:")
 
 
+def _has_linked_component(target: Path, root: Path) -> bool:
+    """True if ``target`` itself or any directory between it and ``root`` is a
+    symlink/junction — a linked component redirects the leaf outside ``root``
+    even when the lexical path stays contained (LIBRARY-P0-001/002)."""
+    cur = target
+    while cur != root:
+        if cur.is_symlink() or _is_reparse_point(cur):
+            return True
+        parent = cur.parent
+        if parent == cur:  # hit the filesystem root without meeting ``root``
+            return True
+        cur = parent
+    return False
+
+
 _INDEX_LOCK_TIMEOUT_S = 30.0
 
 # R2-P1-5: msvcrt.locking does not exclude same-process threads — pair with a
@@ -127,7 +146,16 @@ def _index_lock(root: Path, *, timeout_s: float = _INDEX_LOCK_TIMEOUT_S) -> Iter
         yield  # no lock primitive at all (exotic platform): degrade unlocked
         return
     lock_path = root / "index.lock"
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    # LIBRARY-P0-003: the lock-file open joins the safeio no-follow front door
+    # (the events/recents/library/failures advisory-lock quartet) — a symlink/
+    # junction planted at index.lock can no longer redirect the open outside
+    # the shelf. The byte-range lock itself (fcntl/msvcrt below) is unchanged;
+    # we only borrow the descriptor.
+    try:
+        lock_file = open_append_nofollow(lock_path)
+    except SafeOutError as exc:
+        raise LibraryError(f"library index lock is unsafe: {exc}") from exc
+    fd = lock_file.fileno()
     if fcntl is not None:
         retry_exc: tuple[type[BaseException], ...] = (BlockingIOError,)
 
@@ -179,7 +207,7 @@ def _index_lock(root: Path, *, timeout_s: float = _INDEX_LOCK_TIMEOUT_S) -> Iter
                 _unlock()
             except OSError:
                 pass
-        os.close(fd)
+        lock_file.close()
 
 
 class Library:
@@ -203,6 +231,39 @@ class Library:
 
     def blob_path(self, entry: dict[str, Any]) -> Path:
         return self.root / entry["blob"]
+
+    def _contained_member(self, rel: Any) -> Path | None:
+        """Resolve an index-supplied path (``blob``/``thumb``) to an absolute
+        path proven to be a regular file INSIDE the library root, following no
+        symlink/junction at any component (LIBRARY-P0-001/002). Returns None
+        when the value is absent/not a string, absolute or drive-qualified,
+        contains ``..``, escapes the root, or is not a regular file. The index
+        is a machine-local catalogue a corrupted/hostile tool could have
+        rewritten, so its path strings are never trusted as read/delete
+        locations."""
+        if not isinstance(rel, str) or not rel:
+            return None
+        p = Path(rel)
+        # reject absolute/drive-qualified (an absolute right operand makes
+        # ``root / rel`` DROP the root) and any ``..`` (which could escape —
+        # including the symlink-then-``..`` a lexical join would hide).
+        if p.is_absolute() or p.drive or p.anchor or ".." in p.parts:
+            return None
+        root = Path(os.path.abspath(self.root))
+        target = Path(os.path.abspath(root / p))
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+        if _has_linked_component(target, root):
+            return None
+        try:
+            st = os.lstat(target)
+        except OSError:
+            return None
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        return target
 
     # --------------------------------------------------------------- index io
 
@@ -248,6 +309,75 @@ class Library:
         if entry is None:
             raise LibraryError(f"no asset with hash {hash8!r} in the library")
         return entry
+
+    # ---------------------------------------------------------- verified read
+
+    def open_verified_blob(self, entry: dict[str, Any]) -> IO[bytes]:
+        """Open the entry's content-addressed blob for reading with the index
+        treated as UNTRUSTED (LIBRARY-P0-002). The blob must resolve to a
+        regular file inside the library root following no link, and the OPEN
+        descriptor's bytes must hash to the entry's recorded ``hash`` —
+        otherwise a forged row could aim a project copy (``lib use``) at any
+        external secret while claiming a library hash. The digest is verified
+        on the SAME descriptor the caller then reads (rewound to 0), so the
+        index path can never select a different read location than the one
+        whose bytes were checked."""
+        target = self._contained_member(entry.get("blob"))
+        if target is None:
+            raise LibraryError(
+                f"library blob path is unsafe or missing: {entry.get('blob')!r}"
+            )
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(target, flags)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise LibraryError(f"library blob is not a regular file: {target}")
+            h = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                h.update(chunk)
+            digest = HASH_PREFIX + h.hexdigest()
+            if digest != entry.get("hash"):
+                raise LibraryError(
+                    f"library blob bytes do not match the index hash "
+                    f"(index={entry.get('hash')}, blob={digest}) — refusing to "
+                    "copy possibly-substituted content"
+                )
+            os.lseek(fd, 0, os.SEEK_SET)
+        except BaseException:
+            os.close(fd)
+            raise
+        return os.fdopen(fd, "rb")
+
+    def use_into(self, entry: dict[str, Any], dest: Path) -> None:
+        """Copy the entry's blob to ``dest`` reading ONLY from the verified
+        descriptor (LIBRARY-P0-002) — the bytes landed in the project are
+        proven equal to the recorded index hash and cannot be redirected to an
+        external file by a forged path. ``dest`` is chosen by the caller (with
+        its own no-overwrite suffixing); this owns the safe SOURCE read."""
+        with self.open_verified_blob(entry) as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out)
+
+    def find_verified_blob(self, content_hash: str) -> Path | None:
+        """The contained, no-link, byte-verified blob Path for the asset whose
+        recorded hash equals ``content_hash`` — or None when there is no such
+        asset, its blob escapes the root/follows a link/is missing, or its
+        ACTUAL bytes do not hash to ``content_hash`` (INGEST-P0-002 fail-
+        closed). A caller that copies from the returned path gets library bytes
+        proven equal to what the index claims; a forged row aimed at an
+        external secret returns None."""
+        entry = next((e for e in self.assets() if e.get("hash") == content_hash), None)
+        if entry is None:
+            return None
+        try:
+            with self.open_verified_blob(entry):
+                pass
+        except LibraryError:
+            return None
+        return self._contained_member(entry.get("blob"))
 
     def list_assets(self, *, tag: str | None = None,
                     kind: str | None = None) -> list[dict[str, Any]]:
@@ -316,19 +446,22 @@ class Library:
             blob_name = _hex(content_hash) + ext
             blob = self.root / blob_name
             if not blob.exists():  # content-addressed: identical bytes, identical name
-                # Atomic publish: an interrupted copy must never leave a torn
-                # file AT the content-addressed name — this exists() guard (and
-                # every later reader) trusts that name unconditionally, so a
-                # partial blob would be reused, and propagated into projects,
-                # forever. Temp sibling + os.replace = complete-or-absent.
-                tmp = blob.with_name(blob.name + f".{os.getpid()}.part")
-                try:
+                # Atomic publish through the safeio no-follow front door
+                # (LIBRARY-P0-003): the old predictable ``<blob>.<pid>.part``
+                # name could be pre-planted as a symlink, so copy2 followed it
+                # to overwrite an outside file and os.replace published the link
+                # ITSELF as the "content-addressed" blob. publish_tmp uses an
+                # exclusive random-named sibling (O_EXCL) + atomic replace, and
+                # the copied bytes are re-hashed before publish so this name can
+                # never end up over a file whose content is not its hash (an
+                # interrupted copy still leaves the blob complete-or-absent).
+                with publish_tmp(blob) as tmp:
                     shutil.copy2(src, tmp)
-                    os.replace(tmp, blob)
-                except BaseException:
-                    with contextlib.suppress(OSError):
-                        tmp.unlink()
-                    raise
+                    if hash_file(tmp) != content_hash:
+                        raise LibraryError(
+                            f"copied bytes do not match source hash for {src} — "
+                            "refusing to publish a mislabeled content-addressed blob"
+                        )
             entry: dict[str, Any] = {
                 "hash": content_hash,
                 "blob": blob_name,
@@ -354,10 +487,21 @@ class Library:
             entry = self.find(hash8)
             if entry is None:
                 raise LibraryError(f"no asset with hash {hash8!r} in the library")
-            blob = self.root / entry["blob"]
-            blob.unlink(missing_ok=True)
-            if entry.get("thumb"):
-                (self.root / entry["thumb"]).unlink(missing_ok=True)
+            # LIBRARY-P0-001: index path strings are UNTRUSTED — an absolute
+            # value makes ``root / value`` DROP the root, and ``..``/links
+            # escape it, so a bogus row could unlink an arbitrary same-
+            # permission file (project truth, SSH config, user docs) behind a
+            # confirmation prompt that only shows the asset name. Only ever
+            # delete a regular file provably INSIDE the shelf (no link
+            # followed); the row is dropped either way, so a hostile entry is
+            # cleaned from the catalogue without touching whatever it aimed at
+            # outside.
+            blob = self._contained_member(entry.get("blob"))
+            if blob is not None:
+                blob.unlink(missing_ok=True)
+            thumb = self._contained_member(entry.get("thumb"))
+            if thumb is not None:
+                thumb.unlink(missing_ok=True)
             index["assets"] = [e for e in index["assets"] if e["hash"] != entry["hash"]]
             self._save_index(index)
             return entry
