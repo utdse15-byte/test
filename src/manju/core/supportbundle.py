@@ -567,6 +567,15 @@ def _allowlist_container(node: Any) -> Any:
     return {}
 
 
+def _tail_slice(raw_lines: list[str], n: int) -> list[str]:
+    """The last ``n`` lines, where "the last 0 lines" means NONE (SUPPORT-P1-001).
+    Python's ``raw[-0:]`` is ``raw[0:]`` — the whole ledger — so asking a bundle
+    to carry no events handed it every event instead. Any n <= 0 means none."""
+    if n <= 0:
+        return []
+    return raw_lines[-n:]
+
+
 def _allowlist_tail_lines(raw_lines: list[str], stats: dict[str, int]) -> tuple[list[str], int]:
     """Project each raw JSONL line onto the structured-fact allowlist; a
     torn/invalid line is COUNTED and replaced by a ``<malformed line skipped>``
@@ -646,7 +655,7 @@ def collect_events_tail(project: Project, n: int, stats: dict[str, int]) -> tupl
     raw, note = _read_ledger_lines_nofollow(project.root / "events.jsonl")
     if raw is None:
         return [], 0, False, note
-    lines, malformed = _allowlist_tail_lines(raw[-n:], stats)
+    lines, malformed = _allowlist_tail_lines(_tail_slice(raw, n), stats)
     return lines, malformed, True, note
 
 
@@ -657,7 +666,7 @@ def collect_failures_tail(project: Project, n: int, stats: dict[str, int]) -> tu
     raw, note = _read_ledger_lines_nofollow(project.reports_dir / "failures.jsonl")
     if raw is None:
         return [], 0, False, note
-    lines, malformed = _allowlist_tail_lines(raw[-n:], stats)
+    lines, malformed = _allowlist_tail_lines(_tail_slice(raw, n), stats)
     return lines, malformed, True, note
 
 

@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .idents import UnsafeIdentifierError, validate_safe_segment
+from .idents import UnsafeIdentifierError, validate_safe_segment, windows_segment_problems
 from .models import (
     PROJECT_FORMAT,
     PackagingSpec,
@@ -159,6 +159,12 @@ class ProjectError(RuntimeError):
     pass
 
 
+class ProjectNameError(ProjectError):
+    """The requested project directory name is not creatable/openable on
+    Windows (CLI-P1-004). A subclass of ProjectError so every existing
+    ``except ProjectError`` call site keeps catching it."""
+
+
 class Project:
     def __init__(self, root: Path | str):
         self.root = Path(root).resolve()
@@ -227,6 +233,18 @@ class Project:
         root = Path(path).resolve()
         if root.suffix != ".manju":
             root = root.with_name(root.name + ".manju")
+        # CLI-P1-004: the Windows name rules were only ever applied by `check`,
+        # i.e. AFTER the directory existed. `CON.manju` / a trailing-dot name is
+        # unopenable on the first platform, so refuse before anything is made —
+        # same owner the checker uses, no second spelling of the rules.
+        problems = windows_segment_problems(root.name)
+        if not root.stem:
+            problems.append("空项目名(empty project name)")
+        if problems:
+            raise ProjectNameError(
+                "项目名在 Windows 上不可用(refused before creating anything): "
+                + "; ".join(problems)
+            )
         if (root / PROJECT_FILE).exists():
             raise ProjectError(f"project already exists: {root}")
         name = name or root.stem
