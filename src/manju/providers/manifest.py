@@ -12,10 +12,12 @@ overridable via ``MANJU_PROVIDERS_DIR`` (tests use this).
 
 from __future__ import annotations
 
+import math
 import os
 import shlex
 import shutil
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, ValidationError, field_validator
 
@@ -32,6 +34,10 @@ GENERIC_TTS_ADAPTER = "generic_tts"
 COMFYUI_ADAPTER = "manju.providers.comfyui:ComfyUIProvider"
 LOCAL_CMD_ADAPTER = "manju.providers.local_cmd:LocalCommandProvider"
 JOB_STATES = ("queued", "running", "succeeded", "failed")
+# PROVIDER-MANIFEST-008: the CLOSED set of `asr.time_unit` values. The consumer
+# (providers/asr.py) scales by 1000 for "s" and by 1 otherwise, so this list and
+# that branch are the same decision — anything outside it is refused at load.
+ASR_TIME_UNITS: tuple[str, ...] = ("ms", "s")
 
 
 class AuthConfig(ManjuModel):
@@ -136,9 +142,30 @@ class CostConfig(ManjuModel):
     # Round W (issue #25): a negative cost would make budget estimation and
     # the ask_before spend confirmation UNDER-count real spend (or even net
     # negative), defeating both. 0 stays legal (free/local-style providers).
+    #
+    # PROVIDER-MANIFEST-001 (money): `v < 0` alone was NOT enough. Every compare
+    # against NaN is False (IEEE-754) — `NaN < 0` included — so `.nan`, an
+    # ordinary YAML scalar a hand-edited provider.yaml can carry, VALIDATED.
+    # estimate_cost() then returns NaN, which silently disarms BOTH money gates
+    # in build/graph.py: the §8.3 budget breaker (`estimated_cost > budget`) and
+    # the ask_before spend confirmation (`estimated_cost > 0`) — a paid build
+    # starting with no ceiling AND no prompt. `inf` fails those two compares
+    # closed, but it LAUNDERS back into NaN through estimate_cost's
+    # `per_second * (duration_ms / 1000.0)` (`inf * 0.0` is NaN) for any
+    # zero-duration item, reopening the same hole — so both are refused here.
+    # This is the same fail-closed rule `core.models.BudgetConfig` already
+    # applies to the OTHER side of the breaker compare: finite and >= 0, never
+    # guessed into something usable.
     @field_validator("per_second", "per_call")
     @classmethod
     def _nonneg_cost(cls, v: float, info) -> float:
+        if not math.isfinite(v):
+            raise ValueError(
+                f"cost.{info.field_name} 必须是有限数字(实际 {v!r})— NaN 会让"
+                "\"预估花费 > 预算\"和\"预估花费 > 0\"两个比较全部为假,预算熔断和"
+                "ask_before 花费确认会一起失效;inf 乘上 0 时长又会变回 NaN。"
+                "改为 >= 0 的有限数字"
+            )
         if v < 0:
             raise ValueError(
                 f"cost.{info.field_name} 不能为负数(实际 {v!r})— 负成本会让预算估算和"
@@ -173,13 +200,43 @@ class AsrConfig(ManjuModel):
     text_key: str = "text"  # ★ keys within one segment object
     start_key: str = "start"
     end_key: str = "end"
-    time_unit: str = "ms"  # "ms" | "s" — remote timestamps are converted to ms
+    # ★ remote timestamp unit; converted to ms. The closed set is ASR_TIME_UNITS.
+    time_unit: Literal["ms", "s"] = "ms"
     language: str = "zh"
     # WP3: optional word-level timestamps (default None = unused)
     words_path: str | None = None
     word_text_key: str = "text"
     word_start_key: str = "start"
     word_end_key: str = "end"
+
+    # PROVIDER-MANIFEST-008: the consumer is a two-way branch —
+    # ``scale = 1000.0 if time_unit == "s" else 1.0`` — so while this was a free
+    # ``str`` EVERY other spelling silently meant "milliseconds". A manifest
+    # saying ``time_unit: seconds`` produced a structurally perfect caption
+    # track with every timestamp 1000x too small, out of a transcription the
+    # owner PAID for, with no error anywhere. A ``mode="before"`` validator (the
+    # ``Literal`` above would otherwise answer first, in English) refuses it at
+    # LOAD time, so load_manifests() collects it for `manju doctor` and the
+    # provider is simply absent — no paid call, no wrong transcript.
+    #
+    # Deliberately NO synonym table: the plausible spellings are not a closed
+    # set (sec/secs/second/seconds/msec/millis/us/ns/frames/timecode), so any
+    # partial guess-list still drops the unguessed ones into the same silent
+    # ``else: 1.0`` branch — that is UNKNOWN guessed into PASS, and the one
+    # spelling family worth the most caution (``us``/``ns``) is off by 10^3
+    # again in the OTHER direction. Refusing costs the single user one edit
+    # against a message that names both legal values.
+    @field_validator("time_unit", mode="before")
+    @classmethod
+    def _known_time_unit(cls, v):
+        if v not in ASR_TIME_UNITS:
+            raise ValueError(
+                f"asr.time_unit 只能是 {' 或 '.join(ASR_TIME_UNITS)}(实际 {v!r})— "
+                "引擎把除 's' 以外的任何值都当作毫秒,写成 'seconds'/'sec' 会让字幕"
+                "时间轴整体小 1000 倍,而且转写本身已经花过钱、不会报任何错。"
+                "毫秒填 ms,秒填 s"
+            )
+        return v
 
 
 class ComfyConfig(ManjuModel):
