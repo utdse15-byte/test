@@ -39,7 +39,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..core.container import Project, ProjectError
@@ -952,12 +952,14 @@ class _Handler(BaseHTTPRequestHandler):
         remaining = min(max(declared, 0), cap)
         # Short socket timeout so a hostile slow-loris cannot pin the thread.
         prev_timeout = None
+        restore_timeout = False
         try:
             try:
                 prev_timeout = self.connection.gettimeout()
                 self.connection.settimeout(2.0)
+                restore_timeout = True
             except (OSError, AttributeError):
-                prev_timeout = None
+                restore_timeout = False
             while remaining > 0:
                 chunk = self.rfile.read(min(65536, remaining))
                 if not chunk:
@@ -966,7 +968,14 @@ class _Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
         finally:
-            if prev_timeout is not None:
+            # Same trap _read_body documents right above: a blocking-mode socket
+            # reports gettimeout() None, so `prev_timeout is not None` SKIPS the
+            # restore — and the handler never sets a timeout, so that is the
+            # ordinary case here, not the exotic one. Every drained refusal
+            # (host guard / readonly POST / stale token) then left the 2s
+            # deadline welded onto a keep-alive connection the browser goes on
+            # reusing. Track "we changed it" explicitly, like the sibling does.
+            if restore_timeout:
                 try:
                     self.connection.settimeout(prev_timeout)
                 except (OSError, AttributeError):
@@ -1233,7 +1242,19 @@ class _Handler(BaseHTTPRequestHandler):
         self._serve_file(thumb)
 
     def _serve_file(self, abspath: Path) -> None:
-        st = abspath.stat()
+        with open(abspath, "rb") as fh:
+            self._serve_open_file(fh, suffix=abspath.suffix)
+
+    def _serve_open_file(self, fh: IO[bytes], *, suffix: str) -> None:
+        """The ranged/ETag file response, read from an ALREADY-OPEN descriptor.
+
+        The library blob route hands in the handle ``open_verified_blob``
+        re-hashed on that same fd (LIBRARY-P0-002): re-opening by path here
+        would re-admit exactly the substitution the verification just refused,
+        so the bytes served must come from the descriptor that was checked.
+        The CALLER owns the handle's lifetime — this never closes it (the GUI
+        is a long session; every caller uses ``with`` / ``try-finally``)."""
+        st = os.fstat(fh.fileno())
         etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
         if self.headers.get("If-None-Match") == etag:
             self.send_response(304)
@@ -1242,7 +1263,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        ctype = _CONTENT_TYPES.get(abspath.suffix.lower(), "application/octet-stream")
+        ctype = _CONTENT_TYPES.get(suffix.lower(), "application/octet-stream")
         size = st.st_size
         start, end = 0, size - 1
         status = 200
@@ -1276,15 +1297,14 @@ class _Handler(BaseHTTPRequestHandler):
         if status == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
-        with open(abspath, "rb") as f:
-            f.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = f.read(min(65536, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+        fh.seek(start)
+        remaining = length
+        while remaining > 0:
+            chunk = fh.read(min(65536, remaining))
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+            remaining -= len(chunk)
 
     # -------------------------------------------------------------- actions
 
@@ -3646,6 +3666,8 @@ class _Handler(BaseHTTPRequestHandler):
             rel = entry.get("thumb")
             target = (lib.root / rel) if rel else None
         else:
+            # NOT a read location (see the verified open below) — only the
+            # lexical probe that keeps this route's absent/refused split.
             target = lib.blob_path(entry)
         if target is None or not target.is_file():
             self._send_error_json("no such asset", 404)
@@ -3658,14 +3680,30 @@ class _Handler(BaseHTTPRequestHandler):
         except OSError:
             self._send_error_json("not found", 404)
             return
-        self._serve_file(resolved)
+        if thumb:
+            self._serve_file(resolved)
+            return
+        # LIBRARY-P0-002: the index is an untrusted machine-local catalogue, so
+        # its path string never selects the READ location on its own — the blob
+        # is opened no-follow inside the library root and re-hashed on that fd,
+        # and the response streams from the SAME descriptor (a row rewritten
+        # after this check can no longer swap the bytes under us). Refusals keep
+        # this route's protocol: the JSON error body it already speaks.
+        try:
+            handle = lib.open_verified_blob(entry)
+        except LibraryError:
+            self._send_error_json("path not served", 403)
+            return
+        try:
+            self._serve_open_file(handle, suffix=resolved.suffix)
+        finally:
+            handle.close()  # long session: no descriptor outlives the request
 
     def _act_lib_use(self, body: dict[str, Any]) -> None:
         """Copy a library asset INTO the current project (refs/ or imports/),
         honouring the project's no-overwrite suffixing — the same core path as
         `manju lib use`. The library stays independent; the copy is a normal
         human asset from then on."""
-        import shutil
         from pathlib import Path
 
         from ..core.library import Library, LibraryError
@@ -3681,10 +3719,6 @@ class _Handler(BaseHTTPRequestHandler):
         except LibraryError as exc:
             self._send_error_json(str(exc), 404)
             return
-        blob = lib.blob_path(entry)
-        if not blob.exists():
-            self._send_error_json(f"library blob missing: {entry['blob']}", 400)
-            return
         project, actor = self.server.project, self.server.actor
         try:
             with self.server.quick_mutex, _optional_build_lock(project.root, actor):
@@ -3698,13 +3732,21 @@ class _Handler(BaseHTTPRequestHandler):
                 while dest.exists():  # no-overwrite suffixing (§3), like `lib use`
                     dest = dest_dir / f"{stem}_{n}{ext}"
                     n += 1
-                shutil.copy2(blob, dest)
+                # LIBRARY-P0-002: copy through the ONE verified-source owner —
+                # the recorded path is never the read location, and the bytes
+                # that land in the project are proven equal to the index hash.
+                # A refusal happens BEFORE dest is created (失败零写入).
+                lib.use_into(entry, dest)
                 rel = project.relpath(dest)
                 append_event(project.root, actor, "lib_use",
                              {"hash": entry["hash"], "name": entry["name"],
                               "as": as_, "dest": rel, "via": "gui"})
         except BuildLocked as exc:
             self._send_error_json(str(exc), 409)
+            return
+        except LibraryError as exc:
+            # the same 400 shape this route already spoke for a missing blob
+            self._send_error_json(str(exc), 400)
             return
         self._send_json({"ok": True, "dest": rel, "as": as_, "name": entry["name"]})
 
@@ -5947,8 +5989,6 @@ class _Handler(BaseHTTPRequestHandler):
         return changes
 
     def _resolve_source_token(self, token: Any) -> Any:
-        import shutil
-
         from ..build.mixer import MixerError
         from ..core.library import Library, LibraryError
 
@@ -5960,9 +6000,6 @@ class _Handler(BaseHTTPRequestHandler):
             entry = lib.get(hash8)
         except LibraryError as exc:
             raise MixerError(f"library asset {hash8!r} not found") from exc
-        blob = lib.blob_path(entry)
-        if not blob.exists():
-            raise MixerError(f"library blob missing: {entry['blob']}")
         project, actor = self.server.project, self.server.actor
         dest_dir = project.imports_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -5973,7 +6010,14 @@ class _Handler(BaseHTTPRequestHandler):
         while dest.exists():
             dest = dest_dir / f"{stem}_{n}{ext}"
             n += 1
-        shutil.copy2(blob, dest)
+        # LIBRARY-P0-002: same verified-source owner as `lib use` — a forged
+        # index row can never route an external secret into the mix. The
+        # refusal becomes the MixerError the /api/mixer/apply route already
+        # turns into its 400 envelope (nothing written).
+        try:
+            lib.use_into(entry, dest)
+        except LibraryError as exc:
+            raise MixerError(str(exc)) from exc
         rel = project.relpath(dest)
         append_event(project.root, actor, "lib_use",
                      {"hash": entry["hash"], "name": entry["name"],
