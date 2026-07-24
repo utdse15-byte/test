@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -40,7 +41,18 @@ SECRET_PATTERNS = [
                r"\s*[:=]\s*['\"]?[A-Za-z0-9/+_.\-]{16,}"),
 ]
 
-SCAN_SUFFIXES = {".yaml", ".yml", ".json", ".md", ".txt", ".srt", ".ass"}
+# SECRET-JSONL: `.jsonl` is the project's OWN append-only log format — the root
+# `events.jsonl` and `reports/failures.jsonl` / `reports/qc_agent.jsonl` — and
+# those logs quote provider evidence (`evidence=`, headers, error bodies)
+# verbatim. Neither `reports/` nor `events.jsonl` is in the scaffolded
+# .gitignore, so before this they were TRACKED text the HISTORY-P0-001 snapshot
+# pre-check could not see: a key echoed into a failure record walked straight
+# into git history, where a later delete does not remove it. Scan cost stays
+# bounded no matter how long a log grows — file_has_secret streams only the head
+# (MAX_SCAN_BYTES) plus the tail (_SCAN_TAIL_BYTES), so this is size-independent
+# work, and the newest lines (the tail) are always covered.
+SCAN_SUFFIXES = {".yaml", ".yml", ".json", ".md", ".txt", ".srt", ".ass", ".jsonl"}
+
 # CLI-P0-002: a pure suffix whitelist missed the single most common secret
 # home — the extensionless `.env` file (and its `.env.local` / `.env.<stage>`
 # variants) plus other extensionless credential files. Scan selection is now

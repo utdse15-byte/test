@@ -52,7 +52,9 @@ import json
 import sqlite3
 import time
 import uuid
+from datetime import date as _date
 from datetime import datetime, timedelta, timezone
+from datetime import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -129,12 +131,32 @@ _INTENT_SUBMISSION_COLUMNS = (
 )
 
 
+def _json_default(o: Any) -> str:
+    """Serialize the non-JSON scalars ``yaml.safe_load`` routinely produces from
+    truth files — the SAME convention as ``core.hashing._json_default``.
+
+    PROVIDER-STATE-P1-001: an unquoted YAML date in shot params (``aired:
+    2026-07-18``) parses to a ``datetime.date``, which ``json.dumps`` cannot
+    serialize. The resulting ``TypeError`` is NOT an ``OSError``, so it escaped
+    every ``except`` guarding the jobs/runs writes in
+    ``providers/base.py`` — AFTER the paid submission had already gone out. The
+    CLI crashed bare and the ``remote_job_id`` breadcrumb was never written,
+    reopening exactly the §8.1 duplicate-submission window ``jobs`` exists to
+    close. ISO-8601 is deterministic, and this is only reached for otherwise
+    unserializable values, so every already-serializable params dict stays
+    byte-identical. A genuinely unserializable object still raises."""
+    if isinstance(o, (_date, _time)):  # date covers datetime
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def _dumps(value: Any) -> str | None:
     """Canonical JSON for a params dict (or None). Non-ASCII kept, keys sorted
     so the same params always serialize identically."""
     if value is None:
         return None
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      default=_json_default)
 
 
 class MalformedSubmissionEvidence(RuntimeError):

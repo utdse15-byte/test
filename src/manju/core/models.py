@@ -7,6 +7,7 @@ strict on the fields the engine actually computes with.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from pydantic import (
@@ -47,8 +48,33 @@ class ManjuModel(BaseModel):
 
 
 class BudgetConfig(ManjuModel):
+    # CORE-BUDGET-001 (money): the §8.3 breaker is a plain ``running > limit``
+    # compare. A ``NaN`` limit makes EVERY such compare False (IEEE-754), so the
+    # breaker is silently ABSENT for the whole build while real charging
+    # continues — and ``.nan`` / ``.inf`` are ordinary YAML scalars a hand-edited
+    # project.yaml can carry. A negative limit is equally meaningless (it trips
+    # before the first call, or reads as "unlimited" to a human). Same fail-
+    # closed rule ``build/spend.checked_cost`` already applies to the OTHER side
+    # of that compare: finite and >= 0, never guessed into something usable.
     limit: float | None = None
     currency: str = "CNY"
+
+    @field_validator("limit")
+    @classmethod
+    def _usable_limit(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if not math.isfinite(v):
+            raise ValueError(
+                f"budget.limit 必须是有限数值(实际 {v!r})— NaN/inf 会让 "
+                "预算断路器(§8.3)的每一次比较都为假,等于整场构建没有预算保护"
+            )
+        if v < 0:
+            raise ValueError(
+                f"budget.limit 不能为负(实际 {v!r})— 负预算既非'无限制'也无法"
+                "计费;不设预算就把 budget.limit 留空"
+            )
+        return v
 
 
 # Concurrency quality modes (goal item 14). A project MAY pin a default build
