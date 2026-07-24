@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from .hashing import hash_file, hash_value
-from .yamlio import atomic_write_text
+from .safeio import checked_out_path, publish_text
 
 __all__ = [
     "SCHEMA",
@@ -148,21 +148,23 @@ def _tool_version_line(name: str) -> str:
 
 def _dep_version(module: str, dist: str) -> str:
     """A version string when the dep is installed, ``"absent"`` when not.
-    importlib.metadata by distribution first, then a light import fallback."""
+
+    TOOLCHAIN-P0-001: the version comes ONLY from installed distribution
+    metadata. We NEVER ``import`` the module to read ``__version__`` — this
+    diagnostic runs with the CLI's working directory on ``sys.path``, so a
+    hostile third-party project could drop ``opentimelineio.py`` &c. at the front
+    of the search path and turn a version probe into arbitrary code execution.
+    Unmapped/uninstalled ⇒ ``"absent"``, never a project-supplied import."""
+    del module  # never imported — metadata-only by distribution name
     try:
         from importlib.metadata import PackageNotFoundError, version
 
         try:
             return version(dist)
         except PackageNotFoundError:
-            pass
-    except Exception:
-        pass
-    try:
-        mod = __import__(module)
+            return ABSENT
     except Exception:
         return ABSENT
-    return str(getattr(mod, "__version__", "present"))
 
 
 def _optional_tool_present(name: str) -> bool:
@@ -337,10 +339,20 @@ def write_toolchain_manifest(project: Any, doc: dict[str, Any]) -> Path:
             "store a tampered manifest"
         )
     path = toolchain_dir(project) / f"{computed.split(':')[-1]}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(
-        path, json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    return path
+    # TOOLCHAIN-P0-002: publish through the shared safe-output owner. It refuses
+    # a symlink/junction reports/ or reports/toolchain/ ancestor (no-follow
+    # containment — a linked dir can no longer redirect the write off-project),
+    # keeps the target under reports/, refuses a link/dir/special leaf, and lands
+    # the bytes via an O_EXCL random temp + atomic replace (失败零写入). Raises
+    # SafeOutError on refusal — the CLI --write path surfaces it as a bad_out
+    # envelope.
+    target = checked_out_path(
+        path, project_root=Path(project.root), inside_roots=("reports",),
+        kind="工具链清单 / toolchain manifest",
+    )
+    publish_text(
+        target, json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return target
 
 
 # --------------------------------------------------------------- drift (pure)

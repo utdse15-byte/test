@@ -40,6 +40,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -49,6 +50,7 @@ from typing import Any
 from .check import SECRET_PATTERNS
 from .container import Project
 from .hashing import HASH_PREFIX, hash_file
+from .safeio import SafeOutError, checked_out_path, publish_tmp
 
 # The manifest is a diagnostic artifact, NOT a manju.*/vN public schema (see the
 # module docstring and the Loop-F registry ruling): a plain format string.
@@ -56,6 +58,22 @@ BUNDLE_FORMAT = "support-bundle-manifest.1"
 
 DEFAULT_EVENTS_TAIL = 200
 DEFAULT_FAILURES_TAIL = 50
+
+# Upper bound on bytes read from a runtime ledger before tailing (defensive: a
+# hostile/huge ledger can't force an unbounded read). Well past any real tail.
+_LEDGER_READ_CAP = 64 * 1024 * 1024
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """Windows junction/reparse-point detection (POSIX: always False) —
+    ``Path.is_symlink`` misses NTFS junctions; ``st_reparse_tag`` catches them
+    without following. Local mirror of the safeio owner's check (kept here so a
+    no-follow read never depends on a private import)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return bool(getattr(st, "st_reparse_tag", 0))
 
 # Optional deps we report present/absent (names + versions ONLY). A fixed,
 # sorted tuple keeps the environment section deterministic.
@@ -319,21 +337,21 @@ def _tool_version(name: str) -> str:
 
 def _dep_version(module: str, dist: str) -> str:
     """"absent" or a version string for an optional dependency (name+version
-    only). Tries importlib.metadata by distribution name, then a light import."""
+    only). SUPPORT-P0-005: version comes ONLY from installed distribution
+    metadata — we NEVER ``import`` the module to read ``__version__``, because a
+    hostile project at ``sys.path[0]`` can shadow ``opentimelineio.py`` &c. and
+    turn a diagnostic probe into arbitrary code execution. Unknown ⇒ "absent",
+    never a project-supplied import."""
+    del module  # never imported — metadata-only by distribution name
     try:
         from importlib.metadata import PackageNotFoundError, version
 
         try:
             return version(dist)
         except PackageNotFoundError:
-            pass
-    except Exception:
-        pass
-    try:
-        mod = __import__(module)
+            return "absent"
     except Exception:
         return "absent"
-    return str(getattr(mod, "__version__", "present"))
 
 
 def collect_environment() -> dict[str, Any]:
@@ -471,10 +489,90 @@ def collect_project_shape(project: Project) -> dict[str, Any]:
     }
 
 
-def _redact_tail_lines(raw_lines: list[str], stats: dict[str, int]) -> tuple[list[str], int]:
-    """Redact each raw JSONL line; a torn/invalid line is COUNTED and replaced by
-    a ``<malformed line skipped>`` marker (never included verbatim). Returns
-    (redacted_lines, malformed_count)."""
+# --------------------------------------------------------------------------- #
+# SUPPORT-P0-001: strict structured-field allowlist for the ledger tails.        #
+# The bundle promises "no content". A per-line redactor only masks the FEW       #
+# secret/path patterns it knows — a client codename, an unreleased plot echo, a  #
+# private prompt or an error detail all sail through. So the ledger tails carry  #
+# ONLY structured, non-free-text facts (timestamps, controlled-vocab enums,      #
+# counts, booleans, content hashes); every free-text value is DROPPED by         #
+# construction, never merely redacted. This is default-deny by VALUE TYPE and    #
+# PATTERN, so an unknown field can only be excluded, never guessed into PASS.    #
+# --------------------------------------------------------------------------- #
+
+# A machine enum/verb: lowercase snake token only, bounded. Deliberately narrow
+# so uppercase codenames (CLIENT_CODENAME_RAVEN) and any free phrase (has a
+# space, punctuation or uppercase) can never match.
+_MACHINE_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_.\-]{0,39}$")
+# A content hash — always safe (opaque, non-reversible), and useful evidence.
+_ALLOW_HASH_RE = re.compile(r"^" + re.escape(HASH_PREFIX) + r"[0-9a-f]{64}$")
+# An ISO-8601-ish timestamp (the ONLY free-form-looking string kept, under key
+# "ts"); no path/secret shape can satisfy it.
+_TS_RE = re.compile(r"^\d{4}-\d\d-\d\dT[0-9:.,+\-Z]{4,}$")
+# Keys whose string value, when a machine token, is a controlled enum worth
+# keeping. Everything else stringy is content and is dropped.
+_ENUM_KEYS = frozenset({
+    "actor", "action", "level", "step", "kind", "code", "state", "status",
+    "phase", "mode", "reason", "result", "verdict", "outcome", "type", "stage",
+})
+
+
+def _allowlist_scalar(key: str, value: Any) -> tuple[bool, Any]:
+    """(keep, value) for one leaf. Booleans/numbers are structured facts and
+    always kept; a content hash is kept; a timestamp under ``ts`` is kept; a
+    string under an enum key is kept ONLY as a lowercase machine token. Any
+    other string (free text) is dropped."""
+    if isinstance(value, bool):
+        return True, value
+    if isinstance(value, (int, float)):
+        return True, value
+    if isinstance(value, str):
+        if _ALLOW_HASH_RE.match(value):
+            return True, value
+        if key == "ts" and _TS_RE.match(value):
+            return True, value
+        if key in _ENUM_KEYS and _MACHINE_TOKEN_RE.match(value):
+            return True, value
+    return False, None
+
+
+def _allowlist_container(node: Any) -> Any:
+    """Recursively project a JSON record onto the structured-fact allowlist.
+    Dicts keep only surviving leaves / non-empty sub-containers; lists keep only
+    structured scalars and non-empty sub-containers (a bare free string in a
+    list — an argv token, a message — is dropped)."""
+    if isinstance(node, dict):
+        out: dict[Any, Any] = {}
+        for key, value in node.items():
+            k = key if isinstance(key, str) else ""
+            keep, val = _allowlist_scalar(k, value)
+            if keep:
+                out[key] = val
+            elif isinstance(value, (dict, list)):
+                sub = _allowlist_container(value)
+                if sub:
+                    out[key] = sub
+        return out
+    if isinstance(node, list):
+        kept_list: list[Any] = []
+        for value in node:
+            keep, val = _allowlist_scalar("", value)
+            if keep:
+                kept_list.append(val)
+            elif isinstance(value, (dict, list)):
+                sub = _allowlist_container(value)
+                if sub:
+                    kept_list.append(sub)
+        return kept_list
+    return {}
+
+
+def _allowlist_tail_lines(raw_lines: list[str], stats: dict[str, int]) -> tuple[list[str], int]:
+    """Project each raw JSONL line onto the structured-fact allowlist; a
+    torn/invalid line is COUNTED and replaced by a ``<malformed line skipped>``
+    marker (never included verbatim). The surviving structured values still pass
+    through the ONE redactor (belt & braces — a machine token can carry no
+    secret pattern, so this only ever confirms). Returns (lines, malformed)."""
     out: list[str] = []
     malformed = 0
     for raw in raw_lines:
@@ -487,37 +585,80 @@ def _redact_tail_lines(raw_lines: list[str], stats: dict[str, int]) -> tuple[lis
             malformed += 1
             out.append("<malformed line skipped>")
             continue
-        redacted = redact_record(obj, stats)
-        out.append(json.dumps(redacted, ensure_ascii=False, sort_keys=True))
+        kept = redact_record(_allowlist_container(obj), stats)
+        out.append(json.dumps(kept, ensure_ascii=False, sort_keys=True))
     return out, malformed
 
 
-def collect_events_tail(project: Project, n: int, stats: dict[str, int]) -> tuple[list[str], int, bool]:
-    """The last ``n`` events.jsonl lines, each redacted. Returns
-    (lines, malformed_count, source_present)."""
-    path = project.root / "events.jsonl"
-    if not path.exists():
-        return [], 0, False
+def _read_ledger_lines_nofollow(path: Path) -> tuple[list[str] | None, str]:
+    """Read a runtime ledger WITHOUT ever following a link (SUPPORT-P0-002).
+
+    A hostile project can point ``events.jsonl`` / ``reports/failures.jsonl`` at
+    a file OUTSIDE the project; a plain ``read_text`` would then copy an external
+    secret into the shared bundle. So the leaf is ``lstat``'d and opened
+    ``O_NOFOLLOW``: a symlink/junction or any non-regular file is REFUSED (the
+    reason is recorded in the manifest, the link is never followed). Returns
+    ``(lines, note)`` — ``lines is None`` with note ∈ {"absent",
+    "refused: symlink/junction not followed", "refused: not a regular file",
+    "refused: unreadable"}; otherwise the decoded lines with note "ok"."""
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        st = os.lstat(path)
     except OSError:
-        return [], 0, False
-    lines, malformed = _redact_tail_lines(raw[-n:], stats)
-    return lines, malformed, True
+        return None, "absent"
+    if stat.S_ISLNK(st.st_mode) or _is_reparse_point(path):
+        return None, "refused: symlink/junction not followed"
+    if not stat.S_ISREG(st.st_mode):
+        return None, "refused: not a regular file"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        # ELOOP on a raced symlink, or any open failure — never fall back to a
+        # following read.
+        return None, "refused: unreadable"
+    try:
+        try:
+            fst = os.fstat(fd)
+            if not stat.S_ISREG(fst.st_mode):
+                return None, "refused: not a regular file"
+            # Read only the trailing window (bounded memory) but keep true tail
+            # semantics: seek to the last <=cap bytes, then splitlines/tail.
+            if fst.st_size > _LEDGER_READ_CAP:
+                os.lseek(fd, fst.st_size - _LEDGER_READ_CAP, os.SEEK_SET)
+            chunks: list[bytes] = []
+            while True:
+                buf = os.read(fd, 1024 * 1024)
+                if not buf:
+                    break
+                chunks.append(buf)
+            data = b"".join(chunks)
+        except OSError:
+            return None, "refused: unreadable"
+    finally:
+        os.close(fd)
+    return data.decode("utf-8", errors="replace").splitlines(), "ok"
 
 
-def collect_failures_tail(project: Project, n: int, stats: dict[str, int]) -> tuple[list[str], int, bool]:
-    """The last ``n`` reports/failures.jsonl lines, each redacted (same
-    discipline as events). Returns (lines, malformed_count, source_present)."""
-    path = project.reports_dir / "failures.jsonl"
-    if not path.exists():
-        return [], 0, False
-    try:
-        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return [], 0, False
-    lines, malformed = _redact_tail_lines(raw[-n:], stats)
-    return lines, malformed, True
+def collect_events_tail(project: Project, n: int, stats: dict[str, int]) -> tuple[list[str], int, bool, str]:
+    """The last ``n`` events.jsonl lines, allowlisted to structured facts. No
+    link is ever followed (SUPPORT-P0-002). Returns
+    (lines, malformed_count, source_present, note)."""
+    raw, note = _read_ledger_lines_nofollow(project.root / "events.jsonl")
+    if raw is None:
+        return [], 0, False, note
+    lines, malformed = _allowlist_tail_lines(raw[-n:], stats)
+    return lines, malformed, True, note
+
+
+def collect_failures_tail(project: Project, n: int, stats: dict[str, int]) -> tuple[list[str], int, bool, str]:
+    """The last ``n`` reports/failures.jsonl lines, allowlisted to structured
+    facts (same no-follow + allowlist discipline as events). Returns
+    (lines, malformed_count, source_present, note)."""
+    raw, note = _read_ledger_lines_nofollow(project.reports_dir / "failures.jsonl")
+    if raw is None:
+        return [], 0, False, note
+    lines, malformed = _allowlist_tail_lines(raw[-n:], stats)
+    return lines, malformed, True, note
 
 
 def collect_config_digests(stats: dict[str, int]) -> list[dict[str, str]]:
@@ -544,31 +685,91 @@ def collect_config_digests(stats: dict[str, int]) -> list[dict[str, str]]:
 
 
 # --------------------------------------------------------------------------- #
+# Destination safety (SUPPORT-P0-003 / SUPPORT-P0-004)                          #
+# --------------------------------------------------------------------------- #
+
+# Inside-project top-level names that are truth / imports / config / internal /
+# source-log — a diagnostic zip may NEVER be published onto (or under) any of
+# them. Everything else inside the project (a top-level ``support-bundle.zip``,
+# ``exports/``, ``reports/`` …) stays a legal, normal destination.
+_PROTECTED_TOPLEVEL = frozenset({
+    "project.yaml",      # config / truth
+    "bible", "shots", "story", "timeline",  # truth surfaces
+    "media",             # media + media/imports (append-only truth)
+    "events.jsonl",      # runtime source log
+    ".git", ".manju",    # VCS / disposable index
+})
+# Source-log ledger files that live UNDER reports/ (otherwise a normal publish
+# subtree) — the failures ledger and its rotations.
+_PROTECTED_REPORTS_RE = re.compile(r"^reports/failures(?:\.[^/]+)?\.jsonl$")
+# Files whose inode identity must never be aliased (hardlink) by the output.
+_INODE_GUARDS = ("project.yaml", "events.jsonl", "reports/failures.jsonl")
+
+
+def _checked_bundle_dest(project: Project, dest: Path | str) -> Path:
+    """Validate the bundle destination, returning it absolute (SUPPORT-P0-003 /
+    -004). Reuses :func:`manju.core.safeio.checked_out_path` for leaf safety
+    (rejects an existing symlink/junction/dir/non-regular target, so the final
+    artifact can never BE a link and a pre-planted link can't be replaced), then
+    adds a support-bundle-specific protected-domain rule: an inside-project
+    destination may not land on truth/imports/config/internal or a runtime
+    source log (nor a hardlink alias of one). Raises :class:`SafeOutError`."""
+    target = checked_out_path(dest, kind="bundle 输出")  # leaf safety + abspath
+    root = Path(project.root)
+    try:
+        rel = target.relative_to(root)
+    except ValueError:
+        return target  # outside the project — the normal --out use, allowed
+    parts = rel.parts
+    first = parts[0] if parts else ""
+    if first in _PROTECTED_TOPLEVEL:
+        raise SafeOutError(
+            f"bundle 输出落在项目 truth/源日志域 {first}/ 下,拒绝 (会破坏项目真相或源账本): {target}",
+            reason="bad_out",
+        )
+    if _PROTECTED_REPORTS_RE.match(rel.as_posix()):
+        raise SafeOutError(
+            f"bundle 输出落在运行时源账本上,拒绝: {target}", reason="bad_out")
+    # hardlink-alias guard: a non-truth-looking path that is actually a second
+    # name for a protected source file (SUPPORT-P0-004 aliasing).
+    try:
+        tst = os.stat(target) if target.exists() else None
+    except OSError:
+        tst = None
+    if tst is not None:
+        for guard in _INODE_GUARDS:
+            gpath = root / guard
+            try:
+                gst = gpath.stat()
+            except OSError:
+                continue
+            if (tst.st_dev, tst.st_ino) == (gst.st_dev, gst.st_ino):
+                raise SafeOutError(
+                    f"bundle 输出是受保护源文件 {guard} 的硬链接别名,拒绝: {target}",
+                    reason="bad_out",
+                )
+    return target
+
+
+# --------------------------------------------------------------------------- #
 # Deterministic zip writer                                                      #
 # --------------------------------------------------------------------------- #
 
 def _write_zip(dest: Path, members: dict[str, bytes]) -> int:
     """Write ``members`` to ``dest`` as a reproducible zip (sorted member order,
-    fixed 1980 timestamp, 0644) via a sibling temp + atomic replace. Returns the
-    output size in bytes."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(f".{dest.name}.tmp-{os.getpid()}")
-    try:
+    fixed 1980 timestamp, 0644). All bytes travel through
+    :func:`manju.core.safeio.publish_tmp` — an unpredictable ``mkstemp`` sibling
+    (O_EXCL) reached only via atomic replace, so a pre-planted predictable-name
+    link can never capture the write (SUPPORT-P0-004) and a failure writes zero.
+    Returns the output size in bytes."""
+    with publish_tmp(dest) as tmp:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
             for arcname in sorted(members):
                 info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.external_attr = 0o644 << 16
                 zf.writestr(info, members[arcname])
-        size = tmp.stat().st_size
-        os.replace(tmp, dest)
-        return size
-    except BaseException:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
+    return dest.stat().st_size
 
 
 # --------------------------------------------------------------------------- #
@@ -601,7 +802,17 @@ def build_support_bundle(
     """
     if not isinstance(project, Project):
         project = Project(project)
-    dest = Path(dest_zip)
+
+    # SUPPORT-P0-003 / -004: validate the destination BEFORE reading or writing
+    # anything (truth/source-log domains and link/dir/special leaves refused; the
+    # write later goes through an O_EXCL random temp). SafeOutError is re-raised
+    # as BundleError so the CLI's existing ``except BundleError`` turns it into a
+    # stable ``bundle_refused`` envelope instead of a traceback — and no bytes
+    # are ever written on refusal (失败零写入).
+    try:
+        dest = _checked_bundle_dest(project, dest_zip)
+    except SafeOutError as exc:
+        raise BundleError(f"refusing to write support bundle: {exc}") from exc
 
     stats: dict[str, int] = {}
 
@@ -609,15 +820,18 @@ def build_support_bundle(
     project_shape = redact_record(collect_project_shape(project), stats)
     config_digests = collect_config_digests(stats)
 
-    events_lines, events_malformed, events_present = collect_events_tail(
+    events_lines, events_malformed, events_present, events_note = collect_events_tail(
         project, include_events_tail, stats
     )
-    failures_lines, failures_malformed, failures_present = collect_failures_tail(
+    failures_lines, failures_malformed, failures_present, failures_note = collect_failures_tail(
         project, DEFAULT_FAILURES_TAIL, stats
     )
 
     # ---- assemble the non-manifest members
     members: dict[str, bytes] = {}
+    _ALLOWLIST_DESC = ("structured-field allowlist only (ts/actor/action/level/"
+                       "step/kind/code + numeric/boolean/hash detail); free-text "
+                       "fields dropped, not merely redacted")
     included: list[dict[str, str]] = [
         {"member": "MANIFEST.json", "describes": "index + self-scan verdict + redaction counts"},
         {"member": "(inline) environment", "describes": "manju/python/platform/tool + optional-dep versions"},
@@ -626,17 +840,24 @@ def build_support_bundle(
     ]
     skipped: list[dict[str, str]] = []
 
+    # SUPPORT-P0-002: a refused (symlink/non-regular) ledger records its REASON
+    # in the manifest rather than being followed off-project.
+    def _absent_reason(note: str, what: str) -> str:
+        if note.startswith("refused:"):
+            return f"{what} not collected — {note.split(':', 1)[1].strip()} (no-follow input boundary)"
+        return f"no {what} in project"
+
     if events_present:
         members["events-tail.txt"] = ("\n".join(events_lines) + ("\n" if events_lines else "")).encode("utf-8")
-        included.append({"member": "events-tail.txt", "describes": f"last {include_events_tail} events.jsonl lines, redacted per line"})
+        included.append({"member": "events-tail.txt", "describes": f"last {include_events_tail} events.jsonl lines — {_ALLOWLIST_DESC}"})
     else:
-        skipped.append({"what": "events-tail.txt", "reason": "no events.jsonl in project"})
+        skipped.append({"what": "events-tail.txt", "reason": _absent_reason(events_note, "events.jsonl")})
 
     if failures_present:
         members["failures-tail.jsonl"] = ("\n".join(failures_lines) + ("\n" if failures_lines else "")).encode("utf-8")
-        included.append({"member": "failures-tail.jsonl", "describes": f"last {DEFAULT_FAILURES_TAIL} reports/failures.jsonl lines, redacted per line"})
+        included.append({"member": "failures-tail.jsonl", "describes": f"last {DEFAULT_FAILURES_TAIL} reports/failures.jsonl lines — {_ALLOWLIST_DESC}"})
     else:
-        skipped.append({"what": "failures-tail.jsonl", "reason": "no reports/failures.jsonl in project"})
+        skipped.append({"what": "failures-tail.jsonl", "reason": _absent_reason(failures_note, "reports/failures.jsonl")})
 
     # These content facts are always-declared honesties about what is NOT here.
     skipped.append({"what": "media bytes", "reason": "never collected (counts only)"})
@@ -678,6 +899,15 @@ def build_support_bundle(
 
     manifest = {
         "format": BUNDLE_FORMAT,
+        # SUPPORT-P0-001: a LIMITED guarantee, not a blanket "clean" claim. The
+        # ledger tails are a structured-field allowlist (free text dropped by
+        # construction); the self-scan below is a SECONDARY tripwire over the
+        # assembled bytes, not the primary content guarantee.
+        "guarantee": (
+            "ledger tails limited to a structured-field allowlist (free-text "
+            "fields dropped, not merely redacted); ledger inputs read no-follow; "
+            "self_scan is a secondary tripwire, not a content guarantee"
+        ),
         "self_scan": verdict,
         "redaction": redaction,
         "environment": environment,
