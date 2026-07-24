@@ -2745,6 +2745,10 @@ def openclap_export(
               code="no_timeline")
     try:
         out = export_openclap(project, timeline, output=output)
+    except ProjectError as exc:
+        # OPENCLAP-P0-001: a rejected --output (truth/import/外部/链接) is a bad
+        # argument, not an export failure — stable envelope, no failure record.
+        _fail(str(exc), code="bad_out")
     except (OSError, RuntimeError) as exc:
         _record_failure(project, "export", "openclap", "openclap 导出失败",
                         evidence=" ".join(str(exc).split())[:400],
@@ -4306,19 +4310,25 @@ def transcribe(
     if not segments:
         _fail("no transcript segments produced")
     out = out or project.captions_dir / "transcripts" / (media_abs.stem + ".srt")
-    # P2-1: keep --out project-contained (media already goes through resolve).
+    # WINCLI-P0-002: keep --out project-contained (media already goes through
+    # resolve) AND confine it to captions/ via the safeio owner. The old check
+    # only enforced "inside the project root", so `--out project.yaml` overwrote
+    # truth and reported success; now truth/config/媒体 and dir/symlink/junction
+    # leaves refuse loudly (default captions/transcripts/).
+    from .core.safeio import SafeOutError, checked_out_path
     out = Path(out)
     try:
-        out_resolved = out if out.is_absolute() else (project.root / out)
-        out_resolved = out_resolved.resolve()
-        if not out_resolved.is_relative_to(project.root.resolve()):
-            _fail(
-                f"--out 必须落在项目内: {out} (拒绝项目外写入; 默认 captions/transcripts/)",
-                code="out_of_project",
-            )
-        out = out_resolved
+        out_resolved = (out if out.is_absolute() else (project.root / out)).resolve()
     except (OSError, ValueError) as exc:
         _fail(f"--out 路径无效: {out} ({exc})", code="bad_out")
+    if not out_resolved.is_relative_to(project.root.resolve()):
+        _fail(f"--out 必须落在项目内: {out} (拒绝项目外写入; 默认 captions/transcripts/)",
+              code="out_of_project")
+    try:
+        out = checked_out_path(out_resolved, project_root=project.root,
+                               inside_roots=("captions",))
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     from .core.yamlio import atomic_write_text
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -5416,6 +5426,18 @@ def pack(out: Optional[Path] = typer.Option(None),
     portable way to store a real symlink entry)."""
     project = _project()
     out = out or project.root.parent / (project.root.stem + ".manjupkg")
+    # PACK-P0-001: ``ZipFile(out, "w")`` used to create/truncate the target
+    # BEFORE any path check — `--out project.yaml` (or an import) was replaced by
+    # a zip,永久丢失 truth/原素材. Validate via the safeio owner (the default
+    # 项目外 backup path stays allowed; inside-project only exports/reports; a
+    # dir/symlink/junction/special leaf refuses) and stage every byte through an
+    # exclusive sibling temp — a mid-pack failure leaves no half-written zip.
+    from .core.safeio import SafeOutError, checked_out_path, publish_tmp
+    try:
+        out = checked_out_path(out, project_root=project.root,
+                               inside_roots=("exports", "reports"))
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
     excluded_cache = 0
     skipped_symlinks: list[str] = []
     # W5.2: linked DIRECTORIES (symlink dirs on any OS, junctions on NTFS) are
@@ -5439,7 +5461,8 @@ def pack(out: Optional[Path] = typer.Option(None),
     payload_streams = 0
     from .core.idents import windows_collision_key as _win_collision_key
     from .core.idents import windows_relpath_problems as _win_relpath_problems
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+    with publish_tmp(out) as _pkg_tmp, \
+            zipfile.ZipFile(_pkg_tmp, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.comment = json.dumps(
             {"manjupkg": 1, "name": project.root.name}, ensure_ascii=False
         ).encode("utf-8")
@@ -5448,6 +5471,10 @@ def pack(out: Optional[Path] = typer.Option(None),
             # pruned link-dir shields everything beneath it; the ancestor
             # check keeps rglob's traversal INTO the link from leaking files.
             if _pruned_roots and any(root in path.parents for root in _pruned_roots):
+                continue
+            # PACK-P0-001: when --out lands under exports/ the staging temp lives
+            # inside the walked tree — never pack the in-flight package into itself.
+            if path == _pkg_tmp:
                 continue
             if path.is_dir() and (path.is_symlink() or _dir_is_reparse_point(path)):
                 _pruned_roots.append(path)
@@ -7216,6 +7243,24 @@ def tasks_manifest(
     project = _project()
     from .build.attempts import materialize_run_manifest, read_attempts
 
+    # TASKS-P0-001: reports/runs/<run_id>/run.json is built by string-joining
+    # run_id — an absolute run_id drops the project root (pathlib), separators /
+    # `..` climb out, and a symlinked reports/runs/<id> redirects the atomic
+    # write outside (the CLI's post-write relpath() only raised AFTER the
+    # overwrite had happened). Sanitize run_id to a single safe leaf, then refuse
+    # any linked ancestor / symlink leaf via the safeio owner before writing.
+    if (not run_id or run_id in (".", "..")
+            or any(c in run_id for c in ("/", "\\", ":", "\x00"))
+            or len(run_id) > 128):
+        _fail(f"run id 非法: {run_id!r} — 仅允许单段安全名(见 manju build --json 的 run id)",
+              code="bad_args")
+    from .core.safeio import SafeOutError, checked_out_path
+    try:
+        checked_out_path(project.reports_dir / "runs" / run_id / "run.json",
+                         project_root=project.root, inside_roots=("reports",))
+    except SafeOutError as exc:
+        _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
+
     _records, _malformed = read_attempts(project, run_id)
     path = materialize_run_manifest(project, run_id)
     rel = project.relpath(path)
@@ -7769,8 +7814,16 @@ def gc(hard: bool = typer.Option(False, "--hard"),
     freed = 0
     ghost_sidecars = 0
     skipped_busy: list[str] = []
+    refused_roots: list[str] = []
     with _write_lock(project):
         for d in (project.segments_dir, project.proxy_dir):
+            # GC-P0-001: if a segments/proxy ROOT has been replaced by a symlink
+            # or NTFS junction pointing OUTSIDE the project, glob+unlink would
+            # delete project-external files (exit 0, "只清可重建缓存"). A real
+            # cache root is a plain directory; never follow a linked root.
+            if d.is_symlink() or _dir_is_reparse_point(d):
+                refused_roots.append(d.relative_to(project.root).as_posix())
+                continue
             for f in d.glob("*"):
                 if f.is_file():
                     try:
@@ -7808,12 +7861,16 @@ def gc(hard: bool = typer.Option(False, "--hard"),
         append_event(project.root, ACTOR, "gc",
                      {"freed_bytes": freed, "hard": hard,
                       "sidecars_removed": ghost_sidecars,
-                      **({"skipped_busy": len(skipped_busy)} if skipped_busy else {})})
+                      **({"skipped_busy": len(skipped_busy)} if skipped_busy else {}),
+                      **({"refused_roots": refused_roots} if refused_roots else {})})
     if as_json:
         _emit({"freed_bytes": freed, "hard": hard, "sidecars_removed": ghost_sidecars,
-               "skipped_busy": skipped_busy}, True)
+               "skipped_busy": skipped_busy, "refused_roots": refused_roots}, True)
     else:
         typer.secho(f"freed {freed / 1e6:.1f} MB", fg=typer.colors.GREEN)
+        for rel in refused_roots:
+            typer.secho(f"  ⚠ 跳过链接根(symlink/junction 指向项目外,拒绝跟随删除): {rel}",
+                        fg=typer.colors.RED)
         if ghost_sidecars:
             typer.secho(f"  同步删除 {ghost_sidecars} 个 take sidecar(避免残留 ghost take)",
                         fg=typer.colors.BRIGHT_BLACK)

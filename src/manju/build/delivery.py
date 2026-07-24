@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -1282,14 +1283,109 @@ def _manifest_path(project: Project, profile_id: str) -> Path:
     return project.reports_dir / "delivery" / f"{safe}.delivery-manifest.json"
 
 
+# DELIVERY-P0-001/002: a caller-chosen --output pointing at project truth, an
+# import/source, or a manifest-registered artifact used to be truncated and
+# rewritten into a ZIP / manifest JSON — the atomic temp+replace only ever
+# protected a PRIOR bundle, never the business file mis-named as the output.
+# Refuse those destinations before a byte is written. Outside-project paths and
+# neutral in-project scratch paths stay usable (existing behaviour); the leaf is
+# never followed (safeio owns the dir/symlink/special-file refusal).
+_DELIVERY_PROTECTED_ROOTS = frozenset({
+    "project.yaml", "bible", "shots", "timeline", "story", "locales",
+    "captions", "media", "renders", "proposals", ".git", ".manju",
+})
+
+
+def _stat_or_none(path: Path) -> os.stat_result | None:
+    try:
+        return os.stat(path)
+    except OSError:
+        return None
+
+
+def _refuse_registered_overlap(project: Project, dest: Path, manifest: dict) -> None:
+    """Refuse a destination that is (by realpath or dev/inode) the SAME file as
+    any manifest-registered artifact — a registered input living under an
+    otherwise-allowed subtree is still an input a bundle/manifest must never
+    rewrite over."""
+    rels: list[str] = [a["path"] for a in (manifest.get("artifacts") or []) if a.get("path")]
+    pf = (manifest.get("nle") or {}).get("project_file") or {}
+    if pf.get("path"):
+        rels.append(pf["path"])
+    ph = manifest.get("platform_handoff") or {}
+    if ph.get("metadata_file"):
+        rels.append(ph["metadata_file"])
+    dest_real = os.path.realpath(dest)
+    dest_stat = _stat_or_none(dest)
+    for rel in rels:
+        try:
+            ap = project.resolve(rel)
+        except ProjectError:
+            continue
+        if os.path.realpath(ap) == dest_real:
+            raise DeliveryManifestError(
+                f"交付输出与已登记制品是同一文件,拒绝覆盖: {rel}")
+        st = _stat_or_none(ap)
+        if (dest_stat is not None and st is not None
+                and (st.st_dev, st.st_ino) == (dest_stat.st_dev, dest_stat.st_ino)):
+            raise DeliveryManifestError(
+                f"交付输出与已登记制品指向同一 inode,拒绝覆盖: {rel}")
+
+
+def _delivery_output_guard(project: Project, output: Path, manifest: dict) -> Path:
+    """Validate an explicit delivery ``--output`` and return it absolute. Leaf
+    safety comes from the safeio owner (no dir/symlink/junction/special file);
+    truth/import/artifact disjointness is enforced here (DELIVERY-P0-001/002)."""
+    from ..core.safeio import SafeOutError, checked_out_path
+
+    try:
+        dest = checked_out_path(output)  # leaf-only: dir/symlink/special refusal
+    except SafeOutError as exc:
+        raise DeliveryManifestError(str(exc)) from exc
+    root = Path(os.path.abspath(project.root))
+    try:
+        rel = dest.relative_to(root)
+    except ValueError:
+        rel = None
+    if rel is not None and rel.parts and rel.parts[0] in _DELIVERY_PROTECTED_ROOTS:
+        raise DeliveryManifestError(
+            f"交付输出不能覆盖项目 truth/导入/制品({rel.parts[0]}/): {dest} — "
+            "写入 exports/ 或 reports/(或项目外路径)")
+    _refuse_registered_overlap(project, dest, manifest)
+    return dest
+
+
+def _refuse_bundle_credentials(manifest: dict) -> None:
+    """WINCLI-P0-001 fail-closed: when the manifest carries a blocking credential
+    leak (the metadata file holds a token / signed URL), the RAW sensitive file
+    would ride into the outward-facing bundle ZIP. `check` already flagged it
+    ``blocking`` / ``technical_ready:false``; the bundle must refuse too — the
+    manifest merely omitting the secret text never protected the packed file."""
+    ph = manifest.get("platform_handoff") or {}
+    leak = bool(ph.get("credentials_present")) or any(
+        d.get("code") == "PLATFORM_CREDENTIAL_LEAK"
+        for d in (manifest.get("diagnostics") or []))
+    if leak:
+        raise DeliveryManifestError(
+            "PLATFORM_CREDENTIAL_LEAK: 平台元数据含凭据/签名 URL(check 判定 "
+            "blocking)— 交付包会把原始敏感文件打进面向外发的 ZIP,拒绝生成;"
+            "先从元数据文件移除凭据再重试")
+
+
 def materialize_manifest(project: Project, manifest: dict, *,
                          output: Path | None = None) -> Path:
     """Atomically write the manifest to the existing reports area (optional —
     build/export never read it). Same inputs → semantically identical file
-    (deterministic). Deleting or hand-editing it is provably inert (test)."""
+    (deterministic). Deleting or hand-editing it is provably inert (test).
+
+    DELIVERY-P0-002: an explicit ``output`` is guarded (never project truth /
+    import / registered artifact)."""
     from ..core.yamlio import atomic_write_text
 
-    dest = output if output is not None else _manifest_path(project, manifest["profile_id"])
+    if output is not None:
+        dest = _delivery_output_guard(project, output, manifest)
+    else:
+        dest = _manifest_path(project, manifest["profile_id"])
     dest.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(dest, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return dest
@@ -1435,11 +1531,20 @@ def write_bundle(project: Project, manifest: dict, *, output: Path | None = None
     NLE/platform-facing delivery files (contract §11.3)."""
     from ..media.ffmpeg import atomic_output
 
+    # WINCLI-P0-001: a blocking credential leak refuses the WHOLE bundle before
+    # the sensitive metadata file can be packed (fail-closed at the core layer).
+    _refuse_bundle_credentials(manifest)
+
     members = _bundle_members(project, manifest)
     expected = _expected_bindings(manifest, members)
 
-    dest = output if output is not None else (
-        project.exports_dir / "delivery" / f"{_safe_name(manifest['profile_id'])}.bundle.zip")
+    if output is not None:
+        # DELIVERY-P0-001: never truncate project truth / imports / a registered
+        # artifact that was mis-named as the bundle output.
+        dest = _delivery_output_guard(project, output, manifest)
+    else:
+        dest = (project.exports_dir / "delivery"
+                / f"{_safe_name(manifest['profile_id'])}.bundle.zip")
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     # atomic: write to a sibling temp, os.replace on clean completion; on any
