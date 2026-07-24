@@ -265,17 +265,38 @@ PREPARED → DISPATCHING fail-closed 认领(在进入 transport **之前**落dur
 镜头流水线的 `strict` 参考图闸门**故意不继承**——继承它会让一次完全正常的配音,
 因为某个无关镜头缺参考图而 fail-closed。
 
-### 一条本波次自己造出来的回归
+### 本波次自己造出来的五条回归(全部已修)
 
-`21a1e2e` 给 `core/check.py` 加了 `path: Path` 注解却没加 import。
-`from __future__ import annotations` 让它不会在运行时抛错,测试也一直是绿的——
-但仓库自己的 ruff 配置 `select = ["E9","F63","F7","F82"]` 包含 F821,
-`ci.yml` 会红。在审计基线 `4007a33` 上验证过是干净的,确认是本波次引入,已修。
+修 bug 的波次自己会造 bug。这五条都是全量跑测试才现形的,一并记在这里:
 
-同类的还有一条:`91fa9f0` 的 BRIDGE-P0-002 magic 嗅探**正确地**拒绝了
-`tests/test_closeout_c2.py` 里那些 `.png` 夹具——它们从来装的就是
-`b"PREV-FRAME-BYTES-1"` 这样的占位文本。改的是夹具,不是闸门:真实的端点帧
-本来就该以 PNG 签名开头。
+1. **`21a1e2e`:`core/check.py` 缺 `Path` import**。加了 `path: Path` 注解却没
+   加 import,`from __future__ import annotations` 让它不会在运行时抛错,测试
+   一直是绿的——但仓库自己的 ruff 配置
+   `select = ["E9","F63","F7","F82"]` 含 F821,`ci.yml` 会红。在基线 `4007a33`
+   上验证过干净,确认是本波次引入。
+2. **`91fa9f0`:BRIDGE-P0-002 的 magic 嗅探**正确地**拒绝了
+   `tests/test_closeout_c2.py` 的 `.png` 夹具——它们装的一直是
+   `b"PREV-FRAME-BYTES-1"` 这样的占位文本。改夹具,不改闸门。
+3. **`468459e`:`verify_outputs` 管得太宽**。"没有哈希的输出行不能算已验证"这条
+   规则本身对,但它把 `build/graph.py` **故意**不带哈希的 cache-hit take 行也
+   一起报了。那些行按 take 名 + `spec_hash` 绑定身份、刻意跳过媒体重哈希,
+   调用点写明了原因(每次构建都重哈希所有新 take 的 I/O,正是增量路径要避免的)。
+   结果是**每一次普通的增量构建都报一个永久性的完整性失败**——这不是 fixity,
+   是噪音,而且会训练店主忽略这个校验器。现在按"这一行**声称**了什么"判:
+   声明了替代身份绑定(有 `spec_hash`、无 `sha256` 键)的按设计放行;
+   两样都不声称的,以及 `output_ref` 哈希失败的(它总会写这个键),照旧拒绝。
+   两个方向都补了钉子。
+4. **`eccc94d`:只读白名单放得太宽**。无条件放行 `/api/workspace/open`,和既有的
+   `test_workspace_post_blocked_in_readonly` 直接冲突。两边其实都有道理:
+   `manju gui --readonly` 在项目外启动时 `project=None`(见 `cli.gui`),
+   服务的是工作区选择器,那时"打开"是唯一出路,403 等于这个窗口什么都开不了;
+   但**已绑定**的会话里,"在看哪个项目"本身就是 `--readonly` 要冻结的东西。
+   现在只在**未绑定**时放行,既有的钉子原样保留、未做任何弱化。
+5. **`ba9c64d`:C35 的代理测试钉的是实现不是契约**。
+   `test_default_transport_remote_uses_urlopen` 断言远程走 `urlopen`;而 C35 的
+   契约是**行为**——远程尊重系统代理、回环绕过它。PROVIDER-NET-001 让所有调用都走
+   opener(这样凭据安全的重定向策略永远在位),而 `build_opener` 依然装载默认的
+   读环境变量的 ProxyHandler,所以契约没变。测试改为直接断言契约本身。
 
 ## 全部提交(基线 `4007a33` 起)
 
