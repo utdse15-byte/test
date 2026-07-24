@@ -864,6 +864,22 @@ def _technical_timeline_conflicts(project, report, timeline: Timeline) -> None:
                 suggestion="retime or split the captions so their windows do not overlap",
             )
 
+    # A voice clip that runs past the picture window it sits in gets hard-cut
+    # by apad/atrim at render time (media/render._build_audio_graph), so the
+    # line is clipped mid-word in the finished film. Pure timeline math like
+    # everything else here, and the same derivation build/graph.py surfaces as
+    # a build warning — qc.md is where the owner reviews before delivery, so it
+    # must not be the one place that stays quiet. warn, not error: the film
+    # still plays, and a 手工 timeline may cut a tail on purpose.
+    from ..timeline.compiler import voice_overrun_warnings
+
+    for msg in voice_overrun_warnings(timeline):
+        report.add(
+            "warn", "technical", "timeline", msg,
+            suggestion="给该镜头更长的 duration,或缩短/重录配音"
+                       "(locale 构建下画面窗口来自基准语言的配音长度)",
+        )
+
 
 def _technical_garbled_captions(project, report, timeline: Timeline) -> None:
     """Garbled-subtitle (乱码) detection (§9): U+FFFD, UTF-8-as-latin-1 mojibake,

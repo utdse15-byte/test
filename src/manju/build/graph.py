@@ -2046,6 +2046,17 @@ def _run_build_phases(
                         log_path="timeline/timeline.json", actor=actor)
                 return _finish_run(result)
 
+    # LOCALE-P1-010, second half: the compiler now lets a dub keep its own
+    # length, but a voice clip that runs PAST the picture window it sits in is
+    # still hard-cut by apad/atrim (media/render._build_audio_graph) — and that
+    # was silent. The overrun is derivable from the compiled timeline alone, so
+    # surface it once here, where all three branches above have converged on
+    # `timeline` (audition/animatic, the locale overlay, and the ordinary
+    # compiled path). Pure: no ledger write, no Timeline change.
+    from ..timeline.compiler import voice_overrun_warnings
+
+    result.warnings.extend(voice_overrun_warnings(timeline))
+
     # ---- 4. captions
     rules = project.load_rules()
     ass_path = None

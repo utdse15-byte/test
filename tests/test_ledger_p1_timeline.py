@@ -252,3 +252,50 @@ def test_gather_without_a_locale_take_is_unchanged(
     assert cinp.fingerprint() == gather_compile_input(
         tmp_project, lambda p: 4000
     ).fingerprint()
+
+
+# ------------------------------------------------------ build/graph.py wiring
+
+def test_build_graph_surfaces_the_voice_overrun_warnings() -> None:
+    """The compiler can DERIVE the overrun, but the owner only ever sees
+    BuildResult.warnings — an unwired pure function is exactly the shape this
+    audit wave kept finding (guards that existed and were reached by nothing).
+
+    A source pin rather than a driven build: the extend sits after the three
+    timeline branches and before captions/render, so reaching it for real means
+    a full ffmpeg render. tests/test_cycle19_locale_budget_skip.py pins
+    graph.py the same way, and the BEHAVIOUR is covered above against a real
+    compiled timeline."""
+    from pathlib import Path
+
+    import manju.build.graph as G
+
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    assert "voice_overrun_warnings" in src, "graph.py never calls the warner"
+    assert "result.warnings.extend(voice_overrun_warnings(timeline))" in src
+    # …and it must run for EVERY branch, i.e. after the if/elif/else converges,
+    # not inside one of them: the captions phase is the first thing past the
+    # join point.
+    assert src.index("result.warnings.extend(voice_overrun_warnings(timeline))") \
+        < src.index("# ---- 4. captions")
+
+
+def test_qc_reports_the_voice_overrun_as_a_technical_warning() -> None:
+    """qc.md is where the owner reviews before delivery, so it must not be the
+    one surface that stays quiet about a line the render will hard-cut."""
+    from manju.qc.checks import QCReport, _technical_timeline_conflicts
+
+    tl = _compile(voice_duration_ms=3000, picture_voice_duration_ms=1000)
+    report = QCReport()
+    _technical_timeline_conflicts(None, report, tl)
+    hits = [i for i in report.items if i.level == "warn" and "S001" in i.message]
+    assert hits, [i.message for i in report.items]
+    assert hits[0].suggestion
+
+
+def test_qc_stays_quiet_when_every_voice_fits() -> None:
+    from manju.qc.checks import QCReport, _technical_timeline_conflicts
+
+    report = QCReport()
+    _technical_timeline_conflicts(None, report, _compile(voice_duration_ms=1000))
+    assert not [i for i in report.items if i.level == "warn"]
