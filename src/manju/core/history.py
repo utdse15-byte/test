@@ -84,6 +84,32 @@ def _require_repo(project: Project) -> None:
 # ------------------------------------------------------------------ snapshot
 
 
+def _secret_preflight(project: Project) -> list[str]:
+    """HISTORY-P0-001: the project-relative staged files that carry something
+    matching ``core.check.SECRET_PATTERNS``, so ``snapshot`` can refuse to
+    commit a secret into git history (where it survives even a later delete).
+
+    Reuses check.py's scanner (one owner of "what is a secret"): the SAME
+    suffix∪filename selection and streamed head+tail scan `manju check` uses.
+    Only STAGED files are scanned (bounded, per-file capped) so a checkpoint of
+    a large project stays cheap; ``-z`` keeps CJK/space paths verbatim."""
+    from .check import file_has_secret, should_scan_for_secret
+
+    proc = _git(project, "diff", "--cached", "--name-only", "-z")
+    if proc.returncode != 0:
+        return []
+    offenders: list[str] = []
+    for rel in proc.stdout.split("\0"):
+        if not rel:
+            continue
+        path = project.root / rel
+        if not path.is_file() or not should_scan_for_secret(path):
+            continue
+        if file_has_secret(path):
+            offenders.append(rel)
+    return offenders
+
+
 def snapshot(project: Project, label: str = "") -> dict[str, Any]:
     """Stage everything git tracks per .gitignore and commit it, labeled.
     Returns {sha, label, clean} — clean=True means there was nothing to
@@ -95,6 +121,21 @@ def snapshot(project: Project, label: str = "") -> dict[str, Any]:
         head = _git(project, "rev-parse", "--short", "HEAD")
         sha = head.stdout.strip() if head.returncode == 0 else ""
         return {"sha": sha, "label": label, "clean": True}
+    # HISTORY-P0-001: fail-closed secret preflight BEFORE anything is committed.
+    # A key committed once lives in git history forever (a later delete does not
+    # remove it), and this pairs badly with CLI-P0-002 — so refuse the snapshot,
+    # unstage, and point at the fix. The default .gitignore already excludes
+    # .env*; this catches a key force-added or hardcoded into a tracked file.
+    offenders = _secret_preflight(project)
+    if offenders:
+        _git(project, "reset", "-q")  # unstage — never leave a secret staged
+        listed = ", ".join(offenders[:10]) + ("…" if len(offenders) > 10 else "")
+        raise HistoryError(
+            "snapshot 已中止:检测到疑似密钥/凭据即将被提交进 git 历史 —— "
+            f"{listed}。密钥进入历史后即使删除文件也会永久留存,后续 push/共享会泄露。"
+            "请把密钥移到环境变量、把该文件加入 .gitignore(默认已忽略 .env*);"
+            "若密钥曾被提交过,轮换该密钥并用 git filter-repo / BFG 清理历史。"
+        )
     # Record the event BEFORE committing so the commit contains it and the
     # tree is clean afterwards (an after-commit event would re-dirty it and
     # make back-to-back snapshots never converge). The sha lives in git's own

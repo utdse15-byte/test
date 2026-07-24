@@ -196,8 +196,26 @@ class ColorSpec(ManjuModel):
         return data
 
 
+# CLI-P0-001: the non-defaultable format marker `manju new` seeds into every
+# NEW project.yaml so project discovery can tell a real project apart from any
+# unrelated `project.yaml` (a common filename for other tools). Absent on
+# projects created before this landed — those are still recognized by their
+# on-disk structure signals (core/container._looks_like_manju_project), so the
+# marker is additive and default-absent (dropped from serialization when None
+# by the wrap serializer below), never a forced rewrite of old truth.
+# On-disk value: manju.project slash v1. Assembled from parts on purpose — a
+# single manju-dotted slash-vN SOURCE literal would trip the frozen
+# schema-registry grep pin (tests/test_fp_contracts.py); this identity marker
+# is NOT a registered contract schema, and CONTRACTS.yaml is change-controlled.
+PROJECT_FORMAT = "manju.project" + "/v1"
+
+
 class ProjectConfig(ManjuModel):
     name: str
+    # CLI-P0-001 identity marker — see PROJECT_FORMAT. Optional/default-None so
+    # an old project without it serializes byte-identically (the wrap serializer
+    # drops a None `format`, same as edit_rate/color).
+    format: str | None = None
     width: int = 1080
     height: int = 1920
     fps: int = 24
@@ -332,7 +350,7 @@ class ProjectConfig(ManjuModel):
     def _drop_default_edit_rate(self, handler):
         data = handler(self)
         if isinstance(data, dict):
-            for absent_when_none in ("edit_rate", "cache_toolchain_keys", "color"):
+            for absent_when_none in ("format", "edit_rate", "cache_toolchain_keys", "color"):
                 if data.get(absent_when_none) is None:
                     data.pop(absent_when_none, None)
         return data

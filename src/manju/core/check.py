@@ -41,12 +41,93 @@ SECRET_PATTERNS = [
 ]
 
 SCAN_SUFFIXES = {".yaml", ".yml", ".json", ".md", ".txt", ".srt", ".ass"}
+# CLI-P0-002: a pure suffix whitelist missed the single most common secret
+# home — the extensionless `.env` file (and its `.env.local` / `.env.<stage>`
+# variants) plus other extensionless credential files. Scan selection is now
+# "suffix whitelist ∪ filename pattern": these leaf names (case-insensitive)
+# are scanned regardless of extension. Binary files are excluded by a NUL-byte
+# sniff (_looks_binary), not by a narrow suffix list, so this can widen safely.
+SECRET_FILENAMES = frozenset({
+    "credentials", ".netrc", "netrc", ".npmrc", ".pypirc",
+    ".git-credentials", ".htpasswd", ".pgpass", ".dockercfg",
+})
+
 # goal item 21: media/ used to be skipped wholesale, which also hid the text
 # sidecars/notes/prompts real projects keep under media/refs, media/imports,
-# media/gen. Bound per-file scan size so pulling media/ back into scope can
-# never make `manju check` slow — binary/video/audio files are excluded by
-# SUFFIX already, so this only bounds oddly large text files.
+# media/gen. Bound per-file scan work so pulling media/ back into scope can
+# never make `manju check` slow — binary media is excluded by the NUL sniff.
 MAX_SCAN_BYTES = 2_000_000  # 2 MB
+
+# CLI-P0-003: a file larger than MAX_SCAN_BYTES used to be skipped WHOLESALE,
+# so padding a file past 2 MB hid its key from the scan. Now the scan is
+# STREAMED: the leading MAX_SCAN_BYTES AND the trailing _SCAN_TAIL_BYTES are
+# read in overlapping chunks (a key straddling a chunk boundary is still seen)
+# — bounded, size-independent work, but a 2,000,001-byte file's key (head OR
+# tail) is found. _SCAN_CHUNK/_SCAN_OVERLAP keep per-read memory small; the
+# overlap must exceed the longest possible secret match.
+_SCAN_TAIL_BYTES = 1_000_000
+_SCAN_CHUNK = 262_144
+_SCAN_OVERLAP = 4_096
+_NUL_SNIFF_BYTES = 8_192
+
+
+def _looks_binary(head: bytes) -> bool:
+    """Lightweight binary heuristic: a NUL byte in the first _NUL_SNIFF_BYTES.
+    Text secret files never carry NUL; images/video/audio/archives do — so this
+    excludes binaries without a narrow suffix allowlist (CLI-P0-002)."""
+    return b"\x00" in head[:_NUL_SNIFF_BYTES]
+
+
+def _text_has_secret(text: str) -> bool:
+    return any(pattern.search(text) for pattern in SECRET_PATTERNS)
+
+
+def should_scan_for_secret(path: Path) -> bool:
+    """CLI-P0-002 scan selection: suffix whitelist ∪ filename pattern."""
+    if path.suffix.lower() in SCAN_SUFFIXES:
+        return True
+    low = path.name.lower()
+    return low == ".env" or low.startswith(".env.") or low in SECRET_FILENAMES
+
+
+def file_has_secret(path: Path) -> bool:
+    """True iff ``path`` contains something matching :data:`SECRET_PATTERNS`.
+
+    CLI-P0-003: streams the head (up to MAX_SCAN_BYTES) and the tail (last
+    _SCAN_TAIL_BYTES) in overlapping chunks so a padded-oversize file can no
+    longer bury its key; binary files are skipped via the NUL sniff. Never
+    raises — an unreadable file is treated as "no secret found" (the caller
+    already surfaces read failures elsewhere)."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            if _looks_binary(fh.read(_NUL_SNIFF_BYTES)):
+                return False
+            head_len = min(size, MAX_SCAN_BYTES)
+            regions = [(0, head_len)]
+            tail_start = max(head_len, size - _SCAN_TAIL_BYTES)
+            if tail_start < size:  # disjoint tail beyond the head window
+                regions.append((tail_start, size - tail_start))
+            for start, length in regions:
+                fh.seek(start)
+                carry = ""
+                remaining = length
+                while remaining > 0:
+                    chunk = fh.read(min(_SCAN_CHUNK, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    text = carry + chunk.decode("utf-8", errors="replace")
+                    if _text_has_secret(text):
+                        return True
+                    # keep the last _SCAN_OVERLAP chars so a match spanning a
+                    # chunk boundary is still caught (regions are disjoint, so
+                    # carry resets between head and tail — a match cannot span
+                    # the skipped middle).
+                    carry = text[-_SCAN_OVERLAP:]
+    except OSError:
+        return False
+    return False
 
 
 @dataclass
@@ -445,29 +526,25 @@ def run_check(project: Project) -> CheckReport:
 
     # ---- secret scan (keys never enter the project directory)
     for path in project.root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in SCAN_SUFFIXES:
+        # CLI-P0-002: select by suffix whitelist ∪ filename pattern (so `.env`
+        # and friends are covered); binary media is excluded by the NUL sniff
+        # inside file_has_secret, not by a narrow suffix list.
+        if not path.is_file() or not should_scan_for_secret(path):
             continue
         rel = path.relative_to(project.root).as_posix()
         # .git/.manju are VCS/runtime internals, never project truth text;
         # renders/ is compiled binary output. media/ is DELIBERATELY NOT
         # skipped here (goal item 21) — media/refs, media/imports, media/gen
-        # commonly hold text sidecars/notes/prompts, and binary media is
-        # already excluded by SCAN_SUFFIXES above.
+        # commonly hold text sidecars/notes/prompts.
         if rel.startswith((".git/", ".manju/", "renders/")):
             continue
-        try:
-            if path.stat().st_size > MAX_SCAN_BYTES:
-                continue
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for pattern in SECRET_PATTERNS:
-            if pattern.search(text):
-                report.errors.append(
-                    f"{rel}: looks like an API key/secret — keys must live in env vars, "
-                    "never in the project (§8.2)"
-                )
-                break
+        # CLI-P0-003: streamed head+tail scan — an oversize/padded file can no
+        # longer skip the scan wholesale.
+        if file_has_secret(path):
+            report.errors.append(
+                f"{rel}: looks like an API key/secret — keys must live in env vars, "
+                "never in the project (§8.2)"
+            )
 
     # WP4: locale overlay validation (unknown shot ids, malformed YAML)
     try:
