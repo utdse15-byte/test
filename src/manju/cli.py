@@ -4320,8 +4320,18 @@ def masters(
                     fg=typer.colors.GREEN)
         for a in index["artifacts"]:
             loud = a["loudness"]
-            typer.echo(f"  {a['role']:16} {a['path']}  "
-                       f"I={loud['integrated_lufs']} LUFS  TP={loud['true_peak_dbtp']} dBTP")
+            # Never print a bare Python `None` at the owner. A silent bus (no
+            # music/sfx on this film — the ordinary case) and a measurement that
+            # never landed both produced `I=None LUFS`, which reads as breakage
+            # for something that is usually just an empty stem.
+            if loud.get("silent"):
+                level = "静音 (silent — 该总线无信号)"
+            elif loud.get("integrated_lufs") is None:
+                level = "未测得 (not measured — 见 manju doctor)"
+            else:
+                level = (f"I={loud['integrated_lufs']} LUFS  "
+                         f"TP={loud['true_peak_dbtp']} dBTP")
+            typer.echo(f"  {a['role']:16} {a['path']}  {level}")
         if index.get("loudnorm_master"):
             ln = index["loudnorm_master"]
             typer.echo(f"  normalised → {ln['path']} (target {ln['target_lufs']} LUFS)")
