@@ -74,9 +74,20 @@ __all__ = ["render_page", "render_css", "render_js"]
 _CSS = """
 /* manju gui — dark workbench stylesheet (served as /app.css). */
 :root {
-  --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
-  --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
-  --ok: #7ee2a8; --warn: #ffcf5c; --err: #ff8a90;
+  /* Palette (visual pass): the greys were flat and slightly muddy — panel and
+   * background sat ~0.03 apart in luminance, so every surface read as one wash
+   * with hairlines drawn on it. Deepened the base, lifted the panels, and gave
+   * the line colour a touch of the accent hue so borders belong to the theme
+   * instead of looking like leftover 1px grey. Same token NAMES throughout, so
+   * nothing that consumes them changes. */
+  --bg: #0f1115; --panel: #181b21; --panel2: #212530; --line: #2e3440;
+  --fg: #eceef2; --muted: #98a0ad; --accent: #74a9ff; --star: #ffcf5c;
+  --ok: #6fdca0; --warn: #ffc94d; --err: #ff8a90;
+  /* Elevation + radius scale — surfaces now read by depth, not only by border.
+   * Kept subtle: this is a dense workbench, not a marketing page. */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.28);
+  --shadow-2: 0 2px 8px rgba(0,0,0,.32), 0 1px 2px rgba(0,0,0,.24);
+  --radius: 12px; --radius-sm: 8px;
   /* the info/hover tint behind accent-coloured text (next-step bar, unread
    * chip, drag highlight …) — was hand-copied as #202b40 across modules. */
   --accent-bg: #202b40;
@@ -95,9 +106,17 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
     "WenQuanYi Micro Hei", sans-serif;
-  line-height: 1.5; padding-bottom: 4rem;
+  /* CJK sets denser than latin at the same leading; 1.65 keeps the mixed
+     中文/English lines this UI is full of from crowding. */
+  line-height: 1.65; padding-bottom: 4rem;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
 main { padding: 0 1.2rem 1.2rem; max-width: 1600px; margin: 0 auto; }
+/* One heading rhythm instead of browser defaults at every size. */
+h1, h2, h3, h4 { line-height: 1.3; letter-spacing: -.01em; }
+h2 { font-size: 1.12rem; margin: 0 0 .5rem; }
+h3 { font-size: .98rem; margin: 0 0 .4rem; }
+h4 { font-size: .86rem; margin: 0 0 .3rem; color: var(--muted); font-weight: 600; }
 a { color: var(--accent); }
 /* THE one owner of "hidden means hidden". Both the class and the attribute
  * lose to any later `display:` rule at equal specificity (the /create skill
@@ -129,8 +148,9 @@ h3 { margin: .2rem 0 .4rem; font-size: .92rem; }
 
 /* ------------------------------------------------------------- panels -- */
 .panel {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: .9rem 1.1rem; margin: 1rem 0;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-1);
+  padding: 1rem 1.15rem; margin: .9rem 0;
 }
 #header {
   margin: 0 0 1rem; border-radius: 0; border-width: 0 0 1px; padding: 1.1rem 1.4rem;
@@ -143,7 +163,8 @@ h3 { margin: .2rem 0 .4rem; font-size: .92rem; }
 .chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .chip {
   background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
-  padding: .1rem .6rem; font-size: .78rem; white-space: nowrap;
+  padding: .14rem .65rem; font-size: .78rem; white-space: nowrap;
+  line-height: 1.5;
 }
 .chip.lock { color: var(--warn); border-color: #4a3a12; }
 .chip.build-lock {
@@ -199,11 +220,23 @@ button.chip:hover { filter: brightness(1.15); }
 
 /* ------------------------------------------------------------ buttons -- */
 .btn {
-  background: var(--accent); color: #0b1220; border: 0; border-radius: 6px;
-  padding: .38rem .85rem; font-size: .84rem; font-weight: 700; cursor: pointer;
-  font-family: inherit;
+  background: var(--accent); color: #0b1220; border: 0;
+  border-radius: var(--radius-sm);
+  padding: .42rem .9rem; font-size: .84rem; font-weight: 700; cursor: pointer;
+  font-family: inherit; box-shadow: var(--shadow-1);
 }
-.btn.ghost { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.btn.ghost {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  box-shadow: none;
+}
+.btn.ghost:hover:not(:disabled) { border-color: var(--accent); }
+/* A visible keyboard ring everywhere — the workbench is driven by shortcuts
+   (review j/k/g/x, edit space/I/O), so tabbing must never go dark. */
+.btn:focus-visible, button:focus-visible, a:focus-visible,
+select:focus-visible, input:focus-visible, textarea:focus-visible,
+summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+}
 .btn.small { width: 100%; margin-top: .45rem; padding: .28rem .6rem; font-size: .76rem; }
 .btn.mini { padding: .06rem .5rem; font-size: .76rem; font-weight: 700; line-height: 1.3; }
 .btn:hover:not(:disabled) { filter: brightness(1.12); }
@@ -276,9 +309,14 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
 
 /* ------------------------------------------------- badges (board §11) -- */
 .badge {
-  display: inline-block; font-size: .72rem; font-weight: 700; padding: .12rem .5rem;
-  border-radius: 999px; text-transform: uppercase; letter-spacing: .03em;
-  white-space: nowrap;
+  /* Was uppercase + 700 across the board, which shouts on a page that already
+   * carries dozens of them (a 12-shot film renders 30+). Uppercase also does
+   * nothing for the CJK half of every label while making the latin half louder
+   * than the content it annotates. Slightly smaller, medium weight, no
+   * transform: still scannable, no longer competing with the text. */
+  display: inline-block; font-size: .7rem; font-weight: 600; padding: .14rem .5rem;
+  border-radius: 999px; letter-spacing: .01em; white-space: nowrap;
+  line-height: 1.45;
 }
 .st-fresh  { background: #17402a; color: #7ee2a8; }
 .st-stale  { background: #4a3a12; color: #ffcf5c; }
@@ -865,10 +903,23 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: .8rem; margin-top: .9rem;
+  /* Blocks size to their CONTENT instead of stretching to the tallest sibling.
+     交付物 legitimately runs 14 rows while 花费/队列/审批 are a line or two
+     each, and equal-height columns turned that into three ~400px voids beside
+     one full one — the single thing that made this panel look unfinished. */
+  align-items: start;
 }
-.ck-block { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: .55rem .75rem; }
+.ck-block {
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: .65rem .8rem;
+}
 .ck-block h3 { margin: 0 0 .35rem; font-size: .8rem; color: var(--muted); font-weight: 600; }
 .ck-block.wide { grid-column: 1 / -1; }
+/* 交付物 carries an order of magnitude more rows than its neighbours (14 vs
+   one line each). In a single 240px column its chips stacked into a tall thin
+   ladder with dead space alongside; two columns lets them flow. Falls back to
+   one column on narrow viewports via the media query below. */
+.ck-block.span2 { grid-column: span 2; }
 .ck-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .ck-dv { display: inline-flex; align-items: baseline; gap: .3rem; font-size: .76rem;
   padding: .08rem .5rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
@@ -905,6 +956,9 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 
 @media (max-width: 900px) {
   .cockpit { padding: .9rem .9rem; }
+  /* one column at this width — a 2-column span would force a horizontal
+     scroll, which the 420px pass explicitly guarantees against. */
+  .ck-block.span2 { grid-column: span 1; }
   .ck-cta { align-items: stretch; width: 100%; }
   .btn.ck-primary { max-width: none; }
 }
@@ -1848,7 +1902,7 @@ _JS = r"""
         chips.appendChild(chip);
       });
       b.appendChild(chips);
-    }));
+    }, "span2"));
 
     /* spend (block 5) */
     grid.appendChild(ckBlock("花费 (spend)", (b) => {
@@ -2046,8 +2100,8 @@ _JS = r"""
     return b;
   }
 
-  function ckBlock(title, fill) {
-    const b = el("div", "ck-block");
+  function ckBlock(title, fill, cls) {
+    const b = el("div", "ck-block" + (cls ? " " + cls : ""));
     b.appendChild(el("h3", null, title));
     try { fill(b); } catch (err) { b.appendChild(el("p", "ck-err", errMsg(err))); }
     return b;
