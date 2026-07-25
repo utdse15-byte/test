@@ -267,6 +267,33 @@ class Stage:
     predicate: Callable[[Project], tuple[bool, str]]
 
 
+_TEMPLATE_HINT_RE = re.compile(r"[（(]manju create \w+ 生成模板[)）]")
+
+
+def _next_action_for(project: Project, stage: "Stage") -> str:
+    """`stage.next_action` with the "generate a template" clause dropped once
+    the file is already there.
+
+    `manju new` scaffolds story/brief.md and story/script.md, so on a brand-new
+    project the brief stage advised "(manju create brief 生成模板)" — and
+    running it answered "story/brief.md 已存在 — 不覆盖人写的内容". The refusal
+    is right (never overwrite the owner's text); the ADVICE was wrong, and it
+    was the very first instruction a new project gives. The script stage never
+    carried the clause, so this also makes the two siblings agree.
+
+    Found by walking the funnel as a newcomer rather than by reading it."""
+    action = stage.next_action
+    if not _TEMPLATE_HINT_RE.search(action):
+        return action
+    try:
+        exists = (project.root / stage.artifact).exists()
+    except Exception:
+        return action
+    if not exists:
+        return action
+    return re.sub(r"\s*" + _TEMPLATE_HINT_RE.pattern + r"\s*", "", action, count=1)
+
+
 STAGES: list[Stage] = [
     Stage(
         id="brief", cn="立意", artifact="story/brief.md", skill="creation-funnel",
@@ -363,7 +390,7 @@ def funnel_status(project: Project) -> dict[str, Any]:
             "artifact": stage.artifact,
             "evidence": evidence,
             "skill": stage.skill,
-            "next_action": stage.next_action,
+            "next_action": _next_action_for(project, stage),
         })
 
     done_count = sum(1 for s in stages if s["state"] == "done")
