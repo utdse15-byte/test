@@ -3187,3 +3187,17 @@ understood at a glance, or dropped something quietly.
     something, in the ledger hint AND in the immediate error line the owner
     reads first — and only when the directory is really there, the same
     "never offer a route that would refuse" rule as the post-build offers.
+
+32. **A test that measured the terminal, not the surface** — the Windows hard
+    gate went red on `test_the_wall_is_real` ("only 0 panels"). The help surface
+    had not shrunk; the assertion counted Rich's box-drawing corners and the
+    Windows console takes the ASCII fallback, so it was measuring terminal
+    detection. It now counts the app's own command names present in the rendered
+    help (82/82 against a floor of 40), matched as standalone tokens because the
+    per-row border prefix is exactly the platform-dependent part. The test had
+    landed AFTER the last green Windows run, so nothing had ever proven it on
+    the first platform — Linux green is not Windows green, and running the gate
+    is the only way to know. Writing the companion guard tripped the same trap
+    the repo has recorded four times (a token in a docstring), twice in one
+    edit, which is why the character set is now a named constant and the guard
+    scans only the function body.

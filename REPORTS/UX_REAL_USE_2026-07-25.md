@@ -1396,3 +1396,34 @@ Could not open encoder before EOF`,exit 234 / error -22)。
 
 规矩沿用本次会话前面立的那条:**只给现在就能走通的路**。纯 normalize(无淡入淡出)的
 失败根本不产生 scratch,那种情况下这句话不出现。
+
+---
+
+## 二十四、硬闸门红了,而红的是我自己写的那条守卫
+
+准备收尾时把 Windows 硬闸门跑了一遍(`workflow_dispatch`,不需要 PR)。**红了**:
+
+```
+FAILED tests/test_help_first_contact.py::test_the_wall_is_real
+AssertionError: only 0 panels — has the surface shrunk?
+1 failed, 5730 passed, 55 skipped
+```
+
+**surface 没有变小。** 那条断言数的是 Rich 画面板用的方角字符,而 Windows 控制台走的是
+ASCII 边框回退——所以它量的根本不是帮助页有多大,**量的是 Rich 的终端探测**。
+
+这条测试是本次会话前面「帮助墙开三扇门」那次改动的 guard-the-guard,落地时间**晚于**
+上一次绿的 Windows 运行(#257),所以在此之前**没有任何证据说它在 Windows 上成立**。
+Linux 绿 ≠ Windows 绿,这次是自己撞上的。
+
+改法:改成数**帮助页上真实出现的命令名**(82/82,门槛 40),按独立 token 匹配——因为每
+一行都带面板边框前缀,而边框正是跨平台会变的那部分。再加一条守卫钉死「尺寸检查不许再依赖
+画框字符」。
+
+写那条守卫的时候**当场又踩了一次**:守卫的 docstring 里我把那个方角字符写了进去,守卫自己
+把自己判红了。CLAUDE.md 记过四次「注释/docstring 里的 token 触发 grep-pin」,这是第五、
+第六次,而且两次都发生在**正在写 pin 的那一刻**。所以那个字符集现在单独拎成一个常量,
+守卫只扫函数体那一段。
+
+教训写在这里,因为它比这条测试本身重要:**一条只在开发平台绿过的测试,不算验证过——
+尤其当第一平台是另一个。**
