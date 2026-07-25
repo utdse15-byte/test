@@ -24,6 +24,15 @@ from manju.core.safeio import (
     publish_tmp,
 )
 
+# `os.mkfifo` does not exist on Windows — the two FIFO cases below raised
+# AttributeError there and turned the HARD gate red (run #255). Windows has no
+# FIFO to plant in a directory, so the vector genuinely does not exist; the
+# sibling module test_ledger_p0_provider_refs.py already skips its FIFO cases
+# this way, and this file simply missed the marker. Everything else here —
+# symlinks, hardlinks, directories, the atomic-publish contract — still runs on
+# Windows, so the module never goes green by wholesale skipping.
+WINDOWS = os.name == "nt"
+
 
 @pytest.fixture()
 def proot(tmp_path: Path) -> Path:
@@ -85,6 +94,7 @@ def test_linked_parent_inside_project_is_refused(proot: Path, tmp_path: Path) ->
         checked_out_path(proot / "exports" / "sub" / "x.zip", project_root=proot)
 
 
+@pytest.mark.skipif(WINDOWS, reason="POSIX FIFO — os.mkfifo does not exist on Windows")
 def test_fifo_destination_is_refused(tmp_path: Path) -> None:
     fifo = tmp_path / "pipe"
     os.mkfifo(fifo)
@@ -141,6 +151,7 @@ def test_append_refuses_multi_hardlink_file(tmp_path: Path) -> None:
         open_append_nofollow(a)
 
 
+@pytest.mark.skipif(WINDOWS, reason="POSIX FIFO — os.mkfifo does not exist on Windows")
 def test_append_refuses_fifo(tmp_path: Path) -> None:
     fifo = tmp_path / "events.jsonl"
     os.mkfifo(fifo)
