@@ -1209,3 +1209,36 @@ that Save will succeed**」。代码知道,界面没说。一个不加限定的�
 这个修复存在的理由就在那段注释里,注释没了,下一个人就丢掉了原因。
 
 全量:**5749 passed, 0 failed**。
+
+## 二十、终于抓到现场:不是 ffmpeg「失败」,是**音频那条腿吐不出包**
+
+「没有机制就不瞎修」的下一步不是停,是**去抓现场**。连跑三轮全量、开 `--tb=long`,
+第一轮就复现了。拿到了之前从没有过的那两行:
+
+```
+[aost#0:1/aac] Could not open encoder before EOF
+[aost#0:1/aac] Task finished with error code: -22 (Invalid argument)
+[out#0/mp4]    Nothing was written into output file, because at least one of its streams received no packets.
+ffmpeg … -filter_complex '[0:v][1:v]xfade=…[v];[0:a][1:a]acrossfade=d=0.334[a]' … -c:a aac …
+```
+
+**关键是 `aost#0:1/aac`** —— 报错的是**音频输出流**,不是视频。AAC 编码器"在 EOF 之前
+打不开",意思是音频滤镜链**一帧都没产出**,编码器没机会协商参数。视频那条腿是好的。
+
+这一下把结论从「ffmpeg 偶尔失败」收窄到:**xfade 边界渲染里 `acrossfade` 这条音频腿
+偶发地吐不出任何包**。三次复现全部落在这条路径上(两个不同的测试,同一个
+`_applied_timeline` 夹具)。
+
+**我原来猜的「crossfade 比素材还长」也是错的**:夹具是 1 秒的片段配 0.334 秒的交叉
+淡化,音频绰绰有余。所以**四个假设,四个排除**——共享状态、并发争抢、磁盘写满、
+素材过短。
+
+**频率**:累计约 18 轮全量里出现 3 次(≈1/6),永远只在 `test_transitions_looks.py`。
+
+**下一步是具体的**,不再是「等它再红」:在渲染失败时**保留** `renders/segments/tmp*/`
+下的 `a.mp4` / `b.mp4`(当前走 `TemporaryDirectory`,失败即销毁),用 ffprobe 看那两个
+边界片段**是不是偶尔没有音频流** —— 若是,`[0:a]` 拿到空输入,后面一切都对得上。
+
+**仍然不改产品代码。** 但交接的东西已经从「一条无法复现的偶发」变成了「**一条有确切
+错误签名、有复现频率、有四个已排除方向、有明确下一步诊断动作**的线索」。这就是「不瞎
+修」和「不调查」的区别。
