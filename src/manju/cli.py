@@ -54,10 +54,69 @@ if os.name == "nt":  # pragma: no cover — the guard is driven directly in test
     _utf8_harden_stdio()
 
 
+# Provenance markers — §-sections, goal/round/WP/AI_IDE ids — trace a command
+# back to the plan documents it was built from. They belong in the source: the
+# next maintainer needs them. They do NOT belong in `manju --help`, because
+# CLAUDE.md says the plan document is not in the repo, so for the owner reading
+# the command list they are references to something nobody can open. There were
+# 40 §-refs in the top-level help alone.
+#
+# Stripped at RENDER time rather than edited out of 65 docstrings: one owner,
+# reversible, and the provenance stays where maintainers read it.
+_PROV_TOKEN = (
+    r"§[\d][\d.\w\-]*|goal(?:\s+items?)?\s+[\dV][\w\-/]*|round[-\s][\w\-]+|"
+    r"AI_IDE_\d+(?:\s+WP\d+)?|WP\d+|DR\d+\w*|[PWMC]\d+[a-z]?"
+)
+_PROV_RE = re.compile(_PROV_TOKEN, re.I)
+# What may remain inside a parenthetical for it to count as pure provenance.
+_PROV_FILLER_RE = re.compile(
+    r"^[\s,,、;;/·和+&]*(?:roadmap|FP roadmap|见|see)?[\s,,]*$", re.I)
+# A provenance token hung on the END of an otherwise meaningful parenthetical:
+# "(who did what, when — §10)" → "(who did what, when)".
+_PROV_TRAIL_RE = re.compile(
+    r"\s*[,,;;—–-]\s*(?:roadmap\s+)?(?:" + _PROV_TOKEN + r")\s*$", re.I)
+
+
+def _strip_provenance(text: str) -> str:
+    """Drop plan-document references from user-facing help text.
+
+    Conservative on purpose: a parenthetical is removed only when it is ENTIRELY
+    provenance, or trimmed only when a provenance token trails real content. A
+    marker woven into a sentence ("AI_IDE_16 §9 — round-trip …") is left alone —
+    an earlier, greedier version produced "one line of text —)" and "scan .",
+    which is worse than the noise it removed."""
+    def repl(m: "re.Match[str]") -> str:
+        lead = " " if m.group(0)[:1].isspace() else ""
+        inner = m.group(1)
+        if _PROV_RE.search(inner) and _PROV_FILLER_RE.match(_PROV_RE.sub("", inner)):
+            return ""
+        trimmed = _PROV_TRAIL_RE.sub("", inner)
+        if trimmed != inner and trimmed.strip():
+            return f"{lead}({trimmed})"
+        return m.group(0)
+
+    return re.sub(r"\s{2,}", " ",
+                  re.sub(r"\s*[（(]([^()（）]*)[)）]", repl, text)).strip()
+
+
 class _SuggestingGroup(typer.core.TyperGroup):
     """UX wave 2 item 3: a mistyped command gets "did you mean" suggestions
     instead of a bare "No such command" — with 127 commands this is table
     stakes. Same difflib technique as core/mentions.py's @role correction."""
+
+    def get_command(self, ctx, name):  # type: ignore[override]
+        """Also the display hook: typer's rich formatter renders each row from
+        ``command.short_help or command.help``, and it reaches every command
+        through here. Setting `short_help` leaves `help` (and therefore
+        `manju <cmd> --help`, where a maintainer may want the reference) intact.
+        Sub-groups inherit this class, so nested lists get the same treatment."""
+        cmd = super().get_command(ctx, name)
+        if cmd is not None and not getattr(cmd, "_manju_short_help_cleaned", False):
+            source = cmd.short_help or cmd.help or ""
+            if source:
+                cmd.short_help = _strip_provenance(source.split("\n\n")[0])
+            cmd._manju_short_help_cleaned = True
+        return cmd
 
     def resolve_command(self, ctx, args):  # type: ignore[override]
         try:
