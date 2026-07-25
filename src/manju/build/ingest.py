@@ -108,6 +108,7 @@ from ..core.hashing import hash_file
 from ..core.idents import is_safe_segment
 from ..core.refs import (REF_SUFFIX_RE, bible_owner_map, copy_collision_safe,
                          set_bible_ref_image)
+from ..core.safeio import _is_reparse_point
 from ..core.writes import WriteRejected, select_take_checked, selected_take_lock_block
 from ..media.preview import make_preview
 from ..providers.manual import register_manual_take
@@ -281,7 +282,7 @@ def plan_ingest(
                 f"--shot 指定的镜头不存在: {shot} — 先 `manju shot {shot}` 新建,或核对拼写"
             )
 
-    files = _collect_files(paths)
+    files, skipped_links = _collect_files(paths)
     existing_index = _existing_hash_index(project)
     library_index = _library_hash_index()
     shot_ids = set(project.shot_ids())
@@ -344,9 +345,19 @@ def plan_ingest(
                 continue
             row = _classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
                             bible_owner=bible_owner)
-            if on_duplicate == "link" and lib_hit.get("blob_exists"):
-                row = replace(row, file=lib_hit["blob_path"],
+            verified = _verified_library_blob(h) if on_duplicate == "link" else None
+            if verified is not None:
+                # INGEST-P0-002: the library index row's blob path/bytes are
+                # UNTRUSTED — a forged row can claim this hash while pointing at
+                # an external secret. Only source the copy from the library
+                # AFTER re-verifying the blob's actual bytes hash to ``h``
+                # (fail-closed via _verified_library_blob); otherwise keep the
+                # dropped file (byte-identical, honest provenance).
+                row = replace(row, file=str(verified),
                              library_hint=hint + " — 已从素材库复制(provenance: library)")
+            elif on_duplicate == "link":
+                row = replace(row, library_hint=hint +
+                             " — 素材库 blob 校验失败/缺失,改用拖入的文件(provenance: dropped)")
             else:
                 row = replace(row, library_hint=hint)
             rows.append(row)
@@ -354,6 +365,18 @@ def plan_ingest(
 
         rows.append(_classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
                               bible_owner=bible_owner))
+
+    for link in skipped_links:
+        # INGEST-P0-001: symbolic links (and Windows junctions) pointing
+        # outside the selected root are surfaced as their own rows so the
+        # reviewer sees exactly what was left out — never landed.
+        rows.append(IngestRow(
+            file=link, name=Path(link).name, hash="", action="skip_symlink",
+            target="(不落地)",
+            reason=("来源是符号链接/junction(可能指向所选目录之外),已跳过——"
+                    "外部链接不会被导入项目(INGEST-P0-001)"),
+            match="unmatched",
+        ))
 
     errors = []
     if canceled:
@@ -390,19 +413,65 @@ def _library_hash_index() -> dict[str, dict[str, Any]]:
     return out
 
 
-def _collect_files(paths: list[Path] | list[str]) -> list[Path]:
+def _verified_library_blob(content_hash: str) -> Path | None:
+    """The byte-verified, containment-checked library blob Path for
+    ``content_hash`` (INGEST-P0-002) — or None when the library is absent, has
+    no such asset, or the asset's blob escapes the root/follows a link/does not
+    actually hash to ``content_hash``. Best-effort like ``_library_hash_index``:
+    ingest keeps working (falling back to the dropped file) even when the shelf
+    is missing."""
+    try:
+        from ..core.library import Library, LibraryError
+    except ImportError:
+        return None
+    try:
+        return Library().find_verified_blob(content_hash)
+    except LibraryError:
+        return None
+
+
+def _collect_files(paths: list[Path] | list[str]) -> tuple[list[Path], list[str]]:
+    """(files, skipped_links) — NO-FOLLOW traversal (INGEST-P0-001).
+
+    A file symlink is skipped and reported, and a symlinked/junction DIRECTORY
+    is pruned WHOLE (its target tree is external and must never be smuggled
+    into the project), mirroring `cli` pack's link-dir pruning: rglob yields a
+    parent before its children, so a pruned link-dir shields everything beneath
+    it via the ancestor check. A passed root that is itself a link (file OR
+    directory pointing at an outside tree) is refused the same way. Every
+    returned file is therefore a real regular file whose resolved path stays
+    inside the passed root, so the resolve()-dedup below can no longer let one
+    root's link pull in another tree's bytes."""
     out: list[Path] = []
+    skipped_links: list[str] = []
     for raw in paths:
         p = Path(raw)
         if not p.exists():
             raise IngestError(f"路径不存在: {p} — 核对拼写和当前目录")
+        if p.is_symlink() or _is_reparse_point(p):
+            # the passed root ITSELF is a link — never traverse into its
+            # external target (a link file, or a link/junction directory).
+            skipped_links.append(str(p))
+            continue
         if p.is_dir():
             # sorted(Path) is platform-dependent (Windows folds case in
             # PurePath ordering — gate run #4 moved plan row indices). Sort by
             # the POSIX string: byte-identical order on every platform.
-            out.extend(sorted((x for x in p.rglob("*")
-                               if x.is_file() and not x.name.startswith(".")),
-                              key=lambda x: x.as_posix()))
+            pruned_roots: list[Path] = []
+            for x in sorted(p.rglob("*"), key=lambda x: x.as_posix()):
+                if pruned_roots and any(r in x.parents for r in pruned_roots):
+                    continue
+                if x.is_dir() and (x.is_symlink() or _is_reparse_point(x)):
+                    pruned_roots.append(x)
+                    skipped_links.append(str(x))
+                    continue
+                if x.is_symlink() or _is_reparse_point(x):
+                    if x.is_file():  # only file links are meaningful to report
+                        skipped_links.append(str(x))
+                    continue
+                if not x.is_file() or x.name.startswith("."):
+                    continue
+                out.append(x)
         elif p.is_file():
             out.append(p)
         else:
@@ -414,7 +483,7 @@ def _collect_files(paths: list[Path] | list[str]) -> list[Path]:
         if rp not in seen:
             seen.add(rp)
             uniq.append(f)
-    return uniq
+    return uniq, skipped_links
 
 
 def _existing_hash_index(project: Project) -> dict[str, str]:
@@ -902,7 +971,7 @@ def apply_ingest(
             canceled = True
             break
         eff = _apply_override(row, overrides.get(i))
-        if eff.action in ("skip_duplicate", "skip_unreadable"):
+        if eff.action in ("skip_duplicate", "skip_unreadable", "skip_symlink"):
             results.append(IngestRowResult(row=eff, ok=True, detail={"skipped": True}))
             append_event(project.root, actor, "ingest_row", {
                 "index": i, "file": eff.name, "action": eff.action,

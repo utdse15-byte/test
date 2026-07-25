@@ -71,6 +71,14 @@ class ShotInput:
     # (0 / None = whole file) leave the compile byte-identical to before.
     source_in_ms: int = 0
     source_out_ms: int | None = None
+    # WP4 locale: the voice length that fixes the PICTURE window when it is NOT
+    # this shot's own voice. A locale build keeps picture geometry on the BASE
+    # take so every language shares the segment cache; ``voice_duration_ms``
+    # stays the TRUE length of ``voice_source``, because the render bounds the
+    # voice clip with apad/atrim (media/render._build_audio_graph) and a foreign
+    # duration there cuts a longer dub mid-word or pads it with dead silence.
+    # None (every non-locale compile) = the shot's own voice drives picture.
+    picture_voice_duration_ms: int | None = None
 
 
 @dataclass
@@ -154,6 +162,15 @@ class CompileInput:
                         if (s.source_in_ms or s.source_out_ms is not None)
                         else {}
                     ),
+                    # WP4 locale: fold the picture-fixing voice length ONLY when
+                    # it is set (the same non-default-only stance as the two
+                    # blocks above), so every non-locale project keeps today's
+                    # byte-identical hash.
+                    **(
+                        {"picture_voice_duration_ms": s.picture_voice_duration_ms}
+                        if s.picture_voice_duration_ms is not None
+                        else {}
+                    ),
                 }
                 for s in self.shots
             ],
@@ -203,14 +220,23 @@ def snap_to_frame_grid(duration_ms: int, fps: int) -> int:
     return max(1, round(frames * 1000 / fps))
 
 
+def _picture_voice_ms(inp: ShotInput) -> int | None:
+    """The voice length that drives the PICTURE window for this shot: the
+    explicit ``picture_voice_duration_ms`` override (WP4 locale, so every
+    language shares the base take's segment-cache geometry) else the shot's own
+    voice. The voice TRACK always keeps its own ``voice_duration_ms``."""
+    return inp.picture_voice_duration_ms or inp.voice_duration_ms
+
+
 def _resolve_duration_ms(inp: ShotInput, rules: TimelineRules, fps: int) -> int:
     """Audio drives picture (§6). Explicit numeric duration always wins; the
     result is snapped to the frame grid (FIX-B) as the final step."""
     timing = rules.timing
     if inp.shot.duration != "auto":
         return snap_to_frame_grid(max(1, int(round(float(inp.shot.duration) * 1000))), fps)
-    if inp.voice_duration_ms:
-        raw = inp.voice_duration_ms + timing.padding_before_ms + timing.padding_after_ms
+    voice_ms = _picture_voice_ms(inp)
+    if voice_ms:
+        raw = voice_ms + timing.padding_before_ms + timing.padding_after_ms
     elif inp.take_duration_ms:
         raw = inp.take_duration_ms
     else:
@@ -263,8 +289,9 @@ def _resolve_duration_frames(inp: ShotInput, rules: TimelineRules, rate: Rate) -
     if inp.shot.duration != "auto":
         raw = max(1, int(round(float(inp.shot.duration) * 1000)))
         return max(1, ms_to_frames(raw, rate, Rounding.ROUND_HALF_UP))
-    if inp.voice_duration_ms:
-        raw = inp.voice_duration_ms + timing.padding_before_ms + timing.padding_after_ms
+    voice_ms = _picture_voice_ms(inp)
+    if voice_ms:
+        raw = voice_ms + timing.padding_before_ms + timing.padding_after_ms
     elif inp.take_duration_ms:
         raw = inp.take_duration_ms
     else:
@@ -389,7 +416,15 @@ def _align_words_to_text(words: list[dict], text: str) -> list[dict]:
     carry no ",。?"): walk the original dialogue text, match each word token
     in order, and glue the characters between this token's end and the next
     token's start (punctuation/space) onto the word. Any mismatch falls back
-    to the raw words — alignment is an enhancement, never a gate."""
+    to the raw words — alignment is an enhancement, never a gate.
+
+    Invariant (pinned in tests/test_ledger_p1_timeline.py): the enriched texts
+    concatenated in order reproduce ``text`` CHARACTER FOR CHARACTER. Every
+    character is claimed exactly once — the HEAD before the first matched token
+    (a "[SFX] " marker, an "Alice: " speaker label) belongs to the first word,
+    and inter-token runs are carried VERBATIM (stripping them glued latin words
+    together). Cue-edge whitespace is trimmed once, later, by ``_timed_captions``.
+    """
     enriched: list[dict] = []
     cursor = 0
     for i, word in enumerate(words):
@@ -402,9 +437,11 @@ def _align_words_to_text(words: list[dict], text: str) -> list[dict]:
         if i + 1 < len(words):
             nxt = text.find(str(words[i + 1]["text"]), end)
             next_start = nxt if nxt >= 0 else end
-        tail = text[end:next_start].strip()
-        enriched.append({**word, "text": token + tail})
-        cursor = end
+        # head is non-empty only for the FIRST word: the tail below already
+        # advances `cursor` to where the next token was located, so no run of
+        # characters is ever emitted twice.
+        enriched.append({**word, "text": text[cursor:found] + token + text[end:next_start]})
+        cursor = max(end, next_start)
     return enriched
 
 
@@ -447,7 +484,11 @@ def _timed_captions(words: list[dict], offset_ms: int, max_chars: int,
             flush()
         group.append(word)
         length += len(token)
-        if token and token[-1] in "。!?!?…":
+        # The sentence ender is the last NON-SPACE character: an aligned latin
+        # token keeps its trailing space ("Run now! " ), which must not hide the
+        # eager break the CJK path has always had.
+        ender = token.rstrip()
+        if ender and ender[-1] in "。!?!?…":
             flush()
     flush()
     return [c for c in cues if c.text]
@@ -508,6 +549,47 @@ def _branding_overlays(packaging: PackagingSpec, total_ms: int) -> list[OverlayC
                 kind="cta", text=cta.text, position=cta.position,
                 start_ms=start, duration_ms=span,
             ))
+    return out
+
+
+def voice_overrun_warnings(timeline: Timeline) -> list[str]:
+    """Voice clips that run PAST the picture window they sit under.
+
+    Picture is the master (§6): the render bounds each voice clip with
+    apad/atrim and trims the whole mix to ``timeline.duration_ms``, so an
+    over-long voice either plays over the NEXT shot or is cut at the film's
+    end. That is a real, audible outcome and must never be silent — the
+    ``list[str]`` shape is the one ``build.graph.BuildResult.warnings`` already
+    carries, so any caller (build, QC, CLI) can surface these verbatim.
+
+    PURE and derived from the compiled timeline only — never a build input.
+    Slack is one frame, because clip lengths are snapped to the frame grid and
+    may land a fraction of a frame under the voice they were derived from.
+    """
+    out: list[str] = []
+    windows = sorted(
+        ((c.start_ms, c.start_ms + c.duration_ms, c.shot)
+         for c in timeline.tracks.video if c.duration_ms > 0),
+        key=lambda w: w[0],
+    )
+    if not windows:
+        return out
+    fps = timeline.fps if timeline.fps and timeline.fps > 0 else 1
+    slack = 1000 / fps
+    for clip in timeline.tracks.voice:
+        if clip.duration_ms is None or clip.duration_ms <= 0:
+            continue  # None = play to the source's natural end; nothing to bound
+        under = [w for w in windows if w[0] <= clip.start_ms]
+        if not under:
+            continue
+        start, end, shot = under[-1]
+        overrun = (clip.start_ms + clip.duration_ms) - end
+        if overrun > slack:
+            out.append(
+                f"{shot}: 配音比镜头长 {overrun}ms(voice {clip.duration_ms}ms @ "
+                f"{clip.start_ms}ms,镜头 {start}-{end}ms)— 尾部会盖到下一个镜头,"
+                "片尾镜头则会被剪掉;加长该镜头 duration 或重配更短的音频"
+            )
     return out
 
 
@@ -997,17 +1079,28 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
             take_dur = out_ms - in_ms
         elif in_ms and take_dur is not None:
             take_dur = max(1, take_dur - in_ms)
-        # WP4 duration policy: when a base voice exists, prefer its duration
-        # for the VIDEO slot so locale builds keep segment-cache geometry;
-        # locale voice still drives the voice track source/timing below.
+        # WP4 duration policy: when a base voice exists, its duration keeps
+        # fixing the VIDEO slot so locale builds share segment-cache geometry —
+        # but that length is recorded SEPARATELY (picture_voice_duration_ms).
+        # ``voice_duration_ms`` is always the true length of ``voice_source``:
+        # pinning the locale clip to a foreign take made the render apad/atrim
+        # the dub to the wrong length (a translation is rarely the same length
+        # as its source), and voice_overrun_warnings now names the overrun
+        # instead of it happening silently.
         # Cache-first here too (audit FP-L2): the base voice take is reachable
         # WITH its sidecar via _find_voice_take(..., lang=None), so the locale
         # path reads the synthesis probe cache instead of live-probing.
-        voice_take_for_duration = voice_take
-        if lang:
+        voice_dur = _voice_duration_ms(voice_take, probe_fn)
+        picture_voice_dur: int | None = None
+        if lang and voice_take is not None:
             base_voice_take = _find_voice_take(project, status.shot_id, lang=None)
-            if base_voice_take is not None:
-                voice_take_for_duration = base_voice_take
+            # Compare the resolved MEDIA path: with no locale take of its own,
+            # _find_voice_take(lang=...) already fell back to the base file and
+            # there is nothing to override (byte-identical to a base compile).
+            if base_voice_take is not None and base_voice_take[0] != voice_take[0]:
+                base_dur = _voice_duration_ms(base_voice_take, probe_fn)
+                if base_dur and base_dur != voice_dur:
+                    picture_voice_dur = base_dur
         shots.append(
             ShotInput(
                 shot=_shot_for_compile(status.shot_id),
@@ -1015,9 +1108,8 @@ def gather_compile_input(project: Project, probe_fn: ProbeFn, *,
                 take_source=project.relpath(take.media_path),
                 take_duration_ms=take_dur,
                 voice_source=project.relpath(voice) if voice else None,
-                voice_duration_ms=_voice_duration_ms(
-                    voice_take_for_duration, probe_fn
-                ),
+                voice_duration_ms=voice_dur,
+                picture_voice_duration_ms=picture_voice_dur,
                 # Locale timing from locale take when present
                 voice_timing=_load_voice_timing(voice) if voice else None,
                 source_in_ms=in_ms,

@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .container import PROJECT_FILE, Project
+from .safeio import SafeOutError, refuse_unsafe_regular_file
 from .yamlio import read_json, write_json
 
 try:
@@ -193,6 +194,15 @@ def _read_raw(path: Path) -> list[dict[str, Any]]:
 
 
 def _write_raw(path: Path, entries: list[dict[str, Any]]) -> None:
+    # Quartet consistency (events/recents/library/failures): route the store
+    # write through the same no-follow guard the ledger sinks now use — refuse a
+    # symlinked/hardlinked/special recents.json rather than replace or write
+    # through it. Best-effort convenience data (§3): a refusal degrades to
+    # skipping the write, never a crash of the real command that touched it.
+    try:
+        refuse_unsafe_regular_file(path, kind="recents.json")
+    except SafeOutError:
+        return
     write_json(path, {"version": _VERSION, "entries": entries})
 
 

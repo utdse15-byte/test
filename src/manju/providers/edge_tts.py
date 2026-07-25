@@ -40,6 +40,15 @@ from .tts import voice_provider_descriptor
 class EdgeTtsProvider:
     """Same surface as GenericTtsProvider: synthesize() registers a voice take."""
 
+    # WINCLI-P0-003: synthesize() streams shot.dialogue.text to Microsoft's Edge
+    # "Read Aloud" endpoint over a WebSocket — real network egress of private
+    # dialogue, even though per_call cost is 0. The §8.3 spend gate keys on
+    # cost>0, so it never fires here; the voice NETWORK-egress gate
+    # (build.voice.network_egress_gate) keys on these markers instead so a
+    # zero-cost cloud path still passes a network/privacy门.
+    NETWORK_EGRESS = True
+    NETWORK_EGRESS_ENDPOINT = "speech.platform.bing.com (Microsoft Edge TTS)"
+
     def __init__(self, manifest: ProviderManifest, **_ignored):
         self.manifest = manifest
         self.id = manifest.id

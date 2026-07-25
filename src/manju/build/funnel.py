@@ -441,14 +441,25 @@ def scaffold_stage(project: Project, stage_id: str, *, force: bool = False,
             "剧本用 manju new 已脚手架的 story/script.md,分镜用 shots/*.yaml")
     relpath, template = SCAFFOLDS[stage_id]
     path = project.root / relpath
+    # FUNNEL-P0-001: a symlinked ``story/`` (or any linked segment under it)
+    # would scaffold the template THROUGH the link outside the project while the
+    # returned relpath still reads as ``story/<stage>.md`` (``--force`` widens
+    # the blast radius). Refuse the linked directory chain BEFORE the exists /
+    # overwrite check and the write; publish via the no-follow atomic publisher.
+    from ..core.safeio import SafeOutError, publish_text, refuse_linked_within
+
+    try:
+        refuse_linked_within(path.parent, project.root, kind="story 目录")
+    except SafeOutError as exc:
+        # surface through the existing FunnelError envelope (create catches it)
+        raise FunnelError(str(exc)) from exc
     if path.exists() and not force:
         raise FunnelError(
             f"{relpath} 已存在 — 不覆盖人写的内容;确要重置用 --force")
     from ..core.events import append_event
-    from ..core.yamlio import atomic_write_text
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, template)
+    publish_text(path, template)
     rel = project.relpath(path)
     append_event(project.root, actor, "funnel_scaffold",
                  {"stage": stage_id, "path": rel, "force": bool(force)})

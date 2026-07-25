@@ -57,6 +57,7 @@ from uuid import uuid4
 from ..core import events as _events_core
 from ..core.events import EvidenceWriteError
 from ..core.hashing import hash_file, hash_value
+from ..core.safeio import SafeOutError, refuse_linked_within
 
 # --------------------------------------------------------------- schema/states
 
@@ -1059,15 +1060,58 @@ def run_manifest_path(project: Any, run_id: str) -> Path:
     return _root(project) / "reports" / "runs" / str(run_id) / "run.json"
 
 
+# A run id becomes ONE directory name under ``reports/runs/``; nothing legitimate
+# comes near this bound (the minted form is ``run_<YYYYmmdd_HHMMSS>_<hex6>``).
+RUN_ID_MAX_LEN = 128
+
+
+def _checked_run_id(run_id: Any) -> str:
+    """Return ``run_id`` proven safe as a SINGLE path leaf (TASKS-P0-001).
+
+    ``run_manifest_path`` joins the caller's id straight into
+    ``reports/runs/<id>/run.json``, so an absolute id DROPS the project root
+    (pathlib), a ``/``/``\\`` or ``..`` climbs out of the project, a colon opens
+    an NTFS stream/drive on Windows, and a multi-thousand-character id degrades
+    into an unstructured ENAMETOOLONG — the audit overwrote an external
+    ``run.json`` through every one of those. The CLI refuses the same set before
+    it calls, but the CLI is not the boundary: this is the service layer the
+    build orchestrator and any other caller reach directly.
+
+    ``core.idents.validate_safe_segment`` is deliberately NOT reused here: its
+    charset is narrower than the ids this evidence stream has always recorded,
+    so adopting it would retro-reject existing runs instead of only refusing
+    traversal. This is a containment check, not a naming policy.
+    """
+    rid = str(run_id)
+    if (not rid or rid in (".", "..")
+            or any(c in rid for c in ("/", "\\", ":", "\x00"))
+            or len(rid) > RUN_ID_MAX_LEN):
+        raise SafeOutError(
+            f"run id 非法: {run_id!r} — 只允许单段安全名(不含 / \\ : NUL、"
+            f"不是 . 或 ..、长度 1-{RUN_ID_MAX_LEN})",
+            reason="bad_args",
+        )
+    return rid
+
+
 def materialize_run_manifest(project: Any, run_id: str) -> Path:
     """Derive + atomically write ``reports/runs/<run_id>/run.json`` and return
     its path. Deterministic for the same event set (bar ``generated_at``, which
     is excluded from ``evidence_digest``); deletable; NEVER read back by
-    build/resume/cache/rebuild-index."""
+    build/resume/cache/rebuild-index.
+
+    TASKS-P0-001: the id is validated as one safe leaf and the whole
+    ``reports/runs/<id>/run.json`` chain is refused when any segment is a
+    symlink/junction (a linked PARENT redirects the atomic replace outside the
+    project) — both BEFORE anything is derived or written, so a refusal leaves
+    zero bytes behind. Raises :class:`~manju.core.safeio.SafeOutError`, the
+    refusal type the callers already handle."""
     from ..core.yamlio import atomic_write_text
 
-    manifest = build_run_manifest(project, run_id)
+    run_id = _checked_run_id(run_id)
     path = run_manifest_path(project, run_id)
+    refuse_linked_within(path, _root(project), kind="run manifest")
+    manifest = build_run_manifest(project, run_id)
     atomic_write_text(path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return path
 
@@ -1087,8 +1131,31 @@ def verify_outputs(project: Any, run_id: str) -> list[dict]:
             if not isinstance(out, dict):
                 continue
             rel = out.get("path")
+            if not rel:
+                continue  # nothing identifiable to verify against
+            if "sha256" not in out and out.get("spec_hash"):
+                # This output declares an ALTERNATIVE identity binding instead of
+                # a hash. The cache-hit take refs (build/graph.py, the
+                # `skipped_cache_hit` call) bind identity by take NAME +
+                # spec_hash and deliberately skip the media re-hash — re-hashing
+                # every fresh take on every build is exactly the I/O the
+                # incremental path exists to avoid, and that choice is documented
+                # at the call site. Flagging them would make every ordinary
+                # incremental build report a permanent integrity problem, which
+                # is noise, not fixity. A row with NEITHER a hash NOR a spec_hash
+                # claims nothing at all and still falls through to the refusal
+                # below.
+                continue
             expected = out.get("sha256")
-            if not rel or not expected:
+            if not expected:
+                # An output that promised verifiability and cannot deliver it:
+                # either a torn/hand-written row carrying a path and nothing
+                # else, or an output_ref whose hashing failed (it always sets the
+                # key, ""-on-failure). Unverifiable must never read as verified —
+                # UNKNOWN is never guessed into PASS — so surface it.
+                mismatches.append({"attempt_id": d.get("attempt_id"), "path": rel,
+                                   "expected_sha256": "<unrecorded>",
+                                   "actual_sha256": "<unverifiable>"})
                 continue
             fpath = root / rel
             if not fpath.exists():

@@ -88,16 +88,21 @@ def test_bundle_redacts_secrets_paths_and_signed_urls(tmp_project):
     # the self-scan verdict rides the summary, clean.
     assert summary["self_scan"]["ok"] is True
     assert summary["self_scan"]["hits"] == []
-    # redaction actually happened, and it's counted in MANIFEST.json.
+    # SUPPORT-P0-001: the ledger tail is now a STRICT structured-field allowlist
+    # — free-text detail is DROPPED, not merely redacted — so the leak markers
+    # (secrets, signed URLs, and every private basename) are gone by
+    # construction, a strictly stronger guarantee than the old redact-in-place.
     manifest = json.loads(members["MANIFEST.json"])
-    assert manifest["redaction"]["total"] > 0
-    assert manifest["redaction"]["abs_paths_rewritten"] >= 3       # posix + win + mac
-    assert manifest["redaction"]["signed_urls_masked"] >= 1
-    # the redacted events tail is present and carries the placeholders, not secrets.
+    assert manifest["redaction"]["events_included"] == len(_LEAKY_EVENTS)
     tail = members["events-tail.txt"].decode("utf-8")
-    assert "<redacted" in tail
-    assert "final_v1.mp4" in tail                                  # basename kept
     assert "sk-" not in tail
+    assert "final_v1.mp4" not in tail            # private basename no longer kept
+    assert "cdn.example.com" not in tail
+    assert "<redacted" not in tail               # nothing to redact — content excluded
+    for line in tail.splitlines():
+        rec = json.loads(line)
+        assert rec.get("actor") in {"ai", "engine"}
+        assert set(rec) <= {"ts", "actor", "action", "level", "step", "kind", "code", "detail"}
 
 
 # --------------------------------------------------------------------------- #
@@ -108,8 +113,12 @@ def test_self_scan_tripwire_refuses_to_write_when_redactor_is_noop(tmp_project, 
     _write_events(tmp_project, _LEAKY_EVENTS)
     dest = tmp_project.root / "unredacted.zip"
 
-    # defeat THE redactor — every collector routes through redact_record.
+    # Defeat BOTH sanitization seams — the per-value redactor AND the
+    # SUPPORT-P0-001 structured-field allowlist — to prove the self-scan tripwire
+    # is still the last line of defense: with sanitization disabled the raw
+    # secrets reach the assembled bytes and the write is REFUSED.
     monkeypatch.setattr(supportbundle, "redact_record", lambda obj, stats=None: obj)
+    monkeypatch.setattr(supportbundle, "_allowlist_container", lambda node: node)
 
     with pytest.raises(BundleError) as exc:
         build_support_bundle(tmp_project, dest)

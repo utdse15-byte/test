@@ -88,3 +88,83 @@ def evaluate_all_voices(project: Project) -> list[VoiceStatus]:
     bible = project.load_bible()
     return [evaluate_voice(project, project.load_shot(sid), bible)
             for sid in project.shot_ids()]
+
+
+# ------------------------------------------------- WINCLI-P0-003 network門
+
+# `ask_before` token for the SEPARATE network/data-transfer risk category. A
+# cloud TTS (Edge / generic) streams private dialogue off-box even at ZERO cost,
+# so the §8.3 spend gate (which keys on estimated_cost > 0) never fires for it;
+# `build --yes` / `voice --yes` grant SPEND consent, never egress/privacy consent
+# (WINCLI-P0-003). A project that adds this token to project.yaml ask_before
+# refuses network TTS until network出站 is explicitly allowed. Opt-in and additive:
+# absent the token, behaviour is byte-identical to today.
+NETWORK_EGRESS_TOKEN = "external_data_transfer"
+
+
+class VoiceEgressWaiting(RuntimeError):
+    """A network TTS synthesis was refused pending explicit external-data-transfer
+    consent (WINCLI-P0-003). Carries the resolved providers + their egress targets
+    so the caller can list每个远端 provider / 目的地 / 数据类型. ``reason`` is the
+    stable token for envelopes/records."""
+
+    def __init__(self, message: str, *, providers: list[Any], targets: list[dict[str, Any]]):
+        super().__init__(message)
+        self.providers = providers
+        self.targets = targets
+        self.reason = NETWORK_EGRESS_TOKEN
+
+
+def tts_egress_target(provider: Any) -> dict[str, Any]:
+    """Describe the off-box egress a resolved TTS provider performs — ``{provider,
+    destination, data}`` (WINCLI-P0-003). A generic manifest exposes its submit
+    URL host; the Edge module:Class adapter has no submit URL, so its declared
+    ``NETWORK_EGRESS_ENDPOINT`` names Microsoft's endpoint. TTS is cloud-only
+    (decision 5), so every configured TTS provider is treated as network egress."""
+    manifest = getattr(provider, "manifest", None)
+    submit = getattr(manifest, "submit", None) if manifest is not None else None
+    url = getattr(submit, "url", None) if submit is not None else None
+    if url:
+        try:
+            from urllib.parse import urlsplit
+
+            destination = urlsplit(str(url)).netloc or str(url)
+        except Exception:
+            destination = str(url)
+    elif getattr(provider, "NETWORK_EGRESS_ENDPOINT", None):
+        destination = str(provider.NETWORK_EGRESS_ENDPOINT)
+    else:
+        destination = "第三方 TTS 云端(remote TTS cloud)"
+    return {"provider": getattr(provider, "id", None),
+            "destination": destination, "data": "台词文本 dialogue text"}
+
+
+def network_egress_gate(project: Project, providers: list[Any], *,
+                        allow_network: bool) -> None:
+    """WINCLI-P0-003 network/privacy gate — a risk category SEPARATE from the
+    §8.3 spend gate (same waiting-user style). Cloud TTS streams private dialogue
+    off-box even at zero cost, so the spend ``assume_yes`` must NOT double as
+    egress consent. When ``project.yaml`` ask_before lists
+    :data:`NETWORK_EGRESS_TOKEN` and ``allow_network`` is not granted, refuse
+    before any byte leaves the box, naming每个 provider + destination + data type.
+    Opt-in: absent the token, this is a no-op (additive, no behaviour change)."""
+    if allow_network:
+        return
+    try:
+        ask_before = project.load_config().ask_before
+    except Exception:
+        return  # a config read failure must never turn the gate into a crash
+    if NETWORK_EGRESS_TOKEN not in ask_before:
+        return
+    provs = [p for p in providers if p is not None]
+    if not provs:
+        return
+    targets = [tts_egress_target(p) for p in provs]
+    names = ", ".join(str(t["provider"]) for t in targets)
+    dests = ", ".join(str(t["destination"]) for t in targets)
+    raise VoiceEgressWaiting(
+        f"waiting_user: 配音会把台词文本发送到第三方 TTS 云端(provider: {names};"
+        f"目的地: {dests})——命中 ask_before={NETWORK_EGRESS_TOKEN}"
+        "(网络出站/隐私是独立于费用的风险类别,零成本也要过网络门)。"
+        "确认允许网络出站后重试。",
+        providers=[t["provider"] for t in targets], targets=targets)

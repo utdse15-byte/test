@@ -39,13 +39,21 @@ Three portable text-first shapes, one discipline:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 import zipfile
 from pathlib import Path
 from typing import Any
 
 from ..core.container import Project
 from ..core.hashing import HASH_PREFIX, hash_file, hash_value
+from ..core.idents import (
+    UnsafeIdentifierError,
+    validate_safe_segment,
+    windows_segment_problems,
+)
+from ..core.safeio import _is_reparse_point, publish_tmp
 from ..core.yamlio import atomic_write_text, dump_yaml, read_yaml, write_yaml
 
 REFPACK_SCHEMA = "manju.identity-ref-pack/v1"
@@ -231,6 +239,18 @@ def import_reference_pack(project: Project, pack_dir: Path | str
     if index.get("schema") != REFPACK_SCHEMA:
         raise SeriesPackError(f"未知 pack schema: {index.get('schema')!r}")
     pack_id = str(index.get("pack_id") or "pack")
+    # REFPACK-P0-001: an imported pack is UNTRUSTED — its ``pack_id`` becomes a
+    # path segment below (``bible/refpacks/<pack_id>.yaml``). NEVER trust the
+    # exporter's validation: re-check here that it is a safe single segment (no
+    # absolute root / separator / ``..``) AND not a Windows reserved device name,
+    # or an absolute/traversing id would overwrite an arbitrary ``.yaml``.
+    try:
+        validate_safe_segment(pack_id, label="pack_id")
+    except UnsafeIdentifierError as exc:
+        raise SeriesPackError(str(exc)) from exc
+    reserved = windows_segment_problems(f"{pack_id}.yaml")
+    if reserved:
+        raise SeriesPackError("pack_id 不安全: " + "; ".join(reserved))
 
     dest_media = project.root / "media" / "refs" / "imported"
     dest_media.mkdir(parents=True, exist_ok=True)
@@ -461,6 +481,40 @@ def _pack_arcname(name: str) -> str:
     return name
 
 
+def _read_selected_source(path: Path, project: Project) -> bytes:
+    """TEMPLATE-P0-002: read an EXPLICITLY selected pack source with NO link
+    following. A ``bible/style.yaml`` / ``timeline/rules.yaml`` that is a
+    symlink/junction (or resolves outside the project) must never pull
+    project-EXTERNAL bytes — another client's private config, a secret file —
+    into a shareable template pack. The leaf must be a real regular file
+    contained in the project root; the actual read is O_NOFOLLOW."""
+    p = Path(path)
+    if p.is_symlink() or _is_reparse_point(p):
+        raise SeriesPackError(
+            f"选中的模板源是链接(symlink/junction),拒绝把项目外内容打进包: {p.name}")
+    try:
+        p.resolve().relative_to(project.root.resolve())
+    except (OSError, ValueError):
+        raise SeriesPackError(f"选中的模板源逃出项目根,拒绝打包: {p.name}")
+    try:
+        st = os.lstat(p)
+    except OSError as exc:
+        raise SeriesPackError(f"选中的模板源不可读: {p.name} ({exc})") from exc
+    if not stat.S_ISREG(st.st_mode):
+        raise SeriesPackError(f"选中的模板源不是普通文件,拒绝打包: {p.name}")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(p, flags)
+    try:
+        with os.fdopen(fd, "rb") as f:
+            return f.read()
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
 def export_template_pack(project: Project, out_zip: Path | str, *,
                          bible_entries: list[str] | None = None,
                          include_style: bool = False,
@@ -510,13 +564,13 @@ def export_template_pack(project: Project, out_zip: Path | str, *,
     if include_style:
         style_path = project.root / "bible" / "style.yaml"
         if style_path.exists():
-            _add("bible/style.yaml", style_path.read_bytes())
+            _add("bible/style.yaml", _read_selected_source(style_path, project))
             selections["style"] = True
 
     if include_rules:
         rules_path = project.rules_path
         if rules_path.exists():
-            _add("timeline/rules.yaml", rules_path.read_bytes())
+            _add("timeline/rules.yaml", _read_selected_source(rules_path, project))
             selections["rules"] = True
 
     if include_delivery_profiles:
@@ -582,16 +636,19 @@ def export_template_pack(project: Project, out_zip: Path | str, *,
 
     members.sort(key=lambda t: t[0])  # stable order
     sums: list[str] = []
-    out_zip.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_zip.with_suffix(out_zip.suffix + ".tmp")
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-        for arcname, data in members:
-            digest = hashlib.sha256(data).hexdigest()  # the exact streamed bytes
-            sums.append(f"{digest}  {arcname}")
-            zf.writestr(zipfile.ZipInfo(arcname), data)
-        zf.writestr(zipfile.ZipInfo("SHA256SUMS"),
-                    ("\n".join(sums) + "\n").encode("utf-8"))
-    tmp.replace(out_zip)
+    # TEMPLATE-P0-001: publish through a RANDOM O_EXCL sibling temp
+    # (safeio.publish_tmp), never the predictable "<out>.tmp" — a pre-planted
+    # symlink/junction at that fixed name could otherwise make ZipFile write the
+    # archive THROUGH it into an external victim. publish_tmp deletes the temp on
+    # any failure (失败零写入) and atomically replaces out_zip on clean exit.
+    with publish_tmp(out_zip) as tmp:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arcname, data in members:
+                digest = hashlib.sha256(data).hexdigest()  # the exact streamed bytes
+                sums.append(f"{digest}  {arcname}")
+                zf.writestr(zipfile.ZipInfo(arcname), data)
+            zf.writestr(zipfile.ZipInfo("SHA256SUMS"),
+                        ("\n".join(sums) + "\n").encode("utf-8"))
     return {"zip": str(out_zip), "members": [m[0] for m in members],
             "manifest": manifest, "refused_voice_profiles": refused_voice}
 

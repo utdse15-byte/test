@@ -53,9 +53,38 @@ from .yamlio import read_yaml, write_yaml
 
 SERIES_FILE = "series.yaml"
 
+# SERIES-P0-001: the non-defaultable format marker `Series.create` seeds so a
+# series root is told apart from any unrelated `series.yaml` (a MORE likely
+# plain-business filename than project.yaml). Mirrors PROJECT_FORMAT.
+SERIES_FORMAT = "manju.series" + "/v1"  # value: manju.series slash v1; split like PROJECT_FORMAT (schema-registry grep pin)
+
 # The umbrella sub-directories `Series.create` scaffolds (bible/ is filled with
-# the same file set as a project bible below).
+# the same file set as a project bible below). Also the on-disk structure
+# signals that mark a real series (SERIES-P0-001) — an old series without the
+# format marker still resolves via any of these, so discovery never forces a
+# migration; a bare foreign series.yaml matches neither and is refused.
 SERIES_DIRS = ("bible", "episodes", "script", "reports")
+
+
+def _looks_like_manju_series(root: Path) -> bool:
+    """True iff ``root`` is a real Manju series (SERIES-P0-001): its series.yaml
+    declares ``format: manju.series/v1`` OR one of the :data:`SERIES_DIRS`
+    structure directories exists. A plain `series.yaml` from another tool has
+    neither, so it is never mistaken for a series nor written into."""
+    sf = root / SERIES_FILE
+    if not sf.exists():
+        return False
+    if any((root / sig).is_dir() for sig in SERIES_DIRS):
+        return True
+    try:
+        data = read_yaml(sf)
+    except Exception:
+        data = None
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("format"), str)
+        and data["format"].startswith("manju.series/")
+    )
 
 # An episode id is either the E-number convention (E01, E02, …) or a lowercase
 # slug (a-z0-9 with -/_ inside). Rejecting everything else keeps directory names
@@ -136,6 +165,10 @@ class SeriesConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str
+    # SERIES-P0-001 identity marker — see SERIES_FORMAT. Optional/default-None so
+    # an old series without it round-trips unchanged (dropped by exclude_none on
+    # save); recognized on discovery via the structure signal instead.
+    format: str | None = None
     description: str = ""
     episodes: list[EpisodeRef] = Field(default_factory=list)
     created_at: str | None = None
@@ -156,12 +189,41 @@ class Series:
 
         Crucially this keeps walking PAST an episode project: an episode carries
         ``project.yaml`` (which ``Project.find`` stops at) but no ``series.yaml``,
-        so from inside ``episodes/E01.manju`` this climbs to the series root."""
+        so from inside ``episodes/E01.manju`` this climbs to the series root.
+
+        SERIES-P0-001: a `series.yaml` is only a stopping point when the
+        directory is REALLY a manju series (format marker or structure signal).
+        A bare foreign series.yaml is walked past and, if it is the only
+        candidate, reported with a migration hint — never silently taken over."""
         p = Path(start).resolve()
+        bare: Path | None = None
         for candidate in [p, *p.parents]:
-            if (candidate / SERIES_FILE).exists():
+            if not (candidate / SERIES_FILE).exists():
+                continue
+            if _looks_like_manju_series(candidate):
                 return cls(candidate)
+            if bare is None:
+                bare = candidate
+        if bare is not None:
+            raise SeriesError(
+                f"{bare} 有 {SERIES_FILE},但它不像 Manju series:既没有 "
+                f"`format: {SERIES_FORMAT}` 标识,也没有结构目录"
+                f"({'/、'.join(SERIES_DIRS)}/)。为避免误接管并污染无关目录,这里不当作 "
+                f"series 处理。若这确是老的 Manju series,给 {SERIES_FILE} 加一行 "
+                f"`format: {SERIES_FORMAT}`;否则请用 `manju series new` 新建。"
+            )
         raise SeriesError(f"no manju series found from {p} upward")
+
+    def verify_manju_identity(self) -> None:
+        """SERIES-P0-001 write-before verification: refuse a series WRITE against
+        a directory that merely holds a foreign `series.yaml`. In the Series
+        layer (not only the CLI) so every write entry point is covered."""
+        if not _looks_like_manju_series(self.root):
+            raise SeriesError(
+                f"拒绝写入 {self.root}:该目录有 {SERIES_FILE} 但不像 Manju series"
+                f"(缺少 `format: {SERIES_FORMAT}` 标识与结构目录)。为避免污染无关目录,"
+                f"写命令不在此执行。老 series 可在 {SERIES_FILE} 补 `format: {SERIES_FORMAT}`。"
+            )
 
     @classmethod
     def find_or_none(cls, start: Path | str = ".") -> "Series | None":
@@ -180,22 +242,70 @@ class Series:
             raise SeriesError(f"series already exists: {root}")
         name = name or root.name
 
-        for sub in SERIES_DIRS:
-            (root / sub).mkdir(parents=True, exist_ok=True)
-        # The GLOBAL series bible: the SAME file set as a project bible (§4),
-        # empty scaffolds. new_episode seeds an episode's bible from these.
-        for bible_file in BIBLE_FILES:
-            bpath = root / "bible" / f"{bible_file}.yaml"
-            if not bpath.exists():
-                write_yaml(bpath, {})
+        bible_paths = [root / "bible" / f"{f}.yaml" for f in BIBLE_FILES]
 
-        config = SeriesConfig(
-            name=name,
-            description=description,
-            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        )
-        write_yaml(root / SERIES_FILE, config.model_dump(exclude_none=True))
-        (root / "events.jsonl").touch()
+        # Precheck EVERY planned path before the first write, so a blocked
+        # scaffold never leaves a half-built series behind. All blockers are
+        # reported at once (a per-path abort would only reveal the first).
+        blockers: list[str] = []
+        if root.exists() and not root.is_dir():
+            blockers.append(f"{root} 不是目录")
+        for sub in SERIES_DIRS:
+            p = root / sub
+            if p.exists() and not p.is_dir():
+                blockers.append(f"{sub} 已存在且不是目录")
+        for bpath in bible_paths:
+            if bpath.exists() and not bpath.is_file():
+                blockers.append(f"bible/{bpath.name} 已存在且不是普通文件")
+        events_path = root / "events.jsonl"
+        if events_path.exists() and not events_path.is_file():
+            blockers.append("events.jsonl 已存在且不是普通文件")
+        if blockers:
+            raise SeriesError(
+                f"无法在 {root} 建立剧集(未做任何写入): " + "; ".join(blockers))
+
+        # Everything this call creates, in creation order — an error rolls the
+        # list back in reverse so a failure leaves ZERO residue.
+        created: list[Path] = []
+
+        def _mkdir(p: Path) -> None:
+            if not p.exists():
+                p.mkdir(parents=True)
+                created.append(p)
+
+        try:
+            _mkdir(root)
+            for sub in SERIES_DIRS:
+                _mkdir(root / sub)
+            # The GLOBAL series bible: the SAME file set as a project bible (§4),
+            # empty scaffolds. new_episode seeds an episode's bible from these.
+            for bpath in bible_paths:
+                if not bpath.exists():
+                    write_yaml(bpath, {})
+                    created.append(bpath)
+
+            config = SeriesConfig(
+                name=name,
+                format=SERIES_FORMAT,  # SERIES-P0-001 identity marker
+                description=description,
+                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+            series_path = root / SERIES_FILE
+            write_yaml(series_path, config.model_dump(exclude_none=True))
+            created.append(series_path)
+            if not events_path.exists():
+                events_path.touch()
+                created.append(events_path)
+        except (OSError, ValueError, ValidationError) as exc:
+            for p in reversed(created):
+                try:
+                    if p.is_dir():
+                        p.rmdir()
+                    else:
+                        p.unlink()
+                except OSError:
+                    pass
+            raise SeriesError(f"建立剧集失败,已回滚 {root}: {exc}") from exc
 
         if git_init and shutil.which("git") and not (root / ".git").exists():
             subprocess.run(["git", "init", "-q"], cwd=root, check=False, capture_output=True)
@@ -380,6 +490,7 @@ def new_episode(series: Series, eid: str, *, title: str = "", preset: str | None
         raise SeriesError(
             f"invalid episode id {eid!r}: use E01/E02… or a lowercase slug (a-z0-9_-)"
         )
+    series.verify_manju_identity()  # SERIES-P0-001 write-before verification
     ep_dir = series.episode_project_dir(eid)
 
     # Resolve the preset up-front so a bad name fails before we scaffold anything.

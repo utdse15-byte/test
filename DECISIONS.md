@@ -2772,3 +2772,85 @@ REPORTS/UX_WAVE_3_2026-07-20.md.
    palette (UX-WAVE-2 already deferred the palette on the static-file
    split), P2-1 Claude file-change bridge (new watch surface → its own
    wave), P2-4 density memory.
+
+## AUDIT-LEDGER-WAVE (2026-07-24)
+
+An external AI delivered a merged repair bundle against baseline `4007a33`:
+908 unique issues (P0 45 / P1 531 / P2 295 / P3 37). The bundle is a derived
+report — not committed, never a build input. Every P0 and every non-standard-ID
+entry was checked against the code before anything landed; P1 and below were
+sampled. Disposition ledger: REPORTS/AUDIT_LEDGER_WAVE_2026-07-24.md.
+
+The headline number: the ledger describes code behaviour accurately almost
+every time, and is still wrong about roughly six findings in seven, because it
+applies a multi-tenant adversarial threat model to single-user software.
+Standard-ID sample: ~15% real. Non-standard-ID (`GUI-*`/`PROVIDER-*`, reviewed
+exhaustively): 23.6% real — higher because that family concentrates on paid and
+network egress.
+
+### Decisions
+
+1. **The triage rule that replaced the ledger's severities** — a finding is
+   real iff it fail-opens or silently loses data on the tool's OWN happy path
+   with no adversary needed. Applied to all 908, this separated the 45 P0s
+   (all real, one PARTLY) and 21 of the 89 non-standard entries from the rest.
+   Twelve recurring false-positive patterns are recorded in the report so the
+   next session does not re-litigate them; the most common is reading only the
+   weak half of a pair and ignoring a stronger sibling in the same repo.
+   Recorded because it cuts BOTH ways: `PROVIDER-MANIFEST-001` was accurate but
+   UNDERSTATED — it named the budget breaker and missed that the same `NaN`
+   also disables the ask_before spend confirmation. Triaging from entry text
+   systematically underestimates; the code has to be read.
+
+2. **`core/safeio.py` is the one validated-output owner** — six of the nine P0
+   root-cause groups were the same defect: no owner for output paths, so each
+   call site invented its own check (or none) and then truncated the target in
+   place. One policy now: output MAY land outside the project (`pack --out` is
+   the normal case); INSIDE it only the publication subtrees; the leaf is never
+   followed (symlink/junction/dir/special refused); every byte goes through an
+   exclusive `mkstemp` sibling and an atomic replace, so a failure writes
+   nothing. `WINCLI-P0-003` is the wave's only PARTLY: Edge TTS only fires when
+   the owner has authored a TTS manifest, which IS explicit opt-in, so the
+   ledger's "silent egress" framing is wrong — but the zero-cost path did skip
+   the one spend gate, so an independently opt-in egress token landed instead,
+   default no-op and byte-identical when unset.
+
+3. **A guard that is not wired is not a guard** — the recurring shape behind
+   `6ae9457` (P0 checks lived in core but `cli.py` still called the unguarded
+   entry points, so the owner's command line never reached them), `7d3505f`
+   (`voice_overrun_warnings` existed, pure and correct, and nothing on the
+   owner's path called it), and the client halves of `eccc94d` (the
+   bible/rules/packaging CAS and the index `expected_rev` are inert until the
+   page actually sends a token). Landing the rule and landing the call are one
+   change, not two.
+
+4. **Paid safety is now fail-closed end to end** — the money defects were the
+   densest real cluster. Both operands of the §8.3 breaker are finite by
+   construction (`BudgetConfig.limit` and `CostConfig`, `eac46a6` + `05ee1db`)
+   because `NaN` makes every compare False and disables the breaker AND the
+   spend confirmation. TTS/ASR no longer fire the paid POST as their first side
+   effect: they borrow the existing DR06 admission handshake rather than
+   inventing a second mechanism (`ba9c64d`), so a blip after acceptance
+   fail-closes the next run instead of paying twice. A GUI retry no longer
+   inherits `assume_yes`, which had turned one confirmation into a re-clickable
+   spend authorization (`eccc94d`). An already-paid download classifies 429/5xx
+   as retryable instead of burning the take.
+
+5. **Refused, with reasons** — the GUI HTTP framing family (request smuggling,
+   Slowloris, `Expect: 100-continue`): loopback trust model, single user, host
+   guard plus token gate already present; 11 entries, 1 real. `GUI-API-001`'s
+   claimed paid-confirmation bypass runs the wrong direction — `bool()` can
+   only turn a non-bool into True, never JSON `true` into False, and
+   confirm-first flows omit `assume_yes` on the first click. POSIX file modes,
+   TOCTOU races needing a second local actor, and findings reachable only by
+   hand-corrupting a self-declaredly disposable `.manju/` log are design, not
+   defects.
+
+6. **Two regressions this wave introduced, caught and fixed here** — `21a1e2e`
+   added `path: Path` annotations to `core/check.py` without the import;
+   `from __future__ import annotations` kept it from raising, and the tests
+   stayed green, but the repo's ruff config selects F82 so `ci.yml` would have
+   gone red. `91fa9f0`'s BRIDGE-P0-002 magic sniff correctly refused
+   `test_closeout_c2`'s `.png` fixtures, which had always contained
+   placeholder text; the fixture was fixed, not the guard. Verified clean at
+   the audit baseline before changing either.

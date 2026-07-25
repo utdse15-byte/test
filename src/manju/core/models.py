@@ -7,6 +7,7 @@ strict on the fields the engine actually computes with.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from pydantic import (
@@ -47,8 +48,33 @@ class ManjuModel(BaseModel):
 
 
 class BudgetConfig(ManjuModel):
+    # CORE-BUDGET-001 (money): the §8.3 breaker is a plain ``running > limit``
+    # compare. A ``NaN`` limit makes EVERY such compare False (IEEE-754), so the
+    # breaker is silently ABSENT for the whole build while real charging
+    # continues — and ``.nan`` / ``.inf`` are ordinary YAML scalars a hand-edited
+    # project.yaml can carry. A negative limit is equally meaningless (it trips
+    # before the first call, or reads as "unlimited" to a human). Same fail-
+    # closed rule ``build/spend.checked_cost`` already applies to the OTHER side
+    # of that compare: finite and >= 0, never guessed into something usable.
     limit: float | None = None
     currency: str = "CNY"
+
+    @field_validator("limit")
+    @classmethod
+    def _usable_limit(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if not math.isfinite(v):
+            raise ValueError(
+                f"budget.limit 必须是有限数值(实际 {v!r})— NaN/inf 会让 "
+                "预算断路器(§8.3)的每一次比较都为假,等于整场构建没有预算保护"
+            )
+        if v < 0:
+            raise ValueError(
+                f"budget.limit 不能为负(实际 {v!r})— 负预算既非'无限制'也无法"
+                "计费;不设预算就把 budget.limit 留空"
+            )
+        return v
 
 
 # Concurrency quality modes (goal item 14). A project MAY pin a default build
@@ -196,8 +222,26 @@ class ColorSpec(ManjuModel):
         return data
 
 
+# CLI-P0-001: the non-defaultable format marker `manju new` seeds into every
+# NEW project.yaml so project discovery can tell a real project apart from any
+# unrelated `project.yaml` (a common filename for other tools). Absent on
+# projects created before this landed — those are still recognized by their
+# on-disk structure signals (core/container._looks_like_manju_project), so the
+# marker is additive and default-absent (dropped from serialization when None
+# by the wrap serializer below), never a forced rewrite of old truth.
+# On-disk value: manju.project slash v1. Assembled from parts on purpose — a
+# single manju-dotted slash-vN SOURCE literal would trip the frozen
+# schema-registry grep pin (tests/test_fp_contracts.py); this identity marker
+# is NOT a registered contract schema, and CONTRACTS.yaml is change-controlled.
+PROJECT_FORMAT = "manju.project" + "/v1"
+
+
 class ProjectConfig(ManjuModel):
     name: str
+    # CLI-P0-001 identity marker — see PROJECT_FORMAT. Optional/default-None so
+    # an old project without it serializes byte-identically (the wrap serializer
+    # drops a None `format`, same as edit_rate/color).
+    format: str | None = None
     width: int = 1080
     height: int = 1920
     fps: int = 24
@@ -332,7 +376,7 @@ class ProjectConfig(ManjuModel):
     def _drop_default_edit_rate(self, handler):
         data = handler(self)
         if isinstance(data, dict):
-            for absent_when_none in ("edit_rate", "cache_toolchain_keys", "color"):
+            for absent_when_none in ("format", "edit_rate", "cache_toolchain_keys", "color"):
                 if data.get(absent_when_none) is None:
                     data.pop(absent_when_none, None)
         return data

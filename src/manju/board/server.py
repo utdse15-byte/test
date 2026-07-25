@@ -73,6 +73,34 @@ __all__ = ["make_server", "serve_board", "BoardServer", "API_ACTIONS"]
 
 _CHUNK = 64 * 1024
 
+# ---- BOARD-P0-001: media responses must never be same-origin ACTIVE content.
+# A file under a preview surface (media/, reports/frames/, .manju/…) is
+# third-party project content. If it were returned as text/html or
+# image/svg+xml the browser would run its scripts in the Board's own origin —
+# able to read the per-run token off GET / and drive the write API. So the
+# media route serves ONLY a whitelist of PASSIVE media Content-Types (video,
+# audio, non-scriptable images, subtitle text) inline; anything else (HTML,
+# SVG, XML, JSON, unknown) is forced to an octet-stream download. Every media
+# response also carries nosniff + a script-disabling sandbox CSP.
+_SUBTITLE_SUFFIXES = (".srt", ".ass", ".vtt")
+_MEDIA_SANDBOX_CSP = "sandbox"
+
+
+def _safe_media_ctype(path: Path) -> tuple[str, bool]:
+    """Return ``(content_type, force_download)`` for a served media file. Only
+    passive video/audio/image (NEVER image/svg+xml — it is scriptable) and
+    subtitle text keep their real type inline; every other type — text/html,
+    SVG, XML, JSON, unknown — collapses to application/octet-stream so a browser
+    can never execute it as same-origin active content (BOARD-P0-001)."""
+    guessed = (mimetypes.guess_type(str(path))[0] or "").split(";", 1)[0].strip().lower()
+    if guessed.startswith(("video/", "audio/")):
+        return guessed, False
+    if guessed.startswith("image/") and guessed != "image/svg+xml":
+        return guessed, False
+    if path.suffix.lower() in _SUBTITLE_SUFFIXES:
+        return "text/plain; charset=utf-8", False
+    return "application/octet-stream", True
+
 
 def _actor() -> str:
     """Same convention as the CLI (``cli.ACTOR``): MANJU_ACTOR, default 'human'.
@@ -667,9 +695,18 @@ class BoardHandler(BaseHTTPRequestHandler):
             return
         self._stream_file(target)
 
+    def _send_media_guard_headers(self) -> None:
+        """BOARD-P0-001: nosniff stops a passive type being sniffed into HTML;
+        the sandbox CSP disables any script even if a type ever slipped through.
+        Emitted on EVERY media response (200 / 206 / 416)."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", _MEDIA_SANDBOX_CSP)
+
     def _stream_file(self, path: Path) -> None:
         size = path.stat().st_size
-        ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        # BOARD-P0-001: whitelist the served Content-Type; force everything that
+        # could execute (html/svg/xml/unknown) to an octet-stream download.
+        ctype, force_download = _safe_media_ctype(path)
         start, end, is_range = self._parse_range(size)
 
         if is_range and (start > end or start >= size or start < 0):
@@ -677,6 +714,7 @@ class BoardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Range", f"bytes */{size}")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", "0")
+            self._send_media_guard_headers()
             self.end_headers()
             return
 
@@ -688,8 +726,13 @@ class BoardHandler(BaseHTTPRequestHandler):
             self.send_response(HTTPStatus.OK)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Type", ctype)
+        if force_download:
+            # A bare `attachment` (no filename) forces a download and carries no
+            # header-injection risk from the on-disk name.
+            self.send_header("Content-Disposition", "attachment")
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store")
+        self._send_media_guard_headers()
         self.end_headers()
 
         if self.command == "HEAD":

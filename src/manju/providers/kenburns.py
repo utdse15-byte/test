@@ -24,10 +24,17 @@ class KenburnsProvider(Provider):
         image = refset.primary_image
         image_source = refset.primary_image_source
         if image is None:
+            # A ref refused by the intake guard (link / non-regular / escaping
+            # file in media/refs) leaves NO usable image: name the refusal here
+            # or the only signal the owner gets is "no reference image".
+            blocked = [it.blocked_reason for it in refset.image_items()
+                       if it.blocked_reason]
+            detail = ("; ".join(blocked)) if blocked else ""
             raise ProviderFailure(
                 FailureKind.invalid,
                 f"no reference image for shot {req.shot.id} "
-                "(checked params.image, bible ref_image, media/refs)",
+                "(checked params.image, bible ref_image, media/refs)"
+                + (f" — {detail}" if detail else ""),
             )
 
         from ..media.kenburns import kenburns  # lazy: media may not exist yet

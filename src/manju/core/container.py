@@ -23,8 +23,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .idents import UnsafeIdentifierError, validate_safe_segment
+from .idents import UnsafeIdentifierError, validate_safe_segment, windows_segment_problems
 from .models import (
+    PROJECT_FORMAT,
     PackagingSpec,
     ProjectConfig,
     ShotIndex,
@@ -38,6 +39,41 @@ from .timebase import Rate
 from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml
 
 PROJECT_FILE = "project.yaml"
+
+# CLI-P0-001: on-disk signals that a directory holding a `project.yaml` is
+# really a Manju project and not an unrelated tool's config file of the same
+# name. A candidate qualifies when project.yaml carries the `format` marker
+# (PROJECT_FORMAT, seeded by `manju new`) OR any of these structure directories
+# exists — the shape `Project.create` always scaffolds. Old projects (created
+# before the marker) still resolve via the structure signal, so discovery never
+# forces a migration; a bare foreign `project.yaml` matches NEITHER and is
+# refused (Project.find / _looks_like_manju_project) instead of being taken over.
+_PROJECT_STRUCTURE_SIGNALS = ("story", "shots", "bible", "timeline", ".manju")
+
+
+def _looks_like_manju_project(root: Path) -> bool:
+    """True iff ``root`` holds a real Manju project (CLI-P0-001): its
+    project.yaml declares ``format: manju.project/v1`` OR one of the
+    :data:`_PROJECT_STRUCTURE_SIGNALS` directories exists. A plain `project.yaml`
+    dropped by some other tool has neither, so it is never mistaken for a
+    project (and never written into by a manju write command)."""
+    pf = root / PROJECT_FILE
+    if not pf.exists():
+        return False
+    # Structure signal first — a cheap stat that short-circuits for every real
+    # project (create() always scaffolds these), so the write hot path never
+    # re-parses project.yaml just to self-verify.
+    if any((root / sig).is_dir() for sig in _PROJECT_STRUCTURE_SIGNALS):
+        return True
+    try:
+        data = read_yaml(pf)
+    except Exception:
+        data = None
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("format"), str)
+        and data["format"].startswith("manju.project/")
+    )
 # Round Y (review #4): an ORDERED tuple, not a set. `Project.takes()` picks a
 # take's media file by walking this in order, so when a take dir somehow holds
 # more than one media file for the same stem (e.g. take_01.mp4 AND take_01.mov)
@@ -74,6 +110,14 @@ media/imports/
 renders/
 exports/
 .manju/
+# HISTORY-P0-001: secrets never enter git history via `manju snapshot`. Ignore
+# .env and its variants; keep explicit template files (.example/.template/.sample)
+# tracked so a project can still ship a redacted example.
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
 """
 
 # packaging.yaml scaffold header — commented hints for a file that turns nothing
@@ -115,6 +159,12 @@ class ProjectError(RuntimeError):
     pass
 
 
+class ProjectNameError(ProjectError):
+    """The requested project directory name is not creatable/openable on
+    Windows (CLI-P1-004). A subclass of ProjectError so every existing
+    ``except ProjectError`` call site keeps catching it."""
+
+
 class Project:
     def __init__(self, root: Path | str):
         self.root = Path(root).resolve()
@@ -129,15 +179,51 @@ class Project:
 
     @classmethod
     def find(cls, start: Path | str = ".") -> "Project":
+        # CLI-P0-001: a `project.yaml` is only a stopping point when the
+        # directory is REALLY a manju project (format marker or structure
+        # signal). A bare foreign project.yaml is walked PAST, never taken over
+        # — remembered as `bare` so the error can point the owner at it with a
+        # migration hint instead of a generic "no project" message.
         p = Path(start).resolve()
+        bare: Path | None = None
         for candidate in [p, *p.parents]:
-            if (candidate / PROJECT_FILE).exists():
+            if not (candidate / PROJECT_FILE).exists():
+                continue
+            if _looks_like_manju_project(candidate):
                 return cls(candidate)
+            if bare is None:
+                bare = candidate
+        if bare is not None:
+            raise ProjectError(
+                f"{bare} 有 {PROJECT_FILE},但它不像 Manju 项目:既没有 "
+                f"`format: {PROJECT_FORMAT}` 标识,也没有 Manju 的结构目录"
+                f"({'/、'.join(_PROJECT_STRUCTURE_SIGNALS)}/)。为避免误接管并污染无关目录,"
+                f"这里不当作项目处理。若这确是一个老的 Manju 项目,给 {PROJECT_FILE} 加一行 "
+                f"`format: {PROJECT_FORMAT}` 即可;否则请 cd 进正确的 <名字>.manju 目录,"
+                f"或用 `manju new <名字>` 新建。"
+            )
         raise ProjectError(
             f"no manju project found from {p} upward — 当前目录及其所有上级都没有 "
             f"{PROJECT_FILE},所以这里不是 Manju 项目。请 cd 进某个 <名字>.manju "
             f"目录再运行,或用 `manju new <名字>` 新建一个。"
         )
+
+    def verify_manju_identity(self) -> None:
+        """CLI-P0-001 write-before second verification: refuse to run a write
+        command against a directory that merely happens to hold a `project.yaml`
+        but is not a real Manju project (no format marker, no structure signal).
+        The safety check lives here in the Project layer (not only in the CLI)
+        so every write entry point — CLI, MCP, GUI — is covered. A project built
+        through :meth:`create` or discovered through :meth:`find` already
+        qualifies; this closes the gap for a ``Project(<explicit path>)`` opened
+        straight onto a foreign directory."""
+        if not _looks_like_manju_project(self.root):
+            raise ProjectError(
+                f"拒绝写入 {self.root}:该目录有 {PROJECT_FILE} 但不像 Manju 项目"
+                f"(缺少 `format: {PROJECT_FORMAT}` 标识与 Manju 结构目录)。"
+                f"为避免污染无关目录,写命令不在此执行。老项目可在 {PROJECT_FILE} 补一行 "
+                f"`format: {PROJECT_FORMAT}`,或用 `manju new` 新建。"
+            )
 
     # ------------------------------------------------------------- creation
 
@@ -147,6 +233,18 @@ class Project:
         root = Path(path).resolve()
         if root.suffix != ".manju":
             root = root.with_name(root.name + ".manju")
+        # CLI-P1-004: the Windows name rules were only ever applied by `check`,
+        # i.e. AFTER the directory existed. `CON.manju` / a trailing-dot name is
+        # unopenable on the first platform, so refuse before anything is made —
+        # same owner the checker uses, no second spelling of the rules.
+        problems = windows_segment_problems(root.name)
+        if not root.stem:
+            problems.append("空项目名(empty project name)")
+        if problems:
+            raise ProjectNameError(
+                "项目名在 Windows 上不可用(refused before creating anything): "
+                + "; ".join(problems)
+            )
         if (root / PROJECT_FILE).exists():
             raise ProjectError(f"project already exists: {root}")
         name = name or root.stem
@@ -160,7 +258,9 @@ class Project:
             (root / sub).mkdir(parents=True, exist_ok=True)
 
         width, height = (1080, 1920) if vertical else (1920, 1080)
-        config = ProjectConfig(name=name, width=width, height=height)
+        # CLI-P0-001: stamp the format marker so this project is unambiguously a
+        # Manju project on discovery (never mistaken for an unrelated project.yaml).
+        config = ProjectConfig(name=name, format=PROJECT_FORMAT, width=width, height=height)
         write_yaml(root / PROJECT_FILE, config.model_dump(exclude_none=True))
         write_yaml(root / "shots" / "index.yaml", ShotIndex().model_dump())
         write_yaml(root / "timeline" / "rules.yaml", TimelineRules().model_dump())
@@ -308,6 +408,7 @@ class Project:
         return ProjectConfig.model_validate(read_yaml(self.root / PROJECT_FILE) or {})
 
     def save_config(self, config: ProjectConfig) -> None:
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         write_yaml(self.root / PROJECT_FILE, config.model_dump(exclude_none=True))
 
     def edit_rate(self, config: ProjectConfig | None = None) -> Rate:
@@ -339,6 +440,7 @@ class Project:
         return ShotIndex.model_validate(read_yaml(path) or {}) if path.exists() else ShotIndex()
 
     def save_index(self, index: ShotIndex) -> None:
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         write_yaml(self.shots_dir / "index.yaml", index.model_dump())
 
     def shot_ids(self, *, indexed_only: bool = False) -> list[str]:
@@ -387,6 +489,7 @@ class Project:
         return ShotSpec.model_validate(data)
 
     def save_shot(self, shot: ShotSpec) -> None:
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         write_yaml(self.shot_path(shot.id), shot.model_dump(exclude_none=True))
 
     def update_shot_raw(self, shot_id: str, mutate) -> dict[str, Any]:
@@ -397,6 +500,7 @@ class Project:
         a lock sealed over `duration: 3` must not break because the model
         would re-emit `3.0`.
         """
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         data = self.load_shot_raw(shot_id)
         mutate(data)
         write_yaml(self.shot_path(shot_id), data)
@@ -429,6 +533,7 @@ class Project:
         return TimelineRules.model_validate(read_yaml(self.rules_path) or {})
 
     def save_rules(self, rules: TimelineRules) -> None:
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         write_yaml(self.rules_path, rules.model_dump())
 
     # ------------------------------------------------------------ packaging
@@ -441,6 +546,7 @@ class Project:
         return PackagingSpec.model_validate(read_yaml(self.packaging_path) or {})
 
     def save_packaging(self, packaging: PackagingSpec) -> None:
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         write_yaml(self.packaging_path, packaging.model_dump())
 
     # -------------------------------------------------------------- timeline
@@ -451,6 +557,7 @@ class Project:
         return Timeline.model_validate(read_json(self.timeline_path))
 
     def save_timeline(self, timeline: Timeline, *, generated_only: bool = False) -> Path:
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         target = self.timeline_generated_path if generated_only else self.timeline_path
         write_json(target, timeline.model_dump())
         return target
@@ -567,16 +674,29 @@ class Project:
         R2-P1-7: exclusive create (``O_EXCL``) closes the check-then-copy race
         (same discipline as :meth:`register_voice_take`).
         """
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         media_file = Path(media_file)
         if not media_file.exists():
             raise ProjectError(f"take media not found: {media_file}")
+        suffix = media_file.suffix.lower()
+        # CORE-002: `takes()` resolves a take's media STRICTLY through
+        # MEDIA_EXTS, so registering any other extension mints a take whose
+        # media_path is None forever — inside the append-only namespace, where
+        # it is painful to clean up. Refuse BEFORE anything is written (the
+        # check belongs in core, not only in the provider doctor: a misfilled
+        # local_cmd `output_ext`, a hand-passed .gif/.webp/.avi and every other
+        # caller must hit the same wall).
+        if suffix not in MEDIA_EXTS:
+            raise ProjectError(
+                f"take media 扩展名 {suffix or '(无)'} 不是可识别的媒体类型 "
+                f"({', '.join(MEDIA_EXTS)}):{media_file} — 注册后 takes() 永远"
+                f"解析不到它的媒体文件,已拒绝写入 media/gen(append-only,难以清理)"
+            )
         tdir = self.takes_dir(shot_id)
         tdir.mkdir(parents=True, exist_ok=True)
-        suffix = media_file.suffix.lower()
         use_move = bool(move and self.imports_dir not in media_file.parents)
         dest: Path | None = None
         name = ""
-        data: bytes | None = None if use_move else media_file.read_bytes()
         for _ in range(32):
             name = self.next_take_name(shot_id)
             candidate = tdir / (name + suffix)
@@ -609,9 +729,16 @@ class Project:
                             pass
                         raise
                 else:
-                    assert data is not None
+                    # CORE-001: STREAM the copy. Reading the source into one
+                    # bytes object first made peak RSS track file size, and the
+                    # copy path is the DEFAULT (imports are never consumed) —
+                    # a multi-GiB camera/render take paged or OOM'd the box
+                    # AFTER generation had already succeeded. The O_EXCL fd is
+                    # wrapped (not re-opened), so the no-overwrite claim on the
+                    # take name is exactly the one made above.
                     with os.fdopen(fd, "wb") as out:
-                        out.write(data)
+                        with open(media_file, "rb") as src:
+                            shutil.copyfileobj(src, out, 1 << 20)
                         out.flush()
                         os.fsync(out.fileno())
             except BaseException:
@@ -714,6 +841,7 @@ class Project:
         """
         from datetime import datetime, timezone
 
+        self.verify_manju_identity()  # CLI-P0-001 write-before verification
         media_file = Path(media_file)
         if not media_file.exists():
             raise ProjectError(f"voice media not found: {media_file}")
@@ -725,7 +853,6 @@ class Project:
         # ``if dest.exists()`` and then overwrite via shutil.copy2.
         dest: Path | None = None
         name = ""
-        data = media_file.read_bytes()
         for _ in range(32):
             name = self.next_voice_take_name(shot_id, lang=lang)
             candidate = tdir / (name + suffix)
@@ -734,8 +861,12 @@ class Project:
             except FileExistsError:
                 continue
             try:
+                # CORE-001 (same finding as register_take): stream through the
+                # exclusively-created fd instead of materializing the whole
+                # source in RAM — a long dubbing/ASR-sliced wav is not small.
                 with os.fdopen(fd, "wb") as out:
-                    out.write(data)
+                    with open(media_file, "rb") as src:
+                        shutil.copyfileobj(src, out, 1 << 20)
                     out.flush()
                     os.fsync(out.fileno())
             except BaseException:

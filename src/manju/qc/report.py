@@ -14,11 +14,13 @@ editing the shot's generation params and rebuilding.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..core.container import Project
-from ..core.yamlio import atomic_write_text, write_json, write_yaml
+from ..core.safeio import publish_text, refuse_linked_within
+from ..core.yamlio import dump_yaml
 from .checks import QCItem, QCReport
 
 
@@ -33,6 +35,14 @@ def write_reports(project: Project, qc: QCReport,
     proposals live only in qc.json's assurance block."""
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     reports_dir = project.reports_dir
+    # QC-P0-001: a symlinked ``reports/`` (or any linked segment on the way to
+    # it) would write qc.json/qc.md/repair_plan.yaml THROUGH the link into an
+    # external directory while the returned relpaths still read as in-project.
+    # Refuse the linked directory chain up front, then publish each artifact via
+    # the no-follow atomic publisher (random-named sibling temp + atomic
+    # replace) so nothing lands outside the project. Byte-identical to the old
+    # write_json/atomic_write_text/write_yaml output for a genuine reports/.
+    refuse_linked_within(reports_dir, project.root, kind="reports 目录")
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     qc_json = reports_dir / "qc.json"
@@ -42,9 +52,9 @@ def write_reports(project: Project, qc: QCReport,
     payload = {"ok": qc.ok, "generated_at": generated_at, **qc.to_dict()}
     if assurance is not None:
         payload["assurance"] = build_assurance_block(project, assurance)
-    write_json(qc_json, payload)
-    atomic_write_text(qc_md, _render_md(qc, generated_at, assurance))
-    write_yaml(repair_yaml, _repair_plan(project, qc, generated_at))
+    publish_text(qc_json, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    publish_text(qc_md, _render_md(qc, generated_at, assurance))
+    publish_text(repair_yaml, dump_yaml(_repair_plan(project, qc, generated_at)))
 
     return {"qc_json": qc_json, "qc_md": qc_md, "repair_plan": repair_yaml}
 

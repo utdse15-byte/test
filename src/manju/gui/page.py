@@ -1240,6 +1240,11 @@ _JS = r"""
   let lastFp = null;       /* state.fp — seeds the /api/watch long-poll */
   let lastShots = [];      /* last state.shots (new-shot template needs the
                               first scene id; keyboard mode + reorder too) */
+  let lastIndexRev = null; /* GUI-INDEX-P1-001: state.index_rev — the cut-order
+                              CAS token ↑/↓ echoes back as expected_rev, so a
+                              second tab's reorder can no longer silently
+                              revert this one's. Refreshed from every /api/state
+                              AND from the reorder's own 200/409 payload. */
   let lastJobs = [];       /* last state.jobs (spend banner, switch cleanup) */
   let lastLocaleFinals = {}; /* C38: locale finals for QC button lang pick */
   let lastLocales = [];      /* C45: declared locales (lines.yaml) for lang select */
@@ -1421,6 +1426,7 @@ _JS = r"""
     readonly = s.readonly === true;
     lastFp = (typeof s.fp === "string" && s.fp) ? s.fp : null;
     lastShots = Array.isArray(s.shots) ? s.shots : [];
+    lastIndexRev = (typeof s.index_rev === "string") ? s.index_rev : null;
     lastProjectName = (s.project && s.project.name) ? String(s.project.name) : "";
     lastJobs = jobs;
     /* C38: remember locale finals for the QC button (no global STATE). */
@@ -2575,6 +2581,12 @@ _JS = r"""
         saveUrl: url,
         label,
         hints,
+        /* GUI-EDIT-P1-001: the CAS token, same plumbing the shot editor
+         * already uses (showEditor forwards opts.rev as expected_rev). This
+         * textarea holds the WHOLE file and a human may sit on it for twenty
+         * minutes; without the token a second tab — or a CLI/MCP write —
+         * was silently clobbered on save, with no diff to recover from. */
+        rev: (data && typeof data.rev === "string") ? data.rev : undefined,
         validate: { kind: vkind },   /* live keystroke validation for this truth file */
         draftPath: label,   /* UX-WAVE-3: TRUTH_LABELS values ARE the相对路径 */
       });
@@ -3304,7 +3316,23 @@ _JS = r"""
     order[j] = moved;
     reorderBusy = true;
     try {
-      await post(btn, "/api/index", { order }, "已移动 (moved) " + moved);
+      /* GUI-INDEX-P1-001: carry the cut-order CAS token. permute_index only
+       * checks the ids are a PERMUTATION of the current shots, which two tabs
+       * showing the same shot set ALWAYS satisfy — so without this the second
+       * tab's ↑/↓ silently reverted the first tab's reorder, no error and no
+       * recoverable diff. Absent token = the server's historical
+       * last-write-wins, so this stays correct against an older server. */
+      const body = { order };
+      if (lastIndexRev !== null) body.expected_rev = lastIndexRev;
+      const res = await post(btn, "/api/index", body, "已移动 (moved) " + moved);
+      if (res && typeof res.rev === "string") {
+        lastIndexRev = res.rev;
+      } else if (!res) {
+        /* 409 (or any refusal): post() toasts and returns null WITHOUT
+         * refreshing, so re-sync the token — otherwise every later reorder
+         * keeps replaying the stale one and 409s forever. */
+        await refresh();
+      }
     } finally {
       reorderBusy = false;
     }

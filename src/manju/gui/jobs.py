@@ -100,6 +100,101 @@ _LEGACY_UNSCOPED_NOTE = (
     + "无法原样重试(参数摘要有损)——请从原页面重新发起"
 )
 
+# --------------------------------------------------- owner stamp (GUI-MULTI)
+#
+# GUI-MULTI-P1-001. Two GUI windows on the same project used to be invisible
+# to each other, and the damage was not theoretical: constructing a second
+# JobRunner scanned jobs.jsonl, saw instance 1's genuinely-RUNNING paid build
+# as "dangling" and appended a terminal ``interrupted`` record over it. The
+# owner then reads 「实际结果未知，请核对产物后按需重试」 about a build that is
+# at that moment still burning provider money, and re-runs it. So:
+#
+#   1. every record carries the SESSION uuid + OS PID that wrote it, and
+#   2. a dangling record is only reported/sealed as interrupted when its owner
+#      is provably GONE.
+#
+# Liveness, cheapest-first: same PID + a session still in this process's live
+# registry → live (covers two runners in one process, i.e. the tests and the
+# in-process workspace switch). Different PID → ask the OS via
+# runtime.buildlock._pid_alive, the ONE owner of "is this pid alive" (on
+# Windows os.kill(pid, 0) routes through TerminateProcess and would KILL the
+# probed process — never inline a liveness probe here).
+# A record with neither field is a pre-fix/legacy line: it keeps exactly
+# today's behaviour (assume dangling), because there is nothing to check.
+_OWNER_FILE = "gui_owner.json"
+
+# Sessions with a live JobRunner in THIS process.
+_LIVE_SESSIONS: set[str] = set()
+_LIVE_SESSIONS_LOCK = threading.Lock()
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Delegate to the single liveness owner; unknown → assume ALIVE.
+
+    Fail-CLOSED on purpose: mistaking a live owner for a dead one is what
+    wrote a false terminal record over a running paid build.
+    """
+    try:
+        if int(pid) <= 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    try:
+        from ..runtime.buildlock import _pid_alive
+    except Exception:
+        return True
+    try:
+        return bool(_pid_alive(int(pid)))
+    except Exception:
+        return True
+
+
+def _owner_is_live(session: Any, pid: Any) -> bool:
+    """Is the (session, pid) that wrote a record still running?"""
+    has_session = isinstance(session, str) and bool(session)
+    has_pid = isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+    if has_session:
+        with _LIVE_SESSIONS_LOCK:
+            if session in _LIVE_SESSIONS:
+                return True
+    if not has_pid:
+        # Legacy/unstamped line (or a session this process has retired and
+        # whose pid we never learned): nothing left to check.
+        return False
+    if pid == os.getpid():
+        # Our own pid but not our own live session → that runner is gone.
+        return False
+    return _pid_is_alive(pid)
+
+
+def live_foreign_owner(runtime_dir: "Path | str | None") -> dict[str, Any] | None:
+    """The owner stamp of ANOTHER live GUI process holding ``runtime_dir``.
+
+    Returns ``None`` when the project is free, when the stamp belongs to this
+    very process (an in-process rebind is fine), or when the recorded process
+    is gone (stale stamp after a crash — the next open simply overwrites it).
+    """
+    if runtime_dir is None:
+        return None
+    path = Path(runtime_dir) / _OWNER_FILE
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        rec = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(rec, dict):
+        return None
+    session = rec.get("session")
+    pid = rec.get("pid")
+    if isinstance(pid, int) and pid == os.getpid():
+        return None
+    if not _owner_is_live(session, pid):
+        return None
+    return rec
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -338,6 +433,13 @@ class JobRunner:
         project_id: str = "",
     ) -> None:
         self.project_id = project_id or ""
+        # GUI-MULTI-P1-001: who owns the records this runner writes.
+        self.session_id = uuid.uuid4().hex
+        self.pid = os.getpid()
+        with _LIVE_SESSIONS_LOCK:
+            _LIVE_SESSIONS.add(self.session_id)
+        self._runtime_dir: "Path | None" = (
+            Path(runtime_dir) if runtime_dir is not None else None)
         self._queue: "queue.Queue[tuple[Job, Callable[[Job], dict[str, Any]]] | None]" = queue.Queue()
         self._jobs: dict[str, Job] = {}
         self._order: list[str] = []  # insertion order, oldest first
@@ -352,6 +454,7 @@ class JobRunner:
         # whatever jobs.jsonl says about the PREVIOUS process's queue. Never
         # touches self._jobs (these are not live Jobs — see interrupted()).
         self._interrupted: list[dict[str, Any]] = self._scan_interrupted()
+        self._claim_owner()
         self._worker = threading.Thread(target=self._run, name="manju-gui-jobs", daemon=True)
         self._worker.start()
 
@@ -520,6 +623,10 @@ class JobRunner:
         if stopped:
             with self._lock:
                 self._state = RunnerState.CLOSED
+            # GUI-MULTI-P1-001: only once the worker is really gone. Releasing
+            # earlier would tell the next instance the project is free while
+            # this one is still writing it.
+            self._release_owner()
         return ShutdownReport(
             stopped=stopped,
             canceled_queued=tuple(canceled),
@@ -606,6 +713,45 @@ class JobRunner:
 
     # ------------------------------------------------------- jobs.jsonl (AA4)
 
+    def _claim_owner(self) -> None:
+        """Stamp ``.manju/gui_owner.json`` with this session (GUI-MULTI-P1-001).
+
+        Best-effort and disposable, exactly like jobs.jsonl: NO fsync, and any
+        OSError is swallowed — a read-only or exotic filesystem must never
+        stop the GUI from opening a project. The stamp is advisory: it is only
+        ever consulted through :func:`live_foreign_owner`, which re-verifies
+        the recorded pid, so a stale file left by a crash blocks nothing.
+        """
+        if self._runtime_dir is None:
+            return
+        try:
+            self._runtime_dir.mkdir(parents=True, exist_ok=True)
+            (self._runtime_dir / _OWNER_FILE).write_text(
+                json.dumps(
+                    {"session": self.session_id, "pid": self.pid,
+                     "project_id": self.project_id, "started": _now()},
+                    ensure_ascii=False),
+                encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            pass
+
+    def _release_owner(self) -> None:
+        """Drop our stamp on shutdown — only if it is still OURS."""
+        with _LIVE_SESSIONS_LOCK:
+            _LIVE_SESSIONS.discard(self.session_id)
+        if self._runtime_dir is None:
+            return
+        path = self._runtime_dir / _OWNER_FILE
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return
+        if isinstance(rec, dict) and rec.get("session") == self.session_id:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
     def _persist(self, job: Job) -> None:
         """Append one jobs.jsonl transition line for ``job``'s CURRENT state."""
         if self._jobs_log_path is None:
@@ -621,6 +767,11 @@ class JobRunner:
             "created": job.created,
             "started": job.started,
             "finished": job.finished,
+            # GUI-MULTI-P1-001: who wrote this line, so another instance can
+            # tell "the process that owned this job died" (→ interrupted) from
+            # "it is running RIGHT NOW in the other window" (→ hands off).
+            "session": self.session_id,
+            "pid": self.pid,
         }
         self._append_records([record])
 
@@ -730,6 +881,15 @@ class JobRunner:
             started = first_running_ts.get(jid) or rec.get("started")
             pid = rec.get("project_id") or first.get("project_id") or ""
             legacy = not bool(pid)
+            if state in ("queued", "running", "canceling") and _owner_is_live(
+                    rec.get("session"), rec.get("pid")):
+                # GUI-MULTI-P1-001: NOT dangling — another live GUI instance
+                # (or another runner in this process) owns this job right now.
+                # Neither report it as interrupted nor seal a terminal record
+                # over it: that record used to overwrite the真实 outcome of a
+                # paid build that was still running, and told the owner to
+                # re-run it.
+                continue
             if state in ("queued", "running", "canceling"):
                 synth = {
                     "ts": _now(),
@@ -742,6 +902,9 @@ class JobRunner:
                     "created": created,
                     "started": started,
                     "finished": _now(),
+                    # who SEALED it (the previous owner is gone by definition).
+                    "session": self.session_id,
+                    "pid": self.pid,
                 }
                 interrupted.append(_interrupted_job_dict(
                     synth,

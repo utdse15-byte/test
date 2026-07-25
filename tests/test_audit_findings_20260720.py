@@ -316,7 +316,14 @@ def test_f14_corrupt_base64_is_rejected_not_written_as_audio(monkeypatch, tmp_pa
 
 def test_f8_tts_journal_is_fail_closed(monkeypatch, tmp_path, tmp_project, add_shot):
     """Finding 8: if the paid remote job id cannot be durably journaled, the
-    submit surfaces a failure that STILL carries the id — never silent loss."""
+    submit surfaces a failure that STILL carries the id — never silent loss.
+
+    The journal failure is scoped to the ``provider_remote_submit`` record so it
+    lands where finding 8 aimed it: AFTER the provider accepted the paid job.
+    PROVIDER-SUBMISSION-001 added durable admission evidence AHEAD of the POST,
+    and blanket-failing every evidence write now trips that earlier gate instead
+    (which the companion test below pins) — so this one keeps its original
+    target by failing only the post-acceptance write."""
     import manju.core.events as EV
     from manju.providers.base import ProviderFailure
     from manju.providers.tts import get_tts_provider
@@ -335,13 +342,52 @@ def test_f8_tts_journal_is_fail_closed(monkeypatch, tmp_path, tmp_project, add_s
     transport = ScriptedTransport([
         HttpResponse(200, {}, json.dumps({"data": {"task_id": "remote-777"}}).encode()),
     ])
-    # force the durable journal to fail
-    monkeypatch.setattr(EV, "append_jsonl_line",
-                        lambda *a, **k: (_ for _ in ()).throw(EV.EvidenceWriteError("io_error")))
+    # force the durable journal of the ACCEPTED job to fail
+    real_append = EV.append_jsonl_line
+
+    def _fail_the_remote_submit_journal(root, record, *a, **k):
+        if isinstance(record, dict) and record.get("action") == "provider_remote_submit":
+            raise EV.EvidenceWriteError("io_error")
+        return real_append(root, record, *a, **k)
+
+    monkeypatch.setattr(EV, "append_jsonl_line", _fail_the_remote_submit_journal)
     provider = get_tts_provider("tts_x", transport=transport, sleep_fn=lambda s: None)
     with pytest.raises(ProviderFailure) as exc:
         provider.synthesize(tmp_project, shot, tmp_project.load_bible())
     assert "remote-777" in str(exc.value)  # the id is surfaced, not lost
+
+
+def test_f8_tts_never_dispatches_when_evidence_cannot_be_written(
+        monkeypatch, tmp_path, tmp_project, add_shot):
+    """PROVIDER-SUBMISSION-001: unwritable evidence BEFORE the POST means the
+    paid call is never made at all.
+
+    This is the stronger half of finding 8. Surfacing the remote id was the best
+    that ordering could do once the money was already spent; refusing to spend
+    it is better, and it is only possible because the admission claim is now
+    durable before the transport is entered. The transport must therefore never
+    be called — no id to reconcile because there is no submission."""
+    import manju.core.events as EV
+    from manju.providers.base import ProviderFailure
+    from manju.providers.tts import get_tts_provider
+
+    calls = []
+
+    def _transport(method, url, headers, body):
+        calls.append((method, url))
+        raise AssertionError("the paid POST must not be reached")
+
+    _tts_env(monkeypatch, tmp_path,
+             poll={"url": "https://api/tts/{job_id}", "status_path": "$.data.status",
+                   "status_map": {"DONE": "succeeded"}})
+    shot = add_shot(tmp_project, "S001", dialogue={"speaker": "linxia", "text": "台词"})
+    monkeypatch.setattr(EV, "append_jsonl_line",
+                        lambda *a, **k: (_ for _ in ()).throw(EV.EvidenceWriteError("io_error")))
+    provider = get_tts_provider("tts_x", transport=_transport, sleep_fn=lambda s: None)
+    with pytest.raises(ProviderFailure) as exc:
+        provider.synthesize(tmp_project, shot, tmp_project.load_bible())
+    assert calls == []  # nothing was sent, so nothing was billed
+    assert "fail-closed admission gate" in str(exc.value)
 
 
 # ============================================================ providers/asr.py

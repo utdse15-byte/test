@@ -51,6 +51,8 @@ except ImportError:  # POSIX: fcntl above is the coordinator
 
 import threading as _threading
 
+from .safeio import open_append_nofollow, refuse_linked_within
+
 # reports/ is the project's report surface (qc.md/json live here too); failures
 # ride alongside as an append-only jsonl.
 FAILURES_FILE = "reports/failures.jsonl"
@@ -377,6 +379,12 @@ def record_failure(project: Any, failure: Failure) -> dict[str, Any]:
 
     root = _root(project)
     path = root / FAILURES_FILE
+    # FAILURES-P0-001: a symlinked ``reports/`` (or any linked segment under it)
+    # would put failures.jsonl AND failures.lock outside the project; refuse the
+    # linked directory chain BEFORE creating the lock or the ledger. Fail closed
+    # (the failure logger must never write through a link into project truth or
+    # an external file) — the events mirror below is still recorded best-effort.
+    refuse_linked_within(path.parent, root, kind="reports 目录")
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # #50 / P1-3: rotate-check + rotate + append is ONE critical section.
@@ -398,8 +406,11 @@ def record_failure(project: Any, failure: Failure) -> dict[str, Any]:
                 pass  # a rotation hiccup must never lose the failure we came to record
 
             line = json.dumps(record, ensure_ascii=False)
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            # FAILURES-P0-001: the shared no-follow append front door — refuses a
+            # symlinked failures.jsonl (write-through outside the project) and a
+            # failures.jsonl hardlinked to truth (append into project.yaml).
+            with open_append_nofollow(path) as f:
+                f.write((line + "\n").encode("utf-8"))
                 f.flush()
                 os.fsync(f.fileno())
 

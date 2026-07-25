@@ -12,10 +12,12 @@ overridable via ``MANJU_PROVIDERS_DIR`` (tests use this).
 
 from __future__ import annotations
 
+import math
 import os
 import shlex
 import shutil
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, ValidationError, field_validator
 
@@ -32,6 +34,10 @@ GENERIC_TTS_ADAPTER = "generic_tts"
 COMFYUI_ADAPTER = "manju.providers.comfyui:ComfyUIProvider"
 LOCAL_CMD_ADAPTER = "manju.providers.local_cmd:LocalCommandProvider"
 JOB_STATES = ("queued", "running", "succeeded", "failed")
+# PROVIDER-MANIFEST-008: the CLOSED set of `asr.time_unit` values. The consumer
+# (providers/asr.py) scales by 1000 for "s" and by 1 otherwise, so this list and
+# that branch are the same decision — anything outside it is refused at load.
+ASR_TIME_UNITS: tuple[str, ...] = ("ms", "s")
 
 
 class AuthConfig(ManjuModel):
@@ -136,9 +142,30 @@ class CostConfig(ManjuModel):
     # Round W (issue #25): a negative cost would make budget estimation and
     # the ask_before spend confirmation UNDER-count real spend (or even net
     # negative), defeating both. 0 stays legal (free/local-style providers).
+    #
+    # PROVIDER-MANIFEST-001 (money): `v < 0` alone was NOT enough. Every compare
+    # against NaN is False (IEEE-754) — `NaN < 0` included — so `.nan`, an
+    # ordinary YAML scalar a hand-edited provider.yaml can carry, VALIDATED.
+    # estimate_cost() then returns NaN, which silently disarms BOTH money gates
+    # in build/graph.py: the §8.3 budget breaker (`estimated_cost > budget`) and
+    # the ask_before spend confirmation (`estimated_cost > 0`) — a paid build
+    # starting with no ceiling AND no prompt. `inf` fails those two compares
+    # closed, but it LAUNDERS back into NaN through estimate_cost's
+    # `per_second * (duration_ms / 1000.0)` (`inf * 0.0` is NaN) for any
+    # zero-duration item, reopening the same hole — so both are refused here.
+    # This is the same fail-closed rule `core.models.BudgetConfig` already
+    # applies to the OTHER side of the breaker compare: finite and >= 0, never
+    # guessed into something usable.
     @field_validator("per_second", "per_call")
     @classmethod
     def _nonneg_cost(cls, v: float, info) -> float:
+        if not math.isfinite(v):
+            raise ValueError(
+                f"cost.{info.field_name} 必须是有限数字(实际 {v!r})— NaN 会让"
+                "\"预估花费 > 预算\"和\"预估花费 > 0\"两个比较全部为假,预算熔断和"
+                "ask_before 花费确认会一起失效;inf 乘上 0 时长又会变回 NaN。"
+                "改为 >= 0 的有限数字"
+            )
         if v < 0:
             raise ValueError(
                 f"cost.{info.field_name} 不能为负数(实际 {v!r})— 负成本会让预算估算和"
@@ -173,13 +200,43 @@ class AsrConfig(ManjuModel):
     text_key: str = "text"  # ★ keys within one segment object
     start_key: str = "start"
     end_key: str = "end"
-    time_unit: str = "ms"  # "ms" | "s" — remote timestamps are converted to ms
+    # ★ remote timestamp unit; converted to ms. The closed set is ASR_TIME_UNITS.
+    time_unit: Literal["ms", "s"] = "ms"
     language: str = "zh"
     # WP3: optional word-level timestamps (default None = unused)
     words_path: str | None = None
     word_text_key: str = "text"
     word_start_key: str = "start"
     word_end_key: str = "end"
+
+    # PROVIDER-MANIFEST-008: the consumer is a two-way branch —
+    # ``scale = 1000.0 if time_unit == "s" else 1.0`` — so while this was a free
+    # ``str`` EVERY other spelling silently meant "milliseconds". A manifest
+    # saying ``time_unit: seconds`` produced a structurally perfect caption
+    # track with every timestamp 1000x too small, out of a transcription the
+    # owner PAID for, with no error anywhere. A ``mode="before"`` validator (the
+    # ``Literal`` above would otherwise answer first, in English) refuses it at
+    # LOAD time, so load_manifests() collects it for `manju doctor` and the
+    # provider is simply absent — no paid call, no wrong transcript.
+    #
+    # Deliberately NO synonym table: the plausible spellings are not a closed
+    # set (sec/secs/second/seconds/msec/millis/us/ns/frames/timecode), so any
+    # partial guess-list still drops the unguessed ones into the same silent
+    # ``else: 1.0`` branch — that is UNKNOWN guessed into PASS, and the one
+    # spelling family worth the most caution (``us``/``ns``) is off by 10^3
+    # again in the OTHER direction. Refusing costs the single user one edit
+    # against a message that names both legal values.
+    @field_validator("time_unit", mode="before")
+    @classmethod
+    def _known_time_unit(cls, v):
+        if v not in ASR_TIME_UNITS:
+            raise ValueError(
+                f"asr.time_unit 只能是 {' 或 '.join(ASR_TIME_UNITS)}(实际 {v!r})— "
+                "引擎把除 's' 以外的任何值都当作毫秒,写成 'seconds'/'sec' 会让字幕"
+                "时间轴整体小 1000 倍,而且转写本身已经花过钱、不会报任何错。"
+                "毫秒填 ms,秒填 s"
+            )
+        return v
 
 
 class ComfyConfig(ManjuModel):
@@ -337,6 +394,19 @@ class LocalCmdConfig(ManjuModel):
     output_ext: str = ".mp4"  # extension of the file the tool writes to {out}
 
 
+# CORE-002: which media extensions each declared provider ``type`` may write.
+# This is a GROUPING of `core.container.MEDIA_EXTS` (still the one canonical
+# list — membership is always tested against it first), not a second list of
+# legal extensions: an extension that is in MEDIA_EXTS but in no group here has
+# no declared type opinion and is accepted, so adding one to MEDIA_EXTS can
+# never silently start failing manifests that this file was never taught about.
+_TYPE_MEDIA_GROUPS: dict[str, tuple[str, ...]] = {
+    "video": (".mp4", ".mov", ".mkv", ".webm", ".m4v"),
+    "image": (".png", ".jpg", ".jpeg"),
+    "tts": (".wav", ".mp3", ".m4a", ".flac"),
+}
+
+
 class ProviderManifest(ManjuModel):
     id: str
     type: str = "video"  # video | image | tts | asr | vision
@@ -449,6 +519,7 @@ class ProviderManifest(ManjuModel):
                 # doctor probe (§scope): the command head must exist on PATH
                 if words and not shutil.which(words[0]):
                     problems.append(f"local_cmd.command binary {words[0]!r} not found on PATH")
+            problems.extend(self._output_ext_problems())
         for section, url in (("submit", self.submit and self.submit.url),
                              ("poll", self.poll and self.poll.url)):
             if url and not url.startswith(("http://", "https://")):
@@ -456,6 +527,40 @@ class ProviderManifest(ManjuModel):
         if self.auth.key_env and not os.environ.get(self.auth.key_env):
             problems.append(f"auth.key_env {self.auth.key_env} is not set in the environment")
         return problems
+
+    def _output_ext_problems(self) -> list[str]:
+        """``local_cmd.output_ext`` sanity (CORE-002). The extension goes
+        straight into the append-only take namespace, and ``Project.takes()``
+        resolves a take's media STRICTLY through ``MEDIA_EXTS`` — so an
+        ``output_ext`` outside that list (``.gif`` / ``.webp`` / ``.avi``) makes
+        the local generator register SUCCESSFULLY and then report
+        ``media_path=None`` forever, with the junk take stuck in append-only
+        space. An extension contradicting the declared ``type`` (a ``video``
+        provider writing ``.png``) is the same class of misfill. Both fail here,
+        at `manju doctor` / `manju providers check`, instead of at first run."""
+        # the ONE canonical media-extension list (core/container) — never a
+        # second copy of it here.
+        from ..core.container import MEDIA_EXTS
+
+        raw = self.local_cmd.output_ext or ".mp4"
+        # mirrors the normalization LocalCommandProvider.__init__ already does
+        # (dot-prefix only, no stripping), so a working dotless fill
+        # (`output_ext: mp4`) is not reported as bad — while a fill the adapter
+        # would mangle into a broken suffix still is.
+        ext = (raw if raw.startswith(".") else "." + raw).lower()
+        if ext not in MEDIA_EXTS:
+            return [
+                f"local_cmd.output_ext {raw!r} 不是可识别的媒体扩展名"
+                f"({', '.join(MEDIA_EXTS)})— 生成的 take 会写进 media/gen,"
+                f"但 takes() 永远解析不到它的媒体文件"
+            ]
+        expected = _TYPE_MEDIA_GROUPS.get(self.type)
+        if expected and ext not in expected:
+            return [
+                f"local_cmd.output_ext {raw!r} 与 provider type '{self.type}' 不符"
+                f"— 该类型应输出 {', '.join(expected)}"
+            ]
+        return []
 
     def _refs_problems(self) -> list[str]:
         """Reference-delivery config sanity (goal item 7). A bad `refs:` fill
@@ -759,6 +864,11 @@ _FIX_HINTS: tuple[tuple[str, str], ...] = (
      "add {out} to local_cmd.command — the tool must write the result there"),
     ("not found on PATH",
      "install the tool or fix its name so it resolves on PATH"),
+    ("不是可识别的媒体扩展名",
+     "把 local_cmd.output_ext 改成引擎能识别的扩展名(视频 .mp4/.mov,图片 .png/.jpg,"
+     "音频 .wav/.mp3),否则生成的 take 读不回来"),
+    ("与 provider type",
+     "让 local_cmd.output_ext 与 type 对上:video -> .mp4/.mov,image -> .png/.jpg"),
     ("does not look like an HTTP(S) URL",
      "use a full http:// or https:// URL"),
     ("first_frame_field AND refs.last_frame_field",

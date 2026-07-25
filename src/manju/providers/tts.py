@@ -122,8 +122,10 @@ class GenericTtsProvider:
     def _audio_from(self, data, *, dest_dir: Path) -> Path:
         from .generic_cloud import (
             _write_bytes_atomic,
+            is_transient_status,
             reject_html_error_page,
             safe_audio_ext,
+            safe_url,
         )
 
         cfg = self.manifest.tts
@@ -161,10 +163,20 @@ class GenericTtsProvider:
         # injected (this provider defaults to it, like generic_cloud/asr).
         resp = self._transport("GET", url, {}, None)
         if resp.status >= 400 or not resp.body:
+            # PROVIDER-PRIV-001: the audio URL is routinely a PRESIGNED one
+            # (``?X-Amz-Signature=…``); it must never reach failures.jsonl /
+            # reports intact. safe_url is the provider-side front door to the
+            # one scrubber (providers.submission.strip_url_query).
+            # PROVIDER-DOWNLOAD-001 sibling: a 429/5xx here is transient, and
+            # the synthesis has ALREADY been paid for — classify it retryable
+            # instead of burning the take as a terminal provider_error.
+            kind = status_to_kind(resp.status)
+            if kind is FailureKind.provider_error and is_transient_status(resp.status):
+                kind = FailureKind.timeout
             raise ProviderFailure(
-                FailureKind.provider_error,
+                kind,
                 f"{self.id}: audio download failed with HTTP {resp.status}",
-                detail={"url": url},
+                detail={"url": safe_url(url), "status": resp.status},
             )
         # #43/#44/#54: a 200 that is actually an HTML/error page must never
         # be written to disk as if it were the promised audio.
@@ -180,12 +192,14 @@ class GenericTtsProvider:
         ``should_cancel`` (C21): optional cooperative cancel predicate threaded
         into async ``_poll`` so GUI cancel can stop mid-wait.
         """
+        from .base import CapabilitySubmission
         from .generic_cloud import (
             journal_remote_submit,
             parse_json_response,
             render_body,
             require_remote_id,
         )
+        from .submission import disposition_for_status
 
         if not shot.dialogue.text:
             raise ProviderFailure(
@@ -197,63 +211,92 @@ class GenericTtsProvider:
             render_body(cfg.body_template, self._placeholders(shot, bible)),
             ensure_ascii=False,
         ).encode("utf-8")
-        # submit carries the manifest-declared extra_headers, mirroring
-        # generic_cloud.submit (they were silently dropped before — a declared
-        # version/tenant header never reached the API)
-        resp = self._transport(cfg.method, cfg.url, self._headers(cfg.extra_headers), body)
-        if resp.status >= 400:
-            # F4: shared status→kind so a 429 stays retryable rate_limited and
-            # every sibling adapter classifies identically (no drift).
-            raise ProviderFailure(
-                status_to_kind(resp.status),
-                f"{self.id}: synthesis failed with HTTP {resp.status}",
-                detail={"body": resp.text()[:2000]},
-            )
-        # a 2xx whose body is not readable JSON is OUTCOME_UNKNOWN post-submit
-        # (the paid request may have been accepted): structured, never raw.
-        data = parse_json_response(resp, self.id, post_submit=True)
+        # The voice hash is the staleness anchor AND the content-addressed
+        # request identity: it already folds the line, the speaker's bible voice
+        # ref and the resolved provider descriptor (id/fingerprint/language/
+        # format), so two runs that would produce the same voice share a
+        # request_digest and a re-run of an ambiguous one is recognizable.
+        voice_hash = compute_voice_hash(
+            shot, bible, version=VOICE_VERSION,
+            provider=voice_provider_descriptor(self),
+        )
+        # PROVIDER-SUBMISSION-001: the paid POST is no longer the first side
+        # effect. PREPARED + the DISPATCHING claim must be durable BEFORE the
+        # transport is entered, and a blip afterwards leaves an OUTCOME_UNKNOWN
+        # submission that fail-closes the next run instead of paying again.
+        with CapabilitySubmission(
+                self.id, capability="tts", project=project, scope=shot.id,
+                spec_hash=voice_hash, manifest=self.manifest,
+                identity_params={"language": self.manifest.tts.language,
+                                 "format": self.manifest.tts.audio_format},
+                estimated_cost=self.manifest.cost.per_call or None) as guard:
+            # submit carries the manifest-declared extra_headers, mirroring
+            # generic_cloud.submit (they were silently dropped before — a declared
+            # version/tenant header never reached the API)
+            resp = self._transport(cfg.method, cfg.url,
+                                   self._headers(cfg.extra_headers), body)
+            if resp.status >= 400:
+                # F4: shared status→kind so a 429 stays retryable rate_limited and
+                # every sibling adapter classifies identically (no drift).
+                declared = frozenset(cfg.definite_rejection_statuses or ())
+                raise ProviderFailure(
+                    status_to_kind(resp.status),
+                    f"{self.id}: synthesis failed with HTTP {resp.status}",
+                    detail={"body": resp.text()[:2000]},
+                    disposition=disposition_for_status(resp.status, declared),
+                )
+            # a 2xx whose body is not readable JSON is OUTCOME_UNKNOWN post-submit
+            # (the paid request may have been accepted): structured, never raw.
+            data = parse_json_response(resp, self.id, post_submit=True)
 
-        job_id: str | None = None
-        if self.manifest.poll is not None:  # async form
-            # only a real non-empty id — null/array/object never become "/None".
-            job_id = require_remote_id(extract(data, cfg.job_id_path), self.id)
-            # The PAID remote job id must hit DURABLE ground BEFORE we poll —
-            # fail-closed: if it cannot be journaled, surface the id + mark the
-            # outcome unknown instead of silently orphaning the spend.
-            journal_remote_submit(project.root, self.id, job_id, {
-                "capability": "tts", "shot": shot.id,
-                "cost": self.manifest.cost.per_call or None,
-                "currency": self.manifest.cost.currency,
-            })
-            data = self._poll(job_id, should_cancel=should_cancel)
+            job_id: str | None = None
+            if self.manifest.poll is not None:  # async form
+                # only a real non-empty id — null/array/object never become "/None".
+                job_id = require_remote_id(extract(data, cfg.job_id_path), self.id)
+            # provable receipt: ADMITTED (evidence first, then the projection)
+            # the instant the provider answered — this is the record that turns a
+            # later crash into a fail-closed re-run instead of a second charge.
+            guard.admitted(job_id)
+            if job_id is not None:
+                # The PAID remote job id must hit DURABLE ground BEFORE we poll —
+                # fail-closed: if it cannot be journaled, surface the id + mark the
+                # outcome unknown instead of silently orphaning the spend.
+                journal_remote_submit(project.root, self.id, job_id, {
+                    "capability": "tts", "shot": shot.id,
+                    "cost": self.manifest.cost.per_call or None,
+                    "currency": self.manifest.cost.currency,
+                })
+                data = self._poll(job_id, should_cancel=should_cancel)
 
-        with tempfile.TemporaryDirectory(prefix=f"tts_{shot.id}_") as tmp:
-            audio = self._audio_from(data, dest_dir=Path(tmp))
-            sidecar = VoiceTakeSidecar(
-                provider=self.id,
-                voice_hash=compute_voice_hash(
-                    shot, bible, version=VOICE_VERSION,
-                    provider=voice_provider_descriptor(self),
-                ),
-                voice_hash_version=VOICE_VERSION,
-                params={"text": shot.dialogue.text, "speaker": shot.dialogue.speaker},
-                remote=RemoteJobInfo(
-                    job_id=job_id,
-                    cost=self.manifest.cost.per_call or None,
-                    currency=self.manifest.cost.currency,
-                ),
-                # Cache the voice duration at synthesis (audit FP-L2): the same
-                # best-effort probe the video path uses (providers.base.probe_media,
-                # None on failure), so the timeline compiler reads it back instead
-                # of live-ffprobing this file on every compile.
-                probe=probe_media(audio),
-            )
-            return project.register_voice_take(shot.id, audio, sidecar)
+            with tempfile.TemporaryDirectory(prefix=f"tts_{shot.id}_") as tmp:
+                audio = self._audio_from(data, dest_dir=Path(tmp))
+                sidecar = VoiceTakeSidecar(
+                    provider=self.id,
+                    voice_hash=voice_hash,
+                    voice_hash_version=VOICE_VERSION,
+                    params={"text": shot.dialogue.text,
+                            "speaker": shot.dialogue.speaker},
+                    remote=RemoteJobInfo(
+                        job_id=job_id,
+                        cost=self.manifest.cost.per_call or None,
+                        currency=self.manifest.cost.currency,
+                    ),
+                    # Cache the voice duration at synthesis (audit FP-L2): the same
+                    # best-effort probe the video path uses (providers.base.probe_media,
+                    # None on failure), so the timeline compiler reads it back instead
+                    # of live-ffprobing this file on every compile.
+                    probe=probe_media(audio),
+                )
+                take = project.register_voice_take(shot.id, audio, sidecar)
+            # only now, with the take on durable ground, is the submission resolved
+            guard.succeeded()
+            return take
 
     def _poll(self, job_id: str, *, should_cancel=None) -> dict:
         from .generic_cloud import (
             is_transient_status,
             parse_json_response,
+            poll_backoff,
             retry_after_seconds,
         )
 
@@ -279,7 +322,7 @@ class GenericTtsProvider:
                     # SAME id (finding 10) — raising here abandoned the remote
                     # job and a higher-level retry would submit (and pay for) a
                     # NEW one. Honor Retry-After, bounded backoff.
-                    self._sleep(retry_after_seconds(resp.headers, min(0.5 * (2 ** i), 8.0)))
+                    self._sleep(retry_after_seconds(resp.headers, poll_backoff(i)))
                     i += 1
                     continue
                 raise ProviderFailure(
@@ -298,7 +341,7 @@ class GenericTtsProvider:
                     f"{self.id}: job {job_id} ended with status {raw_status!r}",
                     detail={"job_id": job_id, "body": resp.text()[:2000]},
                 )
-            delay = min(0.5 * (2 ** i), 8.0)
+            delay = poll_backoff(i)
             if time.monotonic() + delay > deadline:
                 raise ProviderFailure(
                     FailureKind.timeout,

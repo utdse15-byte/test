@@ -9,6 +9,8 @@ an unapproved bridge NEVER reaches a final.
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from manju.build import bridge
@@ -85,12 +87,21 @@ def test_real_bridge_is_qualification_gated(tmp_project):
 # create real frames and record that acceptance before executing.
 
 
+# BRIDGE-P0-002: a bridge endpoint is base64-delivered to a provider, so intake
+# now requires a REAL image (extension + magic bytes) — the placeholder text
+# frames these tests used no longer qualify. A minimal 1x1 PNG plus a distinct
+# trailing tag per side keeps the frames genuine images with differing hashes.
+_MIN_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk"
+    "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+
+
 def _frames(project):
     d = project.root / "bridge_frames"
     d.mkdir(exist_ok=True)
     prev, nxt = d / "prev.png", d / "next.png"
-    prev.write_bytes(b"c19-prev-frame")
-    nxt.write_bytes(b"c19-next-frame")
+    prev.write_bytes(_MIN_PNG + b"prev")
+    nxt.write_bytes(_MIN_PNG + b"next")
     return prev, nxt
 
 

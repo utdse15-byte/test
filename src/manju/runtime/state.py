@@ -52,7 +52,9 @@ import json
 import sqlite3
 import time
 import uuid
+from datetime import date as _date
 from datetime import datetime, timedelta, timezone
+from datetime import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -129,12 +131,32 @@ _INTENT_SUBMISSION_COLUMNS = (
 )
 
 
+def _json_default(o: Any) -> str:
+    """Serialize the non-JSON scalars ``yaml.safe_load`` routinely produces from
+    truth files — the SAME convention as ``core.hashing._json_default``.
+
+    PROVIDER-STATE-P1-001: an unquoted YAML date in shot params (``aired:
+    2026-07-18``) parses to a ``datetime.date``, which ``json.dumps`` cannot
+    serialize. The resulting ``TypeError`` is NOT an ``OSError``, so it escaped
+    every ``except`` guarding the jobs/runs writes in
+    ``providers/base.py`` — AFTER the paid submission had already gone out. The
+    CLI crashed bare and the ``remote_job_id`` breadcrumb was never written,
+    reopening exactly the §8.1 duplicate-submission window ``jobs`` exists to
+    close. ISO-8601 is deterministic, and this is only reached for otherwise
+    unserializable values, so every already-serializable params dict stays
+    byte-identical. A genuinely unserializable object still raises."""
+    if isinstance(o, (_date, _time)):  # date covers datetime
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def _dumps(value: Any) -> str | None:
     """Canonical JSON for a params dict (or None). Non-ASCII kept, keys sorted
     so the same params always serialize identically."""
     if value is None:
         return None
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      default=_json_default)
 
 
 class MalformedSubmissionEvidence(RuntimeError):
@@ -167,7 +189,18 @@ class RuntimeState:
     ):
         self.root = Path(project_root)
         self.db_path = self.root / ".manju" / "state.sqlite"
+        # STATE-P0-001: sqlite3.connect opens its OWN handle, so it cannot ride
+        # the no-follow append helper. Guard the path instead: refuse a linked
+        # ``.manju`` directory chain (a symlinked .manju would host the db
+        # outside the project) BEFORE mkdir, then refuse a symlinked or
+        # hardlinked state.sqlite (a hardlink to an external db grows Manju
+        # tables THROUGH the second name). Fail closed — never auto-initialize
+        # an external target — before any connection is opened.
+        from ..core.safeio import refuse_linked_within, refuse_unsafe_regular_file
+
+        refuse_linked_within(self.db_path.parent, self.root, kind=".manju 目录")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        refuse_unsafe_regular_file(self.db_path, kind="state.sqlite")
         self._now: Callable[[], datetime] = now_fn or (lambda: datetime.now(timezone.utc))
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

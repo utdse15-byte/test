@@ -32,12 +32,77 @@ closes the loop:
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
 from ..core.hashing import hash_file, hash_value
+from ..core.safeio import _is_reparse_point
 
 BRIDGE_CAPABILITY = "generative_bridge"
+
+# BRIDGE-P0-002: an endpoint frame is base64/-encoded and DELIVERED to a cloud
+# provider, so it must be a REAL image — not a project ``.env`` / event log /
+# script smuggled through as an "image". Extension allowlist AND magic-byte
+# sniff (a non-image renamed ``secret.png`` fails the magic check). Signature
+# sniffing is dependency-free; full decode would need an image library.
+_ALLOWED_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+_IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+)
+
+
+def _sniff_image_type(head: bytes) -> str | None:
+    """Recognised image type from the leading bytes, or ``None``. Covers the
+    still-frame formats a bridge endpoint can legitimately be."""
+    for signature, name in _IMAGE_MAGIC:
+        if head.startswith(signature):
+            return name
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _validate_endpoint_image(label: str, path: Path, project_root) -> None:
+    """BRIDGE-P0-002 intake: an endpoint frame handed toward Provider delivery
+    must be a regular file (never a symlink/junction — no reading through a link
+    to project-external bytes), inside the project when a root is known, with an
+    allowed image extension whose MAGIC bytes actually match a real image.
+    Raises :class:`BridgeError` (transport 0) otherwise."""
+    if path.is_symlink() or _is_reparse_point(path):
+        raise BridgeError(
+            f"{label}: endpoint frame is a link (symlink/junction) — refused "
+            f"(a bridge endpoint must be a real in-project image, not a link)")
+    try:
+        st = os.lstat(path)
+    except OSError:
+        raise BridgeError(f"{label}: endpoint frame file not found: {path.name}")
+    if not stat.S_ISREG(st.st_mode):
+        raise BridgeError(f"{label}: endpoint frame is not a regular file — refused")
+    if project_root is not None:
+        try:
+            path.resolve().relative_to(Path(project_root).resolve())
+        except (OSError, ValueError):
+            raise BridgeError(
+                f"{label}: endpoint frame resolves outside the project — refused")
+    if path.suffix.lower() not in _ALLOWED_IMAGE_EXTS:
+        raise BridgeError(
+            f"{label}: endpoint frame extension {path.suffix.lower()!r} is not an "
+            f"allowed image type — refused (only real image frames may be delivered)")
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError as exc:
+        raise BridgeError(f"{label}: endpoint frame unreadable: {exc}")
+    if _sniff_image_type(head) is None:
+        raise BridgeError(
+            f"{label}: endpoint frame bytes are not a recognised image "
+            f"(magic mismatch) — refused; a non-image project file must never be "
+            f"delivered to a provider as an image")
 
 # The qualification gate (``BRIDGE_NOT_QUALIFIED``) lives in the PROVIDER layer —
 # ``providers.qualification.bridge_admission`` — consulted by the ONE dispatch
@@ -67,6 +132,8 @@ def _bind_endpoint(label: str, frame, declared_hash: str | None,
     path = Path(frame)
     if not path.is_file():
         raise BridgeError(f"{label}: endpoint frame file not found: {path.name}")
+    # BRIDGE-P0-002: bind ONLY a real in-project image — never a .env/log/script.
+    _validate_endpoint_image(label, path, project_root)
     got = hash_file(path)
     if declared_hash and declared_hash != got:
         raise BridgeError(f"{label}: the declared hash does not match the frame "
@@ -126,6 +193,29 @@ def plan_bridge(*, duration_ms: int,
     return plan
 
 
+# ------------------------------------------------------------------ plan --out
+
+
+def write_bridge_plan(plan: dict[str, Any], out, project_root) -> Path:
+    """Validate a caller-chosen ``--out`` and atomically publish the bridge plan
+    JSON (BRIDGE-P0-001). ``bridge plan`` is ZERO-WRITE except for this one file,
+    so the destination must never truncate project truth/imports/config nor a
+    link/dir/special-file leaf: :func:`core.safeio.checked_out_path` refuses an
+    inside-project target outside ``exports/``|``reports/`` (and linked
+    ancestors), and :func:`publish_text` writes via a random exclusive temp
+    (失败零写入). Raises :class:`core.safeio.SafeOutError` (``reason="bad_out"``)
+    which the CLI surfaces through its ``_fail(..., code="bad_out")`` envelope."""
+    import json as _json
+
+    from ..core.safeio import checked_out_path, publish_text
+
+    target = checked_out_path(out, project_root=project_root,
+                              inside_roots=("exports", "reports"),
+                              kind="bridge 计划")
+    publish_text(target, _json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+    return target
+
+
 # ------------------------------------------------------------------ execute
 
 
@@ -172,6 +262,9 @@ def execute_bridge(project: Any, shot: str, plan: dict[str, Any], *, provider,
         path = _resolve_frame(project, ref)
         if not path.is_file():
             raise BridgeError(f"{label}: endpoint frame missing on disk: {ref}")
+        # BRIDGE-P0-002: re-guard at execute time (the plan is never trusted) —
+        # only a real in-project image reaches Provider delivery/base64.
+        _validate_endpoint_image(label, path, project.root)
         got = hash_file(path)
         if want and got != want:
             raise BridgeError(

@@ -23,10 +23,23 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from ..core.models import KeyframeSpec, ShotSpec
-from .base import CloudProvider, FailureKind, GenerationRequest, ProviderFailure
+from .base import (
+    CloudProvider,
+    FailureKind,
+    GenerationRequest,
+    ProviderFailure,
+    status_to_kind,
+)
 from .jsonpath import JsonPathError, assign, extract
 from .manifest import FIRST_LAST_CAPABILITY, GENERIC_ADAPTER, JOB_STATES, ProviderManifest
-from .refs import RefItem, base64_ref, encode_multipart, resolve_local_ref, unreadable_ref_message
+from .refs import (
+    RefItem,
+    base64_ref,
+    encode_multipart,
+    read_ref_bytes,
+    resolve_local_ref,
+    unreadable_ref_message,
+)
 
 # Tier label recorded on a keyframe-sourced ref (its own lineage bucket, distinct
 # from the resolve_refs tiers — a first/last-frame image is authored on the shot's
@@ -145,16 +158,49 @@ def is_transient_status(status: int) -> bool:
 
 
 def retry_after_seconds(headers: dict, default: float) -> float:
-    """Parse a ``Retry-After`` header (delta-seconds form) into a bounded sleep;
-    fall back to ``default`` when absent/unparseable. Capped at 60s so a hostile
-    header cannot wedge the poll loop."""
+    """Parse a ``Retry-After`` header (delta-seconds form) into a BOUNDED sleep.
+
+    PROVIDER-POLL-002: the old ``max(0.0, min(float(ra), 60.0))`` turned
+    ``Retry-After: 0``, a negative value, or ``nan`` into a **0.0 second sleep**,
+    so the poll loop of an already-paid job busy-spun the remote endpoint (and
+    our own CPU) flat out until the 600s budget expired — a proxy or a
+    misconfigured gateway emitting ``Retry-After: 0`` is enough, no adversary
+    needed. The value is now clamped to ``[default, 60]``: ``default`` is the
+    caller's own backoff floor, so a header can only ever ask us to wait
+    LONGER than we already intended, never to spin. Non-finite (nan/inf) and
+    unparseable values fall back to ``default``."""
+    import math
+
+    floor = default if default > 0 else 0.0
     ra = (headers or {}).get("Retry-After") or (headers or {}).get("retry-after")
     if ra:
         try:
-            return max(0.0, min(float(str(ra).strip()), 60.0))
+            value = float(str(ra).strip())
         except (TypeError, ValueError):
-            pass
+            return default
+        if math.isfinite(value):
+            return max(floor, min(value, 60.0))
     return default
+
+
+#: Highest exponent any poll backoff is allowed to raise 2 to. ``2 ** 60`` is
+#: already far above every cap we use, so clamping here changes no real delay —
+#: it only removes the overflow cliff (PROVIDER-POLL-002).
+_MAX_BACKOFF_EXPONENT = 60
+
+
+def poll_backoff(round_index: int, *, base: float = 0.5, cap: float = 8.0) -> float:
+    """Exponential poll backoff that cannot overflow.
+
+    The sibling poll loops all wrote ``min(base * (2 ** i), cap)`` inline. That
+    expression is evaluated EAGERLY (it is also passed as the ``default`` of
+    :func:`retry_after_seconds`), so a long-running poll — an instant transport
+    against a 600s budget reaches four-digit round counts easily — raised a bare
+    ``OverflowError`` out of the middle of a paid, already-accepted job instead
+    of a typed :class:`ProviderFailure`. Clamping the exponent keeps the curve
+    identical for every round that matters and makes the tail flat."""
+    i = max(0, min(int(round_index), _MAX_BACKOFF_EXPONENT))
+    return min(base * (2 ** i), cap)
 
 
 _SAFE_AUDIO_EXTS = frozenset({"wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"})
@@ -222,13 +268,85 @@ def _read_capped(resp, url: str, max_bytes: int | None) -> bytes:
         if total > max_bytes:
             raise ProviderFailure(
                 FailureKind.provider_error,
-                f"response from {url} exceeded the {max_bytes}-byte cap "
-                "(configurable via MANJU_MAX_DOWNLOAD_BYTES) — refusing to "
+                f"response from {safe_url(url)} exceeded the {max_bytes}-byte "
+                "cap (configurable via MANJU_MAX_DOWNLOAD_BYTES) — refusing to "
                 "buffer further (goal 43, OOM guard)",
-                detail={"url": url, "max_bytes": max_bytes},
+                detail={"url": safe_url(url), "max_bytes": max_bytes},
             )
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+def safe_url(url: object) -> str:
+    """A URL rendered for EVIDENCE (a failure message / ``detail``).
+
+    PROVIDER-PRIV-001: a result URL is normally a SIGNED url — its query string
+    (``X-Amz-Signature``/``X-Amz-Credential``/``token=``) IS the credential.
+    Those messages land in ``reports/failures.jsonl`` and the run log, which are
+    read, shared and (now) scanned, so no url reaches evidence verbatim. The
+    scrub itself is NOT forked here: :func:`providers.submission.strip_url_query`
+    stays the one owner and this is the provider-side front door to it."""
+    from .submission import strip_url_query
+
+    return strip_url_query(str(url))
+
+
+# Headers that may cross an origin boundary on a redirect. Everything else —
+# Authorization, Cookie, X-Api-Key, a tenant/account header, a signed-request
+# header — is dropped: see :class:`CredentialSafeRedirectHandler`.
+_REDIRECT_SAFE_HEADERS = frozenset({
+    "accept", "accept-encoding", "accept-language", "user-agent",
+    "content-type", "content-length",
+})
+
+
+def _same_origin(a: str, b: str) -> bool:
+    """Scheme + host + effective port equality (a redirect that stays on the
+    SAME origin may keep its credentials; anything else may not)."""
+    pa, pb = urllib.parse.urlsplit(a), urllib.parse.urlsplit(b)
+    default = {"http": 80, "https": 443}
+    try:
+        port_a = pa.port or default.get(pa.scheme.lower())
+        port_b = pb.port or default.get(pb.scheme.lower())
+    except ValueError:  # malformed port -> treat as a different origin
+        return False
+    return (pa.scheme.lower() == pb.scheme.lower()
+            and (pa.hostname or "").lower() == (pb.hostname or "").lower()
+            and port_a == port_b)
+
+
+class CredentialSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """PROVIDER-NET-001 — the redirect policy stdlib urllib does not have.
+
+    ``urllib.request.HTTPRedirectHandler.redirect_request`` (CPython 3.11)
+    copies EVERY request header onto the redirect target — including
+    ``Authorization``/``X-Api-Key``/a tenant header — regardless of whether the
+    target is the same origin, and it rewrites a ``POST`` into a ``GET`` with no
+    body. On the owner's ordinary path that means (a) the provider API key is
+    handed to whatever host a 302 names, and (b) a PAID submit silently becomes a
+    credential-less GET whose reply we then try to read a job id out of.
+
+    This handler keeps the useful half — a GET/HEAD redirect is followed, which
+    is how signed CDN result URLs work — and fixes both halves:
+
+    * cross-origin: only :data:`_REDIRECT_SAFE_HEADERS` survive; every credential
+      / tenant header is dropped before the new request is issued;
+    * a non-GET/HEAD method is NEVER auto-followed (``None`` = "not my job"), so
+      a paid POST is never re-issued as a GET. The 30x then surfaces to
+      :func:`default_transport`, which refuses it with an honest disposition.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if req.get_method() not in ("GET", "HEAD"):
+            return None  # never downgrade a paid POST into a GET
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None or _same_origin(req.full_url, new.full_url):
+            return new
+        kept = {k: v for k, v in new.header_items()
+                if k.lower() in _REDIRECT_SAFE_HEADERS}
+        return urllib.request.Request(
+            new.full_url, data=new.data, headers=kept, method=new.get_method(),
+            origin_req_host=new.origin_req_host, unverifiable=True)
 
 
 def _is_loopback_host(host: str | None) -> bool:
@@ -252,25 +370,29 @@ def default_transport(method: str, url: str, headers: dict[str, str],
         # non-HTTP protocol dial from a manifest/response-supplied URL.
         raise ProviderFailure(
             FailureKind.invalid,
-            f"refusing non-http(s) URL scheme {scheme!r}: {url}",
-            detail={"url": url, "scheme": scheme},
+            f"refusing non-http(s) URL scheme {scheme!r}: {safe_url(url)}",
+            detail={"url": safe_url(url), "scheme": scheme},
         )
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     max_bytes = _max_response_bytes()
     host = urllib.parse.urlsplit(url).hostname
-    # C35: loopback must bypass system HTTP(S)_PROXY (personal Windows proxy).
+    # PROVIDER-NET-001: EVERY call goes through an opener carrying the
+    # credential-safe redirect policy — urlopen's default handler would copy
+    # Authorization cross-origin and rewrite a paid POST into a GET.
+    # C35: loopback must ALSO bypass system HTTP(S)_PROXY (personal Windows proxy).
+    handlers: list = [CredentialSafeRedirectHandler()]
     if _is_loopback_host(host):
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        open_url = opener.open
-    else:
-        open_url = urllib.request.urlopen
+        handlers.append(urllib.request.ProxyHandler({}))
+    open_url = urllib.request.build_opener(*handlers).open
     try:
         with open_url(request, timeout=60) as resp:
-            return HttpResponse(resp.status, dict(resp.headers),
-                                _read_capped(resp, url, max_bytes))
+            status, resp_headers = resp.status, dict(resp.headers)
+            payload = _read_capped(resp, url, max_bytes)
     except urllib.error.HTTPError as exc:  # still a response — classify upstream
-        return HttpResponse(exc.code, dict(exc.headers or {}),
-                            _read_capped(exc, url, max_bytes))
+        status, payload = exc.code, _read_capped(exc, url, max_bytes)
+        if 300 <= status < 400:
+            _refuse_redirect(method, url, status, dict(exc.headers or {}))
+        return HttpResponse(status, dict(exc.headers or {}), payload)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         # DR06 (ruling 6): mark the send boundary. ONLY a DNS failure or a
         # connection-refused before any byte was written is provably-not-sent;
@@ -282,10 +404,37 @@ def default_transport(method: str, url: str, headers: dict[str, str],
         from .submission import disposition_for_transport_error
 
         raise ProviderFailure(
-            FailureKind.timeout, f"network error calling {url}: {exc}",
-            detail={"url": url},
+            FailureKind.timeout, f"network error calling {safe_url(url)}: {exc}",
+            detail={"url": safe_url(url)},
             disposition=disposition_for_transport_error(exc),
         ) from exc
+    if 300 <= status < 400:
+        _refuse_redirect(method, url, status, resp_headers)
+    return HttpResponse(status, resp_headers, payload)
+
+
+def _refuse_redirect(method: str, url: str, status: int, headers: dict) -> None:
+    """A 30x that :class:`CredentialSafeRedirectHandler` declined to follow.
+
+    Only reachable for a non-GET/HEAD method (a paid POST) or a redirect chain
+    urllib could not complete. For a POST the send boundary is already crossed —
+    the remote side saw the request — so the disposition is OUTCOME_UNKNOWN and
+    the shot fails CLOSED rather than being re-submitted (and re-charged) on the
+    assumption that a redirect means "nothing happened"."""
+    from .submission import NOT_DISPATCHED, OUTCOME_UNKNOWN_DISPOSITION
+
+    location = headers.get("Location") or headers.get("location") or ""
+    sent = method.upper() not in ("GET", "HEAD")
+    raise ProviderFailure(
+        FailureKind.provider_error,
+        f"refusing to follow the HTTP {status} redirect for {method} "
+        f"{safe_url(url)} -> {safe_url(location) or '<no location>'} — a paid "
+        "request is never silently re-issued as a credential-less GET "
+        "(PROVIDER-NET-001)",
+        detail={"url": safe_url(url), "status": status,
+                "location": safe_url(location)},
+        disposition=OUTCOME_UNKNOWN_DISPOSITION if sent else NOT_DISPATCHED,
+    )
 
 
 def _write_bytes_atomic(dest: Path, data: bytes) -> None:
@@ -316,21 +465,58 @@ def _write_bytes_atomic(dest: Path, data: bytes) -> None:
         raise
 
 
+# Content types a MEDIA download may legitimately carry. PROVIDER-DOWNLOAD-002:
+# this is an ALLOWLIST, not an html blacklist — an expired signed URL that
+# answers 200 with `application/json {"error": ...}` (S3/GCS/most job APIs do
+# exactly that) used to sail straight past the old `text/html`-only check and be
+# written to disk, then registered as a SUCCESSFUL paid take. An unset/blank
+# content type stays permitted (many CDNs omit it, and every offline test
+# fixture does) — the magic-byte check below is what covers that case.
+_MEDIA_CONTENT_TYPES = (
+    "video/", "audio/", "image/", "application/octet-stream",
+    "application/binary", "application/force-download", "application/download",
+    "application/mp4", "application/ogg", "application/zip", "binary/",
+)
+# Leading bytes that prove the payload is a TEXT document (a JSON/XML/HTML error
+# body), never media. Checked whatever the declared content type says, because a
+# CDN error page is perfectly capable of claiming `video/mp4`.
+_TEXT_BODY_PREFIXES = (b"{", b"[", b"<")
+
+
 def reject_html_error_page(resp: "HttpResponse", url: str, provider_id: str) -> None:
-    """A "successful" (2xx) download that is actually an HTML/error page — an
-    expired signed URL, a CDN error page, a login wall — must never be written
-    to disk as if it were the promised media (#43/#44/#54). Raises with a
-    short verbatim snippet so the failure is diagnosable from evidence alone;
-    a no-op when the content type is unset or genuinely not HTML."""
-    ctype = (resp.headers.get("Content-Type") or resp.headers.get("content-type") or "").lower()
-    if "text/html" in ctype:
-        snippet = " ".join(resp.text()[:300].split())
-        raise ProviderFailure(
-            FailureKind.provider_error,
-            f"{provider_id}: download from {url} returned text/html instead of "
-            f"media (likely an error page) — snippet: {snippet!r}",
-            detail={"url": url, "content_type": ctype},
-        )
+    """A "successful" (2xx) download that is actually an ERROR DOCUMENT — an
+    expired signed URL, a CDN error page, a login wall, a job API's
+    ``{"error": ...}`` — must never be written to disk as if it were the
+    promised media (#43/#44/#54, PROVIDER-DOWNLOAD-002).
+
+    Two independent gates, either of which refuses:
+
+    * the declared content type, when present, must name a MEDIA type
+      (:data:`_MEDIA_CONTENT_TYPES`) — an allowlist, so ``application/json``,
+      ``text/plain`` and friends are caught, not only ``text/html``;
+    * the first non-whitespace byte must not open a JSON/HTML/XML document
+      (:data:`_TEXT_BODY_PREFIXES`) — which catches an error body that lies
+      about its content type.
+
+    Raises with a short verbatim snippet so the failure is diagnosable from
+    evidence alone. The url is scrubbed (:func:`safe_url`) — a signed result URL
+    must not ride into ``reports/failures.jsonl`` (PROVIDER-PRIV-001)."""
+    raw = (resp.headers.get("Content-Type") or resp.headers.get("content-type") or "")
+    ctype = raw.split(";", 1)[0].strip().lower()
+    bad: str | None = None
+    if ctype and not ctype.startswith(_MEDIA_CONTENT_TYPES):
+        bad = f"content type {ctype!r} is not a media type"
+    elif resp.body.lstrip()[:1] in _TEXT_BODY_PREFIXES:
+        bad = "the body opens as a JSON/HTML/XML document, not media"
+    if bad is None:
+        return
+    snippet = " ".join(resp.text()[:300].split())
+    raise ProviderFailure(
+        FailureKind.provider_error,
+        f"{provider_id}: download from {safe_url(url)} is not media — {bad} "
+        f"(likely an error page) — snippet: {snippet!r}",
+        detail={"url": safe_url(url), "content_type": ctype, "reason": bad},
+    )
 
 
 def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
@@ -719,16 +905,16 @@ class GenericCloudProvider(CloudProvider):
         return status, info
 
     def download(self, job_id: str, dest_dir: Path) -> list[Path]:
-        # F3: download() is the TERMINAL read of this job's cached poll info —
-        # once here, polling is done and this generate() call will not poll the
-        # id again (a later resume re-polls fresh, re-populating). Pop BOTH
-        # per-job dicts so a registry-cached provider instance (one per manifest,
-        # reused across a build of hundreds of shots or a long-lived MCP/GUI
-        # host) does not accumulate them monotonically for the process lifetime.
-        info = self._results.pop(job_id, None) or {}
-        self._submitted.pop(job_id, None)
+        # PROVIDER-DOWNLOAD-001: the cached poll info of an ALREADY PAID job is
+        # read here, NOT popped — the pop is deferred until the bytes are on
+        # disk. Popping first meant a transient download failure threw away the
+        # only copy of the result URL, so the retry inside this same generate()
+        # had nothing to fetch and the job died with the money already spent.
+        info = self._results.get(job_id) or {}
         url = info.get("result_url")
         if not url:
+            self._results.pop(job_id, None)
+            self._submitted.pop(job_id, None)
             raise ProviderFailure(
                 FailureKind.provider_error,
                 f"{self.id}: job {job_id} has no result URL "
@@ -737,23 +923,61 @@ class GenericCloudProvider(CloudProvider):
             )
         resp = self._transport("GET", url, {}, None)
         if resp.status >= 400 or not resp.body:
+            # PROVIDER-DOWNLOAD-001: a 429/503 on the DOWNLOAD of a job we have
+            # ALREADY PAID FOR is transient, not terminal. Hardcoding
+            # provider_error here made base.generate() give up, mark the
+            # submission TERMINAL_FAILURE, and let the NEXT build open a fresh
+            # submission — i.e. pay a second time for media that already exists
+            # remotely. `status_to_kind` is the one owner of that mapping (F4),
+            # so a 429 stays retryable exactly like it does on submit/poll; a
+            # transient 5xx is reported as `timeout`, the other retryable kind.
+            kind = status_to_kind(resp.status)
+            if kind is FailureKind.provider_error and is_transient_status(resp.status):
+                kind = FailureKind.timeout
             raise ProviderFailure(
-                FailureKind.provider_error,
+                kind,
                 f"{self.id}: download failed with HTTP {resp.status}",
-                detail={"url": url},
+                detail={"url": safe_url(url), "job_id": job_id,
+                        "status": resp.status},
             )
-        # #43/#44: a 200 that is actually an HTML/error page (expired signed
-        # URL, CDN error page…) must never be written to disk as if it were
-        # the promised media.
+        # #43/#44 + PROVIDER-DOWNLOAD-002: a 200 that is actually an error
+        # document (expired signed URL, CDN error page, a JSON {"error": …})
+        # must never be written to disk as if it were the promised media.
         reject_html_error_page(resp, url, self.id)
         suffix = Path(url.split("?", 1)[0]).suffix or ".mp4"
         dest = Path(dest_dir) / f"result{suffix}"
         _write_bytes_atomic(dest, resp.body)
+        # F3: only NOW is this the terminal read of the cached poll info — drop
+        # both per-job dicts so a registry-cached provider instance (one per
+        # manifest, reused across a build of hundreds of shots or a long-lived
+        # MCP/GUI host) does not accumulate them for the process lifetime.
+        self._results.pop(job_id, None)
+        self._submitted.pop(job_id, None)
         return [dest]
 
     # --------------------------------------------------------- refs delivery
 
     def _deliver_refs(
+        self, body: dict, req: GenerationRequest
+    ) -> list[tuple[str, str, bytes]]:
+        """Deliver the refs, converting a TOCTOU refusal into a typed failure.
+
+        ``refs.read_ref_bytes`` re-verifies the ref on the OPEN descriptor and
+        raises :class:`~manju.core.safeio.SafeOutError` when the file was swapped
+        for a link / a non-regular file / an out-of-project target between
+        resolution and upload. That is a LOCAL, provably pre-network refusal, so
+        it must surface as ``ProviderFailure(invalid)`` — letting a raw
+        SafeOutError escape would hit base.py's unclassified-exception default
+        and fail the shot CLOSED as OUTCOME_UNKNOWN ("may be billing remotely")
+        for something that never left the machine."""
+        from ..core.safeio import SafeOutError
+
+        try:
+            return self._deliver_refs_verified(body, req)
+        except SafeOutError as exc:
+            raise ProviderFailure(FailureKind.invalid, f"{self.id}: {exc}") from exc
+
+    def _deliver_refs_verified(
         self, body: dict, req: GenerationRequest
     ) -> list[tuple[str, str, bytes]]:
         """Inject reference inputs into the rendered ``body`` per ``manifest.refs``.
@@ -798,7 +1022,7 @@ class GenericCloudProvider(CloudProvider):
                         it = self._require_local(it, rc.image_mode)
                         fld = rc.multipart_field if len(items) == 1 \
                             else f"{rc.multipart_field}{i}"
-                        files.append((fld, it.path.name, it.path.read_bytes()))
+                        files.append((fld, it.path.name, read_ref_bytes(it)))
                 delivery["images"] = [
                     {"ref": it.ref, "tier": it.tier, "delivered_as": rc.image_mode}
                     for it in items
@@ -829,6 +1053,18 @@ class GenericCloudProvider(CloudProvider):
         return files
 
     def _deliver_first_last(
+        self, body: dict, req: GenerationRequest, delivery: dict
+    ) -> list[tuple[str, str, bytes]]:
+        """First/last-frame delivery, with the same TOCTOU→``invalid`` guard
+        :meth:`_deliver_refs` applies (this method is also reachable on its own)."""
+        from ..core.safeio import SafeOutError
+
+        try:
+            return self._deliver_first_last_verified(body, req, delivery)
+        except SafeOutError as exc:
+            raise ProviderFailure(FailureKind.invalid, f"{self.id}: {exc}") from exc
+
+    def _deliver_first_last_verified(
         self, body: dict, req: GenerationRequest, delivery: dict
     ) -> list[tuple[str, str, bytes]]:
         """Deliver the shot's start+end keyframe images as a first/last-frame task.
@@ -885,9 +1121,9 @@ class GenericCloudProvider(CloudProvider):
             self._guard_readable([start, end])
             assert start.path is not None and end.path is not None
             files.append((rc.first_last_multipart_first, start.path.name,
-                          start.path.read_bytes()))
+                          read_ref_bytes(start)))
             files.append((rc.first_last_multipart_last, end.path.name,
-                          end.path.read_bytes()))
+                          read_ref_bytes(end)))
 
         delivery["first_last"] = {
             "mode": rc.first_last_mode,
@@ -921,7 +1157,7 @@ class GenericCloudProvider(CloudProvider):
             return None
         if img.startswith(("http://", "https://")):
             return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=None,
-                           is_url=True, exists=True)
+                           is_url=True, exists=True, root=req.project.root)
         # bible asset id (character/scene) → its ref_image
         entry = req.bible.get(img)
         if isinstance(entry, dict):
@@ -935,7 +1171,8 @@ class GenericCloudProvider(CloudProvider):
         path, reason = resolve_local_ref(req.project, img)
         exists = bool(path and path.is_file())
         return RefItem(ref=img, tier=TIER_KEYFRAME, kind="image", path=path,
-                       is_url=False, exists=exists, blocked_reason=reason)
+                       is_url=False, exists=exists, blocked_reason=reason,
+                       root=req.project.root)
 
     def _guard_readable(self, items: list[RefItem]) -> None:
         msg = unreadable_ref_message(items)

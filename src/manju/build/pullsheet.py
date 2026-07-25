@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..core.hashing import hash_text
+from ..core.idents import windows_segment_problems
+from ..core.safeio import checked_out_path
 from ..core.yamlio import atomic_write_text
 
 if TYPE_CHECKING:
@@ -200,14 +203,37 @@ def compile_pull_sheet_md(project: "Project", timeline: "Timeline | None" = None
     return "\n".join(lines) + "\n"
 
 
+def _safe_sheet_stem(name: str) -> str:
+    """PULLSHEET-P0-001: the project name is DISPLAY identity, not a path — a
+    separator / absolute root / ``..`` / reserved device name in it must never
+    survive into the output filename (``out_dir / f"{name}.csv"`` would otherwise
+    drop the ``exports/pullsheet`` prefix and overwrite an arbitrary file). Fold
+    every path-ish or Windows-lexically-unsafe char to ``_``; CJK/spaces stay
+    (legitimate on both platforms). An empty/reserved result falls back to a
+    fixed safe leaf. The final path is still re-checked by ``checked_out_path``."""
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", (name or "").strip())
+    cleaned = cleaned.replace("..", "_").strip(" .")[:120]
+    if not cleaned or windows_segment_problems(cleaned):
+        return "pullsheet"
+    return cleaned
+
+
 def export_pull_sheet(project: "Project", timeline: "Timeline | None" = None) -> dict[str, Path]:
     """Write the CSV + Markdown pull sheet to ``exports/pullsheet/`` (derived,
-    rebuildable). Returns {kind: path}. PDF is SKIPPED_WITH_EVIDENCE."""
-    name = project.load_config().name
+    rebuildable). Returns {kind: path}. PDF is SKIPPED_WITH_EVIDENCE.
+
+    The filename leaf comes from a sanitized single-segment slug of the project
+    name and the final path is re-validated by ``core.safeio.checked_out_path``
+    (inside-project → only under ``exports/``; never a link/dir leaf) so a
+    hostile ``project.yaml.name`` can never escape ``exports/pullsheet``
+    (PULLSHEET-P0-001)."""
+    stem = _safe_sheet_stem(project.load_config().name)
     out_dir = project.exports_dir / "pullsheet"
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / f"{name}.csv"
-    md_path = out_dir / f"{name}.md"
+    csv_path = checked_out_path(out_dir / f"{stem}.csv", project_root=project.root,
+                                inside_roots=("exports",), kind="pull sheet CSV")
+    md_path = checked_out_path(out_dir / f"{stem}.md", project_root=project.root,
+                               inside_roots=("exports",), kind="pull sheet Markdown")
     atomic_write_text(csv_path, compile_pull_sheet_csv(project, timeline))
     atomic_write_text(md_path, compile_pull_sheet_md(project, timeline))
     return {"csv": csv_path, "md": md_path}

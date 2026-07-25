@@ -304,14 +304,23 @@ def _resolve_output(project: "Project", output: str | Path | None) -> Path:
     config = project.load_config()
     if output is None:
         return project.exports_dir / "openclap" / f"{config.name}.clap"
+    # OPENCLAP-P0-001: an explicit --output used to only check "still inside the
+    # project", so it could truncate canonical truth / an import into gzip
+    # (`read_clap` then read the wreckage back cleanly). Keep openclap output
+    # project-internal AND confine it to exports/ via the shared safeio owner,
+    # which refuses truth/config/imports, directories and symlink/junction leaves.
+    from ...core.safeio import SafeOutError, checked_out_path
+
     out = Path(output)
-    if out.is_absolute():
-        if not out.resolve().is_relative_to(project.root):
-            raise ProjectError(
-                f"导出路径超出项目边界: {output!r} — OpenClap 输出必须落在项目内。")
-        return out
-    # project-relative: reuse the central containment guard
-    return project.resolve(out)
+    resolved = (out if out.is_absolute() else (project.root / out)).resolve()
+    if not resolved.is_relative_to(project.root.resolve()):
+        raise ProjectError(
+            f"导出路径超出项目边界: {output!r} — OpenClap 输出必须落在项目内。")
+    try:
+        return checked_out_path(resolved, project_root=project.root,
+                                inside_roots=("exports",))
+    except SafeOutError as exc:
+        raise ProjectError(str(exc)) from exc
 
 
 def export_openclap(project: "Project", timeline: Timeline, *,

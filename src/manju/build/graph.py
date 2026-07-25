@@ -20,6 +20,7 @@ from ..core.container import Project
 from ..core.events import append_event
 from ..core.hashing import get_by_path
 from ..timeline.compiler import CompileError, build_timeline
+from .spend import PaidResultInvalid, book_actual_cost, checked_cost
 from .stale import ShotBuildStatus, ShotState, evaluate_all
 
 
@@ -434,6 +435,28 @@ def _provider_semaphore(name: str | None, cache: dict):
         return cache[name]
 
 
+def _book_result_cost(running: float, res: dict, *, label: str) -> float:
+    """Fold ONE generation result's provider-reported actual cost into
+    ``running`` through the single accounting owner
+    (:func:`build.spend.book_actual_cost`), and return the new total.
+
+    Every running total that a budget breaker later compares against must be
+    finite and >= 0: a ``NaN`` fails every ``running > budget_limit`` compare
+    (IEEE-754) and a negative cancels out later real spend, so either one
+    silently disables the §8.3 breaker while real charging continues. An
+    unusable figure therefore fails CLOSED — :class:`PaidResultInvalid`
+    propagates and stops the build; it is never coerced to 0 and never
+    accumulated (UNKNOWN is never guessed into PASS).
+
+    ``gen_one`` never raises (its workers run in a thread pool), so a per-take
+    figure it already refused travels back as ``cost_invalid``; re-raising it
+    here puts the refusal back on the committing thread."""
+    invalid = res.get("cost_invalid")
+    if invalid is not None:
+        raise invalid
+    return book_actual_cost(running, res.get("actual_cost", 0.0) or 0.0, label=label)
+
+
 def _concurrent_generate(items, gen_one, *, max_workers: int,
                          budget_limit: float | None, head_provider=None,
                          should_cancel: "Callable[[], bool] | None" = None):
@@ -471,7 +494,13 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
     moment the trip fired, so the caller can say exactly which N will still
     complete and bill). With the default free/local providers every actual
     cost is 0, so the trip never fires and the result set equals ``items`` —
-    nothing observable changes but the order of execution."""
+    nothing observable changes but the order of execution.
+
+    Every actual cost enters that running total through
+    :func:`_book_result_cost`, so an untrustworthy provider figure raises
+    :class:`PaidResultInvalid` here instead of poisoning the total the trip
+    compares against. The raise leaves the pool's ``__exit__`` to drain what is
+    already in flight and submits nothing new — the caller fails the build."""
     from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
     from concurrent.futures import wait as _wait
 
@@ -518,7 +547,7 @@ def _concurrent_generate(items, gen_one, *, max_workers: int,
                 # never itself saw the flag between submissions.
                 if res.get("canceled") and not canceled:
                     canceled = True
-                running += float(res.get("actual_cost", 0.0) or 0.0)
+                running = _book_result_cost(running, res, label=f"actual_cost[{sid}]")
                 if (budget_limit is not None and running > budget_limit
                         and not tripped):
                     tripped = True
@@ -695,6 +724,38 @@ def _estimate_shot_cost(shot, duration_ms: int) -> tuple[float, str | None]:
     return 0.0, None
 
 
+def _voice_egress_check(project: Project, voice_plan: list[dict[str, Any]], *,
+                        allow_network: bool) -> None:
+    """Run the WINCLI-P0-003 network gate over the TTS providers THIS voice plan
+    would call, before a single byte of dialogue leaves the box.
+
+    Egress is a risk category SEPARATE from spend: cloud TTS ships private
+    dialogue off-box even at zero cost, so the §8.3 ``assume_yes`` (spend
+    consent) is deliberately not threaded in here — only an explicit
+    ``allow_network`` grants it. Opt-in: absent the ask_before token
+    :func:`build.voice.network_egress_gate` is a no-op, so a project that never
+    asked for the gate behaves byte-identically.
+
+    Provider resolution is best-effort — an unresolvable provider is left to the
+    synthesis loop's own error path, so the gate only ever names destinations it
+    can actually resolve. Raises :class:`build.voice.VoiceEgressWaiting`."""
+    from ..providers.tts import get_tts_provider
+    from .voice import network_egress_gate
+
+    provs: list[Any] = []
+    seen: set = set()
+    for item in voice_plan:
+        pid = item.get("provider")
+        if pid in seen:
+            continue
+        seen.add(pid)
+        try:
+            provs.append(get_tts_provider(pid))
+        except Exception:
+            continue
+    network_egress_gate(project, provs, allow_network=allow_network)
+
+
 def _plan_voice(project: Project, *, gen: str) -> list[dict[str, Any]]:
     """Voice synthesis plan (M3): shots whose dialogue has no voice take yet,
     when a TTS manifest is configured. Pricing is per_call from the manifest
@@ -781,6 +842,7 @@ def run_build(
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
     lang: str | None = None,  # WP4: locale overlay (None = base, byte-identical)
     agent_profile: str = "collaborative",  # AI_IDE_16 §10 keyframe spend gate
+    allow_network: bool = False,  # WINCLI-P0-003 egress consent (NOT assume_yes)
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
     *content*; this process lock guards the dual-actor scenario — a human
@@ -806,7 +868,13 @@ def run_build(
     clean, ``ok=False, canceled=True`` result (lock released, nothing rolled
     back — see :class:`BuildCanceled`'s docstring) instead of an exception
     reaching the caller. Dry-run never checks it (read-only and instant —
-    nothing to cancel)."""
+    nothing to cancel).
+
+    ``allow_network`` (WINCLI-P0-003, default False) grants the SEPARATE
+    external-data-transfer consent cloud TTS needs. ``assume_yes`` deliberately
+    does not double as it: spend consent is not privacy consent, and cloud TTS
+    ships dialogue off-box at zero cost. Default False changes nothing — the
+    gate only bites for a project that opted in via ``ask_before``."""
     from datetime import datetime, timezone
 
     from ..runtime.buildlock import BuildLocked, build_lock
@@ -863,7 +931,7 @@ def run_build(
             dry_run=True, force=force, actor=actor,
             assume_yes=assume_yes, mode=mode, on_phase=on_phase,
             include_unindexed=include_unindexed, lang=lang,
-            agent_profile=agent_profile,
+            agent_profile=agent_profile, allow_network=allow_network,
         )
     # P0 WP4: _run_build_phases stamps its run_id + terminal-emitted flag onto
     # this carrier, so an EXCEPTION escaping the phases still emits
@@ -877,7 +945,8 @@ def run_build(
                 dry_run=False, force=force, actor=actor,
                 assume_yes=assume_yes, mode=mode, on_phase=on_phase,
                 include_unindexed=include_unindexed, should_cancel=should_cancel,
-                lang=lang, agent_profile=agent_profile, _run_info=_run_info,
+                lang=lang, agent_profile=agent_profile,
+                allow_network=allow_network, _run_info=_run_info,
             )
     except BuildLocked as exc:
         # Contention is a gate, not a debuggable failure — keep R2 semantics
@@ -916,6 +985,42 @@ def run_build(
                      {"target": target, "ok": False, "canceled": True,
                       "generated": exc.generated, "spent": exc.spent,
                       "currency": exc.currency, "run_id": exc.run_id})
+        return result
+    except PaidResultInvalid as exc:
+        # SPEND-P0-001 fail-closed: a provider-reported cost that cannot be
+        # trusted (NaN/inf/negative/non-numeric) never enters the running total,
+        # so the §8.3 budget breaker below it is no longer meaningful for this
+        # build. Stop — an untrusted figure is UNKNOWN, and UNKNOWN is never
+        # guessed into PASS by booking it as 0 and continuing to submit paid
+        # work. Whatever was already produced stays on disk as ordinary
+        # content-addressed cache (§3, same as BuildCanceled); the build itself
+        # is a one-line ok=False result, never a traceback at the CLI/MCP/GUI.
+        result = BuildResult()
+        result.ok = False
+        result.errors.append(
+            f"{exc.reason}: {exc} — 该次构建已停止(付费安全:不可信的金额不会被当成 0 "
+            "继续累计,否则 budget.limit 断路器会失效);核对供应商返回的 cost/currency 后重试"
+        )
+        rid = _run_info.get("run_id")
+        if rid and not _run_info.get("terminal_emitted"):
+            _run_info["terminal_emitted"] = True
+            try:
+                from .attempts import append_run_terminal
+
+                append_run_terminal(project, rid, status="failed", actor=actor)
+            except Exception:
+                pass
+            result.run_id = rid
+        _record(project, "generate", "paid_result",
+                "供应商返回的金额不可信,构建已按付费安全停止",
+                evidence=f"{exc.reason}: cost={exc.cost!r} currency={exc.currency!r}",
+                hint="检查该 provider 的 cost/currency 映射(manifest cost.* / 返回体);"
+                     "确认后重跑 manju build",
+                actor=actor)
+        append_event(project.root, actor, "build",
+                     {"target": target, "ok": False, "reason": exc.reason,
+                      "run_id": rid})
+        _attach_failures(project, result, build_start)
         return result
     except BaseException:
         # P0 WP4: any other exception escaping the phases still terminates the
@@ -972,6 +1077,7 @@ def _run_build_phases(
     should_cancel: "Callable[[], bool] | None" = None,  # goal: honest job cancellation
     lang: str | None = None,  # WP4 locale
     agent_profile: str = "collaborative",  # AI_IDE_16 §10 keyframe spend gate
+    allow_network: bool = False,  # WINCLI-P0-003 egress consent (NOT assume_yes)
     _run_info: dict | None = None,  # P0 WP4: run_build's lifecycle carrier (internal)
 ) -> BuildResult:
     result = BuildResult()
@@ -1400,14 +1506,27 @@ def _run_build_phases(
                 # the next checkpoint rather than recording a failure.
                 takes, exc = None, e
                 canceled = True
+            # Each take's provider-reported cost is validated BEFORE it joins
+            # this shot's subtotal, so one bad figure cannot hide inside a sum
+            # (a negative would cancel a sibling take's real spend). This worker
+            # may run in a thread pool and must never raise, so a refusal rides
+            # back as ``cost_invalid`` for _book_result_cost to re-raise on the
+            # committing thread — never silently dropped to 0.
             actual = 0.0
+            cost_invalid: PaidResultInvalid | None = None
             for t in (takes or []):
                 remote = t.sidecar.remote
                 if remote and remote.cost:
-                    actual += remote.cost
+                    try:
+                        actual += checked_cost(
+                            remote.cost, label=f"actual_cost[{shot.id}/{t.name}]",
+                            currency=remote.currency)
+                    except PaidResultInvalid as bad:
+                        cost_invalid = bad
+                        break
             return {"item": item, "shot": shot, "req": req, "chain": chain,
                     "takes": takes, "exc": exc, "actual_cost": actual,
-                    "canceled": canceled}
+                    "cost_invalid": cost_invalid, "canceled": canceled}
 
         def _commit_one(res: dict) -> None:
             """Serial, order-dependent commit for one generated shot — the exact
@@ -1473,8 +1592,11 @@ def _run_build_phases(
                                evidence=evidence)
             # goal: honest job cancellation — running spend for THIS build, so
             # a checkpoint that trips right after this shot can say exactly
-            # what has already been spent (§8.3 honesty, not just §80's).
-            spent_so_far["total"] += float(res.get("actual_cost", 0.0) or 0.0)
+            # what has already been spent (§8.3 honesty, not just §80's). This
+            # same total gates the serial/voice "already over budget?" checks
+            # below, so it books through the one owner and fails closed.
+            spent_so_far["total"] = _book_result_cost(
+                spent_so_far["total"], res, label=f"actual_cost[{shot.id}]")
             if spent_so_far["currency"] is None:
                 spent_so_far["currency"] = next(
                     (t.sidecar.remote.currency for t in takes
@@ -1582,6 +1704,22 @@ def _run_build_phases(
     # within the same build. WP4: locale plan rows register under locales/<lang>/.
     if voice_plan:
         _phase("voice")
+        from .voice import VoiceEgressWaiting
+
+        def _egress_refused(plan: list[dict[str, Any]]) -> bool:
+            """WINCLI-P0-003: True when this voice plan needs external-data-
+            transfer consent it does not have — the caller returns a
+            waiting_user result WITHOUT synthesizing (transport 0). Absent the
+            ask_before token the gate is a no-op and this is always False."""
+            try:
+                _voice_egress_check(project, plan, allow_network=allow_network)
+                return False
+            except VoiceEgressWaiting as exc:
+                result.ok = False
+                result.waiting_user = True
+                result.errors.append(str(exc))
+                return True
+
         if lang:
             from .locale_build import synthesize_locale_voices
             # R2-P0-1: run_build already holds build_lock — do not re-acquire.
@@ -1592,6 +1730,11 @@ def _run_build_phases(
                     f"(实际花费 {spent_so_far['total']} > budget.limit={budget})"
                 )
                 voice_plan = []
+            # WINCLI-P0-003: gate the locale TTS providers before the batch —
+            # after the budget skip, so a plan that will not be submitted at all
+            # never asks for egress consent it does not need.
+            if voice_plan and _egress_refused(voice_plan):
+                return _finish_run(result)
             try:
                 gen_paths = synthesize_locale_voices(
                     project, voice_plan, lang=lang, actor=actor,
@@ -1642,6 +1785,11 @@ def _run_build_phases(
             from ..providers.tts import get_tts_provider
 
             bible = project.load_bible()
+            # WINCLI-P0-003: gate every provider this plan would call BEFORE the
+            # loop — the refusal must land before any dialogue text is sent, not
+            # per shot after the first one already went out.
+            if _egress_refused(voice_plan):
+                return _finish_run(result)
             voice_budget_skipped: list[str] = []
             for item in voice_plan:
                 # C6: mid-run budget also stops NEW voice submissions (video trip
@@ -1669,15 +1817,25 @@ def _run_build_phases(
                             actor=actor, detail={"provider": item["provider"]})
                     continue
                 result.generated.append(f"{shot.id}/{media.stem}")
-                # Attribute TTS cost into spent_so_far when the take sidecar has it.
+                # Attribute TTS cost into spent_so_far when the take sidecar has
+                # it. The tolerant except below exists to survive a failed
+                # ATTRIBUTION (unreadable sidecar, missing take) — it must not
+                # also absorb a refused FIGURE: spent_so_far gates the remaining
+                # voice submissions, so a poisoned total keeps spending. Booking
+                # goes through the one owner and PaidResultInvalid escapes.
                 try:
                     takes = project.voice_takes(shot.id)
                     if takes:
                         sc = takes[-1][1]
                         if sc is not None and sc.remote is not None and sc.remote.cost:
-                            spent_so_far["total"] += float(sc.remote.cost)
+                            spent_so_far["total"] = book_actual_cost(
+                                spent_so_far["total"], sc.remote.cost,
+                                label=f"actual_cost[voice:{shot.id}]",
+                                currency=sc.remote.currency)
                             if spent_so_far["currency"] is None and sc.remote.currency:
                                 spent_so_far["currency"] = sc.remote.currency
+                except PaidResultInvalid:
+                    raise
                 except Exception:
                     pass
                 append_event(project.root, actor, "voice",
@@ -1887,6 +2045,17 @@ def _run_build_phases(
                              "对照 timeline.generated.json",
                         log_path="timeline/timeline.json", actor=actor)
                 return _finish_run(result)
+
+    # LOCALE-P1-010, second half: the compiler now lets a dub keep its own
+    # length, but a voice clip that runs PAST the picture window it sits in is
+    # still hard-cut by apad/atrim (media/render._build_audio_graph) — and that
+    # was silent. The overrun is derivable from the compiled timeline alone, so
+    # surface it once here, where all three branches above have converged on
+    # `timeline` (audition/animatic, the locale overlay, and the ordinary
+    # compiled path). Pure: no ledger write, no Timeline change.
+    from ..timeline.compiler import voice_overrun_warnings
+
+    result.warnings.extend(voice_overrun_warnings(timeline))
 
     # ---- 4. captions
     rules = project.load_rules()
@@ -2570,7 +2739,9 @@ def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
     rules = project.load_rules()
     bible = project.load_bible()
     by_id = {s.shot_id: s for s in evaluate_all(project)}
-    considered = shots if mode == "shots" else project.shot_ids()
+    # paid-safety (same shape as the voice batch): duplicate ids in an explicit
+    # `--shots` list must not become duplicate paid generations.
+    considered = list(dict.fromkeys(shots)) if mode == "shots" else project.shot_ids()
 
     result = BatchResult(requested=list(considered))
     to_run: list[str] = []
@@ -2737,7 +2908,10 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
     from .voice import VoiceState, evaluate_all_voices
 
     by_id = {v.shot_id: v for v in evaluate_all_voices(project)}
-    considered = shots if mode == "shots" else project.shot_ids()
+    # paid-safety (VOICE-P1-002): an explicit list is de-duped order-preserving —
+    # `--shots S001,S001` is one decision stated twice, never two paid syntheses
+    # (the second would also silently overwrite the first take's record).
+    considered = list(dict.fromkeys(shots)) if mode == "shots" else project.shot_ids()
 
     result = BatchResult(requested=list(considered))
     to_run: list[str] = []

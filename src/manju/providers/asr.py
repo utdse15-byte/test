@@ -257,35 +257,97 @@ class GenericAsrProvider:
                           ensure_ascii=False).encode("utf-8")
         # submit carries the manifest-declared extra_headers (mirrors
         # generic_cloud.submit / the tts sibling — they were silently dropped)
+        from .base import CapabilitySubmission
         from .generic_cloud import (
             journal_remote_submit,
             parse_json_response,
             require_remote_id,
         )
+        from .submission import disposition_for_status
 
-        resp = self._transport(cfg.method, cfg.url, self._headers(cfg.extra_headers), body)
-        if resp.status >= 400:
-            # F4: shared status→kind so ASR classifies a 429 as retryable
-            # rate_limited exactly like its tts sibling (was always provider_error).
-            raise ProviderFailure(
-                status_to_kind(resp.status),
-                f"{self.id}: transcribe failed with HTTP {resp.status}",
-                detail={"body": resp.text()[:2000]},
-            )
-        data = parse_json_response(resp, self.id, post_submit=True)
-
-        poll_cfg = self.manifest.poll
-        if poll_cfg is None:  # sync API: submit IS the result (§8.4)
-            return self._segments_from(data)
-
-        # async form: a real non-empty id (never "/None"), DURABLY journaled
-        # before polling (fail-closed) — same paid-safety contract as TTS.
-        job_id = require_remote_id(extract(data, cfg.job_id_path), self.id)
         root = project_root or _find_project_root(media_path)
-        if root is not None:
-            journal_remote_submit(root, self.id, job_id,
-                                  {"capability": "asr", "media": str(media)})
-        return self._poll_segments(job_id, should_cancel=should_cancel)
+        # PROVIDER-SUBMISSION-001: durable PREPARED + DISPATCHING evidence
+        # BEFORE the paid POST, so a blip afterwards fail-closes the next run
+        # instead of silently paying for the same transcription twice. Media
+        # outside any project has nowhere durable to write (the pre-existing
+        # `journal_remote_submit` skip) — the guard degrades to a no-op there
+        # rather than refusing work that was never journaled before either.
+        with CapabilitySubmission(
+                self.id, capability="asr",
+                project=self._project_for(root), scope=self._scope_id(media_path, root),
+                spec_hash=self._media_digest(media_path), manifest=self.manifest,
+                identity_params={"language": self.manifest.asr.language,
+                                 "filename": media_path.name},
+                estimated_cost=self.manifest.cost.per_call or None) as guard:
+            resp = self._transport(cfg.method, cfg.url,
+                                   self._headers(cfg.extra_headers), body)
+            if resp.status >= 400:
+                # F4: shared status→kind so ASR classifies a 429 as retryable
+                # rate_limited exactly like its tts sibling (was always provider_error).
+                declared = frozenset(cfg.definite_rejection_statuses or ())
+                raise ProviderFailure(
+                    status_to_kind(resp.status),
+                    f"{self.id}: transcribe failed with HTTP {resp.status}",
+                    detail={"body": resp.text()[:2000]},
+                    disposition=disposition_for_status(resp.status, declared),
+                )
+            data = parse_json_response(resp, self.id, post_submit=True)
+
+            poll_cfg = self.manifest.poll
+            job_id = None
+            if poll_cfg is not None:
+                # async form: a real non-empty id (never "/None"), DURABLY
+                # journaled before polling (fail-closed).
+                job_id = require_remote_id(extract(data, cfg.job_id_path), self.id)
+            guard.admitted(job_id)  # provable receipt: the spend is real
+            if poll_cfg is None:  # sync API: submit IS the result (§8.4)
+                segments = self._segments_from(data)
+            else:
+                if root is not None:
+                    journal_remote_submit(root, self.id, job_id,
+                                          {"capability": "asr", "media": str(media)})
+                segments = self._poll_segments(job_id, should_cancel=should_cancel)
+            guard.succeeded()
+            return segments
+
+    # -- submission-identity helpers (PROVIDER-SUBMISSION-001) -------------
+
+    @staticmethod
+    def _project_for(root: "Path | None"):
+        """The Project the admission evidence lands in, or ``None`` when the
+        media does not live in one (degraded, no-op guard)."""
+        if root is None:
+            return None
+        try:
+            from ..core.container import Project
+
+            return Project(root)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _scope_id(media_path: Path, root: "Path | None") -> str:
+        """The correlation key the intent/event rows carry in the ``shot``
+        column. ASR has no shot, so it is the project-relative media path —
+        stable across runs, and ``as_posix`` so Windows and POSIX agree."""
+        try:
+            if root is not None:
+                return "asr:" + media_path.resolve().relative_to(
+                    Path(root).resolve()).as_posix()
+        except (OSError, ValueError):
+            pass
+        return "asr:" + media_path.name
+
+    @staticmethod
+    def _media_digest(media_path: Path) -> "str | None":
+        """The audio's content hash — the one fact that decides whether two ASR
+        submissions are the same request. Through the ONE content hasher."""
+        try:
+            from ..core.hashing import hash_file
+
+            return hash_file(media_path)
+        except OSError:
+            return None
 
     def _poll_segments(self, job_id: str, *,
                        should_cancel: Callable[[], bool] | None = None,
@@ -294,6 +356,7 @@ class GenericAsrProvider:
         from .generic_cloud import (
             is_transient_status,
             parse_json_response,
+            poll_backoff,
             retry_after_seconds,
         )
 
@@ -313,7 +376,7 @@ class GenericAsrProvider:
                 if is_transient_status(resp.status) and time.monotonic() < deadline:
                     # 429 / 5xx polling an ACCEPTED job: keep the SAME id
                     # (finding 10) — abandoning it lets a retry pay for a new one.
-                    self._sleep(retry_after_seconds(resp.headers, min(0.5 * (2 ** i), 8.0)))
+                    self._sleep(retry_after_seconds(resp.headers, poll_backoff(i)))
                     i += 1
                     continue
                 raise ProviderFailure(
@@ -332,7 +395,7 @@ class GenericAsrProvider:
                     f"{self.id}: job {job_id} ended with status {raw_status!r}",
                     detail={"job_id": job_id, "body": resp.text()[:2000]},
                 )
-            delay = min(0.5 * (2 ** i), 8.0)
+            delay = poll_backoff(i)
             if time.monotonic() + delay > deadline:
                 raise ProviderFailure(
                     FailureKind.timeout,

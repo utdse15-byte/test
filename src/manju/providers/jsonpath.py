@@ -95,23 +95,46 @@ def assign(data: Any, path: str, value: Any) -> None:
     :func:`extract`, used to inject a reference into a manifest's body_template
     (§8.6 ``refs.field``). Missing intermediate dict keys are created; list
     indices must already exist. Raises :class:`JsonPathError` on an empty/
-    malformed path or an index into a non-list."""
+    malformed path or an index into a non-list.
+
+    PROVIDER-JSONPATH-P1-001: descending through an EXISTING SCALAR is an error,
+    never a silent overwrite. A ``refs.field`` authored one segment too deep —
+    ``$.prompt.image`` against a body whose ``prompt`` already holds the compiled
+    prompt string — used to replace that string with ``{}``, DELETING the prompt;
+    the paid request then went out anyway with an empty prompt and the owner paid
+    for a blank generation with no configuration error anywhere. Only an ABSENT
+    key (or an explicit ``null`` placeholder, which a body_template uses to
+    declare the slot) may be materialized into a dict."""
     segments = _tokenize(path)
     node = data
     for kind, seg in segments[:-1]:
+        # JsonPathError subclasses KeyError, so the occupied-scalar refusal is
+        # raised OUTSIDE this try — otherwise the generic handler below would
+        # swallow it and replace its diagnosis with "cannot descend into".
+        occupied: Any = None
         try:
             if kind == "index":
                 node = node[seg]
             else:
                 child = node.get(seg)
-                if not isinstance(child, (dict, list)):
+                if child is None:  # absent, or an explicit null placeholder
                     child = {}
                     node[seg] = child
-                node = child
+                elif not isinstance(child, (dict, list)):
+                    occupied = child
+                if occupied is None:
+                    node = child
         except (KeyError, IndexError, TypeError, AttributeError):
             label = f"[{seg}]" if kind == "index" else repr(seg)
             raise JsonPathError(
                 f"path {path!r}: cannot descend into {label}") from None
+        if occupied is not None:
+            raise JsonPathError(
+                f"path {path!r}: segment {seg!r} already holds a "
+                f"{type(occupied).__name__} value ({occupied!r:.60}) — refusing "
+                "to replace authored content with an empty object; check whether "
+                "refs.field 多写了一层"
+            )
     kind, seg = segments[-1]
     try:
         node[seg] = value

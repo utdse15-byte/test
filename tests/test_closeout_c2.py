@@ -133,12 +133,20 @@ class FakeBridgeProvider:
         return [take]
 
 
+# BRIDGE-P0-002 (91fa9f0) sniffs the leading bytes of an endpoint frame and
+# refuses anything that is not a real image, so a `.png` fixture has to actually
+# begin like one. The tail stays distinct per file — these tests are about WHICH
+# bytes get delivered and whether their hash still matches, so the two frames
+# must hash differently.
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
 def frames(project, a=b"PREV-FRAME-BYTES-1", b=b"NEXT-FRAME-BYTES-2"):
     d = Path(project.root) / "bridge_frames"
     d.mkdir(exist_ok=True)
     prev, nxt = d / "prev.png", d / "next.png"
-    prev.write_bytes(a)
-    nxt.write_bytes(b)
+    prev.write_bytes(PNG_MAGIC + a)
+    nxt.write_bytes(PNG_MAGIC + b)
     return prev, nxt
 
 
@@ -181,13 +189,14 @@ def test_b02_direction_params_and_endpoint_bytes_change_digest(tmp_project):
     # params
     p = make_plan(tmp_project, prev, nxt, params={"motion_strength": 0.9})
     assert p["request_digest"] != base["request_digest"]
-    # endpoint BYTES: same file paths, different content
-    prev.write_bytes(b"PREV-FRAME-BYTES-CHANGED")
+    # endpoint BYTES: same file paths, different content (still a real image —
+    # BRIDGE-P0-002 refuses a non-image before the digest is ever computed)
+    prev.write_bytes(PNG_MAGIC + b"PREV-FRAME-BYTES-CHANGED")
     e = make_plan(tmp_project, prev, nxt)
     assert e["request_digest"] != base["request_digest"]
     assert e["prev_end_frame_hash"] != base["prev_end_frame_hash"]
     # and identical inputs are deterministic
-    prev.write_bytes(b"PREV-FRAME-BYTES-1")
+    prev.write_bytes(PNG_MAGIC + b"PREV-FRAME-BYTES-1")
     again = make_plan(tmp_project, prev, nxt)
     assert again["request_digest"] == base["request_digest"]
 

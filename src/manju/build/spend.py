@@ -43,12 +43,93 @@ must not be able to break a read.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ..core.container import Project
 
 # How many of the most recent runs the report surfaces (newest first).
 _RECENT_LIMIT = 20
+
+
+class PaidResultInvalid(RuntimeError):
+    """A provider-reported cost was refused before it could reach the run ledger
+    or the §8.3 running-spend budget breaker (SPEND-P0-001).
+
+    A ``NaN`` cost poisons the running total: ``NaN`` fails EVERY ``running >
+    budget_limit`` compare (IEEE-754), so the breaker never trips and every
+    further paid task is submitted; a negative cost cancels out later real spend
+    the same way. Either lets a broken/hostile provider response silently disable
+    the budget guard DURING real charging — not a display glitch, a keeps-spending
+    one. So every figure that reaches the running total must be finite and >= 0
+    (and, when the budget currency is known, match it); an invalid one fails
+    CLOSED — the caller stops submitting new paid work and records the invalid
+    result — it is NEVER coerced to 0.
+
+    ``reason`` is the stable machine token for ``--json`` envelopes / failure
+    records (``paid_result_invalid`` / ``paid_currency_mismatch``)."""
+
+    def __init__(self, message: str, *, reason: str = "paid_result_invalid",
+                 cost: Any = None, currency: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.cost = cost
+        self.currency = currency
+
+
+def checked_cost(value: Any, *, label: str = "actual_cost",
+                 currency: str | None = None,
+                 budget_currency: str | None = None) -> float:
+    """Return ``value`` as a finite, non-negative ``float`` fit to enter the
+    ledger / budget breaker, or raise :class:`PaidResultInvalid` (SPEND-P0-001).
+
+    Rejects a non-numeric value, ``NaN``/``±inf`` (``math.isfinite`` is False),
+    a negative amount, and — when ``budget_currency`` is set and ``currency`` is
+    given — a currency that differs from the budget's (cross-currency addition is
+    meaningless). A bad figure is NEVER coerced to 0; it fails closed."""
+    try:
+        cost = float(value)
+    except (TypeError, ValueError) as exc:
+        raise PaidResultInvalid(
+            f"{label} 不是数值(provider 返回 {value!r})——拒绝计入账本/预算断路器",
+            cost=value, currency=currency) from exc
+    if not math.isfinite(cost):
+        raise PaidResultInvalid(
+            f"{label} 非有限值({cost})——NaN/inf 会使预算断路器永久失效,拒绝计入",
+            cost=value, currency=currency)
+    if cost < 0:
+        raise PaidResultInvalid(
+            f"{label} 为负({cost})——负成本会抵消后续真实花费,拒绝计入",
+            cost=value, currency=currency)
+    if (budget_currency is not None and currency is not None
+            and currency != budget_currency):
+        raise PaidResultInvalid(
+            f"{label} 币种 {currency!r} 与预算币种 {budget_currency!r} 不一致——"
+            "跨币种累加无意义,拒绝计入", reason="paid_currency_mismatch",
+            cost=value, currency=currency)
+    return cost
+
+
+def book_actual_cost(running: float, value: Any, *, label: str = "actual_cost",
+                     currency: str | None = None,
+                     budget_currency: str | None = None) -> float:
+    """Add a provider-reported cost to the ``running`` spend total under the
+    SPEND-P0-001 invariants and return the new total.
+
+    ``value`` is validated by :func:`checked_cost` (finite, >= 0, currency match)
+    BEFORE it is added, and the resulting total is re-asserted finite &
+    non-negative — so a caller can trust that the subsequent ``running >
+    budget_limit`` comparison will actually fire. Raises :class:`PaidResultInvalid`
+    on any violation; the caller fails closed (stop submitting, record the invalid
+    result), never keeps spending against a poisoned total."""
+    cost = checked_cost(value, label=label, currency=currency,
+                        budget_currency=budget_currency)
+    new_running = float(running) + cost
+    if not math.isfinite(new_running) or new_running < 0:
+        raise PaidResultInvalid(
+            f"累计花费在计入 {label}={cost} 后变为非法值({new_running})——拒绝继续付费提交",
+            cost=value, currency=currency)
+    return new_running
 
 
 def spend_report(project: Project) -> dict:
