@@ -3702,6 +3702,28 @@ def pull_sheet(
                 f"pull-sheet plan: {s['create']} create · {s['update']} update · "
                 f"{s['unchanged']} unchanged (inspect — 加 --apply 才会写入)",
                 fg=typer.colors.BRIGHT_BLACK)
+            # The whole point of plan-then-apply is that a human REVIEWS the
+            # plan, and a bare "1 update" gives them nothing to review — you
+            # either apply blind or go diff the CSV by hand. The per-shot detail
+            # was already computed and already in --json; it just never reached
+            # the text surface. Only the rows that would CHANGE are listed;
+            # `unchanged` stays a count, since that is what it is.
+            for op in plan.get("operations") or []:
+                if op.get("op") == "unchanged":
+                    continue
+                sid = op.get("shot_id", "?")
+                fields = ", ".join(op.get("fields") or []) or "(无字段)"
+                verb = "新建" if op.get("op") == "create_shot" else "更新"
+                typer.echo(f"  {verb} {sid}  字段: {fields}")
+                for name, value in (op.get("values") or {}).items():
+                    rendered = value if isinstance(value, str) else json.dumps(
+                        value, ensure_ascii=False, sort_keys=True)
+                    typer.secho(f"      {name} → {rendered}",
+                                fg=typer.colors.BRIGHT_BLACK)
+                if op.get("locked_paths"):
+                    typer.secho(
+                        f"      ⚠ 锁定字段将被跳过: {', '.join(op['locked_paths'])}",
+                        fg=typer.colors.YELLOW)
         return
 
     result = apply_pull_sheet_import(project, plan, actor=ACTOR)
