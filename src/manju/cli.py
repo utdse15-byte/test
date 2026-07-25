@@ -9726,7 +9726,23 @@ def segments_cmd(
     try:
         ev = _json.loads(report.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        _fail(f"bad report: {exc}", code="bad_report")
+        # This argument is an analysis REPORT, but it is a path and the sibling
+        # commands around it take media, so handing it an .mp4 is the obvious
+        # slip — and it used to answer with a raw decoder exception
+        # ("'utf-8' codec can't decode byte 0xde in position 42"), which names
+        # neither what went wrong nor what the argument wanted. Say both.
+        from .core.container import MEDIA_EXTS  # the ONE media-suffix owner
+
+        hint = ""
+        if report.suffix.lower() in MEDIA_EXTS:
+            hint = ("(这是媒体文件,不是分析报告 —— 本命令读的是 "
+                    "`manju analyze` 产出的 JSON 证据)")
+        elif isinstance(exc, UnicodeDecodeError):
+            hint = "(不是 UTF-8 文本 —— 期望 `manju analyze` 产出的 JSON 报告)"
+        elif isinstance(exc, _json.JSONDecodeError):
+            hint = "(不是合法 JSON —— 期望 `manju analyze` 产出的 JSON 报告)"
+        _fail(f"bad report: {report} {hint}".rstrip() + f" — {exc}",
+              code="bad_report")
         return
     segs = _seg.derive_segments(ev)
     if as_json:
