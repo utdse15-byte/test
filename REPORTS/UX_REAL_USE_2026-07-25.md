@@ -358,3 +358,87 @@ master)全部认;该滤镜从 ffmpeg 4.3 就有,所以钉死的 6.1.1 也有。�
 **"我验证不了"和"我没试过去验证"是两回事。**
 
 `windows-ci.yml` 仍然只能由 CI 回答——那个是真的换不了环境。
+
+---
+
+# 第四轮:把 windows-ci.yml 拆开,看哪些其实能验
+
+上一轮我说"`windows-ci.yml` 真的换不了环境"。**这句话把整个闸门当成了一块铁疙瘩。**
+它不是——它是一串步骤,其中只有一部分真的需要 Windows 语义。拆开看:
+
+| 闸门步骤 | 本机能验? | 结果 |
+|---|---|---|
+| setup-python 3.11 | ✅ | 本机就是 3.11 |
+| choco install ffmpeg 6.1.1 | ❌ | Windows-only(且 6.1 构建已被上游下架) |
+| ffmpeg 版本断言(PowerShell) | ✅ | **装了 pwsh 真跑,挖出一个洞** |
+| `pip install -e ".[dev,jianying,capcut,mcpvideo,edgetts]"` | ✅ | **之前从没装过这些 extras** |
+| `python -m pytest -q -n auto` 全量 | ✅ | 装上 extras 后重跑 |
+| `manju --help` 控制台入口 | ✅ | 通过 |
+| install-smoke(PowerShell 安装/回滚/卸载) | ❌ 行为 / ✅ 语法 | 三个脚本用真 pwsh 语法检查全过 |
+
+## 一、我一直没装 extras —— 也就是说全量套件我一直跑的是另一条路
+
+闸门装的是 `[dev,jianying,capcut,mcpvideo,edgetts]`,而我这几十轮全量跑的是
+`[dev]`。查了一下:`pyJianYingDraft` / `pycapcut` / `mcp_video` / `edge_tts`
+**四个全都没装**。也就是说每一次跑的都是"extra 缺失"分支。
+
+装上以后重跑:**跳过数从 18 降到 11 —— 有 7 条测试从来没真正跑过,现在跑了,全绿。**
+
+## 二、装了 pwsh 之后,闸门自己的防腐断言里有个洞
+
+闸门用这句确认 ffmpeg 没被悄悄换掉:
+
+```powershell
+if ($v -notmatch "ffmpeg version 6\.1") { throw "ffmpeg is not the pinned 6.1.x build: $v" }
+```
+
+`6\.1` 是**前缀匹配**。我在真 PowerShell 7.4.6 里逐条跑过:
+
+```
+6.1.1-3ubuntu5   → 接受 ✓(应该)
+6.10 Copyright   → 接受 ✗(不该 —— 6.10 不是 6.1.x)
+```
+
+一个存在意义就是"拒绝一切非 6.1.x"的守卫,**能被它自己要拒绝的版本满足**。改成
+`"ffmpeg version 6\.1(\.|\s|$)"`,十个用例在真 pwsh 下逐条验过。ffmpeg 历史上没出过
+6.10,所以这是潜在的洞而不是正在流血的伤口——但守卫的话术必须和它的行为一致。
+
+顺带钉住的:闸门不得出现 `continue-on-error`、`pytest` 后面不得出现 `-k`/`-m`/
+`--ignore` 收窄、extras 必须齐全、ffmpeg 存在断言必须在(没有它,套件可以靠静默跳过
+约 63 个 ffmpeg 相关文件来变绿——那是唯一绝不能算数的绿)。
+
+**我自己又犯了两次同一类错**:第一版测试直接在原文里搜 `continue-on-error`,而文件头
+的注释里就写着"no continue-on-error anywhere",于是假红;另一条查 `-m` 收窄,而
+`python -m pytest` 本身就含 ` -m `。都是"没剥掉包装就匹配"——和上一轮 CSS 注释含逗号
+是同一个毛病。
+
+## 三、当前验证状态
+
+| 配置 | 结果 |
+|---|---|
+| **闸门同配置**(全 extras + `PYTHONUTF8=1` + ffmpeg 7.1 + `-n auto` 全量) | **5553 passed, 0 failed, 11 skipped** |
+| ffmpeg 7.0.2 | 仅 drawtext 缺失那批失败,已在 7.1 上验证通过 |
+| 三个 PowerShell 安装脚本 | 真 pwsh 7.4.6 语法检查全过 |
+| 闸门内联 PowerShell(4 段) | 语法检查全过 |
+| `manju --help` 控制台入口 | 通过 |
+
+## 四、诚实记一条没能复现的失败
+
+某一次全量跑里
+`test_transitions_looks.py::test_applied_xfade_boundary_cache_reused_and_type_change_rerenders_only_boundary`
+失败了一次。之后**单跑 3 次、模块并行跑 1 次、全量再跑 1 次,全部通过**,没能复现。
+
+该测试在重并发下做真 ffmpeg 渲染并比对 `st_mtime_ns`,怀疑是负载下的偶发。**我没有
+复现,就不会去"修"它** —— 往一条正在通过的测试里塞一个猜出来的修复,正是本仓库规矩
+禁止的那种投机。记在这里,是因为下一个会话应该知道它偶发过。
+
+## 五、剩下真正验不了的
+
+- **Windows 的 OS 语义本身**:msvcrt 字节锁的真实行为、CreateProcess 引号规则、
+  NTFS 大小写折叠的排序。
+- **install-smoke 的运行时行为**:安装/回滚/卸载真的动了什么(语法验了,行为没验)。
+- **choco 装 6.1.1 这一步**本身(而且 6.1 的第三方构建已被上游下架,本机拿不到)。
+
+这三条只有真 Windows 能回答。**但它们比我上一轮说的"整个 windows-ci.yml 都验不了"
+小得多** —— 那句话当时把能验的部分也一起放弃了,还因此漏掉了 extras 从没装过、以及
+闸门断言里那个洞。

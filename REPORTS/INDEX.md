@@ -78,4 +78,4 @@ reporting window stays visible; the era table keeps their record intact.
 | `UX_WAVE_2_2026-07-17.md` | UX wave 2 — 通知/进度/did-you-mean/补全/文件夹/对比试听/--demo 样片/归档;deferred 项留档 | UX-WAVE-2 |
 | `UX_WAVE_3_2026-07-20.md` | UX wave 3 日常闭环 — 外部方案逐条对账;草稿保护闭环 + 全局任务条;拒/留档处置 | UX-WAVE-3 |
 | `AUDIT_LEDGER_WAVE_2026-07-24.md` | 外部审计总账 908 条逐条/抽样处置 — 真 bug 判据、十二种误报模式、P0 全修 + 付费安全闭环 | AUDIT-LEDGER-WAVE |
-| `UX_REAL_USE_2026-07-25.md` | 真实使用波次(三轮)— 用工具而非读代码;20 处白忙/看不懂/悄悄丢东西的修复(含 roundtrip 未知≠False、@显示名解析、三处 CJK 列宽、events 摘要、驾驶舱竖梯行)+ 换 ffmpeg 关掉 drawtext 环境缺口(22 条转绿)并因此挖出 color.tag_outputs 在 ffmpeg≥7.1 上少打两个轴的真 bug + 自身流程错误留档 | UX-REAL-USE |
+| `UX_REAL_USE_2026-07-25.md` | 真实使用波次(四轮)— 用工具而非读代码;20 处白忙/看不懂/悄悄丢东西的修复(含 roundtrip 未知≠False、@显示名解析、三处 CJK 列宽、events 摘要、驾驶舱竖梯行)+ 换 ffmpeg 关掉 drawtext 环境缺口(22 条转绿)并因此挖出 color.tag_outputs 在 ffmpeg≥7.1 上少打两个轴的真 bug + 拆开 windows-ci.yml 逐步验证(装齐 extras 让 7 条从未跑过的测试转绿;真 pwsh 跑出闸门 ffmpeg 版本断言的前缀匹配洞)+ 自身流程错误留档 | UX-REAL-USE |

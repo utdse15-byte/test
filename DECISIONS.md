@@ -2991,3 +2991,28 @@ understood at a glance, or dropped something quietly.
     end to end on real ffmpeg: 5530 passed / 0 failed / 0 errors on 7.1, and on
     7.0.2 only the drawtext-absent set fails, each already proven green on 7.1.
     `windows-ci.yml` remains the one genuinely unreachable gate.
+
+15. **The Windows gate is a list of steps, not one indivisible block** — the
+    previous round called `windows-ci.yml` simply unverifiable and stopped.
+    Splitting it by step showed most of it runs anywhere, and two real gaps
+    fell out. (a) The gate installs `[dev,jianying,capcut,mcpvideo,edgetts]`
+    while every local run had used `[dev]` alone — all four extras were absent,
+    so every suite run had taken the extra-missing branch. Installing them
+    dropped skips 18 -> 11: seven tests had never actually executed. They pass.
+    (b) Installing PowerShell 7.4.6 on Linux let the gate's own anti-rot assert
+    be EXECUTED: `$v -notmatch "ffmpeg version 6\.1"` is a prefix match, so an
+    "ffmpeg version 6.10" build satisfies a guard whose only job — and whose
+    own error message — is to reject anything that is not 6.1.x. Anchored, and
+    pinned by a test carrying the ten cases run through real PowerShell. The
+    three install scripts and all four inline `run:` blocks parse clean under
+    pwsh. What genuinely remains Windows-only is now a short, specific list
+    (msvcrt behaviour, CreateProcess quoting, NTFS case folding, and the
+    install-smoke job's runtime effects) instead of the whole file.
+
+16. **One unreproduced flake, recorded and NOT "fixed"** —
+    `test_applied_xfade_boundary_cache_reused_and_type_change_rerenders_only_boundary`
+    failed once in a full parallel run and then passed three solo runs, one
+    parallel module run and two more full runs. It compares `st_mtime_ns`
+    after real ffmpeg renders under load. Without a reproduction, editing a
+    currently-passing test would be exactly the speculative change this repo
+    forbids — so it is written down for the next session instead.
