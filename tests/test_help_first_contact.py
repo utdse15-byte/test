@@ -14,8 +14,6 @@ I want to do X.
 
 from __future__ import annotations
 
-import re
-
 from typer.testing import CliRunner
 
 from manju.cli import app
@@ -43,45 +41,47 @@ def _bare() -> str:
 _BOX_DRAWING = "╭─│╰"
 
 
-def _rendered_command_names(out: str) -> list[str]:
-    """The app's own command names that actually appear in the rendered help.
-
-    Matched as standalone tokens, because each row is drawn inside a panel and
-    therefore carries a border prefix — which is precisely the part that
-    differs between platforms.
-    """
+def _command_count() -> int:
+    """How many commands the app has — the size of the wall, read off the app
+    itself rather than off a rendering of it."""
     from typer.main import get_command
 
-    names = sorted(get_command(app).commands)  # type: ignore[attr-defined]
-    return [n for n in names
-            if re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", out)]
+    return len(get_command(app).commands)  # type: ignore[attr-defined]
 
 
 def test_the_wall_is_real() -> None:
     """Guard the guard: the doors only matter while the surface is big.
 
-    Measured by the COMMANDS on the page, not by how the terminal draws panel
-    borders. The first version counted border corners and went red on the
-    Windows hard gate — the FIRST platform — with "only 0 panels": that console
-    gets the ASCII fallback, so the assertion was measuring Rich's terminal
-    detection rather than the size of the surface. The wall is the command list
-    either way.
+    This took two goes at the Windows hard gate, and both failures were the same
+    mistake — measuring the TERMINAL instead of the surface:
+
+    1. counting Rich's border corners: "only 0 panels", because that console
+       takes the ASCII fallback;
+    2. counting command names found in the rendered text: "only 22 commands",
+       because that console renders narrower and elides the longer names.
+
+    The number of commands is a property of the app, not of the console it is
+    printed on, so it is now read off the app and the assertion touches no
+    rendered output at all. That the page RENDERS is what the other tests in
+    this file check, and they pass on both platforms.
     """
-    out = _help()
-    shown = _rendered_command_names(out)
-    assert len(shown) >= 40, f"only {len(shown)} commands — has the surface shrunk?"
+    n = _command_count()
+    assert n >= 40, f"only {n} commands — has the surface shrunk?"
 
 
-def test_the_wall_measurement_is_not_platform_dependent() -> None:
-    """Pin the lesson: nothing in the size check may depend on box drawing."""
+def test_the_wall_measurement_reads_no_rendered_output() -> None:
+    """Pin both lessons at once: the size check may not look at the help text,
+    which is where every terminal-dependent difference lives."""
     from pathlib import Path
 
     body = Path(__file__).read_text(encoding="utf-8")
-    i = body.index("def _rendered_command_names")
-    j = body.index("def test_the_wall_measurement_is_not_platform_dependent")
+    i = body.index("def _command_count")
+    j = body.index("def test_the_wall_measurement_reads_no_rendered_output")
     region = body[i:j]
     for ch in _BOX_DRAWING:
         assert ch not in region, "the box-drawing measurement is back"
+    assert "_help()" not in region.split('"""')[-1], (
+        "the size check is reading rendered output again")
 
 
 def test_every_door_is_named(*, _=None) -> None:

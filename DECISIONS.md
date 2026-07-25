@@ -3193,8 +3193,12 @@ understood at a glance, or dropped something quietly.
     had not shrunk; the assertion counted Rich's box-drawing corners and the
     Windows console takes the ASCII fallback, so it was measuring terminal
     detection. It now counts the app's own command names present in the rendered
-    help (82/82 against a floor of 40), matched as standalone tokens because the
-    per-row border prefix is exactly the platform-dependent part. The test had
+    help — which went red AGAIN, "only 22 commands", because that console renders
+    narrower and elides the longer names: the same mistake twice, measuring the
+    terminal with a different ruler. It now reads the count off the app object
+    and touches no rendered output at all; that the page renders is what the
+    other seven tests in the file check, and they were green on Windows both
+    times. The test had
     landed AFTER the last green Windows run, so nothing had ever proven it on
     the first platform — Linux green is not Windows green, and running the gate
     is the only way to know. Writing the companion guard tripped the same trap
