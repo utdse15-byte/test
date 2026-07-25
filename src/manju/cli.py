@@ -68,6 +68,7 @@ _PROV_TOKEN = (
     r"AI_IDE_\d+(?:\s+WP\d+)?|WP\d+|DR\d+\w*|[PWMC]\d+[a-z]?"
 )
 _PROV_RE = re.compile(_PROV_TOKEN, re.I)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 # What may remain inside a parenthetical for it to count as pure provenance.
 _PROV_FILLER_RE = re.compile(
     r"^[\s,,、;;/·和+&]*(?:roadmap|FP roadmap|见|see)?[\s,,]*$", re.I)
@@ -99,6 +100,76 @@ def _strip_provenance(text: str) -> str:
                   re.sub(r"\s*[（(]([^()（）]*)[)）]", repl, text)).strip()
 
 
+# The owner reads Chinese; 56 of the 82 top-level rows were English-only, so the
+# command list was mostly unreadable to the person it is for. Each entry below
+# is a STRICT translation of that command's existing first line — no new claims,
+# no invented behaviour — rendered in the house style the already-bilingual rows
+# use: Chinese first, then the English ("创作漏斗 / creation funnel").
+#
+# Applied at render time beside _strip_provenance so it is one owner and the
+# docstrings stay the maintainer's copy. `test_help_chinese_lead.py` fails if a
+# new English-only top-level command appears without an entry here, so the table
+# cannot silently fall behind the surface.
+_ZH_LEAD: dict[str, str] = {
+    'align': '把导入的真人配音对齐到剧本',
+    'analyze': '产出绑定到精确媒体哈希的派生证据文档',
+    'appearances': '出场表:bible id 与引用它们的镜头交叉对照',
+    'auto': '自动驾驶:任意一次性 agent CLI 的薄壳',
+    'board': '评审工作台 + 多图故事板',
+    'build': '一键出片:补缺 → 时间线 → 渲染 → QC → 导出',
+    'check': '校验:schema + 引用 + 锁 + 密钥扫描 —— 安全网',
+    'compare': '对比两个成片 —— final_vA 与 final_vB 之间改了什么',
+    'doctor': '环境体检:ffmpeg、字体、磁盘、项目完整性',
+    'events': '看协作日志',
+    'explain': '下次 build 会做什么、为什么?只读',
+    'export': '从已编译时间线导出草稿/字幕',
+    'failures': '最近的失败(新→旧)—— 让每次失败都可排查',
+    'fixity': '不解压校验 .manjupkg 内的 MANJU_FIXITY.json',
+    'frames': '从项目内任意媒体预览静帧',
+    'gc': '回收空间:片段缓存与预览代理',
+    'gui': '本地网页工作台 —— 与 CLI 同一引擎核心的客户端',
+    'history': '合并的变更流:events.jsonl 与 git log 交织',
+    'impact': '改这个镜头会怎样?只读互联报告',
+    'import': '登记一个文件进项目',
+    'locale': '多语言本地化覆盖层',
+    'lock': '把某字段的当前值哈希封存',
+    'masters': '渲染专业音频母版:对白 / 音乐 / 音效分轨',
+    'migrate': '有理数编辑帧率迁移:体检 | 计划 | 应用 | 降级',
+    'new': '新建项目',
+    'pack': '把项目打包成单个 .manjupkg(zip)用于备份/迁移',
+    'package': '从当前成片切出封面(+ 预告)',
+    'presets': '预设套件列表',
+    'prompt': '提示词工作台 —— 只读',
+    'propose': '写提案:请求修改锁定内容的正规通道',
+    'providers': '管理 provider 清单',
+    'pull-sheet': '往返一份编辑过的分镜提取表',
+    'rebuild-index': '从文本 + 媒体重建可丢弃的运行时目录',
+    'redo': '强制重出新 take(只增;已有选择不动)',
+    'reframe': '把 ROI 轨编译成裁切关键帧(只读)',
+    'relink': '媒体缺失报告 + 哈希校验重链',
+    'repair': '修片,三种模式',
+    'rollback': '回滚一件事;历史只增不减',
+    'rough-cut': '只标注的口语粗剪提案(从不删除;可逆)',
+    'roundtrip': '把外部剪辑的改动流回成可评审的真相变更',
+    'route': '查看模型路由策略',
+    'routing': '逐镜路由决策 + 成本',
+    'schema': '导出每个真相文件模型的 JSON Schema',
+    'segments': '从分析证据推导连贯的音画片段(只读)',
+    'select': '选用一个 take',
+    'serve-mcp': 'stdio 上的 MCP server —— 同一核心的薄包装',
+    'shot-package': '校验/查看外部 ShotDraftPackage,或受控写入应用它',
+    'snapshot': '给真相文本打一个带标签的 git 检查点',
+    'status': '接管入口:阶段、缺口、花费、下一步',
+    'support-bundle': '生成已脱敏的诊断支持包',
+    'tool': '说明一个白名单意图 op 的既有确定性执行器',
+    'transcribe': '把导入的真实素材转写成 SRT',
+    'unlock': '解锁(仅交互式终端 + 二次确认,MCP 面不暴露)',
+    'unpack': '还原一个 .manjupkg',
+    'voice': '合成一条新的配音 take(只增,最新者胜)',
+    'watch': '开发循环:真相一变就重跑 manju check',
+}
+
+
 class _SuggestingGroup(typer.core.TyperGroup):
     """UX wave 2 item 3: a mistyped command gets "did you mean" suggestions
     instead of a bare "No such command" — with 127 commands this is table
@@ -114,7 +185,18 @@ class _SuggestingGroup(typer.core.TyperGroup):
         if cmd is not None and not getattr(cmd, "_manju_short_help_cleaned", False):
             source = cmd.short_help or cmd.help or ""
             if source:
-                cmd.short_help = _strip_provenance(source.split("\n\n")[0])
+                # First LINE, not first paragraph: several docstrings open with
+                # a six-line paragraph (see `explain`), which rendered the whole
+                # thing into the list and buried its neighbours.
+                blurb = _strip_provenance(source.strip().split("\n")[0])
+                lead = _ZH_LEAD.get(name)
+                if lead and not _CJK_RE.search(blurb):
+                    # The row becomes the Chinese ALONE, not "中文 / English".
+                    # Carrying both doubled every row's height and made the wall
+                    # taller than the one it was meant to make readable; the
+                    # English is one `manju <cmd> --help` away, unchanged.
+                    blurb = lead if lead.endswith(("。", ":", ":")) else lead + "。"
+                cmd.short_help = blurb
             cmd._manju_short_help_cleaned = True
         return cmd
 
