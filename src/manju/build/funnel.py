@@ -347,6 +347,15 @@ def funnel_status(project: Project) -> dict[str, Any]:
             "id": stage.id,
             "cn": stage.cn,          # 中文名
             "state": state,
+            # `state` is POSITIONAL — everything past the first unfinished stage
+            # is "todo" so the funnel keeps its order. But a later stage's own
+            # predicate can already be satisfied (a project that was built before
+            # its brief was written has plan/produce evidence saying exactly
+            # that), and rendering it as ○ next to evidence reading 已落地 is a
+            # flat contradiction. Carry the predicate itself so the renderer can
+            # say "met, just not its turn" instead. Additive: `state` and the
+            # done count are unchanged for every existing consumer.
+            "satisfied": bool(_done),
             "artifact": stage.artifact,
             "evidence": evidence,
             "skill": stage.skill,

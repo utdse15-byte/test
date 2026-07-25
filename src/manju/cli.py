@@ -202,6 +202,49 @@ def _resolve_shot_arg(project: Project, raw: str) -> str:
     return raw
 
 
+def _resolve_frame_source(project: Project, raw: str) -> str:
+    """``manju frames S001`` → that shot's SELECTED take's media path.
+
+    ``frames`` is the one shot-facing command whose argument is a project-
+    relative media PATH, while every sibling takes a shot id (and forgives the
+    ``s14``/``14`` shorthand via :func:`_resolve_shot_arg`). So typing a shot id
+    here is the natural mistake, not an exotic one, and it used to fail with a
+    bare ``frame source not found: S001`` — which names the input without ever
+    saying a path was wanted. A real path still wins: this only runs when ``raw``
+    is not already an existing file, so no current invocation changes meaning.
+    Same discipline as the sibling resolvers: EXISTING entities only, the
+    resolution is echoed on stderr (``--json`` stdout stays pure), and a shot
+    with nothing to preview fails structured rather than guessing."""
+    try:
+        if project.resolve(raw).is_file():
+            return raw
+    except Exception:
+        pass  # not a usable path — fall through to the shot-id reading
+    sid = _resolve_shot_arg(project, raw)
+    try:
+        if sid not in project.shot_ids():
+            return raw  # not a shot either: let the media layer report the path
+        selected = project.load_shot(sid).status.selected_take
+        takes = {t.name: t for t in project.takes(sid)}
+    except Exception:
+        return raw
+    take = takes.get(selected) if selected else None
+    if take is None or not take.media_path:
+        # Never selected (or the selection has no media): the newest take with
+        # media is what the next build would use, so preview that.
+        with_media = [t for t in takes.values() if t.media_path]
+        take = with_media[-1] if with_media else None
+    if take is None or not take.media_path:
+        _fail(f"{sid} 还没有可预览的 take —— 先 manju build 或 manju redo {sid}",
+              code="bad_args")
+    rel = project.relpath(take.media_path)
+    # Keyed on `sid`, not `raw`: for `frames 2` _resolve_shot_arg has already
+    # echoed "镜头 2 → S002", so echoing raw again would print two lines both
+    # claiming to resolve "2". This way the two read as one chain.
+    typer.secho(f"{sid} → {rel}", fg=typer.colors.BRIGHT_BLACK, err=True)
+    return rel
+
+
 def _resolve_take_arg(project: Project, shot_id: str, raw: str) -> str:
     """The take-side twin of :func:`_resolve_shot_arg`: ``3`` → ``take_03``
     when (and only when) exactly one existing take of ``shot_id`` carries
@@ -557,8 +600,15 @@ def create(
                     fg=typer.colors.CYAN, bold=True)
         for s in info["stages"]:
             mark = _FUNNEL_MARK.get(s["state"], "·")
-            typer.secho(f"  {mark} {s['cn']}({s['id']})  {s['evidence']}",
-                        fg=_FUNNEL_COLOR.get(s["state"]))
+            color = _FUNNEL_COLOR.get(s["state"])
+            if s["state"] == "todo" and s.get("satisfied"):
+                # Already met, just not its turn (the funnel stays ordered). A
+                # dim ✓ instead of ○ so the mark stops contradicting the
+                # evidence line right next to it; still not green, because the
+                # stage is not "done" in funnel order and does not count toward
+                # the N/7 tally.
+                mark = "✓"
+            typer.secho(f"  {mark} {s['cn']}({s['id']})  {s['evidence']}", fg=color)
         cur = info.get("current")
         if cur is None:
             typer.secho("下一步  全部完成 ✅ — 可 manju build 出片", fg=typer.colors.GREEN)
@@ -2432,7 +2482,8 @@ def repair(
 @app.command(rich_help_panel=PANEL_QC)
 def frames(
     source: str = typer.Argument(..., help="project-relative media path "
-                                          "(e.g. media/gen/S001/take_01.mp4)"),
+                                          "(e.g. media/gen/S001/take_01.mp4), "
+                                          "或直接给镜头 id(S001/s1/1 → 该镜头选中的 take)"),
     at_ms: int = typer.Option(0, "--at", help="single-frame timestamp in ms"),
     strip: int = typer.Option(0, "--strip", help="N evenly-spaced scrub thumbnails"),
     width: Optional[int] = typer.Option(
@@ -2447,11 +2498,13 @@ def frames(
 
         manju frames media/gen/S001/take_01.mp4 --at 1500
         manju frames renders/final/final_v1.mp4 --strip 10 --width 160 --json
+        manju frames S001 --strip 4        # 镜头 id → 该镜头选中的 take
     """
     from .media.ffmpeg import MediaError
     from .media.frames import extract_frame, frame_strip
 
     project = _project()
+    source = _resolve_frame_source(project, source)
     try:
         if strip > 0:
             paths = frame_strip(project, source, count=strip,
@@ -3300,8 +3353,18 @@ def exports(
     blockers = ra.get("blockers") or []
     base_status = (ra.get("baseline") or {}).get("status")
     verdict = "READY 可发布" if ready else "NOT READY 未就绪"
+    # A READY verdict printed directly under "missing:6" reads as a
+    # contradiction until you notice blockers=0. The verdict is only ever about
+    # BLOCKERS — an un-generated optional output (a teaser nobody enabled) is
+    # not one — so say which outputs it is deliberately not counting, rather
+    # than leaving the reader to reconcile two adjacent numbers.
+    unmade = sum(v for k, v in (data.get("counts") or {}).items()
+                 if k in ("missing", "stale"))
+    scope = ""
+    if ready and unmade:
+        scope = f",{unmade} 项未生成/待更新但均非阻塞"
     typer.secho(f"发布评估 / release:  {verdict}  "
-                f"(baseline={base_status}, blockers={len(blockers)})",
+                f"(baseline={base_status}, blockers={len(blockers)}{scope})",
                 fg=typer.colors.GREEN if ready else typer.colors.YELLOW)
     for b in blockers:
         typer.secho(f"    ✗ {b['code']}  [{b['scope']}]  {b['detail']}", fg=typer.colors.RED)

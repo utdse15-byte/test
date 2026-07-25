@@ -122,6 +122,71 @@ exports/
 
 # packaging.yaml scaffold header — commented hints for a file that turns nothing
 # on by default (round-N). Enabling any section changes build/package output.
+# Bible scaffolds. `shots/*.yaml` points the author at these files by id, so an
+# empty `{}` left them guessing both the shape and the field names — the one
+# place the guided path stopped guiding (there is no `manju bible add`; authoring
+# is this file or the GUI's bible editor). Every body below is still an EMPTY
+# mapping: a fresh project passes `manju check` byte-for-behaviour unchanged, and
+# nothing here is a build input until the author fills it in.
+_BIBLE_COMMON_TAIL = """\
+#
+# 字段都是自由文档,除 name 外没有必填项;引擎只认最外层的 id。
+#   name        显示名(留空则直接显示 id)
+#   desc        自由描述 —— 生成提示词会读它,写得越具体越稳
+#   ref_image   参考图路径(media/refs/... 或 imports/...),让形象跨镜头一致
+#   aliases     别名,@提及 与 mentions 会解析(如 [老陈, 陈师傅])
+#   locked      锁定字段:写了就不许 AI 改(见 manju check 的 locks 校验)
+# 改完用 `manju check` 验证;GUI 里也有可视化的 bible 编辑器。
+{}
+"""
+
+BIBLE_SCAFFOLD_HEADERS = {
+    "characters": """\
+# characters.yaml — 角色表。shots/*.yaml 的 characters: [id] 按 id 引用这里。
+#
+# 示例(去掉 # 即可启用):
+# a_ming:
+#   name: 阿明
+#   desc: 四十岁的修鞋匠,沉默,手上有老茧,常穿褪色的藏青工装。
+""" + _BIBLE_COMMON_TAIL,
+    "scenes": """\
+# scenes.yaml — 场景表。shots/*.yaml 的 scene: id 按 id 引用这里。
+#
+# 示例(去掉 # 即可启用):
+# jie_tou:
+#   name: 老街街头
+#   desc: 黄昏,潮湿的青石板路,两侧卷闸门半掩的旧店铺,暖黄路灯刚亮。
+""" + _BIBLE_COMMON_TAIL,
+    "props": """\
+# props.yaml — 道具表。在镜头自由文本里用 @id 提及,或写进 desc 由提示词带上。
+#
+# 示例(去掉 # 即可启用):
+# xiu_xie_xiang:
+#   name: 修鞋箱
+#   desc: 木质,边角磨圆,铜搭扣氧化发黑,里面工具摆得极整齐。
+""" + _BIBLE_COMMON_TAIL,
+    "style": """\
+# style.yaml — 全片视觉基调(镜头级 look 在 timeline/rules.yaml)。
+#
+# 示例(去掉 # 即可启用):
+# look:
+#   name: 潮湿黄昏
+#   desc: 低饱和暖调,轻微胶片颗粒,高光柔化;避免高对比硬光。
+# font:
+#   desc: 字幕用思源黑体,字重 Medium
+""" + _BIBLE_COMMON_TAIL,
+    "voices": """\
+# voices.yaml — 角色音色表。id 与 characters.yaml 对应,供 TTS provider 选音。
+#
+# 示例(去掉 # 即可启用):
+# a_ming:
+#   name: 阿明
+#   desc: 中年男声,偏低沉,语速慢,句尾略下沉。
+#   provider_voice: zh-CN-YunjianNeural   # 具体取值见你配置的 provider manifest
+""" + _BIBLE_COMMON_TAIL,
+}
+
+
 PACKAGING_SCAFFOLD_HEADER = """\
 # packaging.yaml — 片头/片尾卡、封面、预告、信息卡(round-N packaging kit)。
 # 默认全部关闭:此文件存在不改变任何构建产物;启用某项后再 `manju build` / `manju package`。
@@ -272,7 +337,16 @@ class Project:
         for bible_file in BIBLE_FILES:
             bpath = root / "bible" / f"{bible_file}.yaml"
             if not bpath.exists():
-                write_yaml(bpath, {})
+                # A commented scaffold rather than a bare `{}` — same treatment
+                # packaging.yaml already gets above, and for the same reason.
+                # shots/S001.yaml points the author at "bible/scenes.yaml 中的
+                # 场景 id", but an empty file shows neither the shape nor that
+                # `name`/`desc` are the ordinary fields; `check` then refuses the
+                # shot with "not found in bible" and the guided path dead-ends on
+                # a schema the author has to go find. The body still parses as an
+                # empty mapping, so a fresh project passes check unchanged.
+                bpath.write_text(
+                    BIBLE_SCAFFOLD_HEADERS[bible_file], encoding="utf-8")
         # the idea stage (§2: creation belongs to the director) gets scaffolds
         # so a takeover always finds the same three files in the same order
         story_templates = {

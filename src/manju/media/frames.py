@@ -110,7 +110,15 @@ def _resolve_source(project: Project, source_relpath: str | Path) -> Path:
     above the root the same way :meth:`Project.resolve` does)."""
     abspath = project.resolve(source_relpath)  # raises ProjectError on escape
     if not abspath.is_file():
-        raise MediaError(f"frame source not found: {source_relpath}")
+        # Name what this argument WANTS, not just what it got. The old message
+        # was a bare "frame source not found: S001", which reads as "that shot
+        # does not exist" when the real issue is that this one command takes a
+        # media path (the CLI resolves a bare shot id for you now, so reaching
+        # here means the path itself is wrong).
+        raise MediaError(
+            f"frame source not found: {source_relpath} —— 这里要的是项目内的媒体"
+            "路径(如 media/gen/S001/take_01.mp4 或 renders/final/final_v1.mp4);"
+            "镜头 id 也可以(S001/s1/1),但该镜头必须已有 take")
     return abspath
 
 
