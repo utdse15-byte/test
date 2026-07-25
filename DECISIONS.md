@@ -3061,3 +3061,82 @@ understood at a glance, or dropped something quietly.
     cited DECISIONS #38, whose round-3b line reads as the opposite. Corrected
     to cite the actual measurement. Fabricating a rationale is worse than
     writing "unknown", because it reads as evidence.
+
+21. **The `--json` error envelope was a contract nobody could read** — `_fail`
+    calls `code` "a stable machine token an agent can branch on" and 177 tests
+    pin specific codes, but the always-injected core skill never mentioned the
+    envelope. The census found the fact that mattered more: 52 explicit codes,
+    yet 250 of 275 failure sites use the default, so ~91% of failures are
+    unclassified — inviting an agent to write branches on `"error"` that can
+    never pay off. Documented in a new on-demand `error-codes` skill classified
+    by what to DO (fix input / fix truth / stop and ask / retry); the core skill
+    keeps only what an agent needs BEFORE it hits an error, because an existing
+    test caps it under 300 lines and that cap IS the agent's token budget. A
+    two-way test keeps docs and code honest — it caught two undocumented codes
+    immediately, and later turned the suite red the moment `no_baseline` was
+    added without documentation.
+
+22. **`impact` answered a command-shaped code** — `impact_error` where the fact
+    was `unknown_shot`, so an agent branching correctly missed it and the
+    message lost the two remedies. Joined the one owner (`_require_shot`) that
+    `select`/`redo`/`voice` already use. One fact, one code, whichever command
+    surfaced it.
+
+23. **Advice that refuses when followed** — the funnel's first instruction told
+    a new project to run `manju create brief`, which answers "已存在 —
+    不覆盖人写的内容". Walking all seven stages found the same shape twice
+    more: `manju board scene` at the step that CREATES shots ("has no shots —
+    nothing to board"), and bare `manju director propose` ("pass exactly one of
+    --from-file / --actions-json"). Three is a pattern: these strings described
+    what a stage IS, not what you can type. The storyboard stage is the funnel's
+    cliff — no CLI command creates a shot at all — so it now names the three
+    routes that work. The plan stage carries the exact line verified to run, and
+    a test parses its JSON against the engine's real ACTION_TYPES.
+
+24. **Presentation is not decoration** — four tables padded by code points, so
+    CJK labels (one code point, two terminal columns) made the status column
+    swing between column 27 and 37 and glued the longest label to its status;
+    `manju tasks` broke every column right of a bare `#{id}` past row ten. They
+    joined the existing CJK-aware owner (`presets.display_width`/`pad`) rather
+    than forking a fifth. The command list also spoke the wrong language: 56 of
+    82 top-level rows were English-only for a Chinese-reading owner, and 40
+    §-references pointed at a plan document CLAUDE.md says is not in the repo.
+    Both fixed at RENDER time, so docstrings stay the maintainer's copy.
+
+25. **Say what you did not check** — `manju qc`'s last line was a bare
+    snake_case token (`no_explicit_expectations 4`) that read like four
+    outstanding debts one line after "0 errors". The GUI's live-validation tick
+    said "✓ 校验通过 (valid)" while its own source comment states it does NO
+    cross-reference or lock verification and that "a ✓ here is NOT a promise
+    that Save will succeed". Both now name the check they actually ran. The
+    engine halves were already right — the QC states have documented reasons,
+    and the editor writes, checks, reverts and names every dangling ref.
+
+26. **Roundtrip without its baseline is WRONG, not unverified** — measured: the
+    same edited OTIO (one clip trimmed 72→36 frames) plans as 1 row `set_inout`
+    beside its baseline and 3 rows `set_transition_override` when copied
+    elsewhere, which is also what an UNTOUCHED export produces. So the real edit
+    vanishes and spurious rows appear — and a draft saved in the editor's own
+    folder is the ordinary case. `--apply` is now refused (`no_baseline`);
+    planning still works, because refusing to write is right and refusing to
+    look would strand the owner.
+
+27. **Hand over the artifact, not the path** — `manju build` ended at
+    "renders/final/final_v3.mp4" and stopped: a video tool that finishes a film
+    and never offers to look at it. It now names the existing ways to see,
+    compare and ship it — offering `compare` only when the previous final is on
+    disk, and announcing the `final_export` confirmation gate rather than
+    teaching `--yes` past the owner's own approval step. Relatedly, `manju
+    status`' returning-owner anchor reported `run_terminal` — a lifecycle
+    record — because one build appends bookkeeping rows AFTER the `build` line.
+    It now names the deed, while the ledger keeps every row.
+
+28. **Three guards caught the author, not the code** — a CSS-rule test whose
+    own comment contained a comma; a skill whose `description` contained
+    `code: "error"`, breaking its YAML frontmatter while the tolerant loader
+    silently degraded the agent-facing index; and a "the two plans must differ"
+    test that compared two UNEDITED exports and passed while measuring nothing.
+    Each was found by a guard-the-guard assertion or by running a variant, not
+    by review. The standing lesson: a fix verified only on its happy path is
+    about half likely to ship a new defect — and the harness is as likely to be
+    wrong as the product, so suspect the harness first.
