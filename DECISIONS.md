@@ -2967,3 +2967,27 @@ understood at a glance, or dropped something quietly.
     that did not strip comments, and the new comment contained commas). Kept
     here for the same reason as #6: the value of red-first is that it sometimes
     goes red on you.
+
+13. **`color.tag_outputs` shipped half-tagged masters on ffmpeg >= 7.1** — the
+    option stamped bt709/tv through the `-color_primaries`/`-color_trc`
+    output options. Measured on one encode across three builds: 7.0.2 writes
+    all four axes; 7.1 and master write only colorspace+range. So an owner who
+    opted in got a master silently missing two of the four tags — the exact
+    defect the option exists to prevent, and a routine delivery-rejection
+    cause. CI could not see it: the hard gate pins ffmpeg 6.1.1. The tags now
+    also ride a `setparams` filter node (honoured by every build tested;
+    present since ffmpeg 4.3, so 6.1.1 has it), and the output options stay so
+    neither ffmpeg generation depends on the other. The node is folded into the
+    content key ONLY when tags are on: a project that never opted in keeps a
+    byte-identical key, and a project that DID re-keys once — without that, its
+    old half-tagged final would keep matching its sidecar and never re-render.
+
+14. **"The environment cannot verify this" was treated as a TODO, not a
+    verdict** — two rounds of this report called the 7 failures + 15 errors
+    environmental (the sandbox ffmpeg lacks `drawtext`) and left them. That
+    reasoning was sound and the conclusion was still unearned: unverified is
+    unverified. Fetching a drawtext-capable build turned all 22 green — and
+    turned up #13, which had been hiding behind them. The suite is now verified
+    end to end on real ffmpeg: 5530 passed / 0 failed / 0 errors on 7.1, and on
+    7.0.2 only the drawtext-absent set fails, each already proven green on 7.1.
+    `windows-ci.yml` remains the one genuinely unreachable gate.

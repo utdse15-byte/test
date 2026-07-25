@@ -69,9 +69,19 @@ def test_color_metadata_reads_tagged_video(tmp_path):
     import subprocess
 
     clip = tmp_path / "tagged.mp4"
+    # The fixture has to actually BE tagged. ffmpeg >= 7.1 no longer honours the
+    # -color_trc/-color_primaries output options for libx264 (7.0.2 writes all
+    # four axes; 7.1 and master write only colorspace+range), so building the
+    # fixture that way made this test fail on a current ffmpeg as though the
+    # PARSER were broken. The setparams filter stamps the frames themselves and
+    # is honoured by every build tested — and by the pinned 6.1.1, since the
+    # filter has existed since ffmpeg 4.3.
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-         "-i", "color=c=blue:s=64x64:d=1:r=24", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-i", "color=c=blue:s=64x64:d=1:r=24",
+         "-vf", "setparams=color_primaries=bt709:color_trc=bt709"
+                ":colorspace=bt709:range=tv",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p",
          "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
          "-color_range", "tv", str(clip)], check=True)
     meta = colorstats.color_metadata(clip)

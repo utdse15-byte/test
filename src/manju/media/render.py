@@ -1131,6 +1131,32 @@ def _build_audio_graph(
 _COLOR_TAG_ARGS = ["-color_primaries", "bt709", "-color_trc", "bt709",
                    "-colorspace", "bt709", "-color_range", "tv"]
 
+# ...but the OUTPUT options above stopped being enough. Verified across three
+# builds encoding the same source to libx264:
+#
+#   ffmpeg 7.0.2  -> color_space=bt709 color_range=tv trc=bt709 primaries=bt709
+#   ffmpeg 7.1    -> color_space=bt709 color_range=tv trc=UNKNOWN primaries=UNKNOWN
+#   ffmpeg master -> color_space=bt709 color_range=tv trc=UNKNOWN primaries=UNKNOWN
+#
+# `tag_outputs` promises bt709 on all FOUR axes, so on a current ffmpeg an
+# opted-in master shipped SILENTLY half-tagged — the exact defect the option
+# exists to prevent, and the kind of thing a delivery gets rejected for.
+#
+# The setparams FILTER stamps the frames themselves and is honoured by every
+# build tested (7.0.2 / 7.1 / master). It has existed since ffmpeg 4.3, so it
+# is available on the pinned 6.1.1 as well. The output options stay: they are
+# what the older builds already honour, they cost nothing, and keeping both
+# means neither ffmpeg generation depends on the other's behaviour.
+_COLOR_TAG_FILTER = ("setparams=color_primaries=bt709:color_trc=bt709"
+                     ":colorspace=bt709:range=tv")
+
+
+def _color_tag_node(color: ColorSpec | None) -> str:
+    """``",setparams=…"`` when tags are opted in, else ``""`` — appended to the
+    video chain's final node so a not-opted-in project's filtergraph (and
+    therefore its rendered bytes) stays byte-identical to before."""
+    return f",{_COLOR_TAG_FILTER}" if color is not None and color.tag_outputs else ""
+
 
 def _enc_params(target: str, color: ColorSpec | None = None) -> list[str]:
     """The final/proxy encode tail. ``color`` (W4): ``tag_outputs`` appends the
@@ -1276,6 +1302,14 @@ def _final_key_payload(
     # every not-opted-in project keeps a byte-identical content key.
     if toolchain_key is not None:
         payload["toolchain"] = toolchain_key
+    # W4 fix: the colour tags now also ride a filtergraph node, which changes
+    # the rendered BYTES for an opted-in project. Without this the old, half-
+    # tagged final would keep matching its sidecar key and never be re-rendered
+    # — a stale key vouching for bytes it no longer describes. Folded in ONLY
+    # when tags are on, exactly like overlay_images/look/toolchain above, so
+    # every project that never opted in keeps a byte-identical content key.
+    if color_spec is not None and color_spec.tag_outputs:
+        payload["color_tag_filter"] = _COLOR_TAG_FILTER
     return payload
 
 
@@ -1583,14 +1617,17 @@ def render_timeline(
                 out_w=out_w, base_idx=1 + extra_inputs.count("-i"),
             )
             # R2: rational projects snap the final node onto the native num/den.
-            img_stmts.append(f"{last_label}fps={rate_arg},format=yuv420p[vout]")
+            img_stmts.append(
+                f"{last_label}fps={rate_arg},format=yuv420p"
+                f"{_color_tag_node(color_spec)}[vout]")
             filter_complex = ";".join([vchain, *img_stmts, *audio_stmts])
         else:
             # FIX-B: force the output onto the project frame grid — without an
             # explicit fps the concat of segments can drift the deduced rate
             # (observed pre-fix: r_frame_rate=143/6 instead of 24/1). R2: a
             # rational project uses its native rate token (fps=24000/1001).
-            vchain += f",fps={rate_arg},format=yuv420p[vout]"
+            vchain += (f",fps={rate_arg},format=yuv420p"
+                       f"{_color_tag_node(color_spec)}[vout]")
             filter_complex = ";".join([vchain, *audio_stmts])
 
         enc = _enc_params(target, color_spec)
