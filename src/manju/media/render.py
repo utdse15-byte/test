@@ -194,7 +194,10 @@ def _preserve_scratch(project: Project, label: str, tmp: Path, *, log: Log) -> N
                 kept_bytes += size
         rows.sort(key=lambda t: t[0])
         lines = [row for _, row in rows]
-        rel_dest = project.relpath(dest)
+        try:
+            rel_dest = project.relpath(dest)
+        except Exception:  # noqa: BLE001 — a naming hiccup must not cost the copy
+            rel_dest = f".manju/{_SCRATCH_KEEP_DIRNAME}/{label}"
         if log is not None:
             log(f"render scratch preserved for inspection: {rel_dest} "
                 f"({kept} file(s) kept, {skipped} skipped)")
