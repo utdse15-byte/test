@@ -946,3 +946,44 @@ story/imports/novel.md」—— **让人把一本小说登记成 take**。因为
 命令。
 
 全量:**5697 passed, 0 failed**。
+
+## 十二、`manju qc` 最后一行:一个没人解释的机器令牌
+
+在真片子上走 QC 闭环。一次干净的运行,最后一行是:
+
+```
+QC: 0 errors, 0 warnings → reports/qc.md
+qc ok
+验收 assurance: no_explicit_expectations 4
+```
+
+**一个全中文 CLI 里的裸 snake_case 令牌**,没说它是什么意思、要不要处理。而且它读起来
+像**还欠着四件事** —— 上一行刚说完 "0 errors, 0 warnings, qc ok"。
+
+它其实是「这几个镜头没人给它写过承诺」的正常状态。现在每个状态都带一句中文,**取自
+`qc/assurance.py` 里那个状态自己的 reason**;全清白的情况直接说明这不是问题,并说清
+要让 QC 替你盯住什么该怎么写。
+
+令牌**留在行上** —— 读同一行的 agent 照旧按它分支,`--json` 一字未动。
+
+**防腐**:测试从引擎的 `STATES` 元组**反推**词表 —— 新增一个状态而不给中文,套件立刻
+红。并且钉了一条:**有真 finding(rejected / unknown / stale)时,那句"这不是问题"
+绝不许出现** —— 那等于引擎叫人无视自己的判决。
+
+## 十三、那条偶发失败:现在是两条,同一个模块
+
+全量跑里 `tests/test_transitions_looks.py` **又**失败了一条 —— 这次是
+`test_applied_xfade_audio_is_continuous_across_the_boundary`,ffmpeg 报
+`Nothing was written into output file, because at least one of its streams
+received no packets`(exit 234)。
+
+单跑 3 次、模块内并行 1 次,全过。
+
+所以现在的事实是:**同一个模块、两条不同的测试、都只在全量并行下失败过一次、都涉及
+真 ffmpeg 渲染**。这已经不是「一条孤立的偶发」,是**一个定位到单模块的模式**。
+
+但我**仍然没有机制**,也仍然无法按需复现。所以我**仍然不去改它** —— 往正在通过的
+测试里塞一个猜出来的修复,是本仓库明令禁止的投机。把两次的签名都记在这里,是为了让
+下一个会话拿到的是**数据**而不是印象。
+
+全量:**5713 passed, 1 failed(上述偶发), 11 skipped** —— 该失败在单独复跑中不复现。

@@ -2172,6 +2172,21 @@ def qc_main(ctx: typer.Context,
         raise typer.Exit(1)
 
 
+# One Chinese gloss per assurance state, taken from that state's own
+# documented reason in qc/assurance.py (STATES, precedence order). The token
+# stays on the line — an agent branches on it — and the gloss rides alongside.
+_ASSURANCE_ZH = {
+    "not_reviewable": "没选中 take 或媒体缺失,无从判读",
+    "no_explicit_expectations": "镜头没写 must_show/avoid,没有可判读的承诺",
+    "unreviewed": "还没有人判读过",
+    "legacy_reviewed": "只有旧版判读证据,不能当数",
+    "stale": "判读过,但镜头此后变了",
+    "rejected": "判读不通过",
+    "unknown": "判不出来(证据不足或编译失败)—— 绝不猜成通过",
+    "accepted": "判读通过",
+}
+
+
 def _echo_assurance_summary(assurance: Optional[list]) -> None:
     """Compact human summary for ``manju qc`` (DR02 WP4): counts per state, then
     a per-shot line for every rejected/unknown/stale shot with its first reason
@@ -2181,8 +2196,24 @@ def _echo_assurance_summary(assurance: Optional[list]) -> None:
     from collections import Counter
 
     counts = Counter(a.get("assurance_state") for a in assurance)
-    summary = ", ".join(f"{state} {n}" for state, n in sorted(counts.items()))
+    # The last line `manju qc` prints was a bare join of snake_case tokens —
+    # "验收 assurance: no_explicit_expectations 4" — in an otherwise Chinese
+    # CLI, with nothing saying what the token means or whether it needs action.
+    # Gloss each state from its own documented reason (qc/assurance.py STATES),
+    # keeping the token so an agent reading the same line still branches on it.
+    summary = ", ".join(
+        f"{state} {n}" + (f"({_ASSURANCE_ZH[state]})" if state in _ASSURANCE_ZH else "")
+        for state, n in sorted(counts.items()))
     typer.echo(f"验收 assurance: {summary}")
+    # `no_explicit_expectations` is the ordinary state of a shot nobody has
+    # written promises for — clean, not a defect. Say so, or a green QC run
+    # reads as if it still owed the owner something.
+    if set(counts) <= {"no_explicit_expectations", "accepted"}:
+        if counts.get("no_explicit_expectations"):
+            typer.secho(
+                "  这不是问题:这些镜头没写 quality.must_show / avoid,"
+                "所以没有可判读的承诺。要让 QC 替你盯住某件事,就给镜头写上。",
+                fg=typer.colors.BRIGHT_BLACK)
     for a in assurance:
         state = a.get("assurance_state")
         if state not in ("rejected", "unknown", "stale"):
