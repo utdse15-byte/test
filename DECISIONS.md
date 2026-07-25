@@ -3016,3 +3016,24 @@ understood at a glance, or dropped something quietly.
     after real ffmpeg renders under load. Without a reproduction, editing a
     currently-passing test would be exactly the speculative change this repo
     forbids — so it is written down for the next session instead.
+
+17. **Two of the four "Windows-only" invariants were not** — the previous round
+    listed msvcrt behaviour, CreateProcess quoting, NTFS case folding and the
+    install-smoke runtime as unanswerable off Windows. Python ships pure-Python
+    Windows implementations of two of them: `PureWindowsPath` case-folds for
+    comparison on ANY platform, and `subprocess.list2cmdline` emits exactly the
+    command line CreateProcess is handed. So the real Windows sort order can be
+    produced on Linux and shown to differ from POSIX (proving
+    `sorted(..., key=as_posix)` earns its keep), and `_split_command` can be
+    round-tripped against the genuine quoting contract for seven argv shapes.
+    Both verified by planting regressions. `test_windows_invariants_guard.py`
+    had asserted in prose that these were unobservable here; that claim is
+    corrected in place. Writing something off as unverifiable IS a claim, and
+    it had cost two real invariants their only cheap check.
+
+18. **A grep pin that matched nothing real** — the first version of the locale
+    ordering pin searched for `sorted(<glob>)`, but those scans sort `p.name`
+    (strings, already platform-stable), so the pattern could never match and
+    the pin asserted nothing. Replaced with a behavioural assertion on
+    `list_locales`' output order, and proven to bite by planting a
+    PureWindowsPath sort: ['de','en','Ja','ZH'] instead of ['Ja','ZH','de','en'].

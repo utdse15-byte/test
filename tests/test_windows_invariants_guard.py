@@ -12,10 +12,19 @@ What is pinned here — and equally important, what is NOT:
 * Pinned: the single-owner rules (one filtergraph escaper, one command
   splitter), the msvcrt lock implementers, explicit UTF-8 on subprocess decode,
   and no CR in a scaffolded project.
-* NOT pinned: anything that needs Windows semantics to observe — case-folded
-  PurePath ordering, real msvcrt behaviour, CreateProcess quoting. Those only
-  CI can answer, and a test that "passes" here without exercising them would be
-  worse than no test, because it would read as coverage.
+* NOT pinned: real msvcrt byte-lock behaviour and the actual CreateProcess
+  syscall. Only a Windows host can answer those, and a test that "passes" here
+  without exercising them would be worse than no test, because it would read as
+  coverage.
+
+CORRECTION (round 4): this file used to list case-folded PurePath ordering and
+CreateProcess QUOTING as unobservable here too. That was wrong. Both have
+pure-Python Windows implementations that run on Linux — ``PureWindowsPath``
+normalises case for comparison on any platform, and ``subprocess.list2cmdline``
+produces the exact command line CreateProcess is handed. They are now executed,
+not assumed, in tests/test_windows_semantics_on_linux.py. Writing something off
+as unverifiable is itself a claim, and this one cost two real invariants their
+only cheap check.
 """
 
 from __future__ import annotations

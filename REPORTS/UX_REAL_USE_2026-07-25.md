@@ -442,3 +442,69 @@ if ($v -notmatch "ffmpeg version 6\.1") { throw "ffmpeg is not the pinned 6.1.x 
 这三条只有真 Windows 能回答。**但它们比我上一轮说的"整个 windows-ci.yml 都验不了"
 小得多** —— 那句话当时把能验的部分也一起放弃了,还因此漏掉了 extras 从没装过、以及
 闸门断言里那个洞。
+
+---
+
+# 第五轮:"只有 Windows 能回答"里,有两条是我判断错了
+
+上一轮我列了四条"只有真 Windows 能回答"的:msvcrt 字节锁行为、CreateProcess 引号
+规则、NTFS 大小写折叠排序、install-smoke 运行时行为。**其中两条是错的。**
+
+Python 自带这两件事的**纯 Python Windows 实现**,在 Linux 上照跑:
+
+- `PureWindowsPath` 在**任何平台**都按大小写折叠做比较 —— Windows 的真实排序在
+  Linux 上就能造出来。
+- `subprocess.list2cmdline` 生成的正是 CreateProcess 会拿到的那条命令行 —— 这是
+  真契约,不是手写的近似。
+
+## 一、大小写折叠排序:差异在 Linux 上就能看见
+
+```
+sorted(PurePosixPath)    ['Banana', 'S010', 'Zebra', 'apple', 'cherry', 's002']
+sorted(PureWindowsPath)  ['apple', 'Banana', 'cherry', 's002', 'S010', 'Zebra']
+                          ↑ 两者不同
+sorted(key=as_posix)     两种 flavour 下结果完全一致
+```
+
+CLAUDE.md 那条"`sorted(..., key=as_posix)` 保证跨平台确定性"的规矩,**现在是被执行
+验证的,不再是被假设的**。
+
+顺带查清一件事:我之前修的那六处 locale 扫描,现在排的是 `p.name`(字符串),本来
+就跨平台稳定。所以我第一版写的"找 `sorted(<glob>)`"grep 钉子**根本对不上真实形状,
+是个空钉子**。改成按行为断言 `list_locales` 的输出顺序,并**植入 Windows 排序验证
+它会红**(`['de','en','Ja','ZH']` ≠ `['Ja','ZH','de','en']`)。
+
+## 二、CreateProcess 引号:用真契约做往返验证
+
+`list2cmdline` 造出 CreateProcess 会收到的命令行,`_split_command` 必须能从中还原
+原始 argv —— 否则带真实 Windows 路径的 provider 模板会丢掉反斜杠、子进程 exit 127
+(这正是闸门第一轮那个缺陷)。7 种 argv 形状(带空格的程序路径、UNC、CJK 目录、
+`key=a b`)全部往返通过。
+
+**植入回归验证过**:把 Windows 分支改回裸 `shlex.split`,5 条立刻变红。
+
+## 三、我又纠正了自己一次
+
+`test_windows_invariants_guard.py` 的文件头原本写着:大小写折叠排序和 CreateProcess
+引号"只有 CI 能回答"。**那句话是错的**,而且代价很实在 —— 它让两条真实不变量白白
+少了唯一一层便宜的检查。已改正并指向新文件。
+
+**"这个验不了"本身就是一个论断**,而我这两轮连着把它下错了两次(先是整个
+windows-ci.yml,再是这两条)。
+
+## 四、那条偶发失败:又找了一轮,仍未复现
+
+针对性压测:6 个 dd 进程占满 4 核的情况下单跑 **12 次**,0 失败;把它和 7 个
+ffmpeg 重模块一起 `-n auto` 跑 **6 轮**,0 失败;此后全量又跑了 **2 次**,都绿。
+
+累计:那条测试自那次失败后已通过约 **40 次**。我读了它的缓存键构成
+(`hash_file(src)` + 尺寸 + fps + 时长 + target + 淡入淡出),**没有任何时间相关输入**,
+所以不存在明显的逻辑竞态。**没有复现、没有机制,我就不会去改一条正在通过的测试。**
+
+## 五、现在真正剩下的
+
+- **msvcrt 字节锁的真实行为**(纯 Python 无从模拟)
+- **install-smoke 的运行时行为**(语法已验,行为未验)
+- **choco 装 6.1.1 这一步**(且 6.1 第三方构建已被上游下架)
+
+比上一轮的四条少了两条。全量套件(闸门同配置):**5568 passed, 0 failed**。
