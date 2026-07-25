@@ -4651,7 +4651,14 @@ _JS = r"""
 
     const renderValid = () => {
       clear(strip);
-      strip.appendChild(el("span", "ed-valid-ok", "✓ 校验通过 (valid)"));
+      /* The comment above is explicit that this endpoint does NO cross-
+         reference or lock verification — but the label claimed an unqualified
+         "校验通过", so a shot naming a scene that is not in the bible showed a
+         green ✓ and then failed on Save with "check failed — 已回滚". The
+         refusal is right and its errors are precise; the surprise came from
+         being told "valid" first. Say WHICH check passed. */
+      strip.appendChild(el("span", "ed-valid-ok",
+        "✓ 格式校验通过 (format valid) —— 引用/锁由保存时的 check 把关"));
     };
     const renderInvalid = (errors) => {
       clear(strip);
