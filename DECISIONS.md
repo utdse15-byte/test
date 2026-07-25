@@ -3140,3 +3140,24 @@ understood at a glance, or dropped something quietly.
     by review. The standing lesson: a fix verified only on its happy path is
     about half likely to ship a new defect — and the harness is as likely to be
     wrong as the product, so suspect the harness first.
+
+29. **A failure that deletes its own evidence** — every multi-step render stage
+    worked in a `TemporaryDirectory`, so the inputs ffmpeg was handed were
+    removed on the way out of the exception. The failure record is good (stderr
+    tail + argv) but the argv names paths that no longer exist, which makes the
+    obvious next step — open the file and look — impossible on EVERY render
+    failure, not just the intermittent one that exposed it. `media/render.
+    _render_scratch` is now the one owner: unchanged on success, and on failure
+    the contents are copied to `.manju/render-debug/<stage>/` — disposable by
+    contract, one set per stage, nested stages kept separately (the inner set is
+    the useful one and must not be clobbered by the outer one), nothing kept on
+    a cancellation, bounded by a per-file cap AND a total budget, copied
+    smallest-first so cheap evidence cannot be crowded out by a master, with
+    every exclusion NAMED in the manifest. Verified against real ffmpeg on a
+    real corrupt input, not a mock: the preserved `b.mp4` reads `streams=`
+    (empty) — the diagnosis, one ffprobe away, where previously there was
+    nothing to probe. Chasing the same lead also produced a real negative
+    result: a silent source does NOT yield a mute boundary layer, because
+    `normalize_segment` gives every layer an audio track — which eliminates the
+    easiest explanation for the `acrossfade` flake and pins what to look at the
+    next time it reproduces.

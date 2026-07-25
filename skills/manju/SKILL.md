@@ -243,6 +243,7 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 5. `content_rejected`(审核拒绝)**别无脑重试**:`manju tasks` 看拒绝原因 tail,改写 prompt 或走降级链(§8)。
 6. 重做 → `manju select` 选新 take → `manju check` → `manju build` → 再 `manju qc` 复核闭环。
 - 硬规矩:花钱 / 长耗时的 redo 命中 `ask_before` 就先 `--dry-run` + 问人;不覆盖 `renders/final/`(只增 `final_vN`)。
+- **渲染失败要查「ffmpeg 到底被喂了什么」**:失败时的中间输入已保留在 `.manju/render-debug/<环节>/`(`boundary` / `segment` / `compose-final`),`manju failures` 里有一条 `level=info` 指路。直接 `ffprobe` 那些文件——`ffmpeg` 报错里的路径是临时目录,早没了。成功不留,同环节下次失败覆盖,看完可删(`.manju/` 是可丢弃的)。
 
 ## 10. `--json` 命令失败时(错误信封)
 

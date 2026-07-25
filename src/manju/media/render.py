@@ -74,12 +74,15 @@ rebuilt rather than poisoning every future final.
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.container import Project
+from ..core.failures import Failure, record_failure
 from ..core.hashing import cache_key, hash_file, short_hash
 from ..core.models import (
     AudioClip,
@@ -92,7 +95,7 @@ from ..core.models import (
 )
 from ..core.yamlio import atomic_write_text, read_yaml
 from .card import find_font
-from .ffmpeg import MediaError, atomic_output, default_log, run_ffmpeg
+from .ffmpeg import MediaCanceled, MediaError, atomic_output, default_log, run_ffmpeg
 from .normalize import normalize_segment
 from .probe import probe_duration_ms
 
@@ -112,6 +115,152 @@ _SEG_ENC = [
 def _even(n: int) -> int:
     n = max(2, int(n))
     return n if n % 2 == 0 else n - 1
+
+
+# ==================================================== render scratch (evidence)
+
+# Every multi-step render stage works in a scratch directory: normalize to a
+# temp then bake fades, build the two crossfade layers then blend them, concat
+# the pieces then run the final pass. Those temps are the INPUTS ffmpeg was
+# actually handed, and a failure's evidence (stderr tail + argv) names them by
+# path — so when the scratch is unconditionally deleted on the way out, the
+# error points at files that no longer exist. Measured on a real intermittent
+# boundary failure: the stderr said the AAC encoder never opened for the audio
+# leg of `acrossfade`, the obvious next step was one ffprobe on the two layer
+# files, and they were gone.
+#
+# So: deleted on success exactly as before, KEPT on failure — under `.manju/`
+# (disposable by contract, never a build input, already gitignored), one set per
+# stage (a new failure replaces that stage's previous set), and bounded by both
+# a per-file cap and a total budget whose exclusions are NAMED in the manifest
+# rather than silently applied. Copy order is SMALLEST FIRST, so the cheap and
+# most diagnostic files (a piece list, a filtergraph dump) always survive a
+# budget that a single concatenated master would otherwise eat whole.
+_SCRATCH_KEEP_DIRNAME = "render-debug"
+_SCRATCH_FILE_CAP_BYTES = 32 * 1024 * 1024
+_SCRATCH_TOTAL_CAP_BYTES = 128 * 1024 * 1024
+_SCRATCH_MANIFEST = "MANIFEST.txt"
+
+
+def _scratch_keep_root(project: Project) -> Path:
+    """Where preserved render scratch lands. One owner, so the disposability
+    contract (`.manju/` is throwaway) can never be half-honoured."""
+    return project.runtime_dir / _SCRATCH_KEEP_DIRNAME
+
+
+def _preserve_scratch(project: Project, label: str, tmp: Path, *, log: Log) -> None:
+    """Copy what survives in ``tmp`` aside for inspection. Best-effort in every
+    direction: this runs while an exception is already in flight, so anything
+    it raises would REPLACE a readable ffmpeg error with a confusing one."""
+    try:
+        dest = _scratch_keep_root(project) / label
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        dest.mkdir(parents=True, exist_ok=True)
+        found: list[tuple[str, int, Path]] = []
+        for src in tmp.rglob("*"):
+            if not src.is_file():
+                continue
+            try:
+                found.append((src.relative_to(tmp).as_posix(), src.stat().st_size, src))
+            except OSError:
+                continue
+        rows: list[tuple[str, str]] = []
+        kept = skipped = 0
+        kept_bytes = skipped_bytes = 0
+        # Smallest first for the COPY decision (cheap evidence wins the budget);
+        # the manifest is re-sorted by path below, because that is what a human
+        # reads and the rest of the build is path-deterministic too.
+        for rel, size, src in sorted(found, key=lambda t: (t[1], t[0])):
+            reason = ""
+            if size > _SCRATCH_FILE_CAP_BYTES:
+                reason = "file-cap"
+            elif kept_bytes + size > _SCRATCH_TOTAL_CAP_BYTES:
+                reason = "total-cap"
+            if not reason:
+                target = dest / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(src, target)
+                except OSError as exc:  # a file ffmpeg still holds open, say
+                    reason = exc.__class__.__name__
+            if reason:
+                rows.append((rel, f"skipped\t{rel}\t{size}\t{reason}"))
+                skipped += 1
+                skipped_bytes += size
+            else:
+                rows.append((rel, f"kept\t{rel}\t{size}"))
+                kept += 1
+                kept_bytes += size
+        rows.sort(key=lambda t: t[0])
+        lines = [row for _, row in rows]
+        rel_dest = project.relpath(dest)
+        if log is not None:
+            log(f"render scratch preserved for inspection: {rel_dest} "
+                f"({kept} file(s) kept, {skipped} skipped)")
+        # The owner and any agent both look at `manju failures` after a failed
+        # build; a preserved directory nobody is told about is no directory at
+        # all. level="info" — the real error was already recorded by the caller,
+        # and degradations deliberately never count toward project health.
+        # Recording FIRST also hands back the ledger's own timestamp, so the
+        # manifest and the note carry the same instant and this module does not
+        # fork a sixth private `_now_iso`.
+        stamp = "未知 (unknown)"
+        try:
+            rec = record_failure(project, Failure(
+                step="render",
+                subject=label,
+                cause=f"失败时的中间输入已保留在 {rel_dest},可直接 ffprobe 检查",
+                evidence="\n".join(lines[:12]),
+                hint=f"看完就删:{rel_dest}(.manju/ 下的残留,不是构建输入)",
+                level="info",
+            ))
+            stamp = str(rec.get("ts") or stamp)
+        except Exception:  # noqa: BLE001 — a wedged ledger must not lose the copy
+            pass
+        header = [
+            "# manju render-debug —— 渲染失败时保留下来的输入文件",
+            f"# 环节 (stage): {label}",
+            f"# 时间 (utc): {stamp}",
+            "#",
+            "# 这个目录随时可以删除:它在 .manju/ 下,是可丢弃的诊断残留,",
+            "# 不是构建输入,删掉不影响任何渲染结果。同一环节下次失败会覆盖它。",
+            f"# 单文件上限 (file-cap): {_SCRATCH_FILE_CAP_BYTES} 字节;"
+            f"合计上限 (total-cap): {_SCRATCH_TOTAL_CAP_BYTES} 字节。",
+            "# 超上限的文件只登记不复制(下面 skipped 那几行写了原因和大小);",
+            "# 复制顺序是小文件优先,所以便宜又有用的证据不会被大文件挤掉。",
+            "#",
+            "# kept|skipped<TAB>相对路径<TAB>字节数",
+        ]
+        tail = [f"# 合计: kept={kept} ({kept_bytes} 字节), "
+                f"skipped={skipped} ({skipped_bytes} 字节)"]
+        atomic_write_text(dest / _SCRATCH_MANIFEST,
+                          "\n".join([*header, *lines, *tail]) + "\n")
+    except Exception:  # noqa: BLE001 — never mask the failure being reported
+        pass
+
+
+@contextmanager
+def _render_scratch(project: Project, label: str, *, dir: Path,
+                    log: Log = None) -> Iterator[Path]:
+    """A scratch directory that survives its own failure.
+
+    Drop-in for ``tempfile.TemporaryDirectory(dir=...)``: same location, same
+    cleanup on the success path. The difference is the failure path — the
+    contents are copied to ``.manju/render-debug/<label>/`` before the temp is
+    removed, so the paths in the error's argv are still readable afterwards.
+
+    A cancellation is NOT a failure (``manju build`` can be stopped on purpose),
+    so ``MediaCanceled`` and ``KeyboardInterrupt`` preserve nothing.
+    """
+    with tempfile.TemporaryDirectory(dir=dir) as tmp:
+        try:
+            yield Path(tmp)
+        except (MediaCanceled, KeyboardInterrupt):
+            raise
+        except Exception:
+            _preserve_scratch(project, label, Path(tmp), log=log)
+            raise
 
 
 def _escape_filter_path(path: Path | str) -> str:
@@ -525,7 +674,7 @@ def _build_segment(
         return seg_path
 
     # Normalize to a temp, then bake fades into the cached segment.
-    with tempfile.TemporaryDirectory(dir=seg_path.parent) as tmp:
+    with _render_scratch(project, "segment", dir=seg_path.parent, log=log) as tmp:
         base = Path(tmp) / "base.mp4"
         normalize_segment(
             src, base, width=width, height=height, fps=enc_fps,
@@ -809,7 +958,7 @@ def _build_boundary_segment(
     layer_ms = 2 * half
     a_src = project.resolve(a.source)
     b_src = project.resolve(b.source)
-    with tempfile.TemporaryDirectory(dir=seg_path.parent) as tmp:
+    with _render_scratch(project, "boundary", dir=seg_path.parent, log=log) as tmp:
         tmpd = Path(tmp)
         a_layer = tmpd / "a.mp4"
         b_layer = tmpd / "b.mp4"
@@ -1561,7 +1710,8 @@ def render_timeline(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(dir=out_path.parent) as tmp:
+    with _render_scratch(project, f"compose-{target}", dir=out_path.parent,
+                         log=log) as tmp:
         tmp_dir = Path(tmp)
         # ③ concat the uniform segments with the concat demuxer (stream copy).
         # Round-T: when applied xfades are present the track is restructured into
