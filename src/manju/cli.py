@@ -2967,9 +2967,13 @@ def fcpxml_import_plan(
                f"({'verified' if plan['version_verified'] else 'UNVERIFIED'}) · "
                f"edit_rate {plan['edit_rate'] or '(unknown)'}")
     typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    # `needs_relink` counts distinct SOURCES, while everything else on this line
+    # counts clips — so a bare "needs_relink: 1" beside "windows: 12" read as
+    # "one clip needs relinking" while every one of the 12 rows below carried
+    # the ⚠. Name the unit.
     typer.echo(f"  windows: {len(plan['windows'])} · transitions: "
                f"{len(plan['transitions'])} · audio: {len(plan['audio_suggestions'])} · "
-               f"needs_relink: {len(plan['needs_relink'])}")
+               f"待重链来源 needs_relink: {len(plan['needs_relink'])} 个来源")
     for w in plan["windows"]:
         flag = "" if w["media_status"] == "inside_project" else "  ⚠needs_relink"
         typer.echo(f"    window {w['name']} @ {w['offset_frames']}f "
@@ -3062,10 +3066,11 @@ def edl_import_plan(
     typer.echo(f"  fcm {plan['frame_code_mode'] or '(none)'} · edit_rate "
                f"{plan['edit_rate']}{' (assumed)' if plan['rate_assumed'] else ''}")
     typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    # Same units mismatch as the fcpxml planner above: sources, not clips.
     typer.echo(f"  windows: {len(plan['windows'])} · transitions: "
                f"{len(plan['transitions'])} · audio: {len(plan['audio_events'])} · "
-               f"needs_relink: {len(plan['needs_relink'])} · unknown_rows: "
-               f"{plan['unknown_rows']}")
+               f"待重链来源 needs_relink: {len(plan['needs_relink'])} 个来源 · "
+               f"unknown_rows: {plan['unknown_rows']}")
     for w in plan["windows"]:
         typer.echo(f"    window {w['clip_name']} @ {w['rec_in_frames']}f "
                    f"+{w['duration_frames']}f (reel {w['reel']} {w['channel']})"
