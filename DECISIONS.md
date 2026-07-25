@@ -2915,3 +2915,55 @@ understood at a glance, or dropped something quietly.
    piping runs through `tail -16` discarded the failure list and forced a
    module-by-module bisect. The report keeps these because the next session will
    otherwise repeat them.
+
+7. **Round 2, same method** — nine more, all presentation, none a correctness
+   defect. `manju roundtrip` printed `truth_moved=False` when there WAS no
+   baseline sidecar to compare against, making "checked, truth is stable"
+   indistinguishable from "there was nothing to check" — and the draft coming
+   back from an editor is precisely the case that arrives without the sidecar.
+   The header now says 未知 (unknown); row data and the `state` vocabulary are
+   untouched because agents branch on them.
+
+8. **The name a user SEES must be a handle they can type** — `build_lookup`
+   indexed `id` and `aliases` but not the display `name`, though `manju
+   appearances`, the bible files and the GUI chips all show exactly that. So
+   `@周叔` resolved to nothing, and with an ASCII-only `all_names` difflib could
+   not even offer a nearest match against a CJK token: a dead end with no
+   signpost. Names are now indexed at id > name > alias; a second handle on the
+   SAME asset can never manufacture a collision with itself.
+
+9. **Four misaligned tables, one root cause** — `f"{s:<18}"` pads by CODE
+   POINTS and a CJK glyph is one code point per two terminal columns. The
+   export centre's status column swung between column 27 and 37 and its longest
+   label printed glued to its status; `manju tasks` printed a bare `#{id}` and
+   broke every column to its right the moment the ledger passed ten rows. The
+   CJK-aware padder already had ONE owner (`presets.display_width`/`pad`) used
+   by four other CLI tables — these joined it rather than forking a fifth. Two
+   more (`manju spend`'s dangling currency space, `manju skills`' hardcoded 22
+   against a 27-character id) came from the same sweep; every remaining `:<N}`
+   in cli.py pads an ASCII enum or id, where code points do equal columns.
+
+10. **A next step that is not a command is not a next step** — the empty-project
+    rung (the FIRST line a new project prints) named a directory, and the
+    broken-shot rung named a task, while the per-shot 待办 directly beneath it
+    already knew the two remedies. Both now name commands; `next_step_key` is
+    unchanged.
+
+11. **Readable exactly when there is something to read** — `manju events`
+    printed `json.dumps(detail)`, so real evidence records (`stage_attempt`
+    carries spec hashes, an output list and a semantic digest) rendered at
+    700-900 columns. The human view now digests, SAYS how many fields it elided
+    and where the full record lives; `--json` was already complete and is
+    untouched. In the GUI, a cockpit activity row collapsed into a
+    one-character-per-line vertical ladder — a flex child with `min-width:auto`
+    squeezed to zero against `word-break:break-all`. All three conditions are
+    pinned, because removing any one alone still breaks it.
+
+12. **A red-first test caught the fix, not just the bug** — the "no trailing
+    whitespace" assertion in the export-table test failed against my own first
+    attempt, which padded the status column and left ragged spaces at end of
+    line. Two other failures that round were bugs in the TESTS (a label
+    measured with `split()[0]` when labels contain spaces; a CSS-rule lookup
+    that did not strip comments, and the new comment contained commas). Kept
+    here for the same reason as #6: the value of red-first is that it sometimes
+    goes red on you.

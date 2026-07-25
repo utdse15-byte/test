@@ -156,7 +156,8 @@ def _char_chips(shot: Any, matrix: dict[str, Any], lookup: Any) -> str:
         if aid is not None:
             registered_canon.add(aid)
             label = names.get(aid, aid)
-            tip = f"角色 {aid}" + (f"(经别名 {c} 解析)" if via == "alias" else "")
+            via_word = {"alias": "别名", "name": "名字"}.get(via)
+            tip = f"角色 {aid}" + (f"(经{via_word} {c} 解析)" if via_word else "")
             chips.append(f'<span class="chip sb-char" title="{_e(tip)}">{_e(label)}</span>')
         else:
             registered_canon.add(c)

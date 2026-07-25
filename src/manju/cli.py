@@ -1708,9 +1708,13 @@ def skills_list(ctx: typer.Context,
         typer.echo("技能库为空 — 在 skills/<id>/SKILL.md 添加技能")
         return
     typer.secho("技能库 / skills(project > user > bundled)", fg=typer.colors.CYAN)
+    # Width from the rows present: a hardcoded 22 was overflowed by
+    # `continue-from-accepted-take` (27), which shoved that row's description
+    # five columns right of every other one.
+    id_w = max(len(r.id) for r in rows)
     for r in rows:
         src = "" if r.source == "bundled" else f"  [{r.source}]"
-        typer.echo(f"  {r.id:<22} {r.when_to_use or r.description}{src}")
+        typer.echo(f"  {r.id:<{id_w}}  {r.when_to_use or r.description}{src}")
     typer.secho("  → manju skills show <id> 查看全文", fg=typer.colors.BRIGHT_BLACK)
 
 
@@ -3316,17 +3320,29 @@ def exports(
         return
 
     typer.secho("导出中心 / exports", fg=typer.colors.CYAN)
+    # `:<18` pads by CODE POINTS, and a CJK label is one code point per two
+    # terminal columns — so this table's status column swung between column 27
+    # and 37, and the longest label (M_AND_E_BUS_EXCLUSION_MASTER) ran straight
+    # into its status with no gap. Measure in columns, like the other CLI
+    # tables already do (the one owner is presets.display_width/pad).
+    from .presets import display_width, pad
+
+    label_w = max([display_width(r["label"]) for r in data["deliverables"]]
+                  or [18]) + 2
+    state_w = max([display_width(r["freshness_zh"]) for r in data["deliverables"]]
+                  or [5]) + 2
     for row in data["deliverables"]:
         color = _FRESHNESS_COLOR.get(row["freshness"], typer.colors.WHITE)
         ver = f" {row['version']}" if row["version"] else ""
         verified = ""
         if row["freshness"] == "verified" and row["verified_by"]:
             verified = f"  [{row['verified_by']} @ {str(row['verified_at'] or '')[:19]}]"
-        typer.echo(
-            f"  {row['label']:<18}"
-            + typer.style(f"{row['freshness_zh']:<5}", fg=color)
-            + f"{ver}{verified}"
-        )
+        tail = f"{ver}{verified}"
+        line = (f"  {pad(row['label'], label_w)}"
+                + typer.style(pad(row["freshness_zh"], state_w) if tail
+                              else row["freshness_zh"], fg=color)
+                + tail)
+        typer.echo(line)
         typer.secho(f"      └ {row['basis']}", fg=typer.colors.BRIGHT_BLACK)
         if row["path"]:
             typer.secho(f"        {row['path']}", fg=typer.colors.BRIGHT_BLACK)
@@ -3568,8 +3584,26 @@ def roundtrip(
     if as_json:
         _emit(plan, True)
     else:
-        typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
-                   f"truth_moved={plan.get('truth_moved')}")
+        # `truth_moved` is only MEANINGFUL when a baseline sidecar was found:
+        # it compares the baseline's compiled_from against the current
+        # timeline's. With no baseline it stays at its default False, and every
+        # row is state="ok" — byte-identical to "we checked and truth is
+        # stable". That is exactly backwards for the case roundtrip exists to
+        # serve: a draft coming BACK from an editor usually arrives without the
+        # sidecar, so the plan that most needs a caveat was the one that showed
+        # none. Say which of the two situations this is.
+        moved = plan.get("truth_moved")
+        if plan.get("baseline"):
+            typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
+                       f"truth_moved={moved}")
+        else:
+            typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
+                       f"truth_moved=未知 (unknown)")
+            typer.secho(
+                "  ⚠ 没找到导出时的 baseline 边车 —— 无法判断项目真相自导出后是否"
+                "变过,下面每一行都未与导出点对账。把载体放回 exports/ 原目录"
+                "(边车在同级 .baseline/),或确认这些改动确实基于当前真相再 --apply。",
+                fg=typer.colors.YELLOW)
         typer.echo(f"  {plan.get('carrier_note')}")
         for i, r in enumerate(plan.get("rows") or [], 1):
             typer.echo(
@@ -6757,6 +6791,21 @@ def mentions(
         _emit(report, True)
         return
     typer.secho("@ 提及报告 / mentions  (--apply 写入镜头登记字段)", fg=typer.colors.CYAN)
+    hits = sum(len(e["resolved"]) + len(e["unresolved"]) for e in report["shots"])
+    if not hits and not report["story"]:
+        # A bare header over nothing reads as "broken", not as "clean": the
+        # user cannot tell whether the scan found no mentions or never ran.
+        # Say what was looked at, and what a mention looks like.
+        n = len(report["shots"])
+        scope = f"{n} 个镜头的自由文本" if shot_id is None else f"镜头 {shot_id} 的自由文本"
+        typer.secho(
+            f"  扫描了 {scope} 与 story/*.md,没有发现 @提及 —— 这不是错误。",
+            fg=typer.colors.BRIGHT_BLACK)
+        typer.secho(
+            "  写法:在镜头的 description/action/notes 里写 @林夏 或 @linxia"
+            "(bible 里的 id 或别名都行),再跑 manju mentions --apply "
+            "把它登记进 characters/scene 字段。", fg=typer.colors.BRIGHT_BLACK)
+        return
     for entry in report["shots"]:
         if not entry["resolved"] and not entry["unresolved"]:
             continue
@@ -7173,9 +7222,14 @@ def tasks(ctx: typer.Context,
         "failed": typer.colors.RED,
         "moderation-rejected": typer.colors.MAGENTA,
     }
+    # Right-align the id: an unpadded "#9" under "#12" shifted every column
+    # after it by one, so the shot/provider/status columns broke apart exactly
+    # at the ledger's 10th row — where a long run is most worth scanning.
+    id_w = max((len(str(t["id"])) for t in tasks_out), default=1)
     for t in tasks_out:
         cost = f"{t['cost']:g} {t['currency']}" if t["cost"] else "—"
-        head = (f"  #{t['id']}  {t['shot'] or '—':<6}  {t['provider'] or '—':<14}  ")
+        head = (f"  {'#' + str(t['id']):>{id_w + 1}}  {t['shot'] or '—':<6}  "
+                f"{t['provider'] or '—':<14}  ")
         typer.echo(head, nl=False)
         typer.secho(f"{t['status']:<20}", fg=_status_color.get(t["status"], typer.colors.WHITE), nl=False)
         typer.echo(f"  {cost}  {t['created'] or ''}"
@@ -7500,8 +7554,13 @@ def spend(as_json: bool = typer.Option(False, "--json")):
         typer.secho(f"  合计 / total  {parts}(混合币种,按币种分列/mixed currencies)",
                     fg=typer.colors.CYAN)
     else:
-        cur = report["currency"] or ""
-        typer.secho(f"  合计 / total  {report['total']:g} {cur}", fg=typer.colors.CYAN)
+        # An unlabeled currency printed as a bare trailing space ("total  0 ")
+        # reads as a truncated line. On a NONZERO total the missing unit is
+        # real information — mark it "?" like the mixed-currency branch and the
+        # tasks footer already do; on a zero total there is no unit to want.
+        cur = report["currency"] or ("?" if report["total"] else "")
+        typer.secho(f"  合计 / total  {report['total']:g}"
+                    + (f" {cur}" if cur else ""), fg=typer.colors.CYAN)
     if report["estimated_total"] is not None:
         delta = report["delta"] or 0.0
         sign = "+" if delta >= 0 else ""
@@ -7643,9 +7702,44 @@ def evaluate(as_json: bool = typer.Option(False, "--json")):
 # ------------------------------------------------------------------- misc
 
 
+_EVENT_DETAIL_KEYS = 4
+_EVENT_VALUE_WIDTH = 44
+# Structural bookkeeping — true, but never the answer to "who did what".
+_EVENT_NOISE_KEYS = ("schema", "semantic_digest", "ts")
+
+
+def _event_detail_brief(detail: dict) -> str:
+    """A scannable one-line digest of an event's detail.
+
+    `manju events` used to print ``json.dumps(detail)`` in full. On a project
+    with real evidence records (stage_attempt carries spec hashes, output
+    lists and a semantic digest) that is 700-900 columns per line, and the
+    command whose help says "who did what, when" became unreadable exactly
+    once the project had a history worth reading.
+
+    Nothing is lost: ``--json`` already emitted the complete records, and this
+    line SAYS when it elided something rather than trailing off."""
+    if not isinstance(detail, dict) or not detail:
+        return ""
+    keys = [k for k in detail if k not in _EVENT_NOISE_KEYS] or list(detail)
+    shown, parts = keys[:_EVENT_DETAIL_KEYS], []
+    for k in shown:
+        v = detail[k]
+        text = (v if isinstance(v, str)
+                else json.dumps(v, ensure_ascii=False, separators=(",", ":")))
+        if len(text) > _EVENT_VALUE_WIDTH:
+            text = text[:_EVENT_VALUE_WIDTH - 1] + "…"
+        parts.append(f"{k}={text}")
+    hidden = len(detail) - len(shown)
+    if hidden > 0:
+        parts.append(f"+{hidden} 项 → --json")
+    return ", ".join(parts)
+
+
 def _event_line(e: dict) -> str:
-    return (f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}  "
-            f"{json.dumps(e.get('detail', {}), ensure_ascii=False)}")
+    brief = _event_detail_brief(e.get("detail", {}))
+    return (f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}"
+            + (f"  {brief}" if brief else ""))
 
 
 @app.command(rich_help_panel=PANEL_COLLAB)

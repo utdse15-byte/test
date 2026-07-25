@@ -931,6 +931,18 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-mini-fill.over { background: var(--err); }
 .ck-ev { display: flex; align-items: baseline; gap: .45rem; font-size: .8rem; padding: .12rem 0; }
 .ck-ev .etime { font-size: .72rem; }
+/* An event row is a flex line in a NARROW cockpit column. Every child shrinks
+   by default and a flex item's min-width is auto, so a long action name
+   ("mentions_apply") squeezed .edetail towards zero — and .edetail carries
+   word-break:break-all, which then broke the text ONE CHARACTER PER LINE,
+   stretching a single row to a dozen lines tall. Pin the fixed parts, let the
+   detail be the one elastic cell, and give it a min-width of 0 so it may
+   actually shrink into an ellipsis instead of exploding vertically. */
+.ck-ev .badge, .ck-ev .eaction, .ck-ev .etime { flex: 0 0 auto; }
+.ck-ev .edetail {
+  flex: 1 1 auto; min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; word-break: normal;
+}
 .ck-sugg { display: flex; align-items: baseline; gap: .4rem; font-size: .82rem; padding: .12rem 0; }
 .ck-err { color: var(--muted); font-size: .8rem; font-style: italic; }
 .ck-empty { color: var(--muted); font-size: .82rem; }
@@ -1962,11 +1974,16 @@ _JS = r"""
         const row = el("div", "ck-ev");
         row.appendChild(el("span", "badge ac-" + (e.actor || "engine"), e.actor || "?"));
         row.appendChild(el("span", "eaction", e.action || ""));
-        if (e.summary) row.appendChild(el("span", "edetail", e.summary));
+        if (e.summary) {
+          const d = el("span", "edetail", e.summary);
+          /* The cell ellipsises, so the full text has to stay reachable. */
+          d.title = e.summary;
+          row.appendChild(d);
+        }
         if (e.ts) row.appendChild(el("span", "etime muted", fmtClock(e.ts)));
         b.appendChild(row);
       });
-    }));
+    }, "span2"));
 
     /* suggestions (block 8, the rest of suggest_next) */
     const sg = c.suggestions;
