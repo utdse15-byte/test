@@ -3205,3 +3205,22 @@ understood at a glance, or dropped something quietly.
     the repo has recorded four times (a token in a docstring), twice in one
     edit, which is why the character set is now a named constant and the guard
     scans only the function body.
+
+33. **The flake was the sandbox's ffmpeg, and the pinned one is clean** — the
+    UNKNOWN left by entry 30 is now a measurement. The 6.1.1 build was never
+    unobtainable; Ubuntu 24.04 ships exactly `7:6.1.1-3ubuntu5` and one `apt
+    install` away, which is what should have been tried before hunting static
+    archives that returned 9-byte "Not Found" bodies. Same machine, same code,
+    same concurrency, same round count: **9 failures in 1600 rounds on n7.1,
+    0 in 1600 on 6.1.1** — P(0 | 7.1's rate) ≈ 1.2e-4, so this is a measured
+    difference, not an absence of evidence. Three consecutive full suites on
+    6.1.1: 5788 passed, 0 failed. The intermittent failure chased all session
+    was an off-pin toolchain, not the suite and not the product. Consequences:
+    no retry is added — the supported, pinned, installer-recommended version
+    does not trigger it, and a retry for a fault absent from the supported
+    configuration is exactly what "nothing speculative" excludes; and
+    `media/ffmpeg` stays record-only rather than growing a version blacklist.
+    The one real fix is documentary: CLAUDE.md's dev loop named no ffmpeg
+    version, which is what cost the day, so it now names 6.1.1, the one-line
+    Ubuntu install, and the `aost#0:1/aac` signature to recognise — turning a
+    day-long dead end into one `ffmpeg -version`.
