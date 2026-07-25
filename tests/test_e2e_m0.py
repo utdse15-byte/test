@@ -32,6 +32,23 @@ def sample_project(tmp_path_factory):
     return Project(root)
 
 
+@pytest.fixture(scope="module")
+def built(sample_project):
+    """The one build every later view in this module reads.
+
+    The M0 scenario is sequential by design — build once, then look at the
+    result several ways — but that dependency used to be IMPLICIT in test
+    order, so running a single test on its own
+    (``pytest tests/test_e2e_m0.py::test_m0_reopen_state_intact``, the first
+    thing anyone does while debugging one) failed with a bare ``assert False``
+    from a project nothing had built yet. Module-scoped, so running the whole
+    file still performs exactly one build.
+    """
+    from manju.build.graph import run_build
+
+    return run_build(sample_project, target="final")
+
+
 def _probe_ms(path: Path) -> int:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -41,10 +58,8 @@ def _probe_ms(path: Path) -> int:
     return int(float(out) * 1000)
 
 
-def test_m0_full_build(sample_project):
-    from manju.build.graph import run_build
-
-    result = run_build(sample_project, target="final")
+def test_m0_full_build(sample_project, built):
+    result = built
     assert result.ok, f"errors={result.errors} warnings={result.warnings}"
     assert result.render_path, "no final render produced"
 
@@ -71,7 +86,7 @@ def test_m0_full_build(sample_project):
     assert out == "1080,1920"
 
 
-def test_m0_reopen_state_intact(sample_project):
+def test_m0_reopen_state_intact(sample_project, built):
     """Reopen the project fresh: all state must come from text + media (§3)."""
     from manju.build.status import project_status
     from manju.core.container import Project
@@ -91,7 +106,7 @@ def test_m0_runtime_dir_disposable(sample_project):
     assert run_check(sample_project).ok
 
 
-def test_m0_incremental_rerender(sample_project):
+def test_m0_incremental_rerender(sample_project, built):
     """Swap one shot's take → only that segment is rebuilt (§7)."""
     import time
 
@@ -140,7 +155,7 @@ def test_m0_incremental_rerender(sample_project):
     assert len(finals) >= 2
 
 
-def test_m0_missing_media_detected(sample_project):
+def test_m0_missing_media_detected(sample_project, built):
     """Deleting a selected take's media must be caught (§13 acceptance)."""
     from manju.core.check import run_check
 
@@ -157,7 +172,7 @@ def test_m0_missing_media_detected(sample_project):
     assert run_check(sample_project).ok
 
 
-def test_m0_pack_roundtrip(sample_project, tmp_path):
+def test_m0_pack_roundtrip(sample_project, built, tmp_path):
     """pack → unpack must produce an openable project (§3)."""
     import zipfile
 

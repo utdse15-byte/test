@@ -71,7 +71,9 @@ def _iter_voice_media(project: "Project", shot_id: str):
     locales_root = project.takes_dir(shot_id) / "locales"
     if not locales_root.is_dir():
         return
-    for lang_dir in sorted(locales_root.iterdir()):
+    # POSIX-string order: sorted(Path) folds case on Windows (build/ingest.py
+    # records the gate run that moved plan rows because of it).
+    for lang_dir in sorted(locales_root.iterdir(), key=lambda p: p.as_posix()):
         if not lang_dir.is_dir():
             continue
         lang = lang_dir.name
