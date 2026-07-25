@@ -1093,3 +1093,32 @@ build ok
 意义了 —— 测试会直接说出来,而不是继续绿着。
 
 全量:**5742 passed, 0 failed**。
+
+## 十七、QC → repair 闭环:走完了,**没找到问题**
+
+前面几轮我只走了 QC 那一半,repair 一直挂着。这轮补完,在真片子上跑了一整圈:
+
+```
+$ manju repair --op trim --shot S001 --ms 300
+repaired S001: trim → new take take_04 (source take_03 untouched)
+select it with: manju select S001 take_04
+
+$ manju select S001 take_04
+S001: selected take_04 — 让改动落到成片: manju build
+```
+
+**每一环都对得上**:
+
+- `manju repair --help` 给的是**能直接粘贴运行的例子**(六个 op 各一行),不是抽象描述
+  —— 这恰恰是漏斗那三档缺的东西。
+- 只增语义被尊重:`source take_03 untouched`,新 take 是 take_04。
+- **每一步都点名下一步**,而且点名的命令我逐条跑过,没有一条回拒绝。
+- `--auto` 有计划但计划为空时:`repaired 0, remaining for human review: 0`(如实)。
+- `--auto` **完全没有计划**时:`no repair_plan.yaml — run manju qc first`,rc=1 ——
+  拒绝 + 点名前置命令,正是 `missing_plan` 该有的样子。
+
+**这一轮没有产出任何修复,这是个真实结果,不是没找够。** 记在这里是为了告诉下一个
+会话:**这条路已经走过了,是干净的,别再从这里开始找。**
+
+（如果哪天要在这里挖,值得看的是 `--op voice` 那条——它涉及重新对齐字幕,是唯一一条
+会动已有产物时间轴的 repair,而我这轮没有配音可修,没能走到。）
