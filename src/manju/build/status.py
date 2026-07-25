@@ -329,7 +329,9 @@ def project_status(project: Project, *, statuses: Any = None,
     try:
         locales_root = project.final_dir / "locales"
         if locales_root.is_dir():
-            for d in sorted(locales_root.iterdir()):
+            # sorted(Path) folds case on Windows; this ordering decides which
+            # locale the next-step message names first. POSIX-string order.
+            for d in sorted(locales_root.iterdir(), key=lambda p: p.as_posix()):
                 if not d.is_dir():
                     continue
                 best = None

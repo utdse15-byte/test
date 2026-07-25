@@ -5077,7 +5077,9 @@ def _present_from_dir(root: Path) -> dict[str, tuple[str, int]]:
     """(bare-hex sha256, size) for every extracted file under ``root``, minus
     the manifest itself and the ``.manju`` runtime dir (created post-extract)."""
     present: dict[str, tuple[str, int]] = {}
-    for p in sorted(root.rglob("*")):
+    # POSIX-string order so the walk is identical on every platform
+    # (sorted(Path) folds case on Windows — see build/ingest.py).
+    for p in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
         if not p.is_file():
             continue
         rel = p.relative_to(root).as_posix()

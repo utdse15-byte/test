@@ -185,7 +185,10 @@ def _plan_done(project: Project) -> tuple[bool, str]:
     locales_root = project.final_dir / "locales"
     if locales_root.is_dir():
         hits = [
-            d.name for d in sorted(locales_root.iterdir())
+            # sorted(Path) folds case on Windows (see build/ingest.py's note
+            # citing the gate run it moved) — sort by the POSIX string.
+            d.name for d in sorted(locales_root.iterdir(),
+                                   key=lambda p: p.as_posix())
             if d.is_dir() and any(d.glob("final_v*.mp4"))
         ]
         if hits:
@@ -222,7 +225,8 @@ def _produce_done(project: Project) -> tuple[bool, str]:
         locales_root = project.final_dir / "locales"
         locale_hits: list[str] = []
         if locales_root.is_dir():
-            for d in sorted(locales_root.iterdir()):
+            # POSIX-string order — platform-independent (see above).
+            for d in sorted(locales_root.iterdir(), key=lambda p: p.as_posix()):
                 if d.is_dir() and any(d.glob("final_v*.mp4")):
                     locale_hits.append(d.name)
         if locale_hits:
