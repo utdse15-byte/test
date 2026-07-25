@@ -835,7 +835,16 @@ def status(as_json: bool = typer.Option(False, "--json")):
     # re-orienting; one line answers it before any state is read.
     recent = info.get("recent_events") or []
     if recent:
-        last = recent[-1]
+        # This line's own purpose is "what was I DOING" — but the newest event
+        # is usually run/stage bookkeeping, so a project whose last act was a
+        # full build greeted the returning owner with
+        #     上次动作  12 分钟前 · run_terminal (human)
+        # naming a run-lifecycle record instead of the build. Same noise class
+        # already filtered out of `manju events`' human view; it was never
+        # applied here, and here it matters more because there is no
+        # surrounding context to read past it.
+        last = next((e for e in reversed(recent)
+                     if e.get("action") not in _BOOKKEEPING_ACTIONS), recent[-1])
         age = humanize_age(str(last.get("ts", "")))
         detail = last.get("detail") or {}
         target = detail.get("shot") or detail.get("name") or ""
@@ -1462,6 +1471,16 @@ def ingest_discard_cmd(
 
 
 # ------------------------------------------------------------------- build
+
+
+# Run/stage lifecycle + evidence records. They belong in the ledger (`manju
+# events`, `manju tasks`) and are what the run-reconstruction machinery reads,
+# but nobody DID them — so they must never be the answer to "what was I doing".
+# The status anchor skips them; if a project has nothing else, it falls back to
+# the newest event rather than showing nothing.
+_BOOKKEEPING_ACTIONS = frozenset({
+    "stage_attempt", "attempt_started", "run_started", "run_terminal",
+})
 
 
 def _echo_after_build(project, render_path: str) -> None:
