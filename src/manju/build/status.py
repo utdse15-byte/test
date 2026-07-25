@@ -88,6 +88,30 @@ def shot_next_action(project: Project, shot_id: str, *, state: str,
 
     if sid in qc_error_shots:
         return _r("qc", "QC 错误:manju repair,或按 reports/qc.md 处理后重跑 manju qc")
+
+    # A take NEWER than the selected one is material nobody has decided about.
+    # Takes are append-only and never auto-select over a human pick, which is
+    # right — but it meant ingesting real footage for an already-selected shot
+    # landed in TOTAL silence: `manju build` reported "final up-to-date" and the
+    # film did not change, while `status` and `explain` both went on naming the
+    # OLD take. The only trace was a `[pending=1]` counter in `ingest-batches`,
+    # which nothing routes you to. So the shot that has an undecided take says
+    # so here, ahead of the voice rung: a missing voice has many surfaces
+    # already, and this had none. It is a decision, not a defect — the current
+    # selection stays valid, and the sentence says so.
+    if selected_take:
+        try:
+            newer = sorted(t.name for t in project.takes(sid)
+                           if t.name > selected_take)
+            if newer:
+                num = newer[-1].split("_")[-1].lstrip("0") or newer[-1]
+                return _r("newtake",
+                          f"有更新的 take 未选用({', '.join(newer[-2:])},现选 "
+                          f"{selected_take})— manju select {sid} {num} 选用,"
+                          f"或不动(现选依然有效,§3 只增不改)")
+        except Exception:
+            pass  # take listing must never break the takeover surface
+
     if voice_state in ("missing", "stale"):
         return _r("voice", f"配音:manju voice {sid}")
     if state == "stale":
@@ -130,6 +154,36 @@ def next_actions(project: Project, *, statuses: Any = None,
         if act["key"] != "ok":
             todo.append(act)
     return todo
+
+
+def _locale_voice_blocker(project: Project, lang: str) -> str | None:
+    """Why ``manju build --lang <lang>`` would be refused, or None if it is
+    genuinely runnable.
+
+    The locale build fails closed when a line has a translation but no voice
+    take (``有译文无配音`` — it refuses native audio under foreign subtitles).
+    Whether that is FIXABLE by the owner right now depends on a TTS provider
+    being configured, so the two cases get different sentences: with TTS, one
+    command finishes it; without, the honest next step is configuring one (or
+    dropping locale voice takes in by hand). Best-effort — any failure here
+    returns None and the caller keeps its previous recommendation."""
+    try:
+        from ..core.locale import _current_tts_descriptor, locale_status
+
+        st = locale_status(project, lang)["locales"].get(lang) or {}
+        need = sorted(sid for sid, v in (st.get("voice") or {}).items()
+                      if v in ("missing", "stale"))
+        if not need:
+            return None
+        head = ", ".join(need[:3]) + ("…" if len(need) > 3 else "")
+        if _current_tts_descriptor() is not None:
+            return (f"{len(need)} 镜有译文无配音({head})— "
+                    f"manju voice --missing --lang {lang} --yes 补齐后再出片")
+        return (f"{len(need)} 镜有译文无配音({head}),且尚未配置 TTS —— "
+                f"先配 provider(manju providers)再 manju voice --missing "
+                f"--lang {lang} --yes,或手动放入 locale 配音 take")
+    except Exception:
+        return None
 
 
 def project_status(project: Project, *, statuses: Any = None,
@@ -331,11 +385,23 @@ def project_status(project: Project, *, statuses: Any = None,
         if missing_locale:
             sample = ", ".join(missing_locale[:4])
             more = "…" if len(missing_locale) > 4 else ""
-            next_step = (
-                f"locale 成片未齐:{sample}{more} — "
-                f"manju build --lang {missing_locale[0]} --target final"
-            )
-            next_step_key = "build_locale"
+            # Only recommend the locale build if it can actually SUCCEED. A
+            # locale whose lines are translated but whose voice takes are
+            # missing is refused on purpose — the engine will not ship native
+            # audio under foreign subtitles — so recommending that build as the
+            # headline next step sent the owner to a command that fails 100% of
+            # the time, and the GUI printed it in its most prominent slot. Name
+            # the step that actually unblocks instead.
+            blocked = _locale_voice_blocker(project, missing_locale[0])
+            if blocked:
+                next_step = f"locale {missing_locale[0]}:{blocked}"
+                next_step_key = "locale_needs_voice"
+            else:
+                next_step = (
+                    f"locale 成片未齐:{sample}{more} — "
+                    f"manju build --lang {missing_locale[0]} --target final"
+                )
+                next_step_key = "build_locale"
         else:
             next_step = "完成 ✅"
             next_step_key = "done"
