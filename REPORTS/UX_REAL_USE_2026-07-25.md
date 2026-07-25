@@ -585,3 +585,76 @@ choco 只在 Windows 上有;且 6.1 的第三方 Linux 构建已被上游下架(
 | msvcrt 字节锁真实行为 | ❌ 仍未验 —— **且已证明 Wine 不能替代** |
 
 加上 choco 那一步,**真正剩下两条**,都需要真 Windows。
+
+---
+
+# 第七轮:我说了三次"要开 PR 才能触发 CI" —— 三次都是错的
+
+`windows-ci.yml` 的 `on:` 里一直写着 `workflow_dispatch: {}`,而且文件头自己就解释了
+为什么:
+
+> "plus manual dispatch **so any single commit can be proven green on Windows
+> before it is merged**."
+
+**这个仓库的作者早就为我这个处境准备好了机制,我连着三轮没去看,还反复告诉你需要你
+点头开 PR。** 这是本次会话里同一个毛病的第三次发作:**把没查过的东西当成查过了**。
+前两次是 drawtext 和 PureWindowsPath,这次是它。
+
+## 一、触发之后,第一件事就是发现硬闸是红的
+
+而且不是我这几轮改出来的 —— 是**已经合并进去的那个审计波次**留下的。Run #255:
+
+```
+FAILED tests/test_ledger_p0_safeio.py::test_fifo_destination_is_refused
+FAILED tests/test_ledger_p0_safeio.py::test_append_refuses_fifo
+AttributeError: module 'os' has no attribute 'mkfifo'
+2 failed, 5327 passed, 53 skipped
+```
+
+`os.mkfifo` 在 Windows 上**根本不存在**。两条测试没加平台守卫。
+
+这两条测试本身没错、也确实该是 POSIX-only(Windows 上没有 FIFO 可以塞到输出路径上,
+这个攻击面在那边不存在)。**问题是它们漏了 marker,而 Linux 永远不可能发现** ——
+`os.mkfifo` 在这边解析得好好的,本地全绿说明不了任何事。
+
+最扎心的是:**同一个波次在 `test_ledger_p0_provider_refs.py` 里做对了**
+(`@pytest.mark.skipif(WINDOWS, reason="POSIX FIFO")`)。知识是有的,缺的只是强制。
+而唯一发现它的东西,是一个跑 13 分钟的 Windows job。
+
+## 二、所以不能只补 marker,得让这一类在 Linux 上可见
+
+新增守卫:测试里凡是用到**在 Windows 上不存在的 `os.*` 名字**(mkfifo / mknod /
+getuid / chown / fork / killpg …),必须带 Windows 守卫。
+
+刻意收窄到"**不存在**的名字",因为那样漏守卫就是**必然的 AttributeError**,不是判断
+题;`os.symlink` 需要权限、`os.link` 跨卷这类**行为差异**是另一个问题,不在这里瞎猜。
+
+守卫自带真值表测试(过松的 GUARD_RE 会把所有文件都放行 —— 那才是真正要防的失效
+模式),并且**把 marker 撤掉验证过它会红**,红的正是闸门点名的那两个模块。
+
+## 三、install-smoke:真 Windows 上通过了
+
+这次 dispatch 的 install-smoke job **在真 windows-latest 上全绿**,包括
+"Uninstall never touches projects"。
+
+上一轮我是用 Linux 的 pwsh 模拟验的;**现在是真机证据**。这一条从"模拟验过"升级成了
+"验过"。
+
+## 四、当前状态
+
+- 本地全量(闸门同配置):**5584 passed, 0 failed**
+- 真 Windows install-smoke:**通过**
+- 真 Windows 全量套件(run #257,commit 7493554):**test 与 install-smoke 两个 job 全绿** —— 硬闸通过
+
+## 五、这一轮真正的教训
+
+前六轮我一直在做同一件事的不同变体:**先断言某件事验不了,再被证明是我没去试。**
+
+- 「沙箱 ffmpeg 缺 drawtext,这是环境的锅」→ 换个构建就有了,还挖出一个产品 bug
+- 「大小写折叠排序只有 Windows 能看」→ `PureWindowsPath` 在这儿就能看
+- 「install-smoke 只能真机验」→ 一半能在 pwsh 里跑,而且抓到了 grep 抓不到的东西
+- 「要开 PR 才能触发 CI」→ `workflow_dispatch` 一直都在
+
+**每一次我给出的理由都成立,每一次结论都是错的。** 理由成立和结论正确是两回事,而我
+这一路把前者当成了后者。这份报告留着,是希望下一个会话在写下"这个验不了"之前,先花
+五分钟证明它。
