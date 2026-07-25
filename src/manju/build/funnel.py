@@ -321,14 +321,36 @@ STAGES: list[Stage] = [
     ),
     Stage(
         id="storyboard", cn="分镜", artifact="shots/", skill="creation-funnel",
-        next_action="拆分镜:补齐 shots/*.yaml 并 manju check 过校验(manju board 可辅助),"
-                    "参考 manju skills show creation-funnel",
+        # The funnel's cliff, found by walking it: every stage before this one
+        # was "edit ONE file, here is a template". This one said "补齐
+        # shots/*.yaml" — plural, no template, and NO CLI command anywhere
+        # creates a shot. It then offered `manju board` as the helper, but
+        # board COMPOSES a storyboard out of shots that already exist: run it
+        # here and it answers "has no shots — nothing to board" and exits 1.
+        # Same defect as the brief stage — a recommendation that refuses — but
+        # at the hardest step, where a newcomer has the least to fall back on.
+        # So name the routes that actually work, and demote board to what it
+        # really is: useful AFTER there are shots.
+        next_action="拆分镜(本步没有模板命令,三条路任选):① manju gui → 分镜页"
+                    "「新建镜头」点着建;② 手写 shots/S001.yaml 并加进 "
+                    "shots/index.yaml 的 order(字段见 manju schema);"
+                    "③ 让 AI 导演按剧本代写。建完跑 manju check 过校验;"
+                    "有镜头之后 manju board 可以拼故事板。"
+                    "参考 manju skills show shot-design",
         predicate=_storyboard_done,
     ),
     Stage(
         id="plan", cn="生成计划", artifact="reports/proposals/", skill="creation-funnel",
-        next_action="生成前先过审:manju director propose 起草生成计划再 confirm"
-                    "(approve-before-spend 闸门)",
+        # Third instance of the same defect, found the same way: `manju
+        # director propose` on its own answers "pass exactly one of
+        # --from-file / --actions-json" and exits 1. And the action shape is
+        # not guessable — `{"op": "build"}` is refused with "unknown action
+        # type None". So give the line that actually runs.
+        next_action='生成前先过审(approve-before-spend 闸门):'
+                    'manju director propose --actions-json \'[{"type":"build",'
+                    '"target":"final"}]\' --why "说明为什么" '
+                    '→ manju director confirm <id> → manju director run <id>;'
+                    '不想走提案流程也可以直接 manju build',
         predicate=_plan_done,
     ),
     Stage(

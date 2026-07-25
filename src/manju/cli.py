@@ -773,7 +773,14 @@ def create(
             typer.secho(f"  {mark} {s['cn']}({s['id']})  {s['evidence']}", fg=color)
         cur = info.get("current")
         if cur is None:
-            typer.secho("下一步  全部完成 ✅ — 可 manju build 出片", fg=typer.colors.GREEN)
+            # The funnel is 7/7 only once a final EXISTS, so "可 manju build
+            # 出片" told the owner to do the thing they had just finished.
+            # Point at what genuinely comes after the funnel instead.
+            typer.secho(
+                "下一步  全部完成 ✅ — 漏斗到此为止,接下来:manju qc 质检 · "
+                "manju package 出封面/预告 · manju export 交给剪辑软件 · "
+                "manju exports 看所有交付物新鲜度",
+                fg=typer.colors.GREEN)
         else:
             entry = next(s for s in info["stages"] if s["id"] == cur)
             typer.secho(f"下一步  【{entry['cn']}】{entry['next_action']}", fg=typer.colors.CYAN)

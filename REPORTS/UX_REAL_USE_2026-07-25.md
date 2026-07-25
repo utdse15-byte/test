@@ -845,3 +845,42 @@ story/brief.md 已存在 — 不覆盖人写的内容;确要重置用 --force
 这条测试不再证明任何东西",而不是假装通过。
 
 全量:**5679 passed, 0 failed**。
+
+## 九、把漏斗走到底:同一个毛病连着犯了三次
+
+接着往下走完 **7/7**(真出了一部 `final_v1.mp4`)。后面两段又撞上**同一件事**:
+
+| 阶段 | 建议照敲的结果 |
+| --- | --- |
+| 立意 | `manju create brief` → `已存在 — 不覆盖人写的内容`,rc=1 |
+| 分镜 | `manju board scene X` → `has no shots — nothing to board`,rc=1 |
+| 生成计划 | `manju director propose` → `pass exactly one of --from-file / --actions-json`,rc=1 |
+
+**三次不是巧合,是一个系统性写法问题**:这些 `next_action` 是照着「这一步是干什么
+的」写的,而不是照着「你现在能敲什么」写的。
+
+### 分镜:漏斗真正的悬崖
+
+前面每一步都是「编辑**一个**文件,这是模板」。到这一步变成「补齐 shots/*.yaml」——
+复数、没模板,而且**整个 CLI 里根本没有任何命令能创建一个镜头**。它给的帮手
+`manju board` 是**用已有镜头拼故事板的**,在这一步跑必然是 `nothing to board`。
+
+改成点名三条**真的走得通**的路:① `manju gui` 分镜页点着建;② 手写
+`shots/S001.yaml` 并加进 `shots/index.yaml` 的 order(字段见 `manju schema`);
+③ 让 AI 导演按剧本代写。`manju board` 降级成它本来的位置:**有镜头之后**拼故事板。
+三条路我都验过存在。
+
+### 生成计划:形状根本猜不出来
+
+不但裸命令会拒,动作的 JSON 形状也猜不到 —— 我按直觉写 `{"op":"build"}`,得到
+`unknown action type None`。正确的键是 `type`。现在建议里直接给出**我实测跑通的那
+一行**,并且测试**把示例 JSON 解析出来、拿去和引擎的 `ACTION_TYPES` 白名单对账** ——
+文档和代码从此不会各走各的。
+
+### 终点线:恭喜你完成了,去做你刚做完的事
+
+7/7 时印的是「全部完成 ✅ — **可 manju build 出片**」。但漏斗判定 7/7 的**前提就是
+成片已存在**。改成指向漏斗之后真正该做的:`manju qc` / `manju package` /
+`manju export` / `manju exports`。
+
+全量:**5683 passed, 0 failed**。
