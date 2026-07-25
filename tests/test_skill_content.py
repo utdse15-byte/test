@@ -12,6 +12,7 @@ vendored LLM call into a system whose engine is LLM-free (§0)."""
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -168,3 +169,54 @@ def test_no_skill_body_vendors_an_llm_call(sid):
         f"{sid}: body contains a vendored LLM-call signature {hits} — the Manju "
         f"engine never calls an LLM (§0); intelligence comes from the driving agent."
     )
+
+
+# --------------------------------------- every skill on disk, not just taxonomy
+
+
+def _all_skill_files() -> list[Path]:
+    root = Path(__file__).resolve().parent.parent / "skills"
+    return sorted(root.rglob("SKILL.md"), key=lambda p: p.as_posix())
+
+
+@pytest.mark.parametrize("path", _all_skill_files(), ids=lambda p: p.parent.name)
+def test_frontmatter_actually_parses(path: Path) -> None:
+    """The loader is deliberately TOLERANT — a malformed skill must not crash
+    the CLI, so `_parse_frontmatter` swallows the YAML error and returns {}.
+    The cost is that an authoring mistake is invisible: the skill still loads,
+    and `manju skills` quietly prints the H1 heading where `when_to_use`
+    belongs, so the agent-facing index degrades with nothing to notice.
+
+    Caught the hard way: a `description` containing "code: \"error\"" — a
+    colon-space inside an unquoted YAML scalar — silently lost every key in
+    the block. The tolerance belongs at runtime; the loudness belongs here.
+
+    Scoped to every skill ON DISK rather than TAXONOMY_IDS, which is the
+    required-minimum set: the skills added beyond it were exactly the ones no
+    frontmatter check covered.
+    """
+    import yaml
+
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n?", text, re.DOTALL)
+    assert m, f"{path.parent.name}: no YAML frontmatter block"
+    try:
+        data = yaml.safe_load(m.group(1))
+    except yaml.YAMLError as exc:  # pragma: no cover - the message is the point
+        raise AssertionError(
+            f"{path.parent.name}: frontmatter is not valid YAML — the loader "
+            f"will silently drop every key: {str(exc).splitlines()[0]}"
+        ) from None
+    assert isinstance(data, dict), f"{path.parent.name}: frontmatter not a mapping"
+    for key in ("name", "description", "when_to_use"):
+        assert data.get(key), f"{path.parent.name}: frontmatter missing {key!r}"
+
+
+@pytest.mark.parametrize("path", _all_skill_files(), ids=lambda p: p.parent.name)
+def test_the_index_shows_when_to_use_not_the_heading(path: Path) -> None:
+    """The observable symptom of the bug above, asserted directly: what the
+    agent-facing index prints must be the declared when_to_use."""
+    info = load_skill(None, path.parent.name)
+    assert info.when_to_use, f"{path.parent.name}: no when_to_use loaded"
+    assert not info.when_to_use.lstrip().startswith("#"), (
+        f"{path.parent.name}: index is showing a heading — frontmatter lost")

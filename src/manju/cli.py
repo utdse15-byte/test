@@ -707,13 +707,41 @@ def status(as_json: bool = typer.Option(False, "--json")):
                     fg=typer.colors.RED)
     typer.secho(f"下一步  {info['next_step']}", fg=typer.colors.CYAN)
     # Intuitiveness wave: per-shot answers — each line IS the action, so the
-    # owner never diffs five state machines in their head. Capped for signal;
-    # the full list rides --json (`todo`).
+    # owner never diffs five state machines in their head.
+    #
+    # Two things the flat `todo[:6]` got wrong once a project had real depth.
+    # (1) A dozen shots typically need the SAME thing, so six identical 配音
+    # lines could push the one genuinely different item (a newtake decision, a
+    # broken shot) below the cut — the rarest item is the one worth reading.
+    # Every distinct `key` is therefore shown before any kind repeats.
+    # (2) The tail said "manju status --json 看全部", sending a HUMAN to parse
+    # JSON to see their own to-do list. It now names what is left, by kind and
+    # by shot, so nothing is hidden and no second command is needed.
     todo = info.get("todo") or []
-    for item in todo[:6]:
+    first_of_kind, seen_keys = [], set()
+    for item in todo:
+        key = item.get("key")
+        if key not in seen_keys:
+            seen_keys.add(key)
+            first_of_kind.append(id(item))
+    budget = max(6, len(seen_keys))
+    picked = [i for i in todo if id(i) in first_of_kind][:budget]
+    for item in todo:                       # fill the rest in original order
+        if len(picked) >= budget:
+            break
+        if item not in picked:
+            picked.append(item)
+    picked = [i for i in todo if i in picked]   # restore document order
+    for item in picked:
         typer.secho(f"待办  {item['shot']}  {item['action']}", fg=typer.colors.YELLOW)
-    if len(todo) > 6:
-        typer.secho(f"待办  …共 {len(todo)} 项(manju status --json 看全部)",
+    rest = [i for i in todo if i not in picked]
+    if rest:
+        by_kind: dict[str, list[str]] = {}
+        for item in rest:
+            by_kind.setdefault(item.get("key") or "?", []).append(item["shot"])
+        parts = "; ".join(f"{k} ×{len(v)}({', '.join(v)})"
+                          for k, v in by_kind.items())
+        typer.secho(f"待办  另有 {len(rest)} 项 — {parts}",
                     fg=typer.colors.BRIGHT_BLACK)
 
 
@@ -3797,6 +3825,12 @@ def impact(
 
     project = _project()
     shot_id = _resolve_shot_arg(project, shot_id)
+    # Join the ONE owner for "that shot does not exist" (`_require_shot`), the
+    # same guard select/redo/voice use. Without it this failed as
+    # `code="impact_error"` — a code shaped like the COMMAND, not the FACT, so
+    # an agent branching on `unknown_shot` (which is what it is) missed it, and
+    # the message lost the two remedies _require_shot spells out.
+    _require_shot(project, shot_id)
     try:
         report = impact_report(project, shot_id, field=field, new_value=value)
     except (ProjectError, ValueError, KeyError) as exc:

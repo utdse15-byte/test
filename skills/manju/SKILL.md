@@ -40,6 +40,7 @@ user_invocable: false
 | 跨集人设世界观 | `series-bible` 剧集设定集 |
 | QC 后逐项修 | `repair-loop` 修复闭环 |
 | 写/改一个技能 | `skill-authoring` 技能编写 |
+| 命令报错了 / 要按 code 分支 | `error-codes` 错误码词表 |
 
 技能是**建议性 craft**,只教你怎么产出专业(非业余)的画面/声音、该跑哪条 `manju` 命令;它们**不绕过、不改写**引擎真相(锁、哈希、只增语义照旧)。
 
@@ -242,6 +243,10 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 5. `content_rejected`(审核拒绝)**别无脑重试**:`manju tasks` 看拒绝原因 tail,改写 prompt 或走降级链(§8)。
 6. 重做 → `manju select` 选新 take → `manju check` → `manju build` → 再 `manju qc` 复核闭环。
 - 硬规矩:花钱 / 长耗时的 redo 命中 `ask_before` 就先 `--dry-run` + 问人;不覆盖 `renders/final/`(只增 `final_vN`)。
+
+## 10. `--json` 命令失败时(错误信封)
+
+失败时 stdout 仍是 JSON、退出码非 0(`{"error": "人话,几乎总带补救命令", "code": "unknown_shot"}`),成功与失败同一条解析路径。**`code` 多数时候是 `"error"`——那是「未分类」不是可分支类别**(约 275 个失败点仅 25 个带专门 code),看到它就读 `error` 文本。带专门 code 的失败按「改输入 / 修真相 / 停下来问人 / 等一下再试」分四类,词表与自动化循环写法见 `manju skills show error-codes`。
 
 ## 命令速查表(§11)
 

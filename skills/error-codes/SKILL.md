@@ -1,0 +1,95 @@
+---
+name: error-codes
+description: Manju CLI `--json` 失败信封的 code 词表与分类——按「你该做什么」把带专门 code 的失败分成改输入 / 修真相 / 停下来问人 / 等一下再试四类,并说明默认的 error 码是「未分类」而非可分支类别。触发词:报错、失败、error、code、退出码、非 0、exit code、命令失败、json 错误、怎么处理这个错。
+when_to_use: 一条 manju 命令失败了、要决定重试还是改输入还是问人时;或在写自动化循环、需要按 code 分支时。
+tags: [reference, core]
+user_invocable: true
+---
+
+# 错误码词表(error-codes)
+
+任何带 `--json` 的命令**失败**时,stdout 上是一个信封,退出码非 0:
+
+```json
+{"error": "S099: 镜头不存在 shot not found (…) — 用 `manju status` 看现有镜头;…", "code": "unknown_shot"}
+```
+
+成功时是正常结果对象。**`--json` 的输出永远是 JSON**,你不需要为失败准备一条解析
+ANSI 彩色文本的分支。
+
+## 先记住这一条:`error` 是「未分类」
+
+CLI 里约 275 个失败点,只有 25 个带专门 code,其余全部落到默认的 `"error"`。
+
+看到 `"code": "error"`,**读 `error` 文本**——它是中文人话,几乎总带补救命令——
+**不要在 `error` 上做分支逻辑**,它不是一个类别,它是「还没分类」。
+
+## 同一个事实 = 同一个 code
+
+镜头不存在,不管你跑的是 `select` / `redo` / `voice` / `impact`,都必须是
+`unknown_shot`。发现某个命令对同一事实给了不同的 code(尤其是命令名形状的 code,
+如 `xxx_error`),那是 bug,值得报。
+
+## 带专门 code 的失败:按「你该做什么」分四类
+
+### 1. 改你的输入再试(参数/id 写错,项目没问题)
+
+`bad_args` `bad_input` `bad_name` `bad_lang` `bad_mode` `bad_out` `bad_rate`
+`unknown_shot` `unknown_provider` `not_found` `no_media` `plan_not_found`
+`batch_not_found` `no_fixture` `missing_root` `exists` `out_of_project`
+`ingest_review_no_items`
+
+典型:`unknown_shot` → 先 `manju status` 看现有镜头再重试;`exists` → 换个名字;
+`out_of_project` → `--out` 必须落在项目内(引擎拒绝项目外写入)。
+
+### 2. 先修项目真相 / 先跑前置命令(不是你参数的问题)
+
+`truth_parse_error` `no_timeline` `missing_plan` `no_project` `bad_plan`
+`bad_align` `bad_archive` `bad_report` `bad_fixture` `ingest_invalid`
+`pull_sheet_invalid` `shot_package_invalid` `refs_assign_invalid`
+`batch_review_invalid` `unreadable_media` `plan_unreadable`
+`toolchain_diff_unreadable` `impact_error`
+
+这三个最常见,补救是固定的:
+
+| code | 先做什么 |
+| --- | --- |
+| `truth_parse_error` | `manju check` 定位坏掉的 YAML 并修 |
+| `no_timeline` | `manju build` 先编译时间线 |
+| `missing_plan` | `manju qc` 先质检才有修复计划 |
+
+### 3. 停下来问人,绝不自动重试(引擎在保护真相或钱)
+
+`waiting_user` `interactive_only` `write_rejected` `tool_refused`
+`migrate_refused` `adopt_refused` `bridge_refused` `bundle_refused`
+`nothing_to_downgrade` `abandoned_by_user` `bad_capability`
+
+这一类**不是错误,是闸门**。`waiting_user` 表示流程卡在人的确认上(§5 approve-
+before-spend);`interactive_only` 表示该命令只在交互式终端可用(如 `unlock`),
+MCP 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮。
+
+### 4. 等一下再试(瞬时/外部)
+
+`build_locked` `tts_unavailable` `canary_submit_failed` `ingest_partial_failure`
+`attach_remote_job`
+
+`build_locked` 表示另一个 build 正在跑——等它结束,别强行并发。
+
+## 别和降级链的失败原因搞混
+
+`content_rejected` / `rate_limited` / `timeout` 是 **provider 生成失败的原因**,
+出现在任务账本(`manju tasks`)和降级链语义里(核心协议 §8),**不是** CLI 命令
+本身的 code。两者的补救完全不同:
+
+| | 出现在哪 | 例子 | 补救 |
+| --- | --- | --- | --- |
+| CLI code | `--json` 失败信封 | `unknown_shot` | 改输入 / 修真相 / 问人 / 等 |
+| provider 失败原因 | `manju tasks`、run ledger | `content_rejected` | 改 prompt 重提 或 走降级链 |
+
+## 写自动化循环时
+
+1. 先判退出码:0 就按成功解析,非 0 才读 `code`。
+2. `code == "error"` → 读 `error` 文本给人看,别自己猜分类。
+3. 第 3 类(问人)出现时**立刻停**,把 `error` 原文交给人,不要重试。
+4. 第 4 类可以退避重试,但要有次数上限,并且**花钱的操作即使可重试也要先看
+   `ask_before`**(核心协议 §5)。
