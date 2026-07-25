@@ -1138,6 +1138,24 @@ def import_(
             typer.secho(f"imported {r}", fg=typer.colors.GREEN)
         for src_rel, thumb in previews.items():
             typer.echo(f"  preview: {thumb}")
+        # A text import already told the owner what to do with it (see the
+        # story_imports hint below); a MEDIA import said nothing, so footage
+        # landed in media/imports and stopped there — nothing in `status`,
+        # `check` or the next-step ladder routes to it, because until it is
+        # registered against a shot it is not part of the film. Name the one
+        # command that changes that (§3.5 回写登记), quoted, because real
+        # footage names have spaces.
+        # `registered` carries BOTH kinds, so the media hint has to exclude the
+        # story ones — a novel is not registered as a take, and the first draft
+        # of this told the owner to do exactly that.
+        media_registered = [r for r in registered if r not in set(story_imports)]
+        if media_registered:
+            first = media_registered[0]
+            typer.secho(
+                f'  下一步 next: 登记到镜头才会进成片 —— manju select <镜头> '
+                f'--file "{first}"(登记为 manual take,永不被自动作废);'
+                f'登记后 manju build 让它落到成片。',
+                fg=typer.colors.BRIGHT_BLACK)
         for note in dup_notes:
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
         for note in lib_notes:
