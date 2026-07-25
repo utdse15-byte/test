@@ -1464,6 +1464,46 @@ def ingest_discard_cmd(
 # ------------------------------------------------------------------- build
 
 
+def _echo_after_build(project, render_path: str) -> None:
+    """The "you just made a film — here is how to look at it" line.
+
+    Presentation only: every command named here already exists. The point is
+    WHEN they are offered. `manju build` used to end at a path, so the owner
+    of a video tool finished a render with no route to the picture.
+
+    A route is printed only if it will work right now — the `compare` line
+    appears solely when there IS an earlier final to compare against.
+    """
+    import re as _re
+
+    rel = str(render_path)
+    lines = [f"看一眼 look: manju gui(成片页)· 抽帧 manju frames {rel}"]
+
+    # Previous final, if any: renders/final/final_vN.mp4 — offer the diff only
+    # when N-1 actually exists on disk.
+    cur = _re.search(r"final_v(\d+)", rel)
+    if cur:
+        n = int(cur.group(1))
+        prev = project.root / "renders" / "final" / f"final_v{n - 1}.mp4"
+        if n > 1 and prev.exists():
+            lines.append(f"和上一版比 diff: manju compare v{n - 1} v{n}")
+
+    # `package` and `export` sit behind the `final_export` ask_before gate and
+    # answer `waiting_user: … 确认后重试`. That is the gate doing its job, not a
+    # failure — so the line SAYS a confirmation is coming rather than either
+    # pretending it will just run, or teaching the owner to reflexively paste
+    # `--yes` past their own approval step.
+    try:
+        gated = "final_export" in (_load_config_or_fail(project).ask_before or [])
+    except Exception:
+        gated = True   # unreadable config: warn about the gate rather than promise it away
+    tail = "(会先要确认)" if gated else ""
+    lines.append(f"出封面/预告 manju package{tail} · "
+                 f"交给剪辑软件 manju export{tail} · 交付物状态 manju exports")
+    for ln in lines:
+        typer.secho("  " + ln, fg=typer.colors.BRIGHT_BLACK)
+
+
 @app.command(rich_help_panel=PANEL_GENERATE)
 def build(
     target: str = typer.Option(
@@ -1615,6 +1655,16 @@ def build(
             typer.echo(f"导出[{k}]: {v}")
         typer.secho("build ok" if result.ok else "build failed",
                     fg=typer.colors.GREEN if result.ok else typer.colors.RED)
+        # A VIDEO tool that finishes a film and never offers to let you look at
+        # it. Every other step of the funnel hands the owner a next move; the
+        # one moment there is an actual artifact, the output stopped at a path.
+        # Nothing new is built here — these are existing commands, surfaced at
+        # the moment they are wanted. Only routes that WILL work are printed:
+        # `compare` is offered solely when a previous version exists, because
+        # recommending a command that then refuses is the defect this session
+        # already fixed three times over.
+        if result.ok and result.render_path and not dry_run:
+            _echo_after_build(project, result.render_path)
     if not result.ok:
         raise typer.Exit(1)
 
