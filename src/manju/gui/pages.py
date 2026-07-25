@@ -1620,11 +1620,29 @@ _PAGES_CSS = """
 .toast-item.bad { border-color: #5a2c2f; border-left-color: var(--err); color: var(--err); }
 
 /* ---------------------------------------------------------- review -- */
-.rv-progress { display: flex; align-items: center; gap: 1rem; }
+/* Sticky under the nav: /review restores its scroll position to the shot you
+   were on, which put 已审 N/M and the progress bar above the fold the moment
+   the page opened. Reviewing is a scrolling loop, so "how many left" has to
+   stay on screen — it is the only thing telling you where you are in it.
+   z-index sits just under .pnav (60) so the nav still wins the overlap. */
+.rv-progress {
+  display: flex; align-items: center; gap: 1rem;
+  position: sticky; top: 50px; z-index: 55;
+  margin-top: 0; backdrop-filter: blur(6px);
+}
 .rv-bar { flex: 1; max-width: 480px; }
 .rv-shot.active { outline: 2px solid var(--accent); }
 .rv-shot.reviewed .rv-head h2::after { content: " ✓"; color: var(--ok); }
-.rv-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: baseline; }
+.rv-head {
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  align-items: baseline;
+  /* Each card is a tall block (player + QC frame + verdict form), so scrolling
+     through one loses its own title — and then nothing on screen says WHICH
+     shot you are judging. Sticky inside its card, under the nav + progress
+     bar, so the answer travels with the content. */
+  position: sticky; top: 96px; z-index: 40;
+  background: var(--panel); padding: .3rem 0 .35rem;
+}
 .rv-idx { font-size: .8rem; margin-left: .4rem; }
 .rv-body { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1rem; margin: .7rem 0; }
 .rv-video { width: 100%; max-height: 420px; border-radius: 8px; background: #000; }
