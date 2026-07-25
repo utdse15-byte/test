@@ -3037,3 +3037,27 @@ understood at a glance, or dropped something quietly.
     the pin asserted nothing. Replaced with a behavioural assertion on
     `list_locales`' output order, and proven to bite by planting a
     PureWindowsPath sort: ['de','en','Ja','ZH'] instead of ['Ja','ZH','de','en'].
+
+19. **The install-smoke contract now EXECUTES, and text checks were proven
+    insufficient** — the venv-free half of the Windows scripts is portable
+    PowerShell, so uninstall and rollback run under pwsh on Linux against a
+    temporary LOCALAPPDATA. Two planted bugs settle why this matters: `$p`
+    computed one directory too high, and an added line deleting `~/.manju`.
+    BOTH pass every assertion in the existing text-only test (each still
+    mentions `$p`), and both are caught by the behavioural one. A script that
+    deletes the owner's providers/routing/library config was grep-clean.
+
+20. **Wine cannot arbitrate msvcrt, and finding that out caught a fabricated
+    rationale of mine** — Wine 9.0 + Windows Python 3.11.9 runs
+    (`sys.platform == 'win32'`), and a probe with passing cross-process
+    positive controls says msvcrt DOES exclude a second same-process handle.
+    That contradicts the real-host measurement recorded at the owner
+    (`core/events.py`: gate round 2, 12 concurrent threads -> 6 surviving
+    lines). Wine's msvcrt is a reimplementation and diverges here, so it is
+    evidence about Wine. The trip was still worth it: checking the primary
+    record showed that a docstring added EARLIER IN THIS SESSION to
+    test_windows_invariants_guard.py asserted a mechanism ("each opens its own
+    fd and both calls succeed") that appears in no record — invented — and
+    cited DECISIONS #38, whose round-3b line reads as the opposite. Corrected
+    to cite the actual measurement. Fabricating a rationale is worse than
+    writing "unknown", because it reads as evidence.

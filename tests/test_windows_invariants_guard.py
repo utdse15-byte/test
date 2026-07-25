@@ -104,10 +104,24 @@ def test_msvcrt_is_implemented_only_by_the_quartet() -> None:
 @pytest.mark.parametrize("rel", [
     "core/events.py", "core/recents.py", "core/library.py", "core/failures.py"])
 def test_each_quartet_member_pairs_a_thread_lock(rel: str) -> None:
-    """msvcrt.locking does NOT exclude two threads in the same process (each
-    opens its own fd and both calls succeed — DECISIONS #38). Every member must
-    pair the byte lock with an in-process threading.Lock, or the GUI/MCP server
-    loses updates on Windows."""
+    """Every member must pair the byte lock with an in-process threading.Lock.
+
+    The evidence is a MEASUREMENT on a real windows-latest runner, recorded at
+    the owner (`core/events.py`, the `events_lock` Windows branch): gate round 2
+    ran 12 concurrent record_verdicts threads and only 6 lines survived. POSIX
+    flock excludes same-process fds; the CRT lock demonstrably did not.
+
+    Two corrections to what this docstring used to say. It asserted a MECHANISM
+    ("each opens its own fd and both calls succeed") that is not in any record —
+    invented, and dropped. And it cited DECISIONS #38, whose round-3b line says
+    "the 12-thread probe PASSED on the real host" — true, but of the run AFTER
+    the thread lock existed, so citing it read as contradicting the claim.
+
+    Wine cannot arbitrate this. A Windows Python 3.11.9 under Wine 9.0 was run
+    against exactly this question and its msvcrt DID exclude a second handle in
+    the same process (with cross-process positive controls both passing), which
+    contradicts the real-host measurement. Wine's msvcrt is a reimplementation
+    and diverges here, so it is evidence about Wine, not about Windows."""
     body = _text(SRC / rel)
     assert "threading" in body, f"{rel} locks bytes but not threads"
 

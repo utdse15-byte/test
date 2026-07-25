@@ -508,3 +508,80 @@ ffmpeg 重模块一起 `-n auto` 跑 **6 轮**,0 失败;此后全量又跑了 **
 - **choco 装 6.1.1 这一步**(且 6.1 第三方构建已被上游下架)
 
 比上一轮的四条少了两条。全量套件(闸门同配置):**5568 passed, 0 failed**。
+
+---
+
+# 第六轮:最后三条,一条关掉、一条改正、一条确认关不掉
+
+## 一、install-smoke:能真跑,而且抓到了 grep 抓不到的东西
+
+这些脚本里不碰 venv 的那部分是**可移植 PowerShell**(`Join-Path` / `Test-Path` /
+`Remove-Item` / 指针文件),把 `$env:LOCALAPPDATA` 指到临时目录,**在 Linux 的 pwsh
+下真跑起来了**。
+
+原有的 `test_windows_install.py` 是**纯文本检查**:断言每条 `Remove-Item` 里出现过
+`$p` 或 `$AppRoot`。这能挡住手滑,但**挡不住算错的值** —— `$p` 算高了一级,照样通过
+每一条 grep,同时把用户的作品删掉。
+
+我植入了两个 bug 做对照:
+
+| 植入的 bug | 原文本测试 | 新行为测试 |
+|---|---|---|
+| `$p` 高一级(删掉整个 `Manju/`) | **通过** ❌ | 抓到 ✅ |
+| 加一行删 `~/.manju`(仍然用 `$p`) | **通过** ❌ | 抓到 ✅ |
+
+第二个尤其说明问题:**一个会删掉用户 providers/routing/素材库配置的脚本,能通过全部
+文本检查。** 现在 9 条行为测试真跑 uninstall 与 rollback:app 被删干净、Logs 不带
+`-Logs` 时保留、**项目和 `~/.manju` 原封不动**、重复卸载不报错、回滚指针互换(可以
+再滚回来)、没有 previous 时**响亮失败**而不是假装成功、目标版本已被删时**拒绝**而不
+是把 launcher 指向不存在的版本。
+
+## 二、msvcrt:我装了 Wine 去验,结果证明 Wine 验不了这件事 —— 但顺手抓出我自己写的一句假话
+
+Wine 9.0 + Windows Python 3.11.9 跑起来了(`sys.platform == 'win32'`,`msvcrt` 可用)。
+针对争议点做了带正反对照的探针:
+
+```
+A: 同进程两线程、各自 fd   → t0 ACQUIRED, t1 BLOCKED   ← 排他了
+B: 持锁时子进程来抢         → BLOCKED                   ← 正对照通过
+C: 释放后子进程再抢         → ACQUIRED                  ← 正对照通过
+```
+
+探针是可靠的(两个正对照都对),但结论**和真机记录相反**。`core/events.py` 属主注释
+里记着 gate round 2 在**真 windows-latest** 上的测量:**12 个并发线程,只活下来 6 行**。
+
+所以:**Wine 的 msvcrt 是重新实现的,在这个语义上和 Windows 不一致。它是关于 Wine
+的证据,不是关于 Windows 的证据。** 这条我没能关掉,而且现在知道**为什么关不掉**。
+
+但这一趟没白跑 —— 它逼我去核对原始记录,于是发现**我自己在前面某一轮往
+`test_windows_invariants_guard.py` 里写了一句假话**:
+
+> "msvcrt.locking does NOT exclude two threads in the same process
+> (**each opens its own fd and both calls succeed** — DECISIONS #38)"
+
+括号里那个**机制是我编的**,任何记录里都没有。而且引的 DECISIONS #38 里 round 3b 明写
+"the 12-thread probe PASSED on the real host"(那是**加了线程锁之后**那次的结果)——
+引它反而像在自打嘴巴。
+
+结论本身没错(真机确实丢了行),**错的是我给它编了个理由、又引了一条读起来相反的
+出处**。已改成引用属主注释里的真实测量,并写明 Wine 在此不可采信。
+
+**给下一个会话的教训:编造机制比说"不知道"更危险。** 它读起来像证据。
+
+## 三、choco 装 6.1.1:确认关不掉
+
+choco 只在 Windows 上有;且 6.1 的第三方 Linux 构建已被上游下架(我试过 BtbN 的
+`n6.1-latest`,404)。这一步只能由真 CI 回答。
+
+## 四、当前状态
+
+全量套件(闸门同配置):**5577 passed, 0 failed, 11 skipped**。
+
+| 原来"只有 Windows 能验"的四条 | 现在 |
+|---|---|
+| CreateProcess 引号 | ✅ 用 `list2cmdline` 真契约往返验证(植入回归验证过) |
+| NTFS 大小写折叠排序 | ✅ 用 `PureWindowsPath` 造出真实差异(植入回归验证过) |
+| install-smoke 运行时 | ✅ uninstall/rollback 在真 pwsh 下执行(两个植入 bug 都抓到) |
+| msvcrt 字节锁真实行为 | ❌ 仍未验 —— **且已证明 Wine 不能替代** |
+
+加上 choco 那一步,**真正剩下两条**,都需要真 Windows。
