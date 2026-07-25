@@ -606,6 +606,41 @@ class BuildResult:
         return {k: v for k, v in self.__dict__.items()}
 
 
+_RENDER_LOG_HINT = "查看 .manju/logs/render.log 复现单条 ffmpeg 命令;核对滤镜/输入"
+
+
+def _render_evidence_clause(project: Project) -> str:
+    """"the inputs are still on disk, here" — or "" when they are not.
+
+    "核对输入" used to be advice nobody could take: every multi-step render
+    stage worked in a TemporaryDirectory, so the files ffmpeg was handed were
+    deleted on the way out of the exception and the command line in the error
+    pointed at paths that no longer existed. They are kept now
+    (``media/render._render_scratch``) — so say where, and name the stages that
+    actually have something, because not every render failure leaves a scratch.
+    """
+    try:
+        # Local import, matching this module's convention for `media.*` (every
+        # ffmpeg import here is function-local so the CLI's cold start does not
+        # pay for the media stack).
+        from ..media.render import _scratch_keep_root
+
+        root = _scratch_keep_root(project)
+        stages = sorted(p.name for p in root.iterdir() if p.is_dir())
+    except Exception:  # noqa: BLE001 — a build is already failing; never add to it
+        stages = []
+    if not stages:
+        return ""
+    return (f"失败时喂给 ffmpeg 的中间输入已留在 "
+            f".manju/render-debug/({'、'.join(stages)}),可直接 ffprobe")
+
+
+def _render_failure_hint(project: Project) -> str:
+    """The render step's "what now" line, as recorded in the failures ledger."""
+    clause = _render_evidence_clause(project)
+    return f"{_RENDER_LOG_HINT};{clause}" if clause else _RENDER_LOG_HINT
+
+
 def _record(project: Project, step: str, subject: str, cause: str, *,
             evidence: str = "", hint: str = "", log_path: str | None = None,
             level: str = "error", actor: str = "engine",
@@ -2235,16 +2270,20 @@ def _run_build_phases(
             if not isinstance(exc, MediaError):
                 raise  # unknown exceptions keep their traceback
             result.ok = False
+            # The immediate error line is what the owner reads FIRST; evidence
+            # they are never told about is evidence they do not have.
+            _evidence = _render_evidence_clause(project)
             result.errors.append(
                 f"render: {' '.join(str(exc).split())} "
-                "(建议:查看 .manju/logs/render.log 复现单条 ffmpeg 命令)"
+                "(建议:查看 .manju/logs/render.log 复现单条 ffmpeg 命令"
+                f"{';' + _evidence if _evidence else ''})"
             )
             # The MediaError already carries the ffmpeg stderr tail + the exact
             # command as its message; record it verbatim as evidence, pointing at
             # the fuller render log (goal 10).
             _record(project, "render", target, f"{target} 渲染失败(ffmpeg)",
                     evidence=str(exc)[-1200:],
-                    hint="查看 .manju/logs/render.log 复现单条 ffmpeg 命令;核对滤镜/输入",
+                    hint=_render_failure_hint(project),
                     log_path=".manju/logs/render.log", actor=actor)
             return _finish_run(result)
         result.render_path = project.relpath(out)

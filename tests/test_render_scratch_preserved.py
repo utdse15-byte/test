@@ -112,6 +112,18 @@ def test_it_lands_under_the_disposable_runtime_dir(project) -> None:
     assert kept.is_relative_to(project.runtime_dir), kept
 
 
+def test_the_preserved_evidence_can_never_be_committed(project) -> None:
+    """Media that survives a failure is still media, and the whole point of the
+    location is that it is throwaway. `.manju/` is in the scaffolded .gitignore
+    — pin it, because "disposable by contract" is the entire justification for
+    writing media there at all."""
+    from manju.core.container import GITIGNORE
+
+    assert ".manju/" in GITIGNORE.splitlines(), GITIGNORE
+    _fail_inside(project, "boundary", {"a.mp4": b"A"})
+    assert _keep(project, "boundary").is_relative_to(project.root / ".manju")
+
+
 def test_the_original_exception_is_re_raised_unchanged(project) -> None:
     err = MediaError("ffmpeg exited 1: acrossfade")
     raised = _fail_inside(project, "boundary", {"a.mp4": b"A"}, exc=err)
@@ -139,6 +151,36 @@ def test_a_new_failure_replaces_the_previous_one_for_that_stage(project) -> None
     kept = _keep(project, "boundary")
     assert (kept / "new.mp4").exists()
     assert not (kept / "old.mp4").exists(), "stale evidence from an older failure"
+
+
+def test_a_survivor_of_a_blocked_wipe_is_removed(project, monkeypatch) -> None:
+    """Windows 11 is the first platform and the owner WILL have one of these
+    files open in a player. rmtree(ignore_errors=True) then leaves it behind,
+    and a stale a.mp4 sitting next to a manifest that does not mention it is
+    worse than no evidence at all. Simulate the blocked wipe."""
+    import manju.media.render as render
+
+    _fail_inside(project, "boundary", {"a.mp4": b"OLD-AND-WRONG"})
+    monkeypatch.setattr(render.shutil, "rmtree", lambda *a, **k: None)
+    _fail_inside(project, "boundary", {"b.mp4": b"NEW"})
+    kept = _keep(project, "boundary")
+    assert (kept / "b.mp4").read_bytes() == b"NEW"
+    assert not (kept / "a.mp4").exists(), "an older failure's file outlived its manifest"
+
+
+def test_an_undeletable_survivor_is_at_least_named(project, monkeypatch) -> None:
+    """If it cannot be removed either, the manifest must say it is there and
+    that it is NOT from this failure — silence would read as 'this is what
+    ffmpeg got'."""
+    import manju.media.render as render
+
+    _fail_inside(project, "boundary", {"a.mp4": b"OLD-AND-WRONG"})
+    monkeypatch.setattr(render.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(render.Path, "unlink",
+                        lambda self, **k: (_ for _ in ()).throw(PermissionError("open")))
+    _fail_inside(project, "boundary", {"b.mp4": b"NEW"})
+    text = _manifest(project, "boundary")
+    assert re.search(r"^stale\ta\.mp4\t", text, re.M), text
 
 
 # ------------------------------------------------------- cancel is not failure

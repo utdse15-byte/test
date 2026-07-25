@@ -3161,3 +3161,29 @@ understood at a glance, or dropped something quietly.
     `normalize_segment` gives every layer an audio track — which eliminates the
     easiest explanation for the `acrossfade` flake and pins what to look at the
     next time it reproduces.
+
+30. **The flake was ffmpeg's, and preserving evidence is what proved it** — the
+    first full suite after entry 29 reproduced the intermittent `acrossfade`
+    failure with the scratch intact. Both boundary layers were healthy (17 AAC
+    packets each), which falsified the standing hypothesis. Replaying the exact
+    command on the exact preserved inputs: 15/15 serial, 240/240 at 12-way
+    parallel. A pytest-free probe that re-derives the layers and sha256s them
+    every round showed ONE distinct hash across 160 rounds — the layer encode is
+    deterministic, as the segment cache already assumed — and still failed once
+    under four concurrent workers, with the same hashes as all 159 successes.
+    Same bytes, same argv, different outcome: a nondeterministic ffmpeg
+    behaviour under concurrency, not a Manju defect and not a data defect. Two
+    things deliberately NOT done and recorded as such: the pinned 6.1.1 (what
+    the Windows hard gate and the owner actually run) was not tested, because
+    the local 6.1 archive is corrupt — so whether this can reach the owner is
+    UNKNOWN, not NO; and no retry was added, because whether it is worth
+    touching the render path depends on that answer. A targeted single retry on
+    this one signature, recorded loudly rather than silently, is now a
+    hand-offable task with evidence rather than a guess.
+
+31. **Advice you have made impossible is not advice** — the render failure's
+    hint said "核对滤镜/输入" while the inputs were being deleted on the way out.
+    It now names the preserved directory and the stages that actually have
+    something, in the ledger hint AND in the immediate error line the owner
+    reads first — and only when the directory is really there, the same
+    "never offer a route that would refuse" rule as the post-build offers.

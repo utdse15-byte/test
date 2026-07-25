@@ -192,6 +192,28 @@ def _preserve_scratch(project: Project, label: str, tmp: Path, *, log: Log) -> N
                 rows.append((rel, f"kept\t{rel}\t{size}"))
                 kept += 1
                 kept_bytes += size
+        # The wipe above is ignore_errors, because a preserve must never raise.
+        # On Windows that is a real gap rather than a theoretical one: the owner
+        # opens a preserved a.mp4 in a player, the next failure cannot delete it,
+        # and a file from an OLDER failure sits next to a manifest that does not
+        # mention it — which reads as "this is what ffmpeg got". So: anything in
+        # the directory this pass did not write is removed, and if it cannot be
+        # removed it is named as stale.
+        written = {rel for rel, _ in rows}
+        for leftover in sorted(dest.rglob("*"), key=lambda p: p.as_posix()):
+            if not leftover.is_file():
+                continue
+            rel = leftover.relative_to(dest).as_posix()
+            if rel in written or rel == _SCRATCH_MANIFEST:
+                continue
+            try:
+                size = leftover.stat().st_size
+            except OSError:
+                size = -1
+            try:
+                leftover.unlink()
+            except OSError:
+                rows.append((rel, f"stale\t{rel}\t{size}\tolder-failure-not-removable"))
         rows.sort(key=lambda t: t[0])
         lines = [row for _, row in rows]
         try:
@@ -233,7 +255,8 @@ def _preserve_scratch(project: Project, label: str, tmp: Path, *, log: Log) -> N
             "# 超上限的文件只登记不复制(下面 skipped 那几行写了原因和大小);",
             "# 复制顺序是小文件优先,所以便宜又有用的证据不会被大文件挤掉。",
             "#",
-            "# kept|skipped<TAB>相对路径<TAB>字节数",
+            "# kept|skipped|stale<TAB>相对路径<TAB>字节数[<TAB>原因]",
+            "# stale = 上一次失败留下的、这次删不掉的文件(不是这次喂给 ffmpeg 的输入)。",
         ]
         tail = [f"# 合计: kept={kept} ({kept_bytes} 字节), "
                 f"skipped={skipped} ({skipped_bytes} 字节)"]
