@@ -35,6 +35,14 @@ Dev loop (never bare `pytest` — src layout needs the editable install):
 
 - Full suite: `python -m pytest -q -n auto` (~6-9 min on 4 cores; needs
   `pip install -e ".[dev]" -c constraints.txt` + ffmpeg/ffprobe on PATH).
+- **Use ffmpeg 6.1.1 — the version windows-ci.yml pins.** On Ubuntu 24.04 that
+  is just `apt install ffmpeg`. An off-pin 7.x build makes
+  `tests/test_transitions_looks.py` fail intermittently (~1 run in 6) with
+  `[aost#0:1/aac] Could not open encoder before EOF` — that is an ffmpeg
+  regression in the `acrossfade` leg, NOT a Manju bug and NOT your change:
+  measured 9 failures in 1600 runs on 7.1 versus 0 in 1600 on 6.1.1, with
+  byte-identical inputs (DECISIONS #33). A previous session lost most of a day
+  to it. If you see that signature, check `ffmpeg -version` first.
 - Fast loop: `python -m pytest -q -n auto -m "not ffmpeg"` — deselects the
   wholly ffmpeg-gated render-heavy modules (honest under-selection: mixed
   modules keep their pure halves). Full suite before every commit.
