@@ -185,7 +185,10 @@ def _plan_done(project: Project) -> tuple[bool, str]:
     locales_root = project.final_dir / "locales"
     if locales_root.is_dir():
         hits = [
-            d.name for d in sorted(locales_root.iterdir())
+            # sorted(Path) folds case on Windows (see build/ingest.py's note
+            # citing the gate run it moved) — sort by the POSIX string.
+            d.name for d in sorted(locales_root.iterdir(),
+                                   key=lambda p: p.as_posix())
             if d.is_dir() and any(d.glob("final_v*.mp4"))
         ]
         if hits:
@@ -222,7 +225,8 @@ def _produce_done(project: Project) -> tuple[bool, str]:
         locales_root = project.final_dir / "locales"
         locale_hits: list[str] = []
         if locales_root.is_dir():
-            for d in sorted(locales_root.iterdir()):
+            # POSIX-string order — platform-independent (see above).
+            for d in sorted(locales_root.iterdir(), key=lambda p: p.as_posix()):
                 if d.is_dir() and any(d.glob("final_v*.mp4")):
                     locale_hits.append(d.name)
         if locale_hits:
@@ -263,6 +267,33 @@ class Stage:
     predicate: Callable[[Project], tuple[bool, str]]
 
 
+_TEMPLATE_HINT_RE = re.compile(r"[（(]manju create \w+ 生成模板[)）]")
+
+
+def _next_action_for(project: Project, stage: "Stage") -> str:
+    """`stage.next_action` with the "generate a template" clause dropped once
+    the file is already there.
+
+    `manju new` scaffolds story/brief.md and story/script.md, so on a brand-new
+    project the brief stage advised "(manju create brief 生成模板)" — and
+    running it answered "story/brief.md 已存在 — 不覆盖人写的内容". The refusal
+    is right (never overwrite the owner's text); the ADVICE was wrong, and it
+    was the very first instruction a new project gives. The script stage never
+    carried the clause, so this also makes the two siblings agree.
+
+    Found by walking the funnel as a newcomer rather than by reading it."""
+    action = stage.next_action
+    if not _TEMPLATE_HINT_RE.search(action):
+        return action
+    try:
+        exists = (project.root / stage.artifact).exists()
+    except Exception:
+        return action
+    if not exists:
+        return action
+    return re.sub(r"\s*" + _TEMPLATE_HINT_RE.pattern + r"\s*", "", action, count=1)
+
+
 STAGES: list[Stage] = [
     Stage(
         id="brief", cn="立意", artifact="story/brief.md", skill="creation-funnel",
@@ -290,14 +321,36 @@ STAGES: list[Stage] = [
     ),
     Stage(
         id="storyboard", cn="分镜", artifact="shots/", skill="creation-funnel",
-        next_action="拆分镜:补齐 shots/*.yaml 并 manju check 过校验(manju board 可辅助),"
-                    "参考 manju skills show creation-funnel",
+        # The funnel's cliff, found by walking it: every stage before this one
+        # was "edit ONE file, here is a template". This one said "补齐
+        # shots/*.yaml" — plural, no template, and NO CLI command anywhere
+        # creates a shot. It then offered `manju board` as the helper, but
+        # board COMPOSES a storyboard out of shots that already exist: run it
+        # here and it answers "has no shots — nothing to board" and exits 1.
+        # Same defect as the brief stage — a recommendation that refuses — but
+        # at the hardest step, where a newcomer has the least to fall back on.
+        # So name the routes that actually work, and demote board to what it
+        # really is: useful AFTER there are shots.
+        next_action="拆分镜(本步没有模板命令,三条路任选):① manju gui → 分镜页"
+                    "「新建镜头」点着建;② 手写 shots/S001.yaml 并加进 "
+                    "shots/index.yaml 的 order(字段见 manju schema);"
+                    "③ 让 AI 导演按剧本代写。建完跑 manju check 过校验;"
+                    "有镜头之后 manju board 可以拼故事板。"
+                    "参考 manju skills show shot-design",
         predicate=_storyboard_done,
     ),
     Stage(
         id="plan", cn="生成计划", artifact="reports/proposals/", skill="creation-funnel",
-        next_action="生成前先过审:manju director propose 起草生成计划再 confirm"
-                    "(approve-before-spend 闸门)",
+        # Third instance of the same defect, found the same way: `manju
+        # director propose` on its own answers "pass exactly one of
+        # --from-file / --actions-json" and exits 1. And the action shape is
+        # not guessable — `{"op": "build"}` is refused with "unknown action
+        # type None". So give the line that actually runs.
+        next_action='生成前先过审(approve-before-spend 闸门):'
+                    'manju director propose --actions-json \'[{"type":"build",'
+                    '"target":"final"}]\' --why "说明为什么" '
+                    '→ manju director confirm <id> → manju director run <id>;'
+                    '不想走提案流程也可以直接 manju build',
         predicate=_plan_done,
     ),
     Stage(
@@ -347,10 +400,19 @@ def funnel_status(project: Project) -> dict[str, Any]:
             "id": stage.id,
             "cn": stage.cn,          # 中文名
             "state": state,
+            # `state` is POSITIONAL — everything past the first unfinished stage
+            # is "todo" so the funnel keeps its order. But a later stage's own
+            # predicate can already be satisfied (a project that was built before
+            # its brief was written has plan/produce evidence saying exactly
+            # that), and rendering it as ○ next to evidence reading 已落地 is a
+            # flat contradiction. Carry the predicate itself so the renderer can
+            # say "met, just not its turn" instead. Additive: `state` and the
+            # done count are unchanged for every existing consumer.
+            "satisfied": bool(_done),
             "artifact": stage.artifact,
             "evidence": evidence,
             "skill": stage.skill,
-            "next_action": stage.next_action,
+            "next_action": _next_action_for(project, stage),
         })
 
     done_count = sum(1 for s in stages if s["state"] == "done")

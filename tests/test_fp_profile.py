@@ -461,8 +461,14 @@ class TestRealFfmpegIntegration:
 
     def test_portrait_420_8bit_with_color_tags(self, tmp_project):
         dest = self._gen(
+            # setparams stamps the FRAMES: ffmpeg >= 7.1 no longer honours the
+            # -color_trc/-color_primaries output options for libx264, so without
+            # it this "tagged" fixture is only half tagged on a current ffmpeg
+            # and the test fails as though the profile reader were at fault.
             ["-f", "lavfi", "-i", "testsrc=duration=0.3:size=108x192:rate=24",
              "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3:sample_rate=48000",
+             "-vf", "setparams=color_primaries=bt709:color_trc=bt709"
+                    ":colorspace=bt709:range=tv",
              "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709",
              "-colorspace", "bt709", "-color_range", "tv",
              "-c:v", "libx264", "-c:a", "aac", "-ac", "2"],

@@ -54,7 +54,15 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/pages-t.css">\n'
         + GLOSSARY_HEAD
-        + '<script src="/webclient.js" defer></script>\n'
+        # GLOSSARY_HEAD ALREADY carries /webclient.js (see pages.py) — loading it
+        # again made every /subtitles, /mixer and /packaging page throw
+        # "Identifier 'ManjuApiError' has already been declared" into the console
+        # on load, because webclient.js declares that class at top level and a
+        # re-declaration is a SyntaxError that aborts the whole second copy.
+        # Nothing broke (the first copy had already defined everything), which is
+        # exactly why it survived: a real error on every page load is noise the
+        # owner learns to scroll past, and the next genuine one hides in it.
+        # The sibling shell in pages.py takes GLOSSARY_HEAD alone; match it.
         + '<script src="/common.js" defer></script>\n'
         + '<script src="/pages-t.js" defer></script>\n'
         "</head>\n"

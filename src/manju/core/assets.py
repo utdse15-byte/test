@@ -159,20 +159,22 @@ class AssetLookup:
     by ``core/mentions.py`` and the QC mention advisories.
 
     ``by_key`` maps a raw token to every ``(kind, asset_id, via)`` it can name,
-    where ``via`` is ``"id"`` or ``"alias"``. ``all_names`` is the flat set of
-    every id + alias, for nearest-match hints."""
+    where ``via`` is ``"id"``, ``"name"`` or ``"alias"``. ``all_names`` is the
+    flat set of every id + display name + alias, for nearest-match hints."""
 
     by_key: dict[str, list[tuple[str, str, str]]] = field(default_factory=dict)
     all_names: list[str] = field(default_factory=list)
 
     def candidates(self, token: str) -> list[tuple[str, str, str]]:
         """Every asset ``token`` can name, priority-sorted: kind priority first,
-        then an exact id before an alias hit within the same kind."""
+        then id before display name before alias within the same kind."""
         order = {k: i for i, k in enumerate(KIND_PRIORITY)}
+        via_order = {"id": 0, "name": 1, "alias": 2}
         cands = self.by_key.get(token, [])
         return sorted(
             cands,
-            key=lambda c: (order.get(c[0], len(order)), 0 if c[2] == "id" else 1),
+            key=lambda c: (order.get(c[0], len(order)),
+                           via_order.get(c[2], len(via_order))),
         )
 
     def resolve(self, token: str) -> tuple[str, str] | None:
@@ -190,7 +192,17 @@ class AssetLookup:
 
 
 def build_lookup(matrix: dict[str, Any]) -> AssetLookup:
-    """Index every id and alias in the matrix for @mention resolution."""
+    """Index every id, display name and alias in the matrix for @mention
+    resolution.
+
+    The display ``name`` is indexed because it is the identity the user
+    actually SEES: ``manju appearances`` prints "old_zhou 周叔", the bible file
+    says ``name: 周叔``, and the GUI chips are labelled with it. Typing
+    ``@周叔`` therefore has to work — indexing only id+aliases left the most
+    natural handle in the project resolving to nothing, with no nearest-match
+    hint either (an ASCII-only ``all_names`` gave difflib nothing to match a
+    CJK token against). Same asset, extra handle: a name never manufactures a
+    collision with its own id, only with a genuinely different asset."""
     by_key: dict[str, list[tuple[str, str, str]]] = {}
     names: list[str] = []
     for kind in KIND_PRIORITY:
@@ -198,6 +210,10 @@ def build_lookup(matrix: dict[str, Any]) -> AssetLookup:
             aid = row["id"]
             by_key.setdefault(aid, []).append((kind, aid, "id"))
             names.append(aid)
+            display = row.get("name")
+            if isinstance(display, str) and display and display != aid:
+                by_key.setdefault(display, []).append((kind, aid, "name"))
+                names.append(display)
             for alias in row.get("aliases") or []:
                 by_key.setdefault(alias, []).append((kind, aid, "alias"))
                 names.append(alias)

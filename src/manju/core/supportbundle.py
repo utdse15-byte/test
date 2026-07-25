@@ -111,6 +111,20 @@ _SECRET_KEY_RE = re.compile(
     r"(?i)(key|token|secret|authorization|signature|password|bearer)"
 )
 
+# Field names that merely CONTAIN "key" while holding one of the build's own
+# content fingerprints — never a credential. The pattern above is a substring
+# match, so `content_key` / `final_key` were redacted out of every bundle, and
+# those are exactly the facts a support bundle exists to carry: "why did it
+# re-render" is answered by comparing content keys, and a bundle that hides
+# them cannot answer it. An EXACT-name allowlist (not a pattern) so nothing
+# widens by accident — `api_key` and any unknown *_key stay redacted, and a real
+# credential would never be named one of these.
+_NON_SECRET_KEY_NAMES = frozenset({
+    "content_key", "final_key", "base_key", "output_key",
+    "windows_collision_key", "next_step_key", "has_key",
+    "submission_idempotency_key",   # our own request-dedup digest, not a secret
+})
+
 # "Authorization: Bearer <tok>" / "authorization=<tok>" — remove the literal
 # word too (the self-scan hunts the bare "Authorization:" marker), value optional.
 _AUTH_RE = re.compile(r"(?i)authorization\s*[:=]\s*(?:bearer\s+)?\S*")
@@ -231,7 +245,9 @@ def redact_record(obj: Any, stats: dict[str, int] | None = None) -> Any:
     if isinstance(obj, dict):
         out: dict[Any, Any] = {}
         for key, value in obj.items():
-            if isinstance(key, str) and _SECRET_KEY_RE.search(key):
+            if (isinstance(key, str)
+                    and key.lower() not in _NON_SECRET_KEY_NAMES
+                    and _SECRET_KEY_RE.search(key)):
                 out[key] = REDACTED
                 _bump(stats, "secret_key_masks", 1)
             else:

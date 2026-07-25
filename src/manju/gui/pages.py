@@ -719,11 +719,32 @@ def _consistency_section(project: Any) -> str:
     coverage = ((brief.get("coverage") or {}).get("units")) or {}
     skipped = brief.get("skipped") or []
 
+    # The criteria text is per unit KIND, not per unit — a handful of distinct
+    # paragraphs. Printing the full ~200-character note on every card meant a
+    # 12-pair film rendered the same wall of text a dozen times and the page
+    # became mostly repetition, which is how a reader stops reading it at all.
+    # State it ONCE above the cards; each card keeps only its short section
+    # label (C/D…), which the legend explains.
+    legend: dict[str, str] = {}
+    for u in units:
+        crit = u.get("criteria") or {}
+        key = str(crit.get("sections") or "").strip()
+        if key and key not in legend:
+            legend[key] = str(crit.get("note") or "").strip()
+    legend_html = ""
+    if legend:
+        rows = "".join(f"<li><b>{_e(k)}</b> — {_e(v)}</li>"
+                       for k, v in legend.items())
+        legend_html = (
+            f'<details class="panel cs-legend"><summary>判据说明 · {len(legend)} 组'
+            f'(适用于下方全部组合,展开看细则)</summary><ul>{rows}</ul></details>\n')
+
     if not units:
         body = ('<p class="muted panel">暂无可判读的一致性组合(需要至少两个共享角色/'
                 '场景、且已选 take 的镜头)。</p>')
     else:
-        body = "\n".join(_consistency_card(u, coverage.get(u["unit"], {})) for u in units)
+        body = legend_html + "\n".join(
+            _consistency_card(u, coverage.get(u["unit"], {})) for u in units)
 
     skip_html = ""
     if skipped:
@@ -760,7 +781,10 @@ def _consistency_card(unit: dict, cov: dict) -> str:
         f'  <div class="cs-head"><b>[{_e(unit.get("kind"))}] {_e(unit.get("label"))}</b>'
         f'  <span class="badge {state_cls} cs-state">{_e(state_label)}</span></div>'
         f'  <div class="muted">成员镜头:{_e(members)}</div>'
-        f'  <div class="muted">判据 {_e(criteria.get("sections"))}:{_e(criteria.get("note"))}</div>'
+        # Short label only — the full note lives once in the section legend
+        # (see _consistency_section), instead of on all N cards.
+        f'  <div class="muted">判据 {_e(criteria.get("sections"))}'
+        f'  <span class="cs-crit-hint">(细则见上方「判据说明」)</span></div>'
         f'  {img_html}'
         f'  <div class="cs-form btnrow">'
         f'    <select class="cs-criterion">{crit_opts}</select>'
@@ -1596,11 +1620,29 @@ _PAGES_CSS = """
 .toast-item.bad { border-color: #5a2c2f; border-left-color: var(--err); color: var(--err); }
 
 /* ---------------------------------------------------------- review -- */
-.rv-progress { display: flex; align-items: center; gap: 1rem; }
+/* Sticky under the nav: /review restores its scroll position to the shot you
+   were on, which put 已审 N/M and the progress bar above the fold the moment
+   the page opened. Reviewing is a scrolling loop, so "how many left" has to
+   stay on screen — it is the only thing telling you where you are in it.
+   z-index sits just under .pnav (60) so the nav still wins the overlap. */
+.rv-progress {
+  display: flex; align-items: center; gap: 1rem;
+  position: sticky; top: 50px; z-index: 55;
+  margin-top: 0; backdrop-filter: blur(6px);
+}
 .rv-bar { flex: 1; max-width: 480px; }
 .rv-shot.active { outline: 2px solid var(--accent); }
 .rv-shot.reviewed .rv-head h2::after { content: " ✓"; color: var(--ok); }
-.rv-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: baseline; }
+.rv-head {
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  align-items: baseline;
+  /* Each card is a tall block (player + QC frame + verdict form), so scrolling
+     through one loses its own title — and then nothing on screen says WHICH
+     shot you are judging. Sticky inside its card, under the nav + progress
+     bar, so the answer travels with the content. */
+  position: sticky; top: 96px; z-index: 40;
+  background: var(--panel); padding: .3rem 0 .35rem;
+}
 .rv-idx { font-size: .8rem; margin-left: .4rem; }
 .rv-body { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1rem; margin: .7rem 0; }
 .rv-video { width: 100%; max-height: 420px; border-radius: 8px; background: #000; }

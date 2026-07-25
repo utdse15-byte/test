@@ -88,6 +88,35 @@ def shot_next_action(project: Project, shot_id: str, *, state: str,
 
     if sid in qc_error_shots:
         return _r("qc", "QC 错误:manju repair,或按 reports/qc.md 处理后重跑 manju qc")
+
+    # A take NEWER than the selected one is material nobody has decided about.
+    # Takes are append-only and never auto-select over a human pick, which is
+    # right — but it meant ingesting real footage for an already-selected shot
+    # landed in TOTAL silence: `manju build` reported "final up-to-date" and the
+    # film did not change, while `status` and `explain` both went on naming the
+    # OLD take. The only trace was a `[pending=1]` counter in `ingest-batches`,
+    # which nothing routes you to. So the shot that has an undecided take says
+    # so here, ahead of the voice rung: a missing voice has many surfaces
+    # already, and this had none. It is a decision, not a defect — the current
+    # selection stays valid, and the sentence says so.
+    # NOT when the shot is stale: a take minted under the old spec is stale
+    # too, so "select the newer one" would be bad advice — the `stale` rung
+    # below (redo, or keep the current pick) is the real answer there. This
+    # rung is for a shot that is otherwise settled and simply has material
+    # nobody has ruled on.
+    if selected_take and state != "stale":
+        try:
+            newer = sorted(t.name for t in project.takes(sid)
+                           if t.name > selected_take)
+            if newer:
+                num = newer[-1].split("_")[-1].lstrip("0") or newer[-1]
+                return _r("newtake",
+                          f"有更新的 take 未选用({', '.join(newer[-2:])},现选 "
+                          f"{selected_take})— manju select {sid} {num} 选用,"
+                          f"或不动(现选依然有效,§3 只增不改)")
+        except Exception:
+            pass  # take listing must never break the takeover surface
+
     if voice_state in ("missing", "stale"):
         return _r("voice", f"配音:manju voice {sid}")
     if state == "stale":
@@ -130,6 +159,55 @@ def next_actions(project: Project, *, statuses: Any = None,
         if act["key"] != "ok":
             todo.append(act)
     return todo
+
+
+def _qualify_done(next_step: str, key: str, todo: list[dict[str, str]]) -> str:
+    """Never print a bare 完成 ✅ directly above a list of 待办.
+
+    The project-level next step and the per-shot todos answer different
+    questions — "is the film buildable" vs "does any shot still want
+    something" — but they print three lines apart, so 「下一步 完成 ✅」 over a
+    dozen 待办 rows just reads as the tool contradicting itself. The verdict is
+    unchanged (nothing BLOCKS the film); it now says what it is not counting."""
+    if key != "done" or not todo:
+        return next_step
+    kinds: list[str] = []
+    for label, k in (("配音", "voice"), ("新 take 待定", "newtake"),
+                     ("待审", "review"), ("过期", "stale")):
+        if any(t.get("key") == k for t in todo):
+            kinds.append(label)
+    what = "、".join(kinds) if kinds else "可选项"
+    return f"完成 ✅ — 片子可出;另有 {len(todo)} 项非阻塞待办({what},见下)"
+
+
+def _locale_voice_blocker(project: Project, lang: str) -> str | None:
+    """Why ``manju build --lang <lang>`` would be refused, or None if it is
+    genuinely runnable.
+
+    The locale build fails closed when a line has a translation but no voice
+    take (``有译文无配音`` — it refuses native audio under foreign subtitles).
+    Whether that is FIXABLE by the owner right now depends on a TTS provider
+    being configured, so the two cases get different sentences: with TTS, one
+    command finishes it; without, the honest next step is configuring one (or
+    dropping locale voice takes in by hand). Best-effort — any failure here
+    returns None and the caller keeps its previous recommendation."""
+    try:
+        from ..core.locale import _current_tts_descriptor, locale_status
+
+        st = locale_status(project, lang)["locales"].get(lang) or {}
+        need = sorted(sid for sid, v in (st.get("voice") or {}).items()
+                      if v in ("missing", "stale"))
+        if not need:
+            return None
+        head = ", ".join(need[:3]) + ("…" if len(need) > 3 else "")
+        if _current_tts_descriptor() is not None:
+            return (f"{len(need)} 镜有译文无配音({head})— "
+                    f"manju voice --missing --lang {lang} --yes 补齐后再出片")
+        return (f"{len(need)} 镜有译文无配音({head}),且尚未配置 TTS —— "
+                f"先配 provider(manju providers)再 manju voice --missing "
+                f"--lang {lang} --yes,或手动放入 locale 配音 take")
+    except Exception:
+        return None
 
 
 def project_status(project: Project, *, statuses: Any = None,
@@ -251,7 +329,9 @@ def project_status(project: Project, *, statuses: Any = None,
     try:
         locales_root = project.final_dir / "locales"
         if locales_root.is_dir():
-            for d in sorted(locales_root.iterdir()):
+            # sorted(Path) folds case on Windows; this ordering decides which
+            # locale the next-step message names first. POSIX-string order.
+            for d in sorted(locales_root.iterdir(), key=lambda p: p.as_posix()):
                 if not d.is_dir():
                     continue
                 best = None
@@ -292,7 +372,12 @@ def project_status(project: Project, *, statuses: Any = None,
     # must not break automation (the per-shot `todo` entries already follow
     # this key+text contract).
     if not statuses:
-        next_step = "创作阶段:先写 shots/(引擎不编故事,§2)"
+        # Every other rung names a command; this one — the FIRST thing a new
+        # project shows — only named a directory, leaving the newcomer with
+        # nothing to type. `manju new` already points at the guided funnel, so
+        # say the same thing here rather than sending them back to the docs.
+        next_step = ("创作阶段:还没有镜头 —— manju create 走引导漏斗,"
+                     "或直接写 shots/*.yaml 再 manju check(引擎不编故事,§2)")
         next_step_key = "create_shots"
     elif by_state.get("missing"):
         next_step = f"manju build(补齐缺失镜头:{', '.join(by_state['missing'][:5])}…)" \
@@ -303,7 +388,13 @@ def project_status(project: Project, *, statuses: Any = None,
         next_step = f"manju select(待挑选:{', '.join(by_state['needs_selection'])})"
         next_step_key = "select"
     elif by_state.get("broken"):
-        next_step = f"修复 broken 镜头:{', '.join(by_state['broken'])}"
+        # The neighbouring rungs all name a command; this one described a task.
+        # The per-shot 待办 already spells the remedy out, so the headline just
+        # has to name the first one for the first broken shot.
+        broken = by_state["broken"]
+        next_step = (f"修复 broken 镜头:{', '.join(broken)} — "
+                     f"manju redo {broken[0]} 重生成,或 manju select "
+                     f"{broken[0]} <take> 换选")
         next_step_key = "fix_broken"
     elif timeline is None:
         next_step = "manju build(编译时间线并渲染)"
@@ -331,11 +422,23 @@ def project_status(project: Project, *, statuses: Any = None,
         if missing_locale:
             sample = ", ".join(missing_locale[:4])
             more = "…" if len(missing_locale) > 4 else ""
-            next_step = (
-                f"locale 成片未齐:{sample}{more} — "
-                f"manju build --lang {missing_locale[0]} --target final"
-            )
-            next_step_key = "build_locale"
+            # Only recommend the locale build if it can actually SUCCEED. A
+            # locale whose lines are translated but whose voice takes are
+            # missing is refused on purpose — the engine will not ship native
+            # audio under foreign subtitles — so recommending that build as the
+            # headline next step sent the owner to a command that fails 100% of
+            # the time, and the GUI printed it in its most prominent slot. Name
+            # the step that actually unblocks instead.
+            blocked = _locale_voice_blocker(project, missing_locale[0])
+            if blocked:
+                next_step = f"locale {missing_locale[0]}:{blocked}"
+                next_step_key = "locale_needs_voice"
+            else:
+                next_step = (
+                    f"locale 成片未齐:{sample}{more} — "
+                    f"manju build --lang {missing_locale[0]} --target final"
+                )
+                next_step_key = "build_locale"
         else:
             next_step = "完成 ✅"
             next_step_key = "done"
@@ -371,10 +474,12 @@ def project_status(project: Project, *, statuses: Any = None,
         "run_log": run_log_info,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
-        "next_step": next_step,
+        "next_step": _qualify_done(
+            next_step, next_step_key, todo_items := next_actions(
+                project, statuses=statuses, voices=voices)),
         "next_step_key": next_step_key,
         # Intuitiveness wave: the per-shot answers (ONE actionable sentence
         # per shot that needs anything) — additive; agents branch on `key`.
-        "todo": next_actions(project, statuses=statuses, voices=voices),
+        "todo": todo_items,
         "build_lock": build_lock_info,
     }

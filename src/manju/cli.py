@@ -54,10 +54,151 @@ if os.name == "nt":  # pragma: no cover — the guard is driven directly in test
     _utf8_harden_stdio()
 
 
+# Provenance markers — §-sections, goal/round/WP/AI_IDE ids — trace a command
+# back to the plan documents it was built from. They belong in the source: the
+# next maintainer needs them. They do NOT belong in `manju --help`, because
+# CLAUDE.md says the plan document is not in the repo, so for the owner reading
+# the command list they are references to something nobody can open. There were
+# 40 §-refs in the top-level help alone.
+#
+# Stripped at RENDER time rather than edited out of 65 docstrings: one owner,
+# reversible, and the provenance stays where maintainers read it.
+_PROV_TOKEN = (
+    r"§[\d][\d.\w\-]*|goal(?:\s+items?)?\s+[\dV][\w\-/]*|round[-\s][\w\-]+|"
+    r"AI_IDE_\d+(?:\s+WP\d+)?|WP\d+|DR\d+\w*|[PWMC]\d+[a-z]?"
+)
+_PROV_RE = re.compile(_PROV_TOKEN, re.I)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+# What may remain inside a parenthetical for it to count as pure provenance.
+_PROV_FILLER_RE = re.compile(
+    r"^[\s,,、;;/·和+&]*(?:roadmap|FP roadmap|见|see)?[\s,,]*$", re.I)
+# A provenance token hung on the END of an otherwise meaningful parenthetical:
+# "(who did what, when — §10)" → "(who did what, when)".
+_PROV_TRAIL_RE = re.compile(
+    r"\s*[,,;;—–-]\s*(?:roadmap\s+)?(?:" + _PROV_TOKEN + r")\s*$", re.I)
+
+
+def _strip_provenance(text: str) -> str:
+    """Drop plan-document references from user-facing help text.
+
+    Conservative on purpose: a parenthetical is removed only when it is ENTIRELY
+    provenance, or trimmed only when a provenance token trails real content. A
+    marker woven into a sentence ("AI_IDE_16 §9 — round-trip …") is left alone —
+    an earlier, greedier version produced "one line of text —)" and "scan .",
+    which is worse than the noise it removed."""
+    def repl(m: "re.Match[str]") -> str:
+        lead = " " if m.group(0)[:1].isspace() else ""
+        inner = m.group(1)
+        if _PROV_RE.search(inner) and _PROV_FILLER_RE.match(_PROV_RE.sub("", inner)):
+            return ""
+        trimmed = _PROV_TRAIL_RE.sub("", inner)
+        if trimmed != inner and trimmed.strip():
+            return f"{lead}({trimmed})"
+        return m.group(0)
+
+    return re.sub(r"\s{2,}", " ",
+                  re.sub(r"\s*[（(]([^()（）]*)[)）]", repl, text)).strip()
+
+
+# The owner reads Chinese; 56 of the 82 top-level rows were English-only, so the
+# command list was mostly unreadable to the person it is for. Each entry below
+# is a STRICT translation of that command's existing first line — no new claims,
+# no invented behaviour — rendered in the house style the already-bilingual rows
+# use: Chinese first, then the English ("创作漏斗 / creation funnel").
+#
+# Applied at render time beside _strip_provenance so it is one owner and the
+# docstrings stay the maintainer's copy. `test_help_chinese_lead.py` fails if a
+# new English-only top-level command appears without an entry here, so the table
+# cannot silently fall behind the surface.
+_ZH_LEAD: dict[str, str] = {
+    'align': '把导入的真人配音对齐到剧本',
+    'analyze': '产出绑定到精确媒体哈希的派生证据文档',
+    'appearances': '出场表:bible id 与引用它们的镜头交叉对照',
+    'auto': '自动驾驶:任意一次性 agent CLI 的薄壳',
+    'board': '评审工作台 + 多图故事板',
+    'build': '一键出片:补缺 → 时间线 → 渲染 → QC → 导出',
+    'check': '校验:schema + 引用 + 锁 + 密钥扫描 —— 安全网',
+    'compare': '对比两个成片 —— final_vA 与 final_vB 之间改了什么',
+    'doctor': '环境体检:ffmpeg、字体、磁盘、项目完整性',
+    'events': '看协作日志',
+    'explain': '下次 build 会做什么、为什么?只读',
+    'export': '从已编译时间线导出草稿/字幕',
+    'failures': '最近的失败(新→旧)—— 让每次失败都可排查',
+    'fixity': '不解压校验 .manjupkg 内的 MANJU_FIXITY.json',
+    'frames': '从项目内任意媒体预览静帧',
+    'gc': '回收空间:片段缓存与预览代理',
+    'gui': '本地网页工作台 —— 与 CLI 同一引擎核心的客户端',
+    'history': '合并的变更流:events.jsonl 与 git log 交织',
+    'impact': '改这个镜头会怎样?只读互联报告',
+    'import': '登记一个文件进项目',
+    'locale': '多语言本地化覆盖层',
+    'lock': '把某字段的当前值哈希封存',
+    'masters': '渲染专业音频母版:对白 / 音乐 / 音效分轨',
+    'migrate': '有理数编辑帧率迁移:体检 | 计划 | 应用 | 降级',
+    'new': '新建项目',
+    'pack': '把项目打包成单个 .manjupkg(zip)用于备份/迁移',
+    'package': '从当前成片切出封面(+ 预告)',
+    'presets': '预设套件列表',
+    'prompt': '提示词工作台 —— 只读',
+    'propose': '写提案:请求修改锁定内容的正规通道',
+    'providers': '管理 provider 清单',
+    'pull-sheet': '往返一份编辑过的分镜提取表',
+    'rebuild-index': '从文本 + 媒体重建可丢弃的运行时目录',
+    'redo': '强制重出新 take(只增;已有选择不动)',
+    'reframe': '把 ROI 轨编译成裁切关键帧(只读)',
+    'relink': '媒体缺失报告 + 哈希校验重链',
+    'repair': '修片,三种模式',
+    'rollback': '回滚一件事;历史只增不减',
+    'rough-cut': '只标注的口语粗剪提案(从不删除;可逆)',
+    'roundtrip': '把外部剪辑的改动流回成可评审的真相变更',
+    'route': '查看模型路由策略',
+    'routing': '逐镜路由决策 + 成本',
+    'schema': '导出每个真相文件模型的 JSON Schema',
+    'segments': '从分析证据推导连贯的音画片段(只读)',
+    'select': '选用一个 take',
+    'serve-mcp': 'stdio 上的 MCP server —— 同一核心的薄包装',
+    'shot-package': '校验/查看外部 ShotDraftPackage,或受控写入应用它',
+    'snapshot': '给真相文本打一个带标签的 git 检查点',
+    'status': '接管入口:阶段、缺口、花费、下一步',
+    'support-bundle': '生成已脱敏的诊断支持包',
+    'tool': '说明一个白名单意图 op 的既有确定性执行器',
+    'transcribe': '把导入的真实素材转写成 SRT',
+    'unlock': '解锁(仅交互式终端 + 二次确认,MCP 面不暴露)',
+    'unpack': '还原一个 .manjupkg',
+    'voice': '合成一条新的配音 take(只增,最新者胜)',
+    'watch': '开发循环:真相一变就重跑 manju check',
+}
+
+
 class _SuggestingGroup(typer.core.TyperGroup):
     """UX wave 2 item 3: a mistyped command gets "did you mean" suggestions
     instead of a bare "No such command" — with 127 commands this is table
     stakes. Same difflib technique as core/mentions.py's @role correction."""
+
+    def get_command(self, ctx, name):  # type: ignore[override]
+        """Also the display hook: typer's rich formatter renders each row from
+        ``command.short_help or command.help``, and it reaches every command
+        through here. Setting `short_help` leaves `help` (and therefore
+        `manju <cmd> --help`, where a maintainer may want the reference) intact.
+        Sub-groups inherit this class, so nested lists get the same treatment."""
+        cmd = super().get_command(ctx, name)
+        if cmd is not None and not getattr(cmd, "_manju_short_help_cleaned", False):
+            source = cmd.short_help or cmd.help or ""
+            if source:
+                # First LINE, not first paragraph: several docstrings open with
+                # a six-line paragraph (see `explain`), which rendered the whole
+                # thing into the list and buried its neighbours.
+                blurb = _strip_provenance(source.strip().split("\n")[0])
+                lead = _ZH_LEAD.get(name)
+                if lead and not _CJK_RE.search(blurb):
+                    # The row becomes the Chinese ALONE, not "中文 / English".
+                    # Carrying both doubled every row's height and made the wall
+                    # taller than the one it was meant to make readable; the
+                    # English is one `manju <cmd> --help` away, unchanged.
+                    blurb = lead if lead.endswith(("。", ":", ":")) else lead + "。"
+                cmd.short_help = blurb
+            cmd._manju_short_help_cleaned = True
+        return cmd
 
     def resolve_command(self, ctx, args):  # type: ignore[override]
         try:
@@ -88,8 +229,29 @@ class _SuggestingGroup(typer.core.TyperGroup):
 # eager options are added; the frozen LEAF-command surface
 # (tests/fixtures/cli_surface.json records leaf commands + required params)
 # is untouched, verified by the snapshot suite.
+# The help wall is ~60 commands across eight panels, and `manju` with no
+# arguments prints all of it. The description used to name only `build` — the
+# one command a newcomer cannot use yet, because there is nothing to build.
+# The epilog is what stays ON SCREEN after the wall scrolls past, so the three
+# doors go there: where am I, start something, I want to do X. `help-workflow`
+# in particular is the task-oriented index, and until now you had to already
+# know it existed to find it.
+#
+# Rich reflows a help string as prose, collapsing single newlines — the first
+# draft ran the three doors together into one unreadable paragraph. Blank lines
+# survive as paragraph breaks, so each door is its own paragraph.
+_EPILOG = (
+    "只记三个入口 / three doors —\n\n"
+    "[b]manju status[/b] · 我在哪、下一步该干什么(任何时候先跑它)\n\n"
+    "[b]manju create[/b] · 从一句话开始的七阶段创作漏斗(全新项目先 manju new)\n\n"
+    "[b]manju help-workflow[/b] · 我想做 X,该按什么顺序敲哪些命令(10 条常见流程)\n\n"
+    "每条命令都有 --help;输出可读的命令大多同时带 --json 给 agent。"
+)
+
 app = typer.Typer(add_completion=True, no_args_is_help=True, cls=_SuggestingGroup,
-                  help="Manju One — a build system for video. 一键出片:manju build")
+                  help="Manju One — 视频构建系统 / a build system for video。"
+                       "不知道从哪开始就跑 manju status。",
+                  epilog=_EPILOG)
 
 
 def _version_callback(value: bool) -> None:
@@ -200,6 +362,49 @@ def _resolve_shot_arg(project: Project, raw: str) -> str:
         _fail(f"镜头 {raw} 不唯一:{', '.join(cands)} — 请用完整 id",
               code="bad_args")
     return raw
+
+
+def _resolve_frame_source(project: Project, raw: str) -> str:
+    """``manju frames S001`` → that shot's SELECTED take's media path.
+
+    ``frames`` is the one shot-facing command whose argument is a project-
+    relative media PATH, while every sibling takes a shot id (and forgives the
+    ``s14``/``14`` shorthand via :func:`_resolve_shot_arg`). So typing a shot id
+    here is the natural mistake, not an exotic one, and it used to fail with a
+    bare ``frame source not found: S001`` — which names the input without ever
+    saying a path was wanted. A real path still wins: this only runs when ``raw``
+    is not already an existing file, so no current invocation changes meaning.
+    Same discipline as the sibling resolvers: EXISTING entities only, the
+    resolution is echoed on stderr (``--json`` stdout stays pure), and a shot
+    with nothing to preview fails structured rather than guessing."""
+    try:
+        if project.resolve(raw).is_file():
+            return raw
+    except Exception:
+        pass  # not a usable path — fall through to the shot-id reading
+    sid = _resolve_shot_arg(project, raw)
+    try:
+        if sid not in project.shot_ids():
+            return raw  # not a shot either: let the media layer report the path
+        selected = project.load_shot(sid).status.selected_take
+        takes = {t.name: t for t in project.takes(sid)}
+    except Exception:
+        return raw
+    take = takes.get(selected) if selected else None
+    if take is None or not take.media_path:
+        # Never selected (or the selection has no media): the newest take with
+        # media is what the next build would use, so preview that.
+        with_media = [t for t in takes.values() if t.media_path]
+        take = with_media[-1] if with_media else None
+    if take is None or not take.media_path:
+        _fail(f"{sid} 还没有可预览的 take —— 先 manju build 或 manju redo {sid}",
+              code="bad_args")
+    rel = project.relpath(take.media_path)
+    # Keyed on `sid`, not `raw`: for `frames 2` _resolve_shot_arg has already
+    # echoed "镜头 2 → S002", so echoing raw again would print two lines both
+    # claiming to resolve "2". This way the two read as one chain.
+    typer.secho(f"{sid} → {rel}", fg=typer.colors.BRIGHT_BLACK, err=True)
+    return rel
 
 
 def _resolve_take_arg(project: Project, shot_id: str, raw: str) -> str:
@@ -557,11 +762,25 @@ def create(
                     fg=typer.colors.CYAN, bold=True)
         for s in info["stages"]:
             mark = _FUNNEL_MARK.get(s["state"], "·")
-            typer.secho(f"  {mark} {s['cn']}({s['id']})  {s['evidence']}",
-                        fg=_FUNNEL_COLOR.get(s["state"]))
+            color = _FUNNEL_COLOR.get(s["state"])
+            if s["state"] == "todo" and s.get("satisfied"):
+                # Already met, just not its turn (the funnel stays ordered). A
+                # dim ✓ instead of ○ so the mark stops contradicting the
+                # evidence line right next to it; still not green, because the
+                # stage is not "done" in funnel order and does not count toward
+                # the N/7 tally.
+                mark = "✓"
+            typer.secho(f"  {mark} {s['cn']}({s['id']})  {s['evidence']}", fg=color)
         cur = info.get("current")
         if cur is None:
-            typer.secho("下一步  全部完成 ✅ — 可 manju build 出片", fg=typer.colors.GREEN)
+            # The funnel is 7/7 only once a final EXISTS, so "可 manju build
+            # 出片" told the owner to do the thing they had just finished.
+            # Point at what genuinely comes after the funnel instead.
+            typer.secho(
+                "下一步  全部完成 ✅ — 漏斗到此为止,接下来:manju qc 质检 · "
+                "manju package 出封面/预告 · manju export 交给剪辑软件 · "
+                "manju exports 看所有交付物新鲜度",
+                fg=typer.colors.GREEN)
         else:
             entry = next(s for s in info["stages"] if s["id"] == cur)
             typer.secho(f"下一步  【{entry['cn']}】{entry['next_action']}", fg=typer.colors.CYAN)
@@ -616,7 +835,16 @@ def status(as_json: bool = typer.Option(False, "--json")):
     # re-orienting; one line answers it before any state is read.
     recent = info.get("recent_events") or []
     if recent:
-        last = recent[-1]
+        # This line's own purpose is "what was I DOING" — but the newest event
+        # is usually run/stage bookkeeping, so a project whose last act was a
+        # full build greeted the returning owner with
+        #     上次动作  12 分钟前 · run_terminal (human)
+        # naming a run-lifecycle record instead of the build. Same noise class
+        # already filtered out of `manju events`' human view; it was never
+        # applied here, and here it matters more because there is no
+        # surrounding context to read past it.
+        last = next((e for e in reversed(recent)
+                     if e.get("action") not in _BOOKKEEPING_ACTIONS), recent[-1])
         age = humanize_age(str(last.get("ts", "")))
         detail = last.get("detail") or {}
         target = detail.get("shot") or detail.get("name") or ""
@@ -657,13 +885,41 @@ def status(as_json: bool = typer.Option(False, "--json")):
                     fg=typer.colors.RED)
     typer.secho(f"下一步  {info['next_step']}", fg=typer.colors.CYAN)
     # Intuitiveness wave: per-shot answers — each line IS the action, so the
-    # owner never diffs five state machines in their head. Capped for signal;
-    # the full list rides --json (`todo`).
+    # owner never diffs five state machines in their head.
+    #
+    # Two things the flat `todo[:6]` got wrong once a project had real depth.
+    # (1) A dozen shots typically need the SAME thing, so six identical 配音
+    # lines could push the one genuinely different item (a newtake decision, a
+    # broken shot) below the cut — the rarest item is the one worth reading.
+    # Every distinct `key` is therefore shown before any kind repeats.
+    # (2) The tail said "manju status --json 看全部", sending a HUMAN to parse
+    # JSON to see their own to-do list. It now names what is left, by kind and
+    # by shot, so nothing is hidden and no second command is needed.
     todo = info.get("todo") or []
-    for item in todo[:6]:
+    first_of_kind, seen_keys = [], set()
+    for item in todo:
+        key = item.get("key")
+        if key not in seen_keys:
+            seen_keys.add(key)
+            first_of_kind.append(id(item))
+    budget = max(6, len(seen_keys))
+    picked = [i for i in todo if id(i) in first_of_kind][:budget]
+    for item in todo:                       # fill the rest in original order
+        if len(picked) >= budget:
+            break
+        if item not in picked:
+            picked.append(item)
+    picked = [i for i in todo if i in picked]   # restore document order
+    for item in picked:
         typer.secho(f"待办  {item['shot']}  {item['action']}", fg=typer.colors.YELLOW)
-    if len(todo) > 6:
-        typer.secho(f"待办  …共 {len(todo)} 项(manju status --json 看全部)",
+    rest = [i for i in todo if i not in picked]
+    if rest:
+        by_kind: dict[str, list[str]] = {}
+        for item in rest:
+            by_kind.setdefault(item.get("key") or "?", []).append(item["shot"])
+        parts = "; ".join(f"{k} ×{len(v)}({', '.join(v)})"
+                          for k, v in by_kind.items())
+        typer.secho(f"待办  另有 {len(rest)} 项 — {parts}",
                     fg=typer.colors.BRIGHT_BLACK)
 
 
@@ -891,6 +1147,24 @@ def import_(
             typer.secho(f"imported {r}", fg=typer.colors.GREEN)
         for src_rel, thumb in previews.items():
             typer.echo(f"  preview: {thumb}")
+        # A text import already told the owner what to do with it (see the
+        # story_imports hint below); a MEDIA import said nothing, so footage
+        # landed in media/imports and stopped there — nothing in `status`,
+        # `check` or the next-step ladder routes to it, because until it is
+        # registered against a shot it is not part of the film. Name the one
+        # command that changes that (§3.5 回写登记), quoted, because real
+        # footage names have spaces.
+        # `registered` carries BOTH kinds, so the media hint has to exclude the
+        # story ones — a novel is not registered as a take, and the first draft
+        # of this told the owner to do exactly that.
+        media_registered = [r for r in registered if r not in set(story_imports)]
+        if media_registered:
+            first = media_registered[0]
+            typer.secho(
+                f'  下一步 next: 登记到镜头才会进成片 —— manju select <镜头> '
+                f'--file "{first}"(登记为 manual take,永不被自动作废);'
+                f'登记后 manju build 让它落到成片。',
+                fg=typer.colors.BRIGHT_BLACK)
         for note in dup_notes:
             typer.secho(f"⚠ {note}", fg=typer.colors.YELLOW)
         for note in lib_notes:
@@ -1199,6 +1473,56 @@ def ingest_discard_cmd(
 # ------------------------------------------------------------------- build
 
 
+# Run/stage lifecycle + evidence records. They belong in the ledger (`manju
+# events`, `manju tasks`) and are what the run-reconstruction machinery reads,
+# but nobody DID them — so they must never be the answer to "what was I doing".
+# The status anchor skips them; if a project has nothing else, it falls back to
+# the newest event rather than showing nothing.
+_BOOKKEEPING_ACTIONS = frozenset({
+    "stage_attempt", "attempt_started", "run_started", "run_terminal",
+})
+
+
+def _echo_after_build(project, render_path: str) -> None:
+    """The "you just made a film — here is how to look at it" line.
+
+    Presentation only: every command named here already exists. The point is
+    WHEN they are offered. `manju build` used to end at a path, so the owner
+    of a video tool finished a render with no route to the picture.
+
+    A route is printed only if it will work right now — the `compare` line
+    appears solely when there IS an earlier final to compare against.
+    """
+    import re as _re
+
+    rel = str(render_path)
+    lines = [f"看一眼 look: manju gui(成片页)· 抽帧 manju frames {rel}"]
+
+    # Previous final, if any: renders/final/final_vN.mp4 — offer the diff only
+    # when N-1 actually exists on disk.
+    cur = _re.search(r"final_v(\d+)", rel)
+    if cur:
+        n = int(cur.group(1))
+        prev = project.root / "renders" / "final" / f"final_v{n - 1}.mp4"
+        if n > 1 and prev.exists():
+            lines.append(f"和上一版比 diff: manju compare v{n - 1} v{n}")
+
+    # `package` and `export` sit behind the `final_export` ask_before gate and
+    # answer `waiting_user: … 确认后重试`. That is the gate doing its job, not a
+    # failure — so the line SAYS a confirmation is coming rather than either
+    # pretending it will just run, or teaching the owner to reflexively paste
+    # `--yes` past their own approval step.
+    try:
+        gated = "final_export" in (_load_config_or_fail(project).ask_before or [])
+    except Exception:
+        gated = True   # unreadable config: warn about the gate rather than promise it away
+    tail = "(会先要确认)" if gated else ""
+    lines.append(f"出封面/预告 manju package{tail} · "
+                 f"交给剪辑软件 manju export{tail} · 交付物状态 manju exports")
+    for ln in lines:
+        typer.secho("  " + ln, fg=typer.colors.BRIGHT_BLACK)
+
+
 @app.command(rich_help_panel=PANEL_GENERATE)
 def build(
     target: str = typer.Option(
@@ -1350,6 +1674,16 @@ def build(
             typer.echo(f"导出[{k}]: {v}")
         typer.secho("build ok" if result.ok else "build failed",
                     fg=typer.colors.GREEN if result.ok else typer.colors.RED)
+        # A VIDEO tool that finishes a film and never offers to let you look at
+        # it. Every other step of the funnel hands the owner a next move; the
+        # one moment there is an actual artifact, the output stopped at a path.
+        # Nothing new is built here — these are existing commands, surfaced at
+        # the moment they are wanted. Only routes that WILL work are printed:
+        # `compare` is offered solely when a previous version exists, because
+        # recommending a command that then refuses is the defect this session
+        # already fixed three times over.
+        if result.ok and result.render_path and not dry_run:
+            _echo_after_build(project, result.render_path)
     if not result.ok:
         raise typer.Exit(1)
 
@@ -1658,9 +1992,13 @@ def skills_list(ctx: typer.Context,
         typer.echo("技能库为空 — 在 skills/<id>/SKILL.md 添加技能")
         return
     typer.secho("技能库 / skills(project > user > bundled)", fg=typer.colors.CYAN)
+    # Width from the rows present: a hardcoded 22 was overflowed by
+    # `continue-from-accepted-take` (27), which shoved that row's description
+    # five columns right of every other one.
+    id_w = max(len(r.id) for r in rows)
     for r in rows:
         src = "" if r.source == "bundled" else f"  [{r.source}]"
-        typer.echo(f"  {r.id:<22} {r.when_to_use or r.description}{src}")
+        typer.echo(f"  {r.id:<{id_w}}  {r.when_to_use or r.description}{src}")
     typer.secho("  → manju skills show <id> 查看全文", fg=typer.colors.BRIGHT_BLACK)
 
 
@@ -1903,6 +2241,21 @@ def qc_main(ctx: typer.Context,
         raise typer.Exit(1)
 
 
+# One Chinese gloss per assurance state, taken from that state's own
+# documented reason in qc/assurance.py (STATES, precedence order). The token
+# stays on the line — an agent branches on it — and the gloss rides alongside.
+_ASSURANCE_ZH = {
+    "not_reviewable": "没选中 take 或媒体缺失,无从判读",
+    "no_explicit_expectations": "镜头没写 must_show/avoid,没有可判读的承诺",
+    "unreviewed": "还没有人判读过",
+    "legacy_reviewed": "只有旧版判读证据,不能当数",
+    "stale": "判读过,但镜头此后变了",
+    "rejected": "判读不通过",
+    "unknown": "判不出来(证据不足或编译失败)—— 绝不猜成通过",
+    "accepted": "判读通过",
+}
+
+
 def _echo_assurance_summary(assurance: Optional[list]) -> None:
     """Compact human summary for ``manju qc`` (DR02 WP4): counts per state, then
     a per-shot line for every rejected/unknown/stale shot with its first reason
@@ -1912,8 +2265,24 @@ def _echo_assurance_summary(assurance: Optional[list]) -> None:
     from collections import Counter
 
     counts = Counter(a.get("assurance_state") for a in assurance)
-    summary = ", ".join(f"{state} {n}" for state, n in sorted(counts.items()))
+    # The last line `manju qc` prints was a bare join of snake_case tokens —
+    # "验收 assurance: no_explicit_expectations 4" — in an otherwise Chinese
+    # CLI, with nothing saying what the token means or whether it needs action.
+    # Gloss each state from its own documented reason (qc/assurance.py STATES),
+    # keeping the token so an agent reading the same line still branches on it.
+    summary = ", ".join(
+        f"{state} {n}" + (f"({_ASSURANCE_ZH[state]})" if state in _ASSURANCE_ZH else "")
+        for state, n in sorted(counts.items()))
     typer.echo(f"验收 assurance: {summary}")
+    # `no_explicit_expectations` is the ordinary state of a shot nobody has
+    # written promises for — clean, not a defect. Say so, or a green QC run
+    # reads as if it still owed the owner something.
+    if set(counts) <= {"no_explicit_expectations", "accepted"}:
+        if counts.get("no_explicit_expectations"):
+            typer.secho(
+                "  这不是问题:这些镜头没写 quality.must_show / avoid,"
+                "所以没有可判读的承诺。要让 QC 替你盯住某件事,就给镜头写上。",
+                fg=typer.colors.BRIGHT_BLACK)
     for a in assurance:
         state = a.get("assurance_state")
         if state not in ("rejected", "unknown", "stale"):
@@ -2432,7 +2801,8 @@ def repair(
 @app.command(rich_help_panel=PANEL_QC)
 def frames(
     source: str = typer.Argument(..., help="project-relative media path "
-                                          "(e.g. media/gen/S001/take_01.mp4)"),
+                                          "(e.g. media/gen/S001/take_01.mp4), "
+                                          "或直接给镜头 id(S001/s1/1 → 该镜头选中的 take)"),
     at_ms: int = typer.Option(0, "--at", help="single-frame timestamp in ms"),
     strip: int = typer.Option(0, "--strip", help="N evenly-spaced scrub thumbnails"),
     width: Optional[int] = typer.Option(
@@ -2447,11 +2817,13 @@ def frames(
 
         manju frames media/gen/S001/take_01.mp4 --at 1500
         manju frames renders/final/final_v1.mp4 --strip 10 --width 160 --json
+        manju frames S001 --strip 4        # 镜头 id → 该镜头选中的 take
     """
     from .media.ffmpeg import MediaError
     from .media.frames import extract_frame, frame_strip
 
     project = _project()
+    source = _resolve_frame_source(project, source)
     try:
         if strip > 0:
             paths = frame_strip(project, source, count=strip,
@@ -2914,9 +3286,13 @@ def fcpxml_import_plan(
                f"({'verified' if plan['version_verified'] else 'UNVERIFIED'}) · "
                f"edit_rate {plan['edit_rate'] or '(unknown)'}")
     typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    # `needs_relink` counts distinct SOURCES, while everything else on this line
+    # counts clips — so a bare "needs_relink: 1" beside "windows: 12" read as
+    # "one clip needs relinking" while every one of the 12 rows below carried
+    # the ⚠. Name the unit.
     typer.echo(f"  windows: {len(plan['windows'])} · transitions: "
                f"{len(plan['transitions'])} · audio: {len(plan['audio_suggestions'])} · "
-               f"needs_relink: {len(plan['needs_relink'])}")
+               f"待重链来源 needs_relink: {len(plan['needs_relink'])} 个来源")
     for w in plan["windows"]:
         flag = "" if w["media_status"] == "inside_project" else "  ⚠needs_relink"
         typer.echo(f"    window {w['name']} @ {w['offset_frames']}f "
@@ -3009,10 +3385,11 @@ def edl_import_plan(
     typer.echo(f"  fcm {plan['frame_code_mode'] or '(none)'} · edit_rate "
                f"{plan['edit_rate']}{' (assumed)' if plan['rate_assumed'] else ''}")
     typer.echo(f"  target: {plan['target_project'] or '(hypothetical fresh project)'}")
+    # Same units mismatch as the fcpxml planner above: sources, not clips.
     typer.echo(f"  windows: {len(plan['windows'])} · transitions: "
                f"{len(plan['transitions'])} · audio: {len(plan['audio_events'])} · "
-               f"needs_relink: {len(plan['needs_relink'])} · unknown_rows: "
-               f"{plan['unknown_rows']}")
+               f"待重链来源 needs_relink: {len(plan['needs_relink'])} 个来源 · "
+               f"unknown_rows: {plan['unknown_rows']}")
     for w in plan["windows"]:
         typer.echo(f"    window {w['clip_name']} @ {w['rec_in_frames']}f "
                    f"+{w['duration_frames']}f (reel {w['reel']} {w['channel']})"
@@ -3258,17 +3635,29 @@ def exports(
         return
 
     typer.secho("导出中心 / exports", fg=typer.colors.CYAN)
+    # `:<18` pads by CODE POINTS, and a CJK label is one code point per two
+    # terminal columns — so this table's status column swung between column 27
+    # and 37, and the longest label (M_AND_E_BUS_EXCLUSION_MASTER) ran straight
+    # into its status with no gap. Measure in columns, like the other CLI
+    # tables already do (the one owner is presets.display_width/pad).
+    from .presets import display_width, pad
+
+    label_w = max([display_width(r["label"]) for r in data["deliverables"]]
+                  or [18]) + 2
+    state_w = max([display_width(r["freshness_zh"]) for r in data["deliverables"]]
+                  or [5]) + 2
     for row in data["deliverables"]:
         color = _FRESHNESS_COLOR.get(row["freshness"], typer.colors.WHITE)
         ver = f" {row['version']}" if row["version"] else ""
         verified = ""
         if row["freshness"] == "verified" and row["verified_by"]:
             verified = f"  [{row['verified_by']} @ {str(row['verified_at'] or '')[:19]}]"
-        typer.echo(
-            f"  {row['label']:<18}"
-            + typer.style(f"{row['freshness_zh']:<5}", fg=color)
-            + f"{ver}{verified}"
-        )
+        tail = f"{ver}{verified}"
+        line = (f"  {pad(row['label'], label_w)}"
+                + typer.style(pad(row["freshness_zh"], state_w) if tail
+                              else row["freshness_zh"], fg=color)
+                + tail)
+        typer.echo(line)
         typer.secho(f"      └ {row['basis']}", fg=typer.colors.BRIGHT_BLACK)
         if row["path"]:
             typer.secho(f"        {row['path']}", fg=typer.colors.BRIGHT_BLACK)
@@ -3300,8 +3689,18 @@ def exports(
     blockers = ra.get("blockers") or []
     base_status = (ra.get("baseline") or {}).get("status")
     verdict = "READY 可发布" if ready else "NOT READY 未就绪"
+    # A READY verdict printed directly under "missing:6" reads as a
+    # contradiction until you notice blockers=0. The verdict is only ever about
+    # BLOCKERS — an un-generated optional output (a teaser nobody enabled) is
+    # not one — so say which outputs it is deliberately not counting, rather
+    # than leaving the reader to reconcile two adjacent numbers.
+    unmade = sum(v for k, v in (data.get("counts") or {}).items()
+                 if k in ("missing", "stale"))
+    scope = ""
+    if ready and unmade:
+        scope = f",{unmade} 项未生成/待更新但均非阻塞"
     typer.secho(f"发布评估 / release:  {verdict}  "
-                f"(baseline={base_status}, blockers={len(blockers)})",
+                f"(baseline={base_status}, blockers={len(blockers)}{scope})",
                 fg=typer.colors.GREEN if ready else typer.colors.YELLOW)
     for b in blockers:
         typer.secho(f"    ✗ {b['code']}  [{b['scope']}]  {b['detail']}", fg=typer.colors.RED)
@@ -3476,6 +3875,24 @@ def roundtrip(
         # being flattened into the generic envelope with every other refusal.
         _fail(str(exc), code=getattr(exc, "reason", "error"))
         return
+    if apply and not plan.get("baseline"):
+        # Measured, not inferred. The SAME edited OTIO (one clip trimmed
+        # 72→36 frames) planned two completely different ways:
+        #   beside its baseline -> 1 row,  set_inout            (the real trim)
+        #   copied elsewhere    -> 3 rows, set_transition_override x3
+        # Without the baseline the trim diff has nothing to compare against, so
+        # the genuine edit VANISHES and three changes the editor never made
+        # appear instead. Applying that writes fiction into truth and silently
+        # drops the owner's actual cut — and a draft saved in the editor's own
+        # folder is the ordinary case, not an exotic one.
+        _fail(
+            "没有 baseline 边车,拒绝 --apply:少了对账基准,真实改动(如剪短某段)"
+            "会检测不到,同时可能凭空多出几行你没做过的改动 —— 实测同一份文件,"
+            "有边车时是 1 行 set_inout,没边车时变成 3 行 set_transition_override。"
+            "把载体放回 exports/<kind>/ 原目录(边车在同级 .baseline/),"
+            "或重新 manju export 后再在编辑器里改。不带 --apply 仍可查看计划。",
+            code="no_baseline")
+        return
     if apply:
         sel = None
         if rows:
@@ -3500,8 +3917,33 @@ def roundtrip(
     if as_json:
         _emit(plan, True)
     else:
-        typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
-                   f"truth_moved={plan.get('truth_moved')}")
+        # `truth_moved` is only MEANINGFUL when a baseline sidecar was found:
+        # it compares the baseline's compiled_from against the current
+        # timeline's. With no baseline it stays at its default False, and every
+        # row is state="ok" — byte-identical to "we checked and truth is
+        # stable". That is exactly backwards for the case roundtrip exists to
+        # serve: a draft coming BACK from an editor usually arrives without the
+        # sidecar, so the plan that most needs a caveat was the one that showed
+        # none. Say which of the two situations this is.
+        moved = plan.get("truth_moved")
+        if plan.get("baseline"):
+            typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
+                       f"truth_moved={moved}")
+        else:
+            typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
+                       f"truth_moved=未知 (unknown)")
+            # The first version of this warning said the rows were merely
+            # "未与导出点对账". Walking a real round-trip showed that
+            # understates it: without the baseline the trim diff has nothing to
+            # compare against, so real edits are MISSING from the list and
+            # spurious ones are IN it. Say that, because "unverified rows" and
+            # "the wrong rows" call for different reactions.
+            typer.secho(
+                "  ⚠ 没找到导出时的 baseline 边车 —— 这份计划不可靠:真实改动"
+                "(如剪短某段)可能整条缺失,同时可能多出你没做过的行。"
+                "把载体放回 exports/ 原目录(边车在同级 .baseline/)后重跑;"
+                "--apply 在这种情况下会被拒绝。",
+                fg=typer.colors.YELLOW)
         typer.echo(f"  {plan.get('carrier_note')}")
         for i, r in enumerate(plan.get("rows") or [], 1):
             typer.echo(
@@ -3634,6 +4076,28 @@ def pull_sheet(
                 f"pull-sheet plan: {s['create']} create · {s['update']} update · "
                 f"{s['unchanged']} unchanged (inspect — 加 --apply 才会写入)",
                 fg=typer.colors.BRIGHT_BLACK)
+            # The whole point of plan-then-apply is that a human REVIEWS the
+            # plan, and a bare "1 update" gives them nothing to review — you
+            # either apply blind or go diff the CSV by hand. The per-shot detail
+            # was already computed and already in --json; it just never reached
+            # the text surface. Only the rows that would CHANGE are listed;
+            # `unchanged` stays a count, since that is what it is.
+            for op in plan.get("operations") or []:
+                if op.get("op") == "unchanged":
+                    continue
+                sid = op.get("shot_id", "?")
+                fields = ", ".join(op.get("fields") or []) or "(无字段)"
+                verb = "新建" if op.get("op") == "create_shot" else "更新"
+                typer.echo(f"  {verb} {sid}  字段: {fields}")
+                for name, value in (op.get("values") or {}).items():
+                    rendered = value if isinstance(value, str) else json.dumps(
+                        value, ensure_ascii=False, sort_keys=True)
+                    typer.secho(f"      {name} → {rendered}",
+                                fg=typer.colors.BRIGHT_BLACK)
+                if op.get("locked_paths"):
+                    typer.secho(
+                        f"      ⚠ 锁定字段将被跳过: {', '.join(op['locked_paths'])}",
+                        fg=typer.colors.YELLOW)
         return
 
     result = apply_pull_sheet_import(project, plan, actor=ACTOR)
@@ -3673,6 +4137,12 @@ def impact(
 
     project = _project()
     shot_id = _resolve_shot_arg(project, shot_id)
+    # Join the ONE owner for "that shot does not exist" (`_require_shot`), the
+    # same guard select/redo/voice use. Without it this failed as
+    # `code="impact_error"` — a code shaped like the COMMAND, not the FACT, so
+    # an agent branching on `unknown_shot` (which is what it is) missed it, and
+    # the message lost the two remedies _require_shot spells out.
+    _require_shot(project, shot_id)
     try:
         report = impact_report(project, shot_id, field=field, new_value=value)
     except (ProjectError, ValueError, KeyError) as exc:
@@ -4257,8 +4727,18 @@ def masters(
                     fg=typer.colors.GREEN)
         for a in index["artifacts"]:
             loud = a["loudness"]
-            typer.echo(f"  {a['role']:16} {a['path']}  "
-                       f"I={loud['integrated_lufs']} LUFS  TP={loud['true_peak_dbtp']} dBTP")
+            # Never print a bare Python `None` at the owner. A silent bus (no
+            # music/sfx on this film — the ordinary case) and a measurement that
+            # never landed both produced `I=None LUFS`, which reads as breakage
+            # for something that is usually just an empty stem.
+            if loud.get("silent"):
+                level = "静音 (silent — 该总线无信号)"
+            elif loud.get("integrated_lufs") is None:
+                level = "未测得 (not measured — 见 manju doctor)"
+            else:
+                level = (f"I={loud['integrated_lufs']} LUFS  "
+                         f"TP={loud['true_peak_dbtp']} dBTP")
+            typer.echo(f"  {a['role']:16} {a['path']}  {level}")
         if index.get("loudnorm_master"):
             ln = index["loudnorm_master"]
             typer.echo(f"  normalised → {ln['path']} (target {ln['target_lufs']} LUFS)")
@@ -4999,7 +5479,9 @@ def _present_from_dir(root: Path) -> dict[str, tuple[str, int]]:
     """(bare-hex sha256, size) for every extracted file under ``root``, minus
     the manifest itself and the ``.manju`` runtime dir (created post-extract)."""
     present: dict[str, tuple[str, int]] = {}
-    for p in sorted(root.rglob("*")):
+    # POSIX-string order so the walk is identical on every platform
+    # (sorted(Path) folds case on Windows — see build/ingest.py).
+    for p in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
         if not p.is_file():
             continue
         rel = p.relative_to(root).as_posix()
@@ -6655,6 +7137,21 @@ def mentions(
         _emit(report, True)
         return
     typer.secho("@ 提及报告 / mentions  (--apply 写入镜头登记字段)", fg=typer.colors.CYAN)
+    hits = sum(len(e["resolved"]) + len(e["unresolved"]) for e in report["shots"])
+    if not hits and not report["story"]:
+        # A bare header over nothing reads as "broken", not as "clean": the
+        # user cannot tell whether the scan found no mentions or never ran.
+        # Say what was looked at, and what a mention looks like.
+        n = len(report["shots"])
+        scope = f"{n} 个镜头的自由文本" if shot_id is None else f"镜头 {shot_id} 的自由文本"
+        typer.secho(
+            f"  扫描了 {scope} 与 story/*.md,没有发现 @提及 —— 这不是错误。",
+            fg=typer.colors.BRIGHT_BLACK)
+        typer.secho(
+            "  写法:在镜头的 description/action/notes 里写 @林夏 或 @linxia"
+            "(bible 里的 id 或别名都行),再跑 manju mentions --apply "
+            "把它登记进 characters/scene 字段。", fg=typer.colors.BRIGHT_BLACK)
+        return
     for entry in report["shots"]:
         if not entry["resolved"] and not entry["unresolved"]:
             continue
@@ -7071,9 +7568,14 @@ def tasks(ctx: typer.Context,
         "failed": typer.colors.RED,
         "moderation-rejected": typer.colors.MAGENTA,
     }
+    # Right-align the id: an unpadded "#9" under "#12" shifted every column
+    # after it by one, so the shot/provider/status columns broke apart exactly
+    # at the ledger's 10th row — where a long run is most worth scanning.
+    id_w = max((len(str(t["id"])) for t in tasks_out), default=1)
     for t in tasks_out:
         cost = f"{t['cost']:g} {t['currency']}" if t["cost"] else "—"
-        head = (f"  #{t['id']}  {t['shot'] or '—':<6}  {t['provider'] or '—':<14}  ")
+        head = (f"  {'#' + str(t['id']):>{id_w + 1}}  {t['shot'] or '—':<6}  "
+                f"{t['provider'] or '—':<14}  ")
         typer.echo(head, nl=False)
         typer.secho(f"{t['status']:<20}", fg=_status_color.get(t["status"], typer.colors.WHITE), nl=False)
         typer.echo(f"  {cost}  {t['created'] or ''}"
@@ -7398,8 +7900,13 @@ def spend(as_json: bool = typer.Option(False, "--json")):
         typer.secho(f"  合计 / total  {parts}(混合币种,按币种分列/mixed currencies)",
                     fg=typer.colors.CYAN)
     else:
-        cur = report["currency"] or ""
-        typer.secho(f"  合计 / total  {report['total']:g} {cur}", fg=typer.colors.CYAN)
+        # An unlabeled currency printed as a bare trailing space ("total  0 ")
+        # reads as a truncated line. On a NONZERO total the missing unit is
+        # real information — mark it "?" like the mixed-currency branch and the
+        # tasks footer already do; on a zero total there is no unit to want.
+        cur = report["currency"] or ("?" if report["total"] else "")
+        typer.secho(f"  合计 / total  {report['total']:g}"
+                    + (f" {cur}" if cur else ""), fg=typer.colors.CYAN)
     if report["estimated_total"] is not None:
         delta = report["delta"] or 0.0
         sign = "+" if delta >= 0 else ""
@@ -7541,9 +8048,44 @@ def evaluate(as_json: bool = typer.Option(False, "--json")):
 # ------------------------------------------------------------------- misc
 
 
+_EVENT_DETAIL_KEYS = 4
+_EVENT_VALUE_WIDTH = 44
+# Structural bookkeeping — true, but never the answer to "who did what".
+_EVENT_NOISE_KEYS = ("schema", "semantic_digest", "ts")
+
+
+def _event_detail_brief(detail: dict) -> str:
+    """A scannable one-line digest of an event's detail.
+
+    `manju events` used to print ``json.dumps(detail)`` in full. On a project
+    with real evidence records (stage_attempt carries spec hashes, output
+    lists and a semantic digest) that is 700-900 columns per line, and the
+    command whose help says "who did what, when" became unreadable exactly
+    once the project had a history worth reading.
+
+    Nothing is lost: ``--json`` already emitted the complete records, and this
+    line SAYS when it elided something rather than trailing off."""
+    if not isinstance(detail, dict) or not detail:
+        return ""
+    keys = [k for k in detail if k not in _EVENT_NOISE_KEYS] or list(detail)
+    shown, parts = keys[:_EVENT_DETAIL_KEYS], []
+    for k in shown:
+        v = detail[k]
+        text = (v if isinstance(v, str)
+                else json.dumps(v, ensure_ascii=False, separators=(",", ":")))
+        if len(text) > _EVENT_VALUE_WIDTH:
+            text = text[:_EVENT_VALUE_WIDTH - 1] + "…"
+        parts.append(f"{k}={text}")
+    hidden = len(detail) - len(shown)
+    if hidden > 0:
+        parts.append(f"+{hidden} 项 → --json")
+    return ", ".join(parts)
+
+
 def _event_line(e: dict) -> str:
-    return (f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}  "
-            f"{json.dumps(e.get('detail', {}), ensure_ascii=False)}")
+    brief = _event_detail_brief(e.get("detail", {}))
+    return (f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}"
+            + (f"  {brief}" if brief else ""))
 
 
 @app.command(rich_help_panel=PANEL_COLLAB)
@@ -8029,7 +8571,8 @@ def _lib_entry_public(entry: dict) -> dict:
 @lib_app.command("add")
 def lib_add(
     files: list[Path],
-    tag: Optional[str] = typer.Option(None, "--tag", help="comma-separated tags"),
+    tag: Optional[list[str]] = typer.Option(
+        None, "--tag", help="tags — comma-separated, and/or repeat the flag"),
     note: Optional[str] = typer.Option(None, "--note", help="a free-text note"),
     as_json: bool = typer.Option(False, "--json"),
 ):
@@ -8038,7 +8581,18 @@ def lib_add(
     from .core.library import LibraryError, _hex
 
     lib = _lib()
-    tags = [t.strip() for t in (tag or "").split(",") if t.strip()]
+    # `--tag a --tag b` is the shape half the world's CLIs use, and typing it
+    # here used to keep only the LAST one and drop the rest in silence — the
+    # user's own labels, gone with no message. Repeating the flag now ACCUMULATES
+    # and each value may still be a comma-separated list, so both spellings (and
+    # any mix) mean what they look like. Order-preserving de-dup so `--tag a,b
+    # --tag b` does not store b twice.
+    tags: list[str] = []
+    for chunk in (tag or []):
+        for t in str(chunk).split(","):
+            t = t.strip()
+            if t and t not in tags:
+                tags.append(t)
     results: list[dict] = []
     for f in files:
         if not f.exists():
@@ -9636,7 +10190,23 @@ def segments_cmd(
     try:
         ev = _json.loads(report.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        _fail(f"bad report: {exc}", code="bad_report")
+        # This argument is an analysis REPORT, but it is a path and the sibling
+        # commands around it take media, so handing it an .mp4 is the obvious
+        # slip — and it used to answer with a raw decoder exception
+        # ("'utf-8' codec can't decode byte 0xde in position 42"), which names
+        # neither what went wrong nor what the argument wanted. Say both.
+        from .core.container import MEDIA_EXTS  # the ONE media-suffix owner
+
+        hint = ""
+        if report.suffix.lower() in MEDIA_EXTS:
+            hint = ("(这是媒体文件,不是分析报告 —— 本命令读的是 "
+                    "`manju analyze` 产出的 JSON 证据)")
+        elif isinstance(exc, UnicodeDecodeError):
+            hint = "(不是 UTF-8 文本 —— 期望 `manju analyze` 产出的 JSON 报告)"
+        elif isinstance(exc, _json.JSONDecodeError):
+            hint = "(不是合法 JSON —— 期望 `manju analyze` 产出的 JSON 报告)"
+        _fail(f"bad report: {report} {hint}".rstrip() + f" — {exc}",
+              code="bad_report")
         return
     segs = _seg.derive_segments(ev)
     if as_json:

@@ -165,9 +165,15 @@ def test_status_shape_is_json_serializable(tmp_project):
     reparsed = json.loads(json.dumps(status, ensure_ascii=False))
     assert [s["id"] for s in reparsed["stages"]] == list(funnel.STAGE_IDS)
     for s in reparsed["stages"]:
-        assert set(s) == {"id", "cn", "state", "artifact", "evidence",
-                          "skill", "next_action"}
+        # `satisfied` joined the shape deliberately: `state` is POSITIONAL, so a
+        # later stage whose own predicate already holds still reads "todo", and
+        # the renderer needs the predicate itself to stop printing ○ next to
+        # evidence saying 已落地. Kept as exact equality — the point of this pin
+        # is that the API/MCP shape never grows a field by ACCIDENT.
+        assert set(s) == {"id", "cn", "state", "satisfied", "artifact",
+                          "evidence", "skill", "next_action"}
         assert s["state"] in ("done", "current", "todo")
+        assert isinstance(s["satisfied"], bool)
     # exactly one current on a fresh project
     assert sum(1 for s in reparsed["stages"] if s["state"] == "current") == 1
 

@@ -74,9 +74,20 @@ __all__ = ["render_page", "render_css", "render_js"]
 _CSS = """
 /* manju gui — dark workbench stylesheet (served as /app.css). */
 :root {
-  --bg: #14161a; --panel: #1d2027; --panel2: #24272f; --line: #333844;
-  --fg: #e8eaed; --muted: #9aa0aa; --accent: #6ea8fe; --star: #ffcf5c;
-  --ok: #7ee2a8; --warn: #ffcf5c; --err: #ff8a90;
+  /* Palette (visual pass): the greys were flat and slightly muddy — panel and
+   * background sat ~0.03 apart in luminance, so every surface read as one wash
+   * with hairlines drawn on it. Deepened the base, lifted the panels, and gave
+   * the line colour a touch of the accent hue so borders belong to the theme
+   * instead of looking like leftover 1px grey. Same token NAMES throughout, so
+   * nothing that consumes them changes. */
+  --bg: #0f1115; --panel: #181b21; --panel2: #212530; --line: #2e3440;
+  --fg: #eceef2; --muted: #98a0ad; --accent: #74a9ff; --star: #ffcf5c;
+  --ok: #6fdca0; --warn: #ffc94d; --err: #ff8a90;
+  /* Elevation + radius scale — surfaces now read by depth, not only by border.
+   * Kept subtle: this is a dense workbench, not a marketing page. */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.28);
+  --shadow-2: 0 2px 8px rgba(0,0,0,.32), 0 1px 2px rgba(0,0,0,.24);
+  --radius: 12px; --radius-sm: 8px;
   /* the info/hover tint behind accent-coloured text (next-step bar, unread
    * chip, drag highlight …) — was hand-copied as #202b40 across modules. */
   --accent-bg: #202b40;
@@ -95,9 +106,17 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
     "WenQuanYi Micro Hei", sans-serif;
-  line-height: 1.5; padding-bottom: 4rem;
+  /* CJK sets denser than latin at the same leading; 1.65 keeps the mixed
+     中文/English lines this UI is full of from crowding. */
+  line-height: 1.65; padding-bottom: 4rem;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
 main { padding: 0 1.2rem 1.2rem; max-width: 1600px; margin: 0 auto; }
+/* One heading rhythm instead of browser defaults at every size. */
+h1, h2, h3, h4 { line-height: 1.3; letter-spacing: -.01em; }
+h2 { font-size: 1.12rem; margin: 0 0 .5rem; }
+h3 { font-size: .98rem; margin: 0 0 .4rem; }
+h4 { font-size: .86rem; margin: 0 0 .3rem; color: var(--muted); font-weight: 600; }
 a { color: var(--accent); }
 /* THE one owner of "hidden means hidden". Both the class and the attribute
  * lose to any later `display:` rule at equal specificity (the /create skill
@@ -129,8 +148,9 @@ h3 { margin: .2rem 0 .4rem; font-size: .92rem; }
 
 /* ------------------------------------------------------------- panels -- */
 .panel {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: .9rem 1.1rem; margin: 1rem 0;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-1);
+  padding: 1rem 1.15rem; margin: .9rem 0;
 }
 #header {
   margin: 0 0 1rem; border-radius: 0; border-width: 0 0 1px; padding: 1.1rem 1.4rem;
@@ -143,7 +163,8 @@ h3 { margin: .2rem 0 .4rem; font-size: .92rem; }
 .chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .chip {
   background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
-  padding: .1rem .6rem; font-size: .78rem; white-space: nowrap;
+  padding: .14rem .65rem; font-size: .78rem; white-space: nowrap;
+  line-height: 1.5;
 }
 .chip.lock { color: var(--warn); border-color: #4a3a12; }
 .chip.build-lock {
@@ -199,11 +220,23 @@ button.chip:hover { filter: brightness(1.15); }
 
 /* ------------------------------------------------------------ buttons -- */
 .btn {
-  background: var(--accent); color: #0b1220; border: 0; border-radius: 6px;
-  padding: .38rem .85rem; font-size: .84rem; font-weight: 700; cursor: pointer;
-  font-family: inherit;
+  background: var(--accent); color: #0b1220; border: 0;
+  border-radius: var(--radius-sm);
+  padding: .42rem .9rem; font-size: .84rem; font-weight: 700; cursor: pointer;
+  font-family: inherit; box-shadow: var(--shadow-1);
 }
-.btn.ghost { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+.btn.ghost {
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  box-shadow: none;
+}
+.btn.ghost:hover:not(:disabled) { border-color: var(--accent); }
+/* A visible keyboard ring everywhere — the workbench is driven by shortcuts
+   (review j/k/g/x, edit space/I/O), so tabbing must never go dark. */
+.btn:focus-visible, button:focus-visible, a:focus-visible,
+select:focus-visible, input:focus-visible, textarea:focus-visible,
+summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+}
 .btn.small { width: 100%; margin-top: .45rem; padding: .28rem .6rem; font-size: .76rem; }
 .btn.mini { padding: .06rem .5rem; font-size: .76rem; font-weight: 700; line-height: 1.3; }
 .btn:hover:not(:disabled) { filter: brightness(1.12); }
@@ -276,9 +309,14 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
 
 /* ------------------------------------------------- badges (board §11) -- */
 .badge {
-  display: inline-block; font-size: .72rem; font-weight: 700; padding: .12rem .5rem;
-  border-radius: 999px; text-transform: uppercase; letter-spacing: .03em;
-  white-space: nowrap;
+  /* Was uppercase + 700 across the board, which shouts on a page that already
+   * carries dozens of them (a 12-shot film renders 30+). Uppercase also does
+   * nothing for the CJK half of every label while making the latin half louder
+   * than the content it annotates. Slightly smaller, medium weight, no
+   * transform: still scannable, no longer competing with the text. */
+  display: inline-block; font-size: .7rem; font-weight: 600; padding: .14rem .5rem;
+  border-radius: 999px; letter-spacing: .01em; white-space: nowrap;
+  line-height: 1.45;
 }
 .st-fresh  { background: #17402a; color: #7ee2a8; }
 .st-stale  { background: #4a3a12; color: #ffcf5c; }
@@ -323,7 +361,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
 .tl-clip {
   flex: 0 0 auto; min-width: 26px; padding: .28rem .25rem; font-size: .7rem;
   font-weight: 700; text-align: center; overflow: hidden; white-space: nowrap;
-  text-overflow: ellipsis; cursor: pointer; border-right: 1px solid #14161a;
+  text-overflow: ellipsis; cursor: pointer; border-right: 1px solid var(--bg);
 }
 .tl-clip:last-child { border-right: 0; }
 .tl-clip:hover { filter: brightness(1.25); }
@@ -723,7 +761,7 @@ button.fchip { cursor: pointer; }
 .fail-body { padding: 0 .65rem .6rem 1.65rem; }
 .fail-ev {
   font-family: var(--mono); font-size: .76rem; white-space: pre-wrap;
-  background: #14161a; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
   padding: .45rem .6rem; margin: .35rem 0; max-height: 15rem; overflow: auto;
   word-break: break-word;
 }
@@ -798,6 +836,23 @@ button.fchip { cursor: pointer; }
   justify-content: space-between;
 }
 .ck-state { min-width: 12rem; flex: 1; }
+/* Cockpit skeleton: shape-of-the-content placeholder while /api/cockpit lands
+   (it is the page's heaviest panel). Reduced-motion users get the bars without
+   the shimmer — the layout alone already says "content is coming". */
+.ck-skel { padding: .2rem 0 .4rem; }
+.ck-skel-line {
+  height: .85rem; margin: .45rem 0; border-radius: 5px; max-width: 22rem;
+  background: linear-gradient(90deg, var(--panel2) 25%, var(--line) 37%, var(--panel2) 63%);
+  background-size: 400% 100%; animation: ck-shimmer 1.4s ease-in-out infinite;
+}
+.ck-skel-line.wide { max-width: 34rem; height: 1.3rem; }
+@keyframes ck-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .ck-skel-line { animation: none; } }
+/* Consistency criteria legend (stated once for the whole section). */
+.cs-legend { margin-bottom: .6rem; }
+.cs-legend ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+.cs-legend li { margin: .25rem 0; line-height: 1.5; }
+.cs-crit-hint { opacity: .7; }
 .ck-phase {
   display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .04em;
   color: var(--accent); text-transform: uppercase; margin-bottom: .15rem;
@@ -848,10 +903,23 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: .8rem; margin-top: .9rem;
+  /* Blocks size to their CONTENT instead of stretching to the tallest sibling.
+     交付物 legitimately runs 14 rows while 花费/队列/审批 are a line or two
+     each, and equal-height columns turned that into three ~400px voids beside
+     one full one — the single thing that made this panel look unfinished. */
+  align-items: start;
 }
-.ck-block { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: .55rem .75rem; }
+.ck-block {
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: .65rem .8rem;
+}
 .ck-block h3 { margin: 0 0 .35rem; font-size: .8rem; color: var(--muted); font-weight: 600; }
 .ck-block.wide { grid-column: 1 / -1; }
+/* 交付物 carries an order of magnitude more rows than its neighbours (14 vs
+   one line each). In a single 240px column its chips stacked into a tall thin
+   ladder with dead space alongside; two columns lets them flow. Falls back to
+   one column on narrow viewports via the media query below. */
+.ck-block.span2 { grid-column: span 2; }
 .ck-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .ck-dv { display: inline-flex; align-items: baseline; gap: .3rem; font-size: .76rem;
   padding: .08rem .5rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
@@ -863,6 +931,18 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-mini-fill.over { background: var(--err); }
 .ck-ev { display: flex; align-items: baseline; gap: .45rem; font-size: .8rem; padding: .12rem 0; }
 .ck-ev .etime { font-size: .72rem; }
+/* An event row is a flex line in a NARROW cockpit column. Every child shrinks
+   by default and a flex item's min-width is auto, so a long action name
+   ("mentions_apply") squeezed .edetail towards zero — and .edetail carries
+   word-break:break-all, which then broke the text ONE CHARACTER PER LINE,
+   stretching a single row to a dozen lines tall. Pin the fixed parts, let the
+   detail be the one elastic cell, and give it a min-width of 0 so it may
+   actually shrink into an ellipsis instead of exploding vertically. */
+.ck-ev .badge, .ck-ev .eaction, .ck-ev .etime { flex: 0 0 auto; }
+.ck-ev .edetail {
+  flex: 1 1 auto; min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; word-break: normal;
+}
 .ck-sugg { display: flex; align-items: baseline; gap: .4rem; font-size: .82rem; padding: .12rem 0; }
 .ck-err { color: var(--muted); font-size: .8rem; font-style: italic; }
 .ck-empty { color: var(--muted); font-size: .82rem; }
@@ -888,6 +968,9 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 
 @media (max-width: 900px) {
   .cockpit { padding: .9rem .9rem; }
+  /* one column at this width — a 2-column span would force a horizontal
+     scroll, which the 420px pass explicitly guarantees against. */
+  .ck-block.span2 { grid-column: span 1; }
   .ck-cta { align-items: stretch; width: 100%; }
   .btn.ck-primary { max-width: none; }
 }
@@ -1578,7 +1661,19 @@ _JS = r"""
       root.appendChild(el("p", "ck-err", "驾驶舱不可用 (cockpit unavailable): " + cockErr));
       return;
     }
-    if (!c) { root.appendChild(el("p", "loading", "加载中 (loading)…")); return; }
+    if (!c) {
+      /* The cockpit is the heaviest panel on the page (~3s on a real project),
+       * and a single grey "加载中" line at the very top read as "this thing is
+       * stuck" while everything below it had already painted. A skeleton in the
+       * SHAPE of what is coming says "working" without pretending to have
+       * content. Pure presentation — no data, replaced wholesale on arrival. */
+      const sk = el("div", "ck-skel");
+      sk.appendChild(el("div", "ck-skel-line wide"));
+      for (let i = 0; i < 3; i++) sk.appendChild(el("div", "ck-skel-line"));
+      sk.appendChild(el("p", "muted", "驾驶舱加载中 (loading cockpit)…"));
+      root.appendChild(sk);
+      return;
+    }
 
     const state = c.state || {};
     const na = c.next_action || {};
@@ -1819,7 +1914,7 @@ _JS = r"""
         chips.appendChild(chip);
       });
       b.appendChild(chips);
-    }));
+    }, "span2"));
 
     /* spend (block 5) */
     grid.appendChild(ckBlock("花费 (spend)", (b) => {
@@ -1879,11 +1974,16 @@ _JS = r"""
         const row = el("div", "ck-ev");
         row.appendChild(el("span", "badge ac-" + (e.actor || "engine"), e.actor || "?"));
         row.appendChild(el("span", "eaction", e.action || ""));
-        if (e.summary) row.appendChild(el("span", "edetail", e.summary));
+        if (e.summary) {
+          const d = el("span", "edetail", e.summary);
+          /* The cell ellipsises, so the full text has to stay reachable. */
+          d.title = e.summary;
+          row.appendChild(d);
+        }
         if (e.ts) row.appendChild(el("span", "etime muted", fmtClock(e.ts)));
         b.appendChild(row);
       });
-    }));
+    }, "span2"));
 
     /* suggestions (block 8, the rest of suggest_next) */
     const sg = c.suggestions;
@@ -1943,10 +2043,17 @@ _JS = r"""
     } else {
       skSub.appendChild(el("p", "ck-empty", "暂无技能调用记录 (no skill usage yet)"));
     }
+    /* The never-used list is a catalogue, not news: 18 skill ids spelled out
+     * in full took over the bottom of the cockpit every single visit, pushing
+     * the things that DO change off the screen. Collapsed behind its own count
+     * — one line when you don't care, the whole list when you do. */
     const neverUsed = skills.never_used || [];
     if (neverUsed.length) {
-      skSub.appendChild(el("div", "ck-line muted",
-        "从未使用 (never used): " + neverUsed.join("、")));
+      const det = el("details", "ck-line muted");
+      det.appendChild(el("summary", null,
+        "从未使用的技能 " + neverUsed.length + " 个 (never used — 展开查看)"));
+      det.appendChild(el("div", null, neverUsed.join("、")));
+      skSub.appendChild(det);
     }
     b.appendChild(skSub);
 
@@ -2010,8 +2117,8 @@ _JS = r"""
     return b;
   }
 
-  function ckBlock(title, fill) {
-    const b = el("div", "ck-block");
+  function ckBlock(title, fill, cls) {
+    const b = el("div", "ck-block" + (cls ? " " + cls : ""));
     b.appendChild(el("h3", null, title));
     try { fill(b); } catch (err) { b.appendChild(el("p", "ck-err", errMsg(err))); }
     return b;
@@ -4279,6 +4386,24 @@ _JS = r"""
 
   const shotUrl = (id) => "/api/shot/" + encodeURIComponent(id);
 
+  /* The next unused S### id, matching the S001/S002 convention the engine and
+     every doc use. Only ids of that exact shape count toward the maximum: a
+     hand-named shot ("intro") must not push the suggestion somewhere odd. */
+  function nextFreeShotId() {
+    const nums = (lastShots || [])
+      .map((s) => /^S(\d{3,})$/.exec(String(s && s.id || "")))
+      .filter(Boolean)
+      .map((m) => parseInt(m[1], 10));
+    const taken = new Set((lastShots || []).map((s) => String(s && s.id || "")));
+    let n = nums.length ? Math.max.apply(null, nums) + 1 : 1;
+    let id = "S" + String(n).padStart(3, "0");
+    while (taken.has(id) && n < 100000) {
+      n += 1;
+      id = "S" + String(n).padStart(3, "0");
+    }
+    return id;
+  }
+
   async function newShotTemplate(id) {
     /* scene defaults to the first scene id seen in existing shots: the shots
      * cards do not carry `scene`, so peek at the first shot's raw YAML */
@@ -4526,7 +4651,14 @@ _JS = r"""
 
     const renderValid = () => {
       clear(strip);
-      strip.appendChild(el("span", "ed-valid-ok", "✓ 校验通过 (valid)"));
+      /* The comment above is explicit that this endpoint does NO cross-
+         reference or lock verification — but the label claimed an unqualified
+         "校验通过", so a shot naming a scene that is not in the bible showed a
+         green ✓ and then failed on Save with "check failed — 已回滚". The
+         refusal is right and its errors are precise; the surprise came from
+         being told "valid" first. Say WHICH check passed. */
+      strip.appendChild(el("span", "ed-valid-ok",
+        "✓ 格式校验通过 (format valid) —— 引用/锁由保存时的 check 把关"));
     };
     const renderInvalid = (errors) => {
       clear(strip);
@@ -4836,7 +4968,14 @@ _JS = r"""
     const input = document.createElement("input");
     input.type = "text";
     input.className = "ns-input";
-    input.placeholder = "S007";
+    /* The placeholder used to be the literal string "S007" on every project.
+       On anything with seven or more shots that names an EXISTING one, so a
+       user who clicked 新建镜头 and typed the id it suggested landed in
+       "S007 已存在,进入编辑" — they asked to create and got the editor for a
+       shot they already had. On an empty project it suggested S007 when the
+       obvious first id is S001. Derive the next free id from the shots the
+       page already holds; fall back to the old literal if none are loaded. */
+    input.placeholder = nextFreeShotId();
     input.maxLength = 64;
     input.pattern = "[A-Za-z0-9_-]{1,64}";
     const go = el("button", "btn", "创建 (Create)");
@@ -4886,7 +5025,14 @@ _JS = r"""
     });
     newBtn.addEventListener("click", () => {
       form.classList.toggle("hidden");
-      if (!form.classList.contains("hidden")) input.focus();
+      if (!form.classList.contains("hidden")) {
+        /* Recomputed on OPEN, not at construction: this bar is built before
+           the first state arrives, so `lastShots` is still empty then and a
+           twelve-shot project was suggesting S001. Opening the form is also
+           the only moment the suggestion has to be right. */
+        input.placeholder = nextFreeShotId();
+        input.focus();
+      }
     });
     form.appendChild(input);
     form.appendChild(go);
@@ -5884,7 +6030,20 @@ _JS = r"""
     root.appendChild(head);
     const shotIds = {};
     lastShots.forEach((s) => { shotIds[s.id] = true; });
-    list.forEach((f) => root.appendChild(failCard(f, shotIds)));
+    /* Retry the same failing action three times and you used to get three
+     * byte-identical rows, which buries the OTHER failures under a repeat of
+     * the one you already know about. Fold consecutive identical (step,
+     * subject, cause) entries into the newest one and mark the count — the
+     * expanded body still shows that newest occurrence's own evidence and
+     * timestamp, so nothing is invented and nothing is hidden. */
+    const folded = [];
+    list.forEach((f) => {
+      const key = [f.step, f.subject, f.cause, f.level].join("|");
+      const prev = folded.length ? folded[folded.length - 1] : null;
+      if (prev && prev.__key === key) { prev.__n += 1; return; }
+      folded.push(Object.assign({}, f, { __key: key, __n: 1 }));
+    });
+    folded.forEach((f) => root.appendChild(failCard(f, shotIds)));
   }
 
   function failCard(f, shotIds) {
@@ -5898,6 +6057,7 @@ _JS = r"""
     sum.appendChild(el("span", "fail-step", f.step || "?"));
     sum.appendChild(el("span", "fail-subj", f.subject || ""));
     sum.appendChild(el("span", "fail-cause", f.cause || ""));
+    if (f.__n > 1) sum.appendChild(el("span", "badge fail-n", "×" + f.__n));
     const bodyBox = el("div", "fail-body" + (open0 ? "" : " hidden"));
     const fillBody = () => {
       clear(bodyBox);

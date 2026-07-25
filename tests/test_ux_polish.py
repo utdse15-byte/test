@@ -784,8 +784,14 @@ def test_next_action_ladder_missing_select_ok(tmp_project, add_shot, make_take):
     # state parameter is a plain string by design — every surface passes its
     # own already-computed value; drive the rung directly)
     del current_spec  # the sidecar-vs-computed comparison form is generation's
+    # NOTE: the NEWEST take, not t1. This shot has two, and selecting the older
+    # one leaves the newer one undecided — which is no longer "nothing
+    # pending": the `newtake` rung reports it (an ingested take used to land in
+    # total silence). Selecting take_02 is what this assertion always meant.
+    newest = sorted(t.name for t in tmp_project.takes("S001"))[-1]
+    assert newest != t1.name
     act = shot_next_action(tmp_project, "S001", state="fresh",
-                           selected_take=t1.name)
+                           selected_take=newest)
     assert act["key"] == "ok"
     assert "无需动作" in act["action"]
 

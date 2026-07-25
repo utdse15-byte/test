@@ -97,6 +97,19 @@ _LEVELS = [
 def _render_md(qc: QCReport, generated_at: str,
                assurance: list[dict] | None = None) -> str:
     status = "✅ ok" if qc.ok else "❌ has errors"
+    if qc.ok:
+        # A bare green ✅ on a film where every shot declared nothing to check
+        # overstates what was actually established: the machine tier passed, but
+        # it had no promises to test against. That is the difference between
+        # "verified good" and "nothing to verify" — the §UNKNOWN discipline, in
+        # the one line a hurried owner reads. `assurance_state` already carries
+        # it per shot; surface the count instead of leaving it to the section
+        # further down. `qc.ok` itself is untouched: this is not a new verdict.
+        unpromised = sum(1 for a in (assurance or [])
+                         if a.get("assurance_state") == "no_explicit_expectations")
+        if unpromised:
+            status += (f"(机检通过;其中 {unpromised} 镜未声明任何预期,"
+                       "无从判定好坏 —— 见下方「验收」)")
     lines: list[str] = [
         "# QC Report / 质检报告",
         "",

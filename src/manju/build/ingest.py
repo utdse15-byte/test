@@ -313,12 +313,43 @@ def plan_ingest(
             ))
             continue
         if h in existing_index:
-            rows.append(IngestRow(
-                file=str(f), name=f.name, hash=h, action="skip_duplicate",
-                target=existing_index[h],
-                reason=f"内容已存在于 {existing_index[h]},跳过(素材只增不改,§3)",
-                match="matched",  # exact by content hash (round AA, #1)
-            ))
+            where = existing_index[h]
+            # "already in the project" and "already IS a take" are different
+            # facts, and only the second one makes this a no-op.
+            #
+            # A file whose bytes sit in media/imports/ is RAW MATERIAL. Asking
+            # for it to become S003's take is a new and legitimate act: takes
+            # are append-only and live in media/gen/, so nothing is overwritten
+            # and imports keeps its copy. Skipping it anyway made `manju import`
+            # a ONE-WAY DOOR — import your footage first (which `import`'s own
+            # help invites: "Real footage/audio → media/imports"), and it could
+            # never afterwards be routed to a shot. Not via `--shot`, not via
+            # `--on-duplicate import`, not by handing ingest an identically
+            # named copy from outside: every route hit this branch. There was no
+            # escape hatch at all, and no message pointing at one, because none
+            # existed.
+            #
+            # So the skip now applies to what it was actually defending: don't
+            # mint a SECOND raw copy of bytes already filed here. If the row
+            # classifies as a real role (take/voice/ref), let it through — and
+            # source it from the copy already in the project rather than the
+            # dropped path, which is byte-identical and keeps provenance honest
+            # when the two are the same file.
+            intended = _classify(f, h, role=role, shot=shot, shot_ids=shot_ids,
+                                 bible_owner=bible_owner)
+            in_imports = where.startswith(project.relpath(project.imports_dir))
+            if intended.action in ("import", "skip_unreadable") or not in_imports:
+                rows.append(IngestRow(
+                    file=str(f), name=f.name, hash=h, action="skip_duplicate",
+                    target=where,
+                    reason=f"内容已存在于 {where},跳过(素材只增不改,§3)",
+                    match="matched",  # exact by content hash (round AA, #1)
+                ))
+                continue
+            seen_in_batch[h] = f.name
+            rows.append(replace(
+                intended, file=str(project.root / where),
+                reason=intended.reason + f"(素材已在 {where},登记为 take 不再复制一份原始素材)"))
             continue
         if h in seen_in_batch:
             rows.append(IngestRow(

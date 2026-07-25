@@ -24,7 +24,8 @@ PROJECT_ACTION_CSS = r"""
   padding: 1.5rem;
 }
 .mj-pa-dlg {
-  background: #1d2027; color: #e8eaed; border: 1px solid #3a3f4b;
+  background: var(--panel, #181b21); color: var(--fg, #eceef2);
+  border: 1px solid var(--line, #2e3440);
   border-radius: 10px; max-width: 32rem; width: 100%;
   padding: 1.25rem 1.4rem; box-shadow: 0 12px 40px rgba(0,0,0,.45);
   font: 14px/1.45 system-ui, sans-serif;
@@ -37,7 +38,8 @@ PROJECT_ACTION_CSS = r"""
 }
 .mj-pa-note { color: #c4c7ce; font-size: .9rem; margin: 0 0 1rem; }
 .mj-pa-cmd {
-  background: #14161a; border: 1px solid #3a3f4b; border-radius: 6px;
+  background: var(--bg, #0f1115); border: 1px solid var(--line, #2e3440);
+  border-radius: 6px;
   padding: .5rem .65rem; font: 12px/1.4 ui-monospace, Consolas, monospace;
   color: #b8d4ff; word-break: break-all; margin: 0 0 1rem;
   user-select: all;

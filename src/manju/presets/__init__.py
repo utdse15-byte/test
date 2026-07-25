@@ -234,7 +234,13 @@ def apply_preset(project, spec: PresetSpec) -> None:
 
     # 4. scaffold seeds — additive/replacing the default story scaffolds. `new`
     #    just created the project, so there's nothing of the human's to clobber.
+    from ..core.yamlio import atomic_write_text
+
     for relpath, seed in spec.scaffold.items():
         dest = project.resolve(relpath)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(seed, encoding="utf-8")
+        # atomic_write_text, not Path.write_text: the latter uses newline=None,
+        # which on WINDOWS turns every "\n" into CRLF — so the same preset would
+        # seed different bytes (and different content hashes) there than
+        # anywhere else. A scaffold has to be byte-identical across platforms.
+        atomic_write_text(dest, seed)

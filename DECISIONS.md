@@ -2854,3 +2854,354 @@ network egress.
    `test_closeout_c2`'s `.png` fixtures, which had always contained
    placeholder text; the fixture was fixed, not the guard. Verified clean at
    the audit baseline before changing either.
+
+## UX-REAL-USE (2026-07-25)
+
+A follow-up to AUDIT-LEDGER-WAVE that found nothing by reading code. The tool
+was USED instead: two projects driven end to end on the CLI, every GUI page
+clicked through in real Chromium (Playwright), real footage imported, a build
+SIGKILLed mid-flight, quit pressed with a job running, a project packed and
+restored. Eleven fixes, all with tests. Report:
+REPORTS/UX_REAL_USE_2026-07-25.md.
+
+Not one is a correctness defect — the engine did the right thing every time.
+They are the places that made the owner do avoidable work, could not be
+understood at a glance, or dropped something quietly.
+
+### Decisions
+
+1. **"Already in the project" is not "already IS a take"** — the ingest dedup
+   conflated them, which made `manju import` a ONE-WAY DOOR for footage: import
+   a clip (as `import`'s own help invites) and it could never afterwards be
+   routed to a shot. Verified there was no escape hatch — not `--shot`, not
+   `--on-duplicate import`, not an identically-named copy from outside — and no
+   message pointed at one because none existed. A row that classifies as a real
+   role now proceeds, sourced from the copy already in the project; a plain
+   duplicate import still skips, so the dedup keeps defending what it was
+   written for.
+
+2. **Material that arrives silently gets a surface** — an ingested take for an
+   already-selected shot never auto-selects (correct), but then `build` said
+   "final up-to-date", the film did not change, and `status`/`explain` went on
+   naming the old take. The new `newtake` rung sits AHEAD of the voice rung (a
+   missing voice already has many surfaces; an undecided take had none) and
+   BEHIND `stale` (a take minted under the old spec is stale too, so "select
+   the newer one" would be bad advice — that ordering was wrong in the first
+   attempt and an existing test caught it).
+
+3. **Never recommend a command that cannot succeed** — a locale with
+   translations but no voice is refused by design, yet status and the GUI's most
+   prominent slot both told you to run exactly that build. The next step now
+   names what actually unblocks, and says something different depending on
+   whether a TTS provider exists.
+
+4. **A support bundle must keep its own evidence** — the secret-key rule is a
+   substring match on field names, so `content_key`/`final_key` were redacted:
+   6 of 6 redactions on a real bundle were content keys, the one fact that
+   answers "why did this re-render". Fixed with an EXACT-name allowlist, never
+   a looser pattern, so it cannot widen by accident.
+
+5. **Say it once, and never contradict the line next to it** — the review page
+   repeated the same 200-character criteria paragraph on every card (12 → 0
+   visible repeats, now one legend); the cockpit headline said 完成 while the
+   banner beneath said 构建进行中 (both now read the same `build_lock`);
+   `manju status` printed a bare 完成 ✅ above a dozen 待办; identical failures
+   stacked as N identical rows (now folded with ×N); `I=None LUFS` could not be
+   told apart from a failed measurement (now 静音 vs 未测得).
+
+6. **Recorded process errors, not just product ones** — a NUL byte written into
+   page.py by a scripted edit broke every GUI test; a claim of "verified" was
+   made before the suite finished and the suite then caught a real regression;
+   piping runs through `tail -16` discarded the failure list and forced a
+   module-by-module bisect. The report keeps these because the next session will
+   otherwise repeat them.
+
+7. **Round 2, same method** — nine more, all presentation, none a correctness
+   defect. `manju roundtrip` printed `truth_moved=False` when there WAS no
+   baseline sidecar to compare against, making "checked, truth is stable"
+   indistinguishable from "there was nothing to check" — and the draft coming
+   back from an editor is precisely the case that arrives without the sidecar.
+   The header now says 未知 (unknown); row data and the `state` vocabulary are
+   untouched because agents branch on them.
+
+8. **The name a user SEES must be a handle they can type** — `build_lookup`
+   indexed `id` and `aliases` but not the display `name`, though `manju
+   appearances`, the bible files and the GUI chips all show exactly that. So
+   `@周叔` resolved to nothing, and with an ASCII-only `all_names` difflib could
+   not even offer a nearest match against a CJK token: a dead end with no
+   signpost. Names are now indexed at id > name > alias; a second handle on the
+   SAME asset can never manufacture a collision with itself.
+
+9. **Four misaligned tables, one root cause** — `f"{s:<18}"` pads by CODE
+   POINTS and a CJK glyph is one code point per two terminal columns. The
+   export centre's status column swung between column 27 and 37 and its longest
+   label printed glued to its status; `manju tasks` printed a bare `#{id}` and
+   broke every column to its right the moment the ledger passed ten rows. The
+   CJK-aware padder already had ONE owner (`presets.display_width`/`pad`) used
+   by four other CLI tables — these joined it rather than forking a fifth. Two
+   more (`manju spend`'s dangling currency space, `manju skills`' hardcoded 22
+   against a 27-character id) came from the same sweep; every remaining `:<N}`
+   in cli.py pads an ASCII enum or id, where code points do equal columns.
+
+10. **A next step that is not a command is not a next step** — the empty-project
+    rung (the FIRST line a new project prints) named a directory, and the
+    broken-shot rung named a task, while the per-shot 待办 directly beneath it
+    already knew the two remedies. Both now name commands; `next_step_key` is
+    unchanged.
+
+11. **Readable exactly when there is something to read** — `manju events`
+    printed `json.dumps(detail)`, so real evidence records (`stage_attempt`
+    carries spec hashes, an output list and a semantic digest) rendered at
+    700-900 columns. The human view now digests, SAYS how many fields it elided
+    and where the full record lives; `--json` was already complete and is
+    untouched. In the GUI, a cockpit activity row collapsed into a
+    one-character-per-line vertical ladder — a flex child with `min-width:auto`
+    squeezed to zero against `word-break:break-all`. All three conditions are
+    pinned, because removing any one alone still breaks it.
+
+12. **A red-first test caught the fix, not just the bug** — the "no trailing
+    whitespace" assertion in the export-table test failed against my own first
+    attempt, which padded the status column and left ragged spaces at end of
+    line. Two other failures that round were bugs in the TESTS (a label
+    measured with `split()[0]` when labels contain spaces; a CSS-rule lookup
+    that did not strip comments, and the new comment contained commas). Kept
+    here for the same reason as #6: the value of red-first is that it sometimes
+    goes red on you.
+
+13. **`color.tag_outputs` shipped half-tagged masters on ffmpeg >= 7.1** — the
+    option stamped bt709/tv through the `-color_primaries`/`-color_trc`
+    output options. Measured on one encode across three builds: 7.0.2 writes
+    all four axes; 7.1 and master write only colorspace+range. So an owner who
+    opted in got a master silently missing two of the four tags — the exact
+    defect the option exists to prevent, and a routine delivery-rejection
+    cause. CI could not see it: the hard gate pins ffmpeg 6.1.1. The tags now
+    also ride a `setparams` filter node (honoured by every build tested;
+    present since ffmpeg 4.3, so 6.1.1 has it), and the output options stay so
+    neither ffmpeg generation depends on the other. The node is folded into the
+    content key ONLY when tags are on: a project that never opted in keeps a
+    byte-identical key, and a project that DID re-keys once — without that, its
+    old half-tagged final would keep matching its sidecar and never re-render.
+
+14. **"The environment cannot verify this" was treated as a TODO, not a
+    verdict** — two rounds of this report called the 7 failures + 15 errors
+    environmental (the sandbox ffmpeg lacks `drawtext`) and left them. That
+    reasoning was sound and the conclusion was still unearned: unverified is
+    unverified. Fetching a drawtext-capable build turned all 22 green — and
+    turned up #13, which had been hiding behind them. The suite is now verified
+    end to end on real ffmpeg: 5530 passed / 0 failed / 0 errors on 7.1, and on
+    7.0.2 only the drawtext-absent set fails, each already proven green on 7.1.
+    `windows-ci.yml` remains the one genuinely unreachable gate.
+
+15. **The Windows gate is a list of steps, not one indivisible block** — the
+    previous round called `windows-ci.yml` simply unverifiable and stopped.
+    Splitting it by step showed most of it runs anywhere, and two real gaps
+    fell out. (a) The gate installs `[dev,jianying,capcut,mcpvideo,edgetts]`
+    while every local run had used `[dev]` alone — all four extras were absent,
+    so every suite run had taken the extra-missing branch. Installing them
+    dropped skips 18 -> 11: seven tests had never actually executed. They pass.
+    (b) Installing PowerShell 7.4.6 on Linux let the gate's own anti-rot assert
+    be EXECUTED: `$v -notmatch "ffmpeg version 6\.1"` is a prefix match, so an
+    "ffmpeg version 6.10" build satisfies a guard whose only job — and whose
+    own error message — is to reject anything that is not 6.1.x. Anchored, and
+    pinned by a test carrying the ten cases run through real PowerShell. The
+    three install scripts and all four inline `run:` blocks parse clean under
+    pwsh. What genuinely remains Windows-only is now a short, specific list
+    (msvcrt behaviour, CreateProcess quoting, NTFS case folding, and the
+    install-smoke job's runtime effects) instead of the whole file.
+
+16. **One unreproduced flake, recorded and NOT "fixed"** —
+    `test_applied_xfade_boundary_cache_reused_and_type_change_rerenders_only_boundary`
+    failed once in a full parallel run and then passed three solo runs, one
+    parallel module run and two more full runs. It compares `st_mtime_ns`
+    after real ffmpeg renders under load. Without a reproduction, editing a
+    currently-passing test would be exactly the speculative change this repo
+    forbids — so it is written down for the next session instead.
+
+17. **Two of the four "Windows-only" invariants were not** — the previous round
+    listed msvcrt behaviour, CreateProcess quoting, NTFS case folding and the
+    install-smoke runtime as unanswerable off Windows. Python ships pure-Python
+    Windows implementations of two of them: `PureWindowsPath` case-folds for
+    comparison on ANY platform, and `subprocess.list2cmdline` emits exactly the
+    command line CreateProcess is handed. So the real Windows sort order can be
+    produced on Linux and shown to differ from POSIX (proving
+    `sorted(..., key=as_posix)` earns its keep), and `_split_command` can be
+    round-tripped against the genuine quoting contract for seven argv shapes.
+    Both verified by planting regressions. `test_windows_invariants_guard.py`
+    had asserted in prose that these were unobservable here; that claim is
+    corrected in place. Writing something off as unverifiable IS a claim, and
+    it had cost two real invariants their only cheap check.
+
+18. **A grep pin that matched nothing real** — the first version of the locale
+    ordering pin searched for `sorted(<glob>)`, but those scans sort `p.name`
+    (strings, already platform-stable), so the pattern could never match and
+    the pin asserted nothing. Replaced with a behavioural assertion on
+    `list_locales`' output order, and proven to bite by planting a
+    PureWindowsPath sort: ['de','en','Ja','ZH'] instead of ['Ja','ZH','de','en'].
+
+19. **The install-smoke contract now EXECUTES, and text checks were proven
+    insufficient** — the venv-free half of the Windows scripts is portable
+    PowerShell, so uninstall and rollback run under pwsh on Linux against a
+    temporary LOCALAPPDATA. Two planted bugs settle why this matters: `$p`
+    computed one directory too high, and an added line deleting `~/.manju`.
+    BOTH pass every assertion in the existing text-only test (each still
+    mentions `$p`), and both are caught by the behavioural one. A script that
+    deletes the owner's providers/routing/library config was grep-clean.
+
+20. **Wine cannot arbitrate msvcrt, and finding that out caught a fabricated
+    rationale of mine** — Wine 9.0 + Windows Python 3.11.9 runs
+    (`sys.platform == 'win32'`), and a probe with passing cross-process
+    positive controls says msvcrt DOES exclude a second same-process handle.
+    That contradicts the real-host measurement recorded at the owner
+    (`core/events.py`: gate round 2, 12 concurrent threads -> 6 surviving
+    lines). Wine's msvcrt is a reimplementation and diverges here, so it is
+    evidence about Wine. The trip was still worth it: checking the primary
+    record showed that a docstring added EARLIER IN THIS SESSION to
+    test_windows_invariants_guard.py asserted a mechanism ("each opens its own
+    fd and both calls succeed") that appears in no record — invented — and
+    cited DECISIONS #38, whose round-3b line reads as the opposite. Corrected
+    to cite the actual measurement. Fabricating a rationale is worse than
+    writing "unknown", because it reads as evidence.
+
+21. **The `--json` error envelope was a contract nobody could read** — `_fail`
+    calls `code` "a stable machine token an agent can branch on" and 177 tests
+    pin specific codes, but the always-injected core skill never mentioned the
+    envelope. The census found the fact that mattered more: 52 explicit codes,
+    yet 250 of 275 failure sites use the default, so ~91% of failures are
+    unclassified — inviting an agent to write branches on `"error"` that can
+    never pay off. Documented in a new on-demand `error-codes` skill classified
+    by what to DO (fix input / fix truth / stop and ask / retry); the core skill
+    keeps only what an agent needs BEFORE it hits an error, because an existing
+    test caps it under 300 lines and that cap IS the agent's token budget. A
+    two-way test keeps docs and code honest — it caught two undocumented codes
+    immediately, and later turned the suite red the moment `no_baseline` was
+    added without documentation.
+
+22. **`impact` answered a command-shaped code** — `impact_error` where the fact
+    was `unknown_shot`, so an agent branching correctly missed it and the
+    message lost the two remedies. Joined the one owner (`_require_shot`) that
+    `select`/`redo`/`voice` already use. One fact, one code, whichever command
+    surfaced it.
+
+23. **Advice that refuses when followed** — the funnel's first instruction told
+    a new project to run `manju create brief`, which answers "已存在 —
+    不覆盖人写的内容". Walking all seven stages found the same shape twice
+    more: `manju board scene` at the step that CREATES shots ("has no shots —
+    nothing to board"), and bare `manju director propose` ("pass exactly one of
+    --from-file / --actions-json"). Three is a pattern: these strings described
+    what a stage IS, not what you can type. The storyboard stage is the funnel's
+    cliff — no CLI command creates a shot at all — so it now names the three
+    routes that work. The plan stage carries the exact line verified to run, and
+    a test parses its JSON against the engine's real ACTION_TYPES.
+
+24. **Presentation is not decoration** — four tables padded by code points, so
+    CJK labels (one code point, two terminal columns) made the status column
+    swing between column 27 and 37 and glued the longest label to its status;
+    `manju tasks` broke every column right of a bare `#{id}` past row ten. They
+    joined the existing CJK-aware owner (`presets.display_width`/`pad`) rather
+    than forking a fifth. The command list also spoke the wrong language: 56 of
+    82 top-level rows were English-only for a Chinese-reading owner, and 40
+    §-references pointed at a plan document CLAUDE.md says is not in the repo.
+    Both fixed at RENDER time, so docstrings stay the maintainer's copy.
+
+25. **Say what you did not check** — `manju qc`'s last line was a bare
+    snake_case token (`no_explicit_expectations 4`) that read like four
+    outstanding debts one line after "0 errors". The GUI's live-validation tick
+    said "✓ 校验通过 (valid)" while its own source comment states it does NO
+    cross-reference or lock verification and that "a ✓ here is NOT a promise
+    that Save will succeed". Both now name the check they actually ran. The
+    engine halves were already right — the QC states have documented reasons,
+    and the editor writes, checks, reverts and names every dangling ref.
+
+26. **Roundtrip without its baseline is WRONG, not unverified** — measured: the
+    same edited OTIO (one clip trimmed 72→36 frames) plans as 1 row `set_inout`
+    beside its baseline and 3 rows `set_transition_override` when copied
+    elsewhere, which is also what an UNTOUCHED export produces. So the real edit
+    vanishes and spurious rows appear — and a draft saved in the editor's own
+    folder is the ordinary case. `--apply` is now refused (`no_baseline`);
+    planning still works, because refusing to write is right and refusing to
+    look would strand the owner.
+
+27. **Hand over the artifact, not the path** — `manju build` ended at
+    "renders/final/final_v3.mp4" and stopped: a video tool that finishes a film
+    and never offers to look at it. It now names the existing ways to see,
+    compare and ship it — offering `compare` only when the previous final is on
+    disk, and announcing the `final_export` confirmation gate rather than
+    teaching `--yes` past the owner's own approval step. Relatedly, `manju
+    status`' returning-owner anchor reported `run_terminal` — a lifecycle
+    record — because one build appends bookkeeping rows AFTER the `build` line.
+    It now names the deed, while the ledger keeps every row.
+
+28. **Three guards caught the author, not the code** — a CSS-rule test whose
+    own comment contained a comma; a skill whose `description` contained
+    `code: "error"`, breaking its YAML frontmatter while the tolerant loader
+    silently degraded the agent-facing index; and a "the two plans must differ"
+    test that compared two UNEDITED exports and passed while measuring nothing.
+    Each was found by a guard-the-guard assertion or by running a variant, not
+    by review. The standing lesson: a fix verified only on its happy path is
+    about half likely to ship a new defect — and the harness is as likely to be
+    wrong as the product, so suspect the harness first.
+
+29. **A failure that deletes its own evidence** — every multi-step render stage
+    worked in a `TemporaryDirectory`, so the inputs ffmpeg was handed were
+    removed on the way out of the exception. The failure record is good (stderr
+    tail + argv) but the argv names paths that no longer exist, which makes the
+    obvious next step — open the file and look — impossible on EVERY render
+    failure, not just the intermittent one that exposed it. `media/render.
+    _render_scratch` is now the one owner: unchanged on success, and on failure
+    the contents are copied to `.manju/render-debug/<stage>/` — disposable by
+    contract, one set per stage, nested stages kept separately (the inner set is
+    the useful one and must not be clobbered by the outer one), nothing kept on
+    a cancellation, bounded by a per-file cap AND a total budget, copied
+    smallest-first so cheap evidence cannot be crowded out by a master, with
+    every exclusion NAMED in the manifest. Verified against real ffmpeg on a
+    real corrupt input, not a mock: the preserved `b.mp4` reads `streams=`
+    (empty) — the diagnosis, one ffprobe away, where previously there was
+    nothing to probe. Chasing the same lead also produced a real negative
+    result: a silent source does NOT yield a mute boundary layer, because
+    `normalize_segment` gives every layer an audio track — which eliminates the
+    easiest explanation for the `acrossfade` flake and pins what to look at the
+    next time it reproduces.
+
+30. **The flake was ffmpeg's, and preserving evidence is what proved it** — the
+    first full suite after entry 29 reproduced the intermittent `acrossfade`
+    failure with the scratch intact. Both boundary layers were healthy (17 AAC
+    packets each), which falsified the standing hypothesis. Replaying the exact
+    command on the exact preserved inputs: 15/15 serial, 240/240 at 12-way
+    parallel. A pytest-free probe that re-derives the layers and sha256s them
+    every round showed ONE distinct hash across 160 rounds — the layer encode is
+    deterministic, as the segment cache already assumed — and still failed once
+    under four concurrent workers, with the same hashes as all 159 successes.
+    Same bytes, same argv, different outcome: a nondeterministic ffmpeg
+    behaviour under concurrency, not a Manju defect and not a data defect. Two
+    things deliberately NOT done and recorded as such: the pinned 6.1.1 (what
+    the Windows hard gate and the owner actually run) was not tested, because
+    the local 6.1 archive is corrupt — so whether this can reach the owner is
+    UNKNOWN, not NO; and no retry was added, because whether it is worth
+    touching the render path depends on that answer. A targeted single retry on
+    this one signature, recorded loudly rather than silently, is now a
+    hand-offable task with evidence rather than a guess.
+
+31. **Advice you have made impossible is not advice** — the render failure's
+    hint said "核对滤镜/输入" while the inputs were being deleted on the way out.
+    It now names the preserved directory and the stages that actually have
+    something, in the ledger hint AND in the immediate error line the owner
+    reads first — and only when the directory is really there, the same
+    "never offer a route that would refuse" rule as the post-build offers.
+
+32. **A test that measured the terminal, not the surface** — the Windows hard
+    gate went red on `test_the_wall_is_real` ("only 0 panels"). The help surface
+    had not shrunk; the assertion counted Rich's box-drawing corners and the
+    Windows console takes the ASCII fallback, so it was measuring terminal
+    detection. It now counts the app's own command names present in the rendered
+    help — which went red AGAIN, "only 22 commands", because that console renders
+    narrower and elides the longer names: the same mistake twice, measuring the
+    terminal with a different ruler. It now reads the count off the app object
+    and touches no rendered output at all; that the page renders is what the
+    other seven tests in the file check, and they were green on Windows both
+    times. The test had
+    landed AFTER the last green Windows run, so nothing had ever proven it on
+    the first platform — Linux green is not Windows green, and running the gate
+    is the only way to know. Writing the companion guard tripped the same trap
+    the repo has recorded four times (a token in a docstring), twice in one
+    edit, which is why the character set is now a named constant and the guard
+    scans only the function body.

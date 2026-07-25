@@ -75,7 +75,10 @@ jobs:
           Write-Host "ffmpeg: $ff"
           $v = (& ffmpeg -version | Select-Object -First 1)
           Write-Host $v
-          if ($v -notmatch "ffmpeg version 6\.1") { throw "ffmpeg is not the pinned 6.1.x build: $v" }
+          # The trailing (\.|\s|$) makes this mean what the error message says.
+          # A bare "6\.1" is a PREFIX match, so a 6.10 build would satisfy a
+          # guard whose whole job is to reject anything that is not 6.1.x.
+          if ($v -notmatch "ffmpeg version 6\.1(\.|\s|$)") { throw "ffmpeg is not the pinned 6.1.x build: $v" }
           $fp = (Get-Command ffprobe -ErrorAction Stop).Source
           Write-Host "ffprobe: $fp"
 

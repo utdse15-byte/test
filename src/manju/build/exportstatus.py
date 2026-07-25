@@ -416,7 +416,8 @@ def _locale_final_langs(project: Project) -> list[str]:
     if not root.is_dir():
         return []
     out: list[str] = []
-    for d in sorted(root.iterdir()):
+    # POSIX-string order — this list of locale names is user-visible.
+    for d in sorted(root.iterdir(), key=lambda p: p.as_posix()):
         if d.is_dir() and any(d.glob("final_v*.mp4")):
             out.append(d.name)
     return out

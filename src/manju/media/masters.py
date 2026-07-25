@@ -266,6 +266,12 @@ def measure_loudness(path: Path) -> dict[str, Any]:
     fact: dict[str, Any] = {
         "integrated_lufs": None, "true_peak_dbtp": None,
         "lra": None, "threshold_lufs": None, "short_term_max_lufs": None,
+        # `measured` separates the two reasons a level can be None: the stem is
+        # genuinely SILENT (-inf, the ordinary case for a project with no music
+        # or sfx bus), or the measurement never landed. Both used to print as a
+        # bare `I=None LUFS`, which reads as "something went wrong" for what is
+        # usually just an empty bus. Additive: the numeric fields are unchanged.
+        "measured": False, "silent": False,
     }
     try:
         proc = subprocess.run(
@@ -279,6 +285,10 @@ def measure_loudness(path: Path) -> dict[str, Any]:
             fact["true_peak_dbtp"] = _fl(data.get("input_tp"))
             fact["lra"] = _fl(data.get("input_lra"))
             fact["threshold_lufs"] = _fl(data.get("input_thresh"))
+            fact["measured"] = True
+            # ffmpeg reports a silent bus as -inf, which _fl records as None
+            # (it is not a clean JSON number and not a useful level).
+            fact["silent"] = _is_neg_inf(data.get("input_i"))
     except (subprocess.SubprocessError, ValueError, json.JSONDecodeError):
         pass
     try:
@@ -323,6 +333,18 @@ def _fl(v: Any) -> float | None:
     # NaN / ±inf (e.g. a truly silent stem measures -inf LUFS) are not clean
     # JSON and not useful facts — record them as None (honest "undefined").
     return round(f, 2) if math.isfinite(f) else None
+
+
+def _is_neg_inf(v: Any) -> bool:
+    """True when ffmpeg reported -inf — i.e. the bus carries no signal at all.
+    Kept next to :func:`_fl`, which is what turns that into a None level."""
+    import math
+
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    return math.isinf(f) and f < 0
 
 
 # --------------------------------------------------------------- level safety

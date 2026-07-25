@@ -1426,7 +1426,9 @@ def suggest_next(project: Project) -> list[Suggestion]:
         locales_root = project.final_dir / "locales"
         if locales_root.is_dir():
             locale_finals = [
-                d.name for d in sorted(locales_root.iterdir())
+                # POSIX-string order — platform-independent (see ingest.py).
+                d.name for d in sorted(locales_root.iterdir(),
+                                       key=lambda p: p.as_posix())
                 if d.is_dir() and any(d.glob("final_v*.mp4"))
             ]
     except Exception:
