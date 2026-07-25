@@ -36,11 +36,52 @@ def _bare() -> str:
     return runner.invoke(app, [], env={"COLUMNS": "100"}).output
 
 
+# The one character class the size check may not touch. Kept as escapes so the
+# guard below can look for it without this line being its own false positive —
+# a token in a comment tripping a grep-pin is a mistake this repo has recorded
+# four times, and writing the guard is exactly when it happens again.
+_BOX_DRAWING = "╭─│╰"
+
+
+def _rendered_command_names(out: str) -> list[str]:
+    """The app's own command names that actually appear in the rendered help.
+
+    Matched as standalone tokens, because each row is drawn inside a panel and
+    therefore carries a border prefix — which is precisely the part that
+    differs between platforms.
+    """
+    from typer.main import get_command
+
+    names = sorted(get_command(app).commands)  # type: ignore[attr-defined]
+    return [n for n in names
+            if re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", out)]
+
+
 def test_the_wall_is_real() -> None:
-    """Guard the guard: the doors only matter while the surface is big."""
+    """Guard the guard: the doors only matter while the surface is big.
+
+    Measured by the COMMANDS on the page, not by how the terminal draws panel
+    borders. The first version counted border corners and went red on the
+    Windows hard gate — the FIRST platform — with "only 0 panels": that console
+    gets the ASCII fallback, so the assertion was measuring Rich's terminal
+    detection rather than the size of the surface. The wall is the command list
+    either way.
+    """
     out = _help()
-    panels = len(re.findall(r"╭─", out))
-    assert panels >= 6, f"only {panels} panels — has the surface shrunk?"
+    shown = _rendered_command_names(out)
+    assert len(shown) >= 40, f"only {len(shown)} commands — has the surface shrunk?"
+
+
+def test_the_wall_measurement_is_not_platform_dependent() -> None:
+    """Pin the lesson: nothing in the size check may depend on box drawing."""
+    from pathlib import Path
+
+    body = Path(__file__).read_text(encoding="utf-8")
+    i = body.index("def _rendered_command_names")
+    j = body.index("def test_the_wall_measurement_is_not_platform_dependent")
+    region = body[i:j]
+    for ch in _BOX_DRAWING:
+        assert ch not in region, "the box-drawing measurement is back"
 
 
 def test_every_door_is_named(*, _=None) -> None:
