@@ -8092,7 +8092,8 @@ def _lib_entry_public(entry: dict) -> dict:
 @lib_app.command("add")
 def lib_add(
     files: list[Path],
-    tag: Optional[str] = typer.Option(None, "--tag", help="comma-separated tags"),
+    tag: Optional[list[str]] = typer.Option(
+        None, "--tag", help="tags — comma-separated, and/or repeat the flag"),
     note: Optional[str] = typer.Option(None, "--note", help="a free-text note"),
     as_json: bool = typer.Option(False, "--json"),
 ):
@@ -8101,7 +8102,18 @@ def lib_add(
     from .core.library import LibraryError, _hex
 
     lib = _lib()
-    tags = [t.strip() for t in (tag or "").split(",") if t.strip()]
+    # `--tag a --tag b` is the shape half the world's CLIs use, and typing it
+    # here used to keep only the LAST one and drop the rest in silence — the
+    # user's own labels, gone with no message. Repeating the flag now ACCUMULATES
+    # and each value may still be a comma-separated list, so both spellings (and
+    # any mix) mean what they look like. Order-preserving de-dup so `--tag a,b
+    # --tag b` does not store b twice.
+    tags: list[str] = []
+    for chunk in (tag or []):
+        for t in str(chunk).split(","):
+            t = t.strip()
+            if t and t not in tags:
+                tags.append(t)
     results: list[dict] = []
     for f in files:
         if not f.exists():
