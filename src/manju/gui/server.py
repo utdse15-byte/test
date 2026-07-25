@@ -660,9 +660,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/favicon.ico":
                 # a real (tiny) icon: kills the one console 404 every load
                 svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
-                       '<rect width="16" height="16" rx="3" fill="#1d2027"/>'
+                       '<rect width="16" height="16" rx="3" fill="#181b21"/>'
                        '<rect x="3" y="4" width="10" height="8" rx="1" fill="#6ea8fe"/>'
-                       '<circle cx="6" cy="8" r="1.4" fill="#14161a"/></svg>')
+                       '<circle cx="6" cy="8" r="1.4" fill="#0f1115"/></svg>')
                 self._send_text(svg, "image/svg+xml")
             elif path == "/app.css":
                 from .page import render_css
@@ -5994,7 +5994,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             label = _html.escape(text or "card")
             svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="135">'
-                   '<rect width="240" height="135" fill="#14161a"/>'
+                   '<rect width="240" height="135" fill="#0f1115"/>'
                    '<text x="120" y="68" fill="#8b93a3" font-size="12" '
                    f'text-anchor="middle">{label}</text></svg>')
             self._send_text(svg, "image/svg+xml")

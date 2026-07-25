@@ -361,7 +361,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
 .tl-clip {
   flex: 0 0 auto; min-width: 26px; padding: .28rem .25rem; font-size: .7rem;
   font-weight: 700; text-align: center; overflow: hidden; white-space: nowrap;
-  text-overflow: ellipsis; cursor: pointer; border-right: 1px solid #14161a;
+  text-overflow: ellipsis; cursor: pointer; border-right: 1px solid var(--bg);
 }
 .tl-clip:last-child { border-right: 0; }
 .tl-clip:hover { filter: brightness(1.25); }
@@ -761,7 +761,7 @@ button.fchip { cursor: pointer; }
 .fail-body { padding: 0 .65rem .6rem 1.65rem; }
 .fail-ev {
   font-family: var(--mono); font-size: .76rem; white-space: pre-wrap;
-  background: #14161a; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
   padding: .45rem .6rem; margin: .35rem 0; max-height: 15rem; overflow: auto;
   word-break: break-word;
 }
