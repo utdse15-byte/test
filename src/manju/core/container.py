@@ -330,10 +330,17 @@ class Project:
         write_yaml(root / "shots" / "index.yaml", ShotIndex().model_dump())
         write_yaml(root / "timeline" / "rules.yaml", TimelineRules().model_dump())
         # packaging.yaml sits next to rules.yaml, everything disabled + hints (§13-14)
-        (root / "timeline" / "packaging.yaml").write_text(
-            PACKAGING_SCAFFOLD_HEADER + dump_yaml(PackagingSpec().model_dump()),
-            encoding="utf-8",
-        )
+        # Written through atomic_write_text, not Path.write_text: the latter uses
+        # newline=None, which on WINDOWS translates every "\n" into CRLF, so a
+        # project scaffolded there would carry different bytes — and different
+        # content hashes — than the same project scaffolded anywhere else. Every
+        # other truth file already goes through that owner (it pins
+        # newline="\n"); these two scaffolds were the exception.
+        from .yamlio import atomic_write_text
+
+        atomic_write_text(
+            root / "timeline" / "packaging.yaml",
+            PACKAGING_SCAFFOLD_HEADER + dump_yaml(PackagingSpec().model_dump()))
         for bible_file in BIBLE_FILES:
             bpath = root / "bible" / f"{bible_file}.yaml"
             if not bpath.exists():
@@ -345,8 +352,9 @@ class Project:
                 # shot with "not found in bible" and the guided path dead-ends on
                 # a schema the author has to go find. The body still parses as an
                 # empty mapping, so a fresh project passes check unchanged.
-                bpath.write_text(
-                    BIBLE_SCAFFOLD_HEADERS[bible_file], encoding="utf-8")
+                # atomic_write_text for the CRLF reason noted on packaging.yaml
+                # above — a scaffold must be byte-identical on every platform.
+                atomic_write_text(bpath, BIBLE_SCAFFOLD_HEADERS[bible_file])
         # the idea stage (§2: creation belongs to the director) gets scaffolds
         # so a takeover always finds the same three files in the same order
         story_templates = {
@@ -357,8 +365,9 @@ class Project:
         for fname, template in story_templates.items():
             spath = root / "story" / fname
             if not spath.exists():
-                spath.write_text(template, encoding="utf-8")
-        (root / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
+                # LF on every platform — same reason as the scaffolds above.
+                atomic_write_text(spath, template)
+        atomic_write_text(root / ".gitignore", GITIGNORE)
         (root / "events.jsonl").touch()
 
         if git_init and shutil.which("git") and not (root / ".git").exists():
