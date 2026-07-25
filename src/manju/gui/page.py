@@ -4386,6 +4386,24 @@ _JS = r"""
 
   const shotUrl = (id) => "/api/shot/" + encodeURIComponent(id);
 
+  /* The next unused S### id, matching the S001/S002 convention the engine and
+     every doc use. Only ids of that exact shape count toward the maximum: a
+     hand-named shot ("intro") must not push the suggestion somewhere odd. */
+  function nextFreeShotId() {
+    const nums = (lastShots || [])
+      .map((s) => /^S(\d{3,})$/.exec(String(s && s.id || "")))
+      .filter(Boolean)
+      .map((m) => parseInt(m[1], 10));
+    const taken = new Set((lastShots || []).map((s) => String(s && s.id || "")));
+    let n = nums.length ? Math.max.apply(null, nums) + 1 : 1;
+    let id = "S" + String(n).padStart(3, "0");
+    while (taken.has(id) && n < 100000) {
+      n += 1;
+      id = "S" + String(n).padStart(3, "0");
+    }
+    return id;
+  }
+
   async function newShotTemplate(id) {
     /* scene defaults to the first scene id seen in existing shots: the shots
      * cards do not carry `scene`, so peek at the first shot's raw YAML */
@@ -4943,7 +4961,14 @@ _JS = r"""
     const input = document.createElement("input");
     input.type = "text";
     input.className = "ns-input";
-    input.placeholder = "S007";
+    /* The placeholder used to be the literal string "S007" on every project.
+       On anything with seven or more shots that names an EXISTING one, so a
+       user who clicked 新建镜头 and typed the id it suggested landed in
+       "S007 已存在,进入编辑" — they asked to create and got the editor for a
+       shot they already had. On an empty project it suggested S007 when the
+       obvious first id is S001. Derive the next free id from the shots the
+       page already holds; fall back to the old literal if none are loaded. */
+    input.placeholder = nextFreeShotId();
     input.maxLength = 64;
     input.pattern = "[A-Za-z0-9_-]{1,64}";
     const go = el("button", "btn", "创建 (Create)");
@@ -4993,7 +5018,14 @@ _JS = r"""
     });
     newBtn.addEventListener("click", () => {
       form.classList.toggle("hidden");
-      if (!form.classList.contains("hidden")) input.focus();
+      if (!form.classList.contains("hidden")) {
+        /* Recomputed on OPEN, not at construction: this bar is built before
+           the first state arrives, so `lastShots` is still empty then and a
+           twelve-shot project was suggesting S001. Opening the form is also
+           the only moment the suggestion has to be right. */
+        input.placeholder = nextFreeShotId();
+        input.focus();
+      }
     });
     form.appendChild(input);
     form.appendChild(go);
