@@ -88,8 +88,29 @@ class _SuggestingGroup(typer.core.TyperGroup):
 # eager options are added; the frozen LEAF-command surface
 # (tests/fixtures/cli_surface.json records leaf commands + required params)
 # is untouched, verified by the snapshot suite.
+# The help wall is ~60 commands across eight panels, and `manju` with no
+# arguments prints all of it. The description used to name only `build` — the
+# one command a newcomer cannot use yet, because there is nothing to build.
+# The epilog is what stays ON SCREEN after the wall scrolls past, so the three
+# doors go there: where am I, start something, I want to do X. `help-workflow`
+# in particular is the task-oriented index, and until now you had to already
+# know it existed to find it.
+#
+# Rich reflows a help string as prose, collapsing single newlines — the first
+# draft ran the three doors together into one unreadable paragraph. Blank lines
+# survive as paragraph breaks, so each door is its own paragraph.
+_EPILOG = (
+    "只记三个入口 / three doors —\n\n"
+    "[b]manju status[/b] · 我在哪、下一步该干什么(任何时候先跑它)\n\n"
+    "[b]manju create[/b] · 从一句话开始的七阶段创作漏斗(全新项目先 manju new)\n\n"
+    "[b]manju help-workflow[/b] · 我想做 X,该按什么顺序敲哪些命令(10 条常见流程)\n\n"
+    "每条命令都有 --help;输出可读的命令大多同时带 --json 给 agent。"
+)
+
 app = typer.Typer(add_completion=True, no_args_is_help=True, cls=_SuggestingGroup,
-                  help="Manju One — a build system for video. 一键出片:manju build")
+                  help="Manju One — 视频构建系统 / a build system for video。"
+                       "不知道从哪开始就跑 manju status。",
+                  epilog=_EPILOG)
 
 
 def _version_callback(value: bool) -> None:
