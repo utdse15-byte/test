@@ -2854,3 +2854,64 @@ network egress.
    `test_closeout_c2`'s `.png` fixtures, which had always contained
    placeholder text; the fixture was fixed, not the guard. Verified clean at
    the audit baseline before changing either.
+
+## UX-REAL-USE (2026-07-25)
+
+A follow-up to AUDIT-LEDGER-WAVE that found nothing by reading code. The tool
+was USED instead: two projects driven end to end on the CLI, every GUI page
+clicked through in real Chromium (Playwright), real footage imported, a build
+SIGKILLed mid-flight, quit pressed with a job running, a project packed and
+restored. Eleven fixes, all with tests. Report:
+REPORTS/UX_REAL_USE_2026-07-25.md.
+
+Not one is a correctness defect — the engine did the right thing every time.
+They are the places that made the owner do avoidable work, could not be
+understood at a glance, or dropped something quietly.
+
+### Decisions
+
+1. **"Already in the project" is not "already IS a take"** — the ingest dedup
+   conflated them, which made `manju import` a ONE-WAY DOOR for footage: import
+   a clip (as `import`'s own help invites) and it could never afterwards be
+   routed to a shot. Verified there was no escape hatch — not `--shot`, not
+   `--on-duplicate import`, not an identically-named copy from outside — and no
+   message pointed at one because none existed. A row that classifies as a real
+   role now proceeds, sourced from the copy already in the project; a plain
+   duplicate import still skips, so the dedup keeps defending what it was
+   written for.
+
+2. **Material that arrives silently gets a surface** — an ingested take for an
+   already-selected shot never auto-selects (correct), but then `build` said
+   "final up-to-date", the film did not change, and `status`/`explain` went on
+   naming the old take. The new `newtake` rung sits AHEAD of the voice rung (a
+   missing voice already has many surfaces; an undecided take had none) and
+   BEHIND `stale` (a take minted under the old spec is stale too, so "select
+   the newer one" would be bad advice — that ordering was wrong in the first
+   attempt and an existing test caught it).
+
+3. **Never recommend a command that cannot succeed** — a locale with
+   translations but no voice is refused by design, yet status and the GUI's most
+   prominent slot both told you to run exactly that build. The next step now
+   names what actually unblocks, and says something different depending on
+   whether a TTS provider exists.
+
+4. **A support bundle must keep its own evidence** — the secret-key rule is a
+   substring match on field names, so `content_key`/`final_key` were redacted:
+   6 of 6 redactions on a real bundle were content keys, the one fact that
+   answers "why did this re-render". Fixed with an EXACT-name allowlist, never
+   a looser pattern, so it cannot widen by accident.
+
+5. **Say it once, and never contradict the line next to it** — the review page
+   repeated the same 200-character criteria paragraph on every card (12 → 0
+   visible repeats, now one legend); the cockpit headline said 完成 while the
+   banner beneath said 构建进行中 (both now read the same `build_lock`);
+   `manju status` printed a bare 完成 ✅ above a dozen 待办; identical failures
+   stacked as N identical rows (now folded with ×N); `I=None LUFS` could not be
+   told apart from a failed measurement (now 静音 vs 未测得).
+
+6. **Recorded process errors, not just product ones** — a NUL byte written into
+   page.py by a scripted edit broke every GUI test; a claim of "verified" was
+   made before the suite finished and the suite then caught a real regression;
+   piping runs through `tail -16` discarded the failure list and forced a
+   module-by-module bisect. The report keeps these because the next session will
+   otherwise repeat them.
