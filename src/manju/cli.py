@@ -3806,6 +3806,24 @@ def roundtrip(
         # being flattened into the generic envelope with every other refusal.
         _fail(str(exc), code=getattr(exc, "reason", "error"))
         return
+    if apply and not plan.get("baseline"):
+        # Measured, not inferred. The SAME edited OTIO (one clip trimmed
+        # 72→36 frames) planned two completely different ways:
+        #   beside its baseline -> 1 row,  set_inout            (the real trim)
+        #   copied elsewhere    -> 3 rows, set_transition_override x3
+        # Without the baseline the trim diff has nothing to compare against, so
+        # the genuine edit VANISHES and three changes the editor never made
+        # appear instead. Applying that writes fiction into truth and silently
+        # drops the owner's actual cut — and a draft saved in the editor's own
+        # folder is the ordinary case, not an exotic one.
+        _fail(
+            "没有 baseline 边车,拒绝 --apply:少了对账基准,真实改动(如剪短某段)"
+            "会检测不到,同时可能凭空多出几行你没做过的改动 —— 实测同一份文件,"
+            "有边车时是 1 行 set_inout,没边车时变成 3 行 set_transition_override。"
+            "把载体放回 exports/<kind>/ 原目录(边车在同级 .baseline/),"
+            "或重新 manju export 后再在编辑器里改。不带 --apply 仍可查看计划。",
+            code="no_baseline")
+        return
     if apply:
         sel = None
         if rows:
@@ -3845,10 +3863,17 @@ def roundtrip(
         else:
             typer.echo(f"roundtrip plan  kind={plan.get('kind')}  "
                        f"truth_moved=未知 (unknown)")
+            # The first version of this warning said the rows were merely
+            # "未与导出点对账". Walking a real round-trip showed that
+            # understates it: without the baseline the trim diff has nothing to
+            # compare against, so real edits are MISSING from the list and
+            # spurious ones are IN it. Say that, because "unverified rows" and
+            # "the wrong rows" call for different reactions.
             typer.secho(
-                "  ⚠ 没找到导出时的 baseline 边车 —— 无法判断项目真相自导出后是否"
-                "变过,下面每一行都未与导出点对账。把载体放回 exports/ 原目录"
-                "(边车在同级 .baseline/),或确认这些改动确实基于当前真相再 --apply。",
+                "  ⚠ 没找到导出时的 baseline 边车 —— 这份计划不可靠:真实改动"
+                "(如剪短某段)可能整条缺失,同时可能多出你没做过的行。"
+                "把载体放回 exports/ 原目录(边车在同级 .baseline/)后重跑;"
+                "--apply 在这种情况下会被拒绝。",
                 fg=typer.colors.YELLOW)
         typer.echo(f"  {plan.get('carrier_note')}")
         for i, r in enumerate(plan.get("rows") or [], 1):

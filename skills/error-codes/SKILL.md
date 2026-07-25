@@ -37,10 +37,12 @@ CLI 里约 275 个失败点,只有 25 个带专门 code,其余全部落到默认
 `bad_args` `bad_input` `bad_name` `bad_lang` `bad_mode` `bad_out` `bad_rate`
 `unknown_shot` `unknown_provider` `not_found` `no_media` `plan_not_found`
 `batch_not_found` `no_fixture` `missing_root` `exists` `out_of_project`
-`ingest_review_no_items`
+`ingest_review_no_items` `no_baseline`
 
 典型:`unknown_shot` → 先 `manju status` 看现有镜头再重试;`exists` → 换个名字;
 `out_of_project` → `--out` 必须落在项目内(引擎拒绝项目外写入)。
+
+`no_baseline`(`manju roundtrip --apply`)是**安全拒绝**:载体不在 `exports/<kind>/` 原目录时找不到对账边车,计划会**漏掉真实改动、并多出没做过的**行,所以拒绝写入。把载体放回原目录,或重新 `manju export` 后再改。
 
 ### 2. 先修项目真相 / 先跑前置命令(不是你参数的问题)
 
