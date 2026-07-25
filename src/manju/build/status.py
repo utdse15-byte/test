@@ -99,7 +99,12 @@ def shot_next_action(project: Project, shot_id: str, *, state: str,
     # so here, ahead of the voice rung: a missing voice has many surfaces
     # already, and this had none. It is a decision, not a defect — the current
     # selection stays valid, and the sentence says so.
-    if selected_take:
+    # NOT when the shot is stale: a take minted under the old spec is stale
+    # too, so "select the newer one" would be bad advice — the `stale` rung
+    # below (redo, or keep the current pick) is the real answer there. This
+    # rung is for a shot that is otherwise settled and simply has material
+    # nobody has ruled on.
+    if selected_take and state != "stale":
         try:
             newer = sorted(t.name for t in project.takes(sid)
                            if t.name > selected_take)
@@ -154,6 +159,25 @@ def next_actions(project: Project, *, statuses: Any = None,
         if act["key"] != "ok":
             todo.append(act)
     return todo
+
+
+def _qualify_done(next_step: str, key: str, todo: list[dict[str, str]]) -> str:
+    """Never print a bare 完成 ✅ directly above a list of 待办.
+
+    The project-level next step and the per-shot todos answer different
+    questions — "is the film buildable" vs "does any shot still want
+    something" — but they print three lines apart, so 「下一步 完成 ✅」 over a
+    dozen 待办 rows just reads as the tool contradicting itself. The verdict is
+    unchanged (nothing BLOCKS the film); it now says what it is not counting."""
+    if key != "done" or not todo:
+        return next_step
+    kinds: list[str] = []
+    for label, k in (("配音", "voice"), ("新 take 待定", "newtake"),
+                     ("待审", "review"), ("过期", "stale")):
+        if any(t.get("key") == k for t in todo):
+            kinds.append(label)
+    what = "、".join(kinds) if kinds else "可选项"
+    return f"完成 ✅ — 片子可出;另有 {len(todo)} 项非阻塞待办({what},见下)"
 
 
 def _locale_voice_blocker(project: Project, lang: str) -> str | None:
@@ -437,10 +461,12 @@ def project_status(project: Project, *, statuses: Any = None,
         "run_log": run_log_info,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
-        "next_step": next_step,
+        "next_step": _qualify_done(
+            next_step, next_step_key, todo_items := next_actions(
+                project, statuses=statuses, voices=voices)),
         "next_step_key": next_step_key,
         # Intuitiveness wave: the per-shot answers (ONE actionable sentence
         # per shot that needs anything) — additive; agents branch on `key`.
-        "todo": next_actions(project, statuses=statuses, voices=voices),
+        "todo": todo_items,
         "build_lock": build_lock_info,
     }

@@ -120,6 +120,21 @@ def test_new_take_outranks_the_voice_todo(
     assert act["key"] == "newtake"
 
 
+def test_a_stale_shot_still_reports_stale_not_newtake(
+        tmp_project: Project, add_shot, make_take) -> None:
+    """Precedence the ladder already had, and the new rung must not steal.
+
+    A take minted under the OLD spec is stale too, so "select the newer one"
+    would be bad advice — redo (or deliberately keeping the current pick) is
+    the real answer. Only an otherwise-settled shot gets the newtake nudge."""
+    add_shot(tmp_project, "S001")
+    make_take(tmp_project, "S001", "sha256:old")
+    make_take(tmp_project, "S001", "sha256:old")
+    act = shot_next_action(tmp_project, "S001", state="stale",
+                           selected_take="take_01")
+    assert act["key"] == "stale"
+
+
 # --------------------------------------- 3. never recommend an unrunnable build
 
 

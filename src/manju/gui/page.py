@@ -798,6 +798,23 @@ button.fchip { cursor: pointer; }
   justify-content: space-between;
 }
 .ck-state { min-width: 12rem; flex: 1; }
+/* Cockpit skeleton: shape-of-the-content placeholder while /api/cockpit lands
+   (it is the page's heaviest panel). Reduced-motion users get the bars without
+   the shimmer — the layout alone already says "content is coming". */
+.ck-skel { padding: .2rem 0 .4rem; }
+.ck-skel-line {
+  height: .85rem; margin: .45rem 0; border-radius: 5px; max-width: 22rem;
+  background: linear-gradient(90deg, var(--panel2) 25%, var(--line) 37%, var(--panel2) 63%);
+  background-size: 400% 100%; animation: ck-shimmer 1.4s ease-in-out infinite;
+}
+.ck-skel-line.wide { max-width: 34rem; height: 1.3rem; }
+@keyframes ck-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .ck-skel-line { animation: none; } }
+/* Consistency criteria legend (stated once for the whole section). */
+.cs-legend { margin-bottom: .6rem; }
+.cs-legend ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+.cs-legend li { margin: .25rem 0; line-height: 1.5; }
+.cs-crit-hint { opacity: .7; }
 .ck-phase {
   display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .04em;
   color: var(--accent); text-transform: uppercase; margin-bottom: .15rem;
@@ -1578,7 +1595,19 @@ _JS = r"""
       root.appendChild(el("p", "ck-err", "驾驶舱不可用 (cockpit unavailable): " + cockErr));
       return;
     }
-    if (!c) { root.appendChild(el("p", "loading", "加载中 (loading)…")); return; }
+    if (!c) {
+      /* The cockpit is the heaviest panel on the page (~3s on a real project),
+       * and a single grey "加载中" line at the very top read as "this thing is
+       * stuck" while everything below it had already painted. A skeleton in the
+       * SHAPE of what is coming says "working" without pretending to have
+       * content. Pure presentation — no data, replaced wholesale on arrival. */
+      const sk = el("div", "ck-skel");
+      sk.appendChild(el("div", "ck-skel-line wide"));
+      for (let i = 0; i < 3; i++) sk.appendChild(el("div", "ck-skel-line"));
+      sk.appendChild(el("p", "muted", "驾驶舱加载中 (loading cockpit)…"));
+      root.appendChild(sk);
+      return;
+    }
 
     const state = c.state || {};
     const na = c.next_action || {};
@@ -1943,10 +1972,17 @@ _JS = r"""
     } else {
       skSub.appendChild(el("p", "ck-empty", "暂无技能调用记录 (no skill usage yet)"));
     }
+    /* The never-used list is a catalogue, not news: 18 skill ids spelled out
+     * in full took over the bottom of the cockpit every single visit, pushing
+     * the things that DO change off the screen. Collapsed behind its own count
+     * — one line when you don't care, the whole list when you do. */
     const neverUsed = skills.never_used || [];
     if (neverUsed.length) {
-      skSub.appendChild(el("div", "ck-line muted",
-        "从未使用 (never used): " + neverUsed.join("、")));
+      const det = el("details", "ck-line muted");
+      det.appendChild(el("summary", null,
+        "从未使用的技能 " + neverUsed.length + " 个 (never used — 展开查看)"));
+      det.appendChild(el("div", null, neverUsed.join("、")));
+      skSub.appendChild(det);
     }
     b.appendChild(skSub);
 
@@ -5884,7 +5920,20 @@ _JS = r"""
     root.appendChild(head);
     const shotIds = {};
     lastShots.forEach((s) => { shotIds[s.id] = true; });
-    list.forEach((f) => root.appendChild(failCard(f, shotIds)));
+    /* Retry the same failing action three times and you used to get three
+     * byte-identical rows, which buries the OTHER failures under a repeat of
+     * the one you already know about. Fold consecutive identical (step,
+     * subject, cause) entries into the newest one and mark the count — the
+     * expanded body still shows that newest occurrence's own evidence and
+     * timestamp, so nothing is invented and nothing is hidden. */
+    const folded = [];
+    list.forEach((f) => {
+      const key = [f.step, f.subject, f.cause, f.level].join("|");
+      const prev = folded.length ? folded[folded.length - 1] : null;
+      if (prev && prev.__key === key) { prev.__n += 1; return; }
+      folded.push(Object.assign({}, f, { __key: key, __n: 1 }));
+    });
+    folded.forEach((f) => root.appendChild(failCard(f, shotIds)));
   }
 
   function failCard(f, shotIds) {
@@ -5898,6 +5947,7 @@ _JS = r"""
     sum.appendChild(el("span", "fail-step", f.step || "?"));
     sum.appendChild(el("span", "fail-subj", f.subject || ""));
     sum.appendChild(el("span", "fail-cause", f.cause || ""));
+    if (f.__n > 1) sum.appendChild(el("span", "badge fail-n", "×" + f.__n));
     const bodyBox = el("div", "fail-body" + (open0 ? "" : " hidden"));
     const fillBody = () => {
       clear(bodyBox);

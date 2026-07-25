@@ -186,6 +186,13 @@ def _phase(status: dict[str, Any]) -> tuple[str, str]:
         return ("qc", "质检")
     if by.get("stale"):
         return ("update", "更新")
+    # A build holding the lock RIGHT NOW is not "完成". The headline said so in
+    # large type while the risk banner directly beneath it said 构建进行中, and
+    # two adjacent lines contradicting each other is worse than either alone —
+    # the reader stops trusting the big one. Same signal the banner already
+    # uses (status["build_lock"]), so the two can no longer disagree.
+    if status.get("build_lock"):
+        return ("building", "构建中")
     return ("done", "完成")
 
 
