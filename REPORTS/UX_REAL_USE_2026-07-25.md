@@ -8,7 +8,7 @@
 
 ## 一、结论先说
 
-共修 **11 处**,全部带测试。没有一处是正确性缺陷——引擎每次都做了对的事。它们是
+共修 **17 处**,全部带测试。没有一处是正确性缺陷——引擎每次都做了对的事。它们是
 **让人白忙、看不懂、或悄悄丢东西**的地方。
 
 按后果排序:
@@ -26,6 +26,12 @@
 | 9 | `masters` 把 `I=None LUFS` 摆给用户 | 分不清静音与失败 |
 | 10 | `segments` 拿到 mp4 吐**原始解码异常** | 不知道参数要什么 |
 | 11 | `import-plan` 汇总行**单位不一致** | 1 挨着 12 个 ⚠ |
+| 12 | 脚手架在 Windows 上写 **CRLF** | 跨平台字节/哈希漂移 |
+| 13 | 六处 locale 扫描排 `Path` 而非 POSIX 串 | 不同平台先点名不同语种 |
+| 14 | `pull-sheet` 计划只给计数,**不给内容** | 审查闸门形式在实质不在 |
+| 15 | M0 e2e 测试**单条跑不了**(既有) | 调试时第一动作就失败 |
+
+(12–13 见下节"Windows 硬闸跑不了时怎么办";14–15 见"审查闸门"与"测试隔离"。)
 
 ## 二、最值得记的三条
 
@@ -68,6 +74,45 @@ take」是两回事**——前者是原始素材,把它变成 take 是全新且�
 其余(`api_key`,或任何没登记过的名字)照旧遮蔽。测试钉了两个方向,包括
 `content_key_secret` / `my_content_key` 必须仍被遮。
 
+## 二之二、Windows 硬闸跑不了时怎么办(`a319b3f` `7828cf1` `2b5bbd6`)
+
+`windows-ci.yml` 是硬闸,但这里是 Linux 沙箱。**跑不了不等于验不了**:那道闸要守的
+不变量是写下来的,那就逐条比对我改过的文件。抓到两类真缺陷,都不是靠猜:
+
+**CRLF 漂移。** `Path.write_text` 用 `newline=None`,在 Windows 上把每个 `\n` 转成
+CRLF。于是在 Windows 上脚手架出来的项目,字节和内容哈希都与别处不同。而
+`atomic_write_text` 显式钉了 `newline="\n"`——其它真相文件早就走它了,**唯独脚手架
+是例外**:packaging.yaml、五个 bible 文件(这一波我自己加的)、三个 story 模板、
+`.gitignore`、全部 preset 种子。全部改走那个 owner,顺带也变成原子写。
+
+**`sorted(Path)` 的大小写折叠。** `build/ingest.py` 里白纸黑字记着规则和事故:
+"Windows folds case in PurePath ordering — gate run #4 moved plan row indices"。
+六处 locale 扫描没照做,而它们的顺序决定了漏斗证据句、`manju status` 的下一步、
+director 提案和导出中心**先点名哪个语种**。
+
+**没有做全树大扫除。** 全仓库 28 处 `sorted(Path)`,逐个读后果,只改有实际后果的。
+留下的例子:`gui/state.py` 的指纹由 `mtime_ns` 构成、只和同机器几秒前的值比对;
+`_present_from_stage` 建的是用于比对的字典,顺序不影响结果。改这些是纯 churn,
+而验收门明说不落投机改动。
+
+**测试是源码钉,并且写明了为什么。** 大小写折叠在 Linux 上复现不了,行为测试在这台
+机器上无论有没有 bug 都会过——那就什么也没证明。能验的是"没有任何 locale 扫描在排
+Path 对象"、"新项目里任何位置不得出现 CR 字节",这才是规则真正要求的性质。
+
+## 二之三、审查闸门与测试隔离(`bc22cb6` `2b5bbd6`)
+
+**`pull-sheet` 的先审后写,形式在实质不在。** 它默认只出计划,就是为了让人先审。
+但人看到的只有 `0 create · 1 update · 11 unchanged`——哪个镜头、哪个字段、改成什么
+一概没有,审的人只能盲签或自己去 diff CSV。细节**早就算出来了**,`--json` 里一应
+俱全,只是从没送到读计划的人眼前。现在列出变更行及其字段与新值;无变更时保持安静;
+被锁定而将跳过的字段单独黄字点出。测试特意钉了"打印细节的分支仍然零写入"。
+
+**M0 e2e 模块单条跑不了(既有缺陷,我自己踩到)。** 它靠测试**顺序**隐式传递"已构建"
+前提,所以 `pytest tests/test_e2e_m0.py::test_m0_reopen_state_intact`——调试时的第一
+个动作——会以一句光秃秃的 `assert False` 失败。我先怀疑是自己改坏的,**回退源文件后
+照样失败**才确认是既有问题。改成显式的模块级 `built` fixture,四条现在都能单独跑通,
+整模块仍然只构建一次。
+
 ## 三、观感修复(`c6a3f89`)
 
 用户明确提出"看得懂、用得顺"优先,这一组专门修可读性:
@@ -105,13 +150,13 @@ take」是两回事**——前者是原始素材,把它变成 take 是全新且�
 
 ## 六、验证
 
-全量测试每轮都跑:**7 failed / 5403 passed / 18 skipped / 15 errors**,与环境基线
+全量测试每轮都跑,末轮:**7 failed / 5432 passed / 18 skipped / 15 errors**,与环境基线
 逐条一致(7 条失败 + 15 条 error 全是沙箱 ffmpeg 缺 `drawtext` 滤镜)。零回归。
 `ruff check src/ tests/` 干净;frozen CLI surface 与 CONTRACTS schema ids 未变。
 
-**未验证**:`.github/workflows/windows-ci.yml`(硬闸)。本波次动了
-`core/container.py`(文件脚手架)、`media/frames.py`(路径)、`core/supportbundle.py`,
-都是 Windows 上路径与编码容易分歧的地方。
+**未验证**:`.github/workflows/windows-ci.yml`(硬闸)仍未运行——本环境是 Linux。
+但见"二之二":该闸要守的不变量已按文档逐条比对过改动文件,并因此修掉两类真缺陷
+(CRLF 漂移、`sorted(Path)` 折叠)。剩余不可本地验证的部分只能由 CI 覆盖。
 
 ## 七、扫过但没发现问题的
 
