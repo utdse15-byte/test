@@ -414,5 +414,105 @@ Edge TTS 经代理真合成(preview 缓存命中)· CJK+空格文件名全程 ·
 - **只测不修**:本报告零代码变更,全部发现待后续波次按红-先行流程逐条处置
   (F-01/F-02 建议优先——一条是契约一致性,一条是付费可见性)。
 - 全量测试套件与本报告无交集(无代码变更);collection sanity 5798 条通过
-  (补 httpx 后,见 F-23)。
+  (补 httpx 后,见 F-23);快循环(`-m "not ffmpeg"`)5689 passed / 0 failed。
 - Windows 侧(`--app`、msvcrt 真行为)本沙箱依旧无法验证,与上一波结论不变。
+
+---
+
+# 第二轮(同日续测)
+
+继续往之前没走到的深处走:GUI 编辑器逐个交互(字幕接管/还原、混音、打包、
+镜头实验室、剪辑页)、修复 op、audition、逐语言 QC、视觉判读回填闭环、
+align/roundtrip(带边车 apply)、bridge、tool、qualify、series sync、
+support-bundle、损坏归档、交付 bundle、ingest 评审生命周期、任务恢复错误路径、
+陈旧标签页守卫。新发现 6 条,其中一条是**完整断裂的闭环**。
+
+## R2-1 v2 视觉判读闭环:每个消费端都断(本轮最重)
+
+`manju qc brief --json` 的 `verdict_contract` **指示** agent 用
+`manju.qc.verdict/v2` 形状回填(回显 packet_id + observations + findings)。
+照它说的做,四个消费端四种下场:
+
+| 消费端 | 结果 |
+|---|---|
+| CLI 人类输出 | **写入成功后当场崩栈**:`KeyError: 'levels'`(`cli.py:2425` 读 `result["levels"]`,而 v2 intake 的返回是 `{"written","bindings",…}` — `agent_review.py:1159`);满屏 Traceback,rc=1 |
+| `manju qc`(汇入) | `agent_verdict_items`(`agent_review.py:1673`)走 **legacy** 读取器 `_read_records`,按 DR02 ruling #1 **跳过一切 v2 行** → v2 的 `findings` 永远不出现为 [AI判读] |
+| `manju qc coverage` | 同一个 legacy 读取器 → 刚判读完的镜头显示 **never**(实测:qc_agent.jsonl 里躺着 `binding: "bound"` 的 S001 判读,coverage 报 `S001: never`,过期 0) |
+| assurance(验收) | 唯一读 v2 的地方(`read_v2_records`),但没写 must_show/avoid 期望的镜头上,一条 findings-only 判读**没有任何可见落点** |
+
+净效果:agent 按文档走一遍视觉 QC,产出**写进了盘、绑定了字节,然后在每个
+人看的界面上都不存在**;CLI 还附赠一个栈。`--json` 路不崩(`_emit(result)`
+不读 levels);MCP `qc_verdict` 也不崩 —— 但不可见性三处相同。
+
+## R2-2 交付 bundle 的出界拒绝,漏的是 pathlib 内脏
+
+```
+$ manju exports --profile master --bundle --output <项目外路径>/delivery.zip
+'/tmp/…/delivery.zip' is not in the subpath of '/tmp/…/雨夜便利店.manju' OR one path is relative and the other is absolute.
+```
+
+「bundle 必须落在项目内」这条规矩本身合理(项目内路径实测正常出包,
+15 entries + SHA256SUMS);但拒绝语是 `Path.relative_to` 的异常原文直出
+(连 "OR one path is relative…" 的库文案都带着),既没说规矩是什么,也没给
+一个能抄的项目内示例。对照:`support-bundle --out` **允许**项目外路径 ——
+两个"打包给人"的命令,一个能出去、一个不能且报库内脏,规矩本身也值得对齐。
+
+## R2-3 陈旧标签页守卫:拦住了,但话是给开发者说的
+
+DECISIONS #45 的场景实测:A 项目页面开着 → 同端口换 B 项目的服务 → 从旧标
+签页点保存。**写入被正确拒绝**(403),盘上零变化 —— 守卫成立。但用户看到的
+toast 是 `missing or invalid X-Manju-Token`:一个全中文工作台里的开发者行话,
+没说人话(「这个标签页连着旧会话/别的项目,请刷新」)。顺带:旧标签页的
+**读**请求(`GET /api/jobs` 等)对新项目照常 200 —— 旧 UI 壳可能安静地拿到
+另一个项目的数据重绘,靠 `manju-project` meta 的客户端检测兜底,值得确认
+每个轮询路径都真的接了。
+
+## R2-4 support-bundle 的脱敏摘要是 Python repr
+
+`redaction: {'events_included': 157, 'events_malformed': 0, …}` —— 与
+F-13(history)同类的 repr 直出,只是规模小。同一行里 `self-scan ok: True`
+的 True 也是 Python 字面量。
+
+## R2-5 ingest 评审动作只回显序号
+
+`manju ingest-confirm <批次> --all-matched` → `[1] confirm ✓`。
+五十项的批次里,「[7] [12] [31] ✓」不告诉你确认了什么;`ingest-review` 里
+文件名明明都在。每行带上文件名是一行的事。
+
+## R2-6 驾驶舱空计划弹窗没有出口(小)
+
+构建计划为空时,弹窗只有「取消 (Cancel)」—— 想强制走一遍
+compile+render 的人在驾驶舱没有门(/edit 页有「重新构建」)。
+引擎判空是对的(实测 CLI build 同刻也是 skip);这是「没门」不是「判错」,
+排低优先。
+
+## 第二轮扫过而干净的
+
+字幕编辑器完整接管闭环(改 cue → 原生 confirm 弹窗 → mode: manual 落盘 →
+「还原自动字幕」按钮出现 → 还原回 compiled)· 混音/打包/镜头实验室/剪辑页
+加载与控件 · /edit 的脏标记与引擎 explain 对账一致(unbuilt:false 时不亮)·
+repair trim/retime/inout(全部追加新 take、指名 select)· qc --deep /
+--lang en / --all-locales · audition 构建(audition_v1.mp4)· MANJU_ACTOR
+事件归属 · 截断 .manjupkg 的 fixity/unpack 拒绝语(一行人话,不崩)·
+fixity --info · 项目内交付 bundle · ingest confirm/flag/discard 状态机 ·
+tasks attach-remote-job / abandon 对不存在 submission 的拒绝(指向
+`manju tasks --json`)· doctor --windows 在 Linux 上不炸 · help-workflow
+recover(每步是真命令)· align --from-srt(timing.json 落盘并指下一步)·
+带边车的 roundtrip(检出我在 OTIO 里的那一刀 → apply 1 条 → check ok)·
+series sync-bible 预览 / status --health · bridge plan(帧文件绑定 + digest,
+`run` 在无合格供应商时按门拒绝)· `manju tool trim` 白名单解析。
+
+## 第二轮我自己犯的错
+
+1. **原生 confirm() 弹窗被 Playwright 默认驳回**,差点把「字幕保存二段确认」
+   报成「静默丢弃」——真人会看到弹窗,是我的自动化把它按了取消。接上
+   dialog-accept 后全流程正确。(本会话第三次:先怀疑测具。)
+2. `pkill` 波及自己 shell 的作业控制,两轮 exit 144 之后才把服务进程改成
+   `start_new_session` 拉起 —— 测试脚本的卫生问题,不是产品的。
+
+## 第二轮之后的处置建议(合并第一轮)
+
+优先级从高到低:R2-1(断裂闭环 + 崩栈)→ F-01(闸门跨面一致)→
+F-02(付费可见性)→ F-04/F-03/F-14(同类 None/双引脚点,一次扫清)→
+其余按表逐条。全部适合红-先行小步落地;R2-1 建议先补
+「v2 也计入 coverage/汇入」的行为测试再动读取器,避免把 legacy 语义改坏。
