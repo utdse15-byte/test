@@ -587,11 +587,23 @@ def _h_export(project: Project, args: dict) -> dict:
     # concurrent build's own captions phase writes (§9) — so this needs the
     # cross-process build lock too, mirroring qc/select_take. BuildLocked
     # propagates uncaught (see _h_update_shot's note above).
+    from ..build.graph import WaitingUser, final_export_gate
     from ..runtime.buildlock import build_lock
 
     formats = args.get("formats") or []
     if not isinstance(formats, list) or not formats:
         raise ToolError("formats must be a non-empty array of srt|otio|jianying")
+    # TRISURFACE F-01: the final_export ask_before token binds THIS surface
+    # too — before, only the CLI enforced it while SKILL.md §5 told agents the
+    # token means "stop and ask". Same structured waiting_user as build/redo
+    # (C61), same fail-closed confirm idiom (C59/C60: only a real JSON true).
+    try:
+        final_export_gate(
+            project, confirmed=args.get("assume_yes") is True, noun="导出",
+            retry="re-call export with assume_yes: true after the human confirms")
+    except WaitingUser as exc:
+        raise ToolError(" ".join(str(exc).split())[:500],
+                        code="waiting_user") from exc
     with build_lock(project.root, actor="ai"):
         timeline = project.load_timeline()
         if timeline is None:
@@ -1076,14 +1088,17 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "export",
         "description": "Export from the compiled timeline. Requires timeline.json. "
-        "Returns {outputs: {format: relpath}}.",
+        "Returns {outputs: {format: relpath}}. When the project lists "
+        "final_export in ask_before this refuses with code=waiting_user until "
+        "a human confirms — re-call with assume_yes: true (JSON true only).",
         "inputSchema": _schema(
             {
                 "formats": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["srt", "otio", "jianying"]},
                     "minItems": 1,
-                }
+                },
+                "assume_yes": {"type": "boolean", "default": False},
             },
             ["formats"],
         ),

@@ -497,6 +497,27 @@ def _emit(data, as_json: bool) -> None:
         typer.echo(json.dumps(data, ensure_ascii=False, indent=2, default=str))
 
 
+def _display_path(project: Project, path: Path) -> str:
+    """Project-relative when inside the project, absolute otherwise —
+    display-only. TRISURFACE R2-2: `exports --bundle --output <项目外路径>`
+    WROTE the zip and then stacktraced composing its own success line, because
+    ``project.relpath`` raises on any path outside the root (an outside
+    ``--output`` is explicitly allowed by the delivery output guard)."""
+    try:
+        return project.relpath(path)
+    except ValueError:
+        return str(Path(path).resolve())
+
+
+def _release_scope_clause(unmade: int) -> str:
+    """The READY verdict's "what it is not counting" clause. TRISURFACE
+    F-24b: the comma rode directly against the digit ("blockers=0,5 项…"),
+    which reads as the decimal 0,5 — a space keeps it a count."""
+    if not unmade:
+        return ""
+    return f", {unmade} 项未生成/待更新但均非阻塞"
+
+
 def _fail(message: str, *, code: str = "error") -> None:
     """Abort with a non-zero exit and a human error message.
 
@@ -2325,11 +2346,19 @@ def qc_brief_cmd(
         _emit(brief, True)
         return
 
+    # TRISURFACE F-24a: the criteria note already spells out the full
+    # `manju skills show <skill>` instruction, so composing "command(note)"
+    # printed the same command twice in one line. Print the note alone when it
+    # already carries the command; keep the composition for notes that don't.
+    def _criteria_line(criteria: dict) -> str:
+        cmd = f"manju skills show {criteria['skill']}"
+        note = criteria.get("note") or ""
+        return f"判读标准:{note}" if cmd in note else f"判读标准:{cmd}({note})"
+
     if mode == "consistency":
         typer.secho(f"质检出题(一致性)/ qc brief --mode consistency:"
                     f"{len(brief['units'])} 个组合可判读", fg=typer.colors.CYAN)
-        typer.echo(f"判读标准:manju skills show {brief['criteria']['skill']}"
-                   f"({brief['criteria']['note']})")
+        typer.echo(_criteria_line(brief["criteria"]))
         for u in brief["units"]:
             members = ", ".join(m["shot"] for m in u["members"])
             typer.echo(f"  [{u['kind']}] {u['unit']}  成员:{members}")
@@ -2341,8 +2370,7 @@ def qc_brief_cmd(
         return
 
     typer.secho(f"质检出题 / qc brief:{len(brief['shots'])} 个镜头可判读", fg=typer.colors.CYAN)
-    typer.echo(f"判读标准:manju skills show {brief['criteria']['skill']}"
-               f"({brief['criteria']['note']})")
+    typer.echo(_criteria_line(brief["criteria"]))
     for s in brief["shots"]:
         typer.echo(f"  {s['shot']}  take={s['take']}")
         frames = "  ".join(f"{k}={v}" for k, v in (s["frames"] or {}).items() if v)
@@ -2422,8 +2450,14 @@ def qc_verdict_cmd(
     else:
         typer.secho(f"已回填 {result['written']} 条 AI 判读 → {result['path']}",
                     fg=typer.colors.GREEN)
-        if result["levels"]:
+        # TRISURFACE R2-1: two intake paths, two result shapes — the legacy
+        # one has ``levels`` only, the v2 one adds ``bindings``. `.get` both:
+        # this line stacktraced (KeyError: 'levels') on every v2 submission,
+        # AFTER the write had already landed.
+        if result.get("levels"):
             typer.echo("  级别:" + ", ".join(f"{k}={v}" for k, v in result["levels"].items()))
+        if result.get("bindings"):
+            typer.echo("  绑定:" + ", ".join(f"{k}={v}" for k, v in result["bindings"].items()))
         typer.echo("→ 跑 manju qc 查看汇入的 [AI判读] 项")
 
 
@@ -2892,14 +2926,16 @@ def export(
     lints the result when installed. final.mp4/SRT/OTIO always remain the
     fallback exits (§14)."""
     project = _project()
-    # WP5: final_export gate — free, but outward-facing; require --yes when token present
+    # WP5: final_export gate — free, but outward-facing; require --yes when
+    # token present. One owner serves CLI + MCP (TRISURFACE F-01).
+    from .build.graph import WaitingUser, final_export_gate
+
     config = _load_config_or_fail(project)
-    if "final_export" in (config.ask_before or []) and not yes:
-        _fail(
-            "waiting_user: final_export 在 ask_before 中 — 导出是外向制品确认"
-            "(非金钱花费)。确认后重试: manju export --yes …",
-            code="waiting_user",
-        )
+    try:
+        final_export_gate(project, confirmed=yes, noun="导出",
+                          retry="manju export --yes …")
+    except WaitingUser as exc:
+        _fail(str(exc), code="waiting_user")
     # AI_IDE_16 §9 pull sheet: a derived CSV+MD export that does NOT require a
     # written timeline.json (it loads-or-compiles). Handle it first so it works
     # pre-build, and let it be requested alongside the timeline exporters.
@@ -2918,8 +2954,12 @@ def export(
             _fail(str(exc), code=getattr(exc, "reason", "bad_out"))
         for kind, path in sheets.items():
             outputs[f"pullsheet_{kind}"] = path
-        notes.append("pull sheet: CSV+MD in exports/pullsheet/ (PDF skipped — "
-                     "no headless-Chromium/PDF-table path in this environment)")
+        # TRISURFACE F-17: the old note claimed "no headless-Chromium … in
+        # this environment" without ever probing anything — doctor showed
+        # chromium ✓ on the same box. PDF output is simply not implemented;
+        # say that, never assert an environment fact nobody measured.
+        notes.append("pull sheet: CSV+MD in exports/pullsheet/(PDF 输出未实现 — "
+                     "需要打印排版时用浏览器打开 MD 即可)")
     timeline = _load_timeline_or_fail(project)
     if timeline is None:
         if pullsheet and not (jianying or capcut or srt or ttml or otio or edl or fcpxml or xmeml):
@@ -3145,12 +3185,13 @@ def openclap_export(
     project = _project()
     # WP5: same final_export gate as `manju export` (outward-facing, free) —
     # a .clap is an exchange artifact for other tools, so it confirms like one.
-    if "final_export" in (project.load_config().ask_before or []) and not yes:
-        _fail(
-            "waiting_user: final_export 在 ask_before 中 — 导出是外向制品确认"
-            "(非金钱花费)。确认后重试: manju openclap export --yes …",
-            code="waiting_user",
-        )
+    from .build.graph import WaitingUser, final_export_gate
+
+    try:
+        final_export_gate(project, confirmed=yes, noun="导出",
+                          retry="manju openclap export --yes …")
+    except WaitingUser as exc:
+        _fail(str(exc), code="waiting_user")
     timeline = _load_timeline_or_fail(project)
     if timeline is None:
         _fail("no timeline.json — run `manju build` first(还没有编译过时间线)",
@@ -3432,13 +3473,14 @@ def package(
     idempotent via .key.json sidecars; --force bypasses. Needs a final —
     without one it points you at `manju build`."""
     # WP5: same final_export gate as `manju export` (outward-facing, free)
+    from .build.graph import WaitingUser, final_export_gate
+
     _pkg_project = _project()
-    if "final_export" in (_pkg_project.load_config().ask_before or []) and not yes:
-        _fail(
-            "waiting_user: final_export 在 ask_before 中 — 包装导出是外向制品确认"
-            "(非金钱花费)。确认后重试: manju package --yes",
-            code="waiting_user",
-        )
+    try:
+        final_export_gate(_pkg_project, confirmed=yes, noun="包装导出",
+                          retry="manju package --yes")
+    except WaitingUser as exc:
+        _fail(str(exc), code="waiting_user")
     from pydantic import ValidationError
 
     from .media.ffmpeg import MediaError
@@ -3595,12 +3637,16 @@ def exports(
             man = _dm.build_manifest(project, profile, metadata_file=metadata_file)
             if bundle:
                 out, man = _dm.write_bundle(project, man, output=output)
+                # TRISURFACE R2-2: an outside --output is legal (delivery
+                # guard) but relpath raises on it — the bundle landed and the
+                # success line stacktraced. Display degrades to absolute.
+                out_disp = _display_path(project, out)
                 append_event(project.root, ACTOR, "delivery_bundle",
-                             {"profile": profile, "bundle": project.relpath(out)})
+                             {"profile": profile, "bundle": out_disp})
                 if as_json:
-                    _emit({"bundle": project.relpath(out), "manifest": man}, True)
+                    _emit({"bundle": out_disp, "manifest": man}, True)
                     return
-                typer.secho(f"交付包 / delivery bundle: {project.relpath(out)}",
+                typer.secho(f"交付包 / delivery bundle: {out_disp}",
                             fg=typer.colors.GREEN)
                 typer.echo(f"  entries={len(_dm._bundle_members(project, man))}  "
                            f"checksums={man['checksums']['path']}")
@@ -3608,7 +3654,7 @@ def exports(
             if output is not None:
                 dest = _dm.materialize_manifest(project, man, output=output)
                 append_event(project.root, ACTOR, "delivery_manifest",
-                             {"profile": profile, "path": project.relpath(dest)})
+                             {"profile": profile, "path": _display_path(project, dest)})
             if as_json:
                 _emit(man, True)
                 return
@@ -3696,9 +3742,7 @@ def exports(
     # than leaving the reader to reconcile two adjacent numbers.
     unmade = sum(v for k, v in (data.get("counts") or {}).items()
                  if k in ("missing", "stale"))
-    scope = ""
-    if ready and unmade:
-        scope = f",{unmade} 项未生成/待更新但均非阻塞"
+    scope = _release_scope_clause(unmade) if ready else ""
     typer.secho(f"发布评估 / release:  {verdict}  "
                 f"(baseline={base_status}, blockers={len(blockers)}{scope})",
                 fg=typer.colors.GREEN if ready else typer.colors.YELLOW)
@@ -9793,7 +9837,11 @@ def series_new(
         _emit({"root": str(series.root), "name": cfg.name}, True)
     else:
         typer.secho(f"created series {series.root}  [{cfg.name}]", fg=typer.colors.GREEN)
-        typer.secho("  下一步:manju series new-episode E01 --title <标题>",
+        # TRISURFACE F-21: `manju new` prints the cd; this twin did not, and
+        # running the suggested command from the parent dir answers
+        # "no manju series found". Same shape, same courtesy.
+        typer.secho(f"  下一步:cd {series.root.name} && "
+                    "manju series new-episode E01 --title <标题>",
                     fg=typer.colors.BRIGHT_BLACK)
 
 

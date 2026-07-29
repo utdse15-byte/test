@@ -516,3 +516,92 @@ series sync-bible 预览 / status --health · bridge plan(帧文件绑定 + dige
 F-02(付费可见性)→ F-04/F-03/F-14(同类 None/双引脚点,一次扫清)→
 其余按表逐条。全部适合红-先行小步落地;R2-1 建议先补
 「v2 也计入 coverage/汇入」的行为测试再动读取器,避免把 legacy 语义改坏。
+
+---
+
+# 修复波(同日落地)— TRISURFACE-FIX
+
+店主发话「fix」。按上表优先级落了一波,**逐条红-先行**(每条新测试都先在
+修复前的代码上验证过红,含两条以 ImportError 形式红的),四个新测试文件共
+34 条:`test_trisurface_verdict_loop.py`(8)、`test_trisurface_export_gate.py`
+(6)、`test_trisurface_voice_ledger.py`(5)、`test_trisurface_polish.py`(18,
+含 3 条守卫)。细节见 DECISIONS.md `TRISURFACE-FIX` 节。
+
+## 已修(18 项)
+
+| 项 | 落点 |
+|---|---|
+| R2-1 v2 判读闭环 | intake 返回补 `levels`(CLI 人类分支不再崩且 `.get` 双形状 + 印 `bindings`);`qc_coverage` 把 v2 记录按 packet 字节归一进同一比较;`agent_verdict_items` 折叠 v2 findings(shot + unit 两档,字节一动照旧 已过期);legacy 行为逐字节守卫 |
+| F-01 final_export 闸 | 一个 owner `build.graph.final_export_gate`(与 spend_gate 同址同 WaitingUser);CLI 三处(export/openclap/package)改走它,消息逐字未变;MCP `export` 接闸 → 结构化 `waiting_user`,`assume_yes is True` fail-closed,schema 增 optional 参数(DR05 特征化钉允许 ADD);GUI 刻意不接——人点按钮即是该 token 要的确认,理由写进 owner docstring |
+| F-02 配音/手动进账本 | `register_voice_take`(全部配音路的咽喉,含 locale 标签)与 `register_manual_take`(select --file + ingest 视频 take)落 live 行;**live ≡ rebuild 钉为行为测试**(同一 multiset);账本失败绝不影响登记(best-effort 守卫) |
+| F-03 None LUFS | `exportstatus._loudness_clause` 一个 formatter:静音说静音,单轴缺说 —,CLI exports 表与 GUI 卡片同源同修 |
+| F-04 /create 双引 | 移除第二个 webclient.js(pages_t 注释里那只 bug 的第四份拷贝),页面渲染测试钉「恰好一次」 |
+| F-05 stale 死循环 | stale 档发现「按当前 spec 重做的候选」时改口 `manju select <shot> <n>`;key 仍是 `stale`(agent 分支不动),无候选时措辞照旧(双向测试) |
+| F-06 schema 报错教形状 | check 的校验错误对 Action/Dialogue/Camera 附「应为 {…}」+ `manju schema` 指路 |
+| F-07 近似键 advisory | check 对「与真实字段近似的未知键」发 warning(`duration_ms` → `duration`);不相干的自由键保持沉默,extra=allow 语义不变、永不 gate |
+| F-08 分镜按钮指路 | 漏斗分镜档改指「工作台首页镜头面板」——分镜工作台页本来就没有那个按钮 |
+| F-12 审批拒绝点名 | `_approval_blocked_message` 逐个列 `CODE[scope]`,不再让人自己扫表 |
+| F-14 board `0.0 None` | 币种 present-but-None 归一为空 + 不留尾随空格 |
+| F-16 TTS 死路信息 | 一条共享 `TTS_UNCONFIGURED_MESSAGE`(三处 raiser 同源):给 `manju providers add` 的真命令 + Edge adapter 行 + 手动投放逃生门;§8.6 与「repair」串台措辞删除 |
+| F-17 pullsheet 诚实注 | 「PDF 输出未实现」——不再断言没探测过的环境事实 |
+| F-21 series cd | `series new` 下一步补 `cd <目录> &&`(与 `manju new` 同款礼貌) |
+| F-23 httpx | 进 dev extra(七个测试模块直接 import 它) |
+| F-24a/b | qc brief 判读标准行只出现一次命令;READY 行 `, N 项` 加空格不再读成小数 |
+| R2-2 bundle 出界 | `_display_path`:项目内相对、项目外绝对——写成功后的成功行不再崩栈(出界 --output 本就是 delivery guard 允许的) |
+| R2-3 令牌 403 | GUI/board 同一条 `TOKEN_403_MESSAGE`:机制名保留 + 人话(旧标签页→刷新) |
+
+## 未修,留档(7 项,均为设计决定或超出本波边界)
+
+- **F-09** Edge TTS 脚手架路径:需要 `providers add --adapter edge` 模板这一
+  真功能;F-16 的新消息已把路指全,升级为模板另起一波。
+- **F-10** readonly 下导出中心按钮可点:服务端 403 是对的;显示层禁用是
+  GUI JS 改动,与 F-20 一起归 GUI 打磨波。
+- **F-11** locale 给无台词镜头铸行:改的是 lines.yaml 形状或 status 语义,
+  需要先定方向(过滤显示 vs 不铸行),不该顺手。
+- **F-13** history 的 repr 墙 / **R2-4** support-bundle 摘要 repr:同一个
+  「接 events 摘要器」活,合并处理。
+- **F-15** ingest 改 bible 的后果静默:该接 `impact` 的预报,属功能接线。
+- **F-18/F-19** MCP 错误码税目扩展 / export 格式面追平 CLI:两者都动
+  agent 契约(错误码文档反捏造测试、surface digest),值得单独一波。
+- **F-20** 人工确认一键落账无撤销:append-only 核验日志的撤回语义要先
+  设计(追加「撤回」事件?),不该在打磨波里顺手定。
+
+## 修复波里我自己犯的错(照例留档)
+
+**F-05 的第一版修复从来不会在真项目里生效,而我的测试是绿的。** 我在检测
+「按当前 spec 重做的候选」时用了 `compute_spec_hash(shot, bible)` 的默认参数,
+而流水线盖进 sidecar 的是 `version=SPEC_VERSION, project_root=…` 的哈希
+(build/stale.py 逐字如此)——两个值永不相等,分支永不触发。测试却绿,
+因为**测试夹具的 sidecar 是用同一个错误调用铸的**:我在用自己的实现验证
+自己的实现。是「改完后回到真项目重跑发现处」抓住的:S003 刚 redo 完,
+status 照旧喊 redo。修正:检测改用 stale.py 的同款逐 take 判据
+(per-take spec_version + project_root),测试夹具改按流水线的真实铸法。
+上一波写过「桩测试比没有测试更危险」——这次差点原样重演,救回来的是
+**修完必须回真项目走一遍**这个流程,不是测试本身。
+
+## 改了一个既有测试,不是弱化
+
+首轮全量抓出唯一一红:`test_cycle2_bugfix_20260715.py::test_rebuild_counts_voice_spend`。
+读栈才发现它把 **state.sqlite 文件路径**当项目根传给了 `RuntimeState`(该类自己
+拼 `.manju/state.sqlite`)——此前能绿只因登记时刻真正的 DB 文件还不存在,那个
+畸形嵌套路径被静默 mkdir 成了目录;F-02 的实时记账让真文件先出现,畸形路径
+立刻 `NotADirectoryError`。修的是测试**自己的构造错误**(全仓 grep:只有这
+一处这么传),断言一字未动——rebuild 仍须导出该行与 2.0 花费。这正是
+F-02 附带价值的一个实例:实时账本让一个潜伏的误用当场现形。
+
+## 验证
+
+- 新增 34 条测试全绿,每条修复前验证过红;`ruff check src/ tests/` 干净。
+- **全部 18 项修复在真项目上逐条回放过原始复现步骤**:v2 判读回填不再崩、
+  [AI判读] 项(含修复前留下的旧记录)出现在 qc.md、coverage 2/7 reviewed、
+  MCP export 回 `waiting_user`、S006 新配音即时出现在 `manju tasks` 第 25 行、
+  S003 的 stale 待办改口点名 take_03、静音母版行改说「该总线静音,无响度可测」。
+- 邻接模块逐簇跑过:verdict 簇 114 条、MCP/gate 簇 133 条、ledger 簇
+  359 条,全绿(其中 e2e 两条首跑红是我残留的 GUI 服务进程吃满 CPU 所致,
+  杀掉后与改动无关地复绿——留档为测具卫生教训)。
+- 全量套件(闸门同配置,ffmpeg 6.1.1):**5816 passed, 0 failed, 19 skipped**。
+- **CLI surface 未变**(只改消息文本与内部实现,`test_fp_cli_snapshot` 全绿);
+  MCP export schema 为 ADD-only(特征化钉明示允许);CONTRACTS schema ids 未动。
+- **未验证**:`windows-ci.yml` 本环境无法运行,与前两波同界——改动无一触碰
+  msvcrt/路径转义等 Windows 专属层,但 Linux 绿 ≠ Windows 绿,这句话上一波
+  就写过,这里照写。

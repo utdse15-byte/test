@@ -841,11 +841,26 @@ def _masters_rows(ctx: _Ctx) -> list[DeliverableRow]:
             loud = art.get("loudness") or {}
             rows.append(DeliverableRow(
                 kind, label, rel, Freshness.UP_TO_DATE,
-                f"母版字节存在且时间线未变;实测 integrated "
-                f"{loud.get('integrated_lufs')} LUFS / TP "
-                f"{loud.get('true_peak_dbtp')} dBTP",
+                "母版字节存在且时间线未变;" + _loudness_clause(loud),
                 openable=True, open_hint=hint))
     return rows
+
+
+def _loudness_clause(loud: dict) -> str:
+    """One honest sentence for a master's loudness facts (TRISURFACE F-03).
+
+    A silent bus records no loudness, and interpolating the raw values printed
+    ``实测 integrated None LUFS / TP None dBTP`` — "measured: None" is a
+    contradiction (None means there was nothing to measure). `manju masters`
+    learned 静音 in the prior UX wave; this is the SAME fact's other formatter
+    (CLI `manju exports` + GUI /exports both render these rows)."""
+    lufs = loud.get("integrated_lufs")
+    tp = loud.get("true_peak_dbtp")
+    if lufs is None and tp is None:
+        return "该总线静音,无响度可测 (silent — no loudness to measure)"
+    lufs_s = f"{lufs} LUFS" if lufs is not None else "— LUFS"
+    tp_s = f"{tp} dBTP" if tp is not None else "— dBTP"
+    return f"实测 integrated {lufs_s} / TP {tp_s}"
 
 
 def _vtt_row(ctx: _Ctx) -> DeliverableRow | None:

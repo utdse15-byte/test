@@ -105,15 +105,18 @@ def _resolve_tts(provider: str | None):
     → the first configured ``type: tts`` manifest, or a named one). Imported at
     call time so a test that monkeypatches ``manju.providers.tts.get_tts_provider``
     is honoured — the same way the build path picks it up."""
-    from ..providers.tts import TtsUnavailable, get_tts_provider, tts_providers
+    from ..providers.tts import (
+        TTS_UNCONFIGURED_MESSAGE,
+        TtsUnavailable,
+        get_tts_provider,
+        tts_providers,
+    )
 
     providers = tts_providers()
     if not providers and not provider:
-        raise TtsUnavailable(
-            "no TTS provider configured — fill a tts manifest (§8.6, type: tts, "
-            "adapter: generic_tts) or use the keyless EdgeTtsProvider; a voice "
-            "cannot be repaired without one"
-        )
+        # TRISURFACE F-16: the one shared message — the old local copy pointed
+        # at §8.6 and framed a --preview request as a failed "repair".
+        raise TtsUnavailable(TTS_UNCONFIGURED_MESSAGE)
     name = provider or sorted(providers)[0]
     return name, get_tts_provider(name)
 
