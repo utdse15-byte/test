@@ -897,3 +897,24 @@ provider 的 F13 适配墙照旧接住并降级 drawtext 带记录——安全�
 的 httpx 默认 5s 全部打在预渲染 HTML/静态文件上。`signal.*` 平台面同扫:
 killpg 测试有 POSIX skipif 门,crash 战役已改 `Popen.kill()`,再无第三处。
 无证据不改——这条准则本身也是本轮的产出之一。
+
+---
+
+# 门禁揭示·第三轮(2026-07-30:探测器太诚实,戳穿了一个不完整的模拟)
+
+PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
+5818 passed, 53 skipped**。两个信号都重要:
+
+1. **唯一红灯是模拟不完整,不是产品错。**
+   `test_absent_tools_are_missing_never_a_crash` 用「清空 PATH + 删
+   CHROME_BIN + 指空 playwright 目录」伪造「无 Chromium 的机器」——但
+   runner 上装着真 Chrome,find_chromium 如今会查安装根(伪造从没清过),
+   于是诚实回答 True,`assert ... is False` 应声而红。修法:缺席世界补上
+   ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA 三个根(与
+   `test_find_edge_absent_is_none` 完全同款),断言一字未动。本地双世界
+   仿真验证:带 Chrome 的 Windows → 找到 chrome.exe(runner 所见);补全
+   的缺席世界 → None(修后所需)。
+2. **chromium 测试道在 Windows 上第一次真的打开了**:skip 从 55 降到 53、
+   passed 从 5803 涨到 5818——7 条卡片像素断言与 round5 的 html 测试
+   在 windows-latest 上首次实跑,**全绿**。卡片两修(断尾/白带)从此有
+   真实 Windows 像素级回归网,这正是 #19 那波想换来的东西。
