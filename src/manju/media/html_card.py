@@ -117,24 +117,30 @@ def html_available() -> bool:
 
 CARD_TEMPLATES = {
     # caption/dialogue card: dark gradient, centered text.
-    # Canvas background is the SOLID {bg_edge}, the real {bg} paints on
-    # body::before{{position:fixed;inset:0}}: headless Chromium here lays out
-    # a viewport 87px SHORTER than --window-size while screenshotting at full
-    # window size, and nothing rasterizes beyond the viewport — the excess
-    # rows can only ever show the canvas BASE color, which a solid provides
-    # and a gradient cannot (gradient canvas => white band). On a healthy
-    # build ::before covers 100% and {bg_edge} never shows.
+    # Canvas background is the SOLID {bg_edge} on html ONLY, the real {bg}
+    # paints on body::before{{position:fixed;inset:0}}: headless Chromium
+    # here lays out a viewport 87px SHORTER than --window-size while
+    # screenshotting at full window size, and nothing rasterizes beyond the
+    # viewport — the excess rows can only ever show the canvas BASE color,
+    # which a solid provides and a gradient cannot (gradient canvas => white
+    # band). {bg_edge} must NOT also sit on body: paint order is canvas →
+    # negative-z ::before → body's own background, so an opaque body
+    # background buries the gradient and every card ships flat (the pixel
+    # probes caught exactly that). On a healthy build ::before covers 100%
+    # and {bg_edge} never shows.
     # The width cap sits on .stack (the flex ITEM, resolved against the
     # definite body) — on an inner block the cyclic percentage is ignored
     # during intrinsic sizing and re-applied at layout, which broke the tail
-    # of EVERY one-line caption (「谢谢。」→「谢/谢。」).
+    # of EVERY one-line caption (「谢谢。」→「谢/谢。」). The 4% side margin
+    # keeps edge-justified presets (white_big) a real inset off the frame
+    # border instead of flush against it; centered layouts are unmoved.
     "caption": """<!doctype html><html><head><meta charset="utf-8"><style>
+html{{background:{bg_edge}}}
 html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;
-background:{bg_edge};
 display:flex;align-items:center;justify-content:{justify};
 font-family:"Noto Sans CJK SC","WenQuanYi Zen Hei","PingFang SC",sans-serif}}
 body::before{{content:"";position:fixed;inset:0;background:{bg};z-index:-1}}
-.stack{{max-width:82%}}
+.stack{{max-width:82%;margin:0 4%}}
 .card{{color:{text_color};font-size:{font_px}px;font-weight:600;text-align:center;
 line-height:1.65;letter-spacing:.04em;
 text-shadow:0 2px 14px rgba(0,0,0,.85)}}
@@ -144,12 +150,12 @@ background:{accent};opacity:.85}}</style></head>
     # chapter/title card: bigger, with a kicker line (.wrap is already the
     # flex item, so its max-width percentage was never part of the wrap bug)
     "chapter": """<!doctype html><html><head><meta charset="utf-8"><style>
+html{{background:{bg_edge}}}
 html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;
-background:{bg_edge};
 display:flex;align-items:center;justify-content:{justify};
 font-family:"Noto Sans CJK SC","WenQuanYi Zen Hei","PingFang SC",sans-serif}}
 body::before{{content:"";position:fixed;inset:0;background:{bg};z-index:-1}}
-.wrap{{text-align:center;max-width:84%}}
+.wrap{{text-align:center;max-width:84%;margin:0 4%}}
 .kicker{{color:{accent};font-size:{kicker_px}px;letter-spacing:.5em;
 text-indent:.5em;margin-bottom:30px}}
 .title{{color:{text_color};font-size:{font_px}px;font-weight:700;line-height:1.5;

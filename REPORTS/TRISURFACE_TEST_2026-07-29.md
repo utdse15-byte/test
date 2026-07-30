@@ -937,3 +937,47 @@ PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
   Windows 化、模拟补全 —— 六个波次(PR #29-#32 + 两个文档提交),
   默认分支在店主的第一平台上重新全绿,且比 arc 开始时多了一整条
   在真 Windows 上实跑的 chromium 像素回归道。
+
+---
+
+# 卡片渲染波·二(2026-07-30:preset 全览暴露出「涂满≠画对」)
+
+收口后按标goal继续巡,把四个 preset 首次并排全渲了一遍 —— 两个新缺陷,
+其中一个直接戳穿了我上一波的验收:
+
+## 1. 渐变全体隐身:z-index:-1 的 ::before 被 body 自己的背景埋了
+
+- **现象**:warm_gradient 整面平紫(顶部本应是 #ff7a45 橙);像素直探证实
+  左上 = (122,28,172) = bg_edge 纯色。默认 caption/chapter 的渐变同样从未
+  画出 —— 深色系平色肉眼难辨,才没被上一波发现。
+- **机制**(CSS 绘制顺序):canvas(html 背景)→ **负 z 定位后代
+  (::before 渐变)** → **body 自己的不透明背景(盖住前者)** → 内容。
+  bg_edge 同时挂在 html,body 上,body 那份把渐变埋了。
+- **修法**:`bg_edge` 只留 html(canvas 传播仍旧铺满整个截图面,含视口外
+  87 行),body 不再带背景 —— ::before 从 body 背景后面浮出来。
+- **两道防线为什么都漏了**(照例留档):①「涂满」测试只断言无白行,
+  bg_edge 纯色打底时渐变缺席照样过;②我上一波亲眼「验收」fixed_p.png 时
+  把平深蓝当成了渐变 —— 深色低对比下肉眼不可信。本波补的
+  `test_gradient_actually_reaches_the_pixels` 按三个家族钉**色调行程**
+  (caption 顶底行均差 ≥8、chapter 径向中心比角亮 ≥8、warm 左上暖右下冷),
+  从此渐变退化平色必红。
+- **诚实残余**:受影响的 headless Chromium 上,视口外 87 行只能是 bg_edge
+  平色 —— warm 的高饱和对角渐变旁接缝可见,caption/chapter 几乎不可辨;
+  健康浏览器(店主的 Edge/Chrome)上 ::before 全覆盖、无接缝。已是该
+  约束下的最优解。
+
+## 2. white_big 文字顶死右缘(14px/1920 ≈ 0.7%)
+
+`justify:flex-end` 在 flex row 主轴上是**水平**推右,加上 .stack 无边距,
+文字贴着帧边渲染,视觉上如同被裁。修法:`.stack`/`.wrap` 加 `margin:0 4%`
+—— 居中 preset 分毫不动(对称边距不改变居中),推边 preset 获得 4% 真实
+内距。`test_edge_pushed_text_keeps_a_margin` 钉 ≥3% 内距。
+
+## 验证
+
+- 红-先行:两条新像素测试修前红(渐变平色、右缘 14px),修后
+  `test_card_visual_fixes.py` 9 条全绿;
+- 四 preset + 两模板重渲亲眼复核:caption 海军蓝渐变、warm 橙→粉→紫、
+  chapter 径向光斑、white_big 右缘内距 —— 全部本次真的看见了;
+- 邻接簇 edit_v3(preset 字节恒等钉照过)+ round5 + packaging 66 绿;
+- 全量套件(ffmpeg 6.1.1):**5855 passed, 0 failed, 19 skipped**。

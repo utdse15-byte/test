@@ -3479,3 +3479,26 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    evidence the card pixel tests EXECUTE on Windows: 5818 passed / 53
    skipped (vs 5803/55 before — the chromium lane opened and every card
    test that ran was green; the sole red was this fabrication gap).
+21. **Card-render wave 2 (2026-07-30)** — rendering all four presets side
+   by side for the first time exposed that #17's fix had a buried defect
+   and my own verification let it through: paint order is canvas → the
+   z-index:-1 ::before → body's OWN opaque background, so carrying bg_edge
+   on body as well as html buried the gradient — EVERY gradient card
+   shipped flat bg_edge solid. Neither defence caught it: the no-white-rows
+   test is blind to a flat solid, and my eyeball check accepted a flat
+   dark navy as "gradient" (dark low-contrast solids defeat visual
+   inspection — recorded as an own-error). bg_edge now lives on html ONLY
+   (canvas propagation still covers the whole screenshot surface including
+   the beyond-viewport strip) and body carries no background, so ::before
+   surfaces. New pixel test pins tonal TRAVEL per family (caption top/bottom
+   row-mean delta, chapter radial center vs corner, warm_gradient warm
+   top-left vs cool bottom-right) — a gradient degrading to flat is red
+   forever after. Second fix in the same wave: white_big's
+   justify:flex-end ran the text flush against the frame edge (14px of
+   1920) — .stack/.wrap gain margin:0 4% (centered presets unmoved,
+   edge-justified presets get a real inset; ≥3% pinned). Honest residue:
+   on the afflicted headless Chromium the beyond-viewport 87 rows can only
+   ever be the bg_edge solid (a visible seam beside warm's high-chroma
+   diagonal, near-invisible on the dark defaults); healthy browsers show
+   no seam at all. 2 red-first pixel tests; 9/9 card tests green;
+   edit_v3 byte-identity pin passes unweakened.
