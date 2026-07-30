@@ -575,3 +575,29 @@ def test_package_refuses_provably_stale_final_by_default(stale_project):
     # --force still works (the escape hatch is unchanged)
     result = make_package(stale_project, force=True)
     assert result["cover"] is not None
+
+
+def test_cover_key_rekeys_with_card_look_but_frame_mode_is_untouched(monkeypatch):
+    """The cover freshness key must fold in the card TEMPLATE's actual CSS for
+    mode="card": after a shipped template fix, an old cover.png must read 过期
+    in the export center, not fresh-with-the-pre-fix-look. mode="frame" never
+    renders through the template, so its key stays byte-identical (no spurious
+    staleness on upgrade)."""
+    from manju.core.models import CoverSpec, ProjectConfig
+    from manju.media import html_card as hc
+    from manju.media.packaging import cover_cache_key
+
+    config = ProjectConfig(name="p")
+    card = CoverSpec(mode="card", text="封面", template="chapter")
+    frame = CoverSpec(mode="frame", frame_ms=1200)
+
+    card_before = cover_cache_key(config, "sha256:f" * 8, card)
+    frame_before = cover_cache_key(config, "sha256:f" * 8, frame)
+
+    monkeypatch.setitem(hc.CARD_TEMPLATES, "chapter",
+                        hc.CARD_TEMPLATES["chapter"] + "/*look-v2*/")
+
+    assert cover_cache_key(config, "sha256:f" * 8, card) != card_before, \
+        "card-mode cover key ignored the template content"
+    assert cover_cache_key(config, "sha256:f" * 8, frame) == frame_before, \
+        "frame-mode cover key must not depend on card templates"

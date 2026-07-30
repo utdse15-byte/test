@@ -22,6 +22,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from ..core.container import Project
 from ..core.hashing import cache_key, hash_file
@@ -221,8 +222,20 @@ def cover_cache_key(config: ProjectConfig, final_hash: str, cover: CoverSpec) ->
 
     Extracted so :mod:`manju.build.exportstatus` (the round-U export center) can
     judge cover freshness against the SAME key ``_make_cover`` writes into
-    ``cover.key.json`` — one formula, never a parallel staleness path."""
-    return cache_key(final_hash, "cover", cover.model_dump(), config.width, config.height)
+    ``cover.key.json`` — one formula, never a parallel staleness path.
+
+    A card-mode cover renders through the html template, so its key ALSO folds
+    in the template's actual CSS — a shipped look fix must re-key the old
+    cover.png into 过期 instead of the export center reporting the pre-fix
+    look as fresh. Frame-mode covers never touch the template; their key stays
+    byte-identical across upgrades (no spurious staleness)."""
+    parts: list[Any] = [final_hash, "cover", cover.model_dump(),
+                        config.width, config.height]
+    if cover.mode == "card":
+        from .html_card import CARD_TEMPLATES
+
+        parts.append(CARD_TEMPLATES.get(cover.template, ""))
+    return cache_key(*parts)
 
 
 def teaser_cache_key(config: ProjectConfig, final_hash: str, teaser: TeaserSpec) -> str:

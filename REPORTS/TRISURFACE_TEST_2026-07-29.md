@@ -980,7 +980,10 @@ PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
 - 四 preset + 两模板重渲亲眼复核:caption 海军蓝渐变、warm 橙→粉→紫、
   chapter 径向光斑、white_big 右缘内距 —— 全部本次真的看见了;
 - 邻接簇 edit_v3(preset 字节恒等钉照过)+ round5 + packaging 66 绿;
-- 全量套件(ffmpeg 6.1.1):**5855 passed, 0 failed, 19 skipped**。
+- 全量套件(ffmpeg 6.1.1):**5855 passed, 0 failed, 19 skipped**;
+- **Windows 门禁实跑绿(run 30536163223)**:渐变色调行程与 white_big 边距
+  两条像素断言在 windows-latest 的真 Chrome 上通过 —— 阈值(顶底行程 ≥8、
+  角部 RGB ±30、≥3% 内距)跨字体/渲染管线成立。
 
 ## 附:预览缓存的升级陷阱(同波修复)
 
@@ -992,3 +995,20 @@ PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
 折进 cache_key —— 观感一变键即变,零维护、无需人工记得 bump 版本号。
 红-先行(改模板内容后仍命中 → 断言 miss),edit_v3 全文件 29 绿,
 GUI 消费端三文件 62 绿。
+
+## 附二:缓存键陷阱全族清点(cover 修复 + 其余留档)
+
+按「一处起火 → 全族排查」把全仓 `cache_key` 调用点审了一遍,按证据分三类:
+
+- **同枪命中,修**:`packaging.cover_cache_key` —— card 模式封面经 html
+  模板渲染,键却只含 spec;模板修复落地后旧 cover.png 在导出中心误报
+  fresh。键现折入模板 CSS(仅 card 模式;frame 模式键字节不变,升级不产
+  伪过期)。一个公式 exportstatus 共用,自动跟随。红-先行。
+- **同类无火,不动**(载荷敏感同款准则):waveform(画风在代码里)、
+  kenburns 片段(有 S4 toolchain 键机制)、audition slate。
+- **早有防备**:`boards.py` 键里带 "board_v1" 版本令牌;render 段/边界/
+  final 键有 S4 toolchain 机制 —— 作者早懂这坑。
+- **明确不修**:intro/outro 卡资产地址(`packaging_card_relpath`)被
+  **编译器**消费 —— 改地址即重写所有既有项目的编译时间线并连锁重渲
+  finals,代价远超收益;旧观感资产走存量说明路线(删除
+  `media/gen/packaging/` 下对应文件即可触发新渲)。
