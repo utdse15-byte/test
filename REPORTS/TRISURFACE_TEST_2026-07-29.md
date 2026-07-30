@@ -756,3 +756,92 @@ AssertionError: assert 'D:\\tmp\\trisurface-outside.zip' == '\\tmp\\trisurface-o
 - 全量套件(闸门同配置,ffmpeg 6.1.1):**5842 passed, 0 failed, 19 skipped**;
 - 合并后重派 `windows-ci.yml`,以合并后的默认分支拿到 Windows 绿灯为收口
   (dispatch 的 b006352 run 含旧测试,预期红,不作数)。
+
+---
+
+# 卡片渲染波(2026-07-30:视觉发现的正式收账 + 复现时又量出一处)
+
+加练轮 A 阶段留下的那条真发现(「谢谢。」折成两行)一直挂账未修。本波
+从零复现时,把它修了,还顺带用像素测量抓出第二处一直存在但没人报过的
+缺陷。两处都在 HTML 卡渲染器 `media/html_card.py`,一个属主,三个消费口
+(caption_card provider、packaging 封面/预告卡、GUI 实时预览)自动同愈。
+
+## 1. 短台词必折行(视觉 QC 的原始发现,机制钉死)
+
+- **复现**:`render_card_png('谢谢。', 1080x1920)` → 「谢/谢。」两行;
+  1920x1080 同样折。**任何**能放进一行的台词都会被折掉尾巴——不是
+  「谢谢。」特殊,是所有单行卡。
+- **机制**:`.card{max-width:82%}` 挂在匿名收缩包裹(shrink-to-fit)的
+  flex 子块**里面**。CSS 循环百分比规则:内在尺寸阶段忽略该 max-width
+  (包裹宽 = 文本单行宽 W),布局阶段再按 0.82·W 收紧 → 尾字永远被挤下去。
+- **修法**:宽度上限移到 flex item 本身(`.stack{max-width:82%}`,百分比
+  对确定的 body 解析),`.card` 不再限宽。长文本折行位与修前一致
+  (82% 帧宽),chapter 模板的 `.wrap` 本来就是 flex item、无此病。
+
+## 2. 底部 87px 白带(测量抓出,从未被肉眼报告)
+
+- **测量**:修折行前后跑帧行分析,竖横两向渲染的卡**底部恒有 87 行纯白**
+  (1080x1920 → 行 1833-1919;1920x1080 → 行 993-1079;drawtext 卡为 0)。
+- **机制**(三组对照实验钉死):这版 headless Chromium 的**布局视口比
+  --window-size 矮 87px,截图面却是全窗口**;视口之外什么都不栅格化
+  (绝对定位红块放在 1833 之后不出现),唯一能到达那 87 行的是 canvas
+  基色——纯色背景可作基色(全表面延展),渐变不能(回退纯白)。
+- **修法**:canvas(html/body)只放**纯色边缘色 bg_edge**(每模板/每
+  preset 的数据字段,声明渐变出帧边的色调,不解析 CSS);真渐变画在
+  `body::before{position:fixed;inset:0}`。健康版本上 ::before 全覆盖、
+  bg_edge 永不露面;受影响版本上底带变成与渐变末端 Δ≈1-2/255 的平色。
+  卡内容始终垂直居中,永远不进底带区。
+- 这条也解释了为什么加练轮我肉眼漏了它:QC 评审帧四边留黑裁切时,
+  白带混进了「帧边」预期;逐行均值一量就藏不住。
+
+## 验证
+
+- 红-先行:新文件 `tests/test_card_visual_fixes.py` 7 条(短台词单行·两向 /
+  长台词仍折 / 全帧涂满·两模板两向),修前 6 红 1 绿(长台词本来就折),
+  修后全绿——断言全部落在**渲染像素**上(chromium+ffmpeg 门,test_round5
+  同款前置)。
+- 字节恒等钉未弱化:`test_edit_v3` 的 preset("")≡无preset 自洽 + 子串
+  断言原样通过(它钉的是「preset 机制不漂移」,不是历史模板字节)。
+- 邻接簇:edit_v3/round5/round_a/packaging/provider_floor 共 86 条全绿。
+- 亲眼验收(与发现同一双眼):「谢谢。」单行居中、渐变铺满到底、无白带;
+  长台词折三行、「。」不落行首(浏览器 kinsoku 正确)。
+- 全量套件(与门禁第二轮修复同跑,ffmpeg 6.1.1):**5849 passed, 0 failed,
+  19 skipped**。
+
+---
+
+# 门禁揭示·第二轮(2026-07-30:PR #29 的延迟 Windows 全量,3 失败全数收账)
+
+PR #29 合并后,门禁在其 head(5c5cdd9,与合并进默认分支的内容相同)上还是
+跑了一次完整 Windows 全量:**3 failed, 5803 passed**。display_path 修复本身
+生效了(它不在失败名单里);三个新失败,两个是加练轮测试自己的平台病,
+一个是又一处载荷敏感死线。全部当轮修掉:
+
+1. **`signal.SIGKILL` 在 Windows 上不存在**(`test_crash_safety_campaign`
+   的注入循环 AttributeError)。改用 `Popen.kill()`——POSIX 上就是 SIGKILL,
+   Windows 上是 TerminateProcess,恰好正是店主故事里的「任务管理器杀」;
+   同样突然、不可捕获、零清理,注入语义分毫不变。
+2. **hypothesis 在 Windows 掷出 `base='\x85'`(NEL)戳破了我的状态机模型**。
+   真相:YAML 1.1 往返把 NEL 行折叠成空格——落盘后的 truth 是 `' '`,
+   而我的夹具用**落盘前**的字符串铸 hash、模型也用它预测(F-05 那课的
+   属性测试版)。产品行为完全符合 DECISIONS #13(有译文时 hash 一致性
+   说了算:匹配=ok、不匹配=翻译过期、孤儿行含在内;没译文才分
+   missing/not_needed)——实测三格矩阵钉死后,模型照文档重写,夹具改从
+   **重读的落盘 base** 铸 hash(与 locale add 同款)。测试更强了:现在
+   它连「YAML 规范化会改写 truth 字符」这件事一起验。
+3. **`test_fp_board_compare` e2e 的 httpx 默认 5s 死线**:那个 GET 在服务端
+   为每对边界**真跑 ffmpeg 抽帧**,windows-latest 抢占下合法超 5s
+   (上一次 Windows run 它绿,本次红——载荷敏感的标准指纹)。放宽到
+   120s,断言未动;纯文件服务的两条 GET 不动(无证据不改)。
+
+顺带一条流程观察:windows-ci 的 concurrency 组(workflow+ref,
+cancel-in-progress)把我手动 dispatch 的 67cff09 run 在 44 秒时取消了——
+所以「合并默认分支的 Windows 绿灯」由本轮修完后的重派来给,取消的那次
+不算数也不用赔。
+
+## 验证
+
+- 定点:crash 战役全文件(含真 kill 轮)+ board compare 全文件 20 条全绿;
+  `'\x85'` 世界手工三格复核(match→ok / deadbeef→过期 / 真台词→ok)。
+- 全量套件(与卡片渲染波同跑,ffmpeg 6.1.1):**5849 passed, 0 failed,
+  19 skipped**;Windows 重派见收口。

@@ -86,24 +86,39 @@ def html_available() -> bool:
 
 
 CARD_TEMPLATES = {
-    # caption/dialogue card: dark gradient, centered text
+    # caption/dialogue card: dark gradient, centered text.
+    # Canvas background is the SOLID {bg_edge}, the real {bg} paints on
+    # body::before{{position:fixed;inset:0}}: headless Chromium here lays out
+    # a viewport 87px SHORTER than --window-size while screenshotting at full
+    # window size, and nothing rasterizes beyond the viewport — the excess
+    # rows can only ever show the canvas BASE color, which a solid provides
+    # and a gradient cannot (gradient canvas => white band). On a healthy
+    # build ::before covers 100% and {bg_edge} never shows.
+    # The width cap sits on .stack (the flex ITEM, resolved against the
+    # definite body) — on an inner block the cyclic percentage is ignored
+    # during intrinsic sizing and re-applied at layout, which broke the tail
+    # of EVERY one-line caption (「谢谢。」→「谢/谢。」).
     "caption": """<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;
-background:{bg};
+background:{bg_edge};
 display:flex;align-items:center;justify-content:{justify};
 font-family:"Noto Sans CJK SC","WenQuanYi Zen Hei","PingFang SC",sans-serif}}
+body::before{{content:"";position:fixed;inset:0;background:{bg};z-index:-1}}
+.stack{{max-width:82%}}
 .card{{color:{text_color};font-size:{font_px}px;font-weight:600;text-align:center;
-max-width:82%;line-height:1.65;letter-spacing:.04em;
+line-height:1.65;letter-spacing:.04em;
 text-shadow:0 2px 14px rgba(0,0,0,.85)}}
 .rule{{width:56px;height:3px;margin:28px auto 0;border-radius:2px;
 background:{accent};opacity:.85}}</style></head>
-<body><div><div class="card">{text}</div><div class="rule"></div></div></body></html>""",
-    # chapter/title card: bigger, with a kicker line
+<body><div class="stack"><div class="card">{text}</div><div class="rule"></div></div></body></html>""",
+    # chapter/title card: bigger, with a kicker line (.wrap is already the
+    # flex item, so its max-width percentage was never part of the wrap bug)
     "chapter": """<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;
-background:{bg};
+background:{bg_edge};
 display:flex;align-items:center;justify-content:{justify};
 font-family:"Noto Sans CJK SC","WenQuanYi Zen Hei","PingFang SC",sans-serif}}
+body::before{{content:"";position:fixed;inset:0;background:{bg};z-index:-1}}
 .wrap{{text-align:center;max-width:84%}}
 .kicker{{color:{accent};font-size:{kicker_px}px;letter-spacing:.5em;
 text-indent:.5em;margin-bottom:30px}}
@@ -118,10 +133,15 @@ letter-spacing:.06em;text-shadow:0 3px 18px rgba(0,0,0,.9)}}</style></head>
 # SAME CSS values as before this table existed — byte-identical HTML/PNG/MP4
 # for a card that never opts into a preset.
 _TEMPLATE_DEFAULTS: dict[str, dict[str, Any]] = {
+    # bg_edge: the SOLID canvas base color behind the bg — the tone at the
+    # gradient's frame-exit edge, declared as data (never parsed out of the
+    # CSS string). Solid bgs simply repeat themselves.
     "caption": {"bg": "linear-gradient(165deg,#0d1117 0%,#161f2e 55%,#1d2a3a 100%)",
+                "bg_edge": "#1d2a3a",
                 "text_color": "#f5f6f8", "accent": "#4a90d9",
                 "font_scale": 1.0, "justify": "center"},
     "chapter": {"bg": "radial-gradient(120% 90% at 50% 20%,#1b2838 0%,#0b1017 70%)",
+                "bg_edge": "#0b1017",
                 "text_color": "#ffffff", "accent": "#7fa6c9",
                 "font_scale": 1.0, "justify": "center"},
 }
@@ -132,14 +152,18 @@ _TEMPLATE_DEFAULTS: dict[str, dict[str, Any]] = {
 # gradients since Chromium renders it). Applied identically across templates,
 # so switching template never resets the chosen preset's look.
 CARD_STYLE_PRESETS: dict[str, dict[str, Any]] = {
-    "mono_black": {"bg": "#000000", "text_color": "#ffffff", "accent": "#8a93a3",
+    "mono_black": {"bg": "#000000", "bg_edge": "#000000",
+                   "text_color": "#ffffff", "accent": "#8a93a3",
                    "font_scale": 1.0, "justify": "center"},          # 简约黑
-    "white_big": {"bg": "#ffffff", "text_color": "#14161b", "accent": "#4b5162",
+    "white_big": {"bg": "#ffffff", "bg_edge": "#ffffff",
+                  "text_color": "#14161b", "accent": "#4b5162",
                   "font_scale": 1.32, "justify": "flex-end"},        # 白底大字
     "warm_gradient": {"bg": "linear-gradient(160deg,#ff7a45 0%,#ff3d67 55%,#7a1cac 100%)",
+                       "bg_edge": "#7a1cac",
                        "text_color": "#fff6ef", "accent": "#ffd9b8",
                        "font_scale": 1.0, "justify": "center"},      # 暖色渐变
-    "neon": {"bg": "#05010c", "text_color": "#39ff9c", "accent": "#ff3df5",
+    "neon": {"bg": "#05010c", "bg_edge": "#05010c",
+             "text_color": "#39ff9c", "accent": "#ff3df5",
              "font_scale": 1.05, "justify": "center"},               # 霓虹
 }
 
@@ -162,6 +186,12 @@ def render_card_png(text: str, dest_png: Path, *, width: int, height: int,
     base = _TEMPLATE_DEFAULTS.get(template, _TEMPLATE_DEFAULTS["caption"])
     style = CARD_STYLE_PRESETS.get(preset) if preset else None
     bg = (style or {}).get("bg", base["bg"])
+    # bg_edge must come from the SAME row that provided bg (a preset's edge
+    # tone against the base's gradient would be a mismatched seam). A row
+    # without bg_edge degrades to bg itself — right for solids, and for an
+    # undeclared gradient no worse than the pre-fix canvas behavior.
+    bg_edge = (style or {}).get("bg_edge", bg) if (style and "bg" in style) \
+        else base.get("bg_edge", bg)
     text_color = (style or {}).get("text_color", base["text_color"])
     accent = (style or {}).get("accent", base["accent"])
     justify = (style or {}).get("justify", base["justify"])
@@ -172,7 +202,8 @@ def render_card_png(text: str, dest_png: Path, *, width: int, height: int,
     doc = tpl.format(width=width, height=height, text=safe,
                      font_px=max(24, int(short // 11 * font_scale)),
                      kicker_px=max(14, short // 34),
-                     bg=bg, text_color=text_color, accent=accent, justify=justify)
+                     bg=bg, bg_edge=bg_edge, text_color=text_color,
+                     accent=accent, justify=justify)
     with tempfile.TemporaryDirectory(prefix="manju_html_") as tmp:
         page = Path(tmp) / "card.html"
         page.write_text(doc, encoding="utf-8")

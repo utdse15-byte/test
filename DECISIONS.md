@@ -3403,3 +3403,49 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    Verification: full suite green locally, then windows-ci.yml re-dispatched
    on the merged default until Windows-green (the b006352 dispatch predates
    the fix and its red does not count).
+17. **Card-render wave (2026-07-30)** — the vision loop's one real finding
+   (「谢谢。」 wrapping onto two lines) is paid off, and reproducing it
+   surfaced a second, never-reported defect. Both in the ONE owner
+   `media/html_card.py`, so caption provider, packaging covers/teasers and
+   the GUI live preview all heal together. (a) Short-caption wrap: the
+   `.card` max-width percentage sat INSIDE the anonymous shrink-to-fit flex
+   wrapper — cyclic-percentage resolution ignores it during intrinsic
+   sizing and re-applies it at layout, so EVERY one-line caption broke its
+   tail character(s). The cap now sits on the flex item (`.stack`), where
+   the percentage resolves against the definite body; long-text wrap width
+   is unchanged (82% of frame). (b) Bottom 87px white band, measured on
+   both orientations and confirmed by three controlled probes: this
+   headless Chromium lays out a viewport 87px SHORTER than --window-size
+   while screenshotting the full window, rasterizes nothing beyond the
+   viewport, and only a SOLID canvas base color extends over the excess
+   rows (gradients fall back to white). Canvas now carries the solid
+   `bg_edge` declared as data per template/preset (never parsed from CSS),
+   with the real gradient on `body::before{position:fixed;inset:0}` — on a
+   healthy build ::before covers 100% and bg_edge never shows; on afflicted
+   builds the band becomes a Δ≈1-2/255 flat tone instead of white. 7
+   red-first pixel-assertion tests (`tests/test_card_visual_fixes.py`,
+   chromium+ffmpeg gated per the round5 precedent); the preset
+   byte-identity pin passes unweakened; visually verified by the same
+   reviewer that filed the original finding.
+18. **Second gate reveal (2026-07-30)** — PR #29's delayed pull_request run
+   executed the full Windows suite on the merged content: 3 failed / 5803
+   passed (the display_path fix itself held). All three paid off in one
+   round: (a) `signal.SIGKILL` does not exist on Windows — the crash
+   campaign's injection now uses `Popen.kill()` (SIGKILL on POSIX,
+   TerminateProcess on Windows — the owner's actual task-manager kill),
+   identical abrupt-death semantics; (b) hypothesis rolled `base='\x85'`
+   (NEL) on the Windows runner and falsified the line-state property's
+   MODEL, not the product: YAML 1.1 line-folds NEL to a space on
+   round-trip, my fixture minted the stored hash from the PRE-write string
+   (the F-05 lesson replayed in property form), and the model missed the
+   #13 rule that hash agreement governs alone whenever a translation is
+   written (orphaned rows included). Fixture now mints from the RE-READ
+   on-disk base exactly like locale add; the model matches the probed
+   three-cell truth matrix, and the property now additionally covers
+   YAML-normalization rewriting truth characters; (c) the board-compare
+   e2e GET runs real server-side ffmpeg still-extraction against httpx's
+   default 5s deadline — raised to 120s (load-sensitive doctrine;
+   assertions unchanged; the pure file-serving GETs untouched, no evidence
+   they need it). Process note: windows-ci's concurrency group cancelled
+   the manual 67cff09 dispatch, so the merged-default green comes from the
+   post-fix re-dispatch.
