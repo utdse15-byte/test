@@ -79,7 +79,8 @@ def gui(tmp_project):
     server.close()
 
 
-def _req(server, path, *, method="GET", body=None, headers=None, host=None, raw=False):
+def _req(server, path, *, method="GET", body=None, headers=None, host=None,
+         raw=False, timeout=10):
     url = f"http://127.0.0.1:{server.port}{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -89,7 +90,7 @@ def _req(server, path, *, method="GET", body=None, headers=None, host=None, raw=
     if host is not None:
         req.add_header("Host", host)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = resp.read()
             return resp.status, dict(resp.headers), (payload if raw else
                                                      json.loads(payload or b"{}"))
@@ -621,13 +622,17 @@ def test_packaging_apply_writes_and_validates_style_preset(gui, tmp_project):
 def test_card_preview_endpoint_accepts_preset_param(gui, tmp_project):
     from urllib.parse import quote
 
+    # 载荷敏感对策: since find_chromium learned Windows (#31 opened the
+    # chromium lane on windows-latest) this endpoint launches a REAL Chrome
+    # screenshot inside the request — the slowest gate runner fired the 10s
+    # socket deadline. Detection latency only; assertions unchanged.
     url = ("/api/card-preview?text=" + quote("标题") + "&template=chapter&preset=neon")
-    status, headers, body = _req(gui, url, raw=True)
+    status, headers, body = _req(gui, url, raw=True, timeout=120)
     assert status == 200
     assert headers.get("Content-Type", "").startswith("image/")
     # an unknown preset degrades quietly to classic rather than erroring
     url_bad = ("/api/card-preview?text=" + quote("标题") + "&template=chapter&preset=bogus")
-    status2, _, _ = _req(gui, url_bad, raw=True)
+    status2, _, _ = _req(gui, url_bad, raw=True, timeout=120)
     assert status2 == 200
 
 

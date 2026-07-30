@@ -3528,3 +3528,17 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    — re-keying would rewrite every existing project's compiled timeline
    and cascade final re-renders; stale-look assets follow the append-only
    存量 stance (delete the media/gen/packaging file to refresh).
+24. **Fourth deadline firing — created by the chromium lane itself
+   (2026-07-30)** — PR #38's gate run (slowest runner yet, 22-minute
+   suite) fired the 10s socket deadline in test_edit_v3's card-preview
+   endpoint test. New family member with a twist: the endpoint only
+   STARTED wrapping real work on Windows when #19/#31 taught find_chromium
+   the platform — a real Chrome launch+screenshot now runs inside the
+   request on windows-latest, which is precisely why the earlier
+   deadline-family sweep had correctly left GUI urlopen sites alone (pure
+   page renders then). The _req helpers in test_edit_v3 (10s) and
+   test_gui_finish (20s) gain a timeout parameter — defaults unchanged for
+   every other call site per the no-evidence rule — and only the
+   card-preview requests pass 120s. Assertions unchanged; both files green
+   locally; the sibling test_gui_finish sites fixed on the same evidence
+   (same endpoint, same mechanism) before they fire.

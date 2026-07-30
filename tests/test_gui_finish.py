@@ -57,7 +57,8 @@ def gui(tmp_project):
     server.close()
 
 
-def _req(server, path, *, method="GET", body=None, headers=None, host=None, raw=False):
+def _req(server, path, *, method="GET", body=None, headers=None, host=None,
+         raw=False, timeout=20):
     url = f"http://127.0.0.1:{server.port}{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -67,7 +68,7 @@ def _req(server, path, *, method="GET", body=None, headers=None, host=None, raw=
     if host is not None:
         req.add_header("Host", host)
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = resp.read()
             return resp.status, dict(resp.headers), (payload if raw else
                                                      json.loads(payload or b"{}"))
@@ -358,8 +359,12 @@ def test_packaging_info_cards_full_replace(gui, tmp_project):
 
 
 def test_card_preview_endpoint_200s(gui, tmp_project):
+    # 载荷敏感对策: with the chromium lane open on windows-latest (#31) this
+    # endpoint launches a REAL Chrome screenshot inside the request — the
+    # sibling test in test_edit_v3 fired its socket deadline on the slowest
+    # gate runner. Detection latency only; assertions unchanged.
     url = "/api/card-preview?text=" + quote("你好") + "&template=chapter"
-    status, headers, body = _req(gui, url, raw=True)
+    status, headers, body = _req(gui, url, raw=True, timeout=120)
     assert status == 200
     ctype = headers.get("Content-Type", "")
     assert ctype.startswith("image/")                          # png or svg placeholder
@@ -370,12 +375,12 @@ def test_card_preview_renders_and_caches(gui, tmp_project):
     from manju.media.frames import frames_cache_dir
 
     url = "/api/card-preview?text=" + quote("封面") + "&template=chapter"
-    status, headers, body = _req(gui, url, raw=True)
+    status, headers, body = _req(gui, url, raw=True, timeout=120)
     assert status == 200 and body[:4] == b"\x89PNG"            # real PNG via the card chain
     cached = list(frames_cache_dir(tmp_project.root).glob("card_*.png"))
     assert cached                                              # cached into .manju/frames
     # a second identical request is served from the cache (byte-identical)
-    _, _, body2 = _req(gui, url, raw=True)
+    _, _, body2 = _req(gui, url, raw=True, timeout=120)
     assert body2 == body
 
 
