@@ -417,6 +417,38 @@ def _collect_backward(path: Path, limit: int | None) -> list[dict[str, Any]]:
     return out
 
 
+_EVENT_DETAIL_KEYS = 4
+_EVENT_VALUE_WIDTH = 44
+# Structural bookkeeping — true, but never the answer to "who did what".
+_EVENT_NOISE_KEYS = ("schema", "semantic_digest", "ts")
+
+
+def event_detail_brief(detail: dict) -> str:
+    """A scannable one-line digest of an event's detail — THE owner.
+
+    Born in cli.py for `manju events` (which used to print ``json.dumps`` in
+    full: 700-900 columns per stage_attempt). TRISURFACE F-13 found `manju
+    history` composing its own raw ``{k}={v}`` summary — a Python repr wall
+    for any dict-valued detail — so the brief moved here where both feeds
+    (and any future reader) share it. Nothing is lost: ``--json`` carries the
+    complete records, and this line SAYS when it elided something."""
+    if not isinstance(detail, dict) or not detail:
+        return ""
+    keys = [k for k in detail if k not in _EVENT_NOISE_KEYS] or list(detail)
+    shown, parts = keys[:_EVENT_DETAIL_KEYS], []
+    for k in shown:
+        v = detail[k]
+        text = (v if isinstance(v, str)
+                else json.dumps(v, ensure_ascii=False, separators=(",", ":")))
+        if len(text) > _EVENT_VALUE_WIDTH:
+            text = text[:_EVENT_VALUE_WIDTH - 1] + "…"
+        parts.append(f"{k}={text}")
+    hidden = len(detail) - len(shown)
+    if hidden > 0:
+        parts.append(f"+{hidden} 项 → --json")
+    return ", ".join(parts)
+
+
 def tail_events(project_root: Path, n: int = 20) -> list[dict[str, Any]]:
     r"""The last ``n`` records of events.jsonl, oldest-first — the handover tail.
 

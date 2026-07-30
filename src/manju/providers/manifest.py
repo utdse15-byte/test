@@ -657,12 +657,21 @@ def estimate_cost(manifest: ProviderManifest, duration_ms: int, candidates: int 
 # lands (a bad *fill* fails at `manju providers check`, not here).
 
 # short adapter names the CLI accepts -> the adapter string stored in the manifest
+# TRISURFACE F-09: the free keyless Edge TTS is the README's "works today"
+# first recommendation, yet it had no scaffold path — the generic template's
+# next-steps (fill submit.url, export <ID>_API_KEY) were ALL wrong for it and
+# the owner had to hand-write the manifest from the README. `--adapter edge`
+# now scaffolds the working manifest directly.
+EDGE_TTS_ADAPTER = "manju.providers.edge_tts:EdgeTtsProvider"
+
 ADAPTER_ALIASES: dict[str, str] = {
     "generic_cloud": GENERIC_ADAPTER,
     "generic_tts": GENERIC_TTS_ADAPTER,
     "generic_asr": GENERIC_ASR_ADAPTER,
     "comfyui": COMFYUI_ADAPTER,
     "local_cmd": LOCAL_CMD_ADAPTER,
+    "edge": EDGE_TTS_ADAPTER,
+    "edge_tts": EDGE_TTS_ADAPTER,
 }
 
 # default adapter per provider `--type`
@@ -813,12 +822,43 @@ cost:
 """
 
 
+def _edge_tts_template(pid: str, type_: str) -> str:
+    """The keyless Edge TTS manifest, complete as written (F-09): no auth
+    section (no key exists), no submit endpoint (the adapter speaks Edge's
+    WebSocket itself), and deliberately NOT the generic ★-header — there is
+    nothing to fill in, and "★-marked fields" / "the API key never lives
+    here" boilerplate on a keyless file is exactly the wrong first step the
+    finding recorded. Voice per character via bible `voice`; the default
+    voice lives in the adapter."""
+    return f"""\
+# ~/.manju/providers/{pid}/provider.yaml — Manju provider manifest (§8.2/§8.6)
+#
+# Edge TTS:免费、无 key(keyless)— 这份文件不需要再填任何字段。
+# 没有 auth 段,也没有 submit 端点:适配器自己直连 Edge TTS 的 WebSocket。
+# 角色声音在 bible/characters.yaml 的 voice 字段里选(如 zh-CN-YunxiNeural);
+# 不写则用适配器默认女声。改完(或什么都不改)可离线验证:
+#   manju providers check {pid}
+#
+id: {pid}
+type: tts
+adapter: {EDGE_TTS_ADAPTER}
+disabled: false
+capabilities: [tts]
+tts:
+  language: zh
+cost:
+  per_call: 0.0
+  currency: CNY
+"""
+
+
 _TEMPLATES = {
     GENERIC_ADAPTER: _generic_cloud_template,
     GENERIC_TTS_ADAPTER: _generic_tts_template,
     GENERIC_ASR_ADAPTER: _generic_asr_template,
     COMFYUI_ADAPTER: _comfyui_template,
     LOCAL_CMD_ADAPTER: _local_cmd_template,
+    EDGE_TTS_ADAPTER: _edge_tts_template,
 }
 
 

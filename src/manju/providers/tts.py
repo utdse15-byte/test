@@ -57,11 +57,10 @@ class TtsUnavailable(RuntimeError):
 # with no command to type. Every clause below is a door the owner can walk
 # through today.
 TTS_UNCONFIGURED_MESSAGE = (
-    "TTS 未配置 no TTS provider configured — 生成模板: manju providers add edge "
-    "--type tts;免费无 key 的 Edge TTS 把模板里的 adapter 改成 "
-    "manju.providers.edge_tts:EdgeTtsProvider(README『Providers that work "
-    "today』有逐字段说明);或自己把配音文件丢进 media/gen/<shot>/ 当 manual "
-    "voice take"
+    "TTS 未配置 no TTS provider configured — 免费无 key 的 Edge TTS 一条命令即可:"
+    "manju providers add edge --type tts --adapter edge(装完 manju providers "
+    "check edge 验证);带 key 的云 TTS 用 --adapter generic_tts 模板;"
+    "或自己把配音文件丢进 media/gen/<shot>/ 当 manual voice take"
 )
 
 

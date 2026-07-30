@@ -90,6 +90,12 @@ class DirectorError(RuntimeError):
     """Clean one-line failures for the CLI/MCP/GUI (FIX-D envelope)."""
 
 
+class UnknownProposal(DirectorError):
+    """The proposal id resolves to nothing on disk (TRISURFACE F-18): typed
+    subclass so the MCP envelope can answer ``code="unknown_proposal"`` —
+    the agent's branch is "list/re-propose", not "retry the same id"."""
+
+
 class ActionError(DirectorError):
     """One action failed during execute — carries the structured failure record
     so the first-failure stop can log it and surface it."""
@@ -286,7 +292,7 @@ def _save(project: Project, proposal: Proposal) -> None:
 def load_proposal(project: Project, proposal_id: str) -> Proposal:
     path = _proposal_path(project, proposal_id)
     if not path.exists():
-        raise DirectorError(f"no such proposal: {proposal_id}")
+        raise UnknownProposal(f"no such proposal: {proposal_id}")
     data = read_yaml(path)
     if not isinstance(data, dict):
         raise DirectorError(f"proposal file is not a mapping: {path.name}")

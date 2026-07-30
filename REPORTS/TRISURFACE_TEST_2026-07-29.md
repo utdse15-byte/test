@@ -553,18 +553,52 @@ F-02(付费可见性)→ F-04/F-03/F-14(同类 None/双引脚点,一次扫清)�
 ## 未修,留档(7 项,均为设计决定或超出本波边界)
 
 - **F-09** Edge TTS 脚手架路径:需要 `providers add --adapter edge` 模板这一
-  真功能;F-16 的新消息已把路指全,升级为模板另起一波。
+  真功能;F-16 的新消息已把路指全,升级为模板另起一波。→ **第三轮已修**
 - **F-10** readonly 下导出中心按钮可点:服务端 403 是对的;显示层禁用是
-  GUI JS 改动,与 F-20 一起归 GUI 打磨波。
+  GUI JS 改动,与 F-20 一起归 GUI 打磨波。→ **第三轮已修**
 - **F-11** locale 给无台词镜头铸行:改的是 lines.yaml 形状或 status 语义,
   需要先定方向(过滤显示 vs 不铸行),不该顺手。
 - **F-13** history 的 repr 墙 / **R2-4** support-bundle 摘要 repr:同一个
-  「接 events 摘要器」活,合并处理。
+  「接 events 摘要器」活,合并处理。→ **第三轮已修**
 - **F-15** ingest 改 bible 的后果静默:该接 `impact` 的预报,属功能接线。
+  → **第三轮已修**
 - **F-18/F-19** MCP 错误码税目扩展 / export 格式面追平 CLI:两者都动
   agent 契约(错误码文档反捏造测试、surface digest),值得单独一波。
+  → **第三轮已修**
 - **F-20** 人工确认一键落账无撤销:append-only 核验日志的撤回语义要先
   设计(追加「撤回」事件?),不该在打磨波里顺手定。
+
+---
+
+# 第三轮修复(店主「continue find and fix」)
+
+上表七项遗留里,五项经细看**并不需要新的设计决定**,同日红-先行落地
+(`tests/test_trisurface_round3.py`,12 条,先红后绿;DECISIONS `TRISURFACE-FIX`
+第 9-12 条):
+
+| 项 | 落点 |
+|---|---|
+| F-13 + R2-4 | 事件 detail 摘要器升为唯一属主 `core.events.event_detail_brief`,`manju events` 与 `manju history` 共用(history 不再印 700 列 Python repr);support-bundle 摘要行改 k=v(`self-scan: ok`,不再有裸 True/字典) |
+| F-15 | `apply_ingest` 结果新增 `staled_shots`(additive):登记参考图后,引用该资产而**过期**的镜头逐个点名;CLI 打 ⚠ 后果行(实测:`引用 lin_xiaoyu 的 4 个镜头已过期(S002, S003, S004, S006)`),并说明 §4.3 默认不重做与金钱闸 |
+| F-09 | `manju providers add <id> --type tts --adapter edge` 直接铸出**完整可用**的 keyless 清单:无 auth、无 submit、无 ★ 待填(专用头注释,不再印「fill the ★ fields」/「export the API key」这两个对 Edge 全错的步骤);`providers check` 即绿;TTS 未配置消息改指这条一步路 |
+| F-22 | `analyze` 拒绝语说清「观察集 JSON」与 `--provider` 资质门两条真路(contract §2 行话删除);`segments` 对不存在的报告不再吐 `[Errno 2]`,点名 `manju analyze … --write` 是产出命令 |
+| F-10 | 只读工作台的导出中心:15 个「生成/更新」「标记已人工确认」与备注输入框**渲染即禁用** + 「只读 readonly」横幅 + 批量按钮隐藏(实测 curl:15/15 disabled);服务端 403 原样保留(纵深不变) |
+| F-18 | MCP 可分支失败获得专码:`locked_field`(→写 proposal)、`rev_conflict`(→重新 get_shot)、`unknown_tool`(→重读 tools/list)、`unknown_proposal`(typed 子类;→重新 propose);错误码技能新增 **MCP 专属小词表**(放在 CLI 分类块之外,反捏造扫描只认 cli.py,两张词表刻意分治) |
+| F-19 | MCP `export` 追平 CLI:formats 枚举扩到 srt\|vtt\|ttml\|otio\|edl\|fcpxml\|xmeml\|jianying\|capcut(ADD-only),走 CLI 同款 exporter 调用与同一把 build lock;srt/vtt 报齐三个字幕兄弟文件;capcut 缺库时 ExporterUnavailable 进信封 |
+
+仍然留档不动:**F-11**(locale 行形状)与 **F-20**(核验日志撤回语义)——
+两者动的是契约的**含义**而非措辞,要么有自己的 DECISIONS 条目,要么不动。
+
+既有测试改动两处、均非弱化:`test_events_human_digest.py` 的 import 从
+`manju.cli._event_detail_brief` 改指新属主 `manju.core.events.event_detail_brief`
+(函数搬家,断言一字未动);`test_providers_routing.py` 的脚手架参数化测试
+自动吃进了新别名 edge/edge_tts 并按「必有 ★」断言而红 —— Edge 模板**本来就
+无字段可填**,该测试对这对别名改断**更强**的反向命题(不许出现 ★),其余
+适配器的「必须标 ★」一字未动。
+
+一条测试基建观察(不修):`test_mcp_copilot_e2e` 的两条 wire 测试在手工挑选的
+重负载批次里偶发 `queue.Empty` 超时,单跑与全量(`-n auto` 门配)均稳定绿——
+无机制不动,记在这里防下一个会话误判为回归。
 
 ## 修复波里我自己犯的错(照例留档)
 

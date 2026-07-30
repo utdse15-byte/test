@@ -28,7 +28,7 @@ from typing import Any
 
 from . import gitops
 from .container import Project
-from .events import append_event, tail_events
+from .events import append_event, event_detail_brief, tail_events
 
 
 class HistoryError(RuntimeError):
@@ -174,7 +174,11 @@ def history(project: Project, n: int = 30) -> list[dict[str, Any]]:
     rows: list[HistoryRow] = []
     for ev in tail_events(project.root, n=10_000):
         detail = ev.get("detail") or {}
-        summary = ", ".join(f"{k}={v}" for k, v in list(detail.items())[:3])
+        # TRISURFACE F-13: the inline f"{k}={v}" summary printed Python reprs
+        # for any dict/list value (relink_apply → a 700-column {'id': …} wall).
+        # events.py already solved this exact problem for `manju events`;
+        # share its brief. `detail` on the row (and --json) stays complete.
+        summary = event_detail_brief(detail)
         rows.append(HistoryRow(
             ts=str(ev.get("ts", "")), source="event",
             actor=str(ev.get("actor", "?")),

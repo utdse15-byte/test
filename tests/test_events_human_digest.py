@@ -18,7 +18,8 @@ import json
 
 from typer.testing import CliRunner
 
-from manju.cli import _event_detail_brief, app
+from manju.cli import app
+from manju.core.events import event_detail_brief as _event_detail_brief
 from manju.core.events import append_event
 
 runner = CliRunner()

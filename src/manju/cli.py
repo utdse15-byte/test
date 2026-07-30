@@ -1297,6 +1297,16 @@ def ingest(
         _emit({**plan.to_dict(), **result.to_dict()}, True)
     else:
         _print_ingest_table(plan, result=result)
+        # TRISURFACE F-15: say what the bible write just cost — a ref-image
+        # registration staled every shot referencing the asset, and the next
+        # build re-generates them (real money on a paid provider).
+        for asset_id, shots in sorted((result.staled_shots or {}).items()):
+            typer.secho(
+                f"  ⚠ 参考图登记改动了 bible:引用 {asset_id} 的 "
+                f"{len(shots)} 个镜头已过期({', '.join(shots)})— 下次 "
+                "manju build 默认不重做(§4.3),重生成用 manju redo 或 "
+                "--regen-stale(付费供应商有金钱闸)",
+                fg=typer.colors.YELLOW)
         typer.secho(f"批次已记录 / batch recorded: {result.batch_id}"
                     f"(manju ingest-review {result.batch_id} 查看/评审)",
                     fg=typer.colors.BRIGHT_BLACK)
@@ -6321,9 +6331,15 @@ def support_bundle_cmd(
         _emit(summary, True)
         return
     typer.secho(f"support bundle → {dest.name}", fg=typer.colors.GREEN)
-    typer.echo(f"  members: {len(summary.get('members') or [])}  "
-               f"redaction: {summary.get('redaction')}  "
-               f"self-scan ok: {summary.get('self_scan', {}).get('ok')}")
+    # TRISURFACE R2-4: the redaction summary printed as a raw Python dict
+    # (`{'events_included': 157, …}`) with a bare `True` behind it — the same
+    # repr-wall class history had. k=v pairs; --json carries the full object.
+    redaction = summary.get("redaction") or {}
+    red_line = ", ".join(f"{k}={v}" for k, v in redaction.items()) or "—"
+    scan_ok = summary.get("self_scan", {}).get("ok")
+    typer.echo(f"  members: {len(summary.get('members') or [])}")
+    typer.echo(f"  redaction: {red_line}")
+    typer.echo(f"  self-scan: {'ok' if scan_ok else 'FAILED(见 --json)'}")
 
 
 @app.command(rich_help_panel=PANEL_OPS)
@@ -8092,42 +8108,15 @@ def evaluate(as_json: bool = typer.Option(False, "--json")):
 # ------------------------------------------------------------------- misc
 
 
-_EVENT_DETAIL_KEYS = 4
-_EVENT_VALUE_WIDTH = 44
-# Structural bookkeeping — true, but never the answer to "who did what".
-_EVENT_NOISE_KEYS = ("schema", "semantic_digest", "ts")
-
-
-def _event_detail_brief(detail: dict) -> str:
-    """A scannable one-line digest of an event's detail.
-
-    `manju events` used to print ``json.dumps(detail)`` in full. On a project
-    with real evidence records (stage_attempt carries spec hashes, output
-    lists and a semantic digest) that is 700-900 columns per line, and the
-    command whose help says "who did what, when" became unreadable exactly
-    once the project had a history worth reading.
-
-    Nothing is lost: ``--json`` already emitted the complete records, and this
-    line SAYS when it elided something rather than trailing off."""
-    if not isinstance(detail, dict) or not detail:
-        return ""
-    keys = [k for k in detail if k not in _EVENT_NOISE_KEYS] or list(detail)
-    shown, parts = keys[:_EVENT_DETAIL_KEYS], []
-    for k in shown:
-        v = detail[k]
-        text = (v if isinstance(v, str)
-                else json.dumps(v, ensure_ascii=False, separators=(",", ":")))
-        if len(text) > _EVENT_VALUE_WIDTH:
-            text = text[:_EVENT_VALUE_WIDTH - 1] + "…"
-        parts.append(f"{k}={text}")
-    hidden = len(detail) - len(shown)
-    if hidden > 0:
-        parts.append(f"+{hidden} 项 → --json")
-    return ", ".join(parts)
+# The one-line detail digest moved to its consumers' shared home
+# (core/events.event_detail_brief) when TRISURFACE F-13 found `manju history`
+# repring the same details this had already solved for `manju events`.
 
 
 def _event_line(e: dict) -> str:
-    brief = _event_detail_brief(e.get("detail", {}))
+    from .core.events import event_detail_brief
+
+    brief = event_detail_brief(e.get("detail", {}))
     return (f"{e.get('ts','?')}  [{e.get('actor','?')}]  {e.get('action','?')}"
             + (f"  {brief}" if brief else ""))
 
@@ -8944,7 +8933,7 @@ def providers_add(
     adapter: Optional[str] = typer.Option(
         None, "--adapter",
         help="generic_cloud | comfyui | local_cmd | generic_tts | generic_asr "
-             "(default: by --type)"),
+             "| edge(免费无 key 的 Edge TTS)(default: by --type)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Scaffold ~/.manju/providers/<id>/provider.yaml from a fully-commented
@@ -8979,7 +8968,9 @@ def providers_add(
         key_env = (read_yaml(dest) or {}).get("auth", {}).get("key_env")
     except Exception:
         pass
-    steps = ["fill the ★ fields in the file"]
+    # F-09: the keyless edge template is complete as written — telling the
+    # owner to "fill the ★ fields" when there are none is a wrong first step.
+    steps = ["fill the ★ fields in the file"] if "★" in text else []
     if key_env:
         steps.append(f"export the API key:  export {key_env}=…")
     steps.append(f"verify offline:      manju providers check {provider_id}")
@@ -10207,7 +10198,13 @@ def analyze_cmd(
                        f" — {decision['reason']}")
         return
     if not fixture or not fixture.exists():
-        _fail("fixture analysis needs --fixture <committed json> (contract §2)",
+        # TRISURFACE F-22: "needs --fixture <committed json> (contract §2)"
+        # was maintainer-speak — the contract document is not in the repo and
+        # nothing said what an observation set IS. Name both real paths.
+        _fail("analyze 需要证据来源(引擎自己不看画面):--fixture <观察集JSON>"
+              "(离线确定性分析:一份人工/外部工具写好的观察记录,绑定到该媒体的"
+              "哈希)或 --provider <已过资质的云分析供应商>(manju providers "
+              "qualify 资质门)。两者都没有时无法凭空分析",
               code="no_fixture")
         return
     try:
@@ -10245,6 +10242,14 @@ def segments_cmd(
         # neither what went wrong nor what the argument wanted. Say both.
         from .core.container import MEDIA_EXTS  # the ONE media-suffix owner
 
+        # TRISURFACE F-22: the missing-file case fell through to the generic
+        # tail and printed the raw errno ("[Errno 2] No such file or
+        # directory: '…'"). Name the fact and the producing command instead.
+        if isinstance(exc, FileNotFoundError):
+            _fail(f"分析报告不存在 report not found: {report} — 先用 "
+                  "`manju analyze <媒体> --fixture <观察集JSON> --write` 产出报告",
+                  code="bad_report")
+            return
         hint = ""
         if report.suffix.lower() in MEDIA_EXTS:
             hint = ("(这是媒体文件,不是分析报告 —— 本命令读的是 "

@@ -270,9 +270,12 @@ def _h_update_shot(project: Project, args: dict) -> dict:
     # (4) verify_locks: a locked field's value may not change over MCP
     violations = verify_locks(new_data, current_locked, label)
     if violations:
+        # TRISURFACE F-18: `locked_field` — the branchable answer is "write a
+        # proposal", and `code:"error"` hid that from every agent.
         raise ToolError(
             "locked field(s) would change (a locked field cannot be edited over "
-            "MCP, §5): " + "; ".join(str(v) for v in violations)
+            "MCP, §5): " + "; ".join(str(v) for v in violations),
+            code="locked_field",
         )
 
     # Round Z (agent ZA): the actual write+recheck is the cross-process-racy
@@ -302,7 +305,8 @@ def _h_update_shot(project: Project, args: dict) -> dict:
         if expected_rev is not None and hash_text(original_text) != expected_rev:
             raise ToolError(
                 f"{shot_id}: 该镜头在你加载后已被其他入口修改(乐观锁校验失败)——"
-                "请刷新后重试(重新调用 get_shot 获取最新 rev 再保存)"
+                "请刷新后重试(重新调用 get_shot 获取最新 rev 再保存)",
+                code="rev_conflict",  # TRISURFACE F-18: branch = re-get_shot
             )
 
         # P0-1: re-validate §5 locks against LIVE disk inside the lock.
@@ -320,7 +324,8 @@ def _h_update_shot(project: Project, args: dict) -> dict:
         if live_violations:
             raise ToolError(
                 "locked field(s) would change (a locked field cannot be edited over "
-                "MCP, §5): " + "; ".join(str(v) for v in live_violations)
+                "MCP, §5): " + "; ".join(str(v) for v in live_violations),
+                code="locked_field",
             )
 
         before = run_check(project)
@@ -592,7 +597,8 @@ def _h_export(project: Project, args: dict) -> dict:
 
     formats = args.get("formats") or []
     if not isinstance(formats, list) or not formats:
-        raise ToolError("formats must be a non-empty array of srt|otio|jianying")
+        raise ToolError("formats must be a non-empty array of "
+                        "srt|vtt|ttml|otio|edl|fcpxml|xmeml|jianying|capcut")
     # TRISURFACE F-01: the final_export ask_before token binds THIS surface
     # too — before, only the CLI enforced it while SKILL.md §5 told agents the
     # token means "stop and ask". Same structured waiting_user as build/redo
@@ -610,16 +616,51 @@ def _h_export(project: Project, args: dict) -> dict:
             raise ToolError("no timeline.json — run the build tool first")
         outputs: dict[str, str] = {}
         for fmt in formats:
-            if fmt == "srt":
+            if fmt in ("srt", "vtt"):
+                # one writer, three sibling caption files (srt/ass/vtt) —
+                # report all three whichever alias the caller named.
                 paths = export_captions(project, timeline)
-                outputs["srt"] = project.relpath(paths["srt"])
-                outputs["ass"] = project.relpath(paths["ass"])
+                for k in ("srt", "ass", "vtt"):
+                    outputs[k] = project.relpath(paths[k])
             elif fmt == "otio":
                 outputs["otio"] = project.relpath(export_otio(project, timeline))
             elif fmt == "jianying":
                 outputs["jianying"] = project.relpath(export_jianying(project, timeline))
+            # TRISURFACE F-19: the CLI exports nine-plus formats; this tool
+            # accepted three and told agents "use srt|otio|jianying" — the
+            # skill teaches the full set, so agents dead-ended on the rest.
+            # Same engine calls the CLI makes, same build-lock scope.
+            elif fmt == "ttml":
+                from ..exporters.ttml import export_ttml
+
+                outputs["ttml"] = project.relpath(export_ttml(project, timeline))
+            elif fmt == "edl":
+                from ..exporters.edl import export_edl
+
+                outputs["edl"] = project.relpath(export_edl(project, timeline))
+            elif fmt == "fcpxml":
+                from ..exporters.fcpxml import export_fcpxml
+
+                outputs["fcpxml"] = project.relpath(export_fcpxml(project, timeline))
+            elif fmt == "xmeml":
+                from ..exporters.xmeml import export_xmeml
+
+                outputs["xmeml"] = project.relpath(export_xmeml(project, timeline))
+            elif fmt == "capcut":
+                from ..exporters.native_draft import (
+                    ExporterUnavailable,
+                    export_capcut_native,
+                )
+
+                try:
+                    outputs["capcut"] = project.relpath(
+                        export_capcut_native(project, timeline))
+                except ExporterUnavailable as exc:
+                    raise ToolError(" ".join(str(exc).split())[:300]) from exc
             else:
-                raise ToolError(f"unknown export format: {fmt!r} (use srt|otio|jianying)")
+                raise ToolError(
+                    f"unknown export format: {fmt!r} (use srt|vtt|ttml|otio|edl|"
+                    "fcpxml|xmeml|jianying|capcut)")
     return {"outputs": outputs}
 
 
@@ -687,7 +728,7 @@ def _h_director_confirm(project: Project, args: dict) -> dict:
 
 def _h_director_execute(project: Project, args: dict, *,
                         profile: str = _P.COLLABORATIVE) -> dict:
-    from ..build.director import DirectorError, execute
+    from ..build.director import DirectorError, UnknownProposal, execute
 
     try:
         # AI_IDE_16 §10: the confirmed-proposal build honors the keyframe spend
@@ -695,6 +736,9 @@ def _h_director_execute(project: Project, args: dict, *,
         # released the SPEND, the ladder is a separate discipline).
         return execute(project, str(args["id"]), actor="ai",
                        agent_profile=profile).to_dict()
+    except UnknownProposal as exc:
+        # TRISURFACE F-18: branch = list/re-propose, never retry the same id.
+        raise ToolError(str(exc), code="unknown_proposal") from exc
     except DirectorError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -1095,7 +1139,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
             {
                 "formats": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["srt", "otio", "jianying"]},
+                    # TRISURFACE F-19: CLI-parity (srt writes srt+ass+vtt; vtt
+                    # is an alias of the same caption writer).
+                    "items": {"type": "string",
+                              "enum": ["srt", "vtt", "ttml", "otio", "edl",
+                                       "fcpxml", "xmeml", "jianying", "capcut"]},
                     "minItems": 1,
                 },
                 "assume_yes": {"type": "boolean", "default": False},
@@ -1330,7 +1378,9 @@ def call_tool(
             code="invalid_argument")
     entry = TOOLS.get(name)
     if entry is None:
-        raise ToolError(f"unknown tool: {name!r}")  # unknown-tool stays unknown-tool
+        # TRISURFACE F-18: its own code — an agent that mistyped a tool name
+        # should re-read tools/list, not retry the same call.
+        raise ToolError(f"unknown tool: {name!r}", code="unknown_tool")
     args = arguments or {}
     # Round-2 UX audit: the advertised `required` arrays were never enforced —
     # a missing arg surfaced as the bare KeyError text ({"error": "'shot_id'"}).

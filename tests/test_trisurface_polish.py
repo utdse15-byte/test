@@ -155,7 +155,9 @@ def test_tts_unconfigured_message_is_walkable(monkeypatch):
     msg = str(exc.value)
     assert "manju providers add" in msg
     assert "§8.6" not in msg
-    assert "edge_tts" in msg  # the free keyless路 stays named
+    # the free keyless path stays named — round 3 (F-09) upgraded it from
+    # "hand-edit the adapter line" to the direct `--adapter edge` scaffold.
+    assert "--adapter edge" in msg
 
 
 # ------------------------------------------------- F-17 honest pullsheet note
