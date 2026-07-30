@@ -981,3 +981,14 @@ PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
   chapter 径向光斑、white_big 右缘内距 —— 全部本次真的看见了;
 - 邻接簇 edit_v3(preset 字节恒等钉照过)+ round5 + packaging 66 绿;
 - 全量套件(ffmpeg 6.1.1):**5855 passed, 0 failed, 19 skipped**。
+
+## 附:预览缓存的升级陷阱(同波修复)
+
+卡片模板一天改了两轮,牵出 `gui/cardprev` 的缓存键问题:键是
+`(text, 模板名, 尺寸, preset名)`,**不含模板内容**,而缓存躺在
+`.manju/frames` 里**不随升级失效** —— 本次升级后,老预览会永远端出
+修复前的旧观感,「预览所见 ≠ 构建所得」恰是预览存在意义的反面。
+修法:把决定观感的数据本身(html 模板 CSS 串 + 两侧渲染器的 preset 行)
+折进 cache_key —— 观感一变键即变,零维护、无需人工记得 bump 版本号。
+红-先行(改模板内容后仍命中 → 断言 miss),edit_v3 全文件 29 绿,
+GUI 消费端三文件 62 绿。

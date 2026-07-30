@@ -667,3 +667,28 @@ def test_v3_readonly_blocks_writes_but_keeps_reads(tmp_project, add_shot):
     finally:
         server.shutdown()
         server.close()
+
+
+def test_cardprev_cache_rekeys_when_the_look_changes(monkeypatch, tmp_project):
+    """The preview cache must key on the LOOK-DETERMINING data (template CSS +
+    preset rows), not template/preset NAMES alone: after a renderer fix ships,
+    a stale .manju preview has to MISS and re-render — a cached pre-fix look
+    that no longer matches build output is the preview's one job inverted."""
+    from manju.gui import cardprev
+    from manju.media import html_card as hc
+
+    def fake_render_card_png(text, dest, *, width, height, template, preset=""):
+        Path(dest).write_bytes(b"png")
+
+    monkeypatch.setattr("manju.media.html_card.render_card_png",
+                        fake_render_card_png)
+
+    _, hit1 = cardprev.render_card_preview(tmp_project, text="回", template="caption")
+    assert hit1 is False
+    _, hit2 = cardprev.render_card_preview(tmp_project, text="回", template="caption")
+    assert hit2 is True  # unchanged look → cache hit
+
+    monkeypatch.setitem(hc.CARD_TEMPLATES, "caption",
+                        hc.CARD_TEMPLATES["caption"] + "/*look-v2*/")
+    _, hit3 = cardprev.render_card_preview(tmp_project, text="回", template="caption")
+    assert hit3 is False, "template content changed but the cache still hit"

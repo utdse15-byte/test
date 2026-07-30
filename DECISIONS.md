@@ -3502,3 +3502,13 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    diagonal, near-invisible on the dark defaults); healthy browsers show
    no seam at all. 2 red-first pixel tests; 9/9 card tests green;
    edit_v3 byte-identity pin passes unweakened.
+22. **Preview-cache upgrade trap (2026-07-30)** — cardprev keyed previews
+   by (text, template NAME, size, preset NAME) into .manju/frames, which
+   outlives upgrades: after #17/#21's template fixes, stale previews would
+   serve the pre-fix look forever while builds produce the fixed one — the
+   preview's one job inverted. The key now folds in the look-determining
+   data itself (the html template CSS string + both renderers' preset
+   rows), so any shipped look change re-keys automatically — no version
+   token to remember to bump. Red-first (mutating template content still
+   hit the cache → assert miss); edit_v3 29 green, GUI consumer files 62
+   green.

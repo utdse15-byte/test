@@ -55,7 +55,17 @@ def render_card_preview(
     """
     pw, ph = _preview_dims(project)
     body = f"{text}\n{subtext}".strip() if subtext else (text or "")
-    key = short_hash(cache_key(body, template, pw, ph, "cardpreview", preset))
+    # The key folds in the LOOK-DETERMINING data itself (html template CSS +
+    # both renderers' preset rows), not just the template/preset NAMES — a
+    # shipped renderer fix must re-key stale .manju previews instead of
+    # serving the pre-fix look forever (the cache outlives upgrades).
+    from ..media.card import CARD_STYLE_PRESETS as _floor_presets
+    from ..media.html_card import CARD_STYLE_PRESETS as _html_presets
+    from ..media.html_card import CARD_TEMPLATES as _templates
+    look = [_templates.get(template, ""),
+            sorted((_html_presets.get(preset) or {}).items()),
+            sorted((_floor_presets.get(preset) or {}).items())]
+    key = short_hash(cache_key(body, template, pw, ph, "cardpreview", preset, look))
     cache = frames_cache_dir(project.root)
     dest = cache / f"card_{key}.png"
     if dest.exists():
