@@ -885,3 +885,15 @@ provider 的 F13 适配墙照旧接住并降级 drawtext 带记录——安全�
 - doctor 文案不用改:Windows 上「chromium (html_render)」行从此如实报
   找到的浏览器 ✓。
 - 全量套件(ffmpeg 6.1.1):**5853 passed, 0 failed, 19 skipped**。
+
+## 死线家族全仓清点(阴性结果,留档防重扫)
+
+载荷敏感死线在 CI 连响三次(mcp wire、ledger GUI jobs、board e2e)后,按
+同一准则把 tests/ 全扫了一遍:「固定 <30s 死线 + 背后是构建/ffmpeg 级真实
+工作」的组合,**只有已修的那三处**。其余候选逐个核过并留在原值:
+`test_gui_project_actions` 的 8s 等线程收尾(作业是测试内闭包,无真实
+工作)、`test_c0911_gates` 三处 15s 是屏障文件轮询(自带 BARRIER_TIMEOUT
+诚实出口)、`test_audit_findings` 的 5s 是纯线程回调、`test_board_serve`
+的 httpx 默认 5s 全部打在预渲染 HTML/静态文件上。`signal.*` 平台面同扫:
+killpg 测试有 POSIX skipif 门,crash 战役已改 `Popen.kill()`,再无第三处。
+无证据不改——这条准则本身也是本轮的产出之一。
