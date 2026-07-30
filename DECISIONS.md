@@ -3309,3 +3309,34 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
 8. **`httpx` is a declared dev dependency (F-23)** — seven test modules
    import it directly; the documented dev install only ever collected clean
    via another extra's transitive dependency.
+9. **Round 3 — the deferred list, revisited (same day)** — five of the seven
+   deferrals turned out tractable without new design decisions, each landed
+   red-first (`tests/test_trisurface_round3.py`, 12 tests): the event-detail
+   brief moved to ONE owner (`core.events.event_detail_brief`) consumed by
+   `manju events` AND `manju history` (F-13 — history repred dict details) and
+   mirrored in support-bundle's summary line (R2-4); `apply_ingest` reports
+   the shots a landed bible_ref left stale (`staled_shots` on the result,
+   additive; the CLI prints the ⚠ consequence line — F-15); the keyless Edge
+   TTS gained a real scaffold (`providers add <id> --type tts --adapter edge`
+   → a complete manifest with NO ★ boilerplate and honest next-steps; the
+   TTS-unconfigured message now points there — F-09); `analyze`/`segments`
+   refusals speak owner language (observation-set explained, missing report
+   names `manju analyze` instead of errno — F-22); the readonly exports page
+   renders its 15 mutating controls disabled with a 只读 banner (server 403
+   unchanged — F-10).
+10. **MCP failures agents must branch on carry their own codes (F-18)** —
+   `locked_field` (branch: propose), `rev_conflict` (branch: re-get_shot),
+   `unknown_tool` (branch: re-read tools/list), `unknown_proposal` (typed
+   `UnknownProposal` subclass; branch: re-propose). Documented in the
+   error-codes skill as a SEPARATE MCP table outside the CLI classification
+   block, so the CLI anti-fabrication scan (which greps cli.py only) stays
+   exact — two vocabularies, deliberately not merged.
+11. **MCP export reaches CLI parity (F-19)** — formats enum grows to
+   srt|vtt|ttml|otio|edl|fcpxml|xmeml|jianying|capcut (ADD-only per the DR05
+   pins), dispatching to the SAME exporter calls the CLI makes inside the
+   same build-lock scope; srt/vtt report all three sibling caption files;
+   capcut adapts ExporterUnavailable into the envelope.
+12. **Still deferred, still on purpose**: F-11 (locale lines.yaml shape for
+   dialogue-less shots) and F-20 (retraction semantics for the append-only
+   human-verification log) — both change a contract's meaning, not its
+   wording, and get their own decision or none.

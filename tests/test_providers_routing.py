@@ -86,10 +86,20 @@ def _write(providers_dir, pid, data):
 # ======================================================= manifest scaffolding
 
 
+# TRISURFACE F-09 (round 3): the keyless Edge templates are complete as
+# written — a ★ there would tell the owner to fill fields that do not exist,
+# which is exactly the dead-end the finding recorded. Every other template
+# still must mark its fillable fields.
+COMPLETE_AS_WRITTEN = {"edge", "edge_tts"}
+
+
 @pytest.mark.parametrize("adapter", sorted(ADAPTER_ALIASES))
 def test_scaffold_round_trips_and_marks_fields(adapter):
     text = scaffold_template("newprov", "video", adapter)
-    assert "★" in text  # fields to fill are marked
+    if adapter in COMPLETE_AS_WRITTEN:
+        assert "★" not in text  # nothing to fill — saying otherwise misleads
+    else:
+        assert "★" in text  # fields to fill are marked
     data = yaml.safe_load(text)  # valid YAML
     m = ProviderManifest.model_validate(data)  # valid manifest
     assert m.id == "newprov"

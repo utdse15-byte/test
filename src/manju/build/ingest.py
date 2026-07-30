@@ -231,12 +231,20 @@ class IngestApplyResult:
     # only registration, §3) and stays landed.
     canceled: bool = False
     errors: list[str] = field(default_factory=list)
+    # TRISURFACE F-15: {asset_id: [shot ids]} that a landed bible_ref row
+    # left STALE — registering a ref image edits the bible, so every shot
+    # referencing the asset re-generates on the next build (real money on a
+    # paid provider). The consequence was silent; now it rides the result so
+    # every surface (CLI/GUI/JSON) can say it. Additive; empty when no
+    # bible_ref landed or nothing went stale.
+    staled_shots: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "results": [r.to_dict() for r in self.results],
             "stopped_at": self.stopped_at, "batch_id": self.batch_id,
             "canceled": self.canceled, "errors": self.errors,
+            "staled_shots": self.staled_shots,
         }
 
 
@@ -1044,4 +1052,38 @@ def apply_ingest(
 
     return IngestApplyResult(results=results, stopped_at=stopped_at,
                              batch_id=resolved_batch_id,
-                             canceled=canceled, errors=errors)
+                             canceled=canceled, errors=errors,
+                             staled_shots=_staled_by_bible_refs(project, results))
+
+
+def _staled_by_bible_refs(project: Project,
+                          results: list[IngestRowResult]) -> dict[str, list[str]]:
+    """TRISURFACE F-15: which shots did this batch's landed bible_ref rows
+    leave stale? A ref-image registration edits the bible, so every shot
+    referencing the asset re-generates on the next build — a consequence the
+    output never mentioned (`manju impact` predicts exactly this for field
+    edits; ingest's bible write had no such line). Best-effort and read-only:
+    a probe failure returns {} rather than failing an already-landed batch."""
+    assets = sorted({r.row.asset_id for r in results
+                     if r.ok and r.row.action == "bible_ref" and r.row.asset_id})
+    if not assets:
+        return {}
+    try:
+        from ..core.assets import asset_matrix
+        from .stale import evaluate_all
+
+        stale_now = {st.shot_id for st in evaluate_all(project)
+                     if st.state.value == "stale"}
+        if not stale_now:
+            return {}
+        matrix = asset_matrix(project)
+        out: dict[str, list[str]] = {}
+        for kind_rows in (matrix.get("kinds") or {}).values():
+            for row in kind_rows:
+                if row.get("id") in assets:
+                    hit = sorted(set(row.get("appearances") or []) & stale_now)
+                    if hit:
+                        out[row["id"]] = hit
+        return out
+    except Exception:
+        return {}

@@ -4438,7 +4438,8 @@ class _Handler(BaseHTTPRequestHandler):
                             "application/javascript; charset=utf-8")
             return True
         if path == exports_page.PAGE_PATH:
-            html_doc = exports_page.render(self.server.project, self.server.token)
+            html_doc = exports_page.render(self.server.project, self.server.token,
+                                           readonly=self.server.readonly)
             self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
             return True
         if path == "/api/exports":

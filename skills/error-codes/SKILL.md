@@ -95,3 +95,22 @@ MCP 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮
 3. 第 3 类(问人)出现时**立刻停**,把 `error` 原文交给人,不要重试。
 4. 第 4 类可以退避重试,但要有次数上限,并且**花钱的操作即使可重试也要先看
    `ask_before`**(核心协议 §5)。
+
+## MCP 工具面的 code(与 CLI 信封同形,另一张小词表)
+
+MCP 工具失败时返回 `isError: true` + `{"error": …, "code": …}` — 同一信封,
+但词表是工具面自己的(不要拿去和上面 CLI 的表混对):
+
+| code | 什么事实 | 该做什么 |
+| --- | --- | --- |
+| `invalid_argument` | 缺参数/参数形状不对 | 读 tools/list 的 inputSchema 改调用 |
+| `unknown_tool` | 工具名不存在 | 重读 tools/list,别重试同名 |
+| `waiting_user` | ask_before 闸(金钱或外向制品) | 停下问人;人同意后带 `assume_yes: true` 重调 |
+| `agent_profile_denied` | 当前 agent profile 不许该工具 | 走 payload 里给出的协作路径(通常是 propose) |
+| `locked_field` | 改动碰到 §5 锁 | 写 proposal,永远别绕锁 |
+| `rev_conflict` | 乐观锁:加载后文件已被改 | 重新 get_shot 拿新 rev 再保存 |
+| `unknown_proposal` | 提案 id 不存在 | 重新 propose / 列出现有提案 |
+| `canceled` | 构建/轮询被协作取消 | 按人意图处理,不自动重试 |
+
+(此表由 tests/test_trisurface_round3.py 的 MCP code 测试钉住;CLI 表的
+反捏造校验只扫上面的分类块,两张词表各自为政。)

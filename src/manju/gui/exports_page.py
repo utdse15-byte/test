@@ -82,26 +82,31 @@ def _chip(row: dict[str, Any]) -> str:
     return f'<span class="badge {cls}">{_e(row["freshness_zh"])}</span>'
 
 
-def _actions(row: dict[str, Any]) -> str:
+def _actions(row: dict[str, Any], *, readonly: bool = False) -> str:
     kind = row["kind"]
     if kind in _BUILD_ONLY:
         # priced: link to the workbench build (plan modal → confirm), never spend here
         return ('<a class="btn ghost mini" href="/">去工作台构建</a>'
                 '<span class="muted xc-hint">计划弹窗确认花费(不在此处直接消费)</span>')
-    out = [f'<button class="btn mini" data-act="gen" data-kind="{_e(kind)}">生成 / 更新</button>']
+    # TRISURFACE F-10: the server already 403s every readonly write — but the
+    # page still rendered 15 inviting buttons, each a click that could only
+    # fail. Disable them at render like the cockpit gates its controls.
+    dis = ' disabled title="只读工作台 readonly"' if readonly else ""
+    out = [f'<button class="btn mini" data-act="gen" data-kind="{_e(kind)}"{dis}>'
+           '生成 / 更新</button>']
     if row["verifiable"]:
         # a desktop draft: the 标记已人工确认 note + button (§14 honesty)
         out.append(
             '<span class="xc-verify">'
             f'<input class="xc-note" type="text" maxlength="200" '
-            f'data-kind="{_e(kind)}" placeholder="确认备注(可选)">'
-            f'<button class="btn ghost mini" data-act="verify" data-kind="{_e(kind)}">'
+            f'data-kind="{_e(kind)}" placeholder="确认备注(可选)"{dis}>'
+            f'<button class="btn ghost mini" data-act="verify" data-kind="{_e(kind)}"{dis}>'
             '标记已人工确认</button></span>'
         )
     return "".join(out)
 
 
-def _card(row: dict[str, Any]) -> str:
+def _card(row: dict[str, Any], *, readonly: bool = False) -> str:
     ver = f' <span class="chip xc-ver">{_e(row["version"])}</span>' if row["version"] else ""
     path = (f'<div class="xc-path muted">{_e(row["open_hint"] or row["path"])}</div>'
             if row["openable"] and (row["open_hint"] or row["path"]) else
@@ -116,12 +121,12 @@ def _card(row: dict[str, Any]) -> str:
         f'<div class="xc-head"><h2>{_e(row["label"])}{ver}</h2>{_chip(row)}</div>'
         f'<div class="xc-basis">{_e(row["basis"])}</div>'
         f'{path}{verified}'
-        f'<div class="xc-actions">{_actions(row)}</div>'
+        f'<div class="xc-actions">{_actions(row, readonly=readonly)}</div>'
         '</div>'
     )
 
 
-def render(project: Any, token: str) -> str:
+def render(project: Any, token: str, *, readonly: bool = False) -> str:
     from ..build.exportstatus import deliverables_data
 
     head = ('<div class="page-h"><h1>导出中心 Export center</h1>'
@@ -147,14 +152,16 @@ def render(project: Any, token: str) -> str:
     # fine, upstream moved", the one state a bulk refresh cannot get wrong.
     stale_kinds = [r["kind"] for r in rows
                    if r["freshness"] == "stale" and r["kind"] not in _BUILD_ONLY]
-    if stale_kinds:
+    if stale_kinds and not readonly:
         summary_chips += (
             f'<button class="btn mini" id="xc-gen-stale" '
             f'data-kinds="{_e(",".join(stale_kinds))}">'
             f'全部生成 / 更新待更新 ({len(stale_kinds)})</button>')
+    if readonly:
+        summary_chips += '<span class="chip readonly">只读 readonly — 操作请回到项目机器</span>'
     summary = f'<div class="xc-summary panel">{summary_chips}</div>'
 
-    cards = "".join(_card(r) for r in rows)
+    cards = "".join(_card(r, readonly=readonly) for r in rows)
     legend = (
         '<div class="xc-legend muted panel">'
         '词汇(§3):<b>上新</b> 与当前规格一致 · <b>待更新</b> 上游已改需重做 · '
