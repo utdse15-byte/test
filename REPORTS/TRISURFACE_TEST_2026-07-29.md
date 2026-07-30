@@ -614,6 +614,49 @@ missing 记为诊断。绿从此可达:实测两句真台词译完 → `missing=
 (use 的不覆盖后缀、rm 的 --yes 确认)· `compare --candidate` 的拒绝语
 (我传错了用法,它答对了)。
 
+---
+
+# 加练轮(店主注资:「做一切可以做的,消耗我的额度,同时有用」)
+
+三个阶段,全部真跑(DECISIONS `TRISURFACE-FIX` #15)。
+
+## A. 视觉 QC 闭环第一次被真的用了
+
+我(视觉模型)当判读员,在雨夜便利店项目上走完整环:给四镜写 `must_show`
+期望 → `qc brief` 出题 → **亲眼读了 21 张评审帧** → 回填 15 条 v2 判读
+(7 镜 + 8 个一致性组合)→ 覆盖率 **7/7 + 8/8** → 汇入 qc.md。结局全部诚实:
+
+- 两个占位镜头(S001/S007 是彩条测试卡)被 assurance **如实拒收** ——
+  「雨夜街道」「便利店夜景」不在画面里,这就是素材的真相;QC 从此永久
+  盯着这两镜等真素材,这正是这套闭环存在的意义。
+- 一条真发现:两字台词「谢谢。」被卡片断行器折成「谢/谢。」两行。
+- 文字卡上无人物形象,八个一致性组合如实判「本轮不可判」而非硬给结论。
+
+## B. 三条路径,三部完整的片子,零新缺陷
+
+- **剧集**:深夜食堂 E01 全漏斗出片 + 配音;bible 从系列下发,E01 本地改动
+  被**报告为分歧而非覆盖**;E02 建立后 season health 如实 NOT READY。
+- **双语**:en+ja 双 locale 各自 Edge 配音、各自成片、逐语言字幕;
+  `locale add` 只铸有台词的行(F-11 实地:`+2 lines`,`无台词=1`);
+  `qc --all-locales` 两语齐检 aggregate=pass。
+- **实拍修复**:四段真素材按命名约定 ingest(空镜头自动选中)、全片
+  `xfade_fade` 转场在钉的 6.1.1 上零抖动、trim/retime 修复后重选重建、
+  cover+teaser 都出了。唯二的绊脚是我自己选错 take 号 —— 解析器诚实拒绝
+  并列出现有 takes。
+
+## C. 崩溃安全战役(`tests/test_crash_safety_campaign.py`)
+
+- **属性测试**(hypothesis):有理帧率网格 round-trip 恒等 + 投影误差
+  严格小于半帧(int 与 1001 族同验)· 事件摘要行有界且永不 repr ·
+  locale 行状态机对任意 (base, entry) 世界恰答一个诚实状态。
+- **真 kill -9 注入**:对真实构建进程分批 SIGKILL,每次死后逐条验 §3 纪律
+  ——真相 YAML 无一撕裂(原子写)、已有媒体字节分毫未动(只增)、事件尾
+  可读、runtime 可重建、check 绿、恢复构建照常出片;并断言**确实杀中过**
+  进行中的构建(否则测试自己喊「什么都没证明」)。
+- **第一枪就是真收获**:hypothesis 找到事件 detail 键/值含换行时「单行
+  摘要」变多行(错误信息真的会带换行)—— 已在唯一属主 `event_detail_brief`
+  修复(折叠空白;`--json` 原文照旧),红-先行。
+
 既有测试改动两处、均非弱化:`test_events_human_digest.py` 的 import 从
 `manju.cli._event_detail_brief` 改指新属主 `manju.core.events.event_detail_brief`
 (函数搬家,断言一字未动);`test_providers_routing.py` 的脚手架参数化测试

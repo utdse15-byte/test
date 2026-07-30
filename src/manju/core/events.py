@@ -440,9 +440,14 @@ def event_detail_brief(detail: dict) -> str:
         v = detail[k]
         text = (v if isinstance(v, str)
                 else json.dumps(v, ensure_ascii=False, separators=(",", ":")))
+        # 崩溃安全战役 (hypothesis): a key or value carrying a newline turned
+        # the one-line digest into a multi-line one — error strings really do
+        # carry newlines. Collapse whitespace in BOTH; the full record stays
+        # verbatim in --json.
+        text = " ".join(text.split())
         if len(text) > _EVENT_VALUE_WIDTH:
             text = text[:_EVENT_VALUE_WIDTH - 1] + "…"
-        parts.append(f"{k}={text}")
+        parts.append(f"{' '.join(str(k).split())}={text}")
     hidden = len(detail) - len(shown)
     if hidden > 0:
         parts.append(f"+{hidden} 项 → --json")

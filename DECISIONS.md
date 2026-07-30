@@ -3359,3 +3359,27 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    sworn and that it is irrevocable — the same dialog pattern the subtitles
    takeover uses. RETRACTION semantics for the append-only log remain
    deferred: this guards the accident without inventing an un-swear.
+15. **Owner-funded hardening round (「消耗我的额度,同时有用」)** — three
+   phases, all executed for real. (a) The visual-QC loop ran END TO END for
+   the first time with an actual vision model as the reviewer: must_show
+   expectations written, 21 frames READ, 15 v2 verdicts filed (7 shots +
+   8 consistency units), coverage 7/7 + 8/8, and assurance now honestly
+   REJECTS the two placeholder color-bar shots (their expectations are
+   absent from the frames — that is the truth of the footage) while one real
+   card-renderer finding landed (a two-character dialogue wraps 谢/谢。).
+   (b) Three complete films through three path families: a series episode
+   (bible sync down + local divergence reported-not-overwritten + season
+   health honest), a bilingual film (en+ja locale loop, per-locale voices,
+   multilocale QC aggregate over BOTH), and a rushes film (ingest naming
+   conventions with auto-select, xfade transitions on the pinned 6.1.1,
+   trim/retime repairs, cover+teaser) — zero new defects on these paths.
+   (c) The 崩溃安全战役: hypothesis properties over the rational timebase
+   (round-trip identity + half-frame error bound), the event brief (bounded,
+   never a repr), the locale line-state machine (one honest state per
+   world), plus REAL SIGKILL injection over live builds asserting the §3
+   disciplines (no torn truth YAML, append-only media untouched, events
+   tail reads, runtime rebuilds, check ok, recovery build green).
+   `tests/test_crash_safety_campaign.py`. The campaign's first catch was
+   real: a newline inside an event-detail key/value broke the one-line
+   digest — error strings do carry newlines — fixed in the ONE owner
+   (event_detail_brief collapses whitespace; --json stays verbatim).
