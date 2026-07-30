@@ -3875,13 +3875,20 @@ def locale(
                     return
                 for lg, body in info["locales"].items():
                     counts = body.get("counts") or {}
+                    # F-11: dialogue-less shots are not debt — their count gets
+                    # its own word (only when non-zero) and their rows stay off
+                    # the actionable listing below.
+                    nn = counts.get("not_needed", 0)
                     typer.echo(
                         f"{lg}: ok={counts.get('ok', 0)}  "
                         f"missing={counts.get('missing', 0)}  "
                         f"翻译过期={counts.get('翻译过期', 0)}"
+                        + (f"  无台词={nn}" if nn else "")
                     )
                     for row in body.get("lines") or []:
                         vs = (body.get("voice") or {}).get(row["shot"], "")
+                        if row["state"] == "not_needed" and vs in ("", "not_needed"):
+                            continue
                         if row["state"] != "ok" or vs not in ("", "fresh", "not_needed"):
                             typer.echo(
                                 f"  {row['shot']}: 译={row['state']}  配音={vs or '—'}"

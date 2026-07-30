@@ -139,8 +139,15 @@ def load_locale_meta(project: Project, lang: str) -> dict[str, Any]:
 
 
 def add_locale(project: Project, lang: str) -> dict[str, Any]:
-    """Scaffold locales/<lang>/lines.yaml with every shot id + empty text +
-    current base_hash."""
+    """Scaffold locales/<lang>/lines.yaml — one row per shot WITH dialogue.
+
+    TRISURFACE F-11 (round 4): scaffolding every shot minted hash-of-empty
+    placeholder rows for dialogue-less shots, and `locale status` then read
+    ``missing=N`` forever — green unreachable, and "you owe a translation"
+    indistinguishable from "there is nothing to translate". Dialogue-less
+    shots are NOT debt: they are skipped here, read ``not_needed`` in
+    :func:`line_status` (legacy empty rows included, no migration), and a
+    shot that gains dialogue later becomes ``missing`` exactly then."""
     lang = validate_lang(lang)
     d = locale_dir(project, lang)
     d.mkdir(parents=True, exist_ok=True)
@@ -153,6 +160,8 @@ def add_locale(project: Project, lang: str) -> dict[str, Any]:
             continue
         shot = project.load_shot(sid)
         text = shot.dialogue.text or ""
+        if not text.strip():
+            continue  # nothing to translate — no row, no debt (F-11)
         lines[sid] = {
             "text": "",
             "base_hash": base_text_hash(text),
@@ -168,19 +177,28 @@ def add_locale(project: Project, lang: str) -> dict[str, Any]:
 
 
 def line_status(project: Project, lang: str, shot_id: str) -> dict[str, Any]:
-    """missing / 翻译过期 / ok for one line."""
+    """not_needed / missing / 翻译过期 / ok for one line.
+
+    ``not_needed`` (F-11): the shot has no base dialogue, so there is nothing
+    to translate — reported for absent rows AND for legacy hash-of-empty
+    scaffold rows, so pre-decision projects read honestly without migration.
+    A translation LEFT BEHIND by removed dialogue still reads 翻译过期 via the
+    stored-hash mismatch below — that row is real and needs a human look."""
     lines = load_lines(project, lang)
     entry = lines.get(shot_id)
     shot = project.load_shot(shot_id)
     base_text = shot.dialogue.text or ""
     current_hash = base_text_hash(base_text)
+    has_base = bool(base_text.strip())
     if entry is None:
-        return {"shot": shot_id, "state": "missing", "text": "",
+        return {"shot": shot_id,
+                "state": "missing" if has_base else "not_needed", "text": "",
                 "base_hash": current_hash}
     text = str(entry.get("text") or "").strip()
     stored = str(entry.get("base_hash") or "")
     if not text:
-        return {"shot": shot_id, "state": "missing", "text": "",
+        return {"shot": shot_id,
+                "state": "missing" if has_base else "not_needed", "text": "",
                 "base_hash": current_hash, "stored_base_hash": stored}
     if stored and stored != current_hash:
         return {"shot": shot_id, "state": "翻译过期", "text": text,
@@ -207,11 +225,12 @@ def _locale_voice_state(project: Project, lang: str, shot_id: str,
     look stale under VOICE_VERSION=2.
     """
     text = str(line.get("text") or "").strip()
-    if line.get("state") == "missing" and not text:
+    if line.get("state") in ("missing", "not_needed") and not text:
         return "not_needed"
     voices = project.voice_takes(shot_id, lang=lang)
     if not voices:
-        return "missing" if text or line.get("state") != "missing" else "not_needed"
+        return ("missing" if text or line.get("state") not in ("missing", "not_needed")
+                else "not_needed")
     media, sc = voices[-1]
     if sc is None:
         return "manual"
@@ -415,7 +434,7 @@ def locale_status(project: Project, lang: str | None = None) -> dict[str, Any]:
             ls = line_status(project, lg, sid)
             rows.append(ls)
             voice_by[sid] = _locale_voice_state(project, lg, sid, ls)
-        counts = {"ok": 0, "missing": 0, "翻译过期": 0}
+        counts = {"ok": 0, "missing": 0, "翻译过期": 0, "not_needed": 0}
         for r in rows:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
         artifacts = _locale_artifact_freshness(project, lg)

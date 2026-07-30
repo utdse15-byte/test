@@ -3340,3 +3340,22 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    dialogue-less shots) and F-20 (retraction semantics for the append-only
    human-verification log) — both change a contract's meaning, not its
    wording, and get their own decision or none.
+13. **Dialogue-less shots are not translation debt (F-11, round 4)** — the
+   call the wave had parked: `locale add` scaffolded a hash-of-empty row for
+   every shot, and `locale status` read ``missing=N`` forever on projects
+   with any dialogue-less shot — green unreachable, real debt buried in
+   noise, and localized delivery manifests counting phantom missing lines.
+   Now: `add_locale` skips shots with no dialogue text; `line_status` answers
+   ``not_needed``(无台词)for them — including legacy empty scaffold rows,
+   no migration; a shot that GAINS dialogue later reads ``missing`` exactly
+   then (pinned); a translation left behind by REMOVED dialogue still reads
+   翻译过期 (the stored-hash mismatch — that row needs a human). The CLI
+   prints ``无台词=N`` only when non-zero and keeps non-actionable rows off
+   the listing; counts carry the new key additively.
+14. **One confirm() before the permanent verification oath (F-20, minimal)** —
+   标记已人工确认 appends a record meaning "a human opened this draft in the
+   desktop app"; a single stray click swore that oath (round 1's automation
+   did). The button now asks a native confirm() naming exactly what is being
+   sworn and that it is irrevocable — the same dialog pattern the subtitles
+   takeover uses. RETRACTION semantics for the append-only log remain
+   deferred: this guards the accident without inventing an un-swear.

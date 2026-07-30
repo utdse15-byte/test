@@ -588,6 +588,31 @@ F-02(付费可见性)→ F-04/F-03/F-14(同类 None/双引脚点,一次扫清)�
 
 仍然留档不动:**F-11**(locale 行形状)与 **F-20**(核验日志撤回语义)——
 两者动的是契约的**含义**而非措辞,要么有自己的 DECISIONS 条目,要么不动。
+→ **第四轮各自拿到了自己的 DECISIONS 条目并落地(见下)**
+
+---
+
+# 第四轮:最后两项,一项做了决定、一项做了最小护栏
+
+(DECISIONS `TRISURFACE-FIX` #13-#14;`tests/test_trisurface_round4.py`,7 条,
+红-先行,其中「后补台词变 missing」一条在旧行为下本来就绿——留作守卫。)
+
+**F-11 的决定:无台词镜头不是翻译欠账。** `locale add` 不再给无台词镜头铸
+hash-of-empty 行;`line_status` 对它们(含盘上遗留的空行,零迁移)回答
+`not_needed`(无台词);**后补台词的镜头恰在那一刻变回 missing**(钉住);
+**删掉台词后遗留的译文仍报 翻译过期**(那行需要人看,不静默)。CLI 只在
+非零时印 `无台词=N`,非可操作行不进列表;localized 交付清单不再把幻影
+missing 记为诊断。绿从此可达:实测两句真台词译完 → `missing=0`。
+
+**F-20 的最小护栏:永久誓言前先问一次。** 标记已人工确认 的语义是「人已在
+桌面 App 打开过该草稿」,一次误触就永久落账(第一轮我的自动化真误触过)。
+按钮现在先弹原生 confirm(),写明在赌什么、且不可撤销 —— 与字幕接管同款
+模式。**撤回语义仍然留档**:护栏挡住误触,不发明「反誓言」。
+
+顺带扫过而干净的(第四轮):presets 三档列表与 `--preset vertical_ai_video`
+建项(30fps 正确)· `create synopsis/beats` 模板生成 · `lib show/use/rm`
+(use 的不覆盖后缀、rm 的 --yes 确认)· `compare --candidate` 的拒绝语
+(我传错了用法,它答对了)。
 
 既有测试改动两处、均非弱化:`test_events_human_digest.py` 的 import 从
 `manju.cli._event_detail_brief` 改指新属主 `manju.core.events.event_detail_brief`
