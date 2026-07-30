@@ -980,7 +980,10 @@ PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
 - 四 preset + 两模板重渲亲眼复核:caption 海军蓝渐变、warm 橙→粉→紫、
   chapter 径向光斑、white_big 右缘内距 —— 全部本次真的看见了;
 - 邻接簇 edit_v3(preset 字节恒等钉照过)+ round5 + packaging 66 绿;
-- 全量套件(ffmpeg 6.1.1):**5855 passed, 0 failed, 19 skipped**。
+- 全量套件(ffmpeg 6.1.1):**5855 passed, 0 failed, 19 skipped**;
+- **Windows 门禁实跑绿(run 30536163223)**:渐变色调行程与 white_big 边距
+  两条像素断言在 windows-latest 的真 Chrome 上通过 —— 阈值(顶底行程 ≥8、
+  角部 RGB ±30、≥3% 内距)跨字体/渲染管线成立。
 
 ## 附:预览缓存的升级陷阱(同波修复)
 
