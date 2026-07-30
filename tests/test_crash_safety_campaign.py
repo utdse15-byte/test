@@ -9,8 +9,8 @@ Two families:
    honest state per (base, entry) world.
 
 2. **Crash injection** (ffmpeg, slow lane) — a `manju build` subprocess is
-   SIGKILLed at a random point, after which every §3 discipline must hold on
-   disk: truth YAML parses whole (atomic writes — no torn files), pre-existing
+   hard-killed (SIGKILL / TerminateProcess) at a random point, after which
+   every §3 discipline must hold on disk: truth YAML parses whole (atomic writes — no torn files), pre-existing
    media bytes are untouched (append-only), the events tail still reads, the
    disposable runtime rebuilds, `manju check` passes, and a follow-up build
    completes green. Three kill points per run keep the suite honest without
@@ -20,7 +20,6 @@ Two families:
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -102,9 +101,17 @@ def test_event_brief_is_bounded_and_never_a_repr(detail):
 def test_line_state_machine_answers_exactly_one_honest_state(
         tmp_path_factory, base, text, stale, row_exists):
     """For every (base dialogue, translation row) world the state must be the
-    documented one: not_needed iff nothing to translate and nothing written;
-    missing iff base exists and no usable translation; 翻译过期 iff a written
-    translation's stored hash no longer matches; ok otherwise."""
+    documented one. When a translation is WRITTEN, hash agreement with the
+    current base governs alone: match → ok, mismatch → 翻译过期 (orphaned
+    rows over a deleted/empty base included — DECISIONS #13 删台词遗译仍报
+    过期). Only with no usable translation does base emptiness decide
+    missing vs not_needed.
+
+    The model reads the base back FROM DISK before predicting: YAML 1.1
+    line-folds characters like U+0085 NEL to a space on round-trip (the
+    Windows gate's hypothesis roll found this), and every real pipeline
+    hash is minted from the on-disk truth, never from a pre-write string.
+    """
     from manju.core.container import Project
     from manju.core.locale import base_text_hash, line_status, locale_dir
     from manju.core.models import ShotSpec
@@ -120,18 +127,22 @@ def test_line_state_machine_answers_exactly_one_honest_state(
     index = project.load_index()
     index.order.append("S001")
     project.save_index(index)
+    reread = project.load_shot("S001").dialogue.text
 
     d = locale_dir(project, "en")
     d.mkdir(parents=True, exist_ok=True)
     if row_exists:
-        stored = "sha256:deadbeef" if stale else base_text_hash(base)
+        # sha256:deadbeef can never equal a real digest, so stale=True is a
+        # genuine mismatch; the fresh hash is minted from the RE-READ base,
+        # exactly like locale add does.
+        stored = "sha256:deadbeef" if stale else base_text_hash(reread)
         write_yaml(d / "lines.yaml",
                    {"S001": {"text": text, "base_hash": stored}})
     else:
         write_yaml(d / "lines.yaml", {})
 
     state = line_status(project, "en", "S001")["state"]
-    has_base = bool(base.strip())
+    has_base = bool(reread.strip())
     has_text = bool(text.strip()) and row_exists
     if not has_text:
         assert state == ("missing" if has_base else "not_needed")
@@ -217,7 +228,11 @@ def test_sigkill_mid_build_never_breaks_the_disciplines(tmp_path):
         )
         time.sleep(delay)
         if proc.poll() is None:
-            proc.send_signal(signal.SIGKILL)
+            # Popen.kill() is the cross-platform hard kill: SIGKILL on POSIX,
+            # TerminateProcess on Windows (signal.SIGKILL does not exist
+            # there — the hard gate caught exactly that). Both are abrupt,
+            # uncatchable, no-cleanup deaths, which is the point.
+            proc.kill()
             proc.wait(timeout=30)
             killed += 1
         _assert_disciplines(project, media_before)

@@ -247,7 +247,11 @@ def test_boundary_stills_extracted_and_served_e2e(tmp_path):
                                with_bgm=False)
     project = Project(root)
     with running(project) as (base, server):
-        html = httpx.get(base + "/").text
+        # 载荷敏感对策: this GET runs REAL ffmpeg still-extraction server-side
+        # for every boundary pair; httpx's default 5s deadline fired on a
+        # contended windows-latest runner. Failure-detection latency only —
+        # every assertion below is unchanged.
+        html = httpx.get(base + "/", timeout=120.0).text
         assert 'class="bnd-row"' in html
         assert "S001 → S002" in html and "S002 → S003" in html
         assert 'src="/media/.manju/frames/' in html
@@ -261,7 +265,7 @@ def test_boundary_stills_extracted_and_served_e2e(tmp_path):
         for rel in rels:
             assert (project.root / rel).is_file()
         # … and the server actually serves them (allowlisted preview surface)
-        r = httpx.get(base + "/media/" + rels[0])
+        r = httpx.get(base + "/media/" + rels[0], timeout=120.0)
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("image/")
 
