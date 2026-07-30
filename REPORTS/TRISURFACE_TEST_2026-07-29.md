@@ -918,3 +918,22 @@ PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
    passed 从 5803 涨到 5818——7 条卡片像素断言与 round5 的 html 测试
    在 windows-latest 上首次实跑,**全绿**。卡片两修(断尾/白带)从此有
    真实 Windows 像素级回归网,这正是 #19 那波想换来的东西。
+
+---
+
+# 收口(2026-07-30:默认分支拿到正式 Windows 绿灯)
+
+三轮门禁揭示全部修完之后:
+
+- **内容判定**:run 30530134961(PR #32 头 8376aee,与默认分支 a6c3707
+  同树)Windows 全量 **success** — chromium 道全开后 0 failed。
+- **正式凭证**:run 30531761066,`workflow_dispatch` 直接打在默认分支
+  `claude/fable-opus-task-division-wv97i6` 的头 a6c3707 上,test 与
+  install-smoke 双 job **success**(这台 runner 慢,套件跑了 39 分钟,
+  但一路绿;60 分钟 job 上限内无任何挂死)。
+- 至此:门禁揭示轮开头写下的收口条件 —— 「以合并后的默认分支拿到
+  Windows 绿灯为收口」—— **达成**。从 ebcbfb0/0a02eb7 的连红,到
+  display_path、载荷敏感对、SIGKILL/NEL/board 三修、卡片两修、发现器
+  Windows 化、模拟补全 —— 六个波次(PR #29-#32 + 两个文档提交),
+  默认分支在店主的第一平台上重新全绿,且比 arc 开始时多了一整条
+  在真 Windows 上实跑的 chromium 像素回归道。
