@@ -41,7 +41,13 @@ def test_rebuild_counts_voice_spend(
         remote=RemoteJobInfo(job_id="j1", cost=2.0, currency="CNY"),
     )
     tmp_project.register_voice_take("S001", src, sc)
-    state = RuntimeState(tmp_project.runtime_dir / "state.sqlite")
+    # TRISURFACE F-02 surfaced a latent misuse here: RuntimeState takes the
+    # PROJECT ROOT (it appends .manju/state.sqlite itself). Passing the db
+    # file path only ever "worked" because no real state.sqlite existed at
+    # register time — live voice recording now creates it, and the bogus
+    # nested path (<db-file>/.manju/state.sqlite) fails loudly. Assertions
+    # below are unchanged: rebuild still derives the row and the spend.
+    state = RuntimeState(tmp_project.root)
     info = state.rebuild(tmp_project)
     assert info["runs"] >= 1
     rows = state.list_runs() if hasattr(state, "list_runs") else None

@@ -621,8 +621,12 @@ class BoardHandler(BaseHTTPRequestHandler):
         # and be a JSON request — a cross-site form POST carries neither.
         if not self._token_ok():
             self._read_body_raw()
+            # TRISURFACE R2-3: same human line as the GUI's refusal — the
+            # common way to hit this is a stale tab after a server rebind.
+            from ..gui.server import TOKEN_403_MESSAGE
+
             self._send_json(HTTPStatus.FORBIDDEN,
-                            {"ok": False, "error": "missing or invalid X-Manju-Token"})
+                            {"ok": False, "error": TOKEN_403_MESSAGE})
             return
         ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         if ctype and ctype != "application/json":

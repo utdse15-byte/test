@@ -331,8 +331,12 @@ STAGES: list[Stage] = [
         # at the hardest step, where a newcomer has the least to fall back on.
         # So name the routes that actually work, and demote board to what it
         # really is: useful AFTER there are shots.
-        next_action="拆分镜(本步没有模板命令,三条路任选):① manju gui → 分镜页"
-                    "「新建镜头」点着建;② 手写 shots/S001.yaml 并加进 "
+        # TRISURFACE F-08: this said 分镜页 — but the nav has a page literally
+        # NAMED 分镜工作台 (/storyboard) with no create affordance; the
+        # 新建镜头 button lives on the workbench HOME's shots panel. Point at
+        # the door that exists.
+        next_action="拆分镜(本步没有模板命令,三条路任选):① manju gui → 工作台"
+                    "首页镜头面板「新建镜头」点着建;② 手写 shots/S001.yaml 并加进 "
                     "shots/index.yaml 的 order(字段见 manju schema);"
                     "③ 让 AI 导演按剧本代写。建完跑 manju check 过校验;"
                     "有镜头之后 manju board 可以拼故事板。"

@@ -3224,3 +3224,88 @@ understood at a glance, or dropped something quietly.
     version, which is what cost the day, so it now names 6.1.1, the one-line
     Ubuntu install, and the `aost#0:1/aac` signature to recognise — turning a
     day-long dead end into one `ffmpeg -version`.
+
+## TRISURFACE-FIX (2026-07-29)
+
+The fix wave for the tri-surface field test (`REPORTS/TRISURFACE_TEST_2026-07-29.md`).
+Every item below was red-first: the new test reproduced the recorded field
+behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.py`,
+`tests/test_trisurface_export_gate.py`, `tests/test_trisurface_voice_ledger.py`,
+`tests/test_trisurface_polish.py`.
+
+### Decisions
+
+1. **The v2 verdict loop is wired to its consumers (R2-1)** — the DR02
+   architecture stands (observations feed assurance only; the legacy reader
+   still skips v2 lines), but the brief's own contract promised v2 FINDINGS
+   the blocker→error/issue→warn/fyi→info fold, and coverage claimed to answer
+   "was this shot AI-reviewed" while reading only the legacy log. Now: the v2
+   intake result carries `levels` (the CLI human branch stacktraced with
+   KeyError AFTER the write landed — it `.get`s both shapes and prints the v2
+   `bindings` line too), `qc_coverage` normalizes v2 records (packet
+   `media_sha256` / `media_members` as the byte binding) into the same
+   comparison the legacy rows use, and `agent_verdict_items` folds v2 findings
+   — shot AND unit scoped — expiring them into the same 已过期 info when the
+   bound bytes move. Legacy behavior byte-identical (guarded).
+2. **`final_export` binds every command surface, with one owner (F-01)** —
+   the token's check lived inline in cli.py three times while MCP `export`
+   wrote outward artifacts ungated, directly against SKILL.md §5's
+   instruction to agents and CLAUDE.md's checks-live-in-core invariant.
+   `build.graph.final_export_gate` (beside `spend_gate`, raising the same
+   WaitingUser) now serves export/openclap/package on the CLI and MCP
+   `_h_export` (structured `waiting_user`, confirmed only by the fail-closed
+   `assume_yes is True` idiom; the schema advertises the arg — an ADD, per the
+   DR05 characterization pins). The GUI export panel is deliberately NOT
+   gated: a human clicking one deliverable's button IS the confirmation the
+   token asks for — recorded in the owner's docstring.
+3. **Voice and manual registrations reach the ledger live (F-02)** — organic
+   use held 7 rows where `rebuild-index` derived 13: TTS (potentially paid)
+   and manual takes were invisible to `manju tasks`/`spend`/`perf` until a
+   rebuild. `Project.register_voice_take` (the choke point every voice path
+   funnels through — providers, voicefix, align, the locale wrapper) and
+   `providers.manual.register_manual_take` (select --file AND ingest video
+   takes) now append the same row rebuild would derive, best-effort (the
+   ledger stays disposable and can never fail a registration). The invariant
+   is pinned as behavior: live rows == a fresh rebuild's rows, same multiset.
+   Sidecar-less manual voice drops stay unrecorded on both sides (deliberate
+   §4.3 convention, and rebuild skips them too — no divergence).
+4. **Stale advice stops chasing its own tail (F-05)** — after `manju redo`,
+   `status`/GUI still said "manju redo" forever, because the stale rung never
+   looked for the candidate that redo had just minted from the CURRENT spec.
+   When such a take exists the sentence now points at `manju select` (naming
+   the take); the rung key stays `stale`, so agents keep their branch, and
+   the prior wave's stale-beats-newtake ordering is untouched.
+5. **One honest formatter per leaked fact** — the exportstatus masters row
+   said `实测 integrated None LUFS`("measured: None" — a contradiction; the
+   prior wave fixed `manju masters` but not this shared engine used by CLI
+   `exports` AND the GUI page): `_loudness_clause` says 静音 when there is
+   nothing to measure. The board project panel printed `花费 0.0 None`
+   (`.get("currency","")` cannot catch present-but-None). `/create` loaded
+   webclient.js twice and threw ManjuApiError-redeclared on every load — the
+   exact bug pages_t.py documents for its three pages, in the fourth copy.
+6. **Refusals name their objects and their doors** — baseline approval lists
+   every blocking deliverable (`REQUIRED_EXPORT_STALE[export:jianying]`, …)
+   instead of "resolve them"; the TTS-unconfigured message (one owner now,
+   three raisers) drops the §8.6 pointer nobody can open and hands the actual
+   commands (`manju providers add` + the Edge adapter line + the manual-drop
+   escape); the pullsheet note stops asserting an environment fact nobody
+   probed ("no headless-Chromium in this environment" while doctor showed
+   chromium ✓) and says PDF 未实现; `series new` prints the `cd` its twin
+   `manju new` always printed; qc brief stops naming the same skill command
+   twice in one line; the READY clause gains the space that kept
+   "blockers=0,5 项" from reading as a decimal; `exports --bundle --output
+   <项目外>` stops stacktracing on its own success line (`_display_path`
+   degrades to absolute — the outside path is legal per the delivery guard);
+   the GUI/board token 403 keeps the mechanism's name and adds the human
+   line (stale tab → refresh).
+7. **First-contact schema errors teach the shape (F-06/F-07)** — check's
+   validation error appends the expected shape for the nested models a
+   hand-writer actually hits (`action: {main, emotion}`, `dialogue:
+   {speaker, text}`) plus the `manju schema` door; and a top-level key that
+   NEAR-misses a real field (`duration_ms` → `duration`) draws an advisory
+   warning while truly-unrelated extras stay the silent free-note the
+   forgiving-extras design intends. `extra="allow"` semantics unchanged —
+   the advisory never gates.
+8. **`httpx` is a declared dev dependency (F-23)** — seven test modules
+   import it directly; the documented dev install only ever collected clean
+   via another extra's transitive dependency.

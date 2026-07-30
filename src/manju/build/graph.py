@@ -89,6 +89,32 @@ def spend_gate(project: Project, estimated_cost: float, currency: str | None,
     )
 
 
+def final_export_gate(project: Project, *, confirmed: bool, noun: str,
+                      retry: str) -> None:
+    """Raise :class:`WaitingUser` when ``final_export`` is in ``ask_before``
+    and the caller has not confirmed (WP5: free, but outward-facing).
+
+    TRISURFACE F-01: this check lived inline in cli.py only, so the SAME
+    export through MCP wrote outward artifacts with no gate — while SKILL.md
+    §5 tells agents the token means "stop and ask". One owner now serves every
+    CLI site and MCP ``_h_export`` (structured ``waiting_user``, confirmed via
+    the fail-closed ``assume_yes is True`` idiom). The GUI export panel is
+    deliberately NOT wired here: there a HUMAN clicks each deliverable's
+    button — that click IS the confirmation the token asks for.
+
+    ``noun`` names the artifact family in the message (导出 / 包装导出);
+    ``retry`` is the exact confirmed re-run the caller should print."""
+    if confirmed:
+        return
+    if "final_export" not in (project.load_config().ask_before or []):
+        return
+    raise WaitingUser(
+        f"waiting_user: final_export 在 ask_before 中 — {noun}是外向制品确认"
+        f"(非金钱花费)。确认后重试: {retry}",
+        0.0, None,
+    )
+
+
 def _keyframe_gated_video_shots(project: Project, *, gen: str,
                                 rules=None) -> list[str]:
     """AI_IDE_16 §10 — shots pending PAID video whose keyframe candidates are
@@ -2987,7 +3013,9 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
     try:
         providers = tts_providers()
         if not providers:
-            raise TtsUnavailable("no TTS provider configured (§8.6, type: tts)")
+            from ..providers.tts import TTS_UNCONFIGURED_MESSAGE
+
+            raise TtsUnavailable(TTS_UNCONFIGURED_MESSAGE)
         provider_id = provider or sorted(providers)[0]
         if provider_id not in providers:
             raise TtsUnavailable(

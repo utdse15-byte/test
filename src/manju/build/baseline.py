@@ -316,10 +316,7 @@ def approve_baseline(project: Any, final_ref: str | None = None, *, reason: str 
     blockers = _technical_blockers(project, final_path)
     blocking = [b for b in blockers if b.get("blocking")]
     if blocking and not accept_known_risk:
-        codes = ", ".join(sorted({b["code"] for b in blocking}))
-        raise BaselineError(
-            f"approval blocked: {codes} — resolve them, or pass --accept-known-risk "
-            "(human-only) to record the risk and approve anyway")
+        raise BaselineError(_approval_blocked_message(blocking))
 
     prior = current_baseline(project, target)
     supersedes = prior.get("event_id") if prior.get("status") in (VALID, DAMAGED, CORRUPT) else None
@@ -706,6 +703,17 @@ def _required_export_blockers(project: Any, rows: list) -> list[dict]:
                 out.append(_blocker("REQUIRED_EXPORT_MISSING", scope,
                                     "an enabled teaser deliverable is missing"))
     return out
+
+
+def _approval_blocked_message(blocking: list[dict]) -> str:
+    """The refusal names every offender (TRISURFACE F-12): "resolve them" with
+    only the code left the owner scanning the whole exports table to find WHICH
+    deliverables were stale — the assessment knew all along."""
+    offenders = ", ".join(
+        f"{b['code']}[{b.get('scope', '?')}]" for b in
+        sorted(blocking, key=lambda b: (b.get("code", ""), b.get("scope", ""))))
+    return (f"approval blocked: {offenders} — resolve them, or pass "
+            "--accept-known-risk (human-only) to record the risk and approve anyway")
 
 
 def _technical_blockers(project: Any, final_path: Path | None,

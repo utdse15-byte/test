@@ -968,6 +968,38 @@ class Project:
             timespec="seconds"
         )
         write_yaml(tdir / f"{name}.sidecar.yaml", sidecar.model_dump(exclude_none=True))
+        # TRISURFACE F-02: every voice path funnels through here (providers,
+        # voicefix, align slices, the locale wrapper), so this is the ONE place
+        # a live ledger row can cover them all — before, TTS runs (potentially
+        # PAID) reached manju tasks/spend only after a rebuild-index. The row
+        # mirrors rebuild()'s sidecar derivation exactly (pinned by
+        # test_trisurface_voice_ledger's live==rebuilt invariant); best-effort,
+        # the ledger is disposable (§3) and must never fail a registration.
+        try:
+            from ..runtime.state import RuntimeState
+
+            remote = sidecar.remote
+            cost = 0.0
+            currency = None
+            job_id = None
+            if remote is not None:
+                job_id = remote.job_id
+                if remote.cost is not None:
+                    cost = float(remote.cost)
+                    currency = remote.currency
+            with RuntimeState(self.root) as state:
+                state.record_run(
+                    shot=shot_id,
+                    provider=sidecar.provider,
+                    status="succeeded",
+                    params=dict(sidecar.params) or None,
+                    cost=cost,
+                    currency=currency,
+                    remote_job_id=job_id,
+                    take=name if lang is None else f"locales/{lang}/{name}",
+                )
+        except Exception:
+            pass
         return dest
 
     # ---------------------------------------------------------------- final

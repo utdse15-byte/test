@@ -51,6 +51,20 @@ class TtsUnavailable(RuntimeError):
     pass
 
 
+# TRISURFACE F-16: ONE message for "no TTS configured", shared by every raiser
+# (this resolver, voicefix, the build voice plan). The old text pointed at
+# §8.6 — a design document that is not in the repo — and named a Python class
+# with no command to type. Every clause below is a door the owner can walk
+# through today.
+TTS_UNCONFIGURED_MESSAGE = (
+    "TTS 未配置 no TTS provider configured — 生成模板: manju providers add edge "
+    "--type tts;免费无 key 的 Edge TTS 把模板里的 adapter 改成 "
+    "manju.providers.edge_tts:EdgeTtsProvider(README『Providers that work "
+    "today』有逐字段说明);或自己把配音文件丢进 media/gen/<shot>/ 当 manual "
+    "voice take"
+)
+
+
 def manifest_fingerprint(manifest: ProviderManifest | None) -> str | None:
     """A stable fingerprint of WHAT the manifest would ask the provider to do
     (round W, review #60): the submit endpoint + body template — the two
@@ -366,12 +380,7 @@ def get_tts_provider(name: str | None = None, **kwargs):
     providers = tts_providers()
     if name is None:
         if not providers:
-            raise TtsUnavailable(
-                "no TTS provider configured — fill a tts manifest (§8.6, type: tts, "
-                "adapter: generic_tts, or the free keyless "
-                "manju.providers.edge_tts:EdgeTtsProvider) under ~/.manju/providers/, "
-                "or drop a voice_take_NN.wav into media/gen/<shot>/ yourself"
-            )
+            raise TtsUnavailable(TTS_UNCONFIGURED_MESSAGE)
         name = sorted(providers)[0]
     if name not in providers:
         raise TtsUnavailable(f"unknown TTS provider {name!r}; configured: {sorted(providers)}")

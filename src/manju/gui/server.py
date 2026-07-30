@@ -83,6 +83,14 @@ _CONTENT_TYPES = {
 
 _MAX_BODY = 1 << 20  # 1 MiB is plenty for any JSON action body
 
+# TRISURFACE R2-3: the CSRF/stale-tab refusal. The mechanism stays named (the
+# token header) but the line now tells the HUMAN what happened and what to do
+# — the classic way to hit this is a tab left open while the server was
+# rebound to another project/session (DECISIONS #45), and "missing or invalid
+# X-Manju-Token" alone reads as developer-ese in an otherwise-Chinese UI.
+TOKEN_403_MESSAGE = ("missing or invalid X-Manju-Token — "
+                     "该标签页连着旧会话或另一个项目,刷新页面后重试 (refresh)")
+
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 
@@ -1057,7 +1065,7 @@ class _Handler(BaseHTTPRequestHandler):
         # R2-P2-2: constant-time compare (board already uses compare_digest).
         if not (got and _secrets.compare_digest(got, self.server.token)):
             self._drain_request_body()
-            self._send_error_json("missing or invalid X-Manju-Token", 403)
+            self._send_error_json(TOKEN_403_MESSAGE, 403)
             return
         # Capture frozen session once for this request (defense in depth;
         # session is immutable after bind, so re-reads agree).

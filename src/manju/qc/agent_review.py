@@ -1148,6 +1148,16 @@ def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dic
     bindings: dict[str, int] = {}
     for rec in prepared:
         bindings[rec["binding"]] = bindings.get(rec["binding"], 0) + 1
+    # TRISURFACE R2-1: the CLI human branch prints a per-level summary off the
+    # intake result. The legacy return carries ``levels``; this one did not, so
+    # `manju qc verdict` stacktraced (KeyError) AFTER the write had landed.
+    # Count finding levels here so both intake paths satisfy the same reader.
+    levels: dict[str, int] = {}
+    for rec in prepared:
+        for fnd in rec.get("findings") or []:
+            lv = str(fnd.get("level") or "")
+            if lv:
+                levels[lv] = levels.get(lv, 0) + 1
     try:
         from ..core.events import append_event
 
@@ -1156,7 +1166,7 @@ def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dic
     except Exception:
         pass
 
-    return {"written": len(prepared), "bindings": bindings,
+    return {"written": len(prepared), "bindings": bindings, "levels": levels,
             "schema": VERDICT_SCHEMA, "path": project.relpath(path)}
 
 
@@ -1734,6 +1744,45 @@ def agent_verdict_items(project: "Project") -> list[QCItem]:
         else:
             stale_shots.add(shot)
 
+    # TRISURFACE R2-1: the DR02 v2 twin. The legacy reader above SKIPS v2 lines
+    # by design (ruling #1: observations feed assurance, never this fold) — but
+    # the brief's contract promises v2 FINDINGS the same blocker→error /
+    # issue→warn / fyi→info fold, and before this wave they went nowhere a
+    # human looks. Fold exactly the findings, bound to the packet bytes
+    # (``media_sha256`` / ``media_members``); observations stay assurance-only.
+    v2_records, v2_malformed = read_v2_records(project)
+    v2_shot_latest: dict[tuple[str, str], tuple[dict, dict]] = {}
+    v2_unit_latest: dict[tuple[str, str], tuple[dict, dict]] = {}
+    for rec in v2_records:
+        subject = rec.get("subject") or {}
+        sid = str(subject.get("id") or "")
+        if not sid:
+            continue
+        for fnd in rec.get("findings") or []:
+            msg_hash = hashlib.sha1(
+                str(fnd.get("message") or "").encode("utf-8")).hexdigest()[:12]
+            target = (v2_unit_latest if subject.get("kind") == "unit"
+                      else v2_shot_latest)
+            target[(sid, msg_hash)] = (rec, fnd)
+
+    for (sid, _mh), (rec, fnd) in sorted(v2_shot_latest.items()):
+        if sid not in known:
+            continue
+        chash = current_hash(sid)
+        if chash is not None and rec.get("media_sha256") == chash:
+            level = LEVEL_MAP.get(str(fnd.get("level")), "info")
+            body = fnd.get("message") or ""
+            message = f"{AI_PREFIX} — · {fnd.get('level')}: {body}".rstrip()
+            hint_bits = []
+            if fnd.get("evidence"):
+                hint_bits.append(f"依据:{fnd['evidence']}")
+            reviewer = (rec.get("reviewer") or {}).get("name") or rec.get("actor", "ai")
+            hint_bits.append(f"packet={rec.get('packet_id')} 判读者={reviewer}")
+            items.append(QCItem(level, "content", sid, message,
+                                suggestion="; ".join(hint_bits)))
+        else:
+            stale_shots.add(sid)
+
     for shot in sorted(stale_shots):
         items.append(QCItem(
             "info", "content", shot,
@@ -1743,6 +1792,8 @@ def agent_verdict_items(project: "Project") -> list[QCItem]:
 
     if unit_records:
         items.extend(_consistency_verdict_items(project, unit_records))
+    if v2_unit_latest:
+        items.extend(_v2_unit_verdict_items(project, v2_unit_latest))
 
     if malformed:
         items.append(QCItem(
@@ -1750,6 +1801,56 @@ def agent_verdict_items(project: "Project") -> list[QCItem]:
             f"reports/{AGENT_LOG} 有 {malformed} 行无法解析,已跳过",
         ))
 
+    return items
+
+
+def _v2_unit_verdict_items(
+        project: "Project",
+        latest: dict[tuple[str, str], tuple[dict, dict]]) -> list[QCItem]:
+    """The unit-scoped v2 fold (TRISURFACE R2-1): a v2 unit finding surfaces
+    only while the packet's ``media_members`` map still equals the unit's
+    CURRENT member map — any member regenerating expires it into ONE info
+    item, mirroring the legacy consistency fold above."""
+    units, _skipped = _consistency_units(project)
+    current_members = {u["unit"]: {m["shot"]: m["take_hash"] for m in u["members"]}
+                       for u in units}
+    unit_kind = {u["unit"]: u["kind"] for u in units}
+    unit_label = {u["unit"]: u["label"] for u in units}
+
+    items: list[QCItem] = []
+    stale_units: set[str] = set()
+    for (uid, _mh), (rec, fnd) in sorted(latest.items()):
+        cur = current_members.get(uid)
+        if cur is None:
+            continue
+        rec_members = {s: (v or {}).get("sha256")
+                       for s, v in (rec.get("media_members") or {}).items()}
+        if rec_members and rec_members == cur:
+            level = LEVEL_MAP.get(str(fnd.get("level")), "info")
+            body = fnd.get("message") or ""
+            kind_label = _KIND_LABEL.get(unit_kind.get(uid, ""), unit_kind.get(uid, ""))
+            label = unit_label.get(uid, uid)
+            message = (f"{AI_PREFIX} 一致性/{kind_label} {label} · — · "
+                       f"{fnd.get('level')}: {body}").rstrip()
+            hint_bits = []
+            if fnd.get("evidence"):
+                hint_bits.append(f"依据:{fnd['evidence']}")
+            reviewer = (rec.get("reviewer") or {}).get("name") or rec.get("actor", "ai")
+            hint_bits.append(
+                f"成员={','.join(sorted(cur))} packet={rec.get('packet_id')} "
+                f"判读者={reviewer}")
+            items.append(QCItem(level, "content", uid, message,
+                                suggestion="; ".join(hint_bits)))
+        else:
+            stale_units.add(uid)
+
+    for uid in sorted(stale_units):
+        items.append(QCItem(
+            "info", "content", uid,
+            "该一致性组合有成员镜头已更新,此前的 AI 判读已过期 — "
+            "重新跑 manju qc brief --mode consistency",
+            suggestion="manju qc brief --mode consistency",
+        ))
     return items
 
 
@@ -1835,6 +1936,28 @@ def qc_coverage(project: "Project") -> dict:
             sid = r.get("shot")
             if sid:
                 shot_records.setdefault(str(sid), []).append(r)
+
+    # TRISURFACE R2-1: DR02 v2 records ARE coverage — before this wave the
+    # legacy-only read above meant a shot reviewed via the current documented
+    # contract still counted "never". Normalize each v2 record into the flat
+    # comparison shape the loops below already understand (packet media bytes
+    # as ``take_hash`` / ``members``); the reviewed/stale verdicts then fall
+    # out of the SAME byte comparisons the legacy rows use.
+    v2_records, _v2_malformed = read_v2_records(project)
+    for r in v2_records:
+        subject = r.get("subject") or {}
+        sid = str(subject.get("id") or "")
+        if not sid:
+            continue
+        if subject.get("kind") == "unit":
+            mm = r.get("media_members") or {}
+            unit_records.setdefault(sid, []).append({
+                "members": [{"shot": s, "take_hash": (v or {}).get("sha256")}
+                            for s, v in mm.items()],
+            })
+        else:
+            shot_records.setdefault(sid, []).append(
+                {"take_hash": r.get("media_sha256")})
 
     reviewable_shots = [
         sid for sid in project.shot_ids()

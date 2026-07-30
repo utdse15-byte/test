@@ -2174,7 +2174,12 @@ def _render_project_panel(project: "Project") -> str:
 
     st = project_status(project)
     budget = st.get("budget_limit")
-    spend = f'{st.get("total_cost", 0)} {st.get("currency", "")}'
+    # TRISURFACE F-14: currency is present-but-None once the ledger holds
+    # currency-less rows, so `.get("currency", "")` still yielded None and the
+    # panel printed ``花费 spend: 0.0 None``. `or ""` + join keeps the line
+    # clean (and drops the trailing space the empty currency left behind).
+    spend = " ".join(
+        s for s in (str(st.get("total_cost", 0)), st.get("currency") or "") if s)
     if budget:
         spend += f' / 预算 budget {budget}'
     by_state = st.get("shots_by_state") or {}

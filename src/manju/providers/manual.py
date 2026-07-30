@@ -56,4 +56,25 @@ def register_manual_take(project: Project, shot_id: str, file: Path) -> TakeInfo
         source=str(file),
         probe=probe_media(file),
     )
-    return project.register_take(shot_id, file, sidecar)  # copies; imports sacred
+    take = project.register_take(shot_id, file, sidecar)  # copies; imports sacred
+    # TRISURFACE F-02: select --file and ingest video takes both land here —
+    # record the live ledger row the rebuild would otherwise be the first to
+    # derive (tasks/spend saw manual takes only after rebuild-index). Mirrors
+    # rebuild()'s sidecar derivation; best-effort, the ledger is disposable
+    # (§3) and must never fail a registration.
+    try:
+        from ..runtime.state import RuntimeState
+
+        with RuntimeState(project.root) as state:
+            state.record_run(
+                shot=shot_id,
+                provider="manual_import",
+                status="succeeded",
+                params=None,
+                cost=0.0,
+                currency=None,
+                take=take.name,
+            )
+    except Exception:
+        pass
+    return take

@@ -155,11 +155,26 @@ class CheckReport:
         return {"ok": self.ok, "errors": self.errors, "warnings": self.warnings}
 
 
+# TRISURFACE F-06: the raw pydantic sentence names what is wrong, never what
+# right looks like — `action: 一句话` (the natural first guess; bible fields
+# are all free text) died on "Input should be a valid dictionary or instance
+# of Action" with no shape in sight. For the nested models a hand-writer
+# actually hits, append the expected shape and the `manju schema` door.
+_SHAPE_HINTS = {
+    "Action": "action: {main: 一句话动作, emotion: 情绪}",
+    "Dialogue": "dialogue: {speaker: 角色id, text: 台词}",
+    "Camera": "camera: {shot_size: wide|medium|closeup, movement: static|…, angle: …}",
+}
+
+
 def _fmt_validation_error(label: str, exc: ValidationError) -> str:
     issues = "; ".join(
         f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()[:5]
     )
-    return f"{label}: schema invalid — {issues}"
+    hints = [hint for model, hint in _SHAPE_HINTS.items()
+             if f"instance of {model}" in issues]
+    tail = f"(应为 {';'.join(hints)};字段全表 manju schema)" if hints else ""
+    return f"{label}: schema invalid — {issues}{tail}"
 
 
 def _prop_refs(shot_raw: dict[str, Any]) -> list[str]:
@@ -321,6 +336,27 @@ def run_check(project: Project) -> CheckReport:
 
         if shot.id != sid:
             report.errors.append(f"{label}: id field '{shot.id}' does not match filename")
+
+        # TRISURFACE F-07: extra="allow" is deliberate (humans and agents both
+        # edit truth files), but it made `duration_ms:` a silent no-op — the
+        # shot quietly kept duration=auto and nothing anywhere said so. A
+        # top-level key that NEAR-MISSES a real field name draws an advisory
+        # (never a gate); a key nothing like any field stays the documented
+        # free-note use and stays silent.
+        try:
+            import difflib
+
+            known = set(type(shot).model_fields)
+            for key in raw:
+                if key in known:
+                    continue
+                close = difflib.get_close_matches(key, known, n=1, cutoff=0.7)
+                if close:
+                    report.warnings.append(
+                        f"{label}: 未知字段 '{key}' 不会生效 — 是想写 "
+                        f"'{close[0]}' 吗?(extra 字段按设计保留,不算错误)")
+        except Exception:
+            pass  # advisory probing must never break the safety net
         if shot.scene and shot.scene not in bible:
             report.errors.append(f"{label}: scene '{shot.scene}' not found in bible")
         for character in shot.characters:

@@ -120,6 +120,41 @@ def shot_next_action(project: Project, shot_id: str, *, state: str,
     if voice_state in ("missing", "stale"):
         return _r("voice", f"配音:manju voice {sid}")
     if state == "stale":
+        # TRISURFACE F-05: right after `manju redo` this rung kept saying
+        # "manju redo" — the exact command just run — because it never looked
+        # for the candidate that redo minted from the CURRENT spec. Following
+        # the printed advice looped forever; the real next action was select.
+        # The key stays "stale" (agents keep their branch); only the sentence
+        # changes, and only when a current-spec take actually exists.
+        try:
+            from ..core.spec import compute_spec_hash
+
+            shot = project.load_shot(sid)
+            bible = project.load_bible()
+            # The SAME per-take freshness predicate build/stale.py applies to
+            # the selected take (§4.3: judge a take by the SPEC_VERSION it was
+            # generated under, with project_root so ref-image bytes count) —
+            # a default-args hash here silently never matched the pipeline's
+            # stamped value, and this branch never fired in the field.
+            def _is_current(t) -> bool:
+                sc = t.sidecar
+                if sc is None or not sc.spec_hash:
+                    return False
+                return sc.spec_hash == compute_spec_hash(
+                    shot, bible, version=sc.spec_version or 1,
+                    project_root=project.root)
+
+            fresh = sorted(
+                t.name for t in project.takes(sid)
+                if t.name != selected_take and _is_current(t))
+            if fresh:
+                num = fresh[-1].split("_")[-1].lstrip("0") or fresh[-1]
+                return _r("stale",
+                          f"spec 已变,且已有按当前 spec 重做的 take({fresh[-1]})"
+                          f"— manju select {sid} {num} 选用,或保留现选"
+                          f"(现选依然可用,§4.3)")
+        except Exception:
+            pass  # candidate probing must never break the takeover surface
         return _r("stale",
                   f"spec 已变:manju redo {sid} 重做,或保留现选(现选依然可用,§4.3)")
 

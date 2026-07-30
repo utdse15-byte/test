@@ -136,7 +136,10 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/create.css">\n'
         + GLOSSARY_HEAD
-        + '<script src="/webclient.js" defer></script>\n'
+        # GLOSSARY_HEAD ALREADY carries /webclient.js (see pages.py) — a second
+        # include threw "Identifier 'ManjuApiError' has already been declared"
+        # on every /create load (the exact bug pages_t.py documents for its
+        # three pages; TRISURFACE F-04 caught this fourth copy).
         + '<script src="/common.js" defer></script>\n'
         + '<script src="/create.js" defer></script>\n'
         "</head>\n"
