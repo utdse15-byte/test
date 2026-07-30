@@ -109,12 +109,20 @@ def test_key_deps_present_or_absent_never_crash():
 
 def test_absent_tools_are_missing_never_a_crash(monkeypatch, tmp_path):
     """Empty PATH ⇒ ffmpeg/ffprobe are the string ``"missing"``, optional tools
-    are ``False`` — the manifest still builds (absence is a fact, not an error)."""
+    are ``False`` — the manifest still builds (absence is a fact, not an error).
+
+    The absence world must ALSO empty the Windows install roots: since
+    find_chromium learned Chrome/Edge's canonical install locations, an empty
+    PATH alone no longer simulates a Chromium-less machine on a runner that
+    has Chrome installed (the probe honestly answered True — the gate caught
+    the incomplete fabrication, not a product bug)."""
     emptybin = tmp_path / "emptybin"
     emptybin.mkdir()
     monkeypatch.setenv("PATH", str(emptybin))
     monkeypatch.delenv("CHROME_BIN", raising=False)
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-browsers"))
+    for env in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        monkeypatch.setenv(env, str(emptybin))
     doc = toolchain_manifest()
     facts = doc["facts"]
     assert facts["tools"]["ffmpeg"] == "missing"

@@ -794,6 +794,11 @@ AssertionError: assert 'D:\\tmp\\trisurface-outside.zip' == '\\tmp\\trisurface-o
 - 这条也解释了为什么加练轮我肉眼漏了它:QC 评审帧四边留黑裁切时,
   白带混进了「帧边」预期;逐行均值一量就藏不住。
 
+**存量说明(店主须知)**:媒体只增,已有项目里旧模板渲出的卡 take 不会被
+自动改写;spec 未变的镜头 `manju status` 也不会喊。想让旧片吃到新渲染,
+对相应镜头 `manju redo <shot> --yes` 重渲(本地免费)再 `manju select` 即可;
+不重渲的旧 take 原样保留,这正是只增纪律的本意。
+
 ## 验证
 
 - 红-先行:新文件 `tests/test_card_visual_fixes.py` 7 条(短台词单行·两向 /
@@ -844,7 +849,10 @@ cancel-in-progress)把我手动 dispatch 的 67cff09 run 在 44 秒时取消了�
 - 定点:crash 战役全文件(含真 kill 轮)+ board compare 全文件 20 条全绿;
   `'\x85'` 世界手工三格复核(match→ok / deadbeef→过期 / 真台词→ok)。
 - 全量套件(与卡片渲染波同跑,ffmpeg 6.1.1):**5849 passed, 0 failed,
-  19 skipped**;Windows 重派见收口。
+  19 skipped**。
+- **Windows 门禁收口:run 30526393193(PR #30 内容,与合并进默认分支的树
+  相同)success —— 整个三面 arc 以来第一个 Windows 全量绿灯**,上述三修
+  与卡片渲染波一并通过真实 windows-latest 验收。
 
 ---
 
@@ -877,3 +885,36 @@ provider 的 F13 适配墙照旧接住并降级 drawtext 带记录——安全�
 - doctor 文案不用改:Windows 上「chromium (html_render)」行从此如实报
   找到的浏览器 ✓。
 - 全量套件(ffmpeg 6.1.1):**5853 passed, 0 failed, 19 skipped**。
+
+## 死线家族全仓清点(阴性结果,留档防重扫)
+
+载荷敏感死线在 CI 连响三次(mcp wire、ledger GUI jobs、board e2e)后,按
+同一准则把 tests/ 全扫了一遍:「固定 <30s 死线 + 背后是构建/ffmpeg 级真实
+工作」的组合,**只有已修的那三处**。其余候选逐个核过并留在原值:
+`test_gui_project_actions` 的 8s 等线程收尾(作业是测试内闭包,无真实
+工作)、`test_c0911_gates` 三处 15s 是屏障文件轮询(自带 BARRIER_TIMEOUT
+诚实出口)、`test_audit_findings` 的 5s 是纯线程回调、`test_board_serve`
+的 httpx 默认 5s 全部打在预渲染 HTML/静态文件上。`signal.*` 平台面同扫:
+killpg 测试有 POSIX skipif 门,crash 战役已改 `Popen.kill()`,再无第三处。
+无证据不改——这条准则本身也是本轮的产出之一。
+
+---
+
+# 门禁揭示·第三轮(2026-07-30:探测器太诚实,戳穿了一个不完整的模拟)
+
+PR #31(find_chromium 学会 Windows)的门禁 run 30527566029:**1 failed,
+5818 passed, 53 skipped**。两个信号都重要:
+
+1. **唯一红灯是模拟不完整,不是产品错。**
+   `test_absent_tools_are_missing_never_a_crash` 用「清空 PATH + 删
+   CHROME_BIN + 指空 playwright 目录」伪造「无 Chromium 的机器」——但
+   runner 上装着真 Chrome,find_chromium 如今会查安装根(伪造从没清过),
+   于是诚实回答 True,`assert ... is False` 应声而红。修法:缺席世界补上
+   ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA 三个根(与
+   `test_find_edge_absent_is_none` 完全同款),断言一字未动。本地双世界
+   仿真验证:带 Chrome 的 Windows → 找到 chrome.exe(runner 所见);补全
+   的缺席世界 → None(修后所需)。
+2. **chromium 测试道在 Windows 上第一次真的打开了**:skip 从 55 降到 53、
+   passed 从 5803 涨到 5818——7 条卡片像素断言与 round5 的 html 测试
+   在 windows-latest 上首次实跑,**全绿**。卡片两修(断尾/白带)从此有
+   真实 Windows 像素级回归网,这正是 #19 那波想换来的东西。

@@ -3465,3 +3465,17 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    tests in the find_edge monkeypatch style (Chrome roots / Edge fallback /
    POSIX keeps the Windows block off / playwright Windows layout); POSIX
    resolution order provably unchanged (card clusters green untouched).
+20. **Third gate reveal (2026-07-30)** — #19's Windows run failed exactly
+   one test: test_absent_tools_are_missing_never_a_crash fabricates a
+   Chromium-less machine by emptying PATH (+CHROME_BIN, +playwright dir),
+   but the runner HAS Chrome installed and find_chromium now honestly finds
+   it through the install roots the fabrication never cleared. The probe is
+   right; the absence world was incomplete. The test now also points
+   ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA at the empty dir (the
+   exact pattern test_find_edge_absent_is_none already uses); assertions
+   unchanged. Both worlds verified by local simulation: Windows-with-Chrome
+   → chrome.exe found (what the runner saw), completed absence world →
+   None (what the fixed test needs). Meanwhile the SAME run is the first
+   evidence the card pixel tests EXECUTE on Windows: 5818 passed / 53
+   skipped (vs 5803/55 before — the chromium lane opened and every card
+   test that ran was green; the sole red was this fabrication gap).
