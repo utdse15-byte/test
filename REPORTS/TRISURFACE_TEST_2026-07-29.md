@@ -1056,3 +1056,27 @@ fieldcheck 项目起真 GUI,工作台/审片/导出中心/packaging/分镜五页
 frame_ms 选帧条仍显示(仅 frame 模式有意义);③封面 fresh 说明句
 「final 字节 + 封面规格 未变」未列新加入键的模板分量 —— 陈述仍为真,
 只是不再穷尽。
+
+---
+
+# 门禁揭示·第四轮(2026-07-30:chromium 道自己造出的新死线成员)
+
+PR #38(纯文档)的门禁 run 30540783495 在**至今最慢的 runner**(套件
+22 分钟)上红了一条:`test_edit_v3::test_card_preview_endpoint_accepts_
+preset_param — TimeoutError`(socket 10s)。1 failed / 5822 passed。
+
+- **机制,带一个反转**:这个端点测试在 Windows 上是**从 #31 起**才开始
+  包真实工作的 —— find_chromium 学会 Windows 后,windows-latest 上
+  `/api/card-preview` 会在请求内真启 Chrome 截图。此前死线家族清点把
+  GUI urlopen 站点留在原值的理由(纯页面渲染)在当时完全正确;是
+  chromium 道的打开让这一站变成了「小死线包真工作」。
+- **修法**:`test_edit_v3`(10s)与 `test_gui_finish`(20s)的 `_req`
+  助手加 timeout 形参 —— **默认值不动**(其余站点仍无证据),仅三处
+  卡预览请求传 120s。断言未动。姐妹文件按同端点同机制的证据一并修,
+  不等它自己烧起来。
+- 家族第四次点火,四次全部是「固定小死线 + 背后真实工作」同一指纹;
+  前三次:mcp wire(构建)、ledger jobs(构建)、board e2e(ffmpeg 抽帧)。
+
+## 验证
+
+- 两文件定点 51 绿;全量见提交记录;合并后由门禁自证。
