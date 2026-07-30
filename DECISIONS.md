@@ -3512,3 +3512,19 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    token to remember to bump. Red-first (mutating template content still
    hit the cache → assert miss); edit_v3 29 green, GUI consumer files 62
    green.
+23. **Cache-key family sweep (2026-07-30)** — after the cardprev firing,
+   every cache_key call site was audited for the same class (key misses a
+   look/output-determining input while the cache outlives code changes).
+   FIXED (fired by the same template change): cover_cache_key folds in the
+   card template's CSS for mode="card" covers, so the export center reads
+   an old cover.png as 过期 after a shipped look fix instead of fresh —
+   frame-mode keys stay byte-identical (no spurious staleness); one shared
+   formula, exportstatus follows automatically; red-first. LEFT (same
+   class, no firing — the no-evidence rule): waveform styling, kenburns
+   clips (S4 toolchain key exists), audition slates. ALREADY GUARDED:
+   boards.py carries a "board_v1" version token; render segment/final keys
+   have the S4 toolchain mechanism. EXPLICITLY NOT CHANGED:
+   packaging_card_relpath (intro/outro assets) is consumed by the COMPILER
+   — re-keying would rewrite every existing project's compiled timeline
+   and cascade final re-renders; stale-look assets follow the append-only
+   存量 stance (delete the media/gen/packaging file to refresh).
