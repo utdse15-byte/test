@@ -316,6 +316,14 @@ _EXPORTS_JS = r"""
   }
 
   function doVerify(kind, btn) {
+    /* TRISURFACE F-20 (minimal): this click appends a PERMANENT human-
+       verification record whose meaning is "a human opened this draft in the
+       desktop app" — one stray click swore that oath by accident (round 1's
+       automation did exactly that). One native confirm() before the append-
+       only write, same pattern the subtitles takeover uses; retraction
+       semantics stay a deferred decision. */
+    if (!confirm("标记「已人工确认」= 你已在桌面 App 里打开过该草稿并确认无误。\n" +
+                 "该记录写入核验日志后不可撤销。确定标记 " + kind + " 吗?")) return;
     var input = document.querySelector('.xc-note[data-kind="' + CSS.escape(kind) + '"]');
     var note = input ? input.value : "";
     btn.disabled = true;
