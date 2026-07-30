@@ -1034,6 +1034,12 @@ GUI 消费端三文件 62 绿。
   出图,导出中心判 fresh。
 - v1(无 intro)→ v2(有 intro)重建正确重渲、final key 正确变更。
 
+**GUI 现场闭环**:起真 `manju gui` 打 `/api/card-preview`(warm_gradient):
+首次渲染出图、左上像素 = (255,121,69) 即 #ff7a45 暖橙分毫不差、右下 =
+#7a1cac,重键后的缓存二次请求 12ms 命中 —— 修复在单元(重键测试)→
+像素(chromium 断言)→ 成片(final_v2)→ GUI 现场(预览端点)四层全部
+验证。
+
 一条纸割观察(不修,留档):packaging.yaml 的正确位置是
 `timeline/packaging.yaml`(脚手架就在那,带全部提示);把它写到项目根
 会被**静默无视**——check 不警告杂散配置文件。手写配置的人(如本次的我)
