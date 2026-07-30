@@ -81,7 +81,10 @@ def _close(server):
         pass
 
 
-def _wait_job(server, job_id, timeout=10.0):
+def _wait_job(server, job_id, timeout=120.0):
+    # 载荷敏感对策: the 10s deadline wrapped five REAL jobs (incl. a
+    # full build) and fired under CPU contention — reproduced with
+    # spinners, never without. Generous deadline, same assertions.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = server.runner.get(job_id)

@@ -139,7 +139,11 @@ class MCPClient:
             msg["params"] = params
         self._send(msg)
 
-    def request(self, method: str, params: dict | None = None, timeout: float = 10.0) -> dict:
+    def request(self, method: str, params: dict | None = None, timeout: float = 120.0) -> dict:
+        # 载荷敏感对策 (hardening round): 10s wrapped REAL builds and fired
+        # under -n auto contention — reproduced on demand with 6 CPU
+        # spinners, never without. The deadline is failure-detection
+        # latency, not an assertion: content checks are unchanged.
         self._id += 1
         rid = self._id
         msg: dict[str, Any] = {"jsonrpc": "2.0", "id": rid, "method": method}

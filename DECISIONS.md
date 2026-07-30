@@ -3359,3 +3359,47 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    sworn and that it is irrevocable — the same dialog pattern the subtitles
    takeover uses. RETRACTION semantics for the append-only log remain
    deferred: this guards the accident without inventing an un-swear.
+15. **Owner-funded hardening round (「消耗我的额度,同时有用」)** — three
+   phases, all executed for real. (a) The visual-QC loop ran END TO END for
+   the first time with an actual vision model as the reviewer: must_show
+   expectations written, 21 frames READ, 15 v2 verdicts filed (7 shots +
+   8 consistency units), coverage 7/7 + 8/8, and assurance now honestly
+   REJECTS the two placeholder color-bar shots (their expectations are
+   absent from the frames — that is the truth of the footage) while one real
+   card-renderer finding landed (a two-character dialogue wraps 谢/谢。).
+   (b) Three complete films through three path families: a series episode
+   (bible sync down + local divergence reported-not-overwritten + season
+   health honest), a bilingual film (en+ja locale loop, per-locale voices,
+   multilocale QC aggregate over BOTH), and a rushes film (ingest naming
+   conventions with auto-select, xfade transitions on the pinned 6.1.1,
+   trim/retime repairs, cover+teaser) — zero new defects on these paths.
+   (c) The 崩溃安全战役: hypothesis properties over the rational timebase
+   (round-trip identity + half-frame error bound), the event brief (bounded,
+   never a repr), the locale line-state machine (one honest state per
+   world), plus REAL SIGKILL injection over live builds asserting the §3
+   disciplines (no torn truth YAML, append-only media untouched, events
+   tail reads, runtime rebuilds, check ok, recovery build green).
+   `tests/test_crash_safety_campaign.py`. The campaign's first catch was
+   real: a newline inside an event-detail key/value broke the one-line
+   digest — error strings do carry newlines — fixed in the ONE owner
+   (event_detail_brief collapses whitespace; --json stays verbatim).
+16. **Gate-revealed round (2026-07-30)** — the Windows hard gate earned its
+   keep against this very session: auto-runs on both merged rounds (ebcbfb0,
+   0a02eb7) failed with exactly ONE failure, `test_trisurface_polish.py::
+   test_display_path_handles_inside_and_outside` — the test asserted the
+   literal `str(outside)` for an outside path while `_display_path`'s
+   contract is degrade-to-absolute via `resolve()`, and on Windows the
+   drive-less `Path("/tmp")/x` resolves anchored to the current drive
+   (`D:\tmp\...`). The product code was right; the test's expectation was
+   platform-naive. Fixed to assert the platform-resolved form
+   (`is_absolute()` + equality with `outside.resolve()`). Second closure in
+   the same commit: #15's "no mechanism, don't touch" observation on the
+   flaky wire tests is now root-caused and fixed — fixed 10s deadlines in
+   `tests/test_mcp.py::MCPClient.request` and `tests/test_ledger_p1_gui_safety.py::
+   _wait_job` wrap REAL builds and fire under CPU contention (reproduced on
+   demand with 6 CPU spinners: 3 failed on cue, never without; green again
+   under the same spinners after the fix). Deadlines raised to 120s —
+   failure-detection latency, not assertions; content checks unchanged.
+   Verification: full suite green locally, then windows-ci.yml re-dispatched
+   on the merged default until Windows-green (the b006352 dispatch predates
+   the fix and its red does not count).
