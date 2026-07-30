@@ -224,3 +224,78 @@ def test_find_edge_absent_is_none(monkeypatch, tmp_path):
     monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     assert html_card.find_edge() is None
+
+def test_find_chromium_discovers_chrome_on_windows(monkeypatch, tmp_path):
+    """W-real-usage: the CARD renderer's probe must find the Chromium the
+    owner's platform actually ships (chrome.exe install roots) — before this,
+    find_chromium knew only Linux names, so the M3-preferred HTML renderer
+    silently never ran on Windows and every card fell to drawtext."""
+    from manju.media import html_card
+
+    fake = tmp_path / "Google" / "Chrome" / "Application"
+    fake.mkdir(parents=True)
+    exe = fake / "chrome.exe"
+    exe.write_bytes(b"MZ")
+    monkeypatch.delenv("CHROME_BIN", raising=False)
+    monkeypatch.setattr(html_card.shutil, "which", lambda name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "nope"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "nope2"))
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-pw"))
+    monkeypatch.setattr(html_card, "_IS_WINDOWS", True, raising=False)
+    assert html_card.find_chromium() == exe
+
+
+def test_find_chromium_falls_back_to_edge_on_windows(monkeypatch, tmp_path):
+    """No Chrome anywhere: Edge (always present on Windows 11, and Chromium
+    underneath) carries the card renderer instead of dropping to drawtext."""
+    from manju.media import html_card
+
+    fake = tmp_path / "Microsoft" / "Edge" / "Application"
+    fake.mkdir(parents=True)
+    exe = fake / "msedge.exe"
+    exe.write_bytes(b"MZ")
+    monkeypatch.delenv("CHROME_BIN", raising=False)
+    monkeypatch.setattr(html_card.shutil, "which", lambda name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "nope"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "nope2"))
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-pw"))
+    monkeypatch.setattr(html_card, "_IS_WINDOWS", True, raising=False)
+    assert html_card.find_chromium() == exe
+
+
+def test_find_chromium_windows_roots_stay_off_on_posix(monkeypatch, tmp_path):
+    """The Windows block is gated on _IS_WINDOWS: identical env on POSIX
+    still answers None (no cross-platform ghost hits)."""
+    from manju.media import html_card
+
+    fake = tmp_path / "Google" / "Chrome" / "Application"
+    fake.mkdir(parents=True)
+    (fake / "chrome.exe").write_bytes(b"MZ")
+    monkeypatch.delenv("CHROME_BIN", raising=False)
+    monkeypatch.setattr(html_card.shutil, "which", lambda name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-pw"))
+    monkeypatch.setattr(html_card, "_IS_WINDOWS", False, raising=False)
+    assert html_card.find_chromium() is None
+
+
+def test_find_chromium_playwright_windows_layout(monkeypatch, tmp_path):
+    """A playwright-managed browsers dir on Windows lays chromium out as
+    chrome-win/chrome.exe — the glob must match it like chrome-linux/chrome."""
+    from manju.media import html_card
+
+    pw = tmp_path / "pw" / "chromium-1234" / "chrome-win"
+    pw.mkdir(parents=True)
+    exe = pw / "chrome.exe"
+    exe.write_bytes(b"MZ")
+    exe.chmod(0o755)
+    monkeypatch.delenv("CHROME_BIN", raising=False)
+    monkeypatch.setattr(html_card.shutil, "which", lambda name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "nope"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "nope"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "nope"))
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "pw"))
+    monkeypatch.setattr(html_card, "_IS_WINDOWS", True, raising=False)
+    assert html_card.find_chromium() == exe

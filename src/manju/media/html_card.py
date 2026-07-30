@@ -37,6 +37,13 @@ _EDGE_PATH_CANDIDATES = ("msedge", "microsoft-edge", "microsoft-edge-stable")
 # Program Files and per-user under LOCALAPPDATA.
 _EDGE_WINDOWS_SUFFIX = ("Microsoft", "Edge", "Application", "msedge.exe")
 
+# The Chromium family as the owner's platform actually ships it: chrome.exe
+# registers on PATH as "chrome"; the install roots mirror Edge's layout. Edge
+# itself is Chromium and renders cards identically — a broken headless render
+# still lands on drawtext behind the provider's F13 adapter wall.
+_CHROMIUM_WIN_CANDIDATES = ("chrome",)
+_CHROME_WINDOWS_SUFFIX = ("Google", "Chrome", "Application", "chrome.exe")
+
 
 def find_edge() -> Path | None:
     """Locate Microsoft Edge (the board's §5.6 ``--app`` host) — PATH first,
@@ -58,8 +65,14 @@ def find_edge() -> Path | None:
 
 
 def find_chromium() -> Path | None:
-    """Locate a headless-capable Chromium: CHROME_BIN, PATH, then the
-    Playwright browsers dir (PLAYWRIGHT_BROWSERS_PATH, default /opt/pw-browsers)."""
+    """Locate a headless-capable Chromium: CHROME_BIN, PATH, the platform's
+    native Chrome/Edge on Windows, then the Playwright browsers dir
+    (PLAYWRIGHT_BROWSERS_PATH, default /opt/pw-browsers).
+
+    The Windows block exists because the owner's platform ships Chromium as
+    chrome.exe/msedge.exe — without it the M3-preferred HTML renderer never
+    ran there and every card silently fell to the drawtext floor while
+    doctor's board row was happily reporting Edge ✓."""
     env_bin = os.environ.get("CHROME_BIN")
     if env_bin and Path(env_bin).exists():
         return Path(env_bin)
@@ -67,11 +80,28 @@ def find_chromium() -> Path | None:
         found = shutil.which(name)
         if found:
             return Path(found)
+    if _IS_WINDOWS:
+        for name in _CHROMIUM_WIN_CANDIDATES:
+            found = shutil.which(name)
+            if found:
+                return Path(found)
+        for env in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(env)
+            if not base:
+                continue
+            candidate = Path(base).joinpath(*_CHROME_WINDOWS_SUFFIX)
+            if candidate.exists():
+                return candidate
+        edge = find_edge()
+        if edge is not None:
+            return edge
     browsers_dir = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers")
     patterns = (
         f"{browsers_dir}/chromium",
         f"{browsers_dir}/chromium-*/chrome-linux/chrome",
+        f"{browsers_dir}/chromium-*/chrome-win/chrome.exe",
         f"{browsers_dir}/chromium_headless_shell-*/chrome-linux/headless_shell",
+        f"{browsers_dir}/chromium_headless_shell-*/chrome-win/headless_shell.exe",
     )
     for pattern in patterns:
         for candidate in sorted(glob.glob(pattern)):

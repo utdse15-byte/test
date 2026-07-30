@@ -845,3 +845,35 @@ cancel-in-progress)把我手动 dispatch 的 67cff09 run 在 44 秒时取消了�
   `'\x85'` 世界手工三格复核(match→ok / deadbeef→过期 / 真台词→ok)。
 - 全量套件(与卡片渲染波同跑,ffmpeg 6.1.1):**5849 passed, 0 failed,
   19 skipped**;Windows 重派见收口。
+
+---
+
+# Windows 卡渲染波(2026-07-30:首选渲染器终于能在第一平台上跑)
+
+卡片工作牵出的下一个疑点,一查是真的:`find_chromium` 的候选全是 Linux
+命名(`chromium`/`google-chrome`/`chrome-linux` glob)。店主的 Windows 11 上:
+
+- `doctor --windows` 一行报「browser (board --app): ✓ Edge」(find_edge 认识
+  Windows),另一行报「chromium (html_render): not found — 文字卡走 drawtext
+  兜底」——**同一台机器,同一个 Chromium 家族,两行互相打脸**;
+- 后果:M3 契约写明 HTML 卡是**首选**渲染器、drawtext 是地板,但在第一平台
+  上首选渲染器**从未运行过**(除非店主手工设 CHROME_BIN),每张卡都静默
+  落在地板上。没有任何 DECISION 说过这是设计。
+
+修法(扩展唯一属主,不开叉):`find_chromium` 在 `_IS_WINDOWS` 下新增
+一段——PATH 上的 `chrome` → Chrome 的规范安装根(Program Files /
+LOCALAPPDATA,镜像 Edge 的检法)→ **`find_edge()` 兜底**(Windows 11 必有
+Edge,Edge 就是 Chromium);playwright glob 补 `chrome-win/chrome.exe` 与
+`headless_shell.exe` 两款 Windows 布局。若某版 Edge 的 headless 渲染失败,
+provider 的 F13 适配墙照旧接住并降级 drawtext 带记录——安全性不依赖新路径。
+
+## 验证
+
+- 红-先行 4 条(`test_windows_doctor.py`,find_edge 同款 monkeypatch 模式):
+  Chrome 安装根发现 / Edge 兜底 / POSIX 上 Windows 根保持关闭 / playwright
+  chrome-win 布局。修前 3 红 1 绿(POSIX 门那条),修后 19 条全文件绿。
+- POSIX 零扰动:round5 + 卡片像素 + round_a 共 23 条原样绿(发现顺序对
+  既有环境的解析结果不变)。
+- doctor 文案不用改:Windows 上「chromium (html_render)」行从此如实报
+  找到的浏览器 ✓。
+- 全量套件(ffmpeg 6.1.1):**5853 passed, 0 failed, 19 skipped**。

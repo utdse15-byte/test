@@ -3449,3 +3449,19 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    they need it). Process note: windows-ci's concurrency group cancelled
    the manual 67cff09 dispatch, so the merged-default green comes from the
    post-fix re-dispatch.
+19. **Windows card-renderer discovery (2026-07-30)** — find_chromium knew
+   only Linux names, so on the owner's PRIMARY platform the M3-preferred
+   HTML card renderer never ran: every card silently fell to the drawtext
+   floor while doctor --windows reported Edge ✓ on the very next row (the
+   board's probe knows Windows, the renderer's didn't). No decision ever
+   declared Windows-cards-are-drawtext. Extended the ONE owner: under
+   _IS_WINDOWS, find_chromium now checks PATH "chrome", Chrome's canonical
+   install roots (mirroring find_edge's layout), then falls back to
+   find_edge() itself — Edge IS Chromium and is always present on Windows
+   11; the playwright glob additionally matches chrome-win/chrome.exe and
+   headless_shell.exe layouts. Safety is unchanged by construction: a
+   failing headless render still lands on drawtext behind the caption
+   provider's F13 adapter wall with a recorded degradation. 4 red-first
+   tests in the find_edge monkeypatch style (Chrome roots / Edge fallback /
+   POSIX keeps the Windows block off / playwright Windows layout); POSIX
+   resolution order provably unchanged (card clusters green untouched).
