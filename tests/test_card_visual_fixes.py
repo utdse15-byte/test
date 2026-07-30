@@ -99,3 +99,86 @@ def test_card_paints_the_full_frame(tmp_path, template, width, height):
     rows = _gray_rows(png, width, height)
     white = [y for y, row in enumerate(rows) if sum(row) // width > 200]
     assert not white, f"unpainted near-white rows: {white[:5]}… ({len(white)} total)"
+
+
+@pytest.mark.ffmpeg
+def test_gradient_actually_reaches_the_pixels(tmp_path):
+    """涂满 ≠ 画对:the no-white-rows assertion is blind to a gradient that
+    silently degrades to the flat bg_edge solid (paint order: canvas → the
+    z-index:-1 ::before → body's own OPAQUE background covered it — every
+    gradient card shipped flat). These probes pin the gradient's actual
+    tonal travel on the pixels, per family:
+
+    - caption default (165deg linear): top rows measurably darker than
+      bottom rows;
+    - chapter default (radial at 50% 20%): the radial center brighter than
+      the far corner;
+    - warm_gradient preset: warm (R>B) at top-left, cool (B>R) at
+      bottom-right."""
+    from manju.media.html_card import render_card_png
+
+    W, H = 1920, 1080
+
+    def rows_gray(png):
+        raw = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-i", str(png),
+             "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            capture_output=True, check=True).stdout
+        return [sum(raw[y * W:(y + 1) * W]) // W for y in range(H)]
+
+    p1 = tmp_path / "caption.png"
+    render_card_png("空", p1, width=W, height=H)
+    rows = rows_gray(p1)
+    top, bottom = sum(rows[:80]) // 80, sum(rows[-80:]) // 80
+    assert bottom - top >= 8, f"caption gradient flat: top={top} bottom={bottom}"
+
+    p2 = tmp_path / "chapter.png"
+    render_card_png("空", p2, width=W, height=H, template="chapter")
+    raw = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-i", str(p2),
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        capture_output=True, check=True).stdout
+    center_top = raw[(H // 5) * W + W // 2]
+    corner = raw[(H - 10) * W + 10]
+    assert center_top - corner >= 8, \
+        f"chapter radial flat: center_top={center_top} corner={corner}"
+
+    p3 = tmp_path / "warm.png"
+    render_card_png("空", p3, width=W, height=H, preset="warm_gradient")
+    rgb = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-i", str(p3),
+         "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True).stdout
+
+    def px(x, y):
+        i = (y * W + x) * 3
+        return rgb[i], rgb[i + 1], rgb[i + 2]
+
+    tl, br = px(10, 10), px(W - 10, H - 10)
+    assert tl[0] > tl[2] + 30, f"top-left not warm: {tl}"
+    assert br[2] > br[0] + 30, f"bottom-right not cool: {br}"
+
+
+@pytest.mark.ffmpeg
+def test_edge_pushed_text_keeps_a_margin(tmp_path):
+    """white_big justifies the stack to the frame edge — the text must still
+    keep a real inset (≥3% of width), never sit flush against the border
+    (measured 14px of 1920 before the fix)."""
+    from manju.media.html_card import render_card_png
+
+    W, H = 1920, 1080
+    png = tmp_path / "wb.png"
+    render_card_png("第三章 归途", png, width=W, height=H, preset="white_big")
+    raw = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-i", str(png),
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        capture_output=True, check=True).stdout
+    rightmost = 0
+    for y in range(H):
+        row = raw[y * W:(y + 1) * W]
+        for x in range(W - 1, rightmost, -1):
+            if row[x] < 100:
+                rightmost = max(rightmost, x)
+                break
+    assert rightmost <= W - int(0.03 * W), \
+        f"text flush against the edge: rightmost dark pixel at {rightmost}/{W}"
