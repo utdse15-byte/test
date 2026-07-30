@@ -1079,4 +1079,6 @@ preset_param — TimeoutError`(socket 10s)。1 failed / 5822 passed。
 
 ## 验证
 
-- 两文件定点 51 绿;全量见提交记录;合并后由门禁自证。
+- 两文件定点 51 绿;全量 **5857 passed, 0 failed**;
+- **门禁自证完成:run 30543960060(f18c3ad,与默认分支 3ba8b46 同树)
+  success** —— 家族第四修与此前十一波一样,在真 windows-latest 上落定。
