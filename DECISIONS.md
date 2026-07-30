@@ -3383,3 +3383,23 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    real: a newline inside an event-detail key/value broke the one-line
    digest — error strings do carry newlines — fixed in the ONE owner
    (event_detail_brief collapses whitespace; --json stays verbatim).
+16. **Gate-revealed round (2026-07-30)** — the Windows hard gate earned its
+   keep against this very session: auto-runs on both merged rounds (ebcbfb0,
+   0a02eb7) failed with exactly ONE failure, `test_trisurface_polish.py::
+   test_display_path_handles_inside_and_outside` — the test asserted the
+   literal `str(outside)` for an outside path while `_display_path`'s
+   contract is degrade-to-absolute via `resolve()`, and on Windows the
+   drive-less `Path("/tmp")/x` resolves anchored to the current drive
+   (`D:\tmp\...`). The product code was right; the test's expectation was
+   platform-naive. Fixed to assert the platform-resolved form
+   (`is_absolute()` + equality with `outside.resolve()`). Second closure in
+   the same commit: #15's "no mechanism, don't touch" observation on the
+   flaky wire tests is now root-caused and fixed — fixed 10s deadlines in
+   `tests/test_mcp.py::MCPClient.request` and `tests/test_ledger_p1_gui_safety.py::
+   _wait_job` wrap REAL builds and fire under CPU contention (reproduced on
+   demand with 6 CPU spinners: 3 failed on cue, never without; green again
+   under the same spinners after the fix). Deadlines raised to 120s —
+   failure-detection latency, not assertions; content checks unchanged.
+   Verification: full suite green locally, then windows-ci.yml re-dispatched
+   on the merged default until Windows-green (the b006352 dispatch predates
+   the fix and its red does not count).

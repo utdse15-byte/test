@@ -238,7 +238,11 @@ def test_display_path_handles_inside_and_outside(tmp_project):
     inside = tmp_project.root / "reports" / "d.zip"
     assert _display_path(tmp_project, inside) == "reports/d.zip"
     outside = Path("/tmp") / "trisurface-outside.zip"
-    assert _display_path(tmp_project, outside) == str(outside)
+    # Windows 的 resolve() 会给无盘符路径锚定当前盘 (D:\tmp\...),所以
+    # 只认平台解析后的绝对形态,不认 str(outside) 字面值。
+    shown = _display_path(tmp_project, outside)
+    assert Path(shown).is_absolute()
+    assert Path(shown) == outside.resolve()
 
 
 # ------------------------------------------------- R2-3 stale-tab 403 text

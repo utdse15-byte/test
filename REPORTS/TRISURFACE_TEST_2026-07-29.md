@@ -664,9 +664,10 @@ missing 记为诊断。绿从此可达:实测两句真台词译完 → `missing=
 无字段可填**,该测试对这对别名改断**更强**的反向命题(不许出现 ★),其余
 适配器的「必须标 ★」一字未动。
 
-一条测试基建观察(不修):`test_mcp_copilot_e2e` 的两条 wire 测试在手工挑选的
-重负载批次里偶发 `queue.Empty` 超时,单跑与全量(`-n auto` 门配)均稳定绿——
-无机制不动,记在这里防下一个会话误判为回归。
+一条测试基建观察(当时记「无机制不动」):`test_mcp_copilot_e2e` 的两条 wire
+测试在手工挑选的重负载批次里偶发 `queue.Empty` 超时,单跑与全量(`-n auto`
+门配)均稳定绿。**后记:机制随后被锁定并已修复,见下文「门禁揭示轮」——
+当时「不动」是对的(没锁定机制前改数字就是掩盖),但「无机制」错了。**
 
 ## 修复波里我自己犯的错(照例留档)
 
@@ -707,3 +708,51 @@ F-02 附带价值的一个实例:实时账本让一个潜伏的误用当场现�
 - **未验证**:`windows-ci.yml` 本环境无法运行,与前两波同界——改动无一触碰
   msvcrt/路径转义等 Windows 专属层,但 Linux 绿 ≠ Windows 绿,这句话上一波
   就写过,这里照写。
+
+---
+
+# 门禁揭示轮(2026-07-30:Windows 硬门自证了一次价值)
+
+上一节的「未验证」一句写完不到一天就被兑现了:两轮合并触发的
+`windows-ci.yml` 自动跑(ebcbfb0 与 0a02eb7)都是红的——两次都是
+**同一条、且只有这一条**失败:`1 failed, 5800 passed, 55 skipped`。
+
+## 红灯是我自己的测试,不是产品代码
+
+`tests/test_trisurface_polish.py::test_display_path_handles_inside_and_outside`:
+
+```
+AssertionError: assert 'D:\\tmp\\trisurface-outside.zip' == '\\tmp\\trisurface-outside.zip'
+```
+
+根因:测试对「项目外路径」断言了 `str(outside)` 字面值,而 `_display_path`
+的契约本来就是降级为 `str(Path(path).resolve())`;Windows 上 `Path("/tmp")/x`
+是**无盘符路径**,`resolve()` 会把它锚定到当前盘(`D:\tmp\...`),字面值
+自然不等。**产品代码是对的,错的是测试的期望。** 修法:改断平台解析后的
+形态——`Path(shown).is_absolute()` 且 `Path(shown) == outside.resolve()`。
+
+上一波原话「Linux 绿 ≠ Windows 绿」——这回验证这句话的恰好是写下它的
+会话自己的测试行。硬门的存在意义(在店主的第一平台上跑同一套件)与
+「远程 workflow_dispatch 可以代替本地 Windows 验证」这两件事,都实证了。
+
+## 载荷敏感对策:#15 的「无机制」观察,机制已锁定并修复
+
+加练轮留档说 `test_mcp_copilot_e2e` 两条 wire 测试「偶发超时,无机制不动」。
+本轮把机制钉死了:
+
+- **机制**:`tests/test_mcp.py` 的 `MCPClient.request` 与
+  `tests/test_ledger_p1_gui_safety.py` 的 `_wait_job` 各自包着**真实工作**
+  (走线的完整构建、五个 GUI 任务含一次真 build)却只给固定 10s 死线——
+  CPU 抢占之下真实工作合法地超过 10s,死线先响。
+- **确定性复现**:起 6 个 CPU 自旋进程再跑该批 → **3 条应声而红**;
+  撤掉自旋、同批 21 条全绿(87s)。要红就红、要绿就绿,不是玄学。
+- **修法**:两处死线 10s→120s(附注释留档)。死线是**故障检出延迟**,
+  不是断言——内容断言一字未动,挂死仍然会被抓,只是给真实工作留出
+  抢占余量。修后在**同样的自旋负载下**复跑:21 passed。
+
+## 验证
+
+- 三个测试文件定点跑全绿(polish 18 条、mcp+ledger 45 条);
+- 全量套件(闸门同配置,ffmpeg 6.1.1):**5842 passed, 0 failed, 19 skipped**;
+- 合并后重派 `windows-ci.yml`,以合并后的默认分支拿到 Windows 绿灯为收口
+  (dispatch 的 b006352 run 含旧测试,预期红,不作数)。
