@@ -794,6 +794,11 @@ AssertionError: assert 'D:\\tmp\\trisurface-outside.zip' == '\\tmp\\trisurface-o
 - 这条也解释了为什么加练轮我肉眼漏了它:QC 评审帧四边留黑裁切时,
   白带混进了「帧边」预期;逐行均值一量就藏不住。
 
+**存量说明(店主须知)**:媒体只增,已有项目里旧模板渲出的卡 take 不会被
+自动改写;spec 未变的镜头 `manju status` 也不会喊。想让旧片吃到新渲染,
+对相应镜头 `manju redo <shot> --yes` 重渲(本地免费)再 `manju select` 即可;
+不重渲的旧 take 原样保留,这正是只增纪律的本意。
+
 ## 验证
 
 - 红-先行:新文件 `tests/test_card_visual_fixes.py` 7 条(短台词单行·两向 /
@@ -844,7 +849,10 @@ cancel-in-progress)把我手动 dispatch 的 67cff09 run 在 44 秒时取消了�
 - 定点:crash 战役全文件(含真 kill 轮)+ board compare 全文件 20 条全绿;
   `'\x85'` 世界手工三格复核(match→ok / deadbeef→过期 / 真台词→ok)。
 - 全量套件(与卡片渲染波同跑,ffmpeg 6.1.1):**5849 passed, 0 failed,
-  19 skipped**;Windows 重派见收口。
+  19 skipped**。
+- **Windows 门禁收口:run 30526393193(PR #30 内容,与合并进默认分支的树
+  相同)success —— 整个三面 arc 以来第一个 Windows 全量绿灯**,上述三修
+  与卡片渲染波一并通过真实 windows-latest 验收。
 
 ---
 
