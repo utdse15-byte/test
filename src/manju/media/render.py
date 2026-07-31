@@ -74,7 +74,9 @@ rebuilt rather than poisoning every future final.
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -1126,8 +1128,29 @@ def _duck_filter(clip: AudioClip) -> str:
     )
 
 
+def _concat_audio_is_digital_silence(concat_mp4: Path) -> bool:
+    """战役④: ``True`` ONLY when one astats pass measures pure digital
+    silence (``Peak level dB: -inf``). Any doubt — probe failure, missing
+    audio, unparsable output — answers ``False`` so the normal loudnorm
+    path runs (UNKNOWN never becomes a bypass)."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(concat_mp4),
+             "-af", "astats=measure_perchannel=none", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120,
+        )
+    except Exception:
+        return False
+    if proc.returncode != 0:
+        return False
+    m = re.search(r"Peak level dB:\s*(-inf)", proc.stderr or "")
+    return m is not None
+
+
 def _build_audio_graph(
-    timeline: Timeline, project: Project, *, target: str, total_s: float
+    timeline: Timeline, project: Project, *, target: str, total_s: float,
+    silent_base: bool = False,
 ) -> tuple[list[str], list[str], str]:
     """Return (extra_input_args, filter_statements, audio_output_label).
 
@@ -1292,8 +1315,19 @@ def _build_audio_graph(
         )
 
     if target == "final":
-        stmts.append(f"{mixed}loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
-        aout = "[aout]"
+        if silent_base:
+            # 战役④ (2026-07-31): loudnorm NaNs on SHORT digital silence
+            # (its integrated window) and the aac encoder then rejects the
+            # frames — the owner's 2s hello-world film could never build.
+            # Normalizing silence is the identity, so the measured-silent
+            # short case passes through (the masters surface already says
+            # 该总线静音 for this state). The caller only sets this flag for
+            # no-overlay + short + probed-silent; any probe doubt keeps
+            # loudnorm — UNKNOWN is never guessed into a bypass.
+            aout = mixed
+        else:
+            stmts.append(f"{mixed}loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
+            aout = "[aout]"
     else:
         aout = mixed  # proxy skips loudnorm for speed
     return inputs, stmts, aout
@@ -1761,8 +1795,16 @@ def render_timeline(
         )
 
         # ④ + ⑤ + ⑥ single final pass: scale (+ look + burn subtitles) + audio mix + mux.
+        # 战役④: the measured NaN class is short + digitally silent + no
+        # overlay audio at all — probe only then (long films pay nothing).
+        _tracks = timeline.tracks
+        _no_overlays = not (list(_tracks.voice) or list(_tracks.sfx)
+                            or list(_tracks.music) or list(_tracks.ambient))
+        silent_base = (target == "final" and _no_overlays and total_s < 10.0
+                       and _concat_audio_is_digital_silence(concat_mp4))
         extra_inputs, audio_stmts, aout = _build_audio_graph(
-            timeline, project, target=target, total_s=total_s
+            timeline, project, target=target, total_s=total_s,
+            silent_base=silent_base,
         )
         vchain = f"[0:v]scale={out_w}:{out_h}:flags=bicubic,setsar=1"
         # Round-T: the deterministic color look rides here — after scale/setsar,
