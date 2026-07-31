@@ -3542,3 +3542,17 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    card-preview requests pass 120s. Assertions unchanged; both files green
    locally; the sibling test_gui_finish sites fixed on the same evidence
    (same endpoint, same mechanism) before they fire.
+25. **Owner decision — MCP surface frozen (2026-07-31)** — after the whole
+   tri-surface arc the owner judged the MCP server unnecessary for their
+   actual workflow: 「感觉没有必要,有 CLI 和 GUI 就可以了」, with an
+   explicit ask to tell future AI sessions (now a standing fact in
+   CLAUDE.md). In practice: `manju serve-mcp`, its tools, agent profiles
+   and every MCP test REMAIN in the tree and must stay green — they are
+   paid-for guarded surface, and removing them would weaken existing tests
+   for no gain. Mechanical upkeep that keeps existing pins green (e.g. the
+   export-format parity pin when the CLI grows a format) is maintenance
+   and stays in scope. What stops: new tools, schema growth, MCP-focused
+   testing/hardening waves, and MCP twins for new CLI/GUI features. The
+   planned "pure-MCP film" campaign is cancelled by this decision; the
+   disk-full drill was declined separately (nothing-speculative gate).
+   Re-opening requires the owner's word, nothing less.
