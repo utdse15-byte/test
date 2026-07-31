@@ -8,6 +8,13 @@ Standing facts every session should honor:
 - The owner is the only user. No SaaS, no multi-user, no real paid providers
   by default — see the wave plan MANJU_WINDOWS_ONLY_LEAN_V3 in
   DECISIONS.md #36-#41 and REPORTS/WINDOWS_WAVE_*.md.
+- **MCP surface FROZEN by owner decision (2026-07-31)** — 店主原话:
+  「感觉没有必要,有 CLI 和 GUI 就可以了」,并要求把这话传给后续接手的
+  AI 会话(就是这一条)。`manju serve-mcp`、它的工具与全部 MCP 测试
+  **原样保留并保持绿**(已付费的守护面;机械性保绿 — 比如既有 parity 钉
+  因 CLI 长了新格式而红时机械补齐 — 属维护,仍在范围内),但**不再有任何
+  新投入**:不加新工具、不扩 schema、不再做 MCP 专项测试/加固波,除非
+  店主亲口重开。(DECISIONS TRISURFACE-FIX #25)
 - `.github/workflows/windows-ci.yml` is the HARD gate (windows-latest, full
   suite, pinned ffmpeg 6.1.1, no continue-on-error). The ubuntu `ci.yml`
   stays green as the dev-loop gate; macOS is informational only (xplat.yml).
