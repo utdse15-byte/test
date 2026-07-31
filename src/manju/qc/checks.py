@@ -170,7 +170,14 @@ def _parse_astats_db(stderr: str, label: str) -> float | None:
 def _probe_audio_stats(path: Path) -> AudioStats | None:
     """One ffmpeg ``astats`` pass → peak + RMS (dB). Returns ``None`` when the
     file has no audio or the detector fails — QC degrades to 'no finding',
-    never to a crash (module docstring contract)."""
+    never to a crash (module docstring contract). 战役③: identity-cached
+    under run_qc's ambient probe scope (26 unchanged voice files re-scanned
+    every build/page); a None (degradation) is never cached."""
+    from ..media.probe import cached_media_fact, store_media_fact
+
+    cached = cached_media_fact(path, "astats")
+    if cached is not None:
+        return AudioStats(peak_db=cached.get("peak_db"), rms_db=cached.get("rms_db"))
     try:
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
@@ -187,6 +194,7 @@ def _probe_audio_stats(path: Path) -> AudioStats | None:
     rms = _parse_astats_db(stderr, "RMS level dB")
     if peak is None and rms is None:
         return None
+    store_media_fact(path, "astats", {"peak_db": peak, "rms_db": rms})
     return AudioStats(peak_db=peak, rms_db=rms)
 
 
@@ -243,6 +251,29 @@ def run_qc(
     ``should_cancel`` (C46): optional cooperative cancel between major check
     batches so GUI cancel can stop a deep QC without finishing every probe.
     """
+    from ..media.probe import probe_cache_scope
+
+    # 战役③ (2026-07-31): QC is the probe-heavy surface — 81 ffprobe + 26
+    # astats on a REAL 80-shot film, re-run by every no-op build AND every
+    # /exports page load. The ambient scope turns unchanged-file probes into
+    # identity-cached disk hits under the disposable .manju; every probe()
+    # call outside this scope is byte-identical to before.
+    with probe_cache_scope(project.root / ".manju" / "cache" / "probe"):
+        return _run_qc_unscoped(project, timeline, deep=deep,
+                                extract_frames=extract_frames,
+                                final_path=final_path,
+                                should_cancel=should_cancel)
+
+
+def _run_qc_unscoped(
+    project: Project,
+    timeline: Timeline | None = None,
+    *,
+    deep: bool = False,
+    extract_frames: bool = True,
+    final_path: Path | str | None = None,
+    should_cancel: "Callable[[], bool] | None" = None,
+) -> QCReport:
     from typing import Callable
 
     report = QCReport()
@@ -1058,23 +1089,68 @@ def _newest_final(project: Project) -> Path | None:
 
 
 def _content_frames(project, report, selected) -> None:
-    """Extract one mid-point frame per selected take — eyes for the agent (§9)."""
+    """Extract one mid-point frame per selected take — eyes for the agent (§9).
+
+    战役③ (2026-07-31): extraction is identity-cached — a no-op rebuild of a
+    REAL 80-shot film spent 21.2s re-extracting 80 unchanged frames every
+    time. The marker records exactly which (source, size, mtime_ns, mid_s)
+    produced dest, which ALSO closes the stale-frame hazard documented in
+    _extract_frame: a bare dest.exists() could present a prior take's frame
+    as fresh; the marker cannot (a different take is a different path, and
+    gen media is append-only — identity is sound by construction)."""
     frames_dir = project.reports_dir / "frames"
     for shot_id, (media_path, info) in selected.items():
         dest = frames_dir / f"{shot_id}.jpg"
+        marker = frames_dir / f"{shot_id}.src.json"
         mid_s = 0.0
         if info is not None and info.duration_ms:
             mid_s = max(0.0, (info.duration_ms / 2.0) / 1000.0)
+        if _frame_marker_fresh(marker, media_path, dest, mid_s):
+            report.add(
+                "info", "content", shot_id,
+                f"mid-point frame for visual review: {project.relpath(dest)}",
+            )
+            continue
         if _extract_frame(media_path, dest, mid_s):
+            _write_frame_marker(marker, media_path, mid_s)
             report.add(
                 "info", "content", shot_id,
                 f"mid-point frame for visual review: {project.relpath(dest)}",
             )
         else:
+            try:
+                marker.unlink(missing_ok=True)  # a failed extract must not leave a stale claim
+            except OSError:
+                pass
             report.add(
                 "info", "content", shot_id,
                 f"could not extract a review frame from {project.relpath(media_path)}",
             )
+
+
+def _frame_marker_fresh(marker: Path, media_path: Path, dest: Path, mid_s: float) -> bool:
+    try:
+        if not dest.exists():
+            return False
+        meta = json.loads(marker.read_text(encoding="utf-8"))
+        st = media_path.stat()
+        return (meta.get("source") == str(media_path)
+                and meta.get("size") == st.st_size
+                and meta.get("mtime_ns") == st.st_mtime_ns
+                and meta.get("mid_s") == round(mid_s, 3))
+    except (OSError, ValueError):
+        return False
+
+
+def _write_frame_marker(marker: Path, media_path: Path, mid_s: float) -> None:
+    try:
+        st = media_path.stat()
+        marker.write_text(json.dumps(
+            {"source": str(media_path), "size": st.st_size,
+             "mtime_ns": st.st_mtime_ns, "mid_s": round(mid_s, 3)},
+            ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _extract_frame(media_path: Path, dest: Path, mid_s: float) -> bool:

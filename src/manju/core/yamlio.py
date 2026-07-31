@@ -110,9 +110,32 @@ def atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+# 战役③ (2026-07-31): a no-op build on a REAL 80-shot film spent 13.6s in
+# 3044 read_yaml calls — the same truth parsed ~38× per shot. This is the
+# ONE yaml-reading owner, so the parse cache lives here and every caller
+# benefits. Semantics are byte-honest: the file's bytes are ALWAYS re-read
+# (any content change reparses immediately — no mtime heuristics, so a
+# same-size same-instant rewrite can never serve stale truth), only the
+# PARSE is skipped on identical bytes, and every return is a fresh deep
+# copy so one caller's mutation can never leak into another's read.
+_PARSE_CACHE: dict[str, tuple[bytes, Any]] = {}
+_PARSE_CACHE_MAX = 4096  # bounded for long-lived GUI processes
+
+
 def read_yaml(path: Path) -> Any:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    import copy
+
+    key = os.fspath(path)
+    with open(path, "rb") as f:
+        raw = f.read()
+    hit = _PARSE_CACHE.get(key)
+    if hit is not None and hit[0] == raw:
+        return copy.deepcopy(hit[1])
+    data = yaml.safe_load(raw.decode("utf-8"))
+    if len(_PARSE_CACHE) >= _PARSE_CACHE_MAX:
+        _PARSE_CACHE.clear()
+    _PARSE_CACHE[key] = (raw, data)
+    return copy.deepcopy(data)
 
 
 def dump_yaml(data: Any) -> str:

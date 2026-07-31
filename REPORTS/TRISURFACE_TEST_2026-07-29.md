@@ -1219,3 +1219,66 @@ byte-identical);现场重放:钉版 `✓ …(与验证套件钉版一致)`,shim 
   改了」与「你点名了另一家」在店主眼里无从分辨。富化需要用 sidecar
   里的供应商描述符**再算一遍哈希**定因;实现路径已明,等真实使用
   出现困惑再动(维护门)。
+
+---
+
+# 战役③:规模现实性(2026-07-31,80 镜真长片)
+
+**方法**:真做一部 80 镜、约 3 分 20 秒的片子(10 幕、26 句台词,
+4 核演习机),把店主会活在其中的每个环逐一计时。
+
+## 健康的部分(原样通过,数字留档)
+
+- `check` 0.6s · `status` 1.8s 且**只有 9 行**(80 镜下依然克制)·
+  `rebuild-index` 0.79s · 单镜 `redo` 2.8s · 首次全量构建 11m57s
+  (80 镜真渲染,~9s/镜,诚实价钱)· GUI 工作台 12ms、分镜 0.44s、
+  审片 0.65s。
+- 单镜改动后 build 按 §4.3 如实标 stale 并劝告,不擅自重做 ✓。
+- build 自动补配缺失配音**是设计**(`_plan_voice` → egress check →
+  spend gate 全链在位;edge 免费无键故无闸感)——首建时 26 句台词被
+  edge 静默配好,核对源码后按设计确认留档。
+
+## 病灶三处(cProfile 铁证),全部修掉
+
+no-op build(什么都没变)**35 秒**;`/exports` 页**每次加载 10.8 秒**
+(页面里整跑一遍 QC)。46s 剖面:`run_qc` 36s,其中抽帧 80 次 21.2s、
+ffprobe 81 次 7.3s、astats 26 次 2.4s;`read_yaml` 3044 次 13.6s
+(每镜真相被重复解析 ~38 次);外加 27 行相同警告墙每次刷屏。
+
+1. **`yamlio.read_yaml` 字节比较解析缓存**(唯一 YAML 属主,一处修全体
+   受益):字节**永远重读**——内容一变立即重解析,不碰 mtime 启发式,
+   同秒同尺寸改写也不可能吃到陈旧真相;只有字节完全一致才跳过解析;
+   每次返回深拷贝,调用方互不串改。长驻 GUI 进程有 4096 条上限。
+2. **QC 审阅帧身份缓存**:`reports/frames/<shot>.src.json` 记录
+   (源路径, size, mtime_ns, mid_s);gen 媒体 append-only,身份键天然
+   可靠。附带把 `_extract_frame` 注释里自述的「裸 dest.exists() 会把
+   上一个 take 的帧当新鲜」隐患一并关死(标记不匹配即重抽)。
+3. **probe/astats 跨进程身份缓存**:`probe(path)` 无 project 手柄,
+   照 `cancel_scope` 先例用 ambient contextvar 传缓存根
+   (`probe_cache_scope`),**只在 `run_qc` 内启用**——作用域外的每个
+   probe() 调用字节不差;缓存落在可弃的 `.manju/cache/probe`(错误
+   永不缓存、降级 None 永不缓存)。astats 走同一条缝(不另起炉灶)。
+4. **警告墙上限**:>8 条时印前 5 条 + 「另有 N 条 — manju qc 或
+   reports/qc.md 看全部(--json 完整)」;§4.3 无静默排除。
+
+## 修后实测(同一台演习机,同一部片)
+
+| 环 | 修前 | 修后 |
+|---|---|---|
+| no-op build | 35s | **1.9s**(18×) |
+| /exports 页加载 | 10.8s | **0.65s**(16×) |
+| build 警告输出 | 27 行墙 | 6 行带指路 |
+
+14 条红-先行测试(`tests/test_scale_noop_build.py`);probe 缓存的
+「新进程重入即命中」「文件一变即重探」「无作用域行为不变」各有专测。
+测具小坑留档:`import manju.media.probe as mp` 拿到的是被包重导出的
+**函数**而非模块(sys.modules 取),已在测试注释里说明。
+
+## 既有钉一处量具修正(非弱化)
+
+`test_c081012_continuation.py::test_observed_state_never_writes_back`
+(§10.1/10.2:瞬态观察不得写回 Bible/Shot/Timeline)在全量里红了一条:
+它的树哈希助手把**整棵树**含 `.manju` 都算作「写回」,而 QC 现在会在
+可弃缓存里合法地热一条 probe 事实。命题本身没有被违反 — 观察确实分毫
+未碰真相;修的是量具:树哈希排除契约上可弃的 `.manju`(README
+§disciplines),注释留因。真相目录的守卫一字未弱。

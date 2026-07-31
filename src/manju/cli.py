@@ -1670,8 +1670,19 @@ def build(
                 else:
                     typer.echo(f"  {p['shot']}: {p['reason']} → {p['provider']} "
                                f"×{p['candidates']} ({p['duration_ms']}ms) ≈{p['estimated_cost']}")
-        for w in result.warnings:
-            typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
+        # 战役③: an 80-shot film printed the same 27-line warning wall on
+        # EVERY build. Above the cap: a few examples + an explicit count-and-
+        # pointer line (§4.3 — nothing silently dropped; --json keeps all).
+        if len(result.warnings) > 8:
+            for w in result.warnings[:5]:
+                typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
+            typer.secho(
+                f"⚠ … 另有 {len(result.warnings) - 5} 条警告未逐条刷屏 — "
+                f"manju qc 或 reports/qc.md 看全部(--json 完整)",
+                fg=typer.colors.YELLOW)
+        else:
+            for w in result.warnings:
+                typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
         for e in result.errors:
             typer.secho(f"✗ {e}", fg=typer.colors.RED)
         # goal 10: a compact pointer to the structured failure records this build
