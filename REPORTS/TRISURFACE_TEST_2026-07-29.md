@@ -1282,3 +1282,52 @@ ffprobe 81 次 7.3s、astats 26 次 2.4s;`read_yaml` 3044 次 13.6s
 可弃缓存里合法地热一条 probe 事实。命题本身没有被违反 — 观察确实分毫
 未碰真相;修的是量具:树哈希排除契约上可弃的 `.manju`(README
 §disciplines),注释留因。真相目录的守卫一字未弱。
+
+---
+
+# 战役④:中文+空格路径全链 & git 时间旅行(2026-07-31)
+
+## A. 中文+空格路径:零缺陷
+
+项目根 `雨夜 便利店 系列/第一部 雨夜.manju`,全程真跑:xfade 转场构建
+(filtergraph 路径过唯一转义属主)→ 中文+空格文件名手动 take
+(`手替 素材 最终版.mp4` 经 `select --file`)→ 重建 v2 → srt/vtt 导出
+→ `pack --out "打包 存档.manjupkg"` → 在另一个中文目录 `异地 恢复/`
+unpack → fixity 59 文件全过 → check ok。没有一个环节绊倒。
+
+## B. git 时间旅行:纪律兑现,并抓出一个真 bug
+
+真相入 git(`.manju`/proxy 忽略),v1 提交 → 改词 + redo + **select**
++ build(final_v3,真改动的片)→ `git checkout <v1> -- shots/` 整体
+回滚。结局:
+
+- status **即刻自洽**:回滚的镜头回到 fresh(内容键与在盘的旧 take
+  重逢,零重生成零花费),v2 世界的新 take 以「非阻塞待办…或不动
+  (§3 只增不改)」如实呈报;
+- build 铸 **final_v4**(append-only,不覆写 v3)——逐 clip 身份比对
+  `v4 == v2(提交世界的片)` 为 **True**:文字真相 + 只增媒体 +
+  内容键 ⇒ 时间旅行精确复原,四个世界的成片全数在盘;
+- 纪律钉 `tests/test_time_travel_discipline.py` 把这条涌现性质钉死
+  (不靠 git,直接还原真相字节;选择存进真相之外、spec 键漂移、
+  take 原地改写任何一腿断裂即红)。
+
+**真 bug(钉测试首建撞出,红-先行修复)**:**短 + 纯静音**的片
+build 必败 —— loudnorm 的积分窗对 <3s 数字静音产 NaN,aac 拒收,
+店主的「2 秒 hello-world」死在 143 字符的 ffmpeg 天书上。实测矩阵:
+2.0s×1 静音 ✗ · 1.4s×2 静音 ✗ · 1.4s×2 有声 ✓ · 2.0s×3 静音 ✓ ·
+4.0s×1 静音 ✓。修法(属主 `media/render`):合成前仅对「无叠加音轨 +
+总长 <10s」的 final 做一次 astats 实测,测得 `Peak level dB: -inf`
+才旁路 loudnorm(静音的归一化本就是恒等;masters 面早有「该总线静音」
+先例);探测有任何疑问一律保留 loudnorm —— UNKNOWN 永不猜成旁路。
+长片零新增开销;既有成品零重键(旁路只触发在此前根本建不出的类)。
+7 条红-先行测试(`tests/test_short_silent_final.py` + 时间旅行钉)。
+
+## 本战役我自己犯的错(照例留档)
+
+- 第一版现场比对 v1↔v4 用错了 timeline.json 的键名,`[] == []`
+  **空对空得出的 True 是空洞结论** —— 被钉测试里的 `assert clips`
+  当场揭穿;修正键名后用真数据重验(v4==v2 为 True)。教训与 F-05
+  同族:**比对助手自己也要有非空断言**。
+- 演习记账把「final_v1」与「提交的 v1 世界」混为一谈(v1 成片是手动
+  接管之前的产物);真正的对照物是 final_v2。已在上文以正确对照重述。
+- 波内纸割:`pack --output` 应为 `--out`(产品报错指了正道,不入账)。

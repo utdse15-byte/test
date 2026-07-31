@@ -3640,3 +3640,28 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    after-numbers, same machine, same film: no-op build 35s → 1.9s (18×),
    /exports 10.8s → 0.65s (16×), warning wall 27 → 6 lines. 14 red-first
    tests in tests/test_scale_noop_build.py.
+30. **Campaign ④ — CJK+space paths & git time travel (2026-07-31)** —
+   (A) A real film under `雨夜 便利店 系列/第一部 雨夜.manju`: xfade build,
+   a CJK+space manual take via select --file, srt/vtt export, pack --out
+   to a CJK archive name, unpack into another CJK dir, fixity 59 files,
+   check ok — zero defects end to end. (B) Truth in git, evolved
+   (redo+select+build), then `git checkout <v1> -- shots/`: status is
+   instantly coherent (the rolled-back shot is FRESH again — content keys
+   reunite with the still-on-disk take; the newer take stays offered as a
+   non-blocking 待办 per §3), and the next build mints final_v4 whose
+   per-clip identity EQUALS the committed world's film — append-only
+   keeps every world's final on disk. Pinned as a discipline test
+   (test_time_travel_discipline.py, no git needed). REAL BUG found by the
+   pin's first build and fixed red-first: a SHORT digitally-silent film
+   could never build — loudnorm NaNs on <3s digital silence and aac
+   rejects (measured matrix: 2s×1 silent ✗, 1.4s×2 silent ✗, 1.4s×2
+   audible ✓, 2s×3 silent ✓, 4s×1 silent ✓). Fix in media/render: for a
+   no-overlay final under 10s, ONE astats probe; only a measured
+   `Peak level dB: -inf` bypasses loudnorm (identity on silence; the
+   masters surface already speaks 该总线静音) — probe doubt keeps
+   loudnorm, UNKNOWN never becomes a bypass; long films pay nothing.
+   Own-errors recorded: the first field comparison used wrong
+   timeline.json keys and its `[] == []` True was vacuous (caught by the
+   pin's assert clips; re-verified with real keys — v4==v2 True), and the
+   drill conflated final_v1 with the committed v1 world (final_v2 is the
+   correct referent). 7 red-first tests across the two new files.
