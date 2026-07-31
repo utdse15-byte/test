@@ -3587,3 +3587,32 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    slowed the probe 3× without breaching (the field mix was heavier). Two
    own-errors recorded: the drill ran concurrent with the definitive suite
    (my load), and piping the suite through `tail` cost the tracebacks.
+28. **Campaign ② — provider dies mid-run (2026-07-31)** — a REAL local
+   HTTP TTS (generic_tts shape, fake 1.5 CNY/call, real WAV once, then
+   os._exit mid-request, then refused) driven through single/batch/retry/
+   abandon/rebuild. The paid-safety core passed every probe verbatim:
+   mid-flight death mints OUTCOME_UNKNOWN, tops `manju tasks` with two
+   recovery commands, blocks resubmission (DR06), abandon-with-reason
+   releases, the unresolved submission SURVIVES rebuild-index, and spend
+   counts exactly the successful calls. Five reporting-shell fixes, 26
+   red-first tests (test_provider_death_drill.py): (1) the generic_tts
+   scaffold taught `{prompt}` — a placeholder the TTS adapter rejects —
+   now `'{text}'` with the available set listed, and the job_id_path
+   comment no longer claims async-only for a schema-required field;
+   (2) failed batches exit 1 (voice+redo, human+json; cancel stays 0);
+   (3) provider failures now reach the failures store via the ONE composer
+   build/graph.record_voice_failure shared by batch loop and single-shot
+   CLI — the DR06 block is structurally excluded (detail.code ==
+   submission_outcome_unknown), never re-recorded; (4) the single-shot
+   path caught neither block nor network death and printed a 143-line
+   traceback wall where batch printed one line — now one line with new
+   code provider_error (added to the error-codes skill's block 4 per the
+   bidirectional scan contract) plus the same store recording; (5)
+   `providers check` answered "no such provider" for a manifest that
+   exists but fails validation — now names the validation error and the
+   file to fix. Own-error recorded: the exclusion test's first forgery
+   lacked the real detail structure and was honestly recorded (F-05's
+   mirror); re-forged field-for-field. Deferred with a named path: voice
+   stale-reason opacity (provider-mismatch vs text-change both read
+   "stale=N"; enriching requires re-hashing with the sidecar's provider
+   descriptor — wait for real-usage confusion per the maintenance gate).

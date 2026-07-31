@@ -753,9 +753,9 @@ submit:                                       # most TTS is synchronous — subm
   url: https://api.example.com/v1/tts         # ★ the synthesis endpoint
   method: POST
   body_template:
-    text: '{{prompt}}'                        # ★ the line to speak
+    text: '{{text}}'                          # ★ the line to speak ({{text}}/{{speaker}}/{{tone}}/{{voice}}…)
     voice: default                            # ★ voice id
-  job_id_path: $.id                           # ★ (only used by async TTS APIs)
+  job_id_path: $.id                           # ★ 必填(异步 API 才真正使用;同步 API 保留 $.id 即可)
 tts:
   audio_url_path: $.data.audio_url            # ★ (or audio_b64_path for inline base64)
   audio_format: wav
