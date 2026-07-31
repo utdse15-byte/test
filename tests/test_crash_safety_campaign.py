@@ -80,10 +80,18 @@ _detail_values = st.recursive(
 @settings(max_examples=150)
 def test_event_brief_is_bounded_and_never_a_repr(detail):
     """The one-line digest must stay a one-line digest for ANY detail shape:
-    no Python dict repr, no unbounded value, elision always announced."""
+    no Python dict repr, no unbounded value, elision always announced.
+
+    Hypothesis 二次立功 (2026-07-31): a KEY whose own text is ``{'`` made the
+    original substring repr-detector (``"{'" not in brief``) fire on the
+    perfectly honest output ``{'=null`` — the detector was naive, the product
+    right. The repr guard is now exact: the brief must never BE the dict's
+    str/repr (the actual regression it exists to catch — someone replacing
+    the formatter with an f-string dump)."""
     brief = event_detail_brief(detail)
     assert "\n" not in brief
-    assert "{'" not in brief and "': " not in brief
+    if detail:
+        assert brief != str(detail) and brief != repr(detail)
     shown = min(len(detail), 4)
     if len(detail) > shown:
         assert "→ --json" in brief

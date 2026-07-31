@@ -1096,3 +1096,57 @@ preset_param — TimeoutError`(socket 10s)。1 failed / 5822 passed。
   的真实亏损背书)②供应商中途真死 ③规模现实性(60–100 镜)
   ④中文+空格路径全链 & git 时间旅行。逐战役立报,红-先行修复,
   照常走全量 + 门禁。
+
+---
+
+# 战役①:ffmpeg 误升级演习(2026-07-31)
+
+**问题(实测坐实)**:把一个报 7.1 的 ffmpeg 放上 PATH(shim:`-version`
+报 7.1-static,其余全部委托真 6.1.1 — 演习测的是**劝告层**,不是重证
+ffmpeg 自己的回归,此处如实披露),`manju doctor` 的回答是:
+
+```
+✓ ffmpeg: /…/ffshim/ffmpeg
+```
+
+绿勾、无版本、零警告。而 DECISIONS #33 的实测记录是:7.x 的 acrossfade
+转场腿同输入 1600 跑 9 败(6.1.1 为 0),错误报文是一条天书
+(`Could not open encoder before EOF`),上一个会话为它赔了大半天。
+店主哪天 winget/choco 顺手升级 ffmpeg,得到的就是「体检全绿 + 渲染
+间歇性暴毙 + 无一字指路」。
+
+**修法**(属主:`media/ffmpeg`,record-only,永不成为构建输入或门):
+
+- `ffmpeg_version_line()`:版本首行事实,进程缓存,委托 S4 工具链采集器
+  (唯一 `-version` 属主);`parse_ffmpeg_major` 对 git 快照/缺失诚实答
+  None — 未知永远不猜。
+- `ffmpeg_version_advisory()`:**只对有记录的区间**给一行人话 — 7.x 给
+  实测过的 acrossfade 回归(带测量数字与回钉建议);≥8 给已记录的
+  ffprobe 色彩标签偏移;5.x/未知**只陈述不判断**(nothing-speculative)。
+- doctor 新增 `ffmpeg_version` 行:钉版 ✓、记录区间 ⚠、其余 • 信息行;
+  `ok` 恒 True — 劝告永不改变退出码。
+- **渲染失败现场**:`_raise_on_bad_exit` 对命中已知签名的 stderr 追加
+  `known_failure_advisory` 一行(报本机版本 + 回钉指路),并把 failures
+  存档的 hint 换成同一句 — GUI 失败页同步受益。当年那半天,今后在
+  错误现场就能拿回来。
+
+**验证**:16 条红-先行测试(解析/劝告/doctor 三态/签名富化/无签名
+byte-identical);现场重放:钉版 `✓ …(与验证套件钉版一致)`,shim 下
+`⚠ ffmpeg version: 7.1-static — 已知回归…建议换回 6.1.1`;既有 doctor
+三文件 + media/ffmpeg 直接消费者批 95 条全绿;全量见提交。
+
+## 战役①提交前全量的两红(附带修复 + 自留过错)
+
+- **hypothesis 二次立功,打中的是我自己的检测器**:反例 key 本身是 `{'`,
+  摘要输出 `{'=null` 完全诚实,而加练轮写的「repr 检测器」用子串匹配
+  (`"{'" not in brief`)被对抗性 key 误伤。产品对,测试错。守卫改为精确
+  命题:brief 永不等于 `str(detail)`/`repr(detail)`(它要抓的真回归 ——
+  有人把格式化器换回 f-string 倾倒 —— 仍然一击必中),其余断言一字未动。
+- **死线家族第五员**:`media/ffmpeg._ENCODERS_TIMEOUT_S`(固定 15s 包真
+  `ffmpeg -encoders` subprocess)在全量 + 演习并发负载下点火一次,隔离即绿
+  —— 与家族四次点火同指纹。按 #24 先例(单次现场点火即证)升到 120s;
+  如实记录:12 个纯 CPU 自旋只把探测拖慢 3× 未击穿,现场的 12 个渲染
+  worker + 演习混合负载更重。
+- **自留过错两条**:①把战役②演习与**定局全量**并发跑了 —— 点火的额外
+  载荷是我自己加的(此后定局跑保持洁净);②全量输出管道 `| tail` 截掉了
+  traceback,导致两红要靠隔离复跑取证(此后全量输出完整落盘)。

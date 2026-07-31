@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextvars
 import functools
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -201,11 +202,17 @@ def _canceled_error(project: Any, step: str, subject: str | None, cmd: list[str]
 def _raise_on_bad_exit(project: Any, cmd: list[str], returncode: int, stderr: str | None, *,
                        subject: str | None, step: str, log_name: str) -> None:
     tail = "\n".join((stderr or "").strip().splitlines()[-_STDERR_TAIL:])
+    try:
+        note = known_failure_advisory(tail)
+    except Exception:  # the steer may never mask the real error
+        note = None
     if project is not None:
         _record_ffmpeg_failure(project, cmd, returncode, tail,
-                               subject=subject, step=step, log_name=log_name)
+                               subject=subject, step=step, log_name=log_name,
+                               known_note=note)
     raise MediaError(
         f"ffmpeg failed (exit {returncode}):\n{tail}\n--- command ---\n{_quote(cmd)}"
+        + (f"\n{note}" if note else "")
     )
 
 
@@ -331,7 +338,8 @@ def run_ffmpeg(
 
 
 def _record_ffmpeg_failure(project: Any, cmd: list[str], returncode: int, tail: str,
-                           *, subject: str | None, step: str, log_name: str) -> None:
+                           *, subject: str | None, step: str, log_name: str,
+                           known_note: str | None = None) -> None:
     """Turn a nonzero ffmpeg exit into a structured Failure. Best-effort: a
     recording hiccup must never mask the real MediaError the caller expects."""
     try:
@@ -341,6 +349,9 @@ def _record_ffmpeg_failure(project: Any, cmd: list[str], returncode: int, tail: 
         if len(cmd) > _ARGV_HEAD:
             argv_head += " …"
         evidence = f"$ {argv_head}\n{tail}" if tail else f"$ {argv_head}"
+        hint = f"复现单条命令见 .manju/logs/{log_name}.log;核对滤镜/输入路径"
+        if known_note:
+            hint = known_note  # the recorded-regression steer outranks generic advice
         record_failure(
             project,
             Failure(
@@ -348,7 +359,7 @@ def _record_ffmpeg_failure(project: Any, cmd: list[str], returncode: int, tail: 
                 subject=subject or "final",
                 cause=f"ffmpeg exited {returncode}",
                 evidence=evidence,
-                hint=f"复现单条命令见 .manju/logs/{log_name}.log;核对滤镜/输入路径",
+                hint=hint,
                 log_path=f".manju/logs/{log_name}.log",
                 detail={"returncode": returncode},
             ),
@@ -441,7 +452,13 @@ def default_log(project_root: Path, name: str = "render") -> Callable[[str], Non
 # h264; other codecs are out of scope. Sorted, deterministic.
 HW_ENCODER_CANDIDATES = ("h264_amf", "h264_nvenc", "h264_qsv")
 
-_ENCODERS_TIMEOUT_S = 15.0
+# 死线家族第五员 (2026-07-31): the fixed 15s wrapped a REAL `ffmpeg
+# -encoders` subprocess and fired once in a full `-n auto` run with extra
+# field-drill load beside it (isolation-green; 12 pure-CPU spinners slowed
+# the probe 3× but did not breach — the field mix of 12 render-heavy
+# workers was heavier). Same fingerprint as the four recorded firings:
+# failure-detection latency, not an assertion — raised, nothing else moves.
+_ENCODERS_TIMEOUT_S = 120.0
 
 
 def _encoder_inventory_uncached() -> dict[str, bool]:
@@ -508,3 +525,90 @@ def hw_encode_eligibility(inventory: dict[str, bool] | None = None) -> dict[str,
                 "运行必败;真正启用前需要真实 canary 编码验证,且本版永不自动启用"
                 "(编码路径仍是 libx264)",
     }
+
+
+# --------------------------------------------------------- version FACTS
+# 战役① (2026-07-31): the owner who accidentally upgrades ffmpeg must not
+# see a clean bill of health while their transition renders die 1-in-6.
+# Version is a machine FACT (this module's charge, record-only, never a
+# gate); advisories exist ONLY for measured/recorded ranges — an unmeasured
+# version gets stated, never judged.
+
+# The version the verified suite runs (windows-ci.yml pins it; the
+# not-found steer above names the same number).
+PINNED_FFMPEG_VERSION = "6.1.1"
+
+_ACROSSFADE_SIGNATURE = "Could not open encoder before EOF"
+
+
+def _ffmpeg_version_line_uncached() -> str:
+    # Delegates to the ONE -version-line owner (the S4 toolchain collector;
+    # media/ sits outside that module's no-import grep-pin, and
+    # media/render's cache-key seam already consumes it).
+    try:
+        from ..core.toolchain import cached_tool_version_line
+
+        return cached_tool_version_line("ffmpeg")
+    except Exception:
+        return "missing"
+
+
+@functools.lru_cache(maxsize=None)
+def ffmpeg_version_line() -> str:
+    """FIRST line of ``ffmpeg -version`` verbatim, or ``"missing"`` —
+    process-cached like :func:`encoder_inventory`."""
+    return _ffmpeg_version_line_uncached()
+
+
+def parse_ffmpeg_major(line: str) -> int | None:
+    """Leading release major from a verbatim ``-version`` first line, or
+    ``None`` for anything else (git snapshots, ``missing``, garbage) —
+    unknown stays unknown, never guessed."""
+    m = re.match(r"ffmpeg version [nN]?(\d+)[.\d]", (line or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def ffmpeg_version_advisory(line: str | None = None) -> str | None:
+    """One human line when the DETECTED ffmpeg falls in a RECORDED-issue
+    range, else ``None``. Recorded only — never speculative: 7.x carries the
+    measured acrossfade encoder-EOF regression (9 failures in 1600 runs vs
+    0/1600 on 6.1.1, byte-identical inputs); ≥8 carries the ffprobe
+    colour-tag drift the install steer above records. Informational always:
+    callers may print it, nothing may gate on it."""
+    text = ffmpeg_version_line() if line is None else line
+    major = parse_ffmpeg_major(text)
+    if major == 7:
+        return (
+            f"已知回归:ffmpeg 7.x 的 acrossfade 转场腿会间歇性报 "
+            f"“{_ACROSSFADE_SIGNATURE}”(同输入实测 1600 跑 9 败,"
+            f"{PINNED_FFMPEG_VERSION} 为 0)。建议换回与验证套件同版的 "
+            f"{PINNED_FFMPEG_VERSION}"
+        )
+    if major is not None and major >= 8:
+        return (
+            f"注意:{major}.x 相对验证套件({PINNED_FFMPEG_VERSION})有 "
+            f"ffprobe 色彩标签偏移记录 — 能出片,但探针/QC 口径可能不一致;"
+            f"建议 {PINNED_FFMPEG_VERSION}"
+        )
+    return None
+
+
+def known_failure_advisory(stderr_tail: str, *,
+                           version_line: str | None = None) -> str | None:
+    """The steer a failing render appends when its stderr matches a RECORDED
+    regression signature — the line a prior session needed when this exact
+    failure cost most of a day. ``None`` for every other stderr."""
+    if _ACROSSFADE_SIGNATURE not in (stderr_tail or ""):
+        return None
+    line = ffmpeg_version_line() if version_line is None else version_line
+    if parse_ffmpeg_major(line) == 7:
+        return (
+            f"已知签名:与 ffmpeg 7.x 的 acrossfade 回归一致(间歇性 — 同输入"
+            f"实测 1600 跑 9 败,{PINNED_FFMPEG_VERSION} 为 0)。本机:{line}。"
+            f"先换回 {PINNED_FFMPEG_VERSION} 再判断是不是项目问题"
+        )
+    return (
+        f"已知签名:此错误形态与 ffmpeg 7.x 的 acrossfade 回归记录一致;"
+        f"本机:{line}。先 `ffmpeg -version` 核对 — 与验证套件同版的是 "
+        f"{PINNED_FFMPEG_VERSION}"
+    )
