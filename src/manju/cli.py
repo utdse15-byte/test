@@ -1784,6 +1784,11 @@ def redo(
             _emit(result.to_dict(), True)
         else:
             _print_batch_result(result, "redo")
+        # 战役② (2026-07-31): a batch that failed shots must say so in its
+        # exit code — `0 ran, 3 failed` used to exit 0 and scripts read it
+        # as success. Cancel stays rc=0 (a user decision, not a failure).
+        if result.failed:
+            raise typer.Exit(1)
         return
 
     if shot_id is None:
@@ -4412,7 +4417,9 @@ def voice(
 
     A priced TTS synthesis stops as waiting_user unless --yes — the same §8.3
     ask_before gate build and redo enforce (R7 spend-gate hole closure)."""
-    from .build.graph import BuildError, WaitingUser, spend_gate, voice_batch
+    from .build.graph import (BuildError, WaitingUser, record_voice_failure,
+                              spend_gate, voice_batch)
+    from .providers.base import ProviderFailure
     from .providers.tts import TtsUnavailable, get_tts_provider
 
     project = _project()
@@ -4536,6 +4543,9 @@ def voice(
             _emit(result.to_dict(), True)
         else:
             _print_batch_result(result, "voice")
+        # 战役②: same failed-batch exit-code honesty as redo above.
+        if result.failed:
+            raise typer.Exit(1)
         return
 
     if shot_id is None:
@@ -4583,6 +4593,12 @@ def voice(
         _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
     except TtsUnavailable as exc:
         _fail(str(exc), code="tts_unavailable")
+    except ProviderFailure as exc:
+        # 战役②: the batch loop renders this as one clean line — the single
+        # path used to be a 143-line traceback wall for the SAME failure.
+        # Same one-composer failures-store recording as the batch.
+        record_voice_failure(project, shot_id, provider, exc)
+        _fail(" ".join(str(exc).split())[:500], code="provider_error")
     append_event(project.root, ACTOR, "voice",
                  {"shot": shot_id, "take": media.stem, "provider": tts.id})
     if as_json:
@@ -9058,6 +9074,15 @@ def providers_check(
     manifests, manifest_errors = load_manifests()
     m = manifests.get(provider_id)
     if m is None:
+        # 战役②: a manifest that EXISTS but fails validation used to answer
+        # "no such provider" here while `providers list` named the real
+        # error — check now gives the same honest diagnosis.
+        related = [e for e in manifest_errors
+                   if e.startswith(f"{provider_id}/")]
+        if related:
+            detail = " ".join(" ".join(related).split())[:400]
+            _fail(f"provider {provider_id!r} 的清单存在但未通过校验:{detail} — "
+                  f"修 {providers_dir() / provider_id / 'provider.yaml'} 后重试")
         _fail(f"no such provider {provider_id!r} "
               f"(looked under {providers_dir()}) — see `manju providers list`")
     problems = m.validate_for_generic()

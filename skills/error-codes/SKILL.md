@@ -73,9 +73,12 @@ MCP 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮
 ### 4. 等一下再试(瞬时/外部)
 
 `build_locked` `tts_unavailable` `canary_submit_failed` `ingest_partial_failure`
-`attach_remote_job`
+`attach_remote_job` `provider_error`
 
 `build_locked` 表示另一个 build 正在跑——等它结束,别强行并发。
+`provider_error` 表示单发配音时供应商调用本身失败(网络断/HTTP 错/中途死):
+失败已进 failures 存档;网络或服务恢复后重试即可,若提示未决提交先按
+`manju tasks` 的恢复命令处理(绝不自动重提,§8/DR06)。
 
 ## 别和降级链的失败原因搞混
 

@@ -1150,3 +1150,72 @@ byte-identical);现场重放:钉版 `✓ …(与验证套件钉版一致)`,shim 
 - **自留过错两条**:①把战役②演习与**定局全量**并发跑了 —— 点火的额外
   载荷是我自己加的(此后定局跑保持洁净);②全量输出管道 `| tail` 截掉了
   traceback,导致两红要靠隔离复跑取证(此后全量输出完整落盘)。
+
+---
+
+# 战役②:供应商中途真死(2026-07-31)
+
+**方法(全真,零 mock)**:自建一个「应答一次就暴毙」的本地 HTTP TTS
+(generic_tts 形状、`per_call: 1.5 CNY` 假价、真 WAV 应答;第二请求读完
+头后 `os._exit(1)` — 真连接重置;之后连接拒绝),对三镜项目跑
+单发/批量/重试/放弃/rebuild 全套编排。
+
+## 付费安全核心:教科书级,全数通过
+
+- **中断即 OUTCOME_UNKNOWN**:死在传输中的那笔铸成未决提交,置顶于
+  `manju tasks`,「绝不自动重提(DR06 ruling 8)」,给出两条恢复命令
+  (attach-remote-job / abandon --reason);再跑批量被**当场拦截**,
+  分文不再付。
+- **abandon 流**:留史、明示「接受重复风险」;放弃后重试正常放行。
+- **狠题:未决提交在 `rebuild-index` 后原样幸存** —— 双付保险不住在
+  可弃的 `.manju` 里,DR06 的持久化承诺是真的。
+- **账目分毫不差**:spend 恰为成功次数 × 1.5,幻影扣费为零;
+  live≡rebuild 对付费 sidecar 成立(F-02 的承诺在 paid 形状上复验)。
+- 既有的「未确认提交意图」ℹ 行也在尽职(列出每次死亡留下的 intent,
+  指引核对供应商账单)——观察:该 ℹ 行的 step 标为 generate(意图层
+  跨能力通用),对 TTS 场景措辞略泛,纸割级留档不动。
+
+## 修掉的五处(红-先行 26 条,`tests/test_provider_death_drill.py`)
+
+1. **脚手架教错占位符**:generic_tts 模板的 body_template 写
+   `text: '{prompt}'`,而 TTS 适配器的占位符集合里**没有** `{prompt}`
+   (那是视频供应商词汇)——照脚手架逐字填,每一镜必死。改
+   `'{text}'` 并在注释列出可用集;顺手把 `job_id_path` 注释从
+   「only used by async」改为「必填(异步才真正使用;同步保留 $.id
+   即可)」——照旧注释删掉该行,清单直接不过校验。
+2. **全败批量 rc=0**:`0 ran, 3 failed` 退出码是 0,脚本读成成功。
+   voice/redo 两处批量(人类与 --json 同修):`failed` 非空 → rc=1;
+   取消是人的决定,rc 仍 0。
+3. **配音失败从不进 failures 存档**:两次真实网络死亡后
+   `manju failures` 答「暂无失败记录,一切顺利」——而 `voice` 本来就是
+   存档 schema 的法定 step,只是从没接线。新的唯一编排器
+   `build/graph.record_voice_failure`(批量循环与单发 CLI 共用):
+   step=voice、subject=镜头、cause=一行原因、hint 点名重试命令;
+   **DR06 拦截不重录**(那是护栏在尽职,`manju tasks` 已带补救出场)——
+   判别用结构化 `detail.code == "submission_outcome_unknown"`,不靠
+   字符串匹配。
+4. **单发路径的 143 行栈墙**:同样的可分支失败(DR06 拦截/网络死),
+   批量是一行红,单发是 Rich traceback 全文直出。单发接住
+   `ProviderFailure` → 一行 + `code="provider_error"`(新码,已按双向
+   扫描契约进 error-codes 技能表第 4 类)+ 同一编排器落存档。
+   现场复验:死亡输出恰 1 行,rc=1。
+5. **`providers check` 把「无效」说成「不存在」**:清单存在但校验失败时
+   check 答 no such provider,而 list 如实给 pydantic 错误——同一状态
+   两种口径。check 现在给出真实校验错误 + 该修的文件路径;真不存在时
+   口径不变。
+
+## 测试自身的一次未遂翻车(留档)
+
+排除判别的测试第一版**赝品铸得不像真品**——伪造的 DR06 异常只有消息
+文本、没带真实的 `detail` 结构,被我自己的结构化判别如实记了档(测试
+红)。这正是 F-05「用自己的错误调用验证自己的实现」的镜像;修正为
+逐字段照抄 `_unknown_outcome_failure` 的铸法,并在测试注释里留此一笔。
+
+## 留档不修
+
+- **stale 混因**:`--provider moni` 合成的配音在默认供应商是 edge 时
+  永远评 stale(期望哈希按「今天的构建会用谁」计算——语义诚实,§4.3
+  下亦仅 advisory),但 status 只报 `stale=N` 不说**为什么**,「台词
+  改了」与「你点名了另一家」在店主眼里无从分辨。富化需要用 sidecar
+  里的供应商描述符**再算一遍哈希**定因;实现路径已明,等真实使用
+  出现困惑再动(维护门)。

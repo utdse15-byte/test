@@ -2934,6 +2934,34 @@ def _voice_selector_mode(shots, all_shots: bool, missing: bool) -> str:
     return active[0]
 
 
+def record_voice_failure(project: Project, shot_id: str,
+                         provider_id: str | None, exc: Exception) -> None:
+    """战役② (2026-07-31): a REAL provider failure must reach the failures
+    store — `voice` has always been one of its canonical steps, only the
+    wiring was missing, so two live network deaths left `manju failures`
+    answering 一切顺利. Both voice surfaces (batch loop, single-shot CLI)
+    call this ONE composer. The DR06 unresolved-submission BLOCK is
+    deliberately not re-recorded: that is the guard doing its job, already
+    surfaced with its remedies by `manju tasks` (the death that minted the
+    submission was recorded when it happened). Best-effort — recording
+    never masks the caller's own error handling."""
+    try:
+        detail = getattr(exc, "detail", None) or {}
+        if isinstance(detail, dict) and detail.get("code") == "submission_outcome_unknown":
+            return
+        from ..core.failures import Failure, record_failure
+
+        record_failure(project, Failure(
+            step="voice", subject=shot_id,
+            cause=_failure_reason(exc),
+            evidence=f"provider={provider_id or '?'} {type(exc).__name__}",
+            hint=f"网络/服务恢复后重试:manju voice --shots {shot_id} --yes;"
+                 f"若有未决提交先按 manju tasks 提示处理",
+        ))
+    except Exception:
+        pass
+
+
 def voice_batch(project: Project, shots: list[str] | None = None, *,
                 all_shots: bool = False, missing: bool = False,
                 provider: str | None = None, actor: str = "engine",
@@ -3082,6 +3110,7 @@ def _voice_batch_locked(project: Project, mode: str, shots: list[str], *,
                 )
                 break
             result.failed.append({"shot": sid, "reason": _failure_reason(exc)})
+            record_voice_failure(project, sid, provider_id, exc)
 
     result.actual_cost = _sum_actual_voice_cost(project, result.takes)
     append_event(project.root, actor, "voice_batch", _voice_event(mode, result))
