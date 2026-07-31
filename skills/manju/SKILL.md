@@ -11,7 +11,9 @@ user_invocable: false
 
 你(Claude Code)是这个 `.manju` 项目的 **AI 导演**。Manju 引擎本身不含任何 LLM——它只负责执行、渲染、校验;创作、规划、决策、修复是你的活。**智能在系统之外,确定性在系统之内。** 一部片子的专业度全由你带进来,引擎只保证确定性与不翻车。
 
-你和人**同一身份**:编辑同样的文本文件、跑同样的命令。真相是文本(YAML/Markdown/JSON),媒体只增不改,git 是版本引擎。你做的一切都要经得起 `manju check` 和 git diff 的审查。
+你和人**同一身份**:编辑同样的文本文件、跑同样的命令。真相是文本(YAML/Markdown/JSON),媒体只增不改,`.manju/` 与 SQLite 可随时删(派生物,`manju rebuild-index` 从真相重建),git 是版本引擎。你做的一切都要经得起 `manju check` 和 git diff 的审查。
+
+**你的操作面是 CLI(加 GUI),不是 MCP。** 店主 2026-07-31 冻结了 MCP 面(原话「感觉没有必要,有 CLI 和 GUI 就可以了」):`manju serve-mcp` 与它的工具原样保留、保持绿,但**不再是推荐路径,也不再有新投入**。本手册所有步骤都走 CLI + 文本文件。(CLAUDE.md 常备事实 · DECISIONS `TRISURFACE-FIX #25`)
 
 下面每一条都是硬规矩,按编号执行。
 
@@ -23,7 +25,7 @@ user_invocable: false
 
 花钱的执行永远卡在 confirm 之后(§5)。手动细活走同一节奏:**改文本 → `manju check` →(命中 `ask_before` 就 `--dry-run` + 问)→ `manju build` → 阶段 commit**。
 
-**技能库(按需加载,别全量背)。** 除本手册外,Manju 带一套 craft 技能;索引随 `manju auto` 一起给你(每条一行「何时用」),要全文用 `manju skills show <id>`(或 MCP `skill_show`)。**按当前阶段只取需要的那一个**:
+**技能库(按需加载,别全量背)。** 除本手册外,Manju 带一套 craft 技能;索引随 `manju auto` 一起给你(每条一行「何时用」),要全文用 `manju skills show <id>`。**按当前阶段只取需要的那一个**:
 
 | 阶段 | 取哪个技能 |
 | --- | --- |
@@ -54,7 +56,7 @@ user_invocable: false
 
 这三步是"双向接管"的核心,`manju status` + events 尾部让任何一方一条命令进入状态。
 
-改镜头文件前,先 `get_shot` 拿到它的 `rev`,保存时把 `rev` 原样回带为 `update_shot` 的 `expected_rev`(乐观锁/CAS):镜头在你加载后被别的入口改过,写入会被当场拒绝(而非静默覆盖别人的编辑),刷新重取再存。无人值守面(`serve-mcp --agent-profile unattended`)下这一步是**强制**的。
+**改镜头文件前,先重读一遍**——你读到写之间,人可能在 GUI 或编辑器里改过同一个文件。三条纪律代替"锁":①**改哪个字段就只改哪个字段**(定点编辑,别整篇重写覆盖别人的改动);②写完立刻 `manju check`——被锁字段在引擎核里守着,绕过 CLI 直接改文件同样当场拦下(实测:`✗ shots/S001.yaml: locked field 'duration' changed`,check 与 build 都 rc=1);③提交前 `git diff` 自查,git 是最终仲裁者。
 
 ## 2. 每次编辑后必跑 `manju check`,check 不过不许 build
 
@@ -83,8 +85,7 @@ user_invocable: false
 
 工具带挂载(§13 M2):mcp-video 的 MCP server 可直接进 Claude Code 配置——
 `claude mcp add mcp-video -- python -m mcp_video`(它同时以 Python 库身份被
-引擎的 QC 检查器直接 import,两个身份互不依赖);Manju 自己的 MCP server 用
-`manju serve-mcp` 挂载。两者都遵守同一条回写规则。
+引擎的 QC 检查器直接 import,两个身份互不依赖)。回写规则对它同样适用。
 
 ## 4. 想改锁定内容 → 写提案,等人批
 

@@ -38,6 +38,17 @@ Standing facts every session should honor:
   beneficial improvements — nothing speculative. (The plan document itself
   is not in the repo; this list IS the acceptance gate.)
 
+Where the rest lives (a cold session should read these before touching code):
+
+- **Operating protocol → `skills/manju/SKILL.md`** — how to drive the product
+  (take selection, stale semantics, ask_before gates, the takeover ritual).
+  Task playbooks live beside it in `skills/*/SKILL.md`; `manju skills` lists them.
+- **Repo state, open risks, work in flight → `STATE.md`** (short by policy).
+- **Why anything is the way it is → `DECISIONS.md`** — start at its two index
+  tables. Citation rule: a bare `#N` means the TOP-LEVEL `## N.` entry; entries
+  inside a named section must carry it (`UX-REAL-USE #33`, `TRISURFACE-FIX #25`).
+- **What was measured → `REPORTS/INDEX.md`** (one row per landed wave).
+
 Dev loop (never bare `pytest` — src layout needs the editable install):
 
 - Full suite: `python -m pytest -q -n auto` (~6-9 min on 4 cores; needs
@@ -48,7 +59,8 @@ Dev loop (never bare `pytest` — src layout needs the editable install):
   `[aost#0:1/aac] Could not open encoder before EOF` — that is an ffmpeg
   regression in the `acrossfade` leg, NOT a Manju bug and NOT your change:
   measured 9 failures in 1600 runs on 7.1 versus 0 in 1600 on 6.1.1, with
-  byte-identical inputs (DECISIONS #33). A previous session lost most of a day
+  byte-identical inputs (DECISIONS `UX-REAL-USE #33` — the bare `#33` used to
+  land on an unrelated top-level entry). A previous session lost most of a day
   to it. If you see that signature, check `ffmpeg -version` first.
 - Fast loop: `python -m pytest -q -n auto -m "not ffmpeg"` — deselects the
   wholly ffmpeg-gated render-heavy modules (honest under-selection: mixed

@@ -1,7 +1,8 @@
 """战役① ffmpeg 误升级演习(店主核准的真实使用战役,2026-07-31)。
 
 Field origin: with a 7.1 build on PATH, `manju doctor` answered a clean
-`✓ ffmpeg: <path>` — no version anywhere, no warning — while DECISIONS #33
+`✓ ffmpeg: <path>` — no version anywhere, no warning — while DECISIONS
+`UX-REAL-USE #33`
 records 7.x failing the acrossfade leg intermittently (measured 9/1600 runs
 vs 0/1600 on 6.1.1, byte-identical inputs; a prior session lost most of a
 day to the cryptic signature). The owner upgrading ffmpeg by accident sees

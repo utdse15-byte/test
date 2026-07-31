@@ -18,6 +18,11 @@
 
 拿不准下一步就 `manju status`(当前阶段 + 每个镜头的待办,一句话一个动作),或 `manju help-workflow`(任务式工作流导航);偏好点击操作用 `manju gui`,审片用 `manju board --serve`,环境体检用 `manju doctor`。选错了不用慌:`manju rollback shot <镜头>` 撤回上一次选择(历史只增不减,永不覆盖)。详细工作流已内建 —— 例如 `manju help-workflow new-project`。
 
+**隔了一阵子回来?** 先 `manju doctor`(尤其是 Windows 更新或动过 ffmpeg 之后),
+再 `manju new 我的样片 --demo && cd 我的样片.manju && manju build --yes` —— 内置
+样片零花费跑通全链路,确认环境没坏再动真项目(见下面「第一部片」)。手上项目
+的进度看 `manju status`;仓库自身的状态与在办风险看 `STATE.md`。
+
 **A deterministic build system for video.** Not an "editor with AI bolted on" — a
 compiler. Think `make` / `ninja`: source files compile into derived artifacts,
 staleness is decided by content hashes, unchanged work is cached, and every
@@ -129,6 +134,43 @@ Windows 11 x64 是第一平台;全程 per-user、无需管理员。
    (长路径策略、NTFS、网络盘、OneDrive、配置可写性、Edge/Chrome、安装模式)。
 6. **偏好点击操作** —— `manju gui`,浏览器工作台(与 CLI/MCP 同一引擎核)。
 
+## 第一部片:两条命令,零花费(`manju new --demo`)
+
+**第一次用、或者隔了半年回来想确认环境还好** —— 别从空项目开始,先让内置样片
+跑通一遍。`--demo` 造一个完整的 12 镜微型故事(雨夜便利店),画面走本地
+`caption_card`,**不联网、不花一分钱**,只需要 ffmpeg。
+
+```bash
+manju new 我的样片 --demo
+cd 我的样片.manju
+manju build --yes
+```
+
+看到的输出(逐字):
+
+```text
+created …/我的样片.manju  [demo: 雨夜便利店 · 12 镜 · caption_card 零花费]
+  零成本出片: cd 我的样片.manju && manju build --yes(本地 caption_card,只需 ffmpeg,不花一分钱)
+  下一步: cd 我的样片.manju && manju status(随时告诉你下一步)
+…
+QC: 通过
+build ok
+  看一眼 look: manju gui(成片页)· 抽帧 manju frames renders/final/final_v1.mp4
+```
+
+成片在 `renders/final/final_v1.mp4`(四核机器上约 2–3 分钟出片)。到这一步,
+**整条链路已经在你的机器上跑通了**:编译时间线 → 渲染 → 质检 → 出片。
+
+接着可以拿这个样片练手,每一步都不花钱:
+
+- `manju status` —— 看当前阶段和每个镜头的待办(一句话一个动作)
+- `manju gui` —— 浏览器工作台,成片页能直接看片
+- 改 `shots/S003.yaml` 里的 `action.main`,再 `manju build` —— 观察它**只重做那一镜**
+- `manju qc brief` —— 看质检怎么出题
+- `manju exports` —— 九种交付物的状态一览
+
+练完了删掉整个目录即可,不留痕迹。要开始真正的项目,往下看 Quickstart。
+
 ## Quickstart
 
 ```bash
@@ -146,8 +188,9 @@ manju import clips/开场.mp4 clips/雨夜.mp4
 # shots/index.yaml (index order is the one order authority) — the guided
 # version of this step is `manju help-workflow new-project`. THEN point a
 # shot at an imported clip (registers it as a manual take; an unknown shot
-# id fails with a clean pointer, never a stray take):
-manju select S001 --file media/imports/opening.mp4
+# id fails with a clean pointer, never a stray take). `manju import` prints
+# this exact line for you, with the real path:
+manju select S001 --file media/imports/开场.mp4
 
 manju check                           # schema + references + locks + secret scan
 manju build                           # compile timeline → render → QC → export

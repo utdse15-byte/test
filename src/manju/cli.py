@@ -248,10 +248,19 @@ _EPILOG = (
     "每条命令都有 --help;输出可读的命令大多同时带 --json 给 agent。"
 )
 
+# 软能力波三 (2026-07-31): two conventions the audit found missing.
+# `-h` is what fingers press first; NO_COLOR (https://no-color.org) is the
+# one-line standards win — Click consults ``ctx.color`` for every secho, and
+# Rich reads NO_COLOR itself for the help screens, so honouring it here
+# covers both surfaces. Colour is only ever suppressed, never forced.
+_CONTEXT_SETTINGS: dict[str, object] = {"help_option_names": ["-h", "--help"]}
+if os.environ.get("NO_COLOR"):
+    _CONTEXT_SETTINGS["color"] = False
+
 app = typer.Typer(add_completion=True, no_args_is_help=True, cls=_SuggestingGroup,
                   help="Manju One — 视频构建系统 / a build system for video。"
                        "不知道从哪开始就跑 manju status。",
-                  epilog=_EPILOG)
+                  epilog=_EPILOG, context_settings=_CONTEXT_SETTINGS)
 
 
 def _version_callback(value: bool) -> None:
@@ -507,6 +516,60 @@ def _display_path(project: Project, path: Path) -> str:
         return project.relpath(path)
     except ValueError:
         return str(Path(path).resolve())
+
+
+class _ProgressReporter:
+    """In-band progress for the multi-minute builds (软能力波三, 2026-07-31).
+
+    The engine has emitted coarse phases AND within-phase labels
+    (``gen:S003 (3/12)``) through ``on_phase`` since UX wave 2 — nothing
+    consumed them on the CLI, so an 80-shot first build ran 11m57s printing
+    nothing at all. Rules that keep this free of side effects:
+
+    * **stderr only** — stdout stays byte-identical for pipes, ``--json`` and
+      every existing test that captures build output;
+    * **interactive only** — a redirected/piped stderr gets nothing, so logs
+      and CI transcripts do not grow a carriage-return smear;
+    * **one rewritten line** (``\\r``), cleared on completion, so the terminal
+      ends exactly as it did before.
+    """
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+        self._width = 0
+
+    def __call__(self, label: str) -> None:
+        try:
+            text = f"  … {label}"
+            pad = max(0, self._width - len(text))
+            self._stream.write("\r" + text + " " * pad)
+            self._stream.flush()
+            self._width = len(text)
+        except Exception:  # a progress hiccup must never break a build
+            pass
+
+    def done(self) -> None:
+        try:
+            self._stream.write("\r" + " " * self._width + "\r")
+            self._stream.flush()
+            self._width = 0
+        except Exception:
+            pass
+
+
+def _build_progress_reporter(as_json: bool, *, force: bool = False):
+    """A reporter, or ``None`` when progress must stay silent (``--json``, or
+    a non-interactive stderr). ``force`` is for tests only."""
+    if as_json:
+        return None
+    stream = sys.stderr
+    if not force:
+        try:
+            if not stream.isatty():
+                return None
+        except Exception:
+            return None
+    return _ProgressReporter(stream)
 
 
 def _release_scope_clause(unmade: int) -> str:
@@ -1623,10 +1686,16 @@ def build(
             lang = validate_lang(lang)
         except _PE as exc:
             _fail(str(exc), code="bad_lang")
-    result = run_build(project, target=target, gen=gen,
-                       regen_stale=regen_stale, dry_run=dry_run, force=force,
-                       actor=ACTOR, assume_yes=yes, mode=mode,
-                       include_unindexed=include_unindexed, lang=lang)
+    _progress = _build_progress_reporter(as_json)
+    try:
+        result = run_build(project, target=target, gen=gen,
+                           regen_stale=regen_stale, dry_run=dry_run, force=force,
+                           actor=ACTOR, assume_yes=yes, mode=mode,
+                           include_unindexed=include_unindexed, lang=lang,
+                           on_phase=_progress)
+    finally:
+        if _progress is not None:
+            _progress.done()
     if as_json:
         # WP5: dry-run --json emits the same plan envelope as GUI /api/plan
         if dry_run:

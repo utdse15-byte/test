@@ -66,6 +66,119 @@ Entries are append-only below.
 | 50 | 2026-07-14 | Direction program: personal production console — review queue default+priority+undo, continue-work home, 交给 Claude handoff, six-group nav | gui/pages.py (qPriority/setQueueMode/u-undo/_NAV_GROUPS/ai-ctx + copyForAI), gui/page.py (ck-continue chip, clickable ck-scount, fail-card 复制诊断上下文), common_js (manju-last recorder) |
 | 51 | 2026-07-14 | Exhaustive bug hunt: 22 fixes — edit Tier-2 unreachable, board select overlay lock, freeze-guard re-arm, pollJob cap honesty, 413 drain, readonly GETs | gui/page.py, gui/pages.py, gui/edit.py, gui/server.py, gui/state.py, gui/cockpit.py, board/board.py, 4× pollJob pages |
 
+### 命名段落索引(2026-07-31 补:此前只覆盖顶层 1–51,漏了这 92 条)
+
+**编号域规则** —— 引用必须消歧:**裸 `#N` 只指顶层段落 `## N.`**;命名段落
+(下表)的条目**必须带段名**,如 `UX-REAL-USE #33`、`TRISURFACE-FIX #25`。
+顶层编号 1–51 与命名段落各自的 1–33 重叠,不带段名的引用会指错人(实测:
+CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶层 ## 33)。
+
+「点名模块」一列由条目正文**实际提到的**路径/命令/标识符机械提取,不作推断;
+正文没点名具体模块的记 `—`(该条是设计或流程决定,不归属单个文件)。
+
+| 条目 | date | summary | 点名模块 / 命令 |
+|------|------|---------|------------------|
+| `SOFT-CAP #1` | 2026-07-31 | Domain standards absorbed deeply, project conventions not — census + the cause | README.md, CLAUDE.md, skills/ |
+| `SOFT-CAP #2` | 2026-07-31 | `manju new --demo` was a shipped, undocumented tutorial — now a README section | README.md, manju new |
+| `SOFT-CAP #3` | 2026-07-31 | Quickstart could not be copy-pasted (selected a never-imported file) | README.md, manju import |
+| `SOFT-CAP #4` | 2026-07-31 | MCP freeze swept into the skills; CLI-native takeover ritual replaces expected_rev CAS | skills/manju, skills/error-codes, skills/skill-authoring, CLAUDE.md |
+| `SOFT-CAP #5` | 2026-07-31 | Decision index backfilled (92 named-section entries) + 编号域 citation rule | DECISIONS.md, tests/test_docs_reachability.py |
+| `SOFT-CAP #6` | 2026-07-31 | `-h`, NO_COLOR, and stderr-only interactive build progress (on_phase finally consumed) | cli.py, tests/test_cli_conventions.py |
+| `SOFT-CAP #7` | 2026-07-31 | Own-errors: wrong NO_COLOR assertion, void lock probe, pipe ate rc, self-satisfying pin | tests/test_cli_conventions.py, tests/test_docs_reachability.py |
+| `SOFT-CAP #8` | 2026-07-31 | Deliberately not done — TOC, v2.1 archive, orphan skills, XDG, --quiet, Ctrl-C | — |
+| `GUI-WAVE-PERSONAL-01 #1` | 2026-07-15 | One project, one process, one window | — |
+| `GUI-WAVE-PERSONAL-01 #2` | 2026-07-15 | Unified project action schema | — |
+| `GUI-WAVE-PERSONAL-01 #3` | 2026-07-15 | JSON client | gui/webclient.py |
+| `GUI-WAVE-PERSONAL-01 #4` | 2026-07-15 | Launch | — |
+| `GUI-WAVE-PERSONAL-01 #5` | 2026-07-15 | Quit coordinator | — |
+| `GUI-WAVE-PERSONAL-01 #6` | 2026-07-15 | Personal UI state | — |
+| `GUI-WAVE-PERSONAL-01 #7` | 2026-07-15 | Shot ui_rev | — |
+| `GUI-WAVE-PERSONAL-01 #8` | 2026-07-15 | Media | — |
+| `GUI-WAVE-PERSONAL-01 #9` | 2026-07-15 | Scale fixtures / soak | scripts/gui_soak.py |
+| `GUI-WAVE-PERSONAL-01 #10` | 2026-07-15 | No Electron/React/SaaS | — |
+| `UX-WAVE-2 #1` | 2026-07-17 | Completion must reach an absent owner | — |
+| `UX-WAVE-2 #2` | 2026-07-17 | Within-phase progress is advisory-only | media/render |
+| `UX-WAVE-2 #3` | 2026-07-17 | did-you-mean | core/mentions.py |
+| `UX-WAVE-2 #4` | 2026-07-17 | Shell completion ON as opt-in (#48) | — |
+| `UX-WAVE-2 #5` | 2026-07-17 | Show in Folder | — |
+| `UX-WAVE-2 #6` | 2026-07-17 | Voice comparison set | — |
+| `UX-WAVE-2 #7` | 2026-07-17 | The built-in demo (`manju new --demo`) | manju new --demo |
+| `UX-WAVE-2 #8` | 2026-07-17 | REPORTS hygiene | — |
+| `UX-WAVE-2 #9` | 2026-07-17 | Deferred with reasons | cli.py |
+| `UX-WAVE-3 #1` | 2026-07-20 | 草稿保护 closes its loop | — |
+| `UX-WAVE-3 #2` | 2026-07-20 | 全局任务条 | — |
+| `UX-WAVE-3 #3` | 2026-07-20 | Rejected, with reasons | — |
+| `UX-WAVE-3 #4` | 2026-07-20 | Deferred, unchanged from plan | — |
+| `AUDIT-LEDGER-WAVE #1` | 2026-07-24 | The triage rule that replaced the ledger's severities | — |
+| `AUDIT-LEDGER-WAVE #2` | 2026-07-24 | `core/safeio.py` is the one validated-output owner | core/safeio.py |
+| `AUDIT-LEDGER-WAVE #3` | 2026-07-24 | A guard that is not wired is not a guard | cli.py, voice_overrun_warnings, expected_rev |
+| `AUDIT-LEDGER-WAVE #4` | 2026-07-24 | Paid safety is now fail-closed end to end | assume_yes |
+| `AUDIT-LEDGER-WAVE #5` | 2026-07-24 | Refused, with reasons | assume_yes |
+| `AUDIT-LEDGER-WAVE #6` | 2026-07-24 | Two regressions this wave introduced, caught and fixed here | core/check.py, ci.yml, test_closeout_c2 |
+| `UX-REAL-USE #1` | 2026-07-25 | "Already in the project" is not "already IS a take" | manju import |
+| `UX-REAL-USE #2` | 2026-07-25 | Material that arrives silently gets a surface | — |
+| `UX-REAL-USE #3` | 2026-07-25 | Never recommend a command that cannot succeed | — |
+| `UX-REAL-USE #4` | 2026-07-25 | A support bundle must keep its own evidence | content_key, final_key |
+| `UX-REAL-USE #5` | 2026-07-25 | Say it once, and never contradict the line next to it | manju status, build_lock |
+| `UX-REAL-USE #6` | 2026-07-25 | Recorded process errors, not just product ones | — |
+| `UX-REAL-USE #7` | 2026-07-25 | Round 2, same method | manju roundtrip |
+| `UX-REAL-USE #8` | 2026-07-25 | The name a user SEES must be a handle they can type | build_lookup, all_names |
+| `UX-REAL-USE #9` | 2026-07-25 | Four misaligned tables, one root cause | cli.py, manju tasks, manju spend, manju skills |
+| `UX-REAL-USE #10` | 2026-07-25 | A next step that is not a command is not a next step | next_step_key |
+| `UX-REAL-USE #11` | 2026-07-25 | Readable exactly when there is something to read | manju events, stage_attempt |
+| `UX-REAL-USE #12` | 2026-07-25 | A red-first test caught the fix, not just the bug | — |
+| `UX-REAL-USE #13` | 2026-07-25 | `color.tag_outputs` shipped half-tagged masters on ffmpeg >= 7.1 | color.tag_outputs |
+| `UX-REAL-USE #14` | 2026-07-25 | **"The environment cannot verify this" was treated as a TODO, not a | — |
+| `UX-REAL-USE #15` | 2026-07-25 | The Windows gate is a list of steps, not one indivisible block | — |
+| `UX-REAL-USE #16` | 2026-07-25 | One unreproduced flake, recorded and NOT "fixed" | test_applied_xfade_boundary_cache_reused_and_type_change_rerenders_only_boundary, st_mtime_ns |
+| `UX-REAL-USE #17` | 2026-07-25 | Two of the four "Windows-only" invariants were not | subprocess.list2cmdline, _split_command, test_windows_invariants_guard.py |
+| `UX-REAL-USE #18` | 2026-07-25 | A grep pin that matched nothing real | p.name, list_locales |
+| `UX-REAL-USE #19` | 2026-07-25 | **The install-smoke contract now EXECUTES, and text checks were proven | providers/routing |
+| `UX-REAL-USE #20` | 2026-07-25 | **Wine cannot arbitrate msvcrt, and finding that out caught a fabricated | core/events.py |
+| `UX-REAL-USE #21` | 2026-07-25 | The `--json` error envelope was a contract nobody could read | no_baseline |
+| `UX-REAL-USE #22` | 2026-07-25 | `impact` answered a command-shaped code | impact_error, unknown_shot, _require_shot |
+| `UX-REAL-USE #23` | 2026-07-25 | Advice that refuses when followed | manju create brief, manju board scene, manju director propose |
+| `UX-REAL-USE #24` | 2026-07-25 | Presentation is not decoration | CLAUDE.md, manju tasks, presets.display_width |
+| `UX-REAL-USE #25` | 2026-07-25 | Say what you did not check | manju qc |
+| `UX-REAL-USE #26` | 2026-07-25 | Roundtrip without its baseline is WRONG, not unverified | set_inout, set_transition_override, no_baseline |
+| `UX-REAL-USE #27` | 2026-07-25 | Hand over the artifact, not the path | manju build, final_export, run_terminal |
+| `UX-REAL-USE #28` | 2026-07-25 | Three guards caught the author, not the code | — |
+| `UX-REAL-USE #29` | 2026-07-25 | A failure that deletes its own evidence | media/render, normalize_segment |
+| `UX-REAL-USE #30` | 2026-07-25 | The flake was ffmpeg's, and preserving evidence is what proved it | — |
+| `UX-REAL-USE #31` | 2026-07-25 | Advice you have made impossible is not advice | — |
+| `UX-REAL-USE #32` | 2026-07-25 | A test that measured the terminal, not the surface | test_the_wall_is_real |
+| `UX-REAL-USE #33` | 2026-07-25 | The flake was the sandbox's ffmpeg, and the pinned one is clean | media/ffmpeg, CLAUDE.md |
+| `TRISURFACE-FIX #1` | 2026-07-29 | The v2 verdict loop is wired to its consumers (R2-1) | qc_coverage, media_sha256, media_members, agent_verdict_items |
+| `TRISURFACE-FIX #2` | 2026-07-29 | `final_export` binds every command surface, with one owner (F-01) | cli.py, CLAUDE.md, final_export, build.graph.final_export_gate |
+| `TRISURFACE-FIX #3` | 2026-07-29 | Voice and manual registrations reach the ledger live (F-02) | manju tasks, providers.manual.register_manual_take |
+| `TRISURFACE-FIX #4` | 2026-07-29 | Stale advice stops chasing its own tail (F-05) | manju redo, manju select |
+| `TRISURFACE-FIX #5` | 2026-07-29 | One honest formatter per leaked fact | manju masters, _loudness_clause |
+| `TRISURFACE-FIX #6` | 2026-07-29 | Refusals name their objects and their doors | manju providers add, manju new, _display_path |
+| `TRISURFACE-FIX #7` | 2026-07-29 | First-contact schema errors teach the shape (F-06/F-07) | manju schema, duration_ms |
+| `TRISURFACE-FIX #8` | 2026-07-29 | `httpx` is a declared dev dependency (F-23) | — |
+| `TRISURFACE-FIX #9` | 2026-07-29 | Round 3 — the deferred list, revisited (same day) | tests/test_trisurface_round3.py, manju events, manju history, manju analyze |
+| `TRISURFACE-FIX #10` | 2026-07-29 | MCP failures agents must branch on carry their own codes (F-18) | cli.py, locked_field, rev_conflict, unknown_tool |
+| `TRISURFACE-FIX #11` | 2026-07-29 | MCP export reaches CLI parity (F-19) | — |
+| `TRISURFACE-FIX #12` | 2026-07-29 | Still deferred, still on purpose | — |
+| `TRISURFACE-FIX #13` | 2026-07-29 | Dialogue-less shots are not translation debt (F-11, round 4) | add_locale, line_status, not_needed |
+| `TRISURFACE-FIX #14` | 2026-07-29 | One confirm() before the permanent verification oath (F-20, minimal) | — |
+| `TRISURFACE-FIX #15` | 2026-07-29 | Owner-funded hardening round (「消耗我的额度,同时有用」) | tests/test_crash_safety_campaign.py |
+| `TRISURFACE-FIX #16` | 2026-07-30 | Gate-revealed round | tests/test_mcp.py, tests/test_ledger_p1_gui_safety.py, _display_path |
+| `TRISURFACE-FIX #17` | 2026-07-30 | Card-render wave | media/html_card.py, tests/test_card_visual_fixes.py, bg_edge |
+| `TRISURFACE-FIX #18` | 2026-07-30 | Second gate reveal | — |
+| `TRISURFACE-FIX #19` | 2026-07-30 | Windows card-renderer discovery | — |
+| `TRISURFACE-FIX #20` | 2026-07-30 | Third gate reveal | — |
+| `TRISURFACE-FIX #21` | 2026-07-30 | Card-render wave 2 | — |
+| `TRISURFACE-FIX #22` | 2026-07-30 | Preview-cache upgrade trap | — |
+| `TRISURFACE-FIX #23` | 2026-07-30 | Cache-key family sweep | media/gen |
+| `TRISURFACE-FIX #24` | 2026-07-29 | **Fourth deadline firing — created by the chromium lane itself | — |
+| `TRISURFACE-FIX #25` | 2026-07-31 | Owner decision — MCP surface frozen | CLAUDE.md, manju serve-mcp |
+| `TRISURFACE-FIX #26` | 2026-07-31 | Campaign ① — off-pin ffmpeg drill | media/ffmpeg |
+| `TRISURFACE-FIX #27` | 2026-07-31 | Pre-commit full-suite double red — both closed | — |
+| `TRISURFACE-FIX #28` | 2026-07-31 | Campaign ② — provider dies mid-run | build/graph, manju tasks |
+| `TRISURFACE-FIX #29` | 2026-07-31 | Campaign ③ — scale realism at 80 shots | tests/test_scale_noop_build.py |
+| `TRISURFACE-FIX #30` | 2026-07-31 | Campaign ④ — CJK+space paths & git time travel | media/render |
+
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
 Design (v2.2 §13 M1, decision 8) named pyJianYingDraft primary and
@@ -3224,6 +3337,84 @@ understood at a glance, or dropped something quietly.
     version, which is what cost the day, so it now names 6.1.1, the one-line
     Ubuntu install, and the `aost#0:1/aac` signature to recognise — turning a
     day-long dead end into one `ffmpeg -version`.
+
+## SOFT-CAP (2026-07-31)
+
+店主问「硬能力差不多了,软能力呢?文档够好吗?吸收了市面上的经验吗?」——
+审计 + 落地。完整报告 `REPORTS/SOFT_CAPABILITY_2026-07-31.md`。
+
+1. **Domain standards are absorbed deeply, software-project conventions are
+   not — and both follow from the same cause: every doc is written for a
+   reader who already knows the answer.** Census: OpenTimelineIO 336
+   references, EBU R128 270, POSIX 117, WCAG/aria 49, SMPTE 10, RFC 7807
+   ported into the CLI's `--json` error envelope, clig.dev cited. Against
+   that: SemVer / CHANGELOG / conventional commits all zero — **and staying
+   zero**, they are ceremony for single-user software. Diátaxis zero (the
+   tutorial quadrant was the real gap), NO_COLOR zero (fixed here), XDG
+   effectively zero (left alone: migrating an existing `~/.manju` is more
+   risk than gain).
+2. **The tutorial already shipped and was documented nowhere.**
+   `manju new --demo` builds a complete 12-shot film through local
+   caption_card — measured: 2m19s, zero spend, a 2.6 MB final — while
+   `--demo` appeared 0 times across README/docs/CLAUDE.md/STATE.md/skills.
+   Now a README section with verbatim expected output, plus a
+   returning-owner path (doctor → demo → STATE.md) in 中文速览.
+3. **The Quickstart could not be copy-pasted.** It imported 开场.mp4 /
+   雨夜.mp4 then selected `media/imports/opening.mp4`, never imported. The
+   product was right all along — `manju import` prints the correct line
+   itself; the README had transcribed it wrong.
+4. **The MCP freeze never reached the skills — this session's own debt.**
+   #25 landed the freeze in CLAUDE.md and DECISIONS the same day but not in
+   `skills/`, where `manju/SKILL.md:57` made `get_shot`/`update_shot` +
+   `expected_rev` MANDATORY — vocabulary with NO CLI equivalent
+   (`expected_rev` exists in cli.py only inside the serve-mcp docstring), so
+   a CLI-only session was ordered to perform an impossible step. Rewritten
+   CLI-native (targeted edit → `manju check` → `git diff`) with measured
+   evidence that field seals catch direct file edits (`✗ locked field
+   'duration' changed`, check and build both rc=1). §0 now names the surface;
+   the error-codes MCP table is marked frozen-archival (kept green, not
+   deleted); CLAUDE.md gained a four-line "where the rest lives" pointer
+   (it had never mentioned `skills/` at all).
+5. **The decision index had a hole exactly where it mattered.** It covered
+   top-level 1–51 while the six named sections' 92 entries — the last three
+   months, the most relevant ones — were invisible to it. Worse, seven
+   sections restart numbering, so `#1..#33` spans three scopes: CLAUDE.md's
+   bare `#33`, cited as the evidence for the ffmpeg 6.1.1 pin ("a previous
+   session lost most of a day"), landed on an unrelated top-level entry. Now
+   a 92-row named-section index (the governs column extracted mechanically
+   from each entry's own text; 38 honestly blank rather than guessed) plus a
+   stated 编号域 rule — bare `#N` means top level, named entries carry their
+   section — with three offending citations fixed and a pin
+   (`test_docs_reachability.py`) that keeps both true.
+6. **Two CLI conventions and the missing build feedback.** `-h` was a hard
+   error; NO_COLOR was ignored (pty-measured). Both fixed at the app's
+   context settings. And the multi-minute build printed nothing at all: the
+   engine has emitted `on_phase` (down to `gen:S003 (3/12)`) since UX wave 2
+   — only the CLI never subscribed. It does now, on **stderr only** and
+   **interactive only**, single rewritten line cleared on exit, so `--json`
+   and piped stdout stay byte-identical (measured: 0 progress marks in a
+   piped run).
+7. **Own-errors.** The NO_COLOR assertion was mine, not the product's: I
+   demanded "no ANSI at all" and saw `\x1b[1m` survive — decomposition
+   showed colour codes go from `{1,0,2,1;33,1;32,1;36}` to `{1,0,2}`, i.e.
+   every colour gone, bold/dim kept, which is exactly what no-color.org asks
+   for; the assertion now tests colour and carries the measured code table so
+   nobody "fixes" bold away. The first lock probe was void (`manju lock` hit
+   its ask_before gate, so no lock was ever set) and had to be re-run with
+   `--yes`. A pipe ate an exit code again — `check` really exits 1, `| tail`
+   showed 0 — the second time in one day for a trap this session had already
+   recorded. And one new pin was self-satisfying (file-level `冻结`
+   exemption); tightened to a ±400-char proximity check, which immediately
+   caught a `get_shot` deep inside the error-codes table — proof the loose
+   version was false green.
+8. **Deliberately not done** (recorded so it is a decision, not an
+   oversight): README still has no TOC and still carries the 100-row command
+   reference; `docs/DESIGN_v2.1.md` is ~82% duplicate of v2.2 and unarchived;
+   STATE.md's two `pending` SHAs; four orphan skills below the五件套 bar;
+   18/19 skills lack a "when NOT to use"; skill-authoring's mandated
+   `references/`+`scripts/` layer has zero implementations; XDG config
+   location; `--quiet`/`--verbose`; Ctrl-C during build still shows a
+   traceback (locks release cleanly — presentation only).
 
 ## TRISURFACE-FIX (2026-07-29)
 
