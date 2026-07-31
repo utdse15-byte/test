@@ -3616,3 +3616,27 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    stale-reason opacity (provider-mismatch vs text-change both read
    "stale=N"; enriching requires re-hashing with the sidecar's provider
    descriptor — wait for real-usage confusion per the maintenance gate).
+29. **Campaign ③ — scale realism at 80 shots (2026-07-31)** — a real
+   80-shot / 3m20s film, every owner loop timed. Healthy as-is: check
+   0.6s, status 1.8s at NINE lines, rebuild-index 0.79s, single redo
+   2.8s, first build 11m57s (honest — 80 real renders), GUI workbench
+   12ms; §4.3 stale advisory honest on a one-shot edit; build auto-voicing
+   missing dialogue confirmed AS DESIGN (_plan_voice → egress check →
+   spend gate). Three profiled pathologies, all fixed red-first: a no-op
+   build took 35s (run_qc 36/46s of the profile: 80 frame re-extractions
+   21.2s, 81 ffprobes 7.3s, 26 astats 2.4s; read_yaml × 3044 = 13.6s) and
+   the /exports page ran the whole QC on every load (10.8s). Fixes:
+   (1) byte-compare parse cache in yamlio.read_yaml, the ONE yaml owner —
+   bytes always re-read so truth can never be stale, only identical bytes
+   skip parsing, every return is a deep copy, 4096-entry cap for长驻 GUI;
+   (2) QC review-frame identity markers (source+size+mtime_ns+mid_s;
+   append-only media makes identity sound) which also close the
+   documented stale-frame hazard; (3) cross-process probe/astats identity
+   cache under .manju/cache/probe via an ambient contextvar seam
+   (probe_cache_scope, the cancel_scope pattern), armed ONLY inside
+   run_qc — unscoped probe() calls byte-identical, errors and degraded
+   Nones never cached; (4) the build warning wall caps at 8 with an
+   explicit count-and-pointer line (§4.3, --json keeps all). Field
+   after-numbers, same machine, same film: no-op build 35s → 1.9s (18×),
+   /exports 10.8s → 0.65s (16×), warning wall 27 → 6 lines. 14 red-first
+   tests in tests/test_scale_noop_build.py.

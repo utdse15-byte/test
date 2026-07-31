@@ -7,8 +7,11 @@ fall back to the first video stream's duration.
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import json
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..core.models import ProbeInfo
@@ -19,6 +22,76 @@ FFPROBE = "ffprobe"
 # default timeout (unlike run_ffmpeg's generous render default) so a
 # corrupt/unreadable/network-mounted file can never hang check/build.
 DEFAULT_PROBE_TIMEOUT_S = 60.0
+
+# 战役③ (2026-07-31): on a REAL 80-shot film, run_qc re-probed 81 unchanged
+# files on every no-op build (7.3s) AND on every /exports page load (the
+# page runs QC). probe(path) has no project handle, so the cache root
+# arrives ambiently — the same contextvar pattern as media/ffmpeg's
+# cancel_scope — and ONLY scoped callers (run_qc) get disk caching; every
+# other probe() call is byte-identical to before. The key is file identity
+# (path + size + mtime_ns): gen media is append-only, so identity is sound
+# by construction, and any in-place edit changes mtime/size and re-probes.
+# The cache lives under .manju (disposable — wiping it costs a re-probe,
+# never truth). Errors are NEVER cached: a failing probe raises exactly as
+# before, every time.
+_probe_cache_root: "contextvars.ContextVar[Path | None]" = contextvars.ContextVar(
+    "manju_probe_cache_root", default=None)
+
+
+@contextmanager
+def probe_cache_scope(root: Path):
+    """Enable identity-keyed disk caching of probe results under ``root``."""
+    token = _probe_cache_root.set(Path(root))
+    try:
+        yield
+    finally:
+        _probe_cache_root.reset(token)
+
+
+def _cache_slot(root: Path, path: Path, kind: str) -> tuple[Path, dict]:
+    st = path.stat()
+    ident = {"source": str(path), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+    name = hashlib.sha1(f"{kind}|{path}".encode("utf-8")).hexdigest()
+    return root / f"{name}.json", ident
+
+
+def _cache_get(path: Path, kind: str) -> dict | None:
+    root = _probe_cache_root.get()
+    if root is None:
+        return None
+    try:
+        slot, ident = _cache_slot(root, path, kind)
+        meta = json.loads(slot.read_text(encoding="utf-8"))
+        if meta.get("ident") == ident:
+            return meta.get("data")
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _cache_put(path: Path, kind: str, data: dict) -> None:
+    root = _probe_cache_root.get()
+    if root is None:
+        return
+    try:
+        slot, ident = _cache_slot(root, path, kind)
+        slot.parent.mkdir(parents=True, exist_ok=True)
+        slot.write_text(json.dumps({"ident": ident, "data": data},
+                                   ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def cached_media_fact(path: Path, kind: str) -> dict | None:
+    """Identity-cached fact for ``path`` under the ambient scope — ``None``
+    outside a scope or on any mismatch. Sibling probes (QC's astats) share
+    this ONE cache seam instead of growing their own."""
+    return _cache_get(Path(path), kind)
+
+
+def store_media_fact(path: Path, kind: str, data: dict) -> None:
+    """Record a fact for ``path`` in the ambient scope (no-op unscoped)."""
+    _cache_put(Path(path), kind, data)
 
 
 def _to_int_ms(seconds: str | float | None) -> int | None:
@@ -54,6 +127,9 @@ def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S) -> Pro
     seconds (#55: a corrupt file / network mount must not hang forever;
     ``None`` disables the cap)."""
     path = Path(path)
+    cached = _cache_get(path, "probe")
+    if cached is not None:
+        return ProbeInfo.model_validate(cached)
     cmd = [
         FFPROBE, "-v", "error", "-print_format", "json",
         "-show_format", "-show_streams", str(path),
@@ -95,13 +171,15 @@ def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S) -> Pro
         if fps is None:
             fps = _parse_fps(video.get("avg_frame_rate"))
 
-    return ProbeInfo(
+    info = ProbeInfo(
         duration_ms=duration_ms,
         width=width,
         height=height,
         fps=fps,
         has_audio=audio is not None,
     )
+    _cache_put(path, "probe", info.model_dump())
+    return info
 
 
 def probe_duration_ms(path: Path) -> int | None:

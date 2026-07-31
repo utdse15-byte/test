@@ -93,9 +93,15 @@ def _accepted_with_endpoint(project, add_shot, shot_id="S001", *,
 
 
 def _tree_hashes(root):
+    # The §10.1/10.2 proposition is about TRUTH (Bible/Shot/Timeline — see
+    # the never-writes-back docstring). `.manju` is contractually DISPOSABLE
+    # runtime (README §disciplines) and 战役③'s probe-fact cache legitimately
+    # writes there during QC; including it here would pin "observing may not
+    # warm a disposable cache", which is not the claim.
     return {
         str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(root.rglob("*")) if p.is_file()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and ".manju" not in p.relative_to(root).parts
     }
 
 
