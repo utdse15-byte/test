@@ -126,6 +126,38 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
         add(tool, found is not None, found or "NOT FOUND",
             f"{'✓' if found else '✗'} {tool}: {found or 'NOT FOUND'}")
         ok = ok and (found is not None or tool == "git")  # git is optional
+
+    # ---- 战役①: the detected ffmpeg VERSION is a fact the owner must see —
+    # an accidental 7.x upgrade used to get a clean ✓ here while transition
+    # renders died 1-in-6 (the measured acrossfade regression). Advisory only
+    # (ok stays True, exit code untouched); recorded ranges warn, everything
+    # else is stated without judgement. Owner: media/ffmpeg (record-only).
+    try:
+        from ..media.ffmpeg import (
+            PINNED_FFMPEG_VERSION,
+            ffmpeg_version_advisory,
+            ffmpeg_version_line,
+        )
+
+        vline = ffmpeg_version_line()
+        if vline != "missing":
+            advisory = ffmpeg_version_advisory(vline)
+            parts = vline.split()
+            ver = parts[2] if vline.startswith("ffmpeg version") and len(parts) > 2 \
+                else vline[:60]
+            if advisory:
+                add("ffmpeg_version", True, vline,
+                    f"⚠ ffmpeg version: {ver} — {advisory}")
+            elif ver.startswith(PINNED_FFMPEG_VERSION):
+                add("ffmpeg_version", True, vline,
+                    f"✓ ffmpeg version: {ver}(与验证套件钉版一致)")
+            else:
+                add("ffmpeg_version", True, vline,
+                    f"• ffmpeg version: {ver}(验证套件用 {PINNED_FFMPEG_VERSION};"
+                    f"该版本无已记录回归,不作判断)")
+    except Exception as exc:  # a version probe must never break doctor
+        add("ffmpeg_version", True, str(exc),
+            f"⚠ ffmpeg 版本探测异常(信息行,不影响退出码): {exc}")
     try:
         from ..media.card import find_font
 

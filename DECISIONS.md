@@ -3556,3 +3556,34 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    planned "pure-MCP film" campaign is cancelled by this decision; the
    disk-full drill was declined separately (nothing-speculative gate).
    Re-opening requires the owner's word, nothing less.
+26. **Campaign ① — off-pin ffmpeg drill (2026-07-31)** — field-proved gap:
+   with a 7.1 build on PATH, doctor answered a clean `✓ ffmpeg: <path>` —
+   no version stated anywhere, no warning — while DECISIONS #33 records
+   the measured 7.x acrossfade regression (9/1600 vs 0/1600, and a prior
+   session lost most of a day to its cryptic signature). Fix, owned by
+   media/ffmpeg (record-only, never a gate): ffmpeg_version_line (process-
+   cached fact, delegates to the S4 toolchain collector — the ONE -version
+   owner), parse_ffmpeg_major (git snapshots/missing → honest None),
+   ffmpeg_version_advisory (RECORDED ranges only: 7.x acrossfade with the
+   measurements, ≥8 ffprobe colour-tag drift; everything else stated,
+   never judged). doctor gains an ffmpeg_version row (✓ pin / ⚠ recorded
+   range / • info; ok always True — exit code untouched). And the failure
+   site itself: _raise_on_bad_exit appends known_failure_advisory when
+   stderr matches the recorded signature, and the Failure hint becomes
+   that steer (GUI failures page benefits too) — the day-costing error now
+   names itself at the moment it happens. 16 red-first tests; the drill
+   re-run shows ⚠ with the steer under the 7.1 shim and ✓ on the pin.
+27. **Pre-commit full-suite double red — both closed (2026-07-31)** —
+   (a) hypothesis's second real catch hit MY detector, not the product: a
+   key whose own text is `{'` makes the honest brief `{'=null`, and the
+   hardening round's substring repr-guard false-positived on it. The guard
+   is now the exact proposition (brief must never BE str/repr of the dict —
+   the f-string-dump regression it exists to catch); every other assertion
+   unchanged. (b) Deadline family, fifth member: _ENCODERS_TIMEOUT_S
+   (fixed 15s around a real `ffmpeg -encoders` subprocess) fired once in a
+   full `-n auto` run that had field-drill load running beside it —
+   isolation-green, family fingerprint exact; raised 15→120 per the #24
+   single-firing precedent, with the honest note that 12 pure-CPU spinners
+   slowed the probe 3× without breaching (the field mix was heavier). Two
+   own-errors recorded: the drill ran concurrent with the definitive suite
+   (my load), and piping the suite through `tail` cost the tracebacks.
