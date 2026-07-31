@@ -111,7 +111,8 @@ def test_line_state_machine_answers_exactly_one_honest_state(
     """For every (base dialogue, translation row) world the state must be the
     documented one. When a translation is WRITTEN, hash agreement with the
     current base governs alone: match → ok, mismatch → 翻译过期 (orphaned
-    rows over a deleted/empty base included — DECISIONS #13 删台词遗译仍报
+    rows over a deleted/empty base included — DECISIONS `TRISURFACE-FIX #13`
+    删台词遗译仍报
     过期). Only with no usable translation does base emptiness decide
     missing vs not_needed.
 
