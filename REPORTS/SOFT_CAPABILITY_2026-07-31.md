@@ -134,6 +134,15 @@ CLAUDE.md 用裸「DECISIONS #33」给 ffmpeg 6.1.1 钉作证(那句"上一个�
 - XDG / `%APPDATA%` 配置位置;`--quiet`/`--verbose`;Ctrl-C 在 build 下仍抛栈
   (锁是干净释放的,只是观感)。
 
+**补记(2026-08-01):这张清单已被「文档收口波」关掉** ——
+见 `REPORTS/DOCS_CLOSEOUT_2026-08-01.md` 与 DECISIONS `DOCS-CLOSEOUT`。
+README 目录 + 命令表搬进 `docs/CLI.md`、v2.1 归档、STATE.md 两个 pending 用真
+run 数据落地(并修掉「由 CI 盖章」这句假话)、技能面四条(契约扩到全盘、
+每个技能补「什么时候不该用」、4 个孤儿技能进 §0、第三层 `references/` 首次落地)
+全部完成。**仅剩 XDG/`%APPDATA%` 继续留档不做**(维持本报告原判:迁移既有
+`~/.manju` 路径风险大于收益)。至于 Ctrl-C 抛栈:`REWORK-FREEDOM #1` 的实地
+复验推翻了这条——实测 rc=130、无栈、锁已释放,现在还会说清已产出的 take 保留。
+
 ## 七、验证
 
 - 新增 `tests/test_docs_reachability.py`(11 条)+ `tests/test_cli_conventions.py`

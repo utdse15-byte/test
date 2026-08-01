@@ -10,6 +10,16 @@ user_invocable: true
 
 Manju 引擎自己不看画面(§0 不含 LLM)——它跑得动的便宜检查先跑,视觉判断留给**你**。本技能给你专业场记级判据 + 严重度,让你把「看着像 AI 吗」变成**逐条可核、可下钩子的裁决**。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 当前 agent 没有视觉能力 | 先跑 `manju qc` 的机检层(A–J 里的 C 类判据),别猜画面 |
+| 已经判完了,现在要执行修复 | `repair-loop` |
+| 要给出 disposition 与修复路由(KEEP/REROLL…) | `review-take-and-route-repair` |
+
 ## 裁决 JSON 契约(agent 产出这个;`manju qc brief` 供帧+判据,`manju qc verdict` 收裁决)
 
 对**每一条发现**(不是每条判据都写,只写命中的)产出一个对象;一次判读产出一个数组:

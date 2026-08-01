@@ -43,6 +43,10 @@ user_invocable: false
 | QC 后逐项修 | `repair-loop` 修复闭环 |
 | 写/改一个技能 | `skill-authoring` 技能编写 |
 | 命令报错了 / 要按 code 分支 | `error-codes` 错误码词表 |
+| 下一镜要接住上一镜的真实结尾 | `continue-from-accepted-take` 续接程序 |
+| 把导演判断落成窄 patch | `direct-shot-source-patch` 导演落地 |
+| 看片判读 + 该留/该改/该重拍 | `review-take-and-route-repair` 评审路由 |
+| 对白本地化成另一种语言 | `localize-dialogue` 对白本地化 |
 
 技能是**建议性 craft**,只教你怎么产出专业(非业余)的画面/声音、该跑哪条 `manju` 命令;它们**不绕过、不改写**引擎真相(锁、哈希、只增语义照旧)。
 
@@ -250,49 +254,29 @@ git 在旁边是第二层保障:所有文本变更都有历史,任何时刻 `git
 
 失败时 stdout 仍是 JSON、退出码非 0(`{"error": "人话,几乎总带补救命令", "code": "unknown_shot"}`),成功与失败同一条解析路径。**`code` 多数时候是 `"error"`——那是「未分类」不是可分支类别**(约 275 个失败点仅 25 个带专门 code),看到它就读 `error` 文本。带专门 code 的失败按「改输入 / 修真相 / 停下来问人 / 等一下再试」分四类,词表与自动化循环写法见 `manju skills show error-codes`。
 
-## 命令速查表(§11)
+## 速查表在第三层(按需读,别背)
 
-| 命令 | 作用 |
-| --- | --- |
-| `manju new 名字 --vertical` | 新建竖屏项目(自动 git init) |
-| `manju status [--json]` | 接管入口:阶段、缺口、下一步、累计花费 |
-| `manju check` | schema + 引用 + 锁 校验(编辑后必跑) |
-| `manju import <files…>` | 登记素材:真实影音进 `media/imports/`(转码代理/缩略图/波形);文本 `.txt/.md` 改道进 `story/imports/<名>.md`(可改编的原稿),两者同样只增不覆盖 |
-| `manju appearances [--json]` | 出场表(只读):每个角色/场景/道具被哪些镜头引用(按序)+ 未引用的孤儿 + 镜头引用但 bible 缺失的条目 |
-| `manju tasks [--json] [-n 20]` | 运行账本(只读):最近生成任务的 provider/镜头/状态(succeeded/failed/moderation-rejected)/花费/失败原因 + 在飞任务 + 按 provider 与项目合计的花费 |
-| `manju build [--target proxy\|final\|exports\|qc] [--gen missing\|auto\|off] [--regen-stale] [--dry-run]` | 一键出片;`--dry-run` 先看清单和成本 |
-| `manju redo S002 [--candidates N] [--provider X] [--seed N]` | 显式重做某镜头 |
-| `manju select S002 take_03` | 选中某 take(或 `--file` 指人工素材) |
-| `manju lock / unlock <shot> <field>` | 上锁 / 解锁(**unlock 你不能调**) |
-| `manju qc / repair [--auto]` | 质检 / 修复(`--auto` 只做 auto-safe 项) |
-| `manju export --jianying/--capcut/--srt/--ttml/--otio/--edl/--fcpxml/--xmeml/--pullsheet` | 从编译时间线导出:剪映/CapCut 草稿、SRT/TTML 字幕、OTIO、EDL、FCPXML、XMEML(Premiere/Resolve)、拉片表(§14 兜底出口 final.mp4/SRT/OTIO 永在) |
-| `manju openclap/fcpxml/edl import-plan <file>` | 互换格式只读导入规划(plan-only,从不拷贝媒体、从不写项目、从不自动落轨);openclap 另有 `inspect`/`export`(.clap) |
-| `manju locale add <lang> / status` | 多语言本地化叠层(WP4):本地化文本不进画面哈希,视频段共享,只有配音/字幕随语言变 |
-| `manju board` | 生成静态 HTML 评审板 |
-| `manju transcribe <media> [--from-srt/--text]` | 导入真人素材转录:云 ASR manifest 或人工输入 → SRT(M4 插件位) |
-| `manju voice <shot>` | 为镜头重新配音(只增;最新的 voice_take 生效;stale 配音 build 只提示不重做;免费的 Edge TTS manifest 开箱即用,词级字幕自动跟随) |
-| `manju pack [--bagit] / unpack` | 单文件归档往返(`.manjupkg`);`--bagit` 写 RFC 8493 序列化 BagIt 包(data/ 载荷 + sha256 清单,unpack/fixity 自动识别) |
-| `manju migrate inspect/plan/apply/downgrade` | 有理数编辑帧率迁移(edit-rate migration):体检 / 计划 / 应用 / 降级 |
-| `manju explain [--json]` | 只读解释:下次 build 会做什么、为什么(哈希证据) |
-| `manju events` | 看协作日志 |
+正文只放规矩;两张查表挪进了 `skills/manju/references/`——渐进式披露的第三层,
+指向了才加载,不占每次全量注入的预算:
+
+- **命令速查** → `references/commands.md`(常用命令 × 一句话作用)。确切参数以
+  `manju <命令> -h` 为准;按任务找命令用 `manju help-workflow`;全部 90+ 条见
+  仓库 `docs/CLI.md`。
+- **术语速查** → `references/glossary.md`(白话 ↔ 内部词,和 GUI 的术语表同源)。
+  看不懂某个内部词就查它,别自己发明术语。
+
+两条路径都相对**本文件所在目录**;不确定它在哪就跑
+`manju skills show manju --json`,里面的 `path` 是绝对路径,同级的
+`references/` 就是第三层。
+
+**但有一类东西不能只留在第三层:你不知道它存在,就永远不会去查。** 所以这些
+出口在这里点名(用法仍在 `references/commands.md` 与 `manju <命令> -h`):
+
+- **导出/交付**:`manju export` 的 `--jianying` `--capcut` `--srt` `--ttml`
+  `--otio` `--edl` `--fcpxml` `--xmeml` `--pullsheet`。
+- **互换只读规划**:`manju openclap/fcpxml/edl import-plan <file>`(只规划,
+  从不拷媒体、从不写项目)。
+- **归档与迁移**:`manju pack --bagit` / `unpack`;`manju migrate`
+  (有理数编辑帧率);`manju locale add|status`(多语言叠层)。
 
 一句话记牢:**开工三步 → 改文件 → check → (命中 ask_before 就 dry-run + 问)→ build → 阶段 commit**。锁与哈希保证人机互不践踏,你只管把创作做好,把决策交给人。
-
-## 术语速查(§10 白话 ↔ 内部,和 GUI 的术语表同源)
-
-跟人沟通时用左列白话;跟引擎打交道时用右列内部词/命令。
-
-| 白话 | 内部 / 命令 | 含义 |
-| --- | --- | --- |
-| 生成来源 | provider / routing | 这条画面/配音由哪个 AI 模型或服务做出来 |
-| 版本 / 这一条 | take_NN / final_vN | 同一镜头反复生成的候选、只增不改的成片版本 |
-| 待更新 / 需重做 | stale | 上游改过、这条还是旧的;默认不动,选择仍生效(§7) |
-| 兜底 / 备用方案 | fallback / 降级链 | 首选失败时逐级退到断网也能出的本地能力(§8) |
-| 智能派单 | routing.yaml / `manju route explain` | 按 draft/review/key_shot 分层自动派 provider |
-| 制作台账 | `manju tasks` | 每笔生成的 provider/状态/花费/失败原因 |
-| 配套信息 | sidecar / packaging | 素材旁的参数说明;封面/预告/片头尾/信息卡 |
-| 成片清单 / 配方单 | manifest / `manju exports` | 9 项交付物 × 上新/待更新/缺失/有问题/待人工确认 |
-| 质量检查 / 质检 | `manju qc` | 存在/技术/内容三层校验 → `reports/qc.*` |
-| 修复方案 | repair_plan.yaml / `manju repair` | QC 发现 → 逐项修复 op(retime/extend/trim/inout/croppad/voice) |
-
-看不懂某个内部词就查这张表或 `manju skills show <相关技能>`;别自己发明术语。

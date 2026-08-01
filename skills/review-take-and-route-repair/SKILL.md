@@ -12,6 +12,16 @@ user_invocable: true
 是**证据**(verdict v2 追加),裁决(assurance)由引擎的纯函数算——你不写结论,
 只写观察 + 决策建议。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 还没有 qc brief 的 packet(没有绑定的字节可评) | 先 `manju qc brief` |
+| 已经判完了,现在要真的动手修 | `repair-loop` |
+| 要评的是整片而不是某一条 take | `manju exports`、`manju compare` |
+
 ## 输入
 
 - `manju qc brief --json` 的 packet(packet_id/media sha/spec_hash/expectation_digest/frames);

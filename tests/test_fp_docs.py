@@ -2,9 +2,13 @@
 
 Two guarantees:
 
-  1. Every ``manju <cmd>`` written in a README command-table row resolves to a
-     real command or sub-app in the live typer registry. A renamed/removed
-     command whose README row was not updated fails RED here.
+  1. Every ``manju <cmd>`` written in a command-table row resolves to a real
+     command or sub-app in the live typer registry. A renamed/removed command
+     whose row was not updated fails RED here. The table lived in README.md
+     until 2026-08-01, when the 文档收口波 moved it to ``docs/CLI.md`` (90 rows
+     of AI-facing reference in front of the owner's first page). The scan
+     follows the content: it now covers BOTH files, so a table split across
+     them — or moved again — stays enforced.
 
   2. The §8 / 14_21-closeout corrected claims stay true: the 更正块 heading is
      present in the completion report, the README toolmap row calls the tool a
@@ -27,6 +31,10 @@ from manju.cli import app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "README.md"
+CLI_DOC = REPO_ROOT / "docs" / "CLI.md"
+# Every doc that may carry a `manju …` command table. Adding a file here only
+# ever widens what must resolve.
+COMMAND_TABLE_DOCS = (README, CLI_DOC)
 # UX wave 2 item 13: the closed AI_IDE_* era lives under REPORTS/archive/.
 COMPLETION_19 = REPO_ROOT / "REPORTS" / "archive" / "AI_IDE_19_COMPLETION.md"
 
@@ -105,31 +113,32 @@ def _resolve_segment(tokens: list[str], prev_group: str | None,
     return True, resolved_group or prev_group, "ok"
 
 
-def _iter_readme_command_spans() -> list[str]:
+def _iter_doc_command_spans() -> list[str]:
     spans: list[str] = []
-    for line in README.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("|") or "`" not in line:
-            continue
-        for span in _SPAN.findall(line):
-            if _MANJU.match(span.strip()):
-                spans.append(span.strip())
+    for doc in COMMAND_TABLE_DOCS:
+        for line in doc.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("|") or "`" not in line:
+                continue
+            for span in _SPAN.findall(line):
+                if _MANJU.match(span.strip()):
+                    spans.append(span.strip())
     return spans
 
 
-# ------------------------------------------------------- README command checks
+# ---------------------------------------------------------- command checks
 
 
-def test_readme_command_spans_are_found():
+def test_command_table_spans_are_found():
     """The parser actually matches the command table (guards against a silent
     zero-match that would make the resolution test vacuously pass)."""
-    assert len(_iter_readme_command_spans()) >= 50
+    assert len(_iter_doc_command_spans()) >= 50
 
 
-def test_every_readme_command_resolves():
-    """Every `manju <cmd>` in the command table resolves to a real command."""
+def test_every_documented_command_resolves():
+    """Every `manju <cmd>` in a command table resolves to a real command."""
     top_leaf, groups = _registry_view()
     failures: list[str] = []
-    for span in _iter_readme_command_spans():
+    for span in _iter_doc_command_spans():
         body = _strip_placeholders(_MANJU.match(span).group(1))
         prev_group: str | None = None
         for seg in re.split(r"\s+/\s+", body):
@@ -140,9 +149,9 @@ def test_every_readme_command_resolves():
             if not ok:
                 failures.append(f"`{span}` -> {reason}")
     assert not failures, (
-        "README command-table row(s) reference commands that no longer exist "
-        "(rename/remove the row, or add a prose mention to ALLOWLIST):\n  "
-        + "\n  ".join(failures)
+        "command-table row(s) in README.md/docs/CLI.md reference commands that "
+        "no longer exist (rename/remove the row, or add a prose mention to "
+        "ALLOWLIST):\n  " + "\n  ".join(failures)
     )
 
 
@@ -155,14 +164,18 @@ def test_completion_report_has_correction_block_heading():
     assert "更正块" in text, "AI_IDE_19_COMPLETION.md lost its 更正块 heading"
 
 
-def test_readme_toolmap_row_says_resolver():
+def test_toolmap_row_says_resolver():
     """Claim 5: the toolmap row calls `manju tool` a whitelist RESOLVER (it
-    resolves/validates intent ops, it never dispatches/invokes executors)."""
+    resolves/validates intent ops, it never dispatches/invokes executors).
+    Scans wherever the command table lives (README until 2026-08-01, then
+    docs/CLI.md) — the claim is about the row, not about the file."""
     toolmap_rows = [
-        line for line in README.read_text(encoding="utf-8").splitlines()
+        line
+        for doc in COMMAND_TABLE_DOCS
+        for line in doc.read_text(encoding="utf-8").splitlines()
         if line.startswith("|") and "manju tool" in line
     ]
-    assert toolmap_rows, "could not find the README toolmap row (mentions `manju tool`)"
+    assert toolmap_rows, "could not find the toolmap row (mentions `manju tool`)"
     assert any("resolver" in line for line in toolmap_rows), (
         "the toolmap row must describe the tool as a 'resolver', not a dispatcher")
 

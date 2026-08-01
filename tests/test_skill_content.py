@@ -1,13 +1,27 @@
 """Round V: the SHIPPED skill library's content contract (goal item 1).
 
 test_skills.py proves the LOADER (three-tier resolution, tolerant frontmatter,
-index). This file proves the fourteen bundled skills the taxonomy calls for are
-actually PRESENT and well-formed craft: every taxonomy id loads, frontmatter is
-complete and within the Agent-Skills limits, bodies stay under 500 lines, the
-index an agent sees carries a 中文 when_to_use for each, every skill declares a
-reference/task type tag, the always-injected core `manju` protocol stays tight
-(<300 lines), and — the load-bearing invariant — no skill body smuggles a
-vendored LLM call into a system whose engine is LLM-free (§0)."""
+index). This file proves the bundled skills are actually PRESENT and well-formed
+craft: every taxonomy id loads, frontmatter is complete and within the
+Agent-Skills limits, bodies stay under 500 lines, the index an agent sees
+carries a 中文 when_to_use for each, every skill declares a reference/task type
+tag, the always-injected core `manju` protocol stays tight (<300 lines), and —
+the load-bearing invariant — no skill body smuggles a vendored LLM call into a
+system whose engine is LLM-free (§0).
+
+文档收口波(2026-08-01)扩了两处,都出自《软能力审计》§六的留档:
+
+* **契约的作用域从 TAXONOMY_IDS 扩到盘上每一个技能。** taxonomy 是"至少要有
+  这些",不是"只管这些";超出它的 5 个技能(`error-codes`、
+  `continue-from-accepted-take`、`direct-shot-source-patch`、
+  `localize-dialogue`、`review-take-and-route-repair`)此前只被"frontmatter
+  能解析吗"两条覆盖——名字长度、类型标签、正文行数、LLM 签名一概没查。
+* **每个可选技能必须写「什么时候不该用」。** 19 个技能 0 个有。技能库最贵的
+  失败不是漏触发,是**误触发**:一个技能被加载进不该它管的场景,agent 照着
+  它的决策树走完全程。`when_to_use` 只说"何时用",反面得自己写清楚,而且要
+  指出该去哪(另一个技能 id 或一条 `manju` 命令),否则只是废话。
+  核心 `manju` 协议豁免:它 `auto: true` 全量注入,从来不被"选择",不存在
+  "别加载它"这个决定(下面有一条正面钉守着这个豁免不被滥用)。"""
 
 from __future__ import annotations
 
@@ -64,6 +78,14 @@ _LLM_CALL_SIGNATURES = (
 
 _CJK = re.compile(r"[一-鿿]")
 
+SKILLS_ROOT = Path(__file__).resolve().parent.parent / "skills"
+# Everything Manju SHIPS, not just the required minimum. The taxonomy stays the
+# presence contract; the content contract below applies to whatever is on disk.
+ALL_SKILL_IDS = sorted(p.parent.name for p in SKILLS_ROOT.glob("*/SKILL.md"))
+SELECTABLE_IDS = [sid for sid in ALL_SKILL_IDS if sid != CORE_SKILL_ID]
+
+NOT_USE_HEADING = "什么时候不该用"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_user_tier(monkeypatch, tmp_path):
@@ -104,7 +126,7 @@ def test_core_skill_listed_first():
 # ------------------------------------------------------- frontmatter contract
 
 
-@pytest.mark.parametrize("sid", sorted(TAXONOMY_IDS))
+@pytest.mark.parametrize("sid", ALL_SKILL_IDS)
 def test_frontmatter_complete_and_within_limits(sid):
     info = load_skill(None, sid)
     assert info.name and info.name.strip(), f"{sid}: empty name"
@@ -122,7 +144,7 @@ def test_frontmatter_complete_and_within_limits(sid):
     assert _CJK.search(info.when_to_use), f"{sid}: when_to_use not Chinese"
 
 
-@pytest.mark.parametrize("sid", sorted(TAXONOMY_IDS))
+@pytest.mark.parametrize("sid", ALL_SKILL_IDS)
 def test_reference_or_task_type_tag_present(sid):
     info = load_skill(None, sid)
     assert "reference" in info.tags or "task" in info.tags, \
@@ -132,7 +154,7 @@ def test_reference_or_task_type_tag_present(sid):
 # ------------------------------------------------------------- body limits
 
 
-@pytest.mark.parametrize("sid", sorted(TAXONOMY_IDS))
+@pytest.mark.parametrize("sid", ALL_SKILL_IDS)
 def test_body_under_500_lines(sid):
     n = len(_body(load_skill(None, sid)).splitlines())
     assert n < 500, f"{sid}: body {n} lines (progressive disclosure: <500, push depth to references/)"
@@ -161,7 +183,7 @@ def test_index_lists_every_skill_with_chinese_when_to_use():
 # ------------------------------------------------- the engine stays LLM-free
 
 
-@pytest.mark.parametrize("sid", sorted(TAXONOMY_IDS))
+@pytest.mark.parametrize("sid", ALL_SKILL_IDS)
 def test_no_skill_body_vendors_an_llm_call(sid):
     body = skill_text(None, sid).lower()
     hits = [sig for sig in _LLM_CALL_SIGNATURES if sig in body]
@@ -169,6 +191,70 @@ def test_no_skill_body_vendors_an_llm_call(sid):
         f"{sid}: body contains a vendored LLM-call signature {hits} — the Manju "
         f"engine never calls an LLM (§0); intelligence comes from the driving agent."
     )
+
+
+# ------------------------------------------- 什么时候不该用(误触发的解药)
+
+
+@pytest.mark.parametrize("sid", SELECTABLE_IDS)
+def test_every_selectable_skill_says_when_not_to_use(sid):
+    """A skill that only says when to USE it over-triggers: the agent loads it
+    into a neighbouring scenario and follows its decision tree to the end.
+    Every selectable skill must state its negative space."""
+    body = skill_text(None, sid)
+    assert NOT_USE_HEADING in body, (
+        f"{sid}: no 「{NOT_USE_HEADING}」 section — over-triggering has no brake")
+
+
+@pytest.mark.parametrize("sid", SELECTABLE_IDS)
+def test_the_negative_section_routes_somewhere_real(sid):
+    """"别用我" without "去用那个" just strands the agent. The section must name
+    another shipped skill id or a real `manju` command."""
+    body = skill_text(None, sid)
+    assert NOT_USE_HEADING in body, f"{sid}: 先补上「{NOT_USE_HEADING}」小节"
+    start = body.index(NOT_USE_HEADING)
+    nxt = body.find("\n## ", start)
+    section = body[start:nxt if nxt != -1 else len(body)]
+    others = [o for o in ALL_SKILL_IDS if o != sid and o in section]
+    assert others or "manju " in section, (
+        f"{sid}: its 「{NOT_USE_HEADING}」 section points nowhere — name the "
+        f"skill or the command that DOES cover the case")
+
+
+def test_the_core_protocols_exemption_is_earned():
+    """The exemption above is not a hole: the core protocol is injected in FULL
+    on every run (`auto: true`), so it is never *chosen* — there is no
+    "don't load this one" decision for a negative section to inform. If it ever
+    stops being auto-injected, this test goes red and the exemption goes away."""
+    text = (SKILLS_ROOT / CORE_SKILL_ID / "SKILL.md").read_text(encoding="utf-8")
+    front = text.split("---")[1]
+    assert re.search(r"^auto:\s*true\s*$", front, re.M), (
+        "the core skill is no longer auto-injected — it must now declare "
+        f"「{NOT_USE_HEADING}」 like every other skill")
+
+
+# ------------------------------------- 索引可达性 + 渐进式披露的第三层
+
+
+def test_the_core_index_table_lists_every_selectable_skill():
+    """§0's table is how a cold session learns a skill EXISTS. Four skills
+    (`continue-from-accepted-take`, `direct-shot-source-patch`,
+    `localize-dialogue`, `review-take-and-route-repair`) shipped without ever
+    being listed there — reachable only by someone who already ran
+    `manju skills`."""
+    core = (SKILLS_ROOT / CORE_SKILL_ID / "SKILL.md").read_text(encoding="utf-8")
+    missing = [sid for sid in SELECTABLE_IDS if f"`{sid}`" not in core]
+    assert not missing, f"核心协议 §0 的技能表漏了: {missing}"
+
+
+@pytest.mark.parametrize("sid", ALL_SKILL_IDS)
+def test_every_referenced_reference_file_exists(sid):
+    """Layer 3 of progressive disclosure is a PATH the agent opens — a pointer
+    to a file that is not there costs a failed read and the depth is lost."""
+    body = skill_text(None, sid)
+    for rel in set(re.findall(r"references/[\w./-]+\.md", body)):
+        assert (SKILLS_ROOT / sid / rel).is_file(), \
+            f"{sid}: 正文指向 {rel},但文件不存在"
 
 
 # --------------------------------------- every skill on disk, not just taxonomy

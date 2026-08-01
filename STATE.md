@@ -4,9 +4,17 @@ Small, active-only. Closed work lives in REPORTS/ and DECISIONS.md — do not
 accumulate history here. (No test inspects this file's text; it is a human
 note, not a contract.)
 
-Current head: `claude/ci-validation-improvements-rsmjpf`
-Last full-green Windows SHA: pending — see REPORTS/LAST_GREEN.yaml (CI-stamped)
-Last full-green Ubuntu SHA: pending — see REPORTS/LAST_GREEN.yaml (CI-stamped)
+Default branch: `claude/fable-opus-task-division-wv97i6`
+Last full-green Windows SHA: `efd7783` — windows-ci run 30704812522 (2026-08-01)
+Last full-green Ubuntu SHA: `efd7783` — ci run 30704812542 (same commit, same day)
+
+Both greens are on the SAME commit, so REPORTS/LAST_GREEN.yaml is stamped for
+the first time (it sat at `pending` since the seed, because nothing actually
+ran the generator — no workflow calls it; a maintainer does, by hand). `efd7783`
+is the PR #52 head; the merge commit `c7889b8` has a byte-identical tree
+(`aa87368`), so the evidence covers the default branch as it stands.
+Test counts stay `null` there: nobody read them off the runs, and a plausible
+number is worse than an honest blank.
 
 ## Validation model (which gate runs when)
 - Every commit / PR head: compile + lint (ci.yml `static`) and the full

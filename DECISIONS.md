@@ -78,6 +78,14 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 
 | 条目 | date | summary | 点名模块 / 命令 |
 |------|------|---------|------------------|
+| `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
+| `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
+| `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
+| `DOCS-CLOSEOUT #4` | 2026-08-01 | 技能内容契约从 taxonomy 扩到盘上全部 19 个;5 个技能此前只被两条覆盖 | tests/test_skill_content.py |
+| `DOCS-CLOSEOUT #5` | 2026-08-01 | 每个可选技能必须写「什么时候不该用」并指出去处;核心协议因 auto 注入豁免(正面钉守着) | skills/*/SKILL.md, tests/test_skill_content.py |
+| `DOCS-CLOSEOUT #6` | 2026-08-01 | 渐进式披露第三层首次落地:核心协议两张查表进 references/,298→282 行腾出余量 | skills/manju/references/, skills/skill-authoring/SKILL.md |
+| `DOCS-CLOSEOUT #7` | 2026-08-01 | 搬家代价被既有钉当场抓住:注入面必须留"存在性"(出口格式点名),细节才可下沉 | skills/manju/SKILL.md, tests/test_fp_polish.py |
+| `DOCS-CLOSEOUT #8` | 2026-08-01 | 仍不做:XDG/%APPDATA% 迁移(维持 SOFT-CAP 原判,风险大于收益) | — |
 | `CUT-MEMBERSHIP #1` | 2026-08-01 | 移出不是删除:index order 就是这一刀,文件永远留盘,随时放回 | core/writes.py, shots/index.yaml |
 | `CUT-MEMBERSHIP #2` | 2026-08-01 | set_cut_order 独立写入器;permute_index 排列不变量不动;GUI 子集必须带 CAS 令牌 | core/writes.py, gui/server.py |
 | `CUT-MEMBERSHIP #3` | 2026-08-01 | CLI `manju cut` / `cut drop` / `cut restore` + 剪辑台 ✕移出与放回托盘 | cli.py, gui/edit.py |
@@ -3347,6 +3355,62 @@ understood at a glance, or dropped something quietly.
     version, which is what cost the day, so it now names 6.1.1, the one-line
     Ubuntu install, and the `aost#0:1/aac` signature to recognise — turning a
     day-long dead end into one `ffmpeg -version`.
+
+## DOCS-CLOSEOUT (2026-08-01)
+
+《软能力审计》(`REPORTS/SOFT_CAPABILITY_2026-07-31.md` §六)结尾留了一张
+「明知而未做」清单。留档不是免责——本段把它关掉,并记下为什么每条都不是
+排版洁癖,而是**文档自己说了假话或压根找不到**。报告:
+`REPORTS/DOCS_CLOSEOUT_2026-08-01.md`。
+
+1. **README 的读者被两拨人抢。** 583 行里有 90 行是命令参考表,而那张表的
+   真实读者是接手的 AI 会话;店主进门第一页却要先滚过它。表整体搬进
+   `docs/CLI.md`,README 头部给一份**每个 `##` 小节都在**的目录(锚点由测试
+   与 README 共用同一个 slug 函数生成,按构造一致),正文从 48.3k 字符降到
+   27.4k。**扫描跟着内容走**:`test_fp_docs` 原本只扫 README,现在扫
+   README + docs/CLI.md 的并集——同样的断言,更宽的输入,不是放松。
+2. **v2.1 与 v2.2 并排放着,谁也没说哪份作数。** 两者约 82% 重复,按文件名
+   排序先读到的是过时的那份。v2.1 进 `docs/archive/`,开头写明被 v2.2 取代、
+   别拿它改代码;README 的两处链接改指现行版。历史不删,只降级
+   (与 `REPORTS/archive/` 同一处置)。
+3. **`LAST_GREEN.yaml` 自称 "written by CI",而没有任何 workflow 调用它的
+   生成器。** 两个 `pending` 因此不是"还没绿",是"没人盖章"——读它的人会
+   以为门禁从没双绿过。修法是**把话说对**(维护者手动跑,文件头明说)而不是
+   为个人软件接一条跨 workflow 的自动流水;并用真数据首次盖章:`efd7783`
+   在 windows run 30704812522 与 ubuntu run 30704812542 上双绿,合并后的
+   `c7889b8` 树字节相同(`aa87368`)。测试数量没人读过就留 `null`——一个
+   看起来合理的数字比空白更坏。新钉是双向的:`result: success` 必须带得出
+   40 位 SHA + 该平台的 run id;文件若再自称 CI 盖章,workflow 里就必须真有
+   那一步。
+4. **技能内容契约的作用域是错的。** `TAXONOMY_IDS` 是"至少要有这些",却被
+   当成"只管这些":盘上 19 个技能里有 5 个只被"frontmatter 能解析吗"两条
+   覆盖,名字长度、类型标签、正文行数、LLM 签名一概没查。契约改为覆盖盘上
+   每一个技能(taxonomy 继续管"必须存在")。实测这 5 个本来就合规——但
+   在此之前,没人知道。
+5. **技能库最贵的失败是误触发,而 19 个技能 0 个写了「什么时候不该用」。**
+   `when_to_use` 只说何时用;被拉进相邻场景的 agent 会照着决策树一路走完。
+   每个可选技能补一节,且**必须指出去处**(另一个技能 id 或一条 `manju`
+   命令),否则只是废话——这条也钉住了。核心 `manju` 协议豁免:它
+   `auto: true` 全量注入、从不被"选择",不存在"别加载它"这个决定;豁免本身
+   由一条正面钉守着(哪天它不再自动注入,测试立刻要求它补上)。
+6. **渐进式披露的第三层,仓库零实现——而核心协议正卡在 298/300 行。**
+   两张查表(命令速查、术语速查)进 `skills/manju/references/`,正文降到
+   268 行(第 7 条补回出口点名后 **282 行**,仍留 18 行余量),腾出的是
+   **未来每一次修改的余量**。路径相对 SKILL.md 目录,
+   agent 拿绝对路径靠 `manju skills show <id> --json` 的 `path`;新钉检查
+   每个被指向的 reference 文件真的存在(指向不存在的文件 = 白花一次读取,
+   深度还丢了)。顺手对齐 `localize-dialogue` 的类型字段(task 标签却写着
+   `auto: true`)。
+7. **搬家的代价被既有钉当场抓住,并且它是对的。** 定局全量里
+   `test_fp_polish::test_core_skill_cheat_sheet_documents_the_audited_surfaces`
+   红了:它钉的是「**只读注入面**的 agent 也必须知道 `--xmeml`/`--ttml`/
+   `--bagit`/`import-plan`/`migrate`/`locale` 这些出口存在」(UX 审计 F37 的
+   遗产),而这些 token 恰好随命令表下沉到了 references/。**没有放宽它去扫
+   references**——那会让钉子变空:第三层按定义不是默认读的。正确的分层是
+   **存在性留在注入面、用法沉到第三层**,于是协议里补一段点名的出口清单
+   (4 行,不是 27 行)。教训一句话:**你不知道它存在,就永远不会去查。**
+8. **清单上仍剩一条,继续留档:** XDG / `%APPDATA%` 配置位置。要迁移既有
+   `~/.manju` 路径,风险大于收益(`SOFT-CAP` 已判过一次),不做。
 
 ## CUT-MEMBERSHIP (2026-08-01)
 

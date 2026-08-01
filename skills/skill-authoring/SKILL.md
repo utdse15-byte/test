@@ -11,6 +11,16 @@ disable-model-invocation: true
 
 技能库是 Manju 的**能力表面**(§0:引擎不含 LLM,craft 全靠技能到达 agent)。写技能不是写文档——**文档给规则,技能告诉 agent 何时弯规则**。本技能是加/改一个技能的逐步程序 + 合规红线。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 只是想用某个技能 | `manju skills`(索引)、`manju skills show <id>`(全文) |
+| 要写的是给店主看的文档 | `docs/` 或 README —— 文档给规则,技能教何时弯规则 |
+| 要定的是引擎侧的规矩 / 决定 | CLAUDE.md 常备事实 + DECISIONS.md 条目 |
+
 ## 格式契约(照 core/skills.py 的解析 + anthropics/skills 规范)
 
 一个技能 = `skills/<id>/SKILL.md`,YAML frontmatter + markdown 正文:
@@ -27,7 +37,7 @@ disable-model-invocation: true
 
 1. **元数据**(name+description,~100 词)——每个已装技能都预载进系统 prompt,让 agent 知道它存在。
 2. **SKILL.md 正文**——只在触发时加载(<500 行)。
-3. **`references/`/`scripts/`**——正文指向才加载;script 是**执行**不是读入(只有输出耗 token)。
+3. **`references/`/`scripts/`**——正文指向才加载;script 是**执行**不是读入(只有输出耗 token)。仓库里第一处落地是核心协议自己:`skills/manju/references/{commands,glossary}.md`(2026-08-01,正文 298→268 行,腾出 <300 行硬限的余量)。**路径相对 SKILL.md 所在目录**,agent 拿绝对路径靠 `manju skills show <id> --json` 的 `path` 字段;`test_skill_content.py` 会检查每个被指向的 reference 文件真的存在。
 
 `manju auto` 只全量注入核心 `manju` 协议 + 每个其他技能的一行索引;全文靠 `manju skills show <id>` 按需取。**技能描述共享 ~1% 上下文预算,溢出时最少用的先被丢**——描述要紧、要互相区分。
 
@@ -65,6 +75,7 @@ disable-model-invocation: true
 [ ] name ≤64、无 claude/anthropic、kebab?
 [ ] description 非空、≤1024、含中文触发词?
 [ ] when_to_use 一行中文、非空(它进索引)?
+[ ] 有「什么时候不该用」小节,且**指了去处**(另一个技能 id 或一条 manju 命令)?
 [ ] tags 含 reference 或 task 类型标签?
 [ ] 正文 <500 行?深度进 references/?
 [ ] core/skills.list_skills 能加载、索引里有它、when_to_use 是中文?
@@ -80,6 +91,7 @@ disable-model-invocation: true
 | 只堆规则、无决策树/例 | 变成文档,eval 不抬升 → 加 before/after |
 | 描述空泛无触发词 | 漏触发;写 pushy、塞中文词 |
 | when_to_use 空 | 索引里没「何时用」→ agent 不知何时加载;test_skill_content 挡 |
+| 只写「何时用」不写「何时不该用」 | **误触发**:被拉进相邻场景,agent 照决策树走完全程;test_skill_content 挡(核心协议除外——它 `auto: true` 全量注入,从不被选择) |
 | 正文 >500 行 | 撑 prompt;深度挪 references/ |
 | 让技能里出现引擎调 LLM | 违反 §0;test 扫代码签名挡 |
 | 技能长期不触发 | 删掉(卫生) |
