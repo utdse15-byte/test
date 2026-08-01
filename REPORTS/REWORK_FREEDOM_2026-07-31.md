@@ -119,3 +119,57 @@ QC   errors=0 warnings=11 可行动提示=16(manju qc 看详情)
 - 现场复验:横屏演练场 `qc` 印「16 可行动提示」、`status` 印
   「可行动提示=16」;Ctrl-C 实测 rc=130 且印出取消话术。
 - 全量套件见提交记录。
+
+---
+
+# 后半程:H–K 组补测(同一演练场,续)
+
+## H 发布哪一版
+
+- **旧成片全部在盘上**(只增不改),而"发哪一版"由基线决定:
+  `manju exports --final final_v3 --approve-baseline` 这条路是通的。
+- 第一次被**正确拒绝**:`approval blocked: CURRENT_FINAL_STALE[final] —
+  resolve them, or pass --accept-known-risk (human-only)`。既不让人误发过期
+  版本,又当场给出人类专用的越权开关。
+- 带 `--accept-known-risk` 后放行,并把风险记进事件:
+  `⚠ 已接受风险 known blockers: CURRENT_FINAL_STALE`,基线随即指向 v3。
+  **这是"自由但诚实"的范本**:不拦死,但让你知道自己在做什么、并留档。
+- `gc` 设计上安全:`imports/` 与 `final/` 永不触碰,`--hard` 只清未选用的
+  take(且限交互式终端)。
+
+## I 多语言返工
+
+`locale add en` 之后想撤 —— 没有 `locale remove` 命令,但**直接删
+`locales/en/` 目录**干净利落:`check` 绿,`locale status` 如实回到
+「no locales — manju locale add en」。文本即真相,文件系统就是接口。
+
+## J 「我改了台词,片子怎么没变?」—— 链条是诚实的(我的误报已验伪)
+
+这是店主最可能误判为 bug 的一幕,值得写清楚:
+
+1. 改 `shots/S001.yaml` 的 `dialogue.text` → `manju build`
+2. **成片和字幕都还是旧词。** 我第一反应是"导出中心报『上新』是虚报"。
+3. 查证结果:**不是虚报,是诚实。** 字幕跟的是**真实语音的对齐**
+   (compiler:「captions snap to real speech」),而配音是 stale 的旧音频 ——
+   音频里说的就是旧词,字幕如实显示旧词才对。若字幕擅自显示新词,反而会与
+   耳朵听到的不符。
+4. 而 status 早就点名了:`配音 stale=1` + 待办「S001 配音:manju voice S001」。
+5. 决定性验证:`manju voice S001 --yes && manju build` → 时间线字幕变成
+   「返工之后的新台词。」,`captions.srt` 同步跟上。
+
+**结论:无缺陷。** 改词后要重配音才落地,这是"字幕必须与音频一致"的必然
+推论,而不是遗漏;产品也在 status 里给了确切的下一步。
+
+## K 其它
+
+- **锁定内容的正规改动通道**:`manju propose` 写提案,与 MCP 面共用同一套
+  编号/占位(O_EXCL 原子申领),锁不许绕但有正门。
+- **做 A/B 两个版本**:整个 `.manju` 目录直接 `cp -r` 即得独立副本,
+  `check` 绿、`status` 正常(副本沿用原名,想改名改 `project.yaml` 即可)。
+
+## 又一次"验证挡住误报"(第三次,累计留档)
+
+本轮我两次差点报错:①"改画幅零提示"——实为 QC 早已逐镜写好、只是级别是
+info(缺陷因此缩小为"看不见");②"导出中心虚报上新"——实为字幕跟音频的
+正确设计。两次都是**先复现再下结论**挡住的。加上软能力波里"NO_COLOR 断言
+写错"那次,一天之内三次;这条流程纪律的价值已经不需要再论证了。
