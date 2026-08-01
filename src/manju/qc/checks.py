@@ -78,6 +78,32 @@ class QCReport:
         self.items.append(QCItem(*args, **kwargs))
 
 
+def actionable_notes(items) -> int:
+    """返工自由度波 (2026-07-31): how many `info` findings carry a concrete
+    next command.
+
+    QC files real advice at `info` — the aspect-change advisory
+    ("take resolution 1080x1920 differs from project 1920x1080", with the
+    exact `manju repair --op croppad …` to run) is the case that started
+    this: every surface said 完成 ✅ while 13 shots' worth of actionable
+    advice sat unread in reports/qc.md. Counting ALL info would be noise
+    (the per-shot "mid-point frame for visual review" bookkeeping lines are
+    info too), so the discriminator is a non-empty ``suggestion`` — advice
+    the owner can act on. Accepts QCItem objects (the CLI holds these) and
+    plain dicts (status reads qc.json), so the two surfaces cannot drift."""
+    total = 0
+    for item in items or ():
+        if isinstance(item, dict):
+            level = item.get("level")
+            suggestion = item.get("suggestion") or ""
+        else:
+            level = getattr(item, "level", None)
+            suggestion = getattr(item, "suggestion", "") or ""
+        if level == "info" and suggestion.strip():
+            total += 1
+    return total
+
+
 # --------------------------------------------------------------------- probe
 
 

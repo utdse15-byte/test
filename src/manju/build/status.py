@@ -393,10 +393,16 @@ def project_status(project: Project, *, statuses: Any = None,
         try:
             qc_data = json.loads(qc_path.read_text(encoding="utf-8"))
             items = qc_data.get("items", [])
+            from ..qc.checks import actionable_notes
+
             qc_summary = {
                 "ok": qc_data.get("ok"),
                 "errors": sum(1 for i in items if i.get("level") == "error"),
                 "warnings": sum(1 for i in items if i.get("level") == "warn"),
+                # 返工自由度波: info findings that carry a concrete command
+                # (aspect re-author, audio beds…). Two numbers used to hide
+                # them entirely behind a green 完成 ✅.
+                "notes": actionable_notes(items),
             }
         except (ValueError, OSError):
             qc_summary = {"ok": None, "note": "qc.json unreadable"}

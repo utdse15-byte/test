@@ -518,6 +518,20 @@ def _display_path(project: Project, path: Path) -> str:
         return str(Path(path).resolve())
 
 
+def _interrupted_message(verb: str) -> str:
+    """返工自由度波 (2026-07-31): the ONE thing Ctrl-C says.
+
+    Interrupting a long build measured clean — rc=130, no traceback, locks
+    released, `manju check` green — but printed NOTHING, so the owner who
+    bailed out could not tell whether finished takes survived or the run had
+    to start over. The engine's own cancel path already words this well
+    ("已取消:N/M …已产出的 take 不受影响"); SIGINT just never reached it.
+    One composer so build/redo/voice cannot drift apart."""
+    return (f"已取消 {verb}(Ctrl-C)—— 已经产出的 take 与成片都保留着"
+            f"(§3 只增不改),真相文本没有被改坏。接着干:manju {verb}"
+            f";先看看现在到哪了:manju status")
+
+
 class _ProgressReporter:
     """In-band progress for the multi-minute builds (软能力波三, 2026-07-31).
 
@@ -951,7 +965,10 @@ def status(as_json: bool = typer.Option(False, "--json")):
     if info.get("latest_final_note"):
         typer.echo(f"  注  {info['latest_final_note']}")
     if info["qc"]:
-        typer.echo(f"QC   errors={info['qc'].get('errors')} warnings={info['qc'].get('warnings')}")
+        _qc_notes = info["qc"].get("notes")
+        typer.echo(
+            f"QC   errors={info['qc'].get('errors')} warnings={info['qc'].get('warnings')}"
+            + (f" 可行动提示={_qc_notes}(manju qc 看详情)" if _qc_notes else ""))
     # goal 79: never print a currency-mislabeled number — when spend spans
     # more than one currency, show every currency's own total (12 CNY + 2 USD)
     # instead of a single merged figure.
@@ -1693,6 +1710,11 @@ def build(
                            actor=ACTOR, assume_yes=yes, mode=mode,
                            include_unindexed=include_unindexed, lang=lang,
                            on_phase=_progress)
+    except KeyboardInterrupt:
+        if _progress is not None:
+            _progress.done()
+        typer.secho(_interrupted_message("build"), fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(130) from None
     finally:
         if _progress is not None:
             _progress.done()
@@ -1853,6 +1875,9 @@ def redo(
                                 all_missing=all_missing, all_shots=all_shots,
                                 candidates=candidates, provider=provider, seed=seed,
                                 actor=ACTOR, assume_yes=yes)
+        except KeyboardInterrupt:
+            typer.secho(_interrupted_message("redo"), fg=typer.colors.YELLOW, err=True)
+            raise typer.Exit(130) from None
         except WaitingUser as exc:
             # Round-2 audit F-E2: the §8.3 spend-gate stop is BRANCHABLE on
             # lock/export/package — redo used to bury it under code:"error",
@@ -2347,9 +2372,13 @@ def qc_main(ctx: typer.Context,
             envelope["assurance"] = build_assurance_block(project, assurance)
         _emit(envelope, True)
     else:
+        from .qc.checks import actionable_notes
+
         errors = sum(1 for i in report.items if i.level == "error")
         warns = sum(1 for i in report.items if i.level == "warn")
-        typer.echo(f"QC: {errors} errors, {warns} warnings → {project.relpath(paths['qc_md'])}")
+        notes = actionable_notes(report.items)
+        typer.echo(f"QC: {errors} errors, {warns} warnings, {notes} 可行动提示 "
+                   f"→ {project.relpath(paths['qc_md'])}")
         typer.secho("qc ok" if report.ok else "qc found errors",
                     fg=typer.colors.GREEN if report.ok else typer.colors.RED)
         _echo_assurance_summary(assurance)
@@ -3699,6 +3728,11 @@ def exports(
         if res.get("risk_accepted_blockers"):
             typer.secho("  ⚠ 已接受风险 known blockers: "
                         + ", ".join(res["risk_accepted_blockers"]), fg=typer.colors.YELLOW)
+        # 返工自由度波: an append-only ledger has no "unapprove" — the way out
+        # is a NEWER decision, and the owner should not have to guess that.
+        typer.secho("  改主意了?对新成片再跑一次 --approve-baseline 即可,"
+                    "以最新一次为准(历史只增不减,旧记录留档)",
+                    fg=typer.colors.BRIGHT_BLACK)
         return
 
     if baseline:
@@ -4615,6 +4649,9 @@ def voice(
             result = voice_batch(project, shots=shot_ids, all_shots=all_shots,
                                  missing=missing, provider=provider,
                                  actor=ACTOR, assume_yes=yes)
+        except KeyboardInterrupt:
+            typer.secho(_interrupted_message("voice"), fg=typer.colors.YELLOW, err=True)
+            raise typer.Exit(130) from None
         except WaitingUser as exc:
             _fail(str(exc), code="waiting_user")  # F-E2: branchable spend stop
         except BuildError as exc:
