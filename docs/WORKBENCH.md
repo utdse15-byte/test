@@ -5,11 +5,22 @@ The rule: **every project capability a human needs day-to-day is reachable in
 GUI deliberately cannot is listed here with its reason.** The GUI is a veneer
 over the same core the CLI calls — no capability exists only in the GUI.
 
-## Known divergence — NOT deliberate, recorded 2026-07-31 (返工自由度波)
+## 移出本刀 / drop a shot from the cut(2026-08-01 补齐,两面对等)
 
-| Capability | State |
-| --- | --- |
-| **把一个镜头移出成片**(remove a shot from the cut) | CLI: 从 `shots/index.yaml` 的 `order` 里删掉那一行(`manju check` 会明确告诉你它将被 EXCLUDE,并给出两条出路)。GUI: **做不到** —— `/api/index` 的写入器 `core.writes.permute_index` 只接受当前镜头集的**排列**,这条不变量正是两个标签页同时改序时的安全守卫(GUI-INDEX-P1-001),放宽它会弱化既有保护。要在 GUI 里支持,应新增一个允许子集的写入器并自带守卫,而不是放宽 `permute_index`。语义(移出后镜头文件留在盘上?孤儿镜头怎么在 status 里呈现?)需店主拍板,故留档待定。 |
+| Capability | CLI | GUI |
+| --- | --- | --- |
+| 把镜头移出成片 / 放回 | `manju cut drop S005` / `manju cut restore S005`(`manju cut` 看现状) | 剪辑台每张卡片的 **✕ 移出**;被移出的进「不在本刀里」托盘,一键**放回** |
+
+语义(店主授权后定,按"最不容易后悔"):**移出不是删除** —— 镜头 YAML 永远
+留在盘上,`index.yaml` 的 order 就是"这一刀",随时可放回,没有单向门。
+
+安全:`permute_index` 的**排列**不变量原样保留(它是两个标签页同时改序时的
+守卫,GUI-INDEX-P1-001);成员变更走独立写入器 `core.writes.set_cut_order`,
+在 GUI 上**必须带 CAS 令牌**,老页面只能改序、丢不了镜头。
+
+连带修掉一个真 bug:剪辑台此前画的是 `shot_ids()`(含盘上多余镜头),于是
+被移出的镜头照样显示在主轨道,点一下 ▲ 就把它静默塞回成片 —— 现在主轨道
+只画这一刀(`indexed_only=True`)。
 
 ## Deliberately CLI-only (containment, §5 — the GUI must NEVER grow these)
 

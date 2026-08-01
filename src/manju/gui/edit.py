@@ -889,7 +889,14 @@ def _seam_modal() -> str:
 
 def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     """The 剪辑 EDIT page: multi-track lanes + a clip strip + per-clip inspector."""
-    shots = project.shot_ids()
+    # 移出本刀 (2026-08-01): the strip renders THE CUT — ``index.yaml`` order,
+    # nothing else. It used to render ``shot_ids()`` (index + on-disk extras),
+    # which meant a shot the owner had dropped still showed as part of the film
+    # AND one click of ▲ posted all ids back through permute_index, silently
+    # restoring it. Shots outside the cut now live in their own tray below,
+    # where the only action is 放回.
+    shots = project.shot_ids(indexed_only=True)
+    out_of_cut = [s for s in project.shot_ids() if s not in shots]
     rules = _load_rules(project)
     td = getattr(rules, "transition_default", None)
     td_type = getattr(td, "type", None) or "cut"
@@ -960,6 +967,9 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
                     project, timeline, a, b, tstate, td_type, td_dur, overrides))
         out.append("</div>")
     out.append("</section>")
+
+    # ---- 不在本刀里 (the other half of 移出: the way back)
+    out.append(_out_of_cut_tray(project, out_of_cut))
 
     # ---- per-shot inspectors (hidden; JS reveals the clicked one)
     for sid in shots:
@@ -1145,7 +1155,43 @@ def _clip_card(project: Any, idx: int, n: int, sid: str,
     parts.append(f'<button class="btn mini ed-down" data-shot="{_e(sid)}" '
                  f'{"disabled" if idx == n - 1 else ""} title="下移">▼</button>')
     parts.append(f'<button class="btn mini ed-open" data-shot="{_e(sid)}">编辑</button>')
+    # 移出本刀: never destructive — the shot file stays and the tray below
+    # offers 放回, so this is a two-click round trip, not a one-way door.
+    parts.append(f'<button class="btn mini ghost ed-drop" data-shot="{_e(sid)}" '
+                 f'title="移出本刀(文件保留,可随时放回)">✕ 移出</button>')
     parts.append("</div></div>")
+    return "".join(parts)
+
+
+def _out_of_cut_tray(project: Any, out_of_cut: list[str]) -> str:
+    """Shots on disk but not in the cut — the other half of 移出本刀.
+
+    Without this the drop would be a one-way door in the GUI (the strip shows
+    the cut only), which is exactly what a rework-heavy workflow must not
+    have. Rendered even when empty is pointless, so it appears only when
+    something is actually out."""
+    if not out_of_cut:
+        return ""
+    parts = ['<section class="panel ed-out-panel">',
+             "<h2>不在本刀里 Out of cut</h2>",
+             '<p class="muted">这些镜头的文件都还在,只是没进成片。'
+             '放回后排在最后,想换位置用上面的 ▲▼。</p>',
+             '<div class="ed-out-strip">']
+    for sid in out_of_cut:
+        take, sel = _selected_take(project, sid)
+        rel = _take_relpath(project, take)
+        parts.append(f'<div class="ed-out-card" data-shot="{_e(sid)}">')
+        if rel:
+            src = "/edit/frame?take=" + quote(rel, safe="") + "&ms=0&w=140"
+            parts.append(f'<img class="ed-out-thumb" loading="lazy" alt="" '
+                         f'src="{_e(src)}">')
+        else:
+            parts.append('<div class="ed-out-thumb ed-thumb-ph">无 take</div>')
+        parts.append(f'<span class="ed-out-id">{_e(sid)}</span>')
+        parts.append(f'<button class="btn mini ed-restore" data-shot="{_e(sid)}" '
+                     f'title="放回本刀(排在最后)">放回</button>')
+        parts.append("</div>")
+    parts.append("</div></section>")
     return "".join(parts)
 
 
@@ -1601,6 +1647,20 @@ _EDIT_CSS = """
 .ed-card-id { font-weight: 700; }
 .ed-card-dur { color: var(--accent); }
 .ed-card-take { font-size: .74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 移出本刀: the out-of-cut tray reads as a shelf, deliberately quieter than
+   the main strip — these shots are parked, not part of the film. */
+.ed-out-strip { display: flex; flex-wrap: wrap; gap: .6rem; }
+.ed-out-card { display: flex; flex-direction: column; align-items: center;
+               gap: .3rem; padding: .4rem; border-radius: 6px;
+               border: 1px dashed var(--line, #555); opacity: .85; }
+.ed-out-thumb { width: 140px; height: auto; border-radius: 4px; }
+.ed-out-id { font-size: .85em; }
+/* The TEXT buttons size to their own words and never wrap — the equal-flex
+   split below broke them onto two lines ("✕ 移"/"出", "编"/"辑") once a fourth
+   button joined the row. Only the ▲▼ arrows stretch to fill what is left. */
+.ed-card-ctl .ed-open, .ed-card-ctl .ed-drop {
+    flex: 0 0 auto; white-space: nowrap;
+    padding-left: .45rem; padding-right: .45rem; }
 .ed-card-ctl { display: flex; gap: .3rem; }
 .ed-card-ctl .btn.mini { flex: 1; }
 
@@ -1840,6 +1900,28 @@ _EDIT_JS = r"""
     });
   }
 
+  /* 移出本刀: membership changes go through the SAME /api/index endpoint and
+   * the SAME CAS token as ↑/↓ — the server routes a subset to set_cut_order
+   * and REFUSES it without a token, so a stale page can never drop a shot. */
+  function setCut(order, okMsg) {
+    var body = { order: order };
+    if (indexRev !== null) body.expected_rev = indexRev;
+    post("/api/index", body).then(function (res) {
+      if (res.data && typeof res.data.rev === "string") indexRev = res.data.rev;
+      if (res.status === 200) { toast(okMsg, true); reloadSoon(); }
+      else toast(errText(res), false);
+    });
+  }
+  function dropShot(sid) {
+    var order = currentOrder().filter(function (s) { return s !== sid; });
+    setCut(order, sid + " 已移出本刀(文件保留,下面可放回)");
+  }
+  function restoreShot(sid) {
+    var order = currentOrder();
+    if (order.indexOf(sid) < 0) order.push(sid);
+    setCut(order, sid + " 已放回本刀(排在最后)");
+  }
+
   // ------------------------------------------------------------ strip clicks
   document.addEventListener("click", function (e) {
     var el = e.target.closest("[data-shot], .ed-scrub-f, .ed-look-chip, .ed-close");
@@ -1851,6 +1933,8 @@ _EDIT_JS = r"""
     }
     if (el.classList.contains("ed-up")) { reorder(el.getAttribute("data-shot"), -1); return; }
     if (el.classList.contains("ed-down")) { reorder(el.getAttribute("data-shot"), 1); return; }
+    if (el.classList.contains("ed-drop")) { dropShot(el.getAttribute("data-shot")); return; }
+    if (el.classList.contains("ed-restore")) { restoreShot(el.getAttribute("data-shot")); return; }
 
     if (el.classList.contains("ed-card")) {
       // click the card body (not a control) opens it

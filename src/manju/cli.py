@@ -2273,6 +2273,116 @@ def auto(
 # ---------------------------------------------------------------- qc/repair
 
 
+cut_app = typer.Typer(
+    no_args_is_help=False,
+    help="这一刀有哪些镜头、什么顺序(`shots/index.yaml` 的 order 就是唯一权威)。"
+         "`drop` 把镜头移出成片,`restore` 放回来 —— **移出不是删除**:镜头文件"
+         "永远留在盘上,随时能放回,所以没有一步是单向门。",
+)
+app.add_typer(cut_app, name="cut", rich_help_panel=PANEL_EXPORT)
+
+
+def _cut_state(project: Project) -> tuple[list[str], list[str]]:
+    """(本刀的顺序, 在盘上但不在本刀里的镜头)。"""
+    order = list(project.load_index().order)
+    out = [s for s in project.shot_ids() if s not in order]
+    return order, out
+
+
+@cut_app.callback(invoke_without_command=True)
+def cut_main(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")):
+    """看这一刀:进成片的镜头(按顺序)+ 被移出的镜头(以及怎么放回)。"""
+    if ctx.invoked_subcommand is not None:
+        return
+    project = _project()
+    order, out = _cut_state(project)
+    if as_json:
+        _emit({"order": order, "out_of_cut": out}, True)
+        return
+    typer.secho(f"本刀 cut ({len(order)} 镜,按播放顺序)", bold=True)
+    for i, sid in enumerate(order, 1):
+        typer.echo(f"  {i:>3}. {sid}")
+    if out:
+        typer.secho(f"不在本刀里 out of cut ({len(out)} 镜,文件都还在)",
+                    fg=typer.colors.YELLOW)
+        for sid in out:
+            typer.echo(f"     {sid}")
+        typer.secho(f"  放回:manju cut restore {out[0]}"
+                    f"(放回后排在最后,想换位置用剪辑台的 ▲▼)",
+                    fg=typer.colors.BRIGHT_BLACK)
+    else:
+        typer.secho("  (没有被移出的镜头)", fg=typer.colors.BRIGHT_BLACK)
+
+
+@cut_app.command("drop")
+def cut_drop(shots: list[str] = typer.Argument(..., help="镜头 id,可给多个(支持 s2 / 2 简写)"),
+             as_json: bool = typer.Option(False, "--json")):
+    """把镜头移出成片 —— 文件留在盘上,`manju cut restore` 随时放回。"""
+    from .core.writes import WriteRejected, set_cut_order
+
+    project = _project()
+    order, out = _cut_state(project)
+    ids = [_resolve_shot_arg(project, s) for s in shots]
+    _unknown = [s for s in ids if s not in project.shot_ids()]
+    if _unknown:
+        _fail(f"没有这些镜头:{', '.join(_unknown)} — `manju cut` 看现有镜头",
+              code="unknown_shot")
+    already = [s for s in ids if s not in order]
+    target = [s for s in order if s not in ids]
+    try:
+        applied = set_cut_order(project, target, actor=ACTOR, via="cli")
+    except WriteRejected as exc:
+        _fail(str(exc), code="bad_args")
+        return
+    dropped = [s for s in ids if s not in already]
+    _, now_out = _cut_state(project)
+    if as_json:
+        _emit({"order": applied, "dropped": dropped, "already_out": already,
+               "out_of_cut": now_out}, True)
+        return
+    for sid in dropped:
+        typer.secho(f"✓ {sid} 已移出本刀(文件还在 shots/{sid}.yaml,"
+                    f"放回:manju cut restore {sid})", fg=typer.colors.GREEN)
+    for sid in already:
+        typer.secho(f"– {sid} 本来就不在本刀里,没动", fg=typer.colors.YELLOW)
+    if dropped:
+        typer.secho("让改动落到成片:manju build", fg=typer.colors.BRIGHT_BLACK)
+
+
+@cut_app.command("restore")
+def cut_restore(shots: list[str] = typer.Argument(..., help="镜头 id,可给多个(支持 s2 / 2 简写)"),
+                as_json: bool = typer.Option(False, "--json")):
+    """把移出的镜头放回成片(排在最后;换位置用剪辑台的 ▲▼)。"""
+    from .core.writes import WriteRejected, set_cut_order
+
+    project = _project()
+    order, out = _cut_state(project)
+    ids = [_resolve_shot_arg(project, s) for s in shots]
+    _unknown = [s for s in ids if s not in project.shot_ids()]
+    if _unknown:
+        _fail(f"没有这些镜头:{', '.join(_unknown)} — `manju cut` 看现有镜头",
+              code="unknown_shot")
+    already = [s for s in ids if s in order]
+    restored = [s for s in ids if s not in order]
+    try:
+        applied = set_cut_order(project, order + restored, actor=ACTOR, via="cli")
+    except WriteRejected as exc:
+        _fail(str(exc), code="bad_args")
+        return
+    _, now_out = _cut_state(project)
+    if as_json:
+        _emit({"order": applied, "restored": restored, "already_in": already,
+               "out_of_cut": now_out}, True)
+        return
+    for sid in restored:
+        typer.secho(f"✓ {sid} 已放回本刀(排在第 {applied.index(sid) + 1} 位)",
+                    fg=typer.colors.GREEN)
+    for sid in already:
+        typer.secho(f"– {sid} 本来就在本刀里,没动", fg=typer.colors.YELLOW)
+    if restored:
+        typer.secho("让改动落到成片:manju build", fg=typer.colors.BRIGHT_BLACK)
+
+
 qc_app = typer.Typer(
     no_args_is_help=False,
     help="三层质检 (§9)。子命令 brief/verdict 是 round V 的视觉判读管道 (§6):Manju "

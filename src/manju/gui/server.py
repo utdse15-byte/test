@@ -3152,7 +3152,7 @@ class _Handler(BaseHTTPRequestHandler):
         recoverable diff. The token is compared INSIDE the build_lock, right
         before the write, exactly like ``_gated_save`` does for the whole-file
         editors. Absent → historical last-write-wins (older pages, CLI)."""
-        from ..core.writes import WriteRejected, permute_index
+        from ..core.writes import WriteRejected, permute_index, set_cut_order
         from ..runtime.buildlock import BuildLocked
 
         project = self.server.project
@@ -3176,10 +3176,30 @@ class _Handler(BaseHTTPRequestHandler):
                             "rev": _index_rev(project),
                         }, 409)
                         return
-                    permute_index(
-                        project, list(order),
-                        actor=self.server.actor, via="gui",
-                    )
+                    # 移出本刀 (2026-08-01): a SUBSET means membership changed
+                    # — a shot is leaving the cut. permute_index's
+                    # permutation invariant is the guard that keeps two
+                    # TOKENLESS tabs from dropping shots by accident, so it
+                    # stays exactly as it is; the subset path goes through
+                    # set_cut_order and is allowed ONLY with a CAS token
+                    # (which the check above has just validated). An older
+                    # page without a token can still only reorder.
+                    is_subset = len(set(order)) < len(project.shot_ids())
+                    if is_subset:
+                        if expected_rev is None:
+                            self._send_error_json(
+                                "移出/放回镜头需要页面带上 index_rev(乐观锁)"
+                                "——请刷新页面后重试", 400)
+                            return
+                        set_cut_order(
+                            project, list(order),
+                            actor=self.server.actor, via="gui",
+                        )
+                    else:
+                        permute_index(
+                            project, list(order),
+                            actor=self.server.actor, via="gui",
+                        )
             except WriteRejected as exc:
                 self._send_error_json(str(exc), 400)
                 return

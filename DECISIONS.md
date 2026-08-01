@@ -78,6 +78,11 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 
 | 条目 | date | summary | 点名模块 / 命令 |
 |------|------|---------|------------------|
+| `CUT-MEMBERSHIP #1` | 2026-08-01 | 移出不是删除:index order 就是这一刀,文件永远留盘,随时放回 | core/writes.py, shots/index.yaml |
+| `CUT-MEMBERSHIP #2` | 2026-08-01 | set_cut_order 独立写入器;permute_index 排列不变量不动;GUI 子集必须带 CAS 令牌 | core/writes.py, gui/server.py |
+| `CUT-MEMBERSHIP #3` | 2026-08-01 | CLI `manju cut` / `cut drop` / `cut restore` + 剪辑台 ✕移出与放回托盘 | cli.py, gui/edit.py |
+| `CUT-MEMBERSHIP #4` | 2026-08-01 | 连带真 bug:剪辑台画 shot_ids() 导致点 ▲ 把移出的镜头静默塞回 | gui/edit.py |
+| `CUT-MEMBERSHIP #5` | 2026-08-01 | 真浏览器验收:按钮折行修正(21px 单行)、放回闭环点通、零 pageerror | gui/edit.py |
 | `REWORK-FREEDOM #1` | 2026-07-31 | Rework freedom measured across A–F: takes, rollback, delete/insert/reorder, fps/aspect, compare, Ctrl-C | manju select, manju rollback, manju compare |
 | `REWORK-FREEDOM #2` | 2026-07-31 | Actionable QC notes made visible on qc/status (ONE counter, info+suggestion) | qc/checks.py, build/status.py, cli.py |
 | `REWORK-FREEDOM #3` | 2026-07-31 | Ctrl-C says what survived and how to resume; baseline re-approval explained | cli.py |
@@ -3342,6 +3347,47 @@ understood at a glance, or dropped something quietly.
     version, which is what cost the day, so it now names 6.1.1, the one-line
     Ubuntu install, and the `aost#0:1/aac` signature to recognise — turning a
     day-long dead end into one `ffmpeg -version`.
+
+## CUT-MEMBERSHIP (2026-08-01)
+
+店主把语义决定权交回:「你觉得怎么弄最好就怎么弄,多考虑我的使用体验即可」。
+`REWORK-FREEDOM #4` 留档的那条(GUI 无法把镜头移出成片)于是在这里落地。
+
+1. **语义:移出不是删除。** A shot leaving the cut leaves ONLY
+   `shots/index.yaml`'s order; its YAML stays on disk, `manju check` already
+   names it as EXCLUDED with both ways back, and putting it back is one
+   command or one click. Chosen because the owner reworks constantly — a
+   one-way door is the one thing this workflow cannot afford — and because
+   it is EXACTLY the semantics the CLI already had, so both surfaces now
+   describe one truth instead of two.
+2. **The old guard did not move.** `permute_index` still accepts only a
+   permutation: that invariant is what stops two TOKENLESS tabs from
+   dropping shots by accident (GUI-INDEX-P1-001). Membership changes get
+   their own writer, `core.writes.set_cut_order` — unknown ids and
+   duplicates rejected, an empty cut allowed (fully reversible, and
+   refusing it would block the legitimate "start this sequence over"), and
+   its own `cut` event recording order/dropped/restored. In the GUI a
+   subset REQUIRES the CAS token, so an older page can still only reorder.
+3. **Both surfaces, one behaviour.** CLI gains `manju cut` (bare = show the
+   cut and what is out, with the way back), `cut drop` and `cut restore` —
+   shot-id shorthand honoured, unknown ids refused by name, and repeating a
+   drop is a forgiving no-op rather than an error (being scolded for
+   repeating yourself is the last thing a rework loop needs). The edit page
+   gains a ✕ 移出 on every clip card and an 「不在本刀里」 tray whose only
+   action is 放回. Frozen CLI surface regenerated on purpose (+2 commands).
+4. **A real bug fell out of it.** The edit strip rendered
+   `project.shot_ids()` — index PLUS on-disk extras — so a shot the owner
+   had already dropped (by hand-editing index.yaml, the documented CLI
+   path) still drew on the main track, and `currentOrder()` posted it back
+   through permute_index: **one click of ▲ silently undid the drop.** The
+   strip now renders the cut only (`indexed_only=True`) and the extras live
+   in the tray. Pinned.
+5. **Owner-experience details worth the pixels.** Verified in a real
+   browser (screenshot + a real click through the restore round trip, zero
+   pageerror): the four-button row broke 「✕ 移出」 and 「编辑」 onto two
+   lines once a fourth button joined, so the text buttons now size to their
+   own words and only the ▲▼ arrows stretch — measured 21px single-line
+   against 38px before.
 
 ## REWORK-FREEDOM (2026-07-31)
 
