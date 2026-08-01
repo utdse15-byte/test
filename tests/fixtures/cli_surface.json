@@ -76,6 +76,18 @@
     "exists": true,
     "params": []
   },
+  "cut drop": {
+    "exists": true,
+    "params": [
+      "shots"
+    ]
+  },
+  "cut restore": {
+    "exists": true,
+    "params": [
+      "shots"
+    ]
+  },
   "director confirm": {
     "exists": true,
     "params": [

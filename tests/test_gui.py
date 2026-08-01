@@ -491,11 +491,39 @@ def test_index_reorder(gui, tmp_project, add_shot):
     status, _, data = _post(gui, "/api/index", {"order": ["S003", "S001", "S002"]})
     assert status == 200 and data["ok"] is True
     assert tmp_project.shot_ids() == ["S003", "S001", "S002"]
-    # not a permutation -> rejected
+    # A SUBSET means membership changed — a shot is leaving the cut. Without
+    # the CAS token that is still refused (移出本刀 wave kept the guard: an
+    # older/stale page must never drop a shot), only the message now says what
+    # to do about it. Assert the BEHAVIOUR, not the wording: refused, and the
+    # cut is untouched.
     status, _, data = _post(gui, "/api/index", {"order": ["S001", "S002"]})
-    assert status == 400 and "permutation" in data["error"]
+    assert status == 400
+    assert "index_rev" in data["error"]          # …and it names the way forward
+    assert tmp_project.shot_ids() == ["S003", "S001", "S002"], "拒绝之后不许有任何改动"
     event = tail_events(tmp_project.root, 2)[0]
     assert event["action"] == "reorder"
+
+
+def test_index_drops_a_shot_only_with_the_cas_token(gui, tmp_project, add_shot):
+    """移出本刀 (2026-08-01): membership changes ARE possible from the GUI —
+    but only from a page holding a fresh token, and the shot file survives."""
+    from manju.gui.server import _index_rev
+
+    for sid in ("S001", "S002", "S003"):
+        add_shot(tmp_project, sid)
+    rev = _index_rev(tmp_project)
+    status, _, data = _post(gui, "/api/index",
+                            {"order": ["S001", "S003"], "expected_rev": rev})
+    assert status == 200, data
+    assert tmp_project.load_index().order == ["S001", "S003"]
+    assert (tmp_project.shots_dir / "S002.yaml").exists(), "移出绝不能删文件"
+
+    # …and it goes back
+    rev = _index_rev(tmp_project)
+    status, _, _ = _post(gui, "/api/index",
+                         {"order": ["S001", "S003", "S002"], "expected_rev": rev})
+    assert status == 200
+    assert tmp_project.load_index().order == ["S001", "S003", "S002"]
 
 
 def test_bible_editor_gated(gui, tmp_project, add_shot):

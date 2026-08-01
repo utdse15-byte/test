@@ -271,6 +271,52 @@ def shot_text_hash(project: Project, shot_id: str) -> str:
     return hash_text(path.read_text(encoding="utf-8"))
 
 
+def set_cut_order(project: Project, new_order: list[str], *,
+                  actor: str = "engine", via: str = "engine") -> list[str]:
+    """Set the cut — its ORDER **and** its membership (2026-08-01).
+
+    ``permute_index`` below deliberately accepts only a permutation: that
+    invariant is what keeps two browser tabs from silently dropping shots
+    when neither carries a CAS token (GUI-INDEX-P1-001). Membership changes
+    therefore get their OWN entrance rather than a relaxation of that guard,
+    and callers that expose it (the GUI) require the token.
+
+    Semantics, chosen for a workflow that reworks constantly: **dropping is
+    not deleting.** A shot left out of ``new_order`` leaves the cut; its
+    YAML stays on disk untouched, `manju check` names it as EXCLUDED with
+    both ways back, and passing it again restores it. Nothing is ever lost,
+    so no drop is a one-way door.
+
+    Guards: every id must be a shot that exists (no inventing rows), and no
+    duplicates (an id twice would silently double a clip). An empty cut is
+    allowed — it is fully reversible, and refusing it would block the
+    legitimate "start this sequence over" move.
+    """
+    if not isinstance(new_order, list) or not all(isinstance(s, str) for s in new_order):
+        raise WriteRejected("order must be a list of shot ids")
+    known = project.shot_ids()
+    unknown = [s for s in new_order if s not in known]
+    if unknown:
+        raise WriteRejected(
+            f"没有这些镜头 unknown shots: {', '.join(unknown)} — "
+            f"现有镜头 available: {', '.join(known)}")
+    seen: set[str] = set()
+    dupes = [s for s in new_order if s in seen or seen.add(s)]  # type: ignore[func-returns-value]
+    if dupes:
+        raise WriteRejected(f"重复的镜头 duplicate ids: {', '.join(sorted(set(dupes)))}")
+
+    before = list(project.load_index().order)
+    index = project.load_index()
+    index.order = list(new_order)
+    project.save_index(index)
+    dropped = [s for s in before if s not in new_order]
+    restored = [s for s in new_order if s not in before]
+    append_event(project.root, actor, "cut",
+                 {"order": list(new_order), "dropped": dropped,
+                  "restored": restored, "via": via})
+    return list(new_order)
+
+
 def permute_index(project: Project, new_order: list[str], *,
                   actor: str = "engine", via: str = "engine") -> list[str]:
     """WP6 shared write path for shot-order permutation (GUI ``/api/index``,
