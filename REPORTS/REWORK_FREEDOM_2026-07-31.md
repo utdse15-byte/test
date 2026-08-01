@@ -216,3 +216,32 @@ info(缺陷因此缩小为"看不见");②"导出中心虚报上新"——实为
 变成了更有用的「移出/放回镜头需要页面带上 index_rev(乐观锁)——请刷新页面
 后重试」。把这条钉从**检查措辞**改为**检查行为**:拒绝之后 `shot_ids()` 必须
 分毫不动;并新增一条钉住新能力(带令牌可移出、镜头文件必须还在、放得回去)。
+
+## 门禁揭示:Ctrl-C 测试只在 POSIX 上成立(2026-08-01)
+
+windows-ci 在 PR #48/#49 上各红一条,同因:
+
+```
+tests/test_rework_freedom.py:147: in _interrupt_build
+    proc.send_signal(signal.SIGINT)
+E   ValueError: Unsupported signal: 2
+```
+
+`1 failed, 5905 passed` —— **产品代码没问题**:Windows 上真按 Ctrl-C 走的是
+控制台的 CTRL_C_EVENT → Python 抛 KeyboardInterrupt → 新加的处理器照常
+生效。错的是**测试模拟中断的方式**:Windows 的 `Popen.send_signal` 只认
+SIGTERM / CTRL_C_EVENT / CTRL_BREAK_EVENT。
+
+修法**不是**给 Windows 打 skip 了事 —— 那会把店主的第一平台上最该验的行为
+变成盲区。把命题拆成两层:
+
+1. **代码路径,全平台都测**(新增,参数化 build/redo/voice 三条):在 CLI
+   真正接住中断的地方抛 `KeyboardInterrupt`,断言退出码 130 + 取消话术 +
+   "接着干"指路。Windows 上照跑,而且顺带把 redo/voice 两条路也纳入(此前
+   只有 build 有端到端覆盖)。
+2. **OS 级信号投递,只在支持模拟的平台测**:真子进程 + 真 SIGINT 的那条
+   保留,加 `skipif(win32)` 并在 reason 里写清**为什么**(CTRL_BREAK_EVENT
+   落成的是 SIGBREAK,与店主真按 Ctrl-C 产生的信号不是同一个,拿它来模拟
+   等于验了另一个命题)。
+
+净结果:覆盖面变大而不是变小。

@@ -149,8 +149,49 @@ def _interrupt_build(project_root, after_s: float):
     return proc.returncode, out
 
 
+@pytest.mark.parametrize("verb", ["build", "redo", "voice"])
+def test_ctrl_c_is_answered_on_every_platform(tmp_project, monkeypatch, verb):
+    """The proposition — Ctrl-C says what survived and exits 130 — tested by
+    raising the interrupt where the CLI actually catches it. Portable on
+    purpose: the subprocess-signal version below cannot run on Windows, which
+    is the owner's PRIMARY platform, so the behaviour they will really hit
+    must be covered by something that runs there."""
+    import manju.build.graph as graph
+    from typer.testing import CliRunner
+
+    from manju.cli import app
+
+    def _boom(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(graph, {"build": "run_build", "redo": "redo_batch",
+                                "voice": "voice_batch"}[verb], _boom)
+    monkeypatch.chdir(tmp_project.root)
+    args = {"build": ["build", "--yes"],
+            "redo": ["redo", "--shots", "S001", "--yes"],
+            "voice": ["voice", "--shots", "S001", "--yes"]}[verb]
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 130, result.output
+    out = result.output
+    assert "已取消" in out, f"Ctrl-C stayed silent — the owner learns nothing: {out!r}"
+    assert f"manju {verb}" in out         # …and how to resume
+    assert "只增" in out or "保留" in out   # …and that finished work survived
+
+
 @pytest.mark.ffmpeg
-def test_ctrl_c_says_what_survived_and_exits_130(tmp_project, add_shot):
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows consoles deliver Ctrl-C as CTRL_C_EVENT to a process "
+           "GROUP; Popen.send_signal(SIGINT) raises ValueError there, and "
+           "CTRL_BREAK_EVENT would land as SIGBREAK — a different signal from "
+           "the one the owner's Ctrl-C actually produces, so simulating it "
+           "would test a different proposition. The behaviour itself is "
+           "covered on every platform by "
+           "test_ctrl_c_is_answered_on_every_platform above.")
+def test_ctrl_c_on_a_real_build_process(tmp_project, add_shot):
+    """The end-to-end evidence where the OS supports the simulation: a REAL
+    build subprocess, a REAL SIGINT, and the state left behind."""
     add_shot(tmp_project, "S001")
     add_shot(tmp_project, "S002")
     rc, out = _interrupt_build(tmp_project.root, 2.5)
