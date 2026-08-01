@@ -78,6 +78,11 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 
 | 条目 | date | summary | 点名模块 / 命令 |
 |------|------|---------|------------------|
+| `REWORK-FREEDOM #1` | 2026-07-31 | Rework freedom measured across A–F: takes, rollback, delete/insert/reorder, fps/aspect, compare, Ctrl-C | manju select, manju rollback, manju compare |
+| `REWORK-FREEDOM #2` | 2026-07-31 | Actionable QC notes made visible on qc/status (ONE counter, info+suggestion) | qc/checks.py, build/status.py, cli.py |
+| `REWORK-FREEDOM #3` | 2026-07-31 | Ctrl-C says what survived and how to resume; baseline re-approval explained | cli.py |
+| `REWORK-FREEDOM #4` | 2026-07-31 | GUI cannot drop a shot from the cut — recorded in WORKBENCH, owner decides the semantics | docs/WORKBENCH.md, core/writes.py, gui/server.py |
+| `REWORK-FREEDOM #5` | 2026-07-31 | Own-errors: wrong GUI probe method, and a defect that shrank once verified | — |
 | `SOFT-CAP #1` | 2026-07-31 | Domain standards absorbed deeply, project conventions not — census + the cause | README.md, CLAUDE.md, skills/ |
 | `SOFT-CAP #2` | 2026-07-31 | `manju new --demo` was a shipped, undocumented tutorial — now a README section | README.md, manju new |
 | `SOFT-CAP #3` | 2026-07-31 | Quickstart could not be copy-pasted (selected a never-imported file) | README.md, manju import |
@@ -3337,6 +3342,62 @@ understood at a glance, or dropped something quietly.
     version, which is what cost the day, so it now names 6.1.1, the one-line
     Ubuntu install, and the `aost#0:1/aac` signature to recognise — turning a
     day-long dead end into one `ffmpeg -version`.
+
+## REWORK-FREEDOM (2026-07-31)
+
+店主目标:「实际使用时 CLI 或 GUI 有极大的自由和操作空间,因为可能会不断地
+调整返工,考虑所有情况」。完整报告 `REPORTS/REWORK_FREEDOM_2026-07-31.md`。
+
+1. **Most rework freedom is already there — measured, not assumed.** Takes
+   switch back and forth unchallenged; `rollback shot` reverts a selection
+   and says what it reverted; a manual `select --file` take can be swapped
+   back to a generated one; deleting a shot from index.yaml earns a
+   textbook check warning naming BOTH ways forward; inserting a shot
+   mid-sequence regenerates only that shot and plays in index order, not id
+   order; fps 24→30 and portrait→landscape both take effect on rebuild
+   (measured 30/1 and 1920x1080) with old material pillarboxed, never
+   stretched; `compare` names every delta including the geometry change.
+   Ctrl-C measured clean: rc=130, no traceback, locks released, check green
+   (an earlier audit's "traceback" claim did not reproduce at three
+   interrupt points — corrected by measurement).
+2. **Actionable advice was invisible on every surface.** After an aspect
+   change QC files a per-shot `info` finding carrying the exact fix
+   (`manju repair --op croppad …`), but `manju qc` counted only errors and
+   warnings, `status` showed the same two numbers, `build` said 「QC: 通过」
+   — measured 16 of 29 info findings carried a concrete command and all 16
+   were silent behind a green 完成 ✅. Rework requires knowing your options.
+   ONE counter `qc.checks.actionable_notes` (discriminator: level `info`
+   AND a non-empty `suggestion`, so the per-shot "mid-point frame"
+   bookkeeping lines stay out) now feeds both the CLI summary and status,
+   and it accepts QCItem objects and qc.json dicts alike so the surfaces
+   cannot drift.
+3. **Ctrl-C said nothing at all.** Bailing out of a long build printed zero
+   lines, leaving the owner unsure whether finished takes survived. The
+   engine already words cancellation well; SIGINT never reached it. ONE
+   composer `cli._interrupted_message`, caught in build/redo/voice, stderr,
+   rc stays 130. Also: `--approve-baseline` now states that an append-only
+   ledger has no unapprove — a newer approval supersedes — instead of
+   leaving the owner to guess.
+4. **Recorded, owner's call: the GUI cannot drop a shot from the cut.** The
+   CLI can (remove the id from index.yaml `order`; ShotSpec has no
+   skip/enabled field, so index order IS the cut — the check warning
+   documents exactly this). The GUI cannot: `/api/index`'s writer
+   `core.writes.permute_index` accepts only a PERMUTATION, and that
+   invariant is precisely the two-tab safety guard (GUI-INDEX-P1-001).
+   Relaxing it would weaken an existing protection, so the fix is a
+   separate subset-accepting writer with its own guard — and the semantics
+   (does the shot file stay on disk? how do orphans read in status? is the
+   GUI verb "drop from cut" or "delete shot"?) are the owner's to choose.
+   `docs/WORKBENCH.md` now records this divergence honestly: its matrix had
+   claimed every day-to-day capability reaches the GUI, and this is a
+   counter-example that is not on the deliberately-CLI-only list.
+5. **Own-errors.** The first GUI probe grepped the homepage for Chinese
+   button labels and found none — the homepage is a 3893-byte shell and the
+   client renders from JSON, so the method was wrong, not the GUI (rollback
+   and snapshot are there as `git_rollback_file` / `git_snapshot`). And I
+   nearly filed "changing the aspect gives zero advice" before checking:
+   QC had been writing it per shot all along, at info level. The defect
+   shrank from "no advice" to "advice invisible" — smaller, and true.
 
 ## SOFT-CAP (2026-07-31)
 

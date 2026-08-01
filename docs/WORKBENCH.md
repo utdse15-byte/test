@@ -5,6 +5,12 @@ The rule: **every project capability a human needs day-to-day is reachable in
 GUI deliberately cannot is listed here with its reason.** The GUI is a veneer
 over the same core the CLI calls — no capability exists only in the GUI.
 
+## Known divergence — NOT deliberate, recorded 2026-07-31 (返工自由度波)
+
+| Capability | State |
+| --- | --- |
+| **把一个镜头移出成片**(remove a shot from the cut) | CLI: 从 `shots/index.yaml` 的 `order` 里删掉那一行(`manju check` 会明确告诉你它将被 EXCLUDE,并给出两条出路)。GUI: **做不到** —— `/api/index` 的写入器 `core.writes.permute_index` 只接受当前镜头集的**排列**,这条不变量正是两个标签页同时改序时的安全守卫(GUI-INDEX-P1-001),放宽它会弱化既有保护。要在 GUI 里支持,应新增一个允许子集的写入器并自带守卫,而不是放宽 `permute_index`。语义(移出后镜头文件留在盘上?孤儿镜头怎么在 status 里呈现?)需店主拍板,故留档待定。 |
+
 ## Deliberately CLI-only (containment, §5 — the GUI must NEVER grow these)
 
 | Capability | Why not in the GUI |
