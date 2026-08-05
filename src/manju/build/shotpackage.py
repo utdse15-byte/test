@@ -284,7 +284,15 @@ def project_revision(project: "Project") -> str:
     possibly stale."""
     index_path = project.shots_dir / "index.yaml"
     index_text = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
-    return hash_value({"shot_ids": project.shot_ids(), "index": index_text})
+    payload: dict[str, Any] = {"shot_ids": project.shot_ids(), "index": index_text}
+    scene_sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(project.scene_contracts_dir.glob("*.yaml"))
+        if path.is_file()
+    }
+    if scene_sources:
+        payload["scene_contracts"] = scene_sources
+    return hash_value(payload)
 
 
 # -------------------------------------------------------------------- mapping

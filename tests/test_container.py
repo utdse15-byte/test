@@ -11,7 +11,7 @@ from manju.core.container import Project, ProjectError
 from manju.core.models import TakeSidecar
 
 SCAFFOLD_DIRS = [
-    "story", "bible", "shots", "media/imports", "media/refs", "media/gen",
+    "story", "story/scenes", "bible", "shots", "media/imports", "media/refs", "media/gen",
     "timeline", "captions", "renders/segments", "renders/proxy", "renders/final",
     "exports/jianying", "exports/capcut", "exports/otio",
     "reports/frames", "proposals", ".manju",

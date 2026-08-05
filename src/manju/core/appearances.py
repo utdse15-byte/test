@@ -6,8 +6,8 @@ ones this report walks:
 
 - **scene**     ← ``shot.scene`` (one per shot)
 - **character** ← ``shot.characters`` (a list)
-- **prop**      ← ``shot.continuity.locks`` entries prefixed ``prop:`` (the
-  §4.1 grammar: ``locks: [character:linxia, scene, prop:future_coin]``)
+- **prop**      ← ``shot.props`` plus legacy ``continuity.locks`` entries
+  prefixed ``prop:``
 
 ``style`` and ``voices`` are consumed globally (style) or via a character's
 voice-shaping fields (voices), never through a shot field, so they are left out
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .authoring import shot_prop_refs
 from .container import BIBLE_FILES, Project
 from .yamlio import read_yaml
 
@@ -43,19 +44,6 @@ def _bible_by_file(project: Project) -> dict[str, dict[str, dict[str, Any]]]:
             else {}
         )
     return out
-
-
-def _prop_refs(shot_raw: dict[str, Any]) -> list[str]:
-    """Prop ids referenced from continuity.locks (``prop:<id>`` entries)."""
-    continuity = shot_raw.get("continuity")
-    locks = continuity.get("locks") if isinstance(continuity, dict) else None
-    refs: list[str] = []
-    for entry in locks or []:
-        if isinstance(entry, str) and entry.startswith("prop:"):
-            pid = entry.split(":", 1)[1].strip()
-            if pid and pid not in refs:
-                refs.append(pid)
-    return refs
 
 
 def appearances(project: Project) -> dict[str, Any]:
@@ -83,7 +71,7 @@ def appearances(project: Project) -> dict[str, Any]:
                 bucket = refs["characters"].setdefault(ch, [])
                 if sid not in bucket:
                     bucket.append(sid)
-        for prop in _prop_refs(raw):
+        for prop in shot_prop_refs(raw):
             bucket = refs["props"].setdefault(prop, [])
             if sid not in bucket:
                 bucket.append(sid)
@@ -108,8 +96,8 @@ def appearances(project: Project) -> dict[str, Any]:
     result["orphans"] = orphans
     result["missing"] = missing
     result["note"] = (
-        "缺失的 scene/character 引用同样会被 `manju check` 报错(此处仅并列展示,"
-        "以 check 为准);缺失的 prop 引用只有本报告校验(continuity.locks 不入 schema)。"
-        "style/voices 不由镜头字段引用,不参与出场/孤儿统计。"
+        "缺失的 scene/character/prop 引用同样会被 `manju check` 报错"
+        "(此处仅并列展示,以 check 为准)。style/voices 不由镜头字段引用,"
+        "不参与出场/孤儿统计。"
     )
     return result

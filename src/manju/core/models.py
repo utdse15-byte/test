@@ -12,15 +12,15 @@ from typing import Any, Literal
 
 from pydantic import (
     AliasChoices,
-    BaseModel,
-    ConfigDict,
     Field,
     field_validator,
     model_serializer,
     model_validator,
 )
 
+from .authoring import ShotContract
 from .idents import is_safe_segment, validate_safe_segment
+from .model_base import ManjuModel
 from .timebase import Rate
 
 SHOT_SIZES = (
@@ -38,10 +38,6 @@ FALLBACK_STEPS = (
     "comic_panel",
     "caption_card",
 )
-
-
-class ManjuModel(BaseModel):
-    model_config = ConfigDict(extra="allow", validate_assignment=True)
 
 
 # ---------------------------------------------------------------- project.yaml
@@ -430,6 +426,7 @@ class Dialogue(ManjuModel):
 class Continuity(ManjuModel):
     prev: str | None = None
     locks: list[str] = Field(default_factory=list)
+    source_media_sha256: str | None = None
 
 
 class Quality(ManjuModel):
@@ -701,6 +698,8 @@ class SourceAudio(ManjuModel):
 class ShotSpec(ManjuModel):
     id: str
     scene: str | None = None
+    scene_id: str | None = None
+    props: list[str] | None = None
     characters: list[str] = Field(default_factory=list)
     duration: float | Literal["auto"] = "auto"  # seconds when numeric
     # Human-readable routing TIER (goal item 15): a director tag like ``draft`` /
@@ -717,6 +716,7 @@ class ShotSpec(ManjuModel):
     continuity: Continuity = Field(default_factory=Continuity)
     quality: Quality = Field(default_factory=Quality)
     generation: Generation = Field(default_factory=Generation)
+    contract: ShotContract | None = None
     status: ShotStatus = Field(default_factory=ShotStatus)
     # Imported-footage own-audio control (round-T). Default (0 dB, unmuted) is a
     # no-op: the segment cache key omits it, so today's projects are byte-stable.

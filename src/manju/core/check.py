@@ -15,7 +15,9 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from .authoring import SceneContract, shot_prop_refs, uses_new_and_legacy_props
 from .container import BIBLE_FILES, Project, ProjectError
+from .idents import is_safe_segment
 from .locks import verify_locks
 from .models import LookSpec, ShotIndex
 from .yamlio import read_yaml
@@ -177,21 +179,6 @@ def _fmt_validation_error(label: str, exc: ValidationError) -> str:
     return f"{label}: schema invalid — {issues}{tail}"
 
 
-def _prop_refs(shot_raw: dict[str, Any]) -> list[str]:
-    """Prop ids referenced from continuity.locks (``prop:<id>`` entries, §4.1
-    grammar — mirrors core/appearances.py's reader, kept local so check.py
-    does not depend on a report module's private helper)."""
-    continuity = shot_raw.get("continuity")
-    locks = continuity.get("locks") if isinstance(continuity, dict) else None
-    refs: list[str] = []
-    for entry in locks or []:
-        if isinstance(entry, str) and entry.startswith("prop:"):
-            pid = entry.split(":", 1)[1].strip()
-            if pid and pid not in refs:
-                refs.append(pid)
-    return refs
-
-
 def run_check(project: Project) -> CheckReport:
     report = CheckReport()
 
@@ -306,6 +293,90 @@ def run_check(project: Project) -> CheckReport:
         index = ShotIndex()
         shot_ids = []
 
+    # Narrative references are type-specific. The legacy merged Bible remains
+    # unchanged for legacy consumers, but a same-named character cannot satisfy
+    # a prop reference (or vice versa) in an authoring contract.
+    bible_ids: dict[str, set[str]] = {}
+    for bible_name in ("characters", "scenes", "props"):
+        bible_path = project.root / "bible" / f"{bible_name}.yaml"
+        try:
+            data = read_yaml(bible_path) or {} if bible_path.exists() else {}
+        except Exception:
+            data = {}
+        bible_ids[bible_name] = set(data) if isinstance(data, dict) else set()
+
+    # Any source file opts in, even when malformed. Parsing it here preserves
+    # that fail-closed behavior instead of silently falling back to LEGACY.
+    scene_contracts: dict[str, SceneContract] = {}
+    scene_members: dict[str, list[str]] = {}
+    for path in sorted(project.scene_contracts_dir.glob("*.yaml")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(project.root).as_posix()
+        if not is_safe_segment(path.stem):
+            report.errors.append(
+                f"{rel}: contract error - filename stem is not a safe scene_id"
+            )
+            continue
+        try:
+            raw_scene = read_yaml(path)
+            if not isinstance(raw_scene, dict):
+                raise TypeError("scene contract must be a mapping")
+            scene_contract = SceneContract.model_validate(raw_scene)
+        except yaml.YAMLError as exc:
+            report.errors.append(f"{rel}: parser error - {_one_line(exc)}")
+            continue
+        except ValidationError as exc:
+            report.errors.append(_fmt_validation_error(f"{rel}: parser error", exc))
+            continue
+        except Exception as exc:
+            report.errors.append(f"{rel}: parser error - {_one_line(exc)}")
+            continue
+
+        if scene_contract.id != path.stem:
+            report.errors.append(
+                f"{rel}: contract error - id field '{scene_contract.id}' does not match filename"
+            )
+            continue
+        scene_contracts[scene_contract.id] = scene_contract
+        scene_members[scene_contract.id] = []
+
+        if (
+            scene_contract.location_ref
+            and scene_contract.location_ref not in bible_ids["scenes"]
+        ):
+            report.errors.append(
+                f"{rel}: contract error - location_ref '{scene_contract.location_ref}' "
+                "not found in bible/scenes.yaml"
+            )
+        for state_name, states in (
+            ("entry_state", scene_contract.entry_state),
+            ("exit_state", scene_contract.exit_state),
+        ):
+            for character_id, state in states.items():
+                if character_id not in bible_ids["characters"]:
+                    report.errors.append(
+                        f"{rel}: contract error - {state_name} character "
+                        f"'{character_id}' not found in bible/characters.yaml"
+                    )
+                for prop_id in state.props:
+                    if prop_id not in bible_ids["props"]:
+                        report.errors.append(
+                            f"{rel}: contract error - {state_name}.{character_id}.props "
+                            f"references '{prop_id}' not found in bible/props.yaml"
+                        )
+
+        for field_name, value in (
+            ("purpose", scene_contract.purpose),
+            ("entry_state", scene_contract.entry_state),
+            ("irreversible_change", scene_contract.irreversible_change),
+            ("exit_state", scene_contract.exit_state),
+        ):
+            if not value:
+                report.warnings.append(
+                    f"{rel}: readiness - SceneContract {field_name} is empty"
+                )
+
     # ---- index integrity
     for sid in index.order:
         if not project.shot_path(sid).exists():
@@ -368,10 +439,11 @@ def run_check(project: Project) -> CheckReport:
         # real reference (§4.1 grammar) and deserves the SAME hard door as
         # scene/characters above: a prop id absent from bible/props.yaml is a
         # dangling continuity reference, not a style choice.
-        for prop_id in _prop_refs(raw):
-            if prop_id not in bible:
+        for prop_id in shot_prop_refs(raw):
+            if prop_id not in bible_ids["props"]:
                 report.errors.append(
-                    f"{label}: continuity.locks 引用的道具 'prop:{prop_id}' 未在 bible 中找到"
+                    f"{label}: contract error - prop '{prop_id}' (legacy 'prop:{prop_id}') "
+                    "not found in bible/props.yaml"
                 )
 
         # ---- #26: per-shot routing dry-run for an EXPLICIT provider ref —
@@ -384,6 +456,55 @@ def run_check(project: Project) -> CheckReport:
         # naming a DISABLED provider explicitly IS already a hard build-time
         # error elsewhere (providers/registry.py) — check now catches that
         # same case early instead of only at real generation time.
+        if uses_new_and_legacy_props(raw):
+            report.warnings.append(
+                f"{label}: readiness - deprecation: use props instead of legacy "
+                "continuity.locks 'prop:' entries; both forms were merged"
+            )
+
+        if shot.scene_id:
+            scene_contract = scene_contracts.get(shot.scene_id)
+            if scene_contract is None:
+                report.errors.append(
+                    f"{label}: contract error - scene_id '{shot.scene_id}' does not "
+                    "resolve to story/scenes/<id>.yaml"
+                )
+            elif sid in index.order:
+                scene_members[shot.scene_id].append(sid)
+                if (
+                    scene_contract.location_ref
+                    and shot.scene
+                    and scene_contract.location_ref != shot.scene
+                ):
+                    report.warnings.append(
+                        f"{label}: readiness - SceneContract '{shot.scene_id}' location_ref "
+                        f"'{scene_contract.location_ref}' differs from shot.scene '{shot.scene}'"
+                    )
+        elif project.narrative_opted_in and sid in index.order:
+            report.warnings.append(
+                f"{label}: readiness - indexed narrative shot is missing scene_id"
+            )
+
+        if shot.contract is not None:
+            if shot.contract.acceptance.action_required and not shot.action.main.strip():
+                report.errors.append(
+                    f"{label}: contract error - acceptance.action_required=true but "
+                    "action.main is empty"
+                )
+            if shot.contract.acceptance.min_end_hold_ms < 0:
+                report.errors.append(
+                    f"{label}: contract error - acceptance.min_end_hold_ms must be >= 0"
+                )
+            for field_name, value in (
+                ("purpose", shot.contract.purpose),
+                ("endpoint", shot.contract.endpoint),
+                ("risk.primary", shot.contract.risk.primary),
+            ):
+                if not value:
+                    report.warnings.append(
+                        f"{label}: readiness - ShotContract {field_name} is empty"
+                    )
+
         if shot.generation.provider and _route_resolve is not None:
             try:
                 res = _route_resolve(project, shot)
@@ -429,6 +550,30 @@ def run_check(project: Project) -> CheckReport:
 
         for violation in verify_locks(raw, shot.locked, label):
             report.errors.append(str(violation))
+
+    if project.narrative_opted_in:
+        if not any(contract.proof_scene for contract in scene_contracts.values()):
+            report.warnings.append("story/scenes: readiness - project has no proof scene")
+
+        proof_shot_found = False
+        for sid in index.order:
+            if not project.shot_path(sid).exists():
+                continue
+            try:
+                candidate = project.load_shot(sid)
+            except Exception:
+                continue
+            if candidate.contract is not None and candidate.contract.proof_shot:
+                proof_shot_found = True
+                break
+        if not proof_shot_found:
+            report.warnings.append("shots: readiness - project has no proof shot")
+
+        for scene_id, contract in scene_contracts.items():
+            if contract.proof_scene and not scene_members.get(scene_id):
+                report.warnings.append(
+                    f"story/scenes/{scene_id}.yaml: readiness - proof scene has no indexed shot"
+                )
 
     # ---- bible locks
     # bible-file-by-file (unmerged) read, reused below for both the lock walk

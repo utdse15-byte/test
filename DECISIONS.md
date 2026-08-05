@@ -82,6 +82,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #2` | 2026-08-05 | Stable craft belongs in Skills; machine and volatile provider facts retain one owner | skills/*/SKILL.md, ProviderManifest |
 | `NARRATIVE-CLOSED-LOOP #3` | 2026-08-05 | Legacy provider formulas are quarantined and never refreshed from memory | skills/prompt-craft/references/archive/ |
 | `NARRATIVE-CLOSED-LOOP #4` | 2026-08-05 | Ordinary narrative work never defaults to marketing syntax or one-beat-one-shot | skills/narrative-pacing/SKILL.md, skills/creation-funnel/SKILL.md |
+| `NARRATIVE-CLOSED-LOOP #5` | 2026-08-05 | Scene and shot contracts retain one owner; scene membership is derived | core/authoring.py, shots/index.yaml, ShotSpec.scene_id |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4053,3 +4054,8 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    generation experiments, edit beats, and shots are distinct. Ordinary
    narrative projects do not automatically receive golden-three-seconds,
    CTA, fixed pattern-interrupt frequency, or one-beat-one-shot rules.
+5. **Scene and shot truth have one owner each.** A SceneContract owns dramatic
+   scene state in `story/scenes/<id>.yaml` but never a shot list. Indexed scene
+   membership is derived from `shots/index.yaml` order plus `ShotSpec.scene_id`.
+   ShotContract is nested in the existing shot YAML, keeping `action.main` as
+   the one authored visible action and avoiding a parallel acceptance document.

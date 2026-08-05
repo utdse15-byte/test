@@ -30,6 +30,20 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  # -- narrative authoring -------------------------------------------------
+  - id: manju.scene-contract/v1
+    kind: schema
+    owner: manju.core.authoring:SceneContract
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Author-owned dramatic scene state in story/scenes/<id>.yaml. It never
+      owns a shot list; membership is derived from shots/index.yaml order and
+      each ShotSpec.scene_id. ShotContract remains nested in shot.yaml so there
+      is no parallel editable shot or acceptance truth.
+
   # -- agent / MCP surface -------------------------------------------------
   - id: manju.agent-surface/v1
     kind: schema
@@ -584,7 +598,8 @@ documents:
     write_older: false
     notes: >-
       One shot per file (shots/<id>.yaml). Authoritative owner of shot intent
-      AND selected take (§4.7). Loaded by core.container.Project.load_shot.
+      AND selected take (§4.7). ShotContract is nested here; no second editable
+      shot or acceptance file exists. Loaded by core.container.Project.load_shot.
   - id: timeline.json
     kind: document
     owner: manju.core.models:Timeline
@@ -704,7 +719,7 @@ documents:
 # consistency test asserts this map covers every listed concept.
 # ---------------------------------------------------------------------------
 ownership:
-  shot_intent: Shot YAML (shots/<id>.yaml)
+  shot_intent: ShotSpec + nested ShotContract (shots/<id>.yaml)
   character_identity: Bible (bible/*.yaml)
   selected_take: Shot YAML (status.selected)
   provider_request: GenerationRequest (providers)

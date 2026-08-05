@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .authoring import SceneContract
 from .idents import UnsafeIdentifierError, validate_safe_segment, windows_segment_problems
 from .models import (
     PROJECT_FORMAT,
@@ -315,7 +316,8 @@ class Project:
         name = name or root.stem
 
         for sub in (
-            "story", "bible", "shots", "media/imports", "media/refs", "media/gen",
+            "story", "story/scenes", "bible", "shots", "media/imports", "media/refs",
+            "media/gen",
             "timeline", "captions", "renders/segments", "renders/proxy", "renders/final",
             "exports/jianying", "exports/capcut", "exports/otio",
             "reports/frames", "proposals", ".manju",
@@ -380,6 +382,19 @@ class Project:
     @property
     def shots_dir(self) -> Path:
         return self.root / "shots"
+
+    @property
+    def story_dir(self) -> Path:
+        return self.root / "story"
+
+    @property
+    def scene_contracts_dir(self) -> Path:
+        return self.story_dir / "scenes"
+
+    @property
+    def narrative_opted_in(self) -> bool:
+        """A source file opts in even when malformed, so errors cannot bypass gates."""
+        return any(path.is_file() for path in self.scene_contracts_dir.glob("*.yaml"))
 
     @property
     def imports_dir(self) -> Path:
@@ -574,6 +589,49 @@ class Project:
     def save_shot(self, shot: ShotSpec) -> None:
         self.verify_manju_identity()  # CLI-P0-001 write-before verification
         write_yaml(self.shot_path(shot.id), shot.model_dump(exclude_none=True))
+
+    # ----------------------------------------------------- scene contracts
+
+    def _safe_scene_id(self, scene_id: str) -> str:
+        try:
+            return validate_safe_segment(scene_id, label="scene_id")
+        except UnsafeIdentifierError as exc:
+            raise ProjectError(str(exc)) from exc
+
+    def scene_contract_path(self, scene_id: str) -> Path:
+        return self.scene_contracts_dir / f"{self._safe_scene_id(scene_id)}.yaml"
+
+    def scene_contract_ids(self) -> list[str]:
+        if not self.scene_contracts_dir.exists():
+            return []
+        return sorted(
+            path.stem for path in self.scene_contracts_dir.glob("*.yaml") if path.is_file()
+        )
+
+    def load_scene_contract(self, scene_id: str) -> SceneContract:
+        path = self.scene_contract_path(scene_id)
+        if not path.exists():
+            raise ProjectError(f"scene contract file not found: {path.name}")
+        data = read_yaml(path)
+        if not isinstance(data, dict):
+            raise ProjectError(f"scene contract file is not a mapping: {path.name}")
+        return SceneContract.model_validate(data)
+
+    def save_scene_contract(self, contract: SceneContract) -> Path:
+        self.verify_manju_identity()
+        path = self.scene_contract_path(contract.id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_yaml(path, contract.model_dump(exclude_none=True))
+        return path
+
+    def scene_shot_ids(self, scene_id: str) -> list[str]:
+        """Indexed shot membership derived only from order and ``shot.scene_id``."""
+        scene_id = self._safe_scene_id(scene_id)
+        members: list[str] = []
+        for shot_id in self.shot_ids(indexed_only=True):
+            if self.load_shot(shot_id).scene_id == scene_id:
+                members.append(shot_id)
+        return members
 
     def update_shot_raw(self, shot_id: str, mutate) -> dict[str, Any]:
         """Edit a shot file as a raw dict and write it back.
