@@ -78,6 +78,10 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 
 | 条目 | date | summary | 点名模块 / 命令 |
 |------|------|---------|------------------|
+| `NARRATIVE-CLOSED-LOOP #1` | 2026-08-05 | Soft capability is product scope; schema and Skill behavior ship together | skills/ |
+| `NARRATIVE-CLOSED-LOOP #2` | 2026-08-05 | Stable craft belongs in Skills; machine and volatile provider facts retain one owner | skills/*/SKILL.md, ProviderManifest |
+| `NARRATIVE-CLOSED-LOOP #3` | 2026-08-05 | Legacy provider formulas are quarantined and never refreshed from memory | skills/prompt-craft/references/archive/ |
+| `NARRATIVE-CLOSED-LOOP #4` | 2026-08-05 | Ordinary narrative work never defaults to marketing syntax or one-beat-one-shot | skills/narrative-pacing/SKILL.md, skills/creation-funnel/SKILL.md |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4027,3 +4031,25 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    pin's assert clips; re-verified with real keys — v4==v2 True), and the
    drill conflated final_v1 with the committed v1 world (final_v2 is the
    correct referent). 7 red-first tests across the two new files.
+
+## NARRATIVE-CLOSED-LOOP (2026-08-05)
+
+1. **Soft capability is product scope, not optional documentation.** Manju's
+   engine remains LLM-free; the external AI director reaches the authoring
+   method through `skills/`. A schema change without matching Skill behavior
+   would fill new contracts with the old method and is therefore incomplete.
+2. **Knowledge ownership is split by lifetime.** Stable directing and
+   production craft belongs in core `SKILL.md` files. Machine capabilities,
+   limits, reference shapes, costs, and routing remain owned by
+   `ProviderManifest`. Dated prompt semantics or owner findings may later use
+   a traceable manifest evidence extension. Unknown claims remain unknown.
+3. **Legacy provider formulas are quarantined, not refreshed from memory.**
+   The prior `prompt-craft` text is preserved under
+   `references/archive/legacy-provider-guidance-2026-08-05.md`, explicitly
+   stale and excluded from automatic loading. Fixed retention percentages,
+   universal shot lengths, reference counts, seed behavior, and LoRA weights
+   no longer drive ordinary narrative work.
+4. **Narrative work does not default to marketing syntax.** Story beats,
+   generation experiments, edit beats, and shots are distinct. Ordinary
+   narrative projects do not automatically receive golden-three-seconds,
+   CTA, fixed pattern-interrupt frequency, or one-beat-one-shot rules.

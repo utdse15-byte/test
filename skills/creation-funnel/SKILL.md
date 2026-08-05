@@ -1,6 +1,6 @@
 ---
 name: creation-funnel
-description: 从一句话创意到可执行分镜的分阶段创作漏斗(逐步程序,含花钱前审批闸)——立意/Concept(brief.md) → 梗概/Synopsis → 节拍/Beat-sheet → 剧本/Script(script.md) → 分镜/Storyboard → 生成。借 LTX 阶段命名与三道 approve-before 闸(cast/Elements 确认、计划、逐镜)。决策树:idea-first 生成式 vs preset/模板式。触发词:创作、漏斗、从头开始、把想法做成视频、立意、梗概、节拍、storyboard、开新项目。
+description: 从一句话创意到 picture lock 的分阶段创作漏斗，覆盖结尾、场次变化、剧本、镜头计划、资产、临时声音、Animatic、proof、生成评审与修源循环。用于新建项目或把想法做成完整视频；不会把故事节拍等同于镜头，也不会从 Storyboard 直接跳到批量生成。
 when_to_use: 用户新建项目、说「帮我把这个想法做成视频」、或要一条从创意到分镜的完整路径时。
 tags: [funnel, task]
 user_invocable: true
@@ -8,7 +8,7 @@ user_invocable: true
 
 # 创作漏斗(creation-funnel)
 
-这是一条**逐步程序**:把一句话创意稳稳推到「可以按生成键的分镜」。每一步产出一个真相文件、经人确认再走下一步;**任何花钱动作都在闸后,先 dry-run 再问**。你只在文本上创作,引擎不编故事。
+这是一条**逐步程序**:把一句话创意推进到 picture lock。生成、看片、续接和修源仍属于创作循环；只有 selected media 之后的装配是确定性执行。任何花钱动作都在闸后。
 
 ## 什么时候不该用
 
@@ -18,15 +18,15 @@ user_invocable: true
 | --- | --- |
 | 项目已有 script/shots,只是要改其中一处 | 直接改文本 + `manju check`;单镜的导演判断走 `direct-shot-source-patch` |
 | 手上是一个长剧本 / 小说,要先拆集 | `series-breakdown` |
-| 只是想跑一次生成 | `manju build --dry-run` 看清单再 `manju build` |
+| 只是想查看生成计划 | `manju build --dry-run` |
 
 ## 决策树:先判入口
 
-- **有想法、要从零生成(生成式)** → 走下面的六阶段漏斗(默认)。
-- **想套现成结构(模板式)** → `manju new --preset <kit>` 选一套预设(vertical_ai_video / horizontal_ai_video / blank),「挑结构 → 往槽里填素材 → 编辑」;仍回到漏斗的「分镜→生成」两步。
+- **有想法、要从零创作** → 走下面的完整漏斗(默认)。
+- **想套现成结构(模板式)** → `manju new --preset <kit>` 选预设；仍需验证场次变化、Animatic 与 proof。
 - **有小说/长稿** → 先走 `series-breakdown`(取框架压缩)再回本漏斗的剧本阶段。
 
-## 六阶段(每阶段 = 一个真相文件 + 一次确认)
+## 当前过渡流程
 
 对齐 Manju 已铺好的骨架(`manju new` 生成 `story/brief.md`/`outline.md`/`script.md`):
 
@@ -35,16 +35,19 @@ user_invocable: true
    - 若 brief 空:先与人确认一句话创意——谁、在哪、发生什么、为什么抓人。别自己拍板方向。
 2. **梗概 / Synopsis → 扩进 `story/brief.md` 末尾**
    - 扩成 3–5 句 premise:核心冲突、一个转折、一个结局钩子。人确认。
-3. **节拍 / Beat-sheet → `story/outline.md`**(市场空白,Manju 的差异点)
-   - 短片按 **Hook→Value/Build→Payoff→CTA** 写 4 拍;**每行一个节拍,一节拍≈一镜头**,保留节拍编号(下一步一一映射成镜头)。钩子/节奏取 `narrative-pacing`。人确认节拍。
+3. **结尾与场次变化 → `story/outline.md`**
+   - 先明确结尾和不可逆变化，再按戏剧场次组织人物进入、变化和离开状态。故事节拍可由多个镜头完成；只有明确的平台格式才加载 `narrative-pacing`。
 4. **剧本 / Script → `story/script.md`**
    - 分场 + 对白,对白逐字写清(将原样成为 `shots/*.yaml` 的 `dialogue.text`,决定 TTS 时长)。
-5. **分镜 / Storyboard → `shots/*.yaml` + `shots/index.yaml`**
-   - 每节拍一个 `shots/SNNN.yaml`(景别/运镜取 `shot-design`;提示词取 `prompt-craft`)。更新 `order`。
+5. **镜头计划 / Storyboard → `shots/*.yaml` + `shots/index.yaml`**
+   - 每镜先写目的、开始状态、一个主要可见变化、结束接口、表演、声音、风险和替代调度，再决定景别与运镜。不要机械地一拍一镜。
    - **cast/Elements 确认闸(第 1 道 approve-before)**:任何镜头生成前,先把人物/场景/道具/配音落进 `bible/` 并让人确认——这是一致性锁,也是花钱前的 checkpoint。
-6. **生成 / Generate → `manju build`**
-   - **第 2 道闸(计划)**:先 `manju build --dry-run`,把镜头数 × 候选 × 时长 + 成本预估贴给人。
-   - **第 3 道闸(逐镜/花钱)**:命中 `project.yaml` 的 `ask_before`(如 `expensive_generation`)就停下问人,得同意再 `manju build`。绝不在没问、没估算下发起烧钱 build。
+6. **临时声音与 Animatic**
+   - 先用现有 `build --target animatic` 连续播放镜头顺序、对白、停顿与环境声；未通过时回到故事或镜头计划。
+7. **Proof → 生成 / 评审 / 修源循环**
+   - 先验证最高风险镜头和完整场次，再逐步扩大生成范围。每次生成只验证一个主要不确定性；真实媒体 endpoint 优先于原计划。
+8. **Picture lock → 确定性装配**
+   - selected media 锁定后再进入 timeline assembly、最终声音、render 与 delivery。
 
 ## 三道 approve-before 闸(市场只有 3 个产品做,Manju 引擎强制)
 
@@ -56,10 +59,10 @@ user_invocable: true
 
 ## BEFORE / AFTER(业余流程 → 专业流程)
 
-**例 1 — 跳过节拍直接拆镜**
+**例 1 — 把节拍机械映射成镜头**
 - BEFORE:拿到一句话就写 30 个 `shots/*.yaml`,结构散、钩子弱。
-- AFTER:先写 4 拍 beat-sheet(Hook/Value/Payoff/CTA),再逐拍映射成镜头。
-- WHY:beat-sheet 是市场空白也是留存地基;先定节拍再拆镜,顺序/钩子才立得住。
+- AFTER:先写结尾和场次变化，再让一个故事节拍按表演与剪辑需要使用一个或多个镜头。
+- WHY:故事变化、生成实验和剪辑落点不是同一种 beat。
 
 **例 2 — 没确认 cast 就烧钱生成**
 - BEFORE:bible 还没定角色就 `manju build` 生成 20 镜,人物每镜不一样。
@@ -77,9 +80,12 @@ user_invocable: true
 创作漏斗自检 · 逐阶段勾
 [ ] 开工三步做完(status/events/mode)?
 [ ] brief.md 有立意 + 3–5 句梗概,方向经人确认(空 brief 没自己拍板)?
-[ ] outline.md 是编号节拍、一拍≈一镜,走 Hook→Value→Payoff→CTA?
+[ ] outline.md 先明确结尾和场次不可逆变化，没有一拍≈一镜?
 [ ] script.md 分场 + 逐字对白?
-[ ] 生成前:bible 落 cast/Elements 且人确认(第 1 闸)?
+[ ] 临时声音与完整 Animatic 已连续播放?
+[ ] 先做最高风险 proof，再扩大生成?
+[ ] 生成后记录真实 endpoint，并在需要时修源?
+[ ] 生成前:bible 落 cast/Elements 且人确认?
 [ ] build 前:manju build --dry-run 出清单 + 成本(第 2 闸)?
 [ ] 命中 ask_before 停下问人,拿到同意才 build(第 3 闸)?
 [ ] 每阶段 manju check + git commit?

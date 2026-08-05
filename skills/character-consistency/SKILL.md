@@ -1,14 +1,14 @@
 ---
 name: character-consistency
-description: 跨镜头/跨集的人设一致性工艺——角色参考库(4–6 张 front/¾/profile/back + 表情)、seed 锁定、按相似度批量生成、各厂牌角色 ID 映射(Kling/Runway/Sora/Midjourney/LoRA)、50–70% 可用率的现实预期、漂移遮盖技巧。把 AI 角色一致性变成可执行流程,落到 Manju 的资产矩阵与参考图预算。触发词:一致性、人设、角色、character、consistency、漂移、drift、参考图、seed、LoRA、角色 ID。
+description: 管理角色跨镜、跨场和跨集的 identity、presentation、behavior、cognition 与 residue 连续性。用于建立角色、检查外观或行为漂移、继承知识/意图/情绪/身体状态，以及规划参考素材和运动压力测试；具体 provider、seed、参考数量与 LoRA 行为必须由当前证据决定。
 when_to_use: 建/锁一个角色、要角色跨镜跨集保持一致、或人脸/服装出现漂移时。
 tags: [craft, reference]
 auto: true
 ---
 
-# 人设一致性(character-consistency)
+# 角色连续性(character-consistency)
 
-AI 最擅长把主角在第 3 镜变成另一个人。你的活:把角色标准化成一份**参考库 + ID**,让每一次生成都引用它,并接受「不是每条都能用」的现实,靠批量与挑选补齐。
+角色连续性不只是一张脸。每次检查 identity、presentation、behavior、cognition 与 residue 五层，并让下一场继承人物真实状态。
 
 ## 什么时候不该用
 
@@ -16,19 +16,25 @@ AI 最擅长把主角在第 3 镜变成另一个人。你的活:把角色标准�
 
 | 情形 | 去哪 |
 | --- | --- |
-| 单镜一次性的人物长相,不跨镜复用 | `prompt-craft` 里把外观写清就够 |
+| 单镜一次性的人物且没有连续性职责 | `shot-design` |
 | 角色来自实拍素材(长相不由生成决定) | `manju import` + `manju select --file` 登记为 manual take |
 | 要管的是跨集的人设档案与世界观 | `series-bible` |
 
-## 决策树:按漂移风险选打法
+## 五层连续性
 
-- **主角、反复出镜、要跨集** → 建**角色资产库**:4–6 张多角度参考(front/¾/profile/back)+ 4–6 张表情,每张连 **prompt + seed** 一起存;条件够(~15–30 张、剧集固定 ~20 集)再训 **LoRA**(0.7–0.9 权重)。
-- **配角、只出几镜** → 参考图 + seed 锁即可,别上 LoRA。
-- **一批相关镜头** → **锁 seed**;**按相似度而非时间顺序批量**(近景→¾→远景→配角→建立镜),减少切换重解读。
-- **人脸顽固漂移** → 短片 4–5s + cutaway 打断 + 单一 LUT 统一肤色/光;实在不行后期换脸。
-- **跨集** → 外观只在 series bible 定义一次,分集只存**状态增量**(换装/受伤/情绪),见 `series-bible`。
+1. **identity**：脸、身体比例、年龄感、声音身份。
+2. **presentation**：服装、发型、伤势、污渍、道具。
+3. **behavior**：体态、步态、视线、手部习惯、社交距离、情绪外显。
+4. **cognition**：知道什么、不知道什么、相信什么、当前意图。
+5. **residue**：情绪、疲劳、疼痛、呼吸和动作速度的残留。
 
-现实预期:一支 15 分钟片 = **40–80 个镜头** @5–10s,每镜 2–3 个变体,**可用率约 50–70%**——所以要多生 + 会挑,别指望一次成。
+## 决策树
+
+- **反复出镜角色**：建立 identity、服装/道具、运动与情绪反应测试素材。
+- **存在动作或道具风险**：先做 turn、walk、sit、reach、hold-prop 等压力测试。
+- **只有外观一致但行为不属于角色**：仍判连续性失败，回到行为 Bible 或镜头表演要求。
+- **真实 endpoint 偏离计划**：下一镜继承 observed state，或明确 reroll / rewrite source。
+- **具体 provider 控制**：读取 ProviderManifest 与带日期证据；未知时不猜 seed、参考数量、权重或型号机制。
 
 ## 参考库原语(每个角色一份)
 
@@ -36,15 +42,7 @@ AI 最擅长把主角在第 3 镜变成另一个人。你的活:把角色标准�
 - **每张存 prompt + seed**:可复现、可追。
 - **结构化元数据(CHAR-ID)**:UUID + 头/脸/发型/服装 + 配色(主/辅/点缀)。原则 = **角色资产标准化**。
 
-## 各厂牌角色 ID 映射(把参考库接到具体模型)
-
-| 厂牌 | 角色一致机制 |
-| --- | --- |
-| Midjourney | `--cref` / `--cw`(v7 → Omni Reference) |
-| Runway Gen-4 | References:单张高清正脸,「identity encoding」 |
-| Kling 3.0 | 上传 3–5 张参考 → identity embedding(Elements ≤4) |
-| Sora 2 | 「创建角色」API → character ID → prompt 里 `@角色ID` |
-| LoRA | 训 15–30 张,0.7–0.9 权重,剧集固定 ~20 集最稳 |
+Provider 型号映射、固定图数、seed 行为、LoRA 权重和可用率已从核心正文撤销。它们只有在当前 manifest 或可追溯 owner evidence 支持时才可使用。
 
 ## BEFORE / AFTER(业余 → 专业,附 WHY)
 
@@ -55,13 +53,13 @@ AI 最擅长把主角在第 3 镜变成另一个人。你的活:把角色标准�
 
 **例 2 — 一张参考图想通吃**
 - BEFORE:只有一张正脸,侧身/背身镜全靠模型脑补。
-- AFTER:补齐 front/¾/profile/back + 表情共 4–6 张,存进资产库。
-- WHY:单视图撑不住转身/侧脸,多角度参考才让不同机位一致。
+- AFTER:根据实际镜头覆盖所需角度、全身动作、道具与表情测试，补齐足够的参考素材。
+- WHY:参考集合由镜头职责决定，不由固定张数决定。
 
 **例 3 — 按剧情顺序硬生**
-- BEFORE:按 S001→S050 顺序逐镜生成,seed 随机。
-- AFTER:锁 seed,按相似度分组批量(所有近景一批、所有远景一批),再回填顺序。
-- WHY:相似镜同 seed 一起生,身份最稳;按时间顺序 + 随机 seed 最容易花。
+- BEFORE:只看脸相似就通过，角色体态、视线和反应方式已经改变。
+- AFTER:同时检查 behavior、cognition 和 residue；不属于角色的动作判为失败。
+- WHY:外观相同不代表角色连续。
 
 **例 4 — 跨集换装写死在分集**
 - BEFORE:第 5 集脚本里重新完整定义角色长相 + 新衣服。
@@ -72,12 +70,11 @@ AI 最擅长把主角在第 3 镜变成另一个人。你的活:把角色标准�
 
 ```
 人设一致性自检 · 逐条勾
-[ ] 每个主角有 4–6 张多角度参考(front/¾/profile/back)+ 表情?
-[ ] 每张参考存了 prompt + seed?
-[ ] 角色有稳定 character_id,映射到目标厂牌的 ID 机制(Kling/Runway/Sora/MJ/LoRA)?
-[ ] 相关镜头锁了 seed、按相似度批量而非时间顺序?
+[ ] identity / presentation / behavior / cognition / residue 五层都检查?
+[ ] 参考素材覆盖实际镜头角度、动作、道具与情绪压力?
+[ ] provider 策略来自当前证据，未知没有被猜成支持?
 [ ] 镜头 prompt 只写动作、不反复重描外观/服装?
-[ ] 接受 50–70% 可用率:每镜多生 2–3 变体再挑?
+[ ] 失败 take 保留并记录真实观察?
 [ ] 跨集:外观在 bible 定义一次,分集只存状态增量?
 [ ] 顽固漂移:短片 + cutaway + 单一 LUT 已上?
 ```
@@ -103,6 +100,6 @@ AI 最擅长把主角在第 3 镜变成另一个人。你的活:把角色标准�
 
 ## 验收 eval
 
-1. 给一个只有正脸参考的角色,是否补齐四视图 + 表情并存 prompt+seed?
-2. 给一批 50 个乱序镜头,是否改成锁 seed + 按相似度批量?
+1. 给一个只有正脸参考的角色,是否根据计划镜头补齐动作、角度、道具和情绪测试?
+2. 给一个脸相同但行为突变的镜头,是否判为角色连续性失败?
 3. 给一个跨集换装需求,是否用 bible 定义 + 分集状态增量而非本地重定义?
