@@ -1,8 +1,9 @@
-"""Round W: versioned spec_hash / voice_hash (review #37, #16, #60).
+"""Versioned spec_hash / voice_hash compatibility.
 
-SPEC_VERSION=2 folds ``dialogue`` + (non-empty) ``keyframes`` into the picture
+Spec v2 folds ``dialogue`` + (non-empty) ``keyframes`` into the picture
 hash — both are real provider inputs (dialogue drives the prompt compiler;
 keyframes drive first/last-frame video tasks) that v1 silently excluded.
+Spec v3 adds explicit props and picture-bearing ShotContract fields.
 VOICE_VERSION=2 folds the resolved TTS provider id + a manifest fingerprint +
 language/format into the voice hash — a provider/model swap used to be
 invisible to voice staleness.
@@ -67,7 +68,7 @@ def test_v1_hash_ignores_dialogue_and_keyframes(tmp_project, add_shot):
 def test_v2_adds_dialogue(tmp_project, add_shot):
     shot = add_shot(tmp_project, "S001", dialogue={"speaker": "linxia", "text": "台词A"})
     bible = tmp_project.load_bible()
-    v2 = spec_payload(shot, bible, version=SPEC_VERSION)
+    v2 = spec_payload(shot, bible, version=2)
     assert v2["dialogue"] == {"speaker": "linxia", "text": "台词A"}
     assert "keyframes" not in v2  # empty keyframes -> key omitted entirely
 
@@ -77,8 +78,7 @@ def test_v2_dialogue_edit_changes_the_hash_but_v1_does_not(tmp_project, add_shot
     b = add_shot(tmp_project, "S001", dialogue={"speaker": "linxia", "text": "完全不同的台词B"})
     bible = tmp_project.load_bible()
     assert compute_spec_hash(a, bible, version=1) == compute_spec_hash(b, bible, version=1)
-    assert compute_spec_hash(a, bible, version=SPEC_VERSION) != \
-        compute_spec_hash(b, bible, version=SPEC_VERSION)
+    assert compute_spec_hash(a, bible, version=2) != compute_spec_hash(b, bible, version=2)
 
 
 def test_v2_keyframes_included_when_non_empty(tmp_project, add_shot):
@@ -87,7 +87,7 @@ def test_v2_keyframes_included_when_non_empty(tmp_project, add_shot):
         {"at_ms": 1500, "image": "https://example.com/mid.png", "prompt": "中段"},
     ])
     bible = tmp_project.load_bible()
-    v2 = spec_payload(shot, bible, version=SPEC_VERSION)
+    v2 = spec_payload(shot, bible, version=2)
     assert v2["keyframes"] == [
         {"position": "start", "at_ms": None, "image": "media/refs/kf.png", "prompt": "开场"},
         {"position": None, "at_ms": 1500, "image": "https://example.com/mid.png", "prompt": "中段"},
@@ -103,11 +103,11 @@ def test_v2_keyframe_local_image_content_change_moves_the_hash(tmp_project, add_
     shot = add_shot(tmp_project, "S001",
                     keyframes=[{"position": "start", "image": "media/refs/kf.png"}])
     bible = tmp_project.load_bible()
-    h1 = compute_spec_hash(shot, bible, version=SPEC_VERSION, project_root=tmp_project.root)
+    h1 = compute_spec_hash(shot, bible, version=2, project_root=tmp_project.root)
 
     # same path, DIFFERENT bytes -> the take's real provider input changed
     img.write_bytes(b"BBBBBBBB")
-    h2 = compute_spec_hash(shot, bible, version=SPEC_VERSION, project_root=tmp_project.root)
+    h2 = compute_spec_hash(shot, bible, version=2, project_root=tmp_project.root)
     assert h1 != h2
 
     # v1 never looks at keyframes at all, so the file edit is invisible to it
@@ -135,7 +135,7 @@ def test_old_v1_take_survives_a_dialogue_edit_as_fresh(tmp_project, add_shot, ma
 
 
 @pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg required (caption_card fallback renders)")
-def test_new_v2_take_goes_stale_after_a_dialogue_edit(tmp_project, add_shot):
+def test_new_current_take_goes_stale_after_a_dialogue_edit(tmp_project, add_shot):
     """A take generated THROUGH THE REAL PATH (Provider._register) records
     spec_version=SPEC_VERSION — a dialogue edit now moves its hash."""
     from manju.build.graph import redo_shot

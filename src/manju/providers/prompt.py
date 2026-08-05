@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core.intent import director_contract_view, prompt_contract_sections
 from ..core.models import Camera, ShotSpec
 
 # -- camera enum -> natural phrase (small fixed mapping; unknowns degrade to the
@@ -57,12 +58,18 @@ _ANGLE = {
 PLACEHOLDERS = (
     "scene",
     "characters",
+    "props",
     "camera",
+    "opening",
     "action",
     "emotion",
+    "endpoint",
+    "performance",
+    "physics",
     "must_show",
     "avoid",
     "dialogue",
+    "timing",
 )
 
 
@@ -158,16 +165,7 @@ def _prefixed(label: str, items: list[Any] | None) -> str:
 
 
 def _fields(shot: ShotSpec, bible: dict[str, dict]) -> dict[str, str]:
-    return {
-        "scene": _scene_field(shot, bible),
-        "characters": _characters_field(shot, bible),
-        "camera": _camera_field(shot.camera),
-        "action": (shot.action.main or "").strip(),
-        "emotion": (shot.action.emotion or "").strip(),
-        "must_show": _prefixed("must clearly show", shot.quality.must_show),
-        "avoid": _prefixed("avoid", shot.quality.avoid),
-        "dialogue": (shot.dialogue.text or "").strip(),
-    }
+    return prompt_contract_sections(shot, bible)
 
 
 def _default_layout(fields: dict[str, str]) -> str:
@@ -177,12 +175,24 @@ def _default_layout(fields: dict[str, str]) -> str:
         lines.append(f"Scene: {fields['scene']}")
     if fields["characters"]:
         lines.append(f"Characters: {fields['characters']}")
+    if fields["props"]:
+        lines.append(f"Props: {fields['props']}")
+    if fields["opening"]:
+        lines.append(f"Opening state: {fields['opening']}")
     if fields["camera"]:
         lines.append(f"Camera: {fields['camera']}")
     if fields["action"]:
         lines.append(f"Action: {fields['action']}")
     if fields["emotion"]:
         lines.append(f"Emotion: {fields['emotion']}")
+    if fields["performance"]:
+        lines.append(f"Performance: {fields['performance']}")
+    if fields["physics"]:
+        lines.append(f"Physics: {fields['physics']}")
+    if fields["endpoint"]:
+        lines.append(f"Endpoint: {fields['endpoint']}")
+    if fields["timing"]:
+        lines.append(f"Timing: {fields['timing']}")
     if fields["must_show"]:
         lines.append(fields["must_show"])
     if fields["avoid"]:
@@ -247,6 +257,10 @@ def compile_image_prompt(
         lines.append(f"Scene: {fields['scene']}")
     if fields["characters"]:
         lines.append(f"Characters: {fields['characters']}")
+    if fields["props"]:
+        lines.append(f"Props: {fields['props']}")
+    if fields["opening"]:
+        lines.append(f"Opening state: {fields['opening']}")
     if fields["camera"]:
         lines.append(f"Camera: {fields['camera']}")
     if fields["emotion"]:
@@ -263,7 +277,11 @@ def compile_negative_prompt(shot: ShotSpec) -> str:
     the exact values :func:`compile_prompt` renders under ``avoid:``, label-free
     and ready for a provider's dedicated negative field. Empty string when the
     shot lists nothing to avoid. Deterministic (authored order preserved)."""
-    return ", ".join(s for s in (_fmt(i) for i in (shot.quality.avoid or [])) if s)
+    avoid = list(shot.quality.avoid or [])
+    if shot.contract is not None:
+        avoid.extend(shot.contract.performance.avoid)
+        avoid.extend(shot.contract.physics.avoid)
+    return ", ".join(s for s in (_fmt(i) for i in avoid) if s)
 
 
 def compile_director_prompt(shot: ShotSpec, bible: dict[str, dict]) -> str:
@@ -274,6 +292,21 @@ def compile_director_prompt(shot: ShotSpec, bible: dict[str, dict]) -> str:
     the director's intent is separate from whatever prompt a model receives).
     Reuses the shared field assembly; empty sections are skipped."""
     fields = _fields(shot, bible)
+    if shot.contract is not None:
+        view = director_contract_view(shot)
+        parts: list[str] = []
+        for label, value in (
+            ("目的 Purpose", view["purpose"]),
+            ("观众必须感知 Viewer must perceive", view["viewer_must_perceive"]),
+            ("起点 Opening", _fmt(view["opening"])),
+            ("动作 Action", fields["action"]),
+            ("终点 Endpoint", _fmt(view["endpoint"])),
+            ("主要风险 Primary risk", view["risk"]["primary"]),
+            ("替代调度 Fallback staging", view["risk"]["fallback_staging"]),
+        ):
+            if value:
+                parts.append(f"{label}: {value}")
+        return "\n".join(parts)
     parts: list[str] = []
     if fields["action"]:
         parts.append(f"动作 Action: {fields['action']}")

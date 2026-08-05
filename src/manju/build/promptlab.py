@@ -154,7 +154,7 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
     exist (the caller turns that into a clean CLI failure). The returned dict is
     JSON-serialisable (paths are strings, findings are plain dicts)."""
     from ..core.hashing import hash_value
-    from ..core.spec import compute_spec_hash, spec_payload
+    from ..core.spec import SPEC_VERSION, compute_spec_hash, spec_payload
     from ..providers.prompt import (
         compile_director_prompt,
         compile_image_prompt,
@@ -197,8 +197,12 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
         "shot": shot_id,
         # (1) ShotSpec snapshot — the canonical spec_payload dict (the exact
         # snapshot a generated take archives), plus its staleness anchor.
-        "shot_spec": spec_payload(shot, bible),
-        "spec_hash": compute_spec_hash(shot, bible),
+        "shot_spec": spec_payload(
+            shot, bible, version=SPEC_VERSION, project_root=project.root
+        ),
+        "spec_hash": compute_spec_hash(
+            shot, bible, version=SPEC_VERSION, project_root=project.root
+        ),
         # (2) the prompts, assembled by the build's own code path (prompt.py).
         "image_prompt": image_prompt,
         "video_prompt": video_prompt,  # == the build's compiled_prompt
@@ -219,7 +223,9 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
         # how fresh it is), and — when the shot declares continuity.prev —
         # the continuation source binding (Skill input, never a build input).
         "compiler_trace": {
-            "source_revision": compute_spec_hash(shot, bible),
+            "source_revision": compute_spec_hash(
+                shot, bible, version=SPEC_VERSION, project_root=project.root
+            ),
             "prompt_bundle_digest": hash_value({
                 "image": image_prompt, "video": video_prompt,
                 "director": director_prompt, "negative": negative_prompt,

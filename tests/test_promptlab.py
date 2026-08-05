@@ -132,9 +132,10 @@ def test_bundle_is_json_serialisable_and_has_all_sections(providers_dir, tmp_pro
                 "cost", "checks"):
         assert key in bundle
     # (1) ShotSpec snapshot is the canonical spec_payload
-    from manju.core.spec import spec_payload
+    from manju.core.spec import SPEC_VERSION, spec_payload
     assert bundle["shot_spec"] == spec_payload(
-        tmp_project.load_shot("S001"), tmp_project.load_bible())
+        tmp_project.load_shot("S001"), tmp_project.load_bible(),
+        version=SPEC_VERSION, project_root=tmp_project.root)
 
 
 # ============================================================ cost field present

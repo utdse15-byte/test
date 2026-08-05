@@ -139,6 +139,16 @@ schemas:
     read_older: true
     write_older: false
     notes: Deterministic QC expectations derived from shot intent.
+  - id: manju.qc.expectations/v2
+    kind: schema
+    owner: manju.qc.expectations
+    status: stable
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: >-
+      Additive contract-aware expectations with start/any/end position and
+      authored source_path. Contract-free shots continue to emit v1 exactly.
   - id: manju.qc.colorstats/v1
     kind: schema
     owner: manju.qc.colorstats

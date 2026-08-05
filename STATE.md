@@ -30,10 +30,11 @@ number is worse than an honest blank.
 - Windows ffmpeg cancellation integration (real child-process kill on Windows).
 
 ## Current structural work
-- Narrative closed-loop refactor — S0 and Phase 1 complete locally: stale
-  provider formulas quarantined; SceneContract storage and nested ShotContract
-  landed without opting legacy projects into readiness. Phase 2 (unified intent
-  projection, picture spec v3, expectations v2) is next.
+- Narrative closed-loop refactor — S0 and Phases 1–2 complete locally: stale
+  provider formulas quarantined; SceneContract + nested ShotContract landed;
+  one pure intent projection now drives current prompt, picture spec v3,
+  expectations v2, and director view while legacy versions remain readable.
+  Phase 3 (reference ownership and provider authoring evidence) is next.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
 - Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,

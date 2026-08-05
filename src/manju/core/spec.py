@@ -8,7 +8,10 @@ deliberately excluded so that human decisions never make a take look stale.
 VERSIONED HASHES (round W, review #37/#16/#60) — §4.3 conservatism extended to
 new provider-input fields WITHOUT mass-restaging every existing take:
 
-    SPEC_VERSION  = 2   dialogue {speaker,text} + (when non-empty) keyframes
+    SPEC_VERSION  = 3   v2 dialogue/keyframes plus explicit props and the
+                        picture-bearing subset of nested ShotContract.
+
+    version 2           dialogue {speaker,text} + (when non-empty) keyframes
                         both already flow into the real prompt/provider call
                         (dialogue -> prompt compiler; keyframes -> first/last
                         frame video tasks) but were excluded from v1's payload.
@@ -33,10 +36,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .intent import picture_contract_payload
 from .hashing import hash_file, hash_value
 from .models import ShotSpec
 
-SPEC_VERSION = 2
+SPEC_VERSION = 3
 VOICE_VERSION = 2
 
 _URL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -102,11 +106,14 @@ def spec_payload(
     assert what does / does not participate.
 
     ``version=1`` (default) is byte-identical to the pre-round-W payload.
-    ``version=2`` (:data:`SPEC_VERSION`) additionally hashes ``dialogue`` and,
+    ``version=2`` additionally hashes ``dialogue`` and,
     when non-empty, ``keyframes`` — both real provider inputs today. Pass
     ``project_root`` so a keyframe's local image file content can be hashed;
     omitted, the keyframe entry still carries its path/prompt (a rename or
-    prompt edit is still caught either way)."""
+    prompt edit is still caught either way). ``version=3`` adds explicit prop
+    dependencies and only the ShotContract fields that affect provider picture
+    input. A prompt override suppresses those new default-prompt projections.
+    """
     bible = bible or {}
     generation = shot.generation.model_dump(exclude_none=False)
     payload: dict[str, Any] = {
@@ -125,6 +132,19 @@ def spec_payload(
         keyframes = _keyframes_payload(shot, project_root)
         if keyframes:
             payload["keyframes"] = keyframes
+    if version >= 3 and not (
+        isinstance(shot.generation.prompt_override, str)
+        and shot.generation.prompt_override.strip()
+    ):
+        prop_ids = list(dict.fromkeys(shot.props or []))
+        if prop_ids:
+            payload["props"] = prop_ids
+            payload["prop_bible"] = {
+                prop_id: _bible_excerpt(bible, prop_id) for prop_id in prop_ids
+            }
+        contract_payload = picture_contract_payload(shot)
+        if contract_payload:
+            payload["contract"] = contract_payload
     return payload
 
 

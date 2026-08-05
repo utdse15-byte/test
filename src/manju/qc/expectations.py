@@ -34,12 +34,14 @@ import unicodedata
 from typing import TYPE_CHECKING
 
 from ..core.hashing import hash_value
+from ..core.intent import expectation_assertions
 from ..core.spec import SPEC_VERSION, compute_spec_hash
 
 if TYPE_CHECKING:
     from ..core.container import Project
 
 SCHEMA = "manju.qc.expectations/v1"
+SCHEMA_V2 = "manju.qc.expectations/v2"
 
 # kind -> (polarity, check). The kind is the id's human-readable middle segment
 # (``exp:<shot>:<kind>:<sha8>``) and the dedup bucket; the source field path is
@@ -89,6 +91,9 @@ def compile_expectations(project: "Project", shot_id: str) -> dict:
         shot, bible, version=SPEC_VERSION, project_root=project.root
     )
 
+    if shot.contract is not None:
+        return _compile_v2(shot, spec_hash)
+
     # (kind, statement, source_path) in authored order, all three sources.
     authored: list[tuple[str, str, str]] = []
     for i, s in enumerate(shot.quality.must_show):
@@ -126,6 +131,74 @@ def compile_expectations(project: "Project", shot_id: str) -> dict:
         "expectations": expectations,
         "digest": digest,
     }
+
+
+def _expectation_id_v2(
+    shot_id: str, kind: str, polarity: str, position: str, statement: str
+) -> str:
+    identity = "\n".join((shot_id, kind, polarity, position, _normalize(statement)))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"exp:{shot_id}:{kind}:{digest[:8]}"
+
+
+def _source_pointer(shot_id: str, source_path: str) -> str:
+    pointer = re.sub(r"\[([0-9]+)\]", r"/\1", source_path.replace(".", "/"))
+    return f"shots/{shot_id}.yaml#/{pointer}"
+
+
+def _compile_v2(shot, spec_hash: str) -> dict:
+    by_id: dict[str, dict] = {}
+    for assertion in expectation_assertions(shot):
+        eid = _expectation_id_v2(
+            shot.id,
+            assertion.kind,
+            assertion.polarity,
+            assertion.position,
+            assertion.statement,
+        )
+        source_path = _source_pointer(shot.id, assertion.source_path)
+        if eid in by_id:
+            by_id[eid].setdefault("duplicates", []).append(source_path)
+            continue
+        by_id[eid] = {
+            "id": eid,
+            "source_path": source_path,
+            "polarity": assertion.polarity,
+            "check": assertion.check,
+            "statement": assertion.statement,
+            "position": assertion.position,
+            "required": True,
+        }
+
+    expectations = sorted(by_id.values(), key=lambda item: item["id"])
+    return {
+        "schema": SCHEMA_V2,
+        "subject": {"kind": "shot", "id": shot.id},
+        "spec_hash": spec_hash,
+        "expectations": expectations,
+        "digest": _digest_v2(shot.id, expectations),
+    }
+
+
+def _digest_v2(shot_id: str, expectations: list[dict]) -> str:
+    identity = [
+        {
+            "id": item["id"],
+            "polarity": item["polarity"],
+            "check": item["check"],
+            "position": item["position"],
+            "statement": _normalize(item["statement"]),
+            "required": item["required"],
+        }
+        for item in sorted(expectations, key=lambda item: item["id"])
+    ]
+    return hash_value(
+        {
+            "schema": SCHEMA_V2,
+            "subject": {"kind": "shot", "id": shot_id},
+            "expectations": identity,
+        }
+    )
 
 
 def _digest(shot_id: str, expectations: list[dict]) -> str:
