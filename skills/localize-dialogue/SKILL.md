@@ -3,12 +3,22 @@ name: localize-dialogue
 description: 把一集的对白本地化成另一种语言的 locale source patch(locales/<lang>/lines.yaml)。吸收 VideoLingo 的方法但放在 Skill 层:术语表 → Translate → Reflect → Adaptation → 时长贴合复审(terminology→translate→reflect→adaptation→timing fit）。产出的是「源补丁」交人确认,核心只负责 base_hash 陈旧、字幕规范与音频验证;技能自己绝不改核心真相、绝不直接调用云翻译/TTS。触发词:本地化、localize、翻译、locale、字幕翻译、lines.yaml、多语言、配音翻译、i18n。
 when_to_use: 需要把对白翻译/改写成某语言、写或修 locales/<lang>/lines.yaml、或为配音做时长贴合复审时。
 tags: [task, localization, craft]
-auto: true
+user_invocable: true
 ---
 
 # 对白本地化(localize-dialogue)
 
 Manju 的本地化真相是 `locales/<lang>/lines.yaml`——每个镜头一行 `{text, base_hash}`,`base_hash` 钉住翻译当时的基准中文 `dialogue.text`。基准一改,这个 hash 对不上,该行就 STALE(核心自动判定)。你的活:按下面五步流水产出**一份 locale source patch**(即 `lines.yaml` 的补丁),交人确认。核心只做 base_hash、timing、字幕规范和音频验证——**翻译内容永远是人/Agent 的源提案,不是核心自动生成的**。
+
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 只是同一种语言里换个说法 | 直接改 `shots/SNNN.yaml` 的 `dialogue.text` |
+| 翻译已定,现在要配音 / 对齐 | `manju voice`、`manju align` |
+| 要定的是字幕每行几个字、安全区多大 | `subtitle-standards` |
 
 ## 五步流水(VideoLingo 方法,Skill 层)
 

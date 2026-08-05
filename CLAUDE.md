@@ -43,6 +43,11 @@ Where the rest lives (a cold session should read these before touching code):
 - **Operating protocol → `skills/manju/SKILL.md`** — how to drive the product
   (take selection, stale semantics, ask_before gates, the takeover ritual).
   Task playbooks live beside it in `skills/*/SKILL.md`; `manju skills` lists them.
+  Every skill states 「什么时候不该用」 — read it before loading one, over-triggering
+  is the expensive failure. Depth the core protocol pushed out of its <300-line
+  budget lives in `skills/manju/references/` (progressive disclosure, layer 3).
+- **Every command → `docs/CLI.md`** (moved out of README 2026-08-01; the README
+  keeps the owner's daily path). Task-first navigation: `manju help-workflow`.
 - **Repo state, open risks, work in flight → `STATE.md`** (short by policy).
 - **Why anything is the way it is → `DECISIONS.md`** — start at its two index
   tables. Citation rule: a bare `#N` means the TOP-LEVEL `## N.` entry; entries

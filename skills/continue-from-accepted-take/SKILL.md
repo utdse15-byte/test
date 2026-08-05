@@ -17,6 +17,16 @@ user_invocable: true
 → 必须从「她仍低头」提出下一镜 patch
 ```
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 上一镜还没有被验收的 take(没有真实结尾可接) | 先 `manju select` 定稿,或走 `review-take-and-route-repair` |
+| 要重新决定这一镜表现什么 | `direct-shot-source-patch` |
+| 只是改台词 / 时长这类窄字段 | 直接改 `shots/SNNN.yaml` + `manju check` |
+
 ## 输入
 
 - `manju prompt <next_shot> --json` 的 `compiler_trace.continuation_source`

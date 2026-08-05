@@ -21,6 +21,16 @@ B. 纯建议报告 —— 开头必须写明「不影响 build,尚未采纳」
 禁止:写 `reports/directing/*.json` 之类的派生文件并指望引擎读它(引擎**从不**读
 reports/ 来编译 Prompt/请求——这是 08_10_12C 的 source-authority 铁律)。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 这一镜的要求就是「接住上一镜的结尾」 | `continue-from-accepted-take` |
+| 要评的是已经生成出来的 take | `review-take-and-route-repair` |
+| 要改的字段已锁 | `manju propose` 写提案,永不 `unlock` |
+
 ## 输入
 
 - 当前 Shot source(`manju prompt <shot> --json` 的 `shot_spec` + `spec_hash`);

@@ -17,6 +17,16 @@ user_invocable: true
 成功时是正常结果对象。**`--json` 的输出永远是 JSON**,你不需要为失败准备一条解析
 ANSI 彩色文本的分支。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 命令成功了但结果不对(退出码 0) | 不是错误码的事,`manju explain`、`manju status` 看它到底做了什么 |
+| 渲染失败要看 ffmpeg 到底被喂了什么 | `manju failures` 里的 info 行 + `.manju/render-debug/` 的中间输入 |
+| 内容审核拒了要改写 | `prompt-craft`(别无脑重试,§8 降级链) |
+
 ## 先记住这一条:`error` 是「未分类」
 
 CLI 里约 275 个失败点,只有 25 个带专门 code,其余全部落到默认的 `"error"`。

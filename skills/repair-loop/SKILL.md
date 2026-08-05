@@ -10,6 +10,16 @@ user_invocable: true
 
 修复是一个**反馈环**:QC(validator)→ 逐项修(fix)→ 复核(repeat),只在通过时收工。你的活:读懂每条发现、选对修复 op、只增 take、再跑 QC 闭环。花钱的重做先 dry-run + 问。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 还没跑过 QC(没有 findings 就没有修复对象) | 先 `manju qc` |
+| 要先判「这条 take 该留该改还是该重拍」 | `review-take-and-route-repair` 出证据 |
+| 坏的是故事不是成片(台词平、开场无钩子) | `narrative-pacing` |
+
 ## 决策树:按发现类型选修复手段
 
 - **时长/时序类**(镜头太短放不下对白、时长不匹配)→ `manju repair --op extend`(freeze/pad_black)或 `--op retime`(变速 `--factor`)或 `--op trim`(裁短)。

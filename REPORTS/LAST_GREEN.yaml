@@ -1,27 +1,25 @@
-# REPORTS/LAST_GREEN.yaml — the latest fully validated commit (Priority 0 item 3).
+# REPORTS/LAST_GREEN.yaml — the latest fully validated commit.
+# INFORMATIONAL ONLY: derived, never a build input, never runtime truth.
+# Written by scripts/dev/update_last_green.py from CI results.
 #
-# INFORMATIONAL ONLY. This file is a DERIVED status record, not truth:
-#   * It MUST NOT be a build input (nothing under src/ reads it).
-#   * It MUST NOT affect runtime behavior.
-#   * It MUST NOT be treated as the source of truth (git + CI are).
-#   * No test asserts anything by scanning THIS file's text.
-#
-# It is meant to be written by CI when a single commit passes BOTH the full
-# Ubuntu suite (ci.yml) and the full Windows suite (windows-ci.yml) — see
-# scripts/dev/update_last_green.py for a generator. The values below are the
-# SEED/placeholder: they are honestly marked "pending" because no commit has
-# yet been through the new gates end-to-end on both platforms. Do NOT hand-edit
-# them to "success" — that would make this file lie. Let CI stamp it.
+# WHO RUNS IT: a maintainer, BY HAND, after reading both runs. No
+# workflow calls this script — the earlier 'stamped by CI' wording was
+# aspirational and left the file at `pending` forever (fixed 2026-08-01,
+# DECISIONS `DOCS-CLOSEOUT #3`; tests/test_docs_closeout.py keeps the
+# claim and the workflows in sync in both directions).
+# Values are MEASURED, never typed from memory: `result: success` may
+# only appear next to a real workflow_run id, and a count nobody read
+# stays null rather than becoming a plausible number.
 
-commit: null              # the SHA that went green on BOTH platforms
+commit: efd778316ec0fd103bc55f1bb9ffad20ed006e42
 ubuntu:
-  workflow_run: null      # ci.yml run id
-  result: pending         # success | failure | pending
+  workflow_run: '30704812542'
+  result: success
   test_count: null
 windows:
-  workflow_run: null      # windows-ci.yml run id
-  result: pending         # success | failure | pending
+  workflow_run: '30704812522'
+  result: success
   test_count: null
 ffmpeg:
-  result: pending         # pinned 6.1.1 present + suite not silently skipped
-generated_at: null        # ISO-8601 timestamp stamped by the generator
+  result: success
+generated_at: '2026-08-01T15:34:58Z'

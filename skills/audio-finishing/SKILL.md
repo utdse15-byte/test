@@ -10,6 +10,16 @@ auto: true
 
 人声听不清、BGM 盖过说话、整片忽大忽小——都是业余音频的 tell。你的活:把响度与闪避目标钉进 `rules.yaml` 的 music/ambient 旋钮,让人声永远在前。
 
+## 什么时候不该用
+
+这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+
+| 情形 | 去哪 |
+| --- | --- |
+| 只是换一首 BGM / 调一格音量,没有响度或闪避问题 | 直接改 `timeline/rules.yaml` 的 `audio` 段,跑 `manju build` |
+| 人声本身要重配 / 重对齐 | `manju voice`、`manju repair --op voice` |
+| 问题其实出在字幕不在声音 | `subtitle-standards` |
+
 ## 决策树:按素材配置声音
 
 - **有对白** → BGM **必须开 ducking**,在人声出现时下压 **≥15–20 dB**(剪映口径:音乐压到人声的 ~30% + 2s 淡出);整体响度对到 **−14 LUFS / −1 dBTP**。
