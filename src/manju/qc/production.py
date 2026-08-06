@@ -293,9 +293,19 @@ def accepted_observed_state(project: "Project", shot_id: str) -> dict[str, Any]:
     Authored hard facts (continuity locks) ride separately from the transient
     opening/endpoint observations; neither is ever written back anywhere."""
     from .agent_review import _current_selected_media, read_v2_records
-    from .assurance import _live_failures, compute_assurance
+    from .assurance import (
+        compute_assurance,
+        current_bound_verdict,
+        stable_assurance_projection,
+        stable_evidence_digest,
+    )
 
-    assurance = compute_assurance(project, shot_id)
+    try:
+        records, _ = read_v2_records(project)
+    except Exception:
+        records = []
+    assurance = compute_assurance(project, shot_id, records=records)
+    assurance_projection = stable_assurance_projection(assurance)
     _path, cur_sha = _current_selected_media(project, shot_id)
     try:
         locks = list(project.load_shot(shot_id).continuity.locks)
@@ -305,7 +315,10 @@ def accepted_observed_state(project: "Project", shot_id: str) -> dict[str, Any]:
     state: dict[str, Any] = {
         "subject": shot_id,
         "assurance_state": assurance["assurance_state"],
-        "assurance_digest": hash_value(assurance),
+        "assurance_projection": assurance_projection,
+        "assurance_digest": hash_value(assurance_projection),
+        "packet_id": None,
+        "evidence_digest": None,
         "media_sha256": cur_sha,
         "authored_locks": locks,
         "observed_opening": [],
@@ -316,31 +329,30 @@ def accepted_observed_state(project: "Project", shot_id: str) -> dict[str, Any]:
     if assurance["assurance_state"] != "accepted" or cur_sha is None:
         return state
 
+    chosen = current_bound_verdict(project, shot_id, records=records)
+    evidence = assurance.get("evidence") or {}
+    if chosen is None:
+        state["reasons"] = ["accepted assurance has no current-bound verdict"]
+        return state
+    chosen_digest = stable_evidence_digest(chosen)
+    if (
+        evidence.get("packet_id") != chosen.get("packet_id")
+        or evidence.get("evidence_digest") != chosen_digest
+    ):
+        state["reasons"] = ["assurance and observed-state verdict bindings differ"]
+        return state
+
     state["status"] = "current"
     state["reasons"] = []
-    # the transient observations: the LAST current-bound v2 record for these
-    # exact bytes that carries observed_states (file order, later wins).
-    try:
-        records, _ = read_v2_records(project)
-    except Exception:
-        records = []
-    chosen = None
-    for rec in records:
-        subj = rec.get("subject") or {}
-        if subj.get("kind") != "shot" or subj.get("id") != shot_id:
-            continue
-        if rec.get("media_sha256") != cur_sha:
-            continue
-        if rec.get("observed_states") is None:
-            continue
-        if _live_failures(project, shot_id, rec):
-            continue  # binding moved -> that observation is history, not evidence
-        chosen = rec
-    if chosen is not None:
-        for obs in chosen.get("observed_states") or []:
-            bucket = ("observed_endpoint" if obs.get("position") == "END"
-                      else "observed_opening")
-            state[bucket].append(dict(obs))
+    state["packet_id"] = evidence.get("packet_id")
+    state["evidence_digest"] = chosen_digest
+    # Only the exact verdict used by assurance may contribute observations.
+    # Missing observed_states intentionally leaves both buckets empty; there is
+    # no fallback to an older (possibly rejected) record.
+    for obs in chosen.get("observed_states") or []:
+        bucket = ("observed_endpoint" if obs.get("position") == "END"
+                  else "observed_opening")
+        state[bucket].append(dict(obs))
     return state
 
 

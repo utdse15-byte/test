@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..core.hashing import hash_value
 from .agent_review import (
     _current_expectation_digest,
     _current_selected_media,
@@ -35,6 +36,55 @@ if TYPE_CHECKING:
     from .checks import QCReport
 
 SCHEMA = "manju.qc.assurance/v1"
+
+_DYNAMIC_EVIDENCE_KEYS = frozenset({
+    "ts", "timestamp", "observed_at", "reviewed_at", "created_at",
+    "updated_at", "ingested_at", "submitted_at",
+})
+
+
+def _without_dynamic_timestamps(value: Any) -> Any:
+    """Return a JSON-shaped evidence value without runtime timestamps."""
+    if isinstance(value, dict):
+        return {
+            key: _without_dynamic_timestamps(item)
+            for key, item in value.items()
+            if key not in _DYNAMIC_EVIDENCE_KEYS
+            and not key.endswith("_at")
+            and not key.endswith("_timestamp")
+        }
+    if isinstance(value, list):
+        return [_without_dynamic_timestamps(item) for item in value]
+    if isinstance(value, tuple):
+        return [_without_dynamic_timestamps(item) for item in value]
+    return value
+
+
+def stable_evidence_digest(record: dict) -> str:
+    """Digest review content while ignoring intake/review wall-clock fields."""
+    return hash_value(_without_dynamic_timestamps(record))
+
+
+def stable_assurance_projection(assurance: dict) -> dict:
+    """Keep only stable, acceptance-relevant assurance facts for proof binding."""
+    evidence = assurance.get("evidence") or {}
+    return {
+        "schema": "manju.qc.assurance/stable-v1",
+        "subject": assurance.get("subject"),
+        "assurance_state": assurance.get("assurance_state"),
+        "spec_hash": assurance.get("spec_hash"),
+        "expectation_digest": assurance.get("expectation_digest"),
+        "failed_expectation_ids": sorted(assurance.get("failed_expectation_ids") or []),
+        "unknown_expectation_ids": sorted(assurance.get("unknown_expectation_ids") or []),
+        "stale_reasons": sorted(assurance.get("stale_reasons") or []),
+        "expectation_compile_error": assurance.get("expectation_compile_error"),
+        "qc": assurance.get("qc"),
+        "evidence": {
+            "packet_id": evidence.get("packet_id"),
+            "media_sha256": evidence.get("media_sha256"),
+            "evidence_digest": evidence.get("evidence_digest"),
+        },
+    }
 
 # the derived per-shot states, in precedence order (first match wins).
 STATES = (
@@ -95,8 +145,30 @@ def _verdict(polarity: str | None, observed: str | None) -> str:
 # --------------------------------------------------------- assurance compute
 
 
+def current_bound_verdict(project: "Project", shot_id: str,
+                          records: list[dict] | None = None) -> dict | None:
+    """Return the latest v2 verdict still bound to this shot's current truth.
+
+    This is the one selector shared by assurance, observed-state projection,
+    continuation, and proof binding. File order is authoritative; callers may
+    pass one already-read snapshot to ensure every projection consumes exactly
+    the same records.
+    """
+    if records is None:
+        records = read_v2_records(project)[0]
+    bound = None
+    for record in records:
+        subject = record.get("subject") or {}
+        if subject.get("kind") != "shot" or subject.get("id") != shot_id:
+            continue
+        if not _live_failures(project, shot_id, record):
+            bound = record
+    return bound
+
+
 def compute_assurance(project: "Project", shot_id: str, *,
-                      qc_report: "QCReport | None" = None) -> dict:
+                      qc_report: "QCReport | None" = None,
+                      records: list[dict] | None = None) -> dict:
     """The derived assurance for one shot (schema ``manju.qc.assurance/v1``).
     Pure and read-only; output ordering is deterministic (sorted ids) so two
     calls deep-equal. See the module docstring for the three-state separation.
@@ -156,8 +228,9 @@ def compute_assurance(project: "Project", shot_id: str, *,
                       reasons=["the shot declares no must_show / avoid / continuity.locks"])
 
     # gather this subject's v2 evidence (file order).
+    all_records = read_v2_records(project)[0] if records is None else records
     v2_records = [
-        r for r in read_v2_records(project)[0]
+        r for r in all_records
         if (r.get("subject") or {}).get("kind") == "shot"
         and (r.get("subject") or {}).get("id") == shot_id
     ]
@@ -172,10 +245,7 @@ def compute_assurance(project: "Project", shot_id: str, *,
 
     # the evidence actually used = the LATEST v2 record still bound to CURRENT
     # state (re-verified now, not trusting the intake-time label).
-    bound = None
-    for r in v2_records:
-        if not _live_failures(project, shot_id, r):
-            bound = r  # file order => last current-bound wins
+    bound = current_bound_verdict(project, shot_id, records=v2_records)
 
     # 4. stale — v2 evidence exists but none of it is still current-bound.
     if bound is None:
@@ -335,6 +405,7 @@ def _evidence_view(record: dict) -> dict:
         "media_sha256": record.get("media_sha256"),
         "reviewer": record.get("reviewer"),
         "observed_at": record.get("ts"),
+        "evidence_digest": stable_evidence_digest(record),
     }
 
 

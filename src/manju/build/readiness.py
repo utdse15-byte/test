@@ -601,8 +601,39 @@ def _scene_contract_payload(scene: Any) -> dict[str, Any]:
     }
 
 
+def _canonical_observed_states(values: Any) -> list[dict[str, Any]]:
+    """Canonical set-like ordering for semantically equivalent re-reviews."""
+    rows = [dict(item) for item in (values or []) if isinstance(item, dict)]
+    return sorted(rows, key=hash_value)
+
+
+def _accepted_review_payload(project: Project, shot_id: str) -> dict[str, Any] | None:
+    """Stable proof binding for the exact accepted verdict, never old evidence."""
+    try:
+        state = accepted_observed_state(project, shot_id)
+    except Exception:
+        return None
+    if (
+        state.get("status") != "current"
+        or state.get("assurance_state") != "accepted"
+    ):
+        return None
+    return {
+        "packet_id": state.get("packet_id"),
+        "evidence_digest": state.get("evidence_digest"),
+        "observed_opening": _canonical_observed_states(
+            state.get("observed_opening")
+        ),
+        "observed_endpoint": _canonical_observed_states(
+            state.get("observed_endpoint")
+        ),
+        "assurance_projection": state.get("assurance_projection"),
+        "assurance_digest": state.get("assurance_digest"),
+    }
+
+
 def proof_scene_digest(project: Project, scene_id: str) -> str:
-    """Exact ordered media/trim/contract/audio state a human approves."""
+    """Exact media, contract, audio, and accepted observed truth being approved."""
     from ..qc.expectations import compile_expectations
 
     scene = project.load_scene_contract(scene_id)
@@ -651,6 +682,7 @@ def proof_scene_digest(project: Project, scene_id: str) -> str:
             "sound": shot.contract.sound.model_dump() if shot.contract else None,
             "source_audio": shot.source_audio.model_dump(),
             "voice": _voice_binding(project, shot_id),
+            "accepted_review": _accepted_review_payload(project, shot_id),
         })
     payload = {
         "scene": _scene_contract_payload(scene),
