@@ -903,6 +903,23 @@ class CloudProvider(Provider):
                 raise self._identity_unavailable(req, "prompt_compile", exc) from exc
             compiled_prompt = None
 
+        # Build adapter semantics once before hashing refs. Generic Cloud seals
+        # body and local bytes here and exposes the hashes from that same safe
+        # read, so identity never opens a selected file separately from the
+        # payload transport will consume.
+        rendered_facts = None
+        try:
+            rendered_facts = self._rendered_request_facts(req)
+        except ProviderFailure:
+            raise
+        except Exception as exc:
+            if strict:
+                raise self._identity_unavailable(req, "body_render", exc) from exc
+        prepared_ref_hashes = (
+            rendered_facts.get("_ref_content_sha256", {})
+            if isinstance(rendered_facts, dict) else {}
+        )
+
         # final selected refs in delivery order: (role, logical_id, sha256).
         ref_refs: list[dict] = []
         ref_blobs: list[dict] = []
@@ -918,7 +935,10 @@ class CloudProvider(Provider):
             from .refs import normalize_subject_scope, physical_ref_key
             key = physical_ref_key(it)
             sha = blob_cache.get(key)
-            if it.path is not None and not it.is_url:
+            if key in prepared_ref_hashes:
+                sha = prepared_ref_hashes[key]
+                blob_cache[key] = sha
+            elif it.path is not None and not it.is_url:
                 try:
                     if key not in blob_cache and it.path.is_file():
                         sha = hash_file(it.path)
@@ -950,12 +970,6 @@ class CloudProvider(Provider):
             if blob_id not in {row.get("blob_id") for row in ref_blobs}:
                 ref_blobs.append({"blob_id": blob_id, "content_sha256": sha})
 
-        rendered_facts = None
-        try:
-            rendered_facts = self._rendered_request_facts(req)
-        except Exception as exc:
-            if strict:
-                raise self._identity_unavailable(req, "body_render", exc) from exc
         rendered_digest = (
             rendered_facts.get("digest")
             if isinstance(rendered_facts, dict) else None

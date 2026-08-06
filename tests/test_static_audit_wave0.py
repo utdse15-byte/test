@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 
@@ -320,6 +321,165 @@ def test_request_identity_blob_ids_never_expose_absolute_local_paths(
     serialized = json.dumps(identity, ensure_ascii=False)
     assert str(tmp_project.root.resolve()).casefold() not in serialized.casefold()
     assert identity["ref_blobs"][0]["blob_id"].startswith("image:sha256:")
+
+
+def test_prepare_then_ref_mutation_cannot_change_transport_payload(
+    tmp_project, add_shot, monkeypatch
+):
+    original = b"sealed-reference-bytes"
+    binding = _owned_ref(tmp_project, "sealed.png", None)
+    ref_path = tmp_project.root / binding["ref"]
+    ref_path.write_bytes(original)
+    shot = add_shot(
+        tmp_project, "S001", generation={"params": {"refs": [binding]}}
+    )
+    transport = CaptureTransport()
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    provider = GenericCloudProvider(
+        _cloud_manifest(refs={
+            "image_mode": "base64_field", "field": "$.image", "max_images": 1,
+            "data_uri": False,
+        }),
+        transport=transport,
+    )
+    req = _request(tmp_project, shot, refs=[binding])
+
+    provider._build_identity(req)
+    ref_path.write_bytes(b"mutated-after-prepare")
+    provider.submit(req)
+
+    sent = json.loads(transport.requests[0][3])
+    assert base64.b64decode(sent["image"]) == original
+
+
+def test_prepare_then_body_template_mutation_cannot_change_transport_payload(
+    tmp_project, add_shot, monkeypatch
+):
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    shot = add_shot(tmp_project, "S001")
+    manifest = _cloud_manifest(body_template={
+        "prompt": "{prompt}",
+        "duration": "{duration_s}",
+        "marker": "sealed",
+    })
+    transport = CaptureTransport()
+    provider = GenericCloudProvider(manifest, transport=transport)
+    req = _request(tmp_project, shot)
+
+    provider._build_identity(req)
+    assert manifest.submit is not None
+    manifest.submit.body_template["marker"] = "mutated"
+    provider.submit(req)
+
+    sent = json.loads(transport.requests[0][3])
+    assert sent["marker"] == "sealed"
+
+
+def test_request_digest_matches_exact_prepared_semantic_payload(
+    tmp_project, add_shot, monkeypatch
+):
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    shot = add_shot(tmp_project, "S001")
+    transport = CaptureTransport()
+    provider = GenericCloudProvider(_cloud_manifest(), transport=transport)
+    req = _request(tmp_project, shot, seed=29)
+
+    identity, _digest = provider._build_identity(req)
+    payload = req._prepared_provider_payloads[provider.id]
+    provider.submit(req)
+
+    assert identity["rendered_request_digest"] == payload.semantic_digest
+    assert payload.semantic_digest.startswith("sha256:")
+    assert json.loads(transport.requests[0][3]) == payload.rendered_body
+
+
+def test_retry_reuses_same_prepared_payload(
+    tmp_project, add_shot, monkeypatch
+):
+    binding = _owned_ref(tmp_project, "retry.png", None)
+    ref_path = tmp_project.root / binding["ref"]
+    original = ref_path.read_bytes()
+    shot = add_shot(
+        tmp_project, "S001", generation={"params": {"refs": [binding]}}
+    )
+    manifest = _cloud_manifest(
+        refs={
+            "image_mode": "base64_field", "field": "$.image", "max_images": 1,
+            "data_uri": False,
+        },
+        body_template={"prompt": "{prompt}", "marker": "sealed"},
+    )
+    transport = CaptureTransport()
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    provider = GenericCloudProvider(manifest, transport=transport)
+    req = _request(tmp_project, shot, refs=[binding])
+
+    provider._build_identity(req)
+    provider.submit(req)
+    ref_path.write_bytes(b"retry-mutation")
+    assert manifest.submit is not None
+    manifest.submit.body_template["marker"] = "retry-mutation"
+    provider.submit(req)
+
+    first = json.loads(transport.requests[0][3])
+    second = json.loads(transport.requests[1][3])
+    assert first == second
+    assert base64.b64decode(second["image"]) == original
+    assert second["marker"] == "sealed"
+
+
+def test_prepared_payload_is_not_rebuilt_inside_submit(
+    tmp_project, add_shot, monkeypatch
+):
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    shot = add_shot(tmp_project, "S001")
+    transport = CaptureTransport()
+    provider = GenericCloudProvider(_cloud_manifest(), transport=transport)
+    req = _request(tmp_project, shot)
+    provider._build_identity(req)
+
+    def unexpected_render(*_args, **_kwargs):
+        raise AssertionError("submit rebuilt a sealed body")
+
+    monkeypatch.setattr("manju.providers.generic_cloud.render_body", unexpected_render)
+    provider.submit(req)
+
+    assert len(transport.requests) == 1
+
+
+def test_ref_file_is_read_once_per_provider_attempt(
+    tmp_project, add_shot, monkeypatch
+):
+    binding = _owned_ref(tmp_project, "read-once.png", None)
+    shot = add_shot(
+        tmp_project, "S001", generation={"params": {"refs": [binding]}}
+    )
+    transport = CaptureTransport()
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    provider = GenericCloudProvider(
+        _cloud_manifest(refs={
+            "image_mode": "multipart", "multipart_field": "image", "max_images": 1,
+        }),
+        transport=transport,
+    )
+    req = _request(tmp_project, shot, refs=[binding])
+    reads = 0
+
+    from manju.providers import generic_cloud as module
+
+    original_read = module.read_ref_bytes
+
+    def counted_read(item):
+        nonlocal reads
+        reads += 1
+        return original_read(item)
+
+    monkeypatch.setattr(module, "read_ref_bytes", counted_read)
+    provider._build_identity(req)
+    provider.submit(req)
+
+    assert reads == 1
+    assert len(transport.requests) == 1
 
 
 class _MutatingFailureProvider:

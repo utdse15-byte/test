@@ -12,14 +12,17 @@ offline; the default transport is stdlib urllib (no new dependencies).
 
 from __future__ import annotations
 
+import base64
 import json
 import hashlib
+import mimetypes
 import os
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, NamedTuple
 
@@ -36,7 +39,6 @@ from .jsonpath import JsonPathError, assign, extract
 from .manifest import FIRST_LAST_CAPABILITY, GENERIC_ADAPTER, JOB_STATES, ProviderManifest
 from .refs import (
     RefItem,
-    base64_ref,
     encode_multipart,
     read_ref_bytes,
     resolve_local_ref,
@@ -60,6 +62,67 @@ class HttpResponse(NamedTuple):
 
     def json(self):
         return json.loads(self.body.decode("utf-8"))
+
+
+@dataclass(frozen=True)
+class PreparedFile:
+    """One immutable multipart file captured before submission admission."""
+
+    field: str
+    filename: str
+    payload: bytes
+    content_sha256: str
+
+
+@dataclass(frozen=True)
+class PreparedProviderPayload:
+    """The exact Generic Cloud semantics bound by request identity.
+
+    JSON bytes, multipart fields, and file bytes are sealed once. Transport may
+    choose a fresh multipart boundary on a retry, but it never re-renders the
+    manifest or re-reads a project file.
+    """
+
+    provider_id: str
+    method: str
+    url: str
+    rendered_body_json: bytes
+    multipart_fields: tuple[tuple[str, str], ...]
+    files: tuple[PreparedFile, ...]
+    semantic_digest: str
+    ref_content_sha256: tuple[tuple[str, str, str], ...]
+    delivery_evidence_json: bytes
+    extra_headers: tuple[tuple[str, str], ...]
+    auth_key_env: str | None
+    auth_header: str
+    idempotency_field: str | None
+
+    @property
+    def rendered_body(self) -> dict[str, object]:
+        """Return a detached view; callers cannot mutate the sealed bytes."""
+        value = json.loads(self.rendered_body_json)
+        assert isinstance(value, dict)
+        return value
+
+    @property
+    def delivery_evidence(self) -> dict:
+        value = json.loads(self.delivery_evidence_json)
+        assert isinstance(value, dict)
+        return value
+
+    def semantic_facts(self) -> dict:
+        return {
+            "method": self.method,
+            "body": self.rendered_body,
+            "files": [
+                {
+                    "field": item.field,
+                    "filename": item.filename,
+                    "content_sha256": item.content_sha256,
+                }
+                for item in self.files
+            ],
+        }
 
 
 # --------------------------------------------------------------- shared guards
@@ -679,6 +742,23 @@ class GenericCloudProvider(CloudProvider):
         headers.update(extra or {})
         return headers
 
+    @staticmethod
+    def _headers_for_payload(payload: PreparedProviderPayload) -> dict[str, str]:
+        """Build auth headers from the config snapshot sealed with the payload."""
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if payload.auth_key_env:
+            key = os.environ.get(payload.auth_key_env)
+            if not key:
+                raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{payload.provider_id}: API key env var {payload.auth_key_env} "
+                    "is not set (keys never live in the project, §8.2)",
+                )
+            name, _, value = payload.auth_header.partition(":")
+            headers[name.strip()] = value.strip().format(key=key)
+        headers.update(dict(payload.extra_headers))
+        return headers
+
     def _classify_body(self, text: str) -> FailureKind:
         """§8.1: content review rejection is first-class — never retried."""
         for marker in self.manifest.failure.content_rejected_when:
@@ -735,25 +815,95 @@ class GenericCloudProvider(CloudProvider):
             self._last_submit = self._clock()
 
     def _rendered_request_facts(self, req: GenerationRequest) -> dict:
-        """Canonical final body and multipart facts, before any transport."""
+        """Canonical facts from the same payload transport will consume."""
+        try:
+            payload = self._prepared_provider_payload(req)
+        except ProviderFailure as exc:
+            if exc.disposition is None:
+                from .submission import NOT_DISPATCHED
+
+                exc.disposition = NOT_DISPATCHED
+            raise
+        return {
+            **payload.semantic_facts(),
+            "digest": payload.semantic_digest,
+            "_ref_content_sha256": {
+                (kind, physical): digest
+                for kind, physical, digest in payload.ref_content_sha256
+            },
+        }
+
+    def _prepared_provider_payload(
+        self, req: GenerationRequest
+    ) -> PreparedProviderPayload:
+        cache = getattr(req, "_prepared_provider_payloads", None)
+        if cache is None:
+            cache = req._prepared_provider_payloads = {}
+        cached = cache.get(self.id)
+        if cached is not None:
+            return cached
+
         self._ensure_provider_request(req)
         cfg = self.manifest.submit
         assert cfg is not None
+        self._enforce_limits(req.shot, req.duration_ms)
         rendered = render_body(cfg.body_template, _placeholder_map(req))
-        files = self._deliver_refs(rendered, req, record=False)
+        blob_cache: dict[tuple[str, str], bytes] = {}
+        delivery: dict = {}
+        raw_files = self._deliver_refs(
+            rendered, req, record=False, blob_cache=blob_cache,
+            delivery_out=delivery,
+        )
+        files = tuple(
+            PreparedFile(
+                field=field,
+                filename=filename,
+                payload=bytes(raw),
+                content_sha256="sha256:" + hashlib.sha256(raw).hexdigest(),
+            )
+            for field, filename, raw in raw_files
+        )
         facts = {
             "method": cfg.method.upper(),
             "body": rendered,
             "files": [
                 {
-                    "field": field,
-                    "filename": filename,
-                    "content_sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                    "field": item.field,
+                    "filename": item.filename,
+                    "content_sha256": item.content_sha256,
                 }
-                for field, filename, payload in files
+                for item in files
             ],
         }
-        return {**facts, "digest": hash_value(facts)}
+        auth = self.manifest.auth
+        sub = getattr(self.manifest, "submission", None)
+        idem = getattr(sub, "idempotency", None) if sub is not None else None
+        idempotency_field = (
+            getattr(idem, "field", None)
+            if getattr(idem, "mode", None) == "header" else None
+        )
+        payload = PreparedProviderPayload(
+            provider_id=self.id,
+            method=cfg.method.upper(),
+            url=str(cfg.url),
+            rendered_body_json=json.dumps(rendered, ensure_ascii=False).encode("utf-8"),
+            multipart_fields=tuple(_body_as_fields(rendered).items()),
+            files=files,
+            semantic_digest=hash_value(facts),
+            ref_content_sha256=tuple(
+                (kind, physical, "sha256:" + hashlib.sha256(raw).hexdigest())
+                for (kind, physical), raw in blob_cache.items()
+            ),
+            delivery_evidence_json=json.dumps(
+                delivery, ensure_ascii=False, sort_keys=True
+            ).encode("utf-8"),
+            extra_headers=tuple((str(k), str(v)) for k, v in cfg.extra_headers.items()),
+            auth_key_env=auth.key_env,
+            auth_header=auth.header,
+            idempotency_field=idempotency_field,
+        )
+        cache[self.id] = payload
+        return payload
 
     # ---------------------------------------------------- CloudProvider API
 
@@ -764,9 +914,8 @@ class GenericCloudProvider(CloudProvider):
             disposition_for_status,
         )
 
-        self._ensure_provider_request(req)
         cfg = self.manifest.submit
-        assert cfg is not None  # validated at construction
+        assert cfg is not None  # response schema remains provider configuration
         # P0 WP2: the provider's DECLARED definite-rejection statuses (else empty
         # = declare nothing). A post-send status is DEFINITELY_REJECTED ONLY if it
         # is in this set; every other >= 400 is conservatively OUTCOME_UNKNOWN.
@@ -777,23 +926,24 @@ class GenericCloudProvider(CloudProvider):
         # REJECTED_PRE_DISPATCH (retry allowed) — and so the WP2 submit-phase
         # default (OUTCOME_UNKNOWN) never swallows a provably-not-sent failure.
         try:
-            self._enforce_limits(req.shot, req.duration_ms)
-            rendered = render_body(cfg.body_template, _placeholder_map(req))
-            # Reference inputs (goal item 7): inject per the manifest `refs:`
-            # section, validating every local ref is readable BEFORE this paid
-            # POST. Returns any multipart file parts and records the delivery
-            # lineage on req.params so it lands on the take (auditable per take).
-            files = self._deliver_refs(rendered, req)
-            if files:
-                content_type, body = encode_multipart(_body_as_fields(rendered), files)
-                headers = self._headers({**cfg.extra_headers, "Content-Type": content_type})
+            payload = self._prepared_provider_payload(req)
+            req.params["ref_delivery"] = payload.delivery_evidence
+            if payload.files:
+                content_type, body = encode_multipart(
+                    dict(payload.multipart_fields),
+                    [(item.field, item.filename, item.payload) for item in payload.files],
+                )
+                headers = self._headers_for_payload(payload)
+                headers["Content-Type"] = content_type
             else:
-                body = json.dumps(rendered, ensure_ascii=False).encode("utf-8")
-                headers = self._headers(cfg.extra_headers)
+                body = payload.rendered_body_json
+                headers = self._headers_for_payload(payload)
             # ruling 10: inject the derived idempotency key ONLY when the manifest
             # declares an idempotency header (req.submission_idempotency_key is set
             # by base._prepare_submission for a declared provider, else None).
-            headers = self._with_idempotency_header(headers, req)
+            key = getattr(req, "submission_idempotency_key", None)
+            if payload.idempotency_field and key:
+                headers[payload.idempotency_field] = key
             # the engine-side throttle is pre-network too — keep it inside the
             # provably-not-sent boundary so any refusal here is NOT_DISPATCHED.
             self._throttle()
@@ -814,7 +964,7 @@ class GenericCloudProvider(CloudProvider):
                 detail={"error_class": type(exc).__name__},
                 disposition=NOT_DISPATCHED,
             ) from exc
-        resp = self._transport(cfg.method, cfg.url, headers, body)
+        resp = self._transport(payload.method, payload.url, headers, body)
         # From here the send boundary is crossed — a failure's disposition is
         # DEFINITELY_REJECTED only for a MANIFEST-DECLARED status, else UNKNOWN
         # (no global 429/tested-4xx assumption). The FailureKind mapping is
@@ -985,7 +1135,9 @@ class GenericCloudProvider(CloudProvider):
     # --------------------------------------------------------- refs delivery
 
     def _deliver_refs(
-        self, body: dict, req: GenerationRequest, *, record: bool = True
+        self, body: dict, req: GenerationRequest, *, record: bool = True,
+        blob_cache: dict[tuple[str, str], bytes] | None = None,
+        delivery_out: dict | None = None,
     ) -> list[tuple[str, str, bytes]]:
         """Deliver the refs, converting a TOCTOU refusal into a typed failure.
 
@@ -999,13 +1151,20 @@ class GenericCloudProvider(CloudProvider):
         for something that never left the machine."""
         from ..core.safeio import SafeOutError
 
+        if blob_cache is None:
+            blob_cache = {}
         try:
-            return self._deliver_refs_verified(body, req, record=record)
+            return self._deliver_refs_verified(
+                body, req, record=record, blob_cache=blob_cache,
+                delivery_out=delivery_out,
+            )
         except SafeOutError as exc:
             raise ProviderFailure(FailureKind.invalid, f"{self.id}: {exc}") from exc
 
     def _deliver_refs_verified(
-        self, body: dict, req: GenerationRequest, *, record: bool = True
+        self, body: dict, req: GenerationRequest, *, record: bool = True,
+        blob_cache: dict[tuple[str, str], bytes],
+        delivery_out: dict | None = None,
     ) -> list[tuple[str, str, bytes]]:
         """Inject reference inputs into the rendered ``body`` per ``manifest.refs``.
 
@@ -1043,9 +1202,13 @@ class GenericCloudProvider(CloudProvider):
             if items:
                 self._guard_readable(items)  # local refs must exist (pre-submit)
                 if rc.image_mode == "base64_field":
-                    values = [base64_ref(self._require_local(it, rc.image_mode),
-                                         data_uri=rc.data_uri, mime=rc.mime)
-                              for it in items]
+                    values = [
+                        self._base64_prepared_ref(
+                            self._require_local(it, rc.image_mode), blob_cache,
+                            data_uri=rc.data_uri, mime=rc.mime,
+                        )
+                        for it in items
+                    ]
                     assign(body, rc.field, _one_or_list(values, rc.max_images))
                 elif rc.image_mode == "url_field":
                     urls = [self._require_url(it, rc.field) for it in items]
@@ -1055,7 +1218,8 @@ class GenericCloudProvider(CloudProvider):
                         it = self._require_local(it, rc.image_mode)
                         fld = rc.multipart_field if len(items) == 1 \
                             else f"{rc.multipart_field}{i}"
-                        files.append((fld, it.path.name, read_ref_bytes(it)))
+                        files.append((fld, it.path.name,
+                                      self._prepared_ref_bytes(it, blob_cache)))
                 delivery["images"] = [
                     {
                         "ref": it.ref,
@@ -1100,26 +1264,37 @@ class GenericCloudProvider(CloudProvider):
         # start AND end whose images resolve to real local files, routed to a
         # provider that advertises `first_last_frame`, delivers both per the
         # `refs.first_last_*` mapping. Folds into the SAME ref_delivery lineage.
-        files += self._deliver_first_last(body, req, delivery)
+        files += self._deliver_first_last(
+            body, req, delivery, blob_cache=blob_cache
+        )
 
         if record:
             req.params["ref_delivery"] = delivery
+        if delivery_out is not None:
+            delivery_out.clear()
+            delivery_out.update(delivery)
         return files
 
     def _deliver_first_last(
-        self, body: dict, req: GenerationRequest, delivery: dict
+        self, body: dict, req: GenerationRequest, delivery: dict, *,
+        blob_cache: dict[tuple[str, str], bytes] | None = None,
     ) -> list[tuple[str, str, bytes]]:
         """First/last-frame delivery, with the same TOCTOU→``invalid`` guard
         :meth:`_deliver_refs` applies (this method is also reachable on its own)."""
         from ..core.safeio import SafeOutError
 
+        if blob_cache is None:
+            blob_cache = {}
         try:
-            return self._deliver_first_last_verified(body, req, delivery)
+            return self._deliver_first_last_verified(
+                body, req, delivery, blob_cache=blob_cache
+            )
         except SafeOutError as exc:
             raise ProviderFailure(FailureKind.invalid, f"{self.id}: {exc}") from exc
 
     def _deliver_first_last_verified(
-        self, body: dict, req: GenerationRequest, delivery: dict
+        self, body: dict, req: GenerationRequest, delivery: dict, *,
+        blob_cache: dict[tuple[str, str], bytes],
     ) -> list[tuple[str, str, bytes]]:
         """Deliver the shot's start+end keyframe images as a first/last-frame task.
 
@@ -1166,8 +1341,12 @@ class GenericCloudProvider(CloudProvider):
         files: list[tuple[str, str, bytes]] = []
         if enc == "base64_field":
             self._guard_readable([start, end])  # pre-submit, zero-cost
-            first_v = base64_ref(start, data_uri=rc.data_uri, mime=rc.mime)
-            last_v = base64_ref(end, data_uri=rc.data_uri, mime=rc.mime)
+            first_v = self._base64_prepared_ref(
+                start, blob_cache, data_uri=rc.data_uri, mime=rc.mime
+            )
+            last_v = self._base64_prepared_ref(
+                end, blob_cache, data_uri=rc.data_uri, mime=rc.mime
+            )
             self._assign_first_last(body, rc, first_v, last_v)
         elif enc == "url_field":
             self._assign_first_last(body, rc, start.ref, end.ref)
@@ -1175,9 +1354,9 @@ class GenericCloudProvider(CloudProvider):
             self._guard_readable([start, end])
             assert start.path is not None and end.path is not None
             files.append((rc.first_last_multipart_first, start.path.name,
-                          read_ref_bytes(start)))
+                          self._prepared_ref_bytes(start, blob_cache)))
             files.append((rc.first_last_multipart_last, end.path.name,
-                          read_ref_bytes(end)))
+                          self._prepared_ref_bytes(end, blob_cache)))
 
         delivery["first_last"] = {
             "mode": rc.first_last_mode,
@@ -1186,6 +1365,29 @@ class GenericCloudProvider(CloudProvider):
             "end": {"ref": end.ref, "role": "end", "delivered_as": enc},
         }
         return files
+
+    @staticmethod
+    def _prepared_ref_bytes(
+        item: RefItem, blob_cache: dict[tuple[str, str], bytes]
+    ) -> bytes:
+        key = physical_ref_key(item)
+        if key not in blob_cache:
+            blob_cache[key] = read_ref_bytes(item)
+        return blob_cache[key]
+
+    @classmethod
+    def _base64_prepared_ref(
+        cls, item: RefItem, blob_cache: dict[tuple[str, str], bytes], *,
+        data_uri: bool, mime: str | None,
+    ) -> str:
+        assert item.path is not None
+        encoded = base64.b64encode(
+            cls._prepared_ref_bytes(item, blob_cache)
+        ).decode("ascii")
+        if not data_uri:
+            return encoded
+        guessed = mime or mimetypes.guess_type(item.path.name)[0] or "image/png"
+        return f"data:{guessed};base64,{encoded}"
 
     def _assign_first_last(self, body: dict, rc, first_v, last_v) -> None:
         """Write the two frame values into ``body`` per the configured shape:
