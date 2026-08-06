@@ -8,8 +8,8 @@ deliberately excluded so that human decisions never make a take look stale.
 VERSIONED HASHES (round W, review #37/#16/#60) — §4.3 conservatism extended to
 new provider-input fields WITHOUT mass-restaging every existing take:
 
-    SPEC_VERSION  = 4   v3 plus every authored logical reference binding and
-                        the content hash of each project-local reference blob.
+    SPEC_VERSION  = 5   v4 plus complete list/mapping reference syntax. v4 is
+                        retained byte-for-byte for historical take comparison.
 
     version 2           dialogue {speaker,text} + (when non-empty) keyframes
                         both already flow into the real prompt/provider call
@@ -39,8 +39,9 @@ from typing import Any
 from .intent import picture_contract_payload
 from .hashing import hash_file, hash_value
 from .models import ShotSpec
+from .reference_syntax import iter_authored_reference_bindings
 
-SPEC_VERSION = 4
+SPEC_VERSION = 5
 VOICE_VERSION = 2
 
 _URL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -175,7 +176,7 @@ def _reference_binding(
     }
 
 
-def _reference_payload(
+def _reference_payload_v4(
     shot: ShotSpec,
     bible: dict[str, dict[str, Any]],
     project_root: Path | str | None,
@@ -222,6 +223,26 @@ def _reference_payload(
     return out
 
 
+def _reference_payload_v5(
+    shot: ShotSpec,
+    bible: dict[str, dict[str, Any]],
+    project_root: Path | str | None,
+) -> list[dict[str, Any]]:
+    """Complete authored syntax, shared with provider reference resolution."""
+    out: list[dict[str, Any]] = []
+    for binding in iter_authored_reference_bindings(shot, bible):
+        row = _reference_binding(
+            binding.value,
+            kind=binding.kind,
+            tier=binding.tier,
+            project_root=project_root,
+            inferred_scope=binding.inferred_scope,
+        )
+        if row is not None:
+            out.append(row)
+    return out
+
+
 def spec_payload(
     shot: ShotSpec,
     bible: dict[str, dict[str, Any]] | None = None,
@@ -240,9 +261,10 @@ def spec_payload(
     prompt edit is still caught either way). ``version=3`` adds explicit prop
     dependencies and only the ShotContract fields that affect provider picture
     input. A prompt override suppresses those new default-prompt projections.
-    ``version=4`` additionally records every authored logical reference binding
-    and hashes each project-local reference file. Provider-specific delivery
-    policy is deliberately absent.
+    ``version=4`` records the historical flat logical-reference formula.
+    ``version=5`` uses the same authored list/mapping expansion as provider
+    resolution, including singular/plural image/video keys and mixed ``refs``.
+    Provider-specific delivery policy is deliberately absent from both.
     """
     bible = bible or {}
     generation = shot.generation.model_dump(exclude_none=False)
@@ -275,8 +297,10 @@ def spec_payload(
         contract_payload = picture_contract_payload(shot)
         if contract_payload:
             payload["contract"] = contract_payload
-    if version >= 4:
-        payload["references"] = _reference_payload(shot, bible, project_root)
+    if version == 4:
+        payload["references"] = _reference_payload_v4(shot, bible, project_root)
+    elif version >= 5:
+        payload["references"] = _reference_payload_v5(shot, bible, project_root)
     return payload
 
 

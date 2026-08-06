@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 from ..core.hashing import hash_value
+from ..core.reference_syntax import iter_authored_reference_bindings
 from ..core.safeio import (
     SafeOutError,
     refuse_linked_within,
@@ -289,9 +290,15 @@ def resolve_refs(
     bible = bible or {}
     items: list[RefItem] = []
 
-    _collect_params(project, params, items)
-    _collect_shot(project, shot, items)
-    _collect_bible(project, shot, bible, items)
+    for binding in iter_authored_reference_bindings(
+        shot, bible, params=params
+    ):
+        if binding.kind is None:
+            items.append(_classify(project, binding.value, binding.tier))
+        else:
+            items.append(_make_item(
+                project, binding.value, binding.tier, binding.kind
+            ))
     _collect_refs_dir(project, items)  # gated: only when no existing declared ref
 
     return RefSet.from_items(items)
@@ -435,57 +442,6 @@ def _make_delivery_plan(
         budget_lineage=budget_lineage,
         digest=hash_value(payload),
     )
-
-
-def _collect_params(project: "Project", params: dict, items: list[RefItem]) -> None:
-    for key in ("image", "images"):
-        for val in _as_list(params.get(key)):
-            items.append(_make_item(project, val, TIER_PARAMS, "image"))
-    for key in ("video", "videos"):
-        for val in _as_list(params.get(key)):
-            items.append(_make_item(project, val, TIER_PARAMS, "video"))
-    for val in _as_list(params.get("refs")):
-        items.append(_classify(project, val, TIER_PARAMS))
-
-
-def _collect_shot(project: "Project", shot: "ShotSpec", items: list[RefItem]) -> None:
-    # A shot may carry a top-level `refs:` (ShotSpec allows extra keys) — either
-    # a flat list of paths/URLs or a {images/videos/image/video} mapping.
-    refs = getattr(shot, "refs", None)
-    if refs is None:
-        return
-    if isinstance(refs, dict):
-        for key in ("image", "images"):
-            for val in _as_list(refs.get(key)):
-                items.append(_make_item(project, val, TIER_SHOT, "image"))
-        for key in ("video", "videos"):
-            for val in _as_list(refs.get(key)):
-                items.append(_make_item(project, val, TIER_SHOT, "video"))
-        for val in _as_list(refs.get("refs")):
-            items.append(_classify(project, val, TIER_SHOT))
-    else:
-        for val in _as_list(refs):
-            items.append(_classify(project, val, TIER_SHOT))
-
-
-def _collect_bible(project: "Project", shot: "ShotSpec", bible: dict,
-                   items: list[RefItem]) -> None:
-    keys: list[str] = list(shot.characters)
-    if shot.scene:
-        keys.append(shot.scene)
-    # Props are a first-class Bible tier just like characters and scenes. A
-    # shot can name a prop without putting its ref in generation.params.
-    keys.extend(str(prop_id) for prop_id in (shot.props or []) if prop_id)
-    for key in keys:
-        entry = bible.get(key)
-        if not isinstance(entry, dict):
-            continue
-        for k in ("ref_image", "ref_images"):
-            for val in _as_list(entry.get(k)):
-                items.append(_make_item(project, val, TIER_BIBLE, "image"))
-        for k in ("ref_video", "ref_videos"):
-            for val in _as_list(entry.get(k)):
-                items.append(_make_item(project, val, TIER_BIBLE, "video"))
 
 
 def refs_dir_intake_reason(path: Path, root: Path) -> str | None:
