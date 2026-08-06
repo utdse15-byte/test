@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: character_behavior_continuity
+skill: character-consistency
+title: 同脸但行为漂移
+prompt: 角色脸、年龄和衣服相同，但下一镜突然用完全不同的走路节奏、眼神和社交距离。请诊断连续性。
+expected:
+  must: ["判定 behavior 连续性问题", "分别检查 identity、presentation、behavior、cognition、residue", "提出可观察的修复证据"]
+  must_not: ["只说脸一致所以通过", "把瞬态姿势直接升级成 Bible 永久事实"]
+review: 复核五层是否独立，且行为判断落到体态、节奏、眼神或距离。

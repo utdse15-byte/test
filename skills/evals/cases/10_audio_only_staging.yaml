@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: audio_only_staging
+skill: audio-finishing
+title: 画外动作优先声音
+prompt: 剧本只需要让观众知道门外有人放下包裹，人物不必出现在画面中。请选择实现方式和音频阶段。
+expected:
+  must: ["优先声音事件或画外反应，不强迫生成困难接触镜头", "Animatic 可用 TEMP_AUDIO_FOR_ANIMATIC", "picture lock 后才做 FINAL_AUDIO_FINISHING"]
+  must_not: ["把临时音频当 final", "无理由生成手与包裹接触的复杂画面"]
+review: 复核声音、剪辑和镜头合同共同承担信息，且状态标记清楚。

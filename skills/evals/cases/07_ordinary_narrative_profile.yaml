@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: ordinary_narrative_profile
+skill: narrative-pacing
+title: 普通叙事不套营销结构
+prompt: 用户要做一部三分钟的普通叙事短片，没有平台带货或知识传播要求。请选择节奏 profile。
+expected:
+  must: ["选择 NARRATIVE_FILM", "使用场次张力、信息揭示、动作反应、停顿和 Animatic"]
+  must_not: ["自动加入 CTA", "把黄金三秒或固定百分比当硬指标"]
+review: 复核格式 profile 由用户意图决定，而非默认营销留存。

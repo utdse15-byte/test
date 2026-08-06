@@ -1,72 +1,54 @@
 ---
 name: direct-shot-source-patch
-description: 导演判断落地程序——读 Shot+Bible+prompt/refs/preflight 诊断,把"这一镜要表现什么"压缩成一个可见 beat,输出对现有 Shot/Bible/refs source 的窄 patch 或 proposal;绝不直接生成、绝不写派生报告当输入。触发词:导演、分镜、改镜头、beat、运镜、导演判断、direct shot。
-when_to_use: 用户要"导"一镜(定 beat/机位/结尾/参考),或 prompt --check 报了 CLIP_SCOPE_* 问题需要重新收窄镜头时。
+description: 导演源 patch：根据 SceneContract、ShotContract、Bible、参考所有权和 preflight，把一个导演判断落到最窄的真实源字段。
+when_to_use: 当用户要改一镜的 beat、opening、endpoint、参考职责、实现方式或风险时使用；不直接生成媒体。
 tags: [directing, task]
 user_invocable: true
 ---
 
-# 导演判断 → source patch(direct-shot-source-patch)
+# 导演判断落地
 
-创作决定只有写进现有事实源(Shot/Bible/refs)才存在。你可以自由地做导演判断
-(scene function / felt intent / POV / power shift / single visible beat /
-opening state / endpoint / future beats to reserve / camera & blocking),
-但**交付物只有两种**:
-
-```text
-A. 对现有 Shot/Bible/refs 的窄 patch(经 manju director propose 或直接受控写)
-B. 纯建议报告 —— 开头必须写明「不影响 build,尚未采纳」
-```
-
-禁止:写 `reports/directing/*.json` 之类的派生文件并指望引擎读它(引擎**从不**读
-reports/ 来编译 Prompt/请求——这是 08_10_12C 的 source-authority 铁律)。
-
-## 什么时候不该用
-
-这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
-
-| 情形 | 去哪 |
-| --- | --- |
-| 这一镜的要求就是「接住上一镜的结尾」 | `continue-from-accepted-take` |
-| 要评的是已经生成出来的 take | `review-take-and-route-repair` |
-| 要改的字段已锁 | `manju propose` 写提案,永不 `unlock` |
+所有创作判断必须落在真实 source：SceneContract、ShotContract、Bible asset、reference ownership、production method 或 provider params。不要写 reports 里的派生 JSON 期待引擎读取，也不要把一场的复杂意图塞进旧的 `action.main`、`quality.must_show`、`continuity.locks` 三个容器。
 
 ## 输入
 
-- 当前 Shot source(`manju prompt <shot> --json` 的 `shot_spec` + `spec_hash`);
-- Bible(角色/场景锁定字段优先);
-- `production_checks` + `compiler_trace`(同一 JSON 里,含 surface freshness);
-- `manju refs <shot> --json` 的 per-ref lineage;
-- 用户的创作诉求(原话)。
+- 当前 SceneContract、ShotContract、ShotSpec 和 Bible；
+- `manju prompt <shot> --json` 的 spec hash、production checks 和 compiler trace；
+- `manju refs <shot> --json` 的 reference lineage 与当前 ProviderManifest preflight；
+- 用户要求和当前媒体观察（若已有 selected take）。
 
-## 映射表:导演决定 → 写入位置(只用现有字段)
+## 归属判断
 
-| 导演决定 | 写入 |
-|---|---|
-| 当前一个可见 beat | `action.main`(一镜一个 beat;结尾写明落点,如「最后定格在…」) |
-| 相机与运动 | `camera.shot_size / movement / angle` |
-| 必须可见 / 不得出现 | `quality.must_show` / `quality.avoid`(只写可观察验收项) |
-| 连续性事实 | `continuity.locks` / `continuity.prev` |
-| 参考选择与迁移 | 现有 refs 绑定的 dict 形式:`{ref: …, controls: […], ignore: […], subject_ref: …}` |
-| Provider 参数 | `generation.params`(经 04 preflight 检查) |
-| 未来剧情 / 保留 beat | 下一镜或故事 source —— **绝不**塞进本镜 must_show/avoid |
+1. 影响场次为何存在、进入/离开状态或不可逆变化：改 SceneContract。
+2. 影响本镜目的、观众感知、opening、visible change、endpoint、表演、声音、风险或验收：改 ShotContract。
+3. 影响角色/场景/道具稳定事实：改 Bible asset，并检查所有引用。
+4. 影响参考的控制变量：改 reference binding 的 `controls`/`ignore`/lineage，交给 `prompt-craft` 重新编译。
+5. 影响实现路径：改 control.production_method/motion_source；能力由 ProviderManifest preflight 决定。
+6. 影响厂商参数：只写当前 manifest 允许的 generation.params，未知就停。
+
+现有 ShotSpec 的兼容字段仍有明确职责：`action.main` 只镜像当前主要可见动作，`quality.must_show` 只放可观察验收项，`continuity.locks` 只放连续性事实，`camera.*` 承担机位/运动，`generation.params` 只放 manifest 允许的参数。丰富导演判断优先写入新合同，不发明模型不存在的旁路字段。
 
 ## 输出
 
-1. 一个窄 patch(diff 或 `manju director propose` 的 action 列表);
-2. 三行解释:当前可见 beat / endpoint 落点 / camera & ref 变化;
-3. 不执行任何生成命令。
+输出一个窄 diff 或 `manju director propose` action，附三行：当前可见 beat、endpoint 落点、控制来源变化。纯建议可以写报告，但必须声明不影响 build；引擎永不读取 `reports/directing` 或其他 reports/ 文件来编译 Prompt。
 
-## 失败条件(直接说,不硬做)
+## 失败条件
 
-- 诉求需要发明新镜头而用户未授权 → 停,提议新增 shot 的 proposal;
-- source 被锁定(CAS/locks)或 proposal 已 stale → 停,走 `manju director` 流程;
-- 意图无法压缩成单 clip 的一个 beat → 停,输出拆镜建议(引用 CLIP_SCOPE 检查的 split 提议);
-- Provider capability 不支持(preflight INCOMPATIBLE)→ 停,改参数或换 provider 的 proposal。
+- 字段锁定或 proposal 已 stale：停，走 human proposal 流程，不 unlock；
+- 意图不能压缩成一个可见变化：停，提出拆镜或 Edit Beat；
+- ProviderManifest preflight 不支持：停，改 production method 或 provider 参数 proposal；
+- 用户未授权新场次/镜头：不扩大 source 范围。
 
 ## 纪律
 
-- 改完 source 后由现有 workbench 重新编译:`manju prompt <shot> --json`,确认
-  `spec_hash`/`prompt_bundle_digest` 移动、`production_checks` 变干净;
-- 一次 patch 解决一个诊断;不顺手重写无关字段;
-- 本 skill 不花钱、不 build、不 select。
+patch 后运行 `manju check` 和 `manju prompt <shot> --json`，确认 contract digest、production checks 与 refs lineage 更新。本技能不花钱、不 build、不 select、不直接调用 Provider。
+
+## 什么时候不该用
+
+只是承接 accepted media 真实结尾时用 `continue-from-accepted-take`；已经有 take 需要判断 disposition 时用 `review-take-and-route-repair`；只是执行 QC 修复 op 时用 `repair-loop`。
+
+## Eval
+
+1. 用户说“更紧张”时，先要求可观察 beat/endpoint，不能直接加形容词。
+2. 角色认知变化应落在 SceneContract/ShotContract 的状态字段，不应伪装成 camera 参数。
+3. locked source patch 必须转 proposal，不执行 unlock。

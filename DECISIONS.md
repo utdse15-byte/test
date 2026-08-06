@@ -4109,3 +4109,15 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     atomically before transport. Legacy, dry-run, free/local/proxy, and explicit
     collaborative paths retain their prior behavior, while `--yes` remains spend
     consent and cannot impersonate content approval.
+11. **The S1 craft layer consumes landed contracts instead of inventing a
+    parallel authoring system.** The always-injected protocol and the focused
+    creation, scene, shot, character, prompt, pacing, series, review,
+    continuation, patch, repair, and audio Skills now name SceneContract,
+    ShotContract, current media observations, reference ownership,
+    ProviderManifest authoring evidence, and the staged readiness view as their
+    inputs. `scene-design` is the sole new core craft Skill; Scene membership
+    remains derived. Ordinary narrative defaults to NARRATIVE_FILM, Prompt is a
+    control/instruction compiler, character continuity has five independent
+    layers, and temporary Animatic audio cannot impersonate final audio.
+    Ten `manju.skill-eval/v1` cases cover the minimum directing decisions; an
+    agent-structured review records 10/10 pass without becoming a build input.

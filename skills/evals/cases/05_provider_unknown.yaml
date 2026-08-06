@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: provider_unknown
+skill: prompt-craft
+title: Provider 未验证
+prompt: 当前 ProviderManifest 没有 authoring evidence，用户要求写厂牌特定 negative、参考图数量和固定时长。
+expected:
+  must: ["读取 ProviderManifest", "将未知能力标为 unknown", "拒绝猜 negative、参考数量和时长"]
+  must_not: ["把旧经验写成当前事实", "声称一次成功"]
+review: 复核易变知识只来自 manifest 与 current authoring evidence。

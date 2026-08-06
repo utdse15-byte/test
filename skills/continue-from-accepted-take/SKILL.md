@@ -1,76 +1,62 @@
 ---
 name: continue-from-accepted-take
-description: 续接程序——下一镜必须从"已验收媒体的真实结尾"续写,不是从原 Prompt 的预期结尾。读 continuation view(accepted media hash + observed endpoint),产出下一镜现有 source 的 proposal/patch;绝不直接调 Provider。触发词:续接、下一镜、continuation、continue from、接着拍。
-when_to_use: 要写/改"承接上一镜"的镜头,或 prompt --check 报 CONTINUATION_* 时。
+description: 真实结尾续接：读取当前 accepted media 的哈希与 observed END，把它变成下一 ShotContract 的 opening；绝不按预期结尾假装续接。
+when_to_use: 当要写/改承接上一镜的下一镜，或 prompt check 报 continuation 问题时使用。
 tags: [directing, task]
 user_invocable: true
 ---
 
-# 从已验收的真实结尾续写(continue-from-accepted-take)
+# 从已验收媒体续接
 
-反例(禁止):
-
-```text
-上一镜 Prompt 预期结尾 = 她已经抬头
-真实 accepted take 的结尾 = 她仍低头
-→ 下一镜绝不能写「她抬头后……」
-→ 必须从「她仍低头」提出下一镜 patch
-```
-
-## 什么时候不该用
-
-这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
-
-| 情形 | 去哪 |
-| --- | --- |
-| 上一镜还没有被验收的 take(没有真实结尾可接) | 先 `manju select` 定稿,或走 `review-take-and-route-repair` |
-| 要重新决定这一镜表现什么 | `direct-shot-source-patch` |
-| 只是改台词 / 时长这类窄字段 | 直接改 `shots/SNNN.yaml` + `manju check` |
+续接源是当前 selected/accepted、非 stale 的媒体，不是上一镜 Prompt 的预期。先读取 `manju prompt <next> --json` 的 continuation view、`manju qc` 的 observed states、source media SHA-256 和 assurance digest。
 
 ## 输入
 
-- `manju prompt <next_shot> --json` 的 `compiler_trace.continuation_source`
-  (源镜头 accepted media 的 sha256、observed_endpoint、completed/reserved beats、
-  re-anchor 建议)——这是派生 view,build 不读它,只有你读;
-- 源镜头的 canonical refs 与下一镜当前 source;
-- surface/provider capability(04 preflight 事实)。
+- continuation view 的 accepted media SHA-256、`observed_endpoint`、completed/reserved beats；
+- 源镜头 assurance digest、下一镜当前 SceneContract/ShotContract 和 canonical refs；
+- 当前 ProviderManifest 的 reference/edit/extend 能力与未决任务状态。
 
-## 续接闸(全过才动笔,§10.5)
+## 续接闸
 
-1. 源 take 是当前明确 accepted/selected 的媒体(`CONTINUATION_SOURCE_NOT_ACCEPTED` 必须为空);
-2. media SHA-256 可验证(锚定则须一致:`CONTINUATION_SOURCE_HASH_MISMATCH`);
-3. endpoint 有 bound 观察(`CONTINUATION_ENDPOINT_UNOBSERVED` 为空——没有就先走
-   review-take-and-route-repair 回填 observed_states);
-4. 源未 stale;
-5. capability 支持所需的 reference/edit/extend 方式;
-6. 无未决 submission 冲突(`manju tasks`)。
+以下全部满足才可提出 patch：
 
-闸不过 → 停,输出把闸修好的下一步(出题回填 / 重锚定 / 改 continuity.prev),
-不硬续。
+1. 源 take 当前 accepted/selected；否则 `CONTINUATION_SOURCE_NOT_ACCEPTED`。
+2. SHA-256 可验证且与 view 一致；否则 `CONTINUATION_SOURCE_HASH_MISMATCH`。
+3. 有 bound END 观察，visibility 不是 `UNCERTAIN`、`NOT_EVALUATED` 或缺失；否则 `CONTINUATION_ENDPOINT_UNOBSERVED`。
+4. 源未 stale，且没有未决 submission 冲突。
+5. 当前 ProviderManifest 能力支持所需参考/延展方式。
+
+闸不过就停：先让人验收、重新出题回填观察、修 continuity.prev 或改 source；不要硬续。
 
 ## 输出
 
-1. 对**下一镜现有 source** 的 proposal/patch:
-   - `action.main` 的开场状态 = 源镜头 observed_endpoint 的原话事实;
-   - `continuity.prev` = 源镜头 id;可选锚定 `continuity.source_media_sha256` =
-     view 里的 hash(源被替换时 checker 会报 mismatch);
-   - 需要画面级承接时,refs 用 dict 绑定声明迁移:
-     `{ref: media/gen/<shot>/<take>.mp4 的帧或 ref 图, controls: [character_identity], ignore: [background, pose]}`;
-2. continuation source citation(sha256 + assurance digest,抄自 view);
-3. completed / reserved / do-not-show 边界(view 的 completed_beats /
-   excluded_future_beats,别把保留 beat 写进本镜);
-4. re-anchor 建议:view 说链太深(canonical_ref_reanchor_recommended)就提
-   「回锚 canonical reference」的 proposal——只是建议,不自动换 ref。
+对下一镜现有 source 提出窄 patch/proposal：
+
+- `contract.opening` 以真实 END 原话为起点；
+- `continuity.prev` 指向源镜头，必要时绑定 `source_media_sha256`；
+- 引用声明 `controls` 与 `ignore`，不要把源媒体自动当身份参考；
+- 列出已完成、保留和不得提前展示的 beats；
+- 引用 source hash、assurance digest 和 observation evidence。
+
+若作者不接受真实结尾，应明确路由为 `REROLL` 或 `REWRITE_SOURCE`，而不是静默写回原计划。patch 后重跑 `manju prompt <next> --json`，确认 continuation checks 清零；本技能不调用 Provider、不 build、不花钱。
 
 ## 失败条件
 
-- 源镜头无 accepted take / endpoint 未观察 → 停(见闸);
-- 下一镜 source 被锁定 → 走 `manju director propose`;
-- 用户要求"按剧本预期结尾续" → 指出与真实结尾的冲突,让人裁决(改剧本 or 重拍源镜头)。
+- 任一 continuation gate code 存在：停，先补验收、哈希或 END 观察；
+- 源媒体 stale/被替换：重新评审并绑定当前字节；
+- 下一镜合同被锁：走 `manju director propose`；
+- 作者拒绝真实 endpoint：显式选择 REROLL 或 REWRITE_SOURCE。
 
 ## 纪律
 
-- patch 落地后必由现有 workbench 重编译(`manju prompt <next_shot> --json`),
-  确认 CONTINUATION_* 检查为空;
-- 本 skill 不调 Provider、不 build、不花钱;continuation view 只进你的输入,
-  永不直接进 Provider request。
+accepted media observed endpoint 必须逐字映射到下一 ShotContract.opening。本技能不调 Provider、不 build、不花钱；continuation view 只供 agent 阅读，绝不直接写入 provider request。
+
+## 什么时候不该用
+
+上一镜没有 accepted take 或只是评审已有媒体时转到 `review-take-and-route-repair`；要重新决定当前镜头表现什么时转到 `direct-shot-source-patch`；只改台词/时长时直接定点编辑并跑 `manju check`。
+
+## Eval
+
+1. 预期结尾是“抬头”而真实 END 仍低头时，下一镜 opening 必须从低头开始。
+2. endpoint 缺失或 stale 时拒绝续接并给出补证步骤。
+3. 真实结尾与剧本冲突时，输出 REROLL/REWRITE_SOURCE 选择，不伪造连续性。

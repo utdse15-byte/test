@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: scene_contract_location
+skill: scene-design
+title: 同地点多场戏
+prompt: 便利店在夜里发生三次剧情：第一次主角来取证据，第二次她得知同伴背叛，第三次她决定报警。请设计场次。
+expected:
+  must: ["输出三个 SceneContract", "每场有不可逆变化", "entry_state 与 exit_state 有状态增量"]
+  must_not: ["把便利店 location 当成一个场次", "在 SceneContract 中写 shots 列表"]
+review: 人工检查场次按戏剧变化而非地点分组，且字段能被 SceneContract parser 接受。

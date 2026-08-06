@@ -1,72 +1,51 @@
 ---
 name: narrative-pacing
-description: 为明确的发行格式设计叙事节奏与注意力策略。只有用户明确要求平台留存、营销、带货、知识短视频、竖屏短剧或指定格式 profile 时才使用；普通叙事片不自动套黄金三秒、CTA、固定镜长或 pattern interrupt。
-when_to_use: 用户明确指定平台留存、营销、知识短视频、竖屏短剧或其他格式特定节奏目标时。
-tags: [craft, reference]
-auto: false
+description: 叙事节奏与格式特定注意力策略：根据明确选择的格式 profile 设计信息、动作、反应、停顿、声音和剪辑节奏。
+when_to_use: 当需要做节奏 pass、安排信息揭示、沉默、声音先行或平台格式策略时使用；普通叙事默认不加载营销结构。
+tags: [directing, task]
+user_invocable: true
 ---
 
 # 叙事节奏与格式特定注意力策略
 
-先判断作品的格式目标，再选择节奏工具。没有明确 profile 时，按人物状态变化、信息释放、动作与反应、停顿、声音和 Animatic 的实际播放判断节奏。
+先声明 profile，再选择节奏策略：
+
+```text
+NARRATIVE_FILM
+VERTICAL_DRAMA
+KNOWLEDGE_VIDEO
+MARKETING_OR_COMMERCE
+DOCUMENTARY
+ARCHIVE_OR_FOUND_FOOTAGE
+OWNER_DEFINED
+```
+
+## NARRATIVE_FILM 默认
+
+- 场次压力和不可逆变化优先于“每秒刺激”。
+- 让人物和观众何时知道信息成为节奏选择；必要时使用信息差，但不伪造事实。
+- 用动作—反应、停顿、沉默、声音先行/滞后和视觉模式变化组织注意力。
+- 用 Animatic 的真实播放测试阅读时间、呼吸、对白、声音事件和剪辑接口。
+- Narrative Beat、Generation Beat、Edit Beat 分开；不要把每个节拍强行压成一镜。
+
+## 其他 profile
+
+只有用户或项目明确选择 `VERTICAL_DRAMA`、`KNOWLEDGE_VIDEO` 或 `MARKETING_OR_COMMERCE` 时，才考虑 hook、pattern interrupt、CTA、价值摘要等格式工具。它们是可撤销的上下文，不是普通叙事的硬门禁；不要写未经当前项目、平台或实验验证的百分比和固定时长。
+
+## 节奏 pass
+
+1. 读 SceneContract 的 entry/exit 和 ShotContract 的 opening/endpoint。
+2. 标出信息首次可见、角色首次反应、动作完成、声音落点和剪辑切点。
+3. 在 Animatic 中验证实际播放；若过短，先调整表演、对白、剪辑或 staging，再考虑数值时长。
+4. 对问题只改一个主要变量，记录假设和观察结果；不要用“更快/更电影感”作为诊断。
+5. `manju check` 后再 `manju production status`，节奏通过不等于 paid-video ready。
 
 ## 什么时候不该用
 
-| 情形 | 去哪 |
-| --- | --- |
-| 普通叙事片只需要故事与镜头设计 | `creation-funnel` / `shot-design` |
-| 单镜画面坏了或 QC 有 findings | `repair-loop` |
-| 对白已锁 | `manju propose`，不要直接改作者真相 |
+还没有场次状态或镜头 endpoint 时转到 `scene-design` 或 `shot-design`；只是音频响度和混音时转到 `audio-finishing`；只是 QC 发现后的具体修复时转到 `repair-loop`。
 
-## 决策树
+## Eval
 
-- **Narrative film**：以场次张力、人物和观众何时得知信息、动作-反应、沉默、声音先行/滞后和 Animatic 为准。
-- **Vertical drama**：在故事成立的前提下检查冲突进入速度与场尾承接；不要把每拍等同于一镜。
-- **Knowledge video**：明确观众问题、证据顺序和信息负担，必要时前置价值。
-- **Marketing / commerce**：只有用户明确选定该 profile，才讨论 hook、CTA 或注意力重置。
-- **Owner-defined**：记录用户给定的节奏标准，不用未经验证的行业百分比替代。
-
-固定秒数、平台完播百分比和通用 pattern-interrupt 频率已撤销。时长必须通过对白、呼吸、动作完成、信息读取、剪辑接口和 Animatic 决定。
-
-## BEFORE / AFTER
-
-**普通叙事片**
-
-- BEFORE：自动要求黄金三秒、CTA 和每几秒切镜。
-- AFTER：先找场次不可逆变化，再用动作、反应、停顿和声音安排观看时间。
-- WHY：营销留存公式不是通用电影语法。
-
-**知识视频**
-
-- BEFORE：长时间寒暄后才回答观众问题。
-- AFTER：在明确 profile 后前置问题与可验证价值，再按理解负担组织证据。
-- WHY：注意力策略必须服务格式和信息。
-
-**镜头过长**
-
-- BEFORE：只因超过某个固定秒数就拆镜。
-- AFTER：在 Animatic 中检查表演、对白、读取和剪辑接口；只有节奏或控制风险确实需要时才拆。
-- WHY：固定镜长无法替代导演判断。
-
-## 自检
-
-```text
-[ ] 用户明确了 format profile？
-[ ] 普通叙事项目没有自动套 hook/CTA？
-[ ] 节奏依据是状态变化、信息、动作-反应和声音？
-[ ] 没有无来源的百分比和固定秒数？
-[ ] 决定已在完整 Animatic 中播放验证？
-```
-
-## Manju 落地
-
-- `shots/index.yaml`：作者镜头顺序。
-- `shots/*.yaml` 与 `timeline/rules.yaml`：镜头时长和全局时序。
-- `manju build --target animatic`：实际播放临时画面与声音。
-- 锁定内容通过 `manju propose` 提交修改理由。
-
-## 验收 eval
-
-1. 普通叙事短片不得自动出现黄金三秒或 CTA。
-2. 明确的营销任务可以使用格式特定注意力策略，但不伪造指标。
-3. 镜长调整必须能解释为表演、信息、声音或剪辑需要。
+1. 给普通电影叙事，选择 NARRATIVE_FILM，并拒绝自动添加 CTA 或营销 hook。
+2. 给明确带货需求，才加载 MARKETING_OR_COMMERCE，并把 CTA 标成格式策略而非人物动机。
+3. Animatic 显示对白能听清但动作未完成时，优先提出 staging/剪辑调整，而不是固定加长每镜。

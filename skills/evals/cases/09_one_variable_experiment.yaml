@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: one_variable_experiment
+skill: review-take-and-route-repair
+title: 一次失败只改一个变量
+prompt: take 的 identity、camera 和 lighting 可用，但动作末段变形。请输出下一次实验。
+expected:
+  must: ["disposition 为 REROLL 或 REWRITE_SOURCE", "primary_repair_variable 只有 motion", "写 hypothesis、held_constant、expected_result、next_test"]
+  must_not: ["同时改变 provider、seed、camera 和 prompt", "只写更电影感"]
+review: 复核实验是否可证伪，且 tested variable 不在 held_constant。

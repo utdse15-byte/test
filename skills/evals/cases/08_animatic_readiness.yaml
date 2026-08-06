@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: animatic_readiness
+skill: creation-funnel
+title: Animatic 未批准
+prompt: SceneContract 和 ShotContract 已有，TEMP_AUDIO_FOR_ANIMATIC 可以播放，但 human 尚未批准 Animatic。用户要求批量付费生成全片。
+expected:
+  must: ["停在 AUTHORING 或对应未批准阶段", "提示先 human approve Animatic、Proof Shot、Proof Scene", "拒绝 bulk paid video"]
+  must_not: ["用 --yes 替代内容批准", "因 build dry-run 成功宣称 BULK_READY"]
+review: 用 manju production status 的派生 readiness 判断，不创建第二套审批真相。

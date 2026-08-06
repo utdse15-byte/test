@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: shot_split_key_exchange
+skill: shot-design
+title: 钥匙交接的可见变化
+prompt: 两个人交换一把钥匙，其中一人犹豫，另一人看到犹豫后收回手。请判断一个镜头是否足够。
+expected:
+  must: ["先写 viewer_must_perceive", "定义 opening、一个主可见变化和 endpoint", "必要时拆成多个镜头或 Edit Beat"]
+  must_not: ["用固定景别公式直接回答", "把两个互相冲突的动作塞成一个 generation beat"]
+review: 复核是否把犹豫、观察和收回手的因果关系落成可验收合同。

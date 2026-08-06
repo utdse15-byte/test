@@ -1,78 +1,74 @@
 ---
 name: prompt-craft
-description: 将已确定的镜头意图编译成 provider 执行指令，并检查参考控制冲突、未决变量与实验假设。只在镜头目的和可见动作已经确定后使用；涉及提示词、prompt、参考图、negative、provider 约束或生成实验时触发。具体型号能力与限制必须读取 ProviderManifest，没有当前证据时保持 unknown。
-when_to_use: 镜头意图已确定，需要分配控制来源、编译执行提示词或检查 provider 未知能力时。
-tags: [craft, reference]
-auto: true
+description: 提示词编译与控制分配：把已确定的 SceneContract、ShotContract、资产和 ProviderManifest 编译成可追踪的执行指令。
+when_to_use: 当镜头目的、opening、endpoint 已确定，需要分配参考/动作/相机/环境控制并编译 provider 指令时使用；不负责重新发明镜头意图。
+tags: [directing, task]
+user_invocable: true
 ---
 
 # 提示词编译与控制分配
 
-Prompt 是镜头决定的派生执行物，不是第二份导演真相。先确认镜头要让观众看到什么，再把仍未被参考素材、预演、实拍或合成承担的变量编译成指令。
+Prompt 不是故事创作入口，也不是一次成功保证。输入必须是：
+
+```text
+SceneContract relevant state
++ ShotContract
++ Bible assets
++ resolved reference ownership
++ selected production method
++ current ProviderManifest
++ current authoring evidence (optional)
+```
+
+## 编译决策树
+
+1. 目的和 endpoint 未定：回 scene-design 或 shot-design，不写 Prompt。
+2. 为每个变量分配唯一控制源：identity、presentation、behavior、cognition、residue、location、framing、lighting、pose、motion、camera、environment response、audio。
+3. 发现两个 source 都控制同一变量：减少引用、改 controls/ignore，记录冲突，不靠更长 Prompt 解决。
+4. 只把未被参考图、动作参考、首尾帧、实拍、2D/3D 预演或合成承担的变量编译进指令。
+5. 读取 ProviderManifest 的 capabilities、limits、refs、cost、adapter。仅当 authoring evidence 状态为 current 且有来源时采用语法或负向指令；过期或缺失就标 unknown，不猜参考数量、时长、seed 或 negative 行为。
+6. 写出一次实验只验证什么，并把 primary variable 与 held constants 分开。
+
+## 输出契约
+
+`manju prompt <shot> --json` 应能追溯以下结果：
+
+- intent summary、opening state、visible motion、camera motion、物理响应、endpoint 和 stable hold；
+- control map：变量、owner、reference lineage、source of truth；
+- unresolved variables、compiled positive instruction、在证据支持时才有的 compiled negative instruction；
+- experiment hypothesis、primary variable、unknown capabilities/warnings；
+- ProviderManifest id/fingerprint、authoring evidence id/date/status。
+
+如果生产方式是 `motion_reference`，动作参考承担动作和时序，Prompt 只补充未承担的身份、场景或 endpoint；如果是 `start_end_frame`，首尾帧承担端点，不得在文字中写出冲突的中间动作。任何 provider 参数都要经 preflight，不能凭模型记忆添加。
+
+## 例：控制图（不是第二套真相）
+
+```yaml
+shot_id: S001
+owners:
+  identity: bible.characters.linxia.identity_ref
+  presentation: bible.characters.linxia.costume_ref
+  motion: refs.motion.door_handle_test
+  endpoint: shot.contract.endpoint
+  camera: shot.camera
+unresolved: [room_echo]
+positive_instruction: 门锁轻响后，手仍与门把连续接触，最后停在门缝打开的状态
+negative_instruction: null
+experiment:
+  hypothesis: 缩小手部动作幅度会保持门把接触
+  primary_variable: motion
+  held_constant: [identity, presentation, camera, lighting, duration]
+unknown_capabilities: []
+```
+
+此 YAML 仅是编译输出的示意；真正输入和输出以现有 CLI JSON、合同和 ProviderManifest 为准，不能保存到 reports 后要求引擎读取。
 
 ## 什么时候不该用
 
-| 情形 | 去哪 |
-| --- | --- |
-| 镜头为什么存在、开始和结束状态尚未确定 | `shot-design` |
-| 下一镜必须接住上一镜真实媒体的结尾 | `continue-from-accepted-take` |
-| 已有媒体需要看片和修复路由 | `review-take-and-route-repair` |
-| 使用手动素材或实拍，不需要生成指令 | `manju select --file` |
+镜头目的或 endpoint 仍在争论时转到 `shot-design`；参考已经生成、要看片并给 disposition 时转到 `review-take-and-route-repair`；要修改 source 字段时转到 `direct-shot-source-patch`。
 
-## 当前隔离纪律
+## Eval
 
-1. 读取镜头作者事实、Bible 与当前媒体观察。
-2. 用 `manju refs <shot> --json` 和 provider manifest 确认参考输入、能力、限制与成本。
-3. 逐项分配 identity、costume、location、framing、lighting、pose、motion、camera 和环境响应的控制来源。
-4. 只有显式声明的 reference transfer 才能接管变量；不要从文件名或画面猜 ownership。
-5. Prompt 只描述未被其他来源控制的变量，并保留可见动作意图与 endpoint。
-6. 每次生成写明一个主要不确定性和可观察的预期结果。
-7. ProviderManifest 没有声明的能力保持 unknown。不要猜 negative 支持、参考数量、时长、seed 或型号语法。
-8. `generation.prompt_override` 是人工逐字指令；不要自动拼接或改写。
-
-旧型号公式已移到 `references/archive/legacy-provider-guidance-2026-08-05.md`，该文件标记为历史记录，不得自动加载或作为当前事实。
-
-## BEFORE / AFTER
-
-**控制冲突**
-
-- BEFORE：参考图已经负责服装，Prompt 又重新指定另一套服装。
-- AFTER：保留角色 ID 和当前状态，只编译动作、未被控制的镜头变化与 endpoint。
-- WHY：两个来源争夺同一变量会让结果不可诊断。
-
-**未知能力**
-
-- BEFORE：凭经验断言某型号支持 negative、固定参考数量或固定时长。
-- AFTER：读取 ProviderManifest；未声明时输出 `unknown` 和验证建议。
-- WHY：易变型号事实不属于核心 Skill。
-
-**不可诊断实验**
-
-- BEFORE：一次同时改镜头、动作、参考图和时长。
-- AFTER：保持其他条件不变，只改变一个主要变量并写出假设。
-- WHY：失败才会形成可继承知识。
-
-## 自检
-
-```text
-[ ] 镜头目的、可见动作和 endpoint 已确定？
-[ ] 每个控制变量都有显式 owner？
-[ ] 没有 reference 争夺同一 closed role？
-[ ] Prompt 只包含未被控制的变量？
-[ ] Provider 能力来自 manifest；未知仍是 unknown？
-[ ] 本次实验只有一个主要变量？
-[ ] prompt_override 未被改写？
-```
-
-## Manju 落地
-
-- `manju prompt <shot> --json`：检查编译结果与启发式问题。
-- `manju refs <shot> --json`：查看解析后的 reference、transfer 与 provider 预算。
-- `manju providers show <id>`：读取机器能力与限制。
-- `manju build --dry-run`：在 transport 前查看请求计划和成本。
-
-## 验收 eval
-
-1. Reference 已控制服装时，输出不得重复争夺服装。
-2. Provider 未验证时，不得猜 negative、参考数量或时长。
-3. 一次失败后的下一轮必须只改变一个主要变量。
+1. 一个动作参考已承担 motion 时，control map 中 motion owner 必须是 reference，Prompt 不得重复拥有它。
+2. authoring evidence 过期时，输出 unknown capability，并拒绝写固定厂牌公式。
+3. 同一变量同时由两张参考图控制时，先报告 ownership conflict，再编译。

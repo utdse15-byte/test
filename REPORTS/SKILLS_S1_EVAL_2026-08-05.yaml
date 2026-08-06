@@ -1,0 +1,49 @@
+schema: manju.skill-eval-review/v1
+date: 2026-08-05
+reviewer: codex-agent
+source_cases: skills/evals/cases
+summary:
+  total: 10
+  passed: 10
+  failed: 0
+results:
+  - id: scene_contract_location
+    result: pass
+    evidence: [skills/scene-design/SKILL.md]
+    note: 按不可逆状态变化拆三个 SceneContract，并明确禁止按 location 合并和写 shots 列表。
+  - id: shot_split_key_exchange
+    result: pass
+    evidence: [skills/shot-design/SKILL.md]
+    note: 固定先判断 viewer perception、opening、单一可见变化和 endpoint；超出一个 generation beat 时拆镜或改 Edit Beat。
+  - id: character_behavior_continuity
+    result: pass
+    evidence: [skills/character-consistency/SKILL.md]
+    note: 五层分别复核，同脸但走路、眼神和距离变化明确归为 behavior 连续性问题。
+  - id: reference_ownership
+    result: pass
+    evidence: [skills/prompt-craft/SKILL.md]
+    note: 已有 presentation/motion owner 的变量从 Prompt 移除，冲突先通过 controls/ignore 解决。
+  - id: provider_unknown
+    result: pass
+    evidence: [skills/prompt-craft/SKILL.md, skills/manju/SKILL.md]
+    note: 没有 current authoring evidence 时 negative、参考数量、固定时长和 seed 保持 unknown。
+  - id: observed_endpoint_continuation
+    result: pass
+    evidence: [skills/continue-from-accepted-take/SKILL.md]
+    note: accepted media observed END 映射到下一 ShotContract.opening，冲突显式走 REROLL 或 REWRITE_SOURCE。
+  - id: ordinary_narrative_profile
+    result: pass
+    evidence: [skills/narrative-pacing/SKILL.md]
+    note: 普通叙事选择 NARRATIVE_FILM，不自动加入 CTA、黄金三秒或未验证百分比。
+  - id: animatic_readiness
+    result: pass
+    evidence: [skills/creation-funnel/SKILL.md, skills/manju/SKILL.md]
+    note: 未批准 Animatic 时拒绝 bulk paid video，花费确认不能代替 Proof Shot/Proof Scene 内容批准。
+  - id: one_variable_experiment
+    result: pass
+    evidence: [skills/review-take-and-route-repair/SKILL.md, skills/repair-loop/SKILL.md]
+    note: 动作末段失败只测试 motion，其他变量列入 held constants，结果绑定当前媒体与合同。
+  - id: audio_only_staging
+    result: pass
+    evidence: [skills/audio-finishing/SKILL.md, skills/shot-design/SKILL.md]
+    note: 仅声音即可交代的画外动作优先 sound + Edit Beat；临时音频与 final finishing 严格分开。

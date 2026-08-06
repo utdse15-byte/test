@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: reference_ownership
+skill: prompt-craft
+title: 参考图已控制服装
+prompt: presentation reference 已明确控制角色服装和伤势，motion reference 控制拿杯子的动作。请编译控制图。
+expected:
+  must: ["presentation owner 是 reference", "motion owner 是 motion reference", "Prompt 只补未承担变量", "输出 controls 与 ignore"]
+  must_not: ["重复编译服装细节", "让 identity reference 同时拥有动作"]
+review: 复核每个变量只有一个 owner，控制冲突先解决再编译。

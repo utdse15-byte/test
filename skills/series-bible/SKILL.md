@@ -1,106 +1,43 @@
 ---
 name: series-bible
-description: 多集剧集的三层数据结构工艺——全局设定集(世界观/世界规则/金手指/人设记录带 character_id + 视觉负载)、分集只存状态增量、连续性层(伏笔/时间线/角色状态)。跨 60+ 集保持人设与世界观一致,避开 Showrunner「每集重置角色」的翻车。落到 Manju 的 series 层与 bible。触发词:设定集、series bible、世界观、人设、跨集、多集、连续性、伏笔、时间线、角色状态。
-when_to_use: 搭建/管理跨多集的角色与世界观、要跨集一致、或组织剧集设定与连续性时。
-tags: [series, reference]
-auto: true
+description: 单片与剧集共用的连续性账本：维护角色、关系、知识、时间线、情绪残留和资产职责的状态增量。
+when_to_use: 当跨场、跨镜或跨集需要维护人物/世界状态、伏笔和关系变化时使用；单片也可使用，不要求先变成系列项目。
+tags: [directing, task]
+user_invocable: true
 ---
 
-# 剧集设定集(series-bible)
+# Series Bible
 
-一部 60+ 集短剧,人设/世界观必须有**单一真相**,否则第 20 集主角就换了脸、换了金手指。你的活:把设定拆成**三层**——全局设定集、分集状态增量、连续性追踪——让每一集都引用同一份真相。
+Bible 不是静态人物介绍，而是可追踪的状态账本。SceneContract 与 ShotContract 是单片和剧集共同的创作原语；系列层只增加规模、索引和跨集汇总。
+
+## 五类状态
+
+- identity：稳定身份和声音锚点。
+- presentation：服装、发型、伤势、污渍、道具和位置。
+- behavior：体态、节奏、眼神、手部习惯、距离和情绪外显。
+- cognition：知道/不知道、相信、误解和当前意图。
+- residue：情绪、疲劳、疼痛、呼吸和动作速度的残留。
+
+关系、地点、道具、线索和时间线也用同样的“当前状态 → 本场变化 → 下一场要求”记录。每次只写真实变化，不重抄整个人物定义。
+
+## 更新规则
+
+1. 先读上一场 exit state、accepted media 的 bound observed endpoint 和当前 Bible。
+2. 只把跨镜/跨场稳定的事实写进 Bible；瞬态姿势、镜头内表演和未验收生成结果留在 ShotContract 或观察记录。
+3. 对每个变化写来源：SceneContract、approved decision、human observation 或已登记资产。
+4. 下一场/下一集读取状态增量，检查是否与 opening、continuity 和角色五层一致。
+5. 发生冲突时暂停编译，报告哪个源拥有权；不要用新一段描述静默覆盖旧事实。
+
+## 系列索引
+
+剧集项目可以额外维护：跨集时间线、伏笔/回收、关系图、资产目录和每集 state delta。单片不应因为没有“系列”标签而省略知识状态、关系状态或情绪残留。
 
 ## 什么时候不该用
 
-这个技能**只**管上面 frontmatter `when_to_use` 说的那件事。误触发比漏触发贵——被拉进相邻场景后,agent 会照着这里的决策树一路走完。以下情形请转走:
+只需创建一场的 entry/exit 合同时转到 `scene-design`；只需设计当前单镜头时转到 `shot-design`；只需确认生成媒体是否符合合同则用 `review-take-and-route-repair`。
 
-| 情形 | 去哪 |
-| --- | --- |
-| 单集 / 单片项目 | 本项目的 `bible/` 就够,别搭剧集层 |
-| 要把一个长故事切成多少集 | `series-breakdown` |
-| 只是某个角色在单镜里漂移 | `character-consistency` |
+## Eval
 
-## 三层数据模型(照这个建目录)
-
-参考 oh-story 已落地的文件树:
-
-```
-{series}/
-├── 设定/     (设定集 BIBLE)  世界观/ · 角色/(每角色一文件) · 势力/ · 关系.md · 题材定位.md
-├── 大纲/     大纲.md(全剧) · 卷纲_第N卷.md · 细纲_第NNN集.md(节拍、出场角色、钩子)
-├── 正文/     (分集剧本 / 正文)
-└── 追踪/     (连续性)  伏笔.md · 时间线.md · 角色状态.md
-```
-
-**(A) 设定集 BIBLE — 全局,60+ 集共享**
-- *剧集元*:标题、logline、题材定位、基调 + 2–3 对标、形态(竖屏/横屏)+ 集数 + 单集时长、平台 + 备案层级。
-- *世界观*:设定、背景/神话、**世界规则**(力量体系 / 金手指、代价、限制)、势力(每个一条)。
-- *人设(每角色一条 = 角色库条目)*:身份(`character_id` UUID、姓名、别名、年龄)、小传(前史、家庭、外在-vs-潜意识性格、want/need、弧线),以及**视觉负载**(脸/发/身、默认服装 + 配色 主/辅/点缀、配音、4–6+ 张参考 front/¾/profile/back + 表情,每张连 prompt+seed,加 LoRA/embedding 指针与各厂牌 ID)。
-- *关系图*、*全局视听风格*、可复用 **location & prop Elements**(各带参考集 + id)。
-- *剧集弧*:四阶段 + 付费点 卡一/卡二/卡三 + 主题。
-
-**(B) 分集剧本 — 每集,只存增量**
-- `episode_number`、标题、时长、免费/付费 + 卡N 标记;**集纲**(logline、A/B/C 线、节拍、幕点、3 秒钩、中段冲突、反转、结尾钩子);**场→镜拆解**(每镜:时长 5–10s、机位、`character_id`→拉出角色库参考、动作、台词、道具、seed+prompt、model)。
-- **人设一律按 ID 引用 bible,本地只存「本集状态增量」**(换装/受伤/情绪)——**绝不在分集重定义外观**。
-
-**(C) 连续性 / 追踪 — 调和 A↔B(多数 AI 工具缺的一层)**
-- `伏笔.md`(埋—收登记)、`时间线.md`(内部纪年)、`角色状态.md`(每集每角色快照:所在、服装、伤情、已知信息、关系)。
-- 参照 ViMax 的「依赖感知视觉一致性」:跨镜追踪角色/环境状态,从先前时间线选首帧参考。
-
-## 决策树
-
-- **单片(1 集)** → 不用 series 层;项目内 bible(characters/scenes/props/voices)足够。
-- **多集但短(≤~12 集)** → 建 series bible + 连续性三件套;人设外观定义一次。
-- **长篇(60–100 集)** → 全套三层 + 每集状态增量 + 逐集角色状态快照;LoRA 在剧集固定 ~20 集时最稳(见 `character-consistency`)。
-
-## BEFORE / AFTER(业余 → 专业,附 WHY)
-
-**例 1 — 分集重定义外观(Showrunner 翻车)**
-- BEFORE:第 8 集脚本又写「主角:长黑发、疤在左脸、红外套」。
-- AFTER:bible 定义一次;第 8 集只写 `character_id: linxia` + `delta: {服装: 军装, 伤: 右臂}`。
-- WHY:本地重定义会漂移、还和 bible 冲突;单一外观源 + 增量是跨 60 集稳定的唯一办法。
-
-**例 2 — 世界规则没写死**
-- BEFORE:金手指能力时强时弱,凭当集需要。
-- AFTER:bible `世界规则` 明确能力、代价、限制;每集受此约束。
-- WHY:力量体系不设边界 = 观众弃剧的高发点;规则是世界观可信度的地基。
-
-**例 3 — 伏笔埋了没收**
-- BEFORE:第 3 集出现的信物,后面再没出现。
-- AFTER:`追踪/伏笔.md` 登记「第 3 集埋 信物 → 计划第 40 集收」,QC 可检未收伏笔。
-- WHY:埋而不收是长剧硬伤;连续性层让它可检测,而不是靠记忆。
-
-## 拷贝进工作笔记的清单
-
-```
-剧集设定集自检 · 逐条勾
-[ ] 三层建齐:设定/(bible)、大纲/、正文/、追踪/(连续性)?
-[ ] 每角色一条 bible 记录,含 character_id + 视觉负载(参考集+prompt+seed+各厂牌 ID)?
-[ ] 世界规则(金手指/代价/限制)写死?
-[ ] 分集只按 character_id 引用 + 状态增量,没在本地重定义外观?
-[ ] 连续性三件套:伏笔.md(埋—收)、时间线.md、角色状态.md 逐集更新?
-[ ] 关系图 + 全局视听风格 + 可复用 location/prop Elements?
-```
-
-## 失败目录(smells + 在 Manju 里长什么样)
-
-| smell | 在 Manju 的表现 / 抓法 |
-| --- | --- |
-| 跨集人设漂移 | `visual-qc-review` A2;根因是没有单一外观源 → 建 bible |
-| 分集本地重定义外观 | 分集脚本里出现完整外观描述;改为 character_id + delta |
-| 世界规则不一致 | 内容层连续性;`追踪/时间线.md` 缺 |
-| 伏笔未收/时间线矛盾 | `追踪/` 三件套缺失 → 跨集不一致「不可检测」 |
-| 角色资产不标准 | `manju assets` 角色缺 character_id / 参考集 → 见 `character-consistency` |
-
-## Manju 落地(把设定集钉进真相)
-
-- **项目 bible**:Manju 现有 `bible/`(characters/scenes/props/voices.yaml)即 project 级设定;资产读模型 `manju assets [show <id>]`(别名/关系/appearances)。
-- **升 series 层(报告建议的方向)**:在 project 之上加**共享 series bible** + 引用 `character_id` 的**分集 project** + **连续性层**(`追踪/`:伏笔/时间线/角色状态)。角色记录给稳定 `character_id`、参考集(take 已存 spec_snapshot+seed)、各厂牌 ID 槽(Kling/Runway/Sora refs / LoRA 指针)。
-- **拆集流程**:见 `series-breakdown`(红果 三层次拆解法 + 卡点);**人设建库**见 `character-consistency`。
-- **备案合规(中国路径)**:微短剧需 备案号 才能上线,标题/内容合规(呼应 `cover-and-title` 禁绝对化)——advisory,Manju 从不发布。
-
-## 验收 eval
-
-1. 给一个在第 8 集重定义主角外观的脚本,是否改成 character_id + 状态增量?
-2. 给一部没有连续性层的多集项目,是否补出 伏笔/时间线/角色状态 三件套?
-3. 给一个金手指忽强忽弱的设定,是否在 bible 写死能力/代价/限制?
+1. 下一集角色服装变了但 identity 未变，输出 presentation delta，不重定义角色。
+2. 角色在上一集已经知道线索时，下一场不得把它写回 unknown；指出 cognition 冲突。
+3. accepted take 的“手搭在门把上”是 transient endpoint，不把它升级成 Bible 永久属性。

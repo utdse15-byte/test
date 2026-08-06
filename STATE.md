@@ -41,8 +41,9 @@ number is worse than an honest blank.
   binding drift, and stays outside assurance/spec/attempt evidence. Production
   readiness now derives Scene/Shot, exact-byte Animatic approval, Proof Shot,
   ordered Proof Scene digest approval, and staged paid-video admission without a
-  second truth store. Phase S1 (rewrite soft capabilities against the landed
-  contracts) is next.
+  second truth store. Phase S1 now rewrites the external AI-director Skills,
+  adds scene-design, aligns review/continuation/repair/audio to observed media,
+  and adds ten structured eval cases; later phases remain open.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
 - Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,

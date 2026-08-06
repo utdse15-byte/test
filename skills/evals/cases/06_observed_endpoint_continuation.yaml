@@ -1,0 +1,9 @@
+schema: manju.skill-eval/v1
+id: observed_endpoint_continuation
+skill: continue-from-accepted-take
+title: 真实 endpoint 偏离
+prompt: Prompt 预期角色抬头，但当前 accepted take 的 END 观察是角色仍低头看着钥匙。请设计下一镜开场。
+expected:
+  must: ["从 observed END 写下一镜 opening", "绑定当前媒体 SHA-256", "指出与原计划冲突时走 REROLL 或 REWRITE_SOURCE"]
+  must_not: ["按 Prompt 预期结尾续写", "没有 bound observation 仍硬续"]
+review: 复核续接闸全部检查 accepted、hash、非 stale 和 END observation。
