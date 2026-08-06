@@ -867,7 +867,7 @@ class CloudProvider(Provider):
         twice — keyed by provider id since a fallback provider has a distinct
         identity."""
         from . import submission as S
-        from ..core.hashing import hash_file
+        from ..core.hashing import hash_file, hash_value
         from .catalog import descriptor_for_manifest, provider_profile_digest
 
         cache = getattr(req, "_dr06_identity_cache", None)
@@ -932,14 +932,21 @@ class CloudProvider(Provider):
                         raise self._identity_unavailable(req, "ref_hash", exc) from exc
                     sha = None
                     blob_cache[key] = sha
+            # Identity-facing blob ids must never contain the physical cache key:
+            # local keys are absolute paths. Content-address local blobs and hash
+            # the query-stripped logical ref only when bytes are unavailable.
+            stable_blob_key = sha or hash_value({
+                "kind": it.kind,
+                "logical_ref": S.strip_url_query(str(it.ref)),
+            })
+            blob_id = f"{it.kind}:{stable_blob_key}"
             ref_refs.append(S.ref_fact(
                 it.kind, it.ref, sha,
                 subject_scope=normalize_subject_scope(it.subject_ref),
                 controls=it.controls if it.declared_transfer or it.transfer_errors else None,
                 ignore=it.ignore if it.declared_transfer or it.transfer_errors else None,
-                blob_id=f"{key[0]}:{key[1]}" if it.declared_transfer or it.transfer_errors else None,
+                blob_id=blob_id if it.declared_transfer or it.transfer_errors else None,
             ))
-            blob_id = f"{key[0]}:{key[1]}"
             if blob_id not in {row.get("blob_id") for row in ref_blobs}:
                 ref_blobs.append({"blob_id": blob_id, "content_sha256": sha})
 

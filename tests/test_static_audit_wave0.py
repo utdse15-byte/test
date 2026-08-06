@@ -301,6 +301,27 @@ def test_request_identity_binds_final_rendered_body(
     assert facts["body"]["seed"] == 9
 
 
+def test_request_identity_blob_ids_never_expose_absolute_local_paths(
+    tmp_project, add_shot, monkeypatch
+):
+    binding = _owned_ref(tmp_project, "identity-path.png", None)
+    shot = add_shot(
+        tmp_project, "S001", generation={"params": {"refs": [binding]}}
+    )
+    monkeypatch.setenv("AUDIT_PROVIDER_KEY", "offline-test-key")
+    provider = GenericCloudProvider(_cloud_manifest(refs={
+        "image_mode": "base64_field", "field": "$.image", "max_images": 1,
+    }))
+    req = _request(tmp_project, shot, refs=[binding])
+
+    provider._ensure_provider_request(req)
+    identity, _digest = provider._build_identity(req)
+
+    serialized = json.dumps(identity, ensure_ascii=False)
+    assert str(tmp_project.root.resolve()).casefold() not in serialized.casefold()
+    assert identity["ref_blobs"][0]["blob_id"].startswith("image:sha256:")
+
+
 class _MutatingFailureProvider:
     id = "attempt_a"
 
