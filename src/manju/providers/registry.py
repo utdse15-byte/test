@@ -191,7 +191,10 @@ def generate_with_fallback(
     # routing so providers that do not consume prompt text cannot bypass the
     # pre-transport ownership gate.
     try:
-        req.refset()
+        req.validate_recipe()
+        req.authored_refset()
+    except ProviderFailure:
+        raise
     except Exception as exc:
         from .refs import ReferenceControlConflict
         from .submission import NOT_DISPATCHED
@@ -287,7 +290,6 @@ def generate_with_fallback(
         # _on_success/_on_failure) — before the chain's terminal event lands —
         # so this is the only way the runs row and the stage_attempt event
         # share one attempt_id on the cloud path too (tasks --json parity).
-        req.evidence_attempt_id = handle.attempt_id if handle is not None else None
         try:
             provider = get_provider(name)
         except KeyError as exc:
@@ -297,7 +299,11 @@ def generate_with_fallback(
             continue
         _emit(log, f"provider {name}: generating shot {req.shot.id}")
         try:
-            takes = provider.generate(req)
+            attempt_req = req.for_provider(provider)
+            attempt_req.evidence_attempt_id = (
+                handle.attempt_id if handle is not None else None
+            )
+            takes = provider.generate(attempt_req)
         except NeedsHumanInput as exc:
             attempts.append((name, f"needs human input: {exc}"))
             if handle is not None:

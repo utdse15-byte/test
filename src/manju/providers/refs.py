@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
+from ..core.hashing import hash_value
 from ..core.safeio import (
     SafeOutError,
     refuse_linked_within,
@@ -112,6 +113,69 @@ class ReferenceControlConflict(ValueError):
         super().__init__(message or "reference control ownership conflict")
 
 
+class RequiredReferenceOmitted(ValueError):
+    """A provider plan dropped a binding that owns a closed picture variable."""
+
+    def __init__(self, provider_id: str, omissions: list[dict[str, Any]]):
+        self.provider_id = provider_id
+        self.omissions = tuple(omissions)
+        refs = ", ".join(str(row.get("ref")) for row in omissions)
+        super().__init__(
+            f"provider {provider_id!r} would omit required reference owner(s): {refs}"
+        )
+
+
+@dataclass(frozen=True)
+class OmittedBinding:
+    item: RefItem
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ref": self.item.ref,
+            "tier": self.item.tier,
+            "kind": self.item.kind,
+            "controls": list(self.item.controls),
+            "subject_ref": self.item.subject_ref,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class ReferenceDeliveryPlan:
+    """Immutable provider-specific binding selection formed before prompt/identity."""
+
+    provider_id: str
+    selected_bindings: tuple[RefItem, ...]
+    omitted_bindings: tuple[OmittedBinding, ...]
+    image_mode: str
+    video_mode: str
+    max_images: int | None
+    max_videos: int | None
+    budget_lineage: dict[str, Any] | None
+    digest: str
+
+    def selected_refset(self) -> "RefSet":
+        return RefSet.from_items(list(self.selected_bindings))
+
+    def selected(self, kind: str) -> tuple[RefItem, ...]:
+        return tuple(item for item in self.selected_bindings if item.kind == kind)
+
+    def evidence_base(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "image_mode": self.image_mode,
+            "video_mode": self.video_mode,
+            "images": [],
+            "videos": [],
+            "plan_digest": self.digest,
+        }
+        if self.budget_lineage is not None:
+            out["budget"] = self.budget_lineage
+        if self.omitted_bindings:
+            out["omitted_bindings"] = [row.to_dict() for row in self.omitted_bindings]
+        return out
+
+
 @dataclass
 class RefSet:
     """The refs available to one shot, most-specific first.
@@ -134,10 +198,8 @@ class RefSet:
     @classmethod
     def from_items(cls, raw: list[RefItem]) -> "RefSet":
         items = _dedup(raw)
-        images = [it.path for it in items
-                  if it.kind == "image" and it.path is not None and it.exists]
-        videos = [it.path for it in items
-                  if it.kind == "video" and it.path is not None and it.exists]
+        images = _unique_paths(items, "image")
+        videos = _unique_paths(items, "video")
         primary = images[0] if images else None
         lineage = {
             "images": [_ref_lineage(it) for it in items if it.kind == "image"],
@@ -235,6 +297,146 @@ def resolve_refs(
     return RefSet.from_items(items)
 
 
+_REQUIRED_DELIVERY_ROLES = frozenset({
+    "character_identity", "face", "costume", "prop", "location", "background",
+    "pose", "motion", "framing", "lighting",
+})
+
+
+def plan_reference_delivery(
+    provider: Any,
+    refset: RefSet,
+    shot: "ShotSpec",
+    bible: dict[str, dict] | None = None,
+) -> ReferenceDeliveryPlan:
+    """Select the exact logical bindings a provider can deliver.
+
+    All authored bindings are validated first. The resulting immutable plan is
+    then shared by prompt compilation, request identity and body rendering.
+    """
+    validate_control_ownership(refset)
+    provider_id = str(getattr(provider, "id", "") or "<unknown>")
+    manifest = getattr(provider, "manifest", None)
+    adapter = str(getattr(manifest, "adapter", "") or "")
+
+    # Providers without executable reference facts keep the historical all-ref
+    # view. Manifest-backed generic and ComfyUI adapters have concrete delivery
+    # limits and therefore receive an exact provider-specific subset.
+    if manifest is None:
+        return _make_delivery_plan(
+            provider_id, list(refset.items), [], "native", "native", None, None, None
+        )
+
+    from .refbudget import allocate
+
+    # Budget physical blobs, not logical bindings. One image can legitimately
+    # bind two scoped characters; it is uploaded once but both bindings survive.
+    physical_refset = RefSet.from_items(_physical_items(refset.items))
+    budget = allocate(physical_refset, getattr(manifest, "limits", None), shot, bible=bible)
+    if adapter == "generic_cloud":
+        cfg = manifest.refs
+        image_mode = cfg.image_mode
+        video_mode = cfg.video_mode
+        max_images = max(0, int(cfg.max_images or 0))
+        max_videos = max(0, int(cfg.max_videos or 0))
+    elif adapter.endswith("ComfyUIProvider"):
+        input_map = getattr(getattr(manifest, "comfyui", None), "input_map", {}) or {}
+        templates = tuple(str(value) for value in input_map.values())
+        uses_upload = any("{image_upload}" in value for value in templates)
+        uses_path = any("{image}" in value for value in templates)
+        image_mode = "upload" if uses_upload else "path" if uses_path else "none"
+        video_mode = "none"
+        max_images = 1 if image_mode != "none" else 0
+        max_videos = 0
+    else:
+        return _make_delivery_plan(
+            provider_id, list(refset.items), [], "native", "native", None, None,
+            budget.to_lineage() if budget.active else None,
+        )
+
+    selected_physical = (
+        (list(budget.selected_images)[:max_images] if image_mode != "none" else [])
+        + (list(budget.selected_videos)[:max_videos] if video_mode != "none" else [])
+    )
+    selected_keys = {physical_ref_key(item) for item in selected_physical}
+    selected_images = [item for item in refset.image_items()
+                       if physical_ref_key(item) in selected_keys]
+    selected_videos = [item for item in refset.video_items()
+                       if physical_ref_key(item) in selected_keys]
+    selected = selected_images + selected_videos
+
+    omitted: list[OmittedBinding] = []
+    reasons = {physical_ref_key(row.item): row.reason for row in budget.omitted}
+    for item in refset.items:
+        if physical_ref_key(item) in selected_keys:
+            continue
+        if image_mode == "none" and item.kind == "image":
+            reason = "provider image_mode is none"
+        elif video_mode == "none" and item.kind == "video":
+            reason = "provider video_mode is none"
+        else:
+            reason = reasons.get(physical_ref_key(item), "provider reference capacity exceeded")
+        omitted.append(OmittedBinding(item=item, reason=reason))
+
+    required = [
+        row.to_dict() for row in omitted
+        if _REQUIRED_DELIVERY_ROLES & set(row.item.controls)
+    ]
+    if required:
+        raise RequiredReferenceOmitted(provider_id, required)
+
+    return _make_delivery_plan(
+        provider_id,
+        selected,
+        omitted,
+        image_mode,
+        video_mode,
+        max_images,
+        max_videos,
+        budget.to_lineage() if budget.active else None,
+    )
+
+
+def _make_delivery_plan(
+    provider_id: str,
+    selected: list[RefItem],
+    omitted: list[OmittedBinding],
+    image_mode: str,
+    video_mode: str,
+    max_images: int | None,
+    max_videos: int | None,
+    budget_lineage: dict[str, Any] | None,
+) -> ReferenceDeliveryPlan:
+    payload = {
+        "provider_id": provider_id,
+        "image_mode": image_mode,
+        "video_mode": video_mode,
+        "selected": [
+            {
+                "kind": item.kind,
+                "ref": item.ref,
+                "tier": item.tier,
+                "controls": list(item.controls),
+                "ignore": list(item.ignore),
+                "subject_ref": item.subject_ref,
+            }
+            for item in selected
+        ],
+        "omitted": [row.to_dict() for row in omitted],
+    }
+    return ReferenceDeliveryPlan(
+        provider_id=provider_id,
+        selected_bindings=tuple(selected),
+        omitted_bindings=tuple(omitted),
+        image_mode=image_mode,
+        video_mode=video_mode,
+        max_images=max_images,
+        max_videos=max_videos,
+        budget_lineage=budget_lineage,
+        digest=hash_value(payload),
+    )
+
+
 def _collect_params(project: "Project", params: dict, items: list[RefItem]) -> None:
     for key in ("image", "images"):
         for val in _as_list(params.get(key)):
@@ -271,6 +473,9 @@ def _collect_bible(project: "Project", shot: "ShotSpec", bible: dict,
     keys: list[str] = list(shot.characters)
     if shot.scene:
         keys.append(shot.scene)
+    # Props are a first-class Bible tier just like characters and scenes. A
+    # shot can name a prop without putting its ref in generation.params.
+    keys.extend(str(prop_id) for prop_id in (shot.props or []) if prop_id)
     for key in keys:
         entry = bible.get(key)
         if not isinstance(entry, dict):
@@ -586,12 +791,48 @@ REF_TRANSFER_VOCAB = frozenset({
 
 
 def control_owners(refset: RefSet) -> dict[str, tuple[RefItem, ...]]:
-    """Explicit ``controls`` owners by role; ``ignore`` never claims a role."""
+    """Explicit owners by ``(role, canonical subject scope)``.
+
+    The return key keeps the role visible while encoding the scope as
+    ``role@scope``. ``None`` is rendered as ``role@*`` for a global owner.
+    ``ignore`` never claims ownership, and duplicate physical blobs remain
+    distinct logical bindings until after this validation has run.
+    """
     owners: dict[str, list[RefItem]] = {}
     for item in refset.items:
+        ignored = set(item.ignore)
         for role in dict.fromkeys(item.controls):
-            owners.setdefault(str(role), []).append(item)
+            role = str(role)
+            if role in ignored:
+                continue
+            scope = normalize_subject_scope(item.subject_ref, role=role)
+            key = f"{role}@{scope or '*'}"
+            owners.setdefault(key, []).append(item)
     return {role: tuple(items) for role, items in owners.items()}
+
+
+def normalize_subject_scope(subject_ref: str | None, *, role: str | None = None) -> str | None:
+    """Canonicalize ``character:A``/``character/A`` and prop/asset aliases."""
+    if subject_ref is None or not str(subject_ref).strip():
+        return None
+    raw = str(subject_ref).strip()
+    for prefix, canonical in (
+        ("character:", "character"), ("character/", "character"),
+        ("prop:", "prop"), ("prop/", "prop"),
+        ("asset:", "asset"), ("asset/", "asset"),
+    ):
+        if raw.lower().startswith(prefix):
+            value = raw[len(prefix):].strip()
+            if not value:
+                return None
+            if canonical == "asset" and role in {
+                "character_identity", "face", "costume", "pose", "motion"
+            }:
+                canonical = "character"
+            elif canonical == "asset" and role == "prop":
+                canonical = "prop"
+            return f"{canonical}:{value}"
+    return raw
 
 
 def reference_control_conflicts(refset: RefSet) -> list[dict[str, Any]]:
@@ -605,16 +846,32 @@ def reference_control_conflicts(refset: RefSet) -> list[dict[str, Any]]:
                 "message": f"reference {item.ref} has invalid transfer ownership: {error}",
             })
 
-    for role, items in sorted(control_owners(refset).items()):
-        if len(items) < 2:
+    owners = control_owners(refset)
+    by_role: dict[str, list[tuple[str, RefItem]]] = {}
+    for key, items in owners.items():
+        role, _, scope = key.partition("@")
+        for item in items:
+            by_role.setdefault(role, []).append((scope, item))
+    for role, scoped_items in sorted(by_role.items()):
+        counts: dict[str, int] = {}
+        for scope, _item in scoped_items:
+            counts[scope] = counts.get(scope, 0) + 1
+        scopes = set(counts)
+        # Same scoped subject conflicts. A global owner conflicts with every
+        # scoped owner because it claims the whole role.
+        bad_scopes = {scope for scope, count in counts.items() if count > 1}
+        if "*" in scopes and len(scoped_items) > 1:
+            bad_scopes = scopes
+        if len(scoped_items) <= 1 or not bad_scopes:
             continue
-        refs = [item.ref for item in items]
+        refs = [item.ref for scope, item in scoped_items if scope in bad_scopes]
         conflicts.append({
             "role": role,
+            "scopes": sorted(bad_scopes),
             "refs": refs,
             "message": (
-                f"closed reference role {role!r} has multiple owners: "
-                + ", ".join(refs)
+                f"closed reference role {role!r} has multiple owners in scope "
+                f"{sorted(bad_scopes)!r}: " + ", ".join(refs)
             ),
         })
     return conflicts
@@ -728,16 +985,62 @@ def _ref_str(project: "Project", path: Path) -> str:
 
 
 def _dedup(items: list[RefItem]) -> list[RefItem]:
-    """Keep first occurrence (most-specific tier) per (kind, resolved key)."""
-    seen: set[tuple[str, str]] = set()
+    """Deduplicate physical legacy refs without dropping logical bindings.
+
+    Plain string refs keep the historical first-wins behavior. Explicit
+    transfer declarations are logical bindings: the same blob may be bound to
+    two subjects and must survive as two items. Exact duplicate declarations
+    are still collapsed.
+    """
+    seen_physical: set[tuple[str, str]] = set()
+    seen_logical: set[tuple[Any, ...]] = set()
     out: list[RefItem] = []
     for it in items:
         key = str(it.path.resolve()) if it.path is not None else it.ref
-        sig = (it.kind, key)
-        if sig in seen:
-            continue
-        seen.add(sig)
+        if it.declared_transfer or it.transfer_errors:
+            logical = (it.kind, key, tuple(it.controls), tuple(it.ignore),
+                       normalize_subject_scope(it.subject_ref))
+            if logical in seen_logical:
+                continue
+            seen_logical.add(logical)
+        else:
+            sig = (it.kind, key)
+            if sig in seen_physical:
+                continue
+            seen_physical.add(sig)
         out.append(it)
+    return out
+
+
+def physical_ref_key(item: RefItem) -> tuple[str, str]:
+    """Stable physical-blob key used after logical binding validation."""
+    key = str(item.path.resolve()) if item.path is not None else item.ref
+    return item.kind, key
+
+
+def _physical_items(items: list[RefItem]) -> list[RefItem]:
+    seen: set[tuple[str, str]] = set()
+    out: list[RefItem] = []
+    for item in items:
+        key = physical_ref_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _unique_paths(items: list[RefItem], kind: str) -> list[Path]:
+    seen: set[str] = set()
+    out: list[Path] = []
+    for item in items:
+        if item.kind != kind or item.path is None or not item.exists:
+            continue
+        key = str(item.path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item.path)
     return out
 
 

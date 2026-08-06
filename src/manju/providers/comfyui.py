@@ -129,6 +129,7 @@ class ComfyUIProvider(Provider):
             raise
 
     def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        self._ensure_provider_request(req)
         workflow_text, wf_rel = self._load_workflow(req)
         workflow = self._parse_workflow(workflow_text, wf_rel)
         values = self._values(req)
@@ -213,6 +214,7 @@ class ComfyUIProvider(Provider):
     def _values(self, req: GenerationRequest) -> dict[str, object]:
         from .prompt import compile_prompt
 
+        self._ensure_provider_request(req)
         config = req.project.load_config()
         values: dict[str, object] = {
             "width": config.width,
@@ -247,27 +249,25 @@ class ComfyUIProvider(Provider):
         which omits the reference entirely. Any positive (or unset) budget keeps
         the single primary; when a budget is configured the allocation audit
         block is attached to ``ref_delivery`` for parity with generic_cloud."""
-        from .refbudget import allocate
-
         refset = req.refset()
-        budget = allocate(refset, self.manifest.limits, req.shot, bible=req.bible)
-        # a max_ref_images budget of 0 forbids ALL reference images here
-        budget_omits = budget.max_images == 0
-        budget_block = {"budget": budget.to_lineage()} if budget.active else {}
+        plan = req.delivery_plan
+        assert plan is not None
+        selected = list(plan.selected("image"))
+        budget_omits = bool(refset.image_items()) and not selected
+        budget_block = {"budget": plan.budget_lineage} if plan.budget_lineage is not None else {}
 
         if not self._uses_upload():
             # {image} path mode (or no image at all): record what path (if any)
             # was handed to the graph so silent ref-dropping stays visible.
-            primary = None if budget_omits else refset.primary_image
+            primary = selected[0] if selected else None
             if budget_omits and refset.primary_image is not None:
                 values["image"] = ""  # the budget removed the path from the graph
-            imgs = ([{"ref": refset.primary_image_path_str(),
-                      "tier": refset.primary_image_source, "delivered_as": "path"}]
-                    if (refset.image_items() and not budget_omits) else [])
+            imgs = ([{"ref": item.ref, "tier": item.tier, "delivered_as": "path"}
+                     for item in selected] if selected else [])
             return {"image_mode": "path" if primary is not None else "none",
                     "images": imgs, "videos": [], **budget_block}
 
-        primary = None if budget_omits else refset.primary_image
+        primary = selected[0] if selected else None
         if primary is None:
             if budget_omits:
                 raise ProviderFailure(
@@ -284,14 +284,14 @@ class ComfyUIProvider(Provider):
                 f"{self.id}: input_map uses {_UPLOAD_PLACEHOLDER} but shot "
                 f"{req.shot.id} has no usable local reference image{detail}",
             )
-        item = refset.primary_image_item
-        assert item is not None  # primary is not None <=> the item exists
+        item = primary
+        assert item is not None
         name, subfolder = self._upload_image(item)
         values["image_upload"] = f"{subfolder}/{name}" if subfolder else name
         return {
             "image_mode": "upload",
-            "images": [{"ref": refset.primary_image_path_str(),
-                        "tier": refset.primary_image_source,
+            "images": [{"ref": item.ref,
+                        "tier": item.tier,
                         "delivered_as": "upload",
                         "uploaded": {"name": name, "subfolder": subfolder}}],
             "videos": [],

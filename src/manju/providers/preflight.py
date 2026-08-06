@@ -41,6 +41,7 @@ R_DISABLED = "PROVIDER_DISABLED"
 R_CAPABILITY = "CAPABILITY_UNSUPPORTED"
 R_DURATION = "DURATION_OVER_MAX"
 R_PLACEHOLDER = "UNKNOWN_BODY_PLACEHOLDER"
+R_RESERVED_PARAM = "RESERVED_GENERATION_PARAM"
 
 # omission codes (delivered, but with a documented loss)
 O_REF_IMAGES = "REF_IMAGES_OMITTED"
@@ -59,6 +60,17 @@ WARN_LEGACY_RESOLUTION = "LEGACY_UNINTERPRETABLE_LIMIT"
 BASE_PLACEHOLDER_KEYS = frozenset({
     "prompt", "duration_s", "duration_ms", "width", "height", "fps", "seed", "shot_id",
 })
+
+# Values derived by the engine from the validated shot/config. ``seed`` is the
+# one deliberate recipe input and therefore is not in this set.
+ENGINE_OWNED_PLACEHOLDERS = frozenset({
+    "prompt", "duration_s", "duration_ms", "width", "height", "fps", "shot_id",
+})
+
+
+def reserved_generation_param_keys(params: dict | None) -> tuple[str, ...]:
+    """Return engine-owned names illegally supplied as provider recipe params."""
+    return tuple(sorted(ENGINE_OWNED_PLACEHOLDERS & set((params or {}).keys())))
 
 
 def duration_exceeds_limit(max_duration_ms: int | None, duration_ms: int | None) -> bool:
@@ -233,6 +245,18 @@ def check_request_compatibility(
                                   f"{f.max_duration_ms}ms"})
 
     # 4. body-template placeholder completeness (unknown → INCOMPATIBLE)
+    # A descriptor-only compatibility query may pass arbitrary diagnostic
+    # metadata without an executable body template (legacy characterization).
+    # Once a real template is present, these names can shape transport and are
+    # therefore rejected by the same rule submit enforces unconditionally.
+    reserved = reserved_generation_param_keys(params) if body_placeholders is not None else ()
+    if reserved:
+        reasons.append({
+            "code": R_RESERVED_PARAM,
+            "detail": f"generation.params cannot override engine-owned fields: {list(reserved)}",
+            "keys": list(reserved),
+        })
+
     placeholders = (iter_body_placeholders(body_placeholders)
                     if not isinstance(body_placeholders, (set, frozenset, list, tuple, type(None)))
                     else set(body_placeholders or ()))

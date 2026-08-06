@@ -21,12 +21,13 @@ the deterministic skeleton around them.
 
 from __future__ import annotations
 
+import copy
 import shutil
 import sqlite3
 import tempfile
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -35,7 +36,7 @@ from ..core.container import Project, TakeInfo
 from ..core.models import ProbeInfo, RemoteJobInfo, ShotSpec, TakeSidecar
 
 if TYPE_CHECKING:
-    from .refs import RefSet
+    from .refs import ReferenceDeliveryPlan, RefSet
 
 # Roadmap item 10 — the provider plugin surface is FROZEN as a v1 contract
 # (stable, additive-only): Provider/CloudProvider ABCs, GenerationRequest's
@@ -316,13 +317,26 @@ class GenerationRequest:
     # ``redo_of`` so the derived candidate-family view can join the redo to its
     # creative family. Provenance only — providers must not read it.
     redo_of: str | None = None
+    # Provider-specific immutable reference selection. It is formed before
+    # prompt compilation and request identity, then reused by body rendering.
+    delivery_plan: "ReferenceDeliveryPlan | None" = None
 
-    def refset(self) -> "RefSet":
-        """The resolved :class:`~manju.providers.refs.RefSet` for this shot.
+    def validate_recipe(self) -> None:
+        from .preflight import reserved_generation_param_keys
+        from .submission import NOT_DISPATCHED
 
-        Returns the RefSet populated at the call site, or lazily resolves (and
-        caches) one from the request's own ``project``/``shot``/``bible``/``params``
-        so directly-constructed requests are never ref-blind."""
+        keys = reserved_generation_param_keys(self.params)
+        if keys:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                "generation.params cannot override engine-owned request fields: "
+                + ", ".join(keys),
+                detail={"code": "reserved_generation_param", "keys": list(keys)},
+                disposition=NOT_DISPATCHED,
+            )
+
+    def authored_refset(self) -> "RefSet":
+        """Resolve and validate every authored logical binding before selection."""
         if self.refs is None:
             from .refs import resolve_refs
 
@@ -333,6 +347,77 @@ class GenerationRequest:
 
         validate_control_ownership(self.refs)
         return self.refs
+
+    def ensure_provider_plan(self, provider: Any) -> None:
+        """Seal the provider-specific reference plan on this attempt request."""
+        self.validate_recipe()
+        provider_id = str(getattr(provider, "id", "") or "<unknown>")
+        if self.delivery_plan is not None:
+            if self.delivery_plan.provider_id != provider_id:
+                raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"request planned for {self.delivery_plan.provider_id!r}, not {provider_id!r}",
+                    detail={"code": "provider_plan_mismatch"},
+                )
+            return
+        from .refs import (
+            ReferenceControlConflict,
+            RequiredReferenceOmitted,
+            plan_reference_delivery,
+        )
+        from .submission import NOT_DISPATCHED
+
+        try:
+            self.delivery_plan = plan_reference_delivery(
+                provider, self.authored_refset(), self.shot, self.bible
+            )
+        except ReferenceControlConflict as exc:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"shot {self.shot.id} has conflicting reference ownership: {exc}",
+                detail={
+                    "code": "reference_control_conflict",
+                    "conflicts": list(exc.conflicts),
+                },
+                disposition=NOT_DISPATCHED,
+            ) from exc
+        except RequiredReferenceOmitted as exc:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                str(exc),
+                detail={
+                    "code": "required_reference_omitted",
+                    "provider_id": provider_id,
+                    "omissions": list(exc.omissions),
+                },
+                disposition=NOT_DISPATCHED,
+            ) from exc
+
+    def for_provider(self, provider: Any) -> "GenerationRequest":
+        """Create an isolated mutable attempt from the immutable base request."""
+        attempt = replace(
+            self,
+            params=copy.deepcopy(self.params),
+            refs=copy.deepcopy(self.authored_refset()),
+            delivery_plan=None,
+            evidence_attempt_id=None,
+        )
+        attempt.ensure_provider_plan(provider)
+        return attempt
+
+    def refset(self) -> "RefSet":
+        """The resolved :class:`~manju.providers.refs.RefSet` for this shot.
+
+        Returns the RefSet populated at the call site, or lazily resolves (and
+        caches) one from the request's own ``project``/``shot``/``bible``/``params``
+        so directly-constructed requests are never ref-blind."""
+        authored = self.authored_refset()
+        if self.delivery_plan is None:
+            return authored
+        cached = getattr(self, "_effective_refset", None)
+        if cached is None:
+            cached = self._effective_refset = self.delivery_plan.selected_refset()
+        return cached
 
 
 def probe_media(path: Path) -> ProbeInfo | None:
@@ -357,6 +442,10 @@ class Provider(ABC):
 
     id: str = ""
     kind: str = "local"  # "local" | "cloud"
+
+    def _ensure_provider_request(self, req: GenerationRequest) -> GenerationRequest:
+        req.ensure_provider_plan(self)
+        return req
 
     @abstractmethod
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
@@ -596,6 +685,8 @@ class CloudProvider(Provider):
         # evidence + intent columns.
         from . import submission as S
 
+        self._ensure_provider_request(req)
+
         # Resolve and validate transfer ownership before opening submission
         # state, minting an intent, or reaching any provider transport.
         try:
@@ -750,6 +841,24 @@ class CloudProvider(Provider):
         caps = sorted(getattr(manifest, "capabilities", None) or [])
         return caps[0] if caps else (self.kind or "generate")
 
+    def _identity_recipe_params(self, req: GenerationRequest) -> dict:
+        """Authored provider recipe only; refs/runtime evidence have own owners."""
+        excluded = {
+            "image", "images", "video", "videos", "refs",
+            "compiled_prompt", "ref_delivery", "bridge_admission",
+            "remote_job_id", "submission_id", "request_digest",
+            "job_id", "prompt_id",
+        }
+        return {
+            key: copy.deepcopy(value)
+            for key, value in req.params.items()
+            if key not in excluded
+        }
+
+    def _rendered_request_facts(self, req: GenerationRequest) -> dict | None:
+        """Adapter hook for final pretransport body facts used by identity."""
+        return None
+
     def _build_identity(self, req: GenerationRequest) -> tuple[dict, str]:
         """Assemble the submission identity + its request_digest (pure module).
         Hashes the small ref files and the compiled prompt HERE; the pure module
@@ -780,6 +889,8 @@ class CloudProvider(Provider):
         # behaviour — decided by kind here, never a global flag.
         strict = (self.kind == "cloud")
 
+        self._ensure_provider_request(req)
+
         # compiled prompt -> digest only (never stored). Best-effort compile.
         compiled_prompt = None
         try:
@@ -794,6 +905,8 @@ class CloudProvider(Provider):
 
         # final selected refs in delivery order: (role, logical_id, sha256).
         ref_refs: list[dict] = []
+        ref_blobs: list[dict] = []
+        blob_cache: dict[tuple[str, str], str | None] = {}
         try:
             refset = req.refset()
             items = list(refset.image_items()) + list(refset.video_items())
@@ -802,11 +915,14 @@ class CloudProvider(Provider):
                 raise self._identity_unavailable(req, "ref_resolution", exc) from exc
             items = []
         for it in items:
-            sha = None
+            from .refs import normalize_subject_scope, physical_ref_key
+            key = physical_ref_key(it)
+            sha = blob_cache.get(key)
             if it.path is not None and not it.is_url:
                 try:
-                    if it.path.is_file():
+                    if key not in blob_cache and it.path.is_file():
                         sha = hash_file(it.path)
+                        blob_cache[key] = sha
                     elif strict:
                         # a declared LOCAL ref that should be hashed but is not a
                         # readable file — the identity is incomplete, fail closed.
@@ -815,15 +931,38 @@ class CloudProvider(Provider):
                     if strict:
                         raise self._identity_unavailable(req, "ref_hash", exc) from exc
                     sha = None
-            ref_refs.append(S.ref_fact(it.kind, it.ref, sha))
+                    blob_cache[key] = sha
+            ref_refs.append(S.ref_fact(
+                it.kind, it.ref, sha,
+                subject_scope=normalize_subject_scope(it.subject_ref),
+                controls=it.controls if it.declared_transfer or it.transfer_errors else None,
+                ignore=it.ignore if it.declared_transfer or it.transfer_errors else None,
+                blob_id=f"{key[0]}:{key[1]}" if it.declared_transfer or it.transfer_errors else None,
+            ))
+            blob_id = f"{key[0]}:{key[1]}"
+            if blob_id not in {row.get("blob_id") for row in ref_blobs}:
+                ref_blobs.append({"blob_id": blob_id, "content_sha256": sha})
+
+        rendered_facts = None
+        try:
+            rendered_facts = self._rendered_request_facts(req)
+        except Exception as exc:
+            if strict:
+                raise self._identity_unavailable(req, "body_render", exc) from exc
+        rendered_digest = (
+            rendered_facts.get("digest")
+            if isinstance(rendered_facts, dict) else None
+        )
 
         first_frame, last_frame = self._keyframe_flags(req)
         identity = S.build_submission_identity(
             shot_id=req.shot.id, spec_hash=req.spec_hash, provider_id=self.id,
             provider_profile_digest=profile_digest, capability=capability,
             duration_ms=req.duration_ms, candidates=req.candidates,
-            seed=req.params.get("seed"), params=req.params,
+            seed=req.params.get("seed"), params=self._identity_recipe_params(req),
             compiled_prompt=compiled_prompt, ref_refs=ref_refs,
+            rendered_request_digest=rendered_digest,
+            ref_blobs=ref_blobs,
             first_frame=first_frame, last_frame=last_frame,
             project_root=req.project.root)
         result = (identity, S.request_digest(identity))

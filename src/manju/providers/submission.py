@@ -312,6 +312,8 @@ def build_submission_identity(
     params: dict | None,
     compiled_prompt: str | None,
     ref_refs: list[dict] | None = None,
+    rendered_request_digest: str | None = None,
+    ref_blobs: list[dict] | None = None,
     first_frame: bool = False,
     last_frame: bool = False,
     project_root: Path | None = None,
@@ -343,7 +345,9 @@ def build_submission_identity(
         "params": canonical_params(params, project_root=project_root),
         # the compiled prompt is referenced by digest ONLY — the text never lands.
         "compiled_prompt_digest": _hv(compiled_prompt) if compiled_prompt else None,
+        "rendered_request_digest": rendered_request_digest,
         "refs": list(ref_refs or []),
+        **({"ref_blobs": list(ref_blobs)} if ref_blobs is not None else {}),
         "first_frame": bool(first_frame),
         "last_frame": bool(last_frame),
     }
@@ -357,13 +361,24 @@ def request_digest(identity: dict) -> str:
     return hash_value(identity)
 
 
-def ref_fact(role: str, logical_id: str, content_sha256: str | None) -> dict:
+def ref_fact(role: str, logical_id: str, content_sha256: str | None, *,
+             subject_scope: str | None = None, controls: tuple | list | None = None,
+             ignore: tuple | list | None = None, blob_id: str | None = None) -> dict:
     """One entry of the identity's ``refs`` list — ``(role, logical_id,
     content_sha256)`` in delivery order. ``content_sha256`` is ``None`` for a URL
     ref (no local bytes); the logical_id has already had any signed query
     stripped by the caller / :func:`strip_url_query`."""
-    return {"role": role, "logical_id": strip_url_query(str(logical_id)),
-            "content_sha256": content_sha256}
+    out = {"role": role, "logical_id": strip_url_query(str(logical_id)),
+           "content_sha256": content_sha256}
+    if subject_scope is not None:
+        out["subject_scope"] = subject_scope
+    if controls is not None:
+        out["controls"] = list(controls)
+    if ignore is not None:
+        out["ignore"] = list(ignore)
+    if blob_id is not None:
+        out["blob_id"] = blob_id
+    return out
 
 
 # --------------------------------------------------------------- idempotency

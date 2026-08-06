@@ -13,6 +13,7 @@ offline; the default transport is stdlib urllib (no new dependencies).
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import threading
 import time
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from ..core.models import KeyframeSpec, ShotSpec
+from ..core.hashing import hash_value
 from .base import (
     CloudProvider,
     FailureKind,
@@ -39,6 +41,7 @@ from .refs import (
     read_ref_bytes,
     resolve_local_ref,
     unreadable_ref_message,
+    physical_ref_key,
 )
 
 # Tier label recorded on a keyframe-sourced ref (its own lineage bucket, distinct
@@ -529,9 +532,11 @@ def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
     equality is pinned by test_dr04_preflight). Keep the two in lock-step."""
     from .prompt import compile_prompt
 
+    req.validate_recipe()
     config = req.project.load_config()
     refset = req.refset()
-    values: dict[str, object] = {
+    values: dict[str, object] = dict(req.params)
+    values.update({
         "prompt": compile_prompt(req.shot, req.bible, refset=refset),
         "duration_s": req.duration_ms / 1000.0,
         "duration_ms": req.duration_ms,
@@ -540,8 +545,7 @@ def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
         "fps": config.fps,
         "seed": req.params.get("seed", 0),
         "shot_id": req.shot.id,
-    }
-    values.update(req.params)
+    })
     return values
 
 
@@ -730,6 +734,27 @@ class GenericCloudProvider(CloudProvider):
                     self._sleep(wait)
             self._last_submit = self._clock()
 
+    def _rendered_request_facts(self, req: GenerationRequest) -> dict:
+        """Canonical final body and multipart facts, before any transport."""
+        self._ensure_provider_request(req)
+        cfg = self.manifest.submit
+        assert cfg is not None
+        rendered = render_body(cfg.body_template, _placeholder_map(req))
+        files = self._deliver_refs(rendered, req, record=False)
+        facts = {
+            "method": cfg.method.upper(),
+            "body": rendered,
+            "files": [
+                {
+                    "field": field,
+                    "filename": filename,
+                    "content_sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                }
+                for field, filename, payload in files
+            ],
+        }
+        return {**facts, "digest": hash_value(facts)}
+
     # ---------------------------------------------------- CloudProvider API
 
     def submit(self, req: GenerationRequest) -> str:
@@ -739,6 +764,7 @@ class GenericCloudProvider(CloudProvider):
             disposition_for_status,
         )
 
+        self._ensure_provider_request(req)
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
         # P0 WP2: the provider's DECLARED definite-rejection statuses (else empty
@@ -959,7 +985,7 @@ class GenericCloudProvider(CloudProvider):
     # --------------------------------------------------------- refs delivery
 
     def _deliver_refs(
-        self, body: dict, req: GenerationRequest
+        self, body: dict, req: GenerationRequest, *, record: bool = True
     ) -> list[tuple[str, str, bytes]]:
         """Deliver the refs, converting a TOCTOU refusal into a typed failure.
 
@@ -974,12 +1000,12 @@ class GenericCloudProvider(CloudProvider):
         from ..core.safeio import SafeOutError
 
         try:
-            return self._deliver_refs_verified(body, req)
+            return self._deliver_refs_verified(body, req, record=record)
         except SafeOutError as exc:
             raise ProviderFailure(FailureKind.invalid, f"{self.id}: {exc}") from exc
 
     def _deliver_refs_verified(
-        self, body: dict, req: GenerationRequest
+        self, body: dict, req: GenerationRequest, *, record: bool = True
     ) -> list[tuple[str, str, bytes]]:
         """Inject reference inputs into the rendered ``body`` per ``manifest.refs``.
 
@@ -997,17 +1023,23 @@ class GenericCloudProvider(CloudProvider):
         configured the allocator returns the refs in their resolved order with
         zero omissions, so the delivered bytes AND the ``ref_delivery`` block are
         byte-identical to before (pinned)."""
-        from .refbudget import allocate
-
         rc = self.manifest.refs
+        self._ensure_provider_request(req)
         refset = req.refset()
-        budget = allocate(refset, self.manifest.limits, req.shot, bible=req.bible)
-        delivery: dict = {"image_mode": rc.image_mode, "video_mode": rc.video_mode,
-                          "images": [], "videos": []}
+        plan = req.delivery_plan
+        assert plan is not None
+        delivery: dict = plan.evidence_base()
         files: list[tuple[str, str, bytes]] = []
 
         if rc.image_mode != "none" and rc.max_images > 0:
-            items = budget.selected_images[: rc.max_images]
+            logical_items = list(plan.selected("image"))
+            seen_blobs: set[tuple[str, str]] = set()
+            items = []
+            for item in logical_items:
+                key = physical_ref_key(item)
+                if key not in seen_blobs:
+                    seen_blobs.add(key)
+                    items.append(item)
             if items:
                 self._guard_readable(items)  # local refs must exist (pre-submit)
                 if rc.image_mode == "base64_field":
@@ -1025,32 +1057,53 @@ class GenericCloudProvider(CloudProvider):
                             else f"{rc.multipart_field}{i}"
                         files.append((fld, it.path.name, read_ref_bytes(it)))
                 delivery["images"] = [
-                    {"ref": it.ref, "tier": it.tier, "delivered_as": rc.image_mode}
-                    for it in items
+                    {
+                        "ref": it.ref,
+                        "tier": it.tier,
+                        "delivered_as": rc.image_mode,
+                        **({"controls": list(it.controls),
+                            "ignore": list(it.ignore),
+                            "subject_ref": it.subject_ref}
+                           if it.declared_transfer or it.transfer_errors else {}),
+                    }
+                    for it in logical_items
                 ]
 
         if rc.video_mode == "url_field" and rc.max_videos > 0:
-            vitems = budget.selected_videos[: rc.max_videos]
+            logical_vitems = list(plan.selected("video"))
+            seen_videos: set[tuple[str, str]] = set()
+            vitems = []
+            for item in logical_vitems:
+                key = physical_ref_key(item)
+                if key not in seen_videos:
+                    seen_videos.add(key)
+                    vitems.append(item)
             if vitems:
                 urls = [self._require_url(it, rc.video_field) for it in vitems]
                 assign(body, rc.video_field, _one_or_list(urls, rc.max_videos))
                 delivery["videos"] = [
-                    {"ref": it.ref, "tier": it.tier, "delivered_as": "url_field"}
-                    for it in vitems
+                    {
+                        "ref": it.ref,
+                        "tier": it.tier,
+                        "delivered_as": "url_field",
+                        **({"controls": list(it.controls),
+                            "ignore": list(it.ignore),
+                            "subject_ref": it.subject_ref}
+                           if it.declared_transfer or it.transfer_errors else {}),
+                    }
+                    for it in logical_vitems
                 ]
 
         # Only a CONFIGURED budget adds the audit block — otherwise the
         # ref_delivery dict is byte-identical to today (byte-identity contract).
-        if budget.active:
-            delivery["budget"] = budget.to_lineage()
-
         # First/last-frame task (goal item 12, round U): a shot with keyframes at
         # start AND end whose images resolve to real local files, routed to a
         # provider that advertises `first_last_frame`, delivers both per the
         # `refs.first_last_*` mapping. Folds into the SAME ref_delivery lineage.
         files += self._deliver_first_last(body, req, delivery)
 
-        req.params["ref_delivery"] = delivery
+        if record:
+            req.params["ref_delivery"] = delivery
         return files
 
     def _deliver_first_last(
