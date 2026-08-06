@@ -90,6 +90,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #10` | 2026-08-05 | Production readiness is derived; exact-byte Animatic and ordered Proof Scene approvals stage paid video before bulk | build/readiness.py, build/graph.py, reports/verifications.jsonl, manju production |
 | `NARRATIVE-CLOSED-LOOP #11` | 2026-08-05 | S1 craft Skills consume landed contracts and proof/readiness inputs instead of inventing another authoring system | skills/, SceneContract, ShotContract, ProviderManifest |
 | `NARRATIVE-CLOSED-LOOP #12` | 2026-08-06 | Media eligibility is one derived view; proxy build success never implies Picture Lock, and scaffold examples do not opt legacy projects in | build/readiness.py, build/status.py, manju status, manju production, story/scenes/*.yaml.example |
+| `NARRATIVE-CLOSED-LOOP #13` | 2026-08-06 | Synthetic no-paid rehearsal proves invalidation, experiment, observed-endpoint, rewrite and proof-gate code paths only; real narrative production remains unproven | tests/test_phase7a_narrative_rehearsal.py, REPORTS/NARRATIVE_REHEARSAL_2026-08-06.md |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4134,3 +4135,12 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     SceneContract/ShotContract files, whose suffix deliberately does not match
     the `story/scenes/*.yaml` narrative opt-in rule, so legacy behavior remains
     unchanged until an author explicitly copies a real scene contract into use.
+13. **No-paid rehearsal is code-path evidence, not production evidence.** A
+    synthetic manual-media fixture walks SceneContract/ShotContract, exact-byte
+    Animatic approval, a failed endpoint, one-variable Experiment Memory,
+    observed endpoint, `REWRITE_SOURCE`, stale evidence, a replacement
+    candidate, Proof Shot, ordered Proof Scene approval and `BULK_READY` without
+    creating a provider attempt. A separate proxy-backed legacy fixture remains
+    ungated for compatibility but ineligible for Picture Lock. Synthetic bytes
+    and fixture QC cannot prove story, performance, continuity or final media,
+    so Phase 7B and S2 remain explicitly incomplete.

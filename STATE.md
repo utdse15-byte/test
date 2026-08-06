@@ -47,9 +47,12 @@ number is worse than an honest blank.
   status, skill/auto surfaces, GUI and the system-check Demo one derived
   `proxy-only` / `candidate` / `final-eligible` vocabulary; build success never
   implies Picture Lock, and parser-valid `.yaml.example` contracts do not opt
-  legacy projects into narrative gates. Phase 7A code/path rehearsal is next;
-  real provider Dogfood (7B), evidence-driven S2 and cross-platform Phase 8
-  remain open.
+  legacy projects into narrative gates. Phase 7A now rehearses the no-paid
+  contract -> exact-byte Animatic -> failed endpoint/one-variable experiment ->
+  REWRITE_SOURCE -> replacement candidate -> Proof Scene -> BULK_READY path,
+  while retaining an empty provider-attempt ledger and an ungated legacy path.
+  This is code/path evidence only. Real provider Dogfood (7B), evidence-driven
+  S2 and cross-platform Phase 8 remain open.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
 - Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,
