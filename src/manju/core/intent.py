@@ -138,16 +138,27 @@ def _subject_matches(subject_ref: str | None, asset_id: str) -> bool:
     if not subject_ref:
         return True
     subject = str(subject_ref).strip()
-    for prefix in ("character:", "character/", "asset:", "asset/"):
+    for prefix in ("character:", "character/", "prop:", "prop/", "asset:", "asset/"):
         if subject.startswith(prefix):
             subject = subject[len(prefix):]
             break
     return subject == asset_id
 
 
-def _asset_owned(refset: Any | None, asset_id: str, *roles: str) -> bool:
+def _asset_owned(refset: Any | None, asset_id: str, *roles: str,
+                 asset_kind: str = "character") -> bool:
     owners = [item for role in roles for item in _control_items(refset, role)]
-    return any(_subject_matches(getattr(item, "subject_ref", None), asset_id)
+    def matches(item: Any) -> bool:
+        subject = getattr(item, "subject_ref", None)
+        if not subject:
+            return True
+        raw = str(subject).strip().lower()
+        if raw.startswith(("character:", "character/")):
+            return asset_kind == "character" and _subject_matches(subject, asset_id)
+        if raw.startswith(("prop:", "prop/")):
+            return asset_kind == "prop" and _subject_matches(subject, asset_id)
+        return _subject_matches(subject, asset_id)
+    return any(matches(item)
                for item in owners)
 
 
@@ -157,18 +168,29 @@ def _asset_field(
     *,
     authored_names: bool,
     refset: Any | None = None,
+    asset_kind: str = "character",
 ) -> str:
     parts: list[str] = []
     for asset_id in ids:
         entry = bible.get(asset_id) or {}
         entry = entry if isinstance(entry, dict) else {}
         name = str(entry.get("name") or asset_id).strip()
+        identity_roles = (("prop",) if asset_kind == "prop"
+                          else ("character_identity", "face"))
         identity_owned = _asset_owned(
-            refset, asset_id, "character_identity", "face"
+            refset, asset_id, *identity_roles, asset_kind=asset_kind
         )
-        costume_owned = _asset_owned(refset, asset_id, "costume")
+        costume_owned = _asset_owned(refset, asset_id, "costume", asset_kind=asset_kind)
         projected = entry
-        if identity_owned:
+        if identity_owned and asset_kind == "prop":
+            projected = {
+                key: value for key, value in entry.items()
+                if _normalized_key(key) in {
+                    "name", "id", "locked", "state", "status", "action",
+                    "behavior", "function", "purpose",
+                }
+            }
+        elif identity_owned:
             projected = {
                 key: value for key, value in entry.items()
                 if key in ("name", "locked", "voice", "personality", "behavior")
@@ -195,12 +217,54 @@ def _camera_field(camera: Camera, *, refset: Any | None = None) -> str:
         return mapping.get(value, value.replace("_", " ")) if value else ""
 
     framing_owned = _owned(refset, "framing")
-    motion_owned = _owned(refset, "motion")
+    # A scoped subject-motion binding owns that subject's movement, not the
+    # camera path. Only a global motion owner can suppress camera movement.
+    motion_owned = any(
+        not getattr(item, "subject_ref", None)
+        for item in _control_items(refset, "motion")
+        if "motion" not in set(getattr(item, "ignore", ()) or ())
+    )
     return ", ".join(part for part in (
         "" if framing_owned else phrase(_SHOT_SIZE, camera.shot_size),
         "" if motion_owned else phrase(_MOVEMENT, camera.movement),
         "" if framing_owned else phrase(_ANGLE, camera.angle),
     ) if part)
+
+
+def _opening_field(contract: Any, refset: Any | None) -> str:
+    """Project opening facts without erasing unrelated subjects.
+
+    Legacy string facts are global authored prose and remain intact when only a
+    scoped pose/motion owner exists. Structured ``{subject_ref, statement}``
+    facts can be suppressed precisely; a global owner suppresses all facts.
+    """
+    if contract is None:
+        return ""
+    pose_items = [
+        item for role in ("pose", "motion")
+        for item in _control_items(refset, role)
+        if role not in set(getattr(item, "ignore", ()) or ())
+    ]
+    global_owner = any(not getattr(item, "subject_ref", None) for item in pose_items)
+    if global_owner:
+        return ""
+    projected: list[Any] = []
+    for fact in contract.opening or []:
+        if isinstance(fact, dict):
+            subject = fact.get("subject_ref")
+            statement = fact.get("statement", fact.get("text", ""))
+            if subject and any(
+                _subject_matches(getattr(item, "subject_ref", None), str(subject).split(":", 1)[-1])
+                or str(getattr(item, "subject_ref", "")).strip() == str(subject).strip()
+                for item in pose_items
+            ):
+                continue
+            if statement:
+                projected.append(statement)
+        else:
+            # A scoped owner cannot safely claim an unscoped legacy fact.
+            projected.append(fact)
+    return _fmt(projected)
 
 
 def _prefixed(label: str, items: list[Any] | None) -> str:
@@ -273,17 +337,16 @@ def prompt_contract_sections(
     else:
         scene = _excerpt(scene_entry)
 
+    opening = _opening_field(contract, refset)
     return {
         "scene": scene,
         "characters": _asset_field(
             shot.characters, bible, authored_names=True, refset=refset
         ),
-        "props": _asset_field(prop_ids, bible, authored_names=True),
+        "props": _asset_field(prop_ids, bible, authored_names=True, refset=refset,
+                               asset_kind="prop"),
         "camera": _camera_field(shot.camera, refset=refset),
-        "opening": (
-            "" if _owned(refset, "pose", "motion")
-            else (_fmt(contract.opening) if contract else "")
-        ),
+        "opening": opening,
         "action": (shot.action.main or "").strip(),
         "emotion": (shot.action.emotion or "").strip(),
         "endpoint": _fmt(contract.endpoint) if contract else "",

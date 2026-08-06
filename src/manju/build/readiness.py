@@ -162,7 +162,12 @@ def _scene_contract_gate(project: Project) -> tuple[dict[str, Any], dict[str, An
 
 
 def _shot_contract_gate(project: Project) -> dict[str, Any]:
-    from ..providers.refs import resolve_refs, unreadable_ref_message
+    from ..providers.refs import (
+        ReferenceControlConflict,
+        resolve_refs,
+        unreadable_ref_message,
+        validate_control_ownership,
+    )
 
     details: list[dict[str, Any]] = []
     prop_ids = _bible_ids(project, "props")
@@ -209,6 +214,14 @@ def _shot_contract_gate(project: Project) -> dict[str, Any]:
                 ))
         try:
             refs = resolve_refs(project, shot, bible)
+            try:
+                validate_control_ownership(refs)
+            except ReferenceControlConflict as exc:
+                details.append(_detail(
+                    "SHOT_REFERENCE_CONTROL_CONFLICT",
+                    str(exc),
+                    subject=subject,
+                ) | {"conflicts": list(exc.conflicts)})
             ref_error = unreadable_ref_message(refs.items)
         except Exception as exc:
             ref_error = "reference resolution failed: " + " ".join(str(exc).split())[:200]
