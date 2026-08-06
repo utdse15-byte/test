@@ -294,7 +294,10 @@ def spec_payload(
             payload["prop_bible"] = {
                 prop_id: _bible_excerpt(bible, prop_id) for prop_id in prop_ids
             }
-        contract_payload = picture_contract_payload(shot)
+        contract_payload = picture_contract_payload(
+            shot,
+            include_structured_opening=version >= 5,
+        )
         if contract_payload:
             payload["contract"] = contract_payload
     if version == 4:

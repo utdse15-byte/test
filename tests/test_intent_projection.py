@@ -8,6 +8,7 @@ from manju.build.stale import ShotState, evaluate_shot
 from manju.core.intent import (
     director_contract_view,
     expectation_assertions,
+    narrative_intent_digest,
     picture_contract_payload,
     prompt_contract_sections,
 )
@@ -111,6 +112,26 @@ def test_opening_is_start_expectation(tmp_project):
     assert opening["source_path"].endswith("/contract/opening/0")
 
 
+def test_shot_contract_accepts_structured_opening_fact():
+    shot = _contract_shot(opening=[{
+        "subject_ref": "character:lin",
+        "statement": "Lin starts with her hand open",
+    }])
+
+    fact = shot.contract.opening[0]
+    assert fact.subject_ref == "character:lin"
+    assert fact.statement == "Lin starts with her hand open"
+
+
+def test_legacy_string_opening_round_trips_unchanged():
+    statement = "  Lin starts with her hand open  "
+    shot = _contract_shot(opening=[statement])
+
+    assert shot.contract.opening == [statement]
+    assert shot.model_dump()["contract"]["opening"] == [statement]
+    assert picture_contract_payload(shot)["opening"] == [statement]
+
+
 def test_endpoint_is_end_expectation(tmp_project):
     shot = _contract_shot()
     tmp_project.save_shot(shot)
@@ -191,6 +212,69 @@ def test_picture_contract_payload_excludes_non_picture_fields():
     assert payload["min_end_hold_ms"] == 500
     for excluded in ("purpose", "viewer_must_perceive", "risk", "proof_shot"):
         assert excluded not in payload
+
+
+def test_structured_opening_enters_current_spec():
+    statement = "Lin starts with her hand open"
+    shot = _contract_shot(opening=[{
+        "subject_ref": "character:lin",
+        "statement": statement,
+    }])
+
+    assert spec_payload(shot, PIN_BIBLE, version=4)["contract"]["opening"] == [
+        statement
+    ]
+    assert spec_payload(shot, PIN_BIBLE, version=5)["contract"]["opening"] == [{
+        "statement": statement,
+        "subject_ref": "character:lin",
+    }]
+
+
+def test_structured_opening_compiles_to_start_expectation(tmp_project):
+    statement = "Lin starts with her hand open"
+    shot = _contract_shot(opening=[{
+        "subject_ref": "character:lin",
+        "statement": statement,
+    }])
+    tmp_project.save_shot(shot)
+
+    [opening] = [
+        row for row in compile_expectations(tmp_project, "S001")["expectations"]
+        if row["statement"] == statement
+    ]
+    assert opening["position"] == "start"
+    assert opening["source_path"].endswith("/contract/opening/0")
+
+
+def test_structured_opening_changes_animatic_digest(tmp_project):
+    statement = "A figure waits beside the door"
+    shot = _contract_shot(opening=[{
+        "subject_ref": "character:lin",
+        "statement": statement,
+    }])
+    tmp_project.save_shot(shot)
+    index = tmp_project.load_index()
+    index.order.append(shot.id)
+    tmp_project.save_index(index)
+    before = narrative_intent_digest(tmp_project)
+
+    shot.contract.opening[0].subject_ref = "prop:lin"
+    tmp_project.save_shot(shot)
+
+    assert narrative_intent_digest(tmp_project) != before
+
+
+def test_structured_opening_enters_director_view():
+    statement = "Lin starts with her hand open"
+    shot = _contract_shot(opening=[{
+        "subject_ref": "character:lin",
+        "statement": statement,
+    }])
+
+    assert director_contract_view(shot)["opening"] == [{
+        "statement": statement,
+        "subject_ref": "character:lin",
+    }]
 
 
 def test_contract_prompt_sections_and_views_are_deterministic():
@@ -289,7 +373,7 @@ def test_legacy_expectation_digest_is_pinned(tmp_project):
     )
 
 
-def test_prompt_override_is_verbatim_and_new_contract_does_not_change_v3_hash():
+def test_prompt_override_remains_verbatim():
     exact = "  custom {prompt}\nkeep spacing  "
     a = _contract_shot()
     a.generation.prompt_override = exact

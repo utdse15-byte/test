@@ -96,10 +96,74 @@ class AcceptanceContract(ManjuModel):
     min_end_hold_ms: int = 0
 
 
+class SubjectStateFact(ManjuModel):
+    statement: str
+    subject_ref: str | None = None
+
+
+def canonical_subject_scope(value: Any, *, role: str | None = None) -> str | None:
+    """Canonical typed scope; the id portion remains case-preserving."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    for prefix, canonical in (
+        ("character:", "character"), ("character/", "character"),
+        ("prop:", "prop"), ("prop/", "prop"),
+        ("asset:", "asset"), ("asset/", "asset"),
+        ("scene:", "scene"), ("scene/", "scene"),
+    ):
+        if lowered.startswith(prefix):
+            subject_id = raw[len(prefix):].strip()
+            if not subject_id:
+                return None
+            if canonical == "asset" and role in {"pose", "motion"}:
+                canonical = "character"
+            elif canonical == "asset" and role == "prop":
+                canonical = "prop"
+            return f"{canonical}:{subject_id}"
+    return raw
+
+
+def state_fact_statement(fact: str | SubjectStateFact | Mapping[str, Any]) -> str:
+    if isinstance(fact, str):
+        return fact
+    if isinstance(fact, SubjectStateFact):
+        return fact.statement
+    if isinstance(fact, Mapping):
+        return str(fact.get("statement", fact.get("text", "")) or "")
+    return str(fact)
+
+
+def state_fact_subject_scope(
+    fact: str | SubjectStateFact | Mapping[str, Any],
+) -> str | None:
+    if isinstance(fact, str):
+        return None
+    if isinstance(fact, SubjectStateFact):
+        return canonical_subject_scope(fact.subject_ref)
+    if isinstance(fact, Mapping):
+        return canonical_subject_scope(fact.get("subject_ref"))
+    return None
+
+
+def state_fact_payload(
+    fact: str | SubjectStateFact | Mapping[str, Any],
+) -> str | dict[str, str]:
+    """Stable JSON/YAML projection; legacy string facts stay exact strings."""
+    if isinstance(fact, str):
+        return fact
+    payload = {"statement": state_fact_statement(fact)}
+    scope = state_fact_subject_scope(fact)
+    if scope:
+        payload["subject_ref"] = scope
+    return payload
+
+
 class ShotContract(ManjuModel):
     purpose: str = ""
     viewer_must_perceive: str = ""
-    opening: list[str] = Field(default_factory=list)
+    opening: list[str | SubjectStateFact] = Field(default_factory=list)
     endpoint: list[str] = Field(default_factory=list)
     performance: RequiredAvoid = Field(default_factory=RequiredAvoid)
     physics: RequiredAvoid = Field(default_factory=RequiredAvoid)

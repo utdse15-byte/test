@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .authoring import (
+    canonical_subject_scope,
+    state_fact_payload,
+    state_fact_statement,
+    state_fact_subject_scope,
+)
 from .hashing import hash_value
 from .models import Camera, ShotSpec
 
@@ -241,29 +247,31 @@ def _opening_field(contract: Any, refset: Any | None) -> str:
     if contract is None:
         return ""
     pose_items = [
-        item for role in ("pose", "motion")
+        (role, item) for role in ("pose", "motion")
         for item in _control_items(refset, role)
         if role not in set(getattr(item, "ignore", ()) or ())
     ]
-    global_owner = any(not getattr(item, "subject_ref", None) for item in pose_items)
+    global_owner = any(
+        canonical_subject_scope(getattr(item, "subject_ref", None), role=role) is None
+        for role, item in pose_items
+    )
     if global_owner:
         return ""
-    projected: list[Any] = []
+    owned_scopes = {
+        scope
+        for role, item in pose_items
+        if (scope := canonical_subject_scope(
+            getattr(item, "subject_ref", None), role=role
+        )) is not None
+    }
+    projected: list[str] = []
     for fact in contract.opening or []:
-        if isinstance(fact, dict):
-            subject = fact.get("subject_ref")
-            statement = fact.get("statement", fact.get("text", ""))
-            if subject and any(
-                _subject_matches(getattr(item, "subject_ref", None), str(subject).split(":", 1)[-1])
-                or str(getattr(item, "subject_ref", "")).strip() == str(subject).strip()
-                for item in pose_items
-            ):
-                continue
-            if statement:
-                projected.append(statement)
-        else:
-            # A scoped owner cannot safely claim an unscoped legacy fact.
-            projected.append(fact)
+        scope = state_fact_subject_scope(fact)
+        if scope is not None and scope in owned_scopes:
+            continue
+        statement = state_fact_statement(fact)
+        if statement:
+            projected.append(statement)
     return _fmt(projected)
 
 
@@ -272,7 +280,11 @@ def _prefixed(label: str, items: list[Any] | None) -> str:
     return f"{label}: {', '.join(values)}" if values else ""
 
 
-def picture_contract_payload(shot: ShotSpec) -> dict[str, Any]:
+def picture_contract_payload(
+    shot: ShotSpec,
+    *,
+    include_structured_opening: bool = False,
+) -> dict[str, Any]:
     """Picture-bearing v3 fields only; director notes never restage a take."""
     contract = shot.contract
     if contract is None:
@@ -280,7 +292,12 @@ def picture_contract_payload(shot: ShotSpec) -> dict[str, Any]:
 
     payload: dict[str, Any] = {}
     if contract.opening:
-        payload["opening"] = list(contract.opening)
+        if include_structured_opening:
+            payload["opening"] = [state_fact_payload(fact) for fact in contract.opening]
+        else:
+            payload["opening"] = [
+                state_fact_statement(fact) for fact in contract.opening
+            ]
     if contract.endpoint:
         payload["endpoint"] = list(contract.endpoint)
     for name, value in (
@@ -388,7 +405,8 @@ def expectation_assertions(shot: ShotSpec) -> list[IntentAssertion]:
         return assertions
     for index, statement in enumerate(contract.opening):
         add(
-            "opening", "present", statement, "external_consistency",
+            "opening", "present", state_fact_statement(statement),
+            "external_consistency",
             f"contract.opening[{index}]", "start",
         )
     if contract.acceptance.action_required:
@@ -436,7 +454,7 @@ def director_contract_view(shot: ShotSpec) -> dict[str, Any]:
     return {
         "purpose": contract.purpose,
         "viewer_must_perceive": contract.viewer_must_perceive,
-        "opening": list(contract.opening),
+        "opening": [state_fact_payload(fact) for fact in contract.opening],
         "action": shot.action.model_dump(),
         "endpoint": list(contract.endpoint),
         "performance": contract.performance.model_dump(),
@@ -476,7 +494,7 @@ def narrative_intent_payload(project: Any) -> list[dict[str, Any]]:
         }
         if contract is not None:
             row["contract"] = {
-                "opening": list(contract.opening),
+                "opening": [state_fact_payload(fact) for fact in contract.opening],
                 "endpoint": list(contract.endpoint),
                 "performance": contract.performance.model_dump(),
                 "physics": contract.physics.model_dump(),

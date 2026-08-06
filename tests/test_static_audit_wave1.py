@@ -35,6 +35,26 @@ def _item(path, *, role="character_identity", subject=None, ignore=()):
     )
 
 
+def _project_scoped_opening(tmp_project, add_shot, opening, *, role, subject):
+    shot = add_shot(
+        tmp_project,
+        "S001",
+        contract={"opening": opening},
+    )
+    refs = RefSet.from_items([
+        _item(
+            tmp_project.root / "offline-reference.bin",
+            role=role,
+            subject=subject,
+        )
+    ])
+    return prompt_contract_sections(
+        shot,
+        tmp_project.load_bible(),
+        refset=refs,
+    )["opening"]
+
+
 def test_two_scoped_character_identity_owners_are_valid(tmp_path):
     a = tmp_path / "a.png"
     b = tmp_path / "b.png"
@@ -201,6 +221,80 @@ def test_scoped_motion_preserves_camera_and_legacy_opening(tmp_project, add_shot
     assert "coin on table" in fields["opening"]
 
 
+def test_scoped_character_pose_suppresses_only_matching_character_fact(
+    tmp_project, add_shot
+):
+    opening = _project_scoped_opening(
+        tmp_project,
+        add_shot,
+        [
+            {"subject_ref": "character:A", "statement": "A kneels"},
+            {"subject_ref": "character:B", "statement": "B stands"},
+        ],
+        role="pose",
+        subject="character/A",
+    )
+
+    assert "A kneels" not in opening
+    assert "B stands" in opening
+
+
+def test_scoped_motion_preserves_other_character_fact(tmp_project, add_shot):
+    opening = _project_scoped_opening(
+        tmp_project,
+        add_shot,
+        [
+            {"subject_ref": "character:A", "statement": "A runs"},
+            {"subject_ref": "character:B", "statement": "B waits"},
+        ],
+        role="motion",
+        subject="asset:A",
+    )
+
+    assert "A runs" not in opening
+    assert "B waits" in opening
+
+
+def test_scoped_motion_preserves_prop_fact(tmp_project, add_shot):
+    opening = _project_scoped_opening(
+        tmp_project,
+        add_shot,
+        [{"subject_ref": "prop:coin", "statement": "coin rests on table"}],
+        role="motion",
+        subject="character:A",
+    )
+
+    assert opening == "coin rests on table"
+
+
+def test_scoped_motion_preserves_environment_fact(tmp_project, add_shot):
+    opening = _project_scoped_opening(
+        tmp_project,
+        add_shot,
+        [{"subject_ref": "scene:store", "statement": "rain strikes the window"}],
+        role="motion",
+        subject="character:A",
+    )
+
+    assert opening == "rain strikes the window"
+
+
+def test_character_and_prop_same_id_do_not_cross_match(tmp_project, add_shot):
+    opening = _project_scoped_opening(
+        tmp_project,
+        add_shot,
+        [
+            {"subject_ref": "character:A", "statement": "A waves"},
+            {"subject_ref": "prop:A", "statement": "A-shaped prop stays still"},
+        ],
+        role="motion",
+        subject="character:A",
+    )
+
+    assert "A waves" not in opening
+    assert "A-shaped prop stays still" in opening
+
+
 def test_readiness_uses_generation_ownership_validator(tmp_project, add_shot):
     paths = []
     for name in ("a.png", "b.png"):
@@ -225,4 +319,3 @@ def test_readiness_uses_generation_ownership_validator(tmp_project, add_shot):
         if row["code"] == "SHOT_REFERENCE_CONTROL_CONFLICT"
     )
     assert conflict["conflicts"]
-
