@@ -12,7 +12,7 @@
 - [Project layout](#project-layout)
 - [The three disciplines](#the-three-disciplines)
 - [Windows 快速开始](#windows-快速开始)
-- [第一部片:两条命令,零花费(`manju new --demo`)](#第一部片两条命令零花费manju-new---demo)
+- [系统体检样片:两条命令,零花费(`manju new --demo`)](#系统体检样片两条命令零花费manju-new---demo)
 - [Quickstart](#quickstart)
 - [CLI reference](#cli-reference)
 - [Milestones](#milestones)
@@ -44,7 +44,7 @@
 
 **隔了一阵子回来?** 先 `manju doctor`(尤其是 Windows 更新或动过 ffmpeg 之后),
 再 `manju new 我的样片 --demo && cd 我的样片.manju && manju build --yes` —— 内置
-样片零花费跑通全链路,确认环境没坏再动真项目(见下面「第一部片」)。手上项目
+系统体检样片零花费跑通执行链,确认环境没坏再动真项目(见下面「系统体检样片」)。手上项目
 的进度看 `manju status`;仓库自身的状态与在办风险看 `STATE.md`。
 
 **A deterministic build system for video.** Not an "editor with AI bolted on" — a
@@ -92,10 +92,22 @@ Provider / adapter layer            generation: cloud video/image/TTS, kenburns,
                                     output: FFmpeg · pyJianYingDraft · OTIO · SRT/ASS
 ```
 
-The creation/execution boundary is drawn deliberately: brief → outline → script
-→ Bible → shot list is *creation* (the director's job); everything after the
-shot list (generate, assemble, render, QC, export) is *execution* (the engine's
-job). The build graph starts from "shots + media" and never invents shots.
+The creation/execution boundary is drawn deliberately. Story and ending,
+`SceneContract`, embedded `ShotContract`, asset/control choices, media review,
+human approval and Picture Lock are *director decisions*. Prompt projection,
+approved provider transport, append-only take registration, timeline assembly,
+render, technical QC and export are *deterministic execution*. 引擎不替导演决定
+场次为何存在、镜头如何结束、哪个 take 可接受或何时锁片；build graph 只从合同
+与已登记媒体执行，不从 Prompt 或渲染结果反向发明作者事实。
+
+Selected media uses one eligibility vocabulary everywhere:
+
+- `proxy-only`: caption card/comic proxy，可做系统体检和预览，永远不能证明 Picture Lock。
+- `candidate`: 已登记的真实候选，但当前性、人工批准或 assurance 仍未全部满足。
+- `final-eligible`: 当前 selected video、非 proxy、人工批准且 assurance accepted，才有资格进入 Picture Lock 评审。
+
+`build ok` 只说明本次执行成功；即使产生 `renders/final/final_vN.mp4`，也不会自动把
+`proxy-only` 或 `candidate` 升级成 `final-eligible`，更不会自动完成 Picture Lock。
 
 ## Project layout
 
@@ -158,11 +170,11 @@ Windows 11 x64 是第一平台;全程 per-user、无需管理员。
    (长路径策略、NTFS、网络盘、OneDrive、配置可写性、Edge/Chrome、安装模式)。
 6. **偏好点击操作** —— `manju gui`,浏览器工作台(与 CLI/MCP 同一引擎核)。
 
-## 第一部片:两条命令,零花费(`manju new --demo`)
+## 系统体检样片:两条命令,零花费(`manju new --demo`)
 
-**第一次用、或者隔了半年回来想确认环境还好** —— 别从空项目开始,先让内置样片
-跑通一遍。`--demo` 造一个完整的 12 镜微型故事(雨夜便利店),画面走本地
-`caption_card`,**不联网、不花一分钱**,只需要 ffmpeg。
+**第一次用、或者隔了半年回来想确认环境还好** —— 别从空项目开始,先让内置
+pipeline regression sample 跑通一遍。`--demo` 造一个 12 张文字卡组成的系统体检
+样片(雨夜便利店),画面走本地 `caption_card`,**不联网、不花一分钱**,只需要 ffmpeg。
 
 ```bash
 manju new 我的样片 --demo
@@ -170,20 +182,23 @@ cd 我的样片.manju
 manju build --yes
 ```
 
-看到的输出(逐字):
+关键输出会明确标记它的资格:
 
 ```text
-created …/我的样片.manju  [demo: 雨夜便利店 · 12 镜 · caption_card 零花费]
-  零成本出片: cd 我的样片.manju && manju build --yes(本地 caption_card,只需 ffmpeg,不花一分钱)
+created …/我的样片.manju  [system-check sample: 雨夜便利店 · 12 张 caption-card · proxy-only · 零花费]
+  regression pipeline: cd 我的样片.manju && manju build --yes(…build ok 不等于 Picture Lock)
   下一步: cd 我的样片.manju && manju status(随时告诉你下一步)
 …
 QC: 通过
 build ok
-  看一眼 look: manju gui(成片页)· 抽帧 manju frames renders/final/final_v1.mp4
+  查看构建产物 look: manju gui(成片页)· 抽帧 manju frames renders/final/final_v1.mp4
+  媒体资格: proxy-only=12, candidate=0, final-eligible=0 · Picture Lock not eligible
 ```
 
-成片在 `renders/final/final_v1.mp4`(四核机器上约 2–3 分钟出片)。到这一步,
-**整条链路已经在你的机器上跑通了**:编译时间线 → 渲染 → 质检 → 出片。
+体检渲染在 `renders/final/final_v1.mp4`(四核机器上约 2–3 分钟)。到这一步,
+**确定性执行链已经在你的机器上跑通了**:编译时间线 → 渲染 → 技术质检 → 导出。
+它的每镜仍是 `proxy-only`；这不证明 AI 叙事生产、真实表演、镜头连续性、人工内容
+批准、`final-eligible` 或 Picture Lock。caption-card Demo 只证明系统 plumbing。
 
 接着可以拿这个样片练手,每一步都不花钱:
 

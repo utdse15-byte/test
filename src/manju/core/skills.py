@@ -233,6 +233,11 @@ def skill_index_text(project=None, *, exclude: tuple[str, ...] = ()) -> str:
     if warning:
         lines.append(warning)
     if rows:
+        lines.append(
+            "作者合同: SceneContract/ShotContract。生产资格术语: "
+            "proxy-only=系统体检代理, candidate=已登记但尚未证明最终资格, "
+            "final-eligible=当前媒体已满足人工批准与 assurance；build ok 不等于 Picture Lock。"
+        )
         lines.append("可用技能库(用 `manju skills show <id>` 取全文,按需加载,不要全量复制):")
         for s in rows:
             hint = s.when_to_use or s.description

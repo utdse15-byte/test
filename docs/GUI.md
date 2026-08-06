@@ -390,6 +390,10 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
 - **导航按使用频率分六组**(工作台·创作·镜头·审片·成片·工具箱),纯呈现层
   CSS 下拉:全部 17 条链接始终在 DOM 里(模式 pin 依赖这一点),_NAV 是
   唯一标签 owner。
+- **`/create` 不把 build 当锁片**:创作轨使用故事与结尾、SceneContract /
+  ShotContract、Animatic / Proof 和 candidate 术语；同页只读显示
+  `proxy-only` / `candidate` / `final-eligible` 与 Picture Lock eligibility，
+  数据来自 `build/readiness.py` 的派生视图，不保存第二份状态。
 - **AI 在 GUI 外**(§0):/review 卡片 复制给 Claude、失败卡 复制诊断上下文
   只递结构化文本;不要在 GUI 里内建聊天/模型管理。
 - **`manju gui --app`**:Edge/Chrome `--app=` 无边框窗口,找不到浏览器时

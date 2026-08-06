@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
 from manju.build import graph
-from manju.build.graph import animatic_content_key, run_build
+from manju.build.graph import ShotState, animatic_content_key, run_build
 from manju.build.readiness import (
     ReadinessError,
     approve_animatic,
     approve_proof_scene,
     current_animatic,
+    media_eligibility,
     production_readiness,
     proof_scene_digest,
     proof_shot_status,
@@ -244,6 +246,83 @@ def test_legacy_project_is_not_gated(tmp_project, add_shot):
     assert report["allowed_paid_shot_ids"] == "all"
     assert report["disallowed_paid_shot_ids"] == []
     assert report["bulk_paid_generation_allowed"] is True
+    assert report["eligibility"]["counts"]["none"] == 1
+    assert report["eligibility"]["picture_lock_eligible"] is False
+
+
+def test_media_eligibility_distinguishes_proxy_candidate_and_final(
+        tmp_project, add_shot, monkeypatch):
+    add_shot(tmp_project, "S001")
+    add_shot(tmp_project, "S002")
+    add_shot(tmp_project, "S003")
+    _selected_video(tmp_project, "S001", provider="caption_card")
+    _selected_video(tmp_project, "S002", approved=False)
+    _selected_video(tmp_project, "S003")
+    _acceptance_stubs(monkeypatch)
+
+    view = media_eligibility(tmp_project)
+    by_shot = {row["shot"]: row for row in view["shots"]}
+    assert by_shot["S001"]["state"] == "proxy-only"
+    assert by_shot["S002"]["state"] == "candidate"
+    assert by_shot["S003"]["state"] == "final-eligible"
+    assert by_shot["S001"]["picture_lock_eligible"] is False
+    assert by_shot["S003"]["picture_lock_eligible"] is True
+    assert view["counts"] == {
+        "proxy-only": 1, "candidate": 1, "final-eligible": 1, "none": 0,
+    }
+    assert view["picture_lock_eligible"] is False
+
+
+def test_proxy_final_does_not_imply_picture_lock(
+        tmp_project, add_shot, monkeypatch):
+    from manju.build.status import project_status
+
+    add_shot(tmp_project, "S001")
+    _selected_video(tmp_project, "S001", provider="caption_card")
+    _acceptance_stubs(monkeypatch)
+    tmp_project.final_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.final_dir / "final_v1.mp4").write_bytes(b"pipeline-output")
+    tmp_project.timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_project.timeline_path.write_text(_timeline().model_dump_json(), encoding="utf-8")
+
+    info = project_status(tmp_project)
+    assert info["latest_final"] == "renders/final/final_v1.mp4"
+    assert info["production"]["eligibility"]["counts"]["proxy-only"] == 1
+    assert info["production"]["eligibility"]["picture_lock_eligible"] is False
+    assert info["next_step_key"] == "proxy_only"
+    assert "proxy-only" in info["next_step"]
+    assert "Picture Lock" in info["next_step"]
+
+
+def test_proxy_notice_does_not_hide_a_more_urgent_qc_failure(
+        tmp_project, add_shot, monkeypatch):
+    from manju.build.status import project_status
+
+    add_shot(tmp_project, "S001")
+    take = _selected_video(tmp_project, "S001", provider="caption_card")
+    _acceptance_stubs(monkeypatch)
+    tmp_project.final_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.final_dir / "final_v1.mp4").write_bytes(b"pipeline-output")
+    tmp_project.timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_project.timeline_path.write_text(_timeline().model_dump_json(), encoding="utf-8")
+    tmp_project.reports_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_project.reports_dir / "qc.json").write_text(json.dumps({
+        "ok": False,
+        "items": [{"level": "error", "shot": "S001", "message": "bad frame"}],
+    }), encoding="utf-8")
+    statuses = [SimpleNamespace(
+        shot_id="S001",
+        state=ShotState.FRESH,
+        note=None,
+        selected_take=take.name,
+        take=take,
+    )]
+    monkeypatch.setattr("manju.build.status.next_actions", lambda *args, **kwargs: [])
+
+    info = project_status(tmp_project, statuses=statuses)
+    assert info["production"]["eligibility"]["counts"]["proxy-only"] == 1
+    assert info["next_step_key"] == "fix_qc"
+    assert "reports/qc.md" in info["next_step"]
 
 
 def test_scene_contract_gate(tmp_project, add_shot):

@@ -443,10 +443,13 @@ def proof_shot_status(project: Project, shot_id: str) -> dict[str, Any]:
 
     selected = shot.status.selected_take
     take = project.get_take(shot_id, selected) if selected else None
+    is_video = False
     if not selected or take is None or take.media_path is None:
         reasons.append("selected video take is missing")
-    elif take.name not in {item.name for item in video_takes(project, shot_id)}:
-        reasons.append("selected take is not video media")
+    else:
+        is_video = take.name in {item.name for item in video_takes(project, shot_id)}
+        if not is_video:
+            reasons.append("selected take is not video media")
 
     state = None
     media_sha = None
@@ -489,9 +492,22 @@ def proof_shot_status(project: Project, shot_id: str) -> dict[str, Any]:
     expectation_digest = assurance.get("expectation_digest")
     if not expectation_digest:
         reasons.append("current expectation digest is unavailable")
+    # Eligibility is a derived view over the same evidence above. A registered
+    # take that is not yet current/approved/assured remains a candidate; a
+    # proxy provider can never qualify for picture lock even when its build
+    # succeeds. Missing media is kept distinct so the three public labels do
+    # not turn an absent take into a misleading candidate.
+    if provider in PROXY_ONLY_PROVIDERS:
+        eligibility = "proxy-only"
+    elif is_video:
+        eligibility = "final-eligible" if not reasons else "candidate"
+    else:
+        eligibility = "none"
     return {
         "shot": shot_id,
         "ready": not reasons,
+        "state": eligibility,
+        "picture_lock_eligible": eligibility == "final-eligible",
         "reasons": reasons,
         "selected_take": selected,
         "provider": provider,
@@ -503,6 +519,42 @@ def proof_shot_status(project: Project, shot_id: str) -> dict[str, Any]:
         "review_state": shot.status.review_state,
         "assurance_state": assurance_state,
         "expectation_digest": expectation_digest,
+    }
+
+
+def media_eligibility(project: Project) -> dict[str, Any]:
+    """Return the current selected-media eligibility for every indexed shot.
+
+    This is deliberately a pure read model. It does not add approval state or
+    write a readiness file; ``production_readiness`` and the takeover status
+    both consume this same projection. ``picture_lock_eligible`` is true only
+    when every indexed shot is ``final-eligible``.
+    """
+    rows: list[dict[str, Any]] = []
+    for shot_id in project.shot_ids(indexed_only=True):
+        try:
+            rows.append(proof_shot_status(project, shot_id))
+        except Exception as exc:
+            rows.append({
+                "shot": shot_id,
+                "state": "none",
+                "picture_lock_eligible": False,
+                "ready": False,
+                "reasons": [f"eligibility evaluation failed: {exc}"],
+            })
+    counts = {state: 0 for state in ("proxy-only", "candidate", "final-eligible", "none")}
+    for row in rows:
+        state = row.get("state", "none")
+        counts[state if state in counts else "none"] += 1
+    lock_reasons = [
+        f"{row['shot']}: {row.get('state', 'none')}"
+        for row in rows if not row.get("picture_lock_eligible")
+    ]
+    return {
+        "shots": rows,
+        "counts": counts,
+        "picture_lock_eligible": bool(rows) and not lock_reasons,
+        "picture_lock_reasons": lock_reasons,
     }
 
 
@@ -737,6 +789,7 @@ def production_readiness(
     project: Project, paid_shot_ids: list[str] | None = None
 ) -> dict[str, Any]:
     """Derive all gates and the paid-video allowance for the current stage."""
+    eligibility = media_eligibility(project)
     if not project.narrative_opted_in:
         return {
             "schema": SCHEMA,
@@ -752,6 +805,7 @@ def production_readiness(
             "bulk_paid_generation_allowed": True,
             "next_action": None,
             "release_findings": [],
+            "eligibility": eligibility,
         }
 
     scene_gate, scenes = _scene_contract_gate(project)
@@ -874,4 +928,5 @@ def production_readiness(
         "bulk_paid_generation_allowed": stage == "BULK_READY",
         "next_action": next_action,
         "release_findings": _release_findings(project),
+        "eligibility": eligibility,
     }

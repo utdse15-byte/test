@@ -1,18 +1,20 @@
-"""The built-in demo project (UX wave 2 item 8): 雨夜便利店, a complete
-12-shot time-loop micro-story that builds to a finished video at ZERO cost.
+"""The built-in system-check sample (Phase 6): 雨夜便利店, a 12-card
+pipeline regression sample that exercises deterministic build plumbing at ZERO
+cost. It is not narrative production proof.
 
 ``manju new <名字> --demo`` scaffolds TEXT TRUTH ONLY — brief, script, bible,
 and 12 shots pinned to the free local ``caption_card`` provider (no reference
-image needed, no cloud, no key). The finished video comes from the normal
-pipeline afterwards::
+image needed, no cloud, no key). The diagnostic render comes from the normal
+pipeline afterwards; it remains proxy-only::
 
     cd <名字>.manju && manju build --yes    # ffmpeg required, money not
 
-Why it exists: onboarding (a tangible finished project to explore), AI-session
-reference (an end-to-end project for validating changes), and demos to friends
-(no spend, no content improvised on the spot). The engine never invents story
-content at build time — this module is owner-authored fixture text, written
-once, and everything it writes is plain hand-editable YAML/Markdown (§2/§3).
+Why it exists: onboarding, workstation regression checks, and a reproducible
+caption-card media path. The selected ``caption_card`` takes are **proxy-only**:
+they can prove system plumbing, but never prove a real narrative, a final
+creative decision, or Picture Lock. The engine never invents story content at
+build time — this module is owner-authored fixture text, written once, and
+everything it writes is plain hand-editable YAML/Markdown (§2/§3).
 """
 
 from __future__ import annotations
@@ -23,7 +25,8 @@ from ..core.container import Project
 from ..core.models import ShotSpec
 from ..core.yamlio import write_yaml
 
-# The 科幻悬疑 micro-story: one beat per shot, 凌晨三点的时间循环。
+# The diagnostic card sequence uses a fixed line per card solely so build
+# regressions remain reproducible; it is not a narrative one-beat/one-shot rule.
 # (Same story the M0 acceptance fixture tells — kept in prose sync by taste,
 # not by import: tests/ must never become a src/ dependency.)
 _BEATS: list[tuple[str, str, str]] = [
@@ -52,15 +55,15 @@ _BRIEF = """\
 _SCRIPT_HEADER = """\
 # 雨夜便利店(demo)
 
-十二拍微型故事:科幻悬疑,单一场景为主,时间循环结构。
-每一拍即一个镜头(S001–S012),对白就是分镜真相 —— 改这里之后
+十二张系统体检文字卡:科幻悬疑文本,单一地点为主,时间循环结构。
+每张卡固定映射到一个测试镜头(S001–S012),仅用于 pipeline regression —— 改这里之后
 记得同步 shots/*.yaml(或用 manju ingest 流程重新导入)。
 
 """
 
 
 def scaffold_demo(project: Project) -> list[str]:
-    """Write the demo's text truth into a freshly created project.
+    """Write the system-check sample truth into a freshly created project.
 
     Returns the created shot ids. Zero cost by construction: every shot pins
     ``generation.provider: caption_card`` (the free local text-card provider,

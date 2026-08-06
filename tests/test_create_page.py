@@ -140,6 +140,9 @@ def test_rail_renders_all_seven_stages_fresh_current_brief(tmp_project):
     # every stage carries its skill chip
     assert 'data-act="skill"' in html
     assert "creation-funnel" in html
+    for term in ("SceneContract", "ShotContract", "proxy-only", "candidate",
+                 "final-eligible"):
+        assert term in html
 
 
 def test_rail_advances_current_when_brief_written(tmp_project):
@@ -313,7 +316,7 @@ def test_plan_stage_lists_proposals_no_approve_button(tmp_project, add_shot):
                      actor="human")
     html = create_page.render_create(tmp_project, "tok")
 
-    assert "生成计划 Plan" in html
+    assert "Animatic / Proof Plan" in html
     assert "approve-before-spend" in html
     assert prop.id in html              # the proposal is listed
     assert 'href="/director"' in html   # links to the ONE approval surface

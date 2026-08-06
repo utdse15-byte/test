@@ -231,3 +231,22 @@ def test_new_scaffolds_story_templates(tmp_path):
                           ("script.md", "剧本")):
         content = (project.root / "story" / fname).read_text(encoding="utf-8")
         assert marker in content
+
+
+def test_new_scaffolds_parseable_contract_examples_without_narrative_opt_in(tmp_path):
+    """Examples teach the real models but their .example suffix cannot enable gates."""
+    from manju.core.authoring import SceneContract
+    from manju.core.container import Project
+    from manju.core.models import ShotSpec
+    from manju.core.yamlio import read_yaml
+
+    project = Project.create(tmp_path / "contract-examples", git_init=False)
+    scene_path = project.root / "story" / "scenes" / "SCENE_EXAMPLE.yaml.example"
+    shot_path = project.root / "shots" / "SHOT_EXAMPLE.yaml.example"
+
+    assert SceneContract.model_validate(read_yaml(scene_path)).id == "SCENE_EXAMPLE"
+    shot = ShotSpec.model_validate(read_yaml(shot_path))
+    assert shot.id == "SHOT_EXAMPLE"
+    assert shot.scene_id == "SCENE_EXAMPLE"
+    assert shot.contract is not None
+    assert project.narrative_opted_in is False

@@ -244,7 +244,7 @@ class _SuggestingGroup(typer.core.TyperGroup):
 _EPILOG = (
     "只记三个入口 / three doors —\n\n"
     "[b]manju status[/b] · 我在哪、下一步该干什么(任何时候先跑它)\n\n"
-    "[b]manju create[/b] · 从一句话开始的七阶段创作漏斗(全新项目先 manju new)\n\n"
+    "[b]manju create[/b] · 从故事与结尾到合同、Proof、候选构建(全新项目先 manju new)\n\n"
     "[b]manju help-workflow[/b] · 我想做 X,该按什么顺序敲哪些命令(10 条常见流程)\n\n"
     "每条命令都有 --help;输出可读的命令大多同时带 --json 给 agent。"
 )
@@ -703,8 +703,8 @@ def new(
     shots: int = typer.Option(0, "--shots", help="scaffold N skeleton shots (S001…)"),
     demo: bool = typer.Option(
         False, "--demo",
-        help="内置样片: 雨夜便利店 12 镜微型故事(caption_card 零花费)— "
-             "创建后 manju build --yes 即可零成本出完整成片(需 ffmpeg)"),
+        help="内置系统体检样片: 雨夜便利店 12 张 caption-card 回归样本(零花费)— "
+             "可验证 pipeline；proxy-only，不是叙事成片证明(需 ffmpeg)"),
     check_hook: bool = typer.Option(
         False, "--check-hook",
         help="install a git pre-commit hook running manju check",
@@ -762,11 +762,12 @@ def new(
         demo_shots = scaffold_demo(project)
         append_event(project.root, ACTOR, "new", {"name": name, "demo": True})
         typer.secho(
-            f"created {project.root}  [demo: 雨夜便利店 · {len(demo_shots)} 镜 · "
-            "caption_card 零花费]", fg=typer.colors.GREEN)
+            f"created {project.root}  [system-check sample: 雨夜便利店 · "
+            f"{len(demo_shots)} 张 caption-card · proxy-only · 零花费]",
+            fg=typer.colors.GREEN)
         typer.secho(
-            f"  零成本出片: cd {project.root.name} && manju build --yes"
-            "(本地 caption_card,只需 ffmpeg,不花一分钱)",
+            f"  regression pipeline: cd {project.root.name} && manju build --yes"
+            "(本地 caption_card,只需 ffmpeg,不花一分钱；build ok 不等于 Picture Lock)",
             fg=typer.colors.BRIGHT_BLACK)
     else:
         append_event(project.root, ACTOR, "new", {"name": name})
@@ -779,7 +780,7 @@ def new(
         fg=typer.colors.BRIGHT_BLACK,
     )
     typer.secho(
-        "  引导流程: manju create(七阶段创作漏斗)· 全流程见 manju help-workflow new-project",
+        "  引导流程: manju create(故事→合同→Proof→候选构建)· 全流程见 manju help-workflow new-project",
         fg=typer.colors.BRIGHT_BLACK,
     )
     if shots > 0:
@@ -824,8 +825,8 @@ def presets(as_json: bool = typer.Option(False, "--json")):
 
 
 # ------------------------------------------------------------------ create
-# The creation funnel (round V, goal item 2): 立意→梗概→节拍→剧本→分镜→生成计划
-# →生成 as staged data. `manju create` (no arg) is the funnel checklist; `manju
+# The creation funnel (round V, goal item 2): story→contracts→proof→candidate
+# build as staged data. `manju create` (no arg) is the funnel checklist; `manju
 # create <stage>` scaffolds a stage template. The engine scaffolds, never authors
 # (§2) — the templates collapse to zero content, so writing one does not complete
 # the stage.
@@ -845,7 +846,7 @@ def create(
 ):
     """创作漏斗 / creation funnel (goal item 2).
 
-    `manju create` (无参数) 打印七阶段清单(立意→梗概→节拍→剧本→分镜→生成计划→生成)
+    `manju create` (无参数) 打印七阶段清单(故事与结尾→场次/镜头合同→Animatic/Proof→候选构建)
     并高亮当前阶段与下一步;`manju create <stage>` 为 brief/synopsis/beats 写模板
     (已存在则拒绝覆盖,除非 --force)。剧本用 `manju new` 已脚手架的 story/script.md。
     """
@@ -876,9 +877,9 @@ def create(
             # 出片" told the owner to do the thing they had just finished.
             # Point at what genuinely comes after the funnel instead.
             typer.secho(
-                "下一步  全部完成 ✅ — 漏斗到此为止,接下来:manju qc 质检 · "
-                "manju package 出封面/预告 · manju export 交给剪辑软件 · "
-                "manju exports 看所有交付物新鲜度",
+                "下一步  候选构建阶段完成 — 先用 manju production status 查看 "
+                "candidate/final-eligible 与 Picture Lock 资格,再按需 manju qc · "
+                "manju package · manju export · manju exports",
                 fg=typer.colors.GREEN)
         else:
             entry = next(s for s in info["stages"] if s["id"] == cur)
@@ -957,6 +958,20 @@ def status(as_json: bool = typer.Option(False, "--json")):
             f"{k}={len(v)}" for k, v in info["voice_by_state"].items()))
     tl = info["timeline"]
     typer.echo(f"时间线  {'✓ ' + str(tl['duration_ms']) + 'ms (' + str(tl['mode']) + ')' if tl['exists'] else '—'}")
+    production = info.get("production") or {}
+    eligibility = production.get("eligibility") or {}
+    counts = eligibility.get("counts") or {}
+    typer.echo(
+        "生产  "
+        + f"{production.get('stage', 'UNAVAILABLE')} · "
+        + "media "
+        + ", ".join(
+            f"{state}={int(counts.get(state, 0))}"
+            for state in ("proxy-only", "candidate", "final-eligible")
+        )
+        + " · Picture Lock "
+        + ("eligible" if eligibility.get("picture_lock_eligible") else "not eligible")
+    )
     typer.echo(f"成片  {info['latest_final'] or '—'}")
     if info.get("locale_finals"):
         typer.echo(
@@ -1596,7 +1611,7 @@ _BOOKKEEPING_ACTIONS = frozenset({
 
 
 def _echo_after_build(project, render_path: str) -> None:
-    """The "you just made a film — here is how to look at it" line.
+    """Show how to inspect the build artifact without claiming Picture Lock.
 
     Presentation only: every command named here already exists. The point is
     WHEN they are offered. `manju build` used to end at a path, so the owner
@@ -1608,7 +1623,27 @@ def _echo_after_build(project, render_path: str) -> None:
     import re as _re
 
     rel = str(render_path)
-    lines = [f"看一眼 look: manju gui(成片页)· 抽帧 manju frames {rel}"]
+    lines = [f"查看构建产物 look: manju gui(成片页)· 抽帧 manju frames {rel}"]
+    try:
+        from .build.readiness import media_eligibility
+
+        view = media_eligibility(project)
+        counts = view.get("counts") or {}
+        lines.append(
+            "媒体资格: "
+            + ", ".join(
+                f"{state}={int(counts.get(state, 0))}"
+                for state in ("proxy-only", "candidate", "final-eligible")
+            )
+            + " · Picture Lock "
+            + ("eligible" if view.get("picture_lock_eligible") else "not eligible")
+            + "(build ok 只说明执行成功)"
+        )
+    except Exception:
+        lines.append(
+            "媒体资格: unavailable · build ok 只说明执行成功,"
+            "不代表 final-eligible 或 Picture Lock(manju production status)"
+        )
 
     # Previous final, if any: renders/final/final_vN.mp4 — offer the diff only
     # when N-1 actually exists on disk.
@@ -1855,6 +1890,17 @@ def _print_production_readiness(report: dict) -> None:
     )
     if report.get("stage") == "LEGACY":
         typer.echo("  legacy project: narrative readiness is not enabled")
+        eligibility = report.get("eligibility") or {}
+        counts = eligibility.get("counts") or {}
+        typer.echo(
+            "  media eligibility: "
+            + ", ".join(
+                f"{state}={int(counts.get(state, 0))}"
+                for state in ("proxy-only", "candidate", "final-eligible")
+            )
+            + " · Picture Lock "
+            + ("eligible" if eligibility.get("picture_lock_eligible") else "not eligible")
+        )
         return
     for gate in report.get("gates") or []:
         mark = "PASS" if gate.get("state") == "pass" else "FAIL"
@@ -1870,6 +1916,17 @@ def _print_production_readiness(report: dict) -> None:
     typer.echo(
         "  paid video allowed: "
         + ("all" if allowed == "all" else ", ".join(allowed or []) or "none")
+    )
+    eligibility = report.get("eligibility") or {}
+    counts = eligibility.get("counts") or {}
+    typer.echo(
+        "  media eligibility: "
+        + ", ".join(
+            f"{state}={int(counts.get(state, 0))}"
+            for state in ("proxy-only", "candidate", "final-eligible")
+        )
+        + " · Picture Lock "
+        + ("eligible" if eligibility.get("picture_lock_eligible") else "not eligible")
     )
     if report.get("next_action"):
         typer.echo(f"  next: {report['next_action']}")
@@ -2311,9 +2368,12 @@ _MINI_PLAYBOOK = (
     "按照 Manju 操作手册工作(内置精简版):\n"
     "1. 开工先跑 manju status --json,读 events.jsonl 尾部与 project.yaml 的 mode/ask_before。\n"
     "2. 每次编辑后必跑 manju check;check 不过不许 build。\n"
-    "3. 一键构建:manju build(补缺→时间线→渲染→QC),再按需 manju export。\n"
-    "4. 花钱/长耗时(视频生成、final render)按 ask_before 先询问,问前先 manju build --dry-run。\n"
-    "5. 禁区:不调 unlock、不动 media/imports、不覆盖 final;想改锁定内容写 proposals/。"
+    "3. 先读 SceneContract/ShotContract；用 manju production status 查看 "
+    "proxy-only/candidate/final-eligible 与 Picture Lock 资格。\n"
+    "4. 一键构建:manju build(补缺→时间线→渲染→QC),再按需 manju export；"
+    "build ok 只说明执行成功，不代表 Picture Lock。\n"
+    "5. 花钱/长耗时(视频生成、final render)按 ask_before 先询问,问前先 manju build --dry-run。\n"
+    "6. 禁区:不调 unlock、不动 media/imports、不覆盖 final;想改锁定内容写 proposals/。"
 )
 
 

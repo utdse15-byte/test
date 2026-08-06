@@ -2,7 +2,7 @@
 
 Round V, goal item 2's GUI half (§2 of REPORTS/ROUND-V-REFERENCES-1.md). The
 CLI half is ``manju create`` + :mod:`manju.build.funnel`; this is its human
-face: the staged funnel (立意→梗概→节拍→剧本→分镜→生成计划→生成) rendered as a
+face: the staged funnel (story→contracts→proof→candidate build) rendered as a
 *workspace*, not a protocol. The market's idea→storyboard funnels (LTX / HeyGen
 / 即创…) all propose STRUCTURE from an idea, then let a human decide at a few
 gates (§2c/§2d); Manju's stance (§0) is that the LLM lives in the driving agent,
@@ -84,8 +84,13 @@ def create_payload(project: Any) -> dict[str, Any]:
     """The funnel status the page + its refresh render from (the CLI's
     ``manju create --json`` shape, verbatim from :func:`funnel_status`)."""
     from ..build.funnel import funnel_status
+    from ..build.readiness import production_readiness
 
-    return funnel_status(project)
+    payload = funnel_status(project)
+    readiness = production_readiness(project)
+    payload["production"] = readiness
+    payload["eligibility"] = readiness.get("eligibility") or {}
+    return payload
 
 
 def skill_payload(project: Any, skill_id: str) -> dict[str, Any]:
@@ -266,7 +271,7 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
 
 
 def _plan_workbench(project: Any, entry: dict[str, Any]) -> str:
-    """The 生成计划 stage: READ the director's proposals and link to /director.
+    """The Animatic/Proof plan stage: read proposals and link to /director.
     Approve (确认/执行) happens on the director page — one approval surface, so
     this panel never renders a confirm/execute button (§2d)."""
     try:
@@ -294,7 +299,7 @@ def _plan_workbench(project: Any, entry: dict[str, Any]) -> str:
                 )
             inner = '<ul class="cw-props">' + "".join(rows) + "</ul>"
     return (
-        '<section class="cw-special panel"><h2>生成计划 Plan '
+        '<section class="cw-special panel"><h2>Animatic / Proof Plan '
         '<span class="muted">· approve-before-spend 闸门</span></h2>'
         f'<p class="muted">{_e(entry["evidence"])}</p>'
         + inner
@@ -324,11 +329,12 @@ def _special_workbench(project: Any, current: str, status: dict[str, Any]) -> st
     if final is not None:
         rel = project.relpath(final)
         link += (f'<a class="btn ghost" href="/media/{quote(rel, safe="/")}">'
-                 '看最新成片 →</a>')
+                 '看最新构建产物 →</a>')
     return (
-        '<section class="cw-special panel"><h2>生成 Produce</h2>'
+        '<section class="cw-special panel"><h2>候选构建 Candidate build</h2>'
         f'<p class="muted">{_e(entry["evidence"])}</p>'
-        '<p>分镜已就绪 —— 回工作台运行 build 出片。</p>'
+        '<p>合同与 Proof 计划已就绪 —— 回工作台运行 build 生成可审片 candidate。'
+        'build ok 不会自动变成 final-eligible 或 Picture Lock。</p>'
         f'<div class="cw-btnrow">{link}</div></section>'
     )
 
@@ -339,11 +345,35 @@ def _complete_workbench(project: Any) -> str:
     if final is not None:
         rel = project.relpath(final)
         link += (f'<a class="btn ghost" href="/media/{quote(rel, safe="/")}">'
-                 '看最新成片 →</a>')
+                 '看最新构建产物 →</a>')
     return (
-        '<section class="cw-special panel"><h2>全部完成 ✅</h2>'
-        '<p>创作漏斗已走完 —— 立意到成片每一步都落地了。可回工作台继续打磨或再出一版。</p>'
+        '<section class="cw-special panel"><h2>候选构建阶段完成</h2>'
+        '<p>创作源与构建产物已落地。候选素材仍需媒体评审、人工批准和 Picture Lock，'
+        '可回工作台继续打磨或再出一版。</p>'
         f'<div class="cw-btnrow">{link}</div></section>'
+    )
+
+
+def _eligibility_panel(status: dict[str, Any]) -> str:
+    """Render the readiness vocabulary once for the create workbench."""
+    production = status.get("production") or {}
+    eligibility = status.get("eligibility") or {}
+    counts = eligibility.get("counts") or {}
+    stage = production.get("stage", "UNAVAILABLE")
+    lock = "eligible" if eligibility.get("picture_lock_eligible") else "not eligible"
+    return (
+        '<section class="cw-eligibility panel">'
+        '<div class="cw-eligibility-head"><h2>生产资格 / media eligibility</h2>'
+        f'<span class="muted">stage {_e(stage)} · Picture Lock {_e(lock)}</span></div>'
+        '<div class="cw-eligibility-grid">'
+        + "".join(
+            f'<div class="cw-eligibility-item"><b>{_e(state)}</b>'
+            f'<span>{int(counts.get(state, 0))}</span></div>'
+            for state in ("proxy-only", "candidate", "final-eligible")
+        )
+        + '</div><p class="muted">build ok 只证明执行链成功；proxy-only 是系统体检代理，'
+          'candidate 仍待评审，只有 final-eligible 才能进入 Picture Lock。</p>'
+        '</section>'
     )
 
 
@@ -352,7 +382,7 @@ def _complete_workbench(project: Any) -> str:
 
 def render_create(project: Any, token: str) -> str:
     head = ('<div class="page-h"><h1>创作 Create</h1>'
-            '<span class="muted">把一句话想法一步步推到可以按「生成」的分镜 · '
+            '<span class="muted">把故事意图推进到合同、Proof 和可审片 candidate · '
             'AI 起草、你定夺 · 每步一个真相文件(引擎从不代写)</span></div>')
 
     try:
@@ -369,11 +399,11 @@ def render_create(project: Any, token: str) -> str:
     intro = ""
     if status.get("done") == 0 and current == "brief":
         intro = (
-            '<div class="cw-intro panel"><h2>从这里开始 · 立意</h2>'
-            '<p>创作台把一个想法一步步推到可以按「生成」的分镜:'
-            '<b>立意 → 梗概 → 节拍 → 剧本 → 分镜 → 生成计划 → 生成</b>。'
+            '<div class="cw-intro panel"><h2>从这里开始 · 故事与结尾</h2>'
+            '<p>创作台把故事意图推进到合同、Animatic、Proof 和候选构建:'
+            '<b>故事与结尾 → SceneContract/ShotContract → Animatic → Proof → 候选构建</b>。'
             '每一步你写一个真相文件,AI 可起草、你来定夺。'
-            '先在下面写下你的<b>一句话立意</b>:谁、在哪、发生什么、为什么抓人。</p></div>'
+            '先在下面写下你的<b>故事与结尾</b>:人物处境、不可逆变化和离开状态。</p></div>'
         )
 
     rail = ('<div class="cw-railwrap panel"><div class="cw-rail">'
@@ -408,7 +438,7 @@ def render_create(project: Any, token: str) -> str:
         '</div></div>'
     )
 
-    body = (head + intro + rail
+    body = (head + intro + _eligibility_panel(status) + rail
             + '<div id="cw-workbench">' + "".join(editors) + special + '</div>'
             + modal)
     return _shell("创作", token, "/create", body)
@@ -431,6 +461,14 @@ _CREATE_CSS = """
 
 .cw-intro { border-left: 3px solid var(--accent); }
 .cw-intro h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.cw-eligibility { margin-top: 1rem; border-left: 3px solid var(--warn, var(--accent)); }
+.cw-eligibility-head { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; flex-wrap: wrap; }
+.cw-eligibility h2 { margin: 0; font-size: 1rem; }
+.cw-eligibility-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .6rem 0 .45rem; }
+.cw-eligibility-item { display: flex; justify-content: space-between; gap: .5rem; padding: .45rem .6rem; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: .78rem; }
+.cw-eligibility-item span { color: var(--accent); font-weight: 700; }
+.cw-eligibility p { margin: 0; font-size: .78rem; line-height: 1.4; }
+@media (max-width: 680px) { .cw-eligibility-grid { grid-template-columns: 1fr; } }
 
 /* -------------------------------------------------------------- rail (A) */
 .cw-railwrap { overflow-x: auto; }

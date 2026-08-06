@@ -29,7 +29,7 @@ from typing import Iterator
 
 WORKFLOWS: dict[str, dict] = {
     "new-project": {
-        "title": "从零到获批 Animatic / new project → approved animatic",
+        "title": "从故事到合同与获批 Animatic / story → contracts → approved animatic",
         "when": "你有想法或素材,但还没有 .manju 项目",
         "steps": [
             ("manju new <名字> --preset vertical_ai_video",
@@ -38,8 +38,9 @@ WORKFLOWS: dict[str, dict] = {
              "kits。然后 cd <名字>.manju 进入项目 — 后面的每条命令都在项目里运行"
              "(round-2 audit: the one unwritten step every cold start tripped on)"),
             ("manju create",
-             "show the staged authoring checklist through Storyboard; production "
-             "continues through the Animatic and proof gates below"),
+             "show the staged authoring checklist: story and ending → "
+             "SceneContract/ShotContract → Animatic/Proof → candidate build; "
+             "production continues through the gates below"),
             ("manju import <files...>",
              "register your own footage/audio into read-only media/imports/ — "
              "the engine never touches originals"),
@@ -49,8 +50,10 @@ WORKFLOWS: dict[str, dict] = {
              "compile the full shot order, temporary dialogue/sound, durations and "
              "keyframes into a spend-free continuous animatic"),
             ("manju production status",
-             "verify that scene/shot contracts and the current animatic pass before "
-             "asking for content approval"),
+             "verify that SceneContract/ShotContract and the current Animatic pass "
+             "before asking for content approval; status also distinguishes "
+             "proxy-only, candidate, and final-eligible media and never equates "
+             "build ok with Picture Lock"),
             ("manju production approve-animatic <animatic> --reason <why>",
              "human-only approval of the current animatic's exact path, bytes and "
              "content key; --yes cannot replace it"),
@@ -92,7 +95,8 @@ WORKFLOWS: dict[str, dict] = {
         "steps": [
             ("manju production status",
              "read the current AUTHORING / PROOF_SHOT_READY / PROOF_SCENE_READY / "
-             "BULK_READY stage and the paid shot scope it permits"),
+             "BULK_READY stage and the paid shot scope it permits; selected media "
+             "remains proxy-only, candidate, or final-eligible until evidence says otherwise"),
             ("manju build --dry-run",
              "see the exact stage-limited generation plan, readiness gates and cost "
              "before any provider transport"),
@@ -143,7 +147,7 @@ WORKFLOWS: dict[str, dict] = {
                      "manju failures"],
     },
     "preview-final": {
-        "title": "预演阶梯 → 正式成片 / preview ladder → final",
+        "title": "预演阶梯 → candidate → Picture Lock / preview ladder",
         "when": "想在花大钱生成/渲染之前,先便宜地听到、看到片子的样子",
         "steps": [
             ("manju build --target audition",
@@ -164,7 +168,9 @@ WORKFLOWS: dict[str, dict] = {
              "read-only: why the next build will do what it will do, with "
              "est_cost totals"),
             ("manju build --target final",
-             "the real render; content-key idempotent — --force re-renders regardless"),
+             "deterministic render to the final-path artifact; it remains proxy-only "
+             "or candidate until production status says final-eligible, and build ok "
+             "never performs Picture Lock"),
             ("manju package",
              "cut cover.png (+ teaser.mp4) out of the freshly built final"),
         ],
@@ -199,7 +205,7 @@ WORKFLOWS: dict[str, dict] = {
     },
     "deliver": {
         "title": "交付(清单→平台交接→符合性)/ deliver",
-        "when": "成片满意了,要打包交给平台、剪辑软件或别人",
+        "when": "目标媒体已 final-eligible 且人完成 Picture Lock,要打包交付",
         "steps": [
             ("manju exports",
              "导出中心: every deliverable's freshness at a glance; --json adds the "

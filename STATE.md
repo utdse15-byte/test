@@ -30,7 +30,7 @@ number is worse than an honest blank.
 - Windows ffmpeg cancellation integration (real child-process kill on Windows).
 
 ## Current structural work
-- Narrative closed-loop refactor — S0 and Phases 1–5 complete locally: stale
+- Narrative closed-loop refactor — S0, Phases 1–6 and S1 are complete locally: stale
   provider formulas quarantined; SceneContract + nested ShotContract landed;
   one pure intent projection now drives current prompt, picture spec v3,
   expectations v2, and director view while legacy versions remain readable.
@@ -43,7 +43,13 @@ number is worse than an honest blank.
   ordered Proof Scene digest approval, and staged paid-video admission without a
   second truth store. Phase S1 now rewrites the external AI-director Skills,
   adds scene-design, aligns review/continuation/repair/audio to observed media,
-  and adds ten structured eval cases; later phases remain open.
+  and adds ten structured eval cases. Phase 6 now gives docs, workflow help,
+  status, skill/auto surfaces, GUI and the system-check Demo one derived
+  `proxy-only` / `candidate` / `final-eligible` vocabulary; build success never
+  implies Picture Lock, and parser-valid `.yaml.example` contracts do not opt
+  legacy projects into narrative gates. Phase 7A code/path rehearsal is next;
+  real provider Dogfood (7B), evidence-driven S2 and cross-platform Phase 8
+  remain open.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
 - Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,

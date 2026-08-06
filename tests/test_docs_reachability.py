@@ -111,12 +111,11 @@ def test_the_index_rule_is_stated_where_a_reader_will_hit_it():
 
 
 def test_the_zero_cost_demo_is_documented_where_a_beginner_looks():
-    """`manju new --demo` builds a complete 12-shot film for free — it was
-    shipped and documented NOWHERE (0 hits across README/docs/CLAUDE.md)."""
+    """`manju new --demo` is a free pipeline diagnostic, never narrative proof."""
     assert "--demo" in README
     # The tutorial is a SECTION, not a passing mention — anchor on the heading
     # so a stray `--demo` elsewhere can never satisfy this pin.
-    heads = [h for h in re.findall(r"^## .*$", README, re.M) if "第一部片" in h]
+    heads = [h for h in re.findall(r"^## .*$", README, re.M) if "系统体检样片" in h]
     assert heads, "no tutorial section heading found in README"
     start = README.index(heads[0])
     section = README[start:README.index("\n## ", start + 1)]
@@ -125,6 +124,9 @@ def test_the_zero_cost_demo_is_documented_where_a_beginner_looks():
     assert "renders/final" in section         # what the reader should find
     assert "零" in section                     # …and that it costs nothing
     assert "manju status" in section          # …and where to go next
+    assert "pipeline regression sample" in section
+    assert "proxy-only" in section
+    assert "不证明" in section
 
 
 def test_the_quickstart_selects_a_file_it_actually_imported():

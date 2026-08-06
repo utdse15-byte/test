@@ -61,6 +61,7 @@ manju production status --json
 8. 不 unlock、不覆盖 `media/imports/`、`media/gen/`、`renders/final/`，不把 API key 写入项目；锁字段走 `manju director propose`。
 9. 花钱或长耗时动作先 `manju build --dry-run`，命中 `ask_before` 必须停下等 human confirm。paid-video 还必须按 `AUTHORING → PROOF_SHOT_READY → PROOF_SCENE_READY → BULK_READY` 通过 `manju production status`。
 10. Animatic 是节奏和可播放性证明，不是最终画面批准；Proof Shot/Proof Scene 必须绑定当前源、媒体字节、合同和人类批准。没有真实 provider、素材或批准不得宣称真实生产完成。
+11. 媒体资格只用三词：`proxy-only` 是系统代理且永不进入 Picture Lock，`candidate` 是仍待当前性/人工批准/assurance 的登记视频，`final-eligible` 才有资格进入人工锁片评审；`build ok` 不会自动升级资格。
 
 ## 2. 合同与媒体观察
 

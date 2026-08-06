@@ -387,6 +387,44 @@ def project_status(project: Project, *, statuses: Any = None,
             + ", ".join(f"{k}={v}" for k, v in locale_finals.items())
         )
 
+    # Production readiness owns both narrative gates and selected-media
+    # eligibility. Status only consumes that derived view; it never persists a
+    # second approval/readiness truth store. Keep a degraded row rather than
+    # making the normal takeover command fail because an advisory projection is
+    # temporarily unavailable.
+    try:
+        from .readiness import production_readiness
+
+        production = production_readiness(project)
+    except Exception as exc:
+        production = {
+            "stage": "UNAVAILABLE",
+            "state": "UNAVAILABLE",
+            "opted_in": bool(getattr(project, "narrative_opted_in", False)),
+            "eligibility": {
+                "shots": [],
+                "counts": {
+                    "proxy-only": 0,
+                    "candidate": 0,
+                    "final-eligible": 0,
+                    "none": 0,
+                },
+                "picture_lock_eligible": False,
+                "picture_lock_reasons": [f"production readiness unavailable: {exc}"],
+            },
+        }
+    eligibility = production["eligibility"]
+    proxy_count = int(eligibility.get("counts", {}).get("proxy-only", 0))
+    candidate_count = int(eligibility.get("counts", {}).get("candidate", 0))
+    if final is not None and proxy_count:
+        proxy_note = (
+            f"{proxy_count} selected take(s) are proxy-only; build output is a preview, "
+            "not Picture Lock"
+        )
+        latest_final_note = (
+            f"{latest_final_note}; {proxy_note}" if latest_final_note else proxy_note
+        )
+
     qc_summary = None
     qc_path = project.reports_dir / "qc.json"
     if qc_path.exists():
@@ -484,6 +522,27 @@ def project_status(project: Project, *, statuses: Any = None,
             next_step = "完成 ✅"
             next_step_key = "done"
 
+    # A local fallback can render a technically complete file, but its selected
+    # proxy media never becomes narrative proof or Picture Lock. This is an
+    # honest status distinction, not a new build gate for legacy projects.
+    if final is not None and proxy_count and next_step_key == "done":
+        next_step = (
+            "构建产物可预览,但含 proxy-only 镜头；它不是 Picture Lock。"
+            "替换为非代理视频、人工批准并接受 assurance 后再评审。"
+        )
+        next_step_key = "proxy_only"
+    elif (
+        final is not None
+        and production.get("opted_in")
+        and not eligibility.get("picture_lock_eligible")
+        and next_step_key == "done"
+    ):
+        next_step = (
+            f"当前有 {candidate_count} 个 candidate；构建成功不等于 Picture Lock。"
+            "完成当前媒体的人工批准和 assurance，再评审锁定资格。"
+        )
+        next_step_key = "picture_lock_pending"
+
     # Preset label + advisory qc_focus (P3): purely a record the preset wrote
     # at `manju new` time; surfaced here so a takeover sees what to watch for.
     qc_focus = config.model_dump().get("qc_focus") or []
@@ -515,6 +574,7 @@ def project_status(project: Project, *, statuses: Any = None,
         "run_log": run_log_info,
         "budget_limit": config.budget.limit,
         "recent_events": tail_events(project.root, 5),
+        "production": production,
         "next_step": _qualify_done(
             next_step, next_step_key, todo_items := next_actions(
                 project, statuses=statuses, voices=voices)),

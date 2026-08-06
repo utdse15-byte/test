@@ -327,7 +327,7 @@ def test_produce_not_done_when_final_is_stale(tmp_project, add_shot):
     status = funnel.funnel_status(p)
     produce_stage = next(s for s in status["stages"] if s["id"] == "produce")
     assert produce_stage["state"] == "current"  # no longer "done"
-    assert "成片已过期" in produce_stage["evidence"]
+    assert "构建产物已过期" in produce_stage["evidence"]
     assert status["complete"] is False
 
 
@@ -381,14 +381,27 @@ def test_create_checklist_json(in_project):
     data = json.loads(result.output)
     assert data["current"] == "brief"
     assert data["total"] == len(funnel.STAGES)
-    assert data["stages"][0]["cn"] == "立意"
+    assert data["stages"][0]["cn"] == "故事与结尾"
 
 
 def test_create_checklist_human(in_project):
     result = runner.invoke(app, ["create"])
     assert result.exit_code == 0, result.output
     assert "创作漏斗" in result.output
-    assert "立意" in result.output and "下一步" in result.output
+    assert "故事与结尾" in result.output and "下一步" in result.output
+
+
+def test_funnel_uses_narrative_neutral_contract_and_proof_terms(tmp_project):
+    labels = [stage.cn for stage in funnel.STAGES]
+    joined = " ".join(labels + [stage.next_action for stage in funnel.STAGES])
+    assert "SceneContract" in joined
+    assert "ShotContract" in joined
+    assert "Animatic" in joined
+    assert "Proof Shot" in joined
+    assert "Proof Scene" in joined
+    assert "candidate" in joined
+    assert "Hook→Value→Payoff→CTA" not in joined
+    assert "Hook(0-3s" not in funnel.SCAFFOLDS["beats"][1]
 
 
 def test_create_stage_scaffold_json(in_project):

@@ -1286,7 +1286,9 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "funnel_status",
         "description": "创作漏斗状态 / creation-funnel status: the staged workflow as data — "
-        "立意→梗概→节拍→剧本→分镜→生成计划→生成. Per-stage {id, cn(中文名), "
+        "故事与结尾→SceneContract/ShotContract→Animatic/Proof→候选构建. "
+        "A successful build remains a candidate until media is final-eligible; "
+        "proxy-only never implies Picture Lock. Per-stage {id, cn(中文名), "
         "state(done|current|todo), artifact, evidence, skill, "
         "next_action}; the first not-done stage is `current`. Read-only — "
         "detects progress from files on disk, scaffolds nothing, spends "

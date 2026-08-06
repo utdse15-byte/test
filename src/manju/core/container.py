@@ -361,7 +361,7 @@ class Project:
         # so a takeover always finds the same three files in the same order
         story_templates = {
             "brief.md": "# 一句话创意\n\n<!-- 一句话说清:谁、在哪、发生什么、为什么抓人 -->\n",
-            "outline.md": "# 大纲\n\n<!-- 三幕/起承转合;每行一个节拍,后续一节拍≈一镜头 -->\n",
+            "outline.md": "# 大纲\n\n<!-- 写清故事与结尾、场次变化和承接;节拍不等于镜头 -->\n",
             "script.md": "# 剧本\n\n<!-- 分场与对白;对白会成为 shots/*.yaml 的 dialogue.text -->\n",
         }
         for fname, template in story_templates.items():
@@ -369,6 +369,75 @@ class Project:
             if not spath.exists():
                 # LF on every platform — same reason as the scaffolds above.
                 atomic_write_text(spath, template)
+        # Contract examples teach the real authoring models without opting a
+        # fresh project into narrative readiness. The ``.yaml.example`` suffix
+        # is intentionally outside ``narrative_opted_in``'s ``*.yaml`` glob;
+        # copying either file to its canonical name is the explicit opt-in.
+        atomic_write_text(
+            root / "story" / "scenes" / "SCENE_EXAMPLE.yaml.example",
+            """format: manju.scene-contract/v1
+id: SCENE_EXAMPLE
+title: Example scene contract
+location_ref: example_location
+time: unspecified
+purpose: Show how a scene carries a state change
+entry_state:
+  protagonist:
+    knowledge: []
+    intention: []
+    emotion_residue: []
+    body: []
+    props: {}
+irreversible_change:
+  - protagonist makes a visible decision
+exit_state:
+  protagonist:
+    knowledge: []
+    intention: [continue]
+    emotion_residue: []
+    body: []
+    props: {}
+carry_forward:
+  - continue from the observed end state
+proof_scene: false
+""",
+        )
+        atomic_write_text(
+            root / "shots" / "SHOT_EXAMPLE.yaml.example",
+            """id: SHOT_EXAMPLE
+scene_id: SCENE_EXAMPLE
+duration: 2.0
+action:
+  main: protagonist makes the visible decision
+  emotion: restrained
+contract:
+  purpose: Make the scene change legible
+  viewer_must_perceive: The decision is visible before the cut
+  opening:
+    - start from the current observed state
+  endpoint:
+    - end on the decision and hold long enough to read it
+  performance:
+    required: [restrained]
+    avoid: [unmotivated flourish]
+  physics:
+    required: []
+    avoid: []
+  sound:
+    cue: one clear diegetic cue
+  control:
+    production_method: manual
+    motion_source: manual
+    primary_uncertainty: performer timing
+  risk:
+    primary: endpoint may be unclear
+    fallback_staging: hold on a still frame for review
+  acceptance:
+    action_required: true
+    min_end_hold_ms: 250
+  proof_shot: false
+""",
+        )
         atomic_write_text(root / ".gitignore", GITIGNORE)
         (root / "events.jsonl").touch()
 

@@ -69,6 +69,14 @@ def test_it_offers_a_way_to_see_the_film(project, capsys) -> None:
     assert "manju frames" in out
 
 
+def test_build_output_never_claims_picture_lock_from_render_success(project, capsys) -> None:
+    _finals(project, 1)
+    out = _out(project, "renders/final/final_v1.mp4", capsys)
+    assert "proxy-only" in out and "candidate" in out and "final-eligible" in out
+    assert "build ok 只说明执行成功" in out
+    assert "Picture Lock" in out
+
+
 def test_the_frames_command_names_the_file_just_rendered(project, capsys) -> None:
     """A generic `manju frames <media>` would make the owner go find the path."""
     _finals(project, 2)

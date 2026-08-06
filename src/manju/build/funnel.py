@@ -1,4 +1,4 @@
-"""The creation funnel — 立意→梗概→节拍→剧本→分镜→生成计划→生成 as STAGED DATA.
+"""The creation funnel — story→contracts→proof→candidate build as STAGED DATA.
 
 Round V, goal item 2's engine half (§2 of REPORTS/ROUND-V-REFERENCES-1.md). The
 market's idea→storyboard funnels (LTX / HeyGen / 即创…) all propose STRUCTURE
@@ -11,13 +11,13 @@ next action — plus the three approve-before-spend gates the field validates
 
 The seven canonical stages (my contract):
 
-1. brief      立意       story/brief.md          一页纸立意/受众/时长/平台
-2. synopsis   梗概       story/synopsis.md       立意展开成一段梗概
-3. beats      节拍       story/beats.md          Hook→Value→Payoff→CTA,≥3 节拍
-4. script     剧本       story/script.md         分场与对白(→ shots.dialogue.text)
-5. storyboard 分镜       shots/*.yaml            镜头存在且 manju check 过校验
-6. plan       生成计划   proposals + final       approve-before-spend 闸门
-7. produce    生成       renders/final/final_v*  最新成片存在
+1. brief      故事与结尾   story/brief.md          故事意图、结尾和观众
+2. synopsis   场次梗概     story/synopsis.md       场次进入/变化/离开
+3. beats      变化节拍     story/beats.md          叙事变化与停顿,≥3 节拍
+4. script     剧本与声音   story/script.md         分场、对白与 TEMP_AUDIO_FOR_ANIMATIC
+5. storyboard 场次/镜头合同 shots/*.yaml          SceneContract/ShotContract + check
+6. plan       Animatic/Proof计划 proposals + final  Animatic、Proof Shot、Proof Scene 闸门
+7. produce    候选构建     renders/final/final_v*  候选产物;需另行取得 final-eligible
 
 `funnel_status(project)` walks these in order: the FIRST stage whose done-
 predicate is False is ``current``; everything before it is ``done``, everything
@@ -140,7 +140,7 @@ def _beats_done(project: Project) -> tuple[bool, str]:
     if n > _MIN_CONTENT and beats >= _MIN_BEATS:
         return True, f"story/beats.md 已写 {beats} 个节拍(约 {n} 字)"
     if beats < _MIN_BEATS:
-        return False, f"story/beats.md 只有 {beats} 个节拍(需 ≥{_MIN_BEATS}:Hook→Value→Payoff→CTA)"
+        return False, f"story/beats.md 只有 {beats} 个节拍(需 ≥{_MIN_BEATS} 个叙事变化)"
     return False, f"story/beats.md 正文过短({n} 字,需 >{_MIN_CONTENT})"
 
 
@@ -180,7 +180,10 @@ def _plan_done(project: Project) -> tuple[bool, str]:
     here (a completed plan does not need to remain "current" forever)."""
     final = project.newest_final_path()
     if final is not None:
-        return True, f"已有成片 {project.relpath(final)}(生成计划已落地)"
+        return True, (
+            f"已有候选构建产物 {project.relpath(final)}"
+            "(生成计划已落地;媒体资格另见 manju production status)"
+        )
     # C8: locale-only projects still have deliverable finals under locales/.
     locales_root = project.final_dir / "locales"
     if locales_root.is_dir():
@@ -193,7 +196,7 @@ def _plan_done(project: Project) -> tuple[bool, str]:
         ]
         if hits:
             return True, (
-                "尚无 base 成片,但已有 locale 成片: "
+                "尚无 base 构建产物,但已有 locale 构建产物: "
                 + ", ".join(hits)
                 + "(locale 交付已落地;base 仍可用 manju build)"
             )
@@ -231,11 +234,11 @@ def _produce_done(project: Project) -> tuple[bool, str]:
                     locale_hits.append(d.name)
         if locale_hits:
             return False, (
-                "还没有 base 成片(renders/final/),但已有 locale 成片: "
+                "还没有 base 候选构建产物(renders/final/),但已有 locale 构建产物: "
                 + ", ".join(locale_hits)
                 + " — funnel 按 base final 计;locale 交付用 manju build --lang"
             )
-        return False, "还没有成片:manju build 生成 final"
+        return False, "还没有候选构建产物:manju build 生成 final(candidate)"
     from .exportstatus import Freshness, deliverables
 
     try:
@@ -244,10 +247,13 @@ def _produce_done(project: Project) -> tuple[bool, str]:
     except Exception:
         final_row = None
     if final_row is None:  # the freshness engine itself errored — degrade honestly
-        return True, f"已有成片:{project.relpath(final)}"
+        return True, f"已有候选构建产物:{project.relpath(final)}(资格未推断)"
     if final_row.freshness is Freshness.UP_TO_DATE:
-        return True, f"已有成片:{project.relpath(final)}({final_row.basis})"
-    return False, f"成片已过期:{final_row.basis} — manju build 重新生成"
+        return True, (
+            f"已有当前 candidate:{project.relpath(final)}({final_row.basis});"
+            "build 成功不等于 final-eligible"
+        )
+    return False, f"成片构建产物已过期:{final_row.basis} — manju build 重新生成"
 
 
 # ------------------------------------------------------------------- stages
@@ -296,31 +302,32 @@ def _next_action_for(project: Project, stage: "Stage") -> str:
 
 STAGES: list[Stage] = [
     Stage(
-        id="brief", cn="立意", artifact="story/brief.md", skill="creation-funnel",
-        next_action="编辑 story/brief.md 写清一句话立意/给谁看/时长/平台"
+        id="brief", cn="故事与结尾", artifact="story/brief.md", skill="creation-funnel",
+        next_action="编辑 story/brief.md 写清故事与结尾(立意)、人物处境和观众"
                     "(manju create brief 生成模板),参考 manju skills show creation-funnel",
         predicate=_brief_done,
     ),
     Stage(
-        id="synopsis", cn="梗概", artifact="story/synopsis.md", skill="creation-funnel",
-        next_action="编辑 story/synopsis.md 把立意展开成一段梗概"
+        id="synopsis", cn="场次梗概", artifact="story/synopsis.md", skill="creation-funnel",
+        next_action="编辑 story/synopsis.md 写清每场的进入状态、不可逆变化和离开状态"
                     "(manju create synopsis 生成模板),参考 manju skills show creation-funnel",
         predicate=_synopsis_done,
     ),
     Stage(
-        id="beats", cn="节拍", artifact="story/beats.md", skill="narrative-pacing",
-        next_action="编辑 story/beats.md 按 Hook→Value→Payoff→CTA 写 ≥3 个节拍"
+        id="beats", cn="变化节拍", artifact="story/beats.md", skill="narrative-pacing",
+        next_action="编辑 story/beats.md 按信息、动作、反应、停顿和声音写 ≥3 个叙事节拍"
                     "(manju create beats 生成模板),参考 manju skills show narrative-pacing",
         predicate=_beats_done,
     ),
     Stage(
-        id="script", cn="剧本", artifact="story/script.md", skill="creation-funnel",
+        id="script", cn="剧本与声音", artifact="story/script.md", skill="creation-funnel",
         next_action="编辑 story/script.md 写分场与对白(对白会成为 shots 的 dialogue.text),"
+                    "并先用 TEMP_AUDIO_FOR_ANIMATIC 验证节奏,"
                     "参考 manju skills show creation-funnel",
         predicate=_script_done,
     ),
     Stage(
-        id="storyboard", cn="分镜", artifact="shots/", skill="creation-funnel",
+        id="storyboard", cn="场次/镜头合同", artifact="shots/", skill="creation-funnel",
         # The funnel's cliff, found by walking it: every stage before this one
         # was "edit ONE file, here is a template". This one said "补齐
         # shots/*.yaml" — plural, no template, and NO CLI command anywhere
@@ -335,7 +342,7 @@ STAGES: list[Stage] = [
         # NAMED 分镜工作台 (/storyboard) with no create affordance; the
         # 新建镜头 button lives on the workbench HOME's shots panel. Point at
         # the door that exists.
-        next_action="拆分镜(本步没有模板命令,三条路任选):① manju gui → 工作台"
+        next_action="建立 SceneContract 与 ShotContract(本步没有模板命令,三条路任选):① manju gui → 工作台"
                     "首页镜头面板「新建镜头」点着建;② 手写 shots/S001.yaml 并加进 "
                     "shots/index.yaml 的 order(字段见 manju schema);"
                     "③ 让 AI 导演按剧本代写。建完跑 manju check 过校验;"
@@ -344,13 +351,13 @@ STAGES: list[Stage] = [
         predicate=_storyboard_done,
     ),
     Stage(
-        id="plan", cn="生成计划", artifact="reports/proposals/", skill="creation-funnel",
+        id="plan", cn="Animatic/Proof 计划", artifact="reports/proposals/", skill="creation-funnel",
         # Third instance of the same defect, found the same way: `manju
         # director propose` on its own answers "pass exactly one of
         # --from-file / --actions-json" and exits 1. And the action shape is
         # not guessable — `{"op": "build"}` is refused with "unknown action
         # type None". So give the line that actually runs.
-        next_action='生成前先过审(approve-before-spend 闸门):'
+        next_action='先生成并人工批准 Animatic,再过 Proof Shot/Proof Scene 闸门(approve-before-spend):'
                     'manju director propose --actions-json \'[{"type":"build",'
                     '"target":"final"}]\' --why "说明为什么" '
                     '→ manju director confirm <id> → manju director run <id>;'
@@ -358,8 +365,8 @@ STAGES: list[Stage] = [
         predicate=_plan_done,
     ),
     Stage(
-        id="produce", cn="生成", artifact="renders/final/", skill="creation-funnel",
-        next_action="manju build 生成成片 final",
+        id="produce", cn="候选构建", artifact="renders/final/", skill="creation-funnel",
+        next_action="manju build 生成可审片 candidate;成功 build 不等于 final-eligible 或 Picture Lock",
         predicate=_produce_done,
     ),
 ]
@@ -447,43 +454,38 @@ def funnel_current(project: Project) -> dict[str, Any] | None:
 _BRIEF_TEMPLATE = """\
 # 立意 / Brief
 
-<!-- 一页纸立意(参考 manju skills show creation-funnel)。填写下面四问,
+<!-- 故事与结尾(参考 manju skills show creation-funnel)。填写下面三问,
      删掉本注释、写下正文后本阶段即完成(正文 >80 字)。引擎从不代写内容(§2)。 -->
 
-## 一句话立意
-<!-- 谁、在哪、发生什么、为什么抓人?一句话说清。 -->
+## 故事与结尾
+<!-- 谁处于什么处境?故事如何结束?写清不可逆变化,不要先写镜头。 -->
 
-## 给谁看(受众)
-<!-- 目标观众是谁?他们的痛点 / 好奇点在哪? -->
+## 观众与观看条件(可选)
+<!-- 谁会看?他们需要理解什么?若有格式/时长要求,在这里写明来源。 -->
 
-## 为什么现在
-<!-- 这个选题此刻为什么值得做?蹭到什么热点 / 情绪? -->
-
-## 平台与时长
-<!-- 抖音 / 小红书 / YouTube Shorts…?竖屏还是横屏?目标时长(如 30s)? -->
+## 不能丢的事实
+<!-- 角色、地点、道具、声音或结尾必须保留的事实。 -->
 """
 
 _SYNOPSIS_TEMPLATE = """\
-# 梗概 / Synopsis
+# 场次梗概 / Synopsis
 
-<!-- 把立意展开成一段梗概(参考 manju skills show creation-funnel):
-     故事讲了什么?起承转合的主线是什么?情绪弧线怎么走?
+<!-- 把故事展开成场次变化(参考 manju skills show creation-funnel):
+     每场写进入状态、不可逆变化、离开状态和下一场要继承的事实。
      一段话(>80 字)即可,删掉本注释后写正文。 -->
 """
 
 _BEATS_TEMPLATE = """\
-# 节拍 / Beat Sheet
+# 变化节拍 / Beat Sheet
 
-<!-- 短视频四段式节奏(参考 manju skills show narrative-pacing):
-     Hook(0-3s 黄金三秒)→ Value(价值展示)→ Payoff(反转 / 高潮)→ CTA(引导)。
-     每个节拍写一行(以 - 或 1. 开头),≥3 行且有正文本阶段才算完成。
-     删掉下面的示例注释,写你自己的节拍: -->
+<!-- 按信息、动作、反应、停顿和声音组织叙事变化(参考
+     manju skills show narrative-pacing)。每个节拍写一行(以 - 或 1. 开头),
+     ≥3 行且有正文本阶段才算完成。删掉下面的示例注释,写你自己的节拍: -->
 
 <!-- 示例(请替换成真实节拍,注释内的行不计数):
-- Hook: 用最反常识的一句话 / 一个画面在 3 秒内抓住人
-- Value: 交付这条视频承诺的价值 / 信息
-- Payoff: 留到最后的反转或高潮
-- CTA: 引导点赞 / 关注 / 下一集
+- 进入: 角色带着尚未解决的问题进入场次
+- 变化: 一个动作让关系或知识状态不可逆地改变
+- 离开: 角色带着新的状态离开,下一场从这里承接
 -->
 """
 

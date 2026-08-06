@@ -9,6 +9,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 |---|---|
 | `PRODUCTION_READINESS_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #10 |
 | `SKILLS_S1_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #11 |
+| `WORKFLOW_HONESTY_2026-08-06.md` | NARRATIVE-CLOSED-LOOP #12 |
 
 Closed-era reports (the whole `AI_IDE_*` family below) live under
 `REPORTS/archive/` — moved 2026-07-17 (UX wave 2 item 13) so the active

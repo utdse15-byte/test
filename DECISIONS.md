@@ -88,6 +88,8 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #8` | 2026-08-05 | Provider authoring evidence is traceable, advisory, and excluded from machine profile identity | providers/manifest.py, manju providers show/check, manju doctor |
 | `NARRATIVE-CLOSED-LOOP #9` | 2026-08-05 | Creative experiment memory extends the exact media-bound verdict instead of creating another review log | qc/agent_review.py, qc/production.py, reports/qc_agent.jsonl |
 | `NARRATIVE-CLOSED-LOOP #10` | 2026-08-05 | Production readiness is derived; exact-byte Animatic and ordered Proof Scene approvals stage paid video before bulk | build/readiness.py, build/graph.py, reports/verifications.jsonl, manju production |
+| `NARRATIVE-CLOSED-LOOP #11` | 2026-08-05 | S1 craft Skills consume landed contracts and proof/readiness inputs instead of inventing another authoring system | skills/, SceneContract, ShotContract, ProviderManifest |
+| `NARRATIVE-CLOSED-LOOP #12` | 2026-08-06 | Media eligibility is one derived view; proxy build success never implies Picture Lock, and scaffold examples do not opt legacy projects in | build/readiness.py, build/status.py, manju status, manju production, story/scenes/*.yaml.example |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4121,3 +4123,14 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     layers, and temporary Animatic audio cannot impersonate final audio.
     Ten `manju.skill-eval/v1` cases cover the minimum directing decisions; an
     agent-structured review records 10/10 pass without becoming a build input.
+12. **Media eligibility is derived from current evidence, never inferred from
+    a successful build.** The readiness owner classifies selected media as
+    `proxy-only`, `candidate`, `final-eligible`, or absent; Picture Lock is
+    eligible only when every indexed shot is `final-eligible`. Caption-card and
+    comic proxies can prove deterministic pipeline plumbing but cannot qualify
+    for lock. `status`, `production status`, help workflows, the skill index,
+    auto fallback playbook, GUI creation surface, and post-build output consume
+    the same vocabulary. New projects include real-model `.yaml.example`
+    SceneContract/ShotContract files, whose suffix deliberately does not match
+    the `story/scenes/*.yaml` narrative opt-in rule, so legacy behavior remains
+    unchanged until an author explicitly copies a real scene contract into use.

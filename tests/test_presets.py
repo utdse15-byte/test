@@ -53,7 +53,7 @@ EXPECTED_NAMES = ["blank", "vertical_ai_video", "horizontal_ai_video"]
 # never silently redefines "start from nothing / today's generic scaffold".
 GENERIC_STORY = {
     "brief.md": "# 一句话创意\n\n<!-- 一句话说清:谁、在哪、发生什么、为什么抓人 -->\n",
-    "outline.md": "# 大纲\n\n<!-- 三幕/起承转合;每行一个节拍,后续一节拍≈一镜头 -->\n",
+    "outline.md": "# 大纲\n\n<!-- 写清故事与结尾、场次变化和承接;节拍不等于镜头 -->\n",
     "script.md": "# 剧本\n\n<!-- 分场与对白;对白会成为 shots/*.yaml 的 dialogue.text -->\n",
 }
 
