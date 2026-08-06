@@ -2023,13 +2023,15 @@ def redo(
                              help="approve ask_before-gated spend (§8.3)"),
     from_take: Optional[str] = typer.Option(
         None, "--from-take",
-        help="reuse a prior take's recipe (provider+params+seed; R12 Runway pattern)"),
+        help="reuse a prior take's whitelisted creative recipe (never runtime evidence)"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Force new takes (append-only; existing selection stands).
 
-    One shot: `manju redo S002`. --from-take <take> replays that take's recorded
-    recipe (provider + params, seed included); --provider/--seed still override.
+    One shot: `manju redo S002`. --from-take <take> replays only that take's
+    whitelisted creative recipe (seed and declared provider options); remote job
+    ids, compiled prompts, reference delivery and submission evidence are never
+    replayed. --provider/--seed still override.
 
     Batch: `--shots S001,S003`, `--all-stale`, `--all-missing`, `--all` (mutually
     exclusive with each other and with a positional shot id). The whole batch

@@ -650,3 +650,69 @@ Manju One v2
 AI 接管:Claude Code 读同样的文件、跑同样的命令
 互相接管:events + status,30 秒交接;锁与哈希保证互不践踏
 ```
+
+---
+
+## Appendix A: 2026-08-06 request and review consistency hardening
+
+This appendix tightens the existing v2.2 boundaries without changing the
+directory-as-project model, append-only media, human approval, or legacy read
+paths.
+
+### Effective provider request
+
+A provider attempt has one effective request. Engine-owned placeholders
+(`prompt`, duration, dimensions, fps, and shot id) cannot be supplied through
+free-form generation params; `seed` is an authored recipe field. Before prompt
+compilation, identity, admission, or body rendering, the engine resolves every
+authored logical reference binding, validates ownership by role plus canonical
+subject scope, and creates an immutable provider-specific
+`ReferenceDeliveryPlan`. A reference omitted by provider mode or capacity may
+remain advisory only when it owns no closed visual variable. Omitting an owner
+blocks before transport.
+
+The selected plan is the shared input to prompt projection, final rendered
+body, cost/admission facts, and request identity. Identity binds the rendered
+body digest and every selected logical binding while content-addressing physical
+blobs without absolute paths. Logical bindings are never removed by physical
+deduplication: one file may own different scoped variables and is uploaded once.
+Every fallback provider receives a fresh attempt request, including independent
+params, delivery plan, identity cache, and evidence attempt id.
+
+### Reference ownership and picture SPEC v4
+
+Ownership is unique by `(role, canonical subject scope)`. Global and scoped
+owners for the same role conflict; distinct scoped character or prop owners do
+not. Scoped character motion cannot suppress camera movement, and scoped pose
+cannot suppress other characters, props, or global opening facts. Prop Bible
+references participate in the same resolution, prompt, delivery, and staleness
+pipeline as character and location references.
+
+New takes use picture SPEC v4. In addition to established picture-bearing shot
+and Bible facts, v4 binds every authored logical reference declaration (kind,
+ref, tier, controls, ignore, canonical subject scope) and the SHA-256 of readable
+local reference bytes. Provider-specific delivery omission is request truth,
+not picture-spec truth, and stays outside SPEC v4. Takes recorded with v1/v2/v3
+always compare under their recorded version; no migration or bulk stale event is
+inferred merely because v4 exists.
+
+### Redo recipe boundary
+
+`redo --from-take` replays only explicitly whitelisted creative recipe keys,
+including seed and declared provider options. It never replays compiled prompts,
+reference delivery, bridge/submission evidence, remote job ids, request ids, or
+unknown legacy sidecar keys. A redo therefore always creates a new candidate; it
+cannot accidentally resume or poll its parent take's remote job.
+
+### One accepted review record
+
+Accepted assurance and transient observed opening/endpoint facts are selected
+from the same latest current-bound v2 verdict. An accepted verdict without
+`observed_states` remains accepted but supplies no endpoint; continuation and
+Proof Scene gates block instead of falling back to older evidence.
+
+Proof Scene approval binds the accepted packet id, a stable evidence digest
+with dynamic timestamps removed, canonical observed opening and endpoint, and a
+stable assurance projection. Equivalent re-review content does not invalidate
+approval; a changed accepted observation does. Stale or rejected evidence never
+enters that digest.

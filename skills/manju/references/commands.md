@@ -13,7 +13,7 @@
 | `manju appearances [--json]` | 出场表(只读):每个角色/场景/道具被哪些镜头引用(按序)+ 未引用的孤儿 + 镜头引用但 bible 缺失的条目 |
 | `manju tasks [--json] [-n 20]` | 运行账本(只读):最近生成任务的 provider/镜头/状态(succeeded/failed/moderation-rejected)/花费/失败原因 + 在飞任务 + 按 provider 与项目合计的花费 |
 | `manju build [--target proxy\|final\|exports\|qc] [--gen missing\|auto\|off] [--regen-stale] [--dry-run]` | 一键出片;`--dry-run` 先看清单和成本 |
-| `manju redo S002 [--candidates N] [--provider X] [--seed N]` | 显式重做某镜头 |
+| `manju redo S002 [--from-take TAKE] [--candidates N] [--provider X] [--seed N]` | 显式重做某镜头；`--from-take` 只重放白名单内的创作 recipe，不重放 remote job、compiled prompt、ref delivery 或 submission 证据 |
 | `manju select S002 take_03` | 选中某 take(或 `--file` 指人工素材) |
 | `manju lock / unlock <shot> <field>` | 上锁 / 解锁(**unlock 你不能调**) |
 | `manju qc / repair [--auto]` | 质检 / 修复(`--auto` 只做 auto-safe 项) |

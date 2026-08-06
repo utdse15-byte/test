@@ -86,8 +86,8 @@ def _install_pin_bible(project) -> None:
     )
 
 
-def test_spec_version_is_three():
-    assert SPEC_VERSION == 3
+def test_spec_version_is_four():
+    assert SPEC_VERSION == 4
 
 
 def test_one_authored_action_drives_prompt_and_expectation(tmp_project):

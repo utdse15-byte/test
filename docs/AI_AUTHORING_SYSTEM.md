@@ -83,7 +83,7 @@ risk.primary|fallback_staging / acceptance / proof_shot
 AUTHORING → PROOF_SHOT_READY → PROOF_SCENE_READY → BULK_READY
 ```
 
-Animatic approval 绑定当前路径和 exact bytes；Proof Shot/Proof Scene 绑定合同、媒体摘要、选择顺序、声音/voice/timing 和 human actor/reason。`--yes` 只确认花费，不能替代内容批准。没有真实 provider、素材和人类批准时只能报告未验证。
+Animatic approval 绑定当前路径和 exact bytes；Proof Shot/Proof Scene 绑定合同、媒体摘要、选择顺序、声音/voice/timing，以及同一条 accepted verdict 的 packet、稳定 evidence digest、canonical observed opening/endpoint 与 assurance projection。动态评审时间戳不进入 digest；endpoint/opening 改变会使旧 approval 失效，stale/rejected evidence 不会进入。`--yes` 只确认花费，不能替代内容批准。没有真实 provider、素材和人类批准时只能报告未验证。
 
 阶段含义：
 

@@ -29,6 +29,23 @@ SceneContract relevant state
 5. 读取 ProviderManifest 的 capabilities、limits、refs、cost、adapter。仅当 authoring evidence 状态为 current 且有来源时采用语法或负向指令；过期或缺失就标 unknown，不猜参考数量、时长、seed 或 negative 行为。
 6. 写出一次实验只验证什么，并把 primary variable 与 held constants 分开。
 
+## Provider-specific effective reference plan
+
+先验证全部 authored logical bindings，再读取当前 ProviderManifest 形成该
+provider 的 delivery subset。Prompt 只能依据 selected bindings 裁剪默认文字；
+被容量、budget 或 mode 省略的 binding 不再拥有变量。若被省略 binding 声明了
+identity、face、costume、prop、location/background、pose/motion、framing 或
+lighting 等 closed role，必须在 transport 前阻断，不能同时删掉 reference 和
+文字 fallback。ownership key 是 role + canonical subject scope；scoped character
+motion 不拥有 camera movement，scoped pose 不删除其他角色、道具或 environment
+的 opening facts。prop Bible reference 与 character/location reference 同样进入
+binding、Prompt 和 picture-spec 链路。
+
+同一物理文件可以有多条合法 logical binding；不得为省上传而丢 binding。
+Provider 最终 body、compiled Prompt、cost/admission 与 request identity 必须消费
+同一 delivery plan。`prompt_override` 仍逐字透传，但保留 placeholder 冲突仍会
+被 preflight 拒绝。
+
 ## 输出契约
 
 `manju prompt <shot> --json` 应能追溯以下结果：

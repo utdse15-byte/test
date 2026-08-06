@@ -23,8 +23,8 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju build [--target proxy\|final\|exports\|qc\|audition\|animatic] [--gen …] [--regen-stale] [--dry-run]` | M0/WP2/P5 | the one-command build; `audition` = audio-first and `animatic` = deterministic keyframe/temp-audio preview (neither performs paid video generation); dry-run always reports production readiness |
 | `manju production status [--json]` | P5/P6 | derive SceneContract/ShotContract, current+approved Animatic, Proof Shot, Proof Scene and bulk gates plus the one selected-media eligibility view (proxy-only/candidate/final-eligible); reports Picture Lock eligibility without saving a readiness truth file |
 | `manju production approve-animatic PATH --reason …` | P5 | human-only exact-path/exact-byte Animatic approval in the existing verification log; `--yes` and unattended callers cannot approve |
-| `manju production approve-proof-scene SCENE --reason …` | P5 | human-only approval of the current ordered proof-scene digest (takes, media hashes, trims, contracts, expectations and audio timing) |
-| `manju redo S002 [--candidates N] [--provider X] [--seed N]` | M0 | explicitly remake a shot |
+| `manju production approve-proof-scene SCENE --reason …` | P5 | human-only approval of the current ordered proof-scene digest (takes, media, trims, contracts, audio, and the exact accepted packet plus canonical observed opening/endpoint and stable assurance evidence) |
+| `manju redo S002 [--from-take TAKE] [--candidates N] [--provider X] [--seed N]` | M0 | explicitly remake a shot; `--from-take` replays only whitelisted creative recipe keys, never remote jobs, compiled prompts, delivery plans, submission evidence, or unknown legacy keys |
 | `manju select S002 take_03 [--file …]` | M0 | pick a take (or a manual clip) |
 | `manju lock / unlock <shot> <field>` | M0 | value-hash locks (unlock is interactive-only) |
 | `manju qc / repair [--auto] [--op retime\|extend\|trim\|croppad]` | M0/Q | quality checks / repairs — auto-safe plan or a targeted clip op (new take, append-only) |
@@ -52,7 +52,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju assets [show <id>]` | U | asset matrix over the bible: 角色/场景/道具/配音/风格 with aliases, relations, appearances |
 | `manju mentions [--check\|--apply]` | U | @角色/@场景 mentions in shot text: report or register into the spec (lock-respecting) |
 | `manju prompt <shot> [--json] / --check` | U | prompt workbench bundle: 4 prompts + refs lineage + provider trace + cost + single-action checks |
-| `manju refs shot <shot> [--json]` | U | reference resolution + per-provider budget allocation (selected/省略+impact) + cleanliness QC |
+| `manju refs shot <shot> [--json]` | U | authored logical bindings + provider delivery allocation (selected/省略+impact) + cleanliness QC; ownership is unique by role and canonical subject scope, while physical blobs may deduplicate without dropping bindings |
 | `manju repair --op voice --shot <id> [--dry-run]` | U | voice repair loop: keep footage, regen TTS, realign cues (manual cues untouched), remix via keys |
 | `manju board scene <id> [--grid 4\|9] / keyframes <shot> --n N [--scaffold]` | U | 4/9-panel storyboards; action → keyframe beats (writes only with --scaffold) |
 | `manju build --mode quality\|balanced\|speed` | U | quality modes: provider bias + retries + bounded parallel generation (gates preserved) |

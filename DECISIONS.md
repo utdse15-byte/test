@@ -91,6 +91,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #11` | 2026-08-05 | S1 craft Skills consume landed contracts and proof/readiness inputs instead of inventing another authoring system | skills/, SceneContract, ShotContract, ProviderManifest |
 | `NARRATIVE-CLOSED-LOOP #12` | 2026-08-06 | Media eligibility is one derived view; proxy build success never implies Picture Lock, and scaffold examples do not opt legacy projects in | build/readiness.py, build/status.py, manju status, manju production, story/scenes/*.yaml.example |
 | `NARRATIVE-CLOSED-LOOP #13` | 2026-08-06 | Synthetic no-paid rehearsal proves invalidation, experiment, observed-endpoint, rewrite and proof-gate code paths only; real narrative production remains unproven | tests/test_phase7a_narrative_rehearsal.py, REPORTS/NARRATIVE_REHEARSAL_2026-08-06.md |
+| `NARRATIVE-CLOSED-LOOP #14` | 2026-08-06 | Static consistency hardening seals effective provider requests, scoped logical references, SPEC v4, redo replay, and one-record review/proof binding without real transport | providers/, core/spec.py, qc/assurance.py, qc/production.py, build/readiness.py, tests/test_static_audit_wave*.py |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4144,3 +4145,19 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     ungated for compatibility but ineligible for Picture Lock. Synthetic bytes
     and fixture QC cannot prove story, performance, continuity or final media,
     so Phase 7B and S2 remain explicitly incomplete.
+14. **Request, reference, replay, and proof truth are sealed before external
+    effects.** Engine-owned placeholders cannot be overridden by free-form
+    provider params. Every provider attempt first validates all authored logical
+    bindings, scopes ownership by role plus canonical subject, and seals an
+    immutable delivery plan before Prompt, identity, admission, and body
+    rendering; omitted closed-role owners block before transport. Physical blob
+    dedup no longer removes logical bindings or exposes absolute paths. Fallback
+    attempts receive independent mutable state. Picture SPEC v4 binds authored
+    reference declarations and local bytes while retaining permanent v1/v2/v3
+    comparison. `redo --from-take` defaults unknown legacy keys to non-replay and
+    never resumes a recorded remote job. Assurance, accepted observed state,
+    continuation, and Proof Scene approval consume the same latest current-bound
+    verdict; stable evidence/proof digests exclude dynamic timestamps, bind the
+    accepted packet/opening/endpoint, and exclude stale or rejected evidence.
+    All proof is offline Fake Transport, temp bytes, and pure derivation. No real
+    Provider, paid generation, Phase 7B, S2, or film-quality claim is included.

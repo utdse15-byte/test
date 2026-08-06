@@ -42,6 +42,25 @@ _DYNAMIC_EVIDENCE_KEYS = frozenset({
     "updated_at", "ingested_at", "submitted_at",
 })
 
+_STABLE_EVIDENCE_FIELDS = (
+    "schema",
+    "binding",
+    "binding_failures",
+    "packet_id",
+    "subject",
+    "spec_hash",
+    "expectation_digest",
+    "media_sha256",
+    "media_project_path",
+    "media_take",
+    "media_duration_ms",
+    "media_members",
+    "observations",
+    "findings",
+    "reviewer",
+    "observed_states",
+)
+
 
 def _without_dynamic_timestamps(value: Any) -> Any:
     """Return a JSON-shaped evidence value without runtime timestamps."""
@@ -61,8 +80,13 @@ def _without_dynamic_timestamps(value: Any) -> Any:
 
 
 def stable_evidence_digest(record: dict) -> str:
-    """Digest review content while ignoring intake/review wall-clock fields."""
-    return hash_value(_without_dynamic_timestamps(record))
+    """Digest only assurance/observed-state evidence, excluding runtime data."""
+    evidence = {
+        key: record[key]
+        for key in _STABLE_EVIDENCE_FIELDS
+        if key in record
+    }
+    return hash_value(_without_dynamic_timestamps(evidence))
 
 
 def stable_assurance_projection(assurance: dict) -> dict:
