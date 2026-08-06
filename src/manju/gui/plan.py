@@ -110,7 +110,7 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
 
     target = str(params.get("target") or "final")
     gen = str(params.get("gen") or "missing")
-    if target not in ("proxy", "final", "exports", "qc", "audition"):
+    if target not in ("proxy", "final", "exports", "qc", "audition", "animatic"):
         raise ValueError(f"unknown target: {target}")
     if gen not in GEN_MODES:
         raise ValueError(f"unknown gen mode: {gen}")
@@ -147,6 +147,7 @@ def _build_plan(project: Any, params: dict[str, Any], routing_on: bool) -> dict[
             "currency": it.get("currency"),
         })
     env = _envelope("build", rows, [], saved_cost=result.saved_cost, routing=routing_on)
+    env["readiness"] = result.readiness
     # WP5: cache-reuse visibility — final/proxy verdict from explain
     try:
         from ..build.explain import explain as _explain

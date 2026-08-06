@@ -3,6 +3,12 @@
 A navigation map only — every claim lives in the linked report, its
 DECISIONS entry, and its commit. Nothing here is a fact source.
 
+## Active reports
+
+| Report | Record |
+|---|---|
+| `PRODUCTION_READINESS_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #10 |
+
 Closed-era reports (the whole `AI_IDE_*` family below) live under
 `REPORTS/archive/` — moved 2026-07-17 (UX wave 2 item 13) so the active
 reporting window stays visible; the era table keeps their record intact.

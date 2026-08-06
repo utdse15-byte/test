@@ -29,7 +29,7 @@ ANSI 彩色文本的分支。
 
 ## 先记住这一条:`error` 是「未分类」
 
-CLI 里约 275 个失败点,只有 25 个带专门 code,其余全部落到默认的 `"error"`。
+CLI 里约 275 个失败点,只有 26 个带专门 code,其余全部落到默认的 `"error"`。
 
 看到 `"code": "error"`,**读 `error` 文本**——它是中文人话,几乎总带补救命令——
 **不要在 `error` 上做分支逻辑**,它不是一个类别,它是「还没分类」。
@@ -75,10 +75,15 @@ CLI 里约 275 个失败点,只有 25 个带专门 code,其余全部落到默认
 `waiting_user` `interactive_only` `write_rejected` `tool_refused`
 `migrate_refused` `adopt_refused` `bridge_refused` `bundle_refused`
 `nothing_to_downgrade` `abandoned_by_user` `bad_capability`
+`production_approval_refused`
 
 这一类**不是错误,是闸门**。`waiting_user` 表示流程卡在人的确认上(§5 approve-
 before-spend);`interactive_only` 表示该命令只在交互式终端可用(如 `unlock`),
 MCP 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮。
+
+`production_approval_refused` 表示当前 Animatic 或 Proof Scene 不满足人工批准
+前提，或调用者不是 human。先读 `manju production status` 修完门禁并让人实际观看；
+`--yes` 只能确认花费，不能替代内容批准。
 
 ### 4. 等一下再试(瞬时/外部)
 

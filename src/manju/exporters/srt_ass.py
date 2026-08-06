@@ -31,6 +31,7 @@ __all__ = [
     "compile_srt",
     "compile_ass",
     "compile_vtt",
+    "compile_project_ass",
     "export_captions",
 ]
 
@@ -364,6 +365,43 @@ def _caption_style(project: "Project") -> dict[str, Any]:
     return style
 
 
+def _project_caption_timeline(
+    project: "Project", timeline: Timeline
+) -> tuple[Timeline, bool]:
+    """Return the caption truth used for ASS and whether line breaks apply."""
+    srt_path = project.captions_dir / "captions.srt"
+    if project.load_rules().captions.mode != "manual" or not srt_path.exists():
+        return timeline, True
+
+    from ..core.models import CaptionLine, TimelineTracks
+    from ..providers.asr import parse_srt
+
+    human = parse_srt(srt_path.read_text(encoding="utf-8"))
+    human_timeline = Timeline(
+        fps=timeline.fps,
+        width=timeline.width,
+        height=timeline.height,
+        duration_ms=timeline.duration_ms,
+        tracks=TimelineTracks(captions=[
+            CaptionLine(start_ms=cue.start_ms, end_ms=cue.end_ms, text=cue.text)
+            for cue in human
+        ]),
+    )
+    return human_timeline, False
+
+
+def compile_project_ass(project: "Project", timeline: Timeline) -> str:
+    """Pure ASS bytes source shared by export and animatic readiness."""
+    caption_timeline, apply_line_breaks = _project_caption_timeline(project, timeline)
+    return compile_ass(
+        caption_timeline,
+        width=timeline.width,
+        height=timeline.height,
+        style=_caption_style(project),
+        apply_line_breaks=apply_line_breaks,
+    )
+
+
 def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
     """Write ``captions/captions.srt`` and ``captions/captions.ass`` atomically.
 
@@ -385,28 +423,14 @@ def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
     max_chars = style.get("max_chars_per_line")
 
     if project.load_rules().captions.mode == "manual" and srt_path.exists():
-        from ..core.models import CaptionLine, TimelineTracks
-        from ..core.models import Timeline as _Timeline
-        from ..providers.asr import parse_srt
-
         atomic_write_text(
             project.captions_dir / "captions.generated.srt",
             compile_srt(timeline, max_chars_per_line=max_chars),
         )
-        human = parse_srt(srt_path.read_text(encoding="utf-8"))
-        human_timeline = _Timeline(
-            fps=timeline.fps, width=timeline.width, height=timeline.height,
-            duration_ms=timeline.duration_ms,
-            tracks=TimelineTracks(captions=[
-                CaptionLine(start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
-                for s in human
-            ]),
-        )
+        human_timeline, _ = _project_caption_timeline(project, timeline)
         atomic_write_text(
             ass_path,
-            # human cues are truth — never re-broken (§3)
-            compile_ass(human_timeline, width=timeline.width, height=timeline.height,
-                        style=style, apply_line_breaks=False),
+            compile_project_ass(project, timeline),
         )
         # WebVTT re-emits the human cues verbatim too (no re-break).
         atomic_write_text(vtt_path, compile_vtt(human_timeline))
@@ -415,7 +439,7 @@ def export_captions(project: "Project", timeline: Timeline) -> dict[str, Path]:
     atomic_write_text(srt_path, compile_srt(timeline, max_chars_per_line=max_chars))
     atomic_write_text(
         ass_path,
-        compile_ass(timeline, width=timeline.width, height=timeline.height, style=style),
+        compile_project_ass(project, timeline),
     )
     atomic_write_text(vtt_path, compile_vtt(timeline, max_chars_per_line=max_chars))
     return {"srt": srt_path, "ass": ass_path, "vtt": vtt_path}

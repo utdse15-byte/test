@@ -29,7 +29,7 @@ from typing import Iterator
 
 WORKFLOWS: dict[str, dict] = {
     "new-project": {
-        "title": "从零到第一次成片 / new project → first build",
+        "title": "从零到获批 Animatic / new project → approved animatic",
         "when": "你有想法或素材,但还没有 .manju 项目",
         "steps": [
             ("manju new <名字> --preset vertical_ai_video",
@@ -38,17 +38,22 @@ WORKFLOWS: dict[str, dict] = {
              "kits。然后 cd <名字>.manju 进入项目 — 后面的每条命令都在项目里运行"
              "(round-2 audit: the one unwritten step every cold start tripped on)"),
             ("manju create",
-             "print the seven-stage creation funnel (立意→梗概→节拍→剧本→分镜→计划→生成) "
-             "with your current stage and next step highlighted"),
+             "show the staged authoring checklist through Storyboard; production "
+             "continues through the Animatic and proof gates below"),
             ("manju import <files...>",
              "register your own footage/audio into read-only media/imports/ — "
              "the engine never touches originals"),
             ("manju check",
              "schema + references + locks + secret scan; a failing check blocks build"),
-            ("manju build --dry-run",
-             "preview the plan and the spend estimate without paying anything"),
-            ("manju build",
-             "the one-command build: fill gaps → compile timeline → render → QC → export"),
+            ("manju build --target animatic",
+             "compile the full shot order, temporary dialogue/sound, durations and "
+             "keyframes into a spend-free continuous animatic"),
+            ("manju production status",
+             "verify that scene/shot contracts and the current animatic pass before "
+             "asking for content approval"),
+            ("manju production approve-animatic <animatic> --reason <why>",
+             "human-only approval of the current animatic's exact path, bytes and "
+             "content key; --yes cannot replace it"),
         ],
         "next": "refine-shot",
         "see_also": ["manju presets", "manju status", "manju doctor"],
@@ -83,13 +88,17 @@ WORKFLOWS: dict[str, dict] = {
     },
     "generate-takes": {
         "title": "生成候选 take 并选用 / generate takes + select",
-        "when": "镜头写好了,该让 provider 出画面/配音,再从候选里挑一个",
+        "when": "Animatic 已批准,按 proof shot → proof scene → bulk 的范围逐步生成",
         "steps": [
+            ("manju production status",
+             "read the current AUTHORING / PROOF_SHOT_READY / PROOF_SCENE_READY / "
+             "BULK_READY stage and the paid shot scope it permits"),
             ("manju build --dry-run",
-             "see which shots would generate and the aggregated cost estimate first"),
+             "see the exact stage-limited generation plan, readiness gates and cost "
+             "before any provider transport"),
             ("manju build",
-             "generate missing takes through routing + fallback chains; ask_before "
-             "spend stops as waiting_user unless --yes"),
+             "generate only the current proof scope first; review proof shots before "
+             "proof-scene shots, and do not start bulk while status is blocked"),
             ("manju redo <shot> --candidates <N>",
              "force fresh takes for one shot (append-only: the current selection "
              "stands until you pick)"),
@@ -100,6 +109,12 @@ WORKFLOWS: dict[str, dict] = {
              "calls as the CLI, every click recorded as an event"),
             ("manju select <shot> <take>",
              "pick the winner; the decision is one reviewable, revertible line of YAML"),
+            ("manju production approve-proof-scene <scene> --reason <why>",
+             "after continuous human viewing, bind approval to the ordered selected "
+             "takes, media hashes, trims, contracts, expectations and audio timing"),
+            ("manju production status",
+             "repeat the proof loop until BULK_READY; only then may the next build "
+             "perform full paid generation"),
         ],
         "next": "qc-repair",
         "see_also": ["manju routing explain <shot>", "manju compare", "manju spend"],
@@ -137,8 +152,14 @@ WORKFLOWS: dict[str, dict] = {
             ("manju build --target animatic",
              "deterministic keyframe + ken-burns pre-vis over the existing "
              "audio/captions — still no video generation spend"),
+            ("manju production approve-animatic <animatic> --reason <why>",
+             "human approval of the exact current animatic before paid proof work"),
+            ("manju production status",
+             "advance through proof shots and proof scenes; full generation waits for "
+             "BULK_READY"),
             ("manju build --target proxy",
-             "cheap full-picture pass for pacing and assembly checks"),
+             "cheap assembly pass; generation inside the plan still obeys the current "
+             "production-readiness scope"),
             ("manju explain --cost",
              "read-only: why the next build will do what it will do, with "
              "est_cost totals"),

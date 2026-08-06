@@ -87,6 +87,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #7` | 2026-08-05 | Explicit reference owners prune only unresolved default-prompt variables; conflicts fail before transport | providers/refs.py, core/intent.py, providers/prompt.py |
 | `NARRATIVE-CLOSED-LOOP #8` | 2026-08-05 | Provider authoring evidence is traceable, advisory, and excluded from machine profile identity | providers/manifest.py, manju providers show/check, manju doctor |
 | `NARRATIVE-CLOSED-LOOP #9` | 2026-08-05 | Creative experiment memory extends the exact media-bound verdict instead of creating another review log | qc/agent_review.py, qc/production.py, reports/qc_agent.jsonl |
+| `NARRATIVE-CLOSED-LOOP #10` | 2026-08-05 | Production readiness is derived; exact-byte Animatic and ordered Proof Scene approvals stage paid video before bulk | build/readiness.py, build/graph.py, reports/verifications.jsonl, manju production |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4096,3 +4097,15 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    excluded from picture spec hashes and `events.jsonl` stage-attempt evidence.
    Candidate-family views expose the latest current-bound experiment separately
    from historical experiment memory.
+10. **Production proof precedes bulk paid generation.** Readiness is a pure
+    derived view over authored Scene/Shot contracts, current media, assurance,
+    the shared Animatic content key, and the existing verification log; it never
+    creates a second gate or approval truth file. Human Animatic approval binds
+    exact path, bytes, hash, and current content key. Human Proof Scene approval
+    binds the ordered scene digest across selected takes, exact media hashes,
+    trims, contracts, expectations, transitions, dialogue, sound, and voice
+    timing. Unattended paid video advances only through AUTHORING,
+    PROOF_SHOT_READY, PROOF_SCENE_READY, and BULK_READY; a mixed plan refuses
+    atomically before transport. Legacy, dry-run, free/local/proxy, and explicit
+    collaborative paths retain their prior behavior, while `--yes` remains spend
+    consent and cannot impersonate content approval.

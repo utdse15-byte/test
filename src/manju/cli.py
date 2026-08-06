@@ -139,6 +139,7 @@ _ZH_LEAD: dict[str, str] = {
     'pack': '把项目打包成单个 .manjupkg(zip)用于备份/迁移',
     'package': '从当前成片切出封面(+ 预告)',
     'presets': '预设套件列表',
+    'production': '生产就绪度:Animatic、Proof Shot、Proof Scene 与批量付费关卡',
     'prompt': '提示词工作台 —— 只读',
     'propose': '写提案:请求修改锁定内容的正规通道',
     'providers': '管理 provider 清单',
@@ -1761,6 +1762,17 @@ def build(
                 else:
                     typer.echo(f"  {p['shot']}: {p['reason']} → {p['provider']} "
                                f"×{p['candidates']} ({p['duration_ms']}ms) ≈{p['estimated_cost']}")
+        if result.readiness:
+            readiness = result.readiness
+            typer.echo(
+                "生产就绪度 production readiness: "
+                f"{readiness.get('stage')} ({readiness.get('state')})"
+            )
+            if readiness.get("disallowed_paid_shot_ids"):
+                typer.echo(
+                    "  paid video blocked for: "
+                    + ", ".join(readiness["disallowed_paid_shot_ids"])
+                )
         # 战役③: an 80-shot film printed the same 27-line warning wall on
         # EVERY build. Above the cap: a few examples + an explicit count-and-
         # pointer line (§4.3 — nothing silently dropped; --json keeps all).
@@ -1819,6 +1831,120 @@ def build(
             _echo_after_build(project, result.render_path)
     if not result.ok:
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------- production gates
+
+
+production_app = typer.Typer(
+    no_args_is_help=True,
+    help="Animatic、Proof Shot、Proof Scene 与批量付费生产就绪度。",
+)
+app.add_typer(production_app, name="production", rich_help_panel=PANEL_GENERATE)
+
+
+def _print_production_readiness(report: dict) -> None:
+    color = (
+        typer.colors.GREEN
+        if report.get("stage") in ("LEGACY", "BULK_READY")
+        else typer.colors.YELLOW
+    )
+    typer.secho(
+        f"生产阶段 / production stage: {report.get('stage')} ({report.get('state')})",
+        fg=color,
+    )
+    if report.get("stage") == "LEGACY":
+        typer.echo("  legacy project: narrative readiness is not enabled")
+        return
+    for gate in report.get("gates") or []:
+        mark = "PASS" if gate.get("state") == "pass" else "FAIL"
+        gate_color = typer.colors.GREEN if mark == "PASS" else typer.colors.RED
+        typer.secho(f"  {mark:4}  {gate.get('id')}", fg=gate_color)
+        for detail in gate.get("details") or []:
+            typer.echo(
+                "        "
+                + (f"{detail.get('subject')}: " if detail.get("subject") else "")
+                + str(detail.get("message") or detail)
+            )
+    allowed = report.get("allowed_paid_shot_ids")
+    typer.echo(
+        "  paid video allowed: "
+        + ("all" if allowed == "all" else ", ".join(allowed or []) or "none")
+    )
+    if report.get("next_action"):
+        typer.echo(f"  next: {report['next_action']}")
+
+
+@production_app.command("status")
+def production_status(as_json: bool = typer.Option(False, "--json")):
+    """实时推导当前生产阶段与 A-G 门禁；只读，不保存 readiness 文件。"""
+    from .build.readiness import production_readiness
+
+    report = production_readiness(_project())
+    if as_json:
+        _emit(report, True)
+    else:
+        _print_production_readiness(report)
+
+
+@production_app.command("approve-animatic")
+def production_approve_animatic(
+    path: Path = typer.Argument(..., help="current renders/animatic/*.mp4"),
+    reason: str = typer.Option(..., "--reason", help="why the exact animatic is approved"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """人工批准当前 Animatic 的精确路径、字节、哈希和内容键。"""
+    from .build.readiness import ReadinessError, approve_animatic
+
+    project = _project()
+    try:
+        result = approve_animatic(
+            project, str(path), reason=reason, actor_kind=ACTOR,
+            unattended=False,
+        )
+    except ReadinessError as exc:
+        _fail(str(exc), code="production_approval_refused")
+    event = result["event"]
+    append_event(project.root, ACTOR, "approve_animatic", {
+        "event_id": event["event_id"],
+        "artifact": event["artifact"]["path"],
+    })
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho("Animatic 已按精确字节批准", fg=typer.colors.GREEN)
+        typer.echo(f"  {event['artifact']['path']}")
+        typer.echo(f"  {event['artifact']['sha256']}")
+
+
+@production_app.command("approve-proof-scene")
+def production_approve_proof_scene(
+    scene_id: str = typer.Argument(..., help="proof_scene SceneContract id"),
+    reason: str = typer.Option(..., "--reason", help="why the continuous scene works"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """人工批准当前有序 selected-take 场次状态的精确 digest。"""
+    from .build.readiness import ReadinessError, approve_proof_scene
+
+    project = _project()
+    try:
+        result = approve_proof_scene(
+            project, scene_id, reason=reason, actor_kind=ACTOR,
+            unattended=False,
+        )
+    except ReadinessError as exc:
+        _fail(str(exc), code="production_approval_refused")
+    event = result["event"]
+    append_event(project.root, ACTOR, "approve_proof_scene", {
+        "event_id": event["event_id"],
+        "scene_id": scene_id,
+        "proof_scene_digest": event["proof_scene_digest"],
+    })
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho(f"Proof Scene {scene_id} 已批准", fg=typer.colors.GREEN)
+        typer.echo(f"  digest {event['proof_scene_digest']}")
 
 
 # -------------------------------------------------------------------- redo

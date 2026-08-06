@@ -39,21 +39,29 @@ user_invocable: true
    - 先明确结尾和不可逆变化，再按戏剧场次组织人物进入、变化和离开状态。故事节拍可由多个镜头完成；只有明确的平台格式才加载 `narrative-pacing`。
 4. **剧本 / Script → `story/script.md`**
    - 分场 + 对白,对白逐字写清(将原样成为 `shots/*.yaml` 的 `dialogue.text`,决定 TTS 时长)。
-5. **镜头计划 / Storyboard → `shots/*.yaml` + `shots/index.yaml`**
-   - 每镜先写目的、开始状态、一个主要可见变化、结束接口、表演、声音、风险和替代调度，再决定景别与运镜。不要机械地一拍一镜。
+5. **场次与镜头合同 / Storyboard → `story/scenes/*.yaml` + `shots/*.yaml` + `shots/index.yaml`**
+   - 场次先写目的、进入状态、不可逆变化和离开状态；每镜再写目的、开始状态、一个主要可见变化、结束接口、表演、声音、风险和替代调度。不要机械地一拍一镜。
    - **cast/Elements 确认闸(第 1 道 approve-before)**:任何镜头生成前,先把人物/场景/道具/配音落进 `bible/` 并让人确认——这是一致性锁,也是花钱前的 checkpoint。
-6. **临时声音与 Animatic**
-   - 先用现有 `build --target animatic` 连续播放镜头顺序、对白、停顿与环境声；未通过时回到故事或镜头计划。
-7. **Proof → 生成 / 评审 / 修源循环**
-   - 先验证最高风险镜头和完整场次，再逐步扩大生成范围。每次生成只验证一个主要不确定性；真实媒体 endpoint 优先于原计划。
-8. **Picture lock → 确定性装配**
+6. **资产、关键帧、临时声音与完整 Animatic**
+   - 用 `manju build --target animatic` 连续播放当前镜头顺序、关键帧、对白、停顿与环境声；未通过时回到故事或镜头计划。通过后由人执行 `manju production approve-animatic <path> --reason <why>`，批准当前精确路径、字节和内容键。
+7. **Proof Shot → 最高风险镜头**
+   - `manju production status` 进入 `PROOF_SHOT_READY` 后，只做 `contract.proof_shot: true` 的付费镜头；selected take 必须是 current、非 proxy 视频，并有人类 review approval 与 accepted assurance。
+8. **Proof Scene → 连续场次**
+   - Proof Shot 通过后，只做 `proof_scene: true` 场次内镜头。按当前顺序连续观看，再由人执行 `manju production approve-proof-scene <scene> --reason <why>`；换 take、改 trim、顺序、合同或声音节奏都会使旧批准失效。
+9. **Bulk → 批量生产**
+   - 只有 `manju production status` 为 `BULK_READY` 才进入全片付费批量生成。`--yes` 只确认花费，不能替代 Animatic 或 Proof Scene 的内容批准。
+10. **Picture lock → 确定性装配**
    - selected media 锁定后再进入 timeline assembly、最终声音、render 与 delivery。
 
-## 三道 approve-before 闸(市场只有 3 个产品做,Manju 引擎强制)
+## 生产 approve-before 闸
 
 | 闸 | 何时 | Manju 落地 |
 | --- | --- | --- |
 | cast/Elements 确认 | 任何镜头生成前 | `bible/` 落人物/场景/道具 + 人确认;`manju assets` 核对 |
+| Animatic 内容批准 | 任何付费 proof 工作前 | `manju production approve-animatic <path> --reason <why>`；绑定当前精确字节 |
+| Proof Shot | Animatic 批准后 | 只生成/评审声明的 proof shots，直到 current video + human review + accepted assurance |
+| Proof Scene 内容批准 | Proof Shot 通过后 | 连续观看完整 proof scene，再批准当前有序 digest |
+| Bulk Ready | 全片付费批量生成前 | `manju production status` 必须为 `BULK_READY` |
 | 计划(plan) | build 前 | `manju build --dry-run` 出清单 + 成本 |
 | 逐镜/花钱 | 命中 ask_before | 停→贴估算→问人→`--yes` 才执行 |
 
@@ -66,13 +74,13 @@ user_invocable: true
 
 **例 2 — 没确认 cast 就烧钱生成**
 - BEFORE:bible 还没定角色就 `manju build` 生成 20 镜,人物每镜不一样。
-- AFTER:先 `bible/` 定角色 + 人确认(cast 闸),再 dry-run + 问,再 build。
+- AFTER:先 `bible/` 定角色 + 人确认(cast 闸),完成并批准 Animatic，再按 Proof Shot → Proof Scene → Bulk 逐级生成。
 - WHY:cast 确认既是一致性锁又是花钱前 checkpoint;跳过 = 漂移 + 白烧钱。
 
 **例 3 — 直接 build 不 dry-run**
 - BEFORE:`manju build` 一把梭,事后才发现花超预算。
-- AFTER:`manju build --dry-run` 贴数字给人 → 命中 ask_before 就问 → 才 build。
-- WHY:预算护栏第一道闸是你;有数字才让人拍板。
+- AFTER:先看 `manju production status`，仅在当前 proof 范围内 `manju build --dry-run` 贴数字给人；命中 ask_before 就问，`BULK_READY` 后才批量 build。
+- WHY:readiness 管内容是否被证明，dry-run/ask_before 管本次花多少钱；两者不能互相替代。
 
 ## 拷贝进工作笔记的清单
 
@@ -82,8 +90,10 @@ user_invocable: true
 [ ] brief.md 有立意 + 3–5 句梗概,方向经人确认(空 brief 没自己拍板)?
 [ ] outline.md 先明确结尾和场次不可逆变化，没有一拍≈一镜?
 [ ] script.md 分场 + 逐字对白?
-[ ] 临时声音与完整 Animatic 已连续播放?
-[ ] 先做最高风险 proof，再扩大生成?
+[ ] 临时声音与完整 Animatic 已连续播放并由人批准当前精确字节?
+[ ] Proof Shot 是 current、非 proxy、human-approved 且 assurance accepted?
+[ ] Proof Scene 已按当前顺序连续观看并由人批准当前 digest?
+[ ] manju production status 为 BULK_READY 后才扩大到批量付费生成?
 [ ] 生成后记录真实 endpoint，并在需要时修源?
 [ ] 生成前:bible 落 cast/Elements 且人确认?
 [ ] build 前:manju build --dry-run 出清单 + 成本(第 2 闸)?
@@ -96,6 +106,7 @@ user_invocable: true
 | smell | 抓法 |
 | --- | --- |
 | 跳阶段(无 beat-sheet/无 cast 确认) | 本清单;`manju status` 看阶段缺口 |
+| Storyboard 后直接批量 build | `manju production status`；先批准 Animatic，再完成 Proof Shot 与 Proof Scene |
 | 空 brief 自己编方向 | 硬规矩:人已写方向要尊重,别推翻 |
 | 未 dry-run 直接烧钱 | 命中 ask_before 必停;核心手册 §5 |
 | 想改锁定内容 | 走 `manju propose`,永不 `unlock` |
@@ -103,8 +114,9 @@ user_invocable: true
 ## Manju 落地
 
 - **脚手架**:`manju new [--preset <kit>]`(自动 git init;preset 预填骨架);`manju presets` 列预设。
-- **阶段文件**:`story/brief.md` → `story/outline.md` → `story/script.md` → `shots/*.yaml`;`bible/`(cast/Elements)。
-- **确认/花钱**:`manju build --dry-run`、`ask_before`、`manju director propose/confirm/run/suggest`(六步契约作持久对象)。
+- **阶段文件**:`story/brief.md` → `story/outline.md` → `story/script.md` → `story/scenes/*.yaml` → `shots/*.yaml`;`bible/`(cast/Elements)。
+- **生产就绪**:`manju production status`、`approve-animatic`、`approve-proof-scene`；readiness 只派生，批准复用现有 verification log。
+- **确认/花钱**:`manju build --dry-run`、`ask_before`、`manju director propose/confirm/run/suggest`(六步契约作持久对象)；`--yes` 不绕过内容批准。
 - **增量重渲**:改一处只重渲对应段(内容键);自然语言编辑「删第 3 镜/改第 5 镜配音」→ 一次真相编辑 → 增量 build。
 - 承接技能:`narrative-pacing`(节拍/钩子)、`shot-design`(拆镜)、`prompt-craft`(提示词)、`character-consistency`(cast 一致性)。
 
@@ -112,4 +124,4 @@ user_invocable: true
 
 1. 给一句话创意,是否产出 brief→梗概→beat-sheet→script→shots 的有序文件而非直接堆镜头?
 2. 生成前是否强制了 cast/Elements 确认闸?
-3. build 前是否 dry-run 出成本并在命中 ask_before 时停下问人?
+3. 是否严格按 current+approved Animatic → Proof Shot → approved Proof Scene → Bulk Ready 推进，且 build 前 dry-run 出成本并在命中 ask_before 时停下问人?

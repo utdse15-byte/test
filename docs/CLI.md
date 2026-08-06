@@ -20,7 +20,10 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju status [--json]` | M0 | takeover entry: stage, gaps, next step, spend |
 | `manju check` | M0 | schema + referential + lock + secret validation |
 | `manju import <files…>` | M0 | register into `imports/` (proxy/thumb/waveform) |
-| `manju build [--target proxy\|final\|exports\|qc\|audition] [--gen …] [--regen-stale] [--dry-run]` | M0/WP2 | the one-command build; `audition` = audio-first (no video gen) |
+| `manju build [--target proxy\|final\|exports\|qc\|audition\|animatic] [--gen …] [--regen-stale] [--dry-run]` | M0/WP2/P5 | the one-command build; `audition` = audio-first and `animatic` = deterministic keyframe/temp-audio preview (neither performs paid video generation); dry-run always reports production readiness |
+| `manju production status [--json]` | P5 | derive Scene/Shot, current+approved Animatic, Proof Shot, Proof Scene and bulk gates; reports stage plus allowed/disallowed paid shot IDs without saving a readiness truth file |
+| `manju production approve-animatic PATH --reason …` | P5 | human-only exact-path/exact-byte Animatic approval in the existing verification log; `--yes` and unattended callers cannot approve |
+| `manju production approve-proof-scene SCENE --reason …` | P5 | human-only approval of the current ordered proof-scene digest (takes, media hashes, trims, contracts, expectations and audio timing) |
 | `manju redo S002 [--candidates N] [--provider X] [--seed N]` | M0 | explicitly remake a shot |
 | `manju select S002 take_03 [--file …]` | M0 | pick a take (or a manual clip) |
 | `manju lock / unlock <shot> <field>` | M0 | value-hash locks (unlock is interactive-only) |
@@ -57,7 +60,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju exports [--json] [--baseline] [--approve-baseline …] [--profile ID --manifest\|--bundle [--metadata F] [--output …]]` | U/07C/13C | 导出中心 status: 9 deliverables × 上新/待更新/缺失/有问题/待人工确认 + human verification log; `--json` now carries the additive `release_assessment` (blockers/ready/regression review/next safe actions from ToolPolicy); baseline approval is a human-only append-only event binding the final's exact bytes; `--manifest` derives the manju.delivery-manifest/v1 (variant/NLE/localization/credential-free platform-handoff facts — never a build input), `--bundle` packs exactly the manifest's files + SHA256SUMS into a byte-deterministic, path-safe, atomic zip (distinct from `manju pack`) |
 | `manju director propose/confirm/run/suggest [--json]` | U | the six-step AI-director contract: propose → cost → confirm → execute → diff → next |
 | `manju skills [show <id>] [--json]` | V | the bundled expertise library (index via `manju skills`): index cheap, full text on demand (project > user > bundled) |
-| `manju create [brief\|synopsis\|beats] [--force]` | V | the creation funnel: 立意→梗概→节拍→剧本→分镜→计划→生成 checklist + guided scaffolds |
+| `manju create [brief\|synopsis\|beats] [--force]` | V/P5 | staged authoring checklist + guided scaffolds through Storyboard; production then follows current+approved Animatic → Proof Shot → approved Proof Scene → Bulk Ready |
 | `manju series new/new-episode/status/sync-bible/characters/split-script` | V | multi-episode umbrella: episodes are normal projects; global bible with conservative explicit sync |
 | `manju qc brief / qc verdict --from-file` | V | agent-eyes visual QC: frames+context out, hash-bound [AI判读] findings back into run_qc |
 | `manju ingest <dir> [--shot S001] [--role] [--apply]` | X | batch external round-trips: dry-run plan → takes/voice/refs by naming convention, deduped |

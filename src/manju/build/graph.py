@@ -190,50 +190,20 @@ def _animatic_shot_still(project: Project, shot_id: str) -> "Path | None":
     return None
 
 
-def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
-    """AI_IDE_16 §6 — a DETERMINISTIC animatic assembled from each shot's best
-    keyframe still via ffmpeg_kenburns pan/hold, over the EXISTING timeline
-    audio/captions. Output is a DERIVED artifact in ``renders/animatic/`` — never
-    a video take, never selected; content-keyed so a repeat run is idempotent and
-    a delete is rebuildable. REUSES the kenburns + final-render helpers (Fable
-    ruling 4); it never plans or submits a paid video request."""
-    from pathlib import Path
-
+def _animatic_plan(project: Project, timeline):
+    """Pure transformed timeline, segment keys, toolchain key, and material jobs."""
     from ..core.hashing import cache_key, hash_file, short_hash
     from ..core.models import Timeline
-    from ..media.audition import ensure_slate
-    from ..media.ffmpeg import default_log
-    from ..media.kenburns import kenburns
-    from ..media.render import (
-        _audio_input_hashes, _enc_params, _read_key_sidecar, _toolchain_key_component,
-        _write_key_sidecar, render_timeline,
-    )
+    from ..media.audition import slate_path
+    from ..media.render import _toolchain_key_component
 
-    log = default_log(project.root, "animatic")
     config = project.load_config()
-    clips_dir = project.root / ".manju" / "animatic" / "clips"
-    clips_dir.mkdir(parents=True, exist_ok=True)
-
     data = timeline.model_dump()
-    # R2: a rational (1001-family) project folds its exact rate into the per-still
-    # preview key so its animatic clips are content-distinct from an int-nominal
-    # project's; None (int) contributes nothing → byte-identical key. Read via the
-    # config's frame_rate resolver (never the raw rational field — R1 surface
-    # pin). The animatic is a de-scoped preview surface: its clips still ENCODE at
-    # the int nominal fps below (kenburns/slate are untouched), so a rational
-    # preview is nominal-rate — the OUTER animatic key still differs via the
-    # timeline's rational-rate echo folded through tl.model_dump() below.
-    _rate = config.frame_rate
-    _rate_key = None if _rate.exact_int is not None else str(_rate)
-    # S4: the strictly-opt-in toolchain component (sorted token→fact map from
-    # media/render's helper, process-cached facts). None for every project that
-    # never set cache_toolchain_keys → both animatic key sites below append
-    # nothing, byte-identical keys — exactly the _rate_key drop-when-absent
-    # pattern. Opted in, the kenburns clip keys AND the outer animatic key
-    # shift when a declared fact shifts (a new ffmpeg honestly re-renders the
-    # preview instead of reusing stale-toolchain clip bytes).
-    _tc_key = _toolchain_key_component(project, config)
+    rate = config.frame_rate
+    rate_key = None if rate.exact_int is not None else str(rate)
+    tc_key = _toolchain_key_component(project, config)
     seg_keys: list[str] = []
+    jobs: list[dict[str, Any]] = []
     for clip in data.get("tracks", {}).get("video", []) or []:
         shot = str(clip.get("shot") or "")
         dur = int(clip.get("duration_ms") or 1000)
@@ -244,39 +214,103 @@ def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
                 "still": hash_file(still), "dur": dur, "w": config.width,
                 "h": config.height, "fps": config.fps, "kind": "animatic_kenburns",
             }
-            if _rate_key is not None:
-                kb_key["rate"] = _rate_key
-            if _tc_key is not None:
-                kb_key["toolchain"] = _tc_key
+            if rate_key is not None:
+                kb_key["rate"] = rate_key
+            if tc_key is not None:
+                kb_key["toolchain"] = tc_key
             key = short_hash(cache_key(kb_key), 12)
-            dest = clips_dir / f"{shot}_{key}.mp4"
-            if force or not (dest.exists() and dest.stat().st_size > 0):
-                kenburns(still, dest, width=config.width, height=config.height,
-                         fps=config.fps, duration_ms=dur, zoom_from=1.0,
-                         zoom_to=1.08, log=log)
+            dest = project.root / ".manju" / "animatic" / "clips" / f"{shot}_{key}.mp4"
             clip["source"] = project.relpath(dest)
             clip["take"] = "__animatic__"
             seg_keys.append(f"kb:{hash_file(still)}:{dur}")
+            jobs.append({"kind": "kenburns", "source": still, "dest": dest,
+                         "duration_ms": dur})
         else:
-            slate = ensure_slate(project, shot or "shot", duration_ms=dur,
-                                 width=config.width, height=config.height,
-                                 fps=config.fps)
+            slate = slate_path(
+                project, shot or "shot", duration_ms=dur,
+                width=config.width, height=config.height, fps=config.fps,
+            )
             clip["source"] = project.relpath(slate)
             clip["take"] = "__slate__"
             seg_keys.append(f"slate:{shot}:{dur}")
-    tl = Timeline.model_validate(data)
+            jobs.append({"kind": "slate", "shot": shot or "shot", "dest": slate,
+                         "duration_ms": dur})
+    return Timeline.model_validate(data), seg_keys, tc_key, jobs
+
+
+def _animatic_key_from_plan(
+    project: Project,
+    timeline,
+    seg_keys: list[str],
+    toolchain_key,
+    *,
+    ass_file=None,
+    ass_hash: str | None = None,
+) -> str:
+    from ..core.hashing import cache_key, hash_file
+    from ..media.render import _audio_input_hashes, _enc_params
 
     animatic_payload: dict[str, Any] = {
         "segments": seg_keys,
-        "timeline": tl.model_dump(exclude={"meta"}),
-        "ass": hash_file(ass_file) if ass_file and Path(ass_file).exists() else None,
-        "audio": _audio_input_hashes(project, tl),
+        "timeline": timeline.model_dump(exclude={"meta"}),
+        "ass": (
+            hash_file(Path(ass_file))
+            if ass_file and Path(ass_file).exists()
+            else ass_hash
+        ),
+        "audio": _audio_input_hashes(project, timeline),
         "encoding": _enc_params("final"),
         "target": "animatic",
     }
-    if _tc_key is not None:  # S4 opt-in only — absent appends nothing (byte pin)
-        animatic_payload["toolchain"] = _tc_key
-    key = cache_key(animatic_payload)
+    if toolchain_key is not None:
+        animatic_payload["toolchain"] = toolchain_key
+    if project.narrative_opted_in:
+        from ..core.intent import narrative_intent_digest
+
+        animatic_payload["narrative_intent_digest"] = narrative_intent_digest(project)
+    return cache_key(animatic_payload)
+
+
+def animatic_content_key(
+    project: Project, timeline, *, ass_file=None, ass_hash: str | None = None
+) -> str:
+    """Current animatic key, shared byte-for-byte by rendering and readiness."""
+    transformed, seg_keys, toolchain_key, _jobs = _animatic_plan(project, timeline)
+    return _animatic_key_from_plan(
+        project, transformed, seg_keys, toolchain_key,
+        ass_file=ass_file, ass_hash=ass_hash,
+    )
+
+
+def _render_animatic(project: Project, timeline, *, ass_file=None, force=False):
+    """Render a deterministic, derived animatic without creating video takes."""
+    from ..media.audition import ensure_slate
+    from ..media.ffmpeg import default_log
+    from ..media.kenburns import kenburns
+    from ..media.render import _read_key_sidecar, _write_key_sidecar, render_timeline
+
+    log = default_log(project.root, "animatic")
+    config = project.load_config()
+    tl, seg_keys, toolchain_key, jobs = _animatic_plan(project, timeline)
+    for job in jobs:
+        if job["kind"] == "kenburns":
+            dest = job["dest"]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if force or not (dest.exists() and dest.stat().st_size > 0):
+                kenburns(
+                    job["source"], dest,
+                    width=config.width, height=config.height, fps=config.fps,
+                    duration_ms=job["duration_ms"], zoom_from=1.0, zoom_to=1.08,
+                    log=log,
+                )
+        else:
+            ensure_slate(
+                project, job["shot"], duration_ms=job["duration_ms"],
+                width=config.width, height=config.height, fps=config.fps,
+            )
+    key = _animatic_key_from_plan(
+        project, tl, seg_keys, toolchain_key, ass_file=ass_file,
+    )
 
     out_dir = project.root / "renders" / "animatic"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -627,6 +661,9 @@ class BuildResult:
     # dry-run (a plan, emits no evidence) and any legacy construction stay
     # unchanged; `build --json`/MCP surface it for free via to_dict().
     run_id: str | None = None
+    # Phase 5: pure, derived production readiness. Never read back as truth;
+    # attached so CLI/MCP/GUI and dry-run all report the same gates/stage.
+    readiness: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
@@ -1142,6 +1179,27 @@ def _run_build_phases(
     _run_info: dict | None = None,  # P0 WP4: run_build's lifecycle carrier (internal)
 ) -> BuildResult:
     result = BuildResult()
+    # Even a malformed opted-in project that fails `manju check` must report
+    # AUTHORING/BLOCKED rather than disappearing back into an implicit legacy
+    # state. Recomputed with the exact paid-video plan below when planning gets
+    # that far. Readiness derivation itself must never crash a build envelope.
+    try:
+        from . import readiness as _readiness
+
+        result.readiness = _readiness.production_readiness(project, paid_shot_ids=[])
+    except Exception as exc:
+        result.readiness = {
+            "schema": "manju.production-readiness/v1",
+            "opted_in": bool(project.narrative_opted_in),
+            "state": "BLOCKED" if project.narrative_opted_in else "LEGACY",
+            "stage": "AUTHORING" if project.narrative_opted_in else "LEGACY",
+            "gates": [],
+            "failed_gates": ["READINESS_UNAVAILABLE"] if project.narrative_opted_in else [],
+            "allowed_paid_shot_ids": [] if project.narrative_opted_in else "all",
+            "disallowed_paid_shot_ids": [],
+            "bulk_paid_generation_allowed": not project.narrative_opted_in,
+            "next_action": f"repair readiness inputs: {type(exc).__name__}: {exc}",
+        }
     # WP3 run-evidence: one run id per build invocation, minted before any
     # phase runs. Evidence-only — it must NEVER enter a content key/hash; it is
     # threaded to the render's key sidecar (correlating a produced final to its
@@ -1389,6 +1447,51 @@ def _run_build_phases(
         result.plan += _plan_voice(project, gen=gen)
     result.estimated_cost = sum(p["estimated_cost"] for p in result.plan)
 
+    # Phase 5 paid-video admission. Voice rows and zero-cost video rows are not
+    # bulk spend, so free/local/proxy/animatic work remains available at every
+    # stage. The derivation sees the whole paid set at once: a mixed plan is
+    # rejected atomically under unattended instead of silently spending on its
+    # allowed subset.
+    paid_video_shot_ids = list(dict.fromkeys(
+        str(row.get("shot"))
+        for row in result.plan
+        if row.get("kind") != "voice"
+        and float(row.get("estimated_cost") or 0) > 0
+        and row.get("shot")
+    ))
+    try:
+        from . import readiness as _readiness
+
+        result.readiness = _readiness.production_readiness(
+            project, paid_shot_ids=paid_video_shot_ids
+        )
+    except Exception as exc:
+        # An opted-in narrative project fails closed for paid automation when
+        # its gate cannot be derived; legacy/free plans remain unaffected.
+        result.readiness = {
+            "schema": "manju.production-readiness/v1",
+            "opted_in": bool(project.narrative_opted_in),
+            "state": "BLOCKED" if project.narrative_opted_in else "LEGACY",
+            "stage": "AUTHORING" if project.narrative_opted_in else "LEGACY",
+            "gates": [],
+            "failed_gates": ["READINESS_UNAVAILABLE"] if project.narrative_opted_in else [],
+            "allowed_paid_shot_ids": [] if project.narrative_opted_in else "all",
+            "disallowed_paid_shot_ids": (
+                paid_video_shot_ids if project.narrative_opted_in else []
+            ),
+            "bulk_paid_generation_allowed": not project.narrative_opted_in,
+            "next_action": f"repair readiness inputs: {type(exc).__name__}: {exc}",
+        }
+    disallowed_paid = list(result.readiness.get("disallowed_paid_shot_ids") or [])
+    if paid_video_shot_ids and disallowed_paid:
+        stage = result.readiness.get("stage")
+        result.warnings.append(
+            "production readiness: current stage "
+            f"{stage}; paid video is ahead of the allowed proof scope for "
+            f"{', '.join(disallowed_paid)}. collaborative may explicitly continue; "
+            "unattended will refuse before transport."
+        )
+
     # ---- AI_IDE_16 §10 keyframe spend gate (the batch's teeth). A shot about
     # to submit a PAID video whose keyframe candidates are not adopted is
     # flagged. COLLABORATIVE (default): an advisory warning, surfaced in the
@@ -1422,6 +1525,34 @@ def _run_build_phases(
         # to_dict() (and the MCP build tool that returns it) must not leak an
         # absolute filesystem path.
         result.timeline_path = project.relpath(project.timeline_path)
+        return _finish_run(result)
+
+    # Readiness approval is content approval, independent of spend consent:
+    # assume_yes may pass ask_before but can never replace human animatic/
+    # proof-scene approval. This branch is after dry-run and before every
+    # provider transport/keyframe gate, so blocked cases have transport=0.
+    if agent_profile == "unattended" and paid_video_shot_ids and disallowed_paid:
+        allowed_paid = [
+            shot_id for shot_id in paid_video_shot_ids if shot_id not in disallowed_paid
+        ]
+        error = {
+            "code": "PRODUCTION_READINESS_REQUIRED",
+            "stage": result.readiness.get("stage"),
+            "failed_gates": list(result.readiness.get("failed_gates") or []),
+            "allowed_shot_ids": allowed_paid,
+            "disallowed_shot_ids": disallowed_paid,
+            "next_action": result.readiness.get("next_action"),
+        }
+        result.readiness["error"] = error
+        result.ok = False
+        result.errors.append(
+            "PRODUCTION_READINESS_REQUIRED: unattended paid-video plan refused "
+            f"at stage={error['stage']}; failed_gates="
+            f"{','.join(error['failed_gates']) or '(none)'}; allowed="
+            f"{','.join(allowed_paid) or '(none)'}; disallowed="
+            f"{','.join(disallowed_paid)}; next={error['next_action']}. "
+            "No provider transport occurred (transport=0)."
+        )
         return _finish_run(result)
 
     # ---- 1b. ask_before gate (§8.3 第一道闸门,现在由引擎兜底,不再只靠 agent

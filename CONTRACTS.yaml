@@ -44,6 +44,18 @@ schemas:
       each ShotSpec.scene_id. ShotContract remains nested in shot.yaml so there
       is no parallel editable shot or acceptance truth.
 
+  - id: manju.production-readiness/v1
+    kind: schema
+    owner: manju.build.readiness
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Pure derived production-stage and paid-video admission report. Human
+      Animatic and Proof Scene approvals remain append-only events in the
+      existing verification log; no readiness truth file is persisted.
+
   # -- agent / MCP surface -------------------------------------------------
   - id: manju.agent-surface/v1
     kind: schema

@@ -39,6 +39,23 @@ def slate_dir(project: Project) -> Path:
     return d
 
 
+def slate_path(
+    project: Project,
+    shot_id: str,
+    *,
+    duration_ms: int,
+    width: int,
+    height: int,
+    fps: int,
+) -> Path:
+    """Pure content-addressed path for a slate; does not create directories."""
+    key = short_hash(cache_key({
+        "shot": shot_id, "dur_ms": duration_ms,
+        "w": width, "h": height, "fps": fps, "kind": "audition_slate",
+    }), 12)
+    return project.root / ".manju" / "audition" / "slates" / f"{shot_id}_{key}.mp4"
+
+
 def ensure_slate(
     project: Project,
     shot_id: str,
@@ -51,11 +68,11 @@ def ensure_slate(
     """A cheap color slate mp4 labeled with ``shot_id``. Content-addressed
     by geometry+duration+label so rebuilds hit the cache."""
     dur_s = max(0.1, duration_ms / 1000.0)
-    key = short_hash(cache_key({
-        "shot": shot_id, "dur_ms": duration_ms,
-        "w": width, "h": height, "fps": fps, "kind": "audition_slate",
-    }), 12)
-    dest = slate_dir(project) / f"{shot_id}_{key}.mp4"
+    dest = slate_path(
+        project, shot_id, duration_ms=duration_ms,
+        width=width, height=height, fps=fps,
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
         return dest
     # Safe drawtext: alnum/underscore only for the label overlay

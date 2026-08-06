@@ -30,7 +30,7 @@ number is worse than an honest blank.
 - Windows ffmpeg cancellation integration (real child-process kill on Windows).
 
 ## Current structural work
-- Narrative closed-loop refactor — S0 and Phases 1–4 complete locally: stale
+- Narrative closed-loop refactor — S0 and Phases 1–5 complete locally: stale
   provider formulas quarantined; SceneContract + nested ShotContract landed;
   one pure intent projection now drives current prompt, picture spec v3,
   expectations v2, and director view while legacy versions remain readable.
@@ -38,8 +38,11 @@ number is worse than an honest blank.
   variables and blocks closed-role conflicts before transport; ProviderManifest
   authoring evidence is traceable and advisory-only. Experiment Memory now
   extends the existing exact-media-bound verdict, remains historical after
-  binding drift, and stays outside assurance/spec/attempt evidence. Phase 5
-  (animatic, proof, and production readiness) is next.
+  binding drift, and stays outside assurance/spec/attempt evidence. Production
+  readiness now derives Scene/Shot, exact-byte Animatic approval, Proof Shot,
+  ordered Proof Scene digest approval, and staged paid-video admission without a
+  second truth store. Phase S1 (rewrite soft capabilities against the landed
+  contracts) is next.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
 - Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,

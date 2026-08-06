@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .hashing import hash_value
 from .models import Camera, ShotSpec
 
 
@@ -383,3 +384,45 @@ def director_contract_view(shot: ShotSpec) -> dict[str, Any]:
         "acceptance": contract.acceptance.model_dump(),
         "proof_shot": contract.proof_shot,
     }
+
+
+def narrative_intent_payload(project: Any) -> list[dict[str, Any]]:
+    """Animatic-bearing intent in exact indexed order.
+
+    Director-only notes (purpose, viewer notes, risk, and proof flags) are
+    intentionally absent. A narrative project therefore invalidates an
+    animatic for picture/rhythm changes, not for workflow annotations.
+    """
+    rows: list[dict[str, Any]] = []
+    for shot_id in project.shot_ids(indexed_only=True):
+        shot = project.load_shot(shot_id)
+        contract = shot.contract
+        row: dict[str, Any] = {
+            "shot": shot.id,
+            "scene_id": shot.scene_id,
+            "location": shot.scene,
+            "characters": list(shot.characters),
+            "props": list(shot.props or []),
+            "duration": shot.duration,
+            "camera": shot.camera.model_dump(),
+            "action": {
+                "main": shot.action.main,
+                "emotion": shot.action.emotion,
+            },
+            "dialogue": shot.dialogue.model_dump(),
+        }
+        if contract is not None:
+            row["contract"] = {
+                "opening": list(contract.opening),
+                "endpoint": list(contract.endpoint),
+                "performance": contract.performance.model_dump(),
+                "physics": contract.physics.model_dump(),
+                "sound_cue": contract.sound.cue,
+            }
+        rows.append(row)
+    return rows
+
+
+def narrative_intent_digest(project: Any) -> str:
+    """Deterministic digest used only by narrative animatic content keys."""
+    return hash_value(narrative_intent_payload(project))
