@@ -32,12 +32,15 @@ number is worse than an honest blank.
 ## Current structural work
 - Narrative closed-loop refactor — S0, Phases 1–7A and S1 are complete locally: stale
   provider formulas quarantined; SceneContract + nested ShotContract landed;
-  one pure intent projection now drives current prompt, picture SPEC v4,
+  one pure intent projection now drives current prompt, picture SPEC v5,
   expectations v2, and director view while legacy versions remain readable.
-  Authored reference bindings now include scoped ownership, prop references and
-  local-byte staleness; provider-specific delivery is sealed before Prompt,
-  identity, admission and final body, with closed-role omissions blocked before
-  transport and physical upload dedup kept separate. ProviderManifest
+  Typed opening facts support exact canonical-subject pruning while legacy
+  strings and prompt overrides remain unchanged. Authored reference bindings
+  now include complete list/mapping syntax, scoped ownership, prop references
+  and local-byte staleness; v1-v4 formulas remain permanent historical reads.
+  Provider-specific delivery is rendered/read once into an immutable payload
+  consumed by identity, admission, submit and retry, with closed-role omissions
+  blocked before transport and physical upload dedup kept separate. ProviderManifest
   authoring evidence is traceable and advisory-only. Experiment Memory now
   extends the existing exact-media-bound verdict, remains historical after
   binding drift, and stays outside assurance/spec/attempt evidence. Production

@@ -71,6 +71,30 @@ risk.primary|fallback_staging / acceptance / proof_shot
 
 `action.main` 保存主要可见动作。Prompt、picture spec、QC expectations 和 director view 都从同一个 ShotSpec/ShotContract 投影，不能各自再写一份导演意图。
 
+`opening` 兼容旧字符串，也可把起始状态绑定到明确主体：
+
+```yaml
+opening:
+  - rain strikes the window
+  - subject_ref: character:linxia
+    statement: Linxia starts with her left hand open
+  - subject_ref: prop:coin
+    statement: the coin rests on the counter
+```
+
+带 `subject_ref` 的 fact 使用完整 canonical scope。`character:A` 与
+`prop:A` 是不同主体；一个 scoped pose/motion reference 只能接管完全匹配的
+fact，不能删掉其他人物、道具、环境或旧式无 scope 字符串。全局 pose/motion
+owner 才能接管全部 opening。结构化 fact 的 statement 进入 Prompt 和 start
+expectation，完整 payload 进入当前 picture SPEC、director view 与 Animatic
+digest。手写 `prompt_override` 始终逐字保留。
+
+Picture SPEC 按 take 记录的版本永久比较：v1 是历史基础公式，v2 加入
+dialogue/keyframe，v3 加入 props 与 picture contract，v4 保留当时的 flat
+reference 公式及其 mapping 漏洞，v5 才使用与 provider resolver 共用的完整
+`image/images -> video/videos -> refs` 语法并纳入结构化 opening。旧 take
+不会因当前版本提升而迁移或批量 stale。
+
 ## Provider 知识
 
 稳定导演知识在 `skills/*/SKILL.md`。易变 provider 知识只读当前 `ProviderManifest` 的 capabilities、limits、refs、cost、adapter，以及带日期、来源、owner 的 `authoring` evidence。没有 current evidence 时，negative 语法、参考数量、时长、seed 和型号公式都保持 unknown。

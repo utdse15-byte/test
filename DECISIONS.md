@@ -92,6 +92,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #12` | 2026-08-06 | Media eligibility is one derived view; proxy build success never implies Picture Lock, and scaffold examples do not opt legacy projects in | build/readiness.py, build/status.py, manju status, manju production, story/scenes/*.yaml.example |
 | `NARRATIVE-CLOSED-LOOP #13` | 2026-08-06 | Synthetic no-paid rehearsal proves invalidation, experiment, observed-endpoint, rewrite and proof-gate code paths only; real narrative production remains unproven | tests/test_phase7a_narrative_rehearsal.py, REPORTS/NARRATIVE_REHEARSAL_2026-08-06.md |
 | `NARRATIVE-CLOSED-LOOP #14` | 2026-08-06 | Static consistency hardening seals effective provider requests, scoped logical references, SPEC v4, redo replay, and one-record review/proof binding without real transport | providers/, core/spec.py, qc/assurance.py, qc/production.py, build/readiness.py, tests/test_static_audit_wave*.py |
+| `NARRATIVE-CLOSED-LOOP #15` | 2026-08-06 | Second-pass residuals close identity/body TOCTOU, complete reference mappings in SPEC v5, and make scoped opening facts typed and projectable | providers/, core/authoring.py, core/intent.py, core/spec.py, tests/test_static_audit_wave*.py |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4161,3 +4162,18 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     accepted packet/opening/endpoint, and exclude stale or rejected evidence.
     All proof is offline Fake Transport, temp bytes, and pure derivation. No real
     Provider, paid generation, Phase 7B, S2, or film-quality claim is included.
+15. **Second-pass request and intent residuals close without rewriting history.**
+    A provider attempt renders its body and reads selected local reference bytes
+    exactly once into an immutable `PreparedProviderPayload`; identity,
+    admission, submit, and retry consume that same semantic payload. Current
+    picture SPEC v5 and provider resolution share one authored-reference parser
+    for list/mapping and singular/plural image/video/refs forms. Recorded v1-v4
+    takes retain their historical formulas, including v4's mapping omission.
+    `ShotContract.opening` accepts legacy strings or typed
+    `{subject_ref, statement}` facts; scoped pose/motion ownership compares the
+    complete canonical scope and cannot cross-match a character and prop with
+    the same id. Prompt, current SPEC, start expectations, director view, and
+    Animatic digest consume shared fact helpers. `prompt_override` remains
+    verbatim. Evidence is limited to pure functions, temporary bytes, Fake
+    Transport, and offline tests: no real Provider, payment, media generation,
+    Phase 7B, S2, or film-production validation occurred.

@@ -671,30 +671,47 @@ subject scope, and creates an immutable provider-specific
 remain advisory only when it owns no closed visual variable. Omitting an owner
 blocks before transport.
 
-The selected plan is the shared input to prompt projection, final rendered
-body, cost/admission facts, and request identity. Identity binds the rendered
-body digest and every selected logical binding while content-addressing physical
-blobs without absolute paths. Logical bindings are never removed by physical
-deduplication: one file may own different scoped variables and is uploaded once.
-Every fallback provider receives a fresh attempt request, including independent
-params, delivery plan, identity cache, and evidence attempt id.
+The selected plan is the shared input to prompt projection and one immutable
+`PreparedProviderPayload`. Preparation renders the body once and reads every
+selected local file once. Request identity, cost/admission facts, submit, and
+retry then consume that same frozen semantic body and those same file bytes;
+submit never rereads project files or rerenders a mutable body template.
+Multipart boundaries may vary, but the identity-bound fields, filenames, and
+content hashes are exactly the fields/files given to transport. Logical
+bindings are never removed by physical deduplication: one file may own different
+scoped variables and is uploaded once. Every fallback provider receives a fresh
+attempt request, including independent params, delivery plan, prepared payload,
+identity cache, and evidence attempt id.
 
-### Reference ownership and picture SPEC v4
+### Reference ownership and picture SPEC v5
 
 Ownership is unique by `(role, canonical subject scope)`. Global and scoped
 owners for the same role conflict; distinct scoped character or prop owners do
-not. Scoped character motion cannot suppress camera movement, and scoped pose
-cannot suppress other characters, props, or global opening facts. Prop Bible
-references participate in the same resolution, prompt, delivery, and staleness
-pipeline as character and location references.
+not. Scoped character motion cannot suppress camera movement. ShotContract
+opening facts may remain legacy strings or use typed `{subject_ref, statement}`
+values. A scoped pose/motion owner suppresses only a structured fact with the
+same full canonical scope; `character:A` never matches `prop:A`. Other
+characters, props, scene/environment facts, and unscoped legacy strings remain.
+A global owner suppresses all opening facts. Prop Bible references participate
+in the same resolution, prompt, delivery, and staleness pipeline as character
+and location references.
 
-New takes use picture SPEC v4. In addition to established picture-bearing shot
-and Bible facts, v4 binds every authored logical reference declaration (kind,
-ref, tier, controls, ignore, canonical subject scope) and the SHA-256 of readable
-local reference bytes. Provider-specific delivery omission is request truth,
-not picture-spec truth, and stays outside SPEC v4. Takes recorded with v1/v2/v3
-always compare under their recorded version; no migration or bulk stale event is
-inferred merely because v4 exists.
+New takes use picture SPEC v5. Provider resolution and v5 share one authored
+reference parser and the stable order `image/images`, `video/videos`, then
+`refs`; list and mapping forms, controls, ignore, canonical subject scope, and
+readable local bytes all participate. Provider-specific delivery omission is
+request truth, not picture-spec truth, and stays outside the picture SPEC.
+
+| Recorded version | Permanent comparison rule |
+|---|---|
+| v1 / missing | historical base picture formula |
+| v2 | historical v2 dialogue/keyframe formula |
+| v3 | historical props and picture-contract formula; opening is statement text |
+| v4 | historical flat reference formula, including its top-level mapping omission |
+| v5 | complete shared reference syntax plus structured opening payloads |
+
+Every take is compared under the version recorded when it was generated. There
+is no automatic migration and no bulk stale event merely because v5 exists.
 
 ### Redo recipe boundary
 
