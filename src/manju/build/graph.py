@@ -10,6 +10,7 @@ always abort.
 
 from __future__ import annotations
 
+import copy
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2647,6 +2648,35 @@ class _RedoPlan:
     redo_of: str | None = None
 
 
+# Legacy take sidecars mixed creative recipe with runtime evidence. Redo is a
+# new generation request, so it replays only this explicit allowlist. Unknown
+# keys default to non-replayable; provider-specific options belong under the
+# authored ``provider_options`` namespace.
+REPLAYABLE_RECIPE_KEYS = frozenset({
+    "seed", "model", "sampler", "guidance", "cfg_scale", "steps",
+    "strength", "denoise", "negative_prompt", "aspect_ratio", "style",
+    "image", "images", "video", "videos", "refs", "provider_options",
+})
+NEVER_REPLAY_KEYS = frozenset({
+    "remote_job_id", "compiled_prompt", "ref_delivery", "bridge_admission",
+    "submission_id", "request_digest", "job_id", "prompt_id", "mapped_inputs",
+    "workflow_sha256", "base_url", "output", "duration_s", "duration_ms",
+})
+
+
+def replayable_recipe_params(sidecar: Any) -> dict[str, Any]:
+    """Extract a fresh redo recipe from a current or legacy take sidecar."""
+    explicit = getattr(sidecar, "recipe", None)
+    source = explicit if isinstance(explicit, dict) else getattr(sidecar, "params", {})
+    if not isinstance(source, dict):
+        return {}
+    return {
+        key: copy.deepcopy(value)
+        for key, value in source.items()
+        if key in REPLAYABLE_RECIPE_KEYS and key not in NEVER_REPLAY_KEYS
+    }
+
+
 def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
                provider: str | None, seed: int | None, from_take: str | None,
                rules, bible) -> _RedoPlan:
@@ -2663,9 +2693,9 @@ def _plan_redo(project: Project, shot_id: str, *, candidates: int | None,
         prior = project.get_take(shot_id, from_take)
         if prior is None:
             raise BuildError(f"{shot_id}: no such take to reuse: {from_take}")
-        # the recipe travels with the output: replay the take's recorded params
-        # (seed among them) and, unless overridden, its provider.
-        params.update(prior.sidecar.params)
+        # The recipe travels with the output, but runtime evidence never does.
+        # Unknown legacy keys are intentionally not replayed.
+        params.update(replayable_recipe_params(prior.sidecar))
         if provider is None and prior.sidecar.provider not in ("", "manual_import"):
             shot.generation.provider = prior.sidecar.provider
     if seed is not None:

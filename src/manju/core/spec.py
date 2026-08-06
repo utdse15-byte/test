@@ -8,8 +8,8 @@ deliberately excluded so that human decisions never make a take look stale.
 VERSIONED HASHES (round W, review #37/#16/#60) — §4.3 conservatism extended to
 new provider-input fields WITHOUT mass-restaging every existing take:
 
-    SPEC_VERSION  = 3   v2 dialogue/keyframes plus explicit props and the
-                        picture-bearing subset of nested ShotContract.
+    SPEC_VERSION  = 4   v3 plus every authored logical reference binding and
+                        the content hash of each project-local reference blob.
 
     version 2           dialogue {speaker,text} + (when non-empty) keyframes
                         both already flow into the real prompt/provider call
@@ -40,7 +40,7 @@ from .intent import picture_contract_payload
 from .hashing import hash_file, hash_value
 from .models import ShotSpec
 
-SPEC_VERSION = 3
+SPEC_VERSION = 4
 VOICE_VERSION = 2
 
 _URL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -95,6 +95,133 @@ def _keyframes_payload(shot: ShotSpec, project_root: Path | str | None) -> list[
     return out
 
 
+def _as_ref_list(value: Any) -> list[Any]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if item not in (None, "")]
+    return [value]
+
+
+def _local_reference_hash(ref: str, project_root: Path | str | None) -> str | None:
+    """Hash a project-contained local reference without following it outside."""
+    if not ref or _URL_SCHEME_RE.match(ref) or project_root is None:
+        return None
+    root = Path(project_root).resolve()
+    path = Path(ref)
+    if not path.is_absolute():
+        path = root / path
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(root)
+        if resolved.is_file():
+            return hash_file(resolved)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _canonical_subject_scope(value: Any, inferred: str | None = None) -> str | None:
+    raw = str(value or inferred or "").strip()
+    if not raw:
+        return None
+    for prefix, canonical in (
+        ("character:", "character"), ("character/", "character"),
+        ("prop:", "prop"), ("prop/", "prop"),
+        ("asset:", "asset"), ("asset/", "asset"),
+        ("scene:", "scene"), ("scene/", "scene"),
+    ):
+        if raw.lower().startswith(prefix):
+            return f"{canonical}:{raw[len(prefix):].strip()}"
+    return raw
+
+
+def _reference_binding(
+    value: Any,
+    *,
+    kind: str | None,
+    tier: str,
+    project_root: Path | str | None,
+    inferred_scope: str | None = None,
+) -> dict[str, Any] | None:
+    spec = value if isinstance(value, dict) else {}
+    explicit_kind = kind
+    if isinstance(value, dict):
+        if value.get("video") not in (None, ""):
+            ref = value.get("video")
+            explicit_kind = "video"
+        elif value.get("image") not in (None, ""):
+            ref = value.get("image")
+            explicit_kind = "image"
+        else:
+            ref = value.get("ref") or value.get("path")
+    else:
+        ref = value
+    if ref in (None, ""):
+        return None
+    ref = str(ref)
+    if explicit_kind is None:
+        explicit_kind = "video" if Path(ref.split("?", 1)[0]).suffix.lower() in {
+            ".mp4", ".mov", ".webm", ".m4v", ".mkv", ".gif"
+        } else "image"
+    return {
+        "kind": explicit_kind,
+        "ref": ref,
+        "tier": tier,
+        "controls": [str(item) for item in _as_ref_list(spec.get("controls"))],
+        "ignore": [str(item) for item in _as_ref_list(spec.get("ignore"))],
+        "subject_scope": _canonical_subject_scope(spec.get("subject_ref"), inferred_scope),
+        "local_sha256": _local_reference_hash(ref, project_root),
+    }
+
+
+def _reference_payload(
+    shot: ShotSpec,
+    bible: dict[str, dict[str, Any]],
+    project_root: Path | str | None,
+) -> list[dict[str, Any]]:
+    """All authored logical reference bindings in stable resolution order."""
+    out: list[dict[str, Any]] = []
+
+    def add(values: Any, *, kind: str | None, tier: str,
+            inferred_scope: str | None = None) -> None:
+        for value in _as_ref_list(values):
+            row = _reference_binding(
+                value, kind=kind, tier=tier, project_root=project_root,
+                inferred_scope=inferred_scope,
+            )
+            if row is not None:
+                out.append(row)
+
+    params = dict(shot.generation.params or {})
+    for key in ("image", "images"):
+        add(params.get(key), kind="image", tier="params")
+    for key in ("video", "videos"):
+        add(params.get(key), kind="video", tier="params")
+    add(params.get("refs"), kind=None, tier="params")
+
+    add(getattr(shot, "refs", None), kind=None, tier="shot_refs")
+
+    bible_subjects: list[tuple[str, str]] = [
+        (str(character_id), f"character:{character_id}")
+        for character_id in shot.characters
+    ]
+    if shot.scene:
+        bible_subjects.append((shot.scene, f"scene:{shot.scene}"))
+    bible_subjects.extend(
+        (str(prop_id), f"prop:{prop_id}") for prop_id in (shot.props or [])
+    )
+    for bible_id, scope in bible_subjects:
+        entry = bible.get(bible_id)
+        if not isinstance(entry, dict):
+            continue
+        for key in ("ref_image", "ref_images"):
+            add(entry.get(key), kind="image", tier="bible", inferred_scope=scope)
+        for key in ("ref_video", "ref_videos"):
+            add(entry.get(key), kind="video", tier="bible", inferred_scope=scope)
+    return out
+
+
 def spec_payload(
     shot: ShotSpec,
     bible: dict[str, dict[str, Any]] | None = None,
@@ -113,6 +240,9 @@ def spec_payload(
     prompt edit is still caught either way). ``version=3`` adds explicit prop
     dependencies and only the ShotContract fields that affect provider picture
     input. A prompt override suppresses those new default-prompt projections.
+    ``version=4`` additionally records every authored logical reference binding
+    and hashes each project-local reference file. Provider-specific delivery
+    policy is deliberately absent.
     """
     bible = bible or {}
     generation = shot.generation.model_dump(exclude_none=False)
@@ -145,6 +275,8 @@ def spec_payload(
         contract_payload = picture_contract_payload(shot)
         if contract_payload:
             payload["contract"] = contract_payload
+    if version >= 4:
+        payload["references"] = _reference_payload(shot, bible, project_root)
     return payload
 
 
