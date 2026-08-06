@@ -530,8 +530,9 @@ def _placeholder_map(req: GenerationRequest) -> dict[str, object]:
     from .prompt import compile_prompt
 
     config = req.project.load_config()
+    refset = req.refset()
     values: dict[str, object] = {
-        "prompt": compile_prompt(req.shot, req.bible),
+        "prompt": compile_prompt(req.shot, req.bible, refset=refset),
         "duration_s": req.duration_ms / 1000.0,
         "duration_ms": req.duration_ms,
         "width": config.width,

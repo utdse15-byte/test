@@ -226,7 +226,7 @@ class LocalCommandProvider(Provider):
         refset = req.refset()
         primary_video = refset.primary_video
         return {
-            "prompt": compile_prompt(req.shot, req.bible),
+            "prompt": compile_prompt(req.shot, req.bible, refset=refset),
             "width": config.width,
             "height": config.height,
             "fps": config.fps,

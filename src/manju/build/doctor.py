@@ -249,6 +249,18 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
             add(f"provider:{pid}", probe_ok, detail,
                 f"{'✓' if probe_ok else '✗'} provider {pid} ({manifest.type}): {detail}")
             ok = ok and probe_ok
+            if hasattr(manifest, "authoring"):
+                from ..providers.manifest import authoring_evidence_status
+
+                evidence = authoring_evidence_status(manifest)
+                freshness = "current" if evidence["current"] else "not current"
+                evidence_detail = f"{evidence['status']} ({freshness})"
+                add(
+                    f"provider_authoring:{pid}",
+                    True,
+                    evidence_detail,
+                    f"• provider {pid} authoring evidence: {evidence_detail}",
+                )
         for err in load_errors + [e for e in manifest_errors() if e not in load_errors]:
             add("provider_manifest", False, err, f"✗ provider manifest: {err}")
             ok = False

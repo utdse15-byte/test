@@ -174,8 +174,8 @@ def shot_prompt_bundle(project: Project, shot_id: str) -> dict[str, Any]:
 
     cost = _cost(project, shot)
     refset = resolve_refs(project, shot, bible)  # ONE resolve, shared below
-    video_prompt = compile_prompt(shot, bible)
-    image_prompt = compile_image_prompt(shot, bible)
+    video_prompt = compile_prompt(shot, bible, refset=refset)
+    image_prompt = compile_image_prompt(shot, bible, refset=refset)
     director_prompt = compile_director_prompt(shot, bible)
     negative_prompt = compile_negative_prompt(shot)
 

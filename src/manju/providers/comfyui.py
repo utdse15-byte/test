@@ -227,8 +227,9 @@ class ComfyUIProvider(Provider):
         # prompt + resolved image are authoritative — set after the params merge.
         # {image} is the raw path (path-based nodes); {image_upload} is filled by
         # _deliver_refs only when the workflow actually uploads (goal item 7).
-        values["prompt"] = compile_prompt(req.shot, req.bible)
-        values["image"] = req.refset().primary_image_path_str()
+        refset = req.refset()
+        values["prompt"] = compile_prompt(req.shot, req.bible, refset=refset)
+        values["image"] = refset.primary_image_path_str()
         return values
 
     def _uses_upload(self) -> bool:

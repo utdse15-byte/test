@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..core.idents import UnsafeIdentifierError, validate_safe_segment
 from ..core.models import ManjuModel
@@ -394,6 +394,53 @@ class LocalCmdConfig(ManjuModel):
     output_ext: str = ".mp4"  # extension of the file the tool writes to {out}
 
 
+class PromptSemanticsEvidence(ManjuModel):
+    """Dated prompt-language findings not already owned by request shape."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    negative_prompt: str = "unknown"
+    time_instruction: str = "unknown"
+    reference_precedence: str = "unknown"
+    camera_instruction: str = "unknown"
+    prompt_language: str = "unknown"
+
+
+class ProviderAuthoringEvidence(ManjuModel):
+    """Traceable advice for an external AI director, never capability truth."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    status: Literal["unknown", "provisional", "active", "stale", "archived"] = "unknown"
+    verified_on: str | None = None
+    verification_kind: Literal["official_docs", "owner_test", "both"] | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    model_label: str | None = None
+    prompt_semantics: PromptSemanticsEvidence = Field(
+        default_factory=PromptSemanticsEvidence
+    )
+    owner_findings: list[str] = Field(default_factory=list)
+    known_failure_modes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _current_evidence_is_traceable(self) -> "ProviderAuthoringEvidence":
+        if self.status not in ("active", "provisional"):
+            return self
+        missing: list[str] = []
+        if not (self.verified_on or "").strip():
+            missing.append("verified_on")
+        if self.verification_kind is None:
+            missing.append("verification_kind")
+        if not any(str(ref).strip() for ref in self.source_refs):
+            missing.append("source_refs")
+        if missing:
+            raise ValueError(
+                f"authoring status {self.status!r} requires traceability fields: "
+                + ", ".join(missing)
+            )
+        return self
+
+
 # CORE-002: which media extensions each declared provider ``type`` may write.
 # This is a GROUPING of `core.container.MEDIA_EXTS` (still the one canonical
 # list — membership is always tested against it first), not a second list of
@@ -441,6 +488,10 @@ class ProviderManifest(ManjuModel):
     # existing manifest, so byte-identical; surfaced verbatim by the
     # qualification report, never verified by a canary (§8).
     data_handling: DataHandlingConfig = Field(default_factory=DataHandlingConfig)
+    # Optional volatile prompt-semantics evidence for external authoring agents.
+    # It is deliberately not consumed by provider request compilation, spec
+    # hashes, routing, capabilities, limits, refs, or historical take freshness.
+    authoring: ProviderAuthoringEvidence | None = None
 
     def validate_for_generic(self) -> list[str]:
         """Config problems that would only surface when money is at stake —
@@ -599,6 +650,45 @@ class ProviderManifest(ManjuModel):
                     f"{FIRST_LAST_CAPABILITY!r} — add it so the首尾帧任务 is routed here"
                 )
         return out
+
+
+def current_authoring_evidence(
+    manifest: ProviderManifest,
+) -> ProviderAuthoringEvidence | None:
+    """Current advice only; unknown, stale and archived evidence stays inert."""
+    evidence = manifest.authoring
+    if evidence is None or evidence.status not in ("active", "provisional"):
+        return None
+    return evidence
+
+
+def authoring_evidence_status(manifest: ProviderManifest) -> dict:
+    """Honest CLI/doctor projection, including the absent-as-unknown state."""
+    evidence = manifest.authoring
+    if evidence is None:
+        return {
+            "status": "unknown",
+            "current": False,
+            "traceable": False,
+            "verified_on": None,
+            "verification_kind": None,
+            "source_refs": [],
+            "model_label": None,
+        }
+    traceable = bool(
+        (evidence.verified_on or "").strip()
+        and evidence.verification_kind is not None
+        and any(str(ref).strip() for ref in evidence.source_refs)
+    )
+    return {
+        "status": evidence.status,
+        "current": current_authoring_evidence(manifest) is not None,
+        "traceable": traceable,
+        "verified_on": evidence.verified_on,
+        "verification_kind": evidence.verification_kind,
+        "source_refs": list(evidence.source_refs),
+        "model_label": evidence.model_label,
+    }
 
 
 def providers_dir() -> Path:

@@ -103,6 +103,15 @@ class RefItem:
     root: Path | None = None
 
 
+class ReferenceControlConflict(ValueError):
+    """A declared reference-transfer contract has no single closed-role owner."""
+
+    def __init__(self, conflicts: list[dict[str, Any]]):
+        self.conflicts = tuple(conflicts)
+        message = "; ".join(str(item["message"]) for item in conflicts)
+        super().__init__(message or "reference control ownership conflict")
+
+
 @dataclass
 class RefSet:
     """The refs available to one shot, most-specific first.
@@ -574,6 +583,48 @@ REF_TRANSFER_VOCAB = frozenset({
     "background", "pose", "framing", "lighting", "location",
     "color_grade", "motion",
 })
+
+
+def control_owners(refset: RefSet) -> dict[str, tuple[RefItem, ...]]:
+    """Explicit ``controls`` owners by role; ``ignore`` never claims a role."""
+    owners: dict[str, list[RefItem]] = {}
+    for item in refset.items:
+        for role in dict.fromkeys(item.controls):
+            owners.setdefault(str(role), []).append(item)
+    return {role: tuple(items) for role, items in owners.items()}
+
+
+def reference_control_conflicts(refset: RefSet) -> list[dict[str, Any]]:
+    """Return every invalid or multiply-owned closed role with exact refs."""
+    conflicts: list[dict[str, Any]] = []
+    for item in refset.items:
+        for error in item.transfer_errors:
+            conflicts.append({
+                "role": None,
+                "refs": [item.ref],
+                "message": f"reference {item.ref} has invalid transfer ownership: {error}",
+            })
+
+    for role, items in sorted(control_owners(refset).items()):
+        if len(items) < 2:
+            continue
+        refs = [item.ref for item in items]
+        conflicts.append({
+            "role": role,
+            "refs": refs,
+            "message": (
+                f"closed reference role {role!r} has multiple owners: "
+                + ", ".join(refs)
+            ),
+        })
+    return conflicts
+
+
+def validate_control_ownership(refset: RefSet) -> None:
+    """Fail before provider work when transfer ownership is contradictory."""
+    conflicts = reference_control_conflicts(refset)
+    if conflicts:
+        raise ReferenceControlConflict(conflicts)
 
 
 def _split_transfer(value: Any) -> tuple[Any, dict | None]:

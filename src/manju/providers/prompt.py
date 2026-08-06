@@ -164,8 +164,8 @@ def _prefixed(label: str, items: list[Any] | None) -> str:
     return f"{label}: {', '.join(vals)}" if vals else ""
 
 
-def _fields(shot: ShotSpec, bible: dict[str, dict]) -> dict[str, str]:
-    return prompt_contract_sections(shot, bible)
+def _fields(shot: ShotSpec, bible: dict[str, dict], *, refset=None) -> dict[str, str]:
+    return prompt_contract_sections(shot, bible, refset=refset)
 
 
 def _default_layout(fields: dict[str, str]) -> str:
@@ -203,7 +203,11 @@ def _default_layout(fields: dict[str, str]) -> str:
 
 
 def compile_prompt(
-    shot: ShotSpec, bible: dict[str, dict], template: str | None = None
+    shot: ShotSpec,
+    bible: dict[str, dict],
+    template: str | None = None,
+    *,
+    refset=None,
 ) -> str:
     """Compile a shot into a generation prompt (§8.5).
 
@@ -214,11 +218,15 @@ def compile_prompt(
     - otherwise → a deterministic multi-line default layout, empty sections
       skipped.
     """
+    if refset is not None:
+        from .refs import validate_control_ownership
+
+        validate_control_ownership(refset)
     override = shot.generation.prompt_override
     if isinstance(override, str) and override.strip():
         return override  # verbatim — do not normalize or strip
 
-    fields = _fields(shot, bible)
+    fields = _fields(shot, bible, refset=refset)
     if template is not None:
         return template.format_map(_Blank(fields))
     return _default_layout(fields)
@@ -235,7 +243,11 @@ def compile_prompt(
 
 
 def compile_image_prompt(
-    shot: ShotSpec, bible: dict[str, dict], template: str | None = None
+    shot: ShotSpec,
+    bible: dict[str, dict],
+    template: str | None = None,
+    *,
+    refset=None,
 ) -> str:
     """The still-frame (image) prompt (§8.5).
 
@@ -246,10 +258,14 @@ def compile_image_prompt(
     verbatim (it is the best prompt compiler, §8.5), exactly as for the video
     prompt; a ``template`` fills the same placeholders.
     """
+    if refset is not None:
+        from .refs import validate_control_ownership
+
+        validate_control_ownership(refset)
     override = shot.generation.prompt_override
     if isinstance(override, str) and override.strip():
         return override  # verbatim — do not normalize or strip
-    fields = _fields(shot, bible)
+    fields = _fields(shot, bible, refset=refset)
     if template is not None:
         return template.format_map(_Blank(fields))
     lines: list[str] = []

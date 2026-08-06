@@ -91,15 +91,96 @@ def _excerpt(entry: Any, *, skip: tuple[str, ...] = ("locked",)) -> str:
     return ", ".join(parts)
 
 
+def _normalized_key(value: Any) -> str:
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _costume_key(value: Any) -> bool:
+    key = _normalized_key(value)
+    return any(token in key for token in (
+        "costume", "clothing", "clothes", "wardrobe", "outfit", "attire",
+        "garment", "accessories", "uniform", "服装", "服饰", "衣着", "着装",
+        "衣服",
+    ))
+
+
+def _composite_appearance_key(value: Any) -> bool:
+    """Visual prose that may mix costume with identity and cannot be split safely."""
+    return _normalized_key(value) in {
+        "appearance", "description", "look", "visual_description",
+        "外观", "形象", "造型", "外貌描述",
+    }
+
+
+def _lighting_key(value: Any) -> bool:
+    key = _normalized_key(value)
+    return any(token in key for token in (
+        "lighting", "light_design", "illumination", "color_temperature",
+        "灯光", "照明", "光线", "色温",
+    ))
+
+
+def _control_items(refset: Any | None, role: str) -> list[Any]:
+    if refset is None:
+        return []
+    return [
+        item for item in (getattr(refset, "items", ()) or ())
+        if role in (getattr(item, "controls", ()) or ())
+    ]
+
+
+def _owned(refset: Any | None, *roles: str) -> bool:
+    return any(_control_items(refset, role) for role in roles)
+
+
+def _subject_matches(subject_ref: str | None, asset_id: str) -> bool:
+    if not subject_ref:
+        return True
+    subject = str(subject_ref).strip()
+    for prefix in ("character:", "character/", "asset:", "asset/"):
+        if subject.startswith(prefix):
+            subject = subject[len(prefix):]
+            break
+    return subject == asset_id
+
+
+def _asset_owned(refset: Any | None, asset_id: str, *roles: str) -> bool:
+    owners = [item for role in roles for item in _control_items(refset, role)]
+    return any(_subject_matches(getattr(item, "subject_ref", None), asset_id)
+               for item in owners)
+
+
 def _asset_field(
-    ids: list[str], bible: dict[str, dict[str, Any]], *, authored_names: bool
+    ids: list[str],
+    bible: dict[str, dict[str, Any]],
+    *,
+    authored_names: bool,
+    refset: Any | None = None,
 ) -> str:
     parts: list[str] = []
     for asset_id in ids:
         entry = bible.get(asset_id) or {}
         entry = entry if isinstance(entry, dict) else {}
         name = str(entry.get("name") or asset_id).strip()
-        rest = _excerpt(entry, skip=("locked", "name"))
+        identity_owned = _asset_owned(
+            refset, asset_id, "character_identity", "face"
+        )
+        costume_owned = _asset_owned(refset, asset_id, "costume")
+        projected = entry
+        if identity_owned:
+            projected = {
+                key: value for key, value in entry.items()
+                if key in ("name", "locked", "voice", "personality", "behavior")
+                or (_costume_key(key) and not costume_owned)
+            }
+        elif costume_owned:
+            projected = {
+                key: value for key, value in entry.items()
+                if not (_costume_key(key) or _composite_appearance_key(key))
+            }
+        rest = _excerpt(projected, skip=("locked", "name"))
+        if identity_owned and name != asset_id:
+            name = f"{name} [id: {asset_id}]"
         if authored_names:
             parts.append(f"{name} ({rest})" if rest else name)
         else:
@@ -107,20 +188,18 @@ def _asset_field(
     return "; ".join(parts)
 
 
-def _camera_field(camera: Camera) -> str:
+def _camera_field(camera: Camera, *, refset: Any | None = None) -> str:
     def phrase(mapping: dict[str, str], value: str | None) -> str:
         value = (value or "").strip()
         return mapping.get(value, value.replace("_", " ")) if value else ""
 
-    return ", ".join(
-        part
-        for part in (
-            phrase(_SHOT_SIZE, camera.shot_size),
-            phrase(_MOVEMENT, camera.movement),
-            phrase(_ANGLE, camera.angle),
-        )
-        if part
-    )
+    framing_owned = _owned(refset, "framing")
+    motion_owned = _owned(refset, "motion")
+    return ", ".join(part for part in (
+        "" if framing_owned else phrase(_SHOT_SIZE, camera.shot_size),
+        "" if motion_owned else phrase(_MOVEMENT, camera.movement),
+        "" if framing_owned else phrase(_ANGLE, camera.angle),
+    ) if part)
 
 
 def _prefixed(label: str, items: list[Any] | None) -> str:
@@ -164,7 +243,6 @@ def prompt_contract_sections(
     refset: Any | None = None,
 ) -> dict[str, str]:
     """Compile prompt sections without I/O or adding unauthored facts."""
-    del refset  # Phase 3 supplies explicit ownership pruning at this boundary.
     contract = shot.contract
     prop_ids = list(dict.fromkeys(shot.props or []))
     performance_required = contract.performance.required if contract else []
@@ -183,12 +261,28 @@ def prompt_contract_sections(
             f"{contract.acceptance.min_end_hold_ms} ms"
         )
 
+    scene_entry = (bible.get(shot.scene) or {}) if shot.scene else {}
+    if _owned(refset, "location", "background"):
+        scene = ""
+    elif _owned(refset, "lighting") and isinstance(scene_entry, dict):
+        scene = _excerpt({
+            key: value for key, value in scene_entry.items()
+            if not _lighting_key(key)
+        })
+    else:
+        scene = _excerpt(scene_entry)
+
     return {
-        "scene": _excerpt(bible.get(shot.scene) or {}) if shot.scene else "",
-        "characters": _asset_field(shot.characters, bible, authored_names=True),
+        "scene": scene,
+        "characters": _asset_field(
+            shot.characters, bible, authored_names=True, refset=refset
+        ),
         "props": _asset_field(prop_ids, bible, authored_names=True),
-        "camera": _camera_field(shot.camera),
-        "opening": _fmt(contract.opening) if contract else "",
+        "camera": _camera_field(shot.camera, refset=refset),
+        "opening": (
+            "" if _owned(refset, "pose", "motion")
+            else (_fmt(contract.opening) if contract else "")
+        ),
         "action": (shot.action.main or "").strip(),
         "emotion": (shot.action.emotion or "").strip(),
         "endpoint": _fmt(contract.endpoint) if contract else "",

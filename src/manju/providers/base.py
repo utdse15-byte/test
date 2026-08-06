@@ -329,6 +329,9 @@ class GenerationRequest:
             self.refs = resolve_refs(
                 self.project, self.shot, self.bible, params=self.params
             )
+        from .refs import validate_control_ownership
+
+        validate_control_ownership(self.refs)
         return self.refs
 
 
@@ -593,6 +596,24 @@ class CloudProvider(Provider):
         # evidence + intent columns.
         from . import submission as S
 
+        # Resolve and validate transfer ownership before opening submission
+        # state, minting an intent, or reaching any provider transport.
+        try:
+            req.refset()
+        except Exception as exc:
+            from .refs import ReferenceControlConflict
+
+            if isinstance(exc, ReferenceControlConflict):
+                raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"shot {req.shot.id} has conflicting reference ownership: {exc}",
+                    detail={
+                        "code": "reference_control_conflict",
+                        "conflicts": list(exc.conflicts),
+                    },
+                    disposition=S.NOT_DISPATCHED,
+                ) from exc
+            raise self._identity_unavailable(req, "ref_resolution", exc) from exc
         state = self._open_state(req)
         try:
             # goal 27: flag any intent left OPEN by an earlier crashed attempt.
@@ -764,7 +785,8 @@ class CloudProvider(Provider):
         try:
             from .prompt import compile_prompt
 
-            compiled_prompt = compile_prompt(req.shot, req.bible)
+            refset = req.refset()
+            compiled_prompt = compile_prompt(req.shot, req.bible, refset=refset)
         except Exception as exc:
             if strict:
                 raise self._identity_unavailable(req, "prompt_compile", exc) from exc
@@ -1545,7 +1567,9 @@ class CloudProvider(Provider):
                 try:
                     from .prompt import compile_prompt
 
-                    compiled_prompt = compile_prompt(req.shot, req.bible)
+                    compiled_prompt = compile_prompt(
+                        req.shot, req.bible, refset=req.refset()
+                    )
                 except Exception:
                     compiled_prompt = None
             params = dict(req.params)

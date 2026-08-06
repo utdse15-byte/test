@@ -459,12 +459,12 @@ def _clip_scope_checks(project, shot, findings: list[dict[str, Any]]) -> None:
 
 
 def _reference_checks(project, shot, refset, findings: list[dict[str, Any]]) -> None:
-    from ..providers.refs import DECLARED_TIERS
+    from ..providers.refs import DECLARED_TIERS, reference_control_conflicts
 
     sid = shot.id
-    declared_images = [it for it in refset.items
-                       if it.kind == "image" and it.tier in DECLARED_TIERS]
-    for it in declared_images:
+    declared_items = [it for it in refset.items if it.tier in DECLARED_TIERS]
+    declared_images = [it for it in declared_items if it.kind == "image"]
+    for it in declared_items:
         src = [f"shots/{sid}.yaml#/generation/params ({it.tier}: {it.ref})"]
         if it.transfer_errors:
             findings.append(_pcheck(
@@ -480,6 +480,17 @@ def _reference_checks(project, shot, refset, findings: list[dict[str, Any]]) -> 
                 src,
                 "把该 ref 写成 {ref: …, controls: [character_identity], "
                 "ignore: [background, pose]} 的显式绑定"))
+
+    for conflict in reference_control_conflicts(refset):
+        if len(conflict["refs"]) < 2:
+            continue
+        refs = ", ".join(conflict["refs"])
+        findings.append(_pcheck(
+            CODE_REF_CONTROL_CONFLICT, WARNING,
+            str(conflict["message"]),
+            [f"shots/{sid}.yaml#/generation/params ({refs})"],
+            f"为 closed role {conflict['role']} 只保留一个 reference owner",
+        ))
 
     with_decl = [it for it in declared_images if it.declared_transfer]
     if len(declared_images) >= 2 and not any(
@@ -616,13 +627,6 @@ def production_checks(project, shot, *, duration_ms: int | None = None,
             duration_ms = _target_duration_ms(project, shot, project.load_rules())
         except Exception:
             duration_ms = 0
-    if video_prompt is None:
-        try:
-            from ..providers.prompt import compile_prompt
-
-            video_prompt = compile_prompt(shot, project.load_bible())
-        except Exception:
-            video_prompt = ""
     if refset is None:
         try:
             from ..providers.refs import resolve_refs
@@ -630,6 +634,15 @@ def production_checks(project, shot, *, duration_ms: int | None = None,
             refset = resolve_refs(project, shot, project.load_bible())
         except Exception:
             refset = None
+    if video_prompt is None:
+        try:
+            from ..providers.prompt import compile_prompt
+
+            video_prompt = compile_prompt(
+                shot, project.load_bible(), refset=refset
+            )
+        except Exception:
+            video_prompt = ""
 
     _clip_scope_checks(project, shot, findings)
     if refset is not None:

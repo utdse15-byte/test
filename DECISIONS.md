@@ -84,6 +84,8 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #4` | 2026-08-05 | Ordinary narrative work never defaults to marketing syntax or one-beat-one-shot | skills/narrative-pacing/SKILL.md, skills/creation-funnel/SKILL.md |
 | `NARRATIVE-CLOSED-LOOP #5` | 2026-08-05 | Scene and shot contracts retain one owner; scene membership is derived | core/authoring.py, shots/index.yaml, ShotSpec.scene_id |
 | `NARRATIVE-CLOSED-LOOP #6` | 2026-08-05 | One pure intent projection drives prompt, picture hash, expectations, and director view | core/intent.py, core/spec.py, providers/prompt.py, qc/expectations.py |
+| `NARRATIVE-CLOSED-LOOP #7` | 2026-08-05 | Explicit reference owners prune only unresolved default-prompt variables; conflicts fail before transport | providers/refs.py, core/intent.py, providers/prompt.py |
+| `NARRATIVE-CLOSED-LOOP #8` | 2026-08-05 | Provider authoring evidence is traceable, advisory, and excluded from machine profile identity | providers/manifest.py, manju providers show/check, manju doctor |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4066,3 +4068,21 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    Spec v1/v2 and contract-free expectation v1 remain permanent read paths;
    purpose, viewer notes, risk, fallback, proof flags, and scene IDs do not
    restage picture media.
+7. **Reference ownership is explicit and closed before transport.** Only a
+   reference's declared `controls` can suppress default Prompt fields;
+   `ignore` never claims control and no filename or model guess fills a role.
+   Multiple refs claiming one closed role, unknown transfer roles, and
+   `controls`/`ignore` overlap reuse one conflict owner in `providers/refs.py`
+   and fail before routing or provider transport. Identity, costume, location,
+   pose/motion, framing, and lighting prune conservatively; action intent,
+   emotion, endpoint, physics, avoidance rails, and an uncontrolled camera
+   movement remain. A handwritten `prompt_override` is never rewritten.
+8. **Provider authoring evidence is advice, not a second capability source.**
+   `ProviderManifest.authoring` may hold only dated prompt semantics, owner
+   findings, and known failure modes. Active/provisional evidence requires a
+   date, verification kind, and source reference; unknown remains unknown and
+   stale/archived evidence is never returned as current advice. Capabilities,
+   limits, refs, cost, adapter, routing, provider profile identity, Prompt
+   compilation, spec hashes, and historical take freshness remain owned by
+   their existing structures. `providers show/check` and `doctor` display the
+   evidence status without promoting it.

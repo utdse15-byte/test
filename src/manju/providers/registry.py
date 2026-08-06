@@ -187,6 +187,32 @@ def generate_with_fallback(
     hard build error; when a routing.yaml exists the active strategy decides the
     order; with NO routing file the order is byte-identical to §8.4 (explicit
     provider first, then the fallback chain)."""
+    # Closed roles have exactly one explicit reference owner. Validate before
+    # routing so providers that do not consume prompt text cannot bypass the
+    # pre-transport ownership gate.
+    try:
+        req.refset()
+    except Exception as exc:
+        from .refs import ReferenceControlConflict
+        from .submission import NOT_DISPATCHED
+
+        if isinstance(exc, ReferenceControlConflict):
+            detail = {
+                "code": "reference_control_conflict",
+                "conflicts": list(exc.conflicts),
+            }
+            message = f"shot {req.shot.id} has conflicting reference ownership: {exc}"
+            kind = FailureKind.invalid
+        else:
+            detail = {"code": "reference_resolution_unavailable"}
+            message = (
+                f"shot {req.shot.id} reference resolution failed before provider "
+                f"routing ({type(exc).__name__}: {exc})"
+            )
+            kind = FailureKind.provider_error
+        raise ProviderFailure(
+            kind, message, detail=detail, disposition=NOT_DISPATCHED
+        ) from exc
     from . import routing  # lazy: routing imports the registry back
 
     preferred = req.shot.generation.provider

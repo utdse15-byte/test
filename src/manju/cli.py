@@ -9241,6 +9241,7 @@ def _providers_check_sections(provider_id: str, m, manifest_errors: list) -> dic
     routing references (validate the active routing config where a project is
     resolvable), and warnings (the opaque LEGACY ``max_resolution``; disabled)."""
     from .providers.catalog import project_provider_capabilities
+    from .providers.manifest import authoring_evidence_status
 
     key_env = m.auth.key_env
     credential_presence = {
@@ -9276,6 +9277,7 @@ def _providers_check_sections(provider_id: str, m, manifest_errors: list) -> dic
         "credential_presence": credential_presence,
         "projection_consistency": projection_consistency,
         "routing_references": routing_references,
+        "authoring_evidence": authoring_evidence_status(m),
         "warnings": warnings,
     }
 
@@ -9328,6 +9330,9 @@ def providers_check(
         raise typer.Exit(0 if passed else 1)
     for w in sections["warnings"]:
         typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
+    evidence = sections["authoring_evidence"]
+    freshness = "current" if evidence["current"] else "not current"
+    typer.echo(f"authoring evidence: {evidence['status']} ({freshness})")
     if m.disabled:
         typer.secho(f"• {provider_id} is disabled "
                     f"(manju providers enable {provider_id})", fg=typer.colors.BRIGHT_BLACK)
@@ -9413,6 +9418,12 @@ def providers_show(provider_id: str = typer.Argument(..., metavar="ID"),
     if not path.exists():
         _fail(f"no such provider {provider_id!r} (looked at {path})")
     masked = _mask_secrets(read_yaml(path) or {})
+    if isinstance(masked, dict):
+        authoring = masked.get("authoring")
+        if authoring is None:
+            masked["authoring"] = {"status": "unknown"}
+        elif isinstance(authoring, dict):
+            authoring.setdefault("status", "unknown")
     if as_json:
         _emit(masked, True)
         return
