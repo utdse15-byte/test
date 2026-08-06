@@ -118,6 +118,13 @@ REPAIR_VARIABLES = (
     "text_overlay", "audio", "seed", "provider_surface", "safety_wording",
     "post_trim", "post_mask", "post_grade",
 )
+# Phase 4: creative experiment memory is additive metadata inside the existing
+# media-bound verdict decision.  These prose fields never participate in
+# assurance or picture hashing; intake validates them before the verdict is
+# appended to the one review log.
+EXPERIMENT_TEXT_FIELDS = (
+    "hypothesis", "expected_result", "observed_result", "next_test",
+)
 # §9.4: transient (opening/endpoint) observation enums — bound to the reviewed
 # media bytes, NEVER promoted into Bible identity facts.
 OBS_STATE_VISIBILITY = ("VISIBLE", "NOT_VISIBLE", "UNCERTAIN",
@@ -290,6 +297,21 @@ def _verdict_contract_v2(mode: str) -> dict:
                  "evidence": "可选佐证"}
             ],
             "reviewer": {"kind": "model_visual | human", "name": "判读者标识"},
+            "decision": {
+                "disposition": "KEEP | FIX_IN_POST | EDIT_DONT_REGENERATE | "
+                               "REROLL | REWRITE_SOURCE",
+                "primary_repair_variable": "非 KEEP 时必填,取自 REPAIR_VARIABLES",
+                "diagnostic_isolation": "可选布尔值,默认 true",
+                "experiment": {
+                    "hypothesis": "本次实验假设",
+                    "tested_variable": "取自 REPAIR_VARIABLES 的唯一测试变量",
+                    "held_constant": ["保持不变的条件"],
+                    "expected_result": "预期结果",
+                    "observed_result": "对绑定媒体的实际观察",
+                    "usable_ranges_ms": [{"start_ms": 0, "end_ms": 1000}],
+                    "next_test": "下一步测试或处理动作",
+                },
+            },
         },
         "note": "结论由纯函数按 present/absent 逐条比对得出;若当前媒体/spec/expectation "
                 "与 packet 绑定不符,该判读只作为历史保留(binding=stale),不计入当前验收。",
@@ -522,6 +544,21 @@ def _safe_hash(path) -> str | None:
         return None
 
 
+def _take_duration_ms(take: "TakeInfo") -> int | None:
+    """Known duration for immutable take bytes, sidecar first then ffprobe."""
+    probe_info = take.sidecar.probe if take.sidecar is not None else None
+    if probe_info is not None and probe_info.duration_ms is not None:
+        duration = int(probe_info.duration_ms)
+        return duration if duration > 0 else None
+    try:
+        from ..media.probe import probe as _probe
+
+        duration = int(_probe(take.media_path).duration_ms or 0)
+        return duration if duration > 0 else None
+    except Exception:
+        return None
+
+
 # ------------------------------------------------------- DR02 v2 packet issuance
 
 
@@ -575,11 +612,18 @@ def _issue_shot_packet(project: "Project", shot_id: str, take: "TakeInfo",
 
     es = compile_expectations(project, shot_id)
     evidence_frames = [frames[k] for k in ("first", "mid", "last") if frames.get(k)]
+    media = {
+        "project_path": project.relpath(take.media_path),
+        "sha256": _safe_hash(take.media_path),
+        "take": take.name,
+    }
+    duration_ms = _take_duration_ms(take)
+    if duration_ms is not None:
+        media["duration_ms"] = duration_ms
     body = {
         "schema": PACKET_SCHEMA,
         "subject": {"kind": "shot", "id": shot_id},
-        "media": {"project_path": project.relpath(take.media_path),
-                  "sha256": _safe_hash(take.media_path)},
+        "media": media,
         "spec_hash": es["spec_hash"],
         "expectation_digest": es["digest"],
         "expectations": es["expectations"],
@@ -641,16 +685,7 @@ def _member_duration_ms(take: "TakeInfo") -> int:
     path and a live-probe path that see the same duration request the byte-
     identical frame timestamp — the redundant per-member probe the content-
     addressed frame cache had already made moot, now removed."""
-    probe_info = take.sidecar.probe if take.sidecar is not None else None
-    if probe_info is not None and probe_info.duration_ms is not None:
-        return int(probe_info.duration_ms or 0)
-    try:
-        from ..media.probe import probe as _probe
-
-        info = _probe(take.media_path)
-        return int(info.duration_ms or 0)
-    except Exception:
-        return 0
+    return _take_duration_ms(take) or 0
 
 
 def _member_frame(project: "Project", shot_id: str, take_name: str):
@@ -1094,6 +1129,101 @@ def record_verdicts(project: "Project", payload: Any, *, actor: str = "ai") -> d
 # ------------------------------------------------------ DR02 v2 verdict intake
 
 
+def validate_experiment(
+    experiment: Any,
+    *,
+    diagnostic_isolation: bool = True,
+    duration_ms: int | None = None,
+    label: str = "experiment",
+) -> tuple[dict | None, list[str], list[str]]:
+    """Validate and normalize one optional Experiment Memory block.
+
+    Returns ``(normalized, errors, warnings)``.  The helper is shared with
+    ``manju check`` so intake and later integrity scans cannot disagree about
+    usable ranges.  ``diagnostic_isolation`` is explicit for contract clarity;
+    the schema still has exactly one scalar ``tested_variable`` in either mode.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not isinstance(experiment, dict):
+        return None, [f"{label} 必须是对象"], warnings
+
+    normalized: dict[str, Any] = {}
+    for field in EXPERIMENT_TEXT_FIELDS:
+        value = experiment.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{label}.{field} 必须是非空字符串")
+        else:
+            normalized[field] = value
+
+    tested = experiment.get("tested_variable")
+    if tested not in REPAIR_VARIABLES:
+        errors.append(
+            f"{label}.tested_variable 必须是 {'|'.join(REPAIR_VARIABLES)} 之一,"
+            f"收到 {tested!r}"
+        )
+    else:
+        normalized["tested_variable"] = tested
+
+    held = experiment.get("held_constant")
+    if not isinstance(held, list):
+        errors.append(f"{label}.held_constant 必须是字符串数组")
+        held_norm: list[str] = []
+    else:
+        held_norm = []
+        for index, value in enumerate(held):
+            if not isinstance(value, str) or not value.strip():
+                errors.append(
+                    f"{label}.held_constant[{index}] 必须是非空字符串"
+                )
+            else:
+                held_norm.append(value)
+        normalized["held_constant"] = held_norm
+    if tested in REPAIR_VARIABLES and tested in held_norm:
+        isolation_note = "(diagnostic_isolation=true)" if diagnostic_isolation else ""
+        errors.append(
+            f"{label}.tested_variable {tested!r} 不能同时出现在 held_constant"
+            f"{isolation_note}"
+        )
+
+    ranges = experiment.get("usable_ranges_ms")
+    if not isinstance(ranges, list):
+        errors.append(f"{label}.usable_ranges_ms 必须是数组")
+        ranges = []
+    ranges_norm: list[dict[str, int]] = []
+    for index, item in enumerate(ranges):
+        range_label = f"{label}.usable_ranges_ms[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{range_label} 必须是对象")
+            continue
+        start = item.get("start_ms")
+        end = item.get("end_ms")
+        start_ok = isinstance(start, int) and not isinstance(start, bool)
+        end_ok = isinstance(end, int) and not isinstance(end, bool)
+        if not start_ok:
+            errors.append(f"{range_label}.start_ms 必须是整数")
+        elif start < 0:
+            errors.append(f"{range_label}.start_ms 必须 >= 0")
+        if not end_ok:
+            errors.append(f"{range_label}.end_ms 必须是整数")
+        elif start_ok and end <= start:
+            errors.append(f"{range_label}.end_ms 必须 > start_ms")
+        if end_ok and duration_ms is not None and end > duration_ms:
+            errors.append(
+                f"{range_label}.end_ms={end} 超出媒体时长 {duration_ms}ms"
+            )
+        if start_ok and end_ok:
+            ranges_norm.append({"start_ms": start, "end_ms": end})
+    normalized["usable_ranges_ms"] = ranges_norm
+    if ranges and duration_ms is None:
+        warnings.append(
+            f"{label}.usable_ranges_ms 已保存,但 media duration 未知,"
+            "无法校验范围上界"
+        )
+
+    return normalized, errors, warnings
+
+
 def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dict:
     """Intake bound-acceptance v2 verdicts. Accepts a single v2 verdict object
     or a batch ``{"schema": …, "verdicts": [obj, …]}``.
@@ -1153,11 +1283,13 @@ def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dic
     # `manju qc verdict` stacktraced (KeyError) AFTER the write had landed.
     # Count finding levels here so both intake paths satisfy the same reader.
     levels: dict[str, int] = {}
+    warnings: list[str] = []
     for rec in prepared:
         for fnd in rec.get("findings") or []:
             lv = str(fnd.get("level") or "")
             if lv:
                 levels[lv] = levels.get(lv, 0) + 1
+        warnings.extend(str(w) for w in (rec.get("intake_warnings") or []))
     try:
         from ..core.events import append_event
 
@@ -1167,6 +1299,7 @@ def _record_verdicts_v2(project: "Project", payload: dict, *, actor: str) -> dic
         pass
 
     return {"written": len(prepared), "bindings": bindings, "levels": levels,
+            "warnings": warnings,
             "schema": VERDICT_SCHEMA, "path": project.relpath(path)}
 
 
@@ -1177,6 +1310,7 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
     ``(None, [reasons])`` when the payload is invalid (reject the whole batch).
     """
     errs: list[str] = []
+    intake_warnings: list[str] = []
     if not isinstance(v, dict):
         return None, [f"verdict #{idx}: 必须是对象"]
 
@@ -1291,6 +1425,30 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
             reason = decision.get("reason")
             if reason is not None:
                 decision_norm["reason"] = str(reason)
+            if "experiment" in decision:
+                packet_for_duration = _load_packet(project, packet_id) if packet_id else None
+                if isinstance(packet_for_duration, dict) and (
+                    packet_for_duration.get("subject") or {}
+                ).get("kind") != "shot":
+                    errs.append(
+                        f"verdict #{idx}: decision.experiment 仅适用于 shot packet"
+                    )
+                media = (packet_for_duration.get("media") or {}
+                         if isinstance(packet_for_duration, dict) else {})
+                duration = media.get("duration_ms")
+                if not (isinstance(duration, int) and not isinstance(duration, bool)
+                        and duration > 0):
+                    duration = None
+                experiment_norm, experiment_errors, experiment_warnings = validate_experiment(
+                    decision.get("experiment"),
+                    diagnostic_isolation=iso if isinstance(iso, bool) else True,
+                    duration_ms=duration,
+                    label=f"verdict #{idx}: decision.experiment",
+                )
+                errs.extend(experiment_errors)
+                intake_warnings.extend(experiment_warnings)
+                if experiment_norm is not None:
+                    decision_norm["experiment"] = experiment_norm
 
     obs_states_norm = None
     obs_states = v.get("observed_states")
@@ -1454,8 +1612,13 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
         "reviewer": v.get("reviewer") if isinstance(v.get("reviewer"), dict) else {},
     }
     if "media" in packet:
-        rec["media_sha256"] = (packet.get("media") or {}).get("sha256")
-        rec["media_project_path"] = (packet.get("media") or {}).get("project_path")
+        media = packet.get("media") or {}
+        rec["media_sha256"] = media.get("sha256")
+        rec["media_project_path"] = media.get("project_path")
+        if media.get("take") is not None:
+            rec["media_take"] = media.get("take")
+        if media.get("duration_ms") is not None:
+            rec["media_duration_ms"] = media.get("duration_ms")
     if "media_members" in packet:
         rec["media_members"] = packet.get("media_members")
     if binding_failures:
@@ -1471,6 +1634,8 @@ def _prepare_v2_record(project: "Project", v: Any, idx: int, actor: str
     # ride here as routing/drift data — assurance never reads them.
     if dim_obs_norm is not None:
         rec["dimension_observations"] = dim_obs_norm
+    if intake_warnings:
+        rec["intake_warnings"] = intake_warnings
     return rec, []
 
 

@@ -717,6 +717,39 @@ def run_check(project: Project) -> CheckReport:
                 "两个文件会互相覆盖;请重命名其一"
             )
 
+    # Phase 4: verdict intake prevents malformed Experiment Memory, but the
+    # append-only JSONL is still ordinary project evidence that can be edited
+    # or restored from older tools. Re-run the same validator so an invalid
+    # usable range is a `manju check` error instead of silently surviving.
+    try:
+        from ..qc.agent_review import read_v2_records, validate_experiment
+
+        experiment_records, _malformed = read_v2_records(project)
+        for index, record in enumerate(experiment_records):
+            decision = record.get("decision")
+            if not isinstance(decision, dict) or "experiment" not in decision:
+                continue
+            duration = record.get("media_duration_ms")
+            if not (isinstance(duration, int) and not isinstance(duration, bool)
+                    and duration > 0):
+                duration = None
+            label = (
+                f"reports/qc_agent.jsonl: verdict #{index} decision.experiment"
+            )
+            _normalized, errors, warnings = validate_experiment(
+                decision.get("experiment"),
+                diagnostic_isolation=decision.get("diagnostic_isolation", True),
+                duration_ms=duration,
+                label=label,
+            )
+            report.errors.extend(errors)
+            report.warnings.extend(warnings)
+    except Exception as exc:
+        report.warnings.append(
+            "reports/qc_agent.jsonl: experiment 校验跳过 — "
+            + " ".join(str(exc).split())[:200]
+        )
+
     # ---- secret scan (keys never enter the project directory)
     for path in project.root.rglob("*"):
         # CLI-P0-002: select by suffix whitelist ∪ filename pattern (so `.env`

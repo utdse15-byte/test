@@ -1,6 +1,6 @@
 ---
 name: review-take-and-route-repair
-description: bound take 评审程序——对着 qc brief 的 packet 看片,回填 bound observations + 五类 disposition(KEEP/FIX_IN_POST/EDIT_DONT_REGENERATE/REROLL/REWRITE_SOURCE)+ 一个 primary repair variable + endpoint observations;只交证据,绝不执行 select/redo/patch。触发词:评审、看片、review take、triage、disposition、修复路由。
+description: bound take 评审程序——对着 qc brief 的 packet 看片,回填 bound observations + 五类 disposition(KEEP/FIX_IN_POST/EDIT_DONT_REGENERATE/REROLL/REWRITE_SOURCE)+ 一个 primary repair variable + 媒体绑定 Experiment Memory + endpoint observations;只交证据,绝不执行 select/redo/patch。触发词:评审、看片、review take、triage、disposition、修复路由。
 when_to_use: qc brief 出题后要判读 take、或用户问"这个 take 该留该改还是该重拍"时。
 tags: [qc, task]
 user_invocable: true
@@ -35,8 +35,21 @@ user_invocable: true
 2. **decision**(additive,可选):
 
 ```json
-{"disposition": "REROLL", "primary_repair_variable": "seed",
- "diagnostic_isolation": true, "reason": "构图/身份正确,只是噪声运气差"}
+{
+  "disposition": "REROLL",
+  "primary_repair_variable": "motion",
+  "diagnostic_isolation": true,
+  "reason": "动作末段变形,其余条件可保留",
+  "experiment": {
+    "hypothesis": "缩小右手动作幅度可以避免硬币融入手掌",
+    "tested_variable": "motion",
+    "held_constant": ["camera", "character_reference", "lighting", "duration"],
+    "expected_result": "硬币全程保持形状并与手指真实接触",
+    "observed_result": "0-800ms 可用,末段仍轻微变形",
+    "usable_ranges_ms": [{"start_ms": 0, "end_ms": 800}],
+    "next_test": "不再生成完整放入口袋动作,改用遮挡切镜"
+  }
+}
 ```
 
 3. **observed_states** —— 开头/结尾的瞬态观察(下一镜续接的锚点):
@@ -72,6 +85,16 @@ provider_surface safety_wording post_trim post_mask post_grade
 
 secondary 观察可以列,但下一次诊断式尝试只改这一个变量。用户执意一次改多个:
 可以,但 `diagnostic_isolation: false`,并且不得声称知道是哪项起了效。
+
+## Experiment Memory 纪律
+
+- 它只写在**同一个** verdict v2 的 `decision.experiment`,不另建 generation log;
+- `tested_variable` 复用上面的词表,且不得同时列入 `held_constant`;
+- `hypothesis` 写可证伪假设,`expected_result` 与 `observed_result` 分开;
+- `usable_ranges_ms` 只标实际可用区间,必须满足 `0 <= start_ms < end_ms`,不得越过已知媒体时长;
+- `next_test` 说明下一轮唯一变量或明确的剪辑/改源动作;
+- experiment 继承 packet 的 take/media_sha256/spec/expectation 绑定。媒体或源变化后它只作历史,不得当成当前 assurance 证据;
+- 失败 take 不删除。下一轮先读 candidate family 的当前/历史 experiment,再决定唯一变量。
 
 ## 失败条件
 

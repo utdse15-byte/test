@@ -57,8 +57,10 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
     Members carry, when the attempt evidence makes them joinable, the shared
     ``request_digest`` and the take's ``candidate_index`` within that request's
     returned outputs; plus the latest bound review disposition for the take's
-    EXACT bytes, and the keeper/selected separation (§8.4: a KEEP conclusion
-    never implies selection).
+    EXACT bytes, the latest Experiment Memory for those bytes, and the
+    keeper/selected separation (§8.4: a KEEP conclusion never implies
+    selection).  A stale experiment remains under ``historical_experiment``
+    but is never projected as the current ``experiment``.
 
     Hardening WP4 6.1 (claim 7): ``keeper=true`` requires the KEEP record to be
     FULLY current-bound — re-verified through the one existing binding checker
@@ -86,6 +88,7 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
     sha_to_request = _attempt_output_index(project, shot_id)
     # review join: media sha -> latest FULL v2 record (file order, later wins)
     verdict_by_sha = _verdicts_by_sha(project, shot_id)
+    experiment_by_sha = _experiments_by_sha(project, shot_id)
 
     families: dict[str, dict[str, Any]] = {}
     cycles: dict[frozenset, list[str]] = {}
@@ -113,6 +116,7 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
                 sha = None
         digest, cand_idx = sha_to_request.get(sha, (None, None)) if sha else (None, None)
         record = verdict_by_sha.get(sha) if sha else None
+        experiment_record = experiment_by_sha.get(sha) if sha else None
         dispo = (record.get("decision") or {}).get("disposition") if record else None
         binding_status = None
         keeper = False
@@ -123,6 +127,18 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
                 current = False  # unverifiable binding is never current (fail closed)
             binding_status = "current" if current else "stale"
             keeper = dispo == "KEEP" and current
+        historical_experiment = (
+            (experiment_record.get("decision") or {}).get("experiment")
+            if experiment_record else None
+        )
+        experiment_current = False
+        if experiment_record is not None and historical_experiment is not None:
+            try:
+                experiment_current = not _live_failures(
+                    project, shot_id, experiment_record
+                )
+            except Exception:
+                experiment_current = False
         fam["takes"].append({
             "take": take.name,
             "media_sha256": sha,
@@ -132,6 +148,11 @@ def candidate_families(project: "Project", shot_id: str) -> dict[str, Any]:
             "review_disposition": dispo,
             "historical_disposition": dispo,
             "binding_status": binding_status,
+            "experiment": historical_experiment if experiment_current else None,
+            "historical_experiment": historical_experiment,
+            "experiment_binding_status": (
+                "current" if experiment_current else "stale"
+            ) if historical_experiment is not None else None,
             "keeper": keeper,
             "selected": take.name == selected,
         })
@@ -228,6 +249,31 @@ def _verdicts_by_sha(project: "Project", shot_id: str) -> dict[str, dict]:
         sha = rec.get("media_sha256")
         if dispo and sha:
             out[sha] = rec
+    return out
+
+
+def _experiments_by_sha(project: "Project", shot_id: str) -> dict[str, dict]:
+    """Exact media sha256 -> latest v2 record carrying Experiment Memory.
+
+    This index is deliberately independent from the latest disposition index:
+    a later plain review does not erase an earlier experiment.  Currency is
+    checked by the caller through the one existing binding verifier.
+    """
+    try:
+        from .agent_review import read_v2_records
+
+        records, _ = read_v2_records(project)
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for rec in records:
+        subject = rec.get("subject") or {}
+        if subject.get("kind") != "shot" or subject.get("id") != shot_id:
+            continue
+        experiment = (rec.get("decision") or {}).get("experiment")
+        media_sha256 = rec.get("media_sha256")
+        if experiment is not None and media_sha256:
+            out[media_sha256] = rec
     return out
 
 

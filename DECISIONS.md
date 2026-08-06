@@ -86,6 +86,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #6` | 2026-08-05 | One pure intent projection drives prompt, picture hash, expectations, and director view | core/intent.py, core/spec.py, providers/prompt.py, qc/expectations.py |
 | `NARRATIVE-CLOSED-LOOP #7` | 2026-08-05 | Explicit reference owners prune only unresolved default-prompt variables; conflicts fail before transport | providers/refs.py, core/intent.py, providers/prompt.py |
 | `NARRATIVE-CLOSED-LOOP #8` | 2026-08-05 | Provider authoring evidence is traceable, advisory, and excluded from machine profile identity | providers/manifest.py, manju providers show/check, manju doctor |
+| `NARRATIVE-CLOSED-LOOP #9` | 2026-08-05 | Creative experiment memory extends the exact media-bound verdict instead of creating another review log | qc/agent_review.py, qc/production.py, reports/qc_agent.jsonl |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4086,3 +4087,12 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    compilation, spec hashes, and historical take freshness remain owned by
    their existing structures. `providers show/check` and `doctor` display the
    evidence status without promoting it.
+9. **Creative experiments extend the existing media-bound review truth.**
+   Optional `decision.experiment` on `manju.qc.verdict/v2` records the
+   hypothesis, one tested variable, held constants, expected and observed
+   results, usable media ranges, and next test. It inherits the verdict's exact
+   take, media hash, spec, and expectation bindings; stale experiments remain
+   append-only history but never become current assurance. Experiment prose is
+   excluded from picture spec hashes and `events.jsonl` stage-attempt evidence.
+   Candidate-family views expose the latest current-bound experiment separately
+   from historical experiment memory.

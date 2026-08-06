@@ -2692,6 +2692,8 @@ def qc_verdict_cmd(
             typer.echo("  级别:" + ", ".join(f"{k}={v}" for k, v in result["levels"].items()))
         if result.get("bindings"):
             typer.echo("  绑定:" + ", ".join(f"{k}={v}" for k, v in result["bindings"].items()))
+        for warning in result.get("warnings") or []:
+            typer.secho(f"  警告:{warning}", fg=typer.colors.YELLOW)
         typer.echo("→ 跑 manju qc 查看汇入的 [AI判读] 项")
 
 
