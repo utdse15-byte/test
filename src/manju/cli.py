@@ -2471,12 +2471,12 @@ def propose(
     With no --body on a pipe, the body is read from stdin; otherwise it may be
     empty."""
     from .core.yamlio import atomic_write_text
-    from .mcp.tools import _claim_proposal_path, _slugify  # shared numbering/slug
+    from .core.proposal_paths import claim_proposal_path, slugify_proposal_title
 
     project = _project()
     if body is None:
         body = "" if sys.stdin.isatty() else sys.stdin.read()
-    _number, path = _claim_proposal_path(project.proposals_dir, _slugify(title))
+    _number, path = claim_proposal_path(project.proposals_dir, slugify_proposal_title(title))
     atomic_write_text(path, f"# {title}\n\n{body}\n")
     rel = project.relpath(path)
     append_event(project.root, ACTOR, "propose", {"title": title, "path": rel})

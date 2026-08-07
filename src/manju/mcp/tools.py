@@ -18,8 +18,6 @@ All paths returned to the client are project-relative (never absolute).
 
 from __future__ import annotations
 
-import os
-import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -36,6 +34,7 @@ from ..core.events import append_event, tail_events
 from ..core.locks import verify_locks
 from ..core.models import ShotSpec
 from ..core.yamlio import atomic_write_text, read_yaml, write_yaml
+from ..core.proposal_paths import claim_proposal_path, slugify_proposal_title
 from ..exporters.jianying import export_jianying
 from ..exporters.otio import export_otio
 from ..exporters.srt_ass import export_captions
@@ -88,24 +87,13 @@ def _coerce_locked(value: Any) -> dict[str, str]:
     return {}
 
 
-def _slugify(title: str, maxlen: int = 40) -> str:
-    """Lowercased slug that KEEPS CJK (``str.isalnum`` is true for it) and turns
-    spaces/punctuation into ``_``; collapsed, stripped, capped at ``maxlen``."""
-    chars = [c if c.isalnum() else "_" for c in title.strip().lower()]
-    slug = re.sub(r"_+", "_", "".join(chars)).strip("_")
-    if len(slug) > maxlen:
-        slug = slug[:maxlen].strip("_")
-    return slug or "proposal"
+def _slugify_legacy_removed(title: str, maxlen: int = 40) -> str:
+    return slugify_proposal_title(title, maxlen)
 
 
 def _next_proposal_number(proposals_dir: Path) -> int:
-    highest = 0
-    if proposals_dir.exists():
-        for f in proposals_dir.glob("*.md"):
-            m = re.match(r"(\d+)", f.name)
-            if m:
-                highest = max(highest, int(m.group(1)))
-    return highest + 1
+    from ..core.proposal_paths import next_proposal_number
+    return next_proposal_number(proposals_dir)
 
 
 def _claim_proposal_path(proposals_dir: Path, slug: str) -> tuple[int, Path]:
@@ -130,17 +118,7 @@ def _claim_proposal_path(proposals_dir: Path, slug: str) -> tuple[int, Path]:
     :func:`~manju.core.yamlio.atomic_write_text`, an ``os.replace`` onto a
     path no concurrent claimant can also be holding.
     """
-    proposals_dir.mkdir(parents=True, exist_ok=True)
-    number = _next_proposal_number(proposals_dir)
-    while True:
-        path = proposals_dir / f"{number:04d}_{slug}.md"
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            number += 1
-            continue
-        os.close(fd)
-        return number, path
+    return claim_proposal_path(proposals_dir, slug)
 
 
 # ------------------------------------------------------------- handlers
@@ -689,7 +667,7 @@ def _h_propose(project: Project, args: dict) -> dict:
     collide on the same file."""
     title = args["title"]
     body = args["body"]
-    _number, path = _claim_proposal_path(project.proposals_dir, _slugify(title))
+    _number, path = claim_proposal_path(project.proposals_dir, slugify_proposal_title(title))
     atomic_write_text(path, f"# {title}\n\n{body}")
     rel = project.relpath(path)
     append_event(project.root, "ai", "propose", {"path": rel, "title": title})
