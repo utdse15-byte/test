@@ -93,6 +93,7 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #13` | 2026-08-06 | Synthetic no-paid rehearsal proves invalidation, experiment, observed-endpoint, rewrite and proof-gate code paths only; real narrative production remains unproven | tests/test_phase7a_narrative_rehearsal.py, REPORTS/NARRATIVE_REHEARSAL_2026-08-06.md |
 | `NARRATIVE-CLOSED-LOOP #14` | 2026-08-06 | Static consistency hardening seals effective provider requests, scoped logical references, SPEC v4, redo replay, and one-record review/proof binding without real transport | providers/, core/spec.py, qc/assurance.py, qc/production.py, build/readiness.py, tests/test_static_audit_wave*.py |
 | `NARRATIVE-CLOSED-LOOP #15` | 2026-08-06 | Second-pass residuals close identity/body TOCTOU, complete reference mappings in SPEC v5, and make scoped opening facts typed and projectable | providers/, core/authoring.py, core/intent.py, core/spec.py, tests/test_static_audit_wave*.py |
+| `NARRATIVE-CLOSED-LOOP #16` | 2026-08-06 | Third-pass residuals bind paid recovery to a secret-free execution profile, preserve Bible scope through runtime/budget, and version scoped QC commitments as Expectations v3 | providers/, core/intent.py, qc/expectations.py, tests/test_third_round_residuals.py |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4177,3 +4178,23 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     verbatim. Evidence is limited to pure functions, temporary bytes, Fake
     Transport, and offline tests: no real Provider, payment, media generation,
     Phase 7B, S2, or film-production validation occurred.
+16. **Recovery identity, Bible scope, and QC scope share their actual execution
+    semantics without rewriting historical formulas.** Generic-cloud
+    submissions use `manju.submission-identity/v2`, binding the immutable
+    prepared request to a secret-free `ProviderExecutionProfile` that records
+    submit, poll, rejection, failure-marker, and idempotency semantics. The
+    profile snapshot and digest are persisted at PREPARED and in the intent
+    projection. Resume and redispatch validate that original contract before
+    transport; profile drift and legacy rows without a recoverable profile fail
+    closed, and a later manifest cannot retroactively authorize a previously
+    non-idempotent request. Pure legacy identity construction remains v1.
+    Authored Bible `inferred_scope` now reaches runtime resolution while an
+    explicit `subject_ref` still wins; inferred scope does not claim an explicit
+    transfer. Logical scoped bindings survive physical-blob dedup, budget roles
+    prefer canonical runtime scope, and runtime and SPEC v5 use the same scope
+    canonicalizer. Scoped opening commitments compile as Expectations v3, whose
+    row ID and digest include canonical `subject_scope`; unscoped contracts keep
+    byte-identical v2 behavior, and v1/v2 reads remain permanent. Review and
+    proof continue to bind expectation IDs/digests and preserve the scoped row.
+    The evidence is offline Fake Transport, temporary bytes, and pure tests only:
+    no real Provider, paid request, real media, Phase 7B, or S2 work occurred.

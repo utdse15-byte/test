@@ -33,14 +33,19 @@ number is worse than an honest blank.
 - Narrative closed-loop refactor — S0, Phases 1–7A and S1 are complete locally: stale
   provider formulas quarantined; SceneContract + nested ShotContract landed;
   one pure intent projection now drives current prompt, picture SPEC v5,
-  expectations v2, and director view while legacy versions remain readable.
+  expectations v2/v3, and director view while legacy versions remain readable.
   Typed opening facts support exact canonical-subject pruning while legacy
   strings and prompt overrides remain unchanged. Authored reference bindings
   now include complete list/mapping syntax, scoped ownership, prop references
-  and local-byte staleness; v1-v4 formulas remain permanent historical reads.
+  and local-byte staleness; inferred Bible scopes now survive runtime resolution,
+  budget classification and logical dedup while physical uploads remain unique;
+  v1-v4 formulas remain permanent historical reads.
   Provider-specific delivery is rendered/read once into an immutable payload
-  consumed by identity, admission, submit and retry, with closed-role omissions
-  blocked before transport and physical upload dedup kept separate. ProviderManifest
+  consumed by identity, admission, submit and retry. Generic-cloud submission
+  identity v2 also binds a persisted, secret-free execution profile; unresolved
+  rows fail closed before poll/redispatch when the original profile is absent or
+  differs from the live manifest. Closed-role omissions remain blocked before
+  transport and physical upload dedup stays separate. ProviderManifest
   authoring evidence is traceable and advisory-only. Experiment Memory now
   extends the existing exact-media-bound verdict, remains historical after
   binding drift, and stays outside assurance/spec/attempt evidence. Production
@@ -59,6 +64,9 @@ number is worse than an honest blank.
   contract -> exact-byte Animatic -> failed endpoint/one-variable experiment ->
   REWRITE_SOURCE -> replacement candidate -> Proof Scene -> BULK_READY path,
   while retaining an empty provider-attempt ledger and an ungated legacy path.
+  Scoped opening commitments use Expectations v3 so identical text for distinct
+  subjects stays distinct; unscoped contracts remain byte-identical v2 and old
+  v1/v2 verdicts remain readable.
   This is code/path evidence only. Real provider Dogfood (7B), evidence-driven
   S2 and cross-platform Phase 8 remain open.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`

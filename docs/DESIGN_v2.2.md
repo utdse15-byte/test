@@ -683,6 +683,27 @@ scoped variables and is uploaded once. Every fallback provider receives a fresh
 attempt request, including independent params, delivery plan, prepared payload,
 identity cache, and evidence attempt id.
 
+### Submission execution identity and recovery
+
+Generic-cloud requests use `manju.submission-identity/v2`. Alongside the rendered
+request and provider-profile digests, v2 binds a secret-free immutable
+`ProviderExecutionProfile`: submit method/endpoint, explicitly declared
+non-secret semantic headers, auth header shape, job-id and definite-rejection
+rules, poll endpoint/status/result/reason/cost rules, failure markers, and the
+idempotency mode/field. Endpoint identity contains scheme, host, effective port,
+and path; signed queries, credentials, cookies, and secret values never enter
+identity or persisted evidence. Pure legacy identity construction retains
+`manju.submission-identity/v1` unchanged.
+
+PREPARED events and the SQLite intent projection persist the profile snapshot
+and digest. Unresolved recovery validates that stored contract before poll or
+redispatch. A mismatch fails before transport. A historical row without a
+recoverable execution profile also fails closed, so a live manifest that later
+adds idempotency cannot authorize redispatch of an originally non-idempotent
+request. A valid redispatch uses the original stored endpoint, request digest,
+submission id, and idempotency contract rather than reinterpreting the request
+through the live manifest.
+
 ### Reference ownership and picture SPEC v5
 
 Ownership is unique by `(role, canonical subject scope)`. Global and scoped
@@ -702,6 +723,16 @@ reference parser and the stable order `image/images`, `video/videos`, then
 readable local bytes all participate. Provider-specific delivery omission is
 request truth, not picture-spec truth, and stays outside the picture SPEC.
 
+Bible character, scene, and prop bindings carry the parser's inferred scope into
+runtime resolution. An explicit `subject_ref` takes precedence; an inferred
+scope is a logical owner but does not pretend that the author explicitly wrote
+`controls`, `ignore`, or a transfer declaration. The same physical blob may
+therefore retain multiple scoped logical bindings while upload planning counts
+it once. Reference-budget classification prefers each resolved item's canonical
+scope (`primary character`, other `character`, `scene`, then `prop`); its legacy
+unscoped fallback expands dict-form refs through the shared parser instead of
+stringifying mappings.
+
 | Recorded version | Permanent comparison rule |
 |---|---|
 | v1 / missing | historical base picture formula |
@@ -712,6 +743,22 @@ request truth, not picture-spec truth, and stays outside the picture SPEC.
 
 Every take is compared under the version recorded when it was generated. There
 is no automatic migration and no bulk stale event merely because v5 exists.
+
+### Scoped expectations
+
+Intent assertions may carry canonical `subject_scope`. If no assertion is
+scoped, compilation follows the historical Expectations v2 code path byte for
+byte. If any assertion is scoped, compilation emits
+`manju.qc.expectations/v3`; v3 expectation IDs and the set digest include the
+scope, so identical statements for `character:A`, `character:B`, or `prop:A`
+remain distinct. Review packets preserve the field and verdict/proof authority
+continues to be the expectation ID and digest, never statement-only matching.
+
+| Expectations version | Permanent read/compile rule |
+|---|---|
+| v1 | historical authored quality/continuity commitments remain readable |
+| v2 | historical unscoped compiler and identity formula remain byte-identical |
+| v3 | scoped authored commitments include canonical subject scope in row identity and digest |
 
 ### Redo recipe boundary
 

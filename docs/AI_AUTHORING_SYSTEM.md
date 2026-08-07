@@ -89,6 +89,13 @@ owner 才能接管全部 opening。结构化 fact 的 statement 进入 Prompt �
 expectation，完整 payload 进入当前 picture SPEC、director view 与 Animatic
 digest。手写 `prompt_override` 始终逐字保留。
 
+若 opening assertion 都没有主体，ExpectationSet 继续使用历史 v2 编译和
+identity 字节。只要存在 scoped assertion，就生成 Expectations v3；每条 row 的
+`subject_scope`、ID 和集合 digest 都包含 canonical scope。因此相同 statement
+写给 `character:A`、`character:B` 或 `prop:A` 时仍是不同承诺。历史 v1/v2
+verdict 保持可读，review/proof 按 expectation ID/digest 绑定，不按 statement
+单独猜测。
+
 Picture SPEC 按 take 记录的版本永久比较：v1 是历史基础公式，v2 加入
 dialogue/keyframe，v3 加入 props 与 picture contract，v4 保留当时的 flat
 reference 公式及其 mapping 漏洞，v5 才使用与 provider resolver 共用的完整
@@ -98,6 +105,19 @@ reference 公式及其 mapping 漏洞，v5 才使用与 provider resolver 共用
 ## Provider 知识
 
 稳定导演知识在 `skills/*/SKILL.md`。易变 provider 知识只读当前 `ProviderManifest` 的 capabilities、limits、refs、cost、adapter，以及带日期、来源、owner 的 `authoring` evidence。没有 current evidence 时，negative 语法、参考数量、时长、seed 和型号公式都保持 unknown。
+
+Generic Cloud 的新 submission identity 使用 v2，并把一次请求的无秘密
+execution profile 与已封存 body/file bytes 一起绑定。profile 包括 submit/poll
+endpoint 与解析规则、明确声明的非秘密语义 header、失败标记和首次提交的
+idempotency contract；不保存 token、cookie、secret header value 或签名 query。
+未决请求恢复前必须先匹配原 profile。live manifest 发生漂移或旧 row 缺少可恢复
+profile 时，poll/redispatch 都在 transport 前 fail closed；后来新增幂等配置不能
+授权重发一个首次并不幂等的请求。纯 legacy identity 保持 v1 读取。
+
+Bible 的 character/scene/prop 普通引用会从所在位置推导 canonical scope，并
+进入 resolver、ownership、budget、request identity 与 SPEC v5。同一文件可服务
+多个逻辑主体，但物理上传只计一次；显式 `subject_ref` 优先，推导 scope 不伪装
+作者显式写了 controls/ignore。
 
 ## 生产闸门
 
