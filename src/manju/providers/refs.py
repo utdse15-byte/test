@@ -339,7 +339,7 @@ def plan_reference_delivery(
             provider_id, list(refset.items), [], "native", "native", None, None, None
         )
 
-    from .refbudget import allocate
+    from .refbudget import allocate, classify_role
 
     # Budget physical blobs, not logical bindings. One image can legitimately
     # bind two scoped characters; it is uploaded once but both bindings survive.
@@ -397,6 +397,22 @@ def plan_reference_delivery(
     if required:
         raise RequiredReferenceOmitted(provider_id, required)
 
+    budget_lineage = budget.to_lineage() if budget.active else None
+    if budget_lineage is not None:
+        budget_lineage["selected"] = [
+            _budget_role_row(item, classify_role(item, shot, bible))
+            for item in selected
+        ]
+        budget_lineage["omitted"] = [
+            {
+                **_budget_role_row(
+                    row.item, classify_role(row.item, shot, bible)
+                ),
+                "reason": row.reason,
+            }
+            for row in omitted
+        ]
+
     return _make_delivery_plan(
         provider_id,
         selected,
@@ -405,8 +421,20 @@ def plan_reference_delivery(
         video_mode,
         max_images,
         max_videos,
-        budget.to_lineage() if budget.active else None,
+        budget_lineage,
     )
+
+
+def _budget_role_row(item: RefItem, role: str) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "ref": item.ref,
+        "tier": item.tier,
+        "kind": item.kind,
+        "role": role,
+    }
+    if item.subject_ref is not None:
+        row["subject_ref"] = item.subject_ref
+    return row
 
 
 def _make_delivery_plan(

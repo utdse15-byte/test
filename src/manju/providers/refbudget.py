@@ -37,7 +37,9 @@ from .refs import (
     TIER_SHOT,
     RefItem,
     RefSet,
+    normalize_subject_scope,
 )
+from ..core.reference_syntax import iter_authored_reference_bindings
 
 if TYPE_CHECKING:  # type hints only — never imported at runtime (no cycle)
     from ..core.models import ShotSpec
@@ -220,42 +222,58 @@ def classify_role(item: RefItem, shot: "ShotSpec | None",
     if tier == TIER_REFS_DIR:
         return ROLE_FALLBACK
     if tier == TIER_BIBLE:
+        scoped = _role_for_scope(item.subject_ref, shot)
+        if scoped is not None:
+            return scoped
         return _bible_ref_roles(shot, bible).get(item.ref, ROLE_CHARACTER)
     return ROLE_OTHER
 
 
+def _role_for_scope(subject_ref: str | None, shot: "ShotSpec | None") -> str | None:
+    scope = normalize_subject_scope(subject_ref)
+    if not scope:
+        return None
+    kind, separator, subject_id = scope.partition(":")
+    if not separator or not subject_id:
+        return None
+    if kind == "character":
+        characters = [str(item) for item in (
+            getattr(shot, "characters", None) or ()
+        )]
+        return (
+            ROLE_CHARACTER_PRIMARY
+            if characters and subject_id == characters[0]
+            else ROLE_CHARACTER
+        )
+    if kind == "scene":
+        return ROLE_SCENE
+    if kind == "prop":
+        return ROLE_PROP
+    return None
+
+
 def _bible_ref_roles(shot: "ShotSpec | None", bible: dict | None) -> dict[str, str]:
-    """authored-ref-string → role for the shot's bible refs, mirroring the keys
-    ``refs._collect_bible`` reads. The first character is the PRIMARY."""
+    """Legacy unscoped path fallback using the shared authored syntax parser."""
     roles: dict[str, str] = {}
     if not bible or shot is None:
         return roles
-    chars = list(getattr(shot, "characters", None) or [])
-    for idx, cid in enumerate(chars):
-        entry = bible.get(cid)
-        if not isinstance(entry, dict):
+    for binding in iter_authored_reference_bindings(shot, bible):
+        if binding.tier != TIER_BIBLE:
             continue
-        role = ROLE_CHARACTER_PRIMARY if idx == 0 else ROLE_CHARACTER
-        _index_entry_refs(entry, role, roles)
-    scene = getattr(shot, "scene", None)
-    if scene:
-        entry = bible.get(scene)
-        if isinstance(entry, dict):
-            _index_entry_refs(entry, ROLE_SCENE, roles)
-    # Props are not resolved into the RefSet today, but a shot MAY name props and
-    # a manifest MAY pass a prop ref via params; classify any that happen to
-    # match a prop bible entry so the priority stays honest if refs grows props.
-    for pid in (getattr(shot, "props", None) or []):
-        entry = bible.get(pid)
-        if isinstance(entry, dict):
-            _index_entry_refs(entry, ROLE_PROP, roles)
+        role = _role_for_scope(binding.inferred_scope, shot)
+        ref = _authored_ref_value(binding.value)
+        if role is not None and ref:
+            roles.setdefault(ref, role)
     return roles
 
 
-def _index_entry_refs(entry: dict, role: str, roles: dict[str, str]) -> None:
-    for k in ("ref_image", "ref_images", "ref_video", "ref_videos"):
-        for val in _as_list(entry.get(k)):
-            roles.setdefault(str(val), role)
+def _authored_ref_value(value: Any) -> str:
+    if isinstance(value, dict):
+        value = (
+            value.get("ref") or value.get("path")
+            or value.get("image") or value.get("video") or ""
+        )
+    return str(value) if value not in (None, "") else ""
 
 
 def _as_list(value: Any) -> list:
