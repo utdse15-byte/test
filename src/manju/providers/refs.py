@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 from ..core.hashing import hash_value
+from ..core.authoring import canonical_subject_scope
 from ..core.reference_syntax import iter_authored_reference_bindings
 from ..core.safeio import (
     SafeOutError,
@@ -294,10 +295,14 @@ def resolve_refs(
         shot, bible, params=params
     ):
         if binding.kind is None:
-            items.append(_classify(project, binding.value, binding.tier))
+            items.append(_classify(
+                project, binding.value, binding.tier,
+                inferred_scope=binding.inferred_scope,
+            ))
         else:
             items.append(_make_item(
-                project, binding.value, binding.tier, binding.kind
+                project, binding.value, binding.tier, binding.kind,
+                inferred_scope=binding.inferred_scope,
             ))
     _collect_refs_dir(project, items)  # gated: only when no existing declared ref
 
@@ -768,27 +773,8 @@ def control_owners(refset: RefSet) -> dict[str, tuple[RefItem, ...]]:
 
 
 def normalize_subject_scope(subject_ref: str | None, *, role: str | None = None) -> str | None:
-    """Canonicalize ``character:A``/``character/A`` and prop/asset aliases."""
-    if subject_ref is None or not str(subject_ref).strip():
-        return None
-    raw = str(subject_ref).strip()
-    for prefix, canonical in (
-        ("character:", "character"), ("character/", "character"),
-        ("prop:", "prop"), ("prop/", "prop"),
-        ("asset:", "asset"), ("asset/", "asset"),
-    ):
-        if raw.lower().startswith(prefix):
-            value = raw[len(prefix):].strip()
-            if not value:
-                return None
-            if canonical == "asset" and role in {
-                "character_identity", "face", "costume", "pose", "motion"
-            }:
-                canonical = "character"
-            elif canonical == "asset" and role == "prop":
-                canonical = "prop"
-            return f"{canonical}:{value}"
-    return raw
+    """Compatibility name for the shared authored-scope canonicalizer."""
+    return canonical_subject_scope(subject_ref, role=role)
 
 
 def reference_control_conflicts(refset: RefSet) -> list[dict[str, Any]]:
@@ -852,11 +838,12 @@ def _split_transfer(value: Any) -> tuple[Any, dict | None]:
     return ref, value
 
 
-def _transfer_fields(spec: dict | None) -> dict:
+def _transfer_fields(
+    spec: dict | None, *, inferred_scope: str | None = None
+) -> dict:
     """Validated RefItem transfer fields from a dict-form entry. Unknown enums
     and controls∩ignore conflicts are recorded, never dropped."""
-    if spec is None:
-        return {}
+    spec = spec or {}
     controls = tuple(str(c) for c in _as_list(spec.get("controls")))
     ignore = tuple(str(c) for c in _as_list(spec.get("ignore")))
     errors: list[str] = []
@@ -868,18 +855,22 @@ def _transfer_fields(spec: dict | None) -> dict:
     if overlap:
         errors.append("controls 与 ignore 冲突: " + ", ".join(overlap))
     subject = spec.get("subject_ref")
+    subject_ref = normalize_subject_scope(subject or inferred_scope)
     return {
         "controls": controls,
         "ignore": ignore,
-        "subject_ref": str(subject) if subject else None,
+        "subject_ref": subject_ref,
         "declared_transfer": bool(controls or ignore or subject),
         "transfer_errors": tuple(errors),
     }
 
 
-def _make_item(project: "Project", value: Any, tier: str, kind: str) -> RefItem:
+def _make_item(
+    project: "Project", value: Any, tier: str, kind: str, *,
+    inferred_scope: str | None = None,
+) -> RefItem:
     value, transfer = _split_transfer(value)
-    extra = _transfer_fields(transfer)
+    extra = _transfer_fields(transfer, inferred_scope=inferred_scope)
     s = str(value)
     if _is_url(s):
         return RefItem(ref=s, tier=tier, kind=kind, path=None, is_url=True,
@@ -890,17 +881,24 @@ def _make_item(project: "Project", value: Any, tier: str, kind: str) -> RefItem:
                    blocked_reason=reason, root=project.root, **extra)
 
 
-def _classify(project: "Project", value: Any, tier: str) -> RefItem:
+def _classify(
+    project: "Project", value: Any, tier: str, *,
+    inferred_scope: str | None = None,
+) -> RefItem:
     """A mixed refs list entry: video by extension, else image. The dict form
     may also name its kind via an explicit ``video:``/``image:`` key."""
     plain, spec = _split_transfer(value)
     if spec is not None and spec.get("video"):
-        return _make_item(project, value, tier, "video")
+        return _make_item(
+            project, value, tier, "video", inferred_scope=inferred_scope
+        )
     if spec is not None and spec.get("image"):
-        return _make_item(project, value, tier, "image")
+        return _make_item(
+            project, value, tier, "image", inferred_scope=inferred_scope
+        )
     s = str(plain)
     kind = "video" if Path(s.split("?", 1)[0]).suffix.lower() in _VIDEO_EXTS else "image"
-    return _make_item(project, value, tier, kind)
+    return _make_item(project, value, tier, kind, inferred_scope=inferred_scope)
 
 
 def resolve_local_ref(project: "Project", value: str) -> tuple[Path | None, str | None]:
@@ -953,7 +951,7 @@ def _dedup(items: list[RefItem]) -> list[RefItem]:
     out: list[RefItem] = []
     for it in items:
         key = str(it.path.resolve()) if it.path is not None else it.ref
-        if it.declared_transfer or it.transfer_errors:
+        if it.declared_transfer or it.transfer_errors or it.subject_ref is not None:
             logical = (it.kind, key, tuple(it.controls), tuple(it.ignore),
                        normalize_subject_scope(it.subject_ref))
             if logical in seen_logical:
@@ -1017,4 +1015,6 @@ def _ref_lineage(it: RefItem) -> dict:
         out["subject_ref"] = it.subject_ref
         if it.transfer_errors:
             out["transfer_errors"] = list(it.transfer_errors)
+    elif it.subject_ref is not None:
+        out["subject_ref"] = it.subject_ref
     return out

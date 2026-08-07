@@ -137,6 +137,13 @@ def _canonical_subject_scope(value: Any, inferred: str | None = None) -> str | N
     return raw
 
 
+def _canonical_subject_scope_v5(value: Any, inferred: str | None = None) -> str | None:
+    """Current SPEC shares the runtime authored-scope canonicalizer."""
+    from .authoring import canonical_subject_scope
+
+    return canonical_subject_scope(value or inferred)
+
+
 def _reference_binding(
     value: Any,
     *,
@@ -144,6 +151,7 @@ def _reference_binding(
     tier: str,
     project_root: Path | str | None,
     inferred_scope: str | None = None,
+    shared_scope: bool = False,
 ) -> dict[str, Any] | None:
     spec = value if isinstance(value, dict) else {}
     explicit_kind = kind
@@ -171,7 +179,11 @@ def _reference_binding(
         "tier": tier,
         "controls": [str(item) for item in _as_ref_list(spec.get("controls"))],
         "ignore": [str(item) for item in _as_ref_list(spec.get("ignore"))],
-        "subject_scope": _canonical_subject_scope(spec.get("subject_ref"), inferred_scope),
+        "subject_scope": (
+            _canonical_subject_scope_v5(spec.get("subject_ref"), inferred_scope)
+            if shared_scope else
+            _canonical_subject_scope(spec.get("subject_ref"), inferred_scope)
+        ),
         "local_sha256": _local_reference_hash(ref, project_root),
     }
 
@@ -237,6 +249,7 @@ def _reference_payload_v5(
             tier=binding.tier,
             project_root=project_root,
             inferred_scope=binding.inferred_scope,
+            shared_scope=True,
         )
         if row is not None:
             out.append(row)

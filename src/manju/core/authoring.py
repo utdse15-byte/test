@@ -117,7 +117,9 @@ def canonical_subject_scope(value: Any, *, role: str | None = None) -> str | Non
             subject_id = raw[len(prefix):].strip()
             if not subject_id:
                 return None
-            if canonical == "asset" and role in {"pose", "motion"}:
+            if canonical == "asset" and role in {
+                "character_identity", "face", "costume", "pose", "motion"
+            }:
                 canonical = "character"
             elif canonical == "asset" and role == "prop":
                 canonical = "prop"
