@@ -44,14 +44,246 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ..core.hashing import hash_value
 
 SCHEMA_IDENTITY = "manju.submission-identity/v1"
+SCHEMA_IDENTITY_V2 = "manju.submission-identity/v2"
 SCHEMA_EVENT = "manju.provider-submission-event/v1"
+SCHEMA_EXECUTION_PROFILE = "manju.provider-execution-profile/v1"
+
+
+_SECRET_HEADER_RE = re.compile(
+    r"(?:authorization|proxy-authorization|cookie|token|api[-_]?key|secret)",
+    re.IGNORECASE,
+)
+
+
+def _endpoint_identity(value: str | None) -> str | None:
+    """Canonical endpoint without user-info or query values.
+
+    The effective port is explicit so equivalent spelling hashes equally. Query
+    values are never persisted: signed URLs and credentials commonly live there.
+    """
+    if not value:
+        return None
+    parsed = urlsplit(str(value))
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        raise ValueError(f"provider endpoint must be absolute: {value!r}")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"provider endpoint has an invalid port: {value!r}") from exc
+    if port is None:
+        port = 443 if scheme == "https" else 80 if scheme == "http" else None
+    host_text = f"[{host}]" if ":" in host else host
+    authority = f"{host_text}:{port}" if port is not None else host_text
+    path = parsed.path or "/"
+    return f"{scheme}://{authority}{path}"
+
+
+def _auth_header_shape(value: str | None) -> str | None:
+    """Keep the auth header contract while replacing every credential value."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    name, separator, template = raw.partition(":")
+    if not separator:
+        return name.strip().lower()
+    shape = template.strip()
+    if "{key}" in shape:
+        shape = shape.replace("{key}", "<secret>")
+    else:
+        shape = "<secret>"
+    return f"{name.strip().lower()}: {shape}"
+
+
+@dataclass(frozen=True)
+class ProviderExecutionProfile:
+    """Immutable, secret-free submit/poll/recovery semantics for one request."""
+
+    submit_method: str
+    submit_endpoint: str
+    submit_semantic_headers: tuple[tuple[str, str], ...]
+    auth_header_shape: str | None
+    job_id_path: str
+    definite_rejection_statuses: tuple[int, ...]
+    poll_endpoint_template: str | None
+    poll_status_path: str | None
+    poll_status_map: tuple[tuple[str, str], ...]
+    poll_result_url_path: str | None
+    poll_reason_path: str | None
+    poll_cost_path: str | None
+    failure_content_markers: tuple[str, ...]
+    idempotency_mode: str
+    idempotency_field: str | None
+
+    def __post_init__(self) -> None:
+        for endpoint in (self.submit_endpoint, self.poll_endpoint_template):
+            if endpoint is not None and _endpoint_identity(endpoint) != endpoint:
+                raise ValueError("execution profile endpoint is not canonical")
+        for name, value in self.submit_semantic_headers:
+            if _SECRET_HEADER_RE.search(name):
+                raise ValueError(f"secret-bearing semantic header {name!r}")
+            try:
+                from ..core.check import SECRET_PATTERNS
+
+                if any(pattern.search(value) for pattern in SECRET_PATTERNS):
+                    raise ValueError(f"semantic header {name!r} contains a secret value")
+            except ImportError:  # pragma: no cover - defensive import boundary
+                pass
+        if self.auth_header_shape and ":" in self.auth_header_shape \
+                and "<secret>" not in self.auth_header_shape:
+            raise ValueError("auth header values must be replaced by <secret>")
+
+    @classmethod
+    def from_manifest(cls, manifest: Any) -> "ProviderExecutionProfile":
+        submit = getattr(manifest, "submit", None)
+        if submit is None:
+            raise ValueError("provider execution profile requires submit config")
+        extra = {
+            str(key).lower(): (str(key), str(value))
+            for key, value in (getattr(submit, "extra_headers", None) or {}).items()
+        }
+        semantic_headers: list[tuple[str, str]] = []
+        for declared_name in getattr(submit, "identity_headers", None) or ():
+            name = str(declared_name).strip().lower()
+            if _SECRET_HEADER_RE.search(name):
+                raise ValueError(
+                    f"secret-bearing header {declared_name!r} cannot enter submission identity"
+                )
+            if name not in extra:
+                raise ValueError(
+                    f"identity header {declared_name!r} is absent from submit.extra_headers"
+                )
+            semantic_headers.append((name, extra[name][1]))
+
+        poll = getattr(manifest, "poll", None)
+        submission = getattr(manifest, "submission", None)
+        idem = getattr(submission, "idempotency", None)
+        mode = str(getattr(idem, "mode", None) or "none").lower()
+        field = getattr(idem, "field", None)
+        return cls(
+            submit_method=str(submit.method).upper(),
+            submit_endpoint=_endpoint_identity(str(submit.url)) or "",
+            submit_semantic_headers=tuple(sorted(semantic_headers)),
+            auth_header_shape=_auth_header_shape(
+                getattr(getattr(manifest, "auth", None), "header", None)
+            ),
+            job_id_path=str(submit.job_id_path),
+            definite_rejection_statuses=tuple(sorted(set(
+                int(value) for value in (submit.definite_rejection_statuses or ())
+            ))),
+            poll_endpoint_template=(
+                _endpoint_identity(str(poll.url)) if poll is not None else None
+            ),
+            poll_status_path=(str(poll.status_path) if poll is not None else None),
+            poll_status_map=tuple(sorted(
+                (str(key), str(value))
+                for key, value in ((poll.status_map if poll is not None else {}) or {}).items()
+            )),
+            poll_result_url_path=(
+                str(poll.result_url_path) if poll is not None and poll.result_url_path else None
+            ),
+            poll_reason_path=(
+                str(poll.reason_path) if poll is not None and poll.reason_path else None
+            ),
+            poll_cost_path=(
+                str(poll.cost_path) if poll is not None and poll.cost_path else None
+            ),
+            failure_content_markers=tuple(
+                str(value) for value in (
+                    getattr(getattr(manifest, "failure", None),
+                            "content_rejected_when", None) or ()
+                )
+            ),
+            idempotency_mode=mode,
+            idempotency_field=(str(field).lower() if field else None),
+        )
+
+    def semantic_facts(self) -> dict:
+        return {
+            "schema": SCHEMA_EXECUTION_PROFILE,
+            "submit_method": self.submit_method,
+            "submit_endpoint": self.submit_endpoint,
+            "submit_semantic_headers": [list(item) for item in self.submit_semantic_headers],
+            "auth_header_shape": self.auth_header_shape,
+            "job_id_path": self.job_id_path,
+            "definite_rejection_statuses": list(self.definite_rejection_statuses),
+            "poll_endpoint_template": self.poll_endpoint_template,
+            "poll_status_path": self.poll_status_path,
+            "poll_status_map": [list(item) for item in self.poll_status_map],
+            "poll_result_url_path": self.poll_result_url_path,
+            "poll_reason_path": self.poll_reason_path,
+            "poll_cost_path": self.poll_cost_path,
+            "failure_content_markers": list(self.failure_content_markers),
+            "idempotency_mode": self.idempotency_mode,
+            "idempotency_field": self.idempotency_field,
+        }
+
+    @property
+    def digest(self) -> str:
+        return hash_value(self.semantic_facts())
+
+    def to_dict(self) -> dict:
+        return {**self.semantic_facts(), "digest": self.digest}
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "ProviderExecutionProfile":
+        if not isinstance(value, dict) or value.get("schema") != SCHEMA_EXECUTION_PROFILE:
+            raise ValueError("unsupported provider execution profile")
+        profile = cls(
+            submit_method=str(value.get("submit_method") or ""),
+            submit_endpoint=str(value.get("submit_endpoint") or ""),
+            submit_semantic_headers=tuple(
+                (str(item[0]), str(item[1]))
+                for item in (value.get("submit_semantic_headers") or ())
+            ),
+            auth_header_shape=(
+                str(value["auth_header_shape"]) if value.get("auth_header_shape") else None
+            ),
+            job_id_path=str(value.get("job_id_path") or ""),
+            definite_rejection_statuses=tuple(
+                int(item) for item in (value.get("definite_rejection_statuses") or ())
+            ),
+            poll_endpoint_template=(
+                str(value["poll_endpoint_template"])
+                if value.get("poll_endpoint_template") else None
+            ),
+            poll_status_path=(
+                str(value["poll_status_path"]) if value.get("poll_status_path") else None
+            ),
+            poll_status_map=tuple(
+                (str(item[0]), str(item[1])) for item in (value.get("poll_status_map") or ())
+            ),
+            poll_result_url_path=(
+                str(value["poll_result_url_path"])
+                if value.get("poll_result_url_path") else None
+            ),
+            poll_reason_path=(
+                str(value["poll_reason_path"]) if value.get("poll_reason_path") else None
+            ),
+            poll_cost_path=(
+                str(value["poll_cost_path"]) if value.get("poll_cost_path") else None
+            ),
+            failure_content_markers=tuple(
+                str(item) for item in (value.get("failure_content_markers") or ())
+            ),
+            idempotency_mode=str(value.get("idempotency_mode") or "none"),
+            idempotency_field=(
+                str(value["idempotency_field"]) if value.get("idempotency_field") else None
+            ),
+        )
+        if value.get("digest") != profile.digest:
+            raise ValueError("provider execution profile digest mismatch")
+        return profile
 
 # The event action every submission-state line carries at the envelope level, so
 # the collaboration-log tail / a projection reads it like any other action. It
@@ -316,6 +548,7 @@ def build_submission_identity(
     ref_blobs: list[dict] | None = None,
     first_frame: bool = False,
     last_frame: bool = False,
+    execution_profile_digest: str | None = None,
     project_root: Path | None = None,
 ) -> dict:
     """Assemble the ``manju.submission-identity/v1`` document (§7.2) over ONLY
@@ -333,11 +566,13 @@ def build_submission_identity(
     from ..core.hashing import hash_value as _hv
 
     return {
-        "schema": SCHEMA_IDENTITY,
+        "schema": SCHEMA_IDENTITY_V2 if execution_profile_digest else SCHEMA_IDENTITY,
         "shot_id": shot_id,
         "spec_hash": spec_hash,
         "provider_id": provider_id,
         "provider_profile_digest": provider_profile_digest,
+        **({"execution_profile_digest": execution_profile_digest}
+           if execution_profile_digest else {}),
         "capability": capability,
         "duration_ms": duration_ms,
         "candidates": candidates,
@@ -402,7 +637,7 @@ def _event_digest_payload(event: dict) -> dict:
     """The stable subset of a submission event that the chain digest hashes —
     everything that identifies the event and its link, and nothing incidental
     (no envelope ts/actor, no human ``detail`` text)."""
-    return {
+    payload = {
         "submission_id": event.get("submission_id"),
         "request_digest": event.get("request_digest"),
         "from": event.get("from"),
@@ -413,6 +648,10 @@ def _event_digest_payload(event: dict) -> dict:
         "event_id": event.get("event_id"),
         "prev_event_digest": event.get("prev_event_digest"),
     }
+    # Conditional keeps every historical v1 event-chain digest readable.
+    if "execution_profile_digest" in event:
+        payload["execution_profile_digest"] = event.get("execution_profile_digest")
+    return payload
 
 
 def submission_event_digest(event: dict) -> str:

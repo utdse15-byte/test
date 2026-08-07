@@ -402,6 +402,8 @@ def append_submission_event(
     shot: str | None = None, remote_job_id: str | None = None,
     reason_code: str | None = None, prev_event_digest: str | None = None,
     detail: dict | None = None, actor: str = "engine", required: bool = False,
+    execution_profile_digest: str | None = None,
+    execution_profile: dict | None = None,
 ) -> dict:
     """Append ONE ``submission_state`` event via the SAME WP1 coordinator
     (one ``events.lock`` flock, one ``events.jsonl``). Mints ``event_id``, sets
@@ -435,6 +437,17 @@ def append_submission_event(
         }
         if shot is not None:
             event["shot"] = shot           # projection aid (not part of the chain)
+        if execution_profile_digest is not None:
+            event["execution_profile_digest"] = execution_profile_digest
+        if execution_profile is not None:
+            # This document is already a closed, secret-free schema. Re-running
+            # the generic key redactor would replace ``auth_header_shape`` and
+            # make its persisted digest impossible to verify during recovery.
+            from ..providers.submission import ProviderExecutionProfile
+
+            event["execution_profile"] = ProviderExecutionProfile.from_dict(
+                dict(execution_profile)
+            ).to_dict()
         if red_detail:
             event["detail"] = red_detail
         record = {"ts": _now_iso(), "actor": actor, "action": SUBMISSION_ACTION,

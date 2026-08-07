@@ -37,6 +37,7 @@ from .base import (
 )
 from .jsonpath import JsonPathError, assign, extract
 from .manifest import FIRST_LAST_CAPABILITY, GENERIC_ADAPTER, JOB_STATES, ProviderManifest
+from .submission import ProviderExecutionProfile
 from .refs import (
     RefItem,
     encode_multipart,
@@ -96,6 +97,7 @@ class PreparedProviderPayload:
     auth_key_env: str | None
     auth_header: str
     idempotency_field: str | None
+    execution_profile: ProviderExecutionProfile
 
     @property
     def rendered_body(self) -> dict[str, object]:
@@ -722,6 +724,8 @@ class GenericCloudProvider(CloudProvider):
         # can't race _throttle()'s read-sleep-write into a burst that exceeds
         # rate_limit_per_min.
         self._submitted: dict[str, dict] = {}
+        self._execution_profiles_by_job: dict[str, ProviderExecutionProfile] = {}
+        self._poll_urls_by_job: dict[str, str] = {}
         self._throttle_lock = threading.Lock()
 
     # ------------------------------------------------------------ plumbing
@@ -759,9 +763,13 @@ class GenericCloudProvider(CloudProvider):
         headers.update(dict(payload.extra_headers))
         return headers
 
-    def _classify_body(self, text: str) -> FailureKind:
+    def _classify_body(
+        self, text: str, markers: tuple[str, ...] | None = None
+    ) -> FailureKind:
         """§8.1: content review rejection is first-class — never retried."""
-        for marker in self.manifest.failure.content_rejected_when:
+        if markers is None:
+            markers = tuple(self.manifest.failure.content_rejected_when)
+        for marker in markers:
             if marker in text:
                 return FailureKind.content_rejected
         return FailureKind.provider_error
@@ -833,6 +841,21 @@ class GenericCloudProvider(CloudProvider):
             },
         }
 
+    def _execution_profile(
+        self, req: GenerationRequest | None = None
+    ) -> ProviderExecutionProfile:
+        if req is not None:
+            return self._prepared_provider_payload(req).execution_profile
+        return ProviderExecutionProfile.from_manifest(self.manifest)
+
+    def _activate_recovery_profile(
+        self,
+        req: GenerationRequest,
+        job_id: str,
+        profile: ProviderExecutionProfile,
+    ) -> None:
+        self._execution_profiles_by_job[str(job_id)] = profile
+
     def _prepared_provider_payload(
         self, req: GenerationRequest
     ) -> PreparedProviderPayload:
@@ -882,6 +905,7 @@ class GenericCloudProvider(CloudProvider):
             getattr(idem, "field", None)
             if getattr(idem, "mode", None) == "header" else None
         )
+        execution_profile = ProviderExecutionProfile.from_manifest(self.manifest)
         payload = PreparedProviderPayload(
             provider_id=self.id,
             method=cfg.method.upper(),
@@ -901,6 +925,7 @@ class GenericCloudProvider(CloudProvider):
             auth_key_env=auth.key_env,
             auth_header=auth.header,
             idempotency_field=idempotency_field,
+            execution_profile=execution_profile,
         )
         cache[self.id] = payload
         return payload
@@ -915,11 +940,12 @@ class GenericCloudProvider(CloudProvider):
         )
 
         cfg = self.manifest.submit
-        assert cfg is not None  # response schema remains provider configuration
+        assert cfg is not None
         # P0 WP2: the provider's DECLARED definite-rejection statuses (else empty
         # = declare nothing). A post-send status is DEFINITELY_REJECTED ONLY if it
         # is in this set; every other >= 400 is conservatively OUTCOME_UNKNOWN.
-        declared = frozenset(cfg.definite_rejection_statuses or ())
+        profile = self._prepared_provider_payload(req).execution_profile
+        declared = frozenset(profile.definite_rejection_statuses)
         # Everything BEFORE the transport call is provably-not-sent: a duration
         # cap, a render/refs error, a missing key, the engine-side throttle. DR06
         # marks these NOT_DISPATCHED so the admission machine records
@@ -976,14 +1002,14 @@ class GenericCloudProvider(CloudProvider):
                 disposition=disposition_for_status(429, declared),
             )
         if resp.status >= 400:
-            kind = self._classify_body(resp.text())
+            kind = self._classify_body(resp.text(), profile.failure_content_markers)
             raise ProviderFailure(
                 kind, f"{self.id}: submit failed with HTTP {resp.status}",
                 detail={"status": resp.status, "body": resp.text()[:2000]},
                 disposition=disposition_for_status(resp.status, declared),
             )
         try:
-            job_id = extract(resp.json(), cfg.job_id_path)
+            job_id = extract(resp.json(), profile.job_id_path)
         except (JsonPathError, json.JSONDecodeError) as exc:
             # a 2xx we cannot read a job id out of: the server accepted the
             # request (a job MAY exist remotely) but we cannot track it —
@@ -999,13 +1025,21 @@ class GenericCloudProvider(CloudProvider):
         # result per job (one result_url, one downloaded file) — the fallback
         # cost is priced for 1, never req.candidates, matching what is
         # actually produced/billed.
-        self._submitted[str(job_id)] = {"duration_ms": req.duration_ms}
-        return str(job_id)
+        job_id = str(job_id)
+        self._submitted[job_id] = {"duration_ms": req.duration_ms}
+        self._execution_profiles_by_job[job_id] = profile
+        if self.manifest.poll is not None:
+            self._poll_urls_by_job[job_id] = str(self.manifest.poll.url)
+        return job_id
 
     def poll(self, job_id: str) -> tuple[str, dict]:
-        cfg = self.manifest.poll
-        assert cfg is not None
-        url = cfg.url.format(job_id=job_id)
+        profile = self._execution_profiles_by_job.get(str(job_id)) or self._execution_profile()
+        if profile.poll_endpoint_template is None or profile.poll_status_path is None:
+            raise ProviderFailure(
+                FailureKind.invalid, f"{self.id}: execution profile has no poll contract"
+            )
+        url_template = self._poll_urls_by_job.get(str(job_id), profile.poll_endpoint_template)
+        url = url_template.format(job_id=job_id)
         resp = self._transport("GET", url, self._headers(), None)
         text = resp.text()
         if resp.status == 429:
@@ -1021,12 +1055,14 @@ class GenericCloudProvider(CloudProvider):
             return "running", {}
         if resp.status >= 400:
             return "failed", {
-                "failure_kind": self._classify_body(text).value,
+                "failure_kind": self._classify_body(
+                    text, profile.failure_content_markers
+                ).value,
                 "reason": text[:2000],
             }
         try:
             data = resp.json()
-            raw_status = str(extract(data, cfg.status_path))
+            raw_status = str(extract(data, profile.poll_status_path))
         except (JsonPathError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             # UnicodeDecodeError is a ValueError SIBLING of json.JSONDecodeError,
             # not a subclass, so it was NOT caught here — a 2xx poll of an
@@ -1035,7 +1071,7 @@ class GenericCloudProvider(CloudProvider):
             # build instead of returning the graceful provider_error below.
             return "failed", {"failure_kind": FailureKind.provider_error.value,
                               "reason": f"cannot read status: {exc}; body={text[:500]}"}
-        status = cfg.status_map.get(raw_status, raw_status.lower())
+        status = dict(profile.poll_status_map).get(raw_status, raw_status.lower())
         if status not in JOB_STATES:
             return "failed", {
                 "failure_kind": FailureKind.provider_error.value,
@@ -1045,24 +1081,26 @@ class GenericCloudProvider(CloudProvider):
         info: dict = {"raw_status": raw_status}
         if status == "failed":
             reason = text
-            if cfg.reason_path:
+            if profile.poll_reason_path:
                 try:
-                    reason = str(extract(data, cfg.reason_path))
+                    reason = str(extract(data, profile.poll_reason_path))
                 except JsonPathError:
                     pass
             # §8.1: rejection reason FULL TEXT goes to the run log via detail
-            info.update({"failure_kind": self._classify_body(text).value,
+            info.update({"failure_kind": self._classify_body(
+                text, profile.failure_content_markers
+            ).value,
                          "reason": reason})
         if status == "succeeded":
-            if cfg.result_url_path:
+            if profile.poll_result_url_path:
                 try:
-                    info["result_url"] = str(extract(data, cfg.result_url_path))
+                    info["result_url"] = str(extract(data, profile.poll_result_url_path))
                 except JsonPathError as exc:
                     return "failed", {"failure_kind": FailureKind.provider_error.value,
                                       "reason": f"job succeeded but {exc}"}
-            if cfg.cost_path:
+            if profile.poll_cost_path:
                 try:
-                    info["cost"] = float(extract(data, cfg.cost_path))
+                    info["cost"] = float(extract(data, profile.poll_cost_path))
                     info["currency"] = self.manifest.cost.currency
                 except (JsonPathError, TypeError, ValueError):
                     pass

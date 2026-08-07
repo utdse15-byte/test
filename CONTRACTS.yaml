@@ -161,6 +161,17 @@ schemas:
     notes: >-
       Additive contract-aware expectations with start/any/end position and
       authored source_path. Contract-free shots continue to emit v1 exactly.
+  - id: manju.qc.expectations/v3
+    kind: schema
+    owner: manju.qc.expectations
+    status: stable
+    latest_version: 3
+    read_older: true
+    write_older: false
+    notes: >-
+      Scoped authored commitments. Canonical subject_scope participates in each
+      expectation id and the set digest; unscoped contracts retain byte-exact
+      v2 compilation and historical v1/v2 verdicts remain readable.
   - id: manju.qc.colorstats/v1
     kind: schema
     owner: manju.qc.colorstats
@@ -276,6 +287,16 @@ schemas:
     read_older: true
     write_older: false
     notes: Append-only paid-submission evidence event.
+  - id: manju.provider-execution-profile/v1
+    kind: schema
+    owner: manju.providers.submission
+    status: stable
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Secret-free immutable submit, poll, rejection, failure-marker, and
+      idempotency semantics persisted for paid-submission recovery.
   - id: manju.submission-identity/v1
     kind: schema
     owner: manju.providers.submission
@@ -283,7 +304,17 @@ schemas:
     latest_version: 1
     read_older: true
     write_older: false
-    notes: Stable identity of a paid submission (dedup / recovery).
+    notes: Historical paid-submission identity retained for legacy construction.
+  - id: manju.submission-identity/v2
+    kind: schema
+    owner: manju.providers.submission
+    status: stable
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: >-
+      Paid-submission identity binding rendered request, provider profile, and
+      the secret-free provider execution-profile digest.
   - id: manju.request-compatibility/v1
     kind: schema
     owner: manju.providers.preflight

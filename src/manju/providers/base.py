@@ -22,6 +22,7 @@ the deterministic skeleton around them.
 from __future__ import annotations
 
 import copy
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -521,13 +522,17 @@ class _SubmissionContext:
 
     def __init__(self, provider: "CloudProvider", state, req: "GenerationRequest",
                  *, submission_id: str, request_digest: str, current_state: str,
-                 prev_event_digest: str | None = None):
+                 prev_event_digest: str | None = None,
+                 execution_profile_digest: str | None = None,
+                 execution_profile: dict | None = None):
         self.provider = provider
         self.state = state
         self.req = req
         self.submission_id = submission_id
         self.request_digest = request_digest
         self.current_state = current_state
+        self.execution_profile_digest = execution_profile_digest
+        self.execution_profile = execution_profile
         self.remote_job_id: str | None = None
         self._last_digest = prev_event_digest
         self._intent_id: str | None = None
@@ -558,7 +563,9 @@ class _SubmissionContext:
                 request_digest=self.request_digest, from_state=from_state, to_state=to_state,
                 provider_id=self.provider.id, shot=self.req.shot.id,
                 remote_job_id=remote_job_id, reason_code=reason_code,
-                prev_event_digest=self._last_digest, detail=detail, required=required)
+                prev_event_digest=self._last_digest, detail=detail, required=required,
+                execution_profile_digest=self.execution_profile_digest,
+                execution_profile=self.execution_profile)
         except EvidenceWriteError as exc:
             rec, reason = {}, exc.reason
         if rec:
@@ -859,6 +866,18 @@ class CloudProvider(Provider):
         """Adapter hook for final pretransport body facts used by identity."""
         return None
 
+    def _execution_profile(self, req: GenerationRequest | None = None):
+        """Adapter hook for immutable recovery semantics.
+
+        Only adapters with a complete, secret-free profile opt in. Legacy/custom
+        adapters retain their historical identity until they define one.
+        """
+        return None
+
+    def _activate_recovery_profile(self, req, job_id: str, profile) -> None:
+        """Adapter hook to install a verified stored profile for polling."""
+        return None
+
     def _build_identity(self, req: GenerationRequest) -> tuple[dict, str]:
         """Assemble the submission identity + its request_digest (pure module).
         Hashes the small ref files and the compiled prompt HERE; the pure module
@@ -974,6 +993,15 @@ class CloudProvider(Provider):
             rendered_facts.get("digest")
             if isinstance(rendered_facts, dict) else None
         )
+        execution_profile = self._execution_profile(req)
+        execution_profile_digest = (
+            execution_profile.digest if execution_profile is not None else None
+        )
+        if execution_profile is not None:
+            profiles = getattr(req, "_provider_execution_profiles", None)
+            if profiles is None:
+                profiles = req._provider_execution_profiles = {}
+            profiles[self.id] = execution_profile
 
         first_frame, last_frame = self._keyframe_flags(req)
         identity = S.build_submission_identity(
@@ -985,6 +1013,7 @@ class CloudProvider(Provider):
             rendered_request_digest=rendered_digest,
             ref_blobs=ref_blobs,
             first_frame=first_frame, last_frame=last_frame,
+            execution_profile_digest=execution_profile_digest,
             project_root=req.project.root)
         result = (identity, S.request_digest(identity))
         cache[self.id] = result
@@ -1024,14 +1053,22 @@ class CloudProvider(Provider):
         from ..core.hashing import hash_text
 
         identity, digest = self._build_identity(req)
+        profile = (getattr(req, "_provider_execution_profiles", None) or {}).get(self.id)
+        profile_digest = identity.get("execution_profile_digest")
+        profile_snapshot = profile.to_dict() if profile is not None else None
         submission_id = S.mint_submission_id()
         # the derived idempotency key rides a request ATTRIBUTE (never req.params,
         # which would leak into the take sidecar / ledger AND perturb the identity
         # digest) so submit() can inject it ONLY when the manifest declares an
         # idempotency header (ruling 10). Stable across re-dispatch of this id.
         req.submission_id = submission_id
+        idempotency_field = (
+            profile.idempotency_field
+            if profile is not None and profile.idempotency_mode == "header"
+            else self._idempotency_field() if profile is None else None
+        )
         req.submission_idempotency_key = (
-            S.idempotency_key(self.id, submission_id) if self._idempotency_field() else None)
+            S.idempotency_key(self.id, submission_id) if idempotency_field else None)
 
         if state is None:
             raise ProviderFailure(
@@ -1048,7 +1085,9 @@ class CloudProvider(Provider):
         try:
             intent_id = state.open_intent(
                 provider=self.id, shot=req.shot.id, params_hash=params_hash,
-                submission_id=submission_id, request_digest=digest, state=S.PREPARED)
+                submission_id=submission_id, request_digest=digest, state=S.PREPARED,
+                execution_profile_digest=profile_digest,
+                execution_profile=profile_snapshot)
         except (OSError, sqlite3.Error) as exc:
             raise ProviderFailure(
                 FailureKind.provider_error,
@@ -1058,7 +1097,9 @@ class CloudProvider(Provider):
             ) from exc
 
         sub = _SubmissionContext(self, state, req, submission_id=submission_id,
-                                 request_digest=digest, current_state=S.PREPARED)
+                                 request_digest=digest, current_state=S.PREPARED,
+                                 execution_profile_digest=profile_digest,
+                                 execution_profile=profile_snapshot)
         sub._intent_id = intent_id
         # WP1: the PREPARED evidence MUST be durable before the paid submit — an
         # append failure here raises ProviderFailure(NOT_DISPATCHED) and the
@@ -1190,7 +1231,7 @@ class CloudProvider(Provider):
         # failure here used to silently skip the correlation and fresh-submit
         # past an in-flight ADMITTED/DISPATCHING job (double-charge risk).
         try:
-            _identity, digest = self._build_identity(req)
+            identity, digest = self._build_identity(req)
         except ProviderFailure:
             # P0 WP3 §5.1: an identity-unavailable failure is ALREADY fail-closed
             # and provably pre-send (NOT_DISPATCHED) — propagate it verbatim,
@@ -1218,8 +1259,10 @@ class CloudProvider(Provider):
             raise self._recovery_unavailable(req, "state_query", exc) from exc
 
         # a broken per-submission event chain fail-closes ONLY this shot+provider.
+        current_profile_digest = identity.get("execution_profile_digest")
         for row in subs:
             self._guard_chain_integrity(req, row)
+            self._guard_execution_profile(req, row, current_profile_digest)
 
         # 1) an ADMITTED submission is resume-safe (polling, never resubmit).
         admitted = [r for r in subs if r.get("state") == S.ADMITTED]
@@ -1227,6 +1270,9 @@ class CloudProvider(Provider):
             if digest is not None and row.get("request_digest") == digest \
                     and row.get("remote_job_id"):
                 sub = self._context_from_row(state, req, row, digest)
+                profile = row.get("_execution_profile")
+                if profile is not None:
+                    self._activate_recovery_profile(req, row["remote_job_id"], profile)
                 return ("resume", row["remote_job_id"], sub)
         if admitted and digest is not None:
             # an ADMITTED job exists but the spec changed under it (digest
@@ -1241,7 +1287,9 @@ class CloudProvider(Provider):
             if row.get("state") != S.RECOVERY_EVIDENCE_CORRUPT \
                     and digest is not None \
                     and row.get("request_digest") == digest \
-                    and self._idempotency_field():
+                    and row.get("_execution_profile") is not None \
+                    and row["_execution_profile"].idempotency_mode == "header" \
+                    and row["_execution_profile"].idempotency_field:
                 # ruling 10: a DECLARED idempotent provider MAY re-dispatch the
                 # SAME submission_id (the derived key dedupes remotely). NEVER
                 # off the WP3 sentinel — corrupt evidence cannot prove the
@@ -1267,10 +1315,74 @@ class CloudProvider(Provider):
             self, state, req, submission_id=row["submission_id"],
             request_digest=row.get("request_digest") or digest or "",
             current_state=S.normalize_state(row.get("state")),
-            prev_event_digest=self._chain_tail_digest(req, row["submission_id"]))
+            prev_event_digest=self._chain_tail_digest(req, row["submission_id"]),
+            execution_profile_digest=row.get("execution_profile_digest"),
+            execution_profile=(
+                row["_execution_profile"].to_dict()
+                if row.get("_execution_profile") is not None else None
+            ))
         sub._intent_id = row.get("id")
         sub.remote_job_id = row.get("remote_job_id")
         return sub
+
+    def _guard_execution_profile(self, req, row: dict,
+                                 current_digest: str | None) -> None:
+        """Verify the PREPARED recovery snapshot before poll or redispatch."""
+        if current_digest is None:
+            return
+        from . import submission as S
+
+        stored_digest = row.get("execution_profile_digest")
+        raw = row.get("execution_profile_json")
+        if not stored_digest or not raw:
+            raise self._execution_profile_failure(
+                req, row, "submission_execution_profile_unknown",
+                "the unresolved submission predates execution-profile evidence",
+                current_digest,
+            )
+        try:
+            value = json.loads(raw) if isinstance(raw, str) else raw
+            profile = S.ProviderExecutionProfile.from_dict(value)
+        except Exception as exc:
+            raise self._execution_profile_failure(
+                req, row, "submission_execution_profile_unknown",
+                f"the stored execution profile is unreadable ({type(exc).__name__})",
+                current_digest,
+            ) from exc
+        if stored_digest != profile.digest:
+            raise self._execution_profile_failure(
+                req, row, "submission_execution_profile_unknown",
+                "the stored execution profile does not match its digest",
+                current_digest,
+            )
+        if stored_digest != current_digest:
+            raise self._execution_profile_failure(
+                req, row, "submission_execution_profile_mismatch",
+                "the provider submit/poll/idempotency contract changed",
+                current_digest,
+            )
+        row["_execution_profile"] = profile
+
+    def _execution_profile_failure(self, req, row: dict, code: str,
+                                   reason: str, current_digest: str):
+        from . import submission as S
+
+        return ProviderFailure(
+            FailureKind.provider_error,
+            f"{self.id}: submission {row.get('submission_id')} for shot "
+            f"{req.shot.id} cannot be resumed automatically because {reason}; "
+            "refusing poll and redispatch before transport",
+            detail={
+                "code": code,
+                "submission_id": row.get("submission_id"),
+                "shot": req.shot.id,
+                "stored_execution_profile_digest": row.get("execution_profile_digest"),
+                "current_execution_profile_digest": current_digest,
+                "automatic_resubmit": False,
+                "actions": ["attach_remote_job", "abandon_with_duplicate_risk"],
+            },
+            disposition=S.OUTCOME_UNKNOWN_DISPOSITION,
+        )
 
     def _chain_tail_digest(self, req, submission_id):
         try:

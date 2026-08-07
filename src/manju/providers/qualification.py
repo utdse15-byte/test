@@ -1507,6 +1507,13 @@ def _recovery_drill(canary_project, provider, req, digest, provider_id) -> dict:
     from ..runtime.state import RuntimeState
 
     sid = "sub_canary_recover"
+    execution_profile = provider._execution_profile(req)
+    execution_profile_digest = (
+        execution_profile.digest if execution_profile is not None else None
+    )
+    execution_profile_snapshot = (
+        execution_profile.to_dict() if execution_profile is not None else None
+    )
     prev_digest = None
     prev_state = None
     for to_state, job in ((S.PREPARED, None), (S.DISPATCHING, None),
@@ -1514,7 +1521,9 @@ def _recovery_drill(canary_project, provider, req, digest, provider_id) -> dict:
         rec = A.append_submission_event(
             canary_project, submission_id=sid, request_digest=digest,
             from_state=prev_state, to_state=to_state, provider_id=provider_id,
-            shot=req.shot.id, remote_job_id=job, prev_event_digest=prev_digest)
+            shot=req.shot.id, remote_job_id=job, prev_event_digest=prev_digest,
+            execution_profile_digest=execution_profile_digest,
+            execution_profile=execution_profile_snapshot)
         prev_digest = S.submission_event_digest(rec)
         prev_state = to_state
 

@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS intents (
 _INTENT_SUBMISSION_COLUMNS = (
     ("submission_id", "TEXT"),
     ("request_digest", "TEXT"),
+    ("execution_profile_digest", "TEXT"),
+    ("execution_profile_json", "TEXT"),
     ("state", "TEXT"),
     ("updated_ts", "TEXT"),
 )
@@ -521,6 +523,8 @@ class RuntimeState:
                     params_hash: str | None = None,
                     submission_id: str | None = None,
                     request_digest: str | None = None,
+                    execution_profile_digest: str | None = None,
+                    execution_profile: dict | None = None,
                     state: str | None = None) -> str:
         """Persist a PRE-SUBMIT intent (§8.1 double-submit window, goal 27):
         written BEFORE the paid ``submit()`` call so a crash between "we are
@@ -541,10 +545,12 @@ class RuntimeState:
         with self._conn:
             self._conn.execute(
                 "INSERT INTO intents (id, provider, shot, params_hash, ts, "
-                "remote_job_id, status, submission_id, request_digest, state, "
-                "updated_ts) VALUES (?, ?, ?, ?, ?, NULL, 'open', ?, ?, ?, ?)",
+                "remote_job_id, status, submission_id, request_digest, "
+                "execution_profile_digest, execution_profile_json, state, "
+                "updated_ts) VALUES (?, ?, ?, ?, ?, NULL, 'open', ?, ?, ?, ?, ?, ?)",
                 (intent_id, provider, shot, params_hash, ts,
-                 submission_id, request_digest, state, ts if state else None),
+                 submission_id, request_digest, execution_profile_digest,
+                 _dumps(execution_profile), state, ts if state else None),
             )
         return intent_id
 
@@ -868,18 +874,23 @@ class RuntimeState:
                     self._conn.execute(
                         "INSERT INTO intents (id, provider, shot, params_hash, ts, "
                         "remote_job_id, status, submission_id, request_digest, "
-                        "state, updated_ts) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, "
-                        "?, ?, ?)",
+                        "execution_profile_digest, execution_profile_json, state, "
+                        "updated_ts) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)",
                         (uuid.uuid4().hex, rec.get("provider_id") or "?",
                          rec.get("shot") or "?", None, ts, remote_job_id,
-                         sid, rec.get("request_digest"), state, ts),
+                         sid, rec.get("request_digest"),
+                         rec.get("execution_profile_digest"),
+                         _dumps(rec.get("execution_profile")), state, ts),
                     )
                 else:
                     self._conn.execute(
                         "UPDATE intents SET state = ?, remote_job_id = ?, "
-                        "request_digest = ?, updated_ts = ? WHERE submission_id = ?",
+                        "request_digest = ?, execution_profile_digest = ?, "
+                        "execution_profile_json = ?, updated_ts = ? "
+                        "WHERE submission_id = ?",
                         (state, remote_job_id, rec.get("request_digest"),
-                         ts, sid),
+                         rec.get("execution_profile_digest"),
+                         _dumps(rec.get("execution_profile")), ts, sid),
                     )
                 restored += 1
         return restored

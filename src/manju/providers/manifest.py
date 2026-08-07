@@ -52,6 +52,10 @@ class SubmitConfig(ManjuModel):
     body_template: dict = Field(default_factory=dict)
     job_id_path: str  # ★ mini-JSONPath into the submit response
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    # Non-secret response-shaping headers whose values belong to request
+    # identity (for example API/model versions). Auth/cookie/key headers are
+    # rejected by ProviderExecutionProfile and never persisted.
+    identity_headers: list[str] = Field(default_factory=list)
     # P0 WP2 (additive, optional): the ONLY submit HTTP statuses this provider
     # treats as a DEFINITE remote rejection (the request reached the server and
     # was refused with NO side effect — so a fallback provider is safe). There is
