@@ -15,6 +15,7 @@ Release change: `0.1.0` -> `0.2.0` (breaking removal of the unsupported protocol
 - C4 protocol-only tests and snapshots removed; core behavior tests retained or
   migrated; current docs and skills now describe files + CLI + GUI only.
 - C5 offline closeout gates added and rehearsed with no provider or network activity.
+- C6 package, zero-residual, CLI, Ubuntu, and Windows release gates measured.
 
 ## Local evidence on the closeout tree
 
@@ -26,14 +27,16 @@ Release change: `0.1.0` -> `0.2.0` (breaking removal of the unsupported protocol
 | `python -m compileall -q src tests` | passed |
 | `python -m ruff check src tests` | passed |
 | `git diff --check` | passed |
-| Full local suite (`PYTHONPATH=G:\\nxm\\src`) | 6058 passed, 63 skipped, 31 failed, 15 errors |
+| CI-focused closeout regression set (`PYTHONUTF8=1`) | 64 passed |
+| Full local suite (host Python 3.14.5) | 6070 passed, 63 skipped, 20 failed, 15 errors |
 
 The full-suite non-green results are environment or pre-existing independent
 module issues, not protocol-removal regressions: the corpus fixture cannot use
 FFmpeg drawtext without Fontconfig; Windows install tests hit local PowerShell
-error `8009001d`; local-command tests expect a POSIX `sh`; several tests decode
-UTF-8 files through the host GBK locale; and existing static/help assertions are
-outside C0-C5. These are preserved as explicit residual risk rather than hidden.
+error `8009001d`; local-command and static scan tests expect POSIX `sh`/`grep`
+commands absent from this desktop PATH. These are preserved as explicit host
+limitations rather than hidden; the Python 3.11 Ubuntu and Windows gates below
+are the release evidence.
 
 ## No-protocol audit
 
@@ -49,17 +52,21 @@ by the current product.
 ## Package audit
 
 The release artifacts were built locally as `manju-0.2.0-py3-none-any.whl` and
-`manju-0.2.0.tar.gz`. The wheel contained 226 entries and the sdist contained 696;
+`manju-0.2.0.tar.gz`. The wheel contained 226 entries and the sdist contained 715;
 both checks found no `manju/mcp` path, protocol module, or `mcp-video` dependency
 metadata. This is an offline package inspection only.
 
 ## Platform certification status
 
-The last measured same-commit Ubuntu + Windows green evidence remains the prior
-SHA recorded in `REPORTS/LAST_GREEN.yaml`. The current closeout commit has not yet
-run on those remote gates at the time this report is authored. Pushing this branch
-is therefore the next release action; this report does not claim a green result
-for a SHA that has not been measured.
+Commit `f4dbdc1867b7b7467b87dde11cdc469dd7bd757e` passed both release gates:
+
+| Platform | Workflow run | Result |
+| --- | --- | --- |
+| Ubuntu / Python 3.11 | `31184410026` | 6163 passed, 5 skipped; static and console entry point passed |
+| Windows / Python 3.11 | `31184430755` | 6112 passed, 56 skipped; pinned FFmpeg, console entry point, and install lifecycle passed |
+
+Both workflow records report the exact same full SHA. The measured record is
+stored in `REPORTS/LAST_GREEN.yaml`.
 
 ## Explicit stop boundary
 

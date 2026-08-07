@@ -5,16 +5,14 @@ accumulate history here. (No test inspects this file's text; it is a human
 note, not a contract.)
 
 Default branch: `claude/fable-opus-task-division-wv97i6`
-Last full-green Windows SHA: `efd7783` — windows-ci run 30704812522 (2026-08-01)
-Last full-green Ubuntu SHA: `efd7783` — ci run 30704812542 (same commit, same day)
+Last full-green Windows SHA: `f4dbdc1` — windows-ci run 31184430755 (2026-08-07)
+Last full-green Ubuntu SHA: `f4dbdc1` — ci run 31184410026 (same commit, same day)
 
 Both greens are on the SAME commit, so REPORTS/LAST_GREEN.yaml is stamped for
-the first time (it sat at `pending` since the seed, because nothing actually
-ran the generator — no workflow calls it; a maintainer does, by hand). `efd7783`
-is the PR #52 head; the merge commit `c7889b8` has a byte-identical tree
-(`aa87368`), so the evidence covers the default branch as it stands.
-Test counts stay `null` there: nobody read them off the runs, and a plausible
-number is worse than an honest blank.
+the v5 closeout tree. The Ubuntu run recorded 6163 passed / 5 skipped; the
+Windows hard release gate recorded 6112 passed / 56 skipped and also passed its
+pinned-FFmpeg and install/update/rollback/uninstall checks. No workflow calls
+the generator; a maintainer stamps the measured result by hand.
 
 ## Validation model (which gate runs when)
 - Every commit / PR head: compile + lint (ci.yml `static`) and the full
@@ -92,14 +90,13 @@ or real-media Dogfood has been run.
 
 ### v5.0 closeout and protocol removal (2026-08-07)
 
-The current branch completes C0-C5 of the owner closeout plan. The supported
+The current branch completes C0-C6 of the owner closeout plan. The supported
 product surface is project files + the JSON-capable CLI + the existing local GUI
 over shared core services. The removed protocol has no runtime, dependency,
 contract, test, snapshot, or current-document compatibility surface. C6 local
-checks and package audit are recorded in the final certification report; remote
-Ubuntu/Windows CI evidence for the final commit remains pending until this
-branch is pushed. No real provider, paid request, network generation, or media
-Dogfood was run.
+checks, package audit, and same-commit Ubuntu/Windows evidence are recorded in
+the final certification report. No real provider, paid request, network
+generation, or media Dogfood was run.
 
 ## Do not regress
 - Text is the source of truth.
