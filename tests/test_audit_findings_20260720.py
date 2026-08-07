@@ -537,7 +537,8 @@ def test_f21_concurrent_same_eid_never_corrupts_identity(tmp_path):
 
     t1 = threading.Thread(target=make, args=("Title-A",))
     t2 = threading.Thread(target=make, args=("Title-B",))
-    t1.start(); t2.start(); t1.join(10); t2.join(10)
+    t1.start(); t2.start(); t1.join(60); t2.join(60)
+    assert not t1.is_alive() and not t2.is_alive(), "new_episode threads did not finish"
 
     from manju.core.container import Project
     ep_dir = tmp_series.episode_project_dir("E01")
