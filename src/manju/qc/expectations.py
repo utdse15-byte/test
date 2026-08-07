@@ -1,29 +1,28 @@
-"""ExpectationSet compilation (DR02 WP1) — the derived, LLM-free contract of
+"""Versioned ExpectationSet compilation — the derived, LLM-free picture contract.
 what a shot's AUTHOR explicitly promised the picture would show.
 
 An ExpectationSet is a DERIVED artifact: it is compiled read-only from a shot's
-EXPLICIT authored constraints and never writes back to any source. It compiles
-from ONLY three sources (DR02 non-negotiable + orchestrator ruling #3):
+EXPLICIT authored constraints and never writes back to any source. Historical
+v1 compiles from exactly three sources (DR02 ruling #3):
 
     quality.must_show[i]   -> polarity=present, check=external_visual
     quality.avoid[i]       -> polarity=absent,  check=external_visual
     continuity.locks[i]    -> polarity=present, check=external_consistency
 
-Nothing else. Action/dialogue/story free text, prompts, reviewer summaries, and
-model confidence are FORBIDDEN sources — a promise is something the author wrote
-down as a constraint, not something a model inferred. Deterministic technical
-checks (resolution, duration, OCR must_show machine tier) stay in ``run_qc`` and
-gate acceptance through the separate "no policy-blocking error" condition; they
-are deliberately NOT duplicated here as expectations (ruling #3).
+For a shot with an explicit ShotContract, v2 additionally projects authored
+opening, accepted action, endpoint, performance, physics, and final-hold
+commitments through ``core.intent.expectation_assertions``. V3 preserves that
+v2 surface and adds canonical ``subject_scope`` to scoped commitment identity.
+Dialogue/story free text, prompts, reviewer summaries, model output, and model
+confidence remain forbidden sources: a promise is authored, never inferred.
+Deterministic technical checks (resolution, duration, OCR must_show machine tier)
+stay in ``run_qc`` and gate acceptance separately.
 
-Identity vs provenance. An expectation's ``id`` is content-derived from its
-polarity + a normalized form of its statement, so it is STABLE under list
-reorder and independent of YAML key order; ``source_path`` records the authored
-index purely as provenance. The set ``digest`` is a canonical hash over the
-expectation IDENTITIES (sorted by id, provenance excluded) so the same
-semantics under a different key/list order yield an identical digest, while any
-authored text change moves it. An empty set is a valid state meaning "nothing
-was promised" — never auto-invent a requirement.
+Identity vs provenance. V1 IDs derive from polarity and normalized statement;
+v2 also binds shot, kind, and position; v3 additionally binds canonical subject
+scope. ``source_path`` remains provenance rather than identity. Each set digest
+canonically binds its version's expectation identities with provenance excluded.
+An empty set is valid and means "nothing was promised".
 """
 
 from __future__ import annotations
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
 
 SCHEMA = "manju.qc.expectations/v1"
 SCHEMA_V2 = "manju.qc.expectations/v2"
+SCHEMA_V3 = "manju.qc.expectations/v3"
 
 # kind -> (polarity, check). The kind is the id's human-readable middle segment
 # (``exp:<shot>:<kind>:<sha8>``) and the dedup bucket; the source field path is
@@ -147,8 +147,11 @@ def _source_pointer(shot_id: str, source_path: str) -> str:
 
 
 def _compile_v2(shot, spec_hash: str) -> dict:
+    assertions = expectation_assertions(shot)
+    if any(assertion.subject_scope is not None for assertion in assertions):
+        return _compile_v3(shot, spec_hash, assertions)
     by_id: dict[str, dict] = {}
-    for assertion in expectation_assertions(shot):
+    for assertion in assertions:
         eid = _expectation_id_v2(
             shot.id,
             assertion.kind,
@@ -178,6 +181,82 @@ def _compile_v2(shot, spec_hash: str) -> dict:
         "expectations": expectations,
         "digest": _digest_v2(shot.id, expectations),
     }
+
+
+def _expectation_id_v3(
+    shot_id: str,
+    kind: str,
+    polarity: str,
+    position: str,
+    subject_scope: str | None,
+    statement: str,
+) -> str:
+    identity = "\n".join((
+        shot_id,
+        kind,
+        polarity,
+        position,
+        subject_scope or "",
+        _normalize(statement),
+    ))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"exp:{shot_id}:{kind}:{digest[:8]}"
+
+
+def _compile_v3(shot, spec_hash: str, assertions: list) -> dict:
+    by_id: dict[str, dict] = {}
+    for assertion in assertions:
+        eid = _expectation_id_v3(
+            shot.id,
+            assertion.kind,
+            assertion.polarity,
+            assertion.position,
+            assertion.subject_scope,
+            assertion.statement,
+        )
+        source_path = _source_pointer(shot.id, assertion.source_path)
+        if eid in by_id:
+            by_id[eid].setdefault("duplicates", []).append(source_path)
+            continue
+        by_id[eid] = {
+            "id": eid,
+            "source_path": source_path,
+            "polarity": assertion.polarity,
+            "check": assertion.check,
+            "statement": assertion.statement,
+            "position": assertion.position,
+            "subject_scope": assertion.subject_scope,
+            "required": True,
+        }
+
+    expectations = sorted(by_id.values(), key=lambda item: item["id"])
+    return {
+        "schema": SCHEMA_V3,
+        "subject": {"kind": "shot", "id": shot.id},
+        "spec_hash": spec_hash,
+        "expectations": expectations,
+        "digest": _digest_v3(shot.id, expectations),
+    }
+
+
+def _digest_v3(shot_id: str, expectations: list[dict]) -> str:
+    identity = [
+        {
+            "id": item["id"],
+            "polarity": item["polarity"],
+            "check": item["check"],
+            "position": item["position"],
+            "subject_scope": item.get("subject_scope"),
+            "statement": _normalize(item["statement"]),
+            "required": item["required"],
+        }
+        for item in sorted(expectations, key=lambda item: item["id"])
+    ]
+    return hash_value({
+        "schema": SCHEMA_V3,
+        "subject": {"kind": "shot", "id": shot_id},
+        "expectations": identity,
+    })
 
 
 def _digest_v2(shot_id: str, expectations: list[dict]) -> str:

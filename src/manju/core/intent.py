@@ -23,6 +23,7 @@ class IntentAssertion:
     check: Literal["external_visual", "external_consistency"]
     source_path: str
     position: Literal["any", "start", "end"] = "any"
+    subject_scope: str | None = None
 
 
 _SHOT_SIZE = {
@@ -387,10 +388,14 @@ def expectation_assertions(shot: ShotSpec) -> list[IntentAssertion]:
         check: Literal["external_visual", "external_consistency"],
         source_path: str,
         position: Literal["any", "start", "end"] = "any",
+        subject_scope: str | None = None,
     ) -> None:
         if isinstance(statement, str) and statement.strip():
             assertions.append(
-                IntentAssertion(kind, polarity, statement, check, source_path, position)
+                IntentAssertion(
+                    kind, polarity, statement, check, source_path, position,
+                    canonical_subject_scope(subject_scope),
+                )
             )
 
     for index, statement in enumerate(shot.quality.must_show):
@@ -408,6 +413,7 @@ def expectation_assertions(shot: ShotSpec) -> list[IntentAssertion]:
             "opening", "present", state_fact_statement(statement),
             "external_consistency",
             f"contract.opening[{index}]", "start",
+            state_fact_subject_scope(statement),
         )
     if contract.acceptance.action_required:
         add("action", "present", shot.action.main, "external_visual", "action.main")
