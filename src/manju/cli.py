@@ -119,6 +119,7 @@ _ZH_LEAD: dict[str, str] = {
     'check': '校验:schema + 引用 + 锁 + 密钥扫描 —— 安全网',
     'compare': '对比两个成片 —— final_vA 与 final_vB 之间改了什么',
     'doctor': '环境体检:ffmpeg、字体、磁盘、项目完整性',
+    'creator': '创作工作流视图:从剧本到镜头的规划与导出',
     'events': '看协作日志',
     'explain': '下次 build 会做什么、为什么?只读',
     'export': '从已编译时间线导出草稿/字幕',
@@ -157,6 +158,8 @@ _ZH_LEAD: dict[str, str] = {
     'segments': '从分析证据推导连贯的音画片段(只读)',
     'select': '选用一个 take',
     'shot-package': '校验/查看外部 ShotDraftPackage,或受控写入应用它',
+    'shot-control-plan': '查看某个镜头的控制计划与下一步提示',
+    'shot': '镜头创作与控制视图:查看或生成单个镜头',
     'snapshot': '给真相文本打一个带标签的 git 检查点',
     'story': '故事事实、SourceSpan 与派生 lint/coverage',
     'screen': '银幕体验意图、coverage 与 Control View',
@@ -1882,7 +1885,7 @@ app.add_typer(production_app, name="production", rich_help_panel=PANEL_GENERATE)
 # v5.0 authoring projections. These commands are thin read-only views over
 # core models and derived reports; they never call a Provider or write truth.
 
-@app.command("creator")
+@app.command("creator", rich_help_panel=PANEL_COLLAB)
 def creator(as_json: bool = typer.Option(False, "--json")):
     """Read-only creation-funnel summary for dramatic/screen authoring."""
     from .build.director import list_proposals
@@ -2059,7 +2062,7 @@ def asset_qualify_record(verdict: Path, as_json: bool = typer.Option(False, "--j
     _emit(record_asset_qualification(_project(), evidence), as_json)
 
 
-@app.command("shot-control-plan")
+@app.command("shot-control-plan", rich_help_panel=PANEL_COLLAB)
 def shot_control_plan(shot_id: str, as_json: bool = typer.Option(False, "--json")):
     """Read-only Provider-neutral Control View for one shot."""
     from .build.control_view import derive_control_view

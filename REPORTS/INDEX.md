@@ -15,6 +15,8 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `STATIC_BUG_CLOSEOUT_2026-08-06.md` | NARRATIVE-CLOSED-LOOP #14 |
 | `SECOND_STATIC_RESIDUAL_CLOSEOUT_2026-08-06.md` | NARRATIVE-CLOSED-LOOP #15 |
 | `THIRD_STATIC_RESIDUAL_CLOSEOUT_2026-08-06.md` | NARRATIVE-CLOSED-LOOP #16 |
+| `MCP_REMOVAL_AND_V5_CLOSEOUT_2026-08-07.md` | C0-C6 no-protocol closeout certification |
+| `V5_CLOSEOUT_REHEARSAL_2026-08-07.md` | C5 offline rehearsal |
 
 Closed-era reports (the whole `AI_IDE_*` family below) live under
 `REPORTS/archive/` — moved 2026-07-17 (UX wave 2 item 13) so the active

@@ -22,7 +22,9 @@ runner = CliRunner()
 
 
 def _current_surface_files(root: Path) -> list[Path]:
-    excluded = {".git", "REPORTS", "docs/archive"}
+    # This document is the single explanatory record for the removed protocol.
+    # All other current product files must remain token-free.
+    excluded = {".git", "REPORTS", "docs/archive", "docs/ARCHITECTURE_BOUNDARIES.md"}
     files: list[Path] = []
     for path in root.rglob("*"):
         if not path.is_file():
@@ -58,6 +60,14 @@ def test_current_surface_has_no_removed_protocol_tokens() -> None:
             offenders.append(path.relative_to(root).as_posix())
     assert offenders == []
     assert importlib.util.find_spec("manju." + protocol) is None
+
+
+def test_architecture_boundary_is_the_only_explanatory_exception() -> None:
+    root = Path(__file__).resolve().parents[1]
+    boundary = root / "docs" / "ARCHITECTURE_BOUNDARIES.md"
+    text = boundary.read_text(encoding="utf-8").lower()
+    assert "project files" in text and "json-capable cli" in text
+    assert "local gui" in text and "removed" in text
 
 
 def test_cli_and_gui_project_status_share_one_core(tmp_project) -> None:

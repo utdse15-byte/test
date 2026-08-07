@@ -90,6 +90,17 @@ or real-media Dogfood has been run.
   extracted; the big file split is intentionally not started until the full
   gates pass on one commit.
 
+### v5.0 closeout and protocol removal (2026-08-07)
+
+The current branch completes C0-C5 of the owner closeout plan. The supported
+product surface is project files + the JSON-capable CLI + the existing local GUI
+over shared core services. The removed protocol has no runtime, dependency,
+contract, test, snapshot, or current-document compatibility surface. C6 local
+checks and package audit are recorded in the final certification report; remote
+Ubuntu/Windows CI evidence for the final commit remains pending until this
+branch is pushed. No real provider, paid request, network generation, or media
+Dogfood was run.
+
 ## Do not regress
 - Text is the source of truth.
 - Media is append-only.

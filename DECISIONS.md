@@ -4206,3 +4206,26 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
     proof continue to bind expectation IDs/digests and preserve the scoped row.
     The evidence is offline Fake Transport, temporary bytes, and pure tests only:
     no real Provider, paid request, real media, Phase 7B, or S2 work occurred.
+
+## V5-CLOSEOUT-AND-PROTOCOL-REMOVAL (2026-08-07)
+
+1. **Complete removal supersedes the earlier MCP freeze.** Decision 25 under
+   `NARRATIVE-CLOSED-LOOP` froze the surface while retaining its runtime and
+   tests. The owner subsequently required complete removal. The current product
+   therefore has no MCP server, client, tool registry, policy/profile, transport,
+   schema, command, dependency, feature flag, deprecated stub, reader, writer,
+   migration, or compatibility surface. Historical records remain evidence only.
+2. **The supported product boundary is files + CLI + GUI.** AI IDE sessions and
+   the owner work directly with project truth files, the JSON-capable CLI, and
+   the existing local GUI. All three consume shared domain/application services;
+   no protocol proxy sits between them and the deterministic engine.
+3. **The removal is a breaking release change.** Manju advances from `0.1.0` to
+   `0.2.0`. Proposal path helpers moved into `core/proposal_paths.py` before the
+   adapter was deleted, preserving their atomic `O_EXCL` semantics without a
+   compatibility layer.
+4. **Certification stays evidence-bound.** Local offline gates, package audits,
+   and scans may prove the deterministic closeout, but they cannot claim current
+   Ubuntu/Windows CI green or real film quality. `REPORTS/LAST_GREEN.yaml` keeps
+   the prior measured same-SHA result until real runs exist for the closeout
+   commit. No Provider, paid request, network generation, or real-media Dogfood
+   was executed during this decision.
