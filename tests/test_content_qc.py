@@ -14,7 +14,6 @@ from manju.qc.content import (
     Verdict,
     check_ocr_assertion,
     content_checks,
-    mcp_video_gate,
     parse_assertions,
     sample_frames,
     tesseract_available,
@@ -149,19 +148,6 @@ def test_agent_tier_recorded(tmp_project, add_shot, make_take):
     assert "qc_vision" not in escalations[0].suggestion  # vendor-slot prose retired
 
 
-# ------------------------------------------------------------- mcp-video
-
-
-def test_mcp_video_gate_degrades_not_crashes(tmp_path):
-    """Adapter wall (§2.5): whatever mcp-video does on a bogus file, our gate
-    returns a tri-state verdict instead of raising."""
-    bogus = tmp_path / "not_a_video.mp4"
-    bogus.write_bytes(b"junk")
-    verdict, note = mcp_video_gate(bogus)
-    assert verdict in (Verdict.PASS, Verdict.FAIL, Verdict.UNKNOWN)
-    assert isinstance(note, str)
-
-
 # --------------------------------------------------- round-W #32: deep QC UNKNOWN
 
 
@@ -170,10 +156,9 @@ def test_deep_qc_unknown_detectors_surface_as_info_never_silent(
     tmp_project, add_shot, make_take
 ):
     """A corrupt/unreadable take makes black/freeze detection fail (probe
-    returns None) and, absent mcp-video (or on any mcp-video internal error),
-    the quality gate returns UNKNOWN. None of these may read as "no problem
-    found" — each must surface its own honest info item naming the detector
-    that did not run, never be silently dropped."""
+    returns None). None of these may read as "no problem found" — each must
+    surface its own honest info item naming the detector that did not run,
+    never be silently dropped."""
     from manju.core.spec import compute_spec_hash
 
     shot = add_shot(tmp_project, "S001")
@@ -193,15 +178,4 @@ def test_deep_qc_unknown_detectors_surface_as_info_never_silent(
     assert freeze_info and freeze_info[0].level == "info"
     assert "检测未运行" in freeze_info[0].message
 
-    # mcp-video: whatever the real adapter does with a corrupt file, an
-    # UNKNOWN verdict must produce an info item naming it — a FAIL verdict is
-    # also acceptable (a real quality-gate rejection), but never silence.
-    mcp_items = [i for i in items if "mcp_video" in i.message or "mcp-video" in i.message]
-    if mcp_items:
-        assert all(i.level in ("info", "warn") for i in mcp_items)
-    else:
-        # if mcp-video actually PASSED a corrupt file that would be its own
-        # surprise, but the black/freeze assertions above already prove the
-        # silent-drop bug is fixed for the two always-available detectors.
-        pass
     assert all(m for m in messages)  # sanity: no empty findings snuck in

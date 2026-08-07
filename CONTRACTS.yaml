@@ -206,27 +206,6 @@ schemas:
       Animatic and Proof Scene approvals remain append-only events in the
       existing verification log; no readiness truth file is persisted.
 
-  # -- agent / MCP surface -------------------------------------------------
-  - id: manju.agent-surface/v1
-    kind: schema
-    owner: manju.mcp.policy
-    status: stable
-    latest_version: 1
-    read_older: true
-    write_older: false
-    notes: >-
-      Machine-readable MCP tool manifest + digest returned by the agent_surface
-      tool. The wire contract for the whole MCP tool surface (document row
-      mcp-tool-surface).
-  - id: manju.agent-tool-policy/v1
-    kind: schema
-    owner: manju.mcp.policy
-    status: stable
-    latest_version: 1
-    read_older: true
-    write_older: false
-    notes: Per-tool ToolPolicy declaration carried by every MCP tool.
-
   # -- media technical evidence -------------------------------------------
   - id: manju.alignment-evidence/v1
     kind: schema
@@ -856,16 +835,6 @@ documents:
     notes: >-
       The public `--json` output surface across the CLI. Command names + required
       params are frozen by tests/fixtures/cli_surface.json (test_fp_cli_snapshot).
-  - id: mcp-tool-surface
-    kind: document
-    owner: manju.mcp
-    status: stable
-    latest_version: 1
-    read_older: true
-    write_older: false
-    notes: >-
-      The MCP tool surface (tool names + input/output). Wire schema is
-      manju.agent-surface/v1 + manju.agent-tool-policy/v1.
   - id: provider-manifest
     kind: document
     owner: manju.providers.manifest

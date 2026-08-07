@@ -196,8 +196,7 @@ def run_doctor(project: Project | None = None, *, windows: bool | None = None) -
     import importlib.util as _ilu
 
     for lib, purpose in (("pyJianYingDraft", "剪映草稿主路"),
-                         ("pycapcut", "国际 CapCut 草稿"),
-                         ("mcp_video", "QC 质量门/媒体分析")):
+                         ("pycapcut", "国际 CapCut 草稿")):
         present = _ilu.find_spec(lib) is not None
         add(lib, True, "installed" if present else f"not installed ({purpose})",
             f"{'✓' if present else '•'} {lib}: "

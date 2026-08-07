@@ -414,7 +414,7 @@ def _content_qc_coverage(project, report) -> None:
 def _content_checkers(project, report, statuses, deep: bool) -> None:
     """§9 third-round stance: the content tier is a machine checker chain the
     engine runs itself — no agent required. must_show assertions always run
-    for shots that declare them; black/freeze/mcp-video probes join on deep."""
+    for shots that declare them; black/freeze probes join on deep."""
     from .content import content_checks
 
     for st in statuses:

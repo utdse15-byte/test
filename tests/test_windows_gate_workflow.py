@@ -107,7 +107,7 @@ def test_the_gate_installs_every_extra() -> None:
     m = re.search(r'pip install .*-e "\.\[([^\]]+)\]"', TEXT)
     assert m, "the extras install line is gone"
     got = {e.strip() for e in m.group(1).split(",")}
-    assert {"dev", "jianying", "capcut", "mcpvideo", "edgetts"} <= got, got
+    assert {"dev", "jianying", "capcut", "edgetts"} <= got, got
 
 
 def test_the_ffmpeg_presence_assert_survives() -> None:

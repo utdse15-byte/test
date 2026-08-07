@@ -187,30 +187,6 @@ def freeze_detected(media: Path) -> bool | None:
     return _detect(media, "freezedetect=n=-60dB:d=2", "freeze_start")
 
 
-# ------------------------------------------------------------ mcp-video
-
-
-def mcp_video_gate(media: Path, *, min_score: float = 80.0) -> tuple[Verdict, str]:
-    """§2.5 ②: prefer mcp-video's quality gate when the library is present;
-    absence or any internal error degrades to UNKNOWN behind the adapter wall."""
-    try:
-        from mcp_video import assert_quality  # type: ignore[import-not-found]
-    except ImportError:
-        return Verdict.UNKNOWN, "mcp-video not installed"
-    try:
-        result = assert_quality(str(media), min_score=min_score)
-    except Exception as exc:  # adapter wall: their failure is our UNKNOWN
-        return Verdict.UNKNOWN, f"mcp-video gate errored: {exc}"
-    passed = result.get("passed", result.get("ok"))
-    score = result.get("score")
-    note = f"mcp-video score={score}" if score is not None else "mcp-video gate"
-    if passed is True:
-        return Verdict.PASS, note
-    if passed is False:
-        return Verdict.FAIL, note + f" (< {min_score})"
-    return Verdict.UNKNOWN, note + " (unrecognized result shape)"
-
-
 # ------------------------------------------------------------- qc_vision
 
 
@@ -295,19 +271,6 @@ def content_checks(project: Project, shot: ShotSpec, take: TakeInfo, *,
                 f"{take.name}: 检测未运行:冻结探测失败(freezedetect,ffmpeg 或媒体异常)",
                 suggestion="deep QC 本项未完成判断;可重跑 `manju qc --deep` 或人工检查该片段",
             ))
-        verdict, note = mcp_video_gate(media)
-        if verdict is Verdict.FAIL:
-            items.append(QCItem(
-                "warn", "content", shot.id, f"{take.name}: {note}",
-                suggestion="mcp-video 质量门未过;redo 或人工复核",
-            ))
-        elif verdict is Verdict.UNKNOWN:
-            items.append(QCItem(
-                "info", "content", shot.id,
-                f"{take.name}: 检测未运行:缺少 mcp_video({note})",
-                suggestion="deep QC 本项未完成判断;pip install mcp_video 或人工复核该片段",
-            ))
-
     if agent_tier:
         # Round V (§6): visual judgment is the driving agent's own eyes + the
         # skill library's standards, not a vendor slot. Point at the agent pipe.
