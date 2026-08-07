@@ -1,9 +1,9 @@
-"""manju CLI (§11). Every read command supports --json — the AI collaboration
-surface is files + this CLI (§2); MCP is a thin wrapper over the same core.
+"""Manju CLI. Every read command supports --json; the AI collaboration
+surface is project files plus this CLI, with the local GUI on the same core.
 
-Hard rules enforced here (§5, §10): `unlock` only works on an interactive
-terminal with confirmation and is never exposed over MCP; nothing under
-media/imports is ever deleted; renders/final only grows.
+Hard rules enforced here: `unlock` only works on an interactive terminal with
+confirmation; nothing under media/imports is ever deleted; renders/final only
+grows.
 """
 
 from __future__ import annotations
@@ -32,8 +32,7 @@ def _utf8_harden_stdio() -> None:
     doctor's ✓/✗/⚠/• glyphs encode there, so ``manju doctor > log.txt`` died
     with UnicodeEncodeError exactly when the owner tried to save output. The
     interactive console was fine (WriteConsoleW), which is why this hid.
-    Mirrors the MCP server's stream hardening (mcp/server.py — "UTF-8 on the
-    wire regardless of locale"): reconfigure both streams to UTF-8 with
+    Reconfigure both streams to UTF-8 with
     errors=replace. Already-UTF-8 streams are untouched (byte-identical
     everywhere the env is sane), and capture shims without ``reconfigure``
     (pytest/typer test runners) are left alone."""
@@ -157,7 +156,6 @@ _ZH_LEAD: dict[str, str] = {
     'schema': '导出每个真相文件模型的 JSON Schema',
     'segments': '从分析证据推导连贯的音画片段(只读)',
     'select': '选用一个 take',
-    'serve-mcp': 'stdio 上的 MCP server —— 同一核心的薄包装',
     'shot-package': '校验/查看外部 ShotDraftPackage,或受控写入应用它',
     'snapshot': '给真相文本打一个带标签的 git 检查点',
     'story': '故事事实、SourceSpan 与派生 lint/coverage',
@@ -166,7 +164,7 @@ _ZH_LEAD: dict[str, str] = {
     'support-bundle': '生成已脱敏的诊断支持包',
     'tool': '说明一个白名单意图 op 的既有确定性执行器',
     'transcribe': '把导入的真实素材转写成 SRT',
-    'unlock': '解锁(仅交互式终端 + 二次确认,MCP 面不暴露)',
+    'unlock': '解锁(仅交互式终端 + 二次确认)',
     'unpack': '还原一个 .manjupkg',
     'voice': '合成一条新的配音 take(只增,最新者胜)',
     'watch': '开发循环:真相一变就重跑 manju check',
@@ -1301,7 +1299,8 @@ def import_(
 # list -> per-file classification (take/voice/ref/import) by filename
 # convention, dry-run by default, `--apply` to execute. Same trusted
 # machine-level door as `import` (absolute paths allowed) — excluded from
-# MCP for the same reason (build/ingest.py's docstring).
+# No protocol-specific surface is needed; the trusted machine-level door is
+# available directly through the normal CLI.
 
 _INGEST_ACTION_ZH = {
     "take": "新 take", "voice": "新配音 take", "shot_ref": "镜头参考图",
@@ -2431,7 +2430,7 @@ def lock(
 
 @app.command(rich_help_panel=PANEL_COLLAB)
 def unlock(shot_id: str, field: str):
-    """Interactive terminal only + confirmation; never exposed over MCP (§5)."""
+    """Interactive terminal only, with explicit confirmation."""
     if not _interactive():
         _fail("unlock is interactive-only: run it yourself in a terminal (§5). "
               "AI agents: write a proposal to proposals/ instead.")
@@ -2463,11 +2462,9 @@ def propose(
     as_json: bool = typer.Option(False, "--json"),
 ):
     """Write proposals/NNNN_<slug>.md — the legitimate channel to request a
-    locked-content change (§5). Twin of the MCP `propose` tool; the numbering
-    and slug scheme are REUSED from manju.mcp.tools so the two share one
-    claim path — an atomic O_EXCL create loop (#51 round W): two concurrent
-    proposers (an agent session racing a human terminal, two agent sessions)
-    never collide on the same file.
+    locked-content change. Numbering and slugging use the shared core claim
+    path with an atomic O_EXCL create loop, so concurrent proposers never
+    collide on the same file.
     With no --body on a pipe, the body is read from stdin; otherwise it may be
     empty."""
     from .core.yamlio import atomic_write_text
@@ -2590,7 +2587,7 @@ def auto(
     """Autopilot (§10): a thin shell over ANY one-shot agent CLI. The agent
     gets the Manju playbook (SKILL.md) plus your task and works through the
     ordinary CLI surface; its actions are logged as actor=ai. No LLM SDK —
-    strictly a subprocess. Structured integrations: `manju serve-mcp`."""
+    strictly a subprocess using project files and ordinary CLI commands."""
     import subprocess
 
     from .agents import AgentResolutionError, build_command, resolve_agent
@@ -3549,7 +3546,7 @@ def export(
     fallback exits (§14)."""
     project = _project()
     # WP5: final_export gate — free, but outward-facing; require --yes when
-    # token present. One owner serves CLI + MCP (TRISURFACE F-01).
+    # token present. The shared build service owns the gate.
     from .build.graph import WaitingUser, final_export_gate
 
     config = _load_config_or_fail(project)
@@ -5596,7 +5593,7 @@ def board(
     Bare ``manju board`` writes a static, self-contained ``board.html``; with
     ``--serve`` it becomes a live, ACTIONABLE workspace on localhost (select
     takes, redo/rollback, build/qc/package/snapshot — a thin veneer over the same
-    core the CLI calls, unlock/gc/pack stay off this surface, like MCP §11).
+    core the CLI calls; unlock/gc/pack stay off this surface).
     Subcommands compose storyboards: ``board scene`` / ``board keyframes``."""
     if ctx.invoked_subcommand is not None:
         return  # dispatch to `scene` / `keyframes`
@@ -5808,8 +5805,8 @@ def gui(
         help="serve every *.manju project under this directory (switchable)"),
 ):
     """Local web workbench (§1-⑦ revisited) — a client of the SAME engine core
-    as the CLI/MCP: truth stays in text files, mutations are serialized jobs,
-    and dangerous ops (unlock, gc --hard) are absent, exactly as on MCP.
+    as the CLI: truth stays in text files, mutations are serialized jobs, and
+    dangerous ops (unlock, gc --hard) are absent.
 
     Round X (agent XE, user pain #6/#8): OUTSIDE a project (and without
     ``--workspace``) this no longer fails — it serves a WORKSPACE PICKER
@@ -8533,7 +8530,7 @@ def tasks_manifest(
     # linked-ancestor refusal, both before it derives or writes anything), so the
     # CLI carries the envelope and not a second copy of the rule — a duplicated
     # policy is a policy with two owners, and the service is the one that has to
-    # hold when the GUI or MCP calls it. Validation still precedes read_attempts,
+    # hold for every caller. Validation still precedes read_attempts,
     # which would otherwise read reports/runs/<id>/ at an unchecked path.
     from .core.safeio import SafeOutError
     try:
@@ -9415,31 +9412,6 @@ def lib_rm(
         _emit({"removed": entry["hash"], "name": entry["name"]}, True)
     else:
         typer.secho(f"removed {entry['name']} from library", fg=typer.colors.YELLOW)
-
-
-@app.command("serve-mcp", rich_help_panel=PANEL_COLLAB)
-def serve_mcp(
-    agent_profile: str = typer.Option(
-        "collaborative", "--agent-profile",
-        help="Agent surface profile: 'collaborative' (default, byte-identical to "
-        "today) or 'unattended' — the opt-in boundary for a self-driving agent "
-        "(reads + proposals stay; self-confirming spend and paid redo are hidden "
-        "and refused; shot writes require an expected_rev CAS token; build is "
-        "dry-run-only). This flag is the ONLY way to select it — project.yaml, "
-        "skills, shots and tool arguments can never escalate the profile."),
-):
-    """MCP server over stdio (§11) — a thin wrapper over the same core. Dangerous
-    commands (unlock, gc --hard) are never on this surface; Claude Code drives
-    everything else here or via files + this CLI, two equivalent paths (§11)."""
-    project = _project()
-    from .mcp.policy import PROFILES
-    from .mcp.server import main as mcp_main
-
-    if agent_profile not in PROFILES:
-        _fail(f"--agent-profile 必须是 {'/'.join(sorted(PROFILES))} 之一(实际 {agent_profile!r})")
-    raise typer.Exit(mcp_main(
-        ["--project", str(project.root), "--agent-profile", agent_profile]
-    ))
 
 
 # ============================================================ providers group

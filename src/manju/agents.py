@@ -1,8 +1,8 @@
 """Agent-CLI resolution for `manju auto` (§10 — the autopilot shell).
 
 `manju auto` drives ANY one-shot agent CLI, not just Claude Code. The
-underlying collaboration surface is already agent-agnostic (files + CLI +
-MCP); this module generalizes the last Claude-specific piece — which binary
+underlying collaboration surface is already agent-agnostic (files + CLI);
+this module generalizes the last Claude-specific piece — which binary
 gets the composed prompt.
 
 Resolution order (first hit wins):
@@ -15,8 +15,7 @@ Resolution order (first hit wins):
 A *template* is a shell-style string containing ``{prompt}`` (e.g.
 ``claude -p {prompt}``); a bare *name* (``codex``) expands via KNOWN_AGENTS.
 A template without ``{prompt}`` gets the prompt appended as one final
-argument. Structured integrations should prefer `manju serve-mcp` — this
-shell exists for agents that only speak "prompt in, work out".
+argument. This shell exists for agents that only speak "prompt in, work out".
 """
 
 from __future__ import annotations
@@ -94,5 +93,5 @@ def resolve_agent(project_agent: str | None, flag: str | None) -> str:
         "no agent CLI found — install one of "
         + "/".join(KNOWN_AGENTS)
         + ", or set --agent/MANJU_AGENT/project.yaml:agent to a template like "
-        + '"claude -p {prompt}" (structured integrations: manju serve-mcp)'
+        + '"claude -p {prompt}"'
     )

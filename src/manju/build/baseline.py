@@ -21,7 +21,7 @@ new event log, NO planner/DAG/readiness subsystem, NO second verification log.
     QC acceptance ........ :func:`qc.assurance.assurance_for_all`
     run terminal honesty . :func:`attempts.build_run_manifest`
     paid submissions ..... ``RuntimeState.unresolved_submissions`` + chain verify
-    action safety ........ ``mcp.policy`` TOOL_DEFS (never a hand-written table)
+    action safety ........ the shared local action-safety projection
   Nothing here re-implements any of them. Deleting or not materializing the
   assessment can never affect build / cache / resume — it is read-only and
   writes nothing.
@@ -409,8 +409,8 @@ def compare_against_baseline(project: Any, candidate: str | None = None) -> dict
 # ------------------------------------------------------ blocker construction
 
 
-# blocker code → the existing command + MCP tool name it maps onto (contract
-# §8.1). The command→tool map is allowed; the SAFETY VALUES come from policy.
+# blocker code -> the existing command name it maps onto. The safety values
+# come from the local action projection below.
 _BLOCKER_ACTIONS: dict[str, dict[str, str | None]] = {
     "CURRENT_FINAL_MISSING": {"command": "manju build --dry-run", "tool": "build"},
     "CURRENT_FINAL_STALE": {"command": "manju build --dry-run", "tool": "build"},
@@ -438,34 +438,30 @@ _BLOCKER_ACTIONS: dict[str, dict[str, str | None]] = {
 }
 
 
-def _action_safety(tool_name: str | None) -> dict[str, Any]:
-    """The action's safety metadata READ from mcp.policy's declared tool policy
-    (§8.2) — never a hand-written allowlist. A CLI-only action (no MCP tool) is
-    a human action: not auto-runnable, confirmation required."""
-    from ..mcp import policy as P
-    from ..mcp.tools import TOOL_DEFS
+_ACTION_SAFETY: dict[str, dict[str, Any]] = {
+    # These are projections for next-action display only. Actual execution
+    # still goes through the CLI/build spend and confirmation gates.
+    "build": {"fix_owner": "human", "safe_to_auto_run": False,
+               "requires_confirmation": True, "may_network": True, "may_spend": True},
+    "qc_brief": {"fix_owner": "host_agent", "safe_to_auto_run": True,
+                 "requires_confirmation": False, "may_network": False, "may_spend": False},
+    "director_suggest": {"fix_owner": "host_agent", "safe_to_auto_run": True,
+                          "requires_confirmation": False, "may_network": False,
+                          "may_spend": False},
+    "export": {"fix_owner": "host_agent", "safe_to_auto_run": True,
+                "requires_confirmation": False, "may_network": False, "may_spend": False},
+}
 
+
+def _action_safety(tool_name: str | None) -> dict[str, Any]:
+    """Return a local, read-only safety projection for a next action."""
     if not tool_name:
         return {"fix_owner": "human", "safe_to_auto_run": False,
                 "requires_confirmation": True, "may_network": False, "may_spend": False}
-    pol = {t["name"]: t["policy"] for t in TOOL_DEFS}.get(tool_name)
-    if pol is None:
-        return {"fix_owner": "human", "safe_to_auto_run": False,
-                "requires_confirmation": True, "may_network": False, "may_spend": False}
-    may_spend = pol["spend"] != P.NEVER
-    may_network = pol["network"] != P.NEVER
-    unattended = pol["unattended"]
-    requires_confirmation = unattended != P.ALLOW
-    safe_to_auto_run = (unattended == P.ALLOW) and not may_spend and not may_network
-    if may_spend or unattended == P.DENY:
-        fix_owner = "human"
-    elif safe_to_auto_run:
-        fix_owner = "host_agent"
-    else:
-        fix_owner = "human"
-    return {"fix_owner": fix_owner, "safe_to_auto_run": safe_to_auto_run,
-            "requires_confirmation": requires_confirmation,
-            "may_network": may_network, "may_spend": may_spend}
+    return dict(_ACTION_SAFETY.get(tool_name, {
+        "fix_owner": "human", "safe_to_auto_run": False,
+        "requires_confirmation": True, "may_network": False, "may_spend": False,
+    }))
 
 
 def _blocker(code: str, scope: str, detail: str, *, blocking: bool = True,
@@ -736,7 +732,7 @@ def _technical_blockers(project: Any, final_path: Path | None,
 
 def _next_actions(blockers: list[dict]) -> list[dict]:
     """One next action per actionable blocker, mapped to an existing command,
-    with safety metadata READ from the ToolPolicy (§8). De-duplicated by command.
+    with safety metadata from the local action projection. De-duplicated by command.
     Never an executable step — a proposal/confirmation reference only."""
     out: list[dict] = []
     seen: set[str] = set()
