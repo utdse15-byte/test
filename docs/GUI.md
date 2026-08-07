@@ -1,7 +1,8 @@
 # `manju gui` — 本地 Web 工作台 / The local web workbench
 
 Code: `src/manju/gui/` (`server.py`, `jobs.py`, `state.py`, `page.py`) plus the
-`gui` command in `src/manju/cli.py`. Design context: `docs/DESIGN_v2.2.md`
+`gui` command in `src/manju/cli.py`. Historical design context:
+`docs/archive/DESIGN_v2.2.md`
 §1-⑦, §3, §5, §11.
 
 ## 位置 / Position
@@ -11,7 +12,7 @@ GUI has the worst value-for-effort, and the static `manju board` covers ~80% of
 the "director's workbench" at under a twentieth of the cost. This GUI revisits that
 deferral as a user-directed decision — and it can be shipped cheaply **because**
 the deferral's rationale still holds: the GUI is the **third client** of the
-same engine core, next to files+CLI and MCP. It calls the same functions
+same engine core, next to files+CLI and CLI/GUI. It calls the same functions
 (`project_status`, `evaluate_all`, `run_check`, `run_build`, `redo_shot`,
 `run_qc`, `explain`), writes the same text files through the same
 `Project.update_shot_raw`, and logs to the same `events.jsonl` (with
@@ -68,7 +69,7 @@ browser (vanilla JS, textContent, polling)
 GuiServer (server.py)          quick_mutex ── select/lock (one YAML edit)
    │                           JobRunner  ── build/redo/voice/qc (FIFO)
    ▼
-engine core (same calls as CLI & MCP: status/stale/check/build/qc/explain)
+engine core (same calls as CLI & CLI/GUI: status/stale/check/build/qc/explain)
    │
    ▼
 text files (truth): shots/*.yaml · events.jsonl   +   media/renders (append-only)
@@ -193,7 +194,7 @@ Details:
   verbatim, never a model round-trip (§3). POST writes the text exactly as
   typed, runs the full `manju check`, and **reverts the write** if it
   introduced any new error — lock violations included, so the GUI cannot
-  bypass §5 any more than MCP can. A new id creates the shot file.
+  bypass §5 any more than CLI/GUI can. A new id creates the shot file.
 - **editor 409 contract** (shot / bible / rules saves, `_gated_save`): the
   `409` body is `{"error", "errors": [only the NEW check findings vs the
   pre-save baseline], "current": <the reverted-to on-disk text — "" when the
@@ -210,7 +211,7 @@ Details:
   the gated save remains the authority.
 - **upload** is the GUI twin of `manju import`: append-only into
   `media/imports/` with collision-suffixed names, streamed through a temp file
-  in `.manju/upload-tmp`. MCP excludes `import` because an agent could pull
+  in `.manju/upload-tmp`. CLI/GUI excludes `import` because an agent could pull
   arbitrary *filesystem paths* into the project; a browser upload has no such
   power — the human pushes bytes they already hold.
 - **git** (`/api/git/status|diff|log` + `commit`): read-mostly window over
@@ -289,8 +290,8 @@ A localhost web server is still a web server. Concretely (all in `server.py`):
   `Referrer-Policy: no-referrer`. Even injected markup could execute nothing.
 - **Absent by design** — `unlock`, `gc --hard`, `pack`/`unpack`, and
   arbitrary-path import/registration do not exist on this surface, mirroring
-  the MCP decision (§5: unlock is interactive-terminal-only; §11: dangerous
-  commands are not on the MCP face). Locking via the GUI is safe (it only
+  the CLI safety boundary (§5: unlock is interactive-terminal-only; dangerous
+  commands are not on the CLI/GUI face). Locking via the GUI is safe (it only
   *adds* a constraint); unlocking stays a deliberate, terminal-confirmed act.
 
 Honest limits:

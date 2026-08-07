@@ -64,7 +64,7 @@ def test_nothing_found_lists_the_options(monkeypatch):
     msg = str(exc.value)
     for name in KNOWN_AGENTS:
         assert name in msg
-    assert "serve-mcp" in msg  # the structured path is named
+    assert "--agent" in msg and "MANJU_AGENT" in msg
 
 
 # ----------------------------------------------------------- template → argv

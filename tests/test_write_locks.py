@@ -1,11 +1,11 @@
-"""Round Z (agent ZA): cross-process write-lock coverage for GUI/MCP/board
+"""Round Z (agent ZA): cross-process write-lock coverage for GUI and board
 LIGHT-WRITERS — the round-W debt the external review flagged (#5).
 
 Round W wired the cross-process ``.manju/build.lock`` (runtime/buildlock.py)
 into every HEAVY engine entrance (build/redo/voice/qc) and into the CLI's
 generic ``_write_lock`` for its light writes (select/import/gc/lock/rollback/
 snapshot/repair, cli.py's ``_write_lock``). It did NOT reach every light
-truth-file write on the GUI/MCP/board surfaces — a mixer/caption/packaging/
+truth-file write on the GUI and board surfaces — a mixer/caption/packaging/
 routing/shot edit, or a board rollback, could still land on disk WHILE a
 separate CLI ``manju build`` process held the lock. This module is NOT a
 corruption test (atomic writes + content-keys already make a torn/stale
@@ -20,7 +20,6 @@ lives in the round Z commit message / PR description):
     editor (``/api/rules``, protects 11 call sites at once) and a
     hand-wired one (``/api/subtitles/save``) — busy under contention,
     normal otherwise.
-  * MCP ``update_shot`` (the only shot-file-writing tool) — same shape.
   * Board ``rollback_shot`` (previously had NO process lock at all) — same
     shape, surfaced as the board's existing 409 "busy" JSON.
   * A NO-DOUBLE-ACQUIRE regression guard: handlers whose underlying engine
@@ -132,39 +131,6 @@ def test_gui_caption_edit_busy_under_build_lock_no_mutation(gui, tmp_project):
     assert tmp_project.load_rules().captions.mode == "manual"
     assert "手改字幕" in (tmp_project.captions_dir / "captions.srt").read_text(encoding="utf-8")
 
-
-# ================================================================= MCP tool
-
-
-def test_mcp_update_shot_respects_build_lock(tmp_project, add_shot):
-    """``update_shot`` is the ONLY MCP tool that writes a shot file (§5) and
-    had no process-lock coverage before this round."""
-    import yaml
-
-    from manju.mcp.tools import TOOL_DEFS
-    from manju.runtime.buildlock import BuildLocked
-
-    add_shot(tmp_project, "S001")
-    handler = next(t["handler"] for t in TOOL_DEFS if t["name"] == "update_shot")
-
-    path = tmp_project.shot_path("S001")
-    before_text = path.read_text(encoding="utf-8")
-    data = yaml.safe_load(before_text)
-    data["dialogue"]["text"] = "改写后的新台词。"
-    new_yaml = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
-
-    lock = BuildLock(tmp_project.root, actor="human").acquire()
-    try:
-        with pytest.raises(BuildLocked):
-            handler(tmp_project, {"shot_id": "S001", "yaml_content": new_yaml})
-    finally:
-        lock.release()
-    assert path.read_text(encoding="utf-8") == before_text  # untouched
-
-    # released -> runs normally
-    result = handler(tmp_project, {"shot_id": "S001", "yaml_content": new_yaml})
-    assert result.get("ok") is True
-    assert yaml.safe_load(path.read_text(encoding="utf-8"))["dialogue"]["text"] == "改写后的新台词。"
 
 
 # =============================================================== board action

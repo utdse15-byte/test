@@ -221,7 +221,7 @@ def rollback_shot(project: Project, shot_id: str) -> dict[str, Any]:
     select/rollback_shot events as the record. Append-only: the newer take
     stays on disk for compare; the change is one line of text plus an event.
 
-    Round W (#39): every OTHER selected_take writer (CLI select, MCP
+    Round W (#39): every OTHER selected_take writer (CLI select, CLI/GUI
     select_take, board/GUI select, build auto-select) now goes through
     ``core/writes.select_take_checked`` — this one deliberately does not.
     Rollback restores a PREVIOUSLY recorded human decision read straight off

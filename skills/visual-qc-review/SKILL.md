@@ -72,7 +72,7 @@ Manju 引擎自己不看画面(§0 不含 LLM)——它跑得动的便宜检查�
 }
 ```
 
-回填仍走 `manju qc verdict --from-file <路径>`(MCP 用 `qc_verdict`);验收状态见 `reports/qc.json` 的 `assurance` 块与 `manju qc` 摘要。若当前媒体/spec/expectation 与 packet 绑定不符,该判读只作历史保留(`binding=stale`),不计入当前验收。
+回填仍走 `manju qc verdict --from-file <路径>`(CLI/GUI 用 `qc_verdict`);验收状态见 `reports/qc.json` 的 `assurance` 块与 `manju qc` 摘要。若当前媒体/spec/expectation 与 packet 绑定不符,该判读只作历史保留(`binding=stale`),不计入当前验收。
 
 ## 严重度三档(Netflix 口径,按「会员体验影响」而非「是否存在」)
 

@@ -206,12 +206,12 @@ def record_provider_failure(project, shot_id: str, provider_id: str,
 # CLOSEOUT C2 (contract §3 执行边界): qualification/admission for the generative
 # bridge lives HERE — the ONE provider-layer service every bridge surface
 # funnels through (build.bridge.execute_bridge → dispatch_bridge →
-# provider.generate). CLI/MCP/GUI are thin wrappers over execute_bridge, and a
+# provider.generate). CLI and GUI are thin wrappers over execute_bridge, and a
 # direct Python call cannot bypass it either: an unqualified provider yields
 # transport 0 with durable refusal evidence. The admission itself is
 # providers.qualification.bridge_admission (floor PRODUCTION_READY, plus the
 # single-use operator risk-acceptance path) — consulted, never re-implemented,
-# so CLI / MCP / direct share the SAME gate function, not three copies.
+# so CLI / CLI/GUI / direct share the SAME gate function, not three copies.
 
 BRIDGE_PARAMS_KEY = "bridge"
 BRIDGE_DISPATCH_CAPABILITY = "generative_bridge"

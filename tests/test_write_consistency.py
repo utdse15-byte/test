@@ -4,8 +4,7 @@ Three precise fixes, one test module:
 
 1. **CAS** (optimistic concurrency) on read-modify-write entrances —
    ``core.writes.checked_shot_write``'s ``expected_text_hash`` / the
-   ``shot_text_hash`` helper, threaded into MCP ``update_shot``'s
-   ``expected_rev`` and the GUI's shot-editor / storyboard-cell / take-note
+   ``shot_text_hash`` helper, used by the GUI's shot-editor / storyboard-cell / take-note
    forms (each of which holds a rendered snapshot a human may sit on before
    saving — the textbook case this closes).
 2. **Residual A** (DECISIONS §9) — per-episode ``BuildLock`` coverage inside
@@ -102,82 +101,9 @@ def test_checked_shot_write_no_cas_when_hash_omitted(tmp_project: Project, add_s
     assert tmp_project.load_shot("S001").dialogue.text == "覆盖也没关系。"
 
 
-# ======================================================================
-# 1b. MCP update_shot's expected_rev / get_shot's rev
-# ======================================================================
-
-
-def test_mcp_get_shot_exposes_rev(tmp_project: Project, add_shot):
-    from manju.mcp.tools import call_tool
-
-    add_shot(tmp_project, "S001")
-    payload = call_tool(tmp_project, "get_shot", {"shot_id": "S001"})
-    assert payload["rev"] == shot_text_hash(tmp_project, "S001")
-    assert payload["rev"]  # non-empty for an existing shot
-
-
-def test_mcp_update_shot_stale_expected_rev_errors_fresh_rev_works(
-    tmp_project: Project, add_shot
-):
-    import copy
-
-    import yaml
-
-    from manju.mcp.tools import ToolError, call_tool
-
-    add_shot(tmp_project, "S001")
-    before = call_tool(tmp_project, "get_shot", {"shot_id": "S001"})
-
-    # a concurrent entrance (CLI / a second MCP client / the GUI) edits the
-    # SAME shot after we loaded it
-    concurrent = copy.deepcopy(before["data"])
-    concurrent["dialogue"]["text"] = "别的入口先改了。"
-    tmp_project.shot_path("S001").write_text(
-        yaml.safe_dump(concurrent, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    on_disk_after_race = tmp_project.shot_path("S001").read_text(encoding="utf-8")
-
-    # our own edit, built from the ORIGINAL (now-stale) load
-    mine = copy.deepcopy(before["data"])
-    mine["dialogue"]["text"] = "我们的改动。"
-    my_yaml = yaml.safe_dump(mine, allow_unicode=True, sort_keys=False)
-
-    with pytest.raises(ToolError, match="乐观锁"):
-        call_tool(tmp_project, "update_shot", {
-            "shot_id": "S001", "yaml_content": my_yaml, "expected_rev": before["rev"],
-        })
-    # refused BEFORE anything touched disk — the concurrent edit stands
-    assert tmp_project.shot_path("S001").read_text(encoding="utf-8") == on_disk_after_race
-
-    # re-fetch the CURRENT rev and retry — now it lands
-    fresh = call_tool(tmp_project, "get_shot", {"shot_id": "S001"})
-    assert fresh["rev"] != before["rev"]
-    result = call_tool(tmp_project, "update_shot", {
-        "shot_id": "S001", "yaml_content": my_yaml, "expected_rev": fresh["rev"],
-    })
-    assert result["ok"] is True
-    reloaded = yaml.safe_load(tmp_project.shot_path("S001").read_text(encoding="utf-8"))
-    assert reloaded["dialogue"]["text"] == "我们的改动。"
-
-
-def test_mcp_update_shot_omitting_expected_rev_unaffected(tmp_project: Project, add_shot):
-    """Backward compatible: an agent that never calls get_shot (or doesn't
-    pass expected_rev back) sees the exact pre-round-AA behavior."""
-    import yaml
-
-    from manju.mcp.tools import call_tool
-
-    add_shot(tmp_project, "S001")
-    data = call_tool(tmp_project, "get_shot", {"shot_id": "S001"})["data"]
-    data["dialogue"]["text"] = "没有 rev 也能存。"
-    result = call_tool(tmp_project, "update_shot", {
-        "shot_id": "S001",
-        "yaml_content": yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-    })
-    assert result["ok"] is True
-
 
 # ======================================================================
-# 1c. GUI 409 — the shot editor (full raw-YAML form) is CAS-protected
+# 1b. GUI 409 — the shot editor (full raw-YAML form) is CAS-protected
 # ======================================================================
 
 from manju.gui.server import create_server  # noqa: E402
@@ -228,7 +154,7 @@ def test_gui_shot_editor_stale_rev_refused_409(gui, tmp_project: Project, add_sh
     rev = loaded["rev"]
     assert rev
 
-    # a concurrent entrance (CLI / MCP / another browser tab) edits the shot
+    # a concurrent entrance (CLI / another browser tab) edits the shot
     tmp_project.update_shot_raw(
         "S001", lambda d: d.setdefault("dialogue", {}).__setitem__("text", "别的入口先改了。"))
     on_disk = tmp_project.shot_path("S001").read_text(encoding="utf-8")

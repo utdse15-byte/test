@@ -62,7 +62,7 @@ derived artifacts (generated assets, compiled timeline, rendered cuts,
 Intelligence lives *outside* the system; determinism lives *inside* it. The
 Manju engine calls no LLM — it only executes, renders, and validates. Claude
 Code (or a human) is the director, collaborating with the engine through text
-files, a `--json` CLI, and an MCP server.
+files, a `--json` CLI, and the local GUI.
 
 ## Four goals, one model
 
@@ -82,7 +82,7 @@ The build-system model solves all four core goals at once:
 ```text
 Intelligence (outside the system)   Claude Code = AI director / human = same identity
         │
-Collaboration surface               text files (truth) · CLI (--json) · MCP · events.jsonl
+Collaboration surface               text files (truth) · CLI (--json) · CLI/GUI · events.jsonl
         │
 Manju engine (deterministic)        build graph & cache · timeline compiler ·
                                     render pipeline · QC · exporters
@@ -168,7 +168,7 @@ Windows 11 x64 是第一平台;全程 per-user、无需管理员。
    ffmpeg.org 的 8.x 会偏移 ffprobe 的色彩标签,已被硬门禁实测。
 5. **体检环境** —— `manju doctor --windows` 验证 ffmpeg/字体/磁盘/项目 + Windows 环境行
    (长路径策略、NTFS、网络盘、OneDrive、配置可写性、Edge/Chrome、安装模式)。
-6. **偏好点击操作** —— `manju gui`,浏览器工作台(与 CLI/MCP 同一引擎核)。
+6. **偏好点击操作** —— `manju gui`,浏览器工作台(与 CLI 同一引擎核)。
 
 ## 系统体检样片:两条命令,零花费(`manju new --demo`)
 
@@ -251,11 +251,11 @@ JSON:`{"error": "人话,几乎总带补救命令", "code": "unknown_shot"}`)。
 | 某条命令怎么用 | `manju <命令> -h` |
 | 按任务找命令(建项目→交付、抢救、体检…) | `manju help-workflow` |
 
-危险命令(`unlock`、`gc --hard`)只在交互式终端里存在,GUI 与 MCP 面上都没有。
+危险命令(`unlock`、`gc --hard`)只在交互式终端里存在,GUI 上没有。
 
 ## Milestones
 
-Sliced by closed loop, not by calendar (see [DESIGN_v2.2.md](docs/DESIGN_v2.2.md) §13).
+Sliced by closed loop, not by calendar (see [archived design](docs/archive/DESIGN_v2.2.md) §13).
 
 - **M0 — engine skeleton, no AI, no models.** ✅ **Core done & frozen.**
   Directory-as-project container, canonical hashing, value-hash locks, spec_hash
@@ -268,10 +268,8 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.2.md](docs/DESIGN_v2.2.md
   lint as the secondary, capcut-cli lint behind an adapter wall, pycapcut for
   international CapCut. Opening in the pinned desktop apps is the remaining
   human verification step (§14).
-- **M2 — AI collaboration layer.** ✅ Done: `skills/manju/SKILL.md` playbook,
-  `events.jsonl`, full `--json` coverage, the stdio MCP server (`manju
-  serve-mcp`, with `unlock`/`gc` absent by design and lock-violating edits
-  rejected with rollback), `manju propose`, and the `manju auto` shell.
+- **M2 — AI collaboration layer.** ✅ Done: `skills/manju/SKILL.md` playbook, `events.jsonl`, full `--json` coverage, `manju propose`, and the `manju auto` one-shot shell. The current collaboration surface is files + CLI + local GUI.
+
 - **M3 — cloud generation + content QC.** ✅ Engine-side done: the
   config-driven **generic cloud adapter** (§8.6 — onboarding a REST API =
   filling the ★ fields of a `provider.yaml`, no code; dedicated adapter
@@ -280,7 +278,7 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.2.md](docs/DESIGN_v2.2.md
   restart re-polls, never resubmits), content-review rejection as a
   first-class failure, and the **machine-checked content QC chain** (§9):
   must_show assertion-ization via frame-sampled OCR, provenance-aware
-  black/freeze probes, the mcp-video quality gate, and a `qc_vision`
+  black/freeze probes, black/freeze media probes, and a `qc_vision`
   manifest slot — all engine-driven, no agent required. What remains is
   literally a config file: fill `~/.manju/providers/<id>/provider.yaml`
   for a real vendor and set its key env var.
@@ -298,7 +296,7 @@ Sliced by closed loop, not by calendar (see [DESIGN_v2.2.md](docs/DESIGN_v2.2.md
 The full design rationale — why directory-as-project beats a ZIP container, why
 git *is* the patch engine, why the AI is fully external, the provider protocol,
 cost guardrails, and the FFmpeg pipeline — is in
-[docs/DESIGN_v2.2.md](docs/DESIGN_v2.2.md)(现行);
+[docs/archive/DESIGN_v2.2.md](docs/archive/DESIGN_v2.2.md)(历史设计,当前架构以 README/CLI/GUI 为准);
 被它取代的 v2.1 只留历史,已归档到 [docs/archive/DESIGN_v2.1.md](docs/archive/DESIGN_v2.1.md)。
 
 - [docs/PINS.md](docs/PINS.md) — index of the source-scanning pin tests (grep-style assertions a stray comment/docstring token trips) and how to evolve one honestly.
@@ -398,7 +396,7 @@ localhost — a thin veneer over the same core functions the CLI calls:
 - per-take 评审批注:severity chips、click-to-seek(点批注跳到该时间码)、
   媒体一换就自动标 STALE;
 - the dangerous surface (`unlock`, `gc`, `pack`) is NOT reachable from the
-  browser, exactly like the MCP server; media paths are traversal-guarded;
+  browser, backed by the same local engine; media paths are traversal-guarded;
   binds 127.0.0.1 by default — a personal workspace, not a hosted product.
 
 Round Q grows it into a workspace: a **take-comparison view** (side-by-side
@@ -422,9 +420,7 @@ The agent is resolved as: `--agent` flag → `MANJU_AGENT` env →
 `project.yaml: agent:` → first of claude / codex / gemini / qwen / aider
 found on PATH. A bare name uses that tool's documented one-shot form; a
 template like `"myagent --task {prompt}"` runs anything else — the prompt
-is substituted as a single argument, never word-split. Agents that speak
-MCP should use `manju serve-mcp` instead; `auto` exists for pure
-prompt-in/work-out CLIs.
+is substituted as a single argument, never word-split. Agents work through project files and ordinary CLI commands; `auto` remains an optional one-shot prompt-in/work-out shell.
 
 ## History, snapshots and rollback (P2)
 
@@ -450,8 +446,7 @@ P0 tools are pinned via three independent extras — install only what you use:
 ```bash
 pip install -e ".[jianying]"   # pyJianYingDraft — JianYing draft primary path
 pip install -e ".[capcut]"    # pycapcut — international CapCut drafts
-pip install -e ".[mcpvideo]"  # mcp-video — QC gate / media analysis / agent toolbelt
-pip install -e ".[jianying,capcut,mcpvideo]"  # everything
+pip install -e ".[jianying,capcut]"  # optional NLE adapters
 ```
 Every tool sits behind an adapter wall — `manju doctor` probes each one, and
 absence degrades to an alternative path instead of breaking a milestone.
@@ -510,3 +505,9 @@ never breaks the registry; the fallback chain always terminates at the
 network-independent `caption_card`. There is deliberately **no plugin
 marketplace or remote discovery** — plugins are local manifests or explicit
 `register_provider()` calls, nothing else.
+
+undefined
+undefined
+undefined
+undefined
+undefined

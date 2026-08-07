@@ -15,7 +15,7 @@ Every test here pins a REPRODUCED defect, red-first:
         on the disaster-recovery commands, the worst place for a traceback.
 * F30 — CLI stdout was not UTF-8-hardened: ``manju doctor > log.txt`` on a
         GBK-codepage Windows shell raises UnicodeEncodeError on ✓/✗/⚠/•
-        (none encode in cp936/cp1252). The MCP server already hardens its
+        (none encode in cp936/cp1252). The CLI already hardens its
         streams; the CLI now does the same, nt-only.
 * F34 — the "reproducible command line" in ffmpeg logs was POSIX-quoted —
         unpasteable into cmd.exe/PowerShell on the primary platform.

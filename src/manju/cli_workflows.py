@@ -277,7 +277,7 @@ WORKFLOWS: dict[str, dict] = {
              "text + media (SQLite is disposable by design)"),
             ("manju unlock <shot> <field>",
              "if your own stale lock blocks the build: unlock is "
-             "interactive-terminal-only by design (never over MCP)"),
+             "interactive-terminal-only by design (never over CLI/GUI)"),
         ],
         "next": "diagnose",
         "see_also": ["manju failures", "manju history", "manju tasks retry <run_id>"],

@@ -38,7 +38,6 @@ top-3 grep-pins already named in `CLAUDE.md`; it never contradicts them.
 | No src module reads the golden test corpus / fixture builders. | `tests/test_c20a_corpus.py::test_runtime_code_never_reads_the_golden_corpus` | Needles `fixtures/golden`, `golden_corpus`, `qc_vision_fake`, `make_bad_media`, `make_visual` in any `src/manju/**/*.py`. | Fixtures stay under `tests/`; runtime never reaches into test assets. |
 | No `build`/`runtime`/`timeline`/`media`/`exporters`/`qc` module references the provider-qualification report (`providers/qualification` is the writer/owner). | `tests/test_c14_qualification.py::test_15_qualification_report_is_not_a_build_input` | `providers/qualification`, `qualification_dir`, `reports/providers/qualification`, or `import qualification` in those package trees. | Qualification evidence is record-only; routing/build never read the report. |
 | Tests never call a raw `os.chdir` (a leaked cwd is the #1 `-n auto` contamination bug); use the `monkeypatch.chdir` fixture. | `tests/test_fp_xdist.py::test_no_raw_chdir_in_tests` | A raw `os.chdir(` / `chdir(` call form in any `tests/**/*.py` (this pin excepts its own file). Scans raw TEST source. | `monkeypatch.chdir` (auto-reverted) — never a bare `os.chdir`. |
-| The MCP package exposes no alternate ungated bridge path — no `execute_bridge` symbol, no bridge-named tool. | `tests/test_closeout_c2.py::test_b06_cli_mcp_direct_share_the_same_gate` (one prong) | `execute_bridge` in any `mcp/*.py` source, or a tool whose name contains `bridge`. (One prong of a broader same-gate behavioural test.) | The real bridge dispatch seam is `providers.base.dispatch_bridge`, consulted through the provider-layer gate by both CLI and MCP. |
 
 ## Evolving a pin honestly
 
@@ -61,3 +60,5 @@ anticipated — but only under this discipline:
 - **Re-run the UNION batch.** When a loop touches a pinned surface, re-run the
   union of the previous loop's verification batch, never a trimmed per-loop
   subset (the quoted batch rule).
+
+undefined

@@ -64,7 +64,7 @@ def write_reports(project: Project, qc: QCReport,
 
 def build_assurance_block(project: Project, assurance: list[dict] | None) -> dict:
     """The derived assurance block embedded in qc.json (and the ``manju qc
-    --json`` / MCP ``qc`` envelopes so all three agree): the per-shot assurance
+    --json`` / CLI/GUI ``qc`` envelopes so all three agree): the per-shot assurance
     dicts plus read-only repair PROPOSALS for the rejected/unknown shots. Pure
     and side-effect-free — proposals never generate, write a source, or spend
     (each carries ``do_not_execute_automatically``). A malformed shot entry is

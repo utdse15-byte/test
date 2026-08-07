@@ -9230,7 +9230,7 @@ def _lib():
 
 
 def _lib_entry_public(entry: dict) -> dict:
-    """The index row as the CLI/GUI surface it (hash8 handle up front)."""
+    """The index row as the CLI/GUI surfaces it (hash8 handle up front)."""
     from .core.library import _hex
 
     return {"hash8": _hex(entry["hash"])[:8], **entry}

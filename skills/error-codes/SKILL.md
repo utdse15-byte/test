@@ -79,7 +79,7 @@ CLI 里约 275 个失败点,只有 26 个带专门 code,其余全部落到默认
 
 这一类**不是错误,是闸门**。`waiting_user` 表示流程卡在人的确认上(§5 approve-
 before-spend);`interactive_only` 表示该命令只在交互式终端可用(如 `unlock`),
-MCP 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮。
+CLI/GUI 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮。
 
 `production_approval_refused` 表示当前 Animatic 或 Proof Scene 不满足人工批准
 前提，或调用者不是 human。先读 `manju production status` 修完门禁并让人实际观看；
@@ -114,27 +114,28 @@ MCP 面上根本不暴露。重试不会让它们变成成功,只会浪费一轮
 4. 第 4 类可以退避重试,但要有次数上限,并且**花钱的操作即使可重试也要先看
    `ask_before`**(核心协议 §5)。
 
-## MCP 工具面的 code(**面已冻结** — 存档参考,不是推荐路径)
-
-> 店主 2026-07-31 冻结 MCP 面(「有 CLI 和 GUI 就可以了」,DECISIONS
-> `TRISURFACE-FIX #25`)。`manju serve-mcp` 与本表原样保留并保持绿,但**日常
-> 走 CLI**,上面那张 CLI 词表才是你要用的。本节留档给仍挂着 MCP 的场合。
-
-MCP 工具失败时返回 `isError: true` + `{"error": …, "code": …}` — 同一信封,
-但词表是工具面自己的(不要拿去和上面 CLI 的表混对):
-
-| code | 什么事实 | 该做什么 |
-| --- | --- | --- |
-| `invalid_argument` | 缺参数/参数形状不对 | 读 tools/list 的 inputSchema 改调用 |
-| `unknown_tool` | 工具名不存在 | 重读 tools/list,别重试同名 |
-| `waiting_user` | ask_before 闸(金钱或外向制品) | 停下问人;人同意后带 `assume_yes: true` 重调 |
-| `agent_profile_denied` | 当前 agent profile 不许该工具 | 走 payload 里给出的协作路径(通常是 propose) |
-| `locked_field` | 改动碰到 §5 锁 | 写 proposal,永远别绕锁 |
-| `rev_conflict` | 乐观锁:加载后文件已被改 | 重新 get_shot 拿新 rev 再保存 |
-| `unknown_proposal` | 提案 id 不存在 | 重新 propose / 列出现有提案 |
-| `canceled` | 构建/轮询被协作取消 | 按人意图处理,不自动重试 |
-
-(此表由 tests/test_trisurface_round3.py 的 MCP code 测试钉住;CLI 表的
-反捏造校验只扫上面的分类块,两张词表各自为政。**再说一遍:MCP 面已冻结**
-—— 表里的 `get_shot` 等工具名只在仍挂着 MCP 的场合有意义,CLI 会话请回到
-上面那张 CLI 词表。)
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined

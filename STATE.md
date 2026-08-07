@@ -77,7 +77,7 @@ or real-media Dogfood has been run.
 - Consolidate job metadata into one registry — DONE: `core/jobkinds.py`
   (`JobKindSpec`); GUI/frontend consume it via `GET /api/meta/job-kinds`.
 - Shared operation semantics — DONE: `core/outcomes.py` (`OperationOutcome`,
-  `classify_exception`, `CancelRecord`); MCP `_h_build` adapts via it.
+  `classify_exception`, `CancelRecord`); CLI and GUI adapters use it.
 - Shared execution context — DONE: `core/execctx.py`
   (`ExecutionContext`, `CancelToken`). Migrate call sites incrementally.
 - Multi-locale QC — DONE: `qc/multilocale.py` + `manju qc --lang/--all-locales`.

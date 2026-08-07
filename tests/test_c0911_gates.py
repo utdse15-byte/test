@@ -1,8 +1,7 @@
 """AI_IDE_09_11G — the anti-overbuild gates, run honestly.
 
 Part A (09 resume): can a FRESH agent, after a crash/restart, safely take over
-using only the EXISTING read-only surfaces (status/tasks/exports/events/
-agent_surface/director)? These are characterization tests — they prove the
+using only the existing read-only surfaces (status/tasks/exports/events/director)? These are characterization tests — they prove the
 current surfaces answer every §4/§6 safety question, so the ResumeCapsule /
 SkillLock / status-resume-section candidates stay SKIPPED/REJECTED with this
 file as the evidence.
@@ -38,8 +37,6 @@ from manju.build.attempts import build_run_manifest, materialize_run_manifest
 from manju.build.shotpackage import project_revision
 from manju.cli import app
 from manju.core.events import tail_events
-from manju.mcp import policy as P
-from manju.mcp.tools import TOOL_DEFS
 from manju.providers import submission as S
 from manju.providers.base import ProviderCanceled, ProviderFailure
 from manju.runtime.state import RuntimeState
@@ -135,7 +132,7 @@ def test_a0_resume_transcript_read_only_calls_answer_every_safety_question(
         2. manju tasks   --json      → unresolved submission + recovery actions
         3. manju events  --json      → the interrupted run's run_id
         4. manju tasks manifest <id> --json → INCOMPLETE + dangling attempt
-        5. manju exports --json      → release blockers + ToolPolicy next actions
+        5. manju exports --json      → release blockers + safe next actions
 
     Verdict the test enforces: after these five READ-ONLY calls every §4.4
     safety risk is decided — no mis-resubmit, no completed-misjudgment, no
@@ -186,7 +183,7 @@ def test_a0_resume_transcript_read_only_calls_answer_every_safety_question(
     assert "SUBMISSION_OUTCOME_UNKNOWN" in codes
     assert "CURRENT_FINAL_MISSING" in codes
     assert ra["ready"] is False
-    for act in ra["next_actions"]:                   # every action policy-stamped
+    for act in ra["next_actions"]:                   # every action safety-stamped
         assert {"command", "fix_owner", "safe_to_auto_run",
                 "requires_confirmation", "may_network", "may_spend"} <= set(act)
     sub_cmds = [a for a in ra["next_actions"]
@@ -194,9 +191,6 @@ def test_a0_resume_transcript_read_only_calls_answer_every_safety_question(
     assert sub_cmds and sub_cmds[0]["command"] == "manju tasks"
     assert sub_cmds[0]["safe_to_auto_run"] is False  # human resolves unknowns
 
-    # surface digest is one more read-only call away (agent_surface) — pure.
-    digest = P.resolve_agent_surface(TOOL_DEFS, P.COLLABORATIVE).digest()
-    assert digest.startswith("sha256:")
 
 
 def test_a1_interrupted_run_recognized_after_restart(tmp_project, add_shot):
@@ -244,30 +238,6 @@ def test_a3_stale_proposal_is_not_an_executable_next_action(tmp_project, add_sho
     assert reloaded.state == "expired"               # honestly recorded, kept
 
 
-def test_a4_surface_digest_visible_moves_on_tools_and_not_on_skills(tmp_project):
-    """§6.4: the tool-surface digest is read-only-visible and moves when a tool
-    POLICY changes. Skill FILE content is deliberately outside the digest —
-    skills are readable content (skill_list/skill_show), not tool policy; this
-    pin is the §5.2 evidence that no recovery error follows from that split
-    (REJECTED_WITH_REASON for SkillLock; no reproduced mis-execution)."""
-    base = P.resolve_agent_surface(TOOL_DEFS, P.COLLABORATIVE).digest()
-    assert base == P.resolve_agent_surface(TOOL_DEFS, P.COLLABORATIVE).digest()
-
-    # a REAL policy change moves the digest…
-    import copy
-
-    changed = copy.deepcopy(TOOL_DEFS)
-    for t in changed:
-        if t["name"] == "status":
-            t["policy"]["unattended"] = P.DENY
-    assert P.resolve_agent_surface(changed, P.COLLABORATIVE).digest() != base
-
-    # …while a skill file changing does not (documented split, not a bug):
-    skills_dir = tmp_project.root / "skills"
-    skills_dir.mkdir(exist_ok=True)
-    (skills_dir / "SKILL.md").write_text("# drifted", encoding="utf-8")
-    assert P.resolve_agent_surface(TOOL_DEFS, P.COLLABORATIVE).digest() == base
-
 
 def test_a5_source_revision_is_accurate_and_read_only(tmp_project, add_shot):
     """§6.5: the current source revision moves exactly when source moves."""
@@ -295,21 +265,18 @@ def test_a6_resume_read_set_is_pure_no_writes_no_network_no_spend(
     _cli_json(tmp_project, "events", "--json")
     _cli_json(tmp_project, "exports", "--json")
     tail_events(tmp_project.root, 50)
-    P.resolve_agent_surface(TOOL_DEFS, P.COLLABORATIVE).manifest()
     after = {str(p) for p in tmp_project.root.rglob("*")}
     assert before == after
 
 
-def test_a7_next_actions_carry_toolpolicy_truth(tmp_project):
-    """§6.7: next-action safety metadata equals the declared ToolPolicy —
-    never a hand-written table (pinned for the resume read too)."""
+def test_a7_next_actions_carry_local_safety_truth(tmp_project):
+    """§6.7: next-action safety metadata stays fail-closed for paid work."""
     ra = _cli_json(tmp_project, "exports", "--json")["release_assessment"]
     build_actions = [a for a in ra["next_actions"] if a.get("tool") == "build"]
     assert build_actions, "a missing final must map to the build tool"
-    pol = {t["name"]: t["policy"] for t in TOOL_DEFS}["build"]
     act = build_actions[0]
-    assert act["may_spend"] == (pol["spend"] != P.NEVER)
-    assert act["may_network"] == (pol["network"] != P.NEVER)
+    assert act["may_spend"] is True
+    assert act["may_network"] is True
     assert act["safe_to_auto_run"] is False and act["fix_owner"] == "human"
 
 

@@ -87,12 +87,12 @@ __all__ = [
 
 
 class DirectorError(RuntimeError):
-    """Clean one-line failures for the CLI/MCP/GUI (FIX-D envelope)."""
+    """Clean one-line failures for the CLI and GUI (FIX-D envelope)."""
 
 
 class UnknownProposal(DirectorError):
     """The proposal id resolves to nothing on disk (TRISURFACE F-18): typed
-    subclass so the MCP envelope can answer ``code="unknown_proposal"`` —
+    subclass so the CLI/GUI envelope can answer ``code="unknown_proposal"`` —
     the agent's branch is "list/re-propose", not "retry the same id"."""
 
 
@@ -213,7 +213,7 @@ class Proposal(BaseModel):
 @dataclass
 class Outcome:
     """The result of :func:`execute` — the step-5 "show the diff" + step-6
-    "suggest next" payload the CLI/MCP/GUI render."""
+    "suggest next" payload the CLI and GUI render."""
 
     proposal_id: str
     ok: bool
@@ -803,11 +803,11 @@ def confirm(project: Project, proposal_id: str, actor: str | None = None) -> Pro
             "be confirmed (re-propose if it was rejected/expired/already run)")
     # Round Y (review #15): a HARD code-level human-only gate on paid proposals.
     # The tool description said "never confirm without a human yes", but that is
-    # a prompt-level hope, not enforcement — an MCP/auto agent (actor="ai") could
+    # a prompt-level hope, not enforcement — an CLI/GUI/auto agent (actor="ai") could
     # propose→confirm→execute and self-approve real spend. Now a proposal that
     # contains ANY priced action (build/redo/voice) can only be confirmed by a
     # HUMAN actor: the CLI `manju director confirm` and the GUI 确认 button both
-    # run as actor="human"; the MCP `director_confirm` tool runs as actor="ai"
+    # run as actor="human"; the CLI/GUI `director_confirm` tool runs as actor="ai"
     # and is refused here. Free (local/text) proposals stay AI-confirmable.
     if (_has_priced_action(proposal) or _has_truth_patch(proposal)) and actor != "human":
         raise DirectorError(
@@ -1106,7 +1106,7 @@ def _record_action_failure(project: Project, action: dict, exc: ActionError,
 # repair sidecar + take file, captions.srt / rules.yaml, packaging.yaml) with
 # NO lock of their own anywhere in their call chain — each is wrapped
 # INDIVIDUALLY, right here at the dispatch site, so a director execute() run
-# can no longer interleave with a concurrent CLI/GUI/MCP mutation of the same
+# can no longer interleave with a concurrent CLI/GUI/CLI/GUI mutation of the same
 # project mid-action. Table (derived by reading each handler's own engine
 # call, not guessed):
 #

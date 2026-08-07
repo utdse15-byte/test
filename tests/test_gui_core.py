@@ -449,7 +449,7 @@ def test_new_project_outside_workspace_rejected(gui):
 
 def test_dangerous_surface_still_absent(gui, tmp_project, add_shot):
     add_shot(tmp_project, "S001")
-    # unlock / gc / pack / unpack are NOT on this surface (mirrors MCP, §5)
+    # unlock / gc / pack / unpack are NOT on this surface (matches the GUI safety boundary, §5)
     for path in ("/api/unlock", "/api/gc", "/api/pack", "/api/unpack"):
         assert _post(gui, path, {})[0] == 404, path
     # every new mutating POST is behind the CSRF token, like the rest

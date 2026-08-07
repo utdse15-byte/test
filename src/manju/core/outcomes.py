@@ -6,11 +6,9 @@ need the owner to confirm a paid action", "the operation was canceled", and
 
 * CLI:  ``_fail(msg, code="waiting_user")`` + an exit code;
 * GUI:  result dicts like ``{"waiting_user": True}`` / ``{"canceled": True}``;
-* MCP:  structured ``ToolError(msg, code="waiting_user"|"canceled")``.
-
 :class:`OperationOutcome` is the ONE semantic result the business layer returns.
-CLI, GUI and MCP then only *adapt* it into their own shape — they do not each
-re-derive what "canceled" means. :func:`classify_exception` is the single place
+CLI and GUI only *adapt* it into their own shape — they do not each re-derive
+what "canceled" means. :func:`classify_exception` is the single place
 that maps the engine's exceptions (``WaitingUser``, ``ProviderCanceled``,
 ``BuildCanceled``, ``ProviderFailure``) onto :class:`OutcomeCode`, so a
 ``ProviderCanceled`` becomes the SAME outcome in all three surfaces.
@@ -172,7 +170,7 @@ class OperationOutcome:
             return False
         return self.retryable
 
-    # -- adapters (CLI / GUI / MCP each ONLY adapt, never re-derive) --------
+    # -- adapters (CLI / GUI only adapt, never re-derive) -------------------
     def to_gui_dict(self) -> dict[str, Any]:
         """The GUI job-result shape."""
         out: dict[str, Any] = dict(self.data)
@@ -188,20 +186,6 @@ class OperationOutcome:
             out.setdefault("error", self.message)
         if self.billing_state is not None:
             out["billing_state"] = self.billing_state
-        return out
-
-    def to_mcp(self) -> dict[str, Any]:
-        """MCP structured response: ``{ok, code, message, ...}``. For non-OK,
-        the caller raises ToolError(message, code=code)."""
-        out: dict[str, Any] = {
-            "ok": self.is_ok,
-            "code": str(self.code),
-            "message": self.message,
-        }
-        if self.billing_state is not None:
-            out["billing_state"] = self.billing_state
-        if self.data:
-            out["data"] = dict(self.data)
         return out
 
     def to_cli(self) -> dict[str, Any]:

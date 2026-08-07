@@ -293,15 +293,3 @@ def test_cli_impact_json(tmp_project, add_shot, monkeypatch):
     assert data["shot"] == "S002"
     assert data["voice"]["would_become"] in ("stale", "missing", "not_needed", "manual")
     assert "cost" in data
-
-
-def test_mcp_impact_tool(tmp_project, add_shot):
-    from manju.mcp.tools import call_tool
-
-    add_shot(tmp_project, "S002")
-    out = call_tool(
-        tmp_project, "impact",
-        {"shot_id": "S002", "field": "dialogue.text", "value": "hello"},
-    )
-    assert out["shot"] == "S002"
-    assert "video" in out and "voice" in out

@@ -9,7 +9,7 @@ Red tests B01–B12 (contract §3). Target behaviour:
   GenerationRequest refs surface (B03); hash-only-no-media is invalid;
 * endpoint bytes are re-hashed at execute time — mismatch => transport 0 (B04);
 * qualification admission is enforced in the ONE provider-layer dispatch seam
-  execute_bridge funnels through — direct Python, CLI and MCP cannot bypass it
+  execute_bridge funnels through — direct Python and CLI cannot bypass it
   (B05/B06); low-rung manual experiments ride a single-use operator risk
   acceptance bound to the exact (provider, capability, request_digest);
 * spec_hash derives from the current Shot + bridge plan; the literal "bridge"
@@ -284,10 +284,10 @@ def test_b05_direct_execute_unqualified_is_transport_zero(tmp_project, add_shot)
     assert len(provider.requests) == 1
 
 
-# ============================== B06 CLI / MCP / direct share the same gate
+# ============================== B06 CLI and direct share the same gate
 
 
-def test_b06_cli_mcp_direct_share_the_same_gate(tmp_project, add_shot,
+def test_b06_cli_and_direct_share_the_same_gate(tmp_project, add_shot,
                                                 providers_dir, monkeypatch,
                                                 tmp_path):
     import manju.providers.base as PB
@@ -330,15 +330,8 @@ def test_b06_cli_mcp_direct_share_the_same_gate(tmp_project, add_shot,
     assert out.exit_code == 0, out.output
     assert len(seen) == 2 and seen[1][0] == pid
 
-    # (3) MCP exposes NO alternate ungated bridge path at all
-    import manju.mcp as mcp_pkg
-    import manju.mcp.tools as MT
-    mcp_src = "".join(p.read_text(encoding="utf-8")
-                      for p in Path(mcp_pkg.__file__).parent.glob("*.py"))
-    assert "execute_bridge" not in mcp_src
-    assert not any("bridge" in name for name in MT.TOOLS)
 
-    # (4) the gate the real dispatch seam consults IS the provider-layer
+    # (3) the gate the real dispatch seam consults IS the provider-layer
     #     qualification admission — one function, not parallel copies
     monkeypatch.setattr(PB, "dispatch_bridge", real_dispatch)
     gate_calls = []

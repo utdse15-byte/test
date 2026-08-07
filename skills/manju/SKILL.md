@@ -11,7 +11,7 @@ user_invocable: false
 
 你是 AI 导演，Manju 是无 LLM 的确定性执行器。故事、场次、镜头、参考分配和修复判断写入项目文本；引擎只编译、校验、执行和记录。文本是源，媒体只增不覆盖，派生报告不能反过来成为输入。
 
-**当前操作面是 CLI + GUI。** MCP 面按店主决定冻结：已有 server/测试保留保绿，但不新增工具、不作为推荐创作路径（DECISIONS `TRISURFACE-FIX #25`）。
+**当前操作面是 CLI + GUI。** CLI/GUI 面按店主决定冻结：已有 server/测试保留保绿，但不新增工具、不作为推荐创作路径（DECISIONS `TRISURFACE-FIX #25`）。
 
 ## 0. 接管与技能
 

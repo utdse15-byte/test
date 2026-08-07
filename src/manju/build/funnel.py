@@ -54,7 +54,7 @@ __all__ = [
 
 
 class FunnelError(RuntimeError):
-    """Clean one-line failures for the CLI/MCP (FIX-D envelope)."""
+    """Clean one-line failures for the CLI and GUI (FIX-D envelope)."""
 
 
 # ------------------------------------------------------------- text predicates

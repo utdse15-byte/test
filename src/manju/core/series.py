@@ -776,12 +776,12 @@ def sync_bible(series: Series, *, apply: bool = False,
 
     Round AA (residual A, DECISIONS §9): this call writes into MULTIPLE
     episode PROJECTS in one pass, each of which is also an independent CLI/
-    GUI/MCP mutation target on its own — a straight per-file write (the
+    GUI/CLI/GUI mutation target on its own — a straight per-file write (the
     pre-round-AA shape) had no cross-process guard, so a `manju build`
     running against episode E03 could interleave with sync-bible mid-write
     into E03's bible/*.yaml. Every episode's WHOLE write section below (all
     its bible-kind files, one hold) is now wrapped in THAT episode's own
-    ``runtime.buildlock.BuildLock`` — the SAME lock a CLI/GUI/MCP build
+    ``runtime.buildlock.BuildLock`` — the SAME lock a CLI/GUI/CLI/GUI build
     against that lone episode project would take. ``apply=False`` (a pure
     report) never acquires anything — nothing is written, so there is
     nothing to protect. A BUSY episode STOPS the whole sync run right there

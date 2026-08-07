@@ -11,9 +11,9 @@ test file:
   must not silently overturn a value-hash lock sealed on an EMPTY
   status.selected_take — it skips, loudly, with a QC-visible record.
 
-Entrance-specific #39 (CLI/MCP/board/GUI select all refusing a locked
+Entrance-specific #39 (CLI/board/GUI select all refusing a locked
 selected_take, and all recording "via") live next to each entrance's own
-test file (test_cli.py / test_mcp.py / test_board_serve.py / test_gui.py) —
+test file (test_cli.py / test_board_serve.py / test_gui.py) —
 see those for the rest of the round-W coverage.
 """
 

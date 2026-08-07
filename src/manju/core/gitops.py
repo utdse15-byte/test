@@ -9,7 +9,7 @@ non-terminal surface) reads it through.
 Read-mostly by design: :func:`commit_all` is the ONLY write. There is
 deliberately NO checkout / reset / revert here — destructive history surgery
 stays in a real terminal with a human at the keyboard, the same doctrine that
-keeps ``unlock`` and ``gc --hard`` off the agent/MCP surface (§5). "Undo" at
+keeps ``unlock`` and ``gc --hard`` limited to the interactive CLI (§5). "Undo" at
 this layer means *see the diff, commit or don't* — never rewriting history.
 
 Contract shared by every helper:

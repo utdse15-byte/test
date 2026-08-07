@@ -30,7 +30,6 @@ over the same core the CLI calls — no capability exists only in the GUI.
 | `gc --hard` | destructive; tty-only |
 | `pack` / `unpack` | filesystem-level import/export of whole projects; shell territory |
 | raw `git` beyond gitops panel (rebase, push) | git is the patch engine; plumbing stays in the shell |
-| `serve-mcp`, `auto`, `watch` | process-management; started from a terminal next to the GUI |
 
 ## The capability matrix (CLI ↔ GUI affordance)
 
@@ -75,3 +74,5 @@ over the same core the CLI calls — no capability exists only in the GUI.
    with bare exception text (item 10).
 6. Human assets and human decisions are never overwritten silently — batch
    ops skip locked/manual shots and say so.
+
+undefined

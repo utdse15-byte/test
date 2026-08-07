@@ -1,4 +1,4 @@
-"""The creation funnel (round V, goal item 2): build/funnel.py + CLI + director + MCP.
+"""The creation funnel (round V, goal item 2): build/funnel.py + CLI + director + GUI.
 
 The staged creative workflow AS DATA — 立意→梗概→节拍→剧本→分镜→生成计划→生成.
 These tests pin: the stage-detection walk (empty→brief current, each written
@@ -6,7 +6,7 @@ artifact advancing `current`, through produce), the done-predicates (a trivial
 template is NOT done; 节拍 needs ≥3 beat lines AND real content; 分镜 reuses
 run_check), the scaffolds (write/refuse/force + event), the `manju create`
 checklist CLI + --json, the director suggest_next funnel-first-pre-storyboard
-rule, and the MCP funnel_status tool. No ffmpeg — every artifact is text/a fake
+rule, and the shared funnel status service. No ffmpeg — every artifact is text/a fake
 final byte-file; the walk never probes media.
 """
 
@@ -161,7 +161,7 @@ def test_walk_empty_to_produce(tmp_project, add_shot):
 
 def test_status_shape_is_json_serializable(tmp_project):
     status = funnel.funnel_status(tmp_project)
-    # round-trips through JSON (the API/MCP contract)
+    # round-trips through JSON (the serialized service contract)
     reparsed = json.loads(json.dumps(status, ensure_ascii=False))
     assert [s["id"] for s in reparsed["stages"]] == list(funnel.STAGE_IDS)
     for s in reparsed["stages"]:
@@ -169,7 +169,7 @@ def test_status_shape_is_json_serializable(tmp_project):
         # later stage whose own predicate already holds still reads "todo", and
         # the renderer needs the predicate itself to stop printing ○ next to
         # evidence saying 已落地. Kept as exact equality — the point of this pin
-        # is that the API/MCP shape never grows a field by ACCIDENT.
+        # is that the serialized service shape never grows a field by ACCIDENT.
         assert set(s) == {"id", "cn", "state", "satisfied", "artifact",
                           "evidence", "skill", "next_action"}
         assert s["state"] in ("done", "current", "todo")
@@ -447,17 +447,3 @@ def test_suggest_next_no_funnel_after_storyboard(tmp_project, add_shot):
     assert not any(s.kind == "funnel" for s in sugg)
     # the ordinary signals still lead (a missing shot → generate)
     assert any(s.kind == "generate" for s in sugg)
-
-
-# ----------------------------------------------------------------- MCP
-
-
-def test_mcp_funnel_status_tool(tmp_project):
-    from manju.mcp.tools import TOOLS, call_tool, list_tools
-
-    assert "funnel_status" in {t["name"] for t in list_tools()}
-    assert TOOLS["funnel_status"]["inputSchema"]["type"] == "object"
-
-    out = call_tool(tmp_project, "funnel_status", {})
-    assert out["current"] == "brief"
-    assert [s["id"] for s in out["stages"]] == list(funnel.STAGE_IDS)

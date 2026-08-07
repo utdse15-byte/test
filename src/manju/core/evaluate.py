@@ -2,7 +2,7 @@
 
 The project has grown a skill library (§core/skills.py), a creation funnel
 (§build/funnel.py), an agent visual-QC pipe (§qc/agent_review.py), and many
-CLI/MCP/GUI workflows — but nothing ever asked "does any of this actually get
+CLI/GUI workflows — but nothing ever asked "does any of this actually get
 used, and does it correlate with fewer redo/repair cycles?" This module is
 that read-only lens.
 
@@ -362,7 +362,7 @@ def _honesty_section() -> dict[str, Any]:
             "问题』,不能跨项目比较优劣,也不是最终成片质量的度量。",
             f"小样本不可靠:计数低于 {SMALL_N_THRESHOLD} 的条目标记为 low_n=true——"
             "排名和『热点』在小样本下极易被单次操作左右,不要当排行榜看。",
-            "只统计被记录的操作:手工绕开 CLI/MCP/GUI 直接改文件、或事件文件被清空/"
+            "只统计被记录的操作:手工绕开 CLI/GUI 直接改文件、或事件文件被清空/"
             "轮转丢失的历史,都不会出现在这里——『从未使用』可能只是『从未被记录』。",
         ],
         "small_n_threshold": SMALL_N_THRESHOLD,

@@ -1165,7 +1165,7 @@ class GenericCloudProvider(CloudProvider):
         # F3: only NOW is this the terminal read of the cached poll info — drop
         # both per-job dicts so a registry-cached provider instance (one per
         # manifest, reused across a build of hundreds of shots or a long-lived
-        # MCP/GUI host) does not accumulate them for the process lifetime.
+        # GUI host) does not accumulate them for the process lifetime.
         self._results.pop(job_id, None)
         self._submitted.pop(job_id, None)
         return [dest]

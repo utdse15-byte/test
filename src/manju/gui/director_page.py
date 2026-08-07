@@ -1,7 +1,7 @@
 """导演助手 /director — the six-step AI-director loop as a workbench page.
 
 The GUI twin of ``manju director …`` (goal item 17): the same
-:mod:`manju.build.director` core the CLI and MCP drive, rendered as one page so
+:mod:`manju.build.director` core the CLI and CLI/GUI drive, rendered as one page so
 a human can run the whole contract without a terminal:
 
     propose → (impact + est cost, 试跑 numbers — the §9 step-2 emphasis) →

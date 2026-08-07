@@ -147,7 +147,7 @@ def test_select_writes_truth_and_event(gui, tmp_project, add_shot, make_take):
 
 def test_select_refuses_when_selected_take_locked(gui, tmp_project, add_shot, make_take):
     """Round W (#39): GUI select now goes through the SAME checked write
-    (select_take_checked) as CLI/MCP/board — a value-hash lock on
+    (select_take_checked) as CLI/board — a value-hash lock on
     status.selected_take must refuse it too, not just get bypassed here."""
     from manju.core.locks import seal_lock
 
@@ -177,7 +177,7 @@ def test_select_refuses_when_selected_take_locked(gui, tmp_project, add_shot, ma
 
 def test_select_refuses_when_build_locked(gui, tmp_project, add_shot, make_take):
     """Round W (#9): GUI select takes the process build lock too — a held
-    lock (another CLI/MCP process mutating the same project) refuses."""
+    lock (another CLI process mutating the same project) refuses."""
     from manju.runtime.buildlock import BuildLock
 
     add_shot(tmp_project, "S001")
@@ -197,7 +197,7 @@ def test_lock_via_api(gui, tmp_project, add_shot):
     status, _, data = _post(gui, "/api/lock", {"shot": "S001", "field": "dialogue.text"})
     assert status == 200 and data["hash"]
     assert "dialogue.text" in tmp_project.load_shot_raw("S001")["locked"]
-    # unlock is NOT on this surface, mirroring MCP (§5)
+    # unlock is NOT on this surface, matching the CLI (§5)
     status, _, _ = _post(gui, "/api/unlock", {"shot": "S001", "field": "dialogue.text"})
     assert status == 404
 

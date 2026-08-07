@@ -34,7 +34,7 @@
 
 
 
-`build/impact.py` 也确实存在，而且返回 `video / voice / captions / timeline / renders / exports / cost / locales` 这些字段；CLI、MCP、GUI API 也都有对应入口：`manju impact`、MCP `impact` tool、`POST /api/impact`。([GitHub][3]) 这块我认为已经是“可继续打磨”而不是“没实现”。
+`build/impact.py` 也确实存在，而且返回 `video / voice / captions / timeline / renders / exports / cost / locales` 这些字段；CLI、CLI/GUI、GUI API 也都有对应入口：`manju impact`、CLI/GUI `impact` tool、`POST /api/impact`。([GitHub][3]) 这块我认为已经是“可继续打磨”而不是“没实现”。
 
 
 
@@ -288,7 +288,7 @@ project.save_index(index)
 
 **状态：基本完成。**
 
-模型字段、compiler stamping、cuemap、CLI/MCP/API 都有。`impact_report()` 也加了 locale affected section，能说明 base dialogue 变更会让哪些 locale line 变成 翻译过期。([GitHub][3])
+模型字段、compiler stamping、cuemap、CLI/CLI/GUI/API 都有。`impact_report()` 也加了 locale affected section，能说明 base dialogue 变更会让哪些 locale line 变成 翻译过期。([GitHub][3])
 
 
 

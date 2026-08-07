@@ -1,9 +1,9 @@
 """Behavioral tests for the shared OperationOutcome model (P1 item 5).
 
-Covers the model, the single exception classifier, and — item 2's contract
-bullet #9 — that ``ProviderCanceled`` maps to the SAME semantic outcome in CLI,
-GUI and MCP, plus bullet #6 (a canceled/uncertain paid request is not
-auto-resubmitted). No source scanning: everything asserts runtime values.
+Covers the model, the single exception classifier, and that ``ProviderCanceled``
+maps to the SAME semantic outcome in CLI and GUI, plus bullet #6 (a
+canceled/uncertain paid request is not auto-resubmitted). No source scanning:
+everything asserts runtime values.
 """
 
 from __future__ import annotations
@@ -81,31 +81,27 @@ def test_waiting_user_is_re_runnable() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Bullet #9: ProviderCanceled -> the SAME outcome across CLI, GUI, MCP
+# Shared semantics across CLI and GUI
 # --------------------------------------------------------------------------- #
 
-def test_provider_canceled_same_semantic_outcome_in_cli_gui_mcp() -> None:
+def test_provider_canceled_same_semantic_outcome_in_cli_gui() -> None:
     o = classify_exception(ProviderCanceled("cloudx", "job-123"))
 
     gui = o.to_gui_dict()
-    mcp = o.to_mcp()
     cli = o.to_cli()
 
-    # All three encode "canceled" — no surface silently downgrades it to ok.
+    # Both surfaces encode "canceled" — no surface silently downgrades it to ok.
     assert gui["canceled"] is True
-    assert mcp["ok"] is False and mcp["code"] == "canceled"
     assert cli["code"] == "canceled" and cli["exit_code"] == 3
 
-    # And all three carry the uncertain-billing disposition forward.
+    # Both surfaces carry the uncertain-billing disposition forward.
     assert gui["billing_state"] == BillingState.CANCEL_REQUESTED_UNKNOWN
-    assert mcp["billing_state"] == BillingState.CANCEL_REQUESTED_UNKNOWN
     assert cli["billing_state"] == BillingState.CANCEL_REQUESTED_UNKNOWN
 
 
-def test_waiting_user_same_semantic_outcome_in_cli_gui_mcp() -> None:
+def test_waiting_user_same_semantic_outcome_in_cli_gui() -> None:
     o = OperationOutcome.waiting_user("confirm spend")
     assert o.to_gui_dict()["waiting_user"] is True
-    assert o.to_mcp()["code"] == "waiting_user"
     assert o.to_cli()["code"] == "waiting_user" and o.to_cli()["exit_code"] == 2
 
 
@@ -113,7 +109,6 @@ def test_ok_outcome_across_surfaces() -> None:
     o = OperationOutcome.ok("done", shot="S001")
     assert "waiting_user" not in o.to_gui_dict() and "canceled" not in o.to_gui_dict()
     assert o.to_gui_dict()["shot"] == "S001"
-    assert o.to_mcp()["ok"] is True and o.to_mcp()["code"] == "ok"
     assert o.to_cli()["exit_code"] == 0
 
 

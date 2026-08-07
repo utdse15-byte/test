@@ -28,9 +28,8 @@ terms:
   no media writes, no new merge engine, no new DB.
 
 The CLI entry is ``manju shot-package FILE [--apply] [--json]`` (build/cli.py),
-following the ``roundtrip`` precedent. There is no MCP tool: the external-file
-apply command class (``ingest`` / ``roundtrip`` / ``import``) is not exposed on
-MCP today, so this one is not either (parity).
+following the ``roundtrip`` precedent. The external-file apply command class
+(``ingest`` / ``roundtrip`` / ``import``) stays limited to explicit CLI workflows.
 """
 
 from __future__ import annotations

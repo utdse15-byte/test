@@ -276,7 +276,7 @@ def built(tmp_path_factory):
 def test_build_run_id_on_result_and_to_dict(built):
     project, result = built
     assert result.run_id
-    assert result.to_dict()["run_id"] == result.run_id  # build --json / MCP free
+    assert result.to_dict()["run_id"] == result.run_id  # build --json free
 
 
 @needs_ffmpeg

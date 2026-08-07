@@ -1,9 +1,9 @@
-"""DR02 WP4 — surface wiring (CLI / reports / director / MCP).
+"""DR02 WP4 — surface wiring (CLI / reports / director / GUI).
 
 The DR02 core (expectations/assurance/v2 packet+verdict pipe) is already merged;
 these tests pin how its DERIVED, READ-ONLY outputs surface through the existing
 commands: the `manju qc` report + --json envelope, reports/qc.json + qc.md, the
-director's suggest_next advisories, and the MCP `qc` / `qc_verdict` /
+director's suggest_next advisories and the GUI review surface.
 `director_suggest` tools. Every assurance surface is additive: it never changes
 the qc exit code, never writes a source, and an old qc.json (no assurance block)
 keeps working.
@@ -227,63 +227,6 @@ def test_old_qc_json_without_assurance_block_suggest_works(project_no_ff):
     # must not raise, and the assurance sub-helper contributes nothing
     d.suggest_next(project)
     assert d._assurance_suggestions(project) == []
-
-
-# ------------------------------------------------- 4/parity. MCP tools
-
-
-@needs_ffmpeg
-def test_mcp_qc_tool_carries_assurance(in_project, add_shot):
-    from manju.mcp.tools import call_tool
-
-    _rejected_shot(in_project, add_shot)
-    result = call_tool(in_project, "qc", {})
-    assert "assurance" in result
-    states = {s["subject"]["id"]: s["assurance_state"]
-              for s in result["assurance"]["shots"]}
-    assert states["S001"] == "rejected"
-
-
-@needs_ffmpeg
-def test_mcp_qc_brief_row_carries_packet_id(in_project, add_shot):
-    from manju.mcp.tools import call_tool
-
-    add_shot(in_project, "S001", quality={"must_show": ["红色雨伞出现"]})
-    _real_take(in_project, "S001")
-    brief = call_tool(in_project, "qc_brief", {})
-    row = next(r for r in brief["shots"] if r["shot"] == "S001")
-    assert row.get("packet_id", "").startswith("pkt_")
-
-
-@needs_ffmpeg
-def test_mcp_qc_verdict_v2_lands_as_v2_record(in_project, add_shot):
-    from manju.mcp.tools import call_tool
-
-    add_shot(in_project, "S001", quality={"must_show": ["红色雨伞出现"]})
-    _real_take(in_project, "S001")
-    row = _row(in_project, "S001")
-    out = call_tool(in_project, "qc_verdict", _v2(row, ["present"]))
-    assert out.get("schema") == V2  # took the v2 intake path
-    records, _ = read_v2_records(in_project)
-    assert records and records[-1].get("binding") in ("bound", "stale")
-
-
-@needs_ffmpeg
-def test_mcp_director_suggest_after_rejected_verdict(in_project, add_shot):
-    from manju.mcp.tools import call_tool
-
-    row = _rejected_shot(in_project, add_shot)
-    call_tool(in_project, "qc", {})  # writes qc.json with the assurance block
-    sugg = call_tool(in_project, "director_suggest", {})["suggestions"]
-    fid = row["expectations"][0]["id"]
-    assert any(s["kind"] == "repair" and s.get("shot") == "S001" and fid in s["text"]
-               and s["action"] is None for s in sugg), sugg
-
-
-def test_mcp_qc_tool_description_mentions_assurance():
-    from manju.mcp.tools import TOOLS
-
-    assert "assurance" in TOOLS["qc"]["description"].lower()
 
 
 # ------------------------------------------------- 7. additive-only writer

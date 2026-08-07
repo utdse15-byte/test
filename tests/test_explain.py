@@ -106,12 +106,3 @@ def test_explain_empty_project_degrades(tmp_project, monkeypatch):
     payload = json.loads(result.output)
     assert payload["shots"] == []
     assert "cannot compile yet" in payload["timeline"]["verdict"]
-
-
-def test_mcp_exposes_explain():
-    from manju.mcp.tools import TOOL_DEFS
-
-    names = [t["name"] for t in TOOL_DEFS]
-    assert "explain" in names
-    tool = next(t for t in TOOL_DEFS if t["name"] == "explain")
-    assert "Read-only" in tool["description"]

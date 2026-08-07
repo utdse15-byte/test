@@ -1,3 +1,6 @@
+> Historical document. The protocol adapter described here was removed in the
+> v5 closeout; current product surfaces are project files, CLI, and local GUI.
+
 # Manju One 实现方案 v2.2
 
 > 日期:2026-07-05(第三轮修订:既有工具采用阶梯 P0/P1/P2 落实、内容 QC 提前并机检化、云 API 通用配置打底;历轮决定记录见 §15)

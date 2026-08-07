@@ -380,7 +380,7 @@ def test_build_gen_off_still_skips_generation(in_project, add_shot):
 
 
 def test_run_build_centralizes_gen_validation_for_every_caller():
-    """MCP's _h_build and any future caller of run_build get the same
+    """Any caller of run_build get the same
     validation for free — this pins the single source of truth."""
     from manju.build.graph import GEN_MODES, run_build
 

@@ -39,7 +39,7 @@ class BuildCanceled(BuildError):
     locked. Whatever was already generated stays on disk as ordinary
     content-addressed cache (§3): nothing is rolled back, and a later build
     reuses it instead of re-spending. Carries what was already done/spent so
-    the caller (CLI/GUI/MCP) reports it honestly instead of a bare "canceled"."""
+    the caller (CLI/GUI/CLI/GUI) reports it honestly instead of a bare "canceled"."""
 
     def __init__(self, message: str, *, generated: list[str], spent: float,
                  currency: str | None, run_id: str | None = None):
@@ -54,7 +54,7 @@ class BuildCanceled(BuildError):
 
 
 # Round W (issue #3): the single source of truth for --gen's three legal
-# values. CLI/MCP/GUI/director all validate against THIS tuple (import it —
+# values. CLI, GUI, and director all validate against THIS tuple (import it —
 # don't repeat the literal) so a typo like "--gen offf" can never drift
 # between call sites into "not off, so proceed" (the review's concrete bug).
 GEN_MODES = ("missing", "auto", "off")
@@ -96,9 +96,9 @@ def final_export_gate(project: Project, *, confirmed: bool, noun: str,
     and the caller has not confirmed (WP5: free, but outward-facing).
 
     TRISURFACE F-01: this check lived inline in cli.py only, so the SAME
-    export through MCP wrote outward artifacts with no gate — while SKILL.md
+    export through CLI/GUI wrote outward artifacts with no gate — while SKILL.md
     §5 tells agents the token means "stop and ask". One owner now serves every
-    CLI site and MCP ``_h_export`` (structured ``waiting_user``, confirmed via
+    CLI site and CLI/GUI ``_h_export`` (structured ``waiting_user``, confirmed via
     the fail-closed ``assume_yes is True`` idiom). The GUI export panel is
     deliberately NOT wired here: there a HUMAN clicks each deliverable's
     button — that click IS the confirmation the token asks for.
@@ -639,7 +639,7 @@ class BuildResult:
     # _run_build_phases §6 below) — it QCs the newest EXISTING final on disk
     # against the freshly recompiled timeline, so a stale render is a real
     # possibility. This names exactly which artifact that was (or None when
-    # there is no final yet), so the CLI/MCP/GUI can say so instead of leaving
+    # there is no final yet), so the CLI and GUI can say so instead of leaving
     # the user to assume QC ran against a fresh render.
     qc_final: str | None = None
     warnings: list[str] = field(default_factory=list)
@@ -660,10 +660,10 @@ class BuildResult:
     # DR03C: the run-evidence id for THIS build (the same id on the final's key
     # sidecar and the events.jsonl attempt stream). Additive, default None so
     # dry-run (a plan, emits no evidence) and any legacy construction stay
-    # unchanged; `build --json`/MCP surface it for free via to_dict().
+    # unchanged; `build --json` and the GUI surface it via to_dict().
     run_id: str | None = None
     # Phase 5: pure, derived production readiness. Never read back as truth;
-    # attached so CLI/MCP/GUI and dry-run all report the same gates/stage.
+    # attached so CLI, GUI, and dry-run all report the same gates/stage.
     readiness: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -945,7 +945,7 @@ def run_build(
 ) -> BuildResult:
     """One mutating build per project at a time (§3, §5, R2). Value locks guard
     *content*; this process lock guards the dual-actor scenario — a human
-    terminal, an AI session over MCP and the board's job runner can otherwise
+    terminal, an AI session over CLI/GUI and the board's job runner can otherwise
     race on timeline.json / renders/ / the ledger with nobody at fault. The
     whole mutating build runs under ``.manju/build.lock``; contention is a
     one-line, ``ok=False`` result (BuildLocked → errors), never a traceback.
@@ -979,11 +979,11 @@ def run_build(
     from ..runtime.buildlock import BuildLocked, build_lock
 
     # Round W (issue #3): validate --gen HERE — the one entry point every
-    # caller (CLI, MCP tool, GUI plan/server, director) ultimately funnels
+    # caller (CLI, GUI plan/server, or director) ultimately funnels
     # through — so a typo like "offf" can never be treated as "not off" and
     # silently proceed to spend money on generation. Some callers already
     # pre-validate (defense in depth, harmless); this closes the gap for the
-    # ones that did not (plain CLI `manju build`, the MCP `build` tool).
+    # ones that did not (plain CLI `manju build`, the CLI/GUI `build` tool).
     if gen not in GEN_MODES:
         result = BuildResult()
         result.ok = False
@@ -1093,7 +1093,7 @@ def run_build(
         # guessed into PASS by booking it as 0 and continuing to submit paid
         # work. Whatever was already produced stays on disk as ordinary
         # content-addressed cache (§3, same as BuildCanceled); the build itself
-        # is a one-line ok=False result, never a traceback at the CLI/MCP/GUI.
+        # is a one-line ok=False result, never a traceback at the CLI or GUI.
         result = BuildResult()
         result.ok = False
         result.errors.append(
@@ -1523,7 +1523,7 @@ def _run_build_phases(
     if dry_run:
         # WP3 p7: keep the machine output project-relative, mirroring the
         # real-build branch's `project.relpath(tl_path)` below — a dry-run's
-        # to_dict() (and the MCP build tool that returns it) must not leak an
+        # to_dict() (and the CLI/GUI build tool that returns it) must not leak an
         # absolute filesystem path.
         result.timeline_path = project.relpath(project.timeline_path)
         return _finish_run(result)
@@ -1569,7 +1569,7 @@ def _run_build_phases(
             f"waiting_user: 预估花费 {result.estimated_cost} "
             f"{next((p.get('currency') for p in result.plan if p.get('currency')), '')} "
             "命中 ask_before=expensive_generation — 确认后重试:CLI `manju build --yes`,"
-            "MCP/GUI 带 assume_yes(先 dry-run 看计划,§8.3)"
+            "CLI/GUI 带 assume_yes(先 dry-run 看计划,§8.3)"
         )
         return _finish_run(result)
 
@@ -2789,7 +2789,7 @@ def _redo_shot_locked(project: Project, shot_id: str, *, candidates: int | None 
                       seed=seed, from_take=from_take, rules=rules, bible=bible)
     # §8.3 事前: price this redo and gate it just like build before any spend.
     spend_gate(project, plan.cost, plan.currency, assume_yes=assume_yes,
-               hint=f"确认后重试:manju redo {shot_id} --yes(或 MCP/GUI 带 assume_yes)")
+               hint=f"确认后重试:manju redo {shot_id} --yes(或 CLI/GUI 带 assume_yes)")
     return _run_redo(project, plan, bible=bible, rules=rules, actor=actor,
                      should_cancel=should_cancel)
 

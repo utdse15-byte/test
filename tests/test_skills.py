@@ -1,5 +1,5 @@
 """Round V: the skill library (core/skills.py) — three-tier resolution,
-tolerant frontmatter, progressive-disclosure index, CLI + MCP surfaces."""
+tolerant frontmatter, progressive-disclosure index, CLI and core surfaces."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def test_project_tier_cannot_shadow_core_skill(tmp_project):
     ``CORE_SKILL_ID`` — a downloaded/untrusted project's own
     ``skills/manju/SKILL.md`` must never shadow the core operating protocol
     (supersedes the old "project wins over bundled" contract for THIS one
-    id). ``manju skills`` / MCP ``skill_list`` must also surface a loud
+    id). ``manju skills`` must also surface a loud
     warning that the shadow attempt was ignored."""
     from manju.core.skills import core_skill_shadow_warning
 
@@ -189,25 +189,3 @@ def test_cli_skills_list_warns_on_core_shadow_attempt(tmp_project, monkeypatch):
     assert data["core_skill_shadow_warning"] and CORE_SKILL_ID in data["core_skill_shadow_warning"]
     core_row = next(s for s in data["skills"] if s["id"] == CORE_SKILL_ID)
     assert core_row["source"] == "bundled"
-
-
-# ------------------------------------------------------------------ MCP
-
-
-def test_mcp_skill_tools(tmp_project):
-    from manju.mcp.tools import call_tool
-
-    _write_skill(tmp_project.root / "skills", "narrative", when="节奏与钩子")
-    listed = call_tool(tmp_project, "skill_list", {})
-    ids = [s["id"] for s in listed["skills"]]
-    assert CORE_SKILL_ID in ids and "narrative" in ids
-    assert listed["core_skill_shadow_warning"] is None  # no shadow attempt here
-
-    shown = call_tool(tmp_project, "skill_show", {"id": "narrative"})
-    assert "正文" in shown["text"]
-    assert shown["skill"]["source"] == "project"
-
-    from manju.mcp.tools import ToolError
-
-    with pytest.raises(ToolError):
-        call_tool(tmp_project, "skill_show", {"id": "nope"})

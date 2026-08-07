@@ -336,19 +336,13 @@ def test_16_plan_json_is_stable_and_paths_are_project_relative(tmp_project):
 
 # ------------------------------------------------------------------------ 17
 
-def test_17_cli_and_service_share_one_plan_mcp_parity_not_exposed(tmp_project, monkeypatch):
+def test_17_cli_and_service_share_one_plan(tmp_project, monkeypatch):
     monkeypatch.chdir(tmp_project.root)
     direct = build_shot_import_plan(tmp_project, _pkg())
     result = runner.invoke(app, ["shot-package", str(FIXTURE), "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == direct
 
-    # parity decision: the ingest/roundtrip external-apply command class is NOT
-    # exposed on MCP today, so shot_package is NOT exposed either.
-    from manju.mcp import tools as mcp_tools
-    names = {t["name"] for t in mcp_tools.list_tools()}
-    assert "shot_package" not in names
-    assert "roundtrip" not in names and "ingest" not in names  # the precedent
 
 
 # ------------------------------------------------------------------------ 18

@@ -1,5 +1,5 @@
 """CLI surface tests (§11) — every read command supports ``--json``; the new
-``propose`` / ``auto`` / ``serve-mcp`` commands and the run-ledger wiring.
+``propose`` / ``auto`` commands and the run-ledger wiring.
 
 These drive the real Typer app through ``typer.testing.CliRunner`` against a
 freshly scaffolded project (``tests/conftest.py`` fixtures), cwd-anchored via
@@ -228,12 +228,16 @@ def test_propose_creates_numbered_markdown(in_project):
     assert names[0].startswith("0001_") and names[1].startswith("0002_")
 
 
-def test_propose_shares_counter_with_mcp_tool(in_project):
-    """The CLI and the MCP `propose` tool draw from ONE numbering counter."""
-    from manju.mcp import tools as mcp_tools
+def test_propose_shares_counter_with_core_helper(in_project):
+    """The CLI and the shared core helper draw from ONE numbering counter."""
+    from manju.core.proposal_paths import claim_proposal_path, slugify_proposal_title
+    from manju.core.yamlio import atomic_write_text
 
-    # MCP first -> 0001, then CLI -> 0002 (same _next_proposal_number scheme)
-    mcp_tools.call_tool(in_project, "propose", {"title": "MCP 提案", "body": "来自 MCP"})
+    number, path = claim_proposal_path(
+        in_project.proposals_dir, slugify_proposal_title("核心提案")
+    )
+    assert number == 1
+    atomic_write_text(path, "# 核心提案\n\n来自核心\n")
     cli = runner.invoke(app, ["propose", "CLI 提案", "--body", "来自 CLI"])
     assert cli.exit_code == 0, cli.output
 
@@ -246,9 +250,14 @@ def _mp_propose_worker(root: str, title: str) -> None:
     each OS process proposes with the SAME title (so same slug — the worst
     case) against the SAME project, all fired together (round W, #51)."""
     from manju.core.container import Project
-    from manju.mcp import tools as mcp_tools
+    from manju.core.proposal_paths import claim_proposal_path, slugify_proposal_title
+    from manju.core.yamlio import atomic_write_text
 
-    mcp_tools.call_tool(Project(root), "propose", {"title": title, "body": "race"})
+    project = Project(root)
+    _number, path = claim_proposal_path(
+        project.proposals_dir, slugify_proposal_title(title)
+    )
+    atomic_write_text(path, f"# {title}\n\nrace\n")
 
 
 def test_propose_concurrent_processes_get_distinct_numbers(in_project):

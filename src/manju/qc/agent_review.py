@@ -225,7 +225,7 @@ def verdict_contract(mode: str = "shots") -> dict:
             "v2": _verdict_contract_v2("consistency"),
             "usage": "把每个一致性组合的判读结果写成下面的 JSON,用 "
                      "`manju qc verdict --from-file <路径>`(或 `-` 走 stdin)回填;"
-                     "MCP 用 qc_verdict 工具。",
+                     "CLI/GUI 用 qc_verdict 工具。",
             "shape": {
                 "verdicts": [
                     {
@@ -247,7 +247,7 @@ def verdict_contract(mode: str = "shots") -> dict:
     return {
         "v2": _verdict_contract_v2("shots"),
         "usage": "把判读结果写成下面的 JSON,用 `manju qc verdict --from-file <路径>` "
-                 "(或 `-` 走 stdin)回填;MCP 用 qc_verdict 工具。",
+                 "(或 `-` 走 stdin)回填;CLI/GUI 用 qc_verdict 工具。",
         "shape": {
             "verdicts": [
                 {
@@ -279,7 +279,7 @@ def _verdict_contract_v2(mode: str) -> dict:
     return {
         "schema": VERDICT_SCHEMA,
         "usage": "回显 brief 中该镜头/组合的 packet_id,并对每条 expectation 给出观察结论;"
-                 "用 `manju qc verdict --from-file <路径>` 回填(MCP 用 qc_verdict)。",
+                 "用 `manju qc verdict --from-file <路径>` 回填(CLI/GUI 用 qc_verdict)。",
         "shape": {
             "schema": VERDICT_SCHEMA,
             "packet_id": "pkt_…(必填,回显本 brief 中该镜头/组合的 packet_id)",
@@ -423,7 +423,7 @@ def qc_brief(project: "Project", shots: list[str] | None = None, *,
     The GUI /review page uses it to render the unit structure + verdict forms
     cheaply and subprocess-free on the request thread, then fetches the boards
     lazily from ``POST /api/review/consistency`` (audit G1). The default (True)
-    keeps every CLI / MCP / on-demand caller byte-identical.
+    keeps every CLI / CLI/GUI / on-demand caller byte-identical.
     """
     if mode == "consistency":
         return _qc_brief_consistency(project, shots, compose_boards=compose_boards)

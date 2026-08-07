@@ -200,18 +200,11 @@ def test_6_fsync_failure_is_not_reported_as_approval_success(tmp_project, monkey
     assert BL.current_baseline(tmp_project)["status"] == "NO_BASELINE"
 
 
-def test_7_unattended_cannot_approve_and_no_mcp_approval_tool(tmp_project):
+def test_7_unattended_cannot_approve(tmp_project):
     _clean_current_final(tmp_project)
     with pytest.raises(BL.BaselineError):
         BL.approve_baseline(tmp_project, None, reason="r", unattended=True)
     assert BL.current_baseline(tmp_project)["status"] == "NO_BASELINE"
-    # the MCP surface exposes NO approval tool under either profile
-    from manju.mcp import policy as P
-    from manju.mcp.tools import TOOL_DEFS
-
-    for profile in (P.COLLABORATIVE, P.UNATTENDED):
-        names = P.resolve_agent_surface(TOOL_DEFS, profile).listed_names()
-        assert not any("baseline" in n or "approve" in n for n in names)
 
 
 def test_8_project_source_cannot_self_declare_approval(tmp_project):
@@ -444,19 +437,14 @@ def test_24_baseline_content_change_requires_human_review(tmp_project, add_shot)
     assert a["ready"] is False
 
 
-def test_25_next_action_toolpolicy_metadata_matches_agent_surface(tmp_project):
+def test_25_next_action_uses_local_safety_projection(tmp_project):
     _manual_timeline(tmp_project)
     _fab_final(tmp_project, "sha256:wrong", output_sha256="auto")   # stale → build action
     a = BL.release_assessment(tmp_project)
     act = next(x for x in a["next_actions"] if x["reason_code"] == "CURRENT_FINAL_STALE")
     assert act["tool"] == "build"
-    # the safety metadata must be READ from mcp.policy's registry, not hand-written
-    from manju.mcp import policy as P
-    from manju.mcp.tools import TOOL_DEFS
-
-    pol = {t["name"]: t["policy"] for t in TOOL_DEFS}["build"]
-    assert act["may_spend"] == (pol["spend"] != P.NEVER)
-    assert act["may_network"] == (pol["network"] != P.NEVER)
+    assert act["may_spend"] is True
+    assert act["may_network"] is True
     assert act["safe_to_auto_run"] is False                # build spends → never auto
     assert act["fix_owner"] == "human"
 
@@ -496,7 +484,7 @@ def test_28_collaborative_exports_default_has_no_regression(tmp_project, monkeyp
     assert json.loads(res.output) == deliverables_data(tmp_project)
 
 
-def test_29_mcp_cli_reuse_the_same_core_service(tmp_project, monkeypatch):
+def test_29_cli_reuses_the_same_core_service(tmp_project, monkeypatch):
     _two_finals_with_snapshots(tmp_project)
     BL.approve_baseline(tmp_project, "final_v1", reason="b", accept_known_risk=True)
     monkeypatch.chdir(tmp_project.root)

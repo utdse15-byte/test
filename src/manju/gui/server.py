@@ -1,11 +1,11 @@
 """The `manju gui` HTTP server (§1-⑦ revisited): stdlib-only, localhost-first.
 
-Position in the architecture: exactly where the CLI and MCP sit — a thin
+Position in the architecture: exactly where the CLI and CLI/GUI sit — a thin
 client over the same engine core (status/stale/graph/check/explain). The GUI
 adds NO state of its own: every mutation goes through the same functions and
 lands in the same text files + events.jsonl. Dangerous operations (`unlock`,
 `gc --hard`, `pack`/`unpack`, `import` of arbitrary paths) are absent from
-this surface, mirroring the MCP decision (§5, §11).
+this surface, mirroring the CLI safety boundary (§5, §11).
 
 Threat model (a localhost web server is still a web server):
 
@@ -1522,7 +1522,7 @@ class _Handler(BaseHTTPRequestHandler):
         storyboard cell edit below. `expected_rev` (optional, the shot
         card's `data-rev` the page rendered) is checked against the file's
         CURRENT hash before writing, INSIDE the same build_lock hold as the
-        write itself (no TOCTOU window against a concurrent CLI/MCP write in
+        write itself (no TOCTOU window against a concurrent CLI write in
         between); a mismatch is refused 409 with the same 中文 CAS message
         `core.writes.checked_shot_write` uses."""
         from ..core.writes import shot_text_hash
@@ -1685,7 +1685,7 @@ class _Handler(BaseHTTPRequestHandler):
         force = bool(body.get("force"))
         assume_yes = bool(body.get("assume_yes"))
         project, actor = self.server.project, self.server.actor
-        # C39: optional lang for locale build (same validate as QC / MCP).
+        # C39: optional lang for locale build (same validate as QC / CLI/GUI).
         lang: str | None = None
         lang_raw = body.get("lang")
         if lang_raw is not None and str(lang_raw).strip():
@@ -2968,7 +2968,7 @@ class _Handler(BaseHTTPRequestHandler):
         GUI-EDIT-P1-001: the bible/rules/packaging editors now pass it too.
         They are the SAME shape as the shot editor — a textarea holding the
         WHOLE file, which a human may sit on for twenty minutes — so with two
-        tabs open (or the editor next to a CLI/MCP write) the later save
+        tabs open (or the editor next to a CLI write) the later save
         silently clobbered the earlier one, with no diff and no event trail to
         recover from. It stays OPTIONAL: a client that sends no token keeps
         the historical last-write-wins behaviour, byte-for-byte."""
@@ -3250,7 +3250,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Check-gated save: write the text exactly as typed, run the full
         `manju check`, and REVERT if the save introduced any new error (lock
         violations included — §5 means the GUI cannot bypass a lock any more
-        than the MCP surface can; unlock stays in the terminal).
+        than the GUI surface can; unlock stays in the terminal).
 
         Round AA item 5 (#1): CAS-protected — the client holds the FULL raw
         YAML text loaded via GET (a textarea a human may sit on for a while
@@ -3309,7 +3309,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _act_upload(self, query: dict[str, list[str]]) -> None:
         """Browser upload into media/imports — the GUI twin of `manju import`.
-        The MCP surface excludes import because an agent could pull arbitrary
+        The GUI surface excludes import because a browser could pull arbitrary
         FILESYSTEM paths into the project; a browser upload has no such power —
         the human pushes bytes they already hold, and imports stay append-only
         (collision-safe names, never overwritten)."""
@@ -3648,11 +3648,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _act_qc_verdict(self, body: dict[str, Any]) -> None:
         """Round X (agent XB, user pain #2): a HUMAN spot-checking the /review
         page's 跨镜一致性 consistency units files a verdict through the SAME
-        intake `manju qc verdict` / the `qc_verdict` MCP tool use — token-gated
+        intake `manju qc verdict` and the GUI review endpoint use — token-gated
         like every mutating POST, actor="human" (record_verdicts already takes
         an `actor` param; agents are not the only ones who can file verdicts).
         Accepts either `unit` (a consistency comparison-unit id) or `shot`
-        (round-V per-shot) — same payload shape as the CLI/MCP verdict body."""
+        (round-V per-shot) — same payload shape as the CLI verdict body."""
         from ..qc.agent_review import VerdictError, record_verdicts
 
         project = self.server.project
@@ -4718,7 +4718,7 @@ class _Handler(BaseHTTPRequestHandler):
         and take-note. ``expected_rev`` (optional, the row's ``data-rev`` the
         page rendered) is checked against the file's CURRENT hash INSIDE the
         same build_lock hold as the write (no TOCTOU window against a
-        concurrent CLI/MCP write in between); a mismatch is refused 409 with
+        concurrent CLI write in between); a mismatch is refused 409 with
         the same 中文 CAS message ``core.writes.checked_shot_write`` uses.
         (Contrast: ``_act_sb_approve``/``_act_sb_lock_batch`` below stay
         CAS-free — the approval chip and the lock button do not round-trip
@@ -5435,7 +5435,7 @@ class _Handler(BaseHTTPRequestHandler):
         with self.server.quick_mutex:
             text = project.shot_path(shot_id).read_text(encoding="utf-8")
             # CAS on the text we just read: this read happens OUTSIDE the
-            # cross-process build_lock _gated_save takes, so a CLI/MCP write
+            # cross-process build_lock _gated_save takes, so a CLI write
             # landing in the window would otherwise be silently reverted by
             # our transformed stale text. A mismatch is the designed 409.
             ok, payload, status = self._gated_save(
@@ -6268,7 +6268,7 @@ class _Handler(BaseHTTPRequestHandler):
     # =================================================================
     # round-U 导演助手 /director (director_page.py): the six-step AI-director
     # loop as one page — propose → impact/cost(试跑) → 确认 → 执行 → diff →
-    # 下一步建议. Every button calls the SAME build/director core the CLI/MCP
+    # 下一步建议. Every button calls the SAME build/director core as the CLI
     # drive; 确认 and 执行 are DELIBERATELY separate POSTs, never one (§8.3
     # approve-before-execute). Isolated GET/POST region, same token/readonly/
     # host gates as every other surface (checked in do_GET/do_POST before us).
@@ -6411,7 +6411,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error_json(" ".join(str(exc).split()), 404)
                 return True
             # round AA (goal item 8): the skill modal serves full SKILL.md
-            # content, same "skill_used" usage signal as CLI/MCP show.
+            # content, same "skill_used" usage signal as CLI show.
             # bug-hunt #51: a GET carries no readonly gate — the one GET that
             # WRITES truth (events.jsonl) must honour readonly itself.
             if not self.server.readonly:

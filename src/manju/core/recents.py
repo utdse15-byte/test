@@ -4,7 +4,7 @@ Cross-project memory for the workspace: user pain #6 (workspace/multi-project
 rough edges) + the "recents" half of pain #8 (``manju gui`` used to hard-fail
 outside a project, and nothing anywhere remembered what you'd worked on
 before). This module is the one store both the CLI, the GUI server and the
-MCP server touch at their high-traffic entry points; the workspace picker
+GUI server touch at their high-traffic entry points; the workspace picker
 (:mod:`manju.gui.workspace`) reads it to build the recents list + the
 in-chrome project switcher.
 
@@ -72,7 +72,7 @@ except ImportError:  # POSIX: fcntl above is the coordinator
 # must pair the byte lock with an in-process threading.Lock, exactly as the other
 # three quartet members do (library._index_lock, events.events_lock,
 # failures._ledger_lock). recents was the one member left without it — a real
-# lost-update hole for the multi-threaded GUI/MCP server on Windows.
+# lost-update hole for the multi-threaded GUI server on Windows.
 _THREAD_LOCKS: dict[str, "_threading.Lock"] = {}
 _THREAD_LOCKS_GUARD = _threading.Lock()
 
@@ -244,7 +244,7 @@ def load_recents(*, drop_missing: bool = True) -> RecentsResult:
 def touch_recent(project: Project) -> None:
     """Record that ``project`` was just opened — called ONCE per CLI
     invocation (``cli._project()``), at GUI server startup / rebind, and at
-    MCP server startup. Upserts by resolved root path (moves it to the front,
+    GUI server startup. Upserts by resolved root path (moves it to the front,
     refreshes its name + timestamp), then caps at :data:`MAX_ENTRIES`,
     evicting the oldest UNPINNED entries first.
 

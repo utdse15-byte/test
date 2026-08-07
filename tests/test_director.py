@@ -1,11 +1,11 @@
-"""The AI-director loop (goal item 17): build/director.py + CLI + MCP + GUI.
+"""The AI-director loop (goal item 17): build/director.py + CLI + GUI.
 
 The six-step collaboration contract as one auditable object — propose → cost/
 impact → confirm → execute → diff → suggest next. These tests drive the core
 lifecycle (incl. expiry-on-change), assert the cost figures come from the SAME
 estimator the GUI plan modal uses (never a parallel one), pin the execute
 ordering + first-failure stop + auto-snapshot + rollback path, cover the
-suggest_next heuristics, and exercise the MCP tools + the GUI page/guards over
+suggest_next heuristics, and exercise the GUI page/guards over
 real HTTP. No ffmpeg is needed anywhere — every action exercised is a text/git
 operation or a mocked engine call.
 """
@@ -353,102 +353,6 @@ def test_suggest_action_payloads_round_trip_into_propose(project):
         if s.action is not None:
             prop = d.propose(project, [s.action], why="from suggestion")
             assert prop.state == "proposed"
-
-
-# ----------------------------------------------------------------- MCP
-
-
-def test_mcp_tool_schemas_present():
-    from manju.mcp.tools import TOOLS, list_tools
-
-    names = {t["name"] for t in list_tools()}
-    for tool in ("director_propose", "director_confirm", "director_execute",
-                 "director_suggest"):
-        assert tool in names
-        schema = TOOLS[tool]["inputSchema"]
-        assert schema["type"] == "object"
-    # the confirm/execute tools require an id
-    assert "id" in TOOLS["director_confirm"]["inputSchema"]["required"]
-    assert "id" in TOOLS["director_execute"]["inputSchema"]["required"]
-    assert "actions" in TOOLS["director_propose"]["inputSchema"]["required"]
-
-
-def test_mcp_driven_roundtrip_snapshot(git_project):
-    from manju.mcp.tools import call_tool
-
-    proposed = call_tool(git_project, "director_propose",
-                         {"actions": [{"type": "snapshot", "label": "x"}], "why": "cp"})
-    pid = proposed["id"]
-    assert proposed["state"] == "proposed"
-
-    confirmed = call_tool(git_project, "director_confirm", {"id": pid})
-    assert confirmed["state"] == "confirmed"
-
-    outcome = call_tool(git_project, "director_execute", {"id": pid})
-    assert outcome["proposal_id"] == pid and outcome["ok"] is True
-
-    sugg = call_tool(git_project, "director_suggest", {})
-    assert "suggestions" in sugg
-
-
-def test_mcp_driven_roundtrip_build_mocked(git_project, monkeypatch):
-    """A driven propose→confirm→execute round-trip over the MCP wire with a
-    MOCKED engine function (run_build) — no ffmpeg, exercises the paid path."""
-    import manju.build.graph as graph
-
-    from manju.mcp.tools import call_tool
-
-    def fake_run_build(project, *, target="final", gen="missing", regen_stale=False,
-                       dry_run=False, force=False, actor="engine",
-                       assume_yes=False, on_phase=None, mode=None,
-                       include_unindexed=False, should_cancel=None, lang=None):
-        r = graph.BuildResult()
-        r.ok = True
-        r.render_path = None if dry_run else "renders/final/final_v1.mp4"
-        return r
-
-    monkeypatch.setattr(graph, "run_build", fake_run_build)
-
-    from manju.build.director import confirm as director_confirm
-
-    proposed = call_tool(git_project, "director_propose",
-                         {"actions": [{"type": "build", "target": "final"}]})
-    pid = proposed["id"]
-    # Round Y (#15): MCP (actor="ai") may NOT confirm a paid proposal — a human
-    # must. Confirm through the human path (what the CLI/GUI do), then MCP can
-    # mechanically execute the human-approved plan.
-    director_confirm(git_project, pid, actor="human")
-    outcome = call_tool(git_project, "director_execute", {"id": pid})
-    assert outcome["ok"] is True
-    assert outcome["results"][0]["type"] == "build"
-
-
-def test_mcp_cannot_self_confirm_paid_proposal(git_project):
-    """Round Y (#15): the hard human-only gate — an AI actor cannot confirm a
-    proposal that spends (build/redo/voice). Free proposals stay AI-confirmable."""
-    from manju.mcp.tools import ToolError, call_tool
-
-    paid = call_tool(git_project, "director_propose",
-                     {"actions": [{"type": "build", "target": "final"}]})
-    with pytest.raises(ToolError, match="付费"):
-        call_tool(git_project, "director_confirm", {"id": paid["id"]})
-
-    # a free (local/text) proposal is still AI-confirmable
-    free = call_tool(git_project, "director_propose", {"actions": [{"type": "snapshot"}]})
-    confirmed = call_tool(git_project, "director_confirm", {"id": free["id"]})
-    assert confirmed["state"] == "confirmed"
-
-
-def test_mcp_confirm_expired_is_error(git_project):
-    from manju.mcp.tools import ToolError, call_tool
-
-    proposed = call_tool(git_project, "director_propose",
-                         {"actions": [{"type": "snapshot"}]})
-    shot = git_project.load_shot("S001")
-    shot.action.text = "changed"
-    git_project.save_shot(shot)
-    with pytest.raises(ToolError, match="待更新"):
-        call_tool(git_project, "director_confirm", {"id": proposed["id"]})
 
 
 # ----------------------------------------------------------------- GUI

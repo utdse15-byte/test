@@ -1,6 +1,6 @@
 """The ONE checked write path for ``status.selected_take`` (round W, #39/#28/#41).
 
-Round-V review (#19/#39) found that CLI ``select``, MCP ``select_take``, board
+Round-V review (#19/#39) found that CLI ``select``, CLI/GUI ``select_take``, board
 ``select``, GUI ``select`` and build's auto-select each wrote
 ``status.selected_take`` with their own — inconsistent — safety net: some
 skipped the value-hash lock check entirely, none ran a post-write check
@@ -31,7 +31,7 @@ deliberately NOT acquired inside this module: `build/graph.py`'s auto-select
 loop and a single-shot `redo`'s inline fill already run inside their own
 ``build_lock`` (BuildLock is not reentrant — a second ``acquire()`` in the
 same process raises immediately), so a lock taken here would self-deadlock
-those callers. Every OTHER entrance (CLI ``select``, MCP ``select_take``,
+those callers. Every OTHER entrance (CLI ``select``, CLI/GUI ``select_take``,
 board/GUI select) takes the process lock itself before calling in — see each
 call site.
 
@@ -42,7 +42,7 @@ and undo must not be blockable by the very lock a mistaken forward selection
 would trip (that would turn a recovery path into one more way to get stuck).
 
 Round AA item 5 (#1) adds a FOURTH, OPTIONAL guard on top of the three above:
-**CAS** (optimistic concurrency). A GUI form or MCP client that LOADED a shot,
+**CAS** (optimistic concurrency). A GUI form that LOADED a shot,
 then SAVES after some other entrance edited it in between, would otherwise
 silently last-writer-win the whole file — nobody is at fault, and nothing
 above (lock guard / write / post-write check) catches it, because the write
@@ -60,7 +60,7 @@ more than a value-hash-locked field, already inside the process's own
 ``build_lock`` hold — see ``cli.py``'s ``_write_lock``), so there is no window
 for a second entrance to move the file between the CLI's read and its write.
 Threading CAS through the CLI would only add a parameter nothing there ever
-needs — see each GUI/MCP call site (gui/server.py, mcp/tools.py) for where it
+needs — see the GUI call sites for where it
 actually threads through.
 """
 
@@ -86,7 +86,7 @@ class WriteRejected(RuntimeError):
 
 def _coerce_locked(value: Any) -> dict[str, str]:
     """Normalize a shot's ``locked`` field (dict, bare list, or absent) to a
-    dict — the same coercion ``core/check.py`` and the MCP tools use."""
+    dict — the same coercion ``core/check.py`` and the UI handlers use."""
     if value is None:
         return {}
     if isinstance(value, list):
@@ -205,13 +205,13 @@ def select_take_checked(
     project: Project, shot_id: str, take: str, *, actor: str, via: str, action: str = "select"
 ) -> dict[str, Any]:
     """THE checked selected_take write (#39/#28/#19-adjacent) — every entrance
-    (CLI ``select``, MCP ``select_take``, board select, GUI select, build
+    (CLI ``select``, CLI/GUI ``select_take``, board select, GUI select, build
     auto-select) calls this instead of poking ``status.selected_take`` by
     hand, so lock verification / post-write check / revert / eventing never
     drift apart between call sites again.
 
     ``actor`` is the events.jsonl actor (human|ai|engine); ``via`` names the
-    entrance (cli|mcp|board|gui|build_auto_select|redo) so the ledger can
+    entrance (cli|local|board|gui|build_auto_select|redo) so the ledger can
     tell them apart even though they share one action name; ``action`` lets
     a caller record under a different action (build's gap-filler uses
     ``"auto_select"``, matching its pre-existing event name).
@@ -252,7 +252,7 @@ def selected_take_lock_block(project: Project, shot_id: str) -> str | None:
 
 
 def shot_text_hash(project: Project, shot_id: str) -> str:
-    """The CAS token every READ entrance exposes (round AA item 5, #1): MCP
+    """The CAS token every READ entrance exposes (round AA item 5, #1): CLI/GUI
     ``get_shot``'s ``rev``, the GUI shot editor / storyboard cell / take-note
     forms embed this in what they render, then send it back on save so
     :func:`checked_shot_write`'s ``expected_text_hash`` (or an equivalent

@@ -3,10 +3,10 @@
 Value-hash locks (§5) guard *content*: a sealed field cannot drift without the
 engine refusing to build. They say nothing about *processes*. The dual-actor
 loop the design celebrates — a human running ``manju build`` in a terminal, an
-AI session mutating shots over MCP, the ``manju gui`` job runner in a third
+AI session mutating shots over CLI/GUI, the ``manju gui`` job runner in a third
 seat — means two engines can race on ``timeline.json``, ``renders/`` and the
 SQLite ledger with nobody at fault. This module closes that gap: every
-mutating entrypoint (CLI, GUI, MCP) funnels its work through one
+mutating entrypoint (CLI, GUI, CLI/GUI) funnels its work through one
 :class:`BuildLock` per project, so at most one process mutates a project at a
 time. The loser gets a :class:`BuildLocked` with a one-line, actionable
 finding instead of a corrupted timeline.
@@ -157,7 +157,7 @@ class BuildLocked(RuntimeError):
     """Another process is (or appears to be) building this project.
 
     Carries the offending lock's ``holder`` dict and ``lock_path`` so callers
-    (CLI, GUI, MCP) can render their own UI on top of the one-line message.
+    (CLI, GUI, CLI/GUI) can render their own UI on top of the one-line message.
     """
 
     def __init__(self, holder: dict[str, Any], lock_path: Path | str):
@@ -437,7 +437,7 @@ class BuildLock:
 @contextmanager
 def build_lock(project_root: Path | str, actor: str = "engine", **kw: Any) -> Iterator[BuildLock]:
     """``with build_lock(project.root, actor="ai"): ...`` — the one-liner every
-    mutating entrypoint (CLI command, GUI job, MCP tool) wraps its work in.
+    mutating entrypoint (CLI command or GUI job) wraps its work in.
     Extra keyword arguments pass straight to :class:`BuildLock`."""
     lock = BuildLock(project_root, actor=actor, **kw)
     lock.acquire()

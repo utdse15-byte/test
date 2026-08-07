@@ -75,10 +75,10 @@ def test_seeded_events_roll_up_correctly(tmp_project, add_shot):
     add_shot(tmp_project, "S002")
     root = tmp_project.root
 
-    # skill usage: creation-funnel used 3x (2 cli + 1 mcp) — not low_n (>= threshold)
+    # skill usage: creation-funnel used 3x (2 cli + 1 gui) — not low_n (>= threshold)
     append_event(root, "human", "skill_used", {"skill": "creation-funnel", "via": "cli"})
     append_event(root, "human", "skill_used", {"skill": "creation-funnel", "via": "cli"})
-    append_event(root, "ai", "skill_used", {"skill": "creation-funnel", "via": "mcp"})
+    append_event(root, "ai", "skill_used", {"skill": "creation-funnel", "via": "gui"})
     # narrative-pacing used once — low_n
     append_event(root, "ai", "skill_used", {"skill": "narrative-pacing", "via": "auto"})
 
@@ -112,7 +112,7 @@ def test_seeded_events_roll_up_correctly(tmp_project, add_shot):
     by_id = {row["id"]: row for row in sk["usage"]}
     assert by_id["creation-funnel"]["count"] == 3
     assert by_id["creation-funnel"]["low_n"] is False
-    assert by_id["creation-funnel"]["by_via"] == {"cli": 2, "mcp": 1}
+    assert by_id["creation-funnel"]["by_via"] == {"cli": 2, "gui": 1}
     assert by_id["narrative-pacing"]["count"] == 1
     assert by_id["narrative-pacing"]["low_n"] is True
     assert "manju" in sk["never_used"]  # the core skill was never served here

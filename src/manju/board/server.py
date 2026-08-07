@@ -5,7 +5,7 @@ A stdlib-only HTTP server (``ThreadingHTTPServer`` + ``BaseHTTPRequestHandler``;
 no starlette/uvicorn, no new dependencies) that is a THIN veneer over the same
 core the CLI calls. It never shells out to ``manju``; it imports and calls the
 same functions. The dangerous surface (unlock / gc / pack / unpack) is
-deliberately ABSENT here, exactly as on the MCP server (§5, §11).
+deliberately ABSENT here, exactly as in the GUI (§5, §11).
 
 Routes:
   GET  /                         → the board HTML, REGENERATED per request
@@ -266,7 +266,7 @@ def _api_build(project: Project, body: dict) -> dict:
 def _api_qc(project: Project, body: dict) -> dict:
     # Round Z (agent ZA): qc writes qc.json/qc.md/repair_plan.yaml (a
     # mutation, §9) — the board path held no process lock for it before,
-    # unlike the GUI/MCP qc surfaces which already do.
+    # unlike the GUI/CLI/GUI qc surfaces which already do.
     from ..qc.checks import run_qc
     from ..qc.report import write_reports
     from ..runtime.buildlock import build_lock

@@ -198,7 +198,7 @@ def test_select_flips_selection_and_records_event(one_shot_project, monkeypatch)
     assert last["action"] == "select"
     assert last["actor"] == "director"
     # round W (#39): every select entrance now records "via" so the ledger
-    # can tell them apart (cli|mcp|board|gui|build_auto_select).
+    # can tell them apart (cli|board|gui|build_auto_select).
     assert last["detail"] == {"shot": "S001", "take": "take_02", "via": "board"}
 
 
@@ -212,7 +212,7 @@ def test_select_bad_take_is_clean_error(one_shot_project):
 
 def test_select_refuses_when_selected_take_locked(one_shot_project):
     """Round W (#39): board select now goes through the SAME checked write
-    (select_take_checked) as CLI/MCP/GUI — a value-hash lock on
+    (select_take_checked) as CLI/GUI — a value-hash lock on
     status.selected_take must refuse it, not just get bypassed here."""
     from manju.core.locks import seal_lock
 
@@ -242,7 +242,7 @@ def test_select_refuses_when_selected_take_locked(one_shot_project):
 
 def test_select_refuses_when_build_locked(one_shot_project):
     """Round W (#9): board select takes the cross-process build lock too —
-    a held lock (a concurrent CLI/MCP/GUI process) refuses it, distinct from
+    a held lock (a concurrent CLI/GUI process) refuses it, distinct from
     the board's own in-process mutation_lock (test_busy_lock_returns_409).
 
     Round Z (agent ZA): a held build lock now surfaces as the SAME 409

@@ -109,7 +109,7 @@ def _validate_endpoint_image(label: str, path: Path, project_root) -> None:
 # seam ``providers.base.dispatch_bridge`` that :func:`execute_bridge` funnels
 # through. It is NEVER imported here (the build-boundary guard: build/ must not
 # read the qualification evidence). This module is the deterministic input
-# binding + lineage half; CLI/MCP/GUI are thin wrappers over these functions.
+# binding + lineage half; CLI and GUI are thin wrappers over these functions.
 
 # the ONE review type adoption consumes: the existing DR02 derived assurance.
 ASSURANCE_SCHEMA = "manju.qc.assurance/v1"

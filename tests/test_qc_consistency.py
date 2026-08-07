@@ -493,50 +493,6 @@ def test_cli_qc_brief_bad_mode_fails_cleanly(tmp_project, add_shot, monkeypatch)
     assert result.exit_code != 0
 
 
-# ------------------------------------------------------------------- MCP
-
-
-@needs_ffmpeg
-def test_mcp_qc_brief_consistency_and_coverage_tools(tmp_project, add_shot):
-    from manju.mcp.tools import call_tool, list_tools
-
-    names = {t["name"] for t in list_tools()}
-    assert {"qc_brief", "qc_coverage", "qc_verdict"} <= names
-
-    _build_consistency_project(tmp_project, add_shot)
-
-    brief = call_tool(tmp_project, "qc_brief", {"mode": "consistency"})
-    assert brief["mode"] == "consistency"
-    unit = next(u for u in brief["units"] if u["unit"] == "pair:S001~S002")
-
-    out = call_tool(tmp_project, "qc_verdict", {"verdicts": [
-        {"unit": unit["unit"], "criterion": "D1", "level": "issue", "message": "光源方向不一致"},
-    ]})
-    assert out["written"] == 1
-
-    cov = call_tool(tmp_project, "qc_coverage", {})
-    assert cov["units"]["pair:S001~S002"]["state"] == "reviewed"
-    assert "summary" in cov
-
-
-def test_mcp_qc_brief_bad_mode_is_tool_error(tmp_project, add_shot):
-    from manju.mcp.tools import ToolError, call_tool
-
-    add_shot(tmp_project, "S001")
-    with pytest.raises(ToolError):
-        call_tool(tmp_project, "qc_brief", {"mode": "bogus"})
-
-
-def test_mcp_qc_verdict_unknown_unit_is_tool_error(tmp_project, add_shot):
-    from manju.mcp.tools import ToolError, call_tool
-
-    add_shot(tmp_project, "S001")
-    with pytest.raises(ToolError):
-        call_tool(tmp_project, "qc_verdict", {"verdicts": [
-            {"unit": "character:nope", "criterion": "A1", "level": "fyi", "message": "x"},
-        ]})
-
-
 # --------------------------------------------------------------- GUI review
 
 

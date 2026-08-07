@@ -2691,7 +2691,7 @@ _JS = r"""
         /* GUI-EDIT-P1-001: the CAS token, same plumbing the shot editor
          * already uses (showEditor forwards opts.rev as expected_rev). This
          * textarea holds the WHOLE file and a human may sit on it for twenty
-         * minutes; without the token a second tab — or a CLI/MCP write —
+         * minutes; without the token a second tab or CLI write
          * was silently clobbered on save, with no diff to recover from. */
         rev: (data && typeof data.rev === "string") ? data.rev : undefined,
         validate: { kind: vkind },   /* live keystroke validation for this truth file */

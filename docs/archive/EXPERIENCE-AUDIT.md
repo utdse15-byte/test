@@ -1,3 +1,6 @@
+> Historical audit. Any protocol references in this file describe a removed
+> product surface and are not supported by the current release.
+
 # EXPERIENCE-AUDIT.md — the three-column ledger (round V, agent VG, goal item 7)
 
 An AUDIT-THEN-FIX sweep against ROUND-V-REFERENCES-2 §3 (NN/g error rubric +

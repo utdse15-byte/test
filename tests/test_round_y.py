@@ -1,7 +1,7 @@
 """Round Y: close the round-W accounting gap the external review caught —
 media-ext determinism (#4), director state fingerprint routing/budget (#45),
 unpack symlink/traversal hardening (#20). (Board CSRF #12 lives in
-test_board_serve.py; the MCP director human-gate #15 in test_director.py.)"""
+test_board_serve.py.)"""
 
 from __future__ import annotations
 

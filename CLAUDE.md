@@ -8,13 +8,7 @@ Standing facts every session should honor:
 - The owner is the only user. No SaaS, no multi-user, no real paid providers
   by default — see the wave plan MANJU_WINDOWS_ONLY_LEAN_V3 in
   DECISIONS.md #36-#41 and REPORTS/WINDOWS_WAVE_*.md.
-- **MCP surface FROZEN by owner decision (2026-07-31)** — 店主原话:
-  「感觉没有必要,有 CLI 和 GUI 就可以了」,并要求把这话传给后续接手的
-  AI 会话(就是这一条)。`manju serve-mcp`、它的工具与全部 MCP 测试
-  **原样保留并保持绿**(已付费的守护面;机械性保绿 — 比如既有 parity 钉
-  因 CLI 长了新格式而红时机械补齐 — 属维护,仍在范围内),但**不再有任何
-  新投入**:不加新工具、不扩 schema、不再做 MCP 专项测试/加固波,除非
-  店主亲口重开。(DECISIONS TRISURFACE-FIX #25)
+- **Current product surface:** project files, the JSON-capable CLI, and the local GUI. The former protocol adapter and its dependency surface were removed in the v5 closeout; do not add compatibility shims or protocol-specific tests.
 - `.github/workflows/windows-ci.yml` is the HARD gate (windows-latest, full
   suite, pinned ffmpeg 6.1.1, no continue-on-error). The ubuntu `ci.yml`
   stays green as the dev-loop gate; macOS is informational only (xplat.yml).
@@ -109,3 +103,10 @@ Owners (one owner per concern — extend it, never fork a parallel one):
 - CLI shot/take shorthand (s14/14 → S014, 3 → take_03) →
   `cli._resolve_shot_arg` / `cli._resolve_take_arg` — existing entities
   only, ambiguity fails bad_args, echo on stderr (DECISIONS #47)
+
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined

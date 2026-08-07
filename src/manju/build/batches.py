@@ -225,7 +225,7 @@ def review_item(
     see ``cli.py``'s ``manju ingest-confirm``/``ingest-flag``/
     ``ingest-discard`` (``cli._write_lock``, the same helper ``select``/
     ``import``/``gc`` already use) for the reference call site. A future
-    GUI/MCP entrance must do the same."""
+    GUI/CLI/GUI entrance must do the same."""
     if decision not in REVIEW_DECISIONS:
         raise BatchError(f"未知 decision: {decision!r} — 只能是 {'/'.join(REVIEW_DECISIONS)}")
     data = load_batch(project, batch_id)

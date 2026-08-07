@@ -1,7 +1,7 @@
 """Canonical safe-segment validator for ids used as path segments.
 
 Untrusted PROJECTS are a real threat model here (§ threat model): a downloaded
-``.manju`` project — or a hand-crafted CLI/MCP/board/GUI argument — must never
+``.manju`` project — or a hand-crafted CLI/board/GUI argument — must never
 be able to smuggle ``../``, an absolute path, a backslash, a leading dot, or a
 NUL byte into a path built from a ``shot_id`` / ``provider_id`` / take name /
 episode id. Round-W goal items 11/72: ONE validator, wired at every place an

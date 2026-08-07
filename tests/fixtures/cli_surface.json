@@ -630,10 +630,6 @@
     "exists": true,
     "params": []
   },
-  "serve-mcp": {
-    "exists": true,
-    "params": []
-  },
   "shot control-plan": {
     "exists": true,
     "params": [

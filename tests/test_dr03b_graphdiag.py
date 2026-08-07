@@ -299,18 +299,6 @@ def test_14_explain_graph_json_and_human(two_shot_project, monkeypatch):
     assert "graph" in human.output.lower() or "依赖" in human.output
 
 
-def test_14_mcp_explain_parity_carries_graph(two_shot_project):
-    """The MCP explain tool gains the same optional arg via the shared service."""
-    from manju.mcp.tools import TOOL_DEFS
-
-    tool = next(t for t in TOOL_DEFS if t["name"] == "explain")
-    assert "graph" in tool["inputSchema"].get("properties", {})
-    out = tool["handler"](two_shot_project, {"graph": True})
-    assert "graph" in out and out["graph"]["schema"] == SCHEMA
-    # without the flag, byte-identical to before (no graph key)
-    out0 = tool["handler"](two_shot_project, {})
-    assert "graph" not in out0
-
 
 # --------------------- 15: derive_build_graph on a real project
 

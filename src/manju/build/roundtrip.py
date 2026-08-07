@@ -971,7 +971,7 @@ def apply_roundtrip(
     base_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     batch_dir = project.root / "reports" / "roundtrip_batches"
     batch_dir.mkdir(parents=True, exist_ok=True)
-    # two applies inside the same second (scripted/MCP-driven) must not
+    # two applies inside the same second (scripted/CLI/GUI-driven) must not
     # overwrite each other's audit record — probe a free suffix
     batch_id, serial = base_id, 2
     while (batch_dir / f"{batch_id}.yaml").exists():

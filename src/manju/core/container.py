@@ -279,7 +279,7 @@ class Project:
         command against a directory that merely happens to hold a `project.yaml`
         but is not a real Manju project (no format marker, no structure signal).
         The safety check lives here in the Project layer (not only in the CLI)
-        so every write entry point — CLI, MCP, GUI — is covered. A project built
+        so every write entry point — CLI, CLI/GUI, GUI — is covered. A project built
         through :meth:`create` or discovered through :meth:`find` already
         qualifies; this closes the gap for a ``Project(<explicit path>)`` opened
         straight onto a foreign directory."""
@@ -645,7 +645,7 @@ contract:
 
     def _safe_shot_id(self, shot_id: str) -> str:
         """The ONE choke point every shot-id-to-path caller passes through
-        (goal item 11) — CLI/MCP/board/GUI arguments, index.yaml entries, and
+        (goal item 11) — CLI/board/GUI arguments, index.yaml entries, and
         model ids all end up here via ``shot_path``/``takes_dir``."""
         try:
             return validate_safe_segment(shot_id, label="shot_id")

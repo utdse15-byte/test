@@ -141,7 +141,7 @@ class PresetSpec(BaseModel):
         return self
 
     def to_public_dict(self) -> dict[str, Any]:
-        """Stable shape for `manju presets --json` and the MCP surface."""
+        """Stable shape for `manju presets --json` and the local GUI."""
         w, h = self.resolution()
         return {
             "name": self.name,

@@ -21,7 +21,7 @@ from its first heading); a library must never crash the CLI.
 Progressive disclosure (the load-bearing design decision): agents get the
 INDEX (id + 何时用 one-liners) cheaply — ``manju auto`` injects the index plus
 only the core ``manju`` protocol skill — and pull one skill's FULL body on
-demand (``manju skills show <id>``, MCP ``skill_show``). The whole library is
+demand (``manju skills show <id>``, CLI/GUI ``skill_show``). The whole library is
 never inlined into a prompt; that is what separates a skill library from a
 protocol document that only grows.
 """

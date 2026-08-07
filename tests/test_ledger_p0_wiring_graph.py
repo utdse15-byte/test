@@ -128,7 +128,7 @@ def test_build_fails_closed_when_a_provider_reports_an_untrustworthy_cost(
     assert result.ok is False
     assert result.waiting_user is False  # a refusal, not a consent prompt
     assert any("paid_result_invalid" in e for e in result.errors), result.errors
-    # fail-closed is a one-line result, never a traceback at the CLI/MCP/GUI.
+    # fail-closed is a one-line result, never a traceback at the CLI/GUI.
     assert all(isinstance(e, str) for e in result.errors)
 
 

@@ -835,6 +835,6 @@ def derive_build_graph(project: Any) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def diagnose_project(project: Any) -> dict[str, Any]:
     """Convenience: derive Manju's build graph and diagnose it. Read-only — the
-    shared service the CLI/MCP ``explain --graph`` surface calls."""
+    shared service the CLI and GUI ``explain --graph`` surfaces call."""
     graph, states = derive_build_graph(project)
     return diagnose(graph, states)

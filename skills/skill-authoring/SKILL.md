@@ -98,8 +98,8 @@ disable-model-invocation: true
 
 ## Manju 落地
 
-- **加载/查看**:`manju skills [--json]`(列表)、`manju skills show <id>`(全文)。三层解析 project > user(`MANJU_SKILLS_DIR`)> bundled(`skills/`)。(MCP 面已冻结,见 DECISIONS `TRISURFACE-FIX #25`;它的 `skill_list`/`skill_show` 仍在,但不是推荐路径。)
-- **测试**:`tests/test_skill_content.py`(内容契约)+ `tests/test_skills.py`(加载/解析/索引/CLI/MCP)。
+- **加载/查看**:`manju skills [--json]`(列表)、`manju skills show <id>`(全文)。三层解析 project > user(`MANJU_SKILLS_DIR`)> bundled(`skills/`)。(CLI/GUI 面已冻结,见 DECISIONS `TRISURFACE-FIX #25`;它的 `skill_list`/`skill_show` 仍在,但不是推荐路径。)
+- **测试**:`tests/test_skill_content.py`(内容契约)+ `tests/test_skills.py`(加载/解析/索引/CLI)。
 - **核心协议**:`skills/manju/SKILL.md` 是 `CORE_SKILL_ID`,`manju auto` 全文注入 → 必须 <300 行、保住硬规矩。
 - 核心手册 §0 的技能库表按创作阶段列出常用技能;完整清单以 `manju skills` 为准(仓库现有 19 个,含本篇与核心协议)。
 

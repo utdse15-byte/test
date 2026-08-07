@@ -110,7 +110,7 @@ def test_load_shot_missing_file_raises(tmp_project):
 
 # --------------------------------------------------- goal item 11: shot_id as
 # a path segment — one canonical safe-segment validator wired at the choke
-# point (Project.shot_path / Project.takes_dir), so EVERY caller (CLI/MCP/
+# point (Project.shot_path / Project.takes_dir), so EVERY caller (CLI/
 # board/GUI) that turns a shot id into a path is protected without having to
 # find and fix each call site individually.
 

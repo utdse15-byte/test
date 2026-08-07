@@ -4,7 +4,7 @@
 `manju check` (and every build) re-hashes the current value and compares.
 A mismatch is a hard error — even if an agent edits the file directly, the
 engine refuses to build. Unlock exists only on the interactive CLI; it is
-never exposed over MCP.
+never exposed over CLI/GUI.
 """
 
 from __future__ import annotations

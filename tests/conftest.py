@@ -38,7 +38,7 @@ def _isolate_gui_state(monkeypatch, tmp_path):
 
 @pytest.fixture(autouse=True)
 def _isolate_recents(monkeypatch, tmp_path):
-    """Round X (agent XE): ``cli._project()``/GUI-server-startup/MCP-server-
+    """Round X (agent XE): ``cli._project()``/GUI-server-startup/
     startup all touch ``~/.manju/recents.json`` on every real invocation —
     redirect it to a hermetic tmp path for every test so the suite never reads
     or writes a real home (mirrors ``_isolate_gui_state`` above)."""

@@ -8,7 +8,7 @@ of hashes exactly when there was finally something to read.
 
 The digest keeps the first few meaningful fields, truncates long values, and
 SAYS how many it elided plus where the whole record lives. Nothing is lost:
-``--json`` already emitted complete records and is untouched — the MCP `events`
+``--json`` already emitted complete records and is untouched
 tool and every JSON consumer read that path.
 """
 

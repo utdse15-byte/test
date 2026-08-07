@@ -68,7 +68,7 @@ jobs:
             ffmpeg tesseract-ocr tesseract-ocr-chi-sim fonts-wqy-zenhei
 
       - name: Install package with all extras
-        run: pip install -c constraints.txt -e ".[dev,jianying,capcut,mcpvideo,edgetts]"
+        run: pip install -c constraints.txt -e ".[dev,jianying,capcut,edgetts]"
 
       - name: Run the full test suite
         run: python -m pytest -q -n auto
