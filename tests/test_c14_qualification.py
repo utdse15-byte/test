@@ -15,6 +15,7 @@ own proofs here.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -519,10 +520,25 @@ def test_15_qualification_report_is_not_a_build_input():
     for pkg in build_pkgs:
         for py in (src / pkg).rglob("*.py"):
             text = py.read_text(encoding="utf-8")
+            tree = ast.parse(text)
+            imports_provider_qualification = False
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imports_provider_qualification = any(
+                        alias.name.endswith("providers.qualification")
+                        for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    imports_provider_qualification = (
+                        module.endswith("providers.qualification")
+                        or (module.endswith("providers") and any(
+                            alias.name == "qualification" for alias in node.names))
+                    )
+                if imports_provider_qualification:
+                    break
             if ("providers/qualification" in text or "qualification_dir" in text
                     or "reports/providers/qualification" in text
-                    or "import qualification" in text
-                    or "qualification import" in text):
+                    or imports_provider_qualification):
                 offenders.append(str(py.relative_to(src)))
     assert offenders == [], f"a build/cache path reads the qualification report: {offenders}"
 

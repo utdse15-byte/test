@@ -102,6 +102,10 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `NARRATIVE-CLOSED-LOOP #14` | 2026-08-06 | Static consistency hardening seals effective provider requests, scoped logical references, SPEC v4, redo replay, and one-record review/proof binding without real transport | providers/, core/spec.py, qc/assurance.py, qc/production.py, build/readiness.py, tests/test_static_audit_wave*.py |
 | `NARRATIVE-CLOSED-LOOP #15` | 2026-08-06 | Second-pass residuals close identity/body TOCTOU, complete reference mappings in SPEC v5, and make scoped opening facts typed and projectable | providers/, core/authoring.py, core/intent.py, core/spec.py, tests/test_static_audit_wave*.py |
 | `NARRATIVE-CLOSED-LOOP #16` | 2026-08-06 | Third-pass residuals bind paid recovery to a secret-free execution profile, preserve Bible scope through runtime/budget, and version scoped QC commitments as Expectations v3 | providers/, core/intent.py, qc/expectations.py, tests/test_third_round_residuals.py |
+| `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #1` | 2026-08-07 | Complete removal supersedes the earlier frozen surface | src/manju/mcp/, cli.py, CONTRACTS.yaml, pyproject.toml |
+| `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #2` | 2026-08-07 | Current product boundary is project files + CLI + GUI | docs/ARCHITECTURE_BOUNDARIES.md, src/manju/cli.py, src/manju/gui/ |
+| `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #3` | 2026-08-07 | Breaking removal advances the release to 0.2.0 | pyproject.toml, src/manju/__init__.py, core/proposal_paths.py |
+| `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #4` | 2026-08-07 | Certification remains bound to measured local and same-SHA CI evidence | REPORTS/MCP_REMOVAL_AND_V5_CLOSEOUT_2026-08-07.md, REPORTS/LAST_GREEN.yaml |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
