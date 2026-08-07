@@ -452,12 +452,15 @@ def director_contract_view(shot: ShotSpec) -> dict[str, Any]:
     """Human/AI director summary; never provider input or a staleness source."""
     contract = shot.contract
     if contract is None:
-        return {
+        view = {
             "action": shot.action.model_dump(),
             "camera": shot.camera.model_dump(),
             "must_show": list(shot.quality.must_show),
         }
-    return {
+        if shot.source_span_refs:
+            view["source_span_refs"] = list(shot.source_span_refs)
+        return view
+    view = {
         "purpose": contract.purpose,
         "viewer_must_perceive": contract.viewer_must_perceive,
         "opening": [state_fact_payload(fact) for fact in contract.opening],
@@ -471,6 +474,11 @@ def director_contract_view(shot: ShotSpec) -> dict[str, Any]:
         "acceptance": contract.acceptance.model_dump(),
         "proof_shot": contract.proof_shot,
     }
+    if contract.screen is not None:
+        view["screen"] = contract.screen.model_dump(exclude_none=True)
+    if shot.source_span_refs:
+        view["source_span_refs"] = list(shot.source_span_refs)
+    return view
 
 
 def narrative_intent_payload(project: Any) -> list[dict[str, Any]]:
@@ -498,6 +506,8 @@ def narrative_intent_payload(project: Any) -> list[dict[str, Any]]:
             },
             "dialogue": shot.dialogue.model_dump(),
         }
+        if shot.source_span_refs:
+            row["source_span_refs"] = list(shot.source_span_refs)
         if contract is not None:
             row["contract"] = {
                 "opening": [state_fact_payload(fact) for fact in contract.opening],
@@ -506,6 +516,8 @@ def narrative_intent_payload(project: Any) -> list[dict[str, Any]]:
                 "physics": contract.physics.model_dump(),
                 "sound_cue": contract.sound.cue,
             }
+            if contract.screen is not None:
+                row["screen"] = contract.screen.model_dump(exclude_none=True)
         rows.append(row)
     return rows
 
@@ -513,3 +525,21 @@ def narrative_intent_payload(project: Any) -> list[dict[str, Any]]:
 def narrative_intent_digest(project: Any) -> str:
     """Deterministic digest used only by narrative animatic content keys."""
     return hash_value(narrative_intent_payload(project))
+
+
+def screen_intent_payload(project: Any) -> list[dict[str, Any]]:
+    """Only screen/source authoring facts, in indexed shot order."""
+    rows: list[dict[str, Any]] = []
+    for shot_id in project.shot_ids(indexed_only=True):
+        shot = project.load_shot(shot_id)
+        screen = shot.contract.screen if shot.contract else None
+        rows.append({
+            "shot": shot.id,
+            "source_span_refs": list(shot.source_span_refs or []),
+            "screen": screen.model_dump(exclude_none=True) if screen else None,
+        })
+    return rows
+
+
+def screen_intent_digest(project: Any) -> str:
+    return hash_value(screen_intent_payload(project))

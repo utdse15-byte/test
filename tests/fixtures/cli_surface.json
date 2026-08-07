@@ -13,6 +13,18 @@
     "exists": true,
     "params": []
   },
+  "asset qualification": {
+    "exists": true,
+    "params": [
+      "asset_ref"
+    ]
+  },
+  "asset qualify-record": {
+    "exists": true,
+    "params": [
+      "verdict"
+    ]
+  },
   "assets show": {
     "exists": true,
     "params": [
@@ -73,6 +85,10 @@
     "params": []
   },
   "create": {
+    "exists": true,
+    "params": []
+  },
+  "creator": {
     "exists": true,
     "params": []
   },
@@ -528,6 +544,36 @@
     "exists": true,
     "params": []
   },
+  "screen coverage": {
+    "exists": true,
+    "params": []
+  },
+  "screen review-packet": {
+    "exists": true,
+    "params": []
+  },
+  "screen review-record": {
+    "exists": true,
+    "params": [
+      "verdict"
+    ]
+  },
+  "screen scene-view": {
+    "exists": true,
+    "params": [
+      "scene_id"
+    ]
+  },
+  "screen shot-view": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "screen status": {
+    "exists": true,
+    "params": []
+  },
   "segments": {
     "exists": true,
     "params": [
@@ -588,6 +634,18 @@
     "exists": true,
     "params": []
   },
+  "shot control-plan": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "shot-control-plan": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
   "shot-package": {
     "exists": true,
     "params": [
@@ -611,6 +669,42 @@
   "status": {
     "exists": true,
     "params": []
+  },
+  "story charter": {
+    "exists": true,
+    "params": []
+  },
+  "story context": {
+    "exists": true,
+    "params": [
+      "scene_id"
+    ]
+  },
+  "story coverage": {
+    "exists": true,
+    "params": []
+  },
+  "story lint": {
+    "exists": true,
+    "params": []
+  },
+  "story spans": {
+    "exists": true,
+    "params": []
+  },
+  "story status": {
+    "exists": true,
+    "params": []
+  },
+  "story threads": {
+    "exists": true,
+    "params": []
+  },
+  "story trajectory": {
+    "exists": true,
+    "params": [
+      "character_id"
+    ]
   },
   "support-bundle": {
     "exists": true,

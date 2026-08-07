@@ -90,6 +90,19 @@ def create_payload(project: Any) -> dict[str, Any]:
     readiness = production_readiness(project)
     payload["production"] = readiness
     payload["eligibility"] = readiness.get("eligibility") or {}
+    if project.creative_opted_in:
+        from ..story.coverage import derive_coverage
+        from ..story.lint import lint_screen, lint_story
+        try:
+            coverage = derive_coverage(project, persist=False)
+        except Exception as exc:
+            coverage = {"error": " ".join(str(exc).split())}
+        payload["story_screen"] = {
+            "creative": project.creative_status(),
+            "story_lint": lint_story(project),
+            "screen_lint": lint_screen(project),
+            "coverage": coverage,
+        }
     return payload
 
 

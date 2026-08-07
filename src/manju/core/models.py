@@ -699,6 +699,9 @@ class ShotSpec(ManjuModel):
     id: str
     scene: str | None = None
     scene_id: str | None = None
+    # Optional authoring references. They are used by source coverage and
+    # never enter picture SPEC, Prompt or Expectations payloads.
+    source_span_refs: list[str] | None = None
     props: list[str] | None = None
     characters: list[str] = Field(default_factory=list)
     duration: float | Literal["auto"] = "auto"  # seconds when numeric

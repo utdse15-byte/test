@@ -6,6 +6,14 @@ text, what was actually built, and why the deviation stands.
 索引 (index) — added 2026-07-13 so a session can find what governs a file without a full read.
 Entries are append-only below.
 
+### NARRATIVE-CLOSED-LOOP #17 — 2026-08-07
+
+v5.0 adopts one dramatic -> screen experience -> production/control chain.
+Screen Intent is authoring-only and cannot enter Prompt, picture SPEC or
+Expectations.  Coverage and context are derived views, Director Proposal is
+the sole proposal store, and legacy projects remain no-op until they opt in
+with `story/creative.yaml`.
+
 | # | date | summary | governs (modules / files / surfaces) |
 |---|------|---------|--------------------------------------|
 | 1 | — | JianYing export emits both self-dev skeleton and native draft | exporters/native_draft, exports/jianying/ (skeleton + pyJianYingDraft native), final.mp4/SRT/OTIO fallback |

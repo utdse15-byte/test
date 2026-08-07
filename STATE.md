@@ -30,6 +30,11 @@ number is worse than an honest blank.
 - Windows ffmpeg cancellation integration (real child-process kill on Windows).
 
 ## Current structural work
+
+v5.0 AV0–AV8 are implemented as an additive, opt-in offline chain. Ownership
+is recorded in `docs/SOURCE_LEDGER.yaml`; the rehearsal evidence is
+`REPORTS/UNIFIED_FILM_REHEARSAL_2026-08-07.md`. No real Provider, paid request
+or real-media Dogfood has been run.
 - Narrative closed-loop refactor — S0, Phases 1–7A and S1 are complete locally: stale
   provider formulas quarantined; SceneContract + nested ShotContract landed;
   one pure intent projection now drives current prompt, picture SPEC v5,

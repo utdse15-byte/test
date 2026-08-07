@@ -100,10 +100,13 @@ def _scene_contract_gate(project: Project) -> tuple[dict[str, Any], dict[str, An
             ))
             continue
         scenes[scene_id] = scene
+        is_v2 = hasattr(scene, "change")
+        change_field = "change" if is_v2 else "irreversible_change"
+        change_value = scene.change if is_v2 else scene.irreversible_change
         for field_name, value in (
             ("purpose", scene.purpose),
             ("entry_state", scene.entry_state),
-            ("irreversible_change", scene.irreversible_change),
+            (change_field, change_value),
             ("exit_state", scene.exit_state),
         ):
             if not value:
@@ -586,19 +589,23 @@ def _voice_binding(project: Project, shot_id: str) -> dict[str, Any] | None:
 
 
 def _scene_contract_payload(scene: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "scene_id": scene.id,
         "location_ref": scene.location_ref,
         "time": scene.time,
         "entry_state": {
             key: value.model_dump() for key, value in scene.entry_state.items()
         },
-        "irreversible_change": list(scene.irreversible_change),
         "exit_state": {
             key: value.model_dump() for key, value in scene.exit_state.items()
         },
         "carry_forward": list(scene.carry_forward),
     }
+    if hasattr(scene, "change"):
+        payload["change"] = scene.change.model_dump()
+    else:
+        payload["irreversible_change"] = list(scene.irreversible_change)
+    return payload
 
 
 def _canonical_observed_states(values: Any) -> list[dict[str, Any]]:
@@ -830,6 +837,104 @@ def _release_findings(project: Project) -> list[dict[str, Any]]:
     }]
 
 
+def _v5_authoring_gates(
+    project: Project, paid_shot_ids: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Optional v5 gates. Legacy projects never enter this path."""
+    from ..story.coverage import derive_coverage
+    from ..story.lint import lint_screen, lint_story
+
+    details: list[dict[str, Any]] = []
+    charter_obj = None
+    try:
+        charter_obj = project.load_creative()
+        if project.creative_status().get("state") != "current":
+            details.append(_detail(
+                "CREATIVE_CHARTER_NOT_CURRENT",
+                "Creative Charter references are missing or drifted",
+                subject="story/creative.yaml",
+            ))
+    except Exception as exc:
+        details.append(_detail("CREATIVE_CHARTER_INVALID", str(exc), subject="story/creative.yaml"))
+    story_report = lint_story(project, mode="standard")
+    screen_report = lint_screen(project, mode="standard")
+    for row in story_report.get("errors", []):
+        details.append(_detail("STORY_LINT", str(row), subject="story"))
+    for row in screen_report.get("errors", []):
+        details.append(_detail("SCREEN_LINT", str(row), subject="screen"))
+    try:
+        coverage = derive_coverage(project, mode="standard", persist=False)
+    except Exception as exc:
+        coverage = {"error": " ".join(str(exc).split()),
+                    "uncovered_source_spans": [],
+                    "uncovered_required_experience_beats": []}
+        details.append(_detail("SOURCE_SPANS_INVALID", coverage["error"],
+                               subject="story/script.md"))
+    for span in coverage.get("uncovered_source_spans", []):
+        severity = (
+            "error" if span in coverage.get("uncovered_proof_scene_source_spans", [])
+            else "warning"
+        )
+        details.append(_detail("SOURCE_COVERAGE", f"source span {span} is uncovered",
+                               subject="story/script.md", severity=severity))
+    for beat in coverage.get("uncovered_required_experience_beats", []):
+        details.append(_detail("SCREEN_COVERAGE", f"required experience beat {beat} is uncovered",
+                               subject="story", severity="error"))
+    paid = set(paid_shot_ids or [])
+    for shot_id in coverage.get("unanchored_shots", []):
+        details.append(_detail(
+            "SCREEN_UNANCHORED_SHOT", f"shot {shot_id} has no source, experience beat or justification",
+            subject=f"shots/{shot_id}.yaml",
+            severity="error" if shot_id in paid else "warning",
+        ))
+    production = charter_obj.production if charter_obj is not None else {}
+    review_policy = production.get("review_policy", {}) if isinstance(production, dict) else {}
+    if review_policy.get("require_current_script_review"):
+        from ..qc.artifact_review import current_artifact_review
+        review = current_artifact_review(project, "story/script.md", screen=False)
+        if not review.get("current") or (review.get("review") or {}).get("verdict") != "approved":
+            details.append(_detail("SCRIPT_REVIEW_NOT_CURRENT",
+                                   review.get("reason") or "current script review is not approved",
+                                   subject="story/script.md"))
+    if review_policy.get("require_animatic_experience_review"):
+        from ..core.intent import screen_intent_digest
+        from ..core.verifications import latest_verification
+        evidence = latest_verification(project, kind="animatic_experience_review")
+        target = evidence.get("target", {}) if evidence else {}
+        media_path = project.root / str(target.get("path") or "")
+        media_current = media_path.is_file() and hash_file(media_path) == target.get("sha256")
+        human_approved = bool(
+            evidence and evidence.get("verdict") == "approved"
+            and (evidence.get("actor") or {}).get("kind") == "human"
+        )
+        if not (media_current and human_approved
+                and target.get("screen_intent_digest") == screen_intent_digest(project)):
+            details.append(_detail("ANIMATIC_EXPERIENCE_REVIEW_NOT_CURRENT",
+                                   "current human six-pass review does not match media and Screen Intent",
+                                   subject="renders/animatic"))
+    qualification_policy = production.get("asset_qualification", {}) if isinstance(production, dict) else {}
+    if qualification_policy.get("required"):
+        from ..qc.asset_qualification import asset_qualification_status
+        refs: set[str] = set()
+        for shot_id in project.shot_ids(indexed_only=True):
+            shot = project.load_shot(shot_id)
+            refs.update(f"character:{item}" for item in shot.characters)
+            refs.update(f"prop:{item}" for item in (shot.props or []))
+            if shot.scene:
+                refs.add(f"location:{shot.scene}")
+        for ref in sorted(refs):
+            if asset_qualification_status(project, ref).get("state") not in (
+                "qualified", "qualified_with_limits"
+            ):
+                details.append(_detail("ASSET_NOT_QUALIFIED", f"{ref} is not qualified",
+                                       subject=ref))
+    return [_gate("CREATIVE_AUTHORING", details)], {
+        "story_lint": story_report,
+        "screen_lint": screen_report,
+        "coverage": coverage,
+    }
+
+
 def production_readiness(
     project: Project, paid_shot_ids: list[str] | None = None
 ) -> dict[str, Any]:
@@ -855,6 +960,10 @@ def production_readiness(
 
     scene_gate, scenes = _scene_contract_gate(project)
     shot_gate = _shot_contract_gate(project)
+    v5_gates, v5_report = (
+        _v5_authoring_gates(project, paid_shot_ids)
+        if project.creative_opted_in else ([], {})
+    )
 
     current = current_animatic(project)
     current_details = [] if current["current"] else [_detail(
@@ -913,7 +1022,7 @@ def production_readiness(
         ))
     proof_scene_gate = _gate("PROOF_SCENES", proof_scene_details)
 
-    first_six = [
+    first_six = v5_gates + [
         scene_gate, shot_gate, current_gate, approval_gate,
         proof_shot_gate, proof_scene_gate,
     ]
@@ -974,4 +1083,5 @@ def production_readiness(
         "next_action": next_action,
         "release_findings": _release_findings(project),
         "eligibility": eligibility,
+        "v5_authoring": v5_report,
     }

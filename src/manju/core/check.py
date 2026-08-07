@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from .authoring import SceneContract, shot_prop_refs, uses_new_and_legacy_props
+from .authoring import SceneContract, parse_scene_contract, shot_prop_refs, uses_new_and_legacy_props
 from .container import BIBLE_FILES, Project, ProjectError
 from .idents import is_safe_segment
 from .locks import verify_locks
@@ -307,7 +307,7 @@ def run_check(project: Project) -> CheckReport:
 
     # Any source file opts in, even when malformed. Parsing it here preserves
     # that fail-closed behavior instead of silently falling back to LEGACY.
-    scene_contracts: dict[str, SceneContract] = {}
+    scene_contracts: dict[str, Any] = {}
     scene_members: dict[str, list[str]] = {}
     for path in sorted(project.scene_contracts_dir.glob("*.yaml")):
         if not path.is_file():
@@ -322,7 +322,7 @@ def run_check(project: Project) -> CheckReport:
             raw_scene = read_yaml(path)
             if not isinstance(raw_scene, dict):
                 raise TypeError("scene contract must be a mapping")
-            scene_contract = SceneContract.model_validate(raw_scene)
+            scene_contract = parse_scene_contract(raw_scene)
         except yaml.YAMLError as exc:
             report.errors.append(f"{rel}: parser error - {_one_line(exc)}")
             continue
@@ -366,10 +366,13 @@ def run_check(project: Project) -> CheckReport:
                             f"references '{prop_id}' not found in bible/props.yaml"
                         )
 
+        is_v2 = hasattr(scene_contract, "change")
+        change_field = "change" if is_v2 else "irreversible_change"
+        change_value = scene_contract.change if is_v2 else scene_contract.irreversible_change
         for field_name, value in (
             ("purpose", scene_contract.purpose),
             ("entry_state", scene_contract.entry_state),
-            ("irreversible_change", scene_contract.irreversible_change),
+            (change_field, change_value),
             ("exit_state", scene_contract.exit_state),
         ):
             if not value:

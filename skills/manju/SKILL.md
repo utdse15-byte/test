@@ -31,6 +31,7 @@ manju production status --json
 | --- | --- |
 | 故事到生产闸门 | `creation-funnel` |
 | 戏剧场次合同 | `scene-design` |
+| 文字到银幕体验提案 | `screen-translation` |
 | 镜头合同与实现方式 | `shot-design` |
 | 角色五层连续性 | `character-consistency` |
 | 控制分配与指令编译 | `prompt-craft` |
@@ -43,6 +44,7 @@ manju production status --json
 | 声音 | `audio-finishing` |
 | 封面标题 | `cover-and-title` |
 | 视觉 QC | `visual-qc-review` |
+| 文字与银幕作品评审 | `artifact-review` |
 | 分集拆解 | `series-breakdown` |
 | 跨场/集设定 | `series-bible` |
 | 技能编写 | `skill-authoring` |

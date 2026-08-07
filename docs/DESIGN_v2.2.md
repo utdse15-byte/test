@@ -780,3 +780,11 @@ with dynamic timestamps removed, canonical observed opening and endpoint, and a
 stable assurance projection. Equivalent re-review content does not invalidate
 approval; a changed accepted observation does. Stale or rejected evidence never
 enters that digest.
+# v5.0 Unified Film Authoring Addendum
+
+The opt-in v5 authoring chain is Dramatic/Causal -> Screen Experience ->
+Production/Control. Creative Charter, SceneContract v2 and nested Screen Intent
+are authoritative authoring truth; lint, coverage, trajectories, context and
+Control View are derived. Screen Intent is excluded from Prompt, picture SPEC
+and Expectations. Legacy projects and historical contract formulas remain
+unchanged.

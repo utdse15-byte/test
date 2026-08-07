@@ -30,6 +30,156 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.creative-charter/v1
+    kind: schema
+    owner: manju.core.creative:CreativeCharter
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Optional project-local dramatic and audiovisual commitments. References
+      exact source bytes and never duplicates production truth.
+
+  - id: manju.scene-contract/v2
+    kind: schema
+    owner: manju.core.authoring:SceneContractV2
+    status: experimental
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: Additive dramatic change and scene experience design; never owns shots.
+
+  - id: manju.source-span/v1
+    kind: schema
+    owner: manju.core.source_spans:SourceSpan
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Stable script marker projection; line numbers are hints only.
+
+  - id: manju.screen-intent/v1
+    kind: schema
+    owner: manju.core.authoring:ScreenIntent
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Optional authoring projection nested in ShotContract; excluded from
+      Prompt, picture SPEC and Expectations.
+
+  - id: manju.truth-patch-set/v1
+    kind: schema
+    owner: manju.build.authoring_patch
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Human-only atomic multi-file authoring adoption payload.
+
+  - id: manju.authoring-impact/v1
+    kind: schema
+    owner: manju.build.authoring_impact
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Rebuildable authoring review impact projection; never picture truth.
+
+  - id: manju.story-coverage/v1
+    kind: schema
+    owner: manju.story.coverage
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Derived source and screen experience coverage.
+  - id: manju.story-lint/v1
+    kind: schema
+    owner: manju.story.lint
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic dramatic structure lint; review findings remain evidence.
+  - id: manju.screen-lint/v1
+    kind: schema
+    owner: manju.story.lint
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic screen anchoring and experience coverage lint.
+  - id: manju.character-trajectory/v1
+    kind: schema
+    owner: manju.story.trajectory
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Leak-safe trajectory projection from SceneContract v2.
+  - id: manju.open-threads/v1
+    kind: schema
+    owner: manju.story.trajectory
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Derived thread history bounded by the requested scene.
+  - id: manju.story-context/v1
+    kind: schema
+    owner: manju.story.context
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Derived scene context packet bounded by requested scene.
+
+  - id: manju.verification.evidence/v1
+    kind: schema
+    owner: manju.core.verifications
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Shared append-only verification evidence envelope.
+  - id: manju.artifact-review/v1
+    kind: schema
+    owner: manju.qc.artifact_review
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Text and screen translation review evidence.
+  - id: manju.animatic-experience-review/v1
+    kind: schema
+    owner: manju.qc.animatic_experience
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Six-pass exact-media-bound Animatic experience review.
+  - id: manju.asset-qualification/v1
+    kind: schema
+    owner: manju.qc.asset_qualification
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Exact-media asset capability and limits evidence.
+
+  - id: manju.control-view/v1
+    kind: schema
+    owner: manju.build.control_view
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Derived Provider-neutral control projection; unknown capabilities are retained.
+
+  # v5.0 AV0 architecture records.  Runtime schema rows are added only when
+  # the corresponding opt-in contracts land; these rows document ownership.
+
   # -- narrative authoring -------------------------------------------------
   - id: manju.scene-contract/v1
     kind: schema

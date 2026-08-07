@@ -160,6 +160,8 @@ _ZH_LEAD: dict[str, str] = {
     'serve-mcp': 'stdio 上的 MCP server —— 同一核心的薄包装',
     'shot-package': '校验/查看外部 ShotDraftPackage,或受控写入应用它',
     'snapshot': '给真相文本打一个带标签的 git 检查点',
+    'story': '故事事实、SourceSpan 与派生 lint/coverage',
+    'screen': '银幕体验意图、coverage 与 Control View',
     'status': '接管入口:阶段、缺口、花费、下一步',
     'support-bundle': '生成已脱敏的诊断支持包',
     'tool': '说明一个白名单意图 op 的既有确定性执行器',
@@ -1876,6 +1878,202 @@ production_app = typer.Typer(
     help="Animatic、Proof Shot、Proof Scene 与批量付费生产就绪度。",
 )
 app.add_typer(production_app, name="production", rich_help_panel=PANEL_GENERATE)
+
+
+# v5.0 authoring projections. These commands are thin read-only views over
+# core models and derived reports; they never call a Provider or write truth.
+
+@app.command("creator")
+def creator(as_json: bool = typer.Option(False, "--json")):
+    """Read-only creation-funnel summary for dramatic/screen authoring."""
+    from .build.director import list_proposals
+    from .build.readiness import production_readiness
+    from .story.coverage import derive_coverage
+    from .story.lint import lint_screen, lint_story
+
+    project = _project()
+    proposals = list_proposals(project)
+    try:
+        readiness = production_readiness(project)
+    except Exception as exc:
+        readiness = {"state": "blocked", "error": " ".join(str(exc).split())}
+    try:
+        coverage = derive_coverage(project, mode="quick", persist=False)
+    except Exception as exc:
+        coverage = {"error": " ".join(str(exc).split())}
+    report = {
+        "creative": project.creative_status(),
+        "stage": readiness.get("stage"),
+        "readiness": readiness,
+        "story_lint": lint_story(project),
+        "screen_lint": lint_screen(project),
+        "coverage": coverage,
+        "pending_proposals": [
+            {"id": item.id, "state": item.state, "why": item.why}
+            for item in proposals if item.state not in ("done", "executed", "rejected")
+        ],
+        "next_action": readiness.get("next_action"),
+    }
+    _emit(report, as_json)
+
+story_app = typer.Typer(no_args_is_help=True, help="故事事实与派生分析。")
+app.add_typer(story_app, name="story", rich_help_panel=PANEL_COLLAB)
+
+
+@story_app.command("status")
+def story_status(as_json: bool = typer.Option(False, "--json")):
+    from .story.lint import lint_screen, lint_story
+    result = {"creative": _project().creative_status(),
+              "story_lint": lint_story(_project()), "screen_lint": lint_screen(_project())}
+    _emit(result, as_json)
+
+
+@story_app.command("charter")
+def story_charter(as_json: bool = typer.Option(False, "--json")):
+    project = _project()
+    result = project.creative_status()
+    if project.load_creative() is not None:
+        result["charter"] = project.load_creative().model_dump(exclude_none=True)
+    _emit(result, as_json)
+
+
+@story_app.command("spans")
+def story_spans(as_json: bool = typer.Option(False, "--json")):
+    from .core.source_spans import load_source_spans
+    _emit({"spans": [span.model_dump() for span in load_source_spans(_project())]}, as_json)
+
+
+@story_app.command("lint")
+def story_lint(mode: str = typer.Option("quick", "--mode"), as_json: bool = typer.Option(False, "--json")):
+    from .story.lint import lint_story
+    _emit(lint_story(_project(), mode=mode), as_json)
+
+
+@story_app.command("coverage")
+def story_coverage(mode: str = typer.Option("quick", "--mode"), as_json: bool = typer.Option(False, "--json")):
+    from .story.coverage import derive_coverage
+    _emit(derive_coverage(_project(), mode=mode, persist=False), as_json)
+
+
+@story_app.command("trajectory")
+def story_trajectory(character_id: str, as_json: bool = typer.Option(False, "--json")):
+    from .story.trajectory import character_trajectory
+    _emit(character_trajectory(_project(), character_id), as_json)
+
+
+@story_app.command("threads")
+def story_threads(as_json: bool = typer.Option(False, "--json")):
+    from .story.trajectory import open_threads
+    _emit(open_threads(_project()), as_json)
+
+
+@story_app.command("context")
+def story_context(
+    scene_id: str,
+    for_directing: bool = typer.Option(True, "--for-directing/--for-review"),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    from .story.context import context_packet
+    _emit(context_packet(_project(), scene_id, for_directing=for_directing), as_json)
+
+
+screen_app = typer.Typer(no_args_is_help=True, help="银幕体验派生视图。")
+app.add_typer(screen_app, name="screen", rich_help_panel=PANEL_COLLAB)
+
+
+@screen_app.command("status")
+def screen_status(as_json: bool = typer.Option(False, "--json")):
+    from .story.lint import lint_screen
+    _emit(lint_screen(_project()), as_json)
+
+
+@screen_app.command("coverage")
+def screen_coverage(mode: str = typer.Option("quick", "--mode"), as_json: bool = typer.Option(False, "--json")):
+    from .story.coverage import derive_coverage
+    _emit(derive_coverage(_project(), mode=mode, persist=False), as_json)
+
+
+@screen_app.command("shot-view")
+def screen_shot_view(shot_id: str, as_json: bool = typer.Option(False, "--json")):
+    from .core.intent import director_contract_view, screen_intent_digest
+    project = _project()
+    shot = project.load_shot(shot_id)
+    _emit({"shot": shot_id, "view": director_contract_view(shot),
+           "screen_intent_digest": screen_intent_digest(project)}, as_json)
+
+
+@screen_app.command("scene-view")
+def screen_scene_view(scene_id: str, as_json: bool = typer.Option(False, "--json")):
+    from .story.context import context_packet
+    _emit(context_packet(_project(), scene_id, for_directing=True), as_json)
+
+
+@screen_app.command("review-packet")
+def screen_review_packet(as_json: bool = typer.Option(False, "--json")):
+    from .core.intent import screen_intent_digest
+    _emit({"screen_intent_digest": screen_intent_digest(_project()),
+           "shots": _project().shot_ids(indexed_only=True)}, as_json)
+
+
+@screen_app.command("review-record")
+def screen_review_record(verdict: Path, as_json: bool = typer.Option(False, "--json")):
+    """Record a prepared text/screen review evidence document."""
+    import json
+    from .qc.artifact_review import record_artifact_review
+    from .qc.animatic_experience import record_animatic_experience_review
+
+    try:
+        review = json.loads(verdict.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _fail(f"invalid review evidence: {exc}", code="bad_args")
+    if not isinstance(review, dict):
+        _fail("review evidence must be a JSON object", code="bad_args")
+    if review.get("kind") == "animatic_experience_review":
+        recorded = record_animatic_experience_review(_project(), review)
+    else:
+        review["screen_review"] = True
+        recorded = record_artifact_review(_project(), review)
+    _emit(recorded, as_json)
+
+
+asset_app = typer.Typer(no_args_is_help=True, help="璧勪骇璧勬牸 evidence 鏌ヨ涓庤褰?")
+app.add_typer(asset_app, name="asset", rich_help_panel=PANEL_COLLAB)
+
+
+@asset_app.command("qualification")
+def asset_qualification(asset_ref: str, as_json: bool = typer.Option(False, "--json")):
+    from .qc.asset_qualification import asset_qualification_status
+    _emit(asset_qualification_status(_project(), asset_ref), as_json)
+
+
+@asset_app.command("qualify-record")
+def asset_qualify_record(verdict: Path, as_json: bool = typer.Option(False, "--json")):
+    import json
+    from .qc.asset_qualification import record_asset_qualification
+
+    try:
+        evidence = json.loads(verdict.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _fail(f"invalid asset qualification evidence: {exc}", code="bad_args")
+    if not isinstance(evidence, dict):
+        _fail("asset qualification evidence must be a JSON object", code="bad_args")
+    _emit(record_asset_qualification(_project(), evidence), as_json)
+
+
+@app.command("shot-control-plan")
+def shot_control_plan(shot_id: str, as_json: bool = typer.Option(False, "--json")):
+    """Read-only Provider-neutral Control View for one shot."""
+    from .build.control_view import derive_control_view
+    _emit(derive_control_view(_project(), shot_id), as_json)
+
+
+shot_app = typer.Typer(no_args_is_help=True, help="shot authoring and control views")
+app.add_typer(shot_app, name="shot", rich_help_panel=PANEL_COLLAB)
+
+
+@shot_app.command("control-plan")
+def shot_control_plan_view(shot_id: str, as_json: bool = typer.Option(False, "--json")):
+    shot_control_plan(shot_id, as_json)
 
 
 def _print_production_readiness(report: dict) -> None:

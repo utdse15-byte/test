@@ -1,0 +1,30 @@
+# v5.0 AV0: one owner per fact.  This is an architectural ledger, not a
+# runtime input and is intentionally safe to delete from a built project.
+version: 1
+status: current
+superseded_specs:
+  - v2
+  - v3
+  - v4
+  - v4.1
+owners:
+  brief_ending_script: story/*.md
+  creative_charter: story/creative.yaml
+  scene_dramatic_state: story/scenes/*.yaml
+  shot_production_truth: shots/*.yaml
+  shot_order: shots/index.yaml
+  picture_spec: manju.core.spec
+  expectations: manju.qc.expectations
+  director_proposals: reports/proposals/*.yaml
+  append_only_evidence: reports/events.jsonl
+  verification_evidence: reports/verifications.jsonl
+  derived_views: reports/derived/**
+  media_and_takes: media/**
+  provider_facts: provider manifests and accepted observed events
+boundaries:
+  screen_intent: "director, coverage, animatic review and control views only"
+  screen_intent_excluded_from: [prompt, picture_spec, expectations]
+  legacy_projects: no_auto_migration
+external_repositories:
+  policy: clean_room_methods_only
+  runtime_dependencies: []

@@ -120,6 +120,7 @@ ACTION_TYPES = (
     "packaging",  # packaging.yaml edit / media/packaging.make_package
     "snapshot",   # core/history.snapshot
     "rollback",   # core/history.{rollback_shot,rollback_file}
+    "truth_patch_set",  # human-only atomic authoring truth adoption
 )
 
 # The step that spends money — priced through the shared estimators. Everything
@@ -133,6 +134,10 @@ def _has_priced_action(proposal) -> bool:
     (build/redo/voice). Round Y (#15): the human-only confirmation gate keys on
     this — free proposals stay AI-confirmable, paid ones need a human."""
     return any(pa.action.get("type") in _PRICED_TYPES for pa in proposal.actions)
+
+
+def _has_truth_patch(proposal) -> bool:
+    return any(pa.action.get("type") == "truth_patch_set" for pa in proposal.actions)
 
 
 def _now() -> str:
@@ -170,6 +175,8 @@ class Proposal(BaseModel):
     actor: str = "human"
     created_at: str = ""
     fingerprint: str = ""  # project state fingerprint at propose time
+    basis: dict[str, str] | None = None
+    basis_digest: str | None = None
     actions: list[ProposalAction] = Field(default_factory=list)
     estimated_cost: float = 0.0
     currency: str | None = None
@@ -367,6 +374,9 @@ def state_fingerprint(project: Project) -> str:
 
 
 def _is_current(project: Project, proposal: Proposal) -> bool:
+    if _has_truth_patch(proposal) and proposal.basis is not None:
+        from .authoring_impact import current_authoring_basis
+        return current_authoring_basis(project, proposal.basis)
     return proposal.fingerprint == state_fingerprint(project)
 
 
@@ -458,7 +468,9 @@ def _verify_confirmation(project: Project, proposal: Proposal) -> None:
             f"proposal {proposal.id} 缺少与当前动作匹配的确认凭据 — events.jsonl"
             "(append-only 账本)里没有本次动作 digest 的 confirm 记录。"
             "可能是 confirmed 状态被手改伪造,或确认后动作/估值被替换;请重新 confirm 后再执行")
-    if _has_priced_action(proposal) and not any(c.get("actor") == "human" for c in matching):
+    if (_has_priced_action(proposal) or _has_truth_patch(proposal)) and not any(
+        c.get("actor") == "human" for c in matching
+    ):
         raise DirectorError(
             f"proposal {proposal.id} 含付费动作,但账本中匹配的确认凭据不是 human 确认 —"
             "付费提案必须由人类确认(且确认绑定到当前动作内容)后才能执行")
@@ -488,6 +500,15 @@ def _validate_action(project: Project, action: Any) -> dict[str, Any]:
     if atype not in ACTION_TYPES:
         raise DirectorError(
             f"unknown action type {atype!r}; the whitelist is {list(ACTION_TYPES)}")
+
+    if atype == "truth_patch_set":
+        from .authoring_patch import normalize_patch_set
+        try:
+            normalized = normalize_patch_set(project, action)
+        except Exception as exc:
+            raise DirectorError(
+                f"truth_patch_set invalid: {' '.join(str(exc).split())}") from exc
+        return {"type": atype, **normalized}
 
     if atype == "build":
         from .graph import GEN_MODES  # round W (issue #3): single source of truth
@@ -693,6 +714,12 @@ def _local_impact(project: Project, action: dict) -> dict[str, Any]:
                 "note": "包装改动:片头/片尾/信息卡在 build 时生效"}
     if atype == "snapshot":
         return {"shots": [], "outputs": [], "note": "git 存档点(不改产物)"}
+    if atype == "truth_patch_set":
+        return {
+            "shots": [],
+            "outputs": [p["path"] for p in action["patches"]],
+            "note": "human-only atomic authoring adoption; no paid action",
+        }
     if atype == "rollback":
         if action["op"] == "shot":
             return {"shots": [action["shot"]], "outputs": ["final"],
@@ -731,6 +758,15 @@ def propose(project: Project, actions: list[Any], *, why: str = "",
         if cur and currency is None:
             currency = cur
 
+    proposal_kwargs: dict[str, Any] = {}
+    if any(entry.action.get("type") == "truth_patch_set" for entry in entries):
+        if len(entries) != 1:
+            raise DirectorError("truth_patch_set cannot be mixed with another action")
+        from .authoring_impact import authoring_basis, authoring_basis_digest
+        paths = [p["path"] for p in entries[0].action["patches"]]
+        basis = authoring_basis(project, paths)
+        proposal_kwargs = {"basis": basis, "basis_digest": authoring_basis_digest(basis)}
+
     proposal = Proposal(
         id=_next_id(project),
         state="proposed",
@@ -741,6 +777,7 @@ def propose(project: Project, actions: list[Any], *, why: str = "",
         actions=entries,
         estimated_cost=round(total, 6),
         currency=currency,
+        **proposal_kwargs,
     )
     _save(project, proposal)
     append_event(project.root, actor, "director_propose",
@@ -772,7 +809,7 @@ def confirm(project: Project, proposal_id: str, actor: str | None = None) -> Pro
     # HUMAN actor: the CLI `manju director confirm` and the GUI 确认 button both
     # run as actor="human"; the MCP `director_confirm` tool runs as actor="ai"
     # and is refused here. Free (local/text) proposals stay AI-confirmable.
-    if _has_priced_action(proposal) and actor != "human":
+    if (_has_priced_action(proposal) or _has_truth_patch(proposal)) and actor != "human":
         raise DirectorError(
             f"proposal {proposal_id} 含付费动作(build/redo/voice)——付费提案必须由人类确认,"
             "不能由 AI 自行确认。请人在 `manju director confirm` 或 GUI 导演页点确认"
@@ -839,7 +876,7 @@ def _claim_confirmed(project: Project, proposal_id: str, actor: str) -> Proposal
             # Round Y (review #15) belt: even a proposal already marked confirmed
             # must have been confirmed BY A HUMAN if it spends — catches a
             # hand-edited file that set confirmed_by to an ai actor.
-            if _has_priced_action(proposal) and proposal.confirmed_by != "human":
+            if (_has_priced_action(proposal) or _has_truth_patch(proposal)) and proposal.confirmed_by != "human":
                 raise DirectorError(
                     f"proposal {proposal_id} 含付费动作,但确认人不是 human"
                     f"(confirmed_by={proposal.confirmed_by!r})——付费提案只能由人类确认后执行")
@@ -1041,6 +1078,7 @@ def _record_action_failure(project: Project, action: dict, exc: ActionError,
         "build": "generate", "redo": "generate", "voice": "voice",
         "repair": "repair", "mixer": "compile", "captions": "captions",
         "packaging": "package", "snapshot": "check", "rollback": "check",
+        "truth_patch_set": "authoring",
     }.get(action["type"], "generate")
     subject = exc.subject or action.get("shot") or action["type"]
     try:
@@ -1333,6 +1371,17 @@ def _do_rollback(project, action, actor, on_phase) -> dict[str, Any]:
                           subject=action.get("shot") or action.get("path") or "rollback") from exc
 
 
+def _do_truth_patch_set(project, action, actor, on_phase) -> dict[str, Any]:
+    from .authoring_patch import apply_truth_patch_set
+    try:
+        return apply_truth_patch_set(project, action, actor=actor)
+    except Exception as exc:
+        raise ActionError(
+            "truth patch adoption failed: " + " ".join(str(exc).split()),
+            subject="truth_patch_set",
+        ) from exc
+
+
 _DISPATCH = {
     "build": _do_build,
     "redo": _do_redo,
@@ -1343,6 +1392,7 @@ _DISPATCH = {
     "packaging": _do_packaging,
     "snapshot": _do_snapshot,
     "rollback": _do_rollback,
+    "truth_patch_set": _do_truth_patch_set,
 }
 
 

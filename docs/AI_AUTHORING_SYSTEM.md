@@ -6,6 +6,13 @@ Manju 引擎不调用 LLM：human/agent 负责导演判断，CLI 负责合同校
 
 ## 真相边界
 
+v5.0 在戏剧事实与生产控制之间增加 Screen Experience 层，但不增加第二套
+VisualPlan、镜头表或 Review store：`story/creative.yaml` 保存戏剧与银幕承诺的
+opt-in 章程，SceneContract v2 保存戏剧变化与 Experience Beats，ShotContract
+内可选 `screen` 保存 Screen Intent。`source_span_refs` 和 `screen` 只进入导演、
+Coverage、Animatic review 与 Control View，不进入 Prompt、picture SPEC 或
+Expectations，因此纯银幕注释变化不会使 take picture-stale。
+
 项目真相是 YAML/Markdown/JSON 和登记过的媒体字节：
 
 - `story/*.md`：故事、结尾、梗概、节拍和剧本；
@@ -20,6 +27,12 @@ Manju 引擎不调用 LLM：human/agent 负责导演判断，CLI 负责合同校
 SceneContract 位于场次源文件，ShotContract 嵌入 ShotSpec；`shot.scene` 保持地点资产语义，戏剧场次引用使用 `ShotSpec.scene_id`。场次成员由 `shots/index.yaml` 顺序与 `scene_id` 派生，SceneContract 不拥有 `shots` 列表。
 
 reports 汇总、ExpectationSet、prompt bundle、readiness view、timeline 和 render 都是派生物，不能成为下一轮编译输入。删掉派生物后应能从文本真相与已登记媒体重新生成。
+
+`reports/derived/story/` 中的 Story/Screen Lint、Source Coverage、Screen
+Experience Coverage、trajectory 与 context packet 都可删除重建。人工或 AI 的
+修改建议继续走唯一 Director Proposal；`truth_patch_set` 必须由人类确认并以
+原子事务采用。Animatic 六遍体验评审和资产资格复用
+`reports/verifications.jsonl`，AI 视觉判断只能 provisional。
 
 新项目包含两个可解析示例：
 

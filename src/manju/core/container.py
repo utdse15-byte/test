@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .authoring import SceneContract
+from .authoring import SceneContract, SceneContractV2, parse_scene_contract
 from .idents import UnsafeIdentifierError, validate_safe_segment, windows_segment_problems
 from .models import (
     PROJECT_FORMAT,
@@ -457,6 +457,22 @@ contract:
         return self.root / "story"
 
     @property
+    def creative_path(self) -> Path:
+        return self.story_dir / "creative.yaml"
+
+    @property
+    def creative_opted_in(self) -> bool:
+        return self.creative_path.is_file()
+
+    def load_creative(self):
+        from .creative import load_creative
+        return load_creative(self)
+
+    def creative_status(self) -> dict[str, Any]:
+        from .creative import creative_status
+        return creative_status(self)
+
+    @property
     def scene_contracts_dir(self) -> Path:
         return self.story_dir / "scenes"
 
@@ -677,16 +693,16 @@ contract:
             path.stem for path in self.scene_contracts_dir.glob("*.yaml") if path.is_file()
         )
 
-    def load_scene_contract(self, scene_id: str) -> SceneContract:
+    def load_scene_contract(self, scene_id: str) -> SceneContract | SceneContractV2:
         path = self.scene_contract_path(scene_id)
         if not path.exists():
             raise ProjectError(f"scene contract file not found: {path.name}")
         data = read_yaml(path)
         if not isinstance(data, dict):
             raise ProjectError(f"scene contract file is not a mapping: {path.name}")
-        return SceneContract.model_validate(data)
+        return parse_scene_contract(data)
 
-    def save_scene_contract(self, contract: SceneContract) -> Path:
+    def save_scene_contract(self, contract: SceneContract | SceneContractV2) -> Path:
         self.verify_manju_identity()
         path = self.scene_contract_path(contract.id)
         path.parent.mkdir(parents=True, exist_ok=True)
