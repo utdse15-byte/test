@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: minimax-h3-handdrawn-live-mix
+skill: prompt-craft
+prompt: >-
+  手绘与实拍混合镜头提供逐字符 prompt_override，包含对白、换行和尾随空格；导出
+  H3 离线作者配置并检查回传流程。
+expected:
+  must:
+    - prompt_override preserved character-for-character
+    - external_manual_roundtrip
+    - claimed_generator unverified
+    - explicit human select
+  must_not:
+    - prompt rewrite or strip
+    - automatic take selection
+review: 对比 prompt.txt 字节，确认回传 sidecar 有 handoff ID、bundle digest 和媒体 SHA256。

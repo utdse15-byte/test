@@ -52,6 +52,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju assets [show <id>]` | U | asset matrix over the bible: 角色/场景/道具/配音/风格 with aliases, relations, appearances |
 | `manju mentions [--check\|--apply]` | U | @角色/@场景 mentions in shot text: report or register into the spec (lock-respecting) |
 | `manju prompt <shot> [--json] / --check` | U | prompt workbench bundle: 4 prompts + refs lineage + provider trace + cost + single-action checks |
+| `manju prompt <shot> --target minimax_h3 [--check\|--json\|--bundle]` | H3 | offline authoring-only H3 projection and deterministic external handoff; never a Provider, network call, cost/qualification input, generated-media claim or Picture Lock evidence |
 | `manju refs shot <shot> [--json]` | U | authored logical bindings + provider delivery allocation (selected/省略+impact) + cleanliness QC; ownership is unique by role and canonical subject scope, while physical blobs may deduplicate without dropping bindings |
 | `manju repair --op voice --shot <id> [--dry-run]` | U | voice repair loop: keep footage, regen TTS, realign cues (manual cues untouched), remix via keys |
 | `manju board scene <id> [--grid 4\|9] / keyframes <shot> --n N [--scaffold]` | U | 4/9-panel storyboards; action → keyframe beats (writes only with --scaffold) |
@@ -64,6 +65,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju series new/new-episode/status/sync-bible/characters/split-script` | V | multi-episode umbrella: episodes are normal projects; global bible with conservative explicit sync |
 | `manju qc brief / qc verdict --from-file` | V | agent-eyes visual QC: frames+context out, hash-bound [AI判读] findings back into run_qc |
 | `manju ingest <dir> [--shot S001] [--role] [--apply]` | X | batch external round-trips: dry-run plan → takes/voice/refs by naming convention, deduped |
+| `manju ingest <file> --shot S001 --apply --no-auto-select --handoff <bundle>` | H3 | preserve external-manual-roundtrip handoff id/digest/media hash with claimed generator unverified; registration never selects the returned take |
 | `manju qc brief --mode consistency / qc coverage` | X | cross-shot consistency briefs (contact sheets, pair boards) + review coverage tracking |
 | `manju tasks cancel/retry <id>` | X | retry failed ledger runs; cancel is GUI-native (running jobs cancel cooperatively, ffmpeg killed) |
 | `manju import --on-duplicate skip\|import\|link` | X | import dedup against the private library with reuse suggestions |

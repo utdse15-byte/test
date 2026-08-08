@@ -1,0 +1,15 @@
+schema: manju.skill-eval/v1
+id: minimax-h3-papercraft-stop-motion
+skill: prompt-craft
+prompt: >-
+  纸艺定格镜头有一张 start keyframe，无普通引用；把原有材质、构图和 endpoint
+  编译成 H3 离线作者配置，不能补写新的动作。
+expected:
+  must:
+    - mode I2VA
+    - start keyframe retained
+    - advisory-only limits
+  must_not:
+    - REF2VA
+    - Provider registration
+review: 检查首帧只承担已有端点/画面变量，输出不路由、不计费、不执行。

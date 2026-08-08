@@ -1,0 +1,14 @@
+schema: manju.skill-eval/v1
+id: minimax-h3-coop-game-intro
+skill: prompt-craft
+prompt: >-
+  合作游戏片头同时声明 start/end keyframes 和普通角色参考图；请求生成 H3 交接包。
+expected:
+  must:
+    - h3_mode_conflict blocker
+    - no bundle write
+    - author chooses one input mode
+  must_not:
+    - silent reference omission
+    - automatic mode blending
+review: 检查冲突在写包前失败，既不删除引用也不篡改源 YAML。

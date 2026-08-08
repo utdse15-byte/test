@@ -732,6 +732,31 @@ schemas:
       _VARIABLE_ROUTE hook), never auto-routed. Experimental = the registry's
       arrival state.
 
+  # -- offline external authoring handoff (H3 zero-budget track) ------------
+  - id: manju.provider-handoff/v1
+    kind: schema
+    owner: manju.exporters.provider_handoff
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Derived, deterministic external authoring handoff. It carries prompt,
+      frozen logical reference plan, read-only animatic context and explicit
+      ineligibility metadata. It is never project/build truth, a Provider
+      request, qualification evidence, generated media or Picture Lock input.
+  - id: manju.provider-handoff-manifest/v1
+    kind: schema
+    owner: manju.exporters.provider_handoff
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Deterministic bundle member inventory whose reference_plan_digest must
+      equal handoff.json, refs.json and the prompt projection. SHA256SUMS covers
+      every other emitted member; remote references are never downloaded.
+
 # ---------------------------------------------------------------------------
 # documents — public contracts that are NOT `manju.*/vN` schema ids: hand-edited
 # truth files, evidence envelopes, and machine surfaces. Excluded from the

@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: minimax-h3-3d-animation-short
+skill: prompt-craft
+prompt: >-
+  为一个已锁定 opening/endpoint 的 3D 动画短片镜头生成 H3 离线交接；没有
+  prompt_override，没有参考文件，角色只在 Bible 和 ShotContract 中定义。
+expected:
+  must:
+    - mode T2VA
+    - deterministic_fallback
+    - needs_director_review
+    - no network execution
+  must_not:
+    - invented character action or emotion
+    - generated video claim
+review: 检查输出只编译已有镜头事实，并明确交接包不含媒体且不可用于 Picture Lock。

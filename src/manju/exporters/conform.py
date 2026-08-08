@@ -901,11 +901,15 @@ _FALLBACK_RULES: dict[str, _Rule] = {
 #: module on disk appears here or in UNSUPPORTED_TARGETS.
 TARGET_CLASSIFIERS: dict[str, dict[str, _Rule]] = _RULES
 
-#: Exporter modules with NO conform classifier, each with the reason. Empty
-#: today — every shipped exporter is classified. Adding exporter #6 without a
+#: Exporter modules with NO conform classifier, each with the reason. Adding
+#: another exporter without a
 #: classifier or a row here fails tests/test_fp_conform.py (no silent
 #: degradation, doc §6.2).
 UNSUPPORTED_TARGETS: dict[str, str] = {
+    "provider_handoff": (
+        "offline prompt/reference handoff bundle, not an NLE or timeline export; "
+        "its loss/eligibility honesty is carried by handoff.json"
+    ),
     # W2 (orchestrator-declared coverage): the FCPXML import-plan module is
     # read-only ANALYSIS, not a writer exit — conform-loss classifies what
     # WRITERS lose; the plan document (manju.fcpxml-import-plan/v1) carries

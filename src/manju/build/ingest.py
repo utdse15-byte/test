@@ -876,7 +876,14 @@ def _maybe_auto_select(project: Project, shot_id: str, take: str, *, actor: str)
         return {"staged": False, "staged_note": f"自动选用检查出错,未选用: {exc}"}
 
 
-def _execute_row(project: Project, row: IngestRow, *, actor: str) -> dict[str, Any]:
+def _execute_row(
+    project: Project,
+    row: IngestRow,
+    *,
+    actor: str,
+    auto_select: bool = True,
+    handoff: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     src = Path(row.file)
     if not src.is_file():
         raise IngestError(f"源文件不存在或不是文件: {row.file}")
@@ -886,10 +893,26 @@ def _execute_row(project: Project, row: IngestRow, *, actor: str) -> dict[str, A
             raise IngestError("take 需要 shot_id")
         if not project.shot_path(row.shot_id).exists():
             raise IngestError(f"镜头不存在: {row.shot_id}")
-        take = register_manual_take(project, row.shot_id, src)
+        take = register_manual_take(project, row.shot_id, src, handoff=handoff)
         media_rel = project.relpath(take.media_path) if take.media_path else None
         detail: dict[str, Any] = {"shot": row.shot_id, "take": take.name, "media": media_rel}
-        detail.update(_maybe_auto_select(project, row.shot_id, take.name, actor=actor))
+        if handoff is not None:
+            detail.update({
+                "source": "external_manual_roundtrip",
+                "handoff_id": handoff.get("handoff_id"),
+                "bundle_digest": handoff.get("bundle_digest"),
+                "claimed_generator": "unverified",
+                "roundtrip_findings": list(
+                    (take.sidecar.qc or {}).get("external_manual_roundtrip") or []
+                ),
+            })
+        if auto_select and handoff is None:
+            detail.update(_maybe_auto_select(project, row.shot_id, take.name, actor=actor))
+        else:
+            detail.update({
+                "staged": False,
+                "staged_note": "manual review required; take was not auto-selected",
+            })
         return detail
 
     if row.action == "voice":
@@ -960,6 +983,8 @@ def apply_ingest(
     clock: Callable[[], datetime] | None = None,
     source: str = "",
     should_cancel: "Callable[[], bool] | None" = None,
+    auto_select: bool = True,
+    handoff: dict[str, Any] | None = None,
 ) -> IngestApplyResult:
     """Execute a (possibly hand-edited) plan through the existing
     registration paths. Runs rows IN ORDER; a row that raises stops the
@@ -1018,7 +1043,13 @@ def apply_ingest(
             })
             continue
         try:
-            detail = _execute_row(project, eff, actor=actor)
+            detail = _execute_row(
+                project,
+                eff,
+                actor=actor,
+                auto_select=auto_select,
+                handoff=handoff,
+            )
         except Exception as exc:
             err = " ".join(str(exc).split()) or exc.__class__.__name__
             results.append(IngestRowResult(row=eff, ok=False, error=err))

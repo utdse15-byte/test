@@ -9,6 +9,9 @@ This is the current product boundary for Manju One v5.0.
 - The existing local GUI uses the same domain and application services as the CLI.
 - Core modules own deterministic domain behavior, evidence, locks, readiness, and QC.
 - Provider adapters are optional boundaries; this closeout does not invoke a real provider.
+- Offline authoring profiles may project existing shot intent into a deterministic
+  human handoff. They remain outside Provider catalogs, routing, cost, qualification,
+  admission, submission, polling, downloads, take registration, and Picture Lock.
 
 ## Removed surface
 

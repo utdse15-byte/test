@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..core.container import Project, TakeInfo
-from ..core.hashing import MANUAL_HASH
+from ..core.hashing import MANUAL_HASH, hash_file
 from ..core.models import TakeSidecar
 from .base import (
     FailureKind,
@@ -38,7 +38,42 @@ class ManualImportProvider(Provider):
         return [register_manual_take(req.project, req.shot.id, Path(file))]
 
 
-def register_manual_take(project: Project, shot_id: str, file: Path) -> TakeInfo:
+def _roundtrip_findings(project: Project, shot_id: str, probe) -> list[dict]:
+    """Advisory duration/aspect checks for an external manual return."""
+    findings: list[dict] = []
+    shot = project.load_shot(shot_id)
+    config = project.load_config()
+    if probe.width and probe.height and config.width and config.height:
+        actual = probe.width / probe.height
+        expected = config.width / config.height
+        if abs(actual - expected) / expected > 0.01:
+            findings.append({
+                "code": "external_return_aspect_mismatch",
+                "level": "warning",
+                "expected": f"{config.width}x{config.height}",
+                "actual": f"{probe.width}x{probe.height}",
+            })
+    if (
+        isinstance(shot.duration, (int, float))
+        and probe.duration_ms is not None
+        and abs(probe.duration_ms - int(float(shot.duration) * 1000)) > 500
+    ):
+        findings.append({
+            "code": "external_return_duration_mismatch",
+            "level": "warning",
+            "expected_ms": int(float(shot.duration) * 1000),
+            "actual_ms": probe.duration_ms,
+        })
+    return findings
+
+
+def register_manual_take(
+    project: Project,
+    shot_id: str,
+    file: Path,
+    *,
+    handoff: dict | None = None,
+) -> TakeInfo:
     """Register human-supplied media as a manual take.
 
     The sidecar records ``provider="manual_import"``, ``spec_hash=MANUAL_HASH``
@@ -49,12 +84,32 @@ def register_manual_take(project: Project, shot_id: str, file: Path) -> TakeInfo
         raise ProviderFailure(
             FailureKind.invalid, f"manual import file not found: {file}"
         )
+    probe = probe_media(file)
+    params = {}
+    qc = {}
+    if handoff is not None:
+        if handoff.get("shot") != shot_id:
+            raise ProviderFailure(
+                FailureKind.invalid,
+                f"handoff shot {handoff.get('shot')!r} does not match {shot_id!r}",
+            )
+        params = {
+            "source": "external_manual_roundtrip",
+            "handoff_id": handoff.get("handoff_id"),
+            "bundle_digest": handoff.get("bundle_digest"),
+            "returned_media_sha256": hash_file(file),
+            "claimed_generator": "unverified",
+        }
+        qc = {"external_manual_roundtrip": _roundtrip_findings(
+            project, shot_id, probe
+        )}
     sidecar = TakeSidecar(
         provider="manual_import",
         spec_hash=MANUAL_HASH,
-        params={},
+        params=params,
         source=str(file),
-        probe=probe_media(file),
+        probe=probe,
+        qc=qc,
     )
     take = project.register_take(shot_id, file, sidecar)  # copies; imports sacred
     # TRISURFACE F-02: select --file and ingest video takes both land here —

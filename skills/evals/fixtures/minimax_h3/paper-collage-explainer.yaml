@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: minimax-h3-paper-collage-explainer
+skill: prompt-craft
+prompt: >-
+  纸张拼贴解释视频有多张已声明 subject_ref/controls 的普通参考图，画面文字为中文，
+  要导出 REF2VA handoff 并保留原文。
+expected:
+  must:
+    - mode REF2VA
+    - logical bindings preserved
+    - visible text preserved in original language
+    - one frozen reference_plan_digest
+  must_not:
+    - translated visible text
+    - second reference selection
+review: 检查多主体逻辑绑定没有因物理去重而丢失，所有结构化文件的摘要相等。

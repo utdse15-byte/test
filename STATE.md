@@ -98,6 +98,18 @@ checks, package audit, and same-commit Ubuntu/Windows evidence are recorded in
 the final certification report. No real provider, paid request, network
 generation, or media Dogfood was run.
 
+### MiniMax H3 zero-budget authoring handoff (2026-08-08)
+
+The H3 track is implemented strictly as an offline `authoring_only` prompt
+profile plus deterministic external handoff. It is not a Provider and does not
+participate in network execution, routing, cost, qualification, paid admission,
+generation or Picture Lock. The bundle reuses the existing prompt/reference,
+animatic and manual ingest/select/QC paths; returned media stays unverified and
+is never auto-selected. Implementation and local evidence are recorded in
+`REPORTS/MINIMAX_H3_ZERO_BUDGET_IMPLEMENTATION_2026-08-08.md`. No MiniMax API,
+weights, local H3 inference, paid request, real H3 output or quality validation
+was used.
+
 ## Do not regress
 - Text is the source of truth.
 - Media is append-only.

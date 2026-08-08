@@ -293,6 +293,16 @@ Sliced by closed loop, not by calendar (see [archived design](docs/archive/DESIG
 
 ## Design
 
+### Zero-budget external authoring handoff
+
+MiniMax H3 is available only as the offline `minimax_h3` authoring profile. It
+does not appear in the Provider catalog and cannot route, price, qualify,
+submit, poll, download, infer locally, or generate media. Use
+`manju prompt S001 --target minimax_h3 --check` to inspect the projection and
+add `--bundle` to write a deterministic human handoff. Returned files use the
+existing dry-run `ingest` and explicit `select` flow; see
+[docs/provider-handoff.md](docs/provider-handoff.md).
+
 The full design rationale — why directory-as-project beats a ZIP container, why
 git *is* the patch engine, why the AI is fully external, the provider protocol,
 cost guardrails, and the FFmpeg pipeline — is in

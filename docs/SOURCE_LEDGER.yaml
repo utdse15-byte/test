@@ -28,3 +28,11 @@ boundaries:
 external_repositories:
   policy: clean_room_methods_only
   runtime_dependencies: []
+  authoring_references:
+    - id: minimax-h3-authoring-2026-08-08
+      owner: MiniMax
+      repository: MiniMax-AI/MiniMax-H3
+      copied_verbatim: false
+      verified_on: 2026-08-08
+      upstream_commit: not_recorded_offline
+      use: unofficial prompt-authoring metadata and external handoff vocabulary only

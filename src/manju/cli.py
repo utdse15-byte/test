@@ -1355,6 +1355,12 @@ def ingest(
              "import(仍按正常分类导入,附带提示) | link(同 import,但从素材库复制,标注来源)"),
     apply: bool = typer.Option(
         False, "--apply", help="执行计划;默认只预演(dry-run),不改动任何文件"),
+    no_auto_select: bool = typer.Option(
+        False, "--no-auto-select",
+        help="register returned takes without selecting them"),
+    handoff: Optional[Path] = typer.Option(
+        None, "--handoff",
+        help="provider handoff bundle/directory whose lineage the return preserves"),
     as_json: bool = typer.Option(False, "--json"),
 ):
     """批量入库 batch ingest — 把外部产出的一批素材(目录或文件列表),按文件名约定
@@ -1374,6 +1380,23 @@ def ingest(
     project = _project()
     if shot:
         shot = _resolve_shot_arg(project, shot)
+    handoff_data = None
+    if handoff is not None:
+        from .exporters.provider_handoff import (
+            ProviderHandoffError,
+            read_handoff_metadata,
+        )
+
+        try:
+            handoff_data = read_handoff_metadata(handoff)
+        except ProviderHandoffError as exc:
+            _fail(str(exc), code="bad_args")
+        if shot is not None and handoff_data["shot"] != shot:
+            _fail(
+                f"handoff shot {handoff_data['shot']!r} does not match --shot {shot!r}",
+                code="bad_args",
+            )
+        no_auto_select = True
     try:
         plan = plan_ingest(project, paths, role=role, shot=shot, on_duplicate=on_duplicate)
     except IngestError as exc:
@@ -1390,13 +1413,27 @@ def ingest(
         return
 
     with _write_lock(project):
-        result = apply_ingest(project, plan, actor=ACTOR,
-                              source=", ".join(str(p) for p in paths))
+        result = apply_ingest(
+            project,
+            plan,
+            actor=ACTOR,
+            source=", ".join(str(p) for p in paths),
+            auto_select=not no_auto_select,
+            handoff=handoff_data,
+        )
 
     if as_json:
         _emit({**plan.to_dict(), **result.to_dict()}, True)
     else:
         _print_ingest_table(plan, result=result)
+        for row_result in result.results:
+            for finding in row_result.detail.get("roundtrip_findings", []):
+                typer.secho(
+                    f"  {finding['level']} {finding['code']}: "
+                    f"expected={finding.get('expected') or finding.get('expected_ms')} "
+                    f"actual={finding.get('actual') or finding.get('actual_ms')}",
+                    fg=typer.colors.YELLOW,
+                )
         # TRISURFACE F-15: say what the bible write just cost — a ref-image
         # registration staled every shot referencing the asset, and the next
         # build re-generates them (real money on a paid provider).
@@ -4895,6 +4932,15 @@ def prompt(
         False, "--check",
         help="lint EVERY shot's action/prompt text; exit non-zero on warnings"),
     as_json: bool = typer.Option(False, "--json"),
+    target: Optional[str] = typer.Option(
+        None, "--target",
+        help="offline prompt authoring target (currently: minimax_h3)"),
+    bundle: bool = typer.Option(
+        False, "--bundle",
+        help="write a deterministic external handoff bundle (requires --target)"),
+    output: Path = typer.Option(
+        Path("exports/provider_handoff"), "--output",
+        help="handoff bundle base directory"),
 ):
     """Prompt workbench (goal 7/8) — read-only.
 
@@ -4907,6 +4953,112 @@ def prompt(
     project = _project()
     if shot_id:
         shot_id = _resolve_shot_arg(project, shot_id)
+
+    if target is not None:
+        if target != "minimax_h3":
+            _fail(
+                f"unknown offline prompt target: {target} (available: minimax_h3)",
+                code="bad_args",
+            )
+        from .providers.minimax_h3_prompt import build_h3_projection
+        from .providers.refs import (
+            ReferenceControlConflict,
+            resolve_refs,
+            validate_control_ownership,
+        )
+
+        def h3_projection(sid: str) -> dict:
+            shot = project.load_shot(sid)
+            bible = project.load_bible()
+            refset = resolve_refs(project, shot, bible)
+            validate_control_ownership(refset)
+            return build_h3_projection(
+                shot, bible, refset, project_root=project.root
+            )
+
+        if bundle:
+            if check:
+                _fail("--bundle and --check are separate actions", code="bad_args")
+            if shot_id is None:
+                _fail("--bundle requires a shot id", code="bad_args")
+            from .exporters.provider_handoff import (
+                ProviderHandoffError,
+                write_handoff_bundle,
+            )
+
+            try:
+                with _write_lock(project):
+                    path, handoff = write_handoff_bundle(
+                        project, shot_id, output=output, target=target
+                    )
+            except (ProviderHandoffError, ReferenceControlConflict) as exc:
+                _fail(str(exc), code="bad_args")
+            result = {
+                "bundle": str(path),
+                "handoff_id": handoff["handoff_id"],
+                "bundle_digest": handoff["bundle_digest"],
+                "reference_plan_digest": handoff["reference_plan_digest"],
+                "generated_media": "absent",
+                "picture_lock": "not_eligible",
+            }
+            if as_json:
+                _emit(result, True)
+            else:
+                typer.secho(f"provider handoff: {path}", fg=typer.colors.GREEN)
+                typer.echo(f"  handoff_id={handoff['handoff_id']}")
+                typer.echo("  generated media: absent; Picture Lock: not eligible")
+            return
+
+        selected = [shot_id] if shot_id else project.shot_ids(indexed_only=True)
+        try:
+            projections = [h3_projection(sid) for sid in selected]
+        except (ProjectError, ReferenceControlConflict) as exc:
+            _fail(str(exc), code="bad_args")
+        if check:
+            findings = [
+                {"shot": row["shot"], **finding}
+                for row in projections
+                for finding in row["findings"]
+            ]
+            ok = not any(row["level"] == "blocker" for row in findings)
+            if as_json:
+                _emit({"target": target, "findings": findings, "ok": ok}, True)
+            else:
+                if not findings:
+                    typer.secho("minimax_h3 prompt check: clean", fg=typer.colors.GREEN)
+                for finding in findings:
+                    color = (
+                        typer.colors.RED
+                        if finding["level"] == "blocker"
+                        else typer.colors.YELLOW
+                    )
+                    typer.secho(
+                        f"{finding['shot']} {finding['level']} "
+                        f"{finding['code']}: {finding['message']}",
+                        fg=color,
+                    )
+            if not ok:
+                raise typer.Exit(1)
+            return
+        if shot_id is None:
+            _fail("prompt --target requires a shot id or --check", code="bad_args")
+        projection = projections[0]
+        if as_json:
+            _emit(projection, True)
+            return
+        typer.secho(
+            f"{projection['shot']}  {target}  mode={projection['mode']}",
+            fg=typer.colors.CYAN,
+        )
+        typer.echo(projection["prompt"])
+        typer.echo(
+            f"reference_plan_digest={projection['reference_plan_digest']}"
+        )
+        for finding in projection["findings"]:
+            typer.echo(
+                f"  {finding['level']} {finding['code']}: {finding['message']}"
+            )
+        return
 
     if check:
         from .qc.prompt_checks import check_all, has_blocking
