@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: video-authoring-exact-override
+skill: prompt-craft
+prompt: >-
+  Project a shot whose generation.prompt_override contains leading spaces,
+  mixed line endings, and non-English dialogue.
+expected:
+  must:
+    - prompt_override origin
+    - character-for-character prompt text
+    - author_override_unverified
+    - exact UTF-8 prompt bytes in the handoff
+  must_not:
+    - strip whitespace
+    - translate, rewrite, or add sections
+review: Compare the authored string and prompt.txt bytes exactly.

@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: video-authoring-verified-manual-return
+skill: prompt-craft
+prompt: >-
+  Ingest a manually returned video against a v2 handoff after the prompt file
+  has been modified without updating its manifest.
+expected:
+  must:
+    - handoff_member hash or size failure
+    - verification completes before registration
+    - no take is created
+    - no automatic selection
+  must_not:
+    - trust top-level identity alone
+    - claim the external generator
+review: Verify fail-closed ordering and that no project media state changes.

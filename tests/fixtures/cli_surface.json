@@ -200,6 +200,28 @@
     "exists": true,
     "params": []
   },
+  "handoff create": {
+    "exists": true,
+    "params": [
+      "shot_id"
+    ]
+  },
+  "handoff inspect": {
+    "exists": true,
+    "params": [
+      "bundle"
+    ]
+  },
+  "handoff profiles": {
+    "exists": true,
+    "params": []
+  },
+  "handoff verify": {
+    "exists": true,
+    "params": [
+      "bundle"
+    ]
+  },
   "help-workflow": {
     "exists": true,
     "params": []

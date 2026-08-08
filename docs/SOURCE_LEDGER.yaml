@@ -24,6 +24,15 @@ owners:
 boundaries:
   screen_intent: "director, coverage, animatic review and control views only"
   screen_intent_excluded_from: [prompt, picture_spec, expectations]
+  video_authoring_plan: >-
+    derived in memory from ShotSpec, ShotContract, Bible, keyframes, dialogue
+    and the existing reference resolver; never editable project truth
+  video_authoring_profiles: >-
+    offline prompt dialects only; never runtime Providers, routing, pricing,
+    qualification, submission, polling, download, inference or Picture Lock
+  external_handoff_return: >-
+    full bundle verification precedes manual take registration; generator
+    identity remains unverified and automatic selection remains forbidden
   legacy_projects: no_auto_migration
 external_repositories:
   policy: clean_room_methods_only

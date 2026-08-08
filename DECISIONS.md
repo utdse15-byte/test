@@ -106,6 +106,13 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #2` | 2026-08-07 | Current product boundary is project files + CLI + GUI | docs/ARCHITECTURE_BOUNDARIES.md, src/manju/cli.py, src/manju/gui/ |
 | `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #3` | 2026-08-07 | Breaking removal advances the release to 0.2.0 | pyproject.toml, src/manju/__init__.py, core/proposal_paths.py |
 | `V5-CLOSEOUT-AND-PROTOCOL-REMOVAL #4` | 2026-08-07 | Certification remains bound to measured local and same-SHA CI evidence | REPORTS/MCP_REMOVAL_AND_V5_CLOSEOUT_2026-08-07.md, REPORTS/LAST_GREEN.yaml |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #1` | 2026-08-08 | Authoring profiles remain separate from executable Providers | providers/prompt_profiles.py, providers registry |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #2` | 2026-08-08 | Canonical authoring plan is derived in memory, never project truth | providers/video_authoring.py |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #3` | 2026-08-08 | Physical assets, logical bindings and Subjects have separate identities | providers/video_authoring.py, providers/refs.py |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #4` | 2026-08-08 | V2 handoffs are generic, atomic, immutable and version-bound | exporters/provider_handoff.py |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #5` | 2026-08-08 | Full bundle verification completes before ingest registration | exporters/provider_handoff.py, manju ingest |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #6` | 2026-08-08 | Manual return never proves generator identity or auto-selects | providers/manual.py, build/ingest.py |
+| `VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION #7` | 2026-08-08 | Evidence is offline-only and does not advance last-green | REPORTS/VIDEO_AUTHORING_GENERALIZATION_2026-08-08.md, REPORTS/LAST_GREEN.yaml |
 | `DOCS-CLOSEOUT #1` | 2026-08-01 | README 加目录、90 行命令表搬进 docs/CLI.md(正文 48.3k→27.4k 字符);扫描跟着内容走 | README.md, docs/CLI.md, tests/test_fp_docs.py |
 | `DOCS-CLOSEOUT #2` | 2026-08-01 | DESIGN_v2.1 归档到 docs/archive/ 并标注被 v2.2 取代;活文档不再指旧路径 | docs/archive/DESIGN_v2.1.md, README.md |
 | `DOCS-CLOSEOUT #3` | 2026-08-01 | LAST_GREEN 自称 CI 盖章而无 workflow 调它:改说真话 + 用真 run 首次盖章(efd7783 双绿) | REPORTS/LAST_GREEN.yaml, scripts/dev/update_last_green.py, STATE.md |
@@ -4233,3 +4240,45 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    the prior measured same-SHA result until real runs exist for the closeout
    commit. No Provider, paid request, network generation, or real-media Dogfood
    was executed during this decision.
+
+## VIDEO-AUTHORING-AND-HANDOFF-GENERALIZATION (2026-08-08)
+
+1. **Authoring profiles are not Providers.** `portable_video` and
+   `minimax_h3` are a static code-owned whitelist with forbidden network and
+   unavailable execution. They never enter Provider catalog, routing, pricing,
+   qualification, admission, submit, poll, download, take registration, or
+   Picture Lock logic. The no-MCP product boundary remains unchanged.
+2. **The canonical plan is derived, frozen, and disposable.** One in-memory
+   `VideoAuthoringPlan` is built from existing Shot/ShotContract/Bible/refs/
+   keyframe/dialogue truth for each operation. No `video_intent.yaml`,
+   generation IR, portable prompt file, or reference-graph truth is added to a
+   project. H3's T2VA/I2VA/L2VA/FL2VA/REF2VA values remain H3 dialect terms,
+   not global truth.
+3. **Physical assets and logical control are different dimensions.** The
+   derived ReferenceGraph stores unique physical assets, every logical binding,
+   and explicitly normalized Subjects separately. One Picture may support many
+   Subjects and one Subject may use many Pictures. Missing `subject_ref` never
+   triggers guessed aggregation. Profile file limits count physical assets,
+   while controls/ignore ownership remains with the existing reference owner.
+4. **Handoff is generic, versioned, atomic, and immutable.** New writers emit
+   `manju.provider-handoff/v2` and manifest v2, bind format/renderer/profile
+   revisions in semantic identity, build and verify a sibling temporary tree,
+   then atomically rename it. A valid byte-identical destination is reused;
+   any mismatch fails closed and is never patched in place. V1 remains a
+   permanent verified read path and is never rewritten.
+5. **Verification precedes lineage.** The sole verifier checks directory
+   containment, symlink/reparse refusal, casefold uniqueness, schemas and
+   registered/legacy profile, regular-file inventory, byte lengths, SHA-256,
+   exact `SHA256SUMS`, and handoff/manifest identity. `ingest --handoff`
+   completes it before registering the first take.
+6. **A manual return proves neither execution nor authorship.** Returned media
+   remains `external_manual_roundtrip`, `claimed_generator: unverified`, and
+   `auto_select: false`. A profile, handoff, filename, or successful ingest
+   cannot prove generator identity, output quality, official certification,
+   production fitness, or Picture Lock eligibility.
+7. **Evidence remains bounded.** This implementation used only synthetic bytes,
+   temporary projects, deterministic local projections, CLI tests, and offline
+   verification. It used no paid API, network generation, model weights, local
+   inference, GPU, real H3/other model output, or film-quality validation. The
+   official last-green SHA is not advanced without same-SHA Ubuntu and Windows
+   evidence.

@@ -756,6 +756,64 @@ schemas:
       Deterministic bundle member inventory whose reference_plan_digest must
       equal handoff.json, refs.json and the prompt projection. SHA256SUMS covers
       every other emitted member; remote references are never downloaded.
+  - id: manju.provider-handoff/v2
+    kind: schema
+    owner: manju.exporters.provider_handoff
+    status: experimental
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: >-
+      Current generic external-authoring handoff. It binds a derived canonical
+      plan to one statically registered authoring profile, semantic and renderer
+      revisions, explicit non-execution claims, and manual-return lineage. The
+      canonical plan is never editable project truth and the bundle is never a
+      runtime Provider request or Picture Lock input.
+  - id: manju.provider-handoff-manifest/v2
+    kind: schema
+    owner: manju.exporters.provider_handoff
+    status: experimental
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: >-
+      Current immutable bundle inventory. manifest_digest covers the sorted
+      final member rows; SHA256SUMS exactly covers those members plus the
+      manifest. Verification of paths, regular files, inventory, bytes, hashes,
+      schemas, profile and identity finishes before manual ingest registration.
+  - id: manju.video-authoring-plan/v1
+    kind: schema
+    owner: manju.providers.video_authoring
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Frozen, in-memory-only projection of existing Shot, Bible, keyframe,
+      dialogue and reference truth. It is derived for one operation and is
+      never persisted as a second editable project truth.
+  - id: manju.video-reference-graph/v1
+    kind: schema
+    owner: manju.providers.video_authoring
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Derived separation of unique physical assets, logical transfer bindings
+      and normalized logical subjects. Physical asset limits never count
+      duplicate logical bindings.
+  - id: manju.video-authoring-projection/v1
+    kind: schema
+    owner: manju.providers.portable_video_prompt
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Profile projection over the canonical plan. portable_video is the generic
+      dialect; minimax_h3 remains a separate strict dialect and neither is an
+      executable Provider.
 
 # ---------------------------------------------------------------------------
 # documents — public contracts that are NOT `manju.*/vN` schema ids: hand-edited

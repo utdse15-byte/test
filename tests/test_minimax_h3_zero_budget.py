@@ -20,6 +20,7 @@ from manju.exporters.provider_handoff import (
 from manju.providers.minimax_h3_prompt import build_h3_projection
 from manju.providers.prompt_profiles import (
     MINIMAX_H3_PROFILE,
+    PORTABLE_VIDEO_PROFILE,
     prompt_profile_registry,
 )
 from manju.providers.refs import resolve_refs
@@ -39,7 +40,10 @@ def _projection(project, shot_id):
 
 def test_h3_profile_is_authoring_only_and_not_a_provider():
     registry = prompt_profile_registry()
-    assert registry == {"minimax_h3": MINIMAX_H3_PROFILE}
+    assert registry == {
+        "portable_video": PORTABLE_VIDEO_PROFILE,
+        "minimax_h3": MINIMAX_H3_PROFILE,
+    }
     assert registry["minimax_h3"].kind == "authoring_only"
     assert registry["minimax_h3"].network == "forbidden"
     assert registry["minimax_h3"].execution == "unavailable"

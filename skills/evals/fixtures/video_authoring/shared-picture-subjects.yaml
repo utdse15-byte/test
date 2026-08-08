@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: video-authoring-shared-picture-subjects
+skill: prompt-craft
+prompt: >-
+  Build a reference graph where one physical picture has separate logical
+  bindings for two explicitly named subjects.
+expected:
+  must:
+    - one physical asset
+    - two logical bindings
+    - two logical subjects
+    - one copied asset
+  must_not:
+    - duplicate physical file count
+    - guessed subject aggregation
+review: Verify that physical deduplication does not erase either subject binding.

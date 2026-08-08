@@ -110,6 +110,7 @@ def _strip_provenance(text: str) -> str:
 # new English-only top-level command appears without an entry here, so the table
 # cannot silently fall behind the surface.
 _ZH_LEAD: dict[str, str] = {
+    'handoff': '离线视频创作与外部交接包',
     'align': '把导入的真人配音对齐到剧本',
     'analyze': '产出绑定到精确媒体哈希的派生证据文档',
     'appearances': '出场表:bible id 与引用它们的镜头交叉对照',
@@ -1384,11 +1385,13 @@ def ingest(
     if handoff is not None:
         from .exporters.provider_handoff import (
             ProviderHandoffError,
-            read_handoff_metadata,
+            verify_handoff_bundle,
         )
 
         try:
-            handoff_data = read_handoff_metadata(handoff)
+            # Integrity and profile verification must finish before apply can
+            # register even the first take.
+            handoff_data = verify_handoff_bundle(handoff).to_dict()["handoff"]
         except ProviderHandoffError as exc:
             _fail(str(exc), code="bad_args")
         if shot is not None and handoff_data["shot"] != shot:
@@ -4925,6 +4928,122 @@ def _print_prompt_checks(findings: list, *, indent: str = "  ") -> None:
                 typer.echo(f"{indent}    {sub['index']}) {text}  ≈{sub['duration_ms']}ms")
 
 
+handoff_app = typer.Typer(
+    no_args_is_help=True,
+    help="Offline video-authoring profiles and verified external handoffs.",
+)
+app.add_typer(handoff_app, name="handoff", rich_help_panel=PANEL_GENERATE)
+
+
+@handoff_app.command("profiles")
+def handoff_profiles(
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """List the static authoring-profile whitelist."""
+    from .providers.prompt_profiles import video_authoring_profile_registry
+
+    rows = [
+        descriptor.to_dict()
+        for descriptor in video_authoring_profile_registry().values()
+    ]
+    if as_json:
+        _emit({"profiles": rows}, True)
+        return
+    for row in rows:
+        typer.echo(
+            f"{row['id']}  {row['display_name']}  "
+            f"kind={row['kind']} network={row['network']} execution={row['execution']}"
+        )
+
+
+@handoff_app.command("create")
+def handoff_create(
+    shot_id: str = typer.Argument(..., metavar="SHOT"),
+    profile_id: str = typer.Option("portable_video", "--profile"),
+    output: Path = typer.Option(
+        Path("exports/provider_handoff"), "--output",
+        help="handoff bundle base directory",
+    ),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Create one immutable v2 handoff bundle."""
+    from .exporters.provider_handoff import ProviderHandoffError, write_handoff_bundle
+
+    project = _project()
+    shot_id = _resolve_shot_arg(project, shot_id)
+    try:
+        with _write_lock(project):
+            path, metadata = write_handoff_bundle(
+                project, shot_id, output=output, target=profile_id
+            )
+    except (ProviderHandoffError, ProjectError) as exc:
+        _fail(str(exc), code="bad_args")
+    result = {
+        "bundle": str(path),
+        "profile": metadata["profile"]["id"],
+        "handoff_id": metadata["handoff_id"],
+        "semantic_digest": metadata["semantic_digest"],
+        "bundle_digest": metadata["bundle_digest"],
+        "reference_plan_digest": metadata["reference_plan_digest"],
+        "generated_media": "absent",
+        "picture_lock": "not_eligible",
+    }
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho(f"provider handoff: {path}", fg=typer.colors.GREEN)
+        typer.echo(f"  handoff_id={metadata['handoff_id']}")
+        typer.echo("  generated media: absent; Picture Lock: not eligible")
+
+
+@handoff_app.command("inspect")
+def handoff_inspect(
+    bundle: Path = typer.Argument(..., exists=False),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Inspect metadata only after full bundle verification."""
+    from .exporters.provider_handoff import ProviderHandoffError, verify_handoff_bundle
+
+    try:
+        verified = verify_handoff_bundle(bundle)
+    except ProviderHandoffError as exc:
+        _fail(str(exc), code="bad_args")
+    result = verified.to_dict()
+    if as_json:
+        _emit(result, True)
+    else:
+        metadata = result["handoff"]
+        typer.echo(f"handoff_id: {metadata['handoff_id']}")
+        typer.echo(f"profile: {metadata.get('target') or metadata.get('profile', {}).get('id')}")
+        typer.echo(f"shot: {metadata['shot']}")
+        typer.echo(f"members: {len(result['members'])}")
+
+
+@handoff_app.command("verify")
+def handoff_verify(
+    bundle: Path = typer.Argument(..., exists=False),
+    as_json: bool = typer.Option(False, "--json"),
+):
+    """Verify schemas, identities, paths, bytes, hashes, and exact inventory."""
+    from .exporters.provider_handoff import ProviderHandoffError, verify_handoff_bundle
+
+    try:
+        verified = verify_handoff_bundle(bundle)
+    except ProviderHandoffError as exc:
+        _fail(str(exc), code="bad_args")
+    result = {
+        "ok": True,
+        "bundle": str(verified.path),
+        "handoff_id": verified.handoff["handoff_id"],
+        "members": len(verified.members),
+    }
+    if as_json:
+        _emit(result, True)
+    else:
+        typer.secho("handoff verification: clean", fg=typer.colors.GREEN)
+        typer.echo(f"  handoff_id={result['handoff_id']}")
+
+
 @app.command(rich_help_panel=PANEL_GENERATE)
 def prompt(
     shot_id: Optional[str] = typer.Argument(None, metavar="SHOT"),
@@ -4934,7 +5053,7 @@ def prompt(
     as_json: bool = typer.Option(False, "--json"),
     target: Optional[str] = typer.Option(
         None, "--target",
-        help="offline prompt authoring target (currently: minimax_h3)"),
+        help="offline prompt authoring target (portable_video or minimax_h3)"),
     bundle: bool = typer.Option(
         False, "--bundle",
         help="write a deterministic external handoff bundle (requires --target)"),
@@ -4955,26 +5074,26 @@ def prompt(
         shot_id = _resolve_shot_arg(project, shot_id)
 
     if target is not None:
-        if target != "minimax_h3":
+        from .providers.prompt_profiles import get_video_authoring_profile
+        from .providers.refs import ReferenceControlConflict
+        from .providers.video_authoring import build_video_authoring_plan
+
+        try:
+            authoring_profile = get_video_authoring_profile(target)
+        except KeyError:
+            from .providers.prompt_profiles import video_authoring_profile_registry
+
+            available = ", ".join(video_authoring_profile_registry())
             _fail(
-                f"unknown offline prompt target: {target} (available: minimax_h3)",
+                f"unknown offline prompt target: {target} (available: {available})",
                 code="bad_args",
             )
-        from .providers.minimax_h3_prompt import build_h3_projection
-        from .providers.refs import (
-            ReferenceControlConflict,
-            resolve_refs,
-            validate_control_ownership,
-        )
 
-        def h3_projection(sid: str) -> dict:
-            shot = project.load_shot(sid)
-            bible = project.load_bible()
-            refset = resolve_refs(project, shot, bible)
-            validate_control_ownership(refset)
-            return build_h3_projection(
-                shot, bible, refset, project_root=project.root
-            )
+        def authoring_projection(sid: str) -> dict:
+            plan = build_video_authoring_plan(project, sid)
+            projected = dict(authoring_profile.project(plan))
+            projected["findings"] = list(authoring_profile.lint(plan, projected))
+            return projected
 
         if bundle:
             if check:
@@ -4997,6 +5116,7 @@ def prompt(
                 "bundle": str(path),
                 "handoff_id": handoff["handoff_id"],
                 "bundle_digest": handoff["bundle_digest"],
+                "semantic_digest": handoff.get("semantic_digest", handoff["bundle_digest"]),
                 "reference_plan_digest": handoff["reference_plan_digest"],
                 "generated_media": "absent",
                 "picture_lock": "not_eligible",
@@ -5011,7 +5131,7 @@ def prompt(
 
         selected = [shot_id] if shot_id else project.shot_ids(indexed_only=True)
         try:
-            projections = [h3_projection(sid) for sid in selected]
+            projections = [authoring_projection(sid) for sid in selected]
         except (ProjectError, ReferenceControlConflict) as exc:
             _fail(str(exc), code="bad_args")
         if check:
@@ -5025,7 +5145,7 @@ def prompt(
                 _emit({"target": target, "findings": findings, "ok": ok}, True)
             else:
                 if not findings:
-                    typer.secho("minimax_h3 prompt check: clean", fg=typer.colors.GREEN)
+                    typer.secho(f"{target} prompt check: clean", fg=typer.colors.GREEN)
                 for finding in findings:
                     color = (
                         typer.colors.RED

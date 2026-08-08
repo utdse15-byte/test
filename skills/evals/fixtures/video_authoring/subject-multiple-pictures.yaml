@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: video-authoring-subject-multiple-pictures
+skill: prompt-craft
+prompt: >-
+  Build a reference graph where two physical pictures explicitly control
+  different properties of the same normalized subject.
+expected:
+  must:
+    - two physical assets
+    - two logical bindings
+    - one aggregated logical subject
+    - controls remain attached to their bindings
+  must_not:
+    - merge the physical files
+    - discard controls or ignore declarations
+review: Verify the many-to-many graph and normalized subject scope without inventing ownership.

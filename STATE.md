@@ -110,6 +110,19 @@ is never auto-selected. Implementation and local evidence are recorded in
 weights, local H3 inference, paid request, real H3 output or quality validation
 was used.
 
+### Video authoring and external handoff generalization (2026-08-08)
+
+The H3-only implementation now sits behind a static offline profile registry
+with `portable_video` and `minimax_h3`. Both consume one frozen, in-memory
+Canonical Video Authoring Plan and many-to-many ReferenceGraph derived from
+existing project truth. New bundles are v2, directory-atomic, immutable, and
+fully verified down to paths, regular-file status, exact inventory, bytes,
+hashes, checksums, schema, profile, and identity before manual ingest writes.
+Legacy v1 H3 bundles remain readable. No runtime Provider, network, paid API,
+model download, local inference, GPU path, editable truth file, automatic
+selection, or removed-protocol surface was added. `REPORTS/LAST_GREEN.yaml` remains on its
+prior measured same-SHA evidence; this local implementation does not update it.
+
 ## Do not regress
 - Text is the source of truth.
 - Media is append-only.

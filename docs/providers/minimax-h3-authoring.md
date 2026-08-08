@@ -12,6 +12,12 @@ cost: not_applicable
 requires_api_key: false
 ```
 
+It consumes the same derived Canonical Video Authoring Plan and ReferenceGraph
+as other authoring profiles. The graph keeps physical assets, logical bindings,
+and normalized Subjects separate, so H3 advisory file limits count unique
+physical assets rather than repeated logical bindings. The plan is in-memory
+only and never becomes another project truth file.
+
 It reads current shot intent, keyframes, and the existing reference resolver.
 It can project `T2VA`, `I2VA`, `L2VA`, `FL2VA`, or `REF2VA`, compile a
 deterministic fallback prompt, preserve `generation.prompt_override` verbatim,
@@ -27,6 +33,7 @@ manju prompt S001 --target minimax_h3
 manju prompt S001 --target minimax_h3 --check
 manju prompt S001 --target minimax_h3 --json
 manju prompt S001 --target minimax_h3 --bundle
+manju handoff create S001 --profile minimax_h3
 ```
 
 Start/end keyframes plus ordinary references are rejected as

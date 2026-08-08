@@ -1,0 +1,16 @@
+schema: manju.skill-eval/v1
+id: video-authoring-portable-start-end
+skill: prompt-craft
+prompt: >-
+  Create a portable_video handoff for a shot with authored start and end
+  keyframes, preserving both roles and their upload order.
+expected:
+  must:
+    - start_and_end_frame dialect summary
+    - explicit start frame before end frame
+    - external capability unverified_at_execution
+    - no network execution
+  must_not:
+    - vendor-specific mode names
+    - generated video claim
+review: Verify that the portable projection uses only authored facts and keeps frame roles explicit.
