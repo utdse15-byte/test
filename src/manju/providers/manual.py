@@ -11,10 +11,12 @@ it is fully equal downstream. Two invariants (§3, §4.3):
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Mapping
 
 from ..core.container import Project, TakeInfo
 from ..core.hashing import MANUAL_HASH, hash_file
 from ..core.models import TakeSidecar
+from .handoff_lineage import VerifiedHandoffLineage, coerce_handoff_lineage
 from .base import (
     FailureKind,
     GenerationRequest,
@@ -72,7 +74,7 @@ def register_manual_take(
     shot_id: str,
     file: Path,
     *,
-    handoff: dict | None = None,
+    handoff: VerifiedHandoffLineage | Mapping[str, Any] | None = None,
 ) -> TakeInfo:
     """Register human-supplied media as a manual take.
 
@@ -88,18 +90,14 @@ def register_manual_take(
     params = {}
     qc = {}
     if handoff is not None:
-        if handoff.get("shot") != shot_id:
+        lineage = coerce_handoff_lineage(handoff)
+        if lineage.shot != shot_id:
             raise ProviderFailure(
                 FailureKind.invalid,
-                f"handoff shot {handoff.get('shot')!r} does not match {shot_id!r}",
+                f"handoff shot {lineage.shot!r} does not match {shot_id!r}",
             )
-        params = {
-            "source": "external_manual_roundtrip",
-            "handoff_id": handoff.get("handoff_id"),
-            "bundle_digest": handoff.get("bundle_digest"),
-            "returned_media_sha256": hash_file(file),
-            "claimed_generator": "unverified",
-        }
+        params = lineage.sidecar_params()
+        params["returned_media_sha256"] = hash_file(file)
         qc = {"external_manual_roundtrip": _roundtrip_findings(
             project, shot_id, probe
         )}

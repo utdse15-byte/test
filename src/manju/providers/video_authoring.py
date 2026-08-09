@@ -276,10 +276,7 @@ def _reference_graph(project: Any, refset: Any) -> ReferenceGraph:
             local_asset = None
             digest = None
             if source_path is not None:
-                try:
-                    local_asset = project.relpath(source_path)
-                except Exception:
-                    local_asset = None
+                local_asset = project.relpath(source_path)
                 if bool(getattr(item, "exists", False)):
                     try:
                         digest = hash_file(source_path)

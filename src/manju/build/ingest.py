@@ -100,7 +100,7 @@ import shutil
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from ..core.container import Project
 from ..core.events import append_event
@@ -112,6 +112,10 @@ from ..core.safeio import _is_reparse_point
 from ..core.writes import WriteRejected, select_take_checked, selected_take_lock_block
 from ..media.preview import make_preview
 from ..providers.manual import register_manual_take
+from ..providers.handoff_lineage import (
+    VerifiedHandoffLineage,
+    coerce_handoff_lineage,
+)
 
 __all__ = [
     "IngestError",
@@ -882,7 +886,7 @@ def _execute_row(
     *,
     actor: str,
     auto_select: bool = True,
-    handoff: dict[str, Any] | None = None,
+    handoff: VerifiedHandoffLineage | None = None,
 ) -> dict[str, Any]:
     src = Path(row.file)
     if not src.is_file():
@@ -898,10 +902,7 @@ def _execute_row(
         detail: dict[str, Any] = {"shot": row.shot_id, "take": take.name, "media": media_rel}
         if handoff is not None:
             detail.update({
-                "source": "external_manual_roundtrip",
-                "handoff_id": handoff.get("handoff_id"),
-                "bundle_digest": handoff.get("bundle_digest"),
-                "claimed_generator": "unverified",
+                **handoff.sidecar_params(),
                 "roundtrip_findings": list(
                     (take.sidecar.qc or {}).get("external_manual_roundtrip") or []
                 ),
@@ -984,7 +985,7 @@ def apply_ingest(
     source: str = "",
     should_cancel: "Callable[[], bool] | None" = None,
     auto_select: bool = True,
-    handoff: dict[str, Any] | None = None,
+    handoff: VerifiedHandoffLineage | Mapping[str, Any] | None = None,
 ) -> IngestApplyResult:
     """Execute a (possibly hand-edited) plan through the existing
     registration paths. Runs rows IN ORDER; a row that raises stops the
@@ -1017,6 +1018,7 @@ def apply_ingest(
     from .batches import new_batch_id, write_batch_record
 
     overrides = overrides or {}
+    handoff_lineage = coerce_handoff_lineage(handoff) if handoff is not None else None
     if batch_id is not None and not is_safe_segment(batch_id):
         raise IngestError(
             f"batch_id 不合法: {batch_id!r} — 只能包含字母、数字、下划线、连字符,长度 1-64"
@@ -1048,7 +1050,7 @@ def apply_ingest(
                 eff,
                 actor=actor,
                 auto_select=auto_select,
-                handoff=handoff,
+                handoff=handoff_lineage,
             )
         except Exception as exc:
             err = " ".join(str(exc).split()) or exc.__class__.__name__

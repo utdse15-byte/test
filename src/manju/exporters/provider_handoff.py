@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import yaml
 
@@ -21,8 +21,9 @@ from ..core.container import ProjectError
 from ..core.hashing import hash_value, short_hash
 from ..providers.prompt_profiles import (
     get_video_authoring_profile,
-    video_authoring_profile_registry,
+    video_authoring_profile_descriptor_history,
 )
+from ..providers.handoff_lineage import VerifiedHandoffLineage
 from ..providers.refs import RefItem, read_ref_bytes
 from ..providers.video_authoring import VideoAuthoringPlan, build_video_authoring_plan
 
@@ -31,7 +32,9 @@ LEGACY_MANIFEST_SCHEMA = "manju.provider-handoff-manifest/v1"
 SCHEMA = "manju.provider-handoff/v2"
 MANIFEST_SCHEMA = "manju.provider-handoff-manifest/v2"
 BUNDLE_FORMAT_REVISION = 2
-RENDERER_REVISION = "2026-08-08.r1"
+_RENDERER_REVISION_R1 = "2026-08-08.r1"
+_RENDERER_REVISION_R2 = "2026-08-08.r2"
+RENDERER_REVISION = _RENDERER_REVISION_R2
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 _SAFE_PROFILE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -62,6 +65,43 @@ class VerifiedHandoff:
             "manifest": _thaw(self.manifest),
             "members": list(self.members),
         }
+
+    def lineage(self) -> VerifiedHandoffLineage:
+        profile = self.handoff.get("profile")
+        profile_id = profile.get("id") if isinstance(profile, Mapping) else None
+        profile_revision = (
+            profile.get("revision") if isinstance(profile, Mapping) else None
+        )
+        return VerifiedHandoffLineage(
+            schema=str(self.handoff["schema"]),
+            shot=str(self.handoff["shot"]),
+            handoff_id=str(self.handoff["handoff_id"]),
+            profile_id=str(profile_id or self.handoff.get("target") or ""),
+            profile_revision=(
+                str(profile_revision) if profile_revision is not None else None
+            ),
+            semantic_digest=str(
+                self.handoff.get("semantic_digest")
+                or self.handoff.get("bundle_digest")
+                or ""
+            ),
+            manifest_digest=(
+                str(self.manifest["manifest_digest"])
+                if self.manifest.get("manifest_digest") is not None
+                else None
+            ),
+            reference_plan_digest=str(self.handoff["reference_plan_digest"]),
+            bundle_format_revision=(
+                int(self.handoff["bundle_format_revision"])
+                if self.handoff.get("bundle_format_revision") is not None
+                else None
+            ),
+            renderer_revision=(
+                str(self.handoff["renderer_revision"])
+                if self.handoff.get("renderer_revision") is not None
+                else None
+            ),
+        )
 
 
 def _fail(code: str, message: str) -> None:
@@ -201,17 +241,86 @@ def _profile_id(handoff: Mapping[str, Any]) -> str:
     profile_id = profile.get("id") if isinstance(profile, dict) else None
     if not isinstance(profile_id, str) or not _SAFE_PROFILE.fullmatch(profile_id):
         _fail("handoff_profile_unknown", f"invalid handoff profile: {profile_id!r}")
-    registry = video_authoring_profile_registry()
-    if profile_id not in registry:
+    history = video_authoring_profile_descriptor_history()
+    if profile_id not in {key[0] for key in history}:
         _fail("handoff_profile_unknown", f"unknown handoff profile: {profile_id}")
     if handoff.get("target") != profile_id:
         _fail("handoff_manifest_invalid", "handoff target/profile identity mismatch")
-    if hash_value(profile) != hash_value(registry[profile_id].to_dict()):
+    revision = profile.get("revision")
+    if not isinstance(revision, str) or not revision:
         _fail(
-            "handoff_manifest_invalid",
-            f"profile metadata does not match registered implementation: {profile_id}",
+            "handoff_profile_revision_unknown",
+            f"invalid handoff profile revision: {revision!r}",
+        )
+    descriptor = history.get((profile_id, revision))
+    if descriptor is None:
+        _fail(
+            "handoff_profile_revision_unknown",
+            f"unknown handoff profile revision: {profile_id}@{revision}",
+        )
+    if hash_value(profile) != hash_value(descriptor.to_dict()):
+        _fail(
+            "handoff_profile_descriptor_mismatch",
+            f"profile metadata does not match descriptor history: {profile_id}@{revision}",
         )
     return profile_id
+
+
+def _semantic_asset_rows(
+    manifest_members: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = []
+    for row in manifest_members:
+        path = row.get("path")
+        if isinstance(path, str) and path.startswith("assets/"):
+            rows.append({
+                "path": path,
+                "sha256": row.get("sha256"),
+                "bytes": row.get("bytes"),
+            })
+    return sorted(rows, key=lambda row: row["path"])
+
+
+def semantic_document_v2(
+    *,
+    handoff: Mapping[str, Any],
+    refs: Mapping[str, Any],
+    prompt_text: str,
+    manifest_members: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Reconstruct the versioned semantic identity from actual bundle content."""
+    renderer_revision = handoff.get("renderer_revision")
+    if renderer_revision not in {_RENDERER_REVISION_R1, _RENDERER_REVISION_R2}:
+        _fail(
+            "handoff_renderer_revision_unknown",
+            f"unknown renderer revision: {renderer_revision!r}",
+        )
+    canonical = handoff.get("canonical")
+    if not isinstance(canonical, Mapping):
+        _fail("handoff_manifest_invalid", "handoff canonical block must be an object")
+    document = {
+        "bundle_format_revision": handoff.get("bundle_format_revision"),
+        "renderer_revision": renderer_revision,
+        "profile": _thaw(handoff.get("profile")),
+        "source_digest": canonical.get("source_digest"),
+        "shot": handoff.get("shot"),
+        "projection": {
+            "mode": handoff.get("mode"),
+            "prompt": prompt_text,
+            "prompt_origin": handoff.get("prompt_origin"),
+            "quality_status": handoff.get("quality_status"),
+        },
+        "reference_plan_digest": handoff.get("reference_plan_digest"),
+        "refs": _thaw(refs),
+        "keyframes": _thaw(handoff.get("keyframes")),
+        "assets": _semantic_asset_rows(manifest_members),
+        "animatic": _thaw(handoff.get("animatic")),
+        "warnings": _thaw(handoff.get("warnings")),
+        "eligibility": _thaw(handoff.get("eligibility")),
+    }
+    if renderer_revision == _RENDERER_REVISION_R2:
+        document["canonical"] = _thaw(canonical)
+    return document
 
 
 def verify_handoff_bundle(path: Path | str) -> VerifiedHandoff:
@@ -297,6 +406,7 @@ def verify_handoff_bundle(path: Path | str) -> VerifiedHandoff:
     if extra_dirs:
         _fail("handoff_unexpected_member", f"unexpected bundle directory: {extra_dirs[0]}")
 
+    member_bytes: dict[str, bytes] = {}
     for name, row in declared.items():
         member = files.get(name)
         if member is None:
@@ -309,6 +419,7 @@ def verify_handoff_bundle(path: Path | str) -> VerifiedHandoff:
             _fail("handoff_member_size_mismatch", f"byte length mismatch for {name}")
         if f"sha256:{_sha256(data)}" != row["sha256"]:
             _fail("handoff_member_hash_mismatch", f"SHA-256 mismatch for {name}")
+        member_bytes[name] = data
 
     checksum_rows = dict(declared)
     checksum_rows["MANIFEST.json"] = {
@@ -385,6 +496,65 @@ def verify_handoff_bundle(path: Path | str) -> VerifiedHandoff:
             or manifest_profile.get("revision") != handoff_profile.get("revision")
         ):
             _fail("handoff_manifest_invalid", "handoff/manifest profile identity mismatch")
+        if "refs.json" not in declared:
+            _fail("handoff_manifest_invalid", "refs.json is not declared")
+        try:
+            prompt_text = member_bytes["prompt.txt"].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            _fail("handoff_manifest_invalid", f"prompt.txt must be exact UTF-8: {exc}")
+        refs_doc, _refs_raw = _load_json(
+            files["refs.json"], code="handoff_manifest_invalid", label="reference graph"
+        )
+        canonical_row = handoff.get("canonical")
+        if not isinstance(canonical_row, dict):
+            _fail("handoff_manifest_invalid", "handoff canonical block must be an object")
+        renderer_revision = handoff.get("renderer_revision")
+        if renderer_revision not in {_RENDERER_REVISION_R1, _RENDERER_REVISION_R2}:
+            _fail(
+                "handoff_renderer_revision_unknown",
+                f"unknown renderer revision: {renderer_revision!r}",
+            )
+        shot = handoff.get("shot")
+        if not isinstance(shot, str) or not shot:
+            _fail("handoff_manifest_invalid", "handoff metadata missing shot")
+        cross_document_mismatch = (
+            refs_doc.get("shot") != shot
+            or refs_doc.get("reference_plan_digest")
+            != handoff.get("reference_plan_digest")
+            or refs_doc.get("reference_graph_digest")
+            != canonical_row.get("reference_graph_digest")
+            or handoff.get("mode") != projection_row.get("dialect_mode")
+            or handoff.get("quality_status") != projection_row.get("quality_status")
+            or (
+                renderer_revision != _RENDERER_REVISION_R1
+                and handoff.get("prompt_origin")
+                != projection_row.get("prompt_origin")
+            )
+        )
+        if cross_document_mismatch:
+            _fail(
+                "handoff_cross_document_mismatch",
+                "handoff, projection, and refs identity fields must agree",
+            )
+        actual_semantic_digest = hash_value(semantic_document_v2(
+            handoff=handoff,
+            refs=refs_doc,
+            prompt_text=prompt_text,
+            manifest_members=members,
+        ))
+        if handoff.get("semantic_digest") != actual_semantic_digest:
+            _fail(
+                "handoff_semantic_digest_mismatch",
+                "semantic_digest does not match actual bundle content",
+            )
+        expected_handoff_id = (
+            f"{profile_id}:{shot}:{short_hash(actual_semantic_digest, 12)}"
+        )
+        if handoff.get("handoff_id") != expected_handoff_id:
+            _fail(
+                "handoff_id_mismatch",
+                "handoff_id does not match the recomputed semantic digest",
+            )
     for key in identity_keys:
         value = handoff.get(key)
         if not isinstance(value, str) or not value:
@@ -559,38 +729,10 @@ def build_handoff(project: Any, shot_id: str, *, target: str = "minimax_h3") -> 
     if not animatic["approval"]["approved"]:
         warnings.append(dict(profile.animatic_warning()))
 
-    semantic_payload = {
-        "bundle_format_revision": BUNDLE_FORMAT_REVISION,
-        "renderer_revision": RENDERER_REVISION,
-        "profile": profile.descriptor.to_dict(),
-        "source_digest": plan.source_digest,
-        "shot": shot_id,
-        "projection": {
-            "mode": projection["mode"],
-            "prompt": projection["prompt"],
-            "prompt_origin": projection["prompt_origin"],
-            "quality_status": projection["quality_status"],
-        },
-        "reference_plan_digest": reference_plan_digest,
-        "refs": refs_doc,
-        "keyframes": keyframes,
-        "assets": [
-            {"path": name, "sha256": f"sha256:{_sha256(data)}", "bytes": len(data)}
-            for name, data in sorted(asset_sources.items())
-        ],
-        "animatic": animatic,
-        "warnings": warnings,
-        "eligibility": projection["eligibility"],
-    }
-    semantic_digest = hash_value(semantic_payload)
-    handoff_id = f"{target}:{shot_id}:{short_hash(semantic_digest, 12)}"
     handoff = {
         "schema": SCHEMA,
         "bundle_format_revision": BUNDLE_FORMAT_REVISION,
         "renderer_revision": RENDERER_REVISION,
-        "handoff_id": handoff_id,
-        "semantic_digest": semantic_digest,
-        "bundle_digest": semantic_digest,
         "target": target,
         "profile": profile.descriptor.to_dict(),
         "shot": shot_id,
@@ -613,6 +755,7 @@ def build_handoff(project: Any, shot_id: str, *, target: str = "minimax_h3") -> 
         "projection": {
             "dialect_mode": projection["mode"],
             "prompt_file": "prompt.txt",
+            "prompt_origin": projection["prompt_origin"],
             "quality_status": projection["quality_status"],
         },
         "claims": {
@@ -629,6 +772,21 @@ def build_handoff(project: Any, shot_id: str, *, target: str = "minimax_h3") -> 
             "auto_select": False,
         },
     }
+    asset_rows = [
+        {"path": name, "sha256": f"sha256:{_sha256(data)}", "bytes": len(data)}
+        for name, data in sorted(asset_sources.items())
+    ]
+    semantic_digest = hash_value(semantic_document_v2(
+        handoff=handoff,
+        refs=refs_doc,
+        prompt_text=projection["prompt"],
+        manifest_members=asset_rows,
+    ))
+    handoff.update({
+        "handoff_id": f"{target}:{shot_id}:{short_hash(semantic_digest, 12)}",
+        "semantic_digest": semantic_digest,
+        "bundle_digest": semantic_digest,
+    })
     return {
         "plan": plan,
         "profile_impl": profile,
@@ -772,8 +930,10 @@ __all__ = [
     "RENDERER_REVISION",
     "SCHEMA",
     "VerifiedHandoff",
+    "VerifiedHandoffLineage",
     "build_handoff",
     "read_handoff_metadata",
+    "semantic_document_v2",
     "verify_handoff_bundle",
     "write_handoff_bundle",
 ]

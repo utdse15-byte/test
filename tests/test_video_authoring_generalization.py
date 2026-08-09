@@ -4,13 +4,16 @@ import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from manju.cli import app
 from manju.core.hashing import hash_value
+from manju.core.models import ProbeInfo
 from manju.core.yamlio import write_yaml
 from manju.exporters.provider_handoff import (
     LEGACY_MANIFEST_SCHEMA,
@@ -22,6 +25,11 @@ from manju.exporters.provider_handoff import (
 )
 from manju.providers.minimax_h3_prompt import project_h3_plan, reference_plan_digest
 from manju.providers.portable_video_prompt import build_portable_projection
+from manju.providers.prompt_profiles import (
+    PORTABLE_VIDEO_PROFILE,
+    video_authoring_profile_registry,
+)
+from manju.providers.refs import RefItem
 from manju.providers.video_authoring import build_video_authoring_plan
 
 
@@ -45,11 +53,24 @@ def _rewrite_manifest_checksums(directory: Path, manifest: dict) -> None:
 
 
 def _replace_declared_member(directory: Path, name: str, data: bytes) -> None:
-    (directory / name).write_bytes(data)
+    _reseal_bundle(directory, {name: data})
+
+
+def _reseal_bundle(
+    directory: Path,
+    replacements: dict[str, bytes],
+    *,
+    manifest_updates: dict | None = None,
+) -> None:
     manifest = json.loads((directory / "MANIFEST.json").read_text(encoding="utf-8"))
-    row = next(row for row in manifest["members"] if row["path"] == name)
-    row["sha256"] = "sha256:" + hashlib.sha256(data).hexdigest()
-    row["bytes"] = len(data)
+    rows = {row["path"]: row for row in manifest["members"]}
+    for name, data in replacements.items():
+        (directory / name).write_bytes(data)
+        row = rows[name]
+        row["sha256"] = "sha256:" + hashlib.sha256(data).hexdigest()
+        row["bytes"] = len(data)
+    if manifest_updates:
+        manifest.update(manifest_updates)
     manifest["manifest_digest"] = hash_value(manifest["members"])
     _rewrite_manifest_checksums(directory, manifest)
 
@@ -89,6 +110,12 @@ def test_v1_is_permanently_readable_with_full_fixity(tmp_path):
     verified = verify_handoff_bundle(_legacy_bundle(tmp_path / "legacy"))
     assert verified.handoff["schema"] == LEGACY_SCHEMA
     assert verified.handoff["target"] == "minimax_h3"
+    lineage = verified.lineage()
+    assert lineage.profile_id == "minimax_h3"
+    assert lineage.profile_revision is None
+    assert lineage.manifest_digest is None
+    assert lineage.bundle_format_revision is None
+    assert lineage.renderer_revision is None
 
 
 def test_canonical_graph_is_many_to_many_and_h3_counts_physical(
@@ -243,7 +270,111 @@ def test_verifier_rejects_link_and_identity_drift(tmp_project, add_shot, tmp_pat
     _replace_declared_member(directory, "handoff.json", _json_bytes(handoff))
     with pytest.raises(ProviderHandoffError) as raised:
         verify_handoff_bundle(directory)
-    assert raised.value.code == "handoff_manifest_invalid"
+    assert raised.value.code == "handoff_cross_document_mismatch"
+
+
+def test_resealed_prompt_with_stale_semantic_digest_is_rejected(
+    tmp_project, add_shot
+):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="semantic-prompt")
+    _replace_declared_member(directory, "prompt.txt", b"resealed prompt")
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_semantic_digest_mismatch"
+
+
+def test_resealed_refs_with_stale_semantic_digest_is_rejected(
+    tmp_project, add_shot
+):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="semantic-refs")
+    refs = json.loads((directory / "refs.json").read_text(encoding="utf-8"))
+    refs["review_note"] = "content changed but byte envelope was resealed"
+    _replace_declared_member(directory, "refs.json", _json_bytes(refs))
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_semantic_digest_mismatch"
+
+
+def test_resealed_asset_with_stale_semantic_digest_is_rejected(
+    tmp_project, add_shot
+):
+    reference = tmp_project.imports_dir / "reference.png"
+    reference.write_bytes(b"original-reference")
+    add_shot(tmp_project, "S001", duration=6, generation={"params": {
+        "images": ["media/imports/reference.png"],
+    }})
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="semantic-asset")
+    asset = next(path for path in directory.rglob("*") if path.is_file()
+                 and path.relative_to(directory).as_posix().startswith("assets/"))
+    name = asset.relative_to(directory).as_posix()
+    _replace_declared_member(directory, name, b"resealed-reference")
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_semantic_digest_mismatch"
+
+
+def test_resealed_canonical_with_stale_semantic_digest_is_rejected(
+    tmp_project, add_shot
+):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="semantic-canonical")
+    handoff = json.loads((directory / "handoff.json").read_text(encoding="utf-8"))
+    handoff["canonical"]["duration_ms"] += 1
+    _replace_declared_member(directory, "handoff.json", _json_bytes(handoff))
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_semantic_digest_mismatch"
+
+
+def test_handoff_id_is_recomputed_from_semantic_digest(tmp_project, add_shot):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="semantic-id")
+    handoff = json.loads((directory / "handoff.json").read_text(encoding="utf-8"))
+    handoff["handoff_id"] = "portable_video:S001:000000000000"
+    _reseal_bundle(
+        directory,
+        {"handoff.json": _json_bytes(handoff)},
+        manifest_updates={"handoff_id": handoff["handoff_id"]},
+    )
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_id_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("dialect_mode", "different"),
+        ("quality_status", "different"),
+        ("prompt_origin", "different"),
+    ],
+)
+def test_projection_duplicate_fields_must_agree(
+    tmp_project, add_shot, field, value
+):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(
+        tmp_project, "S001", output=f"projection-drift-{field}"
+    )
+    handoff = json.loads((directory / "handoff.json").read_text(encoding="utf-8"))
+    handoff["projection"][field] = value
+    _replace_declared_member(directory, "handoff.json", _json_bytes(handoff))
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_cross_document_mismatch"
+
+
+def test_refs_cross_document_identity_must_agree(tmp_project, add_shot):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="refs-drift")
+    refs = json.loads((directory / "refs.json").read_text(encoding="utf-8"))
+    refs["shot"] = "S999"
+    _replace_declared_member(directory, "refs.json", _json_bytes(refs))
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_cross_document_mismatch"
 
 
 @pytest.mark.parametrize(
@@ -328,3 +459,143 @@ def test_ingest_refuses_tampered_handoff_before_registering(
     ])
     assert result.exit_code != 0
     assert not tmp_project.takes("S001", skip_ghosts=True)
+
+
+def test_v2_r1_bundle_remains_readable_after_current_profile_becomes_r2(
+    tmp_project, add_shot, monkeypatch
+):
+    import manju.exporters.provider_handoff as handoff_module
+    import manju.providers.prompt_profiles as profiles_module
+
+    add_shot(tmp_project, "S001", duration=6)
+    monkeypatch.setattr(handoff_module, "RENDERER_REVISION", "2026-08-08.r1")
+    directory, _ = write_handoff_bundle(
+        tmp_project, "S001", target="portable_video", output="historical-profile"
+    )
+    assert verify_handoff_bundle(directory).handoff["renderer_revision"].endswith(".r1")
+
+    current_r2 = replace(PORTABLE_VIDEO_PROFILE, revision="2026-08-08.r2")
+    monkeypatch.setitem(profiles_module._DESCRIPTORS, "portable_video", current_r2)
+    assert video_authoring_profile_registry()["portable_video"].revision.endswith(".r2")
+    assert verify_handoff_bundle(directory).handoff["profile"]["revision"].endswith(".r1")
+
+
+def test_unknown_profile_revision_is_rejected(tmp_project, add_shot):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="unknown-profile-rev")
+    handoff = json.loads((directory / "handoff.json").read_text(encoding="utf-8"))
+    handoff["profile"]["revision"] = "2099-01-01.r999"
+    _reseal_bundle(
+        directory,
+        {"handoff.json": _json_bytes(handoff)},
+        manifest_updates={"profile": {
+            "id": handoff["profile"]["id"],
+            "revision": handoff["profile"]["revision"],
+        }},
+    )
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_profile_revision_unknown"
+
+
+def test_unknown_renderer_revision_is_rejected(tmp_project, add_shot):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="unknown-renderer")
+    handoff = json.loads((directory / "handoff.json").read_text(encoding="utf-8"))
+    handoff["renderer_revision"] = "2099-01-01.r999"
+    _reseal_bundle(
+        directory,
+        {"handoff.json": _json_bytes(handoff)},
+        manifest_updates={"renderer_revision": handoff["renderer_revision"]},
+    )
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_renderer_revision_unknown"
+
+
+def test_known_profile_revision_descriptor_drift_is_rejected(
+    tmp_project, add_shot
+):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(tmp_project, "S001", output="profile-drift")
+    handoff = json.loads((directory / "handoff.json").read_text(encoding="utf-8"))
+    handoff["profile"]["display_name"] = "tampered descriptor"
+    _replace_declared_member(directory, "handoff.json", _json_bytes(handoff))
+    with pytest.raises(ProviderHandoffError) as raised:
+        verify_handoff_bundle(directory)
+    assert raised.value.code == "handoff_profile_descriptor_mismatch"
+
+
+def test_writer_uses_current_profile_and_renderer_revisions(tmp_project, add_shot):
+    import manju.exporters.provider_handoff as handoff_module
+
+    add_shot(tmp_project, "S001", duration=6)
+    _directory, handoff = write_handoff_bundle(
+        tmp_project, "S001", target="portable_video", output="current-revisions"
+    )
+    assert handoff["renderer_revision"] == handoff_module.RENDERER_REVISION
+    assert handoff["renderer_revision"].endswith(".r2")
+    assert handoff["profile"] == (
+        video_authoring_profile_registry()["portable_video"].to_dict()
+    )
+
+
+def test_verified_lineage_survives_cli_manual_roundtrip(
+    tmp_project, add_shot, tmp_path, monkeypatch
+):
+    add_shot(tmp_project, "S001", duration=6)
+    directory, _ = write_handoff_bundle(
+        tmp_project, "S001", target="portable_video", output="lineage"
+    )
+    verified = verify_handoff_bundle(directory)
+    returned = tmp_path / "S001_return.mp4"
+    returned.write_bytes(b"returned-media")
+    monkeypatch.setattr(
+        "manju.providers.manual.probe_media",
+        lambda _path: ProbeInfo(duration_ms=6000, width=1920, height=1080),
+    )
+    monkeypatch.chdir(tmp_project.root)
+    result = CliRunner().invoke(app, [
+        "ingest", str(returned), "--shot", "S001", "--apply",
+        "--no-auto-select", "--handoff", str(directory),
+    ])
+    assert result.exit_code == 0, result.stdout
+
+    take = tmp_project.takes("S001", skip_ghosts=True)[0]
+    params = take.sidecar.params
+    lineage = verified.lineage()
+    assert params["handoff_id"] == lineage.handoff_id
+    assert params["handoff_profile"] == lineage.profile_id
+    assert params["handoff_profile_revision"] == lineage.profile_revision
+    assert params["handoff_semantic_digest"] == lineage.semantic_digest
+    assert params["bundle_digest"] == lineage.semantic_digest
+    assert params["handoff_manifest_digest"] == lineage.manifest_digest
+    assert params["handoff_reference_plan_digest"] == lineage.reference_plan_digest
+    assert params["handoff_bundle_format_revision"] == lineage.bundle_format_revision
+    assert params["handoff_renderer_revision"] == lineage.renderer_revision
+    assert params["claimed_generator"] == "unverified"
+    assert str(directory.resolve()) not in json.dumps(params, ensure_ascii=False)
+    assert tmp_project.load_shot("S001").status.selected_take is None
+
+
+def test_reference_graph_does_not_swallow_unknown_relpath_error(tmp_path):
+    import manju.providers.video_authoring as video_authoring
+
+    item = RefItem(
+        ref="media/imports/reference.png",
+        tier="params",
+        kind="image",
+        path=tmp_path / "reference.png",
+        is_url=False,
+        exists=False,
+        root=tmp_path,
+    )
+
+    class BrokenProject:
+        def relpath(self, _path):
+            raise RuntimeError("programming invariant failed")
+
+    with pytest.raises(RuntimeError, match="programming invariant failed"):
+        video_authoring._reference_graph(
+            BrokenProject(), SimpleNamespace(items=(item,))
+        )

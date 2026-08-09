@@ -147,6 +147,10 @@ _DESCRIPTORS = {
     PORTABLE_VIDEO_PROFILE.id: PORTABLE_VIDEO_PROFILE,
     MINIMAX_H3_PROFILE.id: MINIMAX_H3_PROFILE,
 }
+_PROFILE_DESCRIPTOR_HISTORY = {
+    (PORTABLE_VIDEO_PROFILE.id, PORTABLE_VIDEO_PROFILE.revision): PORTABLE_VIDEO_PROFILE,
+    (MINIMAX_H3_PROFILE.id, MINIMAX_H3_PROFILE.revision): MINIMAX_H3_PROFILE,
+}
 
 
 def get_video_authoring_profile(profile_id: str) -> VideoAuthoringProfile:
@@ -158,6 +162,21 @@ def get_video_authoring_profile(profile_id: str) -> VideoAuthoringProfile:
 
 def video_authoring_profile_registry() -> dict[str, VideoAuthoringProfileDescriptor]:
     return {profile_id: _DESCRIPTORS[profile_id] for profile_id in _PROFILE_FACTORIES}
+
+
+def get_video_authoring_profile_descriptor(
+    profile_id: str, revision: str
+) -> VideoAuthoringProfileDescriptor:
+    """Return a code-owned historical descriptor without executable profile code."""
+    try:
+        return _PROFILE_DESCRIPTOR_HISTORY[(profile_id, revision)]
+    except KeyError as exc:
+        raise KeyError(f"unknown video authoring profile revision: {profile_id}@{revision}") from exc
+
+
+def video_authoring_profile_descriptor_history(
+) -> dict[tuple[str, str], VideoAuthoringProfileDescriptor]:
+    return dict(_PROFILE_DESCRIPTOR_HISTORY)
 
 
 def get_prompt_profile(profile_id: str) -> VideoAuthoringProfileDescriptor:
@@ -179,6 +198,8 @@ __all__ = [
     "VideoAuthoringProfileDescriptor",
     "get_prompt_profile",
     "get_video_authoring_profile",
+    "get_video_authoring_profile_descriptor",
     "prompt_profile_registry",
+    "video_authoring_profile_descriptor_history",
     "video_authoring_profile_registry",
 ]

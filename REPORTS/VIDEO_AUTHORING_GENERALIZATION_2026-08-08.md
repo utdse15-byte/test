@@ -68,3 +68,42 @@ No paid API, network generation, model download, local inference, GPU work,
 real provider output, or film-quality validation was performed. Manual returns
 remain unverified and never auto-select. `REPORTS/LAST_GREEN.yaml` was not
 updated because there is no same-SHA Ubuntu and Windows evidence for this tree.
+
+## Acceptance closeout
+
+The conditional-acceptance follow-up keeps the accepted architecture and closes
+the protocol gaps without adding Provider, runtime, MCP, network, API, model, or
+GPU surfaces:
+
+- The v2 writer and verifier share one renderer-versioned semantic document.
+  The verifier reconstructs it from the exact prompt bytes, parsed refs,
+  manifest asset rows, and handoff fields, then recomputes both
+  `semantic_digest` and `handoff_id`.
+- Renderer r1 retains its original read formula. Current writers use r2, which
+  also binds the complete canonical block. Unknown revisions fail closed.
+- Cross-document shot, reference-plan, reference-graph, mode, quality, and
+  prompt-origin copies must agree.
+- Static profile descriptor history keeps known old profile revisions readable
+  without retaining old executable profile implementations.
+- Verified profile, semantic, manifest, reference-plan, format, and renderer
+  lineage now reaches the manual take sidecar through a frozen path-free value.
+- The reference-graph builder no longer swallows unexpected `relpath()`
+  invariant failures.
+
+Focused closeout coverage includes fully resealed stale prompt, refs, asset,
+canonical, and handoff-ID cases; historical and unknown revisions; descriptor
+drift; sidecar lineage; no stored handoff absolute path; and unexpected relpath
+errors. Current local results are:
+
+```text
+authoring/H3 closeout: 43 passed
+ingest/CLI/Windows-semantics regression: 212 passed / 2 skipped
+repository non-ffmpeg attempt: 6006 passed / 62 skipped / 26 failed / 15 errors
+```
+
+The broad-run failures are outside this change's surfaces and reproduce as
+host limitations: absent `sh`/`grep`, GBK default decoding, a Linux-only font
+fixture plus missing fontconfig data, and Windows PowerShell startup error
+`8009001d`. This remains local evidence only, not a release-green claim.
+`LAST_GREEN` must not advance until the final fix SHA is green on both Ubuntu
+and Windows CI.

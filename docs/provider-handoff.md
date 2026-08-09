@@ -39,11 +39,20 @@ physical assets, profile-authored instructions, copied local assets, the
 manifest, and exact `SHA256SUMS`. `portable_video` adds `UPLOAD_ORDER.md` and
 `CONSTRAINTS.md`.
 
-`semantic_digest` binds the source plan, profile revision, renderer revision,
-and bundle-format revision. `manifest_digest` binds the sorted final payload
-member path/hash/size rows. The manifest and checksum envelope avoid self-hash
-cycles. Existing v1 H3 bundles remain fully readable and fully verified; new
-writers never emit v1.
+`semantic_digest` is recomputed from the actual UTF-8 prompt, parsed
+`refs.json`, asset member path/hash/size rows, profile descriptor, canonical
+facts, projection, and authoring metadata. `handoff_id` is then recomputed from
+that digest. `manifest_digest` separately binds the sorted final payload member
+path/hash/size rows. The manifest and checksum envelope avoid self-hash cycles.
+
+Renderer revision `2026-08-08.r1` remains readable with its original semantic
+formula. Current writers emit `2026-08-08.r2`, which additionally binds the
+complete canonical block and the duplicated prompt-origin projection field.
+Unknown renderer revisions fail closed. Code-owned profile descriptor history
+validates old `(profile id, profile revision)` pairs even after the current
+writer profile advances; arbitrary self-declared profiles remain rejected.
+Existing v1 H3 bundles remain fully readable and fully verified; new writers
+never emit v1.
 
 Publication is directory-atomic and immutable. Manju builds all bytes in a
 sibling temporary directory, flushes them, verifies the complete temporary
@@ -56,8 +65,14 @@ in place.
 `verify_handoff_bundle()` is the only trust entry point. It rejects unsafe
 relative paths, symlinks and Windows reparse points, casefold collisions,
 missing or non-regular members, size/hash drift, a non-exact checksum file,
-unknown files, schema/profile mismatches, and handoff/manifest identity drift.
-`ingest --handoff` completes this verification before registering any take.
+unknown files, schema/profile mismatches, handoff/manifest identity drift,
+cross-document projection/reference drift, stale semantic digests, and stale
+handoff IDs. `ingest --handoff` completes this verification before registering
+any take.
+
+These checks prove self-consistency and content addressing, not third-party
+authenticity. The bundle does not contain a signature, HMAC, certificate, or a
+verified generator identity.
 
 Remote URLs are not downloaded; query and fragment data are removed. Absolute
 host paths, runtime state, credentials, signed queries, and authorization data
@@ -72,8 +87,13 @@ manju ingest returned/S001_external_v1.mp4 --shot S001 --apply \
 manju select S001 <take>
 ```
 
-The first command is a dry run. Handoff-aware apply records
-`external_manual_roundtrip`, the handoff identity, returned-media SHA-256, and
-`claimed_generator: unverified`. It never auto-selects. A filename or manual
-return does not prove generator identity, execution capability, output quality,
-official certification, or Picture Lock eligibility.
+The first command is a dry run. Handoff-aware apply carries a frozen,
+secret-free verified lineage object into registration. The take sidecar records
+the handoff ID, profile ID/revision, semantic and manifest digests, reference
+plan digest, bundle-format and renderer revisions, returned-media SHA-256, and
+`claimed_generator: unverified`. The compatibility `bundle_digest` field remains
+an alias of the semantic digest. External absolute handoff paths are not stored.
+
+Manual returns never auto-select. A filename or manual return does not prove
+generator identity, execution capability, output quality, official
+certification, or Picture Lock eligibility.

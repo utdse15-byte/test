@@ -1381,7 +1381,7 @@ def ingest(
     project = _project()
     if shot:
         shot = _resolve_shot_arg(project, shot)
-    handoff_data = None
+    handoff_lineage = None
     if handoff is not None:
         from .exporters.provider_handoff import (
             ProviderHandoffError,
@@ -1391,12 +1391,12 @@ def ingest(
         try:
             # Integrity and profile verification must finish before apply can
             # register even the first take.
-            handoff_data = verify_handoff_bundle(handoff).to_dict()["handoff"]
+            handoff_lineage = verify_handoff_bundle(handoff).lineage()
         except ProviderHandoffError as exc:
             _fail(str(exc), code="bad_args")
-        if shot is not None and handoff_data["shot"] != shot:
+        if shot is not None and handoff_lineage.shot != shot:
             _fail(
-                f"handoff shot {handoff_data['shot']!r} does not match --shot {shot!r}",
+                f"handoff shot {handoff_lineage.shot!r} does not match --shot {shot!r}",
                 code="bad_args",
             )
         no_auto_select = True
@@ -1422,7 +1422,7 @@ def ingest(
             actor=ACTOR,
             source=", ".join(str(p) for p in paths),
             auto_select=not no_auto_select,
-            handoff=handoff_data,
+            handoff=handoff_lineage,
         )
 
     if as_json:
