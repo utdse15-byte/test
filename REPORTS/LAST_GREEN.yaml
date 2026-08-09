@@ -11,15 +11,15 @@
 # only appear next to a real workflow_run id, and a count nobody read
 # stays null rather than becoming a plausible number.
 
-commit: f4dbdc1867b7b7467b87dde11cdc469dd7bd757e
+commit: f076aee0482e134f1041817e07173ce10c056019
 ubuntu:
-  workflow_run: '31184410026'
+  workflow_run: '31289927126'
   result: success
-  test_count: 6163
+  test_count: 6206
 windows:
-  workflow_run: '31184430755'
+  workflow_run: '31289952433'
   result: success
-  test_count: 6112
+  test_count: 6155
 ffmpeg:
   result: success
-generated_at: '2026-08-07T14:12:42Z'
+generated_at: '2026-08-09T02:40:12Z'

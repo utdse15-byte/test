@@ -5,14 +5,15 @@ accumulate history here. (No test inspects this file's text; it is a human
 note, not a contract.)
 
 Default branch: `claude/fable-opus-task-division-wv97i6`
-Last full-green Windows SHA: `f4dbdc1` — windows-ci run 31184430755 (2026-08-07)
-Last full-green Ubuntu SHA: `f4dbdc1` — ci run 31184410026 (same commit, same day)
+Last full-green Windows SHA: `f076aee` — windows-ci run 31289952433 (2026-08-09)
+Last full-green Ubuntu SHA: `f076aee` — ci run 31289927126 (same commit, same day)
 
 Both greens are on the SAME commit, so REPORTS/LAST_GREEN.yaml is stamped for
-the v5 closeout tree. The Ubuntu run recorded 6163 passed / 5 skipped; the
-Windows hard release gate recorded 6112 passed / 56 skipped and also passed its
-pinned-FFmpeg and install/update/rollback/uninstall checks. No workflow calls
-the generator; a maintainer stamps the measured result by hand.
+the video-authoring acceptance closeout tree. The Ubuntu run recorded 6206
+passed / 5 skipped; the Windows hard release gate recorded 6155 passed / 56
+skipped. It also passed the pinned-FFmpeg and
+install/update/rollback/uninstall checks. No workflow calls the generator; a
+maintainer stamps the measured result by hand.
 
 ## Validation model (which gate runs when)
 - Every commit / PR head: compile + lint (ci.yml `static`) and the full
@@ -120,8 +121,11 @@ fully verified down to paths, regular-file status, exact inventory, bytes,
 hashes, checksums, schema, profile, and identity before manual ingest writes.
 Legacy v1 H3 bundles remain readable. No runtime Provider, network, paid API,
 model download, local inference, GPU path, editable truth file, automatic
-selection, or removed-protocol surface was added. `REPORTS/LAST_GREEN.yaml` remains on its
-prior measured same-SHA evidence; this local implementation does not update it.
+selection, or removed-protocol surface was added. The v2 acceptance closeout
+recomputes semantic identity from actual bundle content, preserves verified
+manifest/profile lineage through manual ingest, and reads known historical
+profile revisions from static descriptors. Same-SHA Ubuntu and Windows evidence
+for `f076aee` is recorded in `REPORTS/LAST_GREEN.yaml`.
 
 ## Do not regress
 - Text is the source of truth.

@@ -66,8 +66,9 @@ gate or cross-platform CI green.
 
 No paid API, network generation, model download, local inference, GPU work,
 real provider output, or film-quality validation was performed. Manual returns
-remain unverified and never auto-select. `REPORTS/LAST_GREEN.yaml` was not
-updated because there is no same-SHA Ubuntu and Windows evidence for this tree.
+remain unverified and never auto-select. Cross-platform code evidence is
+recorded in the acceptance closeout below; it does not change that provider and
+quality boundary.
 
 ## Acceptance closeout
 
@@ -104,6 +105,17 @@ repository non-ffmpeg attempt: 6006 passed / 62 skipped / 26 failed / 15 errors
 The broad-run failures are outside this change's surfaces and reproduce as
 host limitations: absent `sh`/`grep`, GBK default decoding, a Linux-only font
 fixture plus missing fontconfig data, and Windows PowerShell startup error
-`8009001d`. This remains local evidence only, not a release-green claim.
-`LAST_GREEN` must not advance until the final fix SHA is green on both Ubuntu
-and Windows CI.
+`8009001d`. That local attempt is not a release-green claim.
+
+The final implementation commit `f076aee0482e134f1041817e07173ce10c056019`
+then passed both required remote gates on the same SHA:
+
+```text
+Ubuntu CI run 31289927126: 6206 passed / 5 skipped
+Windows hard gate run 31289952433: 6155 passed / 56 skipped
+Windows pinned-FFmpeg check: success
+Windows install/update/rollback/uninstall smoke: success
+```
+
+`REPORTS/LAST_GREEN.yaml` is therefore advanced to that measured implementation
+commit and those exact workflow runs.
