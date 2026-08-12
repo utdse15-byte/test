@@ -1,0 +1,51 @@
+# Audit evidence only. Runtime and build code must never read this file.
+schema: manju.third-party-research-snapshot/v1
+captured_on: 2026-08-11
+runtime_input: false
+upstream_code_executed: false
+upstream_dependencies_installed: false
+upstream_code_copied: false
+network_model_calls: 0
+upstreams:
+  - id: vimax
+    repository: https://github.com/HKUDS/ViMax.git
+    commit: 05a48943878312d88fe5a016c12a9654940ecc43
+    license:
+      file: LICENSE
+      expression: MIT
+      sha256: b800a52c77c8ac924a16bbd34136fe2877f477efac1eaa1af7af0c36703d8966
+    files_read:
+      - LICENSE
+      - readme.md
+      - main_idea2video.py
+      - main_script2video.py
+      - pipelines/script2video_pipeline.py
+    decision: methods_reference_only
+  - id: openchatcut
+    repository: https://github.com/0xsline/OpenChatCut.git
+    commit: 0c0c02df3d25c68a898432ef1b50016d292117f6
+    license:
+      file: LICENSE
+      expression: AGPL-3.0-only
+      sha256: e0eedba615d5cd1b986afb6c5b3a4b1ae33713e7e9dc74d19daec5e3221f9d2e
+    files_read:
+      - LICENSE
+      - README.md
+      - skills/openchatcut/SKILL.md
+      - skills/openchatcut/references/editing-workflow.md
+    decision: optional_process_external_editor_only
+  - id: toonflow-app
+    repository: https://github.com/HBAI-Ltd/Toonflow-app.git
+    commit: bc61ec7a1b5df31293b286981a5f4ad4635464ee
+    license:
+      file: LICENSE
+      expression: Apache-2.0-with-supplementary-commercial-and-branding-terms
+      sha256: 2020f4e9e5754abfd4fbe0b0fc21aa1d411d629b275c5ddffe86b02ff7ba66a7
+    files_read:
+      - LICENSE
+      - docs/README.en.md
+      - src/utils/ai.ts
+      - src/utils/taskRecord.ts
+      - src/utils/vendor.ts
+      - src/utils/vm.ts
+    decision: methods_reference_only

@@ -4300,3 +4300,25 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    process.** Windows PowerShell needs `SYSTEMROOT`; the installer behavior test
    passes that one OS fact while continuing to exclude provider credentials and
    the rest of the parent environment.
+
+## THREE-PROJECTS-ZERO-COST-BOUNDARY (2026-08-11)
+
+1. **Licensing permission does not imply architectural fitness.** ViMax is MIT,
+   OpenChatCut is AGPL-3.0, and Toonflow currently combines Apache-2.0 with
+   supplementary commercial-authorization and branding terms. All three are
+   pinned research references only; none is copied or made a Manju dependency.
+2. **Clean-room methods cross the boundary; implementations do not.** Manju may
+   adapt reviewable planning, continuity, task-state, and draft-approval ideas
+   through existing owners. It rejects ViMax pipeline reuse, OpenChatCut code,
+   Toonflow provider VM/data ownership, and every shared runtime dependency.
+3. **OpenChatCut is process-external and human-controlled.** An independently
+   installed editor may receive verified local files and return local media.
+   Its connection must be loopback-only and its approval must remain manual.
+   This external handoff does not restore the removed Manju MCP surface.
+4. **Zero cost means no billing path exists.** Free tiers, trials, subscriptions,
+   provider credentials, real submits, cloud AI/search, and automatic model
+   downloads are forbidden. Loopback fakes, current local toolchains, existing
+   media, and non-AI local editing are allowed. Future paid work requires a
+   separate plan and cannot be enabled by an override in this edition.
+5. **Third-party absence is a supported state.** ViMax, OpenChatCut, and Toonflow
+   may all be absent while Manju check, build, QC, and export continue to work.

@@ -37,6 +37,11 @@ boundaries:
 external_repositories:
   policy: clean_room_methods_only
   runtime_dependencies: []
+  research_snapshot: docs/architecture/THREE_PROJECT_UPSTREAM_SNAPSHOT.yaml
+  required_surfaces_scanned:
+    - src/manju
+    - skills
+    - pyproject.toml
   authoring_references:
     - id: minimax-h3-authoring-2026-08-08
       owner: MiniMax
@@ -45,3 +50,24 @@ external_repositories:
       verified_on: 2026-08-08
       upstream_commit: not_recorded_offline
       use: unofficial prompt-authoring metadata and external handoff vocabulary only
+    - id: vimax-methods-2026-08-11
+      owner: HKUDS
+      repository: HKUDS/ViMax
+      copied_verbatim: false
+      verified_on: 2026-08-11
+      upstream_commit: 05a48943878312d88fe5a016c12a9654940ecc43
+      use: reject pipeline reuse; adapt only reviewable planning and continuity methods
+    - id: openchatcut-boundary-2026-08-11
+      owner: 0xsline
+      repository: 0xsline/OpenChatCut
+      copied_verbatim: false
+      verified_on: 2026-08-11
+      upstream_commit: 0c0c02df3d25c68a898432ef1b50016d292117f6
+      use: optional process-external localhost editor with manual approval only
+    - id: toonflow-methods-2026-08-11
+      owner: HBAI-Ltd
+      repository: HBAI-Ltd/Toonflow-app
+      copied_verbatim: false
+      verified_on: 2026-08-11
+      upstream_commit: bc61ec7a1b5df31293b286981a5f4ad4635464ee
+      use: reject code and provider VM reuse; adapt only generic task-state vocabulary
