@@ -1,0 +1,12 @@
+..........s.....F                                                        [100%]
+================================== FAILURES ===================================
+_____________ test_current_surface_has_no_removed_protocol_tokens _____________
+tests\test_v5_closeout.py:61: in test_current_surface_has_no_removed_protocol_tokens
+    assert offenders == []
+E   AssertionError: assert ['docs/plans/...L_RUNBOOK.md'] == []
+E     
+E     Left contains 3 more items, first extra item: 'docs/plans/MANJU_THREE_PROJECTS_ZERO_COST_EXECUTION_PLAN.md'
+E     Use -v to get more diff
+=========================== short test summary info ===========================
+FAILED tests/test_v5_closeout.py::test_current_surface_has_no_removed_protocol_tokens
+1 failed, 15 passed, 1 skipped in 39.98s

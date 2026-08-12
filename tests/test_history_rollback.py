@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 
 import pytest
 from typer.testing import CliRunner
@@ -160,8 +161,11 @@ def test_history_merges_events_and_git(tmp_path, monkeypatch):
     assert {"event", "git"} <= sources
     assert [r for r in rows if r["actor"] == "ai" and "select" in r["text"]]
     assert [r for r in rows if r["source"] == "git" and "snapshot" in r["text"]]
-    # oldest→newest ordering
-    assert [r["ts"] for r in rows] == sorted(r["ts"] for r in rows)
+    # oldest→newest by absolute instant. Git emits the committer's local
+    # offset while events use UTC, so ISO strings can cross a calendar date
+    # and must never be compared lexically.
+    instants = [datetime.fromisoformat(r["ts"]).astimezone(timezone.utc) for r in rows]
+    assert instants == sorted(instants)
 
     # CLI smoke: human output carries both kinds of rows
     monkeypatch.chdir(project.root)

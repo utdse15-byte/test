@@ -4282,3 +4282,21 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    inference, GPU, real H3/other model output, or film-quality validation. The
    official last-green SHA is not advanced without same-SHA Ubuntu and Windows
    evidence.
+
+## THREE-PROJECTS-ZERO-COST-BASELINE (2026-08-11)
+
+1. **A pinned FFmpeg is a reference toolchain, not a substitute for fixing
+   compatibility defects.** The 6.1.1 binary remains the established release
+   comparison point, while reproducible failures on newer versions are traced
+   and fixed when Manju owns the assumption. The baseline corpus now resolves
+   fonts through the existing cross-platform owner and passes unchanged on
+   6.1.1 and 8.1.2; the user's system installation is not downgraded.
+2. **External integration documentation does not restore the removed Manju
+   protocol.** Exactly three zero-cost plan/runbook files may describe the
+   localhost-only OpenChatCut boundary. Product runtime, CLI, GUI, skills and
+   all other current documents remain token-scanned, and the removed Manju
+   module remains forbidden.
+3. **Environment isolation preserves only facts required to start the tested
+   process.** Windows PowerShell needs `SYSTEMROOT`; the installer behavior test
+   passes that one OS fact while continuing to exclude provider credentials and
+   the rest of the parent environment.

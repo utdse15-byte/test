@@ -23,8 +23,15 @@ runner = CliRunner()
 
 def _current_surface_files(root: Path) -> list[Path]:
     # This document is the single explanatory record for the removed protocol.
-    # All other current product files must remain token-free.
+    # The three zero-cost integration documents may name the external
+    # OpenChatCut protocol, but remain documentation-only and do not restore a
+    # Manju runtime surface. All other current product files stay token-free.
     excluded = {".git", "REPORTS", "docs/archive", "docs/ARCHITECTURE_BOUNDARIES.md"}
+    external_integration_docs = {
+        "docs/plans/MANJU_THREE_PROJECTS_ZERO_COST_EXECUTION_PLAN.md",
+        "docs/plans/manju_zero_cost_execution_tasks.yaml",
+        "docs/runbooks/MANJU_ZERO_COST_LOCAL_RUNBOOK.md",
+    }
     files: list[Path] = []
     for path in root.rglob("*"):
         if not path.is_file():
@@ -35,7 +42,8 @@ def _current_surface_files(root: Path) -> list[Path]:
         if ("__pycache__" in path.parts or any(part.endswith(".egg-info") for part in path.parts)
                 or path.suffix.lower() not in text_suffixes):
             continue
-        if any(rel == item or rel.startswith(item + "/") for item in excluded):
+        if (rel in external_integration_docs
+                or any(rel == item or rel.startswith(item + "/") for item in excluded)):
             continue
         if rel.startswith(("DECISIONS.md", "PROGRESS.md")):
             continue

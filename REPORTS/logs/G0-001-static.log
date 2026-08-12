@@ -1,0 +1,15 @@
+All checks passed!
+py.exe : ImportError while loading conftest '<REPO>\tests\conftest.py'.
+At line:2 char:415
++ ... STEXITCODE; & py -3.11 -m pytest tests --collect-only -q *>&1 | Tee-O ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ImportError whi...s\conftest.py'.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+tests\conftest.py:20: in <module>
+    from manju.core.container import Project, TakeInfo
+E   ModuleNotFoundError: No module named 'manju'
+
+owner scan for THREE_PROJECTS_BASELINE_:
+
+rg_exit=1
