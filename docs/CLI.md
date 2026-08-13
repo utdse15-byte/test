@@ -102,7 +102,7 @@ frozen and unit-tested; the surface below lands per-milestone.
 | `manju fixity PACK [--info]` | S | archive verify without extracting (streamed, header-blind); packs now self-describe with fixity-covered `MANJU_RESTORE.txt` + engine-registry & toolchain snapshots (omitted honestly when unavailable — never fabricated), all dropped from verified restores |
 | `manju gui [--workspace DIR] [--readonly] [--port] [--app]` | X | 浏览器工作台:与 CLI 同一引擎核,truth 仍在文本,危险操作(unlock/gc --hard)同样缺席;项目外自动给出工作区选择器;`--app` 以 Edge/Chrome 独立窗口打开(#50a)。GUI 能做什么、刻意不做什么见 `docs/WORKBENCH.md`(上手另见 `docs/GUI.md`) |
 | `manju watch [--once] [--interval S]` | — | dev loop:truth 一变就重跑 `manju check`,只读、只 stat 文件,绝不与 build / `manju board --serve` 抢锁 |
-| `manju spend [--json]` | — | 花费视图(§8.3 事后逐笔记账):按供应商/镜头/最近运行拆分 + 估算vs实际差额;读同一份可丢弃 run ledger,ledger 没了退回 take sidecar |
+| `manju spend [--json]` | — | 累计花费视图(§8.3 事后逐笔记账):按供应商/镜头/最近运行拆分 + 估算vs实际差额;读同一份可丢弃 run ledger,ledger 没了退回 take sidecar;`project.yaml` 的 `budget.limit` 是每次构建上限,不跨构建累计 |
 | `manju perf [RUN_ID] [--json]` | — | 运行性能报告(只读派生视图):每阶段耗时、缓存命中率、provider vs 本地耗时、成本合计、最慢阶段;无源数据的指标诚实标 unavailable,从不估算 |
 | `manju evaluate [--json]` | AA | 技能/工作流的诚实用量评估:技能实际被读取次数、redo/repair 的镜头级返工热点、AI QC 判读分布;只读,从不编造生产率数字 |
 | `manju schema [--out DIR]` | M0 | 导出每个 truth-file 模型的 JSON Schema(§4/§12) |

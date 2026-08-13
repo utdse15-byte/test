@@ -152,6 +152,14 @@ Everything else rests on these three invariants:
    reconstructs it from text + media. Backing up a project = copying the folder
    (or `manju pack`). There is no hidden state.
 
+### Budget semantics
+
+`project.yaml`'s `budget.limit` is the **per-build** spending ceiling. The engine
+compares it with the current build's estimate and running actual spend; it does
+not accumulate across separate builds. For cumulative historical spend, use
+`manju spend` (the ledger/sidecar report). The disposable spend report is a view,
+not a build input or a durable cross-build payment gate.
+
 ## Windows 快速开始
 
 Windows 11 x64 是第一平台;全程 per-user、无需管理员。

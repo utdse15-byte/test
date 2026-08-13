@@ -37,8 +37,8 @@ first-class, persistent, human-editable thing instead of scattered pieces:
   via the finals' content keys / ``compare``). Paid actions stay behind the
   EXISTING ask_before / spend-gate at execute time too (defense in depth): the
   ``assume_yes`` that unlocks them comes ONLY from the proposal's confirmed state.
-- **suggest_next()** turns the existing signals (staleness, QC, missing
-  deliverables, budget) into ready-made action payloads an agent/user can pass
+- **suggest_next()** turns the existing signals (staleness, QC and missing
+  deliverables) into ready-made action payloads an agent/user can pass
   straight back into ``propose()`` — closing the loop.
 """
 
@@ -1411,7 +1411,8 @@ def suggest_next(project: Project) -> list[Suggestion]:
     - stale shots → 建议重做 (redo);
     - QC errors/warnings → 建议修复方案 (repair, when a QC item names an op);
     - missing final / cover → 建议生成 (build / package);
-    - budget 近上限 → 提醒 (advisory, no action).
+    - cumulative spend is shown by the spend view; no cross-build budget
+      suggestion is emitted because ``budget.limit`` is per-build.
 
     Funnel awareness (round V, part C): when the creation funnel's current stage
     is still pre-storyboard (立意/梗概/节拍/剧本), the FIRST suggestion is that
@@ -1514,7 +1515,8 @@ def suggest_next(project: Project) -> list[Suggestion]:
             out.append(Suggestion(kind="package", text="已有成片但没有封面 — 建议出封面/预告",
                                   action={"type": "packaging", "op": "package"}))
 
-    # budget near the limit → 提醒 (advisory only)
+    # Historical spend has no current-build context, so it cannot be compared
+    # with the per-build limit here.
     out.extend(_budget_suggestion(project))
     return out
 
@@ -1615,18 +1617,7 @@ def _assurance_suggestions(project: Project) -> list[Suggestion]:
 
 
 def _budget_suggestion(project: Project) -> list[Suggestion]:
-    try:
-        from .spend import spend_report
-
-        report = spend_report(project)
-    except Exception:
-        return []
-    limit = report.get("budget_limit")
-    total = report.get("total") or 0.0
-    if limit and total >= 0.8 * float(limit):
-        cur = report.get("currency") or ""
-        return [Suggestion(
-            kind="budget",
-            text=f"花费护栏提醒:已花 {total:g} / 上限 {float(limit):g} {cur} — 接近上限",
-            action=None)]
+    # spend_report is cumulative history, while budget.limit is enforced per
+    # build. This suggestion has no current-build estimate, so it cannot make
+    # a truthful comparison and deliberately remains empty.
     return []

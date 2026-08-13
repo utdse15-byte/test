@@ -2181,7 +2181,7 @@ def _render_project_panel(project: "Project") -> str:
     spend = " ".join(
         s for s in (str(st.get("total_cost", 0)), st.get("currency") or "") if s)
     if budget:
-        spend += f' / 预算 budget {budget}'
+        spend += f' · 单次构建上限 per-build limit {budget}'
     by_state = st.get("shots_by_state") or {}
     by_state_txt = ", ".join(f"{k}: {len(v)}" for k, v in by_state.items()) or "—"
     voice = st.get("voice_by_state") or {}

@@ -998,7 +998,7 @@ def status(as_json: bool = typer.Option(False, "--json")):
     else:
         spend_txt = f"{info['total_cost']} {info['currency'] or ''}".strip()
     typer.echo(f"花费  {spend_txt}"
-               + (f" / 预算 {info['budget_limit']}" if info["budget_limit"] else ""))
+               + (f" · 每次构建上限 {info['budget_limit']}" if info["budget_limit"] else ""))
     if info.get("qc_focus"):
         typer.secho("质检重点  " + " · ".join(info["qc_focus"]), fg=typer.colors.MAGENTA)
     if recent_failures:
@@ -8886,7 +8886,7 @@ def spend(as_json: bool = typer.Option(False, "--json")):
         typer.echo(f"  预估 / estimated  {report['estimated_total']:g}"
                    f"   δ(实际−预估) {sign}{delta:g}{coverage}")
     if report["budget_limit"] is not None:
-        typer.echo(f"  预算 / budget.limit  {report['budget_limit']:g}")
+        typer.echo(f"  每次构建上限 / per-build budget.limit  {report['budget_limit']:g}")
 
     if report["by_provider"]:
         typer.secho("按供应商 / by provider:", fg=typer.colors.BRIGHT_BLACK)

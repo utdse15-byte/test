@@ -45,6 +45,26 @@ def test_dry_run_is_never_gated(tmp_project, add_shot, priced):
     assert result.estimated_cost == 5.0
 
 
+def test_per_build_budget_ignores_disposable_historical_ledger(
+        tmp_project, add_shot, priced):
+    """Historical ledger spend is not an input to the per-build breaker."""
+    from manju.runtime.state import RuntimeState
+
+    config = tmp_project.load_config()
+    config.budget.limit = 10.0
+    tmp_project.save_config(config)
+    with RuntimeState(tmp_project.root) as state:
+        state.record_run(shot="S000", provider="historical", status="succeeded",
+                         cost=99.0, currency="CNY")
+    add_shot(tmp_project, "S001")
+
+    result = run_build(tmp_project, dry_run=True, actor="ai")
+
+    assert result.ok is True
+    assert result.waiting_user is False
+    assert result.estimated_cost == 5.0
+
+
 def test_zero_cost_plan_is_not_gated(tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     result = run_build(tmp_project, target="qc", actor="ai")
