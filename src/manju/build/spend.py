@@ -4,8 +4,8 @@
 money":
 
     事前  `manju build --dry-run` — per-task cost estimate *before* committing
-    事中  project.yaml `budget.limit` — cumulative spend trips the queue to
-          waiting_user *while* running
+    事中  project.yaml `budget.limit` — this build's running spend trips the
+          queue to waiting_user *while* running; it resets for the next build
     事后  逐笔记账 — every call is booked into the run ledger (provider, cost,
           currency, remote_job_id) *after* the fact; the take sidecar carries
           that call's cost too

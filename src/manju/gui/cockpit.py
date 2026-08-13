@@ -7,7 +7,7 @@ existing engine surfaces the CLI already exposes:
     identity / state  ← build.status.project_status + build.stale.evaluate_all
     final freshness    ← build.exportstatus.deliverables (the final row's verdict)
     next best action   ← build.director.suggest_next
-    risks (exception)  ← project_status (qc / build_lock / crashed-render) + spend
+    risks (exception)  ← project_status (qc / build_lock / crashed-render)
     deliverables       ← build.exportstatus.deliverables
     spend              ← build.spend.spend_report
     queue              ← project_status.run_log.pending_jobs (the resume queue)
@@ -346,22 +346,6 @@ def _risks(project: Project, status: Any, spend: Any) -> dict[str, Any]:
         items.append({"kind": "stale", "level": "warn", "count": len(stale),
                       "shots": stale,
                       "text": f"{len(stale)} 个镜头待更新 (stale):{_join(stale)}"})
-
-    if isinstance(spend, dict):
-        limit = spend.get("budget_limit")
-        total = spend.get("total") or 0.0
-        try:  # a hand-edited non-numeric budget degrades THIS row only (#51)
-            _t, _l = float(total), float(limit) if limit else 0.0
-        except (TypeError, ValueError):
-            limit = None
-        if limit and float(total) >= 0.8 * float(limit):
-            over = float(total) >= float(limit)
-            cur = spend.get("currency") or ""
-            items.append({
-                "kind": "budget", "level": "error" if over else "warn",
-                "ratio": (float(total) / float(limit)) if limit else None,
-                "text": ("已超预算 (over budget):" if over else "接近预算上限 (budget):")
-                        + f" {_num(total)} / {_num(limit)} {cur}".rstrip()})
 
     if status.get("latest_final_note"):
         items.append({"kind": "final", "level": "warn",

@@ -4,7 +4,7 @@ Two surfaces, one truth: :func:`manju.gui.cockpit.cockpit_data` aggregates the
 existing engine reads into the block layout of REPORTS/ROUND-V-REFERENCES-2.md
 (state → one action → activity → risk-by-exception), and the SPA home renders it
 as a hero + block grid served over the same strict-client HTTP server. These
-tests pin the block shapes against fixtures (fresh / stale / budget / healthy),
+tests pin the block shapes against fixtures (fresh / stale / healthy),
 prove per-block degradation (one poisoned source never 500s the cockpit),
 exercise ``GET /api/cockpit`` over real HTTP, and re-assert the CSP/mode-aware
 render invariants the whole GUI is built on.
@@ -122,10 +122,11 @@ def test_cockpit_stale_shot_is_a_risk_with_redo(tmp_project, add_shot, make_take
     assert c["next_action"]["action"] == {"type": "redo", "shot": "S001"}
 
 
-# --------------------------------------------------------------- budget risk
+# --------------------------------------------------------------- budget display
 
 
-def test_cockpit_budget_near_limit_is_a_risk(tmp_project, add_shot, make_take):
+def test_cockpit_cumulative_spend_does_not_claim_budget_risk(
+        tmp_project, add_shot, make_take):
     from manju.core.yamlio import write_yaml
 
     add_shot(tmp_project, "S001")
@@ -134,15 +135,14 @@ def test_cockpit_budget_near_limit_is_a_risk(tmp_project, add_shot, make_take):
     sidecar = take.sidecar
     sidecar.remote = RemoteJobInfo(cost=0.9, currency="CNY")
     write_yaml(take.sidecar_path, sidecar.model_dump(exclude_none=True))
-    # a tight budget → ≥80% trips the guard
+    # The ledger is cumulative, while budget.limit is per-build. The cockpit
+    # has no current-build estimate, so historical spend must not become a risk.
     config = tmp_project.load_config()
     config.budget.limit = 1.0
     tmp_project.save_config(config)
 
     c = cockpit_data(tmp_project)
-    budget = [r for r in c["risks"]["items"] if r["kind"] == "budget"]
-    assert budget, "budget-near-limit should surface as a risk"
-    assert budget[0]["level"] == "warn"  # 0.9/1.0 = 90% (not yet over)
+    assert not any(r["kind"] == "budget" for r in c["risks"]["items"])
     assert c["spend"]["budget_limit"] == 1.0
     assert c["spend"]["total"] == pytest.approx(0.9)
 
@@ -196,7 +196,7 @@ def test_cockpit_degrades_per_block(tmp_project, add_shot, make_take, monkeypatc
     # …and every neighbour still renders (no cascade, no 500)
     for block in ("state", "next_action", "activity", "deliverables", "approvals"):
         assert "error" not in c[block], block
-    # risks still renders — it just omits the (unavailable) budget item
+    # risks still renders — unavailable spend cannot invent a budget risk
     assert "error" not in c["risks"]
     assert not any(r["kind"] == "budget" for r in c["risks"]["items"])
 

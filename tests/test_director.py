@@ -335,15 +335,14 @@ def test_suggest_qc_errors_to_repair_action(project):
     assert act["shot"] == "S001" and act["ms"] == 500 and act["mode"] == "freeze"
 
 
-def test_suggest_budget_near_limit(project, monkeypatch):
+def test_suggest_does_not_compare_cumulative_spend_to_per_build_limit(
+        project, monkeypatch):
     import manju.build.spend as spend
 
     monkeypatch.setattr(spend, "spend_report",
                         lambda p: {"budget_limit": 10.0, "total": 9.0, "currency": "CNY"})
     sugg = d.suggest_next(project)
-    assert any(s.kind == "budget" for s in sugg)
-    budget = next(s for s in sugg if s.kind == "budget")
-    assert budget.action is None  # advisory, no proposal action
+    assert not any(s.kind == "budget" for s in sugg)
 
 
 def test_suggest_action_payloads_round_trip_into_propose(project):

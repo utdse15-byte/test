@@ -42,7 +42,7 @@ Design stance:
 
   * CSP-friendly by construction (``script-src 'self'; style-src 'self'``):
     CSS and JS live in external files, there are no inline handlers and no
-    inline ``style=`` attributes (dynamic geometry — budget bar, timeline
+    inline ``style=`` attributes (dynamic geometry — timeline
     clip widths — goes through the CSSOM, which strict CSP permits); every
     mutating request carries the ``X-Manju-Token`` header read from the
     ``manju-token`` meta tag;
@@ -990,7 +990,7 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 # ---------------------------------------------------------------------- JS --
 # Vanilla ES2020, no frameworks, no external assets. Server data only ever
 # enters the DOM through textContent/createTextNode (dialogue, YAML and git
-# diffs are arbitrary user text). Dynamic styles (budget-bar width, timeline
+# diffs are arbitrary user text). Dynamic styles (timeline
 # clip geometry) are set through the CSSOM (`el.style.* = ...`), which strict
 # `style-src 'self'` permits — unlike `style=` attributes, which this app
 # never uses.
@@ -1574,7 +1574,7 @@ _JS = r"""
    * director), fetched at most once per fingerprint change (mirroring the
    * proposals panel), so it rides the SAME poll with no new machinery. Every
    * node is built via createElement/textContent (CSP + XSS safe); the only
-   * dynamic geometry is a budget mini-bar width set through the CSSOM. */
+   * dynamic geometry is limited to timeline widths set through the CSSOM. */
   let cockFp = null;      /* fingerprint the current cockpit was fetched at */
   let cockStale = false;  /* set by a done job; cleared by the next fetch */
   let cockBusy = false;
@@ -1779,7 +1779,7 @@ _JS = r"""
     }
 
     /* --- RISK BANNER: by exception only (calm when empty) ---------------- */
-    /* the engine risks (qc/stale/budget/broken/lock/crashed-render) come from
+    /* the engine risks (qc/stale/broken/lock/crashed-render) come from
      * /api/cockpit; failed GUI jobs live only in the runner (lastJobs), so they
      * are appended client-side — the fourth risk class the contract names. */
     const risks = c.risks;
@@ -1925,15 +1925,8 @@ _JS = r"""
       const limit = sp && sp.budget_limit;
       b.appendChild(el("div", "ck-line",
         "已花 " + fmtMoney(total) + " " + cur
-        + (limit ? " / 预算 " + fmtMoney(limit) + " " + cur : " / 预算 ∞")));
-      if (typeof limit === "number" && limit > 0) {
-        const ratio = Math.max(0, total / limit);
-        const bar = el("div", "ck-mini-bar");
-        const fill = el("span", "ck-mini-fill" + (ratio > 0.9 ? " over" : ""));
-        fill.style.width = Math.min(100, ratio * 100).toFixed(1) + "%";  /* CSSOM */
-        bar.appendChild(fill);
-        b.appendChild(bar);
-      }
+        + (limit ? " · 每次构建上限 " + fmtMoney(limit) + " " + cur
+                 : " · 每次构建上限 ∞")));
       if (sp && typeof sp.delta === "number") {
         b.appendChild(el("div", "ck-line muted",
           "估算差 (est. delta) " + (sp.delta >= 0 ? "+" : "") + fmtMoney(sp.delta)));
@@ -2176,15 +2169,8 @@ _JS = r"""
 
     const limitTxt = (b.limit === null || b.limit === undefined) ? "∞" : fmtMoney(b.limit);
     root.appendChild(el("div", "spend",
-      "花费 " + fmtMoney(b.total_cost || 0) + " " + (b.currency || "") + " / 预算 " + limitTxt));
-    if (typeof b.limit === "number" && b.limit > 0) {
-      const ratio = Math.max(0, (b.total_cost || 0) / b.limit);
-      const bar = el("div", "bar");
-      const fill = el("span", "bar-fill" + (ratio > 0.9 ? " over" : ""));
-      fill.style.width = Math.min(100, ratio * 100).toFixed(1) + "%";  /* CSSOM: CSP-safe */
-      bar.appendChild(fill);
-      root.appendChild(bar);
-    }
+      "累计花费 " + fmtMoney(b.total_cost || 0) + " " + (b.currency || "")
+      + " · 每次构建上限 " + limitTxt));
     if (s.latest_final_note) {   /* crashed-render honesty (§3) */
       root.appendChild(el("div", "final-note", "⚠ 成片提示 (final note): " + s.latest_final_note));
     }

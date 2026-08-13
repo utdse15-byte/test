@@ -239,6 +239,8 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `THREE-PROJECTS-ZERO-COST-BOUNDARY #3` | 2026-08-11 | OpenChatCut is process-external and human-controlled; loopback-only, manual approval, no MCP restoration | docs/runbooks/ZERO_COST_MODE.md |
 | `THREE-PROJECTS-ZERO-COST-BOUNDARY #4` | 2026-08-11 | Zero cost means no billing path exists — free tiers, trials, credentials and auto model downloads are all forbidden | providers/zero_cost.py, providers/ |
 | `THREE-PROJECTS-ZERO-COST-BOUNDARY #5` | 2026-08-11 | Third-party absence is a supported state; check/build/QC/export keep working without all three | providers/registry.py |
+| `BUDGET-SEMANTICS #1` | 2026-08-13 | `budget.limit` is a per-build ceiling; presentation surfaces keep cumulative history separate | build/graph.py, gui/, board/, cli.py |
+| `BUDGET-SEMANTICS #2` | 2026-08-13 | Disposable ledger/sidecars never become a cross-build payment gate; a durable field would require a new design | .manju/state.sqlite, build/spend.py, README.md |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -4330,3 +4332,19 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    separate plan and cannot be enabled by an override in this edition.
 5. **Third-party absence is a supported state.** ViMax, OpenChatCut, and Toonflow
    may all be absent while Manju check, build, QC, and export continue to work.
+
+## BUDGET-SEMANTICS (2026-08-13)
+
+1. **`project.yaml` `budget.limit` means one build, not a project lifetime.** The
+   engine resets its running estimate/actual total at each `run_build` invocation
+   (including the concurrent generation path). The cockpit, director, board and
+   GUI therefore must not compare cumulative `spend_report()` output with that
+   per-build ceiling or render a cumulative/limit progress ratio. They may show
+   cumulative history and the per-build limit as separate, explicitly labelled
+   facts.
+2. **The disposable ledger is never a payment-gate input.** `.manju/state.sqlite`
+   and its take-sidecar fallback are derived, rebuildable history. Making them the
+   source of a cross-build hard gate would make deleting `.manju` reset the guard
+   and would leave ledger/sidecar fallback behavior inconsistent. A future
+   cumulative ceiling requires a separate durable truth field and a new design;
+   this maintenance fix changes only presentation and documentation.
