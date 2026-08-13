@@ -643,3 +643,51 @@ def test_normal_document_unaffected_by_caps(tmp_path):
     plan_file = plan_fcpxml_import(parse_fcpxml(path), source_sha256="sha256:x")
     assert plan_inline == plan_file
     assert plan_inline["schema"] == PLAN_SCHEMA
+
+
+# --------------------------------------------------------------------------- #
+# 16. MULTI-FORMAT documents — the sequence's OWN format wins                   #
+# --------------------------------------------------------------------------- #
+# A real editorial FCPXML carries more than one <format>: one for the sequence
+# and one per source that was shot differently. Everything downstream — every
+# frame count, every window, the whole rational grid — is derived from the
+# frameDuration picked here, so picking the wrong <format> is not a cosmetic
+# mismatch: it silently re-times the entire document against a grid the editor
+# never chose, and reports no diagnostic while doing it.
+
+
+def _two_format_doc(seq_format: str) -> str:
+    """r1 is 25fps landscape and comes FIRST; r2 is the 1001 family, portrait."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<fcpxml version="1.9"><resources>\n'
+        '<format id="r1" name="FFVideoFormat1080p25" frameDuration="1/25s"'
+        ' width="1920" height="1080"/>\n'
+        '<format id="r2" name="FFVideoFormat1080p2398" frameDuration="1001/24000s"'
+        ' width="1080" height="1920"/>\n'
+        '<asset id="a1" name="S001" src="file:///m/S001/take_01.mp4"'
+        ' start="0s" duration="2s" hasVideo="1" format="r1"/>\n'
+        '</resources>\n'
+        '<library><event><project><sequence format="' + seq_format + '"'
+        ' duration="2s" tcStart="0s">\n'
+        '<spine><asset-clip ref="a1" name="S001" offset="0s" start="0s"'
+        ' duration="2s"/></spine>\n'
+        '</sequence></project></event></library></fcpxml>'
+    )
+
+
+def test_the_sequence_picks_its_declared_format_not_the_first_one():
+    """`<sequence format="r2">` means r2, even when r1 is declared above it."""
+    parsed = parse_fcpxml(_two_format_doc("r2"))
+    assert parsed.frame_duration == Fraction(1001, 24000)
+    assert parsed.rate == Rate.from_fraction(24000, 1001)
+    # geometry rides the same choice — r1 is landscape, r2 is portrait
+    assert (parsed.width, parsed.height) == (1080, 1920)
+
+
+def test_the_first_format_is_only_a_fallback_when_the_sequence_names_none():
+    """With nothing to resolve, falling back to the first format is the honest
+    guess — this pins the fallback as a FALLBACK, not the normal path."""
+    parsed = parse_fcpxml(_two_format_doc(""))
+    assert parsed.frame_duration == Fraction(1, 25)
+    assert (parsed.width, parsed.height) == (1920, 1080)

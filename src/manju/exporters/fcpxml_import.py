@@ -423,8 +423,14 @@ def parse_fcpxml(source: str | Path) -> ParsedFcpxml:
     seq_duration: Fraction | None = None
     if sequence is not None:
         seq_duration = _parse_time(sequence.get("duration"))
-        fmt_el = formats.get(sequence.get("format", "")) or (
-            next(iter(formats.values()), None))
+        # `is None`, not truthiness: a <format> is an EMPTY element, so it is
+        # falsy, and `or` discarded the format the sequence actually named —
+        # every document with more than one <format> silently got the FIRST
+        # one's grid and geometry. The fallback is for a sequence that names
+        # no format at all.
+        fmt_el = formats.get(sequence.get("format", ""))
+        if fmt_el is None:
+            fmt_el = next(iter(formats.values()), None)
         if fmt_el is not None:
             frame_duration = _parse_time(fmt_el.get("frameDuration"))
             width = _int_or_none(fmt_el.get("width"))
