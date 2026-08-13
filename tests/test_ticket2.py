@@ -3,6 +3,7 @@ preserves the project name) + make_sample argparse. Red-first."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -222,12 +223,25 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MAKE_SAMPLE = _REPO_ROOT / "tests" / "fixtures" / "make_sample.py"
 
 
+def _utf8_child_env() -> dict[str, str]:
+    """Environment that makes a Python child process actually WRITE utf-8.
+
+    Declaring ``encoding="utf-8"`` on the parent only says how the pipe is
+    DECODED. A child's ``sys.stdout`` still encodes with the locale code page,
+    so on a cp936 host this script's ``§`` goes out as ``0xa1 0xec``, the
+    reader thread dies on an invalid start byte, and ``proc.stdout`` arrives as
+    ``None`` — an AttributeError far from the real cause.
+    """
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
 def test_make_sample_help_has_no_side_effects(tmp_path, monkeypatch):
     """--help must print usage and create nothing (argparse conversion)."""
     monkeypatch.chdir(tmp_path)
     proc = subprocess.run(
         [sys.executable, str(_MAKE_SAMPLE), "--help"],
         capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO_ROOT),
+        env=_utf8_child_env(),
     )
     assert proc.returncode == 0
     assert "usage" in proc.stdout.lower()
@@ -239,6 +253,7 @@ def test_make_sample_argparse_options(tmp_path):
         [sys.executable, str(_MAKE_SAMPLE), str(tmp_path / "mini"),
          "--shots", "2", "--clip-seconds", "0.5", "--no-bgm"],
         capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO_ROOT),
+        env=_utf8_child_env(),
     )
     assert proc.returncode == 0, proc.stderr
     from manju.core.container import Project
