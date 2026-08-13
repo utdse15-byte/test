@@ -1,13 +1,18 @@
 """Local-command adapter (round-q) — exercised with REAL subprocesses driving
-tiny sh scripts (fast and honest, no mocking). Covers success + lineage, the
-{out}/placeholder substitution (prompt as ONE argv element), env passthrough,
-timeout, missing output, nonzero-exit stderr surfacing."""
+tiny Python helper scripts (fast and honest, no mocking). Covers success +
+lineage, the {out}/placeholder substitution (prompt as ONE argv element), env
+passthrough, timeout, missing output, nonzero-exit stderr surfacing.
+
+The helpers run under sys.executable — the ONE interpreter every supported
+host is guaranteed to have. The original #!/bin/sh fixtures failed wholesale
+on a Windows host with no POSIX shell on PATH (`sh` not found): a fixture
+portability defect, never an adapter one."""
 
 from __future__ import annotations
 
 import os
 import signal
-import stat
+import sys
 import time
 
 import pytest
@@ -19,10 +24,17 @@ from manju.providers.manifest import LOCAL_CMD_ADAPTER, ProviderManifest
 
 
 def _script(tmp_path, name, body):
+    """A tiny Python helper script, run as `sys.executable script ...` so the
+    fixtures work on every host (no POSIX shell / exec bit required)."""
     path = tmp_path / name
-    path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    path.write_text(body, encoding="utf-8")
     return path
+
+
+def _py(script, tail=""):
+    """Command template running `script` with THIS interpreter. Both paths are
+    quoted so a space in either survives _split_command on every platform."""
+    return f'"{sys.executable}" "{script}" {tail}'.strip()
 
 
 def _manifest(command, **overrides):
@@ -49,16 +61,21 @@ def request_for(tmp_project, add_shot):
 
 def test_runs_registers_with_lineage_and_env(tmp_path, request_for):
     # writes the shot id (from MANJU_* env passthrough) into the {out} file
-    script = _script(tmp_path, "gen.sh", 'printf "%s" "$MANJU_SHOT_ID" > "$2"\n')
-    provider = LocalCommandProvider(_manifest(f"sh {script} --out {{out}}"))
+    script = _script(tmp_path, "gen.py", """
+import os, sys
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    fh.write(os.environ["MANJU_SHOT_ID"])
+""")
+    provider = LocalCommandProvider(_manifest(_py(script, "--out {out}")))
     takes = provider.generate(request_for("S001"))
     assert len(takes) == 1
     sc = takes[0].sidecar
     # env passthrough reached the tool
-    assert takes[0].media_path.read_text() == "S001"
+    assert takes[0].media_path.read_text(encoding="utf-8") == "S001"
     # lineage (§4.2): argv, exit code, duration
     assert sc.params["exit_code"] == 0
-    assert sc.params["argv"][0] == "sh" and sc.params["argv"][-1].endswith("out.mp4")
+    assert sc.params["argv"][0] == sys.executable
+    assert sc.params["argv"][-1].endswith("out.mp4")
     assert "--out" in sc.params["argv"]
     assert "duration_s" in sc.params
     assert sc.remote and sc.remote.cost == 0.0
@@ -170,7 +187,7 @@ def test_timeout_reaps_orphaned_grandchild(tmp_path, request_for):
         assert "timed out" in str(exc.value)
 
         assert pidfile.exists(), "wrapper never recorded the grandchild pid"
-        gpid = int(pidfile.read_text().strip())
+        gpid = int(pidfile.read_text(encoding="utf-8").strip())
         # killpg reaped the whole group, not just the wrapper — give the OS a
         # beat to finish reaping the reparented grandchild.
         deadline = time.time() + 5.0

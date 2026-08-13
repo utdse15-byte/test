@@ -245,7 +245,7 @@ def test_audio_drift_carries_a_real_stream_offset(bad_media):
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=start_time", "-of", "json",
          str(bad_media["technical.audio_drift"])],
-        capture_output=True, text=True).stdout
+        capture_output=True, text=True, encoding="utf-8").stdout
     start = float(json.loads(out)["streams"][0]["start_time"])
     floor_ms = CASES["technical.audio_drift"]["probe"]["audio_start_ms_min"]
     assert start * 1000 >= floor_ms, f"audio not drifted: start={start}s"

@@ -36,7 +36,7 @@ def test_fail_json_argv_fallback(tmp_path, monkeypatch):
 
     r = subprocess.run(
         [sys.executable, "-m", "manju.cli", "status", "--json"],
-        capture_output=True, text=True, cwd=tmp_path, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", cwd=tmp_path, timeout=60,
     )
     assert r.returncode != 0
     data = json.loads(r.stdout.strip().splitlines()[-1])

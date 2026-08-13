@@ -300,5 +300,5 @@ def test_served_js_passes_node_syntax_check(tmp_path):
     js_file = tmp_path / "serve.js"
     js_file.write_text(bd._SERVE_JS, encoding="utf-8")
     proc = subprocess.run(["node", "--check", str(js_file)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, f"node --check failed:\n{proc.stderr}"

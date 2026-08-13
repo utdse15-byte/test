@@ -405,6 +405,9 @@ class CredentialSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(newurl)
         if req.get_method() not in ("GET", "HEAD"):
             return None  # never downgrade a paid POST into a GET
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -431,6 +434,9 @@ def _is_loopback_host(host: str | None) -> bool:
 
 def default_transport(method: str, url: str, headers: dict[str, str],
                       body: bytes | None) -> HttpResponse:
+    from .zero_cost import require_transport_allowed
+
+    require_transport_allowed(url)
     scheme = urllib.parse.urlsplit(url).scheme.lower()
     if scheme not in _ALLOWED_URL_SCHEMES:
         # #43: an unexpected scheme (file://, ftp://, data://…) is refused
@@ -953,6 +959,11 @@ class GenericCloudProvider(CloudProvider):
         # default (OUTCOME_UNKNOWN) never swallows a provably-not-sent failure.
         try:
             payload = self._prepared_provider_payload(req)
+            from .zero_cost import require_transport_allowed
+
+            require_transport_allowed(
+                payload.url, credential_ref=payload.auth_key_env
+            )
             req.params["ref_delivery"] = payload.delivery_evidence
             if payload.files:
                 content_type, body = encode_multipart(
@@ -1040,6 +1051,9 @@ class GenericCloudProvider(CloudProvider):
             )
         url_template = self._poll_urls_by_job.get(str(job_id), profile.poll_endpoint_template)
         url = url_template.format(job_id=job_id)
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(url, credential_ref=self.manifest.auth.key_env)
         resp = self._transport("GET", url, self._headers(), None)
         text = resp.text()
         if resp.status == 429:
@@ -1136,6 +1150,9 @@ class GenericCloudProvider(CloudProvider):
                 "(set poll.result_url_path in the manifest)",
                 detail={"job_id": job_id},
             )
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(url)
         resp = self._transport("GET", url, {}, None)
         if resp.status >= 400 or not resp.body:
             # PROVIDER-DOWNLOAD-001: a 429/503 on the DOWNLOAD of a job we have

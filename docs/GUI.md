@@ -94,7 +94,7 @@ POST additionally requires the `X-Manju-Token` header (else `403`), a JSON
 | `/api/state` | consolidated state | see field list below |
 | `/api/jobs` | `{"jobs": [job…]}` | newest first |
 | `/api/check` | `{"ok", "errors": [str], "warnings": [str]}` | `run_check` — schema + references + locks |
-| `/api/explain` | `{"shots", "timeline", "renders"}` | `manju explain` — recompiles + hashes; on demand only |
+| `/api/explain?graph=` | `{"shots", "timeline", "renders"}` (+ `"graph"` when `graph=1`) | `manju explain` — recompiles + hashes; on demand only. `graph=1`\|`true`\|`yes` appends the same `manju.graph-diagnostics/v1` document `manju explain --graph` prints (`diagnose_project`, read-only); opt-in because deriving it recompiles again |
 | `/api/events?n=&actor=&action=` | `{"events": [{"ts","actor","action","detail"}…]}` | tail of `events.jsonl`; `n` default 50, clamped 1–1000 (bad `n` → 50); optional exact-match `actor`/`action` filters, applied over the last 1000 events before the `n`-tail |
 | `/api/shot/<id>` | `{"id","exists","yaml","locked","in_index"}` | raw shot-file text for the editor (see POST notes) |
 | `/api/bible/<name>` | `{"name","exists","yaml"}` | raw text of `bible/{characters,scenes,props,style}.yaml` |

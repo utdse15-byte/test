@@ -60,7 +60,7 @@ def test_final_r_frame_rate_is_project_fps(built_project):
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1",
          str(_finals(built_project)[-1])],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     assert out == "r_frame_rate=24/1", out
 

@@ -242,7 +242,7 @@ def test_grep_pin_never_read_by_build_core_providers_runtime():
         out = subprocess.run(
             ["grep", "-rnE", pattern, str(root / sub),
              "--include=*.py", "--exclude-dir=__pycache__"],
-            capture_output=True, text=True).stdout
+            capture_output=True, text=True, encoding="utf-8").stdout
         for ln in out.splitlines():
             if not ln.strip():
                 continue

@@ -503,7 +503,7 @@ def test_local_cmd_video_ref_placeholder_and_env(tmp_project, add_shot, tmp_path
     _touch(tmp_project, "media/refs/base.mp4", b"video")
     # the script copies MANJU_VIDEO_REF (env passthrough) into {out}
     script = tmp_path / "gen.sh"
-    script.write_text('#!/bin/sh\nprintf "%s" "$MANJU_VIDEO_REF" > "$3"\n')
+    script.write_text('#!/bin/sh\nprintf "%s" "$MANJU_VIDEO_REF" > "$3"\n', encoding="utf-8")
     script.chmod(0o755)
     provider = LocalCommandProvider(_localcmd(f"sh {script} --video {{video_ref}} {{out}}"))
     shot = add_shot(tmp_project, "S001",
@@ -517,7 +517,7 @@ def test_local_cmd_video_ref_placeholder_and_env(tmp_project, add_shot, tmp_path
     # {video_ref} substituted as the absolute path, one argv element
     assert base_abs in takes[0].sidecar.params["argv"]
     # env passthrough (MANJU_VIDEO_REF) matched it
-    assert takes[0].media_path.read_text() == base_abs
+    assert takes[0].media_path.read_text(encoding="utf-8") == base_abs
     rd = takes[0].sidecar.params["ref_delivery"]
     assert rd["video_mode"] == "path" and rd["videos"][0]["tier"] == TIER_PARAMS
 

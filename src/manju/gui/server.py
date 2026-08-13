@@ -802,7 +802,17 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/explain":
                 from ..build.explain import explain
 
-                self._send_json(explain(self.server.project))
+                info = explain(self.server.project)
+                # DR03B ``--graph`` parity. Opt-in exactly like the CLI flag:
+                # the derivation recompiles the timeline to judge cache
+                # validity, so the default payload must not pay for a
+                # diagnostic nobody asked for (same reason the /edit page GET
+                # stopped calling build.explain inline).
+                if (parse_qs(url.query).get("graph", ["0"])[0] or "0") in ("1", "true", "yes"):
+                    from ..build.graphdiag import diagnose_project
+
+                    info["graph"] = diagnose_project(self.server.project)
+                self._send_json(info)
             elif path == "/api/events":
                 q = parse_qs(url.query)
                 n = 50
@@ -3825,16 +3835,18 @@ class _Handler(BaseHTTPRequestHandler):
         key (comment-preserving, the same policy switch the CLI makes). Secret
         values are never touched or read."""
         from ..core.yamlio import atomic_write_text
-        from ..providers.manifest import providers_dir
+        from ..providers.manifest import provider_manifest_dir
 
         from .pages import set_disabled_in_text
 
         pid = str(body.get("id") or "")
-        if not pid or "/" in pid or "\\" in pid or pid.startswith("."):
-            self._send_error_json("invalid provider id", 400)
+        try:
+            manifest_dir = provider_manifest_dir(pid)
+        except ValueError as exc:
+            self._send_error_json(f"invalid provider id: {exc}", 400)
             return
         disabled = bool(body.get("disabled"))
-        path = providers_dir() / pid / "provider.yaml"
+        path = manifest_dir / "provider.yaml"
         if not path.exists():
             self._send_error_json(f"no such provider: {pid}", 404)
             return

@@ -35,7 +35,16 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "manju"
+TESTS = Path(__file__).resolve().parent
+ROOT = TESTS.parent
 PY = sorted(SRC.rglob("*.py"), key=lambda p: p.as_posix())
+# The decode rules below scan the SUITE too. They used to stop at src/, which is
+# how tests/ quietly accumulated 56 of exactly the violation this file forbids —
+# 10 of them failing on a Chinese-locale Windows host, in tests that had nothing
+# to do with encoding. A rule the suite itself is exempt from is not a rule.
+TEST_PY = sorted(TESTS.rglob("*.py"), key=lambda p: p.as_posix())
+DECODE_PY = PY + TEST_PY
+SELF = Path(__file__).resolve()
 
 
 def _text(p: Path) -> str:
@@ -133,9 +142,17 @@ def test_every_text_subprocess_declares_its_encoding() -> None:
     """Without `encoding=`, Python decodes child output with the ANSI code page
     on Windows — which mangles the Chinese in ffmpeg/git output."""
     offenders, scanned, with_text = [], 0, 0
-    for p in PY:
+    for p in DECODE_PY:
+        if p == SELF:
+            # This file STORES deliberately-bad calls as string literals (the
+            # negative case below). Scanning itself would report its own fixture
+            # forever, and "fixing" that string would disarm the negative test.
+            continue
         body = _text(p)
-        for m in re.finditer(r"subprocess\.(?:run|Popen|check_output)\(", body):
+        # ``\w+\.`` not the literal ``subprocess.`` — ``import subprocess as sp``
+        # (or ``from x import subprocess``-style aliasing) slipped straight past
+        # the literal prefix, which a canary violation proved.
+        for m in re.finditer(r"\b\w+\.(?:run|Popen|check_output)\(", body):
             scanned += 1
             call = _call_body(body, m.end() - 1)   # from the OPENING paren
             if "text=True" not in call:
@@ -143,14 +160,14 @@ def test_every_text_subprocess_declares_its_encoding() -> None:
             with_text += 1
             if "encoding=" not in call:
                 offenders.append(
-                    f"{p.relative_to(SRC).as_posix()}:{body[:m.start()].count(chr(10)) + 1}")
+                    f"{p.relative_to(ROOT).as_posix()}:{body[:m.start()].count(chr(10)) + 1}")
     # Guard the guard: an earlier version of this test counted parens from the
     # start of "subprocess.run(", so depth was 0 at index 1 and it truncated
     # every call to two characters — it saw no `text=True` anywhere and passed
     # vacuously. A test that reports coverage it does not have is worse than no
     # test, so the sample size is asserted too.
-    assert scanned >= 20, f"detector found almost no subprocess calls ({scanned})"
-    assert with_text >= 10, f"detector saw almost no text=True calls ({with_text})"
+    assert scanned >= 150, f"detector found almost no subprocess calls ({scanned})"
+    assert with_text >= 60, f"detector saw almost no text=True calls ({with_text})"
     assert offenders == [], f"text subprocess without encoding=: {offenders}"
 
 
@@ -161,6 +178,49 @@ def test_the_subprocess_detector_actually_catches_a_violation() -> None:
     assert "encoding=" not in _call_body(bad, bad.index("("))
     assert "text=True" in _call_body(bad, bad.index("("))
     assert "encoding=" in _call_body(good, good.index("("))
+
+
+def _states_an_encoding(call: str) -> bool:
+    """True when a read_text/write_text call names its codec — as the keyword
+    (``encoding="utf-8"``) or POSITIONALLY (``read_text("utf-8")``, which is
+    what the first parameter of both methods already is). Demanding the keyword
+    form would flag five correct call sites and teach the next reader that this
+    rule is noise."""
+    return "encoding=" in call or bool(re.match(r'\(\s*["\']', call))
+
+
+def test_every_text_file_read_or_write_declares_its_encoding() -> None:
+    """``Path.read_text()``/``write_text()`` with no codec use the LOCALE default
+    — cp936 on a Chinese Windows host, not UTF-8. This is not hypothetical: ten
+    suite failures on this machine were a bare ``read_text()`` hitting a 0x94
+    byte, in tests about schemas and refs that never mentioned encoding. The
+    src/ rule existed; nothing checked the suite, so tests/ drifted to 56
+    violations."""
+    offenders, scanned = [], 0
+    for p in DECODE_PY:
+        if p == SELF:
+            continue
+        body = _text(p)
+        for m in re.finditer(r"\.(?:read_text|write_text)\(", body):
+            scanned += 1
+            if not _states_an_encoding(_call_body(body, m.end() - 1)):
+                offenders.append(
+                    f"{p.relative_to(ROOT).as_posix()}:{body[:m.start()].count(chr(10)) + 1}")
+    # Guard the guard (same reasoning as the subprocess scan above).
+    assert scanned >= 400, f"detector found almost no text file I/O ({scanned})"
+    assert offenders == [], (
+        "read_text/write_text without an encoding — locale-dependent decode: "
+        f"{offenders}")
+
+
+def test_the_encoding_detector_accepts_positional_and_catches_bare() -> None:
+    """The negative case for the check above, both directions."""
+    assert not _states_an_encoding("()")
+    assert not _states_an_encoding("(  )")
+    assert _states_an_encoding('(encoding="utf-8")')
+    assert _states_an_encoding('("utf-8")')
+    assert _states_an_encoding("('utf-8')")
+    assert _states_an_encoding('(json.dumps(d), encoding="utf-8")')
 
 
 def test_a_scaffolded_project_contains_no_cr(tmp_path: Path) -> None:

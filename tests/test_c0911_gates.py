@@ -105,7 +105,7 @@ def _spawn(script_path, *argv):
     return subprocess.Popen(
         [sys.executable, str(script_path), *[str(a) for a in argv]],
         cwd=str(REPO_ROOT), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
 
 
 def _finish(proc, timeout=60):
@@ -368,7 +368,7 @@ def test_b1_g11_1_two_processes_same_submission_exactly_one_claims(tmp_project):
     p1 = _spawn(script, tmp_project.root, barrier)
     p2 = _spawn(script, tmp_project.root, barrier)
     time.sleep(0.3)                                  # both children at the barrier
-    barrier.write_text("go")
+    barrier.write_text("go", encoding="utf-8")
     out1, out2 = _finish(p1), _finish(p2)
 
     verdicts = [out1[-1].split()[0], out2[-1].split()[0]]
@@ -475,7 +475,7 @@ def test_b4_g11_5_two_processes_race_build_lock_single_owner(tmp_project):
     p1 = _spawn(script, tmp_project.root, barrier)
     p2 = _spawn(script, tmp_project.root, barrier)
     time.sleep(0.3)
-    barrier.write_text("go")
+    barrier.write_text("go", encoding="utf-8")
     out1, out2 = _finish(p1), _finish(p2)
     lines = sorted([out1[-1], out2[-1]])
     assert "BARRIER_TIMEOUT" not in lines, lines
@@ -792,7 +792,7 @@ def test_b14_wp6_two_full_subprocess_generates_single_transport(tmp_project, add
     p1 = _spawn(script, tmp_project.root, barrier)
     p2 = _spawn(script, tmp_project.root, barrier)
     time.sleep(0.3)                                   # both children at the barrier
-    barrier.write_text("go")
+    barrier.write_text("go", encoding="utf-8")
     out1, out2 = _finish(p1), _finish(p2)
 
     def _facts(lines):

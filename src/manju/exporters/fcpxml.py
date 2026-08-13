@@ -1,11 +1,14 @@
 """FCPXML WRITER — the one NLE exit where our rational time rides NATIVELY (FP
 loop T2, roadmap §5 item 5 / §6).
 
-WRITER only — there is no FCPXML import path this loop (no round-trip / import-plan
-is claimed anywhere). The document is a minimal-valid FCPXML 1.9 subset compiled
-from the SAME ``Timeline.tracks.video`` truth the render, OTIO and EDL exits read,
-so the picture agrees clip-for-clip across every exit. It expresses exactly what
-the timeline carries and is loud, in-band, about everything it does not.
+This module WRITES. Reading FCPXML back is two separate paths, neither of them
+here: :mod:`manju.exporters.fcpxml_import` plans an arbitrary third-party
+document (PLAN ONLY, by design), and :mod:`manju.build.roundtrip` diffs a
+document Manju itself exported against the baseline written below. The document
+is a minimal-valid FCPXML 1.9 subset compiled from the SAME
+``Timeline.tracks.video`` truth the render, OTIO and EDL exits read, so the
+picture agrees clip-for-clip across every exit. It expresses exactly what the
+timeline carries and is loud, in-band, about everything it does not.
 
 Why FCPXML is special: rational time is NATIVE
 -----------------------------------------------
@@ -746,4 +749,22 @@ def export_fcpxml(
     path = (Path(dest) if dest is not None
             else project.exports_dir / "fcpxml" / f"{config.name}.fcpxml")
     atomic_write_text(path, text)
+    # WP6: baseline for round-trip (derived, never fails export).
+    #
+    # Without this an FCPXML edit had nothing to diff against, so a Resolve
+    # round-trip could not be planned at all. The baseline stores the same
+    # PROJECTION the round-trip reader builds — not the XML text — because a
+    # baseline payload is JSON, and because both sides must be read by one
+    # parser or "the clip moved" could mean two different things.
+    try:
+        from ..build.roundtrip import fcpxml_projection, write_baseline
+
+        from .fcpxml_import import parse_fcpxml
+
+        write_baseline(
+            project, "fcpxml", path.stem, fcpxml_projection(parse_fcpxml(text)),
+            compiled_from=str(timeline.meta.compiled_from or ""),
+        )
+    except Exception:
+        pass
     return path

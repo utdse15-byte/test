@@ -9,6 +9,8 @@ in the SAME truth files and events the CLI would have written.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -87,6 +89,21 @@ def test_page_serves_token_and_csp(gui):
     for path, ctype in (("/app.css", "text/css"), ("/app.js", "application/javascript")):
         s, h, b = _request(gui, path, raw=True)
         assert s == 200 and ctype in h["Content-Type"] and len(b) > 500
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required for --check")
+def test_served_app_js_passes_node_syntax_check(gui, tmp_path):
+    """The whole served bundle parses. Every other app.js test asserts on
+    substrings, so a stray brace anywhere in ~228 KB of JS would ship green and
+    break the page at load; `node --check` on the SERVED bytes is the static
+    guard (same idiom as the board transport's), and it checks what the browser
+    actually parses rather than the generator's return value."""
+    _, _, body = _request(gui, "/app.js", raw=True)
+    js_file = tmp_path / "app.js"
+    js_file.write_bytes(body)
+    proc = subprocess.run(["node", "--check", str(js_file)],
+                          capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, f"node --check failed:\n{proc.stderr}"
 
 
 def test_foreign_host_rejected(gui):
@@ -607,6 +624,36 @@ def test_check_and_explain_endpoints(gui, tmp_project, add_shot):
     assert status == 200 and data["ok"] is True
     status, _, data = _request(gui, "/api/explain")
     assert status == 200 and any(s["shot"] == "S001" for s in data["shots"])
+
+
+def test_explain_graph_opt_in_matches_the_cli(gui, tmp_project, add_shot):
+    """WORKBENCH.md's rule: a CLI capability is either reachable in the GUI or
+    listed as deliberately CLI-only. `explain --graph` is read-only diagnostics
+    (no writes, no spend), so it belongs in the GUI — and it must be the SAME
+    document `manju explain --graph` prints, not a GUI-only reimplementation."""
+    add_shot(tmp_project, "S001")
+    from manju.build.graphdiag import SCHEMA, diagnose_project
+
+    status, _, data = _request(gui, "/api/explain?graph=1")
+    assert status == 200
+    assert data["graph"]["schema"] == SCHEMA
+    # byte-identical to the shared service the CLI calls
+    assert data["graph"] == diagnose_project(tmp_project)
+    # the derived graph models this shot's generation feeding the compile
+    assert any(n["node_id"] == "gen:S001" for n in data["graph"]["nodes"])
+
+
+def test_explain_stays_graphless_by_default(gui, tmp_project, add_shot):
+    """The graph derivation recompiles the timeline to judge cache validity, so
+    it stays opt-in: the default /api/explain payload is unchanged and pays
+    nothing for a diagnostic the caller did not ask for."""
+    add_shot(tmp_project, "S001")
+    status, _, data = _request(gui, "/api/explain")
+    assert status == 200
+    assert "graph" not in data
+    for falsy in ("0", "", "no"):
+        _, _, off = _request(gui, f"/api/explain?graph={falsy}")
+        assert "graph" not in off
 
 
 def test_unknown_routes(gui):

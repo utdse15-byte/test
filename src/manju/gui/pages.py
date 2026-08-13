@@ -1325,9 +1325,8 @@ def _adapter_short(adapter: str) -> str:
 
 
 def _provider_rows() -> tuple[list[dict], list[str]]:
-    import os
-
     from ..providers.manifest import fix_hint, load_manifests
+    from ..providers.zero_cost import credential_presence
 
     manifests, load_errors = load_manifests()
     rows = []
@@ -1340,7 +1339,7 @@ def _provider_rows() -> tuple[list[dict], list[str]]:
             "adapter_short": _adapter_short(m.adapter),
             "capabilities": list(m.capabilities),
             "key_env": key_env,
-            "key_set": (bool(os.environ.get(key_env)) if key_env else None),
+            "key_set": credential_presence(key_env),
             "enabled": not m.disabled,
             "doctor_ok": not problems,
             "findings": [{"problem": p, "fix": fix_hint(p, m)} for p in problems],

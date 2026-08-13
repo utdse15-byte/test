@@ -82,6 +82,9 @@ def _manifest_state() -> tuple[dict[str, Provider], list[str]]:
             errors.append(f"{pid}: manifest id shadows a built-in provider — skipped")
             continue
         try:
+            from .zero_cost import require_manifest_allowed
+
+            require_manifest_allowed(manifest)
             if manifest.adapter == GENERIC_ADAPTER:
                 from .generic_cloud import GenericCloudProvider
 
@@ -125,11 +128,17 @@ def available_providers() -> dict[str, Provider]:
 def get_provider(name: str) -> Provider:
     providers = available_providers()
     try:
-        return providers[name]
+        provider = providers[name]
     except KeyError:
         raise KeyError(
             f"unknown provider {name!r}; available: {sorted(providers)}"
         ) from None
+    manifest = getattr(provider, "manifest", None)
+    if manifest is not None:
+        from .zero_cost import require_manifest_allowed
+
+        require_manifest_allowed(manifest)
+    return provider
 
 
 def fallback_chain(shot: ShotSpec) -> list[str]:

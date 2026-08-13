@@ -81,6 +81,9 @@ class EdgeTtsProvider:
         # C29: honor cancel before any network spend.
         if should_cancel is not None and should_cancel():
             raise ProviderCanceled(self.id, f"edge:{shot.id}")
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed("https://speech.platform.bing.com")
         try:
             import edge_tts
         except ImportError as exc:

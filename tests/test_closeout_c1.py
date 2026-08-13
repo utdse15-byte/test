@@ -367,7 +367,7 @@ def test_q13b_stale_anchor_revokes_the_real_canary_admission(
                               project=user)["admitted"] is True
     # move a staleness anchor (a manifest cost edit moves the profile digest)
     yaml_path = providers_dir / pid / "provider.yaml"
-    yaml_path.write_text(yaml_path.read_text().replace(
+    yaml_path.write_text(yaml_path.read_text(encoding="utf-8").replace(
         "per_second: 0.1", "per_second: 0.99"), encoding="utf-8")
     registry_mod._manifest_cache = None
     after = Q.bridge_admission(pid, "generative_bridge", project=user)

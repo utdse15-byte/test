@@ -1,0 +1,1946 @@
+schema: manju.ide-execution-plan/v1
+generated_on: '2026-08-11'
+target:
+  repository: https://github.com/utdse15-byte/test
+  project_name: Manju One
+  branch_hint: claude/fable-opus-task-division-wv97i6
+  branch_rule: execution-time STATE.md and actual checkout are authoritative
+upstreams:
+- name: ViMax
+  repository: https://github.com/HKUDS/ViMax
+  role: clean-room methods for hierarchical directing, visual dependencies, keyframe evaluation and spatial anchors
+  boundary: MIT attribution; do not use its default paid pipeline/cache as Manju runtime
+- name: OpenChatCut
+  repository: https://github.com/0xsline/OpenChatCut
+  role: optional post-Picture-Lock finishing sidecar
+  boundary: AGPL process separation; no source or Skill vendoring; neutral artifact/protocol boundary
+- name: Toonflow-app
+  repository: https://github.com/HBAI-Ltd/Toonflow-app
+  role: clean-room UX inspiration for local workbench and three-role interaction
+  boundary: supplementary license/branding terms; no copied code/assets/branding; no dynamic TS VM or SQLite truth
+architecture_decision: Manju remains the sole truth, media/hash/QC/selection/Picture-Lock owner. This edition performs no
+  billable inference. ViMax contributes clean-room planning methods; OpenChatCut is a localhost-only finishing sidecar without
+  cloud AI; Toonflow contributes clean-room UX ideas.
+non_negotiable_invariants:
+- Text project files remain the sole canonical truth.
+- Media remains append-only; no candidate, reference, take or finishing result is overwritten.
+- Reports, graph projections, UI state, vector indexes and SQLite remain deletable and never become build/provider inputs.
+- The LLM stays outside Manju; Manju code does not call an additional model API.
+- Director Proposal remains the sole executable proposal store.
+- Truth adoption uses the existing human-only atomic truth_patch_set.
+- Strict zero-cost mode rejects every non-loopback provider transport before network I/O; there is no human override inside
+  this plan.
+- No cloud API key is requested, loaded, persisted or displayed.
+- Reviewer observations, KEEP decisions and scores never imply selected_take or Picture Lock.
+- Manju MCP is not reintroduced.
+- OpenChatCut, ViMax and Toonflow remain optional; absence never blocks core workflows.
+- No public-network/model-provider calls occur in tests or dogfood.
+- Windows remains a hard release gate on the same commit as Ubuntu.
+execution_policy:
+  selection: Execute in dependency order. One task at a time; one task per commit.
+  initial_task: G0-001
+  commit_format: '<TASK-ID>: <imperative summary>'
+  branch: Create a dedicated worktree/branch from the verified baseline. Never reset, stash or discard user changes automatically.
+  owner_first: Before adding any schema/module/command, grep and test for an existing owner. Mark REUSE_ONLY or NOT_NEEDED
+    when appropriate.
+  zero_cost: Set and preserve strict zero-cost/offline-provider policy. Any task that would require a metered API is STOPPED
+    and replaced by local fake/imported/synthetic evidence.
+  context_budget: Load only the global invariants, the current task and direct dependency evidence. Use rg and focused file
+    ranges; do not paste whole large files or logs into chat.
+  tests: Per task run focused tests and compile/static checks only. Run affected integration suites at phase gates; run the
+    full suite only at baseline and H1 release gates unless a dangerous owner change demands it.
+  logs: Write verbose logs to REPORTS and report only command, exit code and concise failure summary to reduce IDE tokens.
+  schema: Register every new manju.* schema literal in CONTRACTS.yaml. Prefer reuse over new contracts.
+  cli: Reuse existing command groups and keep cli.py/GUI routes thin. Do not use this program for large-file refactors.
+  manual_review: Stop before truth confirmation, candidate selection, OpenChatCut approval or finishing adoption.
+  manual_ci: Use actual CI run IDs; never fabricate cross-platform evidence.
+token_economy:
+- Do not restate the plan, task card, or files already read; execute the current task directly.
+- Successful commands are summarized as command, exit code, duration and pass count; never paste full logs.
+- On failure include only the most relevant final 20-40 lines and the first actionable diagnosis.
+- After G0-002, do not re-research upstream repositories unless the pinned source snapshot is stale for the current task.
+- Do not perform opportunistic refactors, style sweeps, or unrelated test expansion.
+- Complete one task per session and stop with a compact result plus the next ready task.
+- Reuse same-HEAD CI evidence from STATE.md/REPORTS/LAST_GREEN.yaml at baseline; G0-001 does not rerun the full suite.
+global_stop_conditions:
+- Any command would call a non-loopback model, generation, OCR, ASR, search or media-provider endpoint.
+- Any task asks for, discovers or tries to use a cloud API key, billing account, credit card, free-trial credit or paid subscription.
+- Any task proposes a real provider submission, even if estimated cost is zero or a free tier is advertised.
+- A task would create a second editable scene, shot, event, authoring-plan or timeline truth.
+- A report, graph, reviewer summary, browser state, vector memory or SQLite row would become an execution input.
+- A task would copy or link OpenChatCut AGPL code or Skills into Manju.
+- A task would copy Toonflow code, assets, branding or dynamic TypeScript provider runtime.
+- A task would execute ViMax default generation pipeline instead of Manju-native local/mock owners.
+- An AI actor would confirm a truth-changing action.
+- A reviewer or score would auto-select a candidate or auto-Picture-Lock.
+- Existing Windows, spend, path, archive, CSRF, content-binding, locking or provider identity gates would be weakened.
+- A task would automatically download large model weights or install a service with unclear resource/license requirements.
+phases:
+- id: G0
+  name: 基线、治理与第三方边界
+  goal: 冻结可复现起点，书面确定许可证、数据所有权和 clean-room 边界。
+  exit_gate: 同一 HEAD 基线证据存在；三方代码未进入核心；ADR 明确采用/拒绝项。
+- id: P0
+  name: 零成本执行闭环与网络硬禁用
+  goal: 先用 localhost 假 Provider、FFmpeg 合成媒体和已有素材验证提交恢复、下载、哈希、QC 与人工选择，同时证明任何非本地 provider transport 都被拒绝。
+  exit_gate: 本地 Proof Shot 完成；模拟远程任务只 submit 一次；零外部模型请求、零 API Key、零账单；STATE 明确真实 Provider 仍未验证。
+- id: D1
+  name: ViMax 风格层级导演规划
+  goal: 将事件链、场次、镜头和摄影机意图变成外部 IDE Agent 工作流，最终仍只采用现有 truth_patch_set。
+  exit_gate: 真实故事片段可产生可审查、可过期、可原子采用的 Scene/Shot 提案，无第二真相。
+- id: V1
+  name: 视觉依赖图与零成本前置检查
+  goal: 派生跨镜视觉依赖、当前锚点和建议波次；在 strict zero-cost mode 下所有外部 transport 一律硬阻断。
+  exit_gate: 依赖可解释、可重建、可识别陈旧；本地 preflight 可演练，任何非 loopback provider transport_count=0。
+- id: K1
+  name: 本地关键帧 Best-of-2 与视觉评审
+  goal: 复用 image takes、Preview Ladder、QC v2 和人工选择，用本地合成/已有图片验证两个关键帧候选的 lineage、评审和下游绑定。
+  exit_gate: 两个零成本候选 append-only、hash-bound 评审；人工采纳的 exact hash 进入本地假视频请求身份；不宣称真实模型质量。
+- id: S1
+  name: 本地空间锚点与引用链
+  goal: 用 FFmpeg 抽帧和已有媒体将 camera-parent/transition-anchor 思想落为 reference-only、可追溯、会过期的 refs。
+  exit_gate: 父镜变化使锚点过期；子镜本地请求绑定 exact anchor hash；没有云生成或账单。
+- id: F1
+  name: OpenChatCut 本地精剪侧车
+  goal: Picture Lock 后经中立 handoff 进入本地 OpenChatCut；仅使用非 AI、本地编辑能力，经双重人工批准返回。
+  exit_gate: 导出—本地精剪—零写入分析—人工采用闭环完成；OpenChatCut 未调用外部 AI/API。
+- id: W1
+  name: Toonflow 风格零成本本地工作台
+  goal: 在现有 localhost GUI 实现派生图视图、三角色交互与零成本 provider 状态，不引入 SQLite 真相、动态 TS Provider 或云 Key。
+  exit_gate: 删除 UI 状态/reports/runtime DB 不改变 build；所有修改只生成现有 Director Proposal；外部 provider 显示为禁用。
+- id: H1
+  name: 零成本故障注入、跨平台与发布判定
+  goal: 证明网络硬禁用、崩溃、陈旧输入、恶意包、第三方不可用和 Windows 差异下仍 fail closed。
+  exit_gate: 同一 commit Ubuntu/Windows 双绿；测试证明无外部模型调用、无凭据、无隐藏真相；发布声明明确真实模型质量未验证。
+topological_order:
+- G0-001
+- G0-002
+- P0-001
+- P0-002
+- P0-003
+- P0-004
+- P0-005
+- D1-001
+- D1-002
+- D1-003
+- D1-004
+- D1-005
+- V1-001
+- V1-002
+- V1-003
+- V1-004
+- V1-005
+- K1-001
+- K1-002
+- K1-003
+- K1-004
+- K1-005
+- S1-001
+- S1-002
+- S1-003
+- F1-001
+- F1-002
+- F1-003
+- W1-001
+- F1-004
+- W1-002
+- F1-005
+- W1-003
+- W1-004
+- W1-005
+- H1-001
+- H1-002
+- H1-003
+tasks:
+- id: G0-001
+  phase: G0
+  title: 冻结零成本版基线与工具链证据
+  priority: P0
+  size: S
+  mode: automated
+  depends_on: []
+  purpose: 在任何功能修改前记录当前分支、HEAD、工作区、Python、OS、FFmpeg 和基线测试，并确认没有云凭据进入本轮执行环境。
+  rationale: 历史绿色只能说明历史 SHA；本轮必须从用户当前 checkout 的准确字节开始，且绝不能自动清理用户改动。
+  inspect_first:
+  - README.md
+  - STATE.md
+  - DECISIONS.md
+  - CONTRACTS.yaml
+  - CLAUDE.md
+  - pyproject.toml
+  - .github/workflows/ci.yml
+  - .github/workflows/windows-ci.yml
+  - tests/CONVENTIONS.md
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/THREE_PROJECTS_BASELINE_<date>.json
+  - REPORTS/THREE_PROJECTS_BASELINE_<date>.md
+  implementation_steps:
+  - 运行 git status/rev-parse/log，记录实际分支和未提交文件；不自动清理用户改动。
+  - 记录 Python、OS、ffmpeg/ffprobe；检查本轮 shell 中常见 provider key 变量是否存在，只记录“已设置/未设置”，绝不记录值。
+  - 若发现任何云模型/provider key 已设置，停止并要求在本轮专用 shell 中清除后再继续。
+  - 运行 compile/static 和一次基线 full suite；后续普通任务只跑 focused tests，减少 token 和计算浪费。
+  - 把命令、退出码、耗时、失败摘要和 HEAD 写入 REPORTS；verbose log 留文件，不粘贴到 IDE 对话。
+  tests:
+  - 基线命令和退出码被记录。
+  - 证据文件不被 build/runtime 读取。
+  - 报告不含 secret 值、用户名或私有绝对路径。
+  acceptance_criteria:
+  - 工作区和 HEAD 明确。
+  - 本轮 shell 无云 API Key。
+  - 基线红时不开始功能开发。
+  required_evidence:
+  - 基线 JSON 与 Markdown
+  - 完整命令日志摘要
+  rollback:
+  - 仅删除本任务新增报告；不改用户工作区。
+  stop_conditions:
+  - 发现用户未提交改动与目标文件重叠。
+  - 检测到云 API Key 仍处于本轮环境。
+  - 基础测试红且与本轮无关。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: G0-002
+  phase: G0
+  title: 建立第三方边界、零成本政策与架构 ADR
+  priority: P0
+  size: M
+  mode: automated
+  depends_on:
+  - G0-001
+  purpose: 固定三个上游的 commit/LICENSE/关键能力快照，并把进程、数据、代码复用和失败边界写成治理文件。
+  rationale: OpenChatCut 是 AGPL，Toonflow LICENSE 含附加商业/品牌条件，ViMax 虽为 MIT 也不应把其弱执行层直接移植。
+  inspect_first:
+  - DECISIONS.md append-only 规则
+  - docs/SOURCE_LEDGER.yaml
+  - OpenChatCut README/LICENSE/MCP session
+  - ViMax README/LICENSE/paper/pipeline
+  - Toonflow README/LICENSE/VM/provider/task record
+  candidate_files_to_modify:
+  - docs/SOURCE_LEDGER.yaml
+  - DECISIONS.md
+  candidate_files_to_create:
+  - docs/architecture/ADR-THREE-PROJECT-INTEGRATION-ZERO-COST.md
+  - docs/architecture/THIRD_PARTY_BOUNDARIES.md
+  - docs/runbooks/ZERO_COST_MODE.md
+  implementation_steps:
+  - 记录三个上游仓库当前完整 commit、许可证文件 SHA256 和本轮实际阅读的关键文件。
+  - 写清四层架构和 clean-room 规则；OpenChatCut/ViMax/Toonflow 都不得成为 Manju core runtime 依赖。
+  - 写入 strict zero-cost 决策：禁止 metered/free-tier cloud inference、禁止 provider key、禁止真实 provider submit、禁止自动大模型权重下载。
+  - 允许 localhost fake provider、FFmpeg/Python 合成媒体、已有本地素材和 OpenChatCut 非 AI 本地编辑。
+  - 所有第三方能力 optional；缺失不得阻断 Manju check/build/qc/export。
+  - DECISIONS.md 只追加新条目，不修改历史。
+  tests:
+  - YAML 可安全加载。
+  - 核心 runtime dependencies 不含三个上游。
+  - 静态边界测试覆盖 src/manju、skills 和 package metadata。
+  acceptance_criteria:
+  - adopt/adapt/reject 与 strict zero-cost 条款明确。
+  - 后续 IDE 不需要猜测是否可以调用 free tier：答案始终是不可以。
+  - 任何付费研究必须另建未来计划。
+  required_evidence:
+  - 上游 snapshot YAML
+  - ADR 与边界测试输出
+  rollback:
+  - 回退本任务独立提交；运行时零影响。
+  stop_conditions:
+  - 无法确定当前 LICENSE 文本。
+  - 实现目标要求复制受限制源码或素材。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: P0-001
+  phase: P0
+  title: 建立零成本运行策略、外部模型出口硬禁用与本地 Proof 配置
+  priority: P0
+  size: M
+  mode: automated
+  depends_on:
+  - G0-002
+  purpose: 审计 ProviderManifest、preflight、submission identity、attempt ledger 和 transport owner，并为本轮建立 localhost-only 的执行策略。
+  rationale: 用户明确零预算。最重要的不是挑一个“免费额度”供应商，而是从代码和流程上保证不会误发任何计费请求。
+  inspect_first:
+  - src/manju/providers/manifest.py
+  - src/manju/providers/catalog.py
+  - src/manju/providers/preflight.py
+  - src/manju/providers/submission.py
+  - src/manju/providers/generic_cloud.py
+  - src/manju/providers/base.py
+  - src/manju/build/attempts.py
+  - src/manju/build/spend.py
+  - src/manju/build/readiness.py
+  - 相关 CLI docs/tests
+  candidate_files_to_modify:
+  - 仅在审计证明表达缺口时修改 provider owner；默认不改公共 schema。
+  candidate_files_to_create:
+  - docs/runbooks/ZERO_COST_LOCAL_PROOF_SHOT.md
+  - scripts/dogfood/local_proof_preflight.py
+  - tests/test_zero_cost_provider_policy.py
+  implementation_steps:
+  - 审计是否已有 offline/network/provider policy owner；优先复用。
+  - 定义本轮执行环境：仅 loopback HTTP/stdio/local files；非 loopback provider endpoint 在 transport 前失败。
+  - 不要请求或配置任何 provider key；若 manifest 含 secret_ref，只允许 schema/dry-run 展示“未配置”，不得解析值。
+  - 选择 localhost fake async provider profile；固定 3–6 秒、720p、候选数 1、cost=0。
+  - 运行 catalog/check/prompt check/build dry-run，保存 secret-free request、execution-profile digest、request digest 和 zero-cost
+    policy 状态。
+  - 若核心缺少可验证的 network policy，按唯一 owner 做最小 additive 实现；旧项目默认行为不能被意外改变。
+  tests:
+  - strict zero-cost 下非 loopback transport_count=0。
+  - localhost fake provider 可通过 preflight。
+  - 无需任何凭据。
+  - 同输入 digest 稳定。
+  acceptance_criteria:
+  - 所有后续任务有可机器验证的零成本/localhost-only 边界。
+  - 没有真实 provider profile 或 API Key。
+  - 本任务零网络模型调用、零费用。
+  required_evidence:
+  - zero-cost policy snapshot
+  - localhost provider profile
+  - preflight/dry-run JSON
+  - egress-block test
+  rollback:
+  - 删除专用 profile/docs；若新增 policy code，独立回退且旧行为测试仍绿。
+  stop_conditions:
+  - 实现只能靠“提醒 IDE 小心”而不能在 transport 前验证。
+  - 任何步骤要求 cloud key、free tier 或真实 endpoint。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: P0-002
+  phase: P0
+  title: 用 localhost 假 Provider 验证请求、时长与零成本身份（条件任务）
+  priority: P0
+  size: L
+  mode: conditional
+  depends_on:
+  - P0-001
+  purpose: 在纯本地环境验证整数秒、最小时长、量化步长、分辨率和模拟成本事实是否在 request/preflight/submission identity 中一致。
+  rationale: 这项工作可提前发现真实 provider 适配缺口，但不需要连接真实供应商。若现有抽象已满足，则标记 NOT_NEEDED。
+  inspect_first:
+  - src/manju/providers/manifest.py CostConfig/LimitsConfig
+  - src/manju/providers/preflight.py
+  - src/manju/providers/submission.py
+  - src/manju/providers/generic_cloud.py render values
+  - src/manju/build/spend.py
+  - provider execution-profile contracts
+  candidate_files_to_modify:
+  - src/manju/providers/manifest.py
+  - src/manju/providers/preflight.py
+  - src/manju/providers/submission.py
+  - src/manju/providers/generic_cloud.py
+  - src/manju/build/spend.py
+  - CONTRACTS.yaml（仅有新 schema literal 时）
+  candidate_files_to_create:
+  - tests/test_provider_billable_request.py
+  implementation_steps:
+  - 先用 fake manifest 证明 duration/resolution/candidate semantics；不需要则零代码结束。
+  - 若需要，定义纯函数 effective_request_facts，输出 requested/submitted/billable duration、resolution、candidate count 和 simulated cost
+    components。
+  - fake provider 的实际费用固定为 0；可另用不执行的 synthetic price fixture 测量计费公式，但不得连接外部 endpoint。
+  - request body、preflight、identity、attempt evidence 共用同一冻结结果。
+  - 旧 manifest 无新字段时 byte-compatible。
+  tests:
+  - 4.2 秒量化到 5 秒的纯函数测试。
+  - fake provider actual cost=0。
+  - 任何非 loopback URL 在 transport 前失败。
+  - 旧 manifest 兼容。
+  acceptance_criteria:
+  - 请求与身份事实一致。
+  - 无真实价格、账号或供应商依赖。
+  - NOT_NEEDED 时代码零修改。
+  required_evidence:
+  - local request truth table
+  - compatibility snapshot
+  - zero-network test
+  rollback:
+  - 回退 additive 字段；兼容测试证明旧行为恢复。
+  stop_conditions:
+  - 需要真实供应商文档或请求才能完成。
+  - 需要破坏 stable provider API。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: P0-003
+  phase: P0
+  title: 建立零成本异步假 Provider 故障注入测试台
+  priority: P0
+  size: L
+  mode: automated
+  depends_on:
+  - P0-001
+  - P0-002
+  purpose: 用 localhost fake provider 复现 submit、ambiguous response、poll、重启恢复、下载和重复执行危险时序。
+  rationale: 在零预算下仍可完整验证任务账本、恢复和 append-only 媒体语义。
+  inspect_first:
+  - 现有 provider/submission/attempt fixtures
+  - src/manju/providers/base.py
+  - src/manju/providers/generic_cloud.py
+  - src/manju/providers/submission.py
+  - src/manju/build/attempts.py
+  - src/manju/core/events.py
+  candidate_files_to_modify:
+  - 仅在测试暴露真实 bug 时改对应 owner；禁止测试后门。
+  candidate_files_to_create:
+  - tests/fixtures/fake_async_video_provider.py
+  - tests/test_paid_provider_fault_matrix.py
+  - scripts/dogfood/simulate_paid_provider.py
+  implementation_steps:
+  - 实现 localhost HTTP fake：submit 返回 job_id；poll 可 queued/running/succeeded/failed；download 返回本地生成视频或错误页。
+  - 用 FFmpeg 在测试启动时生成确定性短 MP4，不下载模型或素材。
+  - 加入提交后响应丢失、persist 后退出、poll 429/503、URL 过期、下载中断、JSON/HTML 伪装 MP4。
+  - 同 submission identity 重跑不得再次 submit；ambiguous 状态只能 attach/abandon/reconcile。
+  - 测试并发 CAS、媒体验证、hash 和 append-only take。
+  - 测试网络策略：只有 loopback fake endpoint 被允许。
+  tests:
+  - 每个故障场景断言 submit_count/poll_count/download_count。
+  - 新进程恢复原 job。
+  - 错误媒体不注册。
+  - CI 不访问公网。
+  acceptance_criteria:
+  - 危险时序有自动化回归。
+  - 零外部请求。
+  - 无需凭据或账单。
+  required_evidence:
+  - fault matrix
+  - 调用计数和测试输出
+  rollback:
+  - 删除测试台；生产 bug 修复需单独评估。
+  stop_conditions:
+  - 测试必须联网。
+  - 模拟要求绕过 submission identity。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: P0-004
+  phase: P0
+  title: 执行一次零成本本地 Proof Shot
+  priority: P0
+  size: M
+  mode: manual_review
+  depends_on:
+  - P0-003
+  purpose: 用 localhost 假 Provider 和 FFmpeg 合成媒体验证合同、提交恢复、下载、hash-bound QC 与人工选择完整闭环。
+  rationale: 它不能替代真实模型质量验证，但能在零费用下证明 Manju 的执行和证据架构。
+  inspect_first:
+  - docs/runbooks/ZERO_COST_LOCAL_PROOF_SHOT.md
+  - manju production status --json
+  - providers check/catalog
+  - prompt --check
+  - build --dry-run
+  - tasks
+  - qc brief/verdict/select
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/ZERO_COST_LOCAL_PROOF_SHOT_<date>.json
+  - REPORTS/ZERO_COST_LOCAL_PROOF_SHOT_<date>.md
+  implementation_steps:
+  - 确认 strict zero-cost policy active，provider endpoint 为 loopback，环境中无云 key。
+  - 生成一条带可验证时长/分辨率/帧标记的确定性本地 MP4；不调用生成模型。
+  - 通过 localhost fake async provider 提交；记录本地 submission id 和 fake remote job id。
+  - 在 queued/running 时故意结束进程，再启动并确认只 poll 原 job、submit_count=1。
+  - 成功后下载 localhost 结果，验证 ffprobe facts、媒体类型和 SHA256，注册 append-only take。
+  - 生成 QC packet；优先用确定性/人工 observation fixture，不调用云 VLM；用户可做一次人工视觉确认。
+  - 用户明确 KEEP/拒绝/select；记录整个零成本证据链。
+  tests:
+  - strict zero-cost/loopback checks。
+  - submit_count=1。
+  - manju check/provider/task/QC focused tests。
+  - 非 loopback sentinel transport_count=0。
+  acceptance_criteria:
+  - 零费用、零外部模型请求、零 API Key。
+  - 中断后不重复 submit。
+  - 本地媒体被 hash-bound 评审并由人选择或拒绝。
+  required_evidence:
+  - zero-cost policy state
+  - localhost request/identity/attempt
+  - submit_count
+  - media SHA/ffprobe
+  - QC binding
+  - manual decision
+  rollback:
+  - 媒体 append-only；若不采用，只取消选择或保留为 rejected candidate。
+  stop_conditions:
+  - endpoint 不是 loopback。
+  - 发现任何 provider key。
+  - 脚本尝试下载模型/访问公网。
+  notes:
+  - 本任务不证明真实云模型质量、真实计费或真实供应商稳定性。
+  - No metered API calls are allowed in this edition.
+- id: P0-005
+  phase: P0
+  title: 冻结零成本 Proof 证据并明确真实 Provider 继续未验证
+  priority: P0
+  size: S
+  mode: manual_review
+  depends_on:
+  - P0-004
+  purpose: 把本地模拟闭环写回 STATE/DECISIONS/SOURCE_LEDGER，同时明确真实 Provider、真实付费和真实生成质量因零预算被有意延期。
+  rationale: 不能把 localhost fake provider 成功包装成真实供应商验证；诚实的未知状态是架构资产。
+  inspect_first:
+  - STATE.md
+  - DECISIONS.md
+  - docs/SOURCE_LEDGER.yaml
+  - ZERO_COST_LOCAL_PROOF_SHOT reports
+  candidate_files_to_modify:
+  - STATE.md
+  - DECISIONS.md
+  - docs/SOURCE_LEDGER.yaml
+  candidate_files_to_create: []
+  implementation_steps:
+  - 核对 commit、fake profile digest、media hash、submit_count 和测试证据一致。
+  - STATE 记录：本地异步恢复/下载/hash/QC/select 已验证；真实 Provider/付费/模型质量仍未验证且因零预算延期。
+  - 明确未验证：真实取消计费、签名 URL、供应商限流、长视频、多候选质量、真实 Windows 云子进程。
+  - 将任何旧的“下一步先做真实付费 Proof”改为“未来有独立预算计划后再研究”，不删除历史。
+  tests:
+  - 文档引用文件/SHA 存在。
+  - STATE 保持 active-only。
+  - 没有“真实 provider 已验证”的错误表述。
+  acceptance_criteria:
+  - 状态声明精确。
+  - 后续阶段只依赖本地媒体/模拟证据。
+  required_evidence:
+  - STATE/DECISIONS/SOURCE_LEDGER diff
+  - 明确 deferred paid track
+  rollback:
+  - 证据错误时追加更正；不改写历史报告。
+  stop_conditions:
+  - 任何文档试图把 fake provider 称为真实供应商。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: D1-001
+  phase: D1
+  title: 审计现有导演、场次、镜头与外部 Agent owner
+  priority: P1
+  size: M
+  mode: automated
+  depends_on:
+  - P0-005
+  purpose: 逐项映射 ViMax 的 event/scene/shot/camera/reference/candidate/checkpoint 到 Manju 现有唯一 owner。
+  rationale: Manju 已有 creation-funnel、SceneContractV2、ShotContract、Director Proposal 和 authoring patch；不应造第二 authoring plan。
+  inspect_first:
+  - src/manju/core/authoring.py
+  - src/manju/core/creative.py
+  - src/manju/core/source_spans.py
+  - src/manju/story/context.py
+  - src/manju/story/coverage.py
+  - src/manju/story/trajectory.py
+  - src/manju/build/director.py
+  - src/manju/build/authoring_patch.py
+  - skills/creation-funnel/SKILL.md
+  - skills/scene-design/SKILL.md
+  - skills/shot-design/SKILL.md
+  - CONTRACTS.yaml
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/VIMAX_CONCEPT_OWNER_AUDIT_<date>.md
+  implementation_steps:
+  - 建立 ViMax 概念→Manju owner 表并标 REUSE/EXTEND/REJECT。
+  - 确认 director propose --from-file 可承载唯一 truth_patch_set action。
+  - 确认 basis/content-bound confirmation/human-only patch/locks/atomic rollback。
+  - 确认 Canonical Video Authoring Plan 只是派生输出，不反向成为可编辑真相。
+  - 找不到 owner 证据前禁止新 schema。
+  tests:
+  - 运行 director/authoring/scene/shot owner 现有测试。
+  acceptance_criteria:
+  - 不提出 director-proposal/v2 或 editable event graph。
+  - 每个新接口都有唯一 owner 证据。
+  required_evidence:
+  - owner audit report
+  rollback:
+  - 删除审计报告。
+  stop_conditions:
+  - 当前分支已有等价实现但任务仍想复制。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: D1-002
+  phase: D1
+  title: 增加只读层级导演上下文包（条件任务）
+  priority: P1
+  size: L
+  mode: conditional
+  depends_on:
+  - D1-001
+  purpose: 给 IDE Agent 一个稳定、来源可引用、无隐藏 memory 的外部输入；若现有 JSON 命令已足够则零代码。
+  rationale: ViMax 依靠分层上下文/RAG，但 Manju 不能让向量库或摘要成为真相。
+  inspect_first:
+  - 现有 story context/production status/prompt JSON/GUI API
+  - src/manju/story/context.py
+  - src/manju/core/source_spans.py
+  - src/manju/build/control_view.py
+  - src/manju/build/readiness.py
+  candidate_files_to_modify:
+  - src/manju/story/context.py 或审计后的单一 owner
+  - src/manju/cli.py 薄适配器
+  - CONTRACTS.yaml（条件）
+  candidate_files_to_create:
+  - src/manju/story/authoring_context.py（条件）
+  - tests/test_authoring_context_packet.py
+  implementation_steps:
+  - 先组合现有命令验证等价；足够则标 REUSE_ONLY。
+  - 若不足，定义实验性 authoring-context/v1：basis hashes、source spans、creative、scenes、shots、threads、trajectory、locks、readiness、allowed
+    roots。
+  - 每段文本携带 source_path/source_sha/span；禁止无出处摘要。
+  - stdout-first；显式写 reports 仍是可删除派生物。
+  - 删除 .manju/reports 后重新输出语义一致。
+  tests:
+  - 输出顺序/digest 稳定。
+  - source/scene/shot 修改使 basis 变化。
+  - 无 secret/私密绝对路径。
+  - legacy 项目诚实输出 unknown。
+  - CONTRACTS registry。
+  acceptance_criteria:
+  - Agent 不靠隐藏向量 memory 获得当前事实。
+  - 上下文包不是 build input。
+  required_evidence:
+  - 示例 JSON
+  - 删除重建等价测试
+  rollback:
+  - 删除模块/CLI/schema；Agent 退回现有命令。
+  stop_conditions:
+  - 现有接口已足够。
+  - 实现要求持久化隐藏摘要。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: D1-003
+  phase: D1
+  title: 实现 ViMax 风格 hierarchical-director Skill 与 eval
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - D1-001
+  - D1-002
+  purpose: 让外部 IDE Agent 按来源→事件→场次→镜头→视觉依赖建议顺序工作，最终只输出一个现有 truth_patch_set。
+  rationale: 要吸收 ViMax 的导演方法，而非其 Provider、文件缓存或 Agent runtime。
+  inspect_first:
+  - skills 目录规范/eval 约定
+  - skills/creation-funnel/SKILL.md
+  - skills/scene-design/SKILL.md
+  - skills/shot-design/SKILL.md
+  - skills/direct-shot-source-patch/SKILL.md
+  - src/manju/build/authoring_patch.py payload
+  candidate_files_to_modify:
+  - skills/creation-funnel/SKILL.md（仅路由引用）
+  - docs/SOURCE_LEDGER.yaml
+  candidate_files_to_create:
+  - skills/hierarchical-director/SKILL.md
+  - skills/hierarchical-director/references/OUTPUT_CONTRACT.md
+  - tests/evals/hierarchical_director/*
+  implementation_steps:
+  - Skill 明确六步：读取 basis→建立 source-cited event chain→聚合 SceneContractV2→设计 ShotContract→提出视觉依赖建议→输出一个 truth_patch_set action。
+  - 事件不是新 truth 文件；编译到现有 scene/shot owner。
+  - unknown/assumption/conflict 单列，不允许补全想象覆盖原文空白。
+  - 每个 patch 带当前 base_sha256/payload_sha256；不直接写文件。
+  - 禁止调用任何 provider、修改 selected_take、写 Picture Lock 或把 reports 当 build input。
+  - 写至少 10 个 eval；使用静态 fixture，不调用外部模型 API。
+  tests:
+  - Skill/frontmatter 发现测试。
+  - eval 输出唯一 truth_patch_set、无 provider action、无锁字段变化。
+  - 示例 payload 通过零执行 propose 验证。
+  acceptance_criteria:
+  - Codex/Claude IDE 可直接调用。
+  - 产物是 Manju 原生提案。
+  - 来源引用完整。
+  required_evidence:
+  - Skill eval 结果
+  - 完整 proposal 示例
+  rollback:
+  - 删除 Skill；核心无依赖。
+  stop_conditions:
+  - 需要复制 ViMax prompt/code 原文。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: D1-004
+  phase: D1
+  title: 补强 truth_patch_set 的 diff、影响与陈旧反馈
+  priority: P1
+  size: M
+  mode: automated
+  depends_on:
+  - D1-003
+  purpose: 让多文件导演提案在人工确认前清晰展示来源、锁冲突、过期影响和将失效的证据。
+  rationale: 现有 patch/confirmation/CAS 已正确，应增强可用性而非新增执行通道。
+  inspect_first:
+  - src/manju/build/director.py
+  - src/manju/build/authoring_patch.py
+  - src/manju/build/authoring_impact.py
+  - director CLI/GUI proposal pages
+  candidate_files_to_modify:
+  - src/manju/build/director.py（最小 additive diagnostics）
+  - src/manju/build/authoring_impact.py
+  - src/manju/cli.py/GUI 薄展示
+  candidate_files_to_create:
+  - tests/test_hierarchical_truth_patch_proposal.py
+  implementation_steps:
+  - 保持 action whitelist 和 sole proposal store。
+  - impact 增加 scene/shot/source spans、lock conflict、story lint/screen coverage/animatic staleness。
+  - show/diff 显示 path/base hash/payload hash/create-or-modify/affected ids，不在日志复制敏感全文。
+  - stale 告诉 IDE 哪些 basis 变化，禁止自动 rebase。
+  - 若现有行为已足够，只补测试/文档，不重构大型 director.py。
+  tests:
+  - 篡改 action/content/estimate 后确认拒绝。
+  - 并发 run 只有一个 CAS 成功。
+  - base 变化零写入。
+  - paid+truth 混合与锁字段变化拒绝。
+  acceptance_criteria:
+  - 人在 confirm 前能理解计划与风险。
+  - AI 无法伪造 human confirmation。
+  - 旧 proposal 可读。
+  required_evidence:
+  - CLI/GUI JSON snapshot
+  - stale/CAS tests
+  rollback:
+  - 回退展示增强；核心语义不变。
+  stop_conditions:
+  - 需要拆分 director.py 大文件；该重构不属本计划。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: D1-005
+  phase: D1
+  title: 导演规划 Proof：真实故事到原子 Scene/Shot 提案
+  priority: P1
+  size: M
+  mode: manual_review
+  depends_on:
+  - D1-004
+  purpose: 用 3–5 场、8–15 镜真实/授权内容验证来源保持、状态变化、镜头合同和人类 diff 审核。
+  rationale: 合成 eval 不足以证明导演工作流。
+  inspect_first:
+  - 真实或授权故事片段
+  - authoring context
+  - director propose/show/confirm/run
+  - check/story lint/coverage/production status
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/HIERARCHICAL_DIRECTOR_PROOF_<date>.md
+  implementation_steps:
+  - IDE Agent 使用 Skill，只生成 proposal 文件。
+  - 运行 director propose，保存零费用 impact。
+  - 人审 source citations、entry/exit state、shot purpose/opening/endpoint、风险。
+  - 故意改一个 basis 文件，证明旧 proposal 过期零写入；重新生成。
+  - 人类 confirm/run；运行 check/lint/coverage/status/git diff。
+  - 记录人工修订比例和误差，不冒充 benchmark。
+  tests:
+  - 采用前后 manju check。
+  - stale test。
+  - paid attempt/event 为零。
+  - 删除 reports 后真相完整。
+  acceptance_criteria:
+  - 真实 Scene/Shot 进入既有 owner。
+  - 无 event graph/hidden memory。
+  - 最终只有原子采用文本为 truth。
+  required_evidence:
+  - proposal YAML
+  - human notes
+  - git diff
+  - zero-paid proof
+  rollback:
+  - 用现有 snapshot/rollback 恢复；保留 proposal 历史。
+  stop_conditions:
+  - 内容授权不清。
+  - Agent 绕过 proposal 直接写 truth。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: V1-001
+  phase: V1
+  title: 派生视觉依赖图，不改现有 build graph
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - D1-005
+  purpose: 从 continuity、Scene/Shot state、角色/道具、refs 和 exact-media evidence 计算跨镜依赖，只用于解释和检查。
+  rationale: ViMax 的视觉 DAG 有价值；但 Manju graphdiag 明确诊断不是调度真相，核心 graph 当前无跨镜边。
+  inspect_first:
+  - src/manju/build/graphdiag.py ruling
+  - src/manju/core/models.py Continuity/characters/props/generation
+  - src/manju/core/authoring.py
+  - src/manju/providers/refs.py
+  - src/manju/qc/production.py continuation/keyframe
+  - src/manju/build/readiness.py
+  candidate_files_to_modify:
+  - CONTRACTS.yaml
+  - src/manju/cli.py 或现有 explain 薄层
+  candidate_files_to_create:
+  - src/manju/build/visual_dependencies.py
+  - tests/test_visual_dependency_view.py
+  implementation_steps:
+  - 定义实验性 visual-dependency-graph/v1；纯函数结果，不读取 materialized 报告。
+  - 边类型至少 continuation、character_identity、appearance、location_state、prop_state、spatial_anchor、eyeline/motion、lighting_weather、reference_binding。
+  - 每边包含 from/to/subjects/source_paths/strength/reason；共享角色默认 advisory。
+  - hard 只来自显式 truth：continuity.prev、exact refs、明确 carry-forward state。
+  - 节点显示 current selected media hash、keyframe adoption、accepted endpoint、ref digest 的可用性。
+  - deterministic sort/digest/cycle/unknown diagnostics；CLI 复用 explain/production 命名。
+  tests:
+  - 同 truth 多次字节稳定。
+  - 删除报告重建一致。
+  - continuity.prev=>hard；共享角色=>advisory。
+  - cycle/unknown/self-edge 明确。
+  - build graph 既有无跨镜测试不变。
+  acceptance_criteria:
+  - 图能解释等待/复核原因。
+  - 不修改 build/graph.py 调度。
+  - 报告不是 build input。
+  required_evidence:
+  - 示例 graph JSON
+  - cycle/unknown snapshots
+  rollback:
+  - 删除模块/命令/schema；build 行为零变化。
+  stop_conditions:
+  - materialized graph 被用作执行输入。
+  - 用隐藏 VLM 记忆推断 hard edge。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: V1-002
+  phase: V1
+  title: 实现 exact-anchor readiness 与陈旧诊断
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - V1-001
+  purpose: 判断 hard dependency 的父镜 exact media/endpoint/ref 当前是否可用，并给出零付费修复路径。
+  rationale: 依赖关系本身不等于锚点可用；必须区分 authored expectation 与 current observed evidence。
+  inspect_first:
+  - src/manju/qc/production.py accepted_observed_state/continuation_view
+  - src/manju/qc/assurance.py
+  - src/manju/providers/refs.py
+  - src/manju/build/readiness.py
+  - src/manju/qc/prompt_checks.py
+  candidate_files_to_modify:
+  - src/manju/build/visual_dependencies.py
+  - src/manju/build/readiness.py（只读 detail）
+  - src/manju/qc/prompt_checks.py（若 owner 合适）
+  candidate_files_to_create:
+  - tests/test_visual_dependency_readiness.py
+  implementation_steps:
+  - 状态枚举：ready、missing_source_media、source_not_accepted、endpoint_unobserved、hash_mismatch、ref_missing、ref_stale、cycle、unknown。
+  - hash 比较基于当前字节；不得用 authored endpoint 代替 observed endpoint。
+  - 诊断附 source/evidence paths、建议现有命令、do_not_execute_automatically。
+  - 第一版只进 explain/prompt-check/readiness detail，不硬阻塞。
+  - 长 continuation 链 re-anchor 建议复用现有 continuation_view。
+  tests:
+  - 父镜重选=>旧 source hash mismatch。
+  - QC binding 漂移=>stale。
+  - 无 observed END 不 ready。
+  - 修复后 deterministic ready。
+  acceptance_criteria:
+  - 每个阻塞有证据和下一步。
+  - 不自动写 refs/select/redo。
+  required_evidence:
+  - readiness truth table
+  - CLI JSON examples
+  rollback:
+  - 回退 diagnostics 接入；保留基础 view。
+  stop_conditions:
+  - 需要读取保存的 graph 报告。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: V1-003
+  phase: V1
+  title: 加入 strict zero-cost 外部 transport 硬阻断，并保留视觉依赖本地门控
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - V1-002
+  - P0-005
+  purpose: 在本轮 strict zero-cost mode 下，任何非 loopback provider 请求都在 transport 前拒绝；视觉依赖 readiness 只对本地 fake/imported workflow
+    进行演练。
+  rationale: 用户不允许付费，因此本计划不存在 human override。未来若预算改变，必须另建计划而不是关闭一个复选框。
+  inspect_first:
+  - 现有 unattended/tool policy/keyframe gate/production readiness owner
+  - src/manju/providers/preflight.py
+  - src/manju/build/readiness.py
+  - src/manju/qc/production.py
+  - project/creative policy fields
+  candidate_files_to_modify:
+  - 审计后的单一策略 owner
+  - src/manju/providers/preflight.py
+  - src/manju/build/readiness.py
+  - CONTRACTS.yaml（条件）
+  candidate_files_to_create:
+  - tests/test_visual_dependency_paid_gate.py
+  implementation_steps:
+  - 复用 P0 的 network policy owner；不要再创建第二策略字段。
+  - strict zero-cost active 时，非 loopback endpoint 永远 transport_count=0，无 human override。
+  - local fake provider 仍从 current truth/evidence 重算 visual dependency readiness；不读保存图。
+  - 门控失败只给零成本修复命令：补 current local media、更新 QC、重绑 ref、修复 cycle。
+  - 旧项目在未启用 strict zero-cost execution profile 时保持原有行为；本计划的 IDE/runbook 永远启用它。
+  tests:
+  - non-loopback=>transport_count=0。
+  - loopback+missing anchor=>preflight fail。
+  - loopback+current anchor=>本地执行。
+  - 不存在 human network override。
+  - 篡改图报告无效。
+  acceptance_criteria:
+  - 本轮不可能误触真实 provider。
+  - 视觉门控来自 current facts。
+  - 无跨镜 scheduler。
+  required_evidence:
+  - egress-block tests
+  - local visual-gate examples
+  rollback:
+  - 移除本轮 profile/测试接入；不要弱化生产既有 spend gate。
+  stop_conditions:
+  - 实现依赖保存图。
+  - 存在可绕过的外部 transport override。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: V1-004
+  phase: V1
+  title: 生成 advisory 依赖波次计划，而非核心 scheduler
+  priority: P2
+  size: M
+  mode: automated
+  depends_on:
+  - V1-002
+  purpose: 展示哪些镜头可并行、哪些等待父镜，但绝不自动批量提交。
+  rationale: ViMax 研究支持图感知并行；Manju 现阶段应先给人/IDE 计划，不改变 executor。
+  inspect_first:
+  - src/manju/build/visual_dependencies.py
+  - src/manju/build/director.py
+  - src/manju/build/graphdiag.py
+  - 现有 batch/spend gate
+  candidate_files_to_modify:
+  - src/manju/build/visual_dependencies.py
+  - src/manju/cli.py 只读输出
+  candidate_files_to_create:
+  - tests/test_visual_dependency_waves.py
+  implementation_steps:
+  - 对 hard-edge DAG 做 deterministic topological layers；advisory 不改变波次。
+  - 每波输出 ready/blocked、依赖证据、估价来源、建议现有命令。
+  - 不调用 redo/build，不成为 resume/cache input。
+  - 可输出 Director action 草稿但不 persist/confirm/run。
+  - cycle 时 fail closed，不给伪计划。
+  tests:
+  - 同图波次稳定。
+  - 独立分支同波，hard child 后移。
+  - cycle 无计划。
+  - 删除输出零行为变化。
+  acceptance_criteria:
+  - 人可据此安排生成。
+  - 核心 graph/executor 未改。
+  required_evidence:
+  - proof scene waves snapshot
+  rollback:
+  - 删除波次输出。
+  stop_conditions:
+  - 实现试图自动确认或提交整波。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: V1-005
+  phase: V1
+  title: 零成本视觉依赖 Proof Scene 演练
+  priority: P1
+  size: M
+  mode: manual_review
+  depends_on:
+  - V1-003
+  - V1-004
+  purpose: 在 3–5 个相互依赖镜头上验证 hard/advisory、陈旧失效、波次和人类决策。
+  rationale: 图算法单测不能证明真实 refs、QC、选择协作。
+  inspect_first:
+  - 一组 proof_scene 镜头
+  - visual dependency explain/waves
+  - production status/qc/refs/selected takes
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/VISUAL_DEPENDENCY_PROOF_SCENE_<date>.md
+  implementation_steps:
+  - 选择 3–5 镜的 synthetic/user-owned proof scene，包含同角色、同场景、continuity.prev 和 camera change。
+  - 使用本地导入/FFmpeg 媒体完成父镜 current-bound END observation。
+  - 观察子镜 blocked→ready；重选父镜后旧 anchor 立即 stale。
+  - 确认 advisory shared-character edge 不硬阻塞。
+  - 记录误报/漏报；不调用 VLM 或外部 provider。
+  tests:
+  - 演练前后 manju check/status/QC。
+  acceptance_criteria:
+  - hard 依赖不因旧证据 fail open。
+  - 零外部请求。
+  - 图不会阻断无关镜头。
+  required_evidence:
+  - 前后 graph snapshots
+  - media hashes
+  - human notes
+  rollback:
+  - 关闭 opt-in gate；保留证据。
+  stop_conditions:
+  - 父镜无 current-bound evidence。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: K1-001
+  phase: K1
+  title: 审计并固定现有 Preview Ladder 关键帧路径
+  priority: P1
+  size: M
+  mode: automated
+  depends_on:
+  - V1-005
+  purpose: 证明 Best-of-2 应复用 image takes、keyframe adoption、promoted refs、QC 和 spend gate。
+  rationale: Manju 已有 preview-ladder/v1 和 exact-byte adoption，不应新增 CandidateSet/approval 表。
+  inspect_first:
+  - src/manju/qc/production.py Preview Ladder/keyframe
+  - image provider capability
+  - src/manju/providers/refs.py
+  - src/manju/core/container.py takes
+  - take sidecar/attempt evidence
+  - GUI/CLI keyframe view
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/KEYFRAME_OWNER_AUDIT_<date>.md
+  implementation_steps:
+  - 确认 image 结果注册 take/sidecar 的 request/ref/provider/cost facts。
+  - 确认 generation.candidates 或 adapter 多结果如何形成两个独立 candidate identity。
+  - 确认 select/promote ref 和 hash 绑定现有命令。
+  - 确认 QC packet 对 image take 支持；不足归属 agent_review。
+  - 写 REUSE/EXTEND 清单。
+  tests:
+  - 运行 preview ladder/keyframe/provider candidate 现有测试。
+  acceptance_criteria:
+  - 明确最小扩展点。
+  - 无新 approval store。
+  required_evidence:
+  - keyframe owner audit
+  rollback:
+  - 删除报告。
+  stop_conditions:
+  - image take 无法 append-only 表达。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: K1-002
+  phase: K1
+  title: 用本地/已有素材建立两个 append-only 关键帧候选
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - K1-001
+  - P0-005
+  purpose: 在同一镜头意图和 refs 下，用 Pillow/FFmpeg 合成图或用户已有本地图片建立两个可追踪 image candidates。
+  rationale: 本阶段验证 candidate、lineage、QC 和采纳机制，不验证云模型生成质量。
+  inspect_first:
+  - image provider route
+  - src/manju/build/graph.py/provider candidate handling
+  - src/manju/build/attempts.py
+  - src/manju/core/container.py
+  - src/manju/qc/production.py
+  candidate_files_to_modify:
+  - 现有 image generation/candidate owner
+  - CLI/GUI keyframe 展示薄层
+  candidate_files_to_create:
+  - tests/test_keyframe_best_of_two.py
+  implementation_steps:
+  - '使用 generation.candidates: 2 的现有语义，或通过本地 import/fixture 形成 candidate_index 0/1；不新增第二 candidates 字段。'
+  - 每候选独立 media bytes/take/candidate_index/request digest/local profile digest/refs hash，cost=0。
+  - 默认用确定性图：不同构图、角色占位或空间标记，便于人工/QC 区分；不下载模型权重。
+  - 写入 append-only media 路径，禁止固定 first_frame.png 覆盖。
+  - Preview Ladder 显示两个 image takes但不自动 adopted。
+  tests:
+  - 两个候选 hash/sidecar 独立。
+  - 重跑不覆盖。
+  - cost=0且无 transport。
+  - 部分失败证据保留。
+  - 旧项目行为不变。
+  acceptance_criteria:
+  - 两个本地候选可独立查看/评审/保留。
+  - 无 file-exists/mtime cache。
+  - 不宣称 AI 质量。
+  required_evidence:
+  - 两个 sidecars/attempt snapshots
+  - zero-cost dry-run
+  rollback:
+  - 候选数退回 1；历史媒体保留。
+  stop_conditions:
+  - 实现要求远程图片 API或自动大模型下载。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: K1-003
+  phase: K1
+  title: 用现有 QC v2 做本地 hash-bound 关键帧评审
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - K1-002
+  purpose: 外部视觉模型只报告观察和证据，Manju 保存当前字节绑定，人类保留选择权。
+  rationale: 应借鉴 ViMax VLM 评估而拒绝黑箱 BestImageSelector 自动决策。
+  inspect_first:
+  - src/manju/qc/agent_review.py
+  - src/manju/qc/assurance.py
+  - src/manju/qc/production.py candidate/keyframe
+  - qc brief/verdict CLI
+  - skills/visual-qc-review/SKILL.md
+  candidate_files_to_modify:
+  - src/manju/qc/agent_review.py（条件）
+  - src/manju/qc/production.py 派生比较
+  - skills/visual-qc-review/SKILL.md
+  - CONTRACTS.yaml（仅必要）
+  candidate_files_to_create:
+  - tests/test_keyframe_qc_binding.py
+  implementation_steps:
+  - 优先复用 manju.qc.packet/v2 和 verdict/v2。
+  - 评审可由人工填写或确定性 fixture 产生；本轮不调用云 VLM。
+  - 维度仍是 observations：identity/appearance/location/prop/composition/screen_intent/style/technical_artifact。
+  - evidence 绑定候选 media path/hash；换字节后旧记录 historical/stale。
+  - comparison view 展示差异/uncertain/blocker，不自动排序或选择。
+  tests:
+  - 媒体变化=>stale。
+  - malformed/unsafe=>zero writes。
+  - 两个 reviewer 冲突=>disagreement。
+  - KEEP 不改变 selected_take。
+  acceptance_criteria:
+  - 评审可追溯 exact bytes。
+  - 无需外部模型。
+  - 人类能看到差异。
+  required_evidence:
+  - 两个 QC packets/verdicts
+  - comparison JSON
+  rollback:
+  - 停止生成新 verdict；历史可读。
+  stop_conditions:
+  - 流程要求模型自动选择才能继续。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: K1-004
+  phase: K1
+  title: 人工采纳关键帧并绑定本地视频请求身份
+  priority: P1
+  size: M
+  mode: automated
+  depends_on:
+  - K1-003
+  - V1-002
+  purpose: 把人类采纳的 exact image bytes 通过现有 image take/ref 进入 localhost fake video request identity。
+  rationale: 关键帧只有真正约束下游付费请求才有价值。
+  inspect_first:
+  - src/manju/qc/production.py adoption/gate
+  - src/manju/providers/refs.py
+  - src/manju/providers/submission.py identity
+  - select/refs/prompt/build dry-run
+  candidate_files_to_modify:
+  - 仅当 identity 未绑定 ref bytes 时修对应 owner
+  - GUI/CLI adoption/binding digest 展示
+  candidate_files_to_create:
+  - tests/test_keyframe_downstream_binding.py
+  implementation_steps:
+  - 人类选择一张 image take或提升为 first-frame/canonical ref；动作走现有命令/truth patch。
+  - 本地 dry-run 显示 adopted take、media_sha、ref role、request digest。
+  - localhost fake video submission identity 包含 exact ref bytes hash；改选产生新 identity。
+  - strict zero-cost policy 同时证明同一请求无法被改成外部 endpoint。
+  - 图片 selected_take 不让 FINAL_VIDEO rung 成立。
+  tests:
+  - 采纳前后 gate。
+  - 重选 request digest 改变。
+  - ref bytes变化=>stale。
+  - 图片不等于 final video。
+  - non-loopback transport=0。
+  acceptance_criteria:
+  - 本地请求可证明使用哪张图。
+  - 采纳是人类 truth change。
+  - 零费用。
+  required_evidence:
+  - adoption before/after JSON
+  - identity diff
+  rollback:
+  - 人类重选/移除 ref；候选历史保留。
+  stop_conditions:
+  - identity 未包含实际参考字节。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: K1-005
+  phase: K1
+  title: 零成本 Best-of-2 工作流 Proof（不评估云模型质量）
+  priority: P1
+  size: M
+  mode: manual_review
+  depends_on:
+  - K1-004
+  purpose: 用三个本地/已有素材镜头验证 Best-of-2 的候选管理、评审、采纳、身份变化和用户操作成本。
+  rationale: 零预算下可以验证系统设计，但不能决定真实模型是否因 Best-of-2 提升质量。
+  inspect_first:
+  - 三个 local proof shots：单主体/双主体/复杂场景占位
+  - QC v2
+  - Preview Ladder
+  - localhost fake video provider
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/KEYFRAME_BEST_OF_TWO_PROOF_<date>.md
+  implementation_steps:
+  - 固定 truth/local profile；每镜建立两张本地候选和一条 fake video result。
+  - 记录人工完成比较所需步骤、候选 hash、QC observation、采纳和 request identity 变化。
+  - 不调用任何远程图片/视频/VLM 服务。
+  - 结论只针对 workflow：是否易懂、是否保持 lineage、是否能防止自动选择。
+  - 真实质量策略保持 experimental/off，等待未来独立预算计划。
+  tests:
+  - provider/task/QC/check focused tests。
+  - zero egress sentinel。
+  acceptance_criteria:
+  - 候选工作流有 Manju 自身零成本证据。
+  - 没有质量夸大。
+  - 自动选择仍无权威。
+  required_evidence:
+  - media hashes
+  - workflow step count
+  - human notes
+  - zero-network proof
+  rollback:
+  - 保持 feature opt-in；本地媒体可保留。
+  stop_conditions:
+  - 任何步骤要求远程 VLM/图像/视频 API。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: S1-001
+  phase: S1
+  title: 定义并生成本地 reference-only 空间锚点
+  priority: P2
+  size: L
+  mode: automated
+  depends_on:
+  - K1-004
+  - V1-002
+  purpose: 从父镜当前本地媒体用 FFmpeg 抽取帧/裁剪视图，保存为 append-only reference artifact。
+  rationale: 先验证 lineage、stale 和 refs 语义；不需要云 transition-video 生成。
+  inspect_first:
+  - src/manju/providers/refs.py
+  - src/manju/media/frames.py
+  - media/ref path rules
+  - external authoring handoff/reference graph
+  - take/ref sidecar
+  - continuation current evidence
+  candidate_files_to_modify:
+  - 现有 refs/ingest owner
+  - CONTRACTS.yaml（条件）
+  candidate_files_to_create:
+  - src/manju/media/spatial_anchor.py（条件）
+  - tests/test_spatial_anchor_artifact.py
+  implementation_steps:
+  - 优先用现有 frame extraction + manual ingest + refs transfer；足够则不新增 schema。
+  - 输入绑定父镜 exact media_sha、帧/时间、目标 shot/camera intent和本地 extraction profile。
+  - 用 FFmpeg 抽帧、crop/scale 等确定性操作生成 anchor；禁止调用生成模型。
+  - 输出写现有 append-only refs 路径，content-addressed/不覆盖。
+  - sidecar 标记 reference_only、source shot/take/hash、target shot、frame/time、method/profile/output hash。
+  tests:
+  - 相同输入 identity稳定。
+  - 父媒体变化=>stale。
+  - path/symlink/overwrite拒绝。
+  - anchor 不进入 final eligibility。
+  - 无公网。
+  acceptance_criteria:
+  - anchor 可追溯父镜真实字节。
+  - 纯本地、零费用、reference-only。
+  required_evidence:
+  - anchor sidecar
+  - stale test
+  rollback:
+  - 解除绑定；artifact 依 append-only/GC 规则保留。
+  stop_conditions:
+  - 只能固定文件名覆盖。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: S1-002
+  phase: S1
+  title: 将当前空间锚点提升为子镜现有 refs binding
+  priority: P2
+  size: M
+  mode: automated
+  depends_on:
+  - S1-001
+  purpose: 通过 provider-neutral ref transfer contract 让子镜真实使用锚点。
+  rationale: 单独生成图片无价值，必须进入现有控制 owner 与 submission identity。
+  inspect_first:
+  - src/manju/providers/refs.py vocabulary/controls/ignore
+  - Shot generation.params.refs
+  - src/manju/providers/submission.py
+  - src/manju/core/intent.py
+  candidate_files_to_modify:
+  - 仅在 vocabulary 无法表达 spatial/background/framing 时 additive 扩展
+  - skills/hierarchical-director/SKILL.md
+  candidate_files_to_create:
+  - tests/test_spatial_anchor_ref_binding.py
+  implementation_steps:
+  - 优先现有 controls 表达 background/framing，排除错误 identity transfer。
+  - 通过 truth_patch_set 提议子镜 refs，等待人类确认。
+  - preflight 显示 anchor/controls/must_not_transfer/ignore/exact hash。
+  - anchor stale 时 transport 前拒绝或 advisory 警告。
+  - 长链定期回到 canonical character/location refs re-anchor。
+  tests:
+  - binding 后 identity 含 anchor hash。
+  - controls/ignore 进入 payload。
+  - stale 不复用旧 identity。
+  acceptance_criteria:
+  - 子镜可证明使用锚点。
+  - 不修改 Bible 身份。
+  required_evidence:
+  - truth patch
+  - request identity diff
+  rollback:
+  - 新 truth patch 移除 binding；历史保留。
+  stop_conditions:
+  - 只能把锚点塞 prompt override 且无 lineage。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: S1-003
+  phase: S1
+  title: 零成本空间锚点 Proof：本地同场景机位变化
+  priority: P2
+  size: M
+  mode: manual_review
+  depends_on:
+  - S1-002
+  purpose: 用 synthetic/user-owned 两镜场景验证 anchor lineage、refs binding、stale 和人工理解，不评估云模型空间保持质量。
+  rationale: 在没有预算时，能诚实验证的是系统契约和操作路径，而非生成模型性能。
+  inspect_first:
+  - 含明确空间标记的本地两镜 proof scene
+  - QC spatial/composition observations
+  - strict zero-cost policy
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/SPATIAL_ANCHOR_PROOF_<date>.md
+  implementation_steps:
+  - 父镜 current-bound accepted 且有 END observation。
+  - 从父镜本地抽取 anchor，绑定到子镜 localhost fake request。
+  - 评审 lineage、位置标记、identity pollution 风险和 stale 行为。
+  - 重选/修改父镜，确认旧 anchor失效。
+  - 功能保持 opt-in；真实质量等待未来独立预算计划。
+  tests:
+  - 媒体/QC/hash 完整。
+  - zero external transport。
+  acceptance_criteria:
+  - 契约和 stale 行为有证据。
+  - 不声称真实模型增益。
+  required_evidence:
+  - anchor/local media hashes
+  - QC/lineage comparison
+  - zero-network proof
+  rollback:
+  - 保持 opt-in。
+  stop_conditions:
+  - 任何步骤试图调用 transition/video model。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: F1-001
+  phase: F1
+  title: OpenChatCut 本地能力、协议、网络与许可证探针
+  priority: P1
+  size: M
+  mode: automated
+  depends_on:
+  - S1-003
+  - G0-002
+  purpose: 记录当前 OpenChatCut 实际 MCP tools、项目导入/导出格式、session 限制，并证明本轮只使用 localhost 和非 AI 编辑能力。
+  rationale: 项目活跃变化；README 明确 draft session 不提供 generation/export/delete 等即时副作用，不能凭想象自动化。
+  inspect_first:
+  - OpenChatCut exact commit/README/LICENSE/package.json
+  - .mcp.json
+  - external MCP tool registry/session/revision/store
+  - project import/export/FCPXML/complete project data
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - docs/integrations/openchatcut/CAPABILITY_SNAPSHOT_<commit>.yaml
+  - docs/integrations/openchatcut/README.md
+  - scripts/probes/openchatcut_capabilities.py
+  - tests/test_openchatcut_probe.py
+  implementation_steps:
+  - 记录 exact commit/版本、工具 schema、draft-safe、side-effect、导入/导出方向。
+  - 只连接 localhost；Bearer token可用环境变量，绝不写报告。
+  - 检查并禁用/不配置所有外部 AI provider、转录、生成或搜索功能。
+  - 验证 begin/read/draft edit/review/status/stale/browser takeover。
+  - OpenChatCut 未安装时输出 structured unavailable；可继续完成 handoff contract，bridge/task保持 optional。
+  tests:
+  - 未运行=>structured unavailable。
+  - token/key 不出现在报告。
+  - 不执行生成/删除/外部 AI。
+  - 非 localhost URL拒绝。
+  acceptance_criteria:
+  - 后续只用实测本地能力。
+  - 无云 Key、无外部 AI 请求。
+  required_evidence:
+  - capability snapshot
+  - probe output
+  rollback:
+  - 删除 probe/docs；核心零依赖。
+  stop_conditions:
+  - endpoint 非 localhost 或网络不可信。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: F1-002
+  phase: F1
+  title: 建立中立、不可变、内容寻址的 finishing handoff
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - F1-001
+  purpose: 把 Picture Lock 的 clips、timeline、audio、captions、constraints 交给任意外部精剪器。
+  rationale: Manju 已有 verified external handoff 和 OTIO/FCPXML/XMEML，应复用安全打包器而不是建立 OpenChatCut 专属真相。
+  inspect_first:
+  - 现有 manju handoff profile/writer/verifier/ingest
+  - external authoring handoff v2
+  - src/manju/exporters/otio.py/fcpxml.py/xmeml.py
+  - roundtrip/import-plan owners
+  - Picture Lock/readiness
+  candidate_files_to_modify:
+  - 现有 handoff/profile owner 或单一 finishing owner
+  - src/manju/cli.py 薄层
+  - CONTRACTS.yaml
+  candidate_files_to_create:
+  - tests/test_finishing_handoff.py
+  - docs/integrations/openchatcut/FINISHING_HANDOFF.md
+  implementation_steps:
+  - 优先新增 finishing_portable profile；语义不兼容才定义 finishing-handoff/v1，并复用同一 archive/inventory/path guard。
+  - 默认要求 current Picture Lock；rough-cut 显式 non_authoritative，不能回写锁片。
+  - manifest 含 project identity、lock/timeline digest、rational edit rate、clip media hashes/in-out、audio/caption hashes、exporter
+    versions、constraints、inventory。
+  - 打包实际支持且通过 conform-loss 的 OTIO/FCPXML/XMEML，并带 neutral timeline JSON。
+  - directory-atomic、regular-file-only、relative paths、exact inventory/checksum。
+  tests:
+  - 无 Picture Lock 默认拒绝。
+  - tamper/missing/extra/symlink/traversal/casefold 拒绝。
+  - 删除 bundle 不影响 build。
+  - 相同输入 identity 稳定。
+  - conform loss 明确。
+  acceptance_criteria:
+  - bundle 与 OpenChatCut 解耦。
+  - 外部编辑器不能改 truth。
+  required_evidence:
+  - verified sample bundle
+  - conform-loss report
+  rollback:
+  - 删除 profile/schema；现有 exporters 不受影响。
+  stop_conditions:
+  - 外部 project file 被当 canonical timeline。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: F1-003
+  phase: F1
+  title: 实现可选 localhost-only OpenChatCut sidecar bridge
+  priority: P2
+  size: L
+  mode: optional
+  depends_on:
+  - F1-001
+  - F1-002
+  purpose: 让 IDE 从 verified finishing bundle 驱动 OpenChatCut draft-safe MCP，同时保持进程和许可证隔离。
+  rationale: OpenChatCut MCP 适合外部控制；Manju 自身 MCP 已移除，不能倒退。
+  inspect_first:
+  - F1-001 capability snapshot
+  - Streamable HTTP MCP
+  - Manju JSON CLI
+  candidate_files_to_modify:
+  - pyproject.toml 仅 optional dev extra（若需要）
+  candidate_files_to_create:
+  - tools/openchatcut_bridge/README.md
+  - tools/openchatcut_bridge/bridge.py 或 bridge.ts
+  - tools/openchatcut_bridge/tests/*
+  implementation_steps:
+  - bridge 只读 verified bundle和 capability snapshot；不复制 OpenChatCut 源码。
+  - 只允许 loopback Streamable HTTP MCP；host 不是 localhost/127.0.0.1/::1 时拒绝。
+  - 实现 health/capability、project target、begin/read/draft edit/review/poll/discard。
+  - 默认 approvalMode=manual；stale/browser takeover/revision mismatch fail closed。
+  - v1 不做 AI generation/transcription/search、delete、credential management 或自动 export。
+  - OpenChatCut 未安装时 Manju 全部核心测试仍绿。
+  tests:
+  - mock happy/stale/rejected/takeover/unavailable。
+  - non-loopback拒绝。
+  - token redaction。
+  - 无第三方时核心全绿。
+  acceptance_criteria:
+  - optional sidecar、localhost-only、无云 AI。
+  - 没有 Manju MCP server。
+  required_evidence:
+  - mock transcript
+  - license boundary test
+  rollback:
+  - 删除 tools bridge。
+  stop_conditions:
+  - 需要复制 AGPL 实现。
+  - 必须让 Manju 持有 OpenChatCut truth。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: F1-004
+  phase: F1
+  title: 完成一次 OpenChatCut 本地人工精剪与零写入 roundtrip 分析
+  priority: P1
+  size: M
+  mode: manual_review
+  depends_on:
+  - F1-002
+  - F1-003
+  purpose: 证明 Picture Lock 后能进行 trim/transition/caption/audio 精修，返回后仍由 Manju 分析和人类采用。
+  rationale: OpenChatCut 的价值是最后 10% finishing，不是替代 Manju 制作系统。
+  inspect_first:
+  - 已 Picture Lock 短场景
+  - verified finishing bundle
+  - OpenChatCut MCP/editor
+  - 现有 FCPXML/OTIO/roundtrip CLI
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - REPORTS/OPENCHATCUT_FINISHING_PROOF_<date>.md
+  implementation_steps:
+  - 导出 verified bundle；按 capability snapshot 自动或人工导入本地 OpenChatCut。
+  - 确认所有 AI provider/转录/生成配置为空；manual edit session 只做 trim 与 transition/caption/audio 等本地编辑。
+  - 用户在编辑器内预览批准。
+  - 导出实测支持的 project data/exchange file/review render，记录 hash/version。
+  - Manju 运行 zero-write roundtrip/import-plan；不得直接 apply。
+  - 第二次人审后才采用可表达变化；其余 finishing-only。
+  tests:
+  - source digest匹配。
+  - 分析默认 zero writes。
+  - stale Lock拒绝。
+  - unsupported effects列 loss。
+  - 无外部网络请求。
+  acceptance_criteria:
+  - 双方各自一份真相。
+  - 两次人工批准。
+  - 本地精剪零服务费用。
+  required_evidence:
+  - bundle/result hashes
+  - editor version/session
+  - roundtrip plan
+  - approvals
+  rollback:
+  - 不采用 plan；外部 artifact 保留。
+  stop_conditions:
+  - OpenChatCut source 与 handoff digest 不一致。
+  - 要求覆盖 Manju 媒体。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: F1-005
+  phase: F1
+  title: 登记 append-only finishing result 与安全加固
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - F1-004
+  purpose: 将外部 project export/render 作为 lineage 完整的交付 artifact 登记，默认不参与 canonical build。
+  rationale: 外部结果要可审计，也要防恶意/损坏包和隐式 auto-apply。
+  inspect_first:
+  - existing handoff ingest/bundle/path security
+  - exports/package/delivery manifest owners
+  - roundtrip import plans
+  candidate_files_to_modify:
+  - 现有 finishing/handoff owner
+  - src/manju/build/delivery.py（若 owner 合适）
+  - CONTRACTS.yaml
+  candidate_files_to_create:
+  - tests/test_finishing_result_security.py
+  implementation_steps:
+  - 定义/复用 finishing-result/v1：source handoff digest、editor/version、project/render hashes、change summary、losses、human approval。
+  - 复制到 append-only exports/finishing/<id> 或现有 owner 路径，禁止覆盖 final.mp4。
+  - 默认只登记；可表达变化仍走 roundtrip plan。
+  - 加入 zip slip/symlink/absolute/casefold/decompression bomb/extra inventory/JSON injection/oversize tests。
+  - delivery manifest 可引用 artifact，但 source cuts 仍由 truth 决定。
+  tests:
+  - tamper/mismatch 拒绝。
+  - 重复相同 bytes idempotent，不同 bytes 不覆盖。
+  - 删除 result 不改变 canonical build。
+  acceptance_criteria:
+  - lineage 完整。
+  - 无 hidden auto-apply。
+  required_evidence:
+  - result manifest
+  - security matrix
+  rollback:
+  - 移除登记；truth 不变。
+  stop_conditions:
+  - result 成为下次 build 隐式输入。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: W1-001
+  phase: W1
+  title: 派生工作台图模型与现有 GUI API
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - V1-002
+  - K1-004
+  - F1-002
+  purpose: 在一个图上连接 source、scene、shot、refs、candidates、QC、selection、Lock 和 finishing。
+  rationale: 采用 Toonflow 的可视化价值，但所有节点必须来自现有 truth/evidence。
+  inspect_first:
+  - src/manju/gui/server.py
+  - src/manju/gui/state.py
+  - src/manju/gui/page.py/pages.py
+  - 现有 /api/state/schema/meta
+  - 所有节点 owner
+  candidate_files_to_modify:
+  - src/manju/gui/server.py 薄路由
+  - CONTRACTS.yaml（若公共 schema）
+  candidate_files_to_create:
+  - src/manju/gui/workbench_graph.py
+  - tests/test_workbench_graph.py
+  implementation_steps:
+  - 定义 workbench-graph/v1 或内部稳定 shape；公共则登记。
+  - 节点：source_span/event-or-change/scene/shot/ref/image take/video take/qc/selection/lock/finishing。
+  - 边：cites/contains/continues/depends_on/references/generated_from/reviewed_by/selected_as/locked_in/finished_as。
+  - 每边带 source path/hash/evidence；推测不入图。
+  - 每次从当前 truth/evidence 派生，不读布局。
+  - 大项目支持 filter/pagination/scene subgraph，不返回媒体正文。
+  tests:
+  - deterministic。
+  - 删除 projection 后 build 不变。
+  - 恶意文本安全编码。
+  - 保留 localhost/Host/CSRF。
+  - 大 fixture 性能。
+  acceptance_criteria:
+  - 图是导航/解释层。
+  - 无 secret/私密绝对路径。
+  required_evidence:
+  - graph snapshot
+  - performance facts
+  rollback:
+  - 删除 endpoint/module。
+  stop_conditions:
+  - 要求新增 SQLite canonical tables。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: W1-002
+  phase: W1
+  title: 在现有 localhost GUI 实现只读图形工作台
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - W1-001
+  purpose: 提供无限画布式浏览、过滤、聚焦、详情和跳转，不引入 Electron/React/Vue。
+  rationale: Manju GUI 已是安全薄客户端；clean-room 增量比移植 Toonflow 前端更稳。
+  inspect_first:
+  - src/manju/gui/page.py
+  - src/manju/gui/pages.py
+  - 现有 JS/CSS
+  - reduced-motion/XSS/project identity/stale-tab protections
+  candidate_files_to_modify:
+  - src/manju/gui/page.py
+  - src/manju/gui/pages.py
+  - 现有静态资源 owner
+  candidate_files_to_create:
+  - tests/test_workbench_gui.py
+  implementation_steps:
+  - 新增 Workbench 页，v1 只读；用原生 SVG/Canvas/HTML。
+  - 支持 scene/shot/status/edge filter、search、focus、details、跳现有 review/edit/qc。
+  - layout/zoom/fold 只存 localStorage 或 .manju/ui，key 绑定 project identity。
+  - 删除 UI state 后重建默认布局且不改 graph/build digest。
+  - 节点显示 exact source/hash/current-or-stale/next existing command。
+  - 支持 reduced motion、键盘、ARIA、转义和列表降级。
+  tests:
+  - XSS 不执行。
+  - project switch/stale tab 409。
+  - 删除布局 build key 不变。
+  - 无 JS 有列表。
+  acceptance_criteria:
+  - 一页理解故事到交付。
+  - 页面零直接写入。
+  - 无 Toonflow 代码/品牌。
+  required_evidence:
+  - GUI screenshots
+  - a11y/security tests
+  rollback:
+  - 移除页面/资源。
+  stop_conditions:
+  - 需要替换 GUI 技术栈。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: W1-003
+  phase: W1
+  title: 实现三角色、proposal-only 工作台交互
+  priority: P1
+  size: L
+  mode: automated
+  depends_on:
+  - W1-002
+  - D1-004
+  purpose: 将 Toonflow 决策/执行/监督映射为 Director Proposal、现有 engine commands 和 QC evidence。
+  rationale: 增强体验但不能绕过 human confirm、spend gate 和唯一真相。
+  inspect_first:
+  - src/manju/build/director.py
+  - GUI proposals/review/jobs API
+  - QC brief/verdict API
+  - operation semantics/job registry
+  candidate_files_to_modify:
+  - src/manju/gui/server.py
+  - src/manju/gui/pages.py/page.py
+  - 薄 API adapters
+  candidate_files_to_create:
+  - tests/test_workbench_proposal_interactions.py
+  implementation_steps:
+  - Director 只生成/import truth_patch_set proposal。
+  - Executor 只调用现有 check/build/redo/export，paid 仍过 human/spend gate。
+  - Reviewer 只创建 packet/接 verdict/显示 assurance，不 select/Lock。
+  - 拖拽 v1 只生成 proposal draft。
+  - 所有返回用现有 OperationOutcome/structured code。
+  tests:
+  - AI actor 不能 confirm paid/truth。
+  - KEEP 不 select。
+  - drag 只 proposal。
+  - stale identity 零写入。
+  acceptance_criteria:
+  - 三层边界在 UI/API 可验证。
+  - mutation 走 shared core。
+  required_evidence:
+  - interaction matrix
+  - proposal flow
+  rollback:
+  - 移除交互，保留只读页。
+  stop_conditions:
+  - GUI 维护独立业务状态。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: W1-004
+  phase: W1
+  title: 声明式 Provider 配置与零成本状态 UI
+  priority: P2
+  size: L
+  mode: automated
+  depends_on:
+  - W1-003
+  - P0-005
+  purpose: 借鉴 Toonflow 配置体验，但在本轮只展示本地/fake provider；外部 provider 明确禁用，不接受云 Key。
+  rationale: 零成本版的 UI 首要责任是防止用户误以为 free tier 可以安全执行，而不是让配置更容易触发云调用。
+  inspect_first:
+  - src/manju/providers/manifest.py/catalog.py/preflight.py
+  - providers add/show/check/catalog CLI
+  - GUI settings patterns
+  - secret owner
+  candidate_files_to_modify:
+  - src/manju/gui/server.py/pages.py/page.py
+  - 现有 provider manifest editor owner（若有）
+  candidate_files_to_create:
+  - tests/test_provider_config_gui.py
+  implementation_steps:
+  - 从 ProviderManifest schema 生成只读/编辑字段；未知 additive 字段 roundtrip 保留。
+  - strict zero-cost active 时隐藏或禁用 secret 输入，显示“外部 provider 禁用；需未来独立预算计划”。
+  - localhost fake provider 可展示 diff/profile digest/capabilities/limits/cost=0/request preview。
+  - 外部 URL 不做连通性探测；保存含非 loopback endpoint 的 profile时标记 disabled，不能执行。
+  - 禁止脚本/eval/VM；profile变化不篡改历史 execution profile。
+  tests:
+  - secret输入/值不进 HTML/API/log。
+  - 非 loopback profile不可执行。
+  - 恶意 script/URL不执行。
+  - 历史任务绑定旧 digest。
+  acceptance_criteria:
+  - 普通用户能看懂零成本状态。
+  - 无动态 TS runtime。
+  - UI不能解除零成本硬门。
+  required_evidence:
+  - GUI disabled-state/preflight snapshots
+  - redaction/egress tests
+  rollback:
+  - 移除 UI editor；CLI 仍可用。
+  stop_conditions:
+  - UI提供“忽略零成本限制并继续”按钮。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: W1-005
+  phase: W1
+  title: 证明工作台与 UI 状态可删除、无隐藏真相
+  priority: P1
+  size: M
+  mode: automated
+  depends_on:
+  - W1-004
+  purpose: 系统验证画布、layout、reports 和 runtime DB 不参与 build/request/selection。
+  rationale: 这是 Toonflow 风格工作台能否与 Manju 共存的核心验收。
+  inspect_first:
+  - .manju runtime dirs
+  - localStorage keys
+  - reports projections
+  - GUI state
+  - build/spec/cache key owners
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - tests/test_workbench_no_hidden_truth.py
+  implementation_steps:
+  - 记录 fixture 的 check/build dry-run/spec/timeline/request digests。
+  - 删除 .manju/ui、workbench reports、布局和可重建 SQLite，再开 GUI。
+  - 比较 truth/build plan/identity/selection/Lock/exports。
+  - 移动节点/折叠布局，确认无 events/truth writes。
+  - 加入 Windows/Ubuntu 矩阵。
+  tests:
+  - 上述 deletion/rebuild 跨平台测试。
+  acceptance_criteria:
+  - 核心输出一致，仅布局重置。
+  required_evidence:
+  - before/after digest comparison
+  rollback:
+  - 移除产生 hidden truth 的 UI feature。
+  stop_conditions:
+  - 发现 UI state 参与 build/cache/provider。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: H1-001
+  phase: H1
+  title: 执行零成本跨模块故障、安全与不变量矩阵
+  priority: P0
+  size: L
+  mode: automated
+  depends_on:
+  - P0-005
+  - D1-005
+  - V1-005
+  - K1-005
+  - S1-003
+  - F1-005
+  - W1-005
+  purpose: 把网络出口、导演、依赖、关键帧、外部编辑和 GUI 的组合失效放入统一回归门。
+  rationale: 最大风险在边界组合，不在单模块 happy path。
+  inspect_first:
+  - 所有新增 tests
+  - tests/CONVENTIONS.md
+  - 现有 path/archive/locking/security fixtures
+  candidate_files_to_modify: []
+  candidate_files_to_create:
+  - tests/test_three_project_integration_invariants.py
+  - REPORTS/THREE_PROJECTS_FAULT_MATRIX_<date>.md
+  implementation_steps:
+  - provider：非 loopback egress、ambiguous local submit、crash、duplicate、bad media。
+  - director：stale/tamper/locks/mixed provider action/CAS。
+  - visual/keyframe：cycle/missing/stale/disagreement/no auto-select。
+  - finishing：OpenChatCut unavailable/stale/version/tamper/zip slip/source drift/non-loopback MCP。
+  - GUI：XSS/CSRF/Host/stale tab/hidden truth/large graph/disabled external provider。
+  - environment：云 key presence检测、secret redaction、no public-network sentinel。
+  - license：核心 imports/dependencies/source 无上游混入。
+  tests:
+  - compileall
+  - CI static checks
+  - integration invariants
+  - full pytest at this release gate only
+  acceptance_criteria:
+  - 所有危险场景 fail closed或人工恢复。
+  - 零公网模型请求、零凭据、零账单。
+  - 无 derived state成为 truth。
+  required_evidence:
+  - zero-cost fault matrix
+  - full test output
+  - network sentinel results
+  rollback:
+  - 按独立 feature commit 回退，不降低既有 gate。
+  stop_conditions:
+  - 为过测试而弱化 Windows/spend/path/security gate。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: H1-002
+  phase: H1
+  title: 同一 commit 的 Ubuntu 与 Windows 全量发布门
+  priority: P0
+  size: M
+  mode: manual_ci
+  depends_on:
+  - H1-001
+  purpose: 在项目首要平台上证明同一字节集通过现有硬门。
+  rationale: Windows 是 Manju 明确的硬 release gate；不能用本地或不同 SHA 代替。
+  inspect_first:
+  - .github/workflows/ci.yml
+  - .github/workflows/windows-ci.yml
+  - .github/workflows/xplat.yml
+  - REPORTS/LAST_GREEN.yaml
+  candidate_files_to_modify:
+  - 仅修真实跨平台 bug；不得弱化 workflow。
+  candidate_files_to_create:
+  - REPORTS/THREE_PROJECTS_XPLAT_GATE_<date>.md
+  implementation_steps:
+  - 干净 worktree 运行 compile/static/full tests。
+  - 推送单一候选 commit，运行 Ubuntu full 和 Windows hard gate。
+  - optional OpenChatCut bridge 在未安装时 mock/skip，不联网。
+  - 核对 FFmpeg、case/path、locks、subprocess、archive。
+  - 只有同一 SHA 双绿才更新 LAST_GREEN/STATE；失败修新 commit 重跑。
+  tests:
+  - 现有 CI 全量，不删减。
+  acceptance_criteria:
+  - Ubuntu/Windows 同一 commit 双绿。
+  - test/skip counts 诚实。
+  required_evidence:
+  - CI run ids
+  - commit SHA
+  - counts
+  rollback:
+  - 回退问题 commit；不伪造 LAST_GREEN。
+  stop_conditions:
+  - workflow 被 allowed_failure/临时弱化。
+  notes:
+  - No metered API calls are allowed in this edition.
+- id: H1-003
+  phase: H1
+  title: 零成本版发布判定、文档与未来预算边界
+  priority: P0
+  size: M
+  mode: manual_review
+  depends_on:
+  - H1-002
+  purpose: 对每项能力给出 SHIP/OPT-IN/DEFER/REJECT，明确哪些只验证了架构，哪些因零预算没有真实模型证据。
+  rationale: 三个上游快速演化，必须保留可撤销边界和重新审计触发条件。
+  inspect_first:
+  - 所有 REPORTS
+  - STATE.md
+  - DECISIONS.md
+  - CONTRACTS.yaml
+  - docs/SOURCE_LEDGER.yaml
+  - 真实费用/UX evidence
+  candidate_files_to_modify:
+  - STATE.md
+  - DECISIONS.md
+  - docs/SOURCE_LEDGER.yaml
+  - README.md/CLI/GUI/Skills docs
+  candidate_files_to_create:
+  - REPORTS/THREE_PROJECTS_FINAL_DECISION_<date>.md
+  implementation_steps:
+  - 逐能力判定：local proof、hierarchical director、visual graph/gate、local Best-of-2、local spatial anchor、OpenChatCut、Workbench。
+  - 真实 Provider、真实模型质量、真实计费、云 OCR/ASR/VLM 全部保持 DEFERRED/UNVERIFIED。
+  - 记录上游 commit snapshots 和重新审计触发条件。
+  - 更新零成本用户工作流：authoring→local candidates→local fake video→QC→Picture Lock→local finishing。
+  - 写清未来重新启用云能力必须生成新计划，不得改一个 flag 后直接执行旧任务。
+  tests:
+  - docs command smoke。
+  - CONTRACTS registry。
+  - sample project full check。
+  acceptance_criteria:
+  - 状态声明与证据一致。
+  - 没有三方/云配置时默认路径完整。
+  - 所有新文件/行为有 owner。
+  - 不宣称 AI 视频生成质量已验证。
+  required_evidence:
+  - final decision report
+  - docs command logs
+  rollback:
+  - 按 feature commits 回退；追加更正历史。
+  stop_conditions:
+  - H1-002 未同 SHA 双绿。
+  notes:
+  - No metered API calls are allowed in this edition.
+edition: strict-zero-cost
+budget_mode:
+  name: strict_zero_cost
+  status: mandatory
+  objective: Develop and validate the architecture without any billable model, generation, OCR, ASR, search or media-provider
+    call.
+  forbidden:
+  - Any metered or billing-enabled model/provider API, even when a free trial or free tier may exist.
+  - Any real video/image/audio generation provider submission.
+  - Any DashScope/Qwen cloud tool, Serper, OpenAI API, Gemini API, Replicate, fal, Runway, Kling, Veo, Seedance or similar
+    remote inference call.
+  - Loading or storing cloud provider API keys for this execution plan.
+  - Any non-loopback provider transport from Manju tests, dogfood scripts or OpenChatCut workflows.
+  - Automatic purchase, subscription, credit top-up or budget increase.
+  - Automatic multi-gigabyte model-weight download; this requires a separate future user decision even if the model is open
+    source.
+  allowed:
+  - Existing IDE/Codex interaction itself; Manju code must not call an additional model API.
+  - Localhost-only fake providers and mock MCP servers.
+  - FFmpeg/ffprobe, Python standard library and existing installed open-source dependencies.
+  - Deterministic synthetic media generated locally for tests.
+  - User-owned or already-present local media.
+  - OpenChatCut local editing features that do not call external AI services.
+  - Normal source-code/package retrieval when no purchase or metered inference is involved; large downloads require explicit
+    user approval.
+  reactivation_rule: Paid/remote inference work is not merely paused inside this DAG. It requires a new, separately approved
+    plan after the user explicitly changes the budget constraint.
+deferred_paid_track:
+  status: prohibited_by_current_user_budget
+  not_in_this_dag:
+  - Real cloud Provider Proof Shot
+  - Paid keyframe Best-of-2 quality bake-off
+  - Cloud-generated spatial transition-anchor comparison
+  - Cloud OCR/ASR/VLM review
+  - Any AI feature inside OpenChatCut that needs a remote API
+  resume_requirements:
+  - The user explicitly states a non-zero maximum budget in a future conversation.
+  - A separate plan is generated; do not silently reactivate tasks from the old paid edition.
+  - Provider/model/pricing/privacy are re-researched at that future date.

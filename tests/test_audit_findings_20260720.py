@@ -165,7 +165,7 @@ def test_f5_release_never_deletes_a_successor_with_the_same_pid(tmp_project):
     a.path.write_text(json.dumps(successor), encoding="utf-8")
     a.release()
     assert a.path.exists(), "A.release() deleted the successor's lock (ABA bug)"
-    assert json.loads(a.path.read_text())["token"] == "successor-token-xyz"
+    assert json.loads(a.path.read_text(encoding="utf-8"))["token"] == "successor-token-xyz"
     a.path.unlink()
 
 

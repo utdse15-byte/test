@@ -1,0 +1,2635 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+...................................................................EE..E [  5%]
+.E....EEE............................................................... [  6%]
+...................................................E.................... [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+......................................ss................................ [ 11%]
+..........ss.ss......................................................... [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+F....................................................................... [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+...............................s........................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+..........................................E.E.E..EE..E..E............... [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+..............F...................................................s.F... [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+......................................ssssssss........s.......s......... [ 47%]
+.................sss..........................ss.....s............s..... [ 48%]
+..................................................s..................... [ 49%]
+...................................ssss......s.s........................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+.....................................................ss................. [ 55%]
+........................................sssssssss....................... [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+...............................................F...F......F.........F... [ 60%]
+...F.F....Fs............................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........s............................................................... [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+.................sss.s.ss.......s....................................... [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+.......................................F................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 84%]
+...........s............................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+....................................................................F... [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+..............s.........................................s............... [ 95%]
+...s..........s...................................s..................... [ 96%]
+.s....................s.F......F..F.F..F...s.F.....F.F........F......... [ 97%]
+...........................................s............................ [ 98%]
+.........ss............................................................. [ 99%]
+...................                                                      [100%]
+=================================== ERRORS ====================================
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.clipped] _
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.audio_drift] _
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_______ ERROR at setup of test_corrupt_container_actually_fails_ffprobe _______
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_black_and_freeze_fixtures_trip_the_production_detectors _
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_______ ERROR at setup of test_audio_drift_carries_a_real_stream_offset _______
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+____ ERROR at setup of test_subtitle_overlap_fixture_has_overlapping_cues _____
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_____________ ERROR at setup of test_text_mutation_frames_differ ______________
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_____ ERROR at setup of test_reviewer_default_fallback_on_generated_media _____
+[gw6] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw6'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw6\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.good] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.short] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.black_head_tail] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.freeze] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.bad_aspect] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.bad_fps] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+_ ERROR at setup of test_generator_produces_probe_conformant_media[technical.silent] _
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path_factory = TempPathFactory(_given_basetemp=WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-...strator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="session")
+    def bad_media(tmp_path_factory) -> dict[str, Path]:
+        dest = tmp_path_factory.mktemp("c20a_bad_media")
+>       return make_bad_media.build_all(dest)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_c20a_corpus.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\fixtures\golden\make_bad_media.py:241: in build_all
+    a, b = gen_text_mutation(dest)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tests\fixtures\golden\make_bad_media.py:206: in gen_text_mutation
+    _run([
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", ...]
+
+    def _run(args: list[str]) -> None:
+        """Run one ffmpeg command, fully non-interactive. Raises on failure with the
+        stderr tail so a generation break is legible."""
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
+>           raise BadMediaError(f"ffmpeg failed ({args}):\n{tail}")
+E           tests.fixtures.golden.make_bad_media.BadMediaError: ffmpeg failed (['-f', 'lavfi', '-i', 'color=c=gray:s=320x240', '-vf', "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='SCENE 01':x=40:y=100:fontsize=40:fontcolor=white", '-frames:v', '1', '-fflags', '+bitexact', '-flags:v', '+bitexact', '-map_metadata', '-1', '<ABS_PATH><USER>\\pytest-658\\popen-gw5\\c20a_bad_media0\\text_mutation_a.png']):
+E           Fontconfig error: Cannot load default config file: File not found
+
+tests\fixtures\golden\make_bad_media.py:45: BadMediaError
+================================== FAILURES ===================================
+______________________ test_report_dir_not_a_build_input ______________________
+[gw5] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_project = <manju.core.container.Project object at 0x0000022127736A50>
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw5/test_report_dir_not_a_build_in0')
+
+    def test_report_dir_not_a_build_input(tmp_project, tmp_path):
+        # the analysis report directory must never be read by build/resume/cache/render.
+        import subprocess
+        root = Path(analysis.__file__).resolve().parents[1]  # src/manju
+>       hits = subprocess.run(
+            ["grep", "-rn", "reports/analysis", str(root),
+             "--include=*.py", "--exclude-dir=__pycache__"],
+            capture_output=True, text=True).stdout
+
+tests\test_c19_analysis.py:171: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['grep', '-rn', 'reports/analysis', '<ABS_PATH>>
+args = 'grep -rn reports/analysis <ABS_PATH> --include=*.py --exclude-dir=__pycache__'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = None, env = None
+startupinfo = <subprocess.STARTUPINFO object at 0x00000221277369D0>
+creationflags = 0, shell = False, p2cread = Handle(1960), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1956), errread = 15, errwrite = Handle(1928)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+______________ test_technical_reports_not_a_build_or_auth_input _______________
+[gw11] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+    def test_technical_reports_not_a_build_or_auth_input():
+        """The derived report dir must never be read by build/core/providers/runtime."""
+        from manju.media import technical_profile as tp
+        root = Path(tp.__file__).resolve().parents[1]   # src/manju
+        hits: list[str] = []
+        for sub in ("build", "core", "providers", "runtime"):
+>           out = subprocess.run(
+                ["grep", "-rn", "reports/technical", str(root / sub),
+                 "--include=*.py", "--exclude-dir=__pycache__"],
+                capture_output=True, text=True).stdout
+
+tests\test_fp_profile.py:436: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['grep', '-rn', 'reports/technical', '<ABS_PATH>>
+args = 'grep -rn reports/technical <ABS_PATH> --include=*.py --exclude-dir=__pycache__'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = None, env = None
+startupinfo = <subprocess.STARTUPINFO object at 0x0000021C11389B10>
+creationflags = 0, shell = False, p2cread = Handle(1384), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(732), errread = 15, errwrite = Handle(1428)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+__________ test_grep_pin_never_read_by_build_core_providers_runtime ___________
+[gw0] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+    def test_grep_pin_never_read_by_build_core_providers_runtime():
+        """RECORD-ONLY pin: no build/core/providers/runtime module references the
+        derived dir or imports the module — the manifest is evidence, never an
+        execution/caching/authorization input. (cli.py — the one writer surface —
+        lives outside these dirs on purpose.)"""
+        import manju
+    
+        root = Path(manju.__file__).resolve().parent  # src/manju
+        hits: list[str] = []
+        pattern = r"reports/toolchain|core\.toolchain|from \.toolchain|core import toolchain"
+        for sub in ("build", "core", "providers", "runtime"):
+>           out = subprocess.run(
+                ["grep", "-rnE", pattern, str(root / sub),
+                 "--include=*.py", "--exclude-dir=__pycache__"],
+                capture_output=True, text=True).stdout
+
+tests\test_fp_toolchain.py:242: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['grep', '-rnE', 'reports/toolchain|core\\.to...>
+args = 'grep -rnE "reports/toolchain|core\\.toolchain|from \\.toolchain|core import toolchain" <ABS_PATH> --include=*.py --exclude-dir=__pycache__'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = None, env = None
+startupinfo = <subprocess.STARTUPINFO object at 0x000002144B97D6D0>
+creationflags = 0, shell = False, p2cread = Handle(1316), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1696), errread = 15, errwrite = Handle(1200)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+__________________ test_runs_registers_with_lineage_and_env ___________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E1363BAB50>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E1363BB950>, shot=ShotSpec(id='S001', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', '<ABS_PATH>>
+args = 'sh <ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_runs_registers_with_linea0\\gen.sh --out <ABS_PATH>'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = '<ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_runs_registers_with_linea0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': '<ABS_PATH>', 'APPDATA': '<ABS_PATH>', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': '<ABS_PATH> Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001E1363BDA90>
+creationflags = 0, shell = False, p2cread = Handle(88), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1288), errread = 15, errwrite = Handle(1800)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_runs_registers_with_linea0')
+request_for = <function request_for.<locals>._make at 0x000001E136395C60>
+
+    def test_runs_registers_with_lineage_and_env(tmp_path, request_for):
+        # writes the shot id (from MANJU_* env passthrough) into the {out} file
+        script = _script(tmp_path, "gen.sh", 'printf "%s" "$MANJU_SHOT_ID" > "$2"\n')
+        provider = LocalCommandProvider(_manifest(f"sh {script} --out {{out}}"))
+>       takes = provider.generate(request_for("S001"))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E1363BAB50>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E1363BB950>, shot=ShotSpec(id='S001', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:148: ProviderFailure
+_______________________ test_prompt_is_one_argv_element _______________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E135CC4050>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E13339B950>, shot=ShotSpec(id='S002', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', '<ABS_PATH>>
+args = 'sh <ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_prompt_is_one...0\\gen.sh --prompt "alpha beta gamma" --out <ABS_PATH>'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = '<ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_prompt_is_one_argv_elemen0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': '<ABS_PATH>', 'APPDATA': '<ABS_PATH>', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': '<ABS_PATH> Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001E136393F10>
+creationflags = 0, shell = False, p2cread = Handle(1784), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1576), errread = 15, errwrite = Handle(1884)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_prompt_is_one_argv_elemen0')
+request_for = <function request_for.<locals>._make at 0x000001E1364339C0>
+
+    def test_prompt_is_one_argv_element(tmp_path, request_for):
+        script = _script(tmp_path, "gen.sh", 'echo ok > "$4"\n')  # write file to {out}
+        provider = LocalCommandProvider(
+            _manifest(f"sh {script} --prompt {{prompt}} --out {{out}}")
+        )
+        # prompt_override with spaces is passed through verbatim by compile_prompt
+>       takes = provider.generate(request_for("S002", prompt_override="alpha beta gamma"))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:73: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E135CC4050>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E13339B950>, shot=ShotSpec(id='S002', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:148: ProviderFailure
+_____________________ test_placeholder_substitution_types _____________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E135D79E50>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E135D78E50>, shot=ShotSpec(id='S003', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', '<ABS_PATH>>
+args = 'sh <ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_placeholder_s...n_0\\gen.sh --size 1080x1920 --seed 7 --out <ABS_PATH>'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = '<ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_placeholder_substitution_0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': '<ABS_PATH>', 'APPDATA': '<ABS_PATH>', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': '<ABS_PATH> Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001E135D7A190>
+creationflags = 0, shell = False, p2cread = Handle(1824), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1912), errread = 15, errwrite = Handle(1564)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_placeholder_substitution_0')
+request_for = <function request_for.<locals>._make at 0x000001E136658360>
+
+    def test_placeholder_substitution_types(tmp_path, request_for):
+        # {width}x{height} embeds into one word; {seed} is its own word
+        script = _script(tmp_path, "gen.sh", 'echo ok > "$6"\n')
+        provider = LocalCommandProvider(
+            _manifest(f"sh {script} --size {{width}}x{{height}} --seed {{seed}} --out {{out}}")
+        )
+>       argv = provider.generate(request_for("S003")).pop().sidecar.params["argv"]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E135D79E50>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E135D78E50>, shot=ShotSpec(id='S003', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:148: ProviderFailure
+________________ test_placeholder_substitution_is_single_pass _________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E13638DF90>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E13638E490>, shot=ShotSpec(id='S005', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', '<ABS_PATH>>
+args = 'sh <ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_placeholder_s...ompt 一个装着{seed}和{out}字样的场景描述 --seed 7 --out <ABS_PATH>'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = '<ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_placeholder_substitution_1\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': '<ABS_PATH>', 'APPDATA': '<ABS_PATH>', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': '<ABS_PATH> Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001E133352310>
+creationflags = 0, shell = False, p2cread = Handle(1084), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1912), errread = 15, errwrite = Handle(1576)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_placeholder_substitution_1')
+request_for = <function request_for.<locals>._make at 0x000001E13318E2A0>
+
+    def test_placeholder_substitution_is_single_pass(tmp_path, request_for):
+        """round-W #58: a compiled prompt that happens to CONTAIN literal
+        "{seed}"/"{out}" text must never be re-scanned by a later placeholder's
+        substitution — the template is scanned ONCE, left to right; only real
+        placeholders from the ORIGINAL template are replaced."""
+        script = _script(tmp_path, "gen.sh", 'echo ok > "$6"\n')
+        provider = LocalCommandProvider(
+            _manifest(f"sh {script} --prompt {{prompt}} --seed {{seed}} --out {{out}}")
+        )
+        # the prompt LITERALLY contains "{seed}" and "{out}" as text — these must
+        # survive verbatim in the prompt argv element, never turn into the real
+        # seed value or output path.
+        prompt_text = "一个装着{seed}和{out}字样的场景描述"
+>       takes = provider.generate(request_for("S005", prompt_override=prompt_text))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:104: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E13638DF90>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E13638E490>, shot=ShotSpec(id='S005', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:148: ProviderFailure
+___________________ test_nonzero_exit_surfaces_stderr_tail ____________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_nonzero_exit_surfaces_std0')
+request_for = <function request_for.<locals>._make at 0x000001E13318E520>
+
+    def test_nonzero_exit_surfaces_stderr_tail(tmp_path, request_for):
+        script = _script(tmp_path, "fail.sh", 'echo "kaboom detail" >&2\nexit 3\n')
+        provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}"))
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S004"))
+>       assert exc.value.kind is FailureKind.provider_error
+E       assert <FailureKind.invalid: 'invalid'> is <FailureKind.provider_error: 'provider_error'>
+E        +  where <FailureKind.invalid: 'invalid'> = ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。").kind
+E        +    where ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") = <ExceptionInfo ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") tblen=3>.value
+E        +  and   <FailureKind.provider_error: 'provider_error'> = FailureKind.provider_error
+
+tests\test_local_cmd.py:116: AssertionError
+____________________ test_missing_output_is_provider_error ____________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_missing_output_is_provide0')
+request_for = <function request_for.<locals>._make at 0x000001E13318C040>
+
+    def test_missing_output_is_provider_error(tmp_path, request_for):
+        script = _script(tmp_path, "noop.sh", 'echo hi\nexit 0\n')  # writes nothing to {out}
+        provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}"))
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S005"))
+>       assert exc.value.kind is FailureKind.provider_error
+E       assert <FailureKind.invalid: 'invalid'> is <FailureKind.provider_error: 'provider_error'>
+E        +  where <FailureKind.invalid: 'invalid'> = ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。").kind
+E        +    where ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") = <ExceptionInfo ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") tblen=3>.value
+E        +  and   <FailureKind.provider_error: 'provider_error'> = FailureKind.provider_error
+
+tests\test_local_cmd.py:125: AssertionError
+______________________________ test_timeout_path ______________________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_timeout_path0')
+request_for = <function request_for.<locals>._make at 0x000001E13318C7C0>
+
+    def test_timeout_path(tmp_path, request_for):
+        script = _script(tmp_path, "slow.sh", 'sleep 10\n: > "$1"\n')
+        provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}", timeout_s=0.5))
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S006"))
+>       assert exc.value.kind is FailureKind.timeout
+E       assert <FailureKind.invalid: 'invalid'> is <FailureKind.timeout: 'timeout'>
+E        +  where <FailureKind.invalid: 'invalid'> = ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。").kind
+E        +    where ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") = <ExceptionInfo ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") tblen=3>.value
+E        +  and   <FailureKind.timeout: 'timeout'> = FailureKind.timeout
+
+tests\test_local_cmd.py:134: AssertionError
+________________ test_local_cmd_video_ref_placeholder_and_env _________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E1357CC290>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E1358748D0>, shot=ShotSpec(id='S001', scene=...place0/雨夜便利店.manju'))]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', '<ABS_PATH>>
+args = 'sh <ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_local_cmd_vid..._place0\\雨夜便利店.manju\\media\\refs\\base.mp4 <ABS_PATH>'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = '<ABS_PATH><USER>\\pytest-658\\popen-gw7\\test_local_cmd_video_ref_place0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': '<ABS_PATH>', 'APPDATA': '<ABS_PATH>', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': '<ABS_PATH> Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001E13582F650>
+creationflags = 0, shell = False, p2cread = Handle(2000), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(1428), errread = 15, errwrite = Handle(1472)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+    
+        assert not pass_fds, "pass_fds not supported on Windows."
+    
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+    
+        if executable is not None:
+            executable = os.fsdecode(executable)
+    
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+    
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+    
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+    
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+    
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+    
+            handle_list[:] = self._filter_handle_list(handle_list)
+    
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+    
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+    
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+    
+            args = '{} /c "{}"'.format (comspec, args)
+    
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+    
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+    
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+<USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\Lib\subprocess.py:1538: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_project = <manju.core.container.Project object at 0x000001E1358748D0>
+add_shot = <function add_shot.<locals>._add at 0x000001E1357DF880>
+tmp_path = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_local_cmd_video_ref_place0')
+
+    def test_local_cmd_video_ref_placeholder_and_env(tmp_project, add_shot, tmp_path):
+        _touch(tmp_project, "media/refs/base.mp4", b"video")
+        # the script copies MANJU_VIDEO_REF (env passthrough) into {out}
+        script = tmp_path / "gen.sh"
+        script.write_text('#!/bin/sh\nprintf "%s" "$MANJU_VIDEO_REF" > "$3"\n')
+        script.chmod(0o755)
+        provider = LocalCommandProvider(_localcmd(f"sh {script} --video {{video_ref}} {{out}}"))
+        shot = add_shot(tmp_project, "S001",
+                        generation={"params": {"video": "media/refs/base.mp4"}})
+        req = GenerationRequest(project=tmp_project, shot=shot,
+                                bible=tmp_project.load_bible(), spec_hash="sha256:x",
+                                duration_ms=3000, candidates=1,
+                                params={"video": "media/refs/base.mp4"})
+>       takes = provider.generate(req)
+                ^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_refs.py:515: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001E1357CC290>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001E1358748D0>, shot=ShotSpec(id='S001', scene=...place0/雨夜便利店.manju'))]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+    
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: svd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:148: ProviderFailure
+_____________ test_current_surface_has_no_removed_protocol_tokens _____________
+[gw3] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+    def test_current_surface_has_no_removed_protocol_tokens() -> None:
+        root = Path(__file__).resolve().parents[1]
+        protocol = "m" + "cp"
+        media_extra = protocol + "-" + "video"
+        old_command = "serve-" + protocol
+        needles = (protocol, media_extra, old_command, "Tool" + "Policy",
+                   "Agent" + "Profile")
+        offenders = []
+        for path in _current_surface_files(root):
+            text = path.read_text(encoding="utf-8").lower()
+            if any(needle.lower() in text for needle in needles):
+                offenders.append(path.relative_to(root).as_posix())
+>       assert offenders == []
+E       AssertionError: assert ['docs/plans/...L_RUNBOOK.md'] == []
+E         
+E         Left contains 3 more items, first extra item: 'docs/plans/MANJU_THREE_PROJECTS_ZERO_COST_EXECUTION_PLAN.md'
+E         Use -v to get more diff
+
+tests\test_v5_closeout.py:61: AssertionError
+_______________________ test_uninstall_removes_the_app ________________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_re...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_removes_the_app0/.manju'))
+
+    def test_uninstall_removes_the_app(installed) -> None:
+        lad, _, _ = installed
+>       _run("uninstall-manju.ps1", lad)
+
+tests\test_windows_install_behaviour.py:78: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'uninstall-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_removes_the_app0/LocalAppData')
+expect_ok = True, args = ()
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: uninstall-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+_________________ test_uninstall_never_touches_the_users_work _________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_ne...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_never_touches_t0/.manju'))
+
+    def test_uninstall_never_touches_the_users_work(installed) -> None:
+        """The one that matters: this is somebody's film."""
+        lad, project, dotmanju = installed
+>       _run("uninstall-manju.ps1", lad)
+
+tests\test_windows_install_behaviour.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'uninstall-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_never_touches_t0/LocalAppData')
+expect_ok = True, args = ()
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: uninstall-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+___________________ test_uninstall_keeps_logs_unless_asked ____________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_ke...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_keeps_logs_unle0/.manju'))
+
+    def test_uninstall_keeps_logs_unless_asked(installed) -> None:
+        lad, _, _ = installed
+>       _run("uninstall-manju.ps1", lad)
+
+tests\test_windows_install_behaviour.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'uninstall-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_keeps_logs_unle0/LocalAppData')
+expect_ok = True, args = ()
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: uninstall-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+______________________ test_uninstall_logs_removes_them _______________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_lo...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_logs_removes_th0/.manju'))
+
+    def test_uninstall_logs_removes_them(installed) -> None:
+        lad, _, _ = installed
+>       _run("uninstall-manju.ps1", lad, "-Logs")
+
+tests\test_windows_install_behaviour.py:99: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'uninstall-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_logs_removes_th0/LocalAppData')
+expect_ok = True, args = ('-Logs',)
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: uninstall-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+________________________ test_uninstall_is_idempotent _________________________
+[gw7] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_is...s/Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_is_idempotent0/.manju'))
+
+    def test_uninstall_is_idempotent(installed) -> None:
+        """Running it twice must not become an error the user has to interpret."""
+        lad, project, _ = installed
+>       _run("uninstall-manju.ps1", lad)
+
+tests\test_windows_install_behaviour.py:106: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'uninstall-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw7/test_uninstall_is_idempotent0/LocalAppData')
+expect_ok = True, args = ()
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: uninstall-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+_______________ test_rollback_repoints_to_the_previous_version ________________
+[gw4] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_rep...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_repoints_to_the_0/.manju'))
+
+    def test_rollback_repoints_to_the_previous_version(installed) -> None:
+        lad, _, _ = installed
+        app = _versions(lad, "0.1.0-B", "0.1.0-A")
+>       _run("update-manju.ps1", lad, "-Rollback")
+
+tests\test_windows_install_behaviour.py:127: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'update-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_repoints_to_the_0/LocalAppData')
+expect_ok = True, args = ('-Rollback',)
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: update-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+_____________________ test_rollback_is_itself_reversible ______________________
+[gw4] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_is_...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_is_itself_revers0/.manju'))
+
+    def test_rollback_is_itself_reversible(installed) -> None:
+        """It swaps the pointers, so a rollback can be rolled back — otherwise the
+        user is stuck one version behind with no way forward but a reinstall."""
+        lad, _, _ = installed
+        app = _versions(lad, "0.1.0-B", "0.1.0-A")
+>       _run("update-manju.ps1", lad, "-Rollback")
+
+tests\test_windows_install_behaviour.py:136: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'update-manju.ps1'
+local_appdata = WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_is_itself_revers0/LocalAppData')
+expect_ok = True, args = ('-Rollback',)
+
+    def _run(script: str, local_appdata: Path, *args: str,
+             expect_ok: bool = True) -> subprocess.CompletedProcess:
+        """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
+        proc = subprocess.run(
+            [PWSH, "-NoProfile", "-File", str(SCRIPTS / script), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
+                 "PATH": "/usr/bi<ABS_PATH>"},
+        )
+        if expect_ok:
+>           assert proc.returncode == 0, f"{script} faile<ABS_PATH>"
+E           AssertionError: update-manju.ps1 failed:
+E             
+E             Internal Windows PowerShell error.  Loading managed Windows PowerShell failed with error 8009001d.
+E             
+E             
+E           assert 4294901760 == 0
+E            +  where 4294901760 = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').returncode
+
+tests\test_windows_install_behaviour.py:51: AssertionError
+___________ test_rollback_with_nothing_to_roll_back_to_fails_loudly ___________
+[gw4] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_wit...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_with_nothing_to_0/.manju'))
+
+    def test_rollback_with_nothing_to_roll_back_to_fails_loudly(installed) -> None:
+        """Silently doing nothing would leave the user believing they rolled back."""
+        lad, _, _ = installed
+        _versions(lad, "0.1.0-B", None)
+        proc = _run("update-manju.ps1", lad, "-Rollback", expect_ok=False)
+        assert proc.returncode != 0
+>       assert "No previous version" in (proc.stdout + proc.stderr)
+E       AssertionError: assert 'No previous version' in ('' + 'I\x00n\x00t\x00e\x00r\x00n\x00a\x00l\x00 \x00W\x00i\x00n\x00d\x00o\x00w\x00s\x00 \x00P\x00o\x00w\x00e\x00r\x00S\x00h\...0 \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00')
+E        +  where '' = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').stdout
+E        +  and   'I\x00n\x00t\x00e\x00r\x00n\x00a\x00l\x00 \x00W\x00i\x00n\x00d\x00o\x00w\x00s\x00 \x00P\x00o\x00w\x00e\x00r\x00S\x00h\...0 \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00' = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').stderr
+
+tests\test_windows_install_behaviour.py:148: AssertionError
+_______________ test_rollback_to_a_deleted_version_fails_loudly _______________
+[gw4] win32 -- Python 3.11.9 <USERPROFILE>\AppData\Local\Python\pythoncore-3.11-64\python.exe
+
+installed = (WindowsPath('<USERPROFILE>/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_to_...Administrator/AppData/Local/Temp/pytest-of-<USER>/pytest-658/popen-gw4/test_rollback_to_a_deleted_ver0/.manju'))
+
+    def test_rollback_to_a_deleted_version_fails_loudly(installed) -> None:
+        """Pointing current.txt at a version that is gone would break the launcher
+        for good — worse than refusing."""
+        lad, _, _ = installed
+        app = _versions(lad, "0.1.0-B", "0.1.0-A")
+        shutil.rmtree(app / "0.1.0-A")
+        proc = _run("update-manju.ps1", lad, "-Rollback", expect_ok=False)
+        assert proc.returncode != 0
+>       assert "no longer on disk" in (proc.stdout + proc.stderr)
+E       AssertionError: assert 'no longer on disk' in ('' + 'I\x00n\x00t\x00e\x00r\x00n\x00a\x00l\x00 \x00W\x00i\x00n\x00d\x00o\x00w\x00s\x00 \x00P\x00o\x00w\x00e\x00r\x00S\x00h\...0 \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00')
+E        +  where '' = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').stdout
+E        +  and   'I\x00n\x00t\x00e\x00r\x00n\x00a\x00l\x00 \x00W\x00i\x00n\x00d\x00o\x00w\x00s\x00 \x00P\x00o\x00w\x00e\x00r\x00S\x00h\...0 \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00' = CompletedProcess(args=['<ABS_PATH>', '-NoProfile', '-File', '<ABS_PATH> \x00w\x00i\x00t\x00h\x00 \x00e\x00r\x00r\x00o\x00r\x00 \x008\x000\x000\x009\x000\x000\x001\x00d\x00.\x00\n\x00\n\x00').stderr
+
+tests\test_windows_install_behaviour.py:159: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_c19_analysis.py::test_report_dir_not_a_build_input - FileNo...
+FAILED tests/test_fp_profile.py::test_technical_reports_not_a_build_or_auth_input
+FAILED tests/test_fp_toolchain.py::test_grep_pin_never_read_by_build_core_providers_runtime
+FAILED tests/test_local_cmd.py::test_runs_registers_with_lineage_and_env - ma...
+FAILED tests/test_local_cmd.py::test_prompt_is_one_argv_element - manju.provi...
+FAILED tests/test_local_cmd.py::test_placeholder_substitution_types - manju.p...
+FAILED tests/test_local_cmd.py::test_placeholder_substitution_is_single_pass
+FAILED tests/test_local_cmd.py::test_nonzero_exit_surfaces_stderr_tail - asse...
+FAILED tests/test_local_cmd.py::test_missing_output_is_provider_error - asser...
+FAILED tests/test_local_cmd.py::test_timeout_path - assert <FailureKind.inval...
+FAILED tests/test_refs.py::test_local_cmd_video_ref_placeholder_and_env - man...
+FAILED tests/test_v5_closeout.py::test_current_surface_has_no_removed_protocol_tokens
+FAILED tests/test_windows_install_behaviour.py::test_uninstall_removes_the_app
+FAILED tests/test_windows_install_behaviour.py::test_uninstall_never_touches_the_users_work
+FAILED tests/test_windows_install_behaviour.py::test_uninstall_keeps_logs_unless_asked
+FAILED tests/test_windows_install_behaviour.py::test_uninstall_logs_removes_them
+FAILED tests/test_windows_install_behaviour.py::test_uninstall_is_idempotent
+FAILED tests/test_windows_install_behaviour.py::test_rollback_repoints_to_the_previous_version
+FAILED tests/test_windows_install_behaviour.py::test_rollback_is_itself_reversible
+FAILED tests/test_windows_install_behaviour.py::test_rollback_with_nothing_to_roll_back_to_fails_loudly
+FAILED tests/test_windows_install_behaviour.py::test_rollback_to_a_deleted_version_fails_loudly
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.clipped]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.audio_drift]
+ERROR tests/test_c20a_corpus.py::test_corrupt_container_actually_fails_ffprobe
+ERROR tests/test_c20a_corpus.py::test_black_and_freeze_fixtures_trip_the_production_detectors
+ERROR tests/test_c20a_corpus.py::test_audio_drift_carries_a_real_stream_offset
+ERROR tests/test_c20a_corpus.py::test_subtitle_overlap_fixture_has_overlapping_cues
+ERROR tests/test_c20a_corpus.py::test_text_mutation_frames_differ - tests.fix...
+ERROR tests/test_c20a_corpus.py::test_reviewer_default_fallback_on_generated_media
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.good]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.short]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.black_head_tail]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.freeze]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.bad_aspect]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.bad_fps]
+ERROR tests/test_c20a_corpus.py::test_generator_produces_probe_conformant_media[technical.silent]
+21 failed, 6111 passed, 64 skipped, 15 errors in 266.92s (0:04:26)

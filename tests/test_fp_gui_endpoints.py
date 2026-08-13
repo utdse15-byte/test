@@ -93,7 +93,7 @@ def test_jobs_submit_does_not_fsync_on_the_post_thread(tmp_path, monkeypatch):
         assert fsyncs == [], "submit fsync'd jobs.jsonl on the POST thread"
         # the write is kept (best-effort, flushed): the queued line is on disk
         log = runtime / "jobs.jsonl"
-        recs = [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+        recs = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()]
         assert any(rec["id"] == job.id and rec["state"] == "queued" for rec in recs)
         assert started.wait(5.0)
     finally:

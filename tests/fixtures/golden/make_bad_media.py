@@ -38,7 +38,7 @@ def _run(args: list[str]) -> None:
     stderr tail so a generation break is legible."""
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])
@@ -198,14 +198,19 @@ def gen_text_mutation(d: Path) -> tuple[Path, Path]:
     "SCENE 02") — a text/logo mutation across frames. drawtext uses a known
     system font; the two frames differ (distinct sha256), which the self-test
     asserts."""
-    font = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    from manju.media.card import _escape, find_font
+
+    font = find_font()
+    if font is None:
+        raise BadMediaError("no usable font found for text-mutation fixture")
+    escaped_font = _escape(font)
     outs = []
     for tag, name in (("SCENE 01", "text_mutation_a.png"),
                       ("SCENE 02", "text_mutation_b.png")):
         out = d / name
         _run([
             "-f", "lavfi", "-i", f"color=c=gray:s={W}x{H}",
-            "-vf", (f"drawtext=fontfile={font}:text='{tag}':x=40:y=100:"
+            "-vf", (f"drawtext=fontfile={escaped_font}:text='{tag}':x=40:y=100:"
                     f"fontsize=40:fontcolor=white"),
             "-frames:v", "1", *_BITEXACT, str(out),
         ])

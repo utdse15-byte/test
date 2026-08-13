@@ -264,7 +264,7 @@ def test_36_providers_catalog_json_and_output(providers_dir, tmp_path, monkeypat
     res2 = runner.invoke(app, ["providers", "catalog", "--json", "--output", str(out)])
     assert res2.exit_code == 0, res2.output
     assert out.exists()
-    written = json.loads(out.read_text())
+    written = json.loads(out.read_text(encoding="utf-8"))
     assert written["projection_digest"] == proj["projection_digest"]
 
 

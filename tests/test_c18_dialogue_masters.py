@@ -166,10 +166,10 @@ def test_master_stale_when_timeline_semantics_change(tmp_path):
     M.render_masters(project, tl)
     # rewrite the index with a stale digest as if the timeline moved on
     idx = M.index_path(project)
-    data = json.loads(idx.read_text())
+    data = json.loads(idx.read_text(encoding="utf-8"))
     for a in data["artifacts"]:
         a["timeline_digest"] = "sha256:staleXXXX"
-    idx.write_text(json.dumps(data))
+    idx.write_text(json.dumps(data), encoding="utf-8")
     rows = {r.kind: r for r in ES.deliverables(project)}
     # CLOSEOUT C5 ruling 2 rename: the raw four-bus sum's kind is now 'stem_sum'.
     assert rows["stem_sum"].freshness.value == "stale"

@@ -4571,7 +4571,8 @@ def locale(
 
 @app.command(rich_help_panel=PANEL_BRIDGE)
 def roundtrip(
-    edited: Path = typer.Argument(..., help="edited skeleton draft_content.json or OTIO"),
+    edited: Path = typer.Argument(
+        ..., help="edited skeleton draft_content.json, OTIO, or FCPXML"),
     apply: bool = typer.Option(False, "--apply", help="apply accepted rows"),
     rows: Optional[str] = typer.Option(
         None, "--rows", help="1-based row indices e.g. 1,3-5"),
@@ -4579,7 +4580,8 @@ def roundtrip(
 ):
     """Flow external editor edits back as reviewable truth changes (WP6).
 
-    Carriers: JianYing diff-stable skeleton + OTIO only. Plan by default;
+    Carriers: JianYing diff-stable skeleton, OTIO, and FCPXML (so a DaVinci
+    Resolve edit can come back). Plan by default;
     ``--apply`` under one build_lock."""
     from .build.roundtrip import apply_roundtrip, plan_roundtrip
     from .core.container import ProjectError
@@ -9767,6 +9769,7 @@ def providers_list(as_json: bool = typer.Option(False, "--json")):
     """Every discovered manifest: id, type, adapter, capabilities, whether its
     key env var is set (never the value), enabled/disabled, doctor verdict."""
     from .providers.manifest import load_manifests
+    from .providers.zero_cost import credential_presence as credential_is_present
 
     manifests, load_errors = load_manifests()
     rows = []
@@ -9780,7 +9783,7 @@ def providers_list(as_json: bool = typer.Option(False, "--json")):
             "adapter_short": _adapter_short(m.adapter),
             "capabilities": list(m.capabilities),
             "key_env": key_env,
-            "key_set": (bool(os.environ.get(key_env)) if key_env else None),
+            "key_set": credential_is_present(key_env),
             "enabled": not m.disabled,
             "doctor_ok": not problems,
             "doctor": "ok" if not problems else "; ".join(problems),
@@ -9877,11 +9880,12 @@ def _providers_check_sections(provider_id: str, m, manifest_errors: list) -> dic
     resolvable), and warnings (the opaque LEGACY ``max_resolution``; disabled)."""
     from .providers.catalog import project_provider_capabilities
     from .providers.manifest import authoring_evidence_status
+    from .providers.zero_cost import credential_presence as credential_is_present
 
     key_env = m.auth.key_env
     credential_presence = {
         "env": key_env,
-        "set": bool(os.environ.get(key_env)) if key_env else None,
+        "set": credential_is_present(key_env),
     }
     proj_a = project_provider_capabilities()
     proj_b = project_provider_capabilities()

@@ -129,7 +129,7 @@ def test_schema_command(tmp_path, monkeypatch, tmp_project):
     assert result.exit_code == 0
     files = sorted(p.name for p in (tmp_path / "schemas").glob("*.schema.json"))
     assert "shot.schema.json" in files and "timeline.schema.json" in files
-    shot_schema = json.loads((tmp_path / "schemas" / "shot.schema.json").read_text())
+    shot_schema = json.loads((tmp_path / "schemas" / "shot.schema.json").read_text(encoding="utf-8"))
     assert "properties" in shot_schema
 
 

@@ -579,8 +579,18 @@ class ProviderManifest(ManjuModel):
                              ("poll", self.poll and self.poll.url)):
             if url and not url.startswith(("http://", "https://")):
                 problems.append(f"{section}.url does not look like an HTTP(S) URL: {url}")
-        if self.auth.key_env and not os.environ.get(self.auth.key_env):
-            problems.append(f"auth.key_env {self.auth.key_env} is not set in the environment")
+        if self.auth.key_env:
+            if os.environ.get("MANJU_EXECUTION_MODE", "").strip().lower() \
+                    == "strict_zero_cost":
+                # Never inspect the credential variable in strict mode. Its
+                # declaration alone is enough to make this profile unusable.
+                problems.append(
+                    f"auth.key_env {self.auth.key_env} is forbidden in strict zero-cost mode"
+                )
+            elif not os.environ.get(self.auth.key_env):
+                problems.append(
+                    f"auth.key_env {self.auth.key_env} is not set in the environment"
+                )
         return problems
 
     def _output_ext_problems(self) -> list[str]:
@@ -1044,6 +1054,13 @@ def reachability_probe(
         url = manifest.ping_url
     else:
         return None, "no zero-cost ping endpoint (set ping_url) — live probe skipped"
+
+    from .zero_cost import require_transport_allowed
+
+    try:
+        require_transport_allowed(url, credential_ref=manifest.auth.key_env)
+    except Exception as exc:
+        return False, str(exc)
 
     def _default_open(u: str):
         # C36: same loopback no-proxy rule as generic_cloud.default_transport —

@@ -436,7 +436,7 @@ def test_technical_reports_not_a_build_or_auth_input():
         out = subprocess.run(
             ["grep", "-rn", "reports/technical", str(root / sub),
              "--include=*.py", "--exclude-dir=__pycache__"],
-            capture_output=True, text=True).stdout
+            capture_output=True, text=True, encoding="utf-8").stdout
         hits += [ln for ln in out.splitlines() if ln.strip()]
     assert hits == [], f"a build/authorization path reads the derived profile: {hits}"
 

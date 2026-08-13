@@ -231,6 +231,14 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `TRISURFACE-FIX #28` | 2026-07-31 | Campaign ② — provider dies mid-run | build/graph, manju tasks |
 | `TRISURFACE-FIX #29` | 2026-07-31 | Campaign ③ — scale realism at 80 shots | tests/test_scale_noop_build.py |
 | `TRISURFACE-FIX #30` | 2026-07-31 | Campaign ④ — CJK+space paths & git time travel | media/render |
+| `THREE-PROJECTS-ZERO-COST-BASELINE #1` | 2026-08-11 | A pinned FFmpeg is a reference toolchain, not a substitute for fixing compatibility defects | tests/fixtures/golden/, media/ |
+| `THREE-PROJECTS-ZERO-COST-BASELINE #2` | 2026-08-11 | External integration docs do not restore the removed Manju protocol; exactly three zero-cost files may describe the localhost-only boundary | docs/plans/, docs/runbooks/ |
+| `THREE-PROJECTS-ZERO-COST-BASELINE #3` | 2026-08-11 | Environment isolation preserves only facts required to start the tested process (Windows SYSTEMROOT), never provider credentials | tests/conftest.py, installer tests |
+| `THREE-PROJECTS-ZERO-COST-BOUNDARY #1` | 2026-08-11 | Licensing permission does not imply architectural fitness; ViMax/OpenChatCut/Toonflow are pinned research references only | docs/architecture/THIRD_PARTY_BOUNDARIES.md |
+| `THREE-PROJECTS-ZERO-COST-BOUNDARY #2` | 2026-08-11 | Clean-room methods cross the boundary; implementations do not | docs/architecture/ADR-THREE-PROJECT-INTEGRATION-ZERO-COST.md |
+| `THREE-PROJECTS-ZERO-COST-BOUNDARY #3` | 2026-08-11 | OpenChatCut is process-external and human-controlled; loopback-only, manual approval, no MCP restoration | docs/runbooks/ZERO_COST_MODE.md |
+| `THREE-PROJECTS-ZERO-COST-BOUNDARY #4` | 2026-08-11 | Zero cost means no billing path exists — free tiers, trials, credentials and auto model downloads are all forbidden | providers/zero_cost.py, providers/ |
+| `THREE-PROJECTS-ZERO-COST-BOUNDARY #5` | 2026-08-11 | Third-party absence is a supported state; check/build/QC/export keep working without all three | providers/registry.py |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -4282,3 +4290,43 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    inference, GPU, real H3/other model output, or film-quality validation. The
    official last-green SHA is not advanced without same-SHA Ubuntu and Windows
    evidence.
+
+## THREE-PROJECTS-ZERO-COST-BASELINE (2026-08-11)
+
+1. **A pinned FFmpeg is a reference toolchain, not a substitute for fixing
+   compatibility defects.** The 6.1.1 binary remains the established release
+   comparison point, while reproducible failures on newer versions are traced
+   and fixed when Manju owns the assumption. The baseline corpus now resolves
+   fonts through the existing cross-platform owner and passes unchanged on
+   6.1.1 and 8.1.2; the user's system installation is not downgraded.
+2. **External integration documentation does not restore the removed Manju
+   protocol.** Exactly three zero-cost plan/runbook files may describe the
+   localhost-only OpenChatCut boundary. Product runtime, CLI, GUI, skills and
+   all other current documents remain token-scanned, and the removed Manju
+   module remains forbidden.
+3. **Environment isolation preserves only facts required to start the tested
+   process.** Windows PowerShell needs `SYSTEMROOT`; the installer behavior test
+   passes that one OS fact while continuing to exclude provider credentials and
+   the rest of the parent environment.
+
+## THREE-PROJECTS-ZERO-COST-BOUNDARY (2026-08-11)
+
+1. **Licensing permission does not imply architectural fitness.** ViMax is MIT,
+   OpenChatCut is AGPL-3.0, and Toonflow currently combines Apache-2.0 with
+   supplementary commercial-authorization and branding terms. All three are
+   pinned research references only; none is copied or made a Manju dependency.
+2. **Clean-room methods cross the boundary; implementations do not.** Manju may
+   adapt reviewable planning, continuity, task-state, and draft-approval ideas
+   through existing owners. It rejects ViMax pipeline reuse, OpenChatCut code,
+   Toonflow provider VM/data ownership, and every shared runtime dependency.
+3. **OpenChatCut is process-external and human-controlled.** An independently
+   installed editor may receive verified local files and return local media.
+   Its connection must be loopback-only and its approval must remain manual.
+   This external handoff does not restore the removed Manju MCP surface.
+4. **Zero cost means no billing path exists.** Free tiers, trials, subscriptions,
+   provider credentials, real submits, cloud AI/search, and automatic model
+   downloads are forbidden. Loopback fakes, current local toolchains, existing
+   media, and non-AI local editing are allowed. Future paid work requires a
+   separate plan and cannot be enabled by an override in this edition.
+5. **Third-party absence is a supported state.** ViMax, OpenChatCut, and Toonflow
+   may all be absent while Manju check, build, QC, and export continue to work.

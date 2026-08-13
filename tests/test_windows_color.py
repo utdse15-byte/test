@@ -190,7 +190,7 @@ def _color_probe(path: Path) -> dict[str, str]:
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
          "stream=color_range,color_space,color_transfer,color_primaries",
          "-of", "default=nw=1", str(path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout
     pairs = dict(line.split("=", 1) for line in out.strip().splitlines())
     return pairs
@@ -238,7 +238,7 @@ def test_render_untagged_today_and_tagged_when_opted_in(tmp_path):
     raw = subprocess.run(
         ["ffprobe", "-v", "error", "-print_format", "json",
          "-show_streams", "-show_format", str(tagged)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout
     doc = N(json.loads(raw))
     assert doc["facts"]["color"]["color_known"] is True

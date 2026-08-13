@@ -253,7 +253,7 @@ def test_sigkill_mid_build_never_breaks_the_disciplines(tmp_path):
     # recovery: a clean follow-up build completes and the film exists
     done = subprocess.run(
         [sys.executable, "-m", "manju.cli", "build"],
-        cwd=project.root, env=env, capture_output=True, text=True, timeout=600,
+        cwd=project.root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=600,
     )
     assert done.returncode == 0, done.stdout + done.stderr
     finals = list((project.root / "renders" / "final").glob("final_v*.mp4"))

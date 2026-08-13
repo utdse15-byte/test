@@ -171,7 +171,7 @@ def _probe_ms(path: Path) -> int:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     return int(round(float(out) * 1000))
 
@@ -185,7 +185,7 @@ def _avg_psnr(a: Path, b: Path) -> float:
     err = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "info", "-i", str(a), "-i", str(b),
          "-lavfi", "psnr", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     ).stderr
     m = re.search(r"average:([0-9.]+|inf)", err)
     assert m, err
@@ -344,7 +344,7 @@ def test_e2e_virtual_trims_apply_a_real_xfade(tmp_path):
     assert not any("no handles" in ln for ln in lines), lines
     boundaries = list(project.segments_dir.glob("xfade_*.mp4"))
     assert len(boundaries) == 1, boundaries
-    data = json.loads(out.with_suffix(".transitions.json").read_text())["transitions"]
+    data = json.loads(out.with_suffix(".transitions.json").read_text(encoding="utf-8"))["transitions"]
     assert data[0]["boundary"] == "S001->S002"
     assert data[0]["applied"] is True
     assert abs(_probe_ms(out) - timeline.duration_ms) <= 1000.0 / FPS + 1
@@ -372,7 +372,7 @@ def test_e2e_reencoded_trims_degrade_to_dip_control(tmp_path):
     warn = [ln for ln in lines if "no handles; used dip-to-black" in ln]
     assert len(warn) == 1 and "S001->S002" in warn[0], lines
     assert not list(project.segments_dir.glob("xfade_*.mp4"))  # nothing applied
-    data = json.loads(out.with_suffix(".transitions.json").read_text())["transitions"]
+    data = json.loads(out.with_suffix(".transitions.json").read_text(encoding="utf-8"))["transitions"]
     assert data[0]["applied"] is False and data[0]["reason"]
     assert abs(_probe_ms(out) - timeline.duration_ms) <= 1000.0 / FPS + 1
 

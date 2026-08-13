@@ -1,0 +1,74 @@
+{
+  "network_calls": 0,
+  "policy": {
+    "allowed_http_hosts": [
+      "localhost",
+      "127.0.0.1",
+      "::1"
+    ],
+    "allowed_provider_adapters": [
+      "generic_cloud",
+      "generic_asr",
+      "generic_tts",
+      "manju.providers.comfyui:ComfyUIProvider"
+    ],
+    "allowed_transports": [
+      "local_files",
+      "stdio",
+      "loopback_http"
+    ],
+    "arbitrary_subprocess": "forbidden",
+    "cloud_fallback": "forbidden",
+    "credential_resolution": "forbidden",
+    "digest": "sha256:e159788dd5ecb3326cce8d076b9b19291a6f7e7561cfd466a9c30293547c8a08",
+    "external_transport": "forbidden",
+    "mode": "strict_zero_cost",
+    "schema": "manju.provider-execution-policy/v1"
+  },
+  "preflight": {
+    "capability": "text_to_video",
+    "effective": {
+      "capability": "text_to_video",
+      "duration_ms": 4000,
+      "first_last": false,
+      "height": 720,
+      "ref_images": 0,
+      "ref_videos": 0,
+      "width": 1280
+    },
+    "omissions": [],
+    "provider_id": "localhost_fake_video",
+    "reasons": [],
+    "schema": "manju.request-compatibility/v1",
+    "status": "COMPATIBLE",
+    "warnings": [
+      {
+        "code": "LEGACY_UNINTERPRETABLE_LIMIT",
+        "detail": "max_resolution '720p' is an opaque, uninterpretable limit — width/height are NOT checked against it (never blocked, never guessed)"
+      }
+    ]
+  },
+  "provider": {
+    "credential_ref": null,
+    "execution_profile_digest": "sha256:4a8e020c9e666073dfc3e2338e449f7ea13595086ae9363aa4c1bb39c2ec24ee",
+    "id": "localhost_fake_video"
+  },
+  "request": {
+    "body": {
+      "candidates": 1,
+      "duration_s": 4.0,
+      "prompt": "synthetic local proof",
+      "resolution": "720p"
+    },
+    "candidates": 1,
+    "digest": "sha256:cbb6d52e1e3e4bff790fa72d3961ed38c35a020faeff0181e6a858273cc72a99",
+    "duration_ms": 4000,
+    "endpoint": "http://127.0.0.1:5198/v1/jobs",
+    "method": "POST",
+    "provider_id": "localhost_fake_video",
+    "resolution": "720p",
+    "simulated_cost": 0.0
+  },
+  "schema": "manju.zero-cost-local-proof/v1",
+  "transport_count": 0
+}

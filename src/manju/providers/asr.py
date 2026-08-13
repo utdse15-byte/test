@@ -233,6 +233,9 @@ class GenericAsrProvider:
 
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(cfg.url, credential_ref=self.manifest.auth.key_env)
         # #54: the SAME size cap generic_cloud's downloads enforce, applied to
         # the local read before base64-encoding it into memory — a huge local
         # file must not be silently loaded whole (OOM guard, goal W).
@@ -369,8 +372,12 @@ class GenericAsrProvider:
             # ProviderCanceled (not ProviderFailure) matches TTS/cloud/ComfyUI.
             if should_cancel is not None and should_cancel():
                 raise ProviderCanceled(self.id, job_id)
+            url = poll_cfg.url.format(job_id=job_id)
+            from .zero_cost import require_transport_allowed
+
+            require_transport_allowed(url, credential_ref=self.manifest.auth.key_env)
             resp = self._transport(
-                "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
+                "GET", url, self._headers(), None
             )
             if resp.status >= 400:
                 if is_transient_status(resp.status) and time.monotonic() < deadline:
@@ -426,7 +433,11 @@ def get_asr_provider(name: str | None = None, **kwargs) -> GenericAsrProvider:
         name = sorted(providers)[0]
     if name not in providers:
         raise AsrUnavailable(f"unknown ASR provider {name!r}; configured: {sorted(providers)}")
-    return GenericAsrProvider(providers[name], **kwargs)
+    manifest = providers[name]
+    from .zero_cost import require_manifest_allowed
+
+    require_manifest_allowed(manifest)
+    return GenericAsrProvider(manifest, **kwargs)
 
 
 def segments_to_srt(segments: list[TranscriptSegment]) -> str:

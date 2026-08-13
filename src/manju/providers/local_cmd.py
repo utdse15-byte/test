@@ -118,6 +118,12 @@ class LocalCommandProvider(Provider):
             raise
 
     def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
         values = self._values(req)
         with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
             out = Path(tmp) / f"out{self._ext}"

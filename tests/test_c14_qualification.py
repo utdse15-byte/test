@@ -194,7 +194,7 @@ def test_1_profile_digest_change_makes_qualification_stale(providers_dir, user, 
 
     # a cost edit moves the DR04 provider_profile_digest → recorded canary stale
     (providers_dir / pid / "provider.yaml").write_text(
-        (providers_dir / pid / "provider.yaml").read_text().replace(
+        (providers_dir / pid / "provider.yaml").read_text(encoding="utf-8").replace(
             "per_second: 0.1", "per_second: 0.99"), encoding="utf-8")
     registry_mod._manifest_cache = None
 
@@ -221,7 +221,7 @@ def test_2_fixture_change_makes_qualification_stale(providers_dir, user, monkeyp
 
     # edit the fixture contract → new fixture_version
     fx = fdir / "canary.video.i2v.v1.yaml"
-    fx.write_text(fx.read_text().replace("one second", "two seconds"), encoding="utf-8")
+    fx.write_text(fx.read_text(encoding="utf-8").replace("one second", "two seconds"), encoding="utf-8")
 
     declared = Q.declared_facts(pid, "image_to_video", fixtures_dir=fdir)
     derived = Q.qualification_state(pid, "image_to_video", evidence=stored, declared=declared)
@@ -606,7 +606,7 @@ def test_18_canary_inputs_are_deterministic_and_non_private():
 
     for f in FIXTURES.glob("*.yaml"):
         import yaml
-        data = yaml.safe_load(f.read_text())
+        data = yaml.safe_load(f.read_text(encoding="utf-8"))
         for key in ("input_media", "sample_artifact"):
             if data.get(key):
                 media = FIXTURES / data[key]
