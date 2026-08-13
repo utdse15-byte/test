@@ -3825,16 +3825,18 @@ class _Handler(BaseHTTPRequestHandler):
         key (comment-preserving, the same policy switch the CLI makes). Secret
         values are never touched or read."""
         from ..core.yamlio import atomic_write_text
-        from ..providers.manifest import providers_dir
+        from ..providers.manifest import provider_manifest_dir
 
         from .pages import set_disabled_in_text
 
         pid = str(body.get("id") or "")
-        if not pid or "/" in pid or "\\" in pid or pid.startswith("."):
-            self._send_error_json("invalid provider id", 400)
+        try:
+            manifest_dir = provider_manifest_dir(pid)
+        except ValueError as exc:
+            self._send_error_json(f"invalid provider id: {exc}", 400)
             return
         disabled = bool(body.get("disabled"))
-        path = providers_dir() / pid / "provider.yaml"
+        path = manifest_dir / "provider.yaml"
         if not path.exists():
             self._send_error_json(f"no such provider: {pid}", 404)
             return

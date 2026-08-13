@@ -461,6 +461,26 @@ def test_providers_toggle_roundtrips_disabled(gui, tmp_project, tmp_path):
     assert _post(gui, "/api/providers/toggle", {"id": "nope", "disabled": True})[0] == 404
 
 
+def test_providers_toggle_refuses_unsafe_ids(gui, tmp_path):
+    """The id names a directory under ``providers_dir()``, so it must go through
+    the validated owner (``providers.manifest.provider_manifest_dir``) and not a
+    hand-rolled substring guard. A guard that only rejects ``/``, ``\\`` and a
+    leading dot lets a Windows drive-relative segment through, and
+    ``Path(base) / "C:evil"`` DISCARDS the base whenever base is on another
+    drive (the suite's own tmp_path case) — writing outside the providers root.
+    On a same-drive base it instead silently aliases to ``evil``, toggling a
+    DIFFERENT provider than the one named. Both outcomes are refusals now."""
+    _write_provider(tmp_path / "_providers")
+    for bad in ("C:evil", "foo:bar", "..", ".hidden", "", "a/b", "a\\b",
+                "sp ace", "trailing.", "x" * 65):
+        status, _, _ = _post(gui, "/api/providers/toggle", {"id": bad, "disabled": True})
+        assert status == 400, f"unsafe provider id accepted: {bad!r} -> {status}"
+
+    # the valid id still works, so the guard is not simply refusing everything
+    assert _post(gui, "/api/providers/toggle",
+                 {"id": "video_x", "disabled": True})[0] == 200
+
+
 # =============================================================== 路由 routing
 
 
