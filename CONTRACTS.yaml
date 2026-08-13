@@ -468,6 +468,16 @@ schemas:
     read_older: true
     write_older: false
     notes: Deterministic localhost fake-provider preflight evidence; never runtime input.
+  - id: manju.fcpxml-roundtrip-baseline/v1
+    kind: schema
+    owner: manju.build.roundtrip
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Derived export-time projection of an FCPXML spine (shot, src, exact
+      rational in/duration) used only as the round-trip diff baseline.
 
   # -- build / run evidence ------------------------------------------------
   - id: manju.stage-attempt-evidence/v1

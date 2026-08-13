@@ -1,7 +1,13 @@
 """Round-trip: external edits flow back as reviewable truth changes (WP6).
 
-v1 carriers: JianYing **diff-stable skeleton** and **OTIO** only.
+Carriers: JianYing **diff-stable skeleton**, **OTIO**, and **FCPXML** (the last
+one so a DaVinci Resolve edit can return — Resolve is free and reads FCPXML).
 Native/encrypted drafts are NOT parsed (honest scope).
+
+Round-trip is for files **Manju exported** and a human then edited in an NLE; it
+diffs against the export baseline. An arbitrary third-party FCPXML is a
+different problem with a different answer — ``exporters.fcpxml_import``, which
+is PLAN ONLY by design. That split is deliberate; this module does not widen it.
 
     plan_roundtrip(project, edited_path) -> plan dict
     apply_roundtrip(project, plan, rows) -> batch result
@@ -16,11 +22,14 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.container import Project, ProjectError
 from ..core.events import append_event
 from ..core.yamlio import atomic_write_text, read_yaml, write_yaml
+
+if TYPE_CHECKING:  # annotation only — no Fraction is constructed here
+    from fractions import Fraction
 
 
 #: Stable machine token for "the baseline file EXISTS but cannot be used".
@@ -64,8 +73,10 @@ def _read_baseline(path: Path) -> dict[str, Any]:
 
 
 def detect_kind(data: Any, path: Path) -> str:
-    """Return 'jianying' | 'otio' | raise."""
+    """Return 'jianying' | 'otio' | 'fcpxml' | raise."""
     if isinstance(data, dict):
+        if data.get("schema") == "manju.fcpxml-roundtrip-baseline/v1":
+            return "fcpxml"
         if "OTIO_SCHEMA" in data or data.get("schema") == "OpenTimelineIO.v1":
             return "otio"
         if "tracks" in data and isinstance(data.get("tracks"), list):
@@ -84,7 +95,8 @@ def detect_kind(data: Any, path: Path) -> str:
                 return "otio"
     raise ProjectError(
         f"无法识别 round-trip 载体: {path.name} — 仅支持 JianYing skeleton "
-        "draft_content.json 与 OTIO JSON(编辑 skeleton/OTIO 以支持回环)"
+        "draft_content.json、OTIO JSON 与 FCPXML"
+        "(编辑 skeleton/OTIO/FCPXML 以支持回环)"
     )
 
 
@@ -248,6 +260,97 @@ def _shot_order_from_otio(data: dict) -> list[str]:
             shot = _normalize_shot_id(shot or clip.get("name"))
             if shot and shot not in order:
                 order.append(shot)
+    return order
+
+
+# ------------------------------------------------------------------ FCPXML
+# FCPXML is the third round-trip carrier, and the only XML one. It exists so a
+# DaVinci Resolve edit can come back: Resolve is free and reads FCPXML, but
+# until the exporter wrote a baseline there was nothing to diff an edited
+# document against.
+#
+# The parsing is NOT reimplemented here. exporters.fcpxml_import already holds
+# every time as an exact Fraction of seconds on the document's own
+# frameDuration, so a 1001/24000 project reads back without drift; a second
+# parser would be a second answer to "how long is this clip".
+
+
+def _frac_ms(value: "Fraction | None") -> int:
+    """Exact rational seconds → whole milliseconds, half-up.
+
+    The rest of round-trip speaks integer ms (`in_ms`, `duration_ms`), so the
+    conversion happens once, here, at the boundary — and never via float, or
+    1001/24000 stops being exact on the way in."""
+    if value is None:
+        return 0
+    ms = value * 1000
+    return int(ms.numerator // ms.denominator + (
+        1 if 2 * (ms.numerator % ms.denominator) >= ms.denominator else 0
+    ))
+
+
+def fcpxml_projection(parsed: Any) -> dict[str, Any]:
+    """A ParsedFcpxml → the plain-dict baseline document round-trip stores.
+
+    A baseline is JSON (`document: dict`), so the raw XML cannot be the
+    baseline. This keeps the fields the diff actually reads, plus the exact
+    rational strings alongside the derived ms so the stored form can be
+    re-checked against the document it came from."""
+    clips: list[dict[str, Any]] = []
+    for c in getattr(parsed, "spine_clips", ()) or ():
+        # A clip whose name no longer resolves to a shot is KEPT with shot=None,
+        # not dropped: the diff reports it as unmatched (as the OTIO reader
+        # does). Dropping it would turn "an NLE renamed this clip" into a
+        # silently shorter timeline.
+        shot = _normalize_shot_id(getattr(c, "name", None))
+        start, dur = getattr(c, "start", None), getattr(c, "duration", None)
+        clips.append({
+            "shot": shot,
+            "name": str(getattr(c, "name", "") or ""),
+            "src": str(getattr(c, "src", "") or ""),
+            "in_ms": _frac_ms(start),
+            "duration_ms": _frac_ms(dur),
+            "in_exact": str(start) if start is not None else None,
+            "duration_exact": str(dur) if dur is not None else None,
+        })
+    fd = getattr(parsed, "frame_duration", None)
+    return {
+        "schema": "manju.fcpxml-roundtrip-baseline/v1",
+        "frame_duration": str(fd) if fd is not None else None,
+        "clips": clips,
+    }
+
+
+def _parse_fcpxml_document(path: Path) -> dict[str, Any]:
+    """Read an edited .fcpxml from disk into the same projection shape."""
+    from ..exporters.fcpxml_import import parse_fcpxml
+
+    return fcpxml_projection(parse_fcpxml(path))
+
+
+def _fcpxml_take(clip: dict) -> str | None:
+    """The take name from a projected clip's ``src``.
+
+    FCPXML carries the shot in the clip name but has nowhere to stamp the take,
+    so identity comes from the asset path the exporter wrote:
+    ``media/gen/S001/take_01.mp4`` → ``take_01``. Without this a trim row would
+    be dropped at apply time for a missing take."""
+    src = str(clip.get("src") or "").replace("\\", "/")
+    if not src:
+        return None
+    stem = src.rsplit("/", 1)[-1]
+    stem = stem.rsplit(".", 1)[0] if "." in stem else stem
+    return stem.strip() or None
+
+
+def _shot_order_from_fcpxml(data: dict) -> list[str]:
+    order: list[str] = []
+    for clip in data.get("clips") or []:
+        if not isinstance(clip, dict):
+            continue
+        shot = _normalize_shot_id(clip.get("shot"))
+        if shot and shot not in order:
+            order.append(shot)
     return order
 
 
@@ -485,10 +588,21 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
     edited_path = Path(edited_path)
     if not edited_path.exists():
         raise ProjectError(f"文件不存在: {edited_path}")
-    try:
-        data = _load_json(edited_path)
-    except Exception as exc:
-        raise ProjectError(f"无法解析 JSON: {exc}") from exc
+    if edited_path.suffix.lower() == ".fcpxml":
+        # The only XML carrier, so it is dispatched on extension BEFORE the
+        # JSON load: _load_json would raise "无法解析 JSON" on a perfectly
+        # valid FCPXML and the real reason would never reach the user.
+        from ..exporters.fcpxml_import import FcpxmlImportError
+
+        try:
+            data = _parse_fcpxml_document(edited_path)
+        except FcpxmlImportError as exc:
+            raise ProjectError(f"无法解析 FCPXML: {exc}") from exc
+    else:
+        try:
+            data = _load_json(edited_path)
+        except Exception as exc:
+            raise ProjectError(f"无法解析 JSON: {exc}") from exc
     kind = detect_kind(data, edited_path)
     baseline_path = find_baseline(project, edited_path)
     baseline_doc = None
@@ -518,10 +632,16 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
 
     rows: list[dict[str, Any]] = []
 
-    # Reorder detection
+    # Reorder detection. Dispatched by NAME per carrier: the old `else` sent
+    # anything that was not JianYing through the OTIO reader, so a third
+    # carrier would have been silently parsed as OTIO — finding no shots and
+    # reporting "no changes" for a real edit.
     if kind == "jianying":
         new_order = _shot_order_from_jianying(data)
         old_order = _shot_order_from_jianying(baseline_doc) if baseline_doc else []
+    elif kind == "fcpxml":
+        new_order = _shot_order_from_fcpxml(data)
+        old_order = _shot_order_from_fcpxml(baseline_doc) if baseline_doc else []
     else:
         new_order = _shot_order_from_otio(data)
         old_order = _shot_order_from_otio(baseline_doc) if baseline_doc else []
@@ -663,6 +783,58 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                     bmeta if isinstance(bmeta, dict) else {},
                     truth_moved=truth_moved,
                 ))
+
+    # FCPXML trim: an asset-clip's start / duration moved against the baseline.
+    # Times were converted to whole ms once, in the projection, from exact
+    # Fractions — so a 1001/24000 timeline compares without drift here.
+    if kind == "fcpxml":
+        base_by_shot: dict[str, list[dict]] = {}
+        for bc in ((baseline_doc.get("clips") or []) if baseline_doc else []):
+            if isinstance(bc, dict) and bc.get("shot"):
+                base_by_shot.setdefault(str(bc["shot"]), []).append(bc)
+        seen: dict[str, int] = {}
+        for clip in data.get("clips") or []:
+            if not isinstance(clip, dict):
+                continue
+            shot = _normalize_shot_id(clip.get("shot"))
+            if not shot:
+                rows.append({
+                    "class": "unmatched",
+                    "state": "unmatched",
+                    "evidence": {"name": clip.get("name"), "hint": "manju ingest"},
+                    "target": None,
+                    "action": None,
+                })
+                continue
+            # One shot may sit in the spine more than once; its baseline clips
+            # are consumed in spine order rather than by a single lookup.
+            n = seen.get(shot, 0)
+            candidates = base_by_shot.get(shot) or []
+            bclip = candidates[n] if n < len(candidates) else {}
+            seen[shot] = n + 1
+            if not bclip:
+                # No baseline row to diff against. Staying silent is required:
+                # treating an absent baseline as in_ms=0 would report every
+                # clip with a non-zero in-point as a fresh trim.
+                continue
+            take = _fcpxml_take(clip) or _fcpxml_take(bclip)
+            in_ms = int(clip.get("in_ms") or 0)
+            dur_ms = int(clip.get("duration_ms") or 0)
+            bin_ms = int(bclip.get("in_ms") or 0)
+            bdur_ms = int(bclip.get("duration_ms") or 0)
+            if in_ms != bin_ms or (dur_ms and bdur_ms and dur_ms != bdur_ms):
+                rows.append({
+                    "class": "trim",
+                    "state": "conflict" if truth_moved else "ok",
+                    "evidence": {
+                        "shot": shot, "take": take,
+                        "from": {"in_ms": bin_ms, "duration_ms": bdur_ms},
+                        "to": {"in_ms": in_ms, "duration_ms": dur_ms,
+                               "out_ms": in_ms + max(dur_ms, 1)},
+                    },
+                    "target": f"media/gen/{shot}/{take}",
+                    "action": "set_inout",
+                })
 
     # JianYing: volume/mute/transition — align baseline by manju identity
     if kind == "jianying":

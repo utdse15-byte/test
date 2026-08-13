@@ -4571,7 +4571,8 @@ def locale(
 
 @app.command(rich_help_panel=PANEL_BRIDGE)
 def roundtrip(
-    edited: Path = typer.Argument(..., help="edited skeleton draft_content.json or OTIO"),
+    edited: Path = typer.Argument(
+        ..., help="edited skeleton draft_content.json, OTIO, or FCPXML"),
     apply: bool = typer.Option(False, "--apply", help="apply accepted rows"),
     rows: Optional[str] = typer.Option(
         None, "--rows", help="1-based row indices e.g. 1,3-5"),
@@ -4579,7 +4580,8 @@ def roundtrip(
 ):
     """Flow external editor edits back as reviewable truth changes (WP6).
 
-    Carriers: JianYing diff-stable skeleton + OTIO only. Plan by default;
+    Carriers: JianYing diff-stable skeleton, OTIO, and FCPXML (so a DaVinci
+    Resolve edit can come back). Plan by default;
     ``--apply`` under one build_lock."""
     from .build.roundtrip import apply_roundtrip, plan_roundtrip
     from .core.container import ProjectError
