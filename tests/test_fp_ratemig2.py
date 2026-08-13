@@ -484,7 +484,7 @@ def _probe_r_frame_rate(path: Path) -> str:
     return subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1:nk=1", str(path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
 
 

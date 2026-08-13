@@ -227,7 +227,7 @@ def test_make_sample_help_has_no_side_effects(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     proc = subprocess.run(
         [sys.executable, str(_MAKE_SAMPLE), "--help"],
-        capture_output=True, text=True, cwd=str(_REPO_ROOT),
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO_ROOT),
     )
     assert proc.returncode == 0
     assert "usage" in proc.stdout.lower()
@@ -238,7 +238,7 @@ def test_make_sample_argparse_options(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(_MAKE_SAMPLE), str(tmp_path / "mini"),
          "--shots", "2", "--clip-seconds", "0.5", "--no-bgm"],
-        capture_output=True, text=True, cwd=str(_REPO_ROOT),
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO_ROOT),
     )
     assert proc.returncode == 0, proc.stderr
     from manju.core.container import Project

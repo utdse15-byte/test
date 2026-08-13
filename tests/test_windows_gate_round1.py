@@ -97,7 +97,7 @@ def test_ass_filter_accepts_colon_path_end_to_end(tmp_path):
         "-vf", f"ass={_escape_filter_path(ass)}",
         "-frames:v", "2", str(out),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert proc.returncode == 0, proc.stderr
     assert out.exists() and out.stat().st_size > 0
 

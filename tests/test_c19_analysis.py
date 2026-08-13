@@ -171,7 +171,7 @@ def test_report_dir_not_a_build_input(tmp_project, tmp_path):
     hits = subprocess.run(
         ["grep", "-rn", "reports/analysis", str(root),
          "--include=*.py", "--exclude-dir=__pycache__"],
-        capture_output=True, text=True).stdout
+        capture_output=True, text=True, encoding="utf-8").stdout
     # only analysis.py itself may name the path (it writes/reads the projection)
     offenders = [ln for ln in hits.splitlines()
                  if "/media/analysis.py" not in ln and ln.strip()]

@@ -96,7 +96,7 @@ def test_copy_on_import_external_mutation_is_inert(tmp_project, tmp_path):
     # sabotage the EXTERNAL pack after import
     for p in (tmp_path / "external_pack" / "media").iterdir():
         p.write_bytes(b"HACKED")
-    (tmp_path / "external_pack" / "pack.yaml").write_text("schema: junk")
+    (tmp_path / "external_pack" / "pack.yaml").write_text("schema: junk", encoding="utf-8")
 
     assert hash_file(local_file) == sha_before                # project unaffected
     assert read_yaml(dest.root / "bible" / "refpacks" / "linxia_pack.yaml")
@@ -185,7 +185,7 @@ def test_outline_apply_creates_episodes_via_existing_path(tmp_series):
     assert created["E01"]["created"] is False                   # existed, reused
     # registered through the EXISTING series.yaml path
     assert "E02" in [e.id for e in tmp_series.load_config().episodes]
-    script = (tmp_series.episode_project_dir("E02") / "story" / "script.md").read_text()
+    script = (tmp_series.episode_project_dir("E02") / "story" / "script.md").read_text(encoding="utf-8")
     assert "line 11" in script and "line 20" in script
 
 

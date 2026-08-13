@@ -272,7 +272,7 @@ def _probe_ms(path: Path) -> int:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     return int(round(float(out) * 1000))
 
@@ -371,7 +371,7 @@ def test_applied_xfade_audio_is_continuous_across_the_boundary(tmp_path):
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "0.82", "-to", "1.18",
          "-i", str(out), "-af", "silencedetect=noise=-45dB:d=0.05,astats=metadata=1",
          "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     ).stderr
     # no silence period detected in the boundary window (the acrossfade never
     # opens a gap) and overall RMS is finite (audio present throughout)
@@ -408,7 +408,7 @@ def test_handle_less_boundary_degrades_to_dip_with_a_named_warning(tmp_path):
     assert not list(project.segments_dir.glob("xfade_*.mp4"))
     # total still exact and the transitions sidecar records the degrade
     assert abs(_probe_ms(out) - tl.duration_ms) <= 1000.0 / FPS + 1
-    data = json.loads(out.with_suffix(".transitions.json").read_text())["transitions"]
+    data = json.loads(out.with_suffix(".transitions.json").read_text(encoding="utf-8"))["transitions"]
     assert data[0]["applied"] is False and data[0]["reason"]
 
 

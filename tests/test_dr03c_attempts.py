@@ -209,9 +209,9 @@ def _seed_run(root: Path, run_id: str) -> None:
 def test_manifest_is_deterministic_for_the_same_event_set(tmp_path):
     _seed_run(tmp_path, "run_m")
     p1 = A.materialize_run_manifest(tmp_path, "run_m")
-    m1 = json.loads(p1.read_text())
+    m1 = json.loads(p1.read_text(encoding="utf-8"))
     p2 = A.materialize_run_manifest(tmp_path, "run_m")
-    m2 = json.loads(p2.read_text())
+    m2 = json.loads(p2.read_text(encoding="utf-8"))
     # generated_at is a wall-clock incidental (NOT part of evidence_digest);
     # everything semantic is byte-stable across re-materialization.
     assert m1["evidence_digest"] == m2["evidence_digest"]
@@ -224,7 +224,7 @@ def test_manifest_is_derived_atomic_and_deletable(tmp_path):
     path = A.materialize_run_manifest(tmp_path, "run_m")
     assert path == A.run_manifest_path(tmp_path, "run_m")
     assert path.exists() and path.name == "run.json"
-    m = json.loads(path.read_text())
+    m = json.loads(path.read_text(encoding="utf-8"))
     assert m["schema"] == A.MANIFEST_SCHEMA
     assert m["terminal_status"] == A.COMPLETED
     assert m["qc_report_refs"] == ["reports/qc.json"]
@@ -233,7 +233,7 @@ def test_manifest_is_derived_atomic_and_deletable(tmp_path):
     digest = m["evidence_digest"]
     path.unlink()
     assert not path.exists()
-    m2 = json.loads(A.materialize_run_manifest(tmp_path, "run_m").read_text())
+    m2 = json.loads(A.materialize_run_manifest(tmp_path, "run_m").read_text(encoding="utf-8"))
     assert m2["evidence_digest"] == digest
 
 
@@ -246,7 +246,7 @@ def test_manifest_never_claims_a_file_without_an_attempt(tmp_path):
     (tmp_path / "renders" / "final" / "final_v9.mp4").write_bytes(b"stray")
     ev = A.RunEvidence(tmp_path, "run_g")
     ev.run_succeeded()  # a run with no render attempt at all
-    m = json.loads(A.materialize_run_manifest(tmp_path, "run_g").read_text())
+    m = json.loads(A.materialize_run_manifest(tmp_path, "run_g").read_text(encoding="utf-8"))
     assert m["final_output_refs"] == []  # never invented from file existence
 
 
@@ -262,7 +262,7 @@ def test_manifest_costs_prefer_actual_and_never_double_count(tmp_path):
     ev.attempt("generate", {"kind": "shot", "shot": "S002"}, "gen").succeeded(
         cost={"estimated": 0.25, "currency": "CNY"})
     ev.run_succeeded()
-    m = json.loads(A.materialize_run_manifest(tmp_path, "run_$").read_text())
+    m = json.loads(A.materialize_run_manifest(tmp_path, "run_$").read_text(encoding="utf-8"))
     cny = next(c for c in m["costs"] if c["currency"] == "CNY")
     assert cny["amount"] == 0.75  # 0.5 (actual) + 0.25 (estimate), NOT 9.x
 

@@ -38,7 +38,7 @@ def _run(args: list[str]) -> None:
     stderr tail so a generation break is legible."""
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").strip().splitlines()[-12:])

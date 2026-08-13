@@ -230,7 +230,7 @@ def test_parity_with_fresh_no_cache_process_including_cjk_names(tmp_path):
              "sys.stdout.write(hash_file(sys.argv[1]))",
              str(f)],
             env={**os.environ, "MANJU_NO_HASH_CACHE": "1"},
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8",
         )
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.strip() == cached, f"parity mismatch for {f.name}"

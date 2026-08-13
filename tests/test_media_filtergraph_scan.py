@@ -133,7 +133,7 @@ def test_reframe_crop_expr_multi_keyframe_burns(tmp_path):
         [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
          "-f", "lavfi", "-t", "0.3", "-i", "color=c=black:s=400x400:r=24",
          "-vf", vf, "-frames:v", "3", str(out)],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
     assert out.exists() and out.stat().st_size > 0

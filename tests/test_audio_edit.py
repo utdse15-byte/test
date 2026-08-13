@@ -454,7 +454,7 @@ def _mean_volume_db(path: Path, start_s: float, dur_s: float) -> float:
     out = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", "-ss", f"{start_s:.3f}", "-t", f"{dur_s:.3f}",
          "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     ).stderr
     m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?|-inf)\s*dB", out)
     if not m:
@@ -509,7 +509,7 @@ def _rms_db(path: Path) -> float:
     out = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
          "-af", "astats=metadata=1", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     ).stderr
     vals = [(-math.inf if v == "-inf" else float(v))
             for v in re.findall(r"RMS level dB:\s*(-?\d+(?:\.\d+)?|-inf)", out)]

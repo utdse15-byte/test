@@ -113,7 +113,7 @@ def test_changing_the_aspect_surfaces_the_reauthor_advice(tmp_project, add_shot)
 
     add_shot(tmp_project, "S001")
     subprocess.run([sys.executable, "-m", "manju.cli", "build", "--yes"],
-                   cwd=tmp_project.root, capture_output=True, text=True,
+                   cwd=tmp_project.root, capture_output=True, text=True, encoding="utf-8",
                    env={**os.environ, "PYTHONUTF8": "1"}, timeout=900)
 
     cfg_path = tmp_project.root / "project.yaml"

@@ -54,7 +54,7 @@ def _dims(path):
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
          "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     return tuple(int(x) for x in r.stdout.strip().split(","))
 

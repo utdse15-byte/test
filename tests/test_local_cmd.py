@@ -55,7 +55,7 @@ def test_runs_registers_with_lineage_and_env(tmp_path, request_for):
     assert len(takes) == 1
     sc = takes[0].sidecar
     # env passthrough reached the tool
-    assert takes[0].media_path.read_text() == "S001"
+    assert takes[0].media_path.read_text(encoding="utf-8") == "S001"
     # lineage (§4.2): argv, exit code, duration
     assert sc.params["exit_code"] == 0
     assert sc.params["argv"][0] == "sh" and sc.params["argv"][-1].endswith("out.mp4")
@@ -170,7 +170,7 @@ def test_timeout_reaps_orphaned_grandchild(tmp_path, request_for):
         assert "timed out" in str(exc.value)
 
         assert pidfile.exists(), "wrapper never recorded the grandchild pid"
-        gpid = int(pidfile.read_text().strip())
+        gpid = int(pidfile.read_text(encoding="utf-8").strip())
         # killpg reaped the whole group, not just the wrapper — give the OS a
         # beat to finish reaping the reparented grandchild.
         deadline = time.time() + 5.0

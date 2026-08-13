@@ -53,7 +53,7 @@ def _probe_ms(path: Path) -> int:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     return int(float(out) * 1000)
 
@@ -81,7 +81,7 @@ def test_m0_full_build(sample_project, built):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-of", "csv=p=0", str(final)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     assert out == "1080,1920"
 

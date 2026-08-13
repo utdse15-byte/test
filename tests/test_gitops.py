@@ -308,7 +308,7 @@ def test_nested_project_reads_as_no_repo(tmp_path):
     import subprocess
 
     log = subprocess.run(["git", "log", "--oneline"], cwd=outer,
-                         capture_output=True, text=True).stdout
+                         capture_output=True, text=True, encoding="utf-8").stdout
     assert "should not land" not in log
 
 

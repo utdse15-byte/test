@@ -81,7 +81,7 @@ def _git_init(project: Project) -> None:
 
 def _git_head(project: Project) -> str:
     return subprocess.run(["git", "rev-parse", "HEAD"], cwd=project.root,
-                          check=True, capture_output=True, text=True).stdout.strip()
+                          check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
 def _all_keys(obj) -> set[str]:
@@ -287,7 +287,7 @@ def test_apply_does_not_auto_commit_and_prints_the_revert(tmp_project):
     assert _git_head(tmp_project) == head_before             # no new commit
     # the change is an uncommitted working-tree edit to exactly project.yaml
     porcelain = subprocess.run(["git", "status", "--porcelain"], cwd=tmp_project.root,
-                               capture_output=True, text=True).stdout
+                               capture_output=True, text=True, encoding="utf-8").stdout
     assert porcelain.strip().split() [-1] == PROJECT_FILE
     assert PROJECT_FILE in result["revert"]
     assert "git" in result["revert"]

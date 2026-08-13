@@ -183,7 +183,7 @@ def test_fresh_user_defaults_to_beginner(tmp_path, monkeypatch):
     assert resolve_mode() == "beginner"
     # the resolution is written back so a later onboarding-dismiss can't flip it
     assert path.exists()
-    assert json.loads(path.read_text())["mode"] == "beginner"
+    assert json.loads(path.read_text(encoding="utf-8"))["mode"] == "beginner"
     assert resolve_mode() == "beginner"        # stable on the second read
 
 
@@ -195,7 +195,7 @@ def test_existing_user_defaults_to_pro(tmp_path, monkeypatch):
                     encoding="utf-8")
     monkeypatch.setenv("MANJU_GUI_STATE", str(path))
     assert resolve_mode() == "pro"
-    assert json.loads(path.read_text())["mode"] == "pro"
+    assert json.loads(path.read_text(encoding="utf-8"))["mode"] == "pro"
 
 
 def test_explicit_mode_wins(tmp_path, monkeypatch):
