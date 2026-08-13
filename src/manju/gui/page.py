@@ -2895,6 +2895,12 @@ _JS = r"""
       catch (err) { toast(errMsg(err), "err"); }
       finally { btn.disabled = false; }
     });
+    mkBtn("依赖图 (Graph)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderGraph(out, await api("GET", "/api/explain?graph=1")); }
+      catch (err) { toast(errMsg(err), "err"); }
+      finally { btn.disabled = false; }
+    });
     mkBtn("体检 (Doctor)", "ghost", async (btn) => {
       btn.disabled = true;
       try { renderDoctor(out, await api("GET", "/api/doctor")); }
@@ -3023,6 +3029,46 @@ _JS = r"""
         out.appendChild(el("p", "why",
           sh.shot + " · 配音 " + vo.state + (vo.why ? " — " + vo.why : "")));
       }
+    });
+  }
+
+  /* DR03B: `explain --graph` — the read-only derived dependency VIEW, the same
+   * manju.graph-diagnostics/v1 document `manju explain --graph` prints. Never a
+   * scheduling truth source, so this renders diagnosis only and offers no
+   * "run these in this order" affordance. */
+  function renderGraph(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "依赖图 (graph)"));
+    const gd = data.graph;
+    if (!gd) {
+      out.appendChild(el("p", "muted", "无依赖图数据 (no graph in response)"));
+      return;
+    }
+    const s = gd.summary || {};
+    const chips = el("div", "chips");
+    const chip = (label, n, cls) => {
+      if (!n) return;
+      chips.appendChild(el("span", "badge " + cls, label + ": " + n));
+    };
+    chips.appendChild(el("span", "badge",
+      "节点 " + (s.node_count || 0) + " · 边 " + (s.edge_count || 0)));
+    chip("ready", s.ready, "st-fresh");
+    chip("blocked", s.blocked, "st-broken");
+    chip("pending", s.pending, "st-stale");
+    chip("waiting", s.waiting, "st-stale");
+    chip("failed", s.failed, "st-broken");
+    chip("cycles", s.cycles, "st-broken");
+    out.appendChild(chips);
+    out.appendChild(el("p", "muted", "只读派生视图,不是调度真相 (diagnostic view)"));
+    (gd.issues || []).forEach((iss) => {
+      out.appendChild(el("div", "doc-line", "! " + iss.code + "  " + iss.node_id));
+    });
+    /* root cause, not just "blocked": name the origin each node waits on. */
+    (gd.nodes || []).forEach((n) => {
+      const bb = n.blocked_by || [];
+      if (!bb.length) return;
+      out.appendChild(el("p", "why", n.node_id + " ← "
+        + bb.map((b) => b.node_id + "(" + b.status + ")").join(", ")));
     });
   }
 

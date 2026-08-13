@@ -802,7 +802,17 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/explain":
                 from ..build.explain import explain
 
-                self._send_json(explain(self.server.project))
+                info = explain(self.server.project)
+                # DR03B ``--graph`` parity. Opt-in exactly like the CLI flag:
+                # the derivation recompiles the timeline to judge cache
+                # validity, so the default payload must not pay for a
+                # diagnostic nobody asked for (same reason the /edit page GET
+                # stopped calling build.explain inline).
+                if (parse_qs(url.query).get("graph", ["0"])[0] or "0") in ("1", "true", "yes"):
+                    from ..build.graphdiag import diagnose_project
+
+                    info["graph"] = diagnose_project(self.server.project)
+                self._send_json(info)
             elif path == "/api/events":
                 q = parse_qs(url.query)
                 n = 50

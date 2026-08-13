@@ -56,6 +56,7 @@ over the same core the CLI calls — no capability exists only in the GUI.
 | Exports / package | `export`, `package` | export action (Q) + ✱ packaging editor lite (S8a) |
 | Spend / tasks | `spend`, `tasks` | spend view (R) + ✱ tasks view (S8a) |
 | Doctor | `doctor` | /api/doctor (R) + ✱ doctor page w/ fix hints (S8b) |
+| Dependency-graph diagnostics | `explain --graph` (DR03B) | 依赖图 (Graph) button → summary chips, issues, per-node root cause (`/api/explain?graph=1`); read-only, opt-in like the flag |
 | **Failure clarity** | ✱ structured failures everywhere (S-C) | ✱ failure cards: step, cause, hint, log link, retry (S8a) |
 | **First-run guidance** | — (README) | ✱ onboarding checklist: 建项目→写剧本→生成→审片→导出, dismissable, per-user state (S8a) |
 | Bible view/edit | edit YAML | bible panel read-only (Q) → ✱ guarded edit w/ lock awareness (S8a, locked fields read-only) |
