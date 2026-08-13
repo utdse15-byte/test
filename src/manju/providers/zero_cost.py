@@ -14,6 +14,7 @@ LOCAL_PROOF_SCHEMA = "manju.zero-cost-local-proof/v1"
 R_EGRESS_BLOCKED = "STRICT_ZERO_COST_EGRESS_BLOCKED"
 R_CREDENTIAL_FORBIDDEN = "STRICT_ZERO_COST_CREDENTIAL_FORBIDDEN"
 R_ADAPTER_FORBIDDEN = "STRICT_ZERO_COST_ADAPTER_FORBIDDEN"
+R_EXECUTION_MODE_INVALID = "EXECUTION_MODE_INVALID"
 
 
 def execution_mode() -> str:
@@ -24,9 +25,32 @@ def strict_zero_cost_active() -> bool:
     return execution_mode() == STRICT_ZERO_COST
 
 
+def _mode_status() -> str:
+    mode = execution_mode()
+    if not mode:
+        return "standard"
+    if mode == STRICT_ZERO_COST:
+        return "strict"
+    return "invalid"
+
+
+def _require_valid_mode() -> None:
+    mode = execution_mode()
+    if mode and mode != STRICT_ZERO_COST:
+        raise ProviderFailure(
+            FailureKind.invalid,
+            "MANJU_EXECUTION_MODE is invalid; use strict_zero_cost or unset it",
+            detail={
+                "reason_code": R_EXECUTION_MODE_INVALID,
+                "transport_count": 0,
+                "mode": mode,
+            },
+        )
+
+
 def credential_presence(credential_ref: str | None) -> bool | None:
     """Report legacy presence without touching credential vars in strict mode."""
-    if not credential_ref or strict_zero_cost_active():
+    if not credential_ref or _mode_status() != "standard":
         return None
     return bool(os.environ.get(credential_ref))
 
@@ -44,9 +68,12 @@ def is_loopback_url(url: str) -> bool:
 
 
 def execution_policy_snapshot() -> dict[str, object]:
+    status = _mode_status()
+    restricted = status in {"strict", "invalid"}
     facts: dict[str, object] = {
         "schema": POLICY_SCHEMA,
         "mode": execution_mode() or "legacy_default",
+        "status": status,
         "allowed_transports": ["local_files", "stdio", "loopback_http"],
         "allowed_http_hosts": ["localhost", "127.0.0.1", "::1"],
         "allowed_provider_adapters": (
@@ -56,21 +83,22 @@ def execution_policy_snapshot() -> dict[str, object]:
                 "generic_tts",
                 "manju.providers.comfyui:ComfyUIProvider",
             ]
-            if strict_zero_cost_active()
+            if restricted
             else "legacy"
         ),
         "arbitrary_subprocess": (
-            "forbidden" if strict_zero_cost_active() else "legacy"
+            "forbidden" if restricted else "legacy"
         ),
-        "external_transport": "forbidden" if strict_zero_cost_active() else "legacy",
-        "credential_resolution": "forbidden" if strict_zero_cost_active() else "legacy",
-        "cloud_fallback": "forbidden" if strict_zero_cost_active() else "legacy",
+        "external_transport": "forbidden" if restricted else "legacy",
+        "credential_resolution": "forbidden" if restricted else "legacy",
+        "cloud_fallback": "forbidden" if restricted else "legacy",
     }
     return {**facts, "digest": hash_value(facts)}
 
 
 def require_transport_allowed(url: str, *, credential_ref: str | None = None) -> None:
     """Fail before credential resolution and before any provider transport."""
+    _require_valid_mode()
     if not strict_zero_cost_active():
         return
     if not is_loopback_url(url):
@@ -96,6 +124,7 @@ def require_transport_allowed(url: str, *, credential_ref: str | None = None) ->
 
 def require_manifest_allowed(manifest) -> None:
     """Reject unaudited provider adapters before they can execute custom code."""
+    _require_valid_mode()
     if not strict_zero_cost_active():
         return
     from .manifest import (

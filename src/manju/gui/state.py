@@ -462,6 +462,7 @@ def build_state(project: "Project", runner: "JobRunner",
             "currency": status["currency"],
             "limit": status["budget_limit"],
         },
+        "execution_policy": _execution_policy(),
         "next_step": status["next_step"],
         "next_step_key": status.get("next_step_key"),
         "shots_by_state": status["shots_by_state"],
@@ -497,3 +498,19 @@ def build_state(project: "Project", runner: "JobRunner",
             "job_count": len(jobs),
         }
     return out
+
+
+def _execution_policy() -> dict[str, Any]:
+    """Small secret-free policy snapshot for the always-visible GUI chrome."""
+    try:
+        from ..providers.zero_cost import execution_policy_snapshot
+
+        snap = execution_policy_snapshot()
+        return {
+            "mode": snap.get("mode"),
+            "status": snap.get("status"),
+            "external_transport": snap.get("external_transport"),
+            "credential_resolution": snap.get("credential_resolution"),
+        }
+    except Exception:
+        return {"mode": "unknown", "status": "invalid"}

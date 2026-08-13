@@ -172,6 +172,9 @@ h3 { margin: .2rem 0 .4rem; font-size: .92rem; }
   animation: mj-pulse 1.4s ease-in-out infinite;
 }
 .chip.readonly { color: var(--warn); border-color: #6b5518; background: #4a3a12; font-weight: 700; }
+.chip.execution.strict { color: var(--ok); border-color: #2f5a43; background: #14261d; }
+.chip.execution.standard { color: var(--muted); }
+.chip.execution.invalid { color: var(--err); border-color: #5a2b2e; background: #2a1618; }
 button.chip { cursor: pointer; font: inherit; font-size: .78rem; color: var(--fg); }
 button.chip:hover { filter: brightness(1.15); }
 
@@ -948,6 +951,16 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .ck-empty { color: var(--muted); font-size: .82rem; }
 
 /* --------------------------------------- evaluate block (round AA item 8) */
+.ck-eval { padding: 0; }
+.ck-eval-title {
+  cursor: pointer; list-style: none; padding: .65rem .8rem;
+  color: var(--muted); font-size: .8rem; font-weight: 600;
+}
+.ck-eval-title::-webkit-details-marker { display: none; }
+.ck-eval-title::before { content: "▸"; display: inline-block; margin-right: .45rem; }
+.ck-eval[open] > .ck-eval-title::before { content: "▾"; }
+.ck-eval[open] > :not(summary) { margin-left: .8rem; margin-right: .8rem; }
+.ck-eval[open] > :last-child { margin-bottom: .75rem; }
 .ck-eval-sub { margin: .5rem 0; }
 .ck-eval-sub h4 { margin: 0 0 .25rem; font-size: .78rem; color: var(--muted); font-weight: 600; }
 /* info callout, not a warning — same info-blue pairing jb-running/st-manual
@@ -1534,7 +1547,7 @@ _JS = r"""
     section("header",
       [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
        s.latest_final_note, s.build_lock, s.readonly, s.workspace,
-       s.finals, (s.shots || []).length],
+       s.execution_policy, s.finals, (s.shots || []).length],
       () => renderHeader(s));
     section("jobs", jobs, () => renderJobs(jobs));
     section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
@@ -1542,7 +1555,6 @@ _JS = r"""
     section("qc", s.qc, () => renderQC(s.qc));
     section("events", s.events, () => renderEvents(s.events || []));
     renderBatchBar();   /* selection survives polls; bar follows current shots */
-    maybeOnboarding(s); /* auto-show once for an empty-ish, undismissed project */
     renderSpend(jobs);  /* §8.3 waiting_user banner in the build panel */
     updateReviewChip(); /* 未阅 N follows the fresh shots + localStorage mark */
     maybeTimeline(s);   /* async, self-contained: a 500 there never cascades */
@@ -1617,6 +1629,9 @@ _JS = r"""
   let evalErr = null;
 
   function maybeEvaluate(s) {
+    /* Evaluation is diagnostic, not the owner's next action. Beginner mode
+     * hides its pro-only details, so avoid doing a read that cannot paint. */
+    if (!document.body.classList.contains("mj-mode-pro")) return;
     if (typeof s.fp === "string" && s.fp && s.fp !== evalFp) {
       fetchEvaluate(s.fp);
     }
@@ -1674,6 +1689,12 @@ _JS = r"""
       root.appendChild(sk);
       return;
     }
+
+    /* #header paints with /api/state before this slower block arrives. Keep
+     * its spend/next-step lines as a loading/error fallback, then remove them
+     * once the cockpit is ready so the same facts are not read twice. */
+    document.querySelectorAll("#header .spend, #header .next-step")
+      .forEach((node) => node.remove());
 
     const state = c.state || {};
     const na = c.next_action || {};
@@ -1898,6 +1919,14 @@ _JS = r"""
       grid.appendChild(b);
     }
 
+    /* Until the first take exists, the remaining cards are predictable empty
+     * states (all deliverables missing, queue idle, no approvals, zero usage).
+     * They do not help the next decision and used to push the actual build
+     * controls out of the first viewport. The hero + progress checklist are
+     * the complete empty-ish state; support telemetry appears once work has
+     * produced something to inspect. */
+    if (fresh) return grid;
+
     /* deliverables strip (block 4) */
     grid.appendChild(ckBlock("交付物 (deliverables)", (b) => {
       const dv = c.deliverables;
@@ -2006,8 +2035,8 @@ _JS = r"""
 
   /* ------------------------------------------------- evaluate (item 8) --- */
   function renderEvaluateBlock() {
-    const b = el("div", "ck-block wide");
-    b.appendChild(el("h3", null, "评估 (evaluate)"));
+    const b = el("details", "ck-block wide mj-pro-only ck-eval");
+    b.appendChild(el("summary", "ck-eval-title", "评估与质量观察 (evaluate)"));
     if (evalErr && !evalData) {
       b.appendChild(el("p", "ck-err", "评估不可用 (evaluate unavailable): " + evalErr));
       return b;
@@ -2134,6 +2163,20 @@ _JS = r"""
     if (p.width && p.height) chip(p.width + "×" + p.height);
     if (p.fps) chip(p.fps + " fps");
     if (p.mode) chip("模式 " + p.mode);
+    const policy = s.execution_policy || {};
+    const policyChip = el("span", "chip execution " + (policy.status || "invalid"));
+    if (policy.status === "strict") {
+      policyChip.textContent = "严格零成本";
+      policyChip.title = "仅本地文件、stdio 与 loopback HTTP;禁止凭据和外部网络";
+    } else if (policy.status === "standard") {
+      policyChip.textContent = "标准执行";
+      policyChip.title = "未启用严格零成本限制;Provider 仍受预算和确认门约束";
+    } else {
+      policyChip.textContent = "执行模式无效";
+      policyChip.title = "MANJU_EXECUTION_MODE=" + (policy.mode || "unknown")
+        + ";Provider 执行已拒绝,请改为 strict_zero_cost 或取消设置";
+    }
+    chips.appendChild(policyChip);
     if (tl.exists) chip("时长 " + fmtDur(tl.duration_ms));
     chip("分镜 " + (Array.isArray(s.shots) ? s.shots.length : 0));
     const bl = s.build_lock;
@@ -2427,7 +2470,6 @@ _JS = r"""
     });
     spendSig = null;
     if (spendBox) clear(spendBox);
-    obShownFor = null;   /* re-evaluate onboarding auto-show for the new project */
     obForce = false;
     batchSel.clear();    /* selection is per-project */
     renderBatchBar();
@@ -5956,19 +5998,11 @@ _JS = r"""
   }
 
   /* --------------------------------------------- first-run onboarding --- */
-  /* Goal item 2: a dismissable checklist with LIVE done-detection from project
-   * state (never a stored "done" flag). Auto-shows once for an empty-ish,
-   * undismissed project; dismissal persists per-user (~/.manju/gui_state.json,
-   * server-side). Re-openable from the header 帮助 chip at any time. */
-  let obShownFor = null;   /* project name we already auto-evaluated this session */
+  /* Full guidance is explicit: the cockpit already shows live progress and
+   * the one next action. Repeating the six steps here automatically pushed
+   * the actual work below the fold. The header/cockpit help buttons keep the
+   * complete checklist one click away. */
   let obForce = false;     /* header 帮助: show even if dismissed/non-empty */
-
-  function maybeOnboarding(s) {
-    const name = (s.project && s.project.name) ? String(s.project.name) : "";
-    if (obShownFor === name) return;   /* one auto-check per project per load */
-    obShownFor = name;
-    fetchOnboarding(false);
-  }
 
   function openOnboarding() {
     obForce = true;

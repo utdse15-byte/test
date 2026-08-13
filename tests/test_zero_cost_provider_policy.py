@@ -152,6 +152,22 @@ def test_unconfigured_mode_preserves_legacy_endpoint_behavior(monkeypatch) -> No
     require_transport_allowed("https://api.example.com/v1/generate")
 
 
+def test_unknown_mode_fails_closed_before_transport(monkeypatch) -> None:
+    monkeypatch.setenv("MANJU_EXECUTION_MODE", "strict_zero_cost_typo")
+    monkeypatch.setenv("SHOULD_NOT_BE_READ", "secret-sentinel")
+
+    with pytest.raises(ProviderFailure) as caught:
+        require_transport_allowed("https://api.example.com/v1/generate")
+
+    assert caught.value.detail["reason_code"] == "EXECUTION_MODE_INVALID"
+    assert caught.value.detail["transport_count"] == 0
+    snapshot = execution_policy_snapshot()
+    assert snapshot["status"] == "invalid"
+    assert snapshot["external_transport"] == "forbidden"
+    assert snapshot["credential_resolution"] == "forbidden"
+    assert credential_presence("SHOULD_NOT_BE_READ") is None
+
+
 def test_strict_mode_rejects_unaudited_custom_adapter(monkeypatch) -> None:
     monkeypatch.setenv("MANJU_EXECUTION_MODE", STRICT_ZERO_COST)
     manifest = _manifest("http://127.0.0.1:5198/v1/generate").model_copy(
