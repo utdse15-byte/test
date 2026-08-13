@@ -1,0 +1,35 @@
+# Explicit dogfood fixture only; it is not installed in the default provider catalog.
+id: localhost_fake_video
+type: video
+adapter: generic_cloud
+capabilities:
+  - text_to_video
+auth:
+  key_env: null
+submit:
+  method: POST
+  url: http://127.0.0.1:5198/v1/jobs
+  body_template:
+    prompt: "{prompt}"
+    duration_s: "{duration_s}"
+    resolution: "{resolution}"
+    candidates: "{candidates}"
+  job_id_path: $.id
+poll:
+  url: http://127.0.0.1:5198/v1/jobs/{job_id}
+  status_path: $.status
+  status_map:
+    queued: queued
+    running: running
+    succeeded: succeeded
+    failed: failed
+  result_url_path: $.result_url
+limits:
+  max_duration_ms: 6000
+  max_resolution: 720p
+  max_concurrent: 1
+  rate_limit_per_min: 6
+cost:
+  per_second: 0.0
+  per_call: 0.0
+  currency: CNY

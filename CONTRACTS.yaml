@@ -452,6 +452,22 @@ schemas:
     read_older: true
     write_older: false
     notes: Spend-free preflight request-compatibility projection.
+  - id: manju.provider-execution-policy/v1
+    kind: schema
+    owner: manju.providers.zero_cost
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Secret-free machine snapshot of strict zero-cost transport policy.
+  - id: manju.zero-cost-local-proof/v1
+    kind: schema
+    owner: manju.providers.zero_cost
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Deterministic localhost fake-provider preflight evidence; never runtime input.
 
   # -- build / run evidence ------------------------------------------------
   - id: manju.stage-attempt-evidence/v1

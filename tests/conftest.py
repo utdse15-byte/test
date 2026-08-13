@@ -58,6 +58,17 @@ def _isolate_providers(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_execution_mode(monkeypatch):
+    """``MANJU_EXECUTION_MODE=strict_zero_cost`` refuses every non-loopback
+    provider transport, and the zero-cost runbook tells the owner to export it
+    for the whole shell session. Left ambient, it turned 21 provider/local_cmd
+    tests red for a reason that had nothing to do with the code under test.
+    Clear it per test; the strict-mode suites set it via monkeypatch, which
+    runs after this autouse fixture."""
+    monkeypatch.delenv("MANJU_EXECUTION_MODE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_http_proxy(monkeypatch):
     """GUI HTTP tests hit 127.0.0.1; system HTTP_PROXY (e.g. 127.0.0.1:10090)
     hijacks urllib and returns 502. Clear proxy env for every test and install

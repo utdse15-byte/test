@@ -370,6 +370,9 @@ class ComfyUIProvider(Provider):
 
     def _http(self, method: str, url: str, body: bytes | None = None,
               headers: dict[str, str] | None = None):
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(url)
         if headers is None:
             headers = {"Content-Type": "application/json"} if body is not None else {}
         try:

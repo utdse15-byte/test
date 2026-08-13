@@ -112,6 +112,11 @@ class PexelsStockProvider(Provider):
             raise
 
     def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(
+            SEARCH_URL, credential_ref=self.manifest.auth.key_env or "PEXELS_API_KEY"
+        )
         key = self._api_key()
         config = req.project.load_config()
         query = self._query_for(req)
@@ -170,6 +175,7 @@ class PexelsStockProvider(Provider):
                 link = chosen.get("link")
                 if not link:
                     continue
+                require_transport_allowed(link)
                 dl = self._transport("GET", link, {}, None)
                 if dl.status >= 400 or not dl.body:
                     continue

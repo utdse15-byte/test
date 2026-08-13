@@ -16,6 +16,11 @@ plan.
 - OpenChatCut as an independently installed non-AI local editor, with its
   endpoint on loopback and approval performed manually inside the editor.
 
+The general `local_cmd` provider remains available in normal execution mode,
+but strict zero-cost mode rejects it. An arbitrary child process can open its
+own network connections, and Manju has no operating-system network sandbox
+that can prove otherwise. Use audited in-process owners for FFmpeg/Python work.
+
 ## Forbidden execution
 
 - Reading, requesting, configuring, or resolving any provider credential.

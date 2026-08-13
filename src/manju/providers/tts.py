@@ -171,6 +171,9 @@ class GenericTtsProvider:
                 FailureKind.provider_error,
                 f"{self.id}: cannot read audio URL ({exc}) — check tts.audio_url_path",
             ) from exc
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(url)
         # #54: the SAME scheme allowlist + size cap generic_cloud's
         # default_transport enforces apply here too when no transport was
         # injected (this provider defaults to it, like generic_cloud/asr).
@@ -220,6 +223,9 @@ class GenericTtsProvider:
             )
         cfg = self.manifest.submit
         assert cfg is not None  # validated at construction
+        from .zero_cost import require_transport_allowed
+
+        require_transport_allowed(cfg.url, credential_ref=self.manifest.auth.key_env)
         body = json.dumps(
             render_body(cfg.body_template, self._placeholders(shot, bible)),
             ensure_ascii=False,
@@ -326,8 +332,12 @@ class GenericTtsProvider:
             # generate_with_fallback treat this as stop-waiting, not a failed spend.
             if should_cancel is not None and should_cancel():
                 raise ProviderCanceled(self.id, job_id)
+            url = poll_cfg.url.format(job_id=job_id)
+            from .zero_cost import require_transport_allowed
+
+            require_transport_allowed(url, credential_ref=self.manifest.auth.key_env)
             resp = self._transport(
-                "GET", poll_cfg.url.format(job_id=job_id), self._headers(), None
+                "GET", url, self._headers(), None
             )
             if resp.status >= 400:
                 if is_transient_status(resp.status) and time.monotonic() < deadline:
@@ -384,6 +394,9 @@ def get_tts_provider(name: str | None = None, **kwargs):
     if name not in providers:
         raise TtsUnavailable(f"unknown TTS provider {name!r}; configured: {sorted(providers)}")
     manifest = providers[name]
+    from .zero_cost import require_manifest_allowed
+
+    require_manifest_allowed(manifest)
     if manifest.adapter == GENERIC_TTS_ADAPTER:
         return GenericTtsProvider(manifest, **kwargs)
     module_name, _, class_name = manifest.adapter.partition(":")
