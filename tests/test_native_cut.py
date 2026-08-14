@@ -151,10 +151,10 @@ def test_lanes_render_all_track_types(gui, tmp_project, add_shot):
     status, _, body = _html(gui, "/edit")
     assert status == 200
     # lane section + every typed lane
-    assert "多轨道 Lanes" in body
-    assert "主轨道 Main" in body and "字幕 Captions" in body
-    assert "配音 Voice" in body and "音乐 Music" in body
-    assert "音效 SFX" in body and "环境 Ambient" in body
+    assert '多轨道<span class="mj-en"' in body
+    assert '主轨道<span class="mj-en"' in body and '字幕<span class="mj-en"' in body
+    assert '配音<span class="mj-en"' in body and '音乐<span class="mj-en"' in body
+    assert '音效<span class="mj-en"' in body and '环境声<span class="mj-en"' in body
     # video clips carry shot + ms geometry
     assert "ed-vclip" in body and 'data-shot="S001"' in body and 'data-shot="S002"' in body
     assert 'data-ms-start="3000"' in body
@@ -170,7 +170,7 @@ def test_lanes_note_before_any_build(gui, tmp_project, add_shot):
     add_shot(tmp_project, "S001")
     _, _, body = _html(gui, "/edit")
     # no timeline yet → honest note, no lane rows (page GET never runs ffmpeg)
-    assert "多轨道 Lanes" in body
+    assert '多轨道<span class="mj-en"' in body
     assert "构建一次后" in body
     assert "ed-vclip" not in body
 

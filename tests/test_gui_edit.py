@@ -137,12 +137,13 @@ def test_edit_page_renders_with_content(gui, tmp_project, add_shot, make_take):
     assert '<h2>时间线<span class="mj-en"' in body
     assert "S001" in body and "S002" in body
     # panels
-    assert "转场 Transitions" in body and "调色 Look" in body
+    assert '转场<span class="mj-en"' in body and '调色<span class="mj-en"' in body
     # the selected take's card thumb points at the lazy frame endpoint
     assert "/edit/frame?take=" in body
     assert quote_take(tmp_project, take) in body
     # inspector affordances baked in server-side
-    assert "裁剪 Trim" in body and "素材声" in body and "时长 Duration" in body
+    assert '裁剪<span class="mj-en"' in body and "素材原声" in body
+    assert '时长<span class="mj-en"' in body
     # honest per-boundary note (global default picker; per-boundary override
     # now lives in rules.yaml's transition_overrides — round-U engine change)
     assert "transition_overrides" in body

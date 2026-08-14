@@ -998,10 +998,10 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
 
 # lane kind -> (中文 label, timeline track attribute)
 _AUDIO_LANES = (
-    ("voice", "配音 Voice", "ed-lane-voice"),
-    ("music", "音乐 Music", "ed-lane-music"),
-    ("sfx", "音效 SFX", "ed-lane-sfx"),
-    ("ambient", "环境 Ambient", "ed-lane-ambient"),
+    ("voice", "配音", "Voice", "ed-lane-voice"),
+    ("music", "音乐", "Music", "ed-lane-music"),
+    ("sfx", "音效", "SFX", "ed-lane-sfx"),
+    ("ambient", "环境声", "Ambient", "ed-lane-ambient"),
 )
 _WAVE_W = 480
 _WAVE_H = 40
@@ -1048,23 +1048,27 @@ def _lanes_section(project: Any, timeline: Any, snap_on: bool = True) -> str:
              '</div></div>')
 
     # 主轨道 (video)
-    p.append(_lane_row("主轨道 Main", "ed-lane-video", "".join(
+    p.append(_lane_row("主轨道", "Main", "ed-lane-video", "".join(
         _video_block(project, vc, total) for vc in tracks.video)))
 
     # 字幕 (captions) + sync-hint strip overlay
     cap_blocks = "".join(_caption_block(c, i, total)
                          for i, c in enumerate(tracks.captions))
     cap_blocks += '<div class="ed-hint-strip" id="ed-synchints-strip"></div>'
-    p.append(_lane_row("字幕 Captions", "ed-lane-caption", cap_blocks))
+    p.append(_lane_row("字幕", "Captions", "ed-lane-caption", cap_blocks))
 
     # 音频 lanes
-    for attr, label, cls in _AUDIO_LANES:
+    for attr, label, technical, cls in _AUDIO_LANES:
         clips = getattr(tracks, attr, []) or []
         if not clips and attr in ("sfx", "ambient", "music"):
             continue  # keep the view tidy: only show audio lanes that carry clips
         blocks = "".join(_audio_block(project, c, total) for c in clips)
-        p.append(_lane_row(label, cls, blocks
-                           or '<span class="ed-lane-empty muted">—</span>'))
+        p.append(_lane_row(
+            label,
+            technical,
+            cls,
+            blocks or '<span class="ed-lane-empty muted">—</span>',
+        ))
 
     p.append("</div>")
     p.append('<figure class="ed-lane-preview" id="ed-lane-preview" hidden>'
@@ -1074,9 +1078,12 @@ def _lanes_section(project: Any, timeline: Any, snap_on: bool = True) -> str:
     return "".join(p)
 
 
-def _lane_row(label: str, cls: str, inner: str) -> str:
-    return (f'<div class="ed-lane {cls}"><div class="ed-lane-label">{_e(label)}</div>'
-            f'<div class="ed-lane-track">{inner}</div></div>')
+def _lane_row(label: str, technical: str, cls: str, inner: str) -> str:
+    return (
+        f'<div class="ed-lane {cls}"><div class="ed-lane-label">'
+        + _term(label, technical)
+        + f'</div><div class="ed-lane-track">{inner}</div></div>'
+    )
 
 
 def _video_block(project: Any, vc: Any, total: int) -> str:

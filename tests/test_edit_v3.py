@@ -413,7 +413,7 @@ def test_edit_page_renders_caption_style_panel_with_hints(gui, tmp_project, add_
     add_shot(tmp_project, "S001")
     status, _, body = _html(gui, "/edit")
     assert status == 200
-    assert "字幕样式 Caption style" in body
+    assert '字幕样式<span class="mj-en"' in body
     assert 'id="ed-cs-font"' in body and 'id="ed-cs-size"' in body
     assert 'id="ed-cs-primary"' in body and 'id="ed-cs-outline"' in body
     assert 'id="ed-cs-marginv"' in body and 'id="ed-cs-align"' in body
