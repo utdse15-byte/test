@@ -1,0 +1,99 @@
+{
+  "schema": "manju.product-polish-wave11-test-summary/v1",
+  "wave": 11,
+  "date": "2026-08-14",
+  "baseline": "7b5b8f2d727653342a4832921fbbb3b9d5fc3cae",
+  "feature_commit": "77eefcbf4b198a98fafa97f22224e12115de55fe",
+  "logged_non_overlapping": [
+    {
+      "scope": "shared-accessibility",
+      "passed": 6,
+      "log": "wave11-tests/pytest-files/test_product_polish_accessibility.log"
+    },
+    {
+      "scope": "workspace",
+      "passed": 27,
+      "log": "wave11-tests/pytest-files/test_workspace.log"
+    },
+    {
+      "scope": "gui-modes",
+      "passed": 22,
+      "log": "wave11-tests/pytest-files/test_gui_modes.log"
+    },
+    {
+      "scope": "page-shell-scripts",
+      "passed": 6,
+      "log": "wave11-tests/pytest-files/test_gui_page_shell_scripts.log"
+    },
+    {
+      "scope": "application-chrome",
+      "passed": 8,
+      "log": "wave11-tests/pytest-files/test_product_polish_app_chrome.log"
+    },
+    {
+      "scope": "gui-pages",
+      "passed": 25,
+      "log": "wave11-tests/pytest-files/test_gui_pages.log"
+    },
+    {
+      "scope": "shared-ux-contract",
+      "passed": 92,
+      "log": "wave11-tests/pytest-files/test_ux_polish.log"
+    },
+    {
+      "scope": "protocol-and-core-regression",
+      "passed": 67,
+      "log": "wave11-tests/pytest-files/pytest-protocol-core.log"
+    },
+    {
+      "scope": "existing-product-journeys",
+      "passed": 94,
+      "log": "wave11-tests/pytest-files/pytest-product-polish-journeys.log"
+    }
+  ],
+  "logged_passed_total": 347,
+  "static": {
+    "compileall": "pass",
+    "node_check": [
+      "app",
+      "common",
+      "glossary",
+      "pages",
+      "task-center",
+      "workspace"
+    ],
+    "git_diff_check": "pass",
+    "ruff": "not installed; not fetched",
+    "log": "wave11-tests/static-checks.txt"
+  },
+  "browser": {
+    "method": "real Manju renderers/CSS/JS with Playwright page.set_content; one loopback HTTP request only to capture the actual browser 404 body",
+    "facts": "wave11-tests/browser-accessibility.json",
+    "script": "wave11-tests/render_accessibility.py",
+    "screenshots": "screenshots/wave11/",
+    "verified": [
+      "skip link focuses main-content",
+      "workspace input survives a failed open and durable error receives focus",
+      "320 CSS-pixel reflow has no horizontal page overflow",
+      "200% and 400% text scaling have no horizontal page overflow in the shared shell",
+      "glossary help opens by click and closes with Escape while restoring focus",
+      "duplicate success toasts coalesce, transient success expires, error remains until dismissed",
+      "project-switch protection is an alertdialog with trapped focus and non-dismissible Escape behavior",
+      "browser 404 preserves navigation and states that project files were not modified"
+    ]
+  },
+  "not_counted": [
+    "a broad combined server-heavy pytest invocation that reached completion output but left sandbox orchestration waiting",
+    "full tests/test_gui.py",
+    "full repository pytest",
+    "Windows hard gate",
+    "live localhost Playwright end-to-end navigation"
+  ],
+  "zero_cost": {
+    "provider_calls": 0,
+    "external_model_api_calls": 0,
+    "credential_reads": 0,
+    "paid_calls": 0,
+    "free_tier_calls": 0
+  }
+}

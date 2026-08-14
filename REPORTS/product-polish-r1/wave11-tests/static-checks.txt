@@ -1,0 +1,10 @@
+compileall: PASS
+node --check app.js: PASS
+node --check common.js: PASS
+node --check glossary.js: PASS
+node --check pages.js: PASS
+node --check task-center.js: PASS
+node --check workspace.js: PASS
+git diff --check: PASS
+git diff --cached --check: PASS
+ruff: NOT INSTALLED

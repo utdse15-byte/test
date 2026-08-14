@@ -1,0 +1,83 @@
+{
+  "not_found": {
+    "viewport": 900,
+    "documentWidth": 890,
+    "bodyWidth": 890,
+    "overflow": false,
+    "title": "这里没有这个页面",
+    "protection": "链接可能已经过期，或者地址输入有误。项目文件没有被修改。",
+    "main": "main-content"
+  },
+  "skip_link": {
+    "before": "mj-skip-link",
+    "after": "main-content"
+  },
+  "workspace_error": {
+    "title": "无法打开这个项目",
+    "copy": "请确认这是一个可访问的 .manju 项目文件夹，然后重试。",
+    "value": "D:\\不存在\\电影.manju",
+    "live": "assertive",
+    "focused": "ws-feedback",
+    "skipFocused": false,
+    "skipTransform": "matrix(1, 0, 0, 1, 0, -62.3906)"
+  },
+  "workspace_400_percent_equivalent": {
+    "viewport": 320,
+    "documentWidth": 310,
+    "bodyWidth": 310,
+    "overflow": false
+  },
+  "shared_shell_400_percent_equivalent": {
+    "viewport": 320,
+    "documentWidth": 310,
+    "bodyWidth": 310,
+    "overflow": false
+  },
+  "shared_shell_text_zoom": {
+    "200": {
+      "viewport": 1280,
+      "documentWidth": 1270,
+      "bodyWidth": 1270,
+      "overflow": false
+    },
+    "400": {
+      "viewport": 1280,
+      "documentWidth": 1270,
+      "bodyWidth": 1270,
+      "overflow": false
+    }
+  },
+  "glossary_open": {
+    "expanded": "true",
+    "open": true,
+    "tooltipDisplay": "block"
+  },
+  "glossary_closed": {
+    "expanded": "false",
+    "open": false,
+    "focused": true
+  },
+  "toast_initial": {
+    "count": 2,
+    "roles": [
+      "status",
+      "alert"
+    ],
+    "closeButtons": 2,
+    "messages": [
+      "项目已保存",
+      "保存没有完成。项目文件没有被修改；请检查冲突后重试。"
+    ]
+  },
+  "toast_after_success_timeout": {
+    "count": 1,
+    "role": "alert",
+    "message": "保存没有完成。项目文件没有被修改；请检查冲突后重试。"
+  },
+  "project_switch_overlay": {
+    "role": "alertdialog",
+    "modal": "true",
+    "focused": "刷新并跟随当前项目",
+    "protect": "项目文件没有被这个旧页面修改。刷新后即可跟随当前项目。"
+  }
+}

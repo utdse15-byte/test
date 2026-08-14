@@ -1,0 +1,37 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.0.2, pluggy-1.6.0 -- /opt/pyvenv/bin/python
+cachedir: .pytest_cache
+metadata: {'Python': '3.13.5', 'Platform': 'Linux-6.18.35-x86_64-with-glibc2.41', 'Packages': {'pytest': '9.0.2', 'pluggy': '1.6.0'}, 'Plugins': {'metadata': '3.1.1', 'ddtrace': '4.4.0', 'Faker': '40.1.2', 'anyio': '4.13.0', 'cov': '7.0.0', 'json-report': '1.5.0', 'asyncio': '1.3.0'}, 'PLATFORM': 'linux/amd64', 'CI': 'true'}
+rootdir: /mnt/data/manju_wave11_work/repo
+configfile: pyproject.toml
+plugins: metadata-3.1.1, ddtrace-4.4.0, Faker-40.1.2, anyio-4.13.0, cov-7.0.0, json-report-1.5.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 25 items
+
+tests/test_gui_pages.py::test_review_page_renders_with_content PASSED    [  4%]
+tests/test_gui_pages.py::test_review_verdict_writes_take_notes_and_event PASSED [  8%]
+tests/test_gui_pages.py::test_review_repair_op_creates_new_take PASSED   [ 12%]
+tests/test_gui_pages.py::test_review_repair_validates PASSED             [ 16%]
+tests/test_gui_pages.py::test_compare_page_full_diff PASSED              [ 20%]
+tests/test_gui_pages.py::test_compare_degraded_pre_s_final PASSED        [ 24%]
+tests/test_gui_pages.py::test_compare_needs_two_finals PASSED            [ 28%]
+tests/test_gui_pages.py::test_library_page_lists_assets PASSED           [ 32%]
+tests/test_gui_pages.py::test_library_use_into_project_honors_no_overwrite PASSED [ 36%]
+tests/test_gui_pages.py::test_library_page_shot_query_shows_suggestions PASSED [ 40%]
+tests/test_gui_pages.py::test_library_page_shot_query_no_match_is_honest PASSED [ 44%]
+tests/test_gui_pages.py::test_library_page_unknown_shot_degrades_cleanly PASSED [ 48%]
+tests/test_gui_pages.py::test_library_tag_and_note_roundtrip PASSED      [ 52%]
+tests/test_gui_pages.py::test_providers_page_masks_secrets PASSED        [ 56%]
+tests/test_gui_pages.py::test_providers_toggle_roundtrips_disabled PASSED [ 60%]
+tests/test_gui_pages.py::test_providers_toggle_refuses_unsafe_ids PASSED [ 64%]
+tests/test_gui_pages.py::test_routing_page_renders PASSED                [ 68%]
+tests/test_gui_pages.py::test_routing_strategy_picker_writes_only_the_key PASSED [ 72%]
+tests/test_gui_pages.py::test_routing_strategy_invalid_reverts PASSED    [ 76%]
+tests/test_gui_pages.py::test_route_explain_endpoint PASSED              [ 80%]
+tests/test_gui_pages.py::test_doctor_page_renders PASSED                 [ 84%]
+tests/test_gui_pages.py::test_pages_assets_and_nav PASSED                [ 88%]
+tests/test_gui_pages.py::test_pages_carry_csp_and_token PASSED           [ 92%]
+tests/test_gui_pages.py::test_dangerous_surface_still_guarded PASSED     [ 96%]
+tests/test_gui_pages.py::test_readonly_blocks_page_actions PASSED        [100%]
+
+============================= 25 passed in 20.70s ==============================

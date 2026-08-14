@@ -365,3 +365,40 @@ live localhost E2E 和同 SHA 双平台发布门仍未冒充完成。
 
 后续优先级：统一中文产品文案、状态/错误/下一步语言、无障碍与视觉回归基线；不再增加新流程，
 不做真实付费测试，不改变项目真相、append-only 媒体和人工决定边界。
+
+## 16. Wave 11：中文产品语言、持久反馈与高缩放无障碍
+
+功能提交：`77eefcb R1: unify accessible language and feedback`。
+
+已完成：
+
+- 新增共享文档无障碍 owner；所有主要 GUI 页面统一 `lang=zh-CN`、一个“跳到主要内容”、
+  一个可聚焦 `main#main-content` 和诚实的无 JavaScript 保护说明；
+- 工作区选择页改成真正的首次使用产品屏，修复其主容器与旧项目切换器同名 `.ws-wrap`
+  导致桌面页面被错误压窄的 CSS owner 冲突；
+- 打开或创建项目失败后，输入仍保留，持久错误区接收焦点，说明发生了什么、项目保护和
+  下一步，技术详情渐进展开；
+- 术语 `?` 改为原生按钮，支持 hover、focus、click、Escape 和焦点恢复，目标尺寸至少 24×24；
+- SPA 与 server-rendered toast 统一语义：成功/警告有界消失，错误保持到明确关闭，重复提示
+  合并，每条消息拥有自己的 `status` / `alert` live-region 语义；
+- 旧页面在项目切换后显示真正的 `alertdialog`，聚焦唯一安全刷新动作，Tab 不逃逸，Escape
+  不解除保护；
+- 浏览器 404 变为可导航的中文产品页面，并明确项目文件没有被修改；
+- 320 CSS px、200% 和 400% 文本证据均无页面级横向溢出；六阶段、项目、执行模式、任务和
+  安全退出仍可访问；
+- 删除 series 页面重复加载 `/webclient.js` 的隐患，并用 rendered-document 测试钉住所有主要
+  shell 不重复加载脚本。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE11_LANGUAGE_ACCESSIBILITY.md`
+- `REPORTS/product-polish-r1/WAVE11_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/screenshots/wave11/`
+- `REPORTS/product-polish-r1/wave11-tests/`
+
+记录的非重叠 focused tests 为 347 passed；compileall、六份真实生成 JavaScript 的
+`node --check`、`git diff --check` 和离线 Chromium 行为证据均通过。当前环境没有 ruff；
+完整 pytest、live localhost E2E、Windows hard gate 和同 SHA 双平台发布门没有冒充完成。
+
+后续优先级：停止增加新旅程，转向可量化的性能、浏览器旅程与视觉回归收口，再进行真实
+Windows App 模式 200% 文本和同 SHA 发布门。继续保持零真实 Provider、零凭据、零费用。

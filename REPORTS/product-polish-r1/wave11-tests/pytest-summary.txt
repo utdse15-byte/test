@@ -1,0 +1,39 @@
+Product Polish R1 Wave 11 — focused test evidence
+
+shell/workspace/accessibility
+  test_product_polish_accessibility.py  6 passed
+  test_workspace.py                    27 passed
+  test_gui_modes.py                    22 passed
+  test_gui_page_shell_scripts.py        6 passed
+  test_product_polish_app_chrome.py     8 passed
+  test_gui_pages.py                    25 passed
+  subtotal                             94 passed
+
+shared UX contract
+  test_ux_polish.py                    92 passed
+
+protocol/core regression
+  test_gui_project_actions.py
+  test_error_protocol_contract.py
+  test_gui_wave_personal.py
+  test_gui_core.py
+  test_fp_gui_endpoints.py
+  subtotal                             67 passed
+
+existing product journeys
+  test_product_polish_home_cockpit.py
+  test_product_polish_home_focus.py
+  test_product_polish_task_center.py
+  test_product_polish_review_theater.py
+  test_product_polish_authoring_journey.py
+  test_product_polish_shot_journey.py
+  test_product_polish_finishing_journey.py
+  subtotal                             94 passed
+
+TOTAL (non-overlapping files)          347 passed
+
+A broad combined invocation was not used as evidence because this sandbox can
+leave a completed pytest process waiting during combined server-heavy runs.
+Every listed file was rerun independently or in a bounded group and produced a
+complete pytest summary. tests/test_gui.py full was not counted; only previously
+identified targeted coverage is represented above.
