@@ -331,13 +331,16 @@ def _take_media(project: Any, take: Any) -> tuple[str | None, str, str | None]:
 
 
 def _player(url: str | None, ext: str, poster: str | None = None,
-            cls: str = "") -> str:
+            cls: str = "", *, lazy: bool = False) -> str:
     """A <video> or <img> element for a media url, degrading to a muted note."""
     if not url:
         return '<p class="muted">无媒体 (no media)</p>'
     if ext in ("png", "jpg", "jpeg", "webp", "gif"):
         return f'<img class="{cls}" src="{_e(url)}" alt="">'
     p = f' poster="{_e(poster)}"' if poster else ""
+    if lazy:
+        return (f'<video class="{cls}" data-src="{_e(url)}"{p} '
+                'controls preload="none"></video>')
     return f'<video class="{cls}" src="{_e(url)}"{p} controls preload="metadata"></video>'
 
 
@@ -441,7 +444,10 @@ def render_review(project: Any, token: str) -> str:
             frame_url = "/media/" + quote(project.relpath(frame), safe="/")
         if sel is not None:
             url, ext, thumb = _take_media(project, sel)
-            player = _player(url, ext, frame_url, cls="rv-video")
+            # Every review card is a cheap shell. The JS activates exactly one
+            # focal player, so a long queue never opens all media streams at
+            # first paint.
+            player = _player(url, ext, frame_url, cls="rv-video", lazy=True)
         else:
             player = '<p class="muted">尚未选用 take (no take selected)</p>'
 
@@ -586,10 +592,6 @@ def render_review(project: Any, token: str) -> str:
             f'<span class="rv-idx muted">#{idx + 1}</span></h2>'
             f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div>'
             f"{next_html}</div>\n"
-            f'  <div class="rv-body">\n'
-            f'    <div class="rv-player">{player}</div>\n'
-            f'    <div class="rv-side">{qc_html}{ann_html}{frame_html}{alt_html}</div>\n'
-            f"  </div>\n"
             f'  <div class="rv-actions btnrow">\n'
             f'    <button class="btn" data-act="good" title="快捷键 g">好</button>\n'
             f'    <button class="btn ghost" data-act="reject" title="快捷键 x">弃</button>\n'
@@ -602,6 +604,10 @@ def render_review(project: Any, token: str) -> str:
                f'title="工作台 A/B 浮层:两个 take 同步播放对比">A/B 对比</a>\n'
                if sel and alts else "")
             + f"  </div>\n"
+            f'  <div class="rv-body">\n'
+            f'    <div class="rv-player">{player}</div>\n'
+            f'    <div class="rv-side">{qc_html}{ann_html}{frame_html}{alt_html}</div>\n'
+            f"  </div>\n"
             f'  <div class="rv-noterow">'
             f'<input class="rv-note-input" placeholder="备注 / 判词 (note)" value="{note_val}">'
             f'<button class="btn ghost mini" data-act="note">保存备注</button>'
@@ -754,11 +760,16 @@ def _consistency_section(project: Any) -> str:
         skip_html = (f'<details class="muted cs-skipped"><summary>跳过 {len(skipped)} '
                     f'个组合</summary><ul>{items}</ul></details>')
 
-    return (
+    content = (
         '<div class="page-h"><h2>跨镜一致性 Consistency</h2>'
         '<span class="muted">角色出场对照表 · 相邻镜头场景对比 · 场景整体看板 — '
         '一致性是跨镜属性,不逐镜孤立判读;人工可在此现场提交裁决</span></div>\n'
         + body + skip_html
+    )
+    return (
+        '<details class="panel rv-pro-section">'
+        '<summary>专业：跨镜一致性 · 展开后加载看板</summary>'
+        + content + '</details>'
     )
 
 
@@ -1675,6 +1686,14 @@ _PAGES_CSS = """
   display: none;
 }
 .rv-actions { align-items: center; }
+.rv-actions {
+  position: sticky; top: 96px; z-index: 39;
+  margin: .2rem 0 .8rem; padding: .45rem .55rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line); border-radius: 8px;
+  backdrop-filter: blur(8px);
+}
+.rv-actions .btn:first-child { background: var(--ok); color: #07130b; border-color: var(--ok); }
 .rv-repair { display: inline-flex; align-items: center; gap: .35rem; flex-wrap: wrap; color: var(--muted); font-size: .8rem; }
 .rv-noterow { display: flex; gap: .5rem; margin-top: .6rem; }
 .rv-note-input, .lib-tag-input, .lib-note-input {
@@ -1705,6 +1724,8 @@ body.rv-queue-on .rv-shot:not(.rv-qcurrent) { display: none; }
 .cs-form select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .4rem; font: inherit; font-size: .84rem; }
 .cs-message { flex: 1; min-width: 220px; background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .84rem; }
 .cs-skipped { margin-top: .6rem; font-size: .84rem; }
+.rv-pro-section { margin-top: 1.4rem; }
+.rv-pro-section > summary { cursor: pointer; font-weight: 650; padding: .2rem 0; }
 
 /* --------------------------------------------------------- compare -- */
 .cmp-picker { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; }
@@ -1827,12 +1848,19 @@ _PAGES_JS = r"""
   // paint, and fill the slots by DOM-building (no innerHTML). A fetch failure
   // leaves a labelled note in every slot — never a blank (degradation contract).
   function initReviewConsistencyBoards() {
-    var slots = [];
-    Array.prototype.slice.call(document.querySelectorAll(".cs-unit")).forEach(function (u) {
-      var slot = u.querySelector(".cs-board-slot");
-      if (slot) slots.push({ unit: u.getAttribute("data-unit"), slot: slot });
-    });
-    if (!slots.length) return;  // empty state — nothing to load, no fetch
+    var details = document.querySelector(".rv-pro-section");
+    if (!details) return;
+    var loaded = false;
+    function loadBoards() {
+      if (loaded) return;
+      loaded = true;
+      var slots = [];
+      Array.prototype.slice.call(details.querySelectorAll(".cs-unit")).forEach(function (u) {
+        var slot = u.querySelector(".cs-board-slot");
+        if (slot) slots.push({ unit: u.getAttribute("data-unit"), slot: slot });
+      });
+      if (!slots.length) return;  // empty state — nothing to load, no fetch
+      details.classList.add("loading");
     function note(slot, text) {
       slot.textContent = "";
       var span = document.createElement("span");
@@ -1845,7 +1873,7 @@ _PAGES_JS = r"""
         note(s.slot, "看板加载失败,请刷新重试 (consistency boards failed to load)");
       });
     }
-    post("/api/review/consistency", {}).then(function (res) {
+      post("/api/review/consistency", {}).then(function (res) {
       if (res.status !== 200 || !res.data || !res.data.units) { degradeAll(); return; }
       var byUnit = {};
       res.data.units.forEach(function (u) { byUnit[u.unit] = u; });
@@ -1862,7 +1890,12 @@ _PAGES_JS = r"""
           note(s.slot, "看板尚未生成(需要 ffmpeg)");
         }
       });
-    }).catch(degradeAll);
+      }).catch(degradeAll);
+    }
+    details.addEventListener("toggle", function () {
+      if (details.open) loadBoards();
+    });
+    if (details.open) loadBoards();
   }
 
   // ------------------------------- 跨镜一致性 consistency verdict form (round X)
@@ -1904,6 +1937,21 @@ _PAGES_JS = r"""
     var shots = Array.prototype.slice.call(document.querySelectorAll(".rv-shot"));
     if (!shots.length) return;
     var active = 0;
+    var activeVideo = null;
+    function activateMedia(card) {
+      if (activeVideo && activeVideo !== card.querySelector("video[data-src], video[src]")) {
+        activeVideo.pause();
+        activeVideo.removeAttribute("src");
+        activeVideo.load();
+      }
+      var video = card && card.querySelector("video[data-src], video[src]");
+      if (!video) { activeVideo = null; return; }
+      if (video.hasAttribute("data-src")) {
+        video.setAttribute("src", video.getAttribute("data-src"));
+        video.setAttribute("preload", "metadata");
+      }
+      activeVideo = video;
+    }
     /* 从上次位置继续 (#49a): the active card survives a reload / a return
      * days later — restored by SHOT ID (indices shift as shots come and go),
      * keyed by the stable project identity. Best-effort only. */
@@ -1986,6 +2034,7 @@ _PAGES_JS = r"""
       shots[active].classList.remove("active");
       active = i;
       shots[active].classList.add("active");
+      activateMedia(shots[active]);
       shots[active].scrollIntoView({ behavior: "smooth", block: "start" });
       try {
         window.localStorage.setItem(posKey, shots[active].getAttribute("data-shot") || "");
@@ -2323,6 +2372,7 @@ _PAGES_JS = r"""
      * lands directly so the page does NOT auto-scroll on a fresh open;
      * j/k/setActive scrolls from here on as always. */
     shots[active].classList.add("active");
+    activateMedia(shots[active]);
     /* 队列默认 (#50): a saved preference wins; otherwise unreviewed work
      * opens straight into 队列模式 — the daily task IS the queue. */
     var savedQ = null;

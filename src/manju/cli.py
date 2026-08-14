@@ -1867,6 +1867,12 @@ def build(
                 typer.secho(f"⚠ {w}", fg=typer.colors.YELLOW)
         for e in result.errors:
             typer.secho(f"✗ {e}", fg=typer.colors.RED)
+        if result.selection_required:
+            typer.secho(
+                "待人工选片: " + ", ".join(result.selection_required)
+                + " — 先打开 manju gui /review 审片,再执行 manju select <shot> <take>",
+                fg=typer.colors.YELLOW,
+            )
         # goal 10: a compact pointer to the structured failure records this build
         # produced (errors that stopped a step, not the degradations) — the full
         # reason/evidence/hint is one command away.

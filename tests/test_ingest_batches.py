@@ -222,7 +222,7 @@ def test_apply_writes_batch_record_with_expected_shape(tmp_project, add_shot, tm
     assert take_item["ok"] is True
     assert take_item["error"] is None
     assert take_item["landed"]["take"] == "take_01"
-    assert take_item["staged"] is True  # empty shot -> auto-selected (goal item 2)
+    assert take_item["staged"] is False
     assert take_item["review"] == "pending"
     assert take_item["note"] == ""
 
@@ -308,7 +308,7 @@ def test_list_batches_empty_project_returns_empty(tmp_project):
 # ======================================================================
 
 
-def test_take_on_empty_shot_auto_selects(tmp_project, add_shot, tmp_path):
+def test_take_on_empty_shot_waits_for_manual_selection(tmp_project, add_shot, tmp_path):
     add_shot(tmp_project, "S001")
     batch = tmp_path / "batch"
     batch.mkdir()
@@ -317,13 +317,13 @@ def test_take_on_empty_shot_auto_selects(tmp_project, add_shot, tmp_path):
     result = apply_ingest(tmp_project, plan, actor="tester")
 
     detail = result.results[0].detail
-    assert detail["staged"] is True
-    assert "自动选用" in detail["staged_note"]
-    assert tmp_project.load_shot("S001").status.selected_take == "take_01"
+    assert detail["staged"] is False
+    assert "manual review required" in detail["staged_note"]
+    assert tmp_project.load_shot("S001").status.selected_take is None
 
     events = tail_events(tmp_project.root, 100)
     auto = [e for e in events if e["action"] == "auto_select"]
-    assert auto and auto[-1]["detail"]["via"] == "ingest"
+    assert auto == []
 
 
 def test_take_on_occupied_shot_never_overwrites(tmp_project, add_shot, make_take, tmp_path):
@@ -339,7 +339,7 @@ def test_take_on_occupied_shot_never_overwrites(tmp_project, add_shot, make_take
 
     detail = result.results[0].detail
     assert detail["staged"] is False
-    assert "未自动切换" in detail["staged_note"]
+    assert "manual review required" in detail["staged_note"]
     assert tmp_project.load_shot("S001").status.selected_take == existing.name
 
 
@@ -369,7 +369,7 @@ def test_take_on_locked_shot_never_auto_selects(tmp_project, add_shot, tmp_path)
     detail = result.results[0].detail
     assert result.results[0].ok is True  # the take itself still landed
     assert detail["staged"] is False
-    assert "锁定" in detail["staged_note"]
+    assert "manual review required" in detail["staged_note"]
     assert tmp_project.load_shot("S001").status.selected_take is None
 
 
@@ -431,31 +431,30 @@ def test_review_unknown_batch_raises(tmp_project):
         review_item(tmp_project, "nosuchbatch", 0, decision="confirm", actor="reviewer")
 
 
-def test_discard_undoes_staged_selection(tmp_project, add_shot, tmp_path):
+def test_discard_of_unselected_ingest_is_a_pure_review_decision(
+        tmp_project, add_shot, tmp_path):
     add_shot(tmp_project, "S001")
     result = _apply_one_take(tmp_project, tmp_path)
-    assert tmp_project.load_shot("S001").status.selected_take == "take_01"
+    assert tmp_project.load_shot("S001").status.selected_take is None
 
     detail = review_item(tmp_project, result.batch_id, 0, decision="discard", actor="reviewer")
     assert detail["item"]["review"] == "discarded"
-    assert detail["undo"] is not None and "已撤销" in detail["undo"]
+    assert detail["undo"] is None
     assert tmp_project.load_shot("S001").status.selected_take is None
 
 
 def test_discard_leaves_a_re_selected_take_alone(tmp_project, add_shot, make_take, tmp_path):
-    """Someone (human or a later `manju select`) picked a DIFFERENT take
-    after the auto-select — discard must never clobber that newer, human-
-    observable decision."""
+    """A later human selection is independent of ingest-batch review."""
     add_shot(tmp_project, "S001")
     result = _apply_one_take(tmp_project, tmp_path)
-    assert tmp_project.load_shot("S001").status.selected_take == "take_01"
+    assert tmp_project.load_shot("S001").status.selected_take is None
 
     other = make_take(tmp_project, "S001", "sha256:other")
     select_take_checked(tmp_project, "S001", other.name, actor="human", via="cli")
 
     detail = review_item(tmp_project, result.batch_id, 0, decision="discard", actor="reviewer")
     assert detail["item"]["review"] == "discarded"
-    assert "未撤销" in detail["undo"]
+    assert detail["undo"] is None
     assert tmp_project.load_shot("S001").status.selected_take == other.name
 
 
@@ -475,14 +474,17 @@ def test_discard_on_non_staged_item_is_a_pure_review_flip(tmp_project, add_shot,
     assert tmp_project.load_shot("S001").status.selected_take == existing.name
 
 
-def test_discard_respects_lock_added_after_staging(tmp_project, add_shot, tmp_path, monkeypatch):
-    """If the field got locked AFTER the auto-select but BEFORE discard, the
-    undo write must refuse (WriteRejected) rather than silently no-op or
-    crash — the review decision itself still succeeds."""
+def test_discard_does_not_touch_a_locked_unselected_field(
+        tmp_project, add_shot, tmp_path, monkeypatch):
+    """Batch review never writes selected_take, even when it is locked."""
     add_shot(tmp_project, "S001")
     result = _apply_one_take(tmp_project, tmp_path)
-    assert tmp_project.load_shot("S001").status.selected_take == "take_01"
+    assert tmp_project.load_shot("S001").status.selected_take is None
 
+    tmp_project.update_shot_raw(
+        "S001",
+        lambda d: d.setdefault("status", {}).setdefault("selected_take", None),
+    )
     raw = tmp_project.load_shot_raw("S001")
     digest = seal_lock(raw, "status.selected_take")
     tmp_project.update_shot_raw(
@@ -490,9 +492,9 @@ def test_discard_respects_lock_added_after_staging(tmp_project, add_shot, tmp_pa
     )
 
     detail = review_item(tmp_project, result.batch_id, 0, decision="discard", actor="reviewer")
-    assert detail["item"]["review"] == "discarded"  # the review decision still lands
-    assert "撤销失败" in detail["undo"]
-    assert tmp_project.load_shot("S001").status.selected_take == "take_01"  # untouched
+    assert detail["item"]["review"] == "discarded"
+    assert detail["undo"] is None
+    assert tmp_project.load_shot("S001").status.selected_take is None
 
 
 # ======================================================================
@@ -551,7 +553,7 @@ def test_cli_ingest_review_shows_items(in_project, add_shot, tmp_path):
 
     result = runner.invoke(app, ["ingest-review", batch_id, "--json"])
     data = json.loads(result.output)
-    assert data["items"][0]["staged"] is True
+    assert data["items"][0]["staged"] is False
 
 
 def test_cli_ingest_review_unknown_batch_fails_cleanly(in_project):
@@ -590,14 +592,14 @@ def test_cli_ingest_flag_with_item_and_note(in_project, add_shot, tmp_path):
     assert data["items"][0]["note"] == "看下画质"
 
 
-def test_cli_ingest_discard_undoes_staged_take(in_project, add_shot, tmp_path):
+def test_cli_ingest_discard_keeps_selection_unset(in_project, add_shot, tmp_path):
     add_shot(in_project, "S001")
     batch = tmp_path / "batch"
     batch.mkdir()
     _drop(batch, "S001.mp4", b"v1")
     apply_result = runner.invoke(app, ["ingest", str(batch), "--apply", "--json"])
     batch_id = json.loads(apply_result.output)["batch_id"]
-    assert in_project.load_shot("S001").status.selected_take == "take_01"
+    assert in_project.load_shot("S001").status.selected_take is None
 
     result = runner.invoke(app, ["ingest-discard", batch_id, "--item", "0"])
     assert result.exit_code == 0, result.output

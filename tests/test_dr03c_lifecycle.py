@@ -347,7 +347,7 @@ def test_tasks_attempt_id_equals_events_attempt_id(tmp_project, add_shot):
     # so _record_local_runs writes the ledger row with the attempt_id).
     add_shot(tmp_project, "S001", generation={"provider": "nope", "candidates": 1})
     result = run_build(tmp_project, target="qc", assume_yes=True)
-    assert result.ok and result.generated
+    assert result.selection_required == ["S001"] and result.generated
 
     recs, _ = A.read_attempts(tmp_project, result.run_id)
     succeeded = next(r for r in recs if r["stage"] == "generate"
@@ -369,7 +369,7 @@ def test_rebuild_index_works_from_sidecars_after_manju_and_manifests_deleted(
     attempt HISTORY is still fully readable from events.jsonl."""
     add_shot(tmp_project, "S001", generation={"provider": "nope", "candidates": 1})
     result = run_build(tmp_project, target="qc", assume_yes=True)
-    assert result.ok and result.run_id
+    assert result.selection_required == ["S001"] and result.run_id
 
     # nuke disposable state + the derived manifests
     shutil.rmtree(tmp_project.root / ".manju", ignore_errors=True)
@@ -394,6 +394,9 @@ def test_build_still_succeeds_after_its_manifest_is_deleted(tmp_project, add_sho
     second build after deleting the first's manifest works unchanged."""
     add_shot(tmp_project, "S001", generation={"provider": "nope", "candidates": 1})
     r1 = run_build(tmp_project, target="qc", assume_yes=True)
+    take = tmp_project.takes("S001")[0]
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name))
     A.run_manifest_path(tmp_project, r1.run_id).unlink()
     r2 = run_build(tmp_project, target="qc", assume_yes=True)
     assert r2.ok  # build never depended on the manifest

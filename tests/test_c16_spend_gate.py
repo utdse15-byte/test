@@ -72,7 +72,7 @@ def test_unattended_no_keyframe_candidates_is_unaffected(
     add_shot(tmp_project, "S001")
     result = run_build(tmp_project, target="qc", actor="ai",
                        assume_yes=True, agent_profile="unattended")
-    assert result.ok is True
+    assert result.selection_required == ["S001"]
     assert transport_spy["n"] >= 1
     assert not any("KEYFRAME_NOT_ADOPTED" in e for e in result.errors)
 
@@ -87,7 +87,7 @@ def test_unattended_adopted_keyframe_proceeds(
     add_shot(tmp_project, "S002")
     result = run_build(tmp_project, target="qc", actor="ai",
                        assume_yes=True, agent_profile="unattended")
-    assert result.ok is True
+    assert result.selection_required == ["S002"]
     assert transport_spy["n"] >= 1
     assert not any("KEYFRAME_NOT_ADOPTED" in e for e in result.errors)
 

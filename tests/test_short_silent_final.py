@@ -88,6 +88,18 @@ def test_a_two_second_silent_film_builds(tmp_path):
         cwd=project.root, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=600,
     )
+    assert proc.returncode == 1
+    select = subprocess.run(
+        [sys.executable, "-m", "manju.cli", "select", "S001", "1"],
+        cwd=project.root, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60,
+    )
+    assert select.returncode == 0, select.stdout + select.stderr
+    proc = subprocess.run(
+        [sys.executable, "-m", "manju.cli", "build", "--gen", "off"],
+        cwd=project.root, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=600,
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     finals = list((project.root / "renders" / "final").glob("final_v*.mp4"))
     assert finals, "no final produced"

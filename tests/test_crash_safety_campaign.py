@@ -250,9 +250,24 @@ def test_sigkill_mid_build_never_breaks_the_disciplines(tmp_path):
     # otherwise this test proved nothing and must say so, not pass quietly.
     assert killed >= 1, "every build finished before its kill fired — increase delays"
 
-    # recovery: a clean follow-up build completes and the film exists
-    done = subprocess.run(
+    # Recovery first fills every missing candidate and stops at the human gate.
+    staged = subprocess.run(
         [sys.executable, "-m", "manju.cli", "build"],
+        cwd=project.root, env=env, capture_output=True, text=True,
+        encoding="utf-8", timeout=600,
+    )
+    assert staged.returncode == 1, staged.stdout + staged.stderr
+    for shot_id in project.shot_ids():
+        take = project.takes(shot_id)[-1]
+        project.update_shot_raw(
+            shot_id,
+            lambda d, name=take.name: d.setdefault("status", {}).__setitem__(
+                "selected_take", name),
+        )
+
+    # After explicit selection, a clean follow-up build completes.
+    done = subprocess.run(
+        [sys.executable, "-m", "manju.cli", "build", "--gen", "off"],
         cwd=project.root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=600,
     )
     assert done.returncode == 0, done.stdout + done.stderr

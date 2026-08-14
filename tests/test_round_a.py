@@ -180,13 +180,16 @@ def test_kenburns_generic_ref_advisory(tmp_project, add_shot):
     add_shot(tmp_project, "S001", duration=1.5,
              dialogue={"speaker": "linxia", "text": "台词"})
     result = run_build(tmp_project, target="qc")
-    assert result.ok, result.errors
+    assert result.selection_required == ["S001"], result.errors
     assert any("通用参考图" in w for w in result.warnings), result.warnings
+    take = tmp_project.takes("S001")[0]
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name))
 
     # explicit params.image -> no advisory
     add_shot(tmp_project, "S002", duration=1.5,
              generation={"provider": "ffmpeg_kenburns",
                          "params": {"image": "media/refs/generic.png"}})
     result = run_build(tmp_project, target="qc")
-    assert result.ok, result.errors
+    assert result.selection_required == ["S002"], result.errors
     assert not any("S002" in w and "通用参考图" in w for w in result.warnings)

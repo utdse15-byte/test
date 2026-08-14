@@ -221,8 +221,25 @@ def test_page_js_lazy_fetch_and_degradation_marker():
     js = pages.render_pages_js()
     assert "/api/review/consistency" in js       # the lazy board fetch target
     assert "cs-board-slot" in js                  # the JS fills the lazy slots
+    assert 'details.addEventListener("toggle"' in js
+    assert "if (details.open) loadBoards();" in js
     # fetch failure -> a labelled note, never a blank (degradation contract)
     assert "看板加载失败" in js
+
+
+def test_review_theater_defers_main_media_and_keeps_actions_first(
+        tmp_project, add_shot, make_take):
+    _two_shot_unit_project(tmp_project, add_shot, make_take)
+
+    html = pages.render_review(tmp_project, "tok")
+    assert html.count('<video class="rv-video" data-src=') == 2
+    assert '<video class="rv-video" src=' not in html
+    assert html.index('class="rv-actions') < html.index('class="rv-body')
+    assert '<details class="panel rv-pro-section">' in html
+
+    js = pages.render_pages_js()
+    assert 'activeVideo.removeAttribute("src")' in js
+    assert "activateMedia(shots[active]);" in js
 
 
 # ---------------------------------------- half 1: _member_frame sidecar probe

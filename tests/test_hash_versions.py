@@ -144,8 +144,10 @@ def test_new_current_take_goes_stale_after_a_dialogue_edit(tmp_project, add_shot
     takes = redo_shot(tmp_project, "S001", actor="human")
     info = tmp_project.get_take("S001", takes[0])
     assert info.sidecar.spec_version == SPEC_VERSION
-    # redo_shot auto-selects when nothing was selected before (§4.3)
-    assert tmp_project.load_shot("S001").status.selected_take == takes[0]
+    # Redo produces reviewable material but never decides for the owner.
+    assert tmp_project.load_shot("S001").status.selected_take is None
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", takes[0]))
 
     tmp_project.update_shot_raw(
         "S001", lambda d: d.setdefault("dialogue", {}).__setitem__("text", "全新台词,内容完全不同"))

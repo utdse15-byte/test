@@ -86,12 +86,12 @@ additions, layered on top without changing what lands where:
   and a 中文 reason explaining the ambiguity. ``manual`` is set at
   :func:`apply_ingest` time on any row a caller corrected via ``overrides``.
   ``skip_duplicate`` rows stay ``matched`` (exact by content hash).
-- **persisted batch record + empty-shot staging** — every :func:`apply_ingest`
+- **persisted batch record + manual adoption** — every :func:`apply_ingest`
   run is written to ``reports/ingest_batches/<batch_id>.yaml`` (see
   :mod:`build.batches`) so it can be reviewed (confirm/flag/discard) after
-  the fact, and a ``take`` that lands on a shot with NO ``selected_take`` yet
-  is auto-selected (never overwriting an existing pick) so an externally
-  produced take doesn't need a separate manual `manju select` — see
+  the fact. A ``take`` that lands on a shot with no ``selected_take`` remains
+  an unselected candidate; review and `manju select` are the only adoption
+  path. See
   :mod:`build.batches` and :func:`apply_ingest` for both."""
 
 from __future__ import annotations
@@ -109,7 +109,6 @@ from ..core.idents import is_safe_segment
 from ..core.refs import (REF_SUFFIX_RE, bible_owner_map, copy_collision_safe,
                          set_bible_ref_image)
 from ..core.safeio import _is_reparse_point
-from ..core.writes import WriteRejected, select_take_checked, selected_take_lock_block
 from ..media.preview import make_preview
 from ..providers.manual import register_manual_take
 from ..providers.handoff_lineage import (
@@ -842,44 +841,6 @@ def _register_manual_voice_take(project: Project, shot_id: str, file: Path) -> P
     return dest
 
 
-def _maybe_auto_select(project: Project, shot_id: str, take: str, *, actor: str) -> dict[str, Any]:
-    """After a ``take`` row lands on a shot with NO ``selected_take`` yet,
-    auto-select it (round AA, goal item 2) — an empty shot that just got its
-    first externally-produced take otherwise still needs a separate manual
-    `manju select` before `manju build` will use it; this closes that one
-    extra step. NEVER overwrites an existing selection (checked first,
-    read-only) and NEVER lands past a lock — ``via="ingest"`` lets
-    events.jsonl tell this apart from every other ``selected_take`` writer
-    (core/writes.py, #39). Reversible: the batch-review ``discard`` decision
-    (build.batches.review_item) undoes exactly this write, IF nobody picked
-    a different take since (see its docstring).
-
-    Never raises: by the time this runs the take file itself is already
-    safely on disk (``register_manual_take`` succeeded), so a rejection here
-    — locked field, a `manju check` regression, or any other surprise — only
-    ever downgrades to ``staged=False`` with the reason recorded. It must
-    never turn a successful ingest row into a failed one."""
-    try:
-        shot = project.load_shot(shot_id)
-        if shot.status and shot.status.selected_take:
-            return {"staged": False, "staged_note": "已有选定 take,未自动切换"}
-        blocking = selected_take_lock_block(project, shot_id)
-        if blocking is not None:
-            return {"staged": False, "staged_note": (
-                f"{shot_id}.status.selected_take 已锁定,未自动选用"
-                "(人工 `manju select` 或先 `manju unlock` 解锁)"
-            )}
-        try:
-            select_take_checked(project, shot_id, take, actor=actor, via="ingest", action="auto_select")
-        except WriteRejected as exc:
-            return {"staged": False, "staged_note": f"自动选用被拒绝,未选用: {exc}"}
-        return {"staged": True, "staged_note": "空镜头,已自动选用该 take,可在批次评审中撤销"}
-    except Exception as exc:
-        # Defensive catch-all (see docstring): the take already landed, this
-        # step is advisory only.
-        return {"staged": False, "staged_note": f"自动选用检查出错,未选用: {exc}"}
-
-
 def _execute_row(
     project: Project,
     row: IngestRow,
@@ -907,13 +868,14 @@ def _execute_row(
                     (take.sidecar.qc or {}).get("external_manual_roundtrip") or []
                 ),
             })
-        if auto_select and handoff is None:
-            detail.update(_maybe_auto_select(project, row.shot_id, take.name, actor=actor))
-        else:
-            detail.update({
-                "staged": False,
-                "staged_note": "manual review required; take was not auto-selected",
-            })
+        # Ingest is append-only material intake. It never decides the active
+        # take; the review queue owns that human choice. Keep the legacy
+        # ``auto_select`` argument for callers that still pass it, but make the
+        # product behavior unambiguous across every intake path.
+        detail.update({
+            "staged": False,
+            "staged_note": "manual review required; take was not auto-selected",
+        })
         return detail
 
     if row.action == "voice":

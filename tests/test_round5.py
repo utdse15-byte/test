@@ -39,8 +39,12 @@ def test_caption_card_prefers_html(tmp_project, add_shot):
 
     add_shot(tmp_project, "S001", duration=1.5,
              dialogue={"speaker": "linxia", "text": "这不可能。"})
-    assert run_build(tmp_project, target="qc").ok
+    first = run_build(tmp_project, target="qc")
+    assert first.selection_required == ["S001"]
     take = tmp_project.takes("S001")[0]
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name))
+    assert run_build(tmp_project, target="qc", gen="off").ok
     assert take.sidecar.params.get("renderer") == "html"
 
 
@@ -101,7 +105,12 @@ def test_captions_manual_mode(tmp_project, add_shot):
 
     add_shot(tmp_project, "S001", duration=2.0,
              dialogue={"speaker": "linxia", "text": "原始台词。"})
-    assert run_build(tmp_project, target="qc").ok
+    first = run_build(tmp_project, target="qc")
+    assert first.selection_required == ["S001"]
+    take = tmp_project.takes("S001")[0]
+    tmp_project.update_shot_raw(
+        "S001", lambda d: d.setdefault("status", {}).__setitem__("selected_take", take.name))
+    assert run_build(tmp_project, target="qc", gen="off").ok
     srt = tmp_project.captions_dir / "captions.srt"
     assert "原始台词" in srt.read_text(encoding="utf-8")
 

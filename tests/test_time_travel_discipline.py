@@ -52,16 +52,22 @@ def test_rolling_truth_back_reproduces_the_old_film_without_regeneration(
     write_yaml(project.shots_dir / "index.yaml",
                {"order": ["S001"], "defaults": {}})
 
-    def cli(*args):
-        proc = subprocess.run(
+    def run_cli(*args):
+        return subprocess.run(
             [sys.executable, "-m", "manju.cli", *args],
             cwd=project.root, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=600,
         )
+
+    def cli(*args):
+        proc = run_cli(*args)
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
         return proc.stdout
 
-    cli("build")                                   # v1 world → final_v1
+    first = run_cli("build")
+    assert first.returncode == 1 and "manual selection required" in first.stdout
+    cli("select", "S001", "1")
+    cli("build", "--gen", "off")                  # v1 world → final_v1
     v1_truth = shot_path.read_bytes()              # what git would restore
 
     # evolve: new text → new take → SELECT it → the film really changes

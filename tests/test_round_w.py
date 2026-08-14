@@ -103,13 +103,10 @@ def _seal_empty_selected_take_lock(project, shot_id: str) -> None:
     )
 
 
-def test_build_auto_select_skips_locked_selected_take(tmp_project, add_shot, make_take):
-    """Round W (#28): build's NEEDS_SELECTION gap-filler must not overturn a
-    lock sealed on an empty selected_take — it skips that shot LOUDLY (a
-    warning naming the shot) and leaves a QC-visible (failures.jsonl,
-    level=info) record, never a silent pass."""
+def test_build_selection_gate_respects_locked_empty_selection(
+        tmp_project, add_shot, make_take):
+    """A locked empty selection remains empty and build stops at review."""
     from manju.build.graph import run_build
-    from manju.core.failures import read_failures
 
     add_shot(tmp_project, "S001")
     make_take(tmp_project, "S001", "h")  # a usable take exists...
@@ -119,18 +116,13 @@ def test_build_auto_select_skips_locked_selected_take(tmp_project, add_shot, mak
 
     # the lock held: selected_take is still empty
     assert tmp_project.load_shot("S001").status.selected_take is None
-    # loud: a warning names the shot and the reason
-    assert any("S001" in w and ("locked" in w.lower() or "SKIPPED" in w)
-              for w in result.warnings), result.warnings
-    # QC-visible: an info-level failure/degradation record exists for it
-    infos = read_failures(tmp_project, n=50, level="info")
-    assert any(r.get("subject") == "S001" for r in infos), infos
+    assert result.selection_required == ["S001"]
+    assert any("manual selection required" in e for e in result.errors)
 
 
-def test_build_auto_select_still_fills_unlocked_gaps(tmp_project, add_shot, make_take):
-    """Sanity companion to the lock-skip test above: an UNLOCKED
-    NEEDS_SELECTION shot is still auto-selected exactly as before (#28 must
-    not regress the normal gap-filling behavior)."""
+def test_build_selection_gate_never_fills_unlocked_gaps(
+        tmp_project, add_shot, make_take):
+    """Unlocked candidates still require an explicit human selection."""
     from manju.build.graph import run_build
 
     add_shot(tmp_project, "S001")
@@ -138,8 +130,9 @@ def test_build_auto_select_still_fills_unlocked_gaps(tmp_project, add_shot, make
 
     result = run_build(tmp_project, target="qc", gen="off", actor="engine")
 
-    assert tmp_project.load_shot("S001").status.selected_take == take.name
-    assert any("S001" in w and "auto-selected" in w for w in result.warnings), result.warnings
+    assert tmp_project.load_shot("S001").status.selected_take is None
+    assert result.selection_required == ["S001"]
+    assert take.name in {t.name for t in tmp_project.takes("S001")}
 
 
 def test_build_auto_select_never_overturns_an_existing_selection(

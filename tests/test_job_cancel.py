@@ -226,7 +226,7 @@ def test_run_build_should_cancel_none_is_byte_identical_default(
     like before this round — a normal, uncanceled build."""
     add_shot(tmp_project, "S001")
     result = run_build(tmp_project, target="qc", gen="missing", actor="ai")
-    assert result.ok is True
+    assert result.selection_required == ["S001"]
     assert result.canceled is False
     assert result.generated  # S001 generated normally
 

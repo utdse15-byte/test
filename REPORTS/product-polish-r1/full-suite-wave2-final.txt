@@ -1,0 +1,1575 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+................ss...................................................... [ 11%]
+........................................ss...ss......................... [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 16%]
+.............................................................F.......... [ 17%]
+........................................................................ [ 18%]
+..............................................s......................... [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+.............................F.......................................... [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+....................................................F................... [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+...............................sss...................................... [ 50%]
+..........ss...................s............s........................... [ 51%]
+........................................................................ [ 52%]
+....................................................................ssss [ 54%]
+s....................................................................... [ 55%]
+........................................................................ [ 56%]
+....sssssssssssssssss...........................s.......s............... [ 57%]
+........................................F..........F......F......F...... [ 58%]
+F......F.s...................................................s.......... [ 59%]
+........................................................................ [ 60%]
+.s...................................................................... [ 62%]
+........................................................................ [ 63%]
+.............................ss......................................... [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+.............................................................s.......... [ 67%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+....................................................F................... [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+...s.................................................................... [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+.................ssssss.............s................................... [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+................s...........................s...............s........... [ 94%]
+................s........s..........................s...........s....... [ 95%]
+............s.........s.....s........................................... [ 96%]
+................s....................................................... [ 97%]
+........................................................................ [ 98%]
+..................................................................       [100%]
+================================== FAILURES ===================================
+______________________ test_report_dir_not_a_build_input ______________________
+[gw4] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+tmp_project = <manju.core.container.Project object at 0x00000225A78F8230>
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw4/test_report_dir_not_a_build_in0')
+
+    def test_report_dir_not_a_build_input(tmp_project, tmp_path):
+        # the analysis report directory must never be read by build/resume/cache/render.
+        import subprocess
+        root = Path(analysis.__file__).resolve().parents[1]  # src/manju
+>       hits = subprocess.run(
+            ["grep", "-rn", "reports/analysis", str(root),
+             "--include=*.py", "--exclude-dir=__pycache__"],
+            capture_output=True, text=True, encoding="utf-8").stdout
+
+tests\test_c19_analysis.py:171:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:555: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['grep', '-rn', 'reports/analysis', 'G:\\XXN\...>
+args = 'grep -rn reports/analysis G:\\XXN\\test\\src\\manju --include=*.py --exclude-dir=__pycache__'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = None, env = None
+startupinfo = <subprocess.STARTUPINFO object at 0x00000225A78F69D0>
+creationflags = 0, shell = False, p2cread = Handle(996), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(968), errread = 15, errwrite = Handle(856)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+______________ test_technical_reports_not_a_build_or_auth_input _______________
+[gw4] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+    def test_technical_reports_not_a_build_or_auth_input():
+        """The derived report dir must never be read by build/core/providers/runtime."""
+        from manju.media import technical_profile as tp
+        root = Path(tp.__file__).resolve().parents[1]   # src/manju
+        hits: list[str] = []
+        for sub in ("build", "core", "providers", "runtime"):
+>           out = subprocess.run(
+                ["grep", "-rn", "reports/technical", str(root / sub),
+                 "--include=*.py", "--exclude-dir=__pycache__"],
+                capture_output=True, text=True, encoding="utf-8").stdout
+
+tests\test_fp_profile.py:436:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:555: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['grep', '-rn', 'reports/technical', 'G:\\XXN...>
+args = 'grep -rn reports/technical G:\\XXN\\test\\src\\manju\\build --include=*.py --exclude-dir=__pycache__'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = None, env = None
+startupinfo = <subprocess.STARTUPINFO object at 0x00000225A73FB950>
+creationflags = 0, shell = False, p2cread = Handle(716), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(888), errread = 15, errwrite = Handle(664)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+__________ test_grep_pin_never_read_by_build_core_providers_runtime ___________
+[gw10] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+    def test_grep_pin_never_read_by_build_core_providers_runtime():
+        """RECORD-ONLY pin: no build/core/providers/runtime module references the
+        derived dir or imports the module — the manifest is evidence, never an
+        execution/caching/authorization input. (cli.py — the one writer surface —
+        lives outside these dirs on purpose.)"""
+        import manju
+
+        root = Path(manju.__file__).resolve().parent  # src/manju
+        hits: list[str] = []
+        pattern = r"reports/toolchain|core\.toolchain|from \.toolchain|core import toolchain"
+        for sub in ("build", "core", "providers", "runtime"):
+>           out = subprocess.run(
+                ["grep", "-rnE", pattern, str(root / sub),
+                 "--include=*.py", "--exclude-dir=__pycache__"],
+                capture_output=True, text=True, encoding="utf-8").stdout
+
+tests\test_fp_toolchain.py:242:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:555: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['grep', '-rnE', 'reports/toolchain|core\\.to...>
+args = 'grep -rnE "reports/toolchain|core\\.toolchain|from \\.toolchain|core import toolchain" G:\\XXN\\test\\src\\manju\\build --include=*.py --exclude-dir=__pycache__'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = None, env = None
+startupinfo = <subprocess.STARTUPINFO object at 0x000001F22C002FD0>
+creationflags = 0, shell = False, p2cread = Handle(912), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(704), errread = 15, errwrite = Handle(768)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+_______________________ test_prompt_is_one_argv_element _______________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2FA2E90>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC2F7A5D0>, shot=ShotSpec(id='S002', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:144:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', 'C:\\Users\\Administrator\\AppData\\Lo...>
+args = 'sh C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_prompt_is_one...0\\gen.sh --prompt "alpha beta gamma" --out C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\localcmd_S002_9chnevja\\out.mp4'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_prompt_is_one_argv_elemen0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\Administrator\\AppData\\Roaming', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': 'C:\\Users\\Administrator\\AppData\\Local\\Google\\Chrome\\User Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001BFC2FB7850>
+creationflags = 0, shell = False, p2cread = Handle(952), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(380), errread = 15, errwrite = Handle(692)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_prompt_is_one_argv_elemen0')
+request_for = <function request_for.<locals>._make at 0x000001BFC2F68720>
+
+    def test_prompt_is_one_argv_element(tmp_path, request_for):
+        script = _script(tmp_path, "gen.sh", 'echo ok > "$4"\n')  # write file to {out}
+        provider = LocalCommandProvider(
+            _manifest(f"sh {script} --prompt {{prompt}} --out {{out}}")
+        )
+        # prompt_override with spaces is passed through verbatim by compile_prompt
+>       takes = provider.generate(request_for("S002", prompt_override="alpha beta gamma"))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:90:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2FA2E90>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC2F7A5D0>, shot=ShotSpec(id='S002', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:154: ProviderFailure
+_____________________ test_placeholder_substitution_types _____________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2FA1D10>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC3057A20>, shot=ShotSpec(id='S003', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:144:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', 'C:\\Users\\Administrator\\AppData\\Lo...>
+args = 'sh C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_placeholder_s...n_0\\gen.sh --size 1080x1920 --seed 7 --out C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\localcmd_S003_siqybv8o\\out.mp4'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_placeholder_substitution_0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\Administrator\\AppData\\Roaming', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': 'C:\\Users\\Administrator\\AppData\\Local\\Google\\Chrome\\User Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001BFC322B550>
+creationflags = 0, shell = False, p2cread = Handle(848), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(924), errread = 15, errwrite = Handle(876)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_placeholder_substitution_0')
+request_for = <function request_for.<locals>._make at 0x000001BFC302FC10>
+
+    def test_placeholder_substitution_types(tmp_path, request_for):
+        # {width}x{height} embeds into one word; {seed} is its own word
+        script = _script(tmp_path, "gen.sh", 'echo ok > "$6"\n')
+        provider = LocalCommandProvider(
+            _manifest(f"sh {script} --size {{width}}x{{height}} --seed {{seed}} --out {{out}}")
+        )
+>       argv = provider.generate(request_for("S003")).pop().sidecar.params["argv"]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:103:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2FA1D10>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC3057A20>, shot=ShotSpec(id='S003', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:154: ProviderFailure
+________________ test_placeholder_substitution_is_single_pass _________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2ECD350>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC316ADA0>, shot=ShotSpec(id='S005', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:144:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', 'C:\\Users\\Administrator\\AppData\\Lo...>
+args = 'sh C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_placeholder_s...ompt 一个装着{seed}和{out}字样的场景描述 --seed 7 --out C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\localcmd_S005_hg1xgpzo\\out.mp4'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_placeholder_substitution_1\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\Administrator\\AppData\\Roaming', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': 'C:\\Users\\Administrator\\AppData\\Local\\Google\\Chrome\\User Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001BFC32CF850>
+creationflags = 0, shell = False, p2cread = Handle(564), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(784), errread = 15, errwrite = Handle(380)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_placeholder_substitution_1')
+request_for = <function request_for.<locals>._make at 0x000001BFC3070250>
+
+    def test_placeholder_substitution_is_single_pass(tmp_path, request_for):
+        """round-W #58: a compiled prompt that happens to CONTAIN literal
+        "{seed}"/"{out}" text must never be re-scanned by a later placeholder's
+        substitution — the template is scanned ONCE, left to right; only real
+        placeholders from the ORIGINAL template are replaced."""
+        script = _script(tmp_path, "gen.sh", 'echo ok > "$6"\n')
+        provider = LocalCommandProvider(
+            _manifest(f"sh {script} --prompt {{prompt}} --seed {{seed}} --out {{out}}")
+        )
+        # the prompt LITERALLY contains "{seed}" and "{out}" as text — these must
+        # survive verbatim in the prompt argv element, never turn into the real
+        # seed value or output path.
+        prompt_text = "一个装着{seed}和{out}字样的场景描述"
+>       takes = provider.generate(request_for("S005", prompt_override=prompt_text))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_local_cmd.py:121:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2ECD350>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC316ADA0>, shot=ShotSpec(id='S005', scene=...mage': None}, items=[]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:154: ProviderFailure
+___________________ test_nonzero_exit_surfaces_stderr_tail ____________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_nonzero_exit_surfaces_std0')
+request_for = <function request_for.<locals>._make at 0x000001BFC30709E0>
+
+    def test_nonzero_exit_surfaces_stderr_tail(tmp_path, request_for):
+        script = _script(tmp_path, "fail.sh", 'echo "kaboom detail" >&2\nexit 3\n')
+        provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}"))
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S004"))
+>       assert exc.value.kind is FailureKind.provider_error
+E       assert <FailureKind.invalid: 'invalid'> is <FailureKind.provider_error: 'provider_error'>
+E        +  where <FailureKind.invalid: 'invalid'> = ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。").kind
+E        +    where ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") = <ExceptionInfo ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") tblen=3>.value
+E        +  and   <FailureKind.provider_error: 'provider_error'> = FailureKind.provider_error
+
+tests\test_local_cmd.py:133: AssertionError
+____________________ test_missing_output_is_provider_error ____________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_missing_output_is_provide0')
+request_for = <function request_for.<locals>._make at 0x000001BFC3071380>
+
+    def test_missing_output_is_provider_error(tmp_path, request_for):
+        script = _script(tmp_path, "noop.sh", 'echo hi\nexit 0\n')  # writes nothing to {out}
+        provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}"))
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S005"))
+>       assert exc.value.kind is FailureKind.provider_error
+E       assert <FailureKind.invalid: 'invalid'> is <FailureKind.provider_error: 'provider_error'>
+E        +  where <FailureKind.invalid: 'invalid'> = ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。").kind
+E        +    where ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") = <ExceptionInfo ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") tblen=3>.value
+E        +  and   <FailureKind.provider_error: 'provider_error'> = FailureKind.provider_error
+
+tests\test_local_cmd.py:142: AssertionError
+______________________________ test_timeout_path ______________________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_timeout_path0')
+request_for = <function request_for.<locals>._make at 0x000001BFC2F6A400>
+
+    def test_timeout_path(tmp_path, request_for):
+        script = _script(tmp_path, "slow.sh", 'sleep 10\n: > "$1"\n')
+        provider = LocalCommandProvider(_manifest(f"sh {script} {{out}}", timeout_s=0.5))
+        with pytest.raises(ProviderFailure) as exc:
+            provider.generate(request_for("S006"))
+>       assert exc.value.kind is FailureKind.timeout
+E       assert <FailureKind.invalid: 'invalid'> is <FailureKind.timeout: 'timeout'>
+E        +  where <FailureKind.invalid: 'invalid'> = ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。").kind
+E        +    where ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") = <ExceptionInfo ProviderFailure("local_cmd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。") tblen=3>.value
+E        +  and   <FailureKind.timeout: 'timeout'> = FailureKind.timeout
+
+tests\test_local_cmd.py:151: AssertionError
+________________ test_local_cmd_video_ref_placeholder_and_env _________________
+[gw7] win32 -- Python 3.14.5 C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\python.exe
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2F4B5C0>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC34EA530>, shot=ShotSpec(id='S001', scene=...place0/雨夜便利店.manju'))]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+>               proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+
+src\manju\providers\local_cmd.py:144:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: None args: ['sh', 'C:\\Users\\Administrator\\AppData\\Lo...>
+args = 'sh C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_local_cmd_vid..._place0\\雨夜便利店.manju\\media\\refs\\base.mp4 C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\localcmd_S001__97oi14o\\out.mp4'
+executable = None, preexec_fn = None, close_fds = False, pass_fds = ()
+cwd = 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\pytest-of-Administrator\\pytest-781\\popen-gw7\\test_local_cmd_video_ref_place0\\雨夜便利店.manju'
+env = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\Administrator\\AppData\\Roaming', 'BROWSER_USE_AVAILABLE...'chrome,iab', 'CODEX_CHROME_USER_DATA_DIR': 'C:\\Users\\Administrator\\AppData\\Local\\Google\\Chrome\\User Data', ...}
+startupinfo = <subprocess.STARTUPINFO object at 0x000001BFC34E49D0>
+creationflags = 0, shell = False, p2cread = Handle(1000), p2cwrite = -1
+c2pread = 14, c2pwrite = Handle(956), errread = 15, errwrite = Handle(768)
+unused_restore_signals = True, unused_gid = None, unused_gids = None
+unused_uid = None, unused_umask = -1, unused_start_new_session = False
+unused_process_group = -1
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds,
+                       pass_fds, cwd, env,
+                       startupinfo, creationflags, shell,
+                       p2cread, p2cwrite,
+                       c2pread, c2pwrite,
+                       errread, errwrite,
+                       unused_restore_signals,
+                       unused_gid, unused_gids, unused_uid,
+                       unused_umask,
+                       unused_start_new_session, unused_process_group):
+        """Execute program (MS Windows version)"""
+
+        assert not pass_fds, "pass_fds not supported on Windows."
+
+        if isinstance(args, str):
+            pass
+        elif isinstance(args, bytes):
+            if shell:
+                raise TypeError('bytes args is not allowed on Windows')
+            args = list2cmdline([args])
+        elif isinstance(args, os.PathLike):
+            if shell:
+                raise TypeError('path-like args is not allowed when '
+                                'shell is true')
+            args = list2cmdline([args])
+        else:
+            args = list2cmdline(args)
+
+        if executable is not None:
+            executable = os.fsdecode(executable)
+
+        # Process startup details
+        if startupinfo is None:
+            startupinfo = STARTUPINFO()
+        else:
+            # bpo-34044: Copy STARTUPINFO since it is modified above,
+            # so the caller can reuse it multiple times.
+            startupinfo = startupinfo.copy()
+
+        use_std_handles = -1 not in (p2cread, c2pwrite, errwrite)
+        if use_std_handles:
+            startupinfo.dwFlags |= _winapi.STARTF_USESTDHANDLES
+            startupinfo.hStdInput = p2cread
+            startupinfo.hStdOutput = c2pwrite
+            startupinfo.hStdError = errwrite
+
+        attribute_list = startupinfo.lpAttributeList
+        have_handle_list = bool(attribute_list and
+                                "handle_list" in attribute_list and
+                                attribute_list["handle_list"])
+
+        # If we were given an handle_list or need to create one
+        if have_handle_list or (use_std_handles and close_fds):
+            if attribute_list is None:
+                attribute_list = startupinfo.lpAttributeList = {}
+            handle_list = attribute_list["handle_list"] = \
+                list(attribute_list.get("handle_list", []))
+
+            if use_std_handles:
+                handle_list += [int(p2cread), int(c2pwrite), int(errwrite)]
+
+            handle_list[:] = self._filter_handle_list(handle_list)
+
+            if handle_list:
+                if not close_fds:
+                    warnings.warn("startupinfo.lpAttributeList['handle_list'] "
+                                  "overriding close_fds", RuntimeWarning)
+
+                # When using the handle_list we always request to inherit
+                # handles but the only handles that will be inherited are
+                # the ones in the handle_list
+                close_fds = False
+
+        if shell:
+            startupinfo.dwFlags |= _winapi.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = _winapi.SW_HIDE
+            if not executable:
+                # gh-101283: without a fully-qualified path, before Windows
+                # checks the system directories, it first looks in the
+                # application directory, and also the current directory if
+                # NeedCurrentDirectoryForExePathW(ExeName) is true, so try
+                # to avoid executing unqualified "cmd.exe".
+                comspec = os.environ.get('ComSpec')
+                if not comspec:
+                    system_root = os.environ.get('SystemRoot', '')
+                    comspec = os.path.join(system_root, 'System32', 'cmd.exe')
+                    if not os.path.isabs(comspec):
+                        raise FileNotFoundError('shell not found: neither %ComSpec% nor %SystemRoot% is set')
+                if os.path.isabs(comspec):
+                    executable = comspec
+            else:
+                comspec = executable
+
+            args = '{} /c "{}"'.format (comspec, args)
+
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+
+        sys.audit("subprocess.Popen", executable, args, cwd, env)
+
+        # Start the process
+        try:
+>           hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                                     # no special security
+                                     None, None,
+                                     int(not close_fds),
+                                     creationflags,
+                                     env,
+                                     cwd,
+                                     startupinfo)
+E                                    FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+C:\Users\Administrator\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py:1553: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+tmp_project = <manju.core.container.Project object at 0x000001BFC34EA530>
+add_shot = <function add_shot.<locals>._add at 0x000001BFC33473D0>
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-781/popen-gw7/test_local_cmd_video_ref_place0')
+
+    def test_local_cmd_video_ref_placeholder_and_env(tmp_project, add_shot, tmp_path):
+        _touch(tmp_project, "media/refs/base.mp4", b"video")
+        # the script copies MANJU_VIDEO_REF (env passthrough) into {out}
+        script = tmp_path / "gen.sh"
+        script.write_text('#!/bin/sh\nprintf "%s" "$MANJU_VIDEO_REF" > "$3"\n', encoding="utf-8")
+        script.chmod(0o755)
+        provider = LocalCommandProvider(_localcmd(f"sh {script} --video {{video_ref}} {{out}}"))
+        shot = add_shot(tmp_project, "S001",
+                        generation={"params": {"video": "media/refs/base.mp4"}})
+        req = GenerationRequest(project=tmp_project, shot=shot,
+                                bible=tmp_project.load_bible(), spec_hash="sha256:x",
+                                duration_ms=3000, candidates=1,
+                                params={"video": "media/refs/base.mp4"})
+>       takes = provider.generate(req)
+                ^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_refs.py:515:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\manju\providers\local_cmd.py:115: in generate
+    return self._generate(req)
+           ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <manju.providers.local_cmd.LocalCommandProvider object at 0x000001BFC2F4B5C0>
+req = GenerationRequest(project=<manju.core.container.Project object at 0x000001BFC34EA530>, shot=ShotSpec(id='S001', scene=...place0/雨夜便利店.manju'))]), should_cancel=None, evidence=None, evidence_attempt_id=None, redo_of=None, delivery_plan=None)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        from .zero_cost import require_manifest_allowed
+
+        # Registry checks are not enough: callers can instantiate this adapter
+        # directly. Strict zero-cost cannot audit an arbitrary child process's
+        # network behavior, so fail before Popen even on that construction path.
+        require_manifest_allowed(self.manifest)
+        values = self._values(req)
+        with tempfile.TemporaryDirectory(prefix=f"localcmd_{req.shot.id}_") as tmp:
+            out = Path(tmp) / f"out{self._ext}"
+            values["out"] = str(out)
+            argv = self._build_argv(values)
+            env = self._env(req, values)
+
+            t0 = self._clock()
+            # F1 resource hygiene: `subprocess.run` (and a bare Popen.kill) only
+            # signals the DIRECT child on timeout, ORPHANING any grandchild a
+            # wrapper command forked — a local SVD/Wan/CogVideo worker holding
+            # VRAM keeps running past the manifest timeout_s. Start the child in
+            # its OWN session/process group (start_new_session=True) and, on
+            # timeout, SIGKILL the WHOLE group so no grandchild survives, then
+            # reap. The ProviderFailure(timeout) surface + every success/failure
+            # semantic below is byte-identical to the old subprocess.run path.
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(req.project.root),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                    **_new_session_kwargs(),
+                )
+            except (OSError, ValueError) as exc:  # binary missing / bad argv
+>               raise ProviderFailure(
+                    FailureKind.invalid,
+                    f"{self.id}: cannot run {argv[0]!r}: {exc}",
+                    detail={"argv": argv,
+                            "hint": f"确认 {argv[0]!r} 已安装且在 PATH,或修正 local_cmd.command"},
+                ) from exc
+E               manju.providers.base.ProviderFailure: svd: cannot run 'sh': [WinError 2] 系统找不到指定的文件。
+
+src\manju\providers\local_cmd.py:154: ProviderFailure
+=========================== short test summary info ===========================
+FAILED tests/test_c19_analysis.py::test_report_dir_not_a_build_input - FileNo...
+FAILED tests/test_fp_profile.py::test_technical_reports_not_a_build_or_auth_input
+FAILED tests/test_fp_toolchain.py::test_grep_pin_never_read_by_build_core_providers_runtime
+FAILED tests/test_local_cmd.py::test_prompt_is_one_argv_element - manju.provi...
+FAILED tests/test_local_cmd.py::test_placeholder_substitution_types - manju.p...
+FAILED tests/test_local_cmd.py::test_placeholder_substitution_is_single_pass
+FAILED tests/test_local_cmd.py::test_nonzero_exit_surfaces_stderr_tail - asse...
+FAILED tests/test_local_cmd.py::test_missing_output_is_provider_error - asser...
+FAILED tests/test_local_cmd.py::test_timeout_path - assert <FailureKind.inval...
+FAILED tests/test_refs.py::test_local_cmd_video_ref_placeholder_and_env - man...
+10 failed, 6185 passed, 63 skipped in 292.07s (0:04:52)

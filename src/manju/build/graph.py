@@ -647,6 +647,8 @@ class BuildResult:
     estimated_cost: float = 0.0
     saved_cost: float = 0.0  # cache savings: what regenerating FRESH shots would cost
     waiting_user: bool = False  # §8.3 ask_before gate: needs an explicit yes
+    # Generated candidates never become project truth without a human pick.
+    selection_required: list[str] = field(default_factory=list)
     # goal: honest job cancellation — a should_cancel() checkpoint tripped
     # mid-build (gui/jobs.py JobRunner.cancel). ``generated``/``errors`` still
     # carry what was actually produced and the honest cancellation message;
@@ -2076,44 +2078,41 @@ def _run_build_phases(
     except Exception:
         pass  # voice bookkeeping never blocks a build
 
-    # ---- 2b. auto-select where no human decision exists yet (filling a gap
-    # is allowed; overturning a selection never is). Round W (#28/#39): goes
-    # through the SAME checked write every other select entrance uses — a
-    # value-hash lock on status/selected_take (sealed empty, before any take
-    # existed) must skip auto-select too, loudly, not just a silent pass.
-    # No build_lock here on purpose: this whole phase already runs inside
-    # run_build's build_lock (not reentrant) — see core/writes.py.
-    from ..core.writes import WriteRejected, select_take_checked
-
-    for st in evaluate_all(project, indexed_only=not include_unindexed):
-        if st.state == ShotState.NEEDS_SELECTION:
-            takes = project.takes(st.shot_id)
-            # AI_IDE_16 §5: a keyframe (IMAGE) candidate is NEVER auto-adopted as
-            # selected_take — the contract forbids auto-setting a candidate as
-            # selected, and an image is not a video deliverable for the timeline.
-            # A human/agent adopts a keyframe explicitly (select / promote-to-ref).
-            usable = [t for t in takes if t.media_path is not None
-                      and t.media_path.suffix.lower() not in _LADDER_IMAGE_EXTS]
+    # ---- 2b. human selection gate ---------------------------------------
+    # Generation creates append-only candidates. It never writes
+    # ``status.selected_take``: that field is the owner's decision, not an
+    # engine default. Stop before compile/render when usable video exists but
+    # no human selection does, and make the next action explicit.
+    if target in ("proxy", "final", "exports", "qc"):
+        selection_required: list[str] = []
+        for st in evaluate_all(project, indexed_only=not include_unindexed):
+            if st.state != ShotState.NEEDS_SELECTION:
+                continue
+            usable = [
+                t for t in project.takes(st.shot_id)
+                if t.media_path is not None
+                and t.media_path.suffix.lower() not in _LADDER_IMAGE_EXTS
+            ]
             if usable:
-                choice = usable[-1].name
-                try:
-                    select_take_checked(
-                        project, st.shot_id, choice, actor=actor,
-                        via="build_auto_select", action="auto_select",
-                    )
-                except WriteRejected as exc:
-                    result.warnings.append(
-                        f"{st.shot_id}: auto-select SKIPPED (locked/rejected) — {exc}"
-                    )
-                    _record(project, "check", st.shot_id,
-                            "auto-select 跳过(selected_take 已锁定或写后校验失败)",
-                            evidence=str(exc), hint=f"人工确认后 `manju select {st.shot_id} "
-                            f"{choice}`,或 `manju unlock {st.shot_id} status.selected_take`",
-                            level="info", actor=actor)
-                    continue
-                result.warnings.append(
-                    f"{st.shot_id}: auto-selected {choice} (no human selection existed)"
-                )
+                selection_required.append(st.shot_id)
+        if selection_required:
+            result.ok = False
+            result.selection_required = selection_required
+            result.errors.append(
+                "manual selection required: candidates are ready for "
+                f"{', '.join(selection_required)}; review them and run "
+                "`manju select <shot> <take>` before building again"
+            )
+            _record(
+                project, "check", "selection", "build stopped at human selection gate",
+                evidence=", ".join(selection_required),
+                hint="审片后执行 `manju select <shot> <take>`，再重试 build",
+                level="info", actor=actor,
+            )
+            return _finish_run(result)
+
+    # No automatic selection for audition/animatic either. They may compile
+    # with placeholders, but selected_take remains an explicit human field.
 
     # ---- 2p. packaging card assets (§13-14): render missing intro/outro cards
     # BEFORE the compile/render so the content-addressed segments the compiler
@@ -2749,30 +2748,6 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
         should_cancel=should_cancel,
     )
     takes = generate_with_fallback(req, fallback_chain(shot))
-    if not shot.status.selected_take and takes:
-        choice = takes[-1].name
-        # Round W (#28/#39): a value-hash lock can seal status/selected_take
-        # even while it is still empty (locked BEFORE a first take existed);
-        # this auto-fill must not silently overturn that. A lightweight
-        # guard (not the full select_take_checked pipeline — this already
-        # runs inside redo_shot's own build_lock, and one extra `manju
-        # check` pass per redo is not free) — loud skip, never silent.
-        from ..core.writes import selected_take_lock_block
-
-        blocking = selected_take_lock_block(project, shot.id)
-        if blocking is not None:
-            _record(project, "check", shot.id,
-                    "redo 自动填选 selected_take 被跳过(已锁定)",
-                    evidence=f"locked path: {blocking}",
-                    hint=f"人工确认后 `manju select {shot.id} {choice}`,或 "
-                    f"`manju unlock {shot.id} {blocking}`",
-                    level="info", actor=actor)
-        else:
-            from ..core.writes import ensure_mapping
-
-            project.update_shot_raw(
-                shot.id, lambda d: ensure_mapping(d, "status").__setitem__("selected_take", choice)
-            )
     _record_local_runs(project, takes, {"redo": True}, {shot.id: plan.cost})
     append_event(project.root, actor, "redo", {"shot": shot.id, "takes": [t.name for t in takes]})
     return [t.name for t in takes]

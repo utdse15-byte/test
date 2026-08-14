@@ -388,7 +388,8 @@ def test_build_records_degradation_when_fallback_fires(tmp_project, add_shot):
     # "why did this shot become a caption card?" record.
     add_shot(tmp_project, "S001", generation={"provider": "nope", "candidates": 1})
     result = run_build(tmp_project, target="final", assume_yes=True)
-    assert result.ok, result.errors
+    assert result.selection_required == ["S001"], result.errors
+    assert result.generated
 
     degradations = [r for r in read_failures(tmp_project, 20) if r["level"] == "info"]
     gen_deg = [r for r in degradations if r["step"] == "generate" and r["subject"] == "S001"]
