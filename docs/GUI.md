@@ -388,9 +388,10 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
 - **所有 per-project 浏览器状态**一律以 #45 的稳定身份令牌为键
   (`manju-ui-/-reviewed-/-rv-pos-/-rv-queue-/-rv-av-/-last-<identity>`),
   绝不用显示名。引擎不保存任何 UI 状态。
-- **导航按使用频率分六组**(工作台·创作·镜头·审片·成片·工具箱),纯呈现层
-  CSS 下拉:全部 17 条链接始终在 DOM 里(模式 pin 依赖这一点),_NAV 是
-  唯一标签 owner。
+- **应用外壳按六个制作阶段稳定呈现**(工作台·创作·镜头·审片·成片·工具):
+  第一行长期显示项目、执行模式和视图设置，第二行始终显示六个阶段；只有当前阶段
+  展开页级子导航，避免 hover-only 下拉和 17 个同权入口。`_NAV` / `_NAV_GROUPS`
+  仍是标签与分组 owner；成片页级顺序继续由其页面内流程条拥有，不重复显示。
 - **成片阶段是一条连续旅程**:`/edit`、`/subtitles`、`/mixer`、
   `/packaging`、`/exports` 共用只读流程条;首屏后只读取一次
   `/api/finishing/status`,状态继续由 exportstatus/readiness 拥有。

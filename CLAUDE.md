@@ -103,10 +103,3 @@ Owners (one owner per concern — extend it, never fork a parallel one):
 - CLI shot/take shorthand (s14/14 → S014, 3 → take_03) →
   `cli._resolve_shot_arg` / `cli._resolve_take_arg` — existing entities
   only, ambiguity fails bad_args, echo on stderr (DECISIONS #47)
-
-undefined
-undefined
-undefined
-undefined
-undefined
-undefined

@@ -188,3 +188,34 @@ git switch codex/product-polish-r1
 后续优先级：先打磨窄窗口下的全局应用导航与新手提示密度，再把外部精剪返回状态
 接入成片阶段；继续保持只读、append-only、人工采用，不扩展新 AI 功能。阶段收口时
 再运行同 SHA Windows / Ubuntu / pinned FFmpeg hard gate。
+
+## 10. Wave 5：统一应用外壳与稳定制作阶段
+
+功能提交：`91b6e1b R1: unify the application chrome`。
+
+功能范围：共享应用栏、六阶段导航、当前阶段子导航、项目身份与执行模式的长期可见性。
+
+已完成：
+
+- 所有主要页面统一使用同一个 `chrome()` owner；修复导演、分镜、镜头实验室和批量入库
+  过去绕过共享新手/专业模式、术语和项目切换外壳的问题；
+- 顶部导航从 hover-only 下拉和多入口 pill wall 收敛为两层结构：应用栏 + 六阶段栏；
+- 当前阶段才显示页级子导航；成片阶段沿用页面内的五步旅程，不重复一套链接；
+- 当前执行模式在所有页面长期显示，本轮截图与验证均使用 `strict_zero_cost`，显示“本地安全”；
+- 当前项目名称进入项目切换入口，新手/专业与术语设置进入渐进展开菜单；
+- 新手提示只在首页首次出现，不再跨页面占据空间；
+- 直接页面标题改为中文优先，英文只随现有专业术语开关出现；
+- 390px 窄窗口以 3×2 网格完整显示六阶段，实测全局页面无横向溢出。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE5_APPLICATION_CHROME.md`
+- `REPORTS/product-polish-r1/screenshots/wave5/`
+- `REPORTS/product-polish-r1/wave5-tests/`
+
+相关 focused tests 共 177 passed；compileall、九份实际生成 JavaScript 的 `node --check`、
+`git diff --check` 均通过。当前环境未安装 ruff，没有冒充已运行；也未运行 Windows hard gate、
+完整 pytest 或真实 localhost Playwright journey。
+
+后续优先级：以真实审片高频旅程为核心，继续收敛 Review Theater 的桌面双栏、窄窗口队列、
+主操作和技术详情层级；不新增模型、自动选择、自动锁片或真实付费测试。

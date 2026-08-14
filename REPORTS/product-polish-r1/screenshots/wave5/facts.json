@@ -1,0 +1,132 @@
+{
+  "schema": "manju.product-polish-screenshot-facts/v1",
+  "rendering": "real server HTML renderers + repository CSS via Playwright page.set_content; scripts removed",
+  "execution_mode": "strict_zero_cost",
+  "project": "polish-wave5.manju (local zero-cost demo)",
+  "pages": {
+    "storyboard-desktop": {
+      "viewport_width": 1440,
+      "viewport_height": 900,
+      "document_scroll_width": 1430,
+      "document_scroll_height": 907,
+      "horizontal_overflow_px": 0,
+      "nav_height": 127.97,
+      "appbar_height": 44,
+      "stagebar_height": 45.41,
+      "subbar_height": 37.56,
+      "stage_count": 6,
+      "stage_labels": [
+        "工作台",
+        "创作",
+        "镜头",
+        "审片",
+        "成片",
+        "工具"
+      ],
+      "active_stage": "镜头",
+      "has_subbar": true,
+      "subnav_labels": [
+        "分镜",
+        "镜头实验室",
+        "批量入库"
+      ],
+      "execution_status": "strict",
+      "execution_label": "本地安全",
+      "project_label": "polish-wave5",
+      "h1_text": "分镜工作台",
+      "page_mode": "beginner",
+      "screenshot": "app-chrome-storyboard-desktop.png"
+    },
+    "storyboard-narrow": {
+      "viewport_width": 390,
+      "viewport_height": 844,
+      "document_scroll_width": 380,
+      "document_scroll_height": 1240,
+      "horizontal_overflow_px": 0,
+      "nav_height": 159.55,
+      "appbar_height": 42,
+      "stagebar_height": 79.92,
+      "subbar_height": 36.63,
+      "stage_count": 6,
+      "stage_labels": [
+        "工作台",
+        "创作",
+        "镜头",
+        "审片",
+        "成片",
+        "工具"
+      ],
+      "active_stage": "镜头",
+      "has_subbar": true,
+      "subnav_labels": [
+        "分镜",
+        "镜头实验室",
+        "批量入库"
+      ],
+      "execution_status": "strict",
+      "execution_label": "本地安全",
+      "project_label": "polish-wave5",
+      "h1_text": "分镜工作台",
+      "page_mode": "beginner",
+      "screenshot": "app-chrome-storyboard-narrow.png"
+    },
+    "mixer-desktop": {
+      "viewport_width": 1440,
+      "viewport_height": 900,
+      "document_scroll_width": 1430,
+      "document_scroll_height": 1330,
+      "horizontal_overflow_px": 0,
+      "nav_height": 90.41,
+      "appbar_height": 44,
+      "stagebar_height": 45.41,
+      "subbar_height": null,
+      "stage_count": 6,
+      "stage_labels": [
+        "工作台",
+        "创作",
+        "镜头",
+        "审片",
+        "成片",
+        "工具"
+      ],
+      "active_stage": "成片",
+      "has_subbar": false,
+      "subnav_labels": [],
+      "execution_status": "strict",
+      "execution_label": "本地安全",
+      "project_label": "polish-wave5",
+      "h1_text": "混音",
+      "page_mode": "beginner",
+      "screenshot": "app-chrome-mixer-desktop.png"
+    },
+    "mixer-narrow": {
+      "viewport_width": 390,
+      "viewport_height": 844,
+      "document_scroll_width": 380,
+      "document_scroll_height": 1853,
+      "horizontal_overflow_px": 0,
+      "nav_height": 122.92,
+      "appbar_height": 42,
+      "stagebar_height": 79.92,
+      "subbar_height": null,
+      "stage_count": 6,
+      "stage_labels": [
+        "工作台",
+        "创作",
+        "镜头",
+        "审片",
+        "成片",
+        "工具"
+      ],
+      "active_stage": "成片",
+      "has_subbar": false,
+      "subnav_labels": [],
+      "execution_status": "strict",
+      "execution_label": "本地安全",
+      "project_label": "polish-wave5",
+      "h1_text": "混音",
+      "page_mode": "beginner",
+      "screenshot": "app-chrome-mixer-narrow.png"
+    }
+  }
+}

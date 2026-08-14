@@ -1,0 +1,102 @@
+{
+  "schema": "manju.product-polish-test-summary/v1",
+  "wave": 5,
+  "scope": "shared application chrome, stable production stages, shared direct-page shell",
+  "zero_cost": true,
+  "paid_calls": 0,
+  "credential_reads": 0,
+  "focused_pytest_passed": 177,
+  "pytest_batches": [
+    [
+      "tests/test_product_polish_app_chrome.py",
+      8
+    ],
+    [
+      "tests/test_gui_modes.py",
+      22
+    ],
+    [
+      "tests/test_workspace.py",
+      27
+    ],
+    [
+      "tests/test_gui_pages.py",
+      25
+    ],
+    [
+      "tests/test_product_polish_home_focus.py",
+      7
+    ],
+    [
+      "tests/test_product_polish_finishing_journey.py",
+      10
+    ],
+    [
+      "tests/test_cockpit.py",
+      13
+    ],
+    [
+      "tests/test_create_page.py",
+      17
+    ],
+    [
+      "tests/test_storyboard.py",
+      26
+    ],
+    [
+      "tests/test_shot_lab.py (3 targeted page tests)",
+      3
+    ],
+    [
+      "tests/test_ingest.py + tests/test_director.py (targeted page tests)",
+      2
+    ],
+    [
+      "tests/test_ux_polish.py (targeted navigation/state tests)",
+      3
+    ],
+    [
+      "tests/test_zero_cost_provider_policy.py",
+      14
+    ]
+  ],
+  "static": {
+    "compileall": "passed",
+    "generated_javascript_node_check": {
+      "status": "passed",
+      "files": 9,
+      "surfaces": [
+        "common",
+        "glossary",
+        "pages",
+        "project-action",
+        "create",
+        "director",
+        "storyboard",
+        "lab",
+        "ingest"
+      ]
+    },
+    "git_diff_check": "passed",
+    "ruff": "not run: tool not installed"
+  },
+  "visual": {
+    "method": "real server HTML renderers and repository CSS via Playwright page.set_content; scripts removed",
+    "live_localhost_browser_journey": "not claimed",
+    "screenshots": 5,
+    "viewports": [
+      "1440x900",
+      "390x844"
+    ],
+    "horizontal_overflow_px": 0,
+    "view_menu_narrow_overflow_px": 0
+  },
+  "not_run": [
+    "full pytest suite",
+    "full tests/test_shot_lab.py (slow in this environment)",
+    "Windows hard gate",
+    "Ubuntu/Windows same-SHA release certification",
+    "live localhost Playwright journey",
+    "real provider/API/credential/paid tests"
+  ]
+}
