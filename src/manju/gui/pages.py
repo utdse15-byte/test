@@ -115,8 +115,10 @@ _INLINE_STAGE_NAV = frozenset(
 GLOSSARY_HEAD = (
     '<link rel="stylesheet" href="/glossary.css">\n'
     '<link rel="stylesheet" href="/project-action.css">\n'
+    '<link rel="stylesheet" href="/task-center.css">\n'
     '<script src="/webclient.js" defer></script>\n'
     '<script src="/project-action.js" defer></script>\n'
+    '<script src="/task-center.js" defer></script>\n'
     '<script src="/glossary.js" defer></script>\n'
 )
 
@@ -343,8 +345,15 @@ def nav_html(
         '<span class="pnav-brand-name">Manju</span></a>',
         '<div class="pnav-tools">',
         _execution_status_html(),
+        '<button type="button" id="mj-task-center-btn" class="mj-task-button" '
+        'aria-haspopup="dialog" aria-controls="mj-task-center" '
+        'aria-expanded="false" title="打开任务中心">'
+        '<span class="mj-task-label">任务</span>'
+        '<span id="mj-task-center-count" class="mj-task-count" hidden></span></button>',
         _mode_controls(mode, show_terms),
         _workspace_switcher(project_name),
+        '<button type="button" id="mj-quit-btn" class="mj-quit-button" '
+        'title="安全退出 Manju">退出</button>',
         "</div></div>",
         '<div class="pnav-stagebar" aria-label="制作阶段">',
     ]

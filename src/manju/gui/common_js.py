@@ -233,6 +233,10 @@ var MJ_TASKBAR_NEXT = {
 
 (function () {
   if (!PROJECT) return;   /* unbound page (picker) — no runner to poll */
+  /* Product Polish R1 Wave 10: every bound page now loads the permanent
+   * shared task center. Keep this historical compact bar only as a fallback
+   * for an older/custom shell that omitted /task-center.js. */
+  if (window.ManjuTaskCenter) return;
   var POLL_MS = 5000;
   var seenActive = Object.create(null);   /* id → true: observed active HERE */
   var doneChips = [];                     /* {job, until} short-lived closers */

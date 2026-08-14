@@ -86,6 +86,16 @@ async function requestJson(method, path, body, options) {
     throw new ManjuApiError(response.status, data, path);
   }
   data = data || {};
+  /* Product Polish R1: accepted background work becomes visible in the
+   * permanent task center immediately, rather than waiting for its idle poll.
+   * This is only a presentation signal; JobRunner remains authoritative. */
+  if (response.status === 202 && data && (data.job || data.jobs)) {
+    try {
+      window.dispatchEvent(new CustomEvent("manju:jobs-changed", {
+        detail: { path: path, status: response.status }
+      }));
+    } catch (eventError) { /* older/custom host: polling remains the fallback */ }
+  }
   /* R2-P0-3: optional envelope so post() can keep real 202 (job submit). */
   if (opts.returnStatus) {
     return { status: response.status, data: data };

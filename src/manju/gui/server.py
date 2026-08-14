@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -140,6 +141,34 @@ def _empty_spend(project: Project) -> dict[str, Any]:
         pass
     return {"total": 0, "currency": None, "budget_limit": limit,
             "by_provider": [], "by_shot": [], "recent": [], "source": "empty"}
+
+
+def _waiting_user_result(exc: BaseException, **extra: Any) -> dict[str, Any]:
+    """Stable GUI envelope for an engine-side ``WaitingUser`` gate.
+
+    ``WaitingUser`` deliberately carries structured cost facts, but the older
+    GUI adapters kept only its prose message.  That made the global task center
+    tell the user a paid step needed confirmation without being able to show
+    the estimate that triggered the stop.  Preserve both: the one-line message
+    remains for compatibility/audit, while additive structured fields let every
+    GUI surface present the same honest amount without parsing human text.
+    """
+    payload: dict[str, Any] = {
+        "waiting_user": True,
+        "errors": [" ".join(str(exc).split())[:500]],
+    }
+    raw_cost = getattr(exc, "estimated_cost", None)
+    try:
+        estimated = float(raw_cost)
+    except (TypeError, ValueError):
+        estimated = None
+    if estimated is not None and math.isfinite(estimated) and estimated >= 0:
+        payload["estimated_cost"] = estimated
+    currency = getattr(exc, "currency", None)
+    if isinstance(currency, str) and currency.strip():
+        payload["currency"] = currency.strip()
+    payload.update(extra)
+    return payload
 
 
 def _reveal_argv(target: Path, platform: str | None = None) -> list[str]:
@@ -333,16 +362,33 @@ class GuiServer(ThreadingHTTPServer):
     def app_status(self) -> dict[str, Any]:
         """Snapshot for GET /api/app/status (readable while closing)."""
         runner = self.runner
+        try:
+            from ..providers.zero_cost import execution_policy_snapshot
+
+            execution_policy = execution_policy_snapshot()
+        except Exception:
+            execution_policy = {"status": "invalid", "mode": "unknown"}
+        provider_blocked = execution_policy.get("status") in {"strict", "invalid"}
         running: dict[str, Any] | None = None
         queued = 0
         for job in runner.list():
             if job.state in ("running", "canceling"):
                 if running is None:
+                    from .task_center import present_job
+
+                    view = present_job(job)
                     running = {
                         "id": job.id,
                         "kind": job.kind,
                         "state": job.state,
-                        "summary": job.progress or job.kind,
+                        "summary": view["phase"]["label"],
+                        "display_name": view["label"],
+                        "phase_label": view["phase"]["label"],
+                        "phase_detail": view["phase"]["detail"],
+                        "context": view["context"],
+                        "cancelable": view["cancelable"],
+                        "paid": view["paid"],
+                        "billing_risk": bool(view["paid"]) and not provider_blocked,
                     }
             elif job.state == "queued":
                 queued += 1
@@ -369,6 +415,7 @@ class GuiServer(ThreadingHTTPServer):
             "running_job": running,
             "queued_count": queued,
             "connected_clients": connected,
+            "execution_policy": execution_policy,
         }
         if self._quit.stuck:
             status["message"] = (
@@ -702,6 +749,15 @@ class _Handler(BaseHTTPRequestHandler):
                 from .project_action import render_project_action_css
 
                 self._send_text(render_project_action_css(), "text/css; charset=utf-8")
+            elif path == "/task-center.js":
+                from .task_center import render_task_center_js
+
+                self._send_text(render_task_center_js(),
+                                "application/javascript; charset=utf-8")
+            elif path == "/task-center.css":
+                from .task_center import render_task_center_css
+
+                self._send_text(render_task_center_css(), "text/css; charset=utf-8")
             elif path == "/workspace.css":
                 from . import workspace as _ws
 
@@ -789,6 +845,14 @@ class _Handler(BaseHTTPRequestHandler):
                 from .finishing_journey import finishing_status
 
                 self._send_json(finishing_status(self.server.project))
+            elif path == "/api/task-center":
+                # Product Polish R1 Wave 10: one shared, read-only presentation
+                # over the existing JobRunner. It creates no queue/state of its
+                # own and stays readable while the quit coordinator is closing.
+                from .task_center import task_center_snapshot
+
+                self._send_json(task_center_snapshot(
+                    self.server.runner, app_status=self.server.app_status()))
             elif path == "/api/jobs":
                 # round AA item 6: JobRunner.interrupted() (a past GUI
                 # process's dangling queued/running/canceling jobs) is
@@ -1802,11 +1866,7 @@ class _Handler(BaseHTTPRequestHandler):
                 from ..build.graph import WaitingUser
                 from ..providers.base import ProviderCanceled
                 if isinstance(exc, WaitingUser):
-                    return {
-                        "waiting_user": True,
-                        "errors": [" ".join(str(exc).split())[:500]],
-                        "shot": shot_id,
-                    }
+                    return _waiting_user_result(exc, shot=shot_id)
                 # C84: mid-generate cancel → canceled.
                 if isinstance(exc, ProviderCanceled):
                     return {
@@ -1847,11 +1907,7 @@ class _Handler(BaseHTTPRequestHandler):
                 )
             except WaitingUser as exc:
                 # C72: priced preview spend gate → waiting_user.
-                return {
-                    "waiting_user": True,
-                    "errors": [" ".join(str(exc).split())[:500]],
-                    "shot": shot_id,
-                }
+                return _waiting_user_result(exc, shot=shot_id)
             except Exception as exc:
                 # C83: mid-preview cancel → canceled (not failed / unavailable).
                 from ..providers.base import ProviderCanceled
@@ -1921,11 +1977,7 @@ class _Handler(BaseHTTPRequestHandler):
                     # C62: spend gate → waiting_user (not failed).
                     from ..build.graph import WaitingUser
                     if isinstance(exc, WaitingUser):
-                        return {
-                            "waiting_user": True,
-                            "errors": [" ".join(str(exc).split())[:500]],
-                            "shot": shot_id,
-                        }
+                        return _waiting_user_result(exc, shot=shot_id)
                     raise
             # C24: thread job cancel into async TTS poll when adapter supports it.
             synth_kwargs: dict[str, Any] = {}
@@ -2005,10 +2057,7 @@ class _Handler(BaseHTTPRequestHandler):
                     should_cancel=job.should_cancel).to_dict()
             except WaitingUser as exc:
                 # C63: batch spend gate → waiting_user result.
-                return {
-                    "waiting_user": True,
-                    "errors": [" ".join(str(exc).split())[:500]],
-                }
+                return _waiting_user_result(exc)
 
         job = self.server.runner.submit("redo_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
@@ -2035,10 +2084,7 @@ class _Handler(BaseHTTPRequestHandler):
                     should_cancel=job.should_cancel).to_dict()
             except WaitingUser as exc:
                 # C63: batch voice spend gate → waiting_user result.
-                return {
-                    "waiting_user": True,
-                    "errors": [" ".join(str(exc).split())[:500]],
-                }
+                return _waiting_user_result(exc)
 
         job = self.server.runner.submit("voice_batch", params, fn)
         self._send_json({"job": job.to_dict()}, 202)
@@ -2213,11 +2259,7 @@ class _Handler(BaseHTTPRequestHandler):
                     takes = redo_shot(project, shot_id, **kwargs)
                 except WaitingUser as exc:
                     # C66: retry redo spend gate → waiting_user.
-                    return {
-                        "waiting_user": True,
-                        "errors": [" ".join(str(exc).split())[:500]],
-                        "shot": shot_id,
-                    }
+                    return _waiting_user_result(exc, shot=shot_id)
                 except Exception as exc:
                     from ..providers.base import ProviderCanceled
                     if isinstance(exc, ProviderCanceled):
@@ -2258,11 +2300,7 @@ class _Handler(BaseHTTPRequestHandler):
                                        f"或 CLI `manju voice {shot_id} --yes`(§8.3)")
                     except WaitingUser as exc:
                         # C66: retry voice spend gate → waiting_user.
-                        return {
-                            "waiting_user": True,
-                            "errors": [" ".join(str(exc).split())[:500]],
-                            "shot": shot_id,
-                        }
+                        return _waiting_user_result(exc, shot=shot_id)
                 # C24: same cancel wire as _act_voice (retry path parity).
                 synth_kwargs: dict[str, Any] = {}
                 try:
@@ -2314,10 +2352,7 @@ class _Handler(BaseHTTPRequestHandler):
                         should_cancel=job.should_cancel).to_dict()
                 except WaitingUser as exc:
                     # C66: retry batch redo spend gate → waiting_user.
-                    return {
-                        "waiting_user": True,
-                        "errors": [" ".join(str(exc).split())[:500]],
-                    }
+                    return _waiting_user_result(exc)
 
             return fn
 
@@ -2339,10 +2374,7 @@ class _Handler(BaseHTTPRequestHandler):
                         should_cancel=job.should_cancel).to_dict()
                 except WaitingUser as exc:
                     # C66: retry batch voice spend gate → waiting_user.
-                    return {
-                        "waiting_user": True,
-                        "errors": [" ".join(str(exc).split())[:500]],
-                    }
+                    return _waiting_user_result(exc)
 
             return fn
 
@@ -5266,13 +5298,12 @@ class _Handler(BaseHTTPRequestHandler):
                 takes = redo_shot(project, shot_id, **kwargs)
             except WaitingUser as exc:
                 # C65: lab generate spend gate → waiting_user (not failed).
-                return {
-                    "waiting_user": True,
-                    "errors": [" ".join(str(exc).split())[:500]],
-                    "shot": shot_id,
-                    "quality": quality,
-                    "provider": provider,
-                }
+                return _waiting_user_result(
+                    exc,
+                    shot=shot_id,
+                    quality=quality,
+                    provider=provider,
+                )
             except Exception as exc:
                 # C85: lab generate cancel mid-poll.
                 from ..providers.base import ProviderCanceled
@@ -5767,11 +5798,7 @@ class _Handler(BaseHTTPRequestHandler):
                     should_cancel=job.should_cancel)
             except WaitingUser as exc:
                 # C64: spend gate → waiting_user (not failed).
-                return {
-                    "waiting_user": True,
-                    "errors": [" ".join(str(exc).split())[:500]],
-                    "shot": shot_id,
-                }
+                return _waiting_user_result(exc, shot=shot_id)
             except HandleRebuildError as exc:
                 # C54: cancel phrasing → JobRunner canceled when cancel_event set.
                 msg = " ".join(str(exc).split())

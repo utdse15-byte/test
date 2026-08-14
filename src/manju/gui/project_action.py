@@ -52,6 +52,9 @@ PROJECT_ACTION_CSS = r"""
 .mj-pa-row button.primary {
   background: #3b6ea8; border-color: #4a82c4; color: #fff;
 }
+.mj-pa-row button.danger {
+  background: #57272c; border-color: #98555b; color: #ffd7da;
+}
 .mj-pa-row button:disabled { opacity: .55; cursor: wait; }
 .mj-pa-status { font-size: .85rem; color: #9aa0a6; min-height: 1.2em; margin: 0 0 .5rem; }
 """
@@ -239,29 +242,45 @@ function showQuitDialog(status, onQuit) {
 
   var running = status && status.running_job;
   var q = (status && status.queued_count) || 0;
+  var returnFocus = document.activeElement;
 
   var ov = document.createElement("div");
   ov.id = "mj-quit-ov";
   ov.className = "mj-pa-ov";
   ov.setAttribute("role", "dialog");
   ov.setAttribute("aria-modal", "true");
+  ov.setAttribute("aria-labelledby", "mj-quit-title");
+  ov.setAttribute("aria-describedby", "mj-quit-copy");
 
   var dlg = document.createElement("div");
   dlg.className = "mj-pa-dlg";
 
   var h = document.createElement("h3");
+  h.id = "mj-quit-title";
   h.textContent = "当前仍有任务运行";
   dlg.appendChild(h);
 
   var note = document.createElement("p");
+  note.id = "mj-quit-copy";
   note.className = "mj-pa-note";
   var lines = [];
   if (running) {
-    lines.push("正在执行：" + (running.kind || "任务") +
+    var billingRisk = running.billing_risk !== undefined
+      ? running.billing_risk === true
+      : running.paid === true;
+    var runningName = running.display_name || running.kind || "任务";
+    var runningPhase = running.phase_label || running.summary || "正在处理";
+    var context = running.context ? (" · " + running.context) : "";
+    lines.push("正在执行：" + runningName + context + " · " + runningPhase +
       (running.id ? (" (#" + running.id + ")") : ""));
+    if (billingRisk) {
+      lines.push("这是可能产生费用的任务；请求取消不等于远端已经停止或停止计费。");
+    } else if (running.cancelable === false) {
+      lines.push("当前阶段不支持中途取消；“取消并退出”会等待任务结束或诚实报告退出受阻。");
+    }
   }
   if (q > 0) {
-    lines.push("另有 " + q + " 个任务等待执行");
+    lines.push("另有 " + q + " 个任务尚未运行；无论选择哪种退出方式，它们都会移出队列，不会开始执行。");
   }
   if (!lines.length) {
     lines.push("任务状态已变化，可直接退出。");
@@ -275,6 +294,7 @@ function showQuitDialog(status, onQuit) {
 
   function close() {
     if (ov.parentNode) ov.parentNode.removeChild(ov);
+    if (returnFocus && typeof returnFocus.focus === "function") returnFocus.focus();
   }
 
   function quit(mode) {
@@ -285,15 +305,22 @@ function showQuitDialog(status, onQuit) {
   var b1 = document.createElement("button");
   b1.type = "button";
   b1.className = "primary";
-  b1.textContent = "完成当前任务后退出";
+  b1.textContent = running
+    ? "完成当前任务后退出"
+    : (q > 0 ? "移出队列并退出" : "安全退出");
   b1.addEventListener("click", function () { quit("after_current"); });
   row.appendChild(b1);
 
-  var b2 = document.createElement("button");
-  b2.type = "button";
-  b2.textContent = "取消任务并退出";
-  b2.addEventListener("click", function () { quit("cancel_running"); });
-  row.appendChild(b2);
+  if (running) {
+    var b2 = document.createElement("button");
+    b2.type = "button";
+    b2.textContent = running.cancelable === false
+      ? "请求停止并退出"
+      : "取消当前任务并退出";
+    if (billingRisk) b2.className = "danger";
+    b2.addEventListener("click", function () { quit("cancel_running"); });
+    row.appendChild(b2);
+  }
 
   var b3 = document.createElement("button");
   b3.type = "button";
@@ -303,6 +330,23 @@ function showQuitDialog(status, onQuit) {
 
   dlg.appendChild(row);
   ov.appendChild(dlg);
+  ov.addEventListener("click", function (event) {
+    if (event.target === ov) close();
+  });
+  ov.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    if (event.key !== "Tab") return;
+    var focusable = Array.prototype.slice.call(dlg.querySelectorAll(
+      'button:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])'
+    )).filter(function (el) { return el.offsetParent !== null; });
+    if (!focusable.length) return;
+    var first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault(); last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault(); first.focus();
+    }
+  });
   document.body.appendChild(ov);
   b3.focus();
 }

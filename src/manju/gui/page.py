@@ -1436,7 +1436,10 @@ _JS = r"""
     if (btn) btn.disabled = true;
     /* item 1: first job-submitting click = the user gesture browsers require
      * for a Notification permission prompt (asked once; 'default' only). */
-    ensureNotifyPermission();
+    /* The shared task center owns notification permission and never prompts
+     * during an unrelated generation click. Keep the historical first-use
+     * prompt only as a fallback for an older/custom shell. */
+    if (!window.ManjuTaskCenter) ensureNotifyPermission();
     let holdDisable = false;
     try {
       const data = await api("POST", path, body);
@@ -1595,6 +1598,9 @@ _JS = r"""
   const NOTIFY_STATE_ZH = { done: "完成", failed: "失败", canceled: "已取消",
                             interrupted: "已中断" };
   function notifyJobTransitions(jobs, prevJobs) {
+    /* The permanent task center owns cross-page de-duplication, title badges,
+     * sound and system notifications. This SPA copy remains a fallback only. */
+    if (window.ManjuTaskCenter) return;
     /* fire once per job transition active -> terminal; only when the owner
      * is away (hidden tab) — a visible tab already shows the jobs panel. */
     if (!prevJobs || !prevJobs.length) return;
@@ -3536,18 +3542,21 @@ _JS = r"""
     clear(root);
     if (!jobs.length) { root.classList.add("hidden"); return; }
     root.classList.remove("hidden");
-    const h = el("h2", null, "任务 (jobs)");
-    /* item 1: opt-in completion beep (persisted; label doubles as state). */
-    const snd = el("button", "btn jobs-sound",
-                   notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关");
-    snd.title = "任务完成时播放提示音(仅本机,localStorage 记忆)";
-    snd.addEventListener("click", () => {
-      try {
-        localStorage.setItem("mj-notify-sound", notifySoundOn() ? "0" : "1");
-      } catch (err) { /* private mode — toggle just won't persist */ }
-      snd.textContent = notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关";
-    });
-    h.appendChild(snd);
+    const h = el("h2", null, "任务详情");
+    /* The permanent task center owns notification preferences. Keep the old
+     * toggle only when a custom/legacy shell omitted that shared owner. */
+    if (!window.ManjuTaskCenter) {
+      const snd = el("button", "btn jobs-sound",
+                     notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关");
+      snd.title = "任务完成时播放提示音(仅本机,localStorage 记忆)";
+      snd.addEventListener("click", () => {
+        try {
+          localStorage.setItem("mj-notify-sound", notifySoundOn() ? "0" : "1");
+        } catch (err) { /* private mode — toggle just won't persist */ }
+        snd.textContent = notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关";
+      });
+      h.appendChild(snd);
+    }
     root.appendChild(h);
     const running = pickJobs(jobs, ["running", "canceling"], 99);  /* always show */
     const queued = pickJobs(jobs, ["queued"], 3);
@@ -6842,6 +6851,9 @@ _JS = r"""
     }
   }
   function ensureQuitBtn() {
+    /* Product Polish R1 Wave 10: the shared task center owns the permanent
+     * quit button on every page. This function is an older-shell fallback. */
+    if (window.ManjuTaskCenter) return;
     /* The app command belongs in the permanent application bar.  The legacy
      * #header now lives inside a collapsed detail surface on home, so using it
      * as the host would make the safe exit action disappear until disclosure. */
@@ -6857,13 +6869,15 @@ _JS = r"""
     host.appendChild(btn);
   }
   window.__mjEnsureQuitBtn = ensureQuitBtn;
-  try {
-    api("GET", "/api/app/status").then((st) => {
-      if (!st) return;
-      window.__mjQuit = true;
-      ensureQuitBtn();
-    }).catch(() => {});
-  } catch (e) { /* boot continues */ }
+  if (!window.ManjuTaskCenter) {
+    try {
+      api("GET", "/api/app/status").then((st) => {
+        if (!st) return;
+        window.__mjQuit = true;
+        ensureQuitBtn();
+      }).catch(() => {});
+    } catch (e) { /* boot continues */ }
+  }
 
   /* refresh() is started by bootstrapWorkspaceUI() after hydrate */
 })();
