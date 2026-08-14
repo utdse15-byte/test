@@ -1,0 +1,40 @@
+{
+  "schema": "manju.product-polish-local-benchmark/v1",
+  "wave": 9,
+  "results": {
+    "12": {
+      "samples_ms": [
+        33.67,
+        32.83,
+        31.76,
+        32.11,
+        35.46
+      ],
+      "median_ms": 32.83,
+      "max_ms": 35.46
+    },
+    "100": {
+      "samples_ms": [
+        181.48,
+        181.53,
+        177.92,
+        172.66,
+        174.93
+      ],
+      "median_ms": 177.92,
+      "max_ms": 181.53
+    },
+    "300": {
+      "samples_ms": [
+        499.57,
+        503.48,
+        500.02,
+        519.53,
+        528.25
+      ],
+      "median_ms": 503.48,
+      "max_ms": 528.25
+    }
+  },
+  "note": "Local synthetic read-only measurement; not a release threshold."
+}

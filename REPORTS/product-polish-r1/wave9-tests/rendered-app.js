@@ -1,0 +1,5720 @@
+/* manju gui — front-end app (served as /app.js; source: manju/gui/page.py).
+ *
+ * Strict client of the engine HTTP API: the page never computes build state
+ * itself — it renders /api/state verbatim and posts intents back. CSP is
+ * `script-src 'self'`, so there are no inline handlers; every request sends
+ * the X-Manju-Token header read from the <meta name="manju-token"> tag.
+ */
+"use strict";
+(() => {
+  const tokenMeta = document.querySelector('meta[name="manju-token"]');
+  const TOKEN = tokenMeta ? (tokenMeta.getAttribute("content") || "") : "";
+  /* stale-tab guard: the project this document rendered for.
+   * Session is immutable — PROJECT is only rewritten when the server returns
+   * next_action.kind === "reload_current" (first bind). Never on open/create
+   * of another project. */
+  const projMeta = document.querySelector('meta[name="manju-project"]');
+  let PROJECT = projMeta ? (projMeta.getAttribute("content") || "") : "";
+  const $ = (id) => document.getElementById(id);
+
+  /* Per-project UI memory (external-review round, #49a): the shot filter and
+   * panel-open states survive a reload. Keyed by the STABLE project identity
+   * (#45's root-derived token) — the display NAME collides across same-named
+   * projects. Best-effort: blocked/corrupt storage never breaks the page. */
+  const uiKey = () => "manju-ui-" + (PROJECT || "unbound");
+  const loadUI = () => {
+    try { return JSON.parse(localStorage.getItem(uiKey())) || {}; }
+    catch (e) { return {}; }
+  };
+  const saveUI = (patch) => {
+    try {
+      const cur = loadUI();
+      Object.keys(patch).forEach((k) => { cur[k] = patch[k]; });
+      localStorage.setItem(uiKey(), JSON.stringify(cur));
+    } catch (e) { /* storage disabled — memory just stays off */ }
+    /* Durable per-workspace restore (server ~/.manju/gui_state.json). */
+    try {
+      if (PROJECT && typeof requestJson === "function") {
+        const serverPatch = {};
+        if (patch.filter !== undefined) serverPatch.shot_status_filter = patch.filter;
+        if (patch.lastShot !== undefined) serverPatch.last_shot_id = patch.lastShot;
+        if (patch.reviewPos !== undefined) serverPatch.review_position = patch.reviewPos;
+        if (patch.shotsScroll !== undefined) serverPatch.shots_scroll = patch.shotsScroll;
+        if (Object.keys(serverPatch).length) {
+          requestJson("POST", "/api/ui-state", { ui: serverPatch },
+            { token: TOKEN, projectId: PROJECT || "" }).catch(() => {});
+        }
+      }
+    } catch (e2) { /* never block UI */ }
+  };
+
+  /* Hydrate from server BEFORE first paint of shots — localStorage is only
+   * a legacy cache / same-origin helper; random --port 0 windows need server. */
+  let workspaceUIReady = false;
+  let stateFilter = "";  /* re-bound after hydrate; default empty until ready */
+  let pendingHydrateShot = "";
+
+  async function bootstrapWorkspaceUI() {
+    if (!PROJECT || typeof requestJson !== "function") {
+      workspaceUIReady = true;
+      const loc = loadUI();
+      stateFilter = loc.filter || "";
+      pendingHydrateShot = loc.lastShot || "";
+      return;
+    }
+    const opts = { token: TOKEN, projectId: PROJECT || "" };
+    const loc = loadUI();
+    let ui = {};
+    try {
+      const data = await requestJson("GET", "/api/ui-state", undefined, opts);
+      ui = (data && data.ui) || {};
+    } catch (e) { ui = {}; }
+    /* Merge: server wins when present; local fills gaps; migrate once. */
+    if (!ui.migrated_from_localstorage) {
+      const patch = {
+        migrated_from_localstorage: true,
+        shot_status_filter: ui.shot_status_filter || loc.filter || "",
+        last_shot_id: ui.last_shot_id || loc.lastShot || "",
+        review_position: ui.review_position || loc.reviewPos || "",
+        playback_rate: ui.playback_rate,
+        volume: ui.volume,
+        muted: ui.muted,
+        autoplay_review: ui.autoplay_review,
+        shots_scroll: ui.shots_scroll,
+      };
+      try {
+        const saved = await requestJson("POST", "/api/ui-state", { ui: patch }, opts);
+        ui = (saved && saved.ui) || Object.assign({}, ui, patch);
+      } catch (e) {
+        ui = Object.assign({}, ui, patch);
+      }
+    }
+    stateFilter = ui.shot_status_filter || loc.filter || "";
+    pendingHydrateShot = ui.last_shot_id || ui.review_position || loc.lastShot || "";
+    if (typeof ui.shots_scroll === "number") {
+      try {
+        const root = $("shots");
+        if (root) root.scrollTop = ui.shots_scroll;
+      } catch (e) { /* */ }
+    }
+    try {
+      localStorage.setItem(uiKey(), JSON.stringify({
+        filter: stateFilter,
+        lastShot: pendingHydrateShot,
+        reviewPos: ui.review_position || pendingHydrateShot,
+      }));
+    } catch (e) { /* */ }
+    workspaceUIReady = true;
+  }
+
+  /* #50a: the review page deep-links /?compare=<shot> into the A/B overlay */
+  let pendingCompare = (() => {
+    try { return new URLSearchParams(location.search).get("compare") || ""; }
+    catch (e) { return ""; }
+  })();
+
+  /* A click-driven header/zone becomes keyboard-operable. A real <button>
+   * would be invalid around its heading/input children, so the pattern is
+   * role+tabindex+keydown — Enter/Space route to the SAME click handler. */
+  const actAsButton = (node, label) => {
+    node.tabIndex = 0;
+    node.setAttribute("role", "button");
+    if (label) node.setAttribute("aria-label", label);
+    node.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();  /* the global Space=play shortcut must not fire */
+        node.click();
+      }
+    });
+  };
+
+  /* another tab switched the server's project — block this one (its media
+   * URLs now resolve inside the NEW project); reload follows the switch. */
+  const projectSwitchedOverlay = (name) => {
+    if (document.getElementById("mj-proj-switched")) return;
+    const ov = document.createElement("div");
+    ov.id = "mj-proj-switched";
+    ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,18,24,.92);" +
+      "color:#fff;display:flex;flex-direction:column;align-items:center;" +
+      "justify-content:center;gap:1rem;text-align:center;padding:2rem";
+    const msg = document.createElement("div");
+    msg.style.cssText = "font-size:1.05rem;max-width:34em";
+    msg.textContent = name
+      ? ("服务器已切换到项目「" + name + "」— 本页属于另一个项目,已停止读写。")
+      : "服务器已切换/关闭项目 — 本页属于另一个项目,已停止读写。";
+    const btn = document.createElement("button");
+    btn.textContent = "刷新,跟随当前项目 (reload)";
+    btn.style.cssText = "font-size:1rem;padding:.5em 1.2em;cursor:pointer";
+    btn.addEventListener("click", () => location.reload());
+    ov.appendChild(msg);
+    ov.appendChild(btn);
+    document.body.appendChild(ov);
+  };
+
+  /* ------------------------------------------------------------- DOM --- */
+  /* Every dynamic node gets its text via textContent — never innerHTML. */
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null && text !== "") n.textContent = String(text);
+    return n;
+  };
+  const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
+  const errMsg = (err) => String((err && err.message) || err);
+
+  /* ------------------------------------------------------ formatting --- */
+  const fmtDur = (ms) => {                       /* 90500 -> "01:30.50" */
+    if (typeof ms !== "number" || !isFinite(ms) || ms <= 0) return "—";
+    const total = ms / 1000;
+    const m = Math.floor(total / 60);
+    const s = total - m * 60;
+    return String(m).padStart(2, "0") + ":" + s.toFixed(2).padStart(5, "0");
+  };
+  const fmtMMSS = (ms) => {                      /* 90500 -> "01:30" (ruler) */
+    const t = Math.max(0, Math.round((typeof ms === "number" && isFinite(ms) ? ms : 0) / 1000));
+    return String(Math.floor(t / 60)).padStart(2, "0") + ":" + String(t % 60).padStart(2, "0");
+  };
+  const fmtMoney = (v) =>
+    (typeof v === "number" && isFinite(v)) ? String(Number(v.toFixed(4))) : "?";
+  const fmtClock = (ts) => {                     /* ISO ts -> local HH:MM:SS */
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) {
+      const p = (x) => String(x).padStart(2, "0");
+      return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+    }
+    const m = /\d{2}:\d{2}:\d{2}/.exec(String(ts || ""));
+    return m ? m[0] : String(ts || "");
+  };
+  const jobSeconds = (job) => {
+    if (!job.started) return "";
+    const a = Date.parse(job.started);
+    if (isNaN(a)) return "";
+    /* C7: show live elapsed for running/canceling, not only finished jobs. */
+    const end = job.finished ? Date.parse(job.finished) : Date.now();
+    if (isNaN(end) || end < a) return "";
+    return ((end - a) / 1000).toFixed(1) + "s";
+  };
+
+  /* ---------------------------------------------------------- toasts --- */
+  const toast = (msg, kind) => {
+    const box = $("toast");
+    if (!box.hasAttribute("aria-live")) {
+      /* announce state changes to assistive tech without stealing focus */
+      box.setAttribute("role", "status");
+      box.setAttribute("aria-live", "polite");
+    }
+    const cls = kind === "err" ? "toast-err" : (kind === "warn" ? "toast-warn" : "toast-ok");
+    const t = el("div", "toast " + cls, msg);
+    t.addEventListener("click", () => t.remove());
+    box.appendChild(t);
+    /* F20 discipline (server pages had it since #42; the SPA missed it):
+     * an error is often a long engine sentence — it stays until clicked. */
+    if (kind === "err") { t.textContent = msg + "  ✕"; }
+    else { setTimeout(() => t.remove(), 4000); }
+  };
+
+  /* ------------------------------------------------------------- API --- */
+  /* Uses /webclient.js requestJson when available; falls back to local
+   * implementation that still preserves the full error JSON body. */
+  const apiOptions = () => ({ token: TOKEN, projectId: PROJECT || "" });
+  const apiRaw = async (method, path, body) => {
+    try {
+      if (typeof requestJson === "function") {
+        const r = await requestJson(method, path, body,
+          Object.assign({}, apiOptions(), { returnStatus: true }));
+        if (r && typeof r === "object" && "data" in r && "status" in r) {
+          return { ok: true, status: r.status, data: r.data };
+        }
+        return { ok: true, status: 200, data: r };
+      }
+    } catch (err) {
+      if (err && err.name === "ManjuApiError") {
+        if (err.status === 409 && err.data && err.data.code === "project_switched") {
+          projectSwitchedOverlay(err.data.project);
+        }
+        return { ok: false, status: err.status, data: err.data || {} };
+      }
+      if (err && err.name === "ManjuProtocolError") {
+        return { ok: false, status: 502, data: { error: err.message || "invalid JSON" } };
+      }
+      throw err;
+    }
+    const opts = { method, headers: { "X-Manju-Token": TOKEN, "Accept": "application/json" } };
+    if (PROJECT) opts.headers["X-Manju-Project"] = PROJECT;
+    if (body !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(path, opts);
+    let data = {};
+    try {
+      const text = await res.text();
+      if (text && text.trim()) {
+        try { data = JSON.parse(text); }
+        catch (e) {
+          if (res.ok) {
+            return { ok: false, status: 502, data: { error: "服务器返回了无效 JSON" } };
+          }
+          data = {};
+        }
+      }
+    } catch (e) { data = {}; }
+    if (res.status === 409 && data && data.code === "project_switched") {
+      projectSwitchedOverlay(data.project);
+    }
+    return { ok: res.ok, status: res.status, data };
+  };
+  const api = async (method, path, body) => {
+    const r = await apiRaw(method, path, body);
+    if (!r.ok) {
+      if (typeof ManjuApiError === "function") {
+        throw new ManjuApiError(r.status, r.data || {}, path);
+      }
+      const err = new Error(r.data && r.data.error ? r.data.error : "HTTP " + r.status + " (" + path + ")");
+      err.status = r.status;
+      err.code = r.data && r.data.code;
+      err.data = r.data || {};
+      throw err;
+    }
+    return r.data;
+  };
+
+  /* POST wrapper: disables the button in flight, toasts success/error,
+   * refreshes state after. Errors never propagate — polling must survive. */
+  const post = async (btn, path, body, okMsg) => {
+    if (btn) btn.disabled = true;
+    /* item 1: first job-submitting click = the user gesture browsers require
+     * for a Notification permission prompt (asked once; 'default' only). */
+    ensureNotifyPermission();
+    let holdDisable = false;
+    try {
+      const data = await api("POST", path, body);
+      if (okMsg) toast(okMsg, "ok");
+      /* C6: if a job was accepted, keep the button off until refresh/gates
+       * re-evaluate — avoids double-submit while job is queued/running. */
+      const j = data && data.job;
+      if (j && (j.state === "queued" || j.state === "running" || j.state === "canceling")) {
+        holdDisable = true;
+      }
+      await refresh();
+      return data;
+    } catch (err) {
+      toast(errMsg(err), "err");
+      return null;
+    } finally {
+      if (btn && !holdDisable) btn.disabled = false;
+      updateGates();  /* keep Build/QC locked if a job is now active */
+    }
+  };
+
+  /* ---------------------------------------------------- polling/watch --- */
+  /* Idle refreshes ride the /api/watch long-poll (seeded from state.fp):
+   * changed -> fetch state, unchanged -> re-arm. While any job is active the
+   * old 1.5s state polling stays — job state transitions don't all bump the
+   * fingerprint. A watch failure degrades to the old 5s interval for ~60s,
+   * then watch is tried again. document.hidden and the editor dialog pause
+   * everything (the in-flight watch is ABORTED so a stale response can never
+   * clobber the page). */
+  let timer = null;
+  let anyActive = false;   /* any job queued/running: fast poll + build lock */
+  let pollFailed = false;  /* toast once per outage, not once per retry */
+  let editorOpen = false;  /* editor dialog pauses the loop entirely: a
+                              mid-edit rerender must never eat the shots grid */
+  let readonly = false;    /* state.readonly: every mutating control gated */
+  let lastFp = null;       /* state.fp — seeds the /api/watch long-poll */
+  let lastShots = [];      /* last state.shots (new-shot template needs the
+                              first scene id; keyboard mode + reorder too) */
+  let lastIndexRev = null; /* GUI-INDEX-P1-001: state.index_rev — the cut-order
+                              CAS token ↑/↓ echoes back as expected_rev, so a
+                              second tab's reorder can no longer silently
+                              revert this one's. Refreshed from every /api/state
+                              AND from the reorder's own 200/409 payload. */
+  let lastJobs = [];       /* last state.jobs (spend banner, switch cleanup) */
+  let lastStatePayload = null; /* current /api/state; lets the collapsed home
+                                  workbench paint only when the owner opens it */
+  let lastLocaleFinals = {}; /* C38: locale finals for QC button lang pick */
+  let lastLocales = [];      /* C45: declared locales (lines.yaml) for lang select */
+  let lastDoneCount = -1;  /* done-job count: a finished job invalidates the
+                              timeline fingerprint, git panel and proposals */
+  let watchCtl = null;            /* AbortController of the in-flight watch */
+  let watchFallbackUntil = 0;     /* after a watch failure: 5s polls until then */
+  const sigs = {};         /* per-section JSON signatures: skip no-op
+                              re-renders so <video> playback survives polls */
+
+  const section = (key, data, fn) => {
+    const sig = JSON.stringify(data === undefined ? null : data);
+    if (sigs[key] === sig) return;
+    sigs[key] = sig;
+    fn();
+  };
+
+  const stopWatch = () => {
+    if (watchCtl) {
+      watchCtl.abort();   /* its catch sees .aborted and stays silent */
+      watchCtl = null;
+    }
+  };
+  const pauseLive = () => {   /* hidden tab / open editor: full stop */
+    if (timer) clearTimeout(timer);
+    stopWatch();
+  };
+
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    if (document.hidden) {
+      /* UX wave 2 item 1: a hidden tab no longer goes fully dark while a job
+       * is ACTIVE — long builds finish while the owner is elsewhere, and a
+       * full stop meant coming back to stale state and no completion signal.
+       * Compromise poll: one slow 20s state check, jobs stay fresh enough to
+       * notify on completion; a hidden IDLE tab still pauses entirely. */
+      if (anyActive) timer = setTimeout(refresh, 20000);
+      return;
+    }
+    if (editorOpen) return;       /* paused; editorClosed() resumes */
+    if (anyActive) { timer = setTimeout(refresh, 1500); return; }
+    if (!lastFp || Date.now() < watchFallbackUntil) {
+      timer = setTimeout(refresh, 5000);  /* no fp yet / watch outage window */
+      return;
+    }
+    armWatch();
+  };
+
+  async function armWatch() {
+    if (watchCtl) return;   /* one in-flight watch only */
+    const ctl = new AbortController();
+    watchCtl = ctl;
+    let changed = false;
+    try {
+      const res = await fetch(
+        "/api/watch?fp=" + encodeURIComponent(lastFp) + "&timeout=25",
+        { headers: { "X-Manju-Token": TOKEN }, signal: ctl.signal });
+      const data = await res.json();
+      if (!res.ok) throw new Error("HTTP " + res.status + " (/api/watch)");
+      changed = !!(data && data.changed);
+    } catch (err) {
+      if (ctl.signal.aborted) return;  /* deliberate pause — stay quiet */
+      if (watchCtl === ctl) watchCtl = null;
+      watchFallbackUntil = Date.now() + 60000;  /* 5s interval for ~60s */
+      schedule();
+      return;
+    }
+    if (watchCtl === ctl) watchCtl = null;
+    if (ctl.signal.aborted || document.hidden || editorOpen) return;  /* paused meanwhile */
+    if (changed) refresh();  /* refresh() re-arms via schedule() */
+    else schedule();         /* timeout lapsed unchanged: just re-arm */
+  }
+
+  /* ============================================== job notifications ===
+   * UX wave 2 item 1: system notification + title badge + optional sound
+   * when a long job finishes while the owner is away. Permission is asked
+   * on FIRST USE (the first job-submitting click — a user gesture, which
+   * browsers require), never at page load. Sound is opt-in, persisted in
+   * localStorage (mj-notify-sound); the beep is WebAudio, no asset. */
+  const BASE_TITLE = document.title;
+  let unseenDone = 0;   /* completions while the tab was hidden */
+  const clearDoneBadge = () => {
+    unseenDone = 0;
+    if (document.title !== BASE_TITLE) document.title = BASE_TITLE;
+  };
+  const notifySoundOn = () => {
+    try { return localStorage.getItem("mj-notify-sound") === "1"; }
+    catch (err) { return false; }
+  };
+  function ensureNotifyPermission() {
+    /* called from job-submitting clicks (user gesture) — first use only */
+    try {
+      if (window.Notification && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    } catch (err) { /* unsupported — badge + sound still work */ }
+  }
+  function playDoneBeep() {
+    if (!notifySoundOn()) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.start(); osc.stop(ctx.currentTime + 0.4);
+    } catch (err) { /* audio blocked — never break the poll loop */ }
+  }
+  const NOTIFY_STATE_ZH = { done: "完成", failed: "失败", canceled: "已取消",
+                            interrupted: "已中断" };
+  function notifyJobTransitions(jobs, prevJobs) {
+    /* fire once per job transition active -> terminal; only when the owner
+     * is away (hidden tab) — a visible tab already shows the jobs panel. */
+    if (!prevJobs || !prevJobs.length) return;
+    const prev = {};
+    prevJobs.forEach((j) => { prev[j.id] = j.state; });
+    jobs.forEach((j) => {
+      const was = prev[j.id];
+      const terminal = NOTIFY_STATE_ZH[j.state];
+      if (!terminal || !was || was === j.state) return;
+      if (was !== "queued" && was !== "running" && was !== "canceling") return;
+      if (!document.hidden) return;
+      unseenDone += 1;
+      document.title = "(" + unseenDone + " 完成) " + BASE_TITLE;
+      playDoneBeep();
+      try {
+        if (window.Notification && Notification.permission === "granted") {
+          const kindZh = (JOB_KIND_LABELS || {})[j.kind] || j.kind || "任务";
+          const waiting = j.result && j.result.waiting_user === true;
+          const body = waiting ? "待确认花费 — 回到工作台确认"
+            : (j.state === "done" ? "已完成" : terminal
+               + (j.error ? ":" + String(j.error).slice(0, 120) : ""));
+          new Notification("Manju · " + kindZh + " " + terminal, { body: body });
+        }
+      } catch (err) { /* notification blocked — badge already updated */ }
+    });
+  }
+
+  let refreshGen = 0;  /* P1-8: drop out-of-order /api/state responses */
+
+  async function refresh() {
+    if (timer) clearTimeout(timer);
+    stopWatch();                  /* a direct refresh supersedes the watch */
+    if (editorOpen) return;       /* paused; editorClosed() resumes */
+    const gen = ++refreshGen;
+    try {
+      const s = await api("GET", "/api/state");
+      /* Post-await guards (P1-8): user may have opened an editor mid-fetch;
+       * a slower older response must never paint over a newer one. */
+      if (gen !== refreshGen) return;
+      if (editorOpen) { schedule(); return; }
+      pollFailed = false;
+      /* stale-tab guard: another tab switched the server's project. Never
+       * silently repaint as the new project — overlay and stop rendering. */
+      if (PROJECT && s && typeof s.project_token === "string" &&
+          s.project_token && s.project_token !== PROJECT) {
+        projectSwitchedOverlay(s.project && s.project.name);
+        return;
+      }
+      render(s);
+    } catch (err) {
+      if (gen !== refreshGen) return;
+      if (!pollFailed) {
+        toast("刷新失败 (refresh failed): " + errMsg(err), "err");
+      }
+      pollFailed = true;
+    }
+    schedule();
+  }
+
+  function renderWorkbench(s) {
+    if (!s || !homeWorkbenchOpen()) return;
+    const jobs = Array.isArray(s.jobs) ? s.jobs : [];
+    section("header",
+      [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
+       s.latest_final_note, s.build_lock, s.readonly, s.workspace,
+       s.execution_policy, s.finals, (s.shots || []).length],
+      () => renderHeader(s));
+    section("jobs", jobs, () => renderJobs(jobs));
+    section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
+    section("failures", [s.failures, s.shots], () => renderFailures(s.failures || []));
+    section("qc", s.qc, () => renderQC(s.qc));
+    section("events", s.events, () => renderEvents(s.events || []));
+    renderBatchBar();
+    renderSpend(jobs);
+    if (lastFp !== estSeenFp && !anyActive) {
+      estSeenFp = lastFp;
+      updateEstimate();
+    }
+    maybeTimeline(s);
+    maybeProposals(s);
+    maybeEvaluate(s);
+    if (gitOpen && (gitStale || !gitLoaded)) fetchGitPanel();
+    if (tasksOpen && !tasksLoaded) fetchTasks();
+    $("dropzone").classList.toggle("hidden", readonly);
+  }
+
+  function render(s) {
+    const jobs = Array.isArray(s.jobs) ? s.jobs : [];
+    notifyJobTransitions(jobs, lastJobs);  /* item 1: before lastJobs is replaced */
+    /* P1-11: include canceling — Job.active does; gates/poll must too. */
+    anyActive = jobs.some((j) =>
+      j.state === "queued" || j.state === "running" || j.state === "canceling");
+    readonly = s.readonly === true;
+    lastFp = (typeof s.fp === "string" && s.fp) ? s.fp : null;
+    lastShots = Array.isArray(s.shots) ? s.shots : [];
+    lastIndexRev = (typeof s.index_rev === "string") ? s.index_rev : null;
+    lastProjectName = (s.project && s.project.name) ? String(s.project.name) : "";
+    lastJobs = jobs;
+    /* C38: remember locale finals for the QC button (no global STATE). */
+    lastLocaleFinals = (s.locale_finals && typeof s.locale_finals === "object")
+      ? s.locale_finals : {};
+    /* C45: declared locales (lines.yaml) for build lang select. */
+    lastLocales = Array.isArray(s.locales) ? s.locales.slice() : [];
+    const doneCount = jobs.filter((j) => j.state === "done").length;
+    if (lastDoneCount >= 0 && doneCount > lastDoneCount) {
+      tlForce = true;    /* a build may have recompiled the timeline */
+      gitStale = true;   /* … and touched the working tree */
+      propStale = true;  /* … and an agent may have filed a proposal */
+      cockStale = true;  /* … and moved every number the cockpit shows */
+      if (homeWorkbenchOpen() && gitOpen) fetchGitPanel();
+      if (homeWorkbenchOpen() && tasksOpen) fetchTasks();
+    }
+    lastDoneCount = doneCount;
+    lastStatePayload = s;
+    /* The compact cockpit always stays current.  The full engineering
+     * workbench is deliberately lazy so 100-shot projects do not construct
+     * every card, timeline and diagnostic panel before the owner asks. */
+    renderWorkbench(s);
+    updateReviewChip(); /* 未阅 N follows the fresh shots + localStorage mark */
+    maybeCockpit(s);    /* async, fingerprint-gated: the round-V cockpit */
+    updateGates();
+    /* #50a: /?compare=S001 deep-links from /review straight into the A/B
+     * takes overlay — consumed once, after the first shots render (the
+     * overlay takes the shot OBJECT). <2 takes = a silent no-op by design. */
+    if (pendingCompare && lastShots.length) {
+      const target = lastShots.find((sh) => sh.id === pendingCompare);
+      pendingCompare = "";
+      /* #50c: strip the param so F5 / the project-switch 刷新 button can
+       * never replay the overlay (worst case: onto a same-named shot in a
+       * DIFFERENT project after a switch). */
+      try { history.replaceState(null, "", location.pathname); } catch (err) { /* keep */ }
+      if (target) {
+        try { openCompare(target); } catch (err) { /* stays on the workbench */ }
+        if (!cmpOverlay) toast("该镜头可对比的视频 take 不足两个", "warn");
+      }
+    }
+  }
+
+  /* ========================================================= cockpit ===
+   * Round V (goal item 4): the one-glance home. Its numbers all come from
+   * /api/cockpit (engine reads only — build.status/stale/exportstatus/spend/
+   * director), fetched at most once per fingerprint change (mirroring the
+   * proposals panel), so it rides the SAME poll with no new machinery. Every
+   * node is built via createElement/textContent (CSP + XSS safe); the only
+   * dynamic geometry is limited to timeline widths set through the CSSOM. */
+  let cockFp = null;      /* fingerprint the current cockpit was fetched at */
+  let cockStale = false;  /* set by a done job; cleared by the next fetch */
+  let cockBusy = false;
+  let cockData = null;
+  let cockErr = null;
+
+  function maybeCockpit(s) {
+    if (typeof s.fp === "string" && s.fp && (s.fp !== cockFp || cockStale)) {
+      fetchCockpit(s.fp);
+    }
+  }
+
+  async function fetchCockpit(fp) {
+    if (cockBusy) return;
+    cockBusy = true;
+    if (fp !== undefined) cockFp = fp;   /* recorded up front: an error must
+                                            not hammer /api/cockpit */
+    cockStale = false;
+    try {
+      cockData = await api("GET", "/api/cockpit");
+      cockErr = null;
+    } catch (err) {
+      cockErr = errMsg(err);   /* section-local degrade; the loop is untouched */
+    } finally {
+      cockBusy = false;
+      renderCockpit();
+    }
+  }
+
+  /* ---------------------------------------------------- evaluate (item 8)
+   * Round AA goal item 8: the honest usage/rework lens (core/evaluate.py),
+   * surfaced in the cockpit as its own block — fetched separately from
+   * /api/evaluate (read-only, no lock), same fingerprint-gated shape as the
+   * cockpit fetch above so it rides the SAME poll with no new machinery.
+   * Independent busy/err/data state: a broken /api/evaluate must never take
+   * the rest of the cockpit down with it. */
+  let evalFp = null;
+  let evalBusy = false;
+  let evalData = null;
+  let evalErr = null;
+
+  function maybeEvaluate(s) {
+    /* Evaluation is diagnostic, not the owner's next action. Beginner mode
+     * hides its pro-only details, so avoid doing a read that cannot paint. */
+    if (!document.body.classList.contains("mj-mode-pro")) return;
+    if (typeof s.fp === "string" && s.fp && s.fp !== evalFp) {
+      fetchEvaluate(s.fp);
+    }
+  }
+
+  async function fetchEvaluate(fp) {
+    if (evalBusy) return;
+    evalBusy = true;
+    if (fp !== undefined) evalFp = fp;
+    try {
+      evalData = await api("GET", "/api/evaluate");
+      evalErr = null;
+    } catch (err) {
+      evalErr = errMsg(err);
+    } finally {
+      evalBusy = false;
+      renderCockpit();  /* re-render the grid with the freshly loaded block */
+    }
+  }
+
+  const CK_STATE_ZH = {
+    missing: "缺失", needs_selection: "待挑选", broken: "损坏",
+    stale: "待更新", manual: "人工", fresh: "就绪",
+  };
+  const CK_STATE_BADGE = {
+    missing: "st-missing", needs_selection: "st-needs", broken: "st-broken",
+    stale: "st-stale", manual: "st-manual", fresh: "st-fresh",
+  };
+  const CK_EXC = { missing: 1, needs_selection: 1, broken: 1, stale: 1 };
+  const CK_FRESH_BADGE = {
+    up_to_date: "st-fresh", stale: "st-stale", missing: "st-missing",
+    problematic: "st-broken", needs_manual: "st-manual", verified: "st-fresh",
+  };
+  const blkErr = (b) => (b && typeof b === "object" && b.error) ? String(b.error) : null;
+
+  const homeWorkbenchOpen = () => {
+    const details = $("workbench-details");
+    return !!(details && details.open);
+  };
+
+  function initHomeWorkbench() {
+    const details = $("workbench-details");
+    if (!details) return;
+    const remembered = loadUI().workbenchOpen;
+    if (typeof remembered === "boolean") {
+      details.open = remembered;
+    } else {
+      /* The home is a cockpit in every view mode.  Professional detail stays
+       * one click away and the user's explicit choice is remembered. */
+      details.open = false;
+    }
+    details.addEventListener("toggle", () => {
+      saveUI({ workbenchOpen: !!details.open });
+      if (details.open) {
+        /* Paint the heavy shot/timeline/ledger surface only after an explicit
+         * disclosure.  The compact cockpit itself remains current above. */
+        renderWorkbench(lastStatePayload);
+        renderCockpit();
+      }
+    });
+  }
+
+  function openWorkbenchDetails(targetId) {
+    const details = $("workbench-details");
+    if (!details) return;
+    details.open = true;
+    saveUI({ workbenchOpen: true });
+    renderWorkbench(lastStatePayload);
+    renderCockpit();
+    if (!targetId) return;
+    requestAnimationFrame(() => {
+      const target = $(targetId);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  const CK_JOURNEY_STATE = {
+    attention: "需要处理", current: "进行中", done: "已完成",
+    todo: "稍后", unavailable: "暂不可用",
+  };
+
+  function renderJourneyRail(journeys) {
+    const nav = el("nav", "ck-journeys");
+    nav.setAttribute("aria-label", "制作进度");
+    ["authoring", "shots", "finishing"].forEach((key) => {
+      const row = journeys && journeys[key];
+      if (!row || blkErr(row)) return;
+      const a = document.createElement("a");
+      const state = String(row.state || "todo");
+      a.className = "ck-journey state-" + state;
+      a.href = row.href || "/";
+      a.title = row.detail || row.next_label || "";
+      const top = el("span", "ck-journey-top");
+      top.appendChild(el("span", "ck-journey-name", row.label || key));
+      const dot = el("span", "ck-journey-state");
+      dot.title = CK_JOURNEY_STATE[state] || state;
+      dot.setAttribute("aria-label", CK_JOURNEY_STATE[state] || state);
+      top.appendChild(dot);
+      a.appendChild(top);
+      a.appendChild(el("strong", "ck-journey-summary", row.summary || ""));
+      if (row.next_label) {
+        a.appendChild(el("span", "ck-journey-next", "下一步：" + row.next_label));
+      }
+      nav.appendChild(a);
+    });
+    return nav;
+  }
+
+  function riskHref(row) {
+    const shots = Array.isArray(row.shots) ? row.shots : [];
+    const sid = shots.length ? String(shots[0]) : "";
+    if (row.kind === "broken") return "/storyboard" + (sid ? "?shot=" + encodeURIComponent(sid) : "");
+    if (row.kind === "qc") return "/review";
+    if (row.kind === "stale") return "/lab" + (sid ? "?shot=" + encodeURIComponent(sid) : "");
+    if (row.kind === "final") return "/exports";
+    return "";
+  }
+
+  function attentionItems(c, focus, riskItems, unreadTakes, failedJobs) {
+    const out = [];
+    const seen = new Set();
+    const push = (item) => {
+      if (!item || !item.label) return;
+      const key = item.key || item.href || item.label;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(item);
+    };
+
+    if (failedJobs > 0) {
+      push({ key: "failed-jobs", label: failedJobs + " 个任务失败",
+        meta: "任务", level: "danger", target: "jobs" });
+    }
+    if (unreadTakes > 0) {
+      push({ key: "unread-takes", label: unreadTakes + " 条新候选尚未审看",
+        meta: "审片", level: "warn", href: "/review" });
+    }
+
+    const author = c.journeys && c.journeys.authoring;
+    const authorAttention = author && author.attention || {};
+    if (focus.source !== "authoring" && Number(authorAttention.truth_pending || 0) > 0) {
+      const pending = Number(authorAttention.truth_pending);
+      const stale = Number(authorAttention.truth_stale || 0);
+      push({ key: "authoring-proposals",
+        label: pending + " 份创作提案待决定" + (stale ? " · " + stale + " 份已过期" : ""),
+        meta: "创作", level: stale ? "warn" : "", href: "/director" });
+    }
+    if (focus.source !== "authoring" && Number(authorAttention.other_pending || 0) > 0) {
+      push({ key: "other-proposals",
+        label: Number(authorAttention.other_pending) + " 份操作提案待决定",
+        meta: "提案", href: "/director" });
+    }
+
+    const ap = c.approvals;
+    const pending = ap && !blkErr(ap) ? Number(ap.pending || 0) : 0;
+    if (pending > 0 && !(focus.source === "shots" && focus.kind === "approve")) {
+      push({ key: "approvals", label: pending + " 个镜头等待人工确认",
+        meta: "审片", href: "/review" });
+    }
+
+    riskItems.forEach((row) => {
+      if (!row || row.level === "info" || row.kind === focus.kind) return;
+      const href = riskHref(row);
+      push({ key: "risk-" + (row.kind || row.text), label: row.text || row.kind,
+        meta: row.level === "error" ? "阻塞" : "注意",
+        level: row.level === "error" ? "danger" : "warn", href });
+    });
+
+    const sg = c.suggestions;
+    const suggestions = (sg && !blkErr(sg) && Array.isArray(sg.items)) ? sg.items : [];
+    suggestions.forEach((row) => {
+      if (out.length >= 5 || !row || row.text === focus.label) return;
+      const sid = row.shot ? String(row.shot) : "";
+      push({ key: "suggestion-" + (row.kind || "") + "-" + sid,
+        label: row.text || row.kind || "查看建议", meta: "建议",
+        href: sid ? "/lab?shot=" + encodeURIComponent(sid) : "#workbench-details",
+        target: sid ? "" : "cockpit-details-host" });
+    });
+    return out.slice(0, 5);
+  }
+
+  function taskRow(item) {
+    let row;
+    if (item.href) {
+      row = document.createElement("a");
+      row.href = item.href;
+    } else {
+      row = document.createElement("button");
+      row.type = "button";
+      row.addEventListener("click", () => openWorkbenchDetails(item.target || "tasks"));
+    }
+    row.className = "ck-task" + (item.level ? " " + item.level : "");
+    row.appendChild(el("span", "ck-task-dot", "●"));
+    row.appendChild(el("span", "ck-task-label", item.label));
+    if (item.meta) row.appendChild(el("span", "ck-task-meta", item.meta));
+    return row;
+  }
+
+  function renderPriorityGrid(c, focus, riskItems, unreadTakes, failedJobs, state) {
+    const grid = el("div", "ck-priority-grid");
+    const items = attentionItems(c, focus, riskItems, unreadTakes, failedJobs);
+    if (items.length) {
+      const card = el("section", "ck-priority-card");
+      const h = el("h2", null, "待我处理");
+      h.appendChild(el("span", "ck-priority-count", String(items.length)));
+      card.appendChild(h);
+      const list = el("div", "ck-task-list");
+      items.forEach((item) => list.appendChild(taskRow(item)));
+      card.appendChild(list);
+      grid.appendChild(card);
+    }
+
+    const q = c.queue;
+    const cloud = (q && !blkErr(q) && typeof q.pending_cloud === "number") ? q.pending_cloud : 0;
+    const activeJobs = (lastJobs || []).filter((j) =>
+      j.state === "queued" || j.state === "running" || j.state === "canceling");
+    const buildActive = riskItems.some((row) => row && row.kind === "lock");
+    const runningCount = activeJobs.length + cloud || (buildActive ? 1 : 0);
+    if (runningCount) {
+      const card = el("section", "ck-priority-card");
+      const h = el("h2", null, "正在运行");
+      /* A build lock is usually evidence for one of the GUI jobs above, not
+       * an additional task.  Show it as context without double-counting it. */
+      h.appendChild(el("span", "ck-priority-count", String(runningCount)));
+      card.appendChild(h);
+      if (activeJobs.length) card.appendChild(el("p", "ck-running-line", activeJobs.length + " 个本地任务正在处理"));
+      if (cloud) card.appendChild(el("p", "ck-running-line", cloud + " 个远程任务等待结果"));
+      if (buildActive) card.appendChild(el("p", "ck-running-line", "当前构建仍在进行"));
+      const open = el("button", "btn ghost mini", "查看任务");
+      open.type = "button";
+      open.addEventListener("click", () => openWorkbenchDetails("jobs"));
+      card.appendChild(open);
+      grid.appendChild(card);
+    }
+
+    const final = state && !blkErr(state) ? state.final : null;
+    const succeeded = (lastJobs || []).find((j) => j.state === "done" || j.state === "succeeded");
+    if (final || succeeded) {
+      const card = el("section", "ck-priority-card");
+      card.appendChild(el("h2", null, "最近成果"));
+      if (final) {
+        const a = document.createElement("a");
+        a.href = "/exports";
+        a.textContent = "当前成片" + (final.version ? " " + final.version : "")
+          + (final.freshness_zh ? " · " + final.freshness_zh : "");
+        const p = el("p", "ck-result-line");
+        p.appendChild(a);
+        card.appendChild(p);
+      }
+      if (succeeded) {
+        const label = succeeded.kind_zh || succeeded.kind || "任务";
+        card.appendChild(el("p", "ck-result-line muted", label + " 已完成"));
+      }
+      grid.appendChild(card);
+    }
+    return grid;
+  }
+
+  function renderStateStrip(state, unreadTakes) {
+    if (blkErr(state) || !(state.shots_total > 0)) return null;
+    const strip = el("div", "ck-strip");
+    const counts = state.shots_by_state || {};
+    Object.keys(counts).forEach((k) => {
+      const chip = el("button", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+      chip.type = "button";
+      chip.title = "在镜头卡中筛选：" + (CK_STATE_ZH[k] || k);
+      chip.appendChild(el("b", null, String(counts[k])));
+      chip.appendChild(document.createTextNode(" " + (CK_STATE_ZH[k] || k)));
+      chip.addEventListener("click", () => {
+        stateFilter = k;
+        saveUI({ filter: stateFilter });
+        renderShots(lastShots);
+        openWorkbenchDetails("shots");
+      });
+      strip.appendChild(chip);
+    });
+    if (unreadTakes > 0) {
+      const a = document.createElement("a");
+      a.className = "ck-scount exc";
+      a.href = "/review";
+      a.title = "打开审片队列处理新候选";
+      a.appendChild(el("b", null, String(unreadTakes)));
+      a.appendChild(document.createTextNode(" 新候选未审"));
+      strip.appendChild(a);
+    }
+    const fin = state.final;
+    if (fin) {
+      const f = el("span", "ck-final", "成片" + (fin.version ? " " + fin.version : ""));
+      if (fin.freshness) {
+        f.appendChild(el("span", "badge " + (CK_FRESH_BADGE[fin.freshness] || "st-missing"),
+          fin.freshness_zh || fin.freshness));
+      }
+      strip.appendChild(f);
+    }
+    return strip;
+  }
+
+  function renderCockpitDetails(c, fresh, state, unreadTakes) {
+    const host = $("cockpit-details-host");
+    if (!host) return;
+    const detailsStatus = $("home-details-status");
+    if (detailsStatus) {
+      detailsStatus.textContent = (!blkErr(state) && state.sentence)
+        ? state.sentence : "镜头、构建、任务、事件与版本";
+    }
+    if (!homeWorkbenchOpen()) { clear(host); return; }
+    clear(host);
+    const strip = renderStateStrip(state, unreadTakes);
+    if (strip) host.appendChild(strip);
+    host.appendChild(renderCockGrid(c, fresh));
+  }
+
+  function renderCockpit() {
+    const root = $("cockpit");
+    if (!root) return;
+    clear(root);
+    const c = cockData;
+    if (cockErr && !c) {
+      root.appendChild(el("p", "ck-err", "首页概览暂不可用：" + cockErr));
+      return;
+    }
+    if (!c) {
+      const sk = el("div", "ck-skel");
+      sk.appendChild(el("div", "ck-skel-line wide"));
+      for (let i = 0; i < 3; i++) sk.appendChild(el("div", "ck-skel-line"));
+      sk.appendChild(el("p", "muted", "正在整理项目状态…"));
+      root.appendChild(sk);
+      return;
+    }
+
+    document.querySelectorAll("#header .spend, #header .next-step")
+      .forEach((node) => node.remove());
+
+    const state = c.state || {};
+    const focus = c.focus && !blkErr(c.focus) ? c.focus : (c.next_action || {});
+    const fresh = (state.shots_total === 0)
+      || (c.onboarding && c.onboarding.should_show);
+    root.classList.toggle("fresh", !!fresh);
+
+    let unreadTakes = 0;
+    try {
+      const snap = loadReviewSnapshot();
+      (lastShots || []).forEach((s) => {
+        (Array.isArray(s.takes) ? s.takes : []).forEach((t) => {
+          if (isNewTake(snap, s.id, String(t.name))) unreadTakes++;
+        });
+      });
+    } catch (err) { unreadTakes = 0; }
+
+    const riskBlock = c.risks;
+    const riskItems = (riskBlock && !blkErr(riskBlock) && Array.isArray(riskBlock.items))
+      ? riskBlock.items.slice() : [];
+    const failedJobs = (lastJobs || []).filter((j) =>
+      j.state === "failed" || j.state === "interrupted").length;
+
+    const card = el("section", "ck-focus-card ck-hero");
+    const copy = el("div", "ck-focus-copy");
+    copy.appendChild(el("div", "ck-focus-eyebrow",
+      (focus.phase || state.phase_zh || "项目") + " · 现在最值得做"));
+    copy.appendChild(el("div", "ck-focus-label",
+      focus.label || focus.text || "查看项目状态"));
+    if (focus.detail || focus.human_label) {
+      copy.appendChild(el("p", "ck-focus-detail", focus.detail || focus.human_label));
+    }
+    card.appendChild(copy);
+    const actions = renderHeroCTA(focus);
+    try {
+      const lastRaw = localStorage.getItem("manju-last-" + PROJECT);
+      const last = lastRaw ? JSON.parse(lastRaw) : null;
+      if (PROJECT && last && last.page && last.page !== "/") {
+        let label = "继续上次工作：" + (last.title || last.page);
+        if (last.page === "/review") {
+          const pos = localStorage.getItem("manju-rv-pos-" + PROJECT);
+          if (pos) label += " · " + pos;
+        }
+        const cont = el("div", "ck-continue");
+        const a = document.createElement("a");
+        a.className = "ck-continue-btn";
+        a.href = last.page;
+        a.textContent = label;
+        cont.appendChild(a);
+        actions.appendChild(cont);
+      }
+    } catch (err) { /* storage off — no quiet continuation link */ }
+    card.appendChild(actions);
+    root.appendChild(card);
+
+    if (blkErr(riskBlock)) {
+      root.appendChild(el("p", "ck-err", "风险状态暂不可用：" + blkErr(riskBlock)));
+    }
+    const visibleRisks = riskItems.filter((row) => row && row.level !== "info");
+    if (visibleRisks.length) {
+      const banner = el("div", "ck-risks");
+      visibleRisks.slice(0, 4).forEach((r) => {
+        const row = el("div", "ck-risk lvl-" + (r.level || "warn"));
+        row.appendChild(el("span", "ck-risk-dot", "●"));
+        row.appendChild(el("span", "ck-risk-text", r.text || r.kind || "需要处理"));
+        banner.appendChild(row);
+      });
+      root.appendChild(banner);
+    }
+
+    root.appendChild(renderJourneyRail(c.journeys || {}));
+    const priority = renderPriorityGrid(c, focus, riskItems, unreadTakes, failedJobs, state);
+    if (priority.childElementCount) root.appendChild(priority);
+
+    renderCockpitDetails(c, fresh, state, unreadTakes);
+  }
+
+  function renderHeroCTA(na) {
+    const cta = el("div", "ck-focus-actions");
+    if (blkErr(na)) {
+      cta.appendChild(el("span", "muted", "当前建议暂不可用"));
+      return cta;
+    }
+    if (na && na.href) {
+      const a = document.createElement("a");
+      a.className = "btn primary ck-primary";
+      a.href = na.href;
+      a.textContent = na.label || na.text || "继续";
+      if (String(na.href).startsWith("#")) {
+        a.addEventListener("click", (event) => {
+          event.preventDefault();
+          openWorkbenchDetails(String(na.href).slice(1) || "cockpit-details-host");
+        });
+      }
+      cta.appendChild(a);
+      return cta;
+    }
+    if (!na || !na.verb || na.verb === "done" || na.verb === "none") {
+      cta.appendChild(el("span", "muted", na && (na.label || na.text)
+        ? (na.label || na.text) : "当前没有必须处理的事项"));
+      return cta;
+    }
+    const label = na.label || na.text || "继续";
+    const btn = el("button", "btn primary ck-primary", label);
+    btn.type = "button";
+    const mutating = na.verb === "build" || na.verb === "redo"
+      || na.verb === "repair" || na.verb === "package";
+    if (readonly && mutating) {
+      btn.disabled = true;
+      btn.title = "只读模式 (readonly)";
+    } else {
+      btn.addEventListener("click", () => heroAction(na));
+    }
+    cta.appendChild(btn);
+    if (na.verb === "build" && na.action && na.action.regen_stale) {
+      cta.appendChild(el("span", "muted", "含重做过期 (incl. regen stale)"));
+    }
+    return cta;
+  }
+
+  function heroAction(na) {
+    try {
+      if (na.verb === "story") { openOnboarding(); return; }
+      if (na.verb === "build") { heroBuild(na.action || {}); return; }
+      if (na.shot) { openWorkbenchDetails("shots"); focusShot(na.shot); return; }
+      openWorkbenchDetails("buildpanel");
+    } catch (err) { toast(errMsg(err), "err"); }
+  }
+
+  function heroBuild(action) {
+    const params = {
+      target: action.target || "final",
+      gen: action.gen || "missing",
+      regen_stale: !!action.regen_stale,
+      force: !!action.force,
+    };
+    /* C55: locale next-step hero carries action.lang into plan + build. */
+    if (action.lang) params.lang = action.lang;
+    showPlanModal("build", params, {
+      title: params.lang
+        ? ("构建前计划 · locale " + params.lang)
+        : "构建前计划 (plan before build)",
+      onConfirm: async () => {
+        const confirmed = Object.assign({}, params, { dry_run: false, assume_yes: true });
+        const msg = params.lang
+          ? ("构建任务已入队 (locale " + params.lang + ")")
+          : "构建任务已入队 (build queued)";
+        const data = await post(null, "/api/build", confirmed, msg);
+        const gate = spendGateOf(data);   /* SYNCHRONOUS waiting_user, if any */
+        if (gate) {
+          spendSig = "sync:" + Date.now();
+          showSpendBanner(spendText(gate), confirmed, spendSig);
+        }
+      },
+    });
+  }
+
+  function renderCockGrid(c, fresh) {
+    const grid = el("div", "ck-grid");
+
+    /* onboarding leads a fresh project (NN/g: one clear next step) */
+    const ob = c.onboarding;
+    if (fresh && ob && !blkErr(ob) && Array.isArray(ob.steps)) {
+      const b = el("div", "ck-block wide");
+      b.appendChild(el("h3", null, "新手引导 (getting started) · "
+        + (ob.done_count || 0) + "/" + (ob.total || ob.steps.length)));
+      ob.steps.forEach((st) => {
+        const line = el("div", "ck-line");
+        line.appendChild(el("span", null, (st.done ? "✓ " : "○ ")));
+        line.appendChild(el("span", st.done ? "muted" : null, st.title || st.key));
+        b.appendChild(line);
+      });
+      const open = el("button", "btn ghost small", "打开引导 (open guide)");
+      open.type = "button";
+      open.addEventListener("click", () => openOnboarding());
+      b.appendChild(open);
+      grid.appendChild(b);
+    }
+
+    /* Until the first take exists, the remaining cards are predictable empty
+     * states (all deliverables missing, queue idle, no approvals, zero usage).
+     * They do not help the next decision and used to push the actual build
+     * controls out of the first viewport. The hero + progress checklist are
+     * the complete empty-ish state; support telemetry appears once work has
+     * produced something to inspect. */
+    if (fresh) return grid;
+
+    /* deliverables strip (block 4) */
+    grid.appendChild(ckBlock("交付物 (deliverables)", (b) => {
+      const dv = c.deliverables;
+      if (blkErr(dv)) { b.appendChild(el("p", "ck-err", blkErr(dv))); return; }
+      const rows = (dv && Array.isArray(dv.rows)) ? dv.rows : [];
+      if (!rows.length) { b.appendChild(el("p", "ck-empty", "暂无 (none)")); return; }
+      const chips = el("div", "ck-chips");
+      rows.forEach((r) => {
+        const chip = el("span", "ck-dv");
+        chip.appendChild(el("span", null, (r.label || r.kind) + (r.version ? " " + r.version : "")));
+        chip.appendChild(el("span", "badge " + (CK_FRESH_BADGE[r.freshness] || "st-missing"),
+          r.freshness_zh || r.freshness));
+        chip.title = r.basis || "";
+        chips.appendChild(chip);
+      });
+      b.appendChild(chips);
+    }, "span2"));
+
+    /* spend (block 5) */
+    grid.appendChild(ckBlock("花费 (spend)", (b) => {
+      const sp = c.spend;
+      if (blkErr(sp)) { b.appendChild(el("p", "ck-err", blkErr(sp))); return; }
+      const total = Number(sp && sp.total || 0);
+      const cur = (sp && sp.currency) || "";
+      const limit = sp && sp.budget_limit;
+      b.appendChild(el("div", "ck-line",
+        "已花 " + fmtMoney(total) + " " + cur
+        + (limit ? " · 每次构建上限 " + fmtMoney(limit) + " " + cur
+                 : " · 每次构建上限 ∞")));
+      if (sp && typeof sp.delta === "number") {
+        b.appendChild(el("div", "ck-line muted",
+          "估算差 (est. delta) " + (sp.delta >= 0 ? "+" : "") + fmtMoney(sp.delta)));
+      }
+    }));
+
+    /* queue (block 6) — cloud pending from the ledger + live GUI jobs */
+    grid.appendChild(ckBlock("队列 (queue)", (b) => {
+      const q = c.queue;
+      const cloud = (q && !blkErr(q) && typeof q.pending_cloud === "number") ? q.pending_cloud : 0;
+      const active = (lastJobs || []).filter((j) => j.state === "queued" || j.state === "running").length;
+      if (!cloud && !active) { b.appendChild(el("p", "ck-empty", "空闲 (idle)")); return; }
+      if (active) b.appendChild(el("div", "ck-line", "本地任务 (GUI jobs) · " + active + " 进行中"));
+      if (cloud) b.appendChild(el("div", "ck-line", "云端待轮询 (cloud pending) · " + cloud));
+    }));
+
+    /* approvals (block 8) — storyboard 审批 pending */
+    grid.appendChild(ckBlock("审批 (approvals)", (b) => {
+      const ap = c.approvals;
+      if (blkErr(ap)) { b.appendChild(el("p", "ck-err", blkErr(ap))); return; }
+      const pending = ap ? (ap.pending || 0) : 0;
+      if (!pending) { b.appendChild(el("p", "ck-empty", "无待审 (none pending)")); return; }
+      const line = el("div", "ck-line");
+      line.appendChild(el("span", null, pending + " 个镜头待审 (pending)"));
+      b.appendChild(line);
+      const a = el("a", "muted", "去审片 (review) →");
+      a.href = "/review";
+      b.appendChild(a);
+    }));
+
+    /* recent activity (block 7) */
+    grid.appendChild(ckBlock("最近动态 (activity)", (b) => {
+      const act = c.activity;
+      if (blkErr(act)) { b.appendChild(el("p", "ck-err", blkErr(act))); return; }
+      const events = (act && Array.isArray(act.events)) ? act.events : [];
+      if (!events.length) { b.appendChild(el("p", "ck-empty", "暂无动态 (no events)")); return; }
+      events.slice(0, 6).forEach((e) => {
+        const row = el("div", "ck-ev");
+        row.appendChild(el("span", "badge ac-" + (e.actor || "engine"), e.actor || "?"));
+        row.appendChild(el("span", "eaction", e.action || ""));
+        if (e.summary) {
+          const d = el("span", "edetail", e.summary);
+          /* The cell ellipsises, so the full text has to stay reachable. */
+          d.title = e.summary;
+          row.appendChild(d);
+        }
+        if (e.ts) row.appendChild(el("span", "etime muted", fmtClock(e.ts)));
+        b.appendChild(row);
+      });
+    }, "span2"));
+
+    /* suggestions (block 8, the rest of suggest_next) */
+    const sg = c.suggestions;
+    const sgItems = (sg && !blkErr(sg) && Array.isArray(sg.items)) ? sg.items : [];
+    if (sgItems.length) {
+      grid.appendChild(ckBlock("其它建议 (suggestions)", (b) => {
+        sgItems.forEach((s) => {
+          const row = el("div", "ck-sugg");
+          row.appendChild(el("span", "ck-risk-dot muted", "•"));
+          const txt = el("span", null, s.text || s.kind || "");
+          if (s.shot) {
+            txt.classList.add("tnote", "seekable");
+            txt.addEventListener("click", () => { try { focusShot(s.shot); } catch (e) {} });
+          }
+          row.appendChild(txt);
+          b.appendChild(row);
+        });
+      }));
+    }
+
+    /* evaluate (round AA item 8) — its own wide block: skill usage / rework
+     * hotspots / QC tallies, then the mandatory honesty section VERBATIM. */
+    grid.appendChild(renderEvaluateBlock());
+
+    return grid;
+  }
+
+  /* ------------------------------------------------- evaluate (item 8) --- */
+  function renderEvaluateBlock() {
+    const b = el("details", "ck-block wide mj-pro-only ck-eval");
+    b.appendChild(el("summary", "ck-eval-title", "评估与质量观察 (evaluate)"));
+    if (evalErr && !evalData) {
+      b.appendChild(el("p", "ck-err", "评估不可用 (evaluate unavailable): " + evalErr));
+      return b;
+    }
+    if (!evalData) {
+      b.appendChild(el("p", "loading", "加载中 (loading)…"));
+      return b;
+    }
+    const ev = evalData;
+
+    /* 技能使用 skills: top used + never-used */
+    const skSub = el("div", "ck-eval-sub");
+    const skills = ev.skills || {};
+    skSub.appendChild(el("h4", null, "技能使用 (skills) · 已用 "
+      + (skills.used_total || 0) + "/" + (skills.installed_total || 0)));
+    const topUsed = (skills.usage || []).filter((r) => r.count > 0).slice(0, 5);
+    if (topUsed.length) {
+      const chips = el("div", "ck-chips");
+      topUsed.forEach((r) => {
+        const chip = el("span", "ck-dv");
+        chip.appendChild(el("span", null, r.id + " ×" + r.count));
+        if (r.low_n) chip.appendChild(el("span", "badge lvl-warn", "样本少"));
+        chips.appendChild(chip);
+      });
+      skSub.appendChild(chips);
+    } else {
+      skSub.appendChild(el("p", "ck-empty", "暂无技能调用记录 (no skill usage yet)"));
+    }
+    /* The never-used list is a catalogue, not news: 18 skill ids spelled out
+     * in full took over the bottom of the cockpit every single visit, pushing
+     * the things that DO change off the screen. Collapsed behind its own count
+     * — one line when you don't care, the whole list when you do. */
+    const neverUsed = skills.never_used || [];
+    if (neverUsed.length) {
+      const det = el("details", "ck-line muted");
+      det.appendChild(el("summary", null,
+        "从未使用的技能 " + neverUsed.length + " 个 (never used — 展开查看)"));
+      det.appendChild(el("div", null, neverUsed.join("、")));
+      skSub.appendChild(det);
+    }
+    b.appendChild(skSub);
+
+    /* 返工热点 rework hotspots: top redo + repair shots */
+    const rhSub = el("div", "ck-eval-sub");
+    rhSub.appendChild(el("h4", null, "返工热点 (rework hotspots)"));
+    const wf = ev.workflow || {};
+    const redo = wf.redo || {};
+    const repair = wf.repair || {};
+    const redoTop = (redo.hotspots || []).slice(0, 5);
+    if (redoTop.length) {
+      rhSub.appendChild(el("div", "ck-line", "重做 (redo) 共 " + (redo.total || 0) + " 次 · "
+        + redoTop.map((r) => r.shot + " ×" + r.count).join("、")));
+    } else {
+      rhSub.appendChild(el("p", "ck-empty", "暂无重做记录 (no redo yet)"));
+    }
+    const repairTop = (repair.hotspots || []).slice(0, 5);
+    if (repairTop.length) {
+      rhSub.appendChild(el("div", "ck-line", "修复 (repair) 共 " + (repair.total || 0) + " 次 · "
+        + repairTop.map((r) => r.shot + " ×" + r.count).join("、")));
+    }
+    b.appendChild(rhSub);
+
+    /* QC verdict tallies */
+    const qcSub = el("div", "ck-eval-sub");
+    const qc = ev.qc || {};
+    qcSub.appendChild(el("h4", null, "QC 判读 (verdicts) · 共 " + (qc.verdicts_total || 0)));
+    if (qc.verdicts_total) {
+      const chips = el("div", "ck-chips");
+      const by = qc.by_level || {};
+      const lvlBadge = { blocker: "lvl-error", issue: "lvl-warn", fyi: "lvl-info" };
+      ["blocker", "issue", "fyi"].forEach((lv) => {
+        const n = by[lv] || 0;
+        if (!n) return;
+        chips.appendChild(el("span", "badge " + lvlBadge[lv], lv + " " + n));
+      });
+      qcSub.appendChild(chips);
+    } else {
+      qcSub.appendChild(el("p", "ck-empty", "暂无 QC 判读记录 (no QC verdicts yet)"));
+    }
+    b.appendChild(qcSub);
+
+    /* honesty — VERBATIM, visible, styled as an info callout (not a warning):
+     * this section IS the point of the feature (goal item 8), never fine print. */
+    const hn = ev.honesty || {};
+    const callout = el("div", "ck-honesty");
+    callout.appendChild(el("h4", null, "诚实说明 (honesty)"));
+    if (hn.summary) callout.appendChild(el("p", "ck-honesty-summary", hn.summary));
+    const claims = Array.isArray(hn.cannot_claim) ? hn.cannot_claim : [];
+    if (claims.length) {
+      const ul = document.createElement("ul");
+      claims.forEach((c) => {
+        const li = document.createElement("li");
+        li.textContent = c;
+        ul.appendChild(li);
+      });
+      callout.appendChild(ul);
+    }
+    b.appendChild(callout);
+
+    return b;
+  }
+
+  function ckBlock(title, fill, cls) {
+    const b = el("div", "ck-block" + (cls ? " " + cls : ""));
+    b.appendChild(el("h3", null, title));
+    try { fill(b); } catch (err) { b.appendChild(el("p", "ck-err", errMsg(err))); }
+    return b;
+  }
+
+  /* ---------------------------------------------------------- header --- */
+  let finalOpen = false;  /* 成片预览 toggle survives re-renders */
+
+  function renderHeader(s) {
+    const root = $("header");
+    clear(root);
+    const p = s.project || {};
+    const b = s.budget || {};
+    const tl = s.timeline || {};
+
+    const top = el("div", "head-top");
+    top.appendChild(el("h1", null, p.name || "manju"));
+    const chips = el("div", "chips");
+    const chip = (t) => chips.appendChild(el("span", "chip", t));
+    if (p.width && p.height) chip(p.width + "×" + p.height);
+    if (p.fps) chip(p.fps + " fps");
+    if (p.mode) chip("模式 " + p.mode);
+    const policy = s.execution_policy || {};
+    const policyChip = el("span", "chip execution " + (policy.status || "invalid"));
+    if (policy.status === "strict") {
+      policyChip.textContent = "严格零成本";
+      policyChip.title = "仅本地文件、stdio 与 loopback HTTP;禁止凭据和外部网络";
+    } else if (policy.status === "standard") {
+      policyChip.textContent = "标准执行";
+      policyChip.title = "未启用严格零成本限制;Provider 仍受预算和确认门约束";
+    } else {
+      policyChip.textContent = "执行模式无效";
+      policyChip.title = "MANJU_EXECUTION_MODE=" + (policy.mode || "unknown")
+        + ";Provider 执行已拒绝,请改为 strict_zero_cost 或取消设置";
+    }
+    chips.appendChild(policyChip);
+    if (tl.exists) chip("时长 " + fmtDur(tl.duration_ms));
+    chip("分镜 " + (Array.isArray(s.shots) ? s.shots.length : 0));
+    const bl = s.build_lock;
+    if (bl && typeof bl === "object") {
+      /* another process (or a crashed run) holds the build lock right now;
+       * both lock shapes travel here — {pid,actor,started,hostname} and the
+       * unreadable-file {note} — so every key is optional */
+      let txt = "构建中 (building)";
+      if (bl.pid !== undefined && bl.pid !== null) txt += " pid " + bl.pid;
+      if (bl.actor) txt += " · " + bl.actor;
+      if (bl.pid === undefined && !bl.actor && bl.note) txt += " · " + bl.note;
+      const lockChip = el("span", "chip build-lock", txt);
+      if (bl.started) lockChip.title = "started " + bl.started + (bl.hostname ? " @ " + bl.hostname : "");
+      chips.appendChild(lockChip);
+    }
+    if (s.readonly === true) {
+      const ro = el("span", "chip readonly", "只读 (readonly)");
+      ro.title = "只读工作台 — 所有修改操作已停用 (all mutating controls disabled)";
+      chips.appendChild(ro);
+    }
+    if (s.workspace && typeof s.workspace === "object") {
+      chips.appendChild(workspaceChip(s.workspace));
+    }
+    /* re-open the first-run checklist any time (Linear/Notion pattern: the
+     * onboarding guide is always one click away, never only at first run) */
+    const help = el("button", "chip", "帮助 · 新手引导 (guide)");
+    help.type = "button";
+    help.title = "打开新手引导清单 (open the onboarding checklist)";
+    help.addEventListener("click", () => openOnboarding());
+    chips.appendChild(help);
+    top.appendChild(chips);
+    root.appendChild(top);
+
+    const limitTxt = (b.limit === null || b.limit === undefined) ? "∞" : fmtMoney(b.limit);
+    root.appendChild(el("div", "spend",
+      "累计花费 " + fmtMoney(b.total_cost || 0) + " " + (b.currency || "")
+      + " · 每次构建上限 " + limitTxt));
+    if (s.latest_final_note) {   /* crashed-render honesty (§3) */
+      root.appendChild(el("div", "final-note", "⚠ 成片提示 (final note): " + s.latest_final_note));
+    }
+    if (s.locale_finals && typeof s.locale_finals === "object") {
+      const langs = Object.keys(s.locale_finals);
+      if (langs.length) {
+        root.appendChild(el("div", "muted",
+          "locale 成片: " + langs.map((k) => k + "=" + s.locale_finals[k]).join(" · ")));
+      }
+    }
+
+    if (s.next_step) root.appendChild(el("div", "next-step", "下一步 (next): " + s.next_step));
+
+    const fin = s.latest_final;
+    if (fin && fin.url) {
+      const wrap = el("div", "final");
+      const btn = el("button", "btn ghost", finalOpen ? "成片预览 ▾" : "成片预览 ▸");
+      btn.type = "button";
+      const holder = el("div", "final-video" + (finalOpen ? "" : " hidden"));
+      const mkVideo = () => {
+        if (holder.firstChild) return;
+        const v = document.createElement("video");
+        v.controls = true;
+        v.preload = "none";
+        v.src = fin.url;
+        holder.appendChild(v);
+      };
+      if (finalOpen) mkVideo();
+      btn.addEventListener("click", () => {
+        finalOpen = !finalOpen;
+        btn.textContent = finalOpen ? "成片预览 ▾" : "成片预览 ▸";
+        holder.classList.toggle("hidden", !finalOpen);
+        if (finalOpen) mkVideo();
+      });
+      const a = el("a", "final-link", fin.path || fin.url);
+      a.href = fin.url;
+      wrap.appendChild(btn);
+      wrap.appendChild(a);
+      /* item 6: the upload flow always passes through the file manager —
+       * one click opens it with the final selected (Windows explorer /select). */
+      if (fin.path) {
+        const rev = el("button", "btn ghost", "📂 在文件夹中显示");
+        rev.type = "button";
+        rev.title = "打开文件管理器并选中该成片 (Show in Folder)";
+        rev.addEventListener("click", () =>
+          post(rev, "/api/reveal", { path: fin.path }, "已在文件夹中显示"));
+        wrap.appendChild(rev);
+      }
+      wrap.appendChild(holder);
+      /* version stack (Frame.io pattern): newest on top, append-only —
+       * every final_vN is one click away; a missing key sidecar is flagged */
+      const finals = Array.isArray(s.finals) ? s.finals : [];
+      if (finals.length > 1) {
+        const stack = el("div", "vstack");
+        finals.forEach((f, i) => {
+          const rowEl = el("div", "vrow");
+          const link = el("a", "final-link", f.name);
+          link.href = f.url;
+          rowEl.appendChild(link);
+          if (i === 0) rowEl.appendChild(el("span", "chip", "当前 (current)"));
+          if (f.has_key === false) {
+            rowEl.appendChild(el("span", "chip warn", "⚠ 无内容键 (no key)"));
+          }
+          if (f.size) rowEl.appendChild(el("span", "muted",
+            (f.size / 1e6).toFixed(1) + " MB"));
+          stack.appendChild(rowEl);
+        });
+        wrap.appendChild(stack);
+      }
+      root.appendChild(wrap);
+    }
+    /* the safe-quit button lives in #header: clear(root) above destroyed the
+     * boot-time append-once button on the first re-render — re-ensure here */
+    if (window.__mjEnsureQuitBtn) window.__mjEnsureQuitBtn();
+  }
+
+  /* ---------------------------------------------- workspace switcher --- */
+  /* Only rendered when state.workspace is non-null (--workspace mode). The
+   * menu is plain CSP-safe DOM; a document-level click closes any open menu
+   * (menu items run first on the bubble, then the menu hides itself). */
+  function workspaceChip(ws) {
+    const wrap = el("span", "ws-wrap");
+    const chipBtn = el("button", "chip ws",
+      "项目 (project): " + (ws.active || "?") + " ▾");
+    chipBtn.type = "button";
+    chipBtn.title = "切换工作区项目 (switch workspace project) · 共 " + (ws.count || 0);
+    const menu = el("div", "ws-menu hidden");
+    chipBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();   /* the document listener would close it again */
+      closeWsMenus(menu);     /* at most one open menu */
+      if (!menu.classList.contains("hidden")) {
+        menu.classList.add("hidden");
+        return;
+      }
+      clear(menu);
+      menu.appendChild(el("div", "muted ws-item", "加载中 (loading)…"));
+      menu.classList.remove("hidden");
+      try {
+        const data = await api("GET", "/api/projects");
+        clear(menu);
+        const items = (data && Array.isArray(data.projects)) ? data.projects : [];
+        if (!items.length) {
+          menu.appendChild(el("div", "muted ws-item", "无项目 (no projects)"));
+          return;
+        }
+        items.forEach((p) => {
+          const item = el("button", "ws-item");
+          item.type = "button";
+          item.appendChild(el("span", null,
+            (p.active ? "✓ " : "") + (p.name || p.slug)));
+          item.appendChild(el("span", "ws-count", "分镜 " + (p.shots || 0)));
+          item.title = p.root || "";
+          if (p.active) {
+            item.disabled = true;
+          } else if (readonly) {
+            item.disabled = true;
+            item.title = "只读模式 (readonly)";
+          } else {
+            item.addEventListener("click", () => {
+              menu.classList.add("hidden");
+              doSwitch(p.slug);
+            });
+          }
+          menu.appendChild(item);
+        });
+        /* new-project dialog lives in the switcher (S8a): create a sibling
+         * project via the same core `manju new` calls, then switch to it */
+        if (!readonly) {
+          const np = el("button", "ws-item ws-new");
+          np.type = "button";
+          np.appendChild(el("span", null, "＋ 新建项目 (New project)"));
+          np.addEventListener("click", (ev2) => {
+            ev2.stopPropagation();
+            menu.classList.add("hidden");
+            openNewProjectDialog();
+          });
+          menu.appendChild(np);
+        }
+      } catch (err) {
+        clear(menu);
+        menu.appendChild(el("div", "muted ws-item",
+          "项目列表不可用 (projects unavailable): " + errMsg(err)));
+      }
+    });
+    wrap.appendChild(chipBtn);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+
+  function closeWsMenus(except) {
+    document.querySelectorAll(".ws-menu").forEach((m) => {
+      if (m !== except) m.classList.add("hidden");
+    });
+  }
+
+  async function requestOpenProject(slug) {
+    /* Never rewrites PROJECT / resetAfterSwitch unless reload_current. */
+    try {
+      const data = await api("POST", "/api/workspace/open", { slug });
+      handleSpaProjectAction(data);
+    } catch (err) {
+      if (err && err.data && err.data.next_action) {
+        handleSpaProjectAction(err.data);
+        return;
+      }
+      /* Fall back to legacy /api/switch (same immutable response). */
+      try {
+        const data = await api("POST", "/api/switch", { slug });
+        handleSpaProjectAction(data);
+      } catch (err2) {
+        if (err2 && err2.data && err2.data.next_action) {
+          handleSpaProjectAction(err2.data);
+          return;
+        }
+        toast("打开项目失败：" + errMsg(err2 || err), "err");
+      }
+    }
+  }
+
+  function handleSpaProjectAction(data) {
+    if (!data) return;
+    const next = data.next_action || {};
+    if (next.kind === "already_open" || data.code === "already_open") {
+      return;  /* no token rewrite, no reset */
+    }
+    if (next.kind === "reload_current") {
+      if (data.project_token) PROJECT = data.project_token;
+      else if (data.project && data.project.id) PROJECT = data.project.id;
+      resetAfterSwitch();
+      refresh();
+      return;
+    }
+    if (typeof handleProjectAction === "function") {
+      handleProjectAction(data, {
+        onReload: () => {
+          if (data.project_token) PROJECT = data.project_token;
+          resetAfterSwitch();
+          refresh();
+        }
+      });
+      return;
+    }
+    /* Fallback without project-action.js */
+    toast((data.error || "请在新窗口打开其他项目") +
+      (data.cli ? (" — " + data.cli) : ""), "err");
+  }
+
+  async function doSwitch(slug) {
+    await requestOpenProject(slug);
+  }
+
+  /* every per-project cache must die with the old project */
+  function resetAfterSwitch() {
+    try { closeCompare(); } catch (e) { /* a stale compare overlay must not outlive the switch */ }
+    Object.keys(sigs).forEach((k) => delete sigs[k]);
+    lastFp = null;
+    lastDoneCount = -1;
+    lastShots = [];
+    lastProjectName = "";   /* triage snapshot is per project name */
+    reviewSnap = null;
+    updateReviewChip();     /* hide 未阅 until the new project renders */
+    finalOpen = false;
+    kbFocusId = null;
+    tlSeenSig = null;
+    tlFingerprint = null;
+    tlForce = false;
+    gitLoaded = false;
+    gitStale = true;
+    gitStatus = null;
+    gitLog = null;
+    gitErr = null;
+    gitLogErr = null;
+    renderGit();
+    if (gitOpen) fetchGitPanel();
+    propFp = null;
+    propStale = false;
+    propLoaded = false;
+    propItems = [];
+    propErr = null;
+    propExpanded = {};
+    renderProposals();
+    cockFp = null;
+    cockStale = false;
+    cockData = null;
+    cockErr = null;
+    renderCockpit();
+    /* a waiting_user banner from the OLD project must not be confirmable
+     * against the new one — the resend would target the active project.
+     * C68: any kind (build/redo/voice/…), not build-only. */
+    lastJobs.forEach((j) => {
+      if (j.result && j.result.waiting_user === true) {
+        spendDismissed[j.id] = true;
+      }
+    });
+    spendSig = null;
+    if (spendBox) clear(spendBox);
+    obForce = false;
+    batchSel.clear();    /* selection is per-project */
+    renderBatchBar();
+    tasksLoaded = false;
+    if (tasksOpen && tasksBody) { clear(tasksBody); fetchTasks(); }
+  }
+
+  /* new-project dialog (S8a) — reuses the #editor <dialog> as a generic modal
+   * (its close handler resumes the poll loop). Name + preset (from `manju
+   * presets`) + orientation; the server creates a sibling and returns
+   * open_in_new_window (frozen session — never rebinds this process). */
+  async function openNewProjectDialog() {
+    const dlg = $("editor");
+    clear(dlg);
+    const head = el("div", "ed-head");
+    head.appendChild(el("h3", null, "新建项目 (new project)"));
+    dlg.appendChild(head);
+    dlg.appendChild(el("p", "muted ed-hint",
+      "在工作区里新建一个同级项目 (a sibling project);与 CLI `manju new` 同一套核心。"));
+
+    const nameL = el("label", "ctl", "名称 (name) ");
+    const name = document.createElement("input");
+    name.type = "text";
+    name.className = "snap-input";
+    name.placeholder = "my_film";
+    name.maxLength = 80;
+    nameL.appendChild(name);
+    dlg.appendChild(nameL);
+
+    const orientL = el("label", "ctl", "画幅 (orientation) ");
+    const orient = document.createElement("select");
+    [["vertical", "竖屏 9:16 (vertical)"], ["horizontal", "横屏 16:9 (horizontal)"]]
+      .forEach((pair) => {
+        const o = document.createElement("option");
+        o.value = pair[0];
+        o.textContent = pair[1];
+        orient.appendChild(o);
+      });
+    orientL.appendChild(orient);
+    dlg.appendChild(orientL);
+
+    const presetL = el("label", "ctl", "预设 (preset) ");
+    const preset = document.createElement("select");
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "无 / generic (none)";
+    preset.appendChild(none);
+    presetL.appendChild(preset);
+    dlg.appendChild(presetL);
+
+    const errBox = el("div", "ed-errors");
+    dlg.appendChild(errBox);
+    const row = el("div", "btnrow ed-btnrow");
+    const create = el("button", "btn", "创建 (Create)");
+    create.type = "button";
+    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => closeEditor());
+    create.addEventListener("click", async () => {
+      const nm = name.value.trim();
+      if (!nm) { toast("请输入名称 (name required)", "warn"); name.focus(); return; }
+      create.disabled = true;
+      cancel.disabled = true;
+      clear(errBox);
+      try {
+        const body = { name: nm, vertical: orient.value !== "horizontal" };
+        if (preset.value) body.preset = preset.value;
+        const d = await api("POST", "/api/new-project", body);
+        const pname = (d && d.project && d.project.name) || (d && d.name) || nm;
+        toast("项目已创建：" + pname, "ok");
+        closeEditor();
+        /* Do NOT resetAfterSwitch / rewrite PROJECT — session stays put. */
+        handleSpaProjectAction(d);
+      } catch (err) {
+        if (err && err.data && err.data.next_action) {
+          const pname = (err.data.project && err.data.project.name) || nm;
+          toast("项目已创建：" + pname, "ok");
+          closeEditor();
+          handleSpaProjectAction(err.data);
+          return;
+        }
+        errBox.appendChild(el("p", "ed-err-title", "创建失败 (create failed): " + errMsg(err)));
+        create.disabled = false;
+        cancel.disabled = false;
+      }
+    });
+    row.appendChild(create);
+    row.appendChild(cancel);
+    dlg.appendChild(row);
+
+    editorOpen = true;   /* pause the poll loop while the dialog is up */
+    pauseLive();
+    if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); }
+    else dlg.setAttribute("open", "");
+    name.focus();
+
+    /* fill presets after the dialog is up (a slow list must not block opening) */
+    try {
+      const data = await api("GET", "/api/presets");
+      (data && Array.isArray(data.presets) ? data.presets : []).forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.name;
+        o.textContent = p.name + " · " + (p.title || "") + " (" + (p.aspect || "") + ")";
+        preset.appendChild(o);
+      });
+    } catch (err) { /* presets are optional; generic still works */ }
+  }
+
+  /* ----------------------------------------------------- build panel --- */
+  let buildBtn = null;
+  let qcBtn = null;
+  let estBtn = null;
+  let tfBtns = [];         /* truth-file editor buttons (bible/rules) */
+  let newShotBtn = null;   /* assigned by initShotsBar */
+  const RO_TIP = "只读模式 (readonly)";
+
+  /* Build/QC follow the JOB queue (anyActive) — unrelated to the cross-
+   * process build-lock chip in the header; readonly gates EVERY mutator
+   * (the dry-run Estimate is a POST too, which the server 403s). */
+  function updateGates() {
+    const gate = (btn, queueLocked) => {
+      if (!btn) return;
+      btn.disabled = (queueLocked && anyActive) || readonly;
+      if (readonly) btn.title = RO_TIP;
+      else if (queueLocked && anyActive) {
+        /* C10 UX: disabled Build/QC while a job runs — say why, not blank. */
+        btn.title = "任务运行中 — 完成后可再点 (job running)";
+      } else btn.title = "";
+    };
+    gate(buildBtn, true);
+    gate(qcBtn, true);
+    gate(estBtn, false);
+    tfBtns.forEach((b) => gate(b, false));
+    gate(newShotBtn, false);
+  }
+
+  /* --------------------------------------------- spend confirm (§8.3) --- */
+  let spendBox = null;   /* stable container at the top of the build panel */
+  let spendSig = null;   /* "job:<id>" | "sync:<n>" — key of the shown banner */
+  const spendDismissed = {};   /* banner key -> true (dismissed/confirmed) */
+
+  const spendGateOf = (data) => {   /* waiting_user in any envelope shape */
+    if (!data) return null;
+    if (data.waiting_user === true) return data;
+    if (data.result && data.result.waiting_user === true) return data.result;
+    return null;
+  };
+  const spendText = (gate) =>
+    (Array.isArray(gate.errors) && gate.errors.length ? gate.errors[0]
+      : "waiting_user: 需要确认预估花费 (spend confirmation required)");
+
+  /* jobs-driven: NEWEST waiting_user job (build/redo/voice/…) raises banner;
+   * 确认 resends that job's EXACT params + assume_yes (C67: not build-only). */
+  const SPEND_KINDS = {
+    build: "/api/build",
+    redo: "/api/redo",
+    voice: "/api/voice",
+    redo_batch: "/api/redo-batch",
+    voice_batch: "/api/voice-batch",
+    voice_preview: "/api/voice/preview",
+    /* C74: 补拍手柄 spend gate confirm re-posts handle-rebuild. */
+    handle_rebuild: "/api/edit/handle-rebuild",
+  };
+  function renderSpend(jobs) {
+    if (!spendBox) return;
+    const gated = jobs.filter((j) => SPEND_KINDS[j.kind])
+      .sort((a, b) => String(b.created).localeCompare(String(a.created)));
+    const j = gated.find((x) => x.state === "done" && x.result &&
+      x.result.waiting_user === true && !spendDismissed[x.id]);
+    const waiting = !!j;
+    if (waiting) {
+      if (spendSig !== "job:" + j.id) {
+        spendSig = "job:" + j.id;
+        showSpendBanner(spendText(j.result), j.params || {}, j.id, j.kind);
+      }
+      return;
+    }
+    /* a job banner clears once its job is dismissed or superseded; a
+     * "sync:" banner (future synchronous waiting_user) stays until acted on */
+    if (spendSig && spendSig.indexOf("job:") === 0) {
+      spendSig = null;
+      clear(spendBox);
+    }
+  }
+
+  function showSpendBanner(text, params, key, kind) {
+    clear(spendBox);
+    const box = el("div", "spendbanner");
+    box.appendChild(el("div", "sb-text", "⚠ " + text));
+    const row = el("div", "btnrow");
+    if (!readonly) {
+      const api = SPEND_KINDS[kind] || "/api/build";
+      const okLabel = kind && kind !== "build"
+        ? "确认花费并继续 (Confirm & continue)"
+        : "确认花费并构建 (Confirm & build)";
+      const ok = el("button", "btn confirm", okLabel);
+      ok.type = "button";
+      ok.addEventListener("click", async () => {
+        const body = Object.assign({}, params, { assume_yes: true, dry_run: false });
+        spendDismissed[key] = true;
+        spendSig = null;
+        const data = await post(ok, api, body,
+          "已确认花费,任务已重新入队 (confirmed — re-queued)");
+        if (data) clear(spendBox);
+        else spendDismissed[key] = false;  /* resend failed: keep it retryable */
+      });
+      row.appendChild(ok);
+    }
+    const no = el("button", "btn ghost", "取消 (Dismiss)");
+    no.type = "button";
+    no.addEventListener("click", () => {
+      spendDismissed[key] = true;
+      spendSig = null;
+      clear(spendBox);
+    });
+    row.appendChild(no);
+    box.appendChild(row);
+    spendBox.appendChild(box);
+  }
+
+  /* ---------------------------------------------- bible/rules editors --- */
+  const TRUTH_LABELS = {
+    characters: "bible/characters.yaml", scenes: "bible/scenes.yaml",
+    props: "bible/props.yaml", style: "bible/style.yaml",
+    rules: "timeline/rules.yaml", packaging: "timeline/packaging.yaml",
+  };
+  const TRUTH_URLS = { rules: "/api/rules", packaging: "/api/packaging" };
+  const TRUTH_VKINDS = { rules: "rules", packaging: "packaging" };
+
+  async function openTruthEditor(name, btn) {
+    const url = TRUTH_URLS[name] || "/api/bible/" + name;
+    const vkind = TRUTH_VKINDS[name] || "bible/" + name;  /* /api/validate kind */
+    const label = TRUTH_LABELS[name] || name;
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api("GET", url);
+      const hints = [];
+      if (!data || data.exists === false) {
+        hints.push("文件尚不存在,保存即创建 (file does not exist yet — saving creates it)");
+      }
+      showEditor({
+        title: "编辑 (edit) · " + label,
+        yaml: (data && data.yaml) || "",
+        saveUrl: url,
+        label,
+        hints,
+        /* GUI-EDIT-P1-001: the CAS token, same plumbing the shot editor
+         * already uses (showEditor forwards opts.rev as expected_rev). This
+         * textarea holds the WHOLE file and a human may sit on it for twenty
+         * minutes; without the token a second tab or CLI write
+         * was silently clobbered on save, with no diff to recover from. */
+        rev: (data && typeof data.rev === "string") ? data.rev : undefined,
+        validate: { kind: vkind },   /* live keystroke validation for this truth file */
+        draftPath: label,   /* UX-WAVE-3: TRUTH_LABELS values ARE the相对路径 */
+      });
+    } catch (err) {
+      toast("无法加载 (cannot load) " + label + ": " + errMsg(err), "err");
+    } finally {
+      if (btn) btn.disabled = false;
+      updateGates();
+    }
+  }
+
+  let updateEstimate = () => {};  /* bound in initBuildPanel */
+  let estSeenFp = null;
+
+  function initBuildPanel() {
+    const root = $("buildpanel");
+    clear(root);
+    root.appendChild(el("h2", null, "构建 (build)"));
+    spendBox = el("div");   /* the §8.3 waiting_user banner lands here */
+    root.appendChild(spendBox);
+
+    const row = el("div", "controls");
+    const mkSelect = (labelTxt, values) => {
+      const l = el("label", "ctl", labelTxt + " ");
+      const sel = document.createElement("select");
+      values.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = v;
+        sel.appendChild(o);
+      });
+      l.appendChild(sel);
+      row.appendChild(l);
+      return sel;
+    };
+    const mkCheck = (labelTxt) => {
+      const l = el("label", "ctl");
+      const c = document.createElement("input");
+      c.type = "checkbox";
+      l.appendChild(c);
+      l.appendChild(document.createTextNode(" " + labelTxt));
+      row.appendChild(l);
+      return c;
+    };
+    const target = mkSelect("目标 (target)", ["final", "proxy", "exports", "qc"]);
+    const gen = mkSelect("生成 (gen)", ["missing", "auto", "off"]);
+    /* C40: language select — empty = base; locale ids for multi-lang builds.
+     * Preset common codes so first locale build is possible before any final. */
+    const lang = mkSelect("语言 (lang)", [""]);
+    lang.options[0].textContent = "base (母语)";
+    const LANG_PRESETS = ["en", "en-US", "ja", "ko", "zh-TW", "zh-HK"];
+    const refreshLangOptions = () => {
+      const cur = lang.value;
+      const finals = Object.keys(lastLocaleFinals || {});
+      const declared = Array.isArray(lastLocales) ? lastLocales.slice() : [];
+      const all = [];
+      LANG_PRESETS.forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      declared.sort().forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      finals.sort().forEach((k) => { if (all.indexOf(k) < 0) all.push(k); });
+      while (lang.options.length > 1) lang.remove(1);
+      all.forEach((k) => {
+        const o = document.createElement("option");
+        o.value = k;
+        let mark = "";
+        if (finals.indexOf(k) >= 0) mark = " ✓成片";
+        else if (declared.indexOf(k) >= 0) mark = " ·台词";
+        o.textContent = k + mark;
+        lang.appendChild(o);
+      });
+      if (cur && Array.from(lang.options).some((o) => o.value === cur)) {
+        lang.value = cur;
+      }
+    };
+    refreshLangOptions();
+    const regen = mkCheck("重做过期 (regen stale)");
+    const force = mkCheck("强制 (force)");
+    root.appendChild(row);
+
+    /* UX-STUDY #1: the price rides ON the trigger — a silent dry-run keeps
+     * the Build button honest about what clicking it would spend */
+    let estSeq = 0;
+    updateEstimate = async () => {
+      if (readonly || !buildBtn) return;
+      refreshLangOptions();
+      const seq = ++estSeq;
+      try {
+        const data = await api("POST", "/api/build", buildBody(true));
+        if (seq !== estSeq || !data || !data.result) return;
+        const cost = Number(data.result.estimated_cost || 0);
+        const cur = ((data.result.plan || [])
+          .map((it) => it.currency).find(Boolean)) || "";
+        buildBtn.textContent = cost > 0
+          ? "构建 (Build) ≈" + fmtMoney(cost) + (cur ? " " + cur : "")
+          : "构建 (Build)";
+        buildBtn.classList.toggle("spendy", cost > 0);
+      } catch (err) { /* advisory only: the button stays plain */ }
+    };
+    [target, gen, lang, regen, force].forEach((c) =>
+      c.addEventListener("change", () => updateEstimate()));
+
+    const out = el("div", "panel-out");
+    const buildBody = (dry) => {
+      const body = {
+        target: target.value,
+        gen: gen.value,
+        regen_stale: regen.checked,
+        force: force.checked,
+        dry_run: dry,
+      };
+      /* C40: only send lang when non-base so default path stays byte-identical. */
+      if (lang.value) body.lang = lang.value;
+      return body;
+    };
+
+    const btns = el("div", "btnrow");
+    const mkBtn = (label, cls, fn) => {
+      const btn = el("button", "btn " + cls, label);
+      btn.type = "button";
+      btn.addEventListener("click", () => fn(btn));
+      btns.appendChild(btn);
+      return btn;
+    };
+    estBtn = mkBtn("估算 (Estimate)", "ghost", async (btn) => {
+      const data = await post(btn, "/api/build", buildBody(true), "估算完成 (dry run)");
+      if (data && data.result) renderPlan(out, data.result);
+    });
+    buildBtn = mkBtn("构建 (Build)", "primary", (btn) => {
+      /* §4.4: the plan modal FIRST (dry-run explanation), then an explicit
+       * confirm that passes assume_yes — never a silent spend. The spend banner
+       * below stays as a belt-and-braces fallback for a synchronous gate. */
+      const body = buildBody(false);
+      /* C41: plan modal must see the same lang as the real build POST. */
+      const planParams = {
+        target: body.target, gen: body.gen,
+        regen_stale: body.regen_stale, force: body.force,
+      };
+      if (body.lang) planParams.lang = body.lang;
+      showPlanModal("build", planParams, {
+        title: body.lang
+          ? ("构建前计划 · locale " + body.lang)
+          : "构建前计划 (plan before build)",
+        onConfirm: async () => {
+          const confirmed = Object.assign({}, body, { assume_yes: true });
+          const msg = body.lang
+            ? ("构建任务已入队 (locale " + body.lang + ")")
+            : "构建任务已入队 (build queued)";
+          const data = await post(btn, "/api/build", confirmed, msg);
+          const gate = spendGateOf(data);  /* SYNCHRONOUS waiting_user, if any */
+          if (gate) {
+            spendSig = "sync:" + Date.now();
+            showSpendBanner(spendText(gate), confirmed, spendSig);
+          }
+        },
+      });
+    });
+    /* WP2 先听后看: audition target — voice+captions on slate, no picture gen */
+    mkBtn("先听后看 (Audition)", "ghost", (btn) => {
+      showPlanModal("build", { target: "audition", gen: "missing" }, {
+        title: "先听后看 — 配音+字幕试听片 (no picture generation)",
+        onConfirm: async () => {
+          const body = { target: "audition", gen: "missing", assume_yes: true };
+          const data = await post(btn, "/api/build", body, "试听片任务已入队");
+          const gate = spendGateOf(data);
+          if (gate) {
+            spendSig = "sync:" + Date.now();
+            showSpendBanner(spendText(gate), body, spendSig);
+          }
+        },
+      });
+    });
+    qcBtn = mkBtn("QC", "ghost", (btn) => {
+      /* C38: when locale finals exist, probe the first lang — never silently
+       * QC base while only locale film is what the author shipped. Multi-lang
+       * projects get the sorted first key; CLI still supports --lang all. */
+      const body = {};
+      const lf = lastLocaleFinals || {};
+      const langs = Object.keys(lf).sort();
+      if (langs.length) body.lang = langs[0];
+      /* C70: multi-locale honesty — first sorted + note remaining. */
+      let msg = "QC 任务已入队 (qc queued)";
+      if (body.lang) {
+        msg = "QC 任务已入队 (locale " + body.lang + ")";
+        if (langs.length > 1) {
+          msg += " · 另有 " + (langs.length - 1) + " 种 locale 未检"
+            + " (CLI: manju qc --lang …)";
+        }
+      }
+      post(btn, "/api/qc", body, msg);
+    });
+    mkBtn("检查 (Check)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderCheck(out, await api("GET", "/api/check")); }
+      catch (err) { toast(errMsg(err), "err"); }
+      finally { btn.disabled = false; }
+    });
+    mkBtn("解释 (Explain)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderExplain(out, await api("GET", "/api/explain")); }
+      catch (err) { toast(errMsg(err), "err"); }
+      finally { btn.disabled = false; }
+    });
+    mkBtn("依赖图 (Graph)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderGraph(out, await api("GET", "/api/explain?graph=1")); }
+      catch (err) { toast(errMsg(err), "err"); }
+      finally { btn.disabled = false; }
+    });
+    mkBtn("体检 (Doctor)", "ghost", async (btn) => {
+      btn.disabled = true;
+      try { renderDoctor(out, await api("GET", "/api/doctor")); }
+      catch (err) {
+        clear(out);
+        out.appendChild(el("h3", null, "体检 (doctor)"));
+        out.appendChild(el("p", "muted", "体检不可用 (doctor unavailable): " + errMsg(err)));
+      }
+      finally { btn.disabled = false; }
+    });
+    root.appendChild(btns);
+
+    /* truth 文件 (files): bible + rules editors — same dialog flow as shots */
+    const tf = el("div", "tfrow");
+    tf.appendChild(el("span", "lbl", "truth 文件 (files):"));
+    tfBtns = [];
+    ["characters", "scenes", "props", "style", "rules", "packaging"].forEach((name) => {
+      const b = el("button", "btn ghost mini", name);
+      b.type = "button";
+      b.title = TRUTH_LABELS[name] || name;
+      b.addEventListener("click", () => openTruthEditor(name, b));
+      tf.appendChild(b);
+      tfBtns.push(b);
+    });
+    root.appendChild(tf);
+    root.appendChild(out);
+  }
+
+  function renderPlan(out, result) {
+    clear(out);
+    out.appendChild(el("h3", null, "试算计划 (plan)"));
+    const plan = Array.isArray(result.plan) ? result.plan : [];
+    if (!plan.length) {
+      out.appendChild(el("p", "muted", "无事可做 (nothing to do)。"));
+    } else {
+      const wrap = el("div", "tablewrap");
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      hr.appendChild(el("th", null, "shot"));
+      hr.appendChild(el("th", null, "reason"));
+      hr.appendChild(el("th", null, "provider"));
+      hr.appendChild(el("th", "num", "≈cost"));
+      thead.appendChild(hr);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      plan.forEach((it) => {
+        const tr = document.createElement("tr");
+        const isVoice = it.kind === "voice";
+        if (isVoice) tr.className = "voice-row";
+        const shotCell = el("td", null, it.shot || "");
+        if (isVoice) shotCell.appendChild(el("span", "badge st-manual vtag", "配音"));
+        tr.appendChild(shotCell);
+        tr.appendChild(el("td", null, it.reason || ""));
+        tr.appendChild(el("td", null, it.provider || ""));
+        tr.appendChild(el("td", "num", "≈" + fmtMoney(it.estimated_cost || 0)));
+        tbody.appendChild(tr);
+      });
+      const totalRow = document.createElement("tr");
+      totalRow.className = "total";
+      const lbl = el("td", null, "合计预估 (estimated total)");
+      lbl.colSpan = 3;
+      totalRow.appendChild(lbl);
+      const cur = (plan.find((p) => p.currency) || {}).currency || "";
+      totalRow.appendChild(el("td", "num grand",   /* §8.3: the number a human
+        confirms must be impossible to miss */
+        "≈" + fmtMoney(result.estimated_cost || 0) + (cur ? " " + cur : "")));
+      tbody.appendChild(totalRow);
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      out.appendChild(wrap);
+    }
+    /* cache savings (Nx replayed-hits pattern): what fresh targets did NOT
+     * cost — saved_cost prices skipped regeneration, skipped lists the hits */
+    const skippedShots = Array.isArray(result.skipped) ? result.skipped : [];
+    const savedCost = Number(result.saved_cost || 0);
+    if ((isFinite(savedCost) && savedCost > 0) || skippedShots.length) {
+      const row = el("div", "savings");
+      if (isFinite(savedCost) && savedCost > 0) {
+        row.appendChild(el("span", "badge st-fresh",
+          "缓存命中省 ≈" + fmtMoney(savedCost) + " (saved)"));
+      }
+      if (skippedShots.length) {
+        const skChip = el("span", "chip", "跳过 " + skippedShots.length + " (cache hits)");
+        skChip.title = skippedShots.join(", ");
+        row.appendChild(skChip);
+      }
+      out.appendChild(row);
+    }
+    (result.errors || []).forEach((m) => out.appendChild(el("p", "lvl-error", "错误: " + m)));
+    (result.warnings || []).forEach((m) => out.appendChild(el("p", "lvl-warning", "警告: " + m)));
+  }
+
+  function renderCheck(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "检查 (check)"));
+    out.appendChild(el("p", data.ok ? "lvl-ok" : "lvl-error",
+      data.ok ? "✓ 通过 (ok)" : "✗ 未通过 (failed)"));
+    (data.errors || []).forEach((m) => out.appendChild(el("p", "lvl-error", "错误: " + m)));
+    (data.warnings || []).forEach((m) => out.appendChild(el("p", "lvl-warning", "警告: " + m)));
+  }
+
+  function renderExplain(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "解释 (explain)"));
+    const chips = el("div", "chips");
+    const verdictChip = (label, v) => {
+      if (!v) return;
+      const cls = String(v).startsWith("skip") ? "st-fresh" : "st-stale";
+      chips.appendChild(el("span", "badge " + cls, label + ": " + v));
+    };
+    const renders = data.renders || {};
+    if (renders.final) verdictChip("final", renders.final.verdict);
+    if (renders.proxy) verdictChip("proxy", renders.proxy.verdict);
+    if (data.timeline) verdictChip("timeline", data.timeline.verdict);
+    out.appendChild(chips);
+    if (renders.note) out.appendChild(el("p", "muted", renders.note));
+    (data.shots || []).forEach((sh) => {
+      const v = sh.video || {};
+      if (v.state && v.state !== "fresh") {
+        out.appendChild(el("p", "why",
+          sh.shot + " · " + v.state + (v.why ? " — " + v.why : "")));
+      }
+      const vo = sh.voice;
+      if (vo && vo.state && vo.state !== "fresh") {
+        out.appendChild(el("p", "why",
+          sh.shot + " · 配音 " + vo.state + (vo.why ? " — " + vo.why : "")));
+      }
+    });
+  }
+
+  /* DR03B: `explain --graph` — the read-only derived dependency VIEW, the same
+   * manju.graph-diagnostics/v1 document `manju explain --graph` prints. Never a
+   * scheduling truth source, so this renders diagnosis only and offers no
+   * "run these in this order" affordance. */
+  function renderGraph(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "依赖图 (graph)"));
+    const gd = data.graph;
+    if (!gd) {
+      out.appendChild(el("p", "muted", "无依赖图数据 (no graph in response)"));
+      return;
+    }
+    const s = gd.summary || {};
+    const chips = el("div", "chips");
+    const chip = (label, n, cls) => {
+      if (!n) return;
+      chips.appendChild(el("span", "badge " + cls, label + ": " + n));
+    };
+    chips.appendChild(el("span", "badge",
+      "节点 " + (s.node_count || 0) + " · 边 " + (s.edge_count || 0)));
+    chip("ready", s.ready, "st-fresh");
+    chip("blocked", s.blocked, "st-broken");
+    chip("pending", s.pending, "st-stale");
+    chip("waiting", s.waiting, "st-stale");
+    chip("failed", s.failed, "st-broken");
+    chip("cycles", s.cycles, "st-broken");
+    out.appendChild(chips);
+    out.appendChild(el("p", "muted", "只读派生视图,不是调度真相 (diagnostic view)"));
+    (gd.issues || []).forEach((iss) => {
+      out.appendChild(el("div", "doc-line", "! " + iss.code + "  " + iss.node_id));
+    });
+    /* root cause, not just "blocked": name the origin each node waits on. */
+    (gd.nodes || []).forEach((n) => {
+      const bb = n.blocked_by || [];
+      if (!bb.length) return;
+      out.appendChild(el("p", "why", n.node_id + " ← "
+        + bb.map((b) => b.node_id + "(" + b.status + ")").join(", ")));
+    });
+  }
+
+  /* -------------------------------------------------------- doctor ----- */
+  /* GET /api/doctor renders into the same inline-results area Check/Explain
+   * use; `line` arrives preformatted (✓/✗/•/⚠) — shown verbatim, monospace. */
+  function renderDoctor(out, data) {
+    clear(out);
+    out.appendChild(el("h3", null, "体检 (doctor)"));
+    const chips = el("div", "chips");
+    chips.appendChild(el("span", "badge " + (data.ok ? "st-fresh" : "st-broken"),
+      data.ok ? "✓ 通过 (ok)" : "✗ 有问题 (problems)"));
+    out.appendChild(chips);
+    const list = el("div");
+    (Array.isArray(data.checks) ? data.checks : []).forEach((c) => {
+      list.appendChild(el("div", "doc-line",
+        c.line || ((c.name || "?") + ": " + (c.detail || ""))));
+    });
+    out.appendChild(list);
+  }
+
+  /* ------------------------------------------------------ jobs strip --- */
+  /* Grouped visibility (GUI repair): never sort-then-slice(0,8) — a long
+   * queue of newer queued jobs was hiding the actual running job. */
+  function jobTime(j) {
+    return j.created || j.started || j.finished || "";
+  }
+  function pickJobs(jobs, states, limit) {
+    return jobs.filter((j) => states.indexOf(j.state) >= 0)
+      .sort((a, b) => String(jobTime(b)).localeCompare(String(jobTime(a))))
+      .slice(0, limit);
+  }
+  /* P1-4: kind→中文 label map, loaded ONCE from the authoritative registry
+   * (GET /api/meta/job-kinds). null until the fetch resolves. The frontend
+   * keeps no hard-coded copy — this IS the whole consumption path. */
+  let JOB_KIND_LABELS = null;
+  let _jobKindLabelsLoading = false;
+  let _lastJobsForRepaint = [];
+  async function ensureJobKindLabels() {
+    if (JOB_KIND_LABELS !== null || _jobKindLabelsLoading) return;
+    _jobKindLabelsLoading = true;
+    try {
+      const meta = await api("GET", "/api/meta/job-kinds");
+      const map = {};
+      ((meta && meta.job_kinds) || []).forEach((s) => {
+        map[s.kind] = s.display_name_zh;
+      });
+      JOB_KIND_LABELS = map;
+      renderJobs(_lastJobsForRepaint);  /* repaint chips with real labels */
+    } catch (e) {
+      JOB_KIND_LABELS = {};  /* degrade gracefully: show the raw kind */
+    } finally {
+      _jobKindLabelsLoading = false;
+    }
+  }
+  function renderJobs(jobs) {
+    _lastJobsForRepaint = jobs;
+    ensureJobKindLabels();  /* fire-and-forget; repaints when it resolves */
+    const root = $("jobs");
+    clear(root);
+    if (!jobs.length) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    const h = el("h2", null, "任务 (jobs)");
+    /* item 1: opt-in completion beep (persisted; label doubles as state). */
+    const snd = el("button", "btn jobs-sound",
+                   notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关");
+    snd.title = "任务完成时播放提示音(仅本机,localStorage 记忆)";
+    snd.addEventListener("click", () => {
+      try {
+        localStorage.setItem("mj-notify-sound", notifySoundOn() ? "0" : "1");
+      } catch (err) { /* private mode — toggle just won't persist */ }
+      snd.textContent = notifySoundOn() ? "🔔 完成提示音:开" : "🔕 完成提示音:关";
+    });
+    h.appendChild(snd);
+    root.appendChild(h);
+    const running = pickJobs(jobs, ["running", "canceling"], 99);  /* always show */
+    const queued = pickJobs(jobs, ["queued"], 3);
+    const need = pickJobs(jobs, ["failed", "interrupted"], 5);
+    const recent = pickJobs(jobs, ["done", "canceled"], 5);
+    const groups = [
+      { title: "正在运行 (running)", items: running },
+      { title: "接下来 (queued)", items: queued },
+      { title: "需要处理 (needs attention)", items: need },
+      { title: "最近完成 (recent)", items: recent },
+    ];
+    let expandedOne = false;  /* UX-STUDY #5: auto-expand only the newest failure */
+    groups.forEach((g) => {
+      if (!g.items.length) return;
+      root.appendChild(el("div", "muted jgroup", g.title));
+      g.items.forEach((j) => renderJobRow(j));
+    });
+
+    function renderJobRow(j) {
+      const row = el("div", "job");
+      /* C26 / P1-4: every JobRunner kind has a short ZH chip (no raw
+       * snake_case). Labels come from the single authoritative registry via
+       * GET /api/meta/job-kinds (loaded once by ensureJobKindLabels); the
+       * frontend keeps NO hard-coded kind→label map of its own. Before the
+       * fetch resolves KIND_ZH is empty and we fall back to the raw kind. */
+      const KIND_ZH = JOB_KIND_LABELS || {};
+      row.appendChild(el("span", "jkind", KIND_ZH[j.kind] || j.kind || "?"));
+      /* C42: show locale tag when job params/result carry lang (build/qc). */
+      const jobLang = (j.params && j.params.lang) || (j.result && j.result.lang) || "";
+      if (jobLang) {
+        row.appendChild(el("span", "muted jlang", "·" + String(jobLang)));
+      }
+      /* C1/C62 UX: waiting_user jobs (build/redo/voice…) show 待确认 not plain done. */
+      const waitSpend = j.result && j.result.waiting_user === true;
+      const STATE_ZH = {
+        queued: "排队中", running: "运行中", canceling: "取消中",
+        canceled: "已取消", done: "完成", failed: "失败", interrupted: "已中断",
+      };
+      const stateLabel = waitSpend ? "待确认花费"
+        : (STATE_ZH[j.state] || j.state);
+      row.appendChild(el("span", "badge jb-" + (waitSpend ? "waiting" : j.state), stateLabel));
+      /* P1-8: a canceled job whose remote/provider cancellation result is
+       * UNKNOWN must NOT read as a clean 已取消 — the remote may have completed
+       * and billed. Surface the uncertainty + possible billing explicitly. */
+      if (j.state === "canceled" && j.billing && j.billing.may_have_billed === true) {
+        const warn = el("span", "badge jb-warn",
+          "远程取消未确认 · 可能已计费");
+        if (j.billing.provider_job_id) {
+          warn.title = "远程任务 " + j.billing.provider_job_id
+            + " 可能仍在运行并计费;后续构建会恢复轮询,不会重复提交。重试需你显式确认。";
+        }
+        row.appendChild(warn);
+      }
+      const secs = jobSeconds(j);
+      if (secs) row.appendChild(el("span", "muted", secs));
+      /* C6 UX: show live phase progress for long builds. */
+      if (j.progress && (j.state === "running" || j.state === "canceling")) {
+        row.appendChild(el("span", "muted jprog", String(j.progress)));
+      }
+      /* goal: honest job cancellation — retry lineage + cancel/retry buttons.
+       * cancelable/retryable come straight from Job.to_dict() so the client
+       * never re-derives the state-machine rule. */
+      if (j.retry_of) {
+        row.appendChild(el("span", "muted", "重试自 #" + j.retry_of));
+      }
+      if (j.state === "interrupted" && j.note) {
+        /* visible, not tucked into a <details> — the honesty note IS the
+         * point of this chip, never fine print (goal item 6). No cancel/
+         * retry buttons render for this state: cancelable/retryable are
+         * both false straight off the same dict, so nothing below adds them. */
+        row.appendChild(el("span", "jnote", j.note));
+      }
+      if (j.state === "canceling") {
+        row.appendChild(el("span", "muted", "取消中…"));
+      }
+      if (j.cancelable) {
+        const cancelBtn = el("button", "btn mini ghost", "取消");
+        cancelBtn.type = "button";
+        roGate(cancelBtn);  /* disabled + tooltip in readonly; click never fires then */
+        cancelBtn.addEventListener("click", () =>
+          post(cancelBtn, "/api/jobs/cancel", { job_id: j.id }, "已请求取消 (cancel requested)"));
+        row.appendChild(cancelBtn);
+      } else if (j.state === "running" || j.state === "canceling") {
+        /* C30: honest absence of cancel — do not leave users guessing. */
+        row.appendChild(el("span", "muted jnote", "运行中不可中途取消"));
+      }
+      if (j.retryable) {
+        const retryBtn = el("button", "btn mini ghost", "重试");
+        retryBtn.type = "button";
+        roGate(retryBtn);
+        retryBtn.addEventListener("click", () =>
+          post(retryBtn, "/api/jobs/retry", { job_id: j.id }, "已重新提交 (retried)"));
+        row.appendChild(retryBtn);
+      }
+      if (j.state === "done" && j.error) {
+        row.appendChild(el("span", "jnote", j.error));
+      }
+      if (j.state === "done" && j.result) {
+        const r = j.result;
+        let summary = "";
+        if (r.render_path) summary = r.render_path;
+        else if (typeof r.qc_ok === "boolean") summary = "qc_ok: " + (r.qc_ok ? "✓" : "✗");
+        else if (Array.isArray(r.errors) && r.errors.length) summary = r.errors[0];
+        if (summary) row.appendChild(el("span", "jsum", summary));
+        /* cache savings on done builds (Nx pattern): mirror renderPlan */
+        if (j.kind === "build") {
+          const saved = Number(r.saved_cost || 0);
+          if (isFinite(saved) && saved > 0) {
+            row.appendChild(el("span", "jsave",
+              "缓存命中省 ≈" + fmtMoney(saved) + " (saved)"));
+          }
+          const hits = Array.isArray(r.skipped) ? r.skipped : [];
+          if (hits.length) {
+            const sk = el("span", "jsave", "跳过 " + hits.length + " (cache hits)");
+            sk.title = hits.join(", ");
+            row.appendChild(sk);
+          }
+        }
+        /* batch results (goal item 3): per-shot skipped/failed reasons, never
+         * a silent exclusion — the BatchResult carries {shot, reason} for each */
+        if (j.kind === "redo_batch" || j.kind === "voice_batch") {
+          const ran = Array.isArray(r.ran) ? r.ran : [];
+          const skipped = Array.isArray(r.skipped) ? r.skipped : [];
+          const failed = Array.isArray(r.failed) ? r.failed : [];
+          row.appendChild(el("span", "jsum",
+            "完成 " + ran.length + " · 跳过 " + skipped.length + " · 失败 " + failed.length));
+          if (skipped.length || failed.length) {
+            const det = document.createElement("details");
+            det.appendChild(el("summary", null, "跳过/失败原因 (skipped / failed)"));
+            const box = el("div", "bb-res");
+            skipped.forEach((s) => {
+              const b = el("div", "pm-skiprow");
+              b.appendChild(el("span", "badge st-manual", s.shot || "?"));
+              b.appendChild(el("span", "muted", "跳过 (skipped): " + (s.reason || "")));
+              box.appendChild(b);
+            });
+            failed.forEach((f) => {
+              const b = el("div", "pm-skiprow");
+              b.appendChild(el("span", "badge qc-err", f.shot || "?"));
+              b.appendChild(el("span", "muted", "失败 (failed): " + (f.reason || "")));
+              box.appendChild(b);
+            });
+            det.appendChild(box);
+            row.appendChild(det);
+          }
+        }
+      }
+      if ((j.state === "failed" || j.state === "canceled") && j.error) {
+        const det = document.createElement("details");
+        if (!expandedOne) { det.open = true; expandedOne = true; }
+        det.appendChild(el("summary", null,
+          j.state === "canceled" ? "已取消 (canceled)" : "错误 (error)"));
+        det.appendChild(el("div", "jerr", j.error));
+        row.appendChild(det);
+      }
+      root.appendChild(row);
+    }
+  }
+
+  /* --------------------------------------------------- timeline strip --- */
+  let tlSeenSig = null;      /* state.timeline signature at the last fetch */
+  let tlFingerprint = null;  /* meta.compiled_from of the rendered strip */
+  let tlFetching = false;
+  let tlForce = false;       /* a done job may have recompiled the timeline */
+
+  function maybeTimeline(s) {
+    const t = s.timeline;
+    const root = $("timeline");
+    if (!t || !t.exists) {
+      tlSeenSig = null;
+      tlFingerprint = null;
+      tlForce = false;
+      if (!root.classList.contains("hidden")) { clear(root); root.classList.add("hidden"); }
+      return;
+    }
+    /* /api/state carries no compiled_from, so its cheap timeline sub-object
+     * (exists/duration/mode) + job completions are the "maybe changed"
+     * signal that gates the fetch; the fetched meta.compiled_from stays
+     * cached as the render key, so an unchanged timeline is neither
+     * re-fetched on every poll nor ever re-rendered. */
+    const sig = JSON.stringify(t);
+    if (tlFetching) return;
+    if (!tlForce && sig === tlSeenSig) return;
+    fetchTimeline(sig, root);
+  }
+
+  async function fetchTimeline(sig, root) {
+    tlFetching = true;
+    tlSeenSig = sig;   /* recorded up-front: an error must not hammer /api/timeline */
+    tlForce = false;
+    try {
+      const data = await api("GET", "/api/timeline");
+      const tl = data ? data.timeline : null;
+      const fp = (tl && tl.meta) ? (tl.meta.compiled_from || "?") : null;
+      if (fp !== null && fp === tlFingerprint) return;  /* strip already current */
+      tlFingerprint = fp;
+      renderTimeline(tl);
+    } catch (err) {
+      tlFingerprint = null;  /* next state change (or done job) retries */
+      clear(root);
+      root.classList.remove("hidden");
+      root.appendChild(el("h2", null, "时间线 (timeline)"));
+      root.appendChild(el("p", "muted tl-note",
+        "时间线不可用 (timeline unavailable): " + errMsg(err)));
+    } finally {
+      tlFetching = false;
+    }
+  }
+
+  function renderTimeline(tl) {
+    const root = $("timeline");
+    clear(root);
+    if (!tl) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    root.appendChild(el("h2", null, "时间线 (timeline)"));
+    const tracks = tl.tracks || {};
+    const clips = Array.isArray(tracks.video) ? tracks.video : [];
+    let total = (typeof tl.duration_ms === "number" && tl.duration_ms > 0) ? tl.duration_ms : 0;
+    if (!total) clips.forEach((c) => { total = Math.max(total, (c.start_ms || 0) + (c.duration_ms || 0)); });
+    if (!clips.length || total <= 0) {
+      root.appendChild(el("p", "muted tl-note", "时间线为空 (timeline is empty)"));
+      return;
+    }
+    const strip = el("div", "tl-strip");
+    clips.forEach((c, i) => {
+      const block = el("div", "tl-clip tl-h" + (i % 6), c.shot || "?");
+      /* proportional width via the CSSOM (CSP-safe); .tl-clip min-width in
+       * the stylesheet keeps tiny clips clickable (the strip then scrolls) */
+      block.style.width = (((c.duration_ms || 0) / total) * 100).toFixed(3) + "%";
+      block.title = (c.shot || "?") + " / " + (c.take || "?") + " · " + fmtDur(c.duration_ms);
+      block.addEventListener("click", () => focusShot(c.shot));
+      strip.appendChild(block);
+    });
+    root.appendChild(strip);
+    /* overlay/music tracks are deliberately NOT drawn in v2: at this strip
+     * height they are a handful of near-invisible slivers (low signal), and
+     * the captions rail already marks the spoken beats. */
+    const caps = Array.isArray(tracks.captions) ? tracks.captions : [];
+    if (caps.length) {
+      const rail = el("div", "tl-caps");
+      caps.forEach((c) => {
+        const b = el("div", "tl-cap");
+        const start = Math.max(0, c.start_ms || 0);
+        const width = Math.max(0, (c.end_ms || 0) - start);
+        b.style.left = ((start / total) * 100).toFixed(3) + "%";   /* CSSOM */
+        b.style.width = ((width / total) * 100).toFixed(3) + "%";
+        b.title = (c.speaker ? c.speaker + ": " : "") + (c.text || "");
+        rail.appendChild(b);
+      });
+      root.appendChild(rail);
+    }
+    const ruler = el("div", "tl-ruler");
+    [0, 0.25, 0.5, 0.75, 1].forEach((f) =>
+      ruler.appendChild(el("span", null, fmtMMSS(total * f))));
+    root.appendChild(ruler);
+  }
+
+  function cardById(id) {
+    const cards = document.querySelectorAll("#shots .shot");
+    for (const card of cards) {
+      if (card.dataset.sid === id) return card;
+    }
+    return null;
+  }
+
+  function flashCard(card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.remove("flash");
+    void card.offsetWidth;   /* restart the one-shot CSS animation */
+    card.classList.add("flash");
+    setTimeout(() => card.classList.remove("flash"), 1600);
+  }
+
+  function focusShot(id) {
+    let card = cardById(id);
+    if (!card && stateFilter) {
+      /* bug-hunt #51: the timeline/cockpit navigate by shot id regardless of
+       * the grid's state filter — navigation wins, the filter clears. */
+      stateFilter = "";
+      saveUI({ filter: "" });
+      renderShots(lastShots);
+      card = cardById(id);
+    }
+    if (card) flashCard(card);
+    else toast("镜头卡片未找到 (shot card not found): " + id, "err");
+  }
+
+  /* ------------------------------------------------------ shots grid --- */
+  const STATE_CLASS = {
+    fresh: "st-fresh", stale: "st-stale", missing: "st-missing",
+    manual: "st-manual", needs_selection: "st-needs", broken: "st-broken",
+  };
+  const PREVIEW_HINT_EXT = { mkv: true, flac: true, m4v: true };
+  const IMAGE_EXT = { png: true, jpg: true, jpeg: true, gif: true, webp: true };
+
+  /* readonly gate for a mutating control: disabled + tooltip (a disabled
+   * button never dispatches click, so listeners can attach unconditionally) */
+  const roGate = (btn) => {
+    if (!readonly) return false;
+    btn.disabled = true;
+    btn.title = RO_TIP;
+    return true;
+  };
+
+  /* ↑/↓ reorder: build the FULL new order from the current state and POST
+   * /api/index. One reorder in flight at a time — the server permutation-
+   * checks against the current shots, and racing swaps could undo each
+   * other; post() handles the disable + toast + refresh. */
+  let reorderBusy = false;
+
+  async function moveShot(shotId, delta, btn) {
+    /* Resolve the position AT CLICK TIME by shot id: the card's render-time
+     * index went stale two ways — a state filter made it a FILTERED-list
+     * index swapped into the FULL order, and the keyed-patch renderer reuses
+     * card nodes (same ui_rev) whose closures still hold pre-reorder
+     * indexes. Both silently swapped the WRONG pair into shots/index.yaml. */
+    if (reorderBusy || readonly) return;
+    const order = lastShots.map((s) => s.id);
+    const i = order.indexOf(shotId);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    const moved = order[i];
+    order[i] = order[j];
+    order[j] = moved;
+    reorderBusy = true;
+    try {
+      /* GUI-INDEX-P1-001: carry the cut-order CAS token. permute_index only
+       * checks the ids are a PERMUTATION of the current shots, which two tabs
+       * showing the same shot set ALWAYS satisfy — so without this the second
+       * tab's ↑/↓ silently reverted the first tab's reorder, no error and no
+       * recoverable diff. Absent token = the server's historical
+       * last-write-wins, so this stays correct against an older server. */
+      const body = { order };
+      if (lastIndexRev !== null) body.expected_rev = lastIndexRev;
+      const res = await post(btn, "/api/index", body, "已移动 (moved) " + moved);
+      if (res && typeof res.rev === "string") {
+        lastIndexRev = res.rev;
+      } else if (!res) {
+        /* 409 (or any refusal): post() toasts and returns null WITHOUT
+         * refreshing, so re-sync the token — otherwise every later reorder
+         * keeps replaying the stale one and 409s forever. */
+        await refresh();
+      }
+    } finally {
+      reorderBusy = false;
+    }
+  }
+
+  /* stateFilter declared earlier; hydrated from /api/ui-state on boot */
+
+  /* most-blocking first — the #44 resolver's ladder, not the alphabet */
+  const STATE_FILTER_ORDER = ["broken", "missing", "needs_selection", "stale", "manual", "fresh"];
+
+  function filterChips(shots) {
+    const bar = el("div", "fchips");
+    const counts = {};
+    shots.forEach((s) => { counts[s.state] = (counts[s.state] || 0) + 1; });
+    const mk = (label, value, n, tip) => {
+      const c = el("button",
+        "chip fchip" + (stateFilter === value ? " on" : ""),
+        label + (n !== undefined ? " " + n : ""));
+      c.type = "button";
+      c.setAttribute("aria-pressed", stateFilter === value ? "true" : "false");
+      if (tip) c.title = tip;
+      c.addEventListener("click", () => {
+        stateFilter = stateFilter === value ? "" : value;
+        saveUI({ filter: stateFilter });  /* survives reload, per project */
+        renderShots(lastShots);  /* state unchanged: re-render directly */
+      });
+      bar.appendChild(c);
+    };
+    mk("全部 (all)", "", shots.length);
+    STATE_FILTER_ORDER.filter((st) => counts[st])
+      .concat(Object.keys(counts).filter((st) => STATE_FILTER_ORDER.indexOf(st) < 0).sort())
+      .forEach((st) => mk(CK_STATE_ZH[st] || st, st, counts[st], st));
+    return bar;
+  }
+
+  /* -------------------------------------- unread-first triage (Figma) --- */
+  /* localStorage manju-reviewed-<project>: {ts, takes:{shotId:[takeNames]}}.
+   * Take cards carry no created_at, so "new" is approximated as "name absent
+   * from the take-name snapshot stored at the last 标记已阅". No snapshot yet
+   * (never marked) -> nothing is flagged. Storage failures (blocked/corrupt)
+   * silently disable the feature — the grid itself must never break. */
+  let lastProjectName = "";   /* state.project.name — keys the snapshot */
+  let reviewSnap = null;      /* parsed snapshot for the CURRENT render pass */
+  let reviewChipEl = null;    /* 未阅 N chip in the shots bar */
+
+  /* Keyed by the STABLE project identity when the guard meta is present —
+   * two projects can share a display NAME and used to share (and clobber)
+   * one snapshot. The old name key migrates once, then retires. */
+  const reviewKey = () =>
+    "manju-reviewed-" + (PROJECT || lastProjectName);
+
+  function loadReviewSnapshot() {
+    if (!lastProjectName && !PROJECT) return null;
+    try {
+      let raw = window.localStorage.getItem(reviewKey());
+      if (!raw && PROJECT && lastProjectName) {
+        const legacy = window.localStorage.getItem("manju-reviewed-" + lastProjectName);
+        if (legacy) {  /* one-time migration off the colliding name key */
+          window.localStorage.setItem(reviewKey(), legacy);
+          window.localStorage.removeItem("manju-reviewed-" + lastProjectName);
+          raw = legacy;
+        }
+      }
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      return (snap && typeof snap === "object" && snap.takes &&
+        typeof snap.takes === "object") ? snap : null;
+    } catch (err) { return null; }
+  }
+
+  function takeNameSnapshot() {
+    const takes = {};
+    lastShots.forEach((s) => {
+      takes[s.id] = (Array.isArray(s.takes) ? s.takes : []).map((t) => String(t.name));
+    });
+    return takes;
+  }
+
+  function isNewTake(snap, shotId, takeName) {
+    if (!snap) return false;
+    const seen = snap.takes[shotId];
+    if (!Array.isArray(seen)) return true;   /* whole shot is post-review */
+    return seen.indexOf(String(takeName)) < 0;
+  }
+
+  function countNewTakes(snap) {
+    if (!snap) return 0;
+    let n = 0;
+    lastShots.forEach((s) =>
+      (Array.isArray(s.takes) ? s.takes : []).forEach((t) => {
+        if (isNewTake(snap, s.id, t.name)) n += 1;
+      }));
+    return n;
+  }
+
+  function markReviewed() {
+    if (!lastProjectName) {
+      toast("项目尚未加载 (project not loaded yet)", "warn");
+      return;
+    }
+    try {
+      window.localStorage.setItem(reviewKey(), JSON.stringify({
+        ts: new Date().toISOString(),
+        takes: takeNameSnapshot(),
+      }));
+      toast("已标记已阅 (marked reviewed)", "ok");
+    } catch (err) {
+      toast("标记失败 (mark reviewed failed): " + errMsg(err), "err");
+      return;
+    }
+    try { renderShots(lastShots); } catch (err) { /* chips are advisory */ }
+    updateReviewChip();
+    /* #50c: the cockpit's 新 take 未阅 row reads the SAME snapshot — repaint
+     * it now, or the one-glance home contradicts the shots bar until the
+     * next fingerprint change. */
+    try { if (cockData) renderCockpit(); } catch (err) { /* advisory */ }
+  }
+
+  function updateReviewChip() {
+    if (!reviewChipEl) return;
+    let n = 0;
+    try { n = countNewTakes(loadReviewSnapshot()); } catch (err) { n = 0; }
+    reviewChipEl.textContent = "未阅 " + n + " (unread)";
+    reviewChipEl.classList.toggle("hidden", n <= 0);
+  }
+
+  /* Debug counters for keyed patch (tests / soak read window.__manjuRenderStats). */
+  const renderStats = {
+    shots_created: 0, shots_reused: 0, shots_replaced: 0, shots_removed: 0,
+    media_nodes_created: 0, media_nodes_reused: 0, media_activated: 0,
+    render_duration_ms: 0,
+  };
+  try { window.__manjuRenderStats = renderStats; } catch (e) { /* non-browser */ }
+
+  /* Media IO: activate src when near viewport; keep selected/review takes ready. */
+  let mediaIO = null;
+  try {
+    if (typeof IntersectionObserver === "function") {
+      mediaIO = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          const node = en.target;
+          if (!node || !node.dataset) return;
+          if (en.isIntersecting) {
+            if (node.dataset.lazySrc && !node.src) {
+              node.src = node.dataset.lazySrc;
+              renderStats.media_activated++;
+            }
+            if (node.tagName === "VIDEO" && node.preload === "none"
+                && node.dataset.wantPreload === "1") {
+              node.preload = "metadata";
+            }
+          } else if (node.tagName === "VIDEO" && !node.dataset.keepAlive) {
+            try {
+              if (!node.paused) node.pause();
+            } catch (err) { /* ignore */ }
+          }
+        });
+      }, { root: null, rootMargin: "200px 0px", threshold: 0.01 });
+    }
+  } catch (e) { mediaIO = null; }
+
+  function disposeShotNode(node) {
+    if (!node) return;
+    node.querySelectorAll("video, img, [data-lazy-media]").forEach((media) => {
+      try {
+        if (mediaIO) mediaIO.unobserve(media);
+      } catch (e) { /* */ }
+      if (media.tagName === "VIDEO") {
+        try { if (!media.paused) media.pause(); } catch (e2) { /* */ }
+      }
+    });
+  }
+
+  function captureFocusIdentity() {
+    const el0 = document.activeElement;
+    if (!el0 || !el0.closest) return null;
+    const card = el0.closest("section.shot[data-sid]");
+    if (!card) return null;
+    const take = el0.closest(".take");
+    return {
+      shotId: card.dataset.sid || "",
+      take: take && take.dataset ? (take.dataset.tname || "") : "",
+      action: el0.dataset ? (el0.dataset.action || "") : "",
+      role: el0.getAttribute("role") || "",
+      tag: (el0.tagName || "").toLowerCase(),
+      cls: el0.className || "",
+    };
+  }
+
+  function restoreFocusIdentity(id) {
+    if (!id || !id.shotId) return;
+    const card = document.querySelector(
+      'section.shot[data-sid="' + id.shotId + '"]');
+    if (!card) return;
+    let target = null;
+    if (id.action) {
+      const scope = id.take
+        ? card.querySelector('.take[data-tname="' + id.take + '"]') || card
+        : card;
+      target = scope.querySelector('[data-action="' + id.action + '"]');
+    }
+    if (!target && id.take) {
+      target = card.querySelector('.take[data-tname="' + id.take + '"] video')
+        || card.querySelector('.take[data-tname="' + id.take + '"]');
+    }
+    if (!target) target = card;
+    try { target.focus({ preventScroll: true }); } catch (e) {
+      try { target.focus(); } catch (e2) { /* */ }
+    }
+  }
+
+  function filterSignature(shots) {
+    const counts = {};
+    (shots || []).forEach((s) => {
+      counts[s.state] = (counts[s.state] || 0) + 1;
+    });
+    return JSON.stringify(counts) + "|" + (stateFilter || "");
+  }
+
+  function ensureFilterChips(root, shots) {
+    const states = Object.keys(shots.reduce((a, s) => (a[s.state] = 1, a), {}));
+    let chips = root.querySelector(".shot-filters");
+    if (states.length <= 1) {
+      if (chips && chips.parentNode) chips.parentNode.removeChild(chips);
+      if (stateFilter) {
+        stateFilter = "";
+        saveUI({ filter: "" });
+      }
+      return;
+    }
+    const sig = filterSignature(shots);
+    if (!chips || chips.dataset.sig !== sig) {
+      const fresh = filterChips(shots);
+      fresh.classList.add("shot-filters");
+      fresh.dataset.sig = sig;
+      if (chips && chips.parentNode) chips.parentNode.replaceChild(fresh, chips);
+      else root.insertBefore(fresh, root.firstChild);
+    }
+  }
+
+  function renderShots(shots) {
+    const t0 = (typeof performance !== "undefined" && performance.now)
+      ? performance.now() : Date.now();
+    /* Per-render snapshot — counters are not cumulative across polls. */
+    renderStats.shots_created = 0;
+    renderStats.shots_reused = 0;
+    renderStats.shots_replaced = 0;
+    renderStats.shots_removed = 0;
+    renderStats.media_nodes_created = 0;
+    renderStats.media_nodes_reused = 0;
+    renderStats.media_activated = 0;
+    reviewSnap = loadReviewSnapshot();   /* one parse per grid render */
+    const root = $("shots");
+    /* #50c (review find #1): a DIRECT re-render (filter chip, cockpit count,
+     * 标记已阅, batch bar) while an inline note editor is open destroys the
+     * editor node WITHOUT editorClosed() — editorOpen would leak true and
+     * silently freeze the whole poll loop + keyboard. The draft is forfeit
+     * (the user asked for a repaint); the pause must never leak. */
+    if (editorOpen && root.querySelector(".tnote-edit")) {
+      editorOpen = false;
+      /* bug-hunt #51: clearing the flag alone left the loop DEAD — nothing
+       * re-arms it (schedule/refresh only chain off each other). */
+      schedule();
+    }
+    if (!shots.length) {
+      clear(root);
+      const empty = el("div", "empty");
+      empty.appendChild(el("p", null, "还没有分镜 (no shots yet)。"));
+      empty.appendChild(el("p", "muted",
+        "分镜是创作阶段：请在 shots/*.yaml 中撰写 — 引擎只做确定性构建，从不代你发明分镜。"));
+      root.appendChild(empty);
+      return;
+    }
+    ensureFilterChips(root, shots);
+    const visible = stateFilter ? shots.filter((s) => s.state === stateFilter) : shots;
+    if (!visible.length) {
+      stateFilter = "";
+      saveUI({ filter: "" });  /* #50c: ditto — never restore a dead filter */
+      renderShots(shots);  /* the filtered state vanished: reset, re-render */
+      return;
+    }
+
+    /* Keyed patch by shot.id + ui_rev — never clear+rebuild the whole grid. */
+    const scrollTop = root.scrollTop;
+    const focusId = captureFocusIdentity();
+    const byId = new Map();
+    Array.from(root.querySelectorAll("section.shot[data-sid]")).forEach((node) => {
+      byId.set(node.dataset.sid, node);
+    });
+    const keep = new Set();
+    const frag = document.createDocumentFragment();
+    let orderHost = root.querySelector(".shot-list");
+    if (!orderHost) {
+      orderHost = el("div", "shot-list");
+      root.appendChild(orderHost);
+    }
+    /* Move existing nodes into fragment for reordering without destroying. */
+    while (orderHost.firstChild) frag.appendChild(orderHost.firstChild);
+
+    visible.forEach((shot, idx) => {
+      const total = shots.length;
+      const existing = byId.get(shot.id);
+      const rev = shot.ui_rev || "";
+      if (existing && existing.dataset.uiRev === rev) {
+        /* Reuse node; update keyboard focus class only. */
+        existing.classList.toggle("kb-focus", shot.id === kbFocusId);
+        /* Batch checkbox may have changed without ui_rev — sync cheaply. */
+        const cb = existing.querySelector("input.shot-check");
+        if (cb) cb.checked = batchSel.has(shot.id);
+        orderHost.appendChild(existing);
+        keep.add(shot.id);
+        renderStats.shots_reused++;
+        existing.querySelectorAll("video, img").forEach(() => {
+          renderStats.media_nodes_reused++;
+        });
+        return;
+      }
+      if (existing) {
+        /* Capture media playback before replace; dispose old observer targets. */
+        const playState = [];
+        existing.querySelectorAll("video").forEach((v) => {
+          playState.push({
+            name: (v.closest(".take") || {}).dataset
+              ? (v.closest(".take").dataset.tname || "") : "",
+            t: v.currentTime, paused: v.paused, vol: v.volume,
+            muted: v.muted, rate: v.playbackRate,
+          });
+        });
+        disposeShotNode(existing);
+        const card = shotCard(shot, idx, total);
+        card.dataset.uiRev = rev;
+        orderHost.appendChild(card);
+        /* Restore playback on matching take name if present. */
+        playState.forEach((ps) => {
+          const v = card.querySelector(
+            ps.name ? ('.take[data-tname="' + ps.name + '"] video') : "video");
+          if (!v) return;
+          try {
+            v.volume = ps.vol; v.muted = ps.muted; v.playbackRate = ps.rate || 1;
+            if (ps.t > 0) v.currentTime = ps.t;
+            if (!ps.paused && v.play) v.play().catch(() => {});
+          } catch (err) { /* autoplay / seek may fail */ }
+        });
+        keep.add(shot.id);
+        renderStats.shots_replaced++;
+        return;
+      }
+      const card = shotCard(shot, idx, total);
+      card.dataset.uiRev = rev;
+      orderHost.appendChild(card);
+      keep.add(shot.id);
+      renderStats.shots_created++;
+    });
+
+    /* Remove shots no longer visible. */
+    byId.forEach((node, sid) => {
+      if (!keep.has(sid)) {
+        disposeShotNode(node);
+        if (node.parentNode) node.parentNode.removeChild(node);
+        renderStats.shots_removed++;
+      }
+    });
+    /* Drop leftover frag nodes (orphans). */
+    while (frag.firstChild) {
+      const n = frag.firstChild;
+      frag.removeChild(n);
+      if (n.dataset && n.dataset.sid && !keep.has(n.dataset.sid)) {
+        disposeShotNode(n);
+        renderStats.shots_removed++;
+      }
+    }
+    try { root.scrollTop = scrollTop; } catch (e) { /* */ }
+    restoreFocusIdentity(focusId);
+    applyReviewFocusMode();
+    if (pendingHydrateShot && !kbFocusId) {
+      const want = pendingHydrateShot;
+      pendingHydrateShot = "";
+      if (visible.some((s) => s.id === want)) kbSetFocus(want);
+    }
+    /* Do NOT saveUI({shotsScroll}) here — renderShots runs on every poll and
+     * would spam POST /api/ui-state. Scroll is persisted on scrollend only. */
+    const t1 = (typeof performance !== "undefined" && performance.now)
+      ? performance.now() : Date.now();
+    renderStats.render_duration_ms = Math.round(t1 - t0);
+  }
+
+  /* Debounced scroll persistence (cross-port restore). */
+  (() => {
+    const root = $("shots");
+    if (!root || root.dataset.scrollBound) return;
+    root.dataset.scrollBound = "1";
+    let t = null;
+    root.addEventListener("scroll", () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        try { saveUI({ shotsScroll: root.scrollTop }); } catch (e) { /* */ }
+      }, 400);
+    }, { passive: true });
+  })();
+
+  function shotCard(shot, idx, total) {
+    const card = el("section", "shot");
+    card.dataset.sid = shot.id;   /* timeline clips scroll to this card */
+    if (shot.id === kbFocusId) card.classList.add("kb-focus");  /* survives re-renders */
+    const head = el("div", "shot-head");
+    /* batch multi-select (goal item 3): the checkbox reflects the persistent
+     * selection Set and survives poll re-renders. Read-only hides mutation, so
+     * the box is disabled there (viewing stays fine). */
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "shot-check";
+    cb.checked = batchSel.has(shot.id);
+    cb.title = "多选做批量 (select for batch redo/voice)";
+    if (readonly) cb.disabled = true;
+    cb.addEventListener("change", () => toggleBatch(shot.id, cb.checked));
+    head.appendChild(cb);
+    head.appendChild(el("span", "sid", shot.id));
+    /* F18 discipline (the board landed it in #42a; the workbench card kept
+     * the raw enum): the GUI's own Chinese state word, enum on the title. */
+    const stBadge = el("span",
+      "badge " + (STATE_CLASS[shot.state] || "st-missing"),
+      CK_STATE_ZH[shot.state] || shot.state);
+    stBadge.title = shot.state;
+    head.appendChild(stBadge);
+    if (shot.voice) {
+      const vc = el("span",
+        "badge " + (STATE_CLASS[shot.voice.state] || "st-missing"),
+        "配音 " + shot.voice.state);
+      if (shot.voice.why) vc.title = shot.voice.why;
+      head.appendChild(vc);
+    }
+    (shot.locked || []).forEach((f) => head.appendChild(el("span", "chip lock", "🔒 " + f)));
+    /* A/B compare (Frame.io): only when >=2 video takes exist to pair. Viewing
+     * is read-only, so it is NOT readonly-gated (the select L/R buttons are). */
+    if (videoTakesOf(shot).length >= 2) {
+      const cmp = el("button", "btn ghost mini cmp-btn", "对比 (Compare)");
+      cmp.type = "button";
+      cmp.title = "并排对比 take (compare two takes side by side)";
+      cmp.addEventListener("click", () => {
+        try { openCompare(shot); }
+        catch (err) { toast("对比打开失败 (compare failed): " + errMsg(err), "err"); }
+      });
+      head.appendChild(cmp);
+    }
+    const mv = el("span", "mvbtns");
+    /* edges follow the FULL index order (a filtered view's first card may
+     * still legally move up within shots/index.yaml) */
+    const fullOrder = lastShots.map((s) => s.id);
+    const fullIdx = fullOrder.indexOf(shot.id);
+    const mkMove = (label, delta, edge, tip) => {
+      const b = el("button", "btn ghost mini", label);
+      b.type = "button";
+      b.title = tip;
+      if (!roGate(b) && edge) b.disabled = true;   /* first ↑ / last ↓ stay off */
+      b.addEventListener("click", () => moveShot(shot.id, delta, b));
+      mv.appendChild(b);
+    };
+    mkMove("↑", -1, fullIdx <= 0, "上移 (move up)");
+    mkMove("↓", 1, fullIdx < 0 || fullIdx === fullOrder.length - 1, "下移 (move down)");
+    head.appendChild(mv);
+    card.appendChild(head);
+
+    if (shot.action) card.appendChild(el("div", "action", shot.action));
+    if (shot.speaker || shot.dialogue) {
+      const d = el("div", "dialogue");
+      if (shot.speaker) d.appendChild(el("span", "speaker", shot.speaker + ": "));
+      d.appendChild(document.createTextNode(shot.dialogue || ""));
+      card.appendChild(d);
+    }
+    if (shot.note) card.appendChild(el("div", "note", shot.note));
+
+    const takes = Array.isArray(shot.takes) ? shot.takes : [];
+    if (takes.length) {
+      const row = el("div", "takes");
+      takes.forEach((t) => row.appendChild(takeCard(shot, t)));
+      card.appendChild(row);
+    } else {
+      card.appendChild(el("div", "dialogue", "还没有 take (no takes yet)"));
+    }
+
+    const voiceTakes = Array.isArray(shot.voice_takes) ? shot.voice_takes : [];
+    if (voiceTakes.length) {
+      const vlist = el("div", "voice-takes");
+      voiceTakes.forEach((v) => {
+        const vrow = el("div", "voice-take");
+        const audio = document.createElement("audio");
+        audio.controls = true;
+        audio.preload = "none";
+        audio.src = v.url;
+        vrow.appendChild(audio);
+        vrow.appendChild(el("span", "vname", v.name + (v.manual ? " (manual)" : "")));
+        vlist.appendChild(vrow);
+      });
+      card.appendChild(vlist);
+    }
+
+    const acts = el("div", "btnrow");
+    const edit = el("button", "btn ghost", "编辑 (Edit)");
+    edit.type = "button";
+    roGate(edit);
+    edit.addEventListener("click", () => openEditorFor(shot.id, edit));
+    acts.appendChild(edit);
+    const redo = el("button", "btn ghost", "重做 (Redo)");
+    redo.type = "button";
+    roGate(redo);
+    redo.addEventListener("click", () =>
+      showPlanModal("redo", { shot: shot.id }, {
+        title: "重做前计划 (plan before redo) · " + shot.id,
+        onConfirm: () => post(redo, "/api/redo", { shot: shot.id, assume_yes: true },
+          shot.id + " 重做已入队 (redo queued)"),
+      }));
+    acts.appendChild(redo);
+    if (String(shot.dialogue || "").trim()) {
+      const voice = el("button", "btn ghost", "配音 (Voice)");
+      voice.type = "button";
+      roGate(voice);
+      voice.addEventListener("click", () =>
+        showPlanModal("voice", { shot: shot.id }, {
+          title: "配音前计划 (plan before voice) · " + shot.id,
+          onConfirm: () => post(voice, "/api/voice", { shot: shot.id, assume_yes: true },
+            shot.id + " 配音已入队 (voice queued)"),
+        }));
+      acts.appendChild(voice);
+    }
+    card.appendChild(acts);
+    return card;
+  }
+
+  function takeCard(shot, t) {
+    const box = el("div", "take" + (t.selected ? " selected" : ""));
+    box.dataset.tname = t.name || "";
+    const ext = String(t.ext || "").toLowerCase();
+    if (t.url && IMAGE_EXT[ext]) {
+      /* image takes render as a real <img> — v2 gave them a dead <video> */
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.alt = t.name || "take";
+      /* Selected: set src immediately; others use lazy dataset + observer. */
+      img.dataset.lazyMedia = "1";
+      if (t.selected) {
+        img.src = t.url;
+        renderStats.media_nodes_created++;
+      } else {
+        img.dataset.lazySrc = t.url;
+        img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        renderStats.media_nodes_created++;
+        if (mediaIO) mediaIO.observe(img);
+      }
+      box.appendChild(img);
+    } else if (t.url) {
+      const v = document.createElement("video");
+      v.controls = true;
+      v.width = 180;
+      /* Selected / current review take: metadata; off-screen others: none. */
+      v.dataset.lazyMedia = "1";
+      if (t.selected || (shot.id === kbFocusId)) {
+        v.preload = "metadata";
+        v.src = t.url;
+        v.dataset.keepAlive = "1";
+        v.dataset.wantPreload = "1";
+      } else {
+        v.preload = "none";
+        v.dataset.lazySrc = t.url;
+        v.dataset.wantPreload = "0";
+      }
+      if (t.poster) v.poster = t.poster;   /* server thumb rides as poster */
+      box.appendChild(v);
+      renderStats.media_nodes_created++;
+      if (mediaIO && !t.selected) mediaIO.observe(v);
+    } else {
+      box.appendChild(el("div", "nomedia", "no media"));
+    }
+    const name = el("div", "tname", t.name);
+    if (t.selected) name.appendChild(el("span", "star", " ★"));
+    if (isNewTake(reviewSnap, shot.id, t.name)) {
+      /* unread-first triage: absent from the last 标记已阅 snapshot */
+      name.appendChild(el("span", "chip tk-new", "新 (new)"));
+    }
+    box.appendChild(name);
+    box.appendChild(el("div", "tmeta", (t.provider || "?") + " · " + fmtDur(t.duration_ms)));
+    if (PREVIEW_HINT_EXT[ext]) {
+      box.appendChild(el("div", "hint", "浏览器可能无法预览 ." + ext));
+    }
+    /* director note (Frame.io-style): truth text; a mm:ss prefix seeks */
+    if (t.note) {
+      const noteEl = el("div", "note tnote", "📝 " + t.note);
+      noteEl.title = t.note;
+      const m = /^(\d{1,2}):(\d{2})/.exec(t.note);
+      const vid = box.querySelector("video");
+      if (m && vid) {
+        noteEl.classList.add("seekable");
+        noteEl.title = t.note + " — 点击跳转 (click to seek)";
+        noteEl.addEventListener("click", () => {
+          vid.currentTime = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+          if (vid.paused && vid.play) vid.play().catch(() => {});
+        });
+      }
+      box.appendChild(noteEl);
+    }
+    const acts = el("div", "tacts");
+    /* one-key verdicts (UX-STUDY #4): 好/弃 are just take_notes values —
+     * one reviewable YAML line, clicking the active verdict clears it */
+    const verdict = (label, value, tip, action) => {
+      const b = el("button", "btn tiny" + (t.note === value ? " on" : ""), label);
+      b.type = "button";
+      b.title = tip;
+      b.setAttribute("aria-label", tip);  /* the emoji face needs a name */
+      b.dataset.action = action;  /* NEVER use positional .tacts .btn for shortcuts */
+      b.dataset.take = t.name || "";
+      roGate(b);
+      b.addEventListener("click", () =>
+        post(b, "/api/take-note",
+          { shot: shot.id, take: t.name, text: t.note === value ? "" : value,
+            expected_rev: shot.rev || undefined },
+          (t.note === value ? "已清除评价 " : "已标记" + value + " ")
+            + shot.id + "/" + t.name));
+      acts.appendChild(b);
+    };
+    verdict("👍", "好", "标记 好 (approve)", "verdict-good");
+    verdict("👎", "弃", "标记 弃 (reject)", "verdict-reject");
+    const noteBtn = el("button", "btn tiny", "📝");
+    noteBtn.type = "button";
+    noteBtn.title = "备注 (note) — 以 mm:ss 开头可点击跳转";
+    noteBtn.setAttribute("aria-label", "备注 (note)");
+    noteBtn.dataset.action = "edit-note";
+    noteBtn.dataset.take = t.name || "";
+    roGate(noteBtn);
+    noteBtn.addEventListener("click", () => {
+      /* inline editor, not a blocking prompt dialog — that froze the whole
+       * page (playing take included) and Esc silently threw the text away.
+       * It joins the ONE editorOpen pause (like the shot-editor dialog):
+       * a fingerprint refresh mid-typing would rebuild #shots and eat the
+       * draft, so the loop pauses while a note editor is up. */
+      const openEd = box.querySelector(".tnote-edit");
+      if (openEd) { openEd.querySelector("textarea").focus(); return; }
+      document.querySelectorAll(".tnote-edit").forEach((other) => other.remove());
+      editorOpen = true;
+      pauseLive();  /* P1-8: abort in-flight watch; join editorOpen pause fully */
+      const ed = el("div", "tnote-edit");
+      const ta = document.createElement("textarea");
+      ta.rows = 2;
+      ta.value = t.note || "";
+      ta.placeholder = "留空保存=删除；mm:ss 开头=可跳转；Ctrl+Enter 保存";
+      const row = el("div", "btnrow");
+      const ok = el("button", "btn mini", "保存 (save)");
+      ok.type = "button";
+      roGate(ok);
+      const cancel = el("button", "btn ghost mini", "取消");
+      cancel.type = "button";
+      const save = () => {
+        editorOpen = false;  /* BEFORE post — its refresh must not be swallowed */
+        post(ok, "/api/take-note",
+          { shot: shot.id, take: t.name, text: ta.value,
+            expected_rev: shot.rev || undefined },
+          ta.value.trim() ? "已备注 " + shot.id + "/" + t.name : "已删除备注"
+        ).then((res) => {
+          /* #50c (review find #2): a FAILED save runs no refresh, so nothing
+           * re-arms the paused loop. Keep the draft + the pause invariant
+           * (editor still in the DOM) — 重试/取消 both resume normally. */
+          if (res === null) { editorOpen = true; return; }
+          /* bug-hunt #51: an UNCHANGED note leaves the shots signature
+           * identical — section() skips the repaint that would sweep the
+           * editor. Remove it explicitly when it survived the refresh. */
+          if (ed.isConnected) ed.remove();
+        });
+      };
+      const closeNote = () => { ed.remove(); editorClosed(); };
+      ok.addEventListener("click", save);
+      cancel.addEventListener("click", closeNote);
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        if (e.key === "Escape") { e.stopPropagation(); closeNote(); }
+      });
+      row.appendChild(ok);
+      row.appendChild(cancel);
+      ed.appendChild(ta);
+      ed.appendChild(row);
+      box.appendChild(ed);
+      ta.focus();
+    });
+    acts.appendChild(noteBtn);
+    /* the recipe travels with the output (Runway pattern): same provider,
+     * same seed, one click — append-only new takes, selection untouched */
+    if (t.provider && t.provider !== "manual_import") {
+      const rb = el("button", "btn tiny", "⟳");
+      rb.type = "button";
+      rb.title = "用此参数重做 (redo with these settings"
+        + (t.seed !== null && t.seed !== undefined ? ", seed " + t.seed : "") + ")";
+      rb.setAttribute("aria-label", "用此参数重做 (redo with these settings)");
+      roGate(rb);
+      rb.addEventListener("click", () => {
+        const planParams = { shot: shot.id, provider: t.provider };
+        if (t.seed !== null && t.seed !== undefined) planParams.seed = t.seed;
+        showPlanModal("redo", planParams, {
+          title: "重做前计划 · " + shot.id + " (" + t.provider + ")",
+          onConfirm: () => post(rb, "/api/redo",
+            Object.assign({ assume_yes: true }, planParams),
+            "已入队重做 " + shot.id + " (" + t.provider + ")"),
+        });
+      });
+      acts.appendChild(rb);
+    }
+    if (!t.selected) {
+      const btn = el("button", "btn small", "选用 (Select)");
+      btn.type = "button";
+      roGate(btn);
+      btn.addEventListener("click", () =>
+        post(btn, "/api/select", { shot: shot.id, take: t.name },
+          "已选用 " + shot.id + " / " + t.name));
+      acts.appendChild(btn);
+    }
+    box.appendChild(acts);
+    return box;
+  }
+
+  /* ------------------------------------------- A/B take compare (R14) --- */
+  /* Frame.io comparison viewer + Resolve Fast Review, in one overlay. Two
+   * <video>s driven from one shot's takes. The overlay is a plain fixed div
+   * mounted on <body> — OUTSIDE #shots — so a poll re-render (which only
+   * rebuilds #shots) can never destroy it; it is read-only, so unlike the
+   * editor it does NOT pause the poll loop. Closed via ✕ or Esc (the global
+   * keydown handler routes Esc here while it is up). Every listener is
+   * try/caught; all text enters via textContent (el()); no inline styles. */
+  let cmpOverlay = null;   /* the mounted overlay element, or null when closed */
+
+  /* takes playable as <video>: has media and is not an image (compare is a
+   * side-by-side video scrub, so image takes are excluded from the pairing) */
+  function videoTakesOf(shot) {
+    return (Array.isArray(shot.takes) ? shot.takes : []).filter((t) =>
+      !!(t && t.url) && !IMAGE_EXT[String(t.ext || "").toLowerCase()]);
+  }
+
+  function closeCompare() {
+    if (!cmpOverlay) return;
+    try {
+      cmpOverlay.querySelectorAll("video").forEach((v) => {
+        try { v.pause(); } catch (e) { /* nothing to stop */ }
+      });
+    } catch (e) { /* teardown is best-effort */ }
+    if (cmpOverlay.parentNode) cmpOverlay.parentNode.removeChild(cmpOverlay);
+    cmpOverlay = null;
+  }
+
+  function openCompare(shot) {
+    closeCompare();   /* at most one overlay at a time */
+    const takes = videoTakesOf(shot);
+    if (takes.length < 2) return;   /* the button only shows for >=2 anyway */
+    const FIT_TARGET = 5;           /* seconds — Resolve Fast Review target */
+
+    let syncOn = false;   /* mirror transport A -> B */
+    let fitOn = false;    /* duration-normalized playbackRate */
+    const sides = [];     /* [leftState, rightState] */
+
+    /* real duration (s): the <video> metadata is authoritative — fake takes
+     * carry no probe, so duration_ms is null; duration_ms is only a fallback */
+    const durSec = (st) => {
+      const v = st && st.video;
+      if (v && isFinite(v.duration) && v.duration > 0) return v.duration;
+      const ms = st && st.take && st.take.duration_ms;
+      return (typeof ms === "number" && isFinite(ms) && ms > 0) ? ms / 1000 : 0;
+    };
+    /* fit 5s: playbackRate = duration / 5, clamped to [0.5, 4] (Resolve Cut) */
+    const fitRateOf = (st) => {
+      const d = durSec(st);
+      if (!fitOn || d <= 0) return 1;
+      return Math.min(4, Math.max(0.5, d / FIT_TARGET));
+    };
+
+    const overlay = el("div", "cmp-overlay");
+    const panel = el("div", "cmp-panel");
+    overlay.appendChild(panel);
+
+    const head = el("div", "cmp-head");
+    head.appendChild(el("h3", null, "对比 (compare) · " + shot.id));
+    const toggles = el("div", "cmp-toggles");
+
+    const syncLabel = el("label", "cmp-toggle");
+    const syncCk = document.createElement("input");
+    syncCk.type = "checkbox";
+    syncLabel.appendChild(syncCk);
+    syncLabel.appendChild(document.createTextNode(" 同步播放 (sync play)"));
+    toggles.appendChild(syncLabel);
+
+    const fitLabel = el("label", "cmp-toggle");
+    const fitCk = document.createElement("input");
+    fitCk.type = "checkbox";
+    fitLabel.appendChild(fitCk);
+    fitLabel.appendChild(document.createTextNode(" 等长回放 (fit 5s)"));
+    const fitRateLbl = el("span", "cmp-rate");   /* ×N.N applied-rate label */
+    fitLabel.appendChild(fitRateLbl);
+    toggles.appendChild(fitLabel);
+    head.appendChild(toggles);
+
+    const closeBtn = el("button", "cmp-close", "✕");
+    closeBtn.type = "button";
+    closeBtn.title = "关闭 (close) · Esc";
+    closeBtn.addEventListener("click", () => {
+      try { closeCompare(); } catch (e) { /* already gone */ }
+    });
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
+
+    const updateFitLabel = () => {
+      if (!fitOn || sides.length < 2) { fitRateLbl.textContent = ""; return; }
+      const l = fitRateOf(sides[0]);
+      const r = fitRateOf(sides[1]);
+      fitRateLbl.textContent = (Math.abs(l - r) < 0.05)
+        ? " ×" + l.toFixed(1)
+        : " 左×" + l.toFixed(1) + " 右×" + r.toFixed(1);
+    };
+    const applyFit = () => {
+      sides.forEach((st) => {
+        try { st.video.playbackRate = fitRateOf(st); } catch (e) { /* pre-metadata */ }
+      });
+      updateFitLabel();
+    };
+
+    const grid = el("div", "cmp-videos");
+    panel.appendChild(grid);
+
+    const makeSide = (defaultIdx, selectLabel) => {
+      const wrap = el("div", "cmp-side");
+      const sel = document.createElement("select");
+      takes.forEach((t, i) => {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = t.name + (t.selected ? " ★" : "");
+        sel.appendChild(o);
+      });
+      const video = document.createElement("video");
+      video.controls = true;
+      video.preload = "metadata";
+      const cap = el("div", "cmp-cap");
+      const selBtn = el("button", "btn small", selectLabel);
+      selBtn.type = "button";
+      roGate(selBtn);   /* /api/select mutates: disabled in readonly */
+
+      const st = { sel, video, cap, selBtn, take: takes[defaultIdx] };
+      sides.push(st);
+
+      const renderCap = () => {
+        clear(cap);
+        const t = st.take;
+        const ms = (isFinite(video.duration) && video.duration > 0)
+          ? video.duration * 1000
+          : (typeof t.duration_ms === "number" ? t.duration_ms : 0);
+        cap.appendChild(el("b", null, t.name));
+        cap.appendChild(document.createTextNode(
+          " · " + (t.provider || "?") + " · " + fmtDur(ms)));
+      };
+      const setTake = (i) => {
+        st.take = takes[i];
+        video.src = st.take.url;   /* property assignment — URL is app-built */
+        renderCap();               /* rate + label refresh on loadedmetadata */
+      };
+
+      sel.addEventListener("change", () => {
+        try { setTake(Number(sel.value)); }
+        catch (e) { toast("切换失败 (switch failed): " + errMsg(e), "err"); }
+      });
+      video.addEventListener("loadedmetadata", () => {
+        try { renderCap(); video.playbackRate = fitRateOf(st); updateFitLabel(); }
+        catch (e) { /* advisory */ }
+      });
+      selBtn.addEventListener("click", () => {
+        try {
+          const takeName = st.take.name;
+          closeCompare();   /* toast + close + refresh — post() refreshes state */
+          post(null, "/api/select", { shot: shot.id, take: takeName },
+            "已选用 " + shot.id + " / " + takeName);
+        } catch (e) { toast("选用失败 (select failed): " + errMsg(e), "err"); }
+      });
+
+      sel.value = String(defaultIdx);
+      wrap.appendChild(sel);
+      wrap.appendChild(video);
+      wrap.appendChild(cap);
+      wrap.appendChild(selBtn);
+      grid.appendChild(wrap);
+      setTake(defaultIdx);
+      return st;
+    };
+
+    /* default pairing: selected take (or first) on the left, newest OTHER on
+     * the right — takes() is oldest-first, so the newest is the last index */
+    const selIdx = takes.findIndex((t) => t.selected);
+    const leftIdx = selIdx >= 0 ? selIdx : 0;
+    let rightIdx = leftIdx;
+    for (let i = takes.length - 1; i >= 0; i--) {
+      if (i !== leftIdx) { rightIdx = i; break; }
+    }
+    makeSide(leftIdx, "选用左 (select L)");
+    makeSide(rightIdx, "选用右 (select R)");
+
+    /* sync: A (left) is the master; play/pause/seek mirror to B. Position
+     * mirroring (seek + >0.25s drift) is suspended while fit 5s is on — fit
+     * deliberately runs the clips at different rates, so only transport
+     * (play/pause) stays linked in that combined mode. */
+    const a = sides[0].video, b = sides[1].video;
+    const safePlay = (v) => { const p = v.play(); if (p && p.catch) p.catch(() => {}); };
+    a.addEventListener("play", () => {
+      try { if (syncOn && b.paused) safePlay(b); } catch (e) { /* transport */ }
+    });
+    a.addEventListener("pause", () => {
+      try { if (syncOn && !b.paused) b.pause(); } catch (e) { /* transport */ }
+    });
+    a.addEventListener("seeked", () => {
+      try { if (syncOn && !fitOn) b.currentTime = a.currentTime; } catch (e) { /* seek */ }
+    });
+    a.addEventListener("timeupdate", () => {
+      try {
+        if (syncOn && !fitOn && Math.abs(b.currentTime - a.currentTime) > 0.25) {
+          b.currentTime = a.currentTime;   /* drift correction */
+        }
+      } catch (e) { /* drift */ }
+    });
+
+    syncCk.addEventListener("change", () => {
+      try {
+        syncOn = syncCk.checked;
+        if (syncOn && !fitOn) {   /* align B to A the moment sync engages */
+          b.currentTime = a.currentTime;
+          if (!a.paused) safePlay(b);
+        }
+      } catch (e) { toast("同步失败 (sync failed): " + errMsg(e), "err"); }
+    });
+    fitCk.addEventListener("change", () => {
+      try { fitOn = fitCk.checked; applyFit(); }
+      catch (e) { toast("等长回放失败 (fit failed): " + errMsg(e), "err"); }
+    });
+
+    document.body.appendChild(overlay);
+    cmpOverlay = overlay;
+  }
+
+  /* ------------------------------------------------------ shot editor --- */
+  /* The editor edits HUMAN TRUTH: the exact YAML bytes travel both ways.
+   * While the dialog is open the poll loop is fully paused (schedule() and
+   * refresh() both early-return), so a mid-edit rerender can never eat the
+   * user's text; the dialog itself lives outside #shots anyway. Saving is
+   * check-gated server-side: a 409 means the file was already reverted. */
+  const SHOT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+  const shotUrl = (id) => "/api/shot/" + encodeURIComponent(id);
+
+  /* The next unused S### id, matching the S001/S002 convention the engine and
+     every doc use. Only ids of that exact shape count toward the maximum: a
+     hand-named shot ("intro") must not push the suggestion somewhere odd. */
+  function nextFreeShotId() {
+    const nums = (lastShots || [])
+      .map((s) => /^S(\d{3,})$/.exec(String(s && s.id || "")))
+      .filter(Boolean)
+      .map((m) => parseInt(m[1], 10));
+    const taken = new Set((lastShots || []).map((s) => String(s && s.id || "")));
+    let n = nums.length ? Math.max.apply(null, nums) + 1 : 1;
+    let id = "S" + String(n).padStart(3, "0");
+    while (taken.has(id) && n < 100000) {
+      n += 1;
+      id = "S" + String(n).padStart(3, "0");
+    }
+    return id;
+  }
+
+  async function newShotTemplate(id) {
+    /* scene defaults to the first scene id seen in existing shots: the shots
+     * cards do not carry `scene`, so peek at the first shot's raw YAML */
+    let scene = "";
+    if (lastShots.length) {
+      try {
+        const d = await api("GET", shotUrl(lastShots[0].id));
+        const m = /^scene:[ \t]*(.+)$/m.exec((d && d.yaml) || "");
+        if (m) scene = m[1].trim().replace(/^["']|["']$/g, "");
+      } catch (err) { /* template scene is a convenience, never a blocker */ }
+    }
+    return "id: " + id + "\nscene: " + scene +
+      "\ncharacters: []\ndialogue: {speaker: \"\", text: \"\"}\nduration: auto\n";
+  }
+
+  async function openEditorFor(id, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api("GET", shotUrl(id));
+      const exists = !!(data && data.exists);
+      const yamlText = exists ? data.yaml : await newShotTemplate(id);
+      /* round AA item 5 (#1): `rev` is the CAS token GET returned (""
+       * for a not-yet-existing shot) — threaded into the shared dialog so
+       * Save can prove the buffer still matches what was loaded. */
+      showShotEditor(id, yamlText, (data && data.locked) || [], !exists,
+        !data || data.in_index !== false, (data && data.rev) || "");
+    } catch (err) {
+      toast("无法加载镜头 (cannot load shot) " + id + ": " + errMsg(err), "err");
+    } finally {
+      if (btn) btn.disabled = false;
+      updateGates();
+    }
+  }
+
+  /* shot flavour of the shared dialog (bible/rules reuse the same flow) */
+  function showShotEditor(id, yamlText, locked, isNew, inIndex, rev) {
+    const chips = (Array.isArray(locked) ? locked : []).map((f) => "🔒 " + f);
+    const hints = [];
+    if (chips.length) {
+      hints.push("锁定字段改动会被 check 拒绝并回滚;解锁请在终端运行 manju unlock");
+    }
+    if (!isNew && inIndex === false) {
+      hints.push("该镜头不在 index 顺序中 (not listed in the shot index)");
+    }
+    showEditor({
+      title: (isNew ? "新建镜头 (new shot) · " : "编辑镜头 (edit shot) · ") + id,
+      yaml: yamlText,
+      saveUrl: shotUrl(id),
+      label: id,
+      chips,
+      hints,
+      validate: { kind: "shot", id },   /* live keystroke validation for this shot */
+      impact: { shot: id },   /* WP1: debounced chain-reaction preview on dialogue */
+      rev,   /* round AA item 5 (#1): CAS token, echoed back on Save below */
+      draftPath: "shots/" + id + ".yaml",   /* UX-WAVE-3: crash-loss draft识别键 */
+    });
+  }
+
+  /* --------------------------------------------- conflict banner (409) --- */
+  /* Naive line diff, deliberately LCS-free (multiset membership only):
+   * "-" = line on disk (truth) missing from the buffer, "+" = line in the
+   * buffer missing from truth. Order-insensitive, hence labelled 近似
+   * (approximate) — good enough to see WHAT the check gate reverted. */
+  function naiveLineDiff(bufferText, truthText) {
+    const bufLines = String(bufferText).split("\n");
+    const truthLines = String(truthText).split("\n");
+    const countOf = (lines) => {
+      const m = Object.create(null);
+      lines.forEach((l) => { m[l] = (m[l] || 0) + 1; });
+      return m;
+    };
+    const inBuf = countOf(bufLines);
+    const inTruth = countOf(truthLines);
+    const rows = [];
+    truthLines.forEach((l) => {
+      if (inBuf[l] > 0) inBuf[l] -= 1;
+      else rows.push({ cls: "dl-del", text: "- " + l });
+    });
+    bufLines.forEach((l) => {
+      if (inTruth[l] > 0) inTruth[l] -= 1;
+      else rows.push({ cls: "dl-add", text: "+ " + l });
+    });
+    return rows;
+  }
+
+  /* Collapsible 对比真相 section for the editor's 409 path: the server
+   * already reverted the file and sent the on-disk text back as `current`.
+   * The user's buffer stays untouched unless they click 重填 (and confirm). */
+  function conflictSection(ta, errBox, current) {
+    const det = document.createElement("details");
+    det.className = "ed-truth";
+    det.open = true;   /* the conflict IS the news — start expanded */
+    det.appendChild(el("summary", null, "对比真相 (diff vs truth)"));
+    det.appendChild(el("p", "ed-truth-note",
+      "近似逐行对比 (approximate line diff): - 行仅存在于磁盘真相, + 行仅存在于你的缓冲区 "
+      + "(- lines only on disk, + lines only in your buffer)"));
+    const box = el("div", "diff");
+    const rows = naiveLineDiff(ta.value, current);
+    if (!rows.length) {
+      box.appendChild(el("div", "dl-ctx", "(无逐行差异 no line-level differences)"));
+    } else {
+      /* arbitrary user text: one div per line, textContent only */
+      rows.forEach((r) => box.appendChild(el("div", r.cls, r.text)));
+    }
+    det.appendChild(box);
+    const row = el("div", "btnrow");
+    const reload = el("button", "btn ghost", "以真相为底重填 (reload truth)");
+    reload.type = "button";
+    reload.title = "用磁盘上的当前内容替换编辑区 (replace the textarea with the on-disk text)";
+    reload.addEventListener("click", () => {
+      try {
+        if (ta.value !== current && !window.confirm(
+          "缓冲区与磁盘真相不同,确定用真相覆盖你的编辑?"
+          + " (your buffer differs — replace it with the on-disk truth?)")) {
+          return;
+        }
+        ta.value = current;   /* property assignment — arbitrary text is safe */
+        clear(errBox);        /* buffer now equals truth: the stale diff goes */
+        ta.focus();
+      } catch (err) {
+        toast("重填失败 (reload failed): " + errMsg(err), "err");
+      }
+    });
+    row.appendChild(reload);
+    det.appendChild(row);
+    return det;
+  }
+
+  /* Generic check-gated YAML dialog: GET-raw text in, POST {"yaml"} out;
+   * 400/409 (bad YAML / check failed + reverted) render INSIDE the dialog
+   * with the text intact. opts: {title, yaml, saveUrl, label, chips, hints,
+   * rev}. `rev` (round AA item 5, #1) is the CAS token — when set, it rides
+   * along as `expected_rev` in the save POST so the server can refuse a
+   * save whose buffer went stale instead of silently overwriting; only the
+   * shot editor sets it today (bible/rules/packaging omit it, unaffected). */
+  function showEditor(opts) {
+    const dlg = $("editor");
+    clear(dlg);
+    const head = el("div", "ed-head");
+    head.appendChild(el("h3", null, opts.title));
+    dlg.appendChild(head);
+    if (Array.isArray(opts.chips) && opts.chips.length) {
+      const chips = el("div", "chips");
+      opts.chips.forEach((c) => chips.appendChild(el("span", "chip lock", c)));
+      dlg.appendChild(chips);
+    }
+    (Array.isArray(opts.hints) ? opts.hints : []).forEach((h) =>
+      dlg.appendChild(el("p", "muted ed-hint", h)));
+    const ta = document.createElement("textarea");
+    ta.className = "ed-ta";
+    ta.rows = 22;
+    ta.spellcheck = false;
+    ta.value = opts.yaml;   /* property assignment — arbitrary text is safe */
+    dlg.appendChild(ta);
+
+    /* ---- 草稿保护 (UX-WAVE-3): the /api/ui-state/draft store existed with
+     * ZERO consumers — twenty minutes of typing died with a crash or a
+     * mis-click. While typing, the buffer is mirrored (debounced 900 ms)
+     * into the personal UI store — NEVER into project truth. On reopen, a
+     * surviving draft that differs from the on-disk text is OFFERED for
+     * one-click restore (never auto-applied); a successful Save clears it.
+     * Everything is best-effort: a failed draft call never blocks editing. */
+    const draftPath = (typeof opts.draftPath === "string" && opts.draftPath) || null;
+    let draftTimer = null;
+    let draftDone = false;   /* save succeeded / dialog reused: stop mirroring */
+    const draftPost = (body) => {
+      body.relative_file_path = draftPath;
+      return apiRaw("POST", "/api/ui-state/draft", body).catch(() => null);
+    };
+    const scheduleDraft = () => {
+      if (!draftPath || draftDone) return;
+      if (draftTimer) clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => {
+        draftTimer = null;
+        if (draftDone) return;
+        if (ta.value === opts.yaml) { draftPost({ action: "clear" }); return; }
+        const b = { draft_text: ta.value };
+        if (opts.rev !== undefined && opts.rev !== null) b.expected_rev = opts.rev;
+        draftPost(b);
+      }, 900);
+    };
+    const settleDraft = () => {   /* the ONE save-success hook */
+      draftDone = true;
+      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+      if (draftPath) draftPost({ action: "clear" });
+    };
+    if (draftPath) {
+      ta.addEventListener("input", scheduleDraft);
+      api("GET", "/api/ui-state?draft=" + encodeURIComponent(draftPath)).then((d) => {
+        const dr = d && d.draft;
+        if (!dr || typeof dr.draft_text !== "string") return;
+        if (draftDone || !ta.isConnected) return;   /* dialog already gone */
+        if (dr.draft_text === ta.value) {
+          draftPost({ action: "clear" });   /* buffer == draft: nothing to offer */
+          return;
+        }
+        const bar = el("div", "ed-draft");
+        const when = String(dr.updated_at || "").replace("T", " ").slice(0, 16);
+        bar.appendChild(el("span", "ed-draft-msg",
+          "检测到未保存草稿 (unsaved draft)" + (when ? " · " + when : "")));
+        if (opts.rev && dr.expected_rev && dr.expected_rev !== opts.rev) {
+          bar.appendChild(el("span", "ed-draft-warn",
+            "当前文件在草稿之后已变化 (the file changed since this draft)"));
+        }
+        const use = el("button", "btn mini", "恢复草稿 (restore)");
+        use.type = "button";
+        use.addEventListener("click", () => {
+          if (ta.value !== opts.yaml && !window.confirm(
+            "编辑区已有改动,确定用草稿覆盖? (buffer has edits — replace with the draft?)")) {
+            return;
+          }
+          ta.value = dr.draft_text;   /* buffer only — Save 仍走同一 CAS 闸门 */
+          bar.remove();
+          scheduleDraft();
+          ta.focus();
+        });
+        const drop = el("button", "btn ghost mini", "删除草稿 (discard)");
+        drop.type = "button";
+        drop.addEventListener("click", () => {
+          draftPost({ action: "clear" });
+          bar.remove();
+          ta.focus();
+        });
+        bar.appendChild(use);
+        bar.appendChild(drop);
+        dlg.insertBefore(bar, ta);
+      }).catch(() => { /* draft read is advisory — the editor stands alone */ });
+    }
+
+    /* ---- live validation strip (VS Code settings.json debounce pattern) ----
+     * On each typing pause we POST /api/validate {kind, yaml, id?} and render a
+     * persistent status line here, between the textarea and the buttons.
+     * ADVISORY ONLY: /api/validate is pure — it parses + model-validates the
+     * buffer with NO write, NO full `check`, and NO lock / cross-reference
+     * verification. So a ✓ here is NOT a promise that Save will succeed: the
+     * gated Save below stays the authority and may still 400/409 on things this
+     * cannot see (locked-field edits, missing bible refs, on-disk conflicts). */
+    const vspec = (opts.validate && opts.validate.kind) ? opts.validate : null;
+    const strip = el("div", "ed-valid");
+    if (vspec) dlg.appendChild(strip);   /* only mounted when a kind is known */
+    let valSeq = 0;          /* newest-wins: a superseded reply must never render */
+    let valTimer = null;     /* 600ms input debounce handle */
+    let valWaitTimer = null; /* 300ms "validating…" delay (anti-flicker) handle */
+    let valOffline = false;  /* network-failure latch: no retry until next input */
+
+    const renderValid = () => {
+      clear(strip);
+      /* The comment above is explicit that this endpoint does NO cross-
+         reference or lock verification — but the label claimed an unqualified
+         "校验通过", so a shot naming a scene that is not in the bible showed a
+         green ✓ and then failed on Save with "check failed — 已回滚". The
+         refusal is right and its errors are precise; the surprise came from
+         being told "valid" first. Say WHICH check passed. */
+      strip.appendChild(el("span", "ed-valid-ok",
+        "✓ 格式校验通过 (format valid) —— 引用/锁由保存时的 check 把关"));
+    };
+    const renderInvalid = (errors) => {
+      clear(strip);
+      const lines = (Array.isArray(errors) ? errors : []).filter(Boolean);
+      if (!lines.length) lines.push("校验未通过 (invalid)");
+      /* server-provided strings: one node per line, textContent only (el()) */
+      lines.forEach((m) => strip.appendChild(el("div", "ed-valid-err", "✗ " + m)));
+    };
+    const renderWaiting = () => {
+      clear(strip);
+      strip.appendChild(el("span", "ed-valid-wait", "校验中… (validating)"));
+    };
+    const renderOffline = () => {
+      clear(strip);
+      strip.appendChild(el("div", "ed-valid-na", "校验不可用 (validation unavailable)"));
+    };
+
+    const runValidate = async () => {
+      /* strip.isConnected guards against a closed/replaced dialog (its own
+       * closure lives on; a late reply must not touch a detached node) */
+      if (!vspec || valOffline || !strip.isConnected) return;
+      const seq = ++valSeq;
+      const body = { kind: vspec.kind, yaml: ta.value };
+      if (vspec.id !== undefined && vspec.id !== null) body.id = vspec.id;
+      if (valWaitTimer) clearTimeout(valWaitTimer);
+      valWaitTimer = setTimeout(() => {   /* only if this outlives 300ms */
+        if (seq === valSeq && strip.isConnected) renderWaiting();
+      }, 300);
+      let r = null;
+      try {
+        r = await apiRaw("POST", "/api/validate", body);
+      } catch (err) {
+        r = null;   /* fetch threw (offline / abort): treat as unavailable */
+      }
+      if (valWaitTimer) { clearTimeout(valWaitTimer); valWaitTimer = null; }
+      if (seq !== valSeq || !strip.isConnected) return;  /* superseded / closed */
+      try {
+        if (!r || !r.ok || !r.data || typeof r.data.ok !== "boolean") {
+          /* transport error or a non-validate shape (offline, 403 readonly,
+           * 400 unknown kind): one muted line, then stop until the next input */
+          valOffline = true;
+          renderOffline();
+        } else if (r.data.ok) {
+          renderValid();
+        } else {
+          renderInvalid(r.data.errors);
+        }
+      } catch (e) { /* a render fault must never break typing */ }
+    };
+
+    const scheduleValidate = () => {
+      if (!vspec) return;
+      try {
+        valOffline = false;   /* fresh input lifts the no-retry latch */
+        if (valTimer) clearTimeout(valTimer);
+        valTimer = setTimeout(() => {
+          if (strip.isConnected) runValidate();
+        }, 600);
+      } catch (e) { /* the keystroke path must never throw */ }
+    };
+    if (vspec) {
+      ta.addEventListener("input", scheduleValidate);
+      try { runValidate(); } catch (e) { /* prime once on open */ }
+    }
+
+    /* ---- WP1 impact strip (debounced /api/impact, 600 ms) ----
+     * On dialogue (or any shot field) edit pause, show what the change would
+     * stale/recompile/re-render and roughly cost. Pure read; advisory only. */
+    const ispec = (opts.impact && opts.impact.shot) ? opts.impact : null;
+    const impactStrip = el("div", "ed-impact");
+    if (ispec) dlg.appendChild(impactStrip);
+    let impactSeq = 0;
+    let impactTimer = null;
+
+    const parseDialogueText = (yamlText) => {
+      /* Minimal extract of dialogue.text from the buffer — no full YAML parse
+       * in the browser. Looks for `text:` under a dialogue: block, or a flat
+       * `dialogue.text:` key. Best-effort; a miss just skips the field/value. */
+      try {
+        const lines = String(yamlText || "").split("\n");
+        let inDialogue = false;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (/^\s*dialogue\s*:/.test(line)) { inDialogue = true; continue; }
+          if (inDialogue && /^\S/.test(line) && !/^\s*dialogue\s*:/.test(line)) {
+            inDialogue = false;
+          }
+          const m = line.match(/^\s*text\s*:\s*(.*)$/);
+          if (m && inDialogue) {
+            let v = m[1].trim();
+            if ((v.startsWith('"') && v.endsWith('"')) ||
+                (v.startsWith("'") && v.endsWith("'"))) {
+              v = v.slice(1, -1);
+            }
+            return v;
+          }
+        }
+      } catch (e) { /* never break typing */ }
+      return null;
+    };
+
+    const runImpact = async () => {
+      if (!ispec || !impactStrip.isConnected) return;
+      const seq = ++impactSeq;
+      const text = parseDialogueText(ta.value);
+      const body = { shot: ispec.shot };
+      if (text !== null) {
+        body.field = "dialogue.text";
+        body.value = text;
+      }
+      let r = null;
+      try {
+        r = await apiRaw("POST", "/api/impact", body);
+      } catch (err) {
+        r = null;
+      }
+      if (seq !== impactSeq || !impactStrip.isConnected) return;
+      try {
+        clear(impactStrip);
+        if (!r || !r.ok || !r.data) {
+          impactStrip.appendChild(el("span", "ed-valid-na", "影响预览不可用"));
+          return;
+        }
+        const summary = r.data.summary_zh || "此修改无明显连锁影响";
+        const cls = (summary.indexOf("无明显") >= 0) ? "ed-impact-ok" : "";
+        impactStrip.appendChild(el("span", cls, summary));
+      } catch (e) { /* never break typing */ }
+    };
+
+    const scheduleImpact = () => {
+      if (!ispec) return;
+      try {
+        if (impactTimer) clearTimeout(impactTimer);
+        impactTimer = setTimeout(() => {
+          if (impactStrip.isConnected) runImpact();
+        }, 600);
+      } catch (e) { /* keystroke path must never throw */ }
+    };
+    if (ispec) {
+      ta.addEventListener("input", scheduleImpact);
+      try { runImpact(); } catch (e) { /* prime once on open */ }
+    }
+
+    /* WP2 试听 ▶ — disposable TTS sample via /api/voice/preview (job-borne) */
+    if (ispec && ispec.shot) {
+      const previewRow = el("div", "btnrow");
+      previewRow.style.marginTop = ".35rem";
+      const prevBtn = el("button", "btn ghost", "试听 ▶ (Preview voice)");
+      prevBtn.type = "button";
+      const aud = document.createElement("audio");
+      aud.controls = true;
+      aud.style.display = "none";
+      aud.style.maxWidth = "100%";
+      aud.style.marginTop = ".3rem";
+      prevBtn.addEventListener("click", async () => {
+        prevBtn.disabled = true;
+        try {
+          const text = parseDialogueText(ta.value);
+          /* NO assume_yes on the first click: a priced TTS preview must pass
+           * the §8.3 ask_before gate — the server answers waiting_user and
+           * the 「确认花费」 banner (SPEND_KINDS.voice_preview) re-posts these
+           * exact params WITH assume_yes after the human confirms. */
+          const body = { shot: ispec.shot };
+          if (text !== null) body.text = text;
+          const r = await apiRaw("POST", "/api/voice/preview", body);
+          if (!r || !r.ok) {
+            toast((r && r.data && r.data.error) || "TTS 不可用", "err");
+            return;
+          }
+          /* job-borne: wait a few polls for done */
+          let job = r.data && r.data.job;
+          const jid = job && job.id;
+          if (jid) {
+            for (let n = 0; n < 40; n++) {
+              await new Promise((res) => setTimeout(res, 400));
+              const st = await api("GET", "/api/jobs");
+              const list = (st && st.jobs) || st || [];
+              const found = (Array.isArray(list) ? list : []).find((j) => j.id === jid);
+              if (found && found.state === "done") {
+                job = found;
+                break;
+              }
+              /* R2-P2-6: canceled/interrupted are terminal (no "error" state). */
+              if (found && (found.state === "failed" || found.state === "canceled"
+                  || found.state === "interrupted")) {
+                const err = found.error
+                  || (found.result && found.result.error) || "试听失败";
+                toast(err, "err");
+                return;
+              }
+            }
+          }
+          const res = (job && job.result) || {};
+          if (job && (job.state === "queued" || job.state === "running"
+              || job.state === "canceling")) {
+            toast("试听仍在排队/运行 — 稍后再点试听,或看任务面板", "err");
+            return;
+          }
+          if (res.waiting_user === true) {
+            toast("试听是付费合成,需先确认花费 — 请在构建面板的「确认花费」横幅点确认", "err");
+            return;
+          }
+          if (res.ok === false || res.code === "tts_unavailable") {
+            toast(res.error || "TTS 不可用", "err");
+            return;
+          }
+          const path = res.preview;
+          if (!path) {
+            toast("试听未返回预览(超时或未完成) — 看任务面板,勿重复连点", "err");
+            return;
+          }
+          aud.src = "/preview/" + encodeURI(path);
+          aud.style.display = "block";
+          try { await aud.play(); } catch (e) { /* autoplay may block */ }
+          toast(res.cached ? "试听(缓存)" : "试听已合成", "ok");
+        } catch (err) {
+          toast("试听失败: " + errMsg(err), "err");
+        } finally {
+          prevBtn.disabled = false;
+        }
+      });
+      previewRow.appendChild(prevBtn);
+      dlg.appendChild(previewRow);
+      dlg.appendChild(aud);
+    }
+
+    const errBox = el("div", "ed-errors");
+    dlg.appendChild(errBox);
+    const row = el("div", "btnrow ed-btnrow");
+    const save = el("button", "btn", "保存 (Save)");
+    save.type = "button";
+    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => closeEditor());
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      cancel.disabled = true;
+      clear(errBox);
+      try {
+        const saveBody = { yaml: ta.value };
+        if (opts.rev !== undefined && opts.rev !== null) saveBody.expected_rev = opts.rev;
+        const r = await apiRaw("POST", opts.saveUrl, saveBody);
+        if (r.ok) {
+          const d = r.data || {};
+          settleDraft();   /* UX-WAVE-3: truth updated — the mirror is stale */
+          toast(d.created ? "已创建 " + opts.label + " (created)"
+            : "已保存 " + opts.label + " (saved)", "ok");
+          const warns = Array.isArray(d.warnings) ? d.warnings : [];
+          if (warns.length) toast("警告 (warnings): " + warns.join(" / "), "warn");
+          closeEditor();   /* its close handler forces the state refresh */
+          return;
+        }
+        /* 400 (bad YAML) / 409 (check failed, already reverted server-side):
+         * render errors INSIDE the dialog, keep it open, keep the text */
+        const d = r.data || {};
+        errBox.appendChild(el("p", "ed-err-title", d.error || ("HTTP " + r.status)));
+        (Array.isArray(d.errors) ? d.errors : []).forEach((m) =>
+          errBox.appendChild(el("p", "ed-err", "✗ " + m)));
+        /* conflict banner (Figma visibility-over-locking): the 409 carries
+         * `current` — the reverted-to disk text — so the dialog can show a
+         * buffer-vs-truth diff and offer a one-click reload, no refetch */
+        if (r.status === 409 && typeof d.current === "string") {
+          try { errBox.appendChild(conflictSection(ta, errBox, d.current)); }
+          catch (e) { /* the diff is advisory — the error list above stands */ }
+        }
+      } catch (err) {
+        errBox.appendChild(el("p", "ed-err-title", "保存失败 (save failed): " + errMsg(err)));
+      } finally {
+        save.disabled = false;
+        cancel.disabled = false;
+      }
+    });
+    row.appendChild(save);
+    row.appendChild(cancel);
+    dlg.appendChild(row);
+
+    editorOpen = true;   /* pause polling BEFORE the dialog becomes visible */
+    pauseLive();         /* … and abort the in-flight watch: its late response
+                            must never rerender under the user's cursor */
+    if (typeof dlg.showModal === "function") {
+      if (!dlg.open) dlg.showModal();   /* native: Esc -> cancel -> close event */
+    } else {
+      dlg.setAttribute("open", "");     /* overlay fallback; Esc handled globally */
+    }
+    ta.focus();
+  }
+
+  function closeEditor() {
+    const dlg = $("editor");
+    if (typeof dlg.close === "function" && dlg.open) dlg.close();  /* fires "close" */
+    else { dlg.removeAttribute("open"); editorClosed(); }
+  }
+
+  function editorClosed() {
+    if (!editorOpen) return;
+    editorOpen = false;
+    clear($("editor"));
+    refresh();   /* resume the paused poll loop with fresh state */
+  }
+
+  /* -------------------------------------------------------- shots bar --- */
+  function initShotsBar() {
+    const root = $("shotsbar");
+    clear(root);
+    root.appendChild(el("h2", null, "分镜 (shots)"));
+    const form = el("span", "ns-form hidden");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ns-input";
+    /* The placeholder used to be the literal string "S007" on every project.
+       On anything with seven or more shots that names an EXISTING one, so a
+       user who clicked 新建镜头 and typed the id it suggested landed in
+       "S007 已存在,进入编辑" — they asked to create and got the editor for a
+       shot they already had. On an empty project it suggested S007 when the
+       obvious first id is S001. Derive the next free id from the shots the
+       page already holds; fall back to the old literal if none are loaded. */
+    input.placeholder = nextFreeShotId();
+    input.maxLength = 64;
+    input.pattern = "[A-Za-z0-9_-]{1,64}";
+    const go = el("button", "btn", "创建 (Create)");
+    go.type = "button";
+    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    cancel.type = "button";
+    const newBtn = el("button", "btn ghost", "新建镜头 (New shot)");
+    newBtn.type = "button";
+    newShotBtn = newBtn;   /* readonly-gated via updateGates() */
+    const submit = async () => {
+      const id = input.value.trim();
+      if (!SHOT_ID_RE.test(id)) {
+        toast("无效镜头 id (invalid shot id): 需匹配 [A-Za-z0-9_-]{1,64}", "err");
+        return;
+      }
+      go.disabled = true;
+      newBtn.disabled = true;
+      try {
+        const data = await api("GET", shotUrl(id));
+        let yamlText;
+        let isNew;
+        if (data && data.exists) {
+          yamlText = data.yaml;
+          isNew = false;
+          toast(id + " 已存在,进入编辑 (already exists — editing)", "warn");
+        } else {
+          yamlText = await newShotTemplate(id);
+          isNew = true;
+        }
+        form.classList.add("hidden");
+        input.value = "";
+        /* R2-P1-9: pass rev so Save CAS refuses concurrent overwrite. */
+        showShotEditor(id, yamlText, (data && data.locked) || [], isNew,
+          !data || data.in_index !== false, (data && data.rev) || "");
+      } catch (err) {
+        toast("无法打开编辑器 (cannot open editor): " + errMsg(err), "err");
+      } finally {
+        go.disabled = false;
+        newBtn.disabled = false;
+      }
+    };
+    go.addEventListener("click", submit);
+    cancel.addEventListener("click", () => form.classList.add("hidden"));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+      else if (e.key === "Escape") form.classList.add("hidden");
+    });
+    newBtn.addEventListener("click", () => {
+      form.classList.toggle("hidden");
+      if (!form.classList.contains("hidden")) {
+        /* Recomputed on OPEN, not at construction: this bar is built before
+           the first state arrives, so `lastShots` is still empty then and a
+           twelve-shot project was suggesting S001. Opening the form is also
+           the only moment the suggestion has to be right. */
+        input.placeholder = nextFreeShotId();
+        input.focus();
+      }
+    });
+    form.appendChild(input);
+    form.appendChild(go);
+    form.appendChild(cancel);
+    root.appendChild(form);
+    root.appendChild(newBtn);
+
+    /* unread-first triage: 未阅 N count + 标记已阅 snapshot button. Local
+     * preference only (localStorage) — deliberately NOT readonly-gated. */
+    reviewChipEl = el("span", "chip unread hidden", "未阅 0 (unread)");
+    reviewChipEl.id = "unreadchip";
+    reviewChipEl.title = "上次标记已阅之后新增的 take (takes added since the last mark)";
+    root.appendChild(reviewChipEl);
+    const rvBtn = el("button", "btn ghost", "标记已阅 (Mark reviewed)");
+    rvBtn.type = "button";
+    rvBtn.id = "markreviewed";
+    rvBtn.title = "记录当前 take 清单;此后新增的 take 会带 新 标记 "
+      + "(snapshot current take names — later ones get a 新 chip)";
+    rvBtn.addEventListener("click", () => {
+      try { markReviewed(); } catch (err) { toast(errMsg(err), "err"); }
+    });
+    root.appendChild(rvBtn);
+
+    /* batch selection helpers (goal item 3): always reachable, not just when
+     * the floating bar is up. Mutating, so both are readonly-gated. */
+    const staleBtn = el("button", "btn ghost", "全选过期 (Select all stale)");
+    staleBtn.type = "button";
+    staleBtn.title = "勾选所有 stale 分镜做批量重做 (select every stale shot)";
+    roGate(staleBtn);
+    staleBtn.addEventListener("click", () => selectAllStale());
+    root.appendChild(staleBtn);
+    const clrBtn = el("button", "btn ghost", "清除选择 (Clear)");
+    clrBtn.type = "button";
+    roGate(clrBtn);
+    clrBtn.addEventListener("click", () => clearBatch());
+    root.appendChild(clrBtn);
+  }
+
+  /* -------------------------------------------------- import dropzone --- */
+  const UPLOAD_MAX = 4 * 1024 * 1024 * 1024;  /* 4 GiB — the server 413s above */
+  const upQueue = [];
+  let upActive = false;
+  let upDone = 0;
+  let upTotal = 0;
+  let zoneLabel = null;
+
+  const zoneIdleText = () => "拖入素材导入 media/imports (drop files to import)";
+
+  function updateZone() {
+    if (!zoneLabel) return;
+    const zone = $("dropzone");
+    if (upActive) {
+      zone.classList.add("busy");
+      zoneLabel.textContent =
+        "上传中 (uploading) " + Math.min(upDone + 1, upTotal) + "/" + upTotal + "…";
+    } else {
+      zone.classList.remove("busy");
+      zoneLabel.textContent = zoneIdleText();
+    }
+  }
+
+  async function uploadOne(file) {
+    /* RAW bytes as the body — not JSON, not multipart (server contract) */
+    const upHeaders = { "X-Manju-Token": TOKEN, "Content-Type": "application/octet-stream" };
+    if (PROJECT) upHeaders["X-Manju-Project"] = PROJECT;
+    const res = await fetch("/api/upload?name=" + encodeURIComponent(file.name), {
+      method: "POST",
+      headers: upHeaders,
+      body: file,
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) throw new Error(data && data.error ? data.error : "HTTP " + res.status);
+    return data;
+  }
+
+  async function drainUploads() {
+    upActive = true;
+    while (upQueue.length) {
+      updateZone();
+      const f = upQueue.shift();
+      try {
+        const data = await uploadOne(f);   /* strictly sequential */
+        toast("已导入 (imported) " + ((data && data.imported) || f.name), "ok");
+      } catch (err) {
+        toast("导入失败 (import failed) " + f.name + ": " + errMsg(err), "err");
+      }
+      upDone += 1;
+    }
+    upActive = false;
+    upDone = 0;
+    upTotal = 0;
+    updateZone();
+    refresh();   /* imports land in events/state */
+  }
+
+  function enqueueUploads(fileList) {
+    Array.from(fileList || []).forEach((f) => {
+      if (f.size > UPLOAD_MAX) {
+        toast("跳过 (skipped) " + f.name + ": 超过 4GiB 上限 (over the 4 GiB limit)", "err");
+        return;
+      }
+      upQueue.push(f);
+      upTotal += 1;
+    });
+    if (upQueue.length && !upActive) drainUploads();
+    else updateZone();
+  }
+
+  function initDropzone() {
+    const zone = $("dropzone");
+    clear(zone);
+    zoneLabel = el("span", null, zoneIdleText());
+    zone.appendChild(zoneLabel);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.className = "hidden";
+    input.addEventListener("change", () => {
+      enqueueUploads(input.files);
+      input.value = "";
+    });
+    zone.appendChild(input);
+    actAsButton(zone, "选择或拖入素材导入 (import files)");
+    zone.addEventListener("click", () => input.click());
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      zone.classList.add("drag");
+    });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("drag");
+      if (e.dataTransfer) enqueueUploads(e.dataTransfer.files);
+    });
+    /* a drop that misses the zone must not navigate away from the workbench */
+    window.addEventListener("dragover", (e) => e.preventDefault());
+    window.addEventListener("drop", (e) => e.preventDefault());
+  }
+
+  /* -------------------------------------------------------- QC panel --- */
+  function renderQC(qc) {
+    const root = $("qc");
+    clear(root);
+    if (!qc) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    root.appendChild(el("h2", null, "QC"));
+    const chips = el("div", "chips");
+    if (qc.ok === true) chips.appendChild(el("span", "badge st-fresh", "✓ 通过"));
+    chips.appendChild(el("span", "badge qc-err", "错误 " + (qc.errors || 0)));
+    chips.appendChild(el("span", "badge qc-warn", "警告 " + (qc.warnings || 0)));
+    root.appendChild(chips);
+    const items = Array.isArray(qc.items) ? qc.items : [];
+    if (!items.length) return;
+    const list = el("div", "list");
+    items.forEach((it) => {
+      const row = el("div", "qc-item");
+      const lvl = String(it.level || "info").toLowerCase();
+      row.appendChild(el("span", "badge lvl-" + lvl, it.level || "info"));
+      const msg = el("span", "qmsg");
+      if (it.shot) msg.appendChild(el("span", "qshot", it.shot + " · "));
+      msg.appendChild(document.createTextNode(it.message || ""));
+      row.appendChild(msg);
+      if (it.suggestion) row.appendChild(el("div", "muted qsug", "建议: " + it.suggestion));
+      list.appendChild(row);
+    });
+    root.appendChild(list);
+  }
+
+  /* ----------------------------------------------------- events feed --- */
+  /* One row builder, shared by the live 15-row tail and the 更多 expansion. */
+  function eventRow(ev) {
+    const row = el("div", "event");
+    row.appendChild(el("span", "etime", fmtClock(ev.ts)));
+    const actor = String(ev.actor || "engine").toLowerCase();
+    const cls = actor === "human" ? "ac-human" : (actor === "ai" ? "ac-ai" : "ac-engine");
+    row.appendChild(el("span", "badge " + cls, ev.actor || "engine"));
+    row.appendChild(el("span", "eaction", ev.action || ""));
+    let detail = "";
+    try { detail = JSON.stringify(ev.detail); } catch (e) { detail = String(ev.detail); }
+    if (detail && detail !== "{}" && detail !== "null" && detail !== "undefined") {
+      const d = el("span", "edetail",
+        detail.length > 120 ? detail.slice(0, 120) + "…" : detail);
+      d.title = detail;
+      row.appendChild(d);
+    }
+    return row;
+  }
+
+  /* The state carries only the newest 15 (server _EVENTS_TAIL); 更多 pulls up
+   * to 100 over the token-free GET /api/events?n=100 and replaces the list,
+   * then hides itself. The live 15-row behavior holds on every poll until the
+   * button is pressed; the expanded view then lives until the NEXT full
+   * re-render of this section — section("events", …) only re-runs when
+   * s.events changes (a new event lands), which resets back to 15 + button. */
+  function renderEvents(events) {
+    const root = $("events");
+    clear(root);
+    root.appendChild(el("h2", null, "事件 (events)"));
+    const list = el("div", "list");
+    const last = events.slice(-15).reverse();
+    if (!last.length) list.appendChild(el("p", "muted", "暂无事件 (no events)"));
+    last.forEach((ev) => list.appendChild(eventRow(ev)));
+    root.appendChild(list);
+    /* only offer 更多 when the tail is full — a shorter tail already IS the
+     * whole log, so fetching 100 would return the very same rows */
+    if (last.length >= 15) {
+      const more = el("button", "btn ghost small ev-more", "更多 (more)");
+      more.type = "button";
+      more.title = "加载最近 100 条事件 (load the latest 100 events)";
+      more.addEventListener("click", async () => {
+        more.disabled = true;
+        try {
+          const data = await api("GET", "/api/events?n=100");
+          const all = (data && Array.isArray(data.events)) ? data.events : [];
+          const rows = all.slice(-100).reverse();   /* newest first, same format */
+          clear(list);
+          if (!rows.length) list.appendChild(el("p", "muted", "暂无事件 (no events)"));
+          rows.forEach((ev) => list.appendChild(eventRow(ev)));
+          more.classList.add("hidden");   /* expanded until the next re-render */
+        } catch (err) {
+          toast("加载更多失败 (load more failed): " + errMsg(err), "err");
+          more.disabled = false;
+        }
+      });
+      root.appendChild(more);
+    }
+  }
+
+  /* -------------------------------------------------------- git panel --- */
+  /* Lazily fetched: on first expand, after each commit, and after each done
+   * job — never on the poll. A 500 (e.g. git endpoints not available)
+   * renders one muted line inside this section only. */
+  let gitOpen = !!loadUI().git;  /* per-project memory (#49a) */
+  let gitLoaded = false;
+  let gitStale = true;
+  let gitBusy = false;
+  let gitStatus = null;    /* /api/git/status payload.git */
+  let gitLog = null;       /* /api/git/log payload.log */
+  let gitErr = null;
+  let gitLogErr = null;
+  let gitBody = null;
+  let gitChips = null;
+
+  function initGitPanel() {
+    const root = $("git");
+    clear(root);
+    const head = el("div", "git-head");
+    const arrow = el("span", "git-arrow", gitOpen ? "▾" : "▸");
+    head.appendChild(arrow);
+    head.appendChild(el("h2", null, "版本 (git)"));
+    gitChips = el("div", "chips");
+    head.appendChild(gitChips);
+    gitBody = el("div", gitOpen ? null : "hidden");
+    actAsButton(head, "版本 (git) 面板");
+    head.setAttribute("aria-expanded", gitOpen ? "true" : "false");
+    head.addEventListener("click", () => {
+      gitOpen = !gitOpen;
+      arrow.textContent = gitOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", gitOpen ? "true" : "false");
+      saveUI({ git: gitOpen });
+      gitBody.classList.toggle("hidden", !gitOpen);
+      if (gitOpen && (gitStale || !gitLoaded)) fetchGitPanel();
+    });
+    root.appendChild(head);
+    root.appendChild(gitBody);
+    if (homeWorkbenchOpen() && gitOpen && !gitLoaded) fetchGitPanel();
+  }
+
+  async function fetchGitPanel() {
+    if (gitBusy) return;
+    gitBusy = true;
+    gitErr = null;
+    gitLogErr = null;
+    try {
+      const st = await api("GET", "/api/git/status");
+      gitStatus = st ? st.git : null;
+      gitLog = null;
+      if (gitStatus) {
+        try {
+          const lg = await api("GET", "/api/git/log?n=10");
+          gitLog = (lg && Array.isArray(lg.log)) ? lg.log : [];
+        } catch (err) {
+          gitLogErr = errMsg(err);
+        }
+      }
+      gitLoaded = true;
+      gitStale = false;
+    } catch (err) {
+      gitErr = errMsg(err);
+    } finally {
+      gitBusy = false;
+      renderGit();
+    }
+  }
+
+  function renderDiffInto(holder, text) {
+    clear(holder);
+    if (!text) {
+      holder.appendChild(el("p", "muted", "无差异 (no diff)"));
+      return;
+    }
+    /* server-derived text: SPLIT into lines, one div per line, textContent
+     * only — never innerHTML (a diff carries arbitrary file content) */
+    const box = el("div", "diff");
+    String(text).split("\n").forEach((line) => {
+      let cls = "dl-ctx";
+      if (line.startsWith("+++") || line.startsWith("---")) cls = "dl-meta";
+      else if (line.startsWith("+")) cls = "dl-add";
+      else if (line.startsWith("-")) cls = "dl-del";
+      else if (line.startsWith("@@")) cls = "dl-hunk";
+      else if (line.startsWith("diff ") || line.startsWith("index ")) cls = "dl-meta";
+      box.appendChild(el("div", cls, line === "" ? " " : line));
+    });
+    holder.appendChild(box);
+  }
+
+  /* truth-text files core/history.rollback_file will restore (media/renders/
+   * exports are refused by the server; mirror that so the button only shows
+   * where it can succeed) */
+  const ROLLBACK_PREFIXES = ["story/", "shots/", "bible/", "timeline/", "captions/"];
+  function isRollbackable(path) {
+    if (!path) return false;
+    if (path === "project.yaml") return true;
+    return ROLLBACK_PREFIXES.some((p) => path.indexOf(p) === 0);
+  }
+
+  function gitFileRow(f) {
+    const wrap = el("div");
+    const row = el("div", "gs-row");
+    row.appendChild(el("span", "gs-chip", f.status || "??"));
+    row.appendChild(el("span", "gs-path", f.path || ""));
+    if (!readonly && isRollbackable(f.path)) {
+      /* rollback-file (core/history): discard working changes to ONE truth
+       * file back to HEAD — guarded by a confirm since it drops local edits */
+      const rb = el("button", "btn tiny ghost gs-rollback", "回滚 (rollback)");
+      rb.type = "button";
+      rb.title = "把该文件恢复到 HEAD (git checkout HEAD -- <file>) — 丢弃工作区改动";
+      rb.addEventListener("click", async (ev) => {
+        ev.stopPropagation();   /* the row's click toggles the diff */
+        if (!window.confirm("回滚 " + f.path + " 到 HEAD?工作区改动将丢失 (discard local changes)")) return;
+        rb.disabled = true;
+        try {
+          const r = await apiRaw("POST", "/api/git/rollback-file", { path: f.path });
+          if (r.ok) {
+            toast("已回滚 (rolled back) " + f.path, "ok");
+            fetchGitPanel();
+            refresh();
+          } else {
+            toast("回滚失败 (rollback failed): " + ((r.data && r.data.error) || ("HTTP " + r.status)), "err");
+            rb.disabled = false;
+          }
+        } catch (err) {
+          toast("回滚失败 (rollback failed): " + errMsg(err), "err");
+          rb.disabled = false;
+        }
+      });
+      row.appendChild(rb);
+    }
+    const holder = el("div", "hidden");
+    let open = false;
+    let busy = false;
+    row.addEventListener("click", async () => {
+      if (busy) return;
+      if (open) {   /* second click collapses */
+        open = false;
+        holder.classList.add("hidden");
+        clear(holder);
+        return;
+      }
+      busy = true;
+      try {
+        const d = await api("GET", "/api/git/diff?path=" + encodeURIComponent(f.path || ""));
+        renderDiffInto(holder, d ? d.diff : null);
+        holder.classList.remove("hidden");
+        open = true;
+      } catch (err) {
+        toast("差异不可用 (diff unavailable): " + errMsg(err), "err");
+      } finally {
+        busy = false;
+      }
+    });
+    wrap.appendChild(row);
+    wrap.appendChild(holder);
+    return wrap;
+  }
+
+  function renderGit() {
+    if (!gitBody || !gitChips) return;
+    clear(gitBody);
+    clear(gitChips);
+    if (gitErr) {
+      gitBody.appendChild(el("p", "muted", "git 状态不可用 (git unavailable): " + gitErr));
+      return;
+    }
+    if (!gitLoaded) {
+      gitBody.appendChild(el("p", "muted", "加载中 (loading)…"));
+      return;
+    }
+    const g = gitStatus;
+    if (!g) {
+      gitBody.appendChild(el("p", "muted", "非 git 仓库 (not a repo)"));
+      return;
+    }
+    /* header chips stay visible even when the body is collapsed again */
+    gitChips.appendChild(el("span", "chip", "分支 (branch) " + (g.branch || "?")));
+    gitChips.appendChild(el("span", "badge " + (g.dirty ? "st-stale" : "st-fresh"),
+      g.dirty ? "有改动 (dirty)" : "干净 (clean)"));
+    if (g.ahead > 0) gitChips.appendChild(el("span", "chip", "领先 (ahead) ↑" + g.ahead));
+    if (g.behind > 0) gitChips.appendChild(el("span", "chip", "落后 (behind) ↓" + g.behind));
+
+    const files = Array.isArray(g.files) ? g.files : [];
+    if (files.length) {
+      const list = el("div");
+      files.forEach((f) => list.appendChild(gitFileRow(f)));
+      if (g.truncated) list.appendChild(el("p", "muted", "(文件列表已截断 truncated)"));
+      gitBody.appendChild(list);
+      const btnrow = el("div", "btnrow");
+      const full = el("button", "btn ghost", "全部差异 (full diff)");
+      full.type = "button";
+      const holder = el("div", "hidden");
+      let fullOpen = false;
+      full.addEventListener("click", async () => {
+        if (fullOpen) {
+          fullOpen = false;
+          holder.classList.add("hidden");
+          clear(holder);
+          return;
+        }
+        full.disabled = true;
+        try {
+          const d = await api("GET", "/api/git/diff");
+          renderDiffInto(holder, d ? d.diff : null);
+          holder.classList.remove("hidden");
+          fullOpen = true;
+        } catch (err) {
+          toast("差异不可用 (diff unavailable): " + errMsg(err), "err");
+        } finally {
+          full.disabled = false;
+        }
+      });
+      btnrow.appendChild(full);
+      gitBody.appendChild(btnrow);
+      gitBody.appendChild(holder);
+    } else {
+      gitBody.appendChild(el("p", "muted", "工作区干净 (working tree clean)"));
+    }
+
+    /* commit box: disabled when the message is empty or the repo is clean;
+     * absent entirely in readonly mode (the diff/log views above stay live) */
+    if (!readonly) {
+      const crow = el("div", "commit-row");
+      const msg = document.createElement("input");
+      msg.type = "text";
+      msg.className = "commit-msg";
+      msg.placeholder = "提交信息 (commit message)";
+      const cbtn = el("button", "btn", "提交 (Commit)");
+      cbtn.type = "button";
+      const syncBtn = () => { cbtn.disabled = !msg.value.trim() || !g.dirty; };
+      const doCommit = async () => {
+        if (cbtn.disabled) return;
+        cbtn.disabled = true;
+        try {
+          const r = await apiRaw("POST", "/api/git/commit", { message: msg.value.trim() });
+          if (r.ok) {
+            toast("已提交 (committed) " + String((r.data && r.data.hash) || "").slice(0, 7), "ok");
+            fetchGitPanel();   /* re-renders the panel (status + log) */
+            return;
+          }
+          toast("提交失败 (commit failed): " +
+            ((r.data && r.data.error) || ("HTTP " + r.status)), "err");
+        } catch (err) {
+          toast("提交失败 (commit failed): " + errMsg(err), "err");
+        }
+        syncBtn();
+      };
+      syncBtn();
+      msg.addEventListener("input", syncBtn);
+      msg.addEventListener("keydown", (e) => { if (e.key === "Enter") doCommit(); });
+      cbtn.addEventListener("click", doCommit);
+      crow.appendChild(msg);
+      crow.appendChild(cbtn);
+      gitBody.appendChild(crow);
+
+      /* snapshot (core/history.snapshot): a labeled checkpoint of the truth
+       * text — the cheap point a rollback can return to. Always available
+       * (unlike commit, it no-ops cleanly when the tree is already clean). */
+      const srow = el("div", "snap-row");
+      const slabel = document.createElement("input");
+      slabel.type = "text";
+      slabel.className = "snap-input";
+      slabel.placeholder = "快照标签 (snapshot label, optional)";
+      const sbtn = el("button", "btn ghost", "快照 (Snapshot)");
+      sbtn.type = "button";
+      sbtn.title = "为当前真相文本打一个带标签的检查点 (labeled git checkpoint)";
+      const doSnap = async () => {
+        sbtn.disabled = true;
+        try {
+          const r = await apiRaw("POST", "/api/git/snapshot", { label: slabel.value.trim() });
+          if (r.ok) {
+            const d = r.data || {};
+            toast(d.clean ? "已是最新,无需快照 (already checkpointed)"
+              : "已快照 (snapshot) " + String(d.sha || "").slice(0, 7), "ok");
+            slabel.value = "";
+            fetchGitPanel();
+          } else {
+            toast("快照失败 (snapshot failed): " + ((r.data && r.data.error) || ("HTTP " + r.status)), "err");
+          }
+        } catch (err) {
+          toast("快照失败 (snapshot failed): " + errMsg(err), "err");
+        } finally {
+          sbtn.disabled = false;
+        }
+      };
+      slabel.addEventListener("keydown", (e) => { if (e.key === "Enter") doSnap(); });
+      sbtn.addEventListener("click", doSnap);
+      srow.appendChild(slabel);
+      srow.appendChild(sbtn);
+      gitBody.appendChild(srow);
+    }
+
+    gitBody.appendChild(el("h3", null, "最近提交 (recent commits)"));
+    if (gitLogErr) {
+      gitBody.appendChild(el("p", "muted", "提交记录不可用 (log unavailable): " + gitLogErr));
+    } else if (!gitLog || !gitLog.length) {
+      gitBody.appendChild(el("p", "muted", "暂无提交 (no commits)"));
+    } else {
+      gitLog.forEach((c) => {
+        const row = el("div", "git-log-row");
+        row.appendChild(el("span", "git-hash", String(c.hash || "").slice(0, 7)));
+        row.appendChild(el("span", null, c.subject || ""));
+        row.appendChild(el("span", "muted", c.author || ""));
+        if (c.ts) row.title = String(c.ts);
+        gitBody.appendChild(row);
+      });
+    }
+  }
+
+  /* --------------------------------------------------- proposals panel --- */
+  /* proposals/ is the AI→human channel (§5) — a collapsible section like the
+   * git panel. Lazily fetched: on first expand, after each done job, and on
+   * a state refresh AT MOST once per fingerprint change (never on the raw
+   * poll cadence). The count badge in the section head stays live even when
+   * the body is collapsed. */
+  let propOpen = !!loadUI().prop;  /* per-project memory (#49a) */
+  let propBusy = false;
+  let propLoaded = false;
+  let propStale = false;    /* set by a done job; cleared by the next fetch */
+  let propFp = null;        /* fingerprint the current list was fetched at */
+  let propItems = [];
+  let propErr = null;
+  let propExpanded = {};    /* name -> true: row expansion survives renders */
+  let propBody = null;
+  let propChips = null;
+
+  function initProposalsPanel() {
+    const root = $("proposals");
+    clear(root);
+    const head = el("div", "git-head");
+    const arrow = el("span", "git-arrow", propOpen ? "▾" : "▸");
+    head.appendChild(arrow);
+    head.appendChild(el("h2", null, "提案 (proposals)"));
+    propChips = el("div", "chips");
+    head.appendChild(propChips);
+    propBody = el("div", propOpen ? null : "hidden");
+    actAsButton(head, "提案 (proposals) 面板");
+    head.setAttribute("aria-expanded", propOpen ? "true" : "false");
+    head.addEventListener("click", () => {
+      propOpen = !propOpen;
+      arrow.textContent = propOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", propOpen ? "true" : "false");
+      saveUI({ prop: propOpen });
+      propBody.classList.toggle("hidden", !propOpen);
+      if (propOpen && (!propLoaded || propStale)) fetchProposals();
+    });
+    root.appendChild(head);
+    root.appendChild(propBody);
+    if (homeWorkbenchOpen() && propOpen && !propLoaded) fetchProposals();
+  }
+
+  function maybeProposals(s) {
+    if (typeof s.fp === "string" && s.fp && (s.fp !== propFp || propStale)) {
+      fetchProposals(s.fp);
+    }
+  }
+
+  async function fetchProposals(fp) {
+    if (propBusy) return;
+    propBusy = true;
+    if (fp !== undefined) propFp = fp;  /* recorded up front: an error must
+                                           not hammer /api/proposals */
+    propStale = false;
+    try {
+      const d = await api("GET", "/api/proposals");
+      propItems = (d && Array.isArray(d.proposals)) ? d.proposals : [];
+      propErr = null;
+      propLoaded = true;
+    } catch (err) {
+      propErr = errMsg(err);   /* section-local degrade, loop unharmed */
+    } finally {
+      propBusy = false;
+      renderProposals();
+    }
+  }
+
+  const fmtDate = (epochSec) => {   /* proposal mtime -> local Y-m-d HH:MM */
+    if (typeof epochSec !== "number" || !isFinite(epochSec) || epochSec <= 0) return "?";
+    const d = new Date(epochSec * 1000);
+    if (isNaN(d.getTime())) return "?";
+    const p = (x) => String(x).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+      " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  };
+
+  function renderProposals() {
+    if (!propBody || !propChips) return;
+    clear(propBody);
+    clear(propChips);
+    if (propItems.length) {
+      propChips.appendChild(el("span", "badge st-stale", String(propItems.length)));
+    }
+    if (propErr) {
+      propBody.appendChild(el("p", "muted", "提案不可用 (proposals unavailable): " + propErr));
+      return;
+    }
+    if (!propLoaded) {
+      propBody.appendChild(el("p", "muted", "加载中 (loading)…"));
+      return;
+    }
+    if (!propItems.length) {
+      propBody.appendChild(el("p", "muted", "暂无提案 (no proposals)"));
+      return;
+    }
+    propItems.forEach((p) => {   /* newest first, straight from the server */
+      const wrap = el("div");
+      const row = el("div", "prop-row");
+      const arrow = el("span", "git-arrow", propExpanded[p.name] ? "▾" : "▸");
+      row.appendChild(arrow);
+      row.appendChild(el("span", "prop-name", p.name || "?"));
+      row.appendChild(el("span", "prop-date", fmtDate(p.mtime)));
+      if (p.truncated) row.appendChild(el("span", "chip", "已截断 (truncated)"));
+      const pre = el("pre", "prop-pre" + (propExpanded[p.name] ? "" : " hidden"));
+      pre.textContent = p.text || "";   /* arbitrary markdown: text only */
+      row.addEventListener("click", () => {
+        const open = !propExpanded[p.name];
+        propExpanded[p.name] = open;
+        arrow.textContent = open ? "▾" : "▸";
+        pre.classList.toggle("hidden", !open);
+      });
+      wrap.appendChild(row);
+      wrap.appendChild(pre);
+      propBody.appendChild(wrap);
+    });
+  }
+
+  /* --------------------------------------------- review keyboard mode --- */
+  /* "?" toggles the hint bar; j/k walk the shot cards, e opens the editor,
+   * 1-9 select take N, space toggles the selected take's <video>.
+   * F toggles single-item review focus (only the focused card stays expanded).
+   * All of it is inert while an input/select/textarea or the editor dialog has focus. */
+  let kbFocusId = null;
+  let kbHintOn = false;
+  let reviewFocusMode = false;  /* single-card review presentation */
+
+  function applyReviewFocusMode() {
+    const root = $("shots");
+    if (!root) return;
+    const cards = root.querySelectorAll("section.shot");
+    root.classList.toggle("review-focus", !!reviewFocusMode);
+    if (!reviewFocusMode) {
+      /* MUST clear per-card hide state — otherwise AT still treats cards as hidden. */
+      cards.forEach((c) => {
+        c.classList.remove("rf-active");
+        c.removeAttribute("aria-hidden");
+        try { c.inert = false; } catch (e) {
+          c.removeAttribute("inert");
+        }
+      });
+      return;
+    }
+    /* Move focus off a card that is about to become inert. */
+    const activeEl = document.activeElement;
+    const activeCard = kbFocusId ? cardById(kbFocusId) : null;
+    if (activeEl && activeCard && !activeCard.contains(activeEl)) {
+      try { activeCard.focus({ preventScroll: true }); } catch (e) { /* */ }
+    }
+    cards.forEach((c) => {
+      const on = c.dataset.sid === kbFocusId;
+      c.classList.toggle("rf-active", on);
+      c.setAttribute("aria-hidden", on ? "false" : "true");
+      try { c.inert = !on; } catch (e) {
+        if (on) c.removeAttribute("inert");
+        else c.setAttribute("inert", "");
+      }
+      if (!on) {
+        c.querySelectorAll("video").forEach((v) => {
+          try { if (!v.paused) v.pause(); } catch (err) { /* */ }
+        });
+      }
+    });
+  }
+
+  function kbHint() {
+    kbHintOn = !kbHintOn;
+    $("kbdhint").classList.toggle("hidden", !kbHintOn);
+  }
+
+  function kbSetFocus(id) {
+    kbFocusId = id;
+    document.querySelectorAll("#shots .shot").forEach((c) =>
+      c.classList.toggle("kb-focus", c.dataset.sid === kbFocusId));
+    const card = kbFocusId ? cardById(kbFocusId) : null;
+    if (card) flashCard(card);   /* scroll + flash, like timeline clicks */
+    applyReviewFocusMode();
+    try {
+      saveUI({ lastShot: id || "", reviewPos: id || "" });
+    } catch (e) { /* */ }
+  }
+
+  function kbMove(delta) {
+    /* bug-hunt #51: walk only the VISIBLE grid — with a state filter on,
+     * focus used to land on cards that are not rendered at all. */
+    const pool = stateFilter
+      ? lastShots.filter((s) => s.state === stateFilter) : lastShots;
+    const ids = pool.map((s) => s.id);
+    if (!ids.length) return;
+    const i = ids.indexOf(kbFocusId);
+    let next;
+    if (i < 0) next = delta > 0 ? 0 : ids.length - 1;   /* enter the grid */
+    else next = Math.min(ids.length - 1, Math.max(0, i + delta));
+    kbSetFocus(ids[next]);
+  }
+
+  function kbSelectTake(n) {
+    if (readonly) return;
+    const shot = lastShots.find((s) => s.id === kbFocusId);
+    if (!shot) return;
+    const take = (Array.isArray(shot.takes) ? shot.takes : [])[n - 1];
+    if (!take || take.selected) return;   /* only existing, unselected takes */
+    post(null, "/api/select", { shot: shot.id, take: take.name },
+      "已选用 " + shot.id + " / " + take.name);
+  }
+
+  function kbPlayPause() {
+    const card = kbFocusId ? cardById(kbFocusId) : null;
+    if (!card) return false;   /* no focused card: space keeps scrolling */
+    const v = card.querySelector(".take.selected video");
+    if (v) {
+      if (v.paused) {
+        const p = v.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } else {
+        v.pause();
+      }
+    }
+    return true;   /* a focused card claims space even without a video */
+  }
+
+  /* =====================================================================
+   * S8a — GUI CORE INTERACTIONS
+   * ===================================================================== */
+
+  /* ---------------------------------------- pre-generation plan modal --- */
+  /* Invariant §4.4 + goal item 5: before ANY priced or generative job we show
+   * the plan (shot / why / provider / est cost, totals, cache savings) and take
+   * an explicit confirm. Wired ON TOP of the existing dry-run + spend-confirm:
+   * /api/plan runs the same estimators read-only, and confirm submits the real
+   * action with assume_yes. Zero-cost plans still show — with a 免费/本地 badge
+   * (the goal asks for explanation BEFORE generation, not only before spend).
+   * The modal is its own <dialog>, separate from #shots, so the poll loop keeps
+   * running underneath without disturbing it. */
+  let planOpen = false;
+
+  function closePlanModal() {
+    const dlg = $("planmodal");
+    try { if (typeof dlg.close === "function" && dlg.open) dlg.close(); }
+    catch (e) { dlg.removeAttribute("open"); }
+    if (dlg.hasAttribute("open")) dlg.removeAttribute("open");
+    planOpen = false;
+    clear(dlg);
+  }
+
+  async function showPlanModal(action, params, opts) {
+    opts = opts || {};
+    const dlg = $("planmodal");
+    clear(dlg);
+    planOpen = true;
+    const head = el("div", "pm-head");
+    head.appendChild(el("h3", null, opts.title || "生成前计划 (plan before generation)"));
+    dlg.appendChild(head);
+    const box = el("div", "pm-body");
+    box.appendChild(el("p", "muted", "计算计划中… (computing plan)"));
+    dlg.appendChild(box);
+    if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); }
+    else dlg.setAttribute("open", "");
+    let data = null;
+    try {
+      data = await api("POST", "/api/plan", Object.assign({ action: action }, params));
+    } catch (err) {
+      data = { _error: errMsg(err) };
+    }
+    if (!planOpen) return;   /* cancelled while the plan was in flight */
+    renderPlanModalBody(box, data, opts);
+  }
+
+  function renderPlanModalBody(box, data, opts) {
+    clear(box);
+    const failed = !!(data && data._error);
+    const rows = (data && Array.isArray(data.rows)) ? data.rows : [];
+    const skipped = (data && Array.isArray(data.skipped)) ? data.skipped : [];
+    const nothing = !failed && rows.length === 0;
+    if (failed) {
+      box.appendChild(el("p", "pm-err", "无法计算计划 (plan unavailable): " + data._error));
+    } else {
+      const zero = !!data.zero_cost;
+      const cur = data.currency || "";
+      box.appendChild(el("div", "pm-badge " + (zero ? "free" : "spendy"),
+        zero ? "免费 / 本地 (free / local)" : "预估花费 (estimated spend)"));
+      if (nothing) {
+        box.appendChild(el("p", "muted", "无事可做 (nothing to generate)。"));
+      } else {
+        const wrap = el("div", "tablewrap");
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        ["shot", "why", "provider"].forEach((h) => hr.appendChild(el("th", null, h)));
+        hr.appendChild(el("th", "num", "≈cost"));
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        rows.forEach((it) => {
+          const tr = document.createElement("tr");
+          if (it.kind === "voice") tr.className = "voice-row";
+          const shotCell = el("td", null, it.shot || "");
+          if (it.kind === "voice") shotCell.appendChild(el("span", "badge st-manual vtag", "配音"));
+          tr.appendChild(shotCell);
+          tr.appendChild(el("td", null, it.reason || ""));
+          tr.appendChild(el("td", null, it.provider || ""));
+          tr.appendChild(el("td", "num", "≈" + fmtMoney(it.estimated_cost || 0)));
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        box.appendChild(wrap);
+        const tot = el("div", "pm-total");
+        tot.appendChild(el("span", null, "合计 (total) " + rows.length + " 项 · ≈"
+          + fmtMoney(data.estimated_cost) + (cur ? " " + cur : "")));
+        if (Number(data.saved_cost) > 0) {
+          tot.appendChild(el("span", "pm-saved",
+            "缓存节省 (cache saved) ≈" + fmtMoney(data.saved_cost)));
+        }
+        if (data.routing) {
+          const rc = el("span", "chip", "routing.yaml");
+          rc.title = "provider 由 routing.yaml 解析 (resolved via routing)";
+          tot.appendChild(rc);
+        }
+        box.appendChild(tot);
+      }
+    }
+    if (skipped.length) {
+      box.appendChild(el("h4", null, "将跳过 (will skip) · " + skipped.length));
+      const sl = el("div", "pm-skip");
+      skipped.forEach((s) => {
+        const r = el("div", "pm-skiprow");
+        r.appendChild(el("span", "badge st-manual", s.shot || "?"));
+        r.appendChild(el("span", "muted", s.reason || ""));
+        sl.appendChild(r);
+      });
+      box.appendChild(sl);
+    }
+    const row = el("div", "btnrow");
+    /* C6: plan failed → only Cancel (never proceed-with-assume_yes blind spend). */
+    if (!nothing && !failed) {
+      const zero = !!data.zero_cost;
+      const ok = el("button", "btn " + (zero ? "primary" : "confirm"),
+        "确认生成 (Confirm)");
+      ok.type = "button";
+      ok.addEventListener("click", () => {
+        closePlanModal();
+        try { opts.onConfirm(data); } catch (e) { toast(errMsg(e), "err"); }
+      });
+      row.appendChild(ok);
+    }
+    const no = el("button", "btn ghost", failed ? "关闭 (Close)" : "取消 (Cancel)");
+    no.type = "button";
+    no.addEventListener("click", () => closePlanModal());
+    row.appendChild(no);
+    box.appendChild(row);
+  }
+
+  /* --------------------------------------------- first-run onboarding --- */
+  /* Full guidance is explicit: the cockpit already shows live progress and
+   * the one next action. Repeating the six steps here automatically pushed
+   * the actual work below the fold. The header/cockpit help buttons keep the
+   * complete checklist one click away. */
+  let obForce = false;     /* header 帮助: show even if dismissed/non-empty */
+
+  function openOnboarding() {
+    obForce = true;
+    fetchOnboarding(true);
+  }
+
+  async function fetchOnboarding(force) {
+    let data = null;
+    try {
+      data = await api("GET", "/api/onboarding");
+    } catch (err) {
+      if (force) toast("引导不可用 (onboarding unavailable): " + errMsg(err), "err");
+      return;
+    }
+    const show = force || obForce || (data && data.should_show);
+    if (show) renderOnboarding(data);
+    else $("onboarding").classList.add("hidden");
+  }
+
+  function renderOnboarding(data) {
+    const root = $("onboarding");
+    clear(root);
+    root.classList.remove("hidden");
+    const head = el("div", "ob-head");
+    head.appendChild(el("h2", null, "新手引导 (getting started)"));
+    head.appendChild(el("span", "ob-prog",
+      (data.done_count || 0) + " / " + (data.total || 0) + " 完成"));
+    const x = el("button", "btn ghost mini", "知道了 · 收起 (Dismiss)");
+    x.type = "button";
+    x.title = "收起清单;此项目不再自动弹出 (dismiss — won't auto-show for this project)";
+    x.addEventListener("click", () => dismissOnboarding());
+    head.appendChild(x);
+    root.appendChild(head);
+    root.appendChild(el("p", "ob-intro",
+      "从创意到成片的六步。每步的完成状态实时来自项目本身 (live from project state)。"));
+    (Array.isArray(data.steps) ? data.steps : []).forEach((st, i) => {
+      const step = el("div", "ob-step " + (st.done ? "done" : "todo"));
+      step.appendChild(el("span", "ob-mark", st.done ? "✓" : (i + 1) + "."));
+      const main = el("div", "ob-main");
+      main.appendChild(el("div", "ob-title", st.title));
+      if (!st.done) {
+        if (st.hint) main.appendChild(el("div", "ob-hint", "怎么做: " + st.hint));
+        if (st.cli) main.appendChild(el("span", "ob-cli", st.cli));
+        if (st.view) {
+          const go = el("button", "btn ghost mini", "去这里 (go)");
+          go.type = "button";
+          go.addEventListener("click", () => scrollToView(st.view));
+          main.appendChild(document.createTextNode(" "));
+          main.appendChild(go);
+        }
+      }
+      step.appendChild(main);
+      root.appendChild(step);
+    });
+  }
+
+  function scrollToView(id) {
+    const node = $(id);
+    if (!node) return;
+    try { node.scrollIntoView({ behavior: "smooth", block: "start" }); }
+    catch (e) { node.scrollIntoView(); }
+  }
+
+  async function dismissOnboarding() {
+    obForce = false;
+    $("onboarding").classList.add("hidden");
+    try { await api("POST", "/api/onboarding/dismiss", { dismissed: true }); }
+    catch (err) { /* persistence is best-effort; the panel is already hidden */ }
+  }
+
+  /* ------------------------------------------------- failure cards ------ */
+  /* Goal item 10 (GUI): render reports/failures.jsonl (carried in /api/state,
+   * so it polls with everything else) as expandable cards. Collapsed shows
+   * step + subject + cause; expanded shows evidence (mono), hint, log path and
+   * the correlated job. Errors red, degradations (info) neutral. A retry lives
+   * on cards whose subject is a shot — it re-runs redo through the plan modal. */
+  const failOpen = {};   /* failure id -> expanded (survives re-render) */
+
+  function renderFailures(failures) {
+    const root = $("failures");
+    clear(root);
+    const list = Array.isArray(failures) ? failures : [];
+    if (!list.length) { root.classList.add("hidden"); return; }
+    root.classList.remove("hidden");
+    const errs = list.filter((f) => (f.level || "error") === "error").length;
+    const head = el("div", "fail-head");
+    head.appendChild(el("h2", null, "失败 (failures)"));
+    if (errs) head.appendChild(el("span", "badge qc-err", "错误 " + errs));
+    const infos = list.length - errs;
+    if (infos) head.appendChild(el("span", "badge qc-warn", "降级 " + infos));
+    root.appendChild(head);
+    const shotIds = {};
+    lastShots.forEach((s) => { shotIds[s.id] = true; });
+    /* Retry the same failing action three times and you used to get three
+     * byte-identical rows, which buries the OTHER failures under a repeat of
+     * the one you already know about. Fold consecutive identical (step,
+     * subject, cause) entries into the newest one and mark the count — the
+     * expanded body still shows that newest occurrence's own evidence and
+     * timestamp, so nothing is invented and nothing is hidden. */
+    const folded = [];
+    list.forEach((f) => {
+      const key = [f.step, f.subject, f.cause, f.level].join("|");
+      const prev = folded.length ? folded[folded.length - 1] : null;
+      if (prev && prev.__key === key) { prev.__n += 1; return; }
+      folded.push(Object.assign({}, f, { __key: key, __n: 1 }));
+    });
+    folded.forEach((f) => root.appendChild(failCard(f, shotIds)));
+  }
+
+  function failCard(f, shotIds) {
+    const level = (f.level === "info") ? "info" : "err";
+    const card = el("div", "fail-card " + level);
+    const id = f.id || "";
+    const sum = el("div", "fail-sum");
+    const open0 = !!failOpen[id];
+    const arrow = el("span", "fail-arrow", open0 ? "▾" : "▸");
+    sum.appendChild(arrow);
+    sum.appendChild(el("span", "fail-step", f.step || "?"));
+    sum.appendChild(el("span", "fail-subj", f.subject || ""));
+    sum.appendChild(el("span", "fail-cause", f.cause || ""));
+    if (f.__n > 1) sum.appendChild(el("span", "badge fail-n", "×" + f.__n));
+    const bodyBox = el("div", "fail-body" + (open0 ? "" : " hidden"));
+    const fillBody = () => {
+      clear(bodyBox);
+      if (f.evidence) bodyBox.appendChild(el("div", "fail-ev", f.evidence));
+      if (f.hint) bodyBox.appendChild(el("div", "fail-hint", "💡 " + f.hint));
+      if (f.log_path) bodyBox.appendChild(el("div", "fail-meta", "日志 (log): " + f.log_path));
+      const job = (f.detail && (f.detail.job_id || f.detail.node_id)) || null;
+      if (job) bodyBox.appendChild(el("div", "fail-meta", "关联任务 (job): " + job));
+      if (f.ts) bodyBox.appendChild(el("div", "fail-meta", f.ts + " · " + (f.actor || "engine")));
+      /* 复制诊断上下文 (#50): a clean task block for an external IDE — error, log,
+       * files, recommended step — instead of pasting the whole project. */
+      const cp = el("button", "btn ghost mini", "复制诊断上下文");
+      cp.type = "button";
+      cp.title = "复制该失败的结构化上下文（步骤、原因、日志、文件），交给外部 IDE 助手";
+      cp.addEventListener("click", async () => {
+        const lines = ["失败步骤: " + (f.step || "?")];
+        if (f.subject) lines.push("对象: " + f.subject);
+        if (f.cause) lines.push("原因: " + f.cause);
+        if (f.evidence) lines.push("证据: " + f.evidence);
+        if (f.hint) lines.push("引擎提示: " + f.hint);
+        if (f.log_path) lines.push("日志: " + f.log_path);
+        if (job) lines.push("任务: " + job);
+        if (f.subject && shotIds[f.subject]) lines.push("镜头文件: shots/" + f.subject + ".yaml");
+        lines.push("目标:（写下希望 IDE 助手完成的事）");
+        try {
+          await navigator.clipboard.writeText(lines.join("\n"));
+          toast("诊断上下文已复制，可粘贴到 IDE 助手", "ok");
+        } catch (e) { toast("复制失败,请手动选择", "err"); }
+      });
+      bodyBox.appendChild(cp);
+      /* retry: only where the subject is a shot in THIS project, through the
+       * normal plan modal (a redo is a priced action) */
+      if (!readonly && f.subject && shotIds[f.subject]) {
+        const retry = el("button", "btn ghost mini", "重试 (Retry) " + f.subject);
+        retry.type = "button";
+        retry.addEventListener("click", () => showPlanModal("redo", { shot: f.subject }, {
+          title: "重试前计划 (plan before retry) · " + f.subject,
+          onConfirm: () => post(retry, "/api/redo", { shot: f.subject, assume_yes: true },
+            f.subject + " 重试已入队 (retry queued)"),
+        }));
+        const wrap = el("div", "btnrow");
+        wrap.appendChild(retry);
+        bodyBox.appendChild(wrap);
+      }
+    };
+    if (open0) fillBody();
+    sum.addEventListener("click", () => {
+      const open = !failOpen[id];
+      failOpen[id] = open;
+      arrow.textContent = open ? "▾" : "▸";
+      bodyBox.classList.toggle("hidden", !open);
+      if (open) fillBody();
+    });
+    card.appendChild(sum);
+    card.appendChild(bodyBox);
+    return card;
+  }
+
+  /* ------------------------------------------------- batch select bar --- */
+  /* Goal item 3 (GUI): checkbox multi-select on shot cards + a floating bulk
+   * bar (N selected → 重做/配音) calling the wave-1 redo_batch/voice_batch
+   * through a job. Selection survives poll re-renders (kept in a Set, pruned to
+   * the live shots on each render). Helpers: 全选过期 / 清除. */
+  const batchSel = new Set();
+
+  function toggleBatch(id, on) {
+    if (on) batchSel.add(id); else batchSel.delete(id);
+    renderBatchBar();
+  }
+
+  function selectAllStale() {
+    lastShots.forEach((s) => { if (s.state === "stale") batchSel.add(s.id); });
+    try { renderShots(lastShots); } catch (e) { /* checkboxes are advisory */ }
+    renderBatchBar();
+  }
+
+  function clearBatch() {
+    batchSel.clear();
+    try { renderShots(lastShots); } catch (e) { /* re-render to clear checks */ }
+    renderBatchBar();
+  }
+
+  function renderBatchBar() {
+    const bar = $("batchbar");
+    clear(bar);
+    const ids = {};
+    lastShots.forEach((s) => { ids[s.id] = true; });
+    Array.from(batchSel).forEach((id) => { if (!ids[id]) batchSel.delete(id); });
+    const n = batchSel.size;
+    if (n === 0 || readonly) { bar.classList.add("hidden"); return; }
+    bar.classList.remove("hidden");
+    bar.appendChild(el("span", "bb-count", n + " 选中 (selected)"));
+    const redo = el("button", "btn confirm", "重做 (Redo)");
+    redo.type = "button";
+    redo.addEventListener("click", () => {
+      const shots = Array.from(batchSel);
+      showPlanModal("batch-redo", { shots: shots }, {
+        title: "批量重做前计划 (plan before batch redo)",
+        onConfirm: () => post(redo, "/api/redo-batch", { shots: shots, assume_yes: true },
+          "批量重做已加入任务队列"),
+      });
+    });
+    bar.appendChild(redo);
+    const voice = el("button", "btn", "配音 (Voice)");
+    voice.type = "button";
+    voice.addEventListener("click", () => {
+      const shots = Array.from(batchSel);
+      showPlanModal("batch-voice", { shots: shots }, {
+        title: "批量配音前计划 (plan before batch voice)",
+        onConfirm: () => post(voice, "/api/voice-batch", { shots: shots, assume_yes: true },
+          "批量配音已入队 (batch voice queued)"),
+      });
+    });
+    bar.appendChild(voice);
+    const clr = el("button", "btn ghost", "清除 (Clear)");
+    clr.type = "button";
+    clr.addEventListener("click", () => clearBatch());
+    bar.appendChild(clr);
+  }
+
+  /* --------------------------------------------------------- tasks view --- */
+  /* WORKBENCH row "Spend / tasks" (S8a): render `manju tasks` JSON — the
+   * JOB/QUEUE view over the disposable run ledger. Collapsible like the git
+   * panel; lazily fetched on expand and after a done job. */
+  let tasksOpen = !!loadUI().tasks;  /* per-project memory (#49a) */
+  let tasksLoaded = false;
+  let tasksBusy = false;
+  let tasksBody = null;
+  let tasksChips = null;
+
+  function initTasksPanel() {
+    const root = $("tasks");
+    clear(root);
+    const head = el("div", "git-head");
+    const arrow = el("span", "git-arrow", tasksOpen ? "▾" : "▸");
+    head.appendChild(arrow);
+    head.appendChild(el("h2", null, "任务 · 账本 (tasks)"));
+    tasksChips = el("div", "chips");
+    head.appendChild(tasksChips);
+    tasksBody = el("div", tasksOpen ? null : "hidden");
+    actAsButton(head, "任务 · 账本 (tasks) 面板");
+    head.setAttribute("aria-expanded", tasksOpen ? "true" : "false");
+    head.addEventListener("click", () => {
+      tasksOpen = !tasksOpen;
+      arrow.textContent = tasksOpen ? "▾" : "▸";
+      head.setAttribute("aria-expanded", tasksOpen ? "true" : "false");
+      saveUI({ tasks: tasksOpen });
+      tasksBody.classList.toggle("hidden", !tasksOpen);
+      if (tasksOpen) fetchTasks();
+    });
+    root.appendChild(head);
+    root.appendChild(tasksBody);
+    if (homeWorkbenchOpen() && tasksOpen) fetchTasks();
+  }
+
+  async function fetchTasks() {
+    if (tasksBusy) return;
+    tasksBusy = true;
+    try {
+      const data = await api("GET", "/api/tasks");
+      tasksLoaded = true;
+      renderTasks(data);
+    } catch (err) {
+      if (tasksBody) {
+        clear(tasksBody);
+        tasksBody.appendChild(el("p", "muted", "账本不可用 (ledger unavailable): " + errMsg(err)));
+      }
+    } finally {
+      tasksBusy = false;
+    }
+  }
+
+  function renderTasks(data) {
+    if (!tasksBody || !tasksChips) return;
+    clear(tasksBody);
+    clear(tasksChips);
+    const spend = (data && data.spend) || {};
+    tasksChips.appendChild(el("span", "chip",
+      "总花费 (spend) " + fmtMoney(spend.total || 0) + " " + (spend.currency || "")));
+    const tasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
+    const pending = (data && Array.isArray(data.pending)) ? data.pending : [];
+    if (pending.length) tasksChips.appendChild(el("span", "chip", "在途 (pending) " + pending.length));
+    if (data && data.available === false) {
+      tasksBody.appendChild(el("p", "muted", data.note || "账本为空 (empty)"));
+      return;
+    }
+    pending.forEach((p) => {
+      const row = el("div", "tk-row");
+      row.appendChild(el("span", "badge tk-polling", "polling"));
+      row.appendChild(el("span", null, (p.shot || "—") + " · " + (p.provider || "—")));
+      if (p.remote_job_id) row.appendChild(el("span", "tk-id", String(p.remote_job_id)));
+      tasksBody.appendChild(row);
+    });
+    if (!tasks.length && !pending.length) {
+      tasksBody.appendChild(el("p", "muted", "登记账本为空 (no runs yet;云生成/redo 后才有记录)"));
+      return;
+    }
+    tasks.forEach((t) => {
+      const row = el("div", "tk-row");
+      if (t.id !== undefined && t.id !== null) row.appendChild(el("span", "tk-id", "#" + t.id));
+      row.appendChild(el("span", "badge tk-" + (t.status || "").replace(/\s+/g, "-"), t.status || "?"));
+      row.appendChild(el("span", null, (t.shot || "—") + " · " + (t.provider || "—")));
+      if (t.cost) row.appendChild(el("span", "muted", fmtMoney(t.cost) + " " + (t.currency || "")));
+      if (t.created) row.appendChild(el("span", "muted", fmtClock(t.created)));
+      if (t.reason) row.appendChild(el("span", "tk-reason", "↳ " + String(t.reason)));
+      tasksBody.appendChild(row);
+    });
+  }
+
+  /* ------------------------------------------------------------ boot --- */
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      pauseLive();   /* clears the timer AND aborts the in-flight watch, so
+                        a stale long-poll response can never clobber */
+      schedule();    /* item 1: re-arms the slow 20s job check iff a job is
+                        active — a hidden idle tab stays fully paused */
+    } else {
+      clearDoneBadge();  /* back on the tab: the (N 完成) title badge is seen */
+      refresh();
+    }
+  });
+  /* any click outside a workspace menu closes it (menu items run first) */
+  document.addEventListener("click", () => closeWsMenus(null));
+  document.addEventListener("keydown", (e) => {
+    if (cmpOverlay) {   /* compare overlay up: Esc closes it, other keys inert */
+      if (e.key === "Escape") { try { closeCompare(); } catch (err) { /* gone */ } }
+      return;
+    }
+    if (planOpen) {   /* plan modal up: native <dialog> Esc closes; keys inert */
+      if (e.key === "Escape" && typeof $("planmodal").showModal !== "function") closePlanModal();
+      return;
+    }
+    if (editorOpen) {
+      /* native <dialog> handles Esc itself (cancel -> close event); the
+       * overlay fallback needs the hand-rolled Esc */
+      if (e.key === "Escape" && typeof $("editor").showModal !== "function") closeEditor();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+    if (tag === "input" || tag === "select" || tag === "textarea") return;
+    if (t && t.isContentEditable) return;
+    const k = e.key;
+    if (k === "r") { refresh(); return; }
+    if (k === "?") { kbHint(); return; }
+    if (k === "j" || k === "k") { kbMove(k === "j" ? 1 : -1); return; }
+    if (k === "e") {
+      if (kbFocusId && !readonly) openEditorFor(kbFocusId, null);
+      return;
+    }
+    if (k === "f" || k === "F") {
+      reviewFocusMode = !reviewFocusMode;
+      applyReviewFocusMode();
+      toast(reviewFocusMode
+        ? "单条审片模式 (single-item review)"
+        : "总览模式 (overview)", "ok");
+      return;
+    }
+    if (k === "n" || k === "N") {
+      /* ONLY the semantic note button — never fall back to first .tacts .btn
+       * (that used to click 好 and silently write a verdict). */
+      if (kbFocusId) {
+        const card = cardById(kbFocusId);
+        if (!card) return;
+        const sel = card.querySelector(".take.selected");
+        const scope = sel || card;
+        const noteBtn = scope.querySelector('[data-action="edit-note"]')
+          || card.querySelector('[data-action="edit-note"]');
+        if (noteBtn) noteBtn.click();
+        else toast("当前镜头没有备注按钮", "warn");
+      }
+      return;
+    }
+    /* keys with a native meaning stay native on interactive elements */
+    if (tag === "button" || tag === "a" || tag === "video" ||
+        tag === "audio" || tag === "summary") return;
+    if (k === " " || k === "Spacebar") {
+      if (kbPlayPause()) e.preventDefault();   /* the page must not scroll */
+      return;
+    }
+    if (k >= "1" && k <= "9") kbSelectTake(Number(k));
+  });
+
+  /* static bilingual hint bar content (toggled by "?") */
+  (() => {
+    const hint = $("kbdhint");
+    clear(hint);
+    [["j/k", " 上/下一个镜头 (next/prev shot)"],
+     ["e", " 编辑 (edit)"],
+     ["f", " 单条审片 (single-item review)"],
+     ["n", " 备注 (note)"],
+     ["1-9", " 选用 take (select take)"],
+     ["Space", " 播放/暂停 (play/pause)"],
+     ["r", " 刷新 (refresh)"],
+     ["?", " 关闭提示 (hide hints)"]].forEach((pair, i) => {
+      if (i) hint.appendChild(document.createTextNode("  ·  "));
+      hint.appendChild(el("b", null, pair[0]));
+      hint.appendChild(document.createTextNode(pair[1]));
+    });
+  })();
+
+  initHomeWorkbench();
+  initBuildPanel();
+  initShotsBar();
+  initDropzone();
+  initGitPanel();
+  initProposalsPanel();
+  initTasksPanel();
+  $("editor").addEventListener("close", editorClosed);
+  $("planmodal").addEventListener("close", () => { planOpen = false; clear($("planmodal")); });
+
+  /* Boot: hydrate personal UI from server, then start polling. */
+  bootstrapWorkspaceUI().then(() => {
+    try { refresh(); } catch (e) { /* first paint best-effort */ }
+  }).catch(() => { try { refresh(); } catch (e2) { /* */ } });
+
+  /* Safe quit: explicit button only — never cancel jobs from beforeunload. */
+  async function requestAppQuit(mode) {
+    try {
+      await api("POST", "/api/app/quit", { mode: mode || "after_current" });
+      toast("正在退出…", "ok");
+    } catch (err) {
+      toast("退出失败：" + errMsg(err), "err");
+    }
+  }
+  async function promptAppQuit() {
+    try {
+      const st = await api("GET", "/api/app/status");
+      if (st.running_job || (st.queued_count || 0) > 0) {
+        if (typeof showQuitDialog === "function") {
+          showQuitDialog(st, (mode) => requestAppQuit(mode));
+          return;
+        }
+      }
+      await requestAppQuit("after_current");
+    } catch (err) {
+      toast("无法读取任务状态：" + errMsg(err), "err");
+    }
+  }
+  function ensureQuitBtn() {
+    /* The app command belongs in the permanent application bar.  The legacy
+     * #header now lives inside a collapsed detail surface on home, so using it
+     * as the host would make the safe exit action disappear until disclosure. */
+    if (!window.__mjQuit) return;
+    const host = document.querySelector(".pnav-tools") || $("header") || document.body;
+    if (!host || document.getElementById("mj-quit-btn")) return;
+    const btn = el("button", "btn ghost mini", "退出");
+    btn.type = "button";
+    btn.id = "mj-quit-btn";
+    btn.title = "安全退出 (finish or cancel jobs)";
+    btn.setAttribute("aria-label", "安全退出 Manju");
+    btn.addEventListener("click", () => promptAppQuit());
+    host.appendChild(btn);
+  }
+  window.__mjEnsureQuitBtn = ensureQuitBtn;
+  try {
+    api("GET", "/api/app/status").then((st) => {
+      if (!st) return;
+      window.__mjQuit = true;
+      ensureQuitBtn();
+    }).catch(() => {});
+  } catch (e) { /* boot continues */ }
+
+  /* refresh() is started by bootstrapWorkspaceUI() after hydrate */
+})();
+

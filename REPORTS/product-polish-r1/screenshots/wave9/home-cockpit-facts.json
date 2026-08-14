@@ -1,0 +1,184 @@
+{
+  "schema": "manju.product-polish-home-evidence/v1",
+  "wave": 9,
+  "screens": {
+    "home-cockpit-desktop": {
+      "viewport": {
+        "w": 1440,
+        "h": 900
+      },
+      "document": {
+        "w": 1430,
+        "h": 900
+      },
+      "horizontalOverflow": -10,
+      "focus": "评价 S003 的当前候选",
+      "focusAction": "评价 S003 的当前候选",
+      "journeys": [
+        "创作故事材料 4/4 · 分镜 6 镜下一步：分镜已就绪，进入镜头生产",
+        "镜头6/6 有候选 · 6/6 已选择 · 5/6 已通过下一步：评价 S003 的当前候选",
+        "成片等待镜头通过 · 5/6下一步：评价 S003 的当前候选"
+      ],
+      "priorityCards": [
+        "待我处理1",
+        "正在运行1",
+        "最近成果"
+      ],
+      "workbenchOpen": false,
+      "shotsPainted": 0,
+      "headerPainted": 0,
+      "headerHTML": "",
+      "elementCount": 200,
+      "cockpitHeight": 347,
+      "calls": [
+        {
+          "method": "GET",
+          "path": "/api/ui-state",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/app/status",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/state",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/cockpit",
+          "body": null
+        }
+      ],
+      "expanded": {
+        "workbenchOpen": true,
+        "shotsPainted": 1,
+        "headerPainted": 1,
+        "elementCount": 441,
+        "calls": [
+          {
+            "method": "GET",
+            "path": "/api/ui-state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/app/status",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/cockpit",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/meta/job-kinds",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/proposals",
+            "body": null
+          }
+        ]
+      }
+    },
+    "home-cockpit-narrow": {
+      "viewport": {
+        "w": 390,
+        "h": 844
+      },
+      "document": {
+        "w": 380,
+        "h": 1117
+      },
+      "horizontalOverflow": -10,
+      "focus": "评价 S003 的当前候选",
+      "focusAction": "评价 S003 的当前候选",
+      "journeys": [
+        "创作故事材料 4/4 · 分镜 6 镜下一步：分镜已就绪，进入镜头生产",
+        "镜头6/6 有候选 · 6/6 已选择 · 5/6 已通过下一步：评价 S003 的当前候选",
+        "成片等待镜头通过 · 5/6下一步：评价 S003 的当前候选"
+      ],
+      "priorityCards": [
+        "待我处理1",
+        "正在运行1",
+        "最近成果"
+      ],
+      "workbenchOpen": false,
+      "shotsPainted": 0,
+      "headerPainted": 0,
+      "headerHTML": "",
+      "elementCount": 200,
+      "cockpitHeight": 791,
+      "calls": [
+        {
+          "method": "GET",
+          "path": "/api/ui-state",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/app/status",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/state",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/cockpit",
+          "body": null
+        }
+      ],
+      "expanded": {
+        "workbenchOpen": true,
+        "shotsPainted": 1,
+        "headerPainted": 1,
+        "elementCount": 441,
+        "calls": [
+          {
+            "method": "GET",
+            "path": "/api/ui-state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/app/status",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/cockpit",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/meta/job-kinds",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/proposals",
+            "body": null
+          }
+        ]
+      }
+    }
+  }
+}

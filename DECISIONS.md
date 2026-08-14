@@ -4356,3 +4356,26 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
 3. **Proposal review must show the proposed bytes, not only the action name.** The Director page may derive bounded before/after and unified-diff previews from the current project and persisted proposal. Long text is bounded in the browser, HTML is escaped, and the raw proposal remains the audit record.
 4. **Confirmation and execution remain separate human decisions.** Repeated clicks are de-duplicated at the page surface; confirmation does not call execution, paid work remains disabled in strict zero-cost mode, and no GUI recommendation can adopt truth by itself.
 5. **The storyboard owns the normal shot-planning surface.** Authoring appears there only as an exceptional hand-off when pending/stale proposal facts or incomplete source materials could make the current storyboard misleading. The projection is disposable, read-only, and never a build input.
+
+## PRODUCT-POLISH-R1-HOME-COCKPIT (2026-08-14)
+
+1. **The home page presents one priority; it does not own a new workflow.** Its
+   authoring, shot-production and finishing cards are read-only projections over
+   the existing journey/status owners. They are disposable presentation and are
+   never build, provider, QC, selection or Picture Lock inputs.
+2. **Priority is deterministic and human-centred.** Broken/current-byte QC
+   blockers lead; current authoring decisions and stale shots follow; candidate,
+   selection, review and approval work precedes engine build/package actions;
+   finishing comes after those facts are settled. A build action still enters the
+   existing plan/cost confirmation modal and cannot execute from presentation
+   text alone.
+3. **The complete engineering workbench remains available but is progressively
+   disclosed.** Its shot cards, timeline, proposals, ledger, events, Git panel and
+   hidden cost estimate render/fetch only after the owner opens “项目详情与高级操作”.
+   The open preference is per-user UI state and never project truth.
+4. **App-mode exit belongs to the permanent application bar.** Collapsing the
+   legacy project header must never hide safe quit. No home-page disclosure may
+   remove access to application lifecycle controls.
+5. **Zero-cost and decision boundaries remain intact.** This wave uses no real
+   provider, credential, API or paid/free-tier generation. Recommendation,
+   selection, shot approval, build and Picture Lock remain distinct decisions.

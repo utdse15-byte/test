@@ -1,0 +1,259 @@
+{
+  "schema": "manju.product-polish-test-summary/v1",
+  "wave": 9,
+  "date": "2026-08-14",
+  "baseline": "458f8dec01ecc2d3912bcc17f912557880f08f66",
+  "focused_pytest": {
+    "home_core": 32,
+    "app_chrome": 8,
+    "gui_pages": 25,
+    "workspace": 27,
+    "gui_modes": 22,
+    "ux_subset": 6,
+    "passed_total": 120,
+    "ux_deselected": 86
+  },
+  "static": {
+    "compileall": "pass",
+    "node_app_js": "pass",
+    "git_diff_check": "pass",
+    "ruff": "not_installed"
+  },
+  "browser": {
+    "schema": "manju.product-polish-home-evidence/v1",
+    "wave": 9,
+    "screens": {
+      "home-cockpit-desktop": {
+        "viewport": {
+          "w": 1440,
+          "h": 900
+        },
+        "document": {
+          "w": 1430,
+          "h": 900
+        },
+        "horizontalOverflow": -10,
+        "focus": "评价 S003 的当前候选",
+        "focusAction": "评价 S003 的当前候选",
+        "journeys": [
+          "创作故事材料 4/4 · 分镜 6 镜下一步：分镜已就绪，进入镜头生产",
+          "镜头6/6 有候选 · 6/6 已选择 · 5/6 已通过下一步：评价 S003 的当前候选",
+          "成片等待镜头通过 · 5/6下一步：评价 S003 的当前候选"
+        ],
+        "priorityCards": [
+          "待我处理1",
+          "正在运行1",
+          "最近成果"
+        ],
+        "workbenchOpen": false,
+        "shotsPainted": 0,
+        "headerPainted": 0,
+        "headerHTML": "",
+        "elementCount": 200,
+        "cockpitHeight": 347,
+        "calls": [
+          {
+            "method": "GET",
+            "path": "/api/ui-state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/app/status",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/cockpit",
+            "body": null
+          }
+        ],
+        "expanded": {
+          "workbenchOpen": true,
+          "shotsPainted": 1,
+          "headerPainted": 1,
+          "elementCount": 441,
+          "calls": [
+            {
+              "method": "GET",
+              "path": "/api/ui-state",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/app/status",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/state",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/cockpit",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/meta/job-kinds",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/proposals",
+              "body": null
+            }
+          ]
+        }
+      },
+      "home-cockpit-narrow": {
+        "viewport": {
+          "w": 390,
+          "h": 844
+        },
+        "document": {
+          "w": 380,
+          "h": 1117
+        },
+        "horizontalOverflow": -10,
+        "focus": "评价 S003 的当前候选",
+        "focusAction": "评价 S003 的当前候选",
+        "journeys": [
+          "创作故事材料 4/4 · 分镜 6 镜下一步：分镜已就绪，进入镜头生产",
+          "镜头6/6 有候选 · 6/6 已选择 · 5/6 已通过下一步：评价 S003 的当前候选",
+          "成片等待镜头通过 · 5/6下一步：评价 S003 的当前候选"
+        ],
+        "priorityCards": [
+          "待我处理1",
+          "正在运行1",
+          "最近成果"
+        ],
+        "workbenchOpen": false,
+        "shotsPainted": 0,
+        "headerPainted": 0,
+        "headerHTML": "",
+        "elementCount": 200,
+        "cockpitHeight": 791,
+        "calls": [
+          {
+            "method": "GET",
+            "path": "/api/ui-state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/app/status",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/state",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/api/cockpit",
+            "body": null
+          }
+        ],
+        "expanded": {
+          "workbenchOpen": true,
+          "shotsPainted": 1,
+          "headerPainted": 1,
+          "elementCount": 441,
+          "calls": [
+            {
+              "method": "GET",
+              "path": "/api/ui-state",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/app/status",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/state",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/cockpit",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/meta/job-kinds",
+              "body": null
+            },
+            {
+              "method": "GET",
+              "path": "/api/proposals",
+              "body": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  "benchmark": {
+    "schema": "manju.product-polish-local-benchmark/v1",
+    "wave": 9,
+    "results": {
+      "12": {
+        "samples_ms": [
+          33.67,
+          32.83,
+          31.76,
+          32.11,
+          35.46
+        ],
+        "median_ms": 32.83,
+        "max_ms": 35.46
+      },
+      "100": {
+        "samples_ms": [
+          181.48,
+          181.53,
+          177.92,
+          172.66,
+          174.93
+        ],
+        "median_ms": 177.92,
+        "max_ms": 181.53
+      },
+      "300": {
+        "samples_ms": [
+          499.57,
+          503.48,
+          500.02,
+          519.53,
+          528.25
+        ],
+        "median_ms": 503.48,
+        "max_ms": 528.25
+      }
+    },
+    "note": "Local synthetic read-only measurement; not a release threshold."
+  },
+  "network": {
+    "provider_calls": 0,
+    "external_api_calls": 0,
+    "credential_reads": 0,
+    "paid_calls": 0,
+    "free_tier_calls": 0
+  },
+  "not_run": [
+    "full_pytest",
+    "live_localhost_playwright",
+    "windows_hard_gate",
+    "same_sha_ubuntu_windows"
+  ]
+}
