@@ -124,7 +124,7 @@ def test_subtitles_page_renders(gui, tmp_project):
     _write_srt(tmp_project, "1\n00:00:00,000 --> 00:00:01,000\n你好\n\n")
     status, _, body = _html(gui, "/subtitles")
     assert status == 200
-    assert "字幕 Subtitles" in body
+    assert '<h1>字幕<span class="mj-en"' in body
     assert "你好" in body                                    # baked cue text
     assert "compiled" in body                                # mode badge
     assert "保存字幕" in body and "＋ 添加字幕" in body        # editor affordances
@@ -247,7 +247,7 @@ def test_mixer_page_offers_library_and_imports_sources(gui, tmp_project):
 
     status, _, body = _html(gui, "/mixer")
     assert status == 200
-    assert "混音 Mixer" in body
+    assert '<h1>混音<span class="mj-en"' in body
     assert "人声" in body and "背景音乐" in body and "环境" in body and "音效" in body
     assert ("lib:" + hash8) in body                          # seeded library asset option
     assert entry["name"] in body                             # its name in the picker
@@ -307,10 +307,11 @@ def test_mixer_apply_rejects_bad_value(gui, tmp_project):
 def test_packaging_page_renders(gui, tmp_project):
     status, _, body = _html(gui, "/packaging")
     assert status == 200
-    assert "打包 Packaging" in body
+    assert '<h1>包装<span class="mj-en"' in body
     assert "片头" in body and "片尾" in body                    # intro/outro forms
     assert "信息卡" in body                                     # info cards editor
-    assert "封面 Cover" in body and "预告片 Teaser" in body      # cover + teaser
+    assert '<h2>封面<span class="mj-en"' in body
+    assert '<h2>预告片<span class="mj-en"' in body                # Chinese-first
     assert "Logo" in body and "水印" in body and "角标" in body and "CTA" in body
     assert 'data-page="/packaging"' in body
 

@@ -145,6 +145,59 @@ if (PROJECT && location.pathname !== "/") {
   } catch (e) { /* best-effort */ }
 }
 
+/* Product Polish R1 Wave 4: the five finishing pages share one journey bar.
+ * The page shell paints immediately with honest "正在检查" placeholders; this
+ * single read then fills them from /api/finishing/status.  No polling and no
+ * client inference: exportstatus/readiness remain the owners. */
+(function initFinishingJourney() {
+  var root = document.querySelector("[data-finishing-journey]");
+  if (!root) return;
+  var finalChip = root.querySelector("[data-finish-final]");
+  var lockChip = root.querySelector("[data-finish-lock]");
+  var note = root.querySelector("[data-finish-note]");
+  var statusClasses = ["st-fresh", "st-stale", "st-missing", "st-broken", "st-needs", "st-manual"];
+
+  function setChip(node, data, fallback) {
+    if (!node) return;
+    statusClasses.forEach(function (cls) { node.classList.remove(cls); });
+    var cls = data && data["class"];
+    node.classList.add(statusClasses.indexOf(cls) >= 0 ? cls : "st-missing");
+    node.textContent = (data && data.label) || fallback;
+    var title = (data && (data.basis || (data.reasons || []).join("；"))) || "";
+    node.title = title;
+  }
+
+  var opts = (typeof manjuApiOptions === "function") ? manjuApiOptions() : {};
+  var req = (typeof requestJson === "function")
+    ? requestJson("GET", "/api/finishing/status", undefined, opts)
+    : fetch("/api/finishing/status").then(function (r) { return r.json(); });
+  req.then(function (data) {
+    var finalData = (data || {}).final || {};
+    var lockData = (data || {}).picture_lock || {};
+    setChip(finalChip, finalData, "成片状态未知");
+    setChip(lockChip, lockData, "锁片资格未知");
+    if (!note) return;
+    note.classList.remove("warn", "bad");
+    var message = "状态来自当前项目与媒体证据；这里只展示，不会替你锁片或改项目。";
+    if (finalData.state === "problematic") {
+      note.classList.add("bad");
+      message = finalData.basis || "当前成片有问题，请先查看导出中心的证据。";
+    } else if (finalData.state === "stale") {
+      note.classList.add("warn");
+      message = finalData.basis || "上游内容已变化，当前成片需要重新构建。";
+    } else if (finalData.state === "missing") {
+      message = "尚无成片；完成当前阶段后可在导出页或工作台进行构建。";
+    } else if (!lockData.eligible && lockData.summary) {
+      message = lockData.summary;
+    }
+    note.textContent = message;
+  }).catch(function () {
+    setChip(finalChip, null, "成片状态暂不可用");
+    setChip(lockChip, null, "锁片资格暂不可用");
+    if (note) note.textContent = "状态检查失败，不影响当前页面编辑；稍后刷新即可重试。";
+  });
+})();
+
 /* ---- 全局任务条 UX-WAVE-3 ------------------------------------------------
  * Read-only presentation over the existing runner — no new task system. The
  * only client state is "which job ids were seen active on THIS page". Kind

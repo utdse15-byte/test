@@ -32,12 +32,16 @@ def _shell_html(kind: str) -> str:
         from manju.gui.pages_t import _shell as shell_t
 
         return shell_t("字幕", "tok", "/subtitles", "<p>x</p>")
+    if kind == "exports":
+        from manju.gui.exports_page import _shell as shell_exports
+
+        return shell_exports("导出中心", "tok", "<p>x</p>")
     from manju.gui.pages import _shell as shell
 
     return shell("审片", "tok", "/review", "<p>x</p>")
 
 
-@pytest.mark.parametrize("kind", ["pages", "pages_t"])
+@pytest.mark.parametrize("kind", ["pages", "pages_t", "exports"])
 def test_no_script_is_loaded_twice(kind: str) -> None:
     html = _shell_html(kind)
     counts = Counter(SRC_RE.findall(html))
@@ -45,7 +49,7 @@ def test_no_script_is_loaded_twice(kind: str) -> None:
     assert not dupes, f"{kind} shell loads these scripts more than once: {dupes}"
 
 
-@pytest.mark.parametrize("kind", ["pages", "pages_t"])
+@pytest.mark.parametrize("kind", ["pages", "pages_t", "exports"])
 def test_shell_still_loads_the_request_layer(kind: str) -> None:
     """The de-dup must not have removed the only copy."""
     srcs = SRC_RE.findall(_shell_html(kind))

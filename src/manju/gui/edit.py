@@ -140,6 +140,16 @@ def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
+def _term(label: str, technical: str) -> str:
+    """Chinese-first product label; reveal the engineering term on demand."""
+    return (
+        _e(label)
+        + '<span class="mj-en" aria-hidden="true"> ('
+        + _e(technical)
+        + ")</span>"
+    )
+
+
 def render_edit_css() -> str:
     return _EDIT_CSS
 
@@ -779,10 +789,10 @@ def look_preview_frame(project: Any, source_relpath: str, at_ms: int,
 # ------------------------------------------------------------------- rendering
 
 
-def _shell(title: str, token: str, body: str) -> str:
+def _shell(title: str, token: str, body: str, project: Any = None) -> str:
     from .pages import GLOSSARY_HEAD, chrome
 
-    nav, bcls = chrome("/edit")
+    nav, bcls = chrome("/edit", project)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -842,7 +852,7 @@ def _keymap_modal() -> str:
         '<div id="ed-keymap-modal" class="ed-modal hidden" role="dialog" '
         'aria-modal="true" aria-labelledby="ed-keymap-title">'
         '<div class="ed-modal-card">'
-        '<h2 id="ed-keymap-title">键盘快捷键 Keyboard map</h2>'
+        '<h2 id="ed-keymap-title">' + _term("键盘快捷键", "Keyboard map") + '</h2>'
         '<p class="muted ed-hint">每个快捷键都只是按钮的加速器 —— 所有操作都能点击完成'
         '(无需拖拽,WCAG 2.5.7)。在输入框里打字时快捷键自动让位。</p>'
         f'<table class="ed-keymap-table">{rows}</table>'
@@ -914,7 +924,7 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     out: list[str] = []
     # ---- header + rebuild affordance + undo / keyboard-map toolbar (v2 §A/§C)
     out.append('<div class="page-h">')
-    out.append("<h1>剪辑 Edit</h1>")
+    out.append('<h1>剪辑<span class="mj-en" aria-hidden="true"> (Edit)</span></h1>')
     # G3: the dirty badge is a LAZY slot — hidden at first paint, revealed by
     # /edit.js after it fetches /api/edit/dirty. Before, render_edit ran a FULL
     # build.explain recompile (+ ~40 probes) inline just for this string; that
@@ -922,13 +932,16 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
     out.append('<span class="chip ed-dirty" id="ed-dirty-chip" hidden '
                'title="有未构建的修改">有未构建的修改</span>')
     out.append('<button class="btn ghost" id="ed-undo-btn" aria-expanded="false" '
-               'title="最近改动 · 一键撤销(git 回滚)">撤销 Undo</button>')
+               'title="最近改动 · 一键撤销（Git 回滚）">撤销<span class="mj-en" aria-hidden="true"> (Undo)</span></button>')
     out.append('<button class="btn ghost" id="ed-keymap-btn" '
                'title="键盘快捷键(或按 ?)">快捷键 ?</button>')
-    out.append('<button class="btn ghost" id="ed-rebuild">重新构建 (rebuild)</button>')
+    out.append('<button class="btn ghost" id="ed-rebuild">重新构建<span class="mj-en" aria-hidden="true"> (rebuild)</span></button>')
     out.append("</div>")
-    out.append('<p class="muted ed-sub">剪辑级收尾:多轨道 · 顺序 · 裁剪 · 素材声 · 转场 · 调色 · '
-               "字幕/语音同步 — 全部无需打开剪映。所有修改走同一引擎核心与事件。</p>")
+    from .finishing_journey import finishing_journey_html
+
+    out.append(finishing_journey_html("/edit"))
+    out.append('<p class="muted ed-sub">调整顺序、裁剪、素材声、转场、调色与字幕同步；'
+               '所有修改都可追溯，原始素材不会被覆盖。</p>')
 
     # ---- honest-undo panel (git-backed; hidden until toggled) — v2 §C
     out.append(_undo_panel())
@@ -952,9 +965,9 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
 
     # ---- clip strip (主轨道 cards: reorder + inspector + clickable seams)
     out.append('<section class="panel ed-tl-panel">')
-    out.append("<h2>时间线 Timeline · 主轨道</h2>")
+    out.append("<h2>" + _term("时间线", "Timeline") + " · 主轨道</h2>")
     if not shots:
-        out.append('<p class="muted">还没有分镜 (no shots yet)。</p>')
+        out.append('<p class="muted">还没有分镜。</p>')
     else:
         out.append('<div class="ed-strip" id="ed-strip">')
         for idx, sid in enumerate(shots):
@@ -977,7 +990,7 @@ def render_edit(project: Any, token: str, query: dict[str, list[str]]) -> str:
         rel = _take_relpath(project, take)
         out.append(_inspector(project, sid, rel, sel, mixer.get(sid, {})))
 
-    return _shell("剪辑 Edit", token, "\n".join(out))
+    return _shell("剪辑", token, "\n".join(out), project)
 
 
 # --------------------------------------------------------------- lanes view
@@ -1006,7 +1019,7 @@ def _lanes_section(project: Any, timeline: Any, snap_on: bool = True) -> str:
     (the persisted magnet state) so the keyboard/snapping layer needs no fetch on
     load, and adds a magnet toggle + a snap-tick ruler overlay."""
     p = ['<section class="panel ed-lanes-panel"><div class="ed-lanes-head">',
-         "<h2>多轨道 Lanes</h2>"]
+         "<h2>" + _term("多轨道", "Lanes") + "</h2>"]
     if timeline is None:
         p.append('<p class="muted ed-hint">构建一次后,这里按 CapCut 方式显示主轨道 / 字幕 / '
                  '音频多轨道、波形与全局播放头。</p></div></section>')
@@ -1173,7 +1186,7 @@ def _out_of_cut_tray(project: Any, out_of_cut: list[str]) -> str:
     if not out_of_cut:
         return ""
     parts = ['<section class="panel ed-out-panel">',
-             "<h2>不在本刀里 Out of cut</h2>",
+             "<h2>" + _term("不在当前剪辑中", "Out of cut") + "</h2>",
              '<p class="muted">这些镜头的文件都还在,只是没进成片。'
              '放回后排在最后,想换位置用上面的 ▲▼。</p>',
              '<div class="ed-out-strip">']
@@ -1254,7 +1267,7 @@ def _inspector(project: Any, sid: str, rel: str | None, sel: str | None,
              '<button class="btn ghost mini ed-close">关闭</button></div>')
 
     # --- Trim (scrub strip + in/out) ---
-    p.append('<div class="ed-block"><h3>裁剪 Trim</h3>')
+    p.append('<div class="ed-block"><h3>' + _term("裁剪", "Trim") + '</h3>')
     if rel:
         # the selected take's cached probe duration (sidecar, no ffmpeg on a
         # page GET) lets the scrub clicks convert frame-fraction → real ms
@@ -1309,7 +1322,7 @@ def _inspector(project: Any, sid: str, rel: str | None, sel: str | None,
     # --- Footage audio ---
     gain = float(mix.get("gain_db", 0.0) or 0.0)
     muted = bool(mix.get("mute", False))
-    p.append('<div class="ed-block"><h3>素材声 Footage audio</h3>')
+    p.append('<div class="ed-block"><h3>' + _term("素材原声", "Footage audio") + '</h3>')
     p.append(
         '<div class="ed-audio-row">'
         f'<label>增益 gain <input class="ed-gain" type="range" min="-30" max="12" '
@@ -1321,7 +1334,7 @@ def _inspector(project: Any, sid: str, rel: str | None, sel: str | None,
 
     # --- Duration override ---
     dur = _shot_duration_raw(project, sid)
-    p.append('<div class="ed-block"><h3>时长 Duration</h3>')
+    p.append('<div class="ed-block"><h3>' + _term("时长", "Duration") + '</h3>')
     p.append(
         '<div class="ed-dur-row">'
         f'<label><input class="ed-dur-auto" type="checkbox" '
@@ -1343,7 +1356,7 @@ def _transitions_panel(td_type: str, td_dur: int) -> str:
         f'{_e(_TRANSITION_LABELS.get(t, t))} ({_e(t)})</option>'
         for t in TRANSITION_TYPES)
     return (
-        '<section class="panel ed-trans-panel mj-pro-only"><h2>转场 Transitions</h2>'
+        '<section class="panel ed-trans-panel mj-pro-only"><h2>' + _term("转场", "Transitions") + '</h2>'
         '<div class="ed-trans-row">'
         f'<label>默认转场 <select id="ed-trans-type">{opts}</select></label>'
         f'<label>时长 (ms) <input id="ed-trans-dur" class="ed-num" type="number" '
@@ -1365,7 +1378,7 @@ def _look_panel(look: Any) -> str:
         f'data-preset="{_e(p)}">{_e(_LOOK_LABELS.get(p, p))}</button>'
         for p in LOOK_PRESETS)
     return (
-        '<section class="panel ed-look-panel mj-pro-only"><h2>调色 Look</h2>'
+        '<section class="panel ed-look-panel mj-pro-only"><h2>' + _term("调色", "Look") + '</h2>'
         f'<div class="ed-look-chips" id="ed-look-chips">{chips}</div>'
         '<div class="ed-look-row">'
         f'<label>强度 intensity <input id="ed-look-int" type="range" min="0" max="1" '
@@ -1410,7 +1423,7 @@ def _caption_style_panel(project: Any, rules: Any) -> str:
     line_hint = ("竖屏建议每行 ≤ 9–10 个 CJK 字" if portrait else "横屏建议每行 ≤ 16 个 CJK 字")
     safe_hint = "竖屏安全区:顶部 ~150px、底部 ~300px(字幕带需在其上方)" if portrait else ""
     return (
-        '<section class="panel ed-capstyle-panel mj-pro-only"><h2>字幕样式 Caption style</h2>'
+        '<section class="panel ed-capstyle-panel mj-pro-only"><h2>' + _term("字幕样式", "Caption style") + '</h2>'
         f'<p class="muted ed-hint">{_e(line_hint)}'
         + (f' · {_e(safe_hint)}' if safe_hint else '')
         + ' · 留空 = 使用系统默认值(不改变现有输出)。</p>'
@@ -1480,7 +1493,7 @@ def _playback_section(project: Any, timeline: Any) -> str:
         return (
             '<section class="panel ed-play-panel" id="ed-play-panel" data-kind="" '
             'data-default-tier="0">'
-            '<h2>预览播放 Preview</h2>'
+            '<h2>' + _term("预览播放", "Preview") + '</h2>'
             '<p class="muted ed-hint" id="ed-play-empty">还没有成片或预览版可播放 —— '
             '先构建(点上方“重新构建”),这里就能按空格播放整条时间线,播放头与多轨道联动。'
             '(在此之前,点击标尺仍显示定格预览。)</p></section>')
@@ -1489,7 +1502,7 @@ def _playback_section(project: Any, timeline: Any) -> str:
         '<section class="panel ed-play-panel" id="ed-play-panel" '
         f'data-kind="{_e(src["kind"] or "")}" data-src="{_e(src["url"] or "")}" '
         f'data-default-tier="{default_tier}">',
-        '<div class="ed-play-head"><h2>预览播放 Preview</h2>',
+        '<div class="ed-play-head"><h2>' + _term("预览播放", "Preview") + '</h2>',
     ]
     if has_t1 and has_t2:
         parts.append(

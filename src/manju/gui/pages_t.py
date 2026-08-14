@@ -39,10 +39,20 @@ def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
-def _shell(title: str, token: str, active: str, body: str) -> str:
+def _term(label: str, technical: str) -> str:
+    """Chinese-first product label; reveal the engineering term on demand."""
+    return (
+        _e(label)
+        + '<span class="mj-en" aria-hidden="true"> ('
+        + _e(technical)
+        + ")</span>"
+    )
+
+
+def _shell(title: str, token: str, active: str, body: str, project: Any = None) -> str:
     from .pages import GLOSSARY_HEAD, chrome
 
-    nav, bcls = chrome(active)
+    nav, bcls = chrome(active, project)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -108,42 +118,57 @@ def _fmt_ms(ms: int) -> str:
 
 def render_subtitles(project: Any, token: str) -> str:
     from .captions_edit import CaptionEditError, read_current_cues
+    from .finishing_journey import finishing_journey_html
 
-    head = ('<div class="page-h"><h1>字幕 Subtitles</h1>'
-            '<span class="muted">改字幕 → 存入 captions.srt(§3 首次编辑接管为 manual)</span></div>')
+    head = ('<div class="page-h"><h1>' + _term("字幕", "Subtitles") + '</h1>'
+            '<span class="muted">校对文字与时间；保存后由 Manju 重新烧录到成片。</span></div>')
     try:
         info = read_current_cues(project)
     except CaptionEditError as exc:
-        return _shell("字幕", token, "/subtitles", head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell(
+            "字幕",
+            token,
+            "/subtitles",
+            head
+            + finishing_journey_html("/subtitles")
+            + f'<p class="err panel">{_e(exc)}</p>',
+            project,
+        )
 
     mode, cues = info["mode"], info["cues"]
     manual = mode == "manual"
-    mode_badge = ('<span class="badge st-needs">manual 人工truth</span>' if manual
-                  else '<span class="badge st-fresh">compiled 自动</span>')
-    gen_note = (' · 编译对比: captions.generated.srt' if info["generated"] else "")
+    mode_badge = (
+        '<span class="badge st-needs">人工字幕<span class="mj-en" aria-hidden="true">'
+        ' (manual)</span></span>' if manual else
+        '<span class="badge st-fresh">自动字幕<span class="mj-en" aria-hidden="true">'
+        ' (compiled)</span></span>'
+    )
+    gen_note = (' · 已保留自动版本作对比' if info["generated"] else "")
     revert = ('<button class="btn ghost" id="sub-revert">还原自动字幕</button>' if manual else "")
 
     explain = (
         '<div class="sub-explain panel">'
-        f'<div>当前模式 {mode_badge}<span class="muted"> 来源 {_e(info["source"])}{_e(gen_note)}</span></div>'
-        '<p class="muted">首次保存会把 <code>rules.captions.mode</code> 翻转为 '
-        '<b>manual</b>:captions.srt 成为人工truth,编译版本转存 captions.generated.srt 作对比;'
-        '重建时 ASS 从人工字幕逐字重烧 = <b>final 重渲染</b>。'
-        '<span class="muted">（还原自动字幕会翻回 compiled 并重新生成。）</span></p>'
+        f'<div>当前版本 {mode_badge}<span class="muted"> · 来源 {_e(info["source"])}'
+        f'{_e(gen_note)}</span></div>'
+        '<p class="muted">首次保存后，人工字幕会成为后续构建使用的版本；原自动字幕仍会保留作对比。'
+        '<span class="mj-en" aria-hidden="true"> rules.captions.mode=manual · '
+        'captions.srt → captions.ass → final</span></p>'
         f'{revert}</div>'
     )
 
     rows = "".join(_cue_row(c) for c in cues) or ""
     empty = ('<tr class="cue-empty"><td colspan="6" class="muted">'
-             '暂无字幕 — 先 build 生成,或点“＋ 添加字幕”。</td></tr>' if not cues else "")
+             '暂无字幕 — 先构建项目，或点“＋ 添加字幕”。</td></tr>' if not cues else "")
     table = (
         '<div class="sub-tablewrap panel"><table class="cue-table"><thead><tr>'
-        '<th>#</th><th>起 start</th><th>止 end</th><th>说话人</th><th>文本 text</th><th>操作</th>'
+        '<th>#</th><th>' + _term("开始", "start") + '</th><th>'
+        + _term("结束", "end") + '</th><th>说话人</th><th>'
+        + _term("字幕文本", "text") + '</th><th>操作</th>'
         f'</tr></thead><tbody id="cue-body">{rows}{empty}</tbody></table>'
         '<div class="sub-actions">'
         '<button class="btn ghost" id="cue-add">＋ 添加字幕</button>'
         '<button class="btn" id="cue-save">保存字幕</button>'
-        '<span class="muted">保存后运行 build 重烧 ASS(= final 重渲染)</span>'
+        '<span class="muted">保存后需要重新构建成片，字幕才会进入最终视频。</span>'
         '</div>'
         '<div id="cue-warn" class="sub-warn muted"></div></div>'
     )
@@ -151,17 +176,16 @@ def render_subtitles(project: Any, token: str) -> str:
     final_rel = _final_rel(project)
     preview = (
         f'<div id="safe-area" class="sub-preview panel" data-final="{_e(final_rel)}">'
-        '<h2>安全区预览 Safe-area preview</h2>'
-        + ('<p class="muted">点某行字幕预览:取该 cue 中点的 final 帧,'
-           '文本叠在安全区内(近似烧录样式)。</p>'
+        '<h2>' + _term("安全区预览", "Safe-area preview") + '</h2>'
+        + ('<p class="muted">点选一行即可查看该字幕在成片安全区中的近似效果。</p>'
            if final_rel else
-           '<p class="muted">还没有 final 渲染 — build 之后可预览烧录效果。</p>')
+           '<p class="muted">还没有成片；完成一次构建后即可预览字幕烧录效果。</p>')
         + '<div class="sa-stage"><img id="sa-frame" alt="" hidden>'
         '<div id="sa-text" class="sa-caption"></div></div></div>'
     )
 
-    body = head + explain + table + preview
-    return _shell("字幕", token, "/subtitles", body)
+    body = head + finishing_journey_html("/subtitles") + explain + table + preview
+    return _shell("字幕", token, "/subtitles", body, project)
 
 
 def _cue_row(c: dict[str, Any]) -> str:
@@ -242,16 +266,17 @@ def _num(cls: str, value: Any, *, step: str = "1", mn: str | None = None) -> str
     return f'<input class="{cls}" type="number" step="{step}"{mattr} value="{_e(value)}">'
 
 
-def _bed_panel(title: str, bed: dict[str, Any], opts: list[dict[str, str]], *,
-               prefix: str, hint: str) -> str:
+def _bed_panel(title: str, technical: str, bed: dict[str, Any],
+               opts: list[dict[str, str]], *, prefix: str, hint: str) -> str:
     duck = bed.get("duck") or {}
     return (
-        f'<div class="mx-bed panel" data-bed="{_e(prefix)}"><h2>{_e(title)}</h2>'
+        f'<div class="mx-bed panel" data-bed="{_e(prefix)}"><h2>'
+        + _term(title, technical) + '</h2>'
         f'<p class="muted">{_e(hint)}</p>'
-        '<div class="mx-row"><label>音源 source</label>'
+        '<div class="mx-row"><label>' + _term("音源", "source") + '</label>'
         + _source_select(opts, bed.get("source"), cls=f"{prefix}-source") +
         f'<audio class="mx-audition {prefix}-audition" controls preload="none"></audio></div>'
-        '<div class="mx-row"><label>音量 gain (dB)</label>'
+        '<div class="mx-row"><label>' + _term("音量", "gain") + ' (dB)</label>'
         + _num(f"{prefix}-gain", bed.get("gain_db", 0), step="0.5") +
         '</div>'
         # advanced rows (round U): in-point/fades/ducking hidden in 新手 mode
@@ -282,62 +307,82 @@ def _bed_panel(title: str, bed: dict[str, Any], opts: list[dict[str, str]], *,
 
 def render_mixer(project: Any, token: str) -> str:
     from ..build.mixer import read_mixer
+    from .finishing_journey import finishing_journey_html
 
-    head = ('<div class="page-h"><h1>混音 Mixer</h1>'
-            '<span class="muted">1:1 绑定 read_mixer/apply_mixer · 人声/BGM/环境/音效</span></div>')
+    head = ('<div class="page-h"><h1>' + _term("混音", "Mixer") + '</h1>'
+            '<span class="muted">平衡人声、背景音乐、环境声和音效。</span></div>')
     try:
         mix = read_mixer(project)
     except Exception as exc:
-        return _shell("混音", token, "/mixer", head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell(
+            "混音",
+            token,
+            "/mixer",
+            head
+            + finishing_journey_html("/mixer")
+            + f'<p class="err panel">{_e(exc)}</p>',
+            project,
+        )
 
     opts = _audio_options(project)
 
     voice = (
-        '<div class="mx-voice panel"><h2>人声 Voice</h2>'
-        '<div class="mx-row"><label>人声音量 voice_gain (dB)</label>'
+        '<div class="mx-voice panel"><h2>' + _term("人声", "Voice") + '</h2>'
+        '<div class="mx-row"><label>' + _term("人声音量", "voice gain") + ' (dB)</label>'
         + _num("voice-gain", mix.get("voice_gain_db", 0), step="0.5") + '</div></div>'
     )
-    music = _bed_panel("背景音乐 BGM (music)", mix.get("music") or {}, opts,
-                       prefix="music", hint="从 imports/库 选曲;入点跳过前奏,淡入从静音起。")
-    ambient = _bed_panel("环境床 Ambient", mix.get("ambient") or {}, opts,
-                         prefix="ambient", hint="室内底噪/氛围,整片铺底,可闪避于人声。")
+    music = _bed_panel(
+        "背景音乐", "BGM / music", mix.get("music") or {}, opts,
+        prefix="music", hint="从素材库选曲；可跳过前奏并设置淡入。",
+    )
+    ambient = _bed_panel(
+        "环境声", "Ambient", mix.get("ambient") or {}, opts,
+        prefix="ambient", hint="铺设室内底噪或氛围，并在人声出现时自动降低。",
+    )
 
     sfx_rows = "".join(_sfx_row(s, opts) for s in (mix.get("sfx") or []))
     sfx = (
-        '<div class="mx-sfx panel" data-opts-count="' + str(len(opts)) + '"><h2>音效 SFX</h2>'
-        '<p class="muted">锚点语法 anchor: 空=从 0 绝对偏移 · '
-        '<code>shot:&lt;id&gt;</code>=该镜起点 · <code>shot:&lt;id&gt;:end</code>=该镜结束。'
-        '整表替换写入(full-list replace)。</p>'
-        f'<table class="sfx-table"><thead><tr><th>音源</th><th>anchor at</th>'
-        f'<th>offset_ms</th><th>gain_db</th><th></th></tr></thead>'
+        '<div class="mx-sfx panel" data-opts-count="' + str(len(opts)) + '"><h2>'
+        + _term("音效", "SFX") + '</h2>'
+        '<p class="muted">音效可以跟随整片时间，也可以绑定到某个镜头的开始或结束。'
+        '<span class="mj-en" aria-hidden="true"> anchor: 空=从 0 绝对偏移 · '
+        '<code>shot:&lt;id&gt;</code>=该镜起点 · <code>shot:&lt;id&gt;:end</code>=该镜结束 · '
+        'full-list replace</span></p>'
+        '<table class="sfx-table"><thead><tr><th>音源</th><th>'
+        + _term("锚点", "anchor") + '</th><th>'
+        + _term("偏移", "offset_ms") + '</th><th>'
+        + _term("音量", "gain_db") + '</th><th></th></tr></thead>'
         f'<tbody id="sfx-body">{sfx_rows}</tbody></table>'
         '<button class="btn ghost" id="sfx-add">＋ 添加音效</button></div>'
     )
 
     trans = mix.get("transition") or {}
     transition = (
-        '<div class="mx-trans panel mj-pro-only"><h2>转场音 Transition hit</h2>'
-        '<div class="mx-row"><label>音源 source</label>'
+        '<div class="mx-trans panel mj-pro-only"><h2>'
+        + _term("转场音", "Transition hit") + '</h2>'
+        '<div class="mx-row"><label>' + _term("音源", "source") + '</label>'
         + _source_select(opts, trans.get("source"), cls="trans-source") +
         '<audio class="mx-audition trans-audition" controls preload="none"></audio></div>'
-        '<div class="mx-row"><label>音量 gain (dB)</label>'
+        '<div class="mx-row"><label>' + _term("音量", "gain") + ' (dB)</label>'
         + _num("trans-gain", trans.get("gain_db", -12), step="0.5") + '</div></div>'
     )
 
     footage = (
-        '<div class="mx-footage panel"><h2>逐镜素材原声 Per-shot footage audio</h2>'
-        '<p class="muted">每个镜头导入素材的自带声音在片段级处理 — 到 '
-        '<a href="/edit">/edit 片段检查器</a> 调 gain/mute(避免重复)。</p></div>'
+        '<div class="mx-footage panel"><h2>' + _term("逐镜素材原声", "Per-shot footage audio") + '</h2>'
+        '<p class="muted">每个镜头自带的声音在剪辑页逐片处理，避免在这里重复调整。'
+        '<a href="/edit">前往剪辑</a></p></div>'
     )
 
     apply = (
-        '<div class="mx-apply panel"><button class="btn" id="mx-apply">应用混音 Apply</button>'
-        '<span class="muted">apply_mixer → 显示重建影响(timeline/final/segments)</span>'
+        '<div class="mx-apply panel"><button class="btn" id="mx-apply">应用混音'
+        '<span class="mj-en" aria-hidden="true"> (Apply)</span></button>'
+        '<span class="muted">应用前会先说明哪些时间线、片段和成片需要重新构建。</span>'
         '<div id="mx-verdict" class="mx-verdict"></div></div>'
     )
 
-    body = head + voice + music + ambient + sfx + transition + footage + apply
-    return _shell("混音", token, "/mixer", body)
+    body = (head + finishing_journey_html("/mixer") + voice + music
+            + ambient + sfx + transition + footage + apply)
+    return _shell("混音", token, "/mixer", body, project)
 
 
 def _sfx_row(s: dict[str, Any], opts: list[dict[str, str]]) -> str:
@@ -361,7 +406,7 @@ def _sfx_row(s: dict[str, Any], opts: list[dict[str, str]]) -> str:
 # media/html_card.py:CARD_STYLE_PRESETS for the actual knobs). "" is the
 # classic/no-preset look, kept first so it is always the pre-selected default.
 _CARD_PRESET_OPTS = (
-    ("", "经典 classic"),
+    ("", "经典"),
     ("mono_black", "简约黑"),
     ("white_big", "白底大字"),
     ("warm_gradient", "暖色渐变"),
@@ -374,16 +419,16 @@ def _card_form(kind: str, label: str, card: dict[str, Any]) -> str:
     return (
         f'<div class="pk-card" data-kind="{_e(kind)}"><h3>{_e(label)}</h3>'
         '<label class="pk-check"><input type="checkbox" class="pk-enabled"'
-        + (" checked" if card.get("enabled") else "") + '> 启用 enabled</label>'
-        '<div class="mx-row"><label>模板 template</label>'
+        + (" checked" if card.get("enabled") else "") + '> 启用<span class="mj-en" aria-hidden="true"> (enabled)</span></label>'
+        '<div class="mx-row"><label>' + _term("模板", "template") + '</label>'
         f'<select class="pk-template">{_tpl_opts(tpl)}</select></div>'
-        '<div class="mx-row"><label>预设样式 preset</label>'
+        '<div class="mx-row"><label>' + _term("预设样式", "preset") + '</label>'
         f'<select class="pk-preset">{_preset_opts(card.get("style_preset", ""))}</select></div>'
-        f'<div class="mx-row"><label>标题 text</label>'
+        '<div class="mx-row"><label>' + _term("标题", "text") + '</label>'
         f'<input class="pk-text" type="text" value="{_e(card.get("text", ""))}"></div>'
-        f'<div class="mx-row"><label>副标题 subtext</label>'
+        '<div class="mx-row"><label>' + _term("副标题", "subtext") + '</label>'
         f'<input class="pk-subtext" type="text" value="{_e(card.get("subtext", ""))}"></div>'
-        '<div class="mx-row"><label>时长 duration (ms)</label>'
+        '<div class="mx-row"><label>' + _term("时长", "duration") + ' (ms)</label>'
         + _num("pk-duration", card.get("duration_ms", 2000), step="100", mn="0") + '</div>'
         '<button class="btn mini ghost" data-act="card-preview">预览卡片</button>'
         '<div class="pk-preview"><img class="pk-prev-img" alt="" hidden></div></div>'
@@ -392,7 +437,7 @@ def _card_form(kind: str, label: str, card: dict[str, Any]) -> str:
 
 def _tpl_opts(current: str) -> str:
     out = []
-    for v, lbl in (("chapter", "chapter 章节"), ("caption", "caption 字幕")):
+    for v, lbl in (("chapter", "章节"), ("caption", "字幕")):
         out.append(f'<option value="{v}"{" selected" if v == current else ""}>{lbl}</option>')
     return "".join(out)
 
@@ -423,7 +468,7 @@ def _image_options(project: Any) -> list[str]:
 def _image_select(cls: str, current: str, images: list[str]) -> str:
     parts = [f'<select class="{cls}">']
     cur = current or ""
-    parts.append(f'<option value=""{" selected" if not cur else ""}>（无 none）</option>')
+    parts.append(f'<option value=""{" selected" if not cur else ""}>（无）</option>')
     seen = False
     for rel in images:
         sel = " selected" if rel == cur else ""
@@ -437,33 +482,40 @@ def _image_select(cls: str, current: str, images: list[str]) -> str:
 
 
 def render_packaging(project: Any, token: str) -> str:
-    head = ('<div class="page-h"><h1>打包 Packaging v2</h1>'
-            '<span class="muted">表单化 packaging.yaml · 存前校验 · 每次改动记事件</span></div>')
+    from .finishing_journey import finishing_journey_html
+
+    head = ('<div class="page-h"><h1>' + _term("包装", "Packaging") + '</h1>'
+            '<span class="muted">设置片头、片尾、信息卡、封面和预告片。</span></div>')
     try:
         spec = project.load_packaging()  # a validated PackagingSpec
     except Exception as exc:
-        return _shell("打包", token, "/packaging",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell("包装", token, "/packaging",
+                      head + finishing_journey_html("/packaging")
+                      + f'<p class="err panel">{_e(exc)}</p>', project)
     pk = spec.model_dump()
     final_rel = _final_rel(project)
     images = _image_options(project)
 
     # intro / outro cards
     cards = (
-        '<div class="pk-sect panel" data-section="cards"><h2>片头/片尾卡片 Intro / Outro</h2>'
-        '<div class="pk-cards">'
-        + _card_form("intro", "片头 Intro", pk["intro"])
-        + _card_form("outro", "片尾 Outro", pk["outro"])
+        '<div class="pk-sect panel" data-section="cards"><h2>'
+        + _term("片头与片尾", "Intro / Outro") + '</h2><div class="pk-cards">'
+        + _card_form("intro", "片头", pk["intro"])
+        + _card_form("outro", "片尾", pk["outro"])
         + '</div><button class="btn" data-act="save" data-section="cards">保存卡片</button></div>'
     )
 
     # info cards list
     ic_rows = "".join(_infocard_row(c) for c in pk.get("info_cards", []))
     info_cards = (
-        '<div class="pk-sect panel" data-section="info"><h2>信息卡 Info cards</h2>'
-        '<p class="muted">章节/角色/信息卡,anchor 语法同 SFX。</p>'
-        '<table class="ic-table"><thead><tr><th>kind</th><th>text</th><th>at</th>'
-        '<th>offset_ms</th><th>duration_ms</th><th>template</th><th></th></tr></thead>'
+        '<div class="pk-sect panel" data-section="info"><h2>'
+        + _term("信息卡", "Info cards") + '</h2>'
+        '<p class="muted">在指定镜头或时间点显示章节、角色或补充信息。</p>'
+        '<table class="ic-table"><thead><tr><th>' + _term("类型", "kind")
+        + '</th><th>' + _term("文字", "text") + '</th><th>'
+        + _term("锚点", "at") + '</th><th>' + _term("偏移", "offset_ms")
+        + '</th><th>' + _term("时长", "duration_ms") + '</th><th>'
+        + _term("模板", "template") + '</th><th></th></tr></thead>'
         f'<tbody id="ic-body">{ic_rows}</tbody></table>'
         '<button class="btn ghost" id="ic-add">＋ 添加信息卡</button> '
         '<button class="btn" data-act="save" data-section="info">保存信息卡</button></div>'
@@ -474,8 +526,8 @@ def render_packaging(project: Any, token: str) -> str:
     cover_sect = (
         f'<div class="pk-sect panel" data-section="cover" data-final="{_e(final_rel)}" '
         f'data-frame-ms="{_e(cover.get("frame_ms", 0))}">'
-        '<h2>封面 Cover</h2>'
-        '<div class="mx-row"><label>模式 mode</label>'
+        '<h2>' + _term("封面", "Cover") + '</h2>'
+        '<div class="mx-row"><label>' + _term("模式", "mode") + '</label>'
         f'<select class="cover-mode">{_cover_mode_opts(cover.get("mode", "frame"))}</select></div>'
         '<div class="cover-frame-ui">'
         + ('<p class="muted">拖动缩略图选帧,±步进微调,写入 cover.frame_ms。</p>'
@@ -486,12 +538,12 @@ def render_packaging(project: Any, token: str) -> str:
            '<button class="btn mini ghost" data-nudge="100">+100</button>'
            '<button class="btn mini ghost" data-nudge="500">+500</button></div>'
            '<div class="cover-fine-frame"><img id="cover-fine-img" alt="" hidden></div>'
-           if final_rel else '<p class="muted">还没有 final — build 之后可选帧。</p>')
+           if final_rel else '<p class="muted">还没有成片；完成一次构建后即可选帧。</p>')
         + '</div>'
         '<div class="cover-card-ui">'
-        f'<div class="mx-row"><label>卡片标题 text</label>'
+        '<div class="mx-row"><label>' + _term("卡片标题", "text") + '</label>'
         f'<input class="cover-text" type="text" value="{_e(cover.get("text", ""))}"></div>'
-        '<div class="mx-row"><label>模板 template</label>'
+        '<div class="mx-row"><label>' + _term("模板", "template") + '</label>'
         f'<select class="cover-template">{_tpl_opts(cover.get("template", "chapter"))}</select></div>'
         '<button class="btn mini ghost" data-act="cover-card-preview">预览卡片封面</button>'
         '<div class="pk-preview"><img id="cover-card-img" alt="" hidden></div></div>'
@@ -502,14 +554,14 @@ def render_packaging(project: Any, token: str) -> str:
     teaser = pk["teaser"]
     teaser_sect = (
         f'<div class="pk-sect panel" data-section="teaser" data-final="{_e(final_rel)}">'
-        '<h2>预告片 Teaser</h2>'
+        '<h2>' + _term("预告片", "Teaser") + '</h2>'
         '<label class="pk-check"><input type="checkbox" class="teaser-enabled"'
-        + (" checked" if teaser.get("enabled") else "") + '> 启用 enabled</label>'
+        + (" checked" if teaser.get("enabled") else "") + '> 启用<span class="mj-en" aria-hidden="true"> (enabled)</span></label>'
         + ('<p class="muted">在条带上点两下选起点/终点(两个滑块),写 from_ms/duration_ms。</p>'
            '<div id="teaser-strip" class="pk-strip"></div>' if final_rel else "")
-        + '<div class="mx-row"><label>from_ms</label>'
+        + '<div class="mx-row"><label>' + _term("起点", "from_ms") + '</label>'
         + _num("teaser-from", teaser.get("from_ms", 0), step="100", mn="0") + '</div>'
-        '<div class="mx-row"><label>duration_ms</label>'
+        '<div class="mx-row"><label>' + _term("时长", "duration_ms") + '</label>'
         + _num("teaser-duration", teaser.get("duration_ms", 5000), step="100", mn="0") + '</div>'
         '<button class="btn" data-act="save" data-section="teaser">保存预告</button>'
         '<div class="teaser-warn muted"></div></div>'
@@ -518,13 +570,14 @@ def render_packaging(project: Any, token: str) -> str:
     branding = _branding_sect(pk, images)
 
     warn_bar = '<div id="pk-warn" class="pk-warnbar muted"></div>'
-    body = head + warn_bar + cards + info_cards + cover_sect + teaser_sect + branding
-    return _shell("打包", token, "/packaging", body)
+    body = (head + finishing_journey_html("/packaging") + warn_bar
+            + cards + info_cards + cover_sect + teaser_sect + branding)
+    return _shell("包装", token, "/packaging", body, project)
 
 
 def _cover_mode_opts(current: str) -> str:
     out = []
-    for v, lbl in (("frame", "frame 取帧"), ("card", "card 卡片")):
+    for v, lbl in (("frame", "从成片取帧"), ("card", "文字卡片")):
         out.append(f'<option value="{v}"{" selected" if v == current else ""}>{lbl}</option>')
     return "".join(out)
 
@@ -553,68 +606,77 @@ def _branding_sect(pk: dict[str, Any], images: list[str]) -> str:
     cta = pk["cta"]
 
     def corner_opts(cls_current: str) -> str:
+        labels = {"tl": "左上", "tr": "右上", "bl": "左下", "br": "右下"}
         return "".join(
-            f'<option value="{v}"{" selected" if cls_current == v else ""}>{v}</option>'
-            for v in ("tl", "tr", "bl", "br"))
+            f'<option value="{v}"{" selected" if cls_current == v else ""}>'
+            f'{labels[v]}</option>'
+            for v in ("tl", "tr", "bl", "br")
+        )
 
     logo_html = (
-        '<div class="pk-brand" data-brand="logo"><h3>Logo / 角标</h3>'
+        '<div class="pk-brand" data-brand="logo"><h3>' + _term("标志图", "Logo") + '</h3>'
         '<label class="pk-check"><input type="checkbox" class="lg-enabled"'
         + (" checked" if logo.get("enabled") else "") + '> 启用</label>'
-        '<div class="mx-row"><label>图片 image</label>'
+        '<div class="mx-row"><label>' + _term("图片", "image") + '</label>'
         + _image_select("lg-image", logo.get("image", ""), images) + '</div>'
-        '<div class="mx-row"><label>角 corner</label>'
+        '<div class="mx-row"><label>' + _term("位置", "corner") + '</label>'
         f'<select class="lg-corner">{corner_opts(logo.get("corner", "tr"))}</select></div>'
-        '<div class="mx-row"><label>size_pct</label>'
+        '<div class="mx-row"><label>' + _term("尺寸", "size_pct") + '</label>'
         + _num("lg-size", logo.get("size_pct", 12.0), step="0.5") + '</div>'
-        '<div class="mx-row"><label>margin_pct</label>'
+        '<div class="mx-row"><label>' + _term("边距", "margin_pct") + '</label>'
         + _num("lg-margin", logo.get("margin_pct", 2.5), step="0.5") + '</div>'
-        '<div class="mx-row"><label>opacity (0–1)</label>'
+        '<div class="mx-row"><label>' + _term("不透明度", "opacity") + ' (0–1)</label>'
         + _num("lg-opacity", logo.get("opacity", 1.0), step="0.05") + '</div></div>'
     )
     wm_html = (
-        '<div class="pk-brand" data-brand="watermark"><h3>水印 Watermark</h3>'
+        '<div class="pk-brand" data-brand="watermark"><h3>' + _term("水印", "Watermark") + '</h3>'
         '<label class="pk-check"><input type="checkbox" class="wm-enabled"'
         + (" checked" if wm.get("enabled") else "") + '> 启用</label>'
-        f'<div class="mx-row"><label>文字 text</label>'
+        '<div class="mx-row"><label>' + _term("文字", "text") + '</label>'
         f'<input class="wm-text" type="text" value="{_e(wm.get("text", ""))}"></div>'
-        '<div class="mx-row"><label>图片 image</label>'
+        '<div class="mx-row"><label>' + _term("图片", "image") + '</label>'
         + _image_select("wm-image", wm.get("image", ""), images) + '</div>'
-        '<div class="mx-row"><label>opacity (0–1)</label>'
+        '<div class="mx-row"><label>' + _term("不透明度", "opacity") + ' (0–1)</label>'
         + _num("wm-opacity", wm.get("opacity", 0.35), step="0.05") + '</div>'
-        '<div class="mx-row"><label>size_pct</label>'
+        '<div class="mx-row"><label>' + _term("尺寸", "size_pct") + '</label>'
         + _num("wm-size", wm.get("size_pct", 30.0), step="1") + '</div>'
-        '<div class="mx-row"><label>position</label>'
+        '<div class="mx-row"><label>' + _term("位置", "position") + '</label>'
         '<select class="wm-position">'
-        + "".join(f'<option value="{v}"{" selected" if wm.get("position") == v else ""}>{v}</option>'
-                  for v in ("center", "diagonal_tile"))
+        + "".join(
+            f'<option value="{value}"{" selected" if wm.get("position") == value else ""}>'
+            f'{label}</option>'
+            for value, label in (("center", "居中"), ("diagonal_tile", "斜向平铺"))
+        )
         + '</select></div></div>'
     )
     badge_html = (
-        '<div class="pk-brand" data-brand="badge"><h3>角标 Badge</h3>'
+        '<div class="pk-brand" data-brand="badge"><h3>' + _term("角标", "Badge") + '</h3>'
         '<label class="pk-check"><input type="checkbox" class="bd-enabled"'
         + (" checked" if badge.get("enabled") else "") + '> 启用</label>'
-        f'<div class="mx-row"><label>文字 text</label>'
+        '<div class="mx-row"><label>' + _term("文字", "text") + '</label>'
         f'<input class="bd-text" type="text" value="{_e(badge.get("text", ""))}"></div>'
-        '<div class="mx-row"><label>角 corner</label>'
+        '<div class="mx-row"><label>' + _term("位置", "corner") + '</label>'
         f'<select class="bd-corner">{corner_opts(badge.get("corner", "tl"))}</select></div></div>'
     )
     cta_html = (
-        '<div class="pk-brand" data-brand="cta"><h3>行动号召 CTA</h3>'
+        '<div class="pk-brand" data-brand="cta"><h3>' + _term("行动号召", "CTA") + '</h3>'
         '<label class="pk-check"><input type="checkbox" class="ct-enabled"'
         + (" checked" if cta.get("enabled") else "") + '> 启用</label>'
-        f'<div class="mx-row"><label>文字 text</label>'
+        '<div class="mx-row"><label>' + _term("文字", "text") + '</label>'
         f'<input class="ct-text" type="text" value="{_e(cta.get("text", ""))}"></div>'
-        '<div class="mx-row"><label>at_end_ms(片尾窗口)</label>'
+        '<div class="mx-row"><label>' + _term("片尾出现时长", "at_end_ms") + '</label>'
         + _num("ct-atend", cta.get("at_end_ms", 3000), step="100", mn="0") + '</div>'
-        '<div class="mx-row"><label>position</label>'
+        '<div class="mx-row"><label>' + _term("位置", "position") + '</label>'
         '<select class="ct-position">'
-        + "".join(f'<option value="{v}"{" selected" if cta.get("position") == v else ""}>{v}</option>'
-                  for v in ("bottom", "center"))
+        + "".join(
+            f'<option value="{value}"{" selected" if cta.get("position") == value else ""}>'
+            f'{label}</option>'
+            for value, label in (("bottom", "底部"), ("center", "居中"))
+        )
         + '</select></div></div>'
     )
     return (
-        '<div class="pk-sect panel" data-section="branding"><h2>品牌叠加 Branding</h2>'
+        '<div class="pk-sect panel" data-section="branding"><h2>' + _term("品牌叠加", "Branding") + '</h2>'
         '<div class="pk-brands">' + logo_html + wm_html + badge_html + cta_html + '</div>'
         '<button class="btn" data-act="save" data-section="branding">保存品牌</button></div>'
     )

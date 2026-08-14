@@ -133,8 +133,8 @@ def test_edit_page_renders_with_content(gui, tmp_project, add_shot, make_take):
     status, headers, body = _html(gui, "/edit")
     assert status == 200
     assert 'data-page="/edit"' in body
-    assert "剪辑 Edit" in body
-    assert "时间线 Timeline" in body
+    assert '<h1>剪辑<span class="mj-en"' in body
+    assert '<h2>时间线<span class="mj-en"' in body
     assert "S001" in body and "S002" in body
     # panels
     assert "转场 Transitions" in body and "调色 Look" in body

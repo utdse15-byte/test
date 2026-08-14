@@ -72,7 +72,7 @@ _NAV = (
     ("/review", "审片"),
     ("/subtitles", "字幕"),
     ("/mixer", "混音"),
-    ("/packaging", "打包"),
+    ("/packaging", "包装"),
     ("/exports", "导出中心"),
     ("/compare", "对比"),
     ("/library", "素材库"),
@@ -1614,6 +1614,63 @@ _PAGES_CSS = """
 
 .page-h { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin: 1.1rem 0 .5rem; }
 .page-h h1 { font-size: 1.25rem; }
+
+/* Product Polish R1 Wave 4: one shared finishing journey across 剪辑 → 字幕
+   → 混音 → 包装 → 导出.  It is presentation-only; the two status chips are
+   filled lazily from existing export/readiness owners after first paint. */
+.mj-finish-journey {
+  margin: .75rem 0 1rem; padding: .75rem .85rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--shadow-1);
+}
+.mj-finish-head, .mj-finish-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .8rem; flex-wrap: wrap;
+}
+.mj-finish-head > div:first-child {
+  display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; min-width: 0;
+}
+.mj-finish-eyebrow {
+  color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .08em;
+}
+.mj-finish-status, .mj-finish-actions {
+  display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+}
+.mj-finish-track {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .35rem; margin: .65rem 0 .55rem;
+}
+.mj-finish-step {
+  display: flex; align-items: center; justify-content: center; gap: .42rem;
+  min-width: 0; padding: .42rem .55rem;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel2); color: var(--muted); text-decoration: none;
+  font-size: .82rem; font-weight: 600;
+}
+.mj-finish-step:hover { color: var(--fg); border-color: #4b5566; filter: none; }
+.mj-finish-step.active {
+  color: var(--fg); border-color: var(--accent); background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px rgba(116,169,255,.18);
+}
+.mj-finish-num {
+  display: inline-grid; place-items: center; flex: 0 0 auto;
+  width: 1.35rem; height: 1.35rem; border-radius: 999px;
+  background: rgba(255,255,255,.06); font-size: .7rem; font-variant-numeric: tabular-nums;
+}
+.mj-finish-step.active .mj-finish-num { background: var(--accent); color: #0b1220; }
+.mj-finish-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mj-finish-note { margin: 0; font-size: .78rem; min-width: min(32rem, 100%); }
+.mj-finish-note.warn { color: var(--warn); }
+.mj-finish-note.bad { color: var(--err); }
+@media (max-width: 760px) {
+  .mj-finish-track { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .mj-finish-step { grid-column: span 2; }
+  .mj-finish-step:nth-child(n + 4) { grid-column: span 3; }
+  .mj-finish-head { align-items: flex-start; }
+  .mj-finish-status { width: 100%; }
+  .mj-finish-foot { align-items: flex-start; }
+  .mj-finish-actions { width: 100%; justify-content: flex-end; }
+}
 .err { color: var(--err); }
 .mini { padding: .1rem .5rem !important; font-size: .74rem !important; }
 

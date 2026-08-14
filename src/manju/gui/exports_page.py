@@ -57,8 +57,10 @@ def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
-def _shell(title: str, token: str, body: str) -> str:
-    from .pages import nav_html
+def _shell(title: str, token: str, body: str, project: Any = None) -> str:
+    from .pages import GLOSSARY_HEAD, chrome
+
+    nav, bcls = chrome(PAGE_PATH, project)
 
     return (
         "<!doctype html>\n"
@@ -70,12 +72,12 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/exports.css">\n'
-        '<script src="/webclient.js" defer></script>\n'
-        '<script src="/common.js" defer></script>\n'
-        '<script src="/exports.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/common.js" defer></script>\n'
+        + '<script src="/exports.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{PAGE_PATH}">\n'
-        + nav_html(PAGE_PATH)
+        f'<body data-page="{PAGE_PATH}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -222,13 +224,19 @@ def _grouped_cards(rows: list[dict[str, Any]], *, readonly: bool = False) -> str
 
 def render(project: Any, token: str, *, readonly: bool = False) -> str:
     from ..build.exportstatus import deliverables_data
+    from .finishing_journey import finishing_journey_html
 
     head = ('<div class="page-h"><h1>导出中心</h1>'
             '<span class="muted">按目标整理成片、精剪交换、字幕和包装产物</span></div>')
     try:
         data = deliverables_data(project)
     except Exception as exc:  # never break the page on a status error
-        return _shell("导出中心", token, head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell(
+            "导出中心", token,
+            head + finishing_journey_html(PAGE_PATH)
+            + f'<p class="err panel">{_e(exc)}</p>',
+            project,
+        )
 
     rows = data["deliverables"]
     counts = data["counts"]
@@ -265,8 +273,9 @@ def render(project: Any, token: str, *, readonly: bool = False) -> str:
         '<b>待人工确认</b> Manju 无法自行证明 · <b>已人工确认</b> 人工确认且字节未变。</p>'
         '</details>'
     )
-    body = head + summary + finishing + cards + legend
-    return _shell("导出中心", token, body)
+    journey = finishing_journey_html(PAGE_PATH)
+    body = head + journey + summary + finishing + cards + legend
+    return _shell("导出中心", token, body, project)
 
 
 # ============================================================ assets (css/js)

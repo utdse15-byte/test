@@ -130,7 +130,7 @@ def test_render_edit_zero_explain_zero_spawns(
 
     assert explain_calls == [], "render_edit recompiled via build.explain on the request thread"
     assert spawns == [], f"render_edit spawned a subprocess on the request thread: {spawns}"
-    assert "剪辑 Edit" in html                    # the page still rendered
+    assert '<h1>剪辑<span class="mj-en"' in html   # Chinese-first page still rendered
     assert 'id="ed-dirty-chip"' in html            # the dirty badge is a lazy slot now
 
 

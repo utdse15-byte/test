@@ -781,6 +781,14 @@ class _Handler(BaseHTTPRequestHandler):
                     else:
                         self.server.state_cache = (fp, payload)
                 self._send_json(payload)
+            elif path == "/api/finishing/status":
+                # Product Polish R1 Wave 4: one small, read-only projection for
+                # the shared 剪辑→字幕→混音→包装→导出 journey.  It is fetched
+                # after first paint so /edit keeps its no-inline-recompile
+                # performance rule.  The helper consumes existing owners only.
+                from .finishing_journey import finishing_status
+
+                self._send_json(finishing_status(self.server.project))
             elif path == "/api/jobs":
                 # round AA item 6: JobRunner.interrupted() (a past GUI
                 # process's dangling queued/running/canceling jobs) is
