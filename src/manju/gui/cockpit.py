@@ -37,6 +37,7 @@ and lights up automatically if they arrive.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from ..build.director import suggest_next
 from ..build.exportstatus import deliverables
@@ -45,6 +46,8 @@ from ..build.status import project_status
 from ..core.container import Project
 from ..core.events import tail_events
 from .onboarding import build_onboarding
+from .authoring_journey import authoring_journey_payload
+from .shot_journey import shot_production_summary
 from .userstate import is_onboarding_dismissed
 
 __all__ = ["cockpit_data"]
@@ -233,7 +236,7 @@ def _state(project: Project, status: Any, deliv: Any) -> dict[str, Any]:
     voice = {k: len(v) for k, v in (status.get("voice_by_state") or {}).items()}
 
     if total == 0:
-        sentence = "还没有镜头 — 先写分镜再生成 (no shots yet)"
+        sentence = "还没有镜头 — 先完成创作和分镜"
     else:
         parts = [f"{counts[s]} {STATE_ZH[s]}" for s in STATE_ORDER if counts.get(s)]
         sentence = f"{phase_zh} · 共 {total} 镜:" + " · ".join(parts)
@@ -334,29 +337,29 @@ def _risks(project: Project, status: Any, spend: Any) -> dict[str, Any]:
     if broken:
         items.append({"kind": "broken", "level": "error", "count": len(broken),
                       "shots": broken,
-                      "text": f"{len(broken)} 个镜头损坏 (broken):{_join(broken)}"})
+                      "text": f"{len(broken)} 个镜头媒体损坏：{_join(broken)}"})
 
     qc = status.get("qc") or {}
     if qc.get("errors"):
         items.append({"kind": "qc", "level": "error", "count": qc["errors"],
-                      "text": f"质检 {qc['errors']} 处错误 (QC errors)"})
+                      "text": f"质检发现 {qc['errors']} 处错误"})
 
     stale = by.get("stale") or []
     if stale:
         items.append({"kind": "stale", "level": "warn", "count": len(stale),
                       "shots": stale,
-                      "text": f"{len(stale)} 个镜头待更新 (stale):{_join(stale)}"})
+                      "text": f"{len(stale)} 个镜头内容已经变化：{_join(stale)}"})
 
     if status.get("latest_final_note"):
         items.append({"kind": "final", "level": "warn",
                       "detail": status["latest_final_note"],
-                      "text": "成片可能不完整 (final may be incomplete)"})
+                      "text": "当前成片可能不完整"})
 
     bl = status.get("build_lock")
     if bl:
         who = bl.get("actor") if isinstance(bl, dict) else None
         items.append({"kind": "lock", "level": "info",
-                      "text": "构建进行中 (build in progress)"
+                      "text": "构建正在进行"
                               + (f" · {who}" if who else "")})
 
     return {"items": items}
@@ -429,6 +432,335 @@ def _onboarding(project: Project) -> dict[str, Any]:
     return ob
 
 
+def _journeys(project: Project, state: Any) -> dict[str, Any]:
+    """Summarise the three product journeys already owned elsewhere.
+
+    This is deliberately a presentation projection, not a new workflow state
+    machine.  Authoring and shot-production reuse their existing read models;
+    finishing is framed from the cockpit's already-computed final evidence plus
+    the shot journey's human approval counts.  Nothing here is persisted or
+    read back by build/provider/QC code.
+    """
+
+    authoring_error = ""
+    try:
+        authoring_raw = authoring_journey_payload(project)
+    except Exception as exc:
+        authoring_error = " ".join(str(exc).split())[:180] or exc.__class__.__name__
+        authoring_raw = {
+            "writing": {"done": 0, "total": 0, "complete": False},
+            "proposal": {"truth_pending": 0, "truth_stale": 0, "error": authoring_error},
+            "storyboard": {"ready": False, "count": 0},
+            "next": {
+                "kind": "writing",
+                "href": "/create",
+                "label": "检查创作材料",
+                "detail": "创作进度暂时无法读取；项目文件没有被修改。",
+            },
+        }
+    writing = authoring_raw.get("writing") or {}
+    proposal = authoring_raw.get("proposal") or {}
+    storyboard = authoring_raw.get("storyboard") or {}
+    authoring_next = authoring_raw.get("next") or {}
+    if authoring_error:
+        authoring_state = "unavailable"
+    elif (
+        proposal.get("error")
+        or proposal.get("truth_pending")
+        or proposal.get("truth_stale")
+        or proposal.get("other_pending")
+    ):
+        authoring_state = "attention"
+    elif not writing.get("complete") or not storyboard.get("ready"):
+        authoring_state = "current"
+    else:
+        authoring_state = "done"
+    authoring_summary = (
+        f"故事材料 {int(writing.get('done') or 0)}/{int(writing.get('total') or 0)}"
+        f" · 分镜 {int(storyboard.get('count') or 0)} 镜"
+    )
+    if proposal.get("truth_pending"):
+        authoring_summary += f" · {int(proposal['truth_pending'])} 份创作提案待决定"
+    elif proposal.get("other_pending"):
+        authoring_summary += f" · {int(proposal['other_pending'])} 份操作提案待决定"
+
+    try:
+        shots_raw = shot_production_summary(project)
+    except Exception as exc:
+        shot_error = " ".join(str(exc).split())[:180] or exc.__class__.__name__
+        shots_raw = {
+            "total": 0, "with_candidates": 0, "selected": 0,
+            "reviewed": 0, "approved": 0, "broken": [],
+            "error": shot_error,
+            "next": {
+                "kind": "plan", "href": "/storyboard",
+                "label": "检查镜头计划",
+            },
+        }
+    total = int(shots_raw.get("total") or 0)
+    with_candidates = int(shots_raw.get("with_candidates") or 0)
+    selected = int(shots_raw.get("selected") or 0)
+    reviewed = int(shots_raw.get("reviewed") or 0)
+    approved = int(shots_raw.get("approved") or 0)
+    if shots_raw.get("error") or shots_raw.get("broken"):
+        shot_state = "attention"
+    elif total <= 0:
+        shot_state = "todo"
+    elif approved >= total:
+        shot_state = "done"
+    else:
+        shot_state = "current"
+    shot_next = shots_raw.get("next") or {}
+    shot_summary = (
+        "尚无镜头"
+        if total <= 0
+        else (
+            f"{with_candidates}/{total} 有候选 · "
+            f"{selected}/{total} 已选择 · {approved}/{total} 已通过"
+        )
+    )
+
+    final = None if not isinstance(state, dict) or state.get("error") else state.get("final")
+    if shots_raw.get("error"):
+        finish_state = "unavailable"
+        finish_summary = "成片准备状态暂不可用"
+        finish_detail = "镜头进度暂时无法读取；不会因此修改项目。"
+        finish_href = "/edit"
+        finish_next = "检查成片工作区"
+    elif total <= 0:
+        finish_state = "todo"
+        finish_summary = "等待镜头计划"
+        finish_detail = "先完成故事与分镜，再进入剪辑和交付。"
+        finish_href = "/create"
+        finish_next = "先完成创作与分镜"
+    elif approved < total:
+        finish_state = "todo"
+        finish_summary = f"等待镜头通过 · {approved}/{total}"
+        finish_detail = "先完成候选选择、评价和镜头审批。"
+        finish_href = str(shot_next.get("href") or "/review")
+        finish_next = str(shot_next.get("label") or "继续镜头制作")
+    elif not final:
+        finish_state = "current"
+        finish_summary = "镜头已通过 · 尚无成片"
+        finish_detail = "进入剪辑并生成第一版成片。"
+        finish_href = "/edit"
+        finish_next = "进入剪辑"
+    else:
+        freshness = str(final.get("freshness") or "")
+        version = str(final.get("version") or "").strip()
+        suffix = f" {version}" if version else ""
+        if freshness in {"up_to_date", "verified"}:
+            finish_state = "done"
+            finish_summary = f"成片{suffix} 当前有效"
+            finish_detail = "可以继续精剪、导出或交付。"
+            finish_href = "/exports"
+            finish_next = "查看成片与导出"
+        elif freshness == "stale":
+            finish_state = "attention"
+            finish_summary = f"成片{suffix} 待更新"
+            finish_detail = "项目内容已经变化，需要重新生成当前成片。"
+            finish_href = "/edit"
+            finish_next = "更新成片"
+        elif freshness == "problematic":
+            finish_state = "attention"
+            finish_summary = f"成片{suffix} 有问题"
+            finish_detail = "先检查成片问题，再继续导出或交付。"
+            finish_href = "/exports"
+            finish_next = "检查成片问题"
+        elif freshness == "needs_manual":
+            finish_state = "attention"
+            finish_summary = f"成片{suffix} 待人工确认"
+            finish_detail = "当前文件存在，但仍需要你检查后再交付。"
+            finish_href = "/exports"
+            finish_next = "检查当前成片"
+        else:
+            finish_state = "current"
+            finish_summary = f"成片{suffix} 状态待确认"
+            finish_detail = str(final.get("note") or "进入成片工作区检查当前结果。")
+            finish_href = "/exports"
+            finish_next = "查看成片状态"
+
+    return {
+        "authoring": {
+            "state": authoring_state,
+            "label": "创作",
+            "summary": authoring_summary,
+            "detail": str(authoring_next.get("detail") or ""),
+            "href": str(authoring_next.get("href") or "/create"),
+            "next_label": str(authoring_next.get("label") or "继续创作"),
+            "next_kind": str(authoring_next.get("kind") or "writing"),
+            "progress": {
+                "done": int(writing.get("done") or 0),
+                "total": int(writing.get("total") or 0),
+            },
+            "attention": {
+                "truth_pending": int(proposal.get("truth_pending") or 0),
+                "truth_stale": int(proposal.get("truth_stale") or 0),
+                "other_pending": int(proposal.get("other_pending") or 0),
+                "error": authoring_error or str(proposal.get("error") or ""),
+            },
+        },
+        "shots": {
+            "state": shot_state,
+            "label": "镜头",
+            "summary": shot_summary,
+            "detail": (
+                "候选、选择、评价和镜头审批始终是独立决定。"
+                if total else "先把故事拆成可执行镜头。"
+            ),
+            "href": str(shot_next.get("href") or "/storyboard"),
+            "next_label": str(shot_next.get("label") or "查看镜头计划"),
+            "next_kind": str(shot_next.get("kind") or "plan"),
+            "shot": shot_next.get("shot"),
+            "progress": {
+                "total": total,
+                "with_candidates": with_candidates,
+                "selected": selected,
+                "reviewed": reviewed,
+                "approved": approved,
+            },
+            "broken": list(shots_raw.get("broken") or []),
+            "error": str(shots_raw.get("error") or ""),
+        },
+        "finishing": {
+            "state": finish_state,
+            "label": "成片",
+            "summary": finish_summary,
+            "detail": finish_detail,
+            "href": finish_href,
+            "next_label": finish_next,
+            "next_kind": "exports" if finish_state == "done" else "finishing",
+        },
+    }
+
+
+def _focus(journeys: Any, next_action: Any, risks: Any) -> dict[str, Any]:
+    """Choose one presentation priority without becoming an execution owner."""
+
+    def _link(source: str, row: dict[str, Any]) -> dict[str, Any]:
+        summary = str(row.get("summary") or "").strip()
+        detail = str(row.get("detail") or "").strip()
+        if summary and detail and summary not in detail:
+            focus_detail = summary + "。" + detail
+        else:
+            focus_detail = detail or summary
+        return {
+            "source": source,
+            "phase": row.get("label") or "项目",
+            "kind": row.get("next_kind") or source,
+            "label": row.get("next_label") or "继续",
+            "detail": focus_detail,
+            "href": row.get("href"),
+            "verb": "link",
+            "action": None,
+            "shot": row.get("shot"),
+        }
+
+    risk_items = [] if not isinstance(risks, dict) else list(risks.get("items") or [])
+    broken = next((row for row in risk_items if row.get("kind") == "broken"), None)
+    if broken:
+        shots = list(broken.get("shots") or [])
+        first = str(shots[0]) if shots else None
+        return {
+            "source": "risk",
+            "phase": "修复",
+            "kind": "broken",
+            "label": f"修复 {int(broken.get('count') or len(shots) or 1)} 个损坏镜头",
+            "detail": "先恢复当前镜头媒体，再继续生成、审片或成片。",
+            "href": "/storyboard" + (f"?shot={quote(first, safe='')}" if first else ""),
+            "verb": "link",
+            "action": None,
+            "shot": first,
+        }
+    qc = next((row for row in risk_items if row.get("kind") == "qc"), None)
+    if qc:
+        return {
+            "source": "risk",
+            "phase": "质检",
+            "kind": "qc",
+            "label": f"处理 {int(qc.get('count') or 1)} 处质检问题",
+            "detail": "先处理阻塞问题，再继续审批和交付。",
+            "href": "/review",
+            "verb": "link",
+            "action": None,
+            "shot": None,
+        }
+
+    if not isinstance(journeys, dict):
+        journeys = {}
+    authoring = journeys.get("authoring") or {}
+    if authoring.get("state") in {"attention", "current"}:
+        return _link("authoring", authoring)
+
+    stale = next((row for row in risk_items if row.get("kind") == "stale"), None)
+    if stale:
+        shots = list(stale.get("shots") or [])
+        first = str(shots[0]) if shots else None
+        return {
+            "source": "risk",
+            "phase": "镜头",
+            "kind": "stale",
+            "label": f"更新 {first} 的候选" if first else "更新过期镜头",
+            "detail": "镜头内容已经变化；重新准备候选，或明确保留当前选择。",
+            "href": "/lab" + (f"?shot={quote(first, safe='')}" if first else ""),
+            "verb": "link",
+            "action": None,
+            "shot": first,
+        }
+
+    shots = journeys.get("shots") or {}
+    if shots.get("state") in {"attention", "current", "todo"}:
+        return _link("shots", shots)
+
+    # Once authoring and human shot decisions are settled, preserve the engine's
+    # exact build/package action so the existing dry-run and spend-confirmation
+    # modal remains the sole execution path.
+    if isinstance(next_action, dict) and next_action.get("verb") in {
+        "build", "redo", "repair", "package",
+    }:
+        verb = str(next_action.get("verb"))
+        shot = next_action.get("shot")
+        labels = {
+            "build": "生成或更新当前成片",
+            "redo": f"更新 {shot} 的候选" if shot else "更新镜头候选",
+            "repair": f"修复 {shot}" if shot else "修复当前问题",
+            "package": "更新成片包装",
+        }
+        details = {
+            "build": "先查看构建计划和费用试算，再决定是否执行。",
+            "redo": "先查看将重做的镜头、参考和费用试算，再决定是否执行。",
+            "repair": "先检查本地媒体和修复计划；现有原件不会被覆盖。",
+            "package": "先查看会更新的包装与交付物，再决定是否执行。",
+        }
+        return {
+            "source": "engine",
+            "phase": "成片" if verb in {"build", "package"} else "镜头",
+            "kind": str(next_action.get("kind") or verb),
+            "label": labels[verb],
+            "detail": details[verb],
+            "href": None,
+            "verb": verb,
+            "action": next_action.get("action"),
+            "shot": shot,
+        }
+
+    finishing = journeys.get("finishing") or {}
+    if finishing:
+        return _link("finishing", finishing)
+
+    return {
+        "source": "fallback",
+        "phase": "项目",
+        "kind": "details",
+        "label": "查看项目详情",
+        "detail": "当前没有明确的下一项；展开项目详情检查状态。",
+        "href": "#workbench-details",
+        "verb": "link",
+        "action": None,
+        "shot": None,
+    }
+
+
 # --------------------------------------------------------------------- api
 
 
@@ -457,4 +789,8 @@ def cockpit_data(project: Project) -> dict[str, Any]:
     data["activity"] = _guard(lambda: _activity(project))
     data["approvals"] = _guard(lambda: _approvals(project))
     data["onboarding"] = _guard(lambda: _onboarding(project))
+    data["journeys"] = _guard(lambda: _journeys(project, data["state"]))
+    data["focus"] = _guard(
+        lambda: _focus(data["journeys"], data["next_action"], data["risks"])
+    )
     return data

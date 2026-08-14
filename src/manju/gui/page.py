@@ -831,9 +831,139 @@ button.fchip { cursor: pointer; }
    spent ONLY on exceptions — the state strip reuses the board's st-* badges,
    the risk banner is the only red block and it renders only when non-empty. */
 .cockpit {
-  margin: 0 0 1rem; padding: 1.05rem 1.4rem; background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  max-width: 1600px; margin: 1rem auto 0; padding: 0 1.2rem;
+  background: transparent;
 }
+.ck-focus-card {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem 1.4rem; align-items: center;
+  padding: 1.15rem 1.25rem; border: 1px solid #345a91;
+  border-radius: var(--radius); background:
+    linear-gradient(135deg, rgba(32,43,64,.96), rgba(24,27,33,.98));
+  box-shadow: var(--shadow-2);
+}
+.ck-focus-copy { min-width: 0; }
+.ck-focus-eyebrow {
+  display: flex; align-items: center; gap: .45rem; flex-wrap: wrap;
+  color: #9dbdff; font-size: .75rem; font-weight: 700;
+  letter-spacing: .04em;
+}
+.ck-focus-eyebrow::before {
+  content: ""; width: .48rem; height: .48rem; border-radius: 999px;
+  background: var(--accent); box-shadow: 0 0 0 4px rgba(116,169,255,.12);
+}
+.ck-focus-label {
+  margin-top: .25rem; font-size: clamp(1.28rem, 2vw, 1.7rem);
+  line-height: 1.3; font-weight: 750; letter-spacing: -.02em;
+}
+.ck-focus-detail {
+  margin: .35rem 0 0; max-width: 60rem; color: var(--muted);
+  font-size: .9rem; line-height: 1.55;
+}
+.ck-focus-actions {
+  display: flex; flex-direction: column; align-items: flex-end; gap: .4rem;
+  min-width: min(19rem, 100%);
+}
+.ck-focus-actions .btn { width: 100%; justify-content: center; }
+.ck-continue {
+  margin: 0; max-width: 19rem; font-size: .78rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ck-continue a { color: var(--muted); text-decoration: none; }
+.ck-continue a:hover { color: var(--fg); }
+
+.ck-journeys {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .75rem; margin-top: .8rem;
+}
+.ck-journey {
+  display: flex; flex-direction: column; gap: .18rem; min-width: 0;
+  padding: .8rem .9rem; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel);
+  color: inherit; text-decoration: none; box-shadow: var(--shadow-1);
+  transition: border-color .14s ease, background .14s ease, transform .14s ease;
+}
+.ck-journey:hover { border-color: #496b9f; background: var(--panel2); transform: translateY(-1px); }
+.ck-journey:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ck-journey-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.ck-journey-name { font-size: .78rem; color: var(--muted); font-weight: 650; }
+.ck-journey-state {
+  width: .52rem; height: .52rem; flex: 0 0 auto; border-radius: 999px;
+  background: #596171;
+}
+.ck-journey.state-current .ck-journey-state { background: var(--accent); }
+.ck-journey.state-attention .ck-journey-state { background: var(--warning, var(--warn)); }
+.ck-journey.state-done .ck-journey-state { background: var(--ok); }
+.ck-journey.state-unavailable .ck-journey-state { background: var(--err); }
+.ck-journey-summary {
+  font-size: .9rem; font-weight: 700; line-height: 1.4;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.ck-journey-next { color: var(--muted); font-size: .76rem; line-height: 1.4; }
+
+.ck-priority-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: .75rem; margin-top: .8rem;
+}
+.ck-priority-card {
+  padding: .8rem .9rem; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel);
+  box-shadow: var(--shadow-1); min-width: 0;
+}
+.ck-priority-card h2 {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  margin: 0 0 .45rem; padding: 0; border: 0;
+  color: var(--muted); font-size: .78rem; font-weight: 650;
+}
+.ck-priority-count {
+  min-width: 1.5rem; padding: .05rem .4rem; border-radius: 999px;
+  background: var(--panel2); color: var(--fg); text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ck-task-list { display: flex; flex-direction: column; gap: .1rem; }
+.ck-task {
+  display: grid; grid-template-columns: .55rem minmax(0, 1fr) auto;
+  gap: .5rem; align-items: baseline; padding: .32rem 0;
+  border-top: 1px solid rgba(46,52,64,.65); color: inherit;
+  text-decoration: none; font-size: .83rem; min-width: 0;
+}
+.ck-task:first-child { border-top: 0; }
+button.ck-task { width: 100%; background: transparent; border-right: 0; border-left: 0; border-bottom: 0; text-align: left; font: inherit; cursor: pointer; }
+.ck-task:hover .ck-task-label { color: var(--accent); }
+.ck-task-dot { color: var(--muted); }
+.ck-task.danger .ck-task-dot { color: var(--err); }
+.ck-task.warn .ck-task-dot { color: var(--warn); }
+.ck-task-label { min-width: 0; overflow-wrap: anywhere; }
+.ck-task-meta { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+.ck-running-line, .ck-result-line { font-size: .84rem; margin: .22rem 0; }
+.ck-result-line a { text-decoration: none; }
+
+.home-main { padding-top: .8rem; }
+.home-workbench {
+  margin: .85rem 0 0; border: 1px solid var(--line); border-radius: var(--radius);
+  background: rgba(24,27,33,.78); box-shadow: var(--shadow-1); overflow: clip;
+}
+.home-workbench-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: .8rem;
+  padding: .8rem 1rem; cursor: pointer; list-style: none;
+  background: var(--panel); color: var(--fg);
+}
+.home-workbench-summary::-webkit-details-marker { display: none; }
+.home-workbench-summary::before {
+  content: "▸"; color: var(--muted); margin-right: -.25rem;
+}
+.home-workbench[open] > .home-workbench-summary::before { content: "▾"; }
+.home-workbench-summary:hover { background: var(--panel2); }
+.home-workbench-summary > span:first-of-type { flex: 1; }
+.home-workbench-summary .muted { font-size: .78rem; text-align: right; }
+.home-workbench-body { padding: .15rem 1rem 1rem; }
+.home-workbench-body #header {
+  margin: .8rem 0; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: .9rem 1rem;
+}
+#cockpit-details-host:empty { display: none; }
+#cockpit-details-host .ck-grid { margin-top: .8rem; }
+#cockpit-details-host .ck-strip { margin-top: .8rem; }
 .ck-hero {
   display: flex; align-items: center; gap: 1rem 1.4rem; flex-wrap: wrap;
   justify-content: space-between;
@@ -980,7 +1110,16 @@ a.btn.ck-continue-btn { text-decoration: none; display: inline-block; }
 .cockpit.fresh .ck-grid { margin-top: .6rem; }
 
 @media (max-width: 900px) {
-  .cockpit { padding: .9rem .9rem; }
+  .cockpit { padding: 0 .75rem; margin-top: .75rem; }
+  .ck-focus-card { grid-template-columns: 1fr; padding: .95rem; }
+  .ck-focus-actions { align-items: stretch; width: 100%; min-width: 0; }
+  .ck-continue { max-width: none; text-align: left; }
+  .ck-journeys { grid-template-columns: 1fr; gap: .5rem; }
+  .ck-priority-grid { grid-template-columns: 1fr; gap: .5rem; }
+  .home-main { padding: .65rem .75rem 1rem; }
+  .home-workbench-summary { align-items: flex-start; flex-wrap: wrap; }
+  .home-workbench-summary .muted { width: 100%; text-align: left; padding-left: .8rem; }
+  .home-workbench-body { padding: .1rem .65rem .8rem; }
   /* one column at this width — a 2-column span would force a horizontal
      scroll, which the 420px pass explicitly guarantees against. */
   .ck-block.span2 { grid-column: span 1; }
@@ -1342,6 +1481,8 @@ _JS = r"""
                               revert this one's. Refreshed from every /api/state
                               AND from the reorder's own 200/409 payload. */
   let lastJobs = [];       /* last state.jobs (spend banner, switch cleanup) */
+  let lastStatePayload = null; /* current /api/state; lets the collapsed home
+                                  workbench paint only when the owner opens it */
   let lastLocaleFinals = {}; /* C38: locale finals for QC button lang pick */
   let lastLocales = [];      /* C45: declared locales (lines.yaml) for lang select */
   let lastDoneCount = -1;  /* done-job count: a finished job invalidates the
@@ -1513,6 +1654,33 @@ _JS = r"""
     schedule();
   }
 
+  function renderWorkbench(s) {
+    if (!s || !homeWorkbenchOpen()) return;
+    const jobs = Array.isArray(s.jobs) ? s.jobs : [];
+    section("header",
+      [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
+       s.latest_final_note, s.build_lock, s.readonly, s.workspace,
+       s.execution_policy, s.finals, (s.shots || []).length],
+      () => renderHeader(s));
+    section("jobs", jobs, () => renderJobs(jobs));
+    section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
+    section("failures", [s.failures, s.shots], () => renderFailures(s.failures || []));
+    section("qc", s.qc, () => renderQC(s.qc));
+    section("events", s.events, () => renderEvents(s.events || []));
+    renderBatchBar();
+    renderSpend(jobs);
+    if (lastFp !== estSeenFp && !anyActive) {
+      estSeenFp = lastFp;
+      updateEstimate();
+    }
+    maybeTimeline(s);
+    maybeProposals(s);
+    maybeEvaluate(s);
+    if (gitOpen && (gitStale || !gitLoaded)) fetchGitPanel();
+    if (tasksOpen && !tasksLoaded) fetchTasks();
+    $("dropzone").classList.toggle("hidden", readonly);
+  }
+
   function render(s) {
     const jobs = Array.isArray(s.jobs) ? s.jobs : [];
     notifyJobTransitions(jobs, lastJobs);  /* item 1: before lastJobs is replaced */
@@ -1536,32 +1704,17 @@ _JS = r"""
       gitStale = true;   /* … and touched the working tree */
       propStale = true;  /* … and an agent may have filed a proposal */
       cockStale = true;  /* … and moved every number the cockpit shows */
-      if (gitOpen) fetchGitPanel();
-      if (tasksOpen) fetchTasks();   /* a done job likely wrote a ledger row */
+      if (homeWorkbenchOpen() && gitOpen) fetchGitPanel();
+      if (homeWorkbenchOpen() && tasksOpen) fetchTasks();
     }
     lastDoneCount = doneCount;
-    if (lastFp !== estSeenFp && !anyActive) {
-      estSeenFp = lastFp;
-      updateEstimate();   /* UX-STUDY #1: price follows the project state */
-    }
-    section("header",
-      [s.project, s.budget, s.next_step, s.timeline, s.latest_final,
-       s.latest_final_note, s.build_lock, s.readonly, s.workspace,
-       s.execution_policy, s.finals, (s.shots || []).length],
-      () => renderHeader(s));
-    section("jobs", jobs, () => renderJobs(jobs));
-    section("shots", [s.shots, s.readonly], () => renderShots(s.shots || []));
-    section("failures", [s.failures, s.shots], () => renderFailures(s.failures || []));
-    section("qc", s.qc, () => renderQC(s.qc));
-    section("events", s.events, () => renderEvents(s.events || []));
-    renderBatchBar();   /* selection survives polls; bar follows current shots */
-    renderSpend(jobs);  /* §8.3 waiting_user banner in the build panel */
+    lastStatePayload = s;
+    /* The compact cockpit always stays current.  The full engineering
+     * workbench is deliberately lazy so 100-shot projects do not construct
+     * every card, timeline and diagnostic panel before the owner asks. */
+    renderWorkbench(s);
     updateReviewChip(); /* 未阅 N follows the fresh shots + localStorage mark */
-    maybeTimeline(s);   /* async, self-contained: a 500 there never cascades */
-    maybeProposals(s);  /* async, at most one fetch per fp change */
     maybeCockpit(s);    /* async, fingerprint-gated: the round-V cockpit */
-    maybeEvaluate(s);   /* async, fingerprint-gated: round AA item 8 */
-    $("dropzone").classList.toggle("hidden", readonly);
     updateGates();
     /* #50a: /?compare=S001 deep-links from /review straight into the A/B
      * takes overlay — consumed once, after the first shots render (the
@@ -1667,82 +1820,310 @@ _JS = r"""
   };
   const blkErr = (b) => (b && typeof b === "object" && b.error) ? String(b.error) : null;
 
+  const homeWorkbenchOpen = () => {
+    const details = $("workbench-details");
+    return !!(details && details.open);
+  };
+
+  function initHomeWorkbench() {
+    const details = $("workbench-details");
+    if (!details) return;
+    const remembered = loadUI().workbenchOpen;
+    if (typeof remembered === "boolean") {
+      details.open = remembered;
+    } else {
+      /* The home is a cockpit in every view mode.  Professional detail stays
+       * one click away and the user's explicit choice is remembered. */
+      details.open = false;
+    }
+    details.addEventListener("toggle", () => {
+      saveUI({ workbenchOpen: !!details.open });
+      if (details.open) {
+        /* Paint the heavy shot/timeline/ledger surface only after an explicit
+         * disclosure.  The compact cockpit itself remains current above. */
+        renderWorkbench(lastStatePayload);
+        renderCockpit();
+      }
+    });
+  }
+
+  function openWorkbenchDetails(targetId) {
+    const details = $("workbench-details");
+    if (!details) return;
+    details.open = true;
+    saveUI({ workbenchOpen: true });
+    renderWorkbench(lastStatePayload);
+    renderCockpit();
+    if (!targetId) return;
+    requestAnimationFrame(() => {
+      const target = $(targetId);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  const CK_JOURNEY_STATE = {
+    attention: "需要处理", current: "进行中", done: "已完成",
+    todo: "稍后", unavailable: "暂不可用",
+  };
+
+  function renderJourneyRail(journeys) {
+    const nav = el("nav", "ck-journeys");
+    nav.setAttribute("aria-label", "制作进度");
+    ["authoring", "shots", "finishing"].forEach((key) => {
+      const row = journeys && journeys[key];
+      if (!row || blkErr(row)) return;
+      const a = document.createElement("a");
+      const state = String(row.state || "todo");
+      a.className = "ck-journey state-" + state;
+      a.href = row.href || "/";
+      a.title = row.detail || row.next_label || "";
+      const top = el("span", "ck-journey-top");
+      top.appendChild(el("span", "ck-journey-name", row.label || key));
+      const dot = el("span", "ck-journey-state");
+      dot.title = CK_JOURNEY_STATE[state] || state;
+      dot.setAttribute("aria-label", CK_JOURNEY_STATE[state] || state);
+      top.appendChild(dot);
+      a.appendChild(top);
+      a.appendChild(el("strong", "ck-journey-summary", row.summary || ""));
+      if (row.next_label) {
+        a.appendChild(el("span", "ck-journey-next", "下一步：" + row.next_label));
+      }
+      nav.appendChild(a);
+    });
+    return nav;
+  }
+
+  function riskHref(row) {
+    const shots = Array.isArray(row.shots) ? row.shots : [];
+    const sid = shots.length ? String(shots[0]) : "";
+    if (row.kind === "broken") return "/storyboard" + (sid ? "?shot=" + encodeURIComponent(sid) : "");
+    if (row.kind === "qc") return "/review";
+    if (row.kind === "stale") return "/lab" + (sid ? "?shot=" + encodeURIComponent(sid) : "");
+    if (row.kind === "final") return "/exports";
+    return "";
+  }
+
+  function attentionItems(c, focus, riskItems, unreadTakes, failedJobs) {
+    const out = [];
+    const seen = new Set();
+    const push = (item) => {
+      if (!item || !item.label) return;
+      const key = item.key || item.href || item.label;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(item);
+    };
+
+    if (failedJobs > 0) {
+      push({ key: "failed-jobs", label: failedJobs + " 个任务失败",
+        meta: "任务", level: "danger", target: "jobs" });
+    }
+    if (unreadTakes > 0) {
+      push({ key: "unread-takes", label: unreadTakes + " 条新候选尚未审看",
+        meta: "审片", level: "warn", href: "/review" });
+    }
+
+    const author = c.journeys && c.journeys.authoring;
+    const authorAttention = author && author.attention || {};
+    if (focus.source !== "authoring" && Number(authorAttention.truth_pending || 0) > 0) {
+      const pending = Number(authorAttention.truth_pending);
+      const stale = Number(authorAttention.truth_stale || 0);
+      push({ key: "authoring-proposals",
+        label: pending + " 份创作提案待决定" + (stale ? " · " + stale + " 份已过期" : ""),
+        meta: "创作", level: stale ? "warn" : "", href: "/director" });
+    }
+    if (focus.source !== "authoring" && Number(authorAttention.other_pending || 0) > 0) {
+      push({ key: "other-proposals",
+        label: Number(authorAttention.other_pending) + " 份操作提案待决定",
+        meta: "提案", href: "/director" });
+    }
+
+    const ap = c.approvals;
+    const pending = ap && !blkErr(ap) ? Number(ap.pending || 0) : 0;
+    if (pending > 0 && !(focus.source === "shots" && focus.kind === "approve")) {
+      push({ key: "approvals", label: pending + " 个镜头等待人工确认",
+        meta: "审片", href: "/review" });
+    }
+
+    riskItems.forEach((row) => {
+      if (!row || row.level === "info" || row.kind === focus.kind) return;
+      const href = riskHref(row);
+      push({ key: "risk-" + (row.kind || row.text), label: row.text || row.kind,
+        meta: row.level === "error" ? "阻塞" : "注意",
+        level: row.level === "error" ? "danger" : "warn", href });
+    });
+
+    const sg = c.suggestions;
+    const suggestions = (sg && !blkErr(sg) && Array.isArray(sg.items)) ? sg.items : [];
+    suggestions.forEach((row) => {
+      if (out.length >= 5 || !row || row.text === focus.label) return;
+      const sid = row.shot ? String(row.shot) : "";
+      push({ key: "suggestion-" + (row.kind || "") + "-" + sid,
+        label: row.text || row.kind || "查看建议", meta: "建议",
+        href: sid ? "/lab?shot=" + encodeURIComponent(sid) : "#workbench-details",
+        target: sid ? "" : "cockpit-details-host" });
+    });
+    return out.slice(0, 5);
+  }
+
+  function taskRow(item) {
+    let row;
+    if (item.href) {
+      row = document.createElement("a");
+      row.href = item.href;
+    } else {
+      row = document.createElement("button");
+      row.type = "button";
+      row.addEventListener("click", () => openWorkbenchDetails(item.target || "tasks"));
+    }
+    row.className = "ck-task" + (item.level ? " " + item.level : "");
+    row.appendChild(el("span", "ck-task-dot", "●"));
+    row.appendChild(el("span", "ck-task-label", item.label));
+    if (item.meta) row.appendChild(el("span", "ck-task-meta", item.meta));
+    return row;
+  }
+
+  function renderPriorityGrid(c, focus, riskItems, unreadTakes, failedJobs, state) {
+    const grid = el("div", "ck-priority-grid");
+    const items = attentionItems(c, focus, riskItems, unreadTakes, failedJobs);
+    if (items.length) {
+      const card = el("section", "ck-priority-card");
+      const h = el("h2", null, "待我处理");
+      h.appendChild(el("span", "ck-priority-count", String(items.length)));
+      card.appendChild(h);
+      const list = el("div", "ck-task-list");
+      items.forEach((item) => list.appendChild(taskRow(item)));
+      card.appendChild(list);
+      grid.appendChild(card);
+    }
+
+    const q = c.queue;
+    const cloud = (q && !blkErr(q) && typeof q.pending_cloud === "number") ? q.pending_cloud : 0;
+    const activeJobs = (lastJobs || []).filter((j) =>
+      j.state === "queued" || j.state === "running" || j.state === "canceling");
+    const buildActive = riskItems.some((row) => row && row.kind === "lock");
+    const runningCount = activeJobs.length + cloud || (buildActive ? 1 : 0);
+    if (runningCount) {
+      const card = el("section", "ck-priority-card");
+      const h = el("h2", null, "正在运行");
+      /* A build lock is usually evidence for one of the GUI jobs above, not
+       * an additional task.  Show it as context without double-counting it. */
+      h.appendChild(el("span", "ck-priority-count", String(runningCount)));
+      card.appendChild(h);
+      if (activeJobs.length) card.appendChild(el("p", "ck-running-line", activeJobs.length + " 个本地任务正在处理"));
+      if (cloud) card.appendChild(el("p", "ck-running-line", cloud + " 个远程任务等待结果"));
+      if (buildActive) card.appendChild(el("p", "ck-running-line", "当前构建仍在进行"));
+      const open = el("button", "btn ghost mini", "查看任务");
+      open.type = "button";
+      open.addEventListener("click", () => openWorkbenchDetails("jobs"));
+      card.appendChild(open);
+      grid.appendChild(card);
+    }
+
+    const final = state && !blkErr(state) ? state.final : null;
+    const succeeded = (lastJobs || []).find((j) => j.state === "done" || j.state === "succeeded");
+    if (final || succeeded) {
+      const card = el("section", "ck-priority-card");
+      card.appendChild(el("h2", null, "最近成果"));
+      if (final) {
+        const a = document.createElement("a");
+        a.href = "/exports";
+        a.textContent = "当前成片" + (final.version ? " " + final.version : "")
+          + (final.freshness_zh ? " · " + final.freshness_zh : "");
+        const p = el("p", "ck-result-line");
+        p.appendChild(a);
+        card.appendChild(p);
+      }
+      if (succeeded) {
+        const label = succeeded.kind_zh || succeeded.kind || "任务";
+        card.appendChild(el("p", "ck-result-line muted", label + " 已完成"));
+      }
+      grid.appendChild(card);
+    }
+    return grid;
+  }
+
+  function renderStateStrip(state, unreadTakes) {
+    if (blkErr(state) || !(state.shots_total > 0)) return null;
+    const strip = el("div", "ck-strip");
+    const counts = state.shots_by_state || {};
+    Object.keys(counts).forEach((k) => {
+      const chip = el("button", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
+      chip.type = "button";
+      chip.title = "在镜头卡中筛选：" + (CK_STATE_ZH[k] || k);
+      chip.appendChild(el("b", null, String(counts[k])));
+      chip.appendChild(document.createTextNode(" " + (CK_STATE_ZH[k] || k)));
+      chip.addEventListener("click", () => {
+        stateFilter = k;
+        saveUI({ filter: stateFilter });
+        renderShots(lastShots);
+        openWorkbenchDetails("shots");
+      });
+      strip.appendChild(chip);
+    });
+    if (unreadTakes > 0) {
+      const a = document.createElement("a");
+      a.className = "ck-scount exc";
+      a.href = "/review";
+      a.title = "打开审片队列处理新候选";
+      a.appendChild(el("b", null, String(unreadTakes)));
+      a.appendChild(document.createTextNode(" 新候选未审"));
+      strip.appendChild(a);
+    }
+    const fin = state.final;
+    if (fin) {
+      const f = el("span", "ck-final", "成片" + (fin.version ? " " + fin.version : ""));
+      if (fin.freshness) {
+        f.appendChild(el("span", "badge " + (CK_FRESH_BADGE[fin.freshness] || "st-missing"),
+          fin.freshness_zh || fin.freshness));
+      }
+      strip.appendChild(f);
+    }
+    return strip;
+  }
+
+  function renderCockpitDetails(c, fresh, state, unreadTakes) {
+    const host = $("cockpit-details-host");
+    if (!host) return;
+    const detailsStatus = $("home-details-status");
+    if (detailsStatus) {
+      detailsStatus.textContent = (!blkErr(state) && state.sentence)
+        ? state.sentence : "镜头、构建、任务、事件与版本";
+    }
+    if (!homeWorkbenchOpen()) { clear(host); return; }
+    clear(host);
+    const strip = renderStateStrip(state, unreadTakes);
+    if (strip) host.appendChild(strip);
+    host.appendChild(renderCockGrid(c, fresh));
+  }
+
   function renderCockpit() {
     const root = $("cockpit");
     if (!root) return;
     clear(root);
     const c = cockData;
     if (cockErr && !c) {
-      root.appendChild(el("p", "ck-err", "驾驶舱不可用 (cockpit unavailable): " + cockErr));
+      root.appendChild(el("p", "ck-err", "首页概览暂不可用：" + cockErr));
       return;
     }
     if (!c) {
-      /* The cockpit is the heaviest panel on the page (~3s on a real project),
-       * and a single grey "加载中" line at the very top read as "this thing is
-       * stuck" while everything below it had already painted. A skeleton in the
-       * SHAPE of what is coming says "working" without pretending to have
-       * content. Pure presentation — no data, replaced wholesale on arrival. */
       const sk = el("div", "ck-skel");
       sk.appendChild(el("div", "ck-skel-line wide"));
       for (let i = 0; i < 3; i++) sk.appendChild(el("div", "ck-skel-line"));
-      sk.appendChild(el("p", "muted", "驾驶舱加载中 (loading cockpit)…"));
+      sk.appendChild(el("p", "muted", "正在整理项目状态…"));
       root.appendChild(sk);
       return;
     }
 
-    /* #header paints with /api/state before this slower block arrives. Keep
-     * its spend/next-step lines as a loading/error fallback, then remove them
-     * once the cockpit is ready so the same facts are not read twice. */
     document.querySelectorAll("#header .spend, #header .next-step")
       .forEach((node) => node.remove());
 
     const state = c.state || {};
-    const na = c.next_action || {};
+    const focus = c.focus && !blkErr(c.focus) ? c.focus : (c.next_action || {});
     const fresh = (state.shots_total === 0)
       || (c.onboarding && c.onboarding.should_show);
     root.classList.toggle("fresh", !!fresh);
 
-    /* --- 继续上次工作 (#50): pure client memory (common.js records every
-     * server-page visit per project); /review restores its own position, so
-     * this chip only needs to LINK back. The engine keeps no UI state. */
-    try {
-      const lastRaw = localStorage.getItem("manju-last-" + PROJECT);
-      const last = lastRaw ? JSON.parse(lastRaw) : null;
-      if (PROJECT && last && last.page && last.page !== "/") {
-        const cont = el("div", "ck-continue");
-        let lbl = "继续上次工作:" + (last.title || last.page);
-        if (last.page === "/review") {
-          const pos = localStorage.getItem("manju-rv-pos-" + PROJECT);
-          if (pos) lbl += " · " + pos;
-        }
-        const a = document.createElement("a");
-        a.className = "btn ck-continue-btn";
-        a.href = last.page;
-        a.textContent = lbl;
-        cont.appendChild(a);
-        root.appendChild(cont);
-      }
-    } catch (err) { /* storage off — no chip, no noise */ }
-
-    /* --- HERO: the state sentence + the ONE next action ------------------ */
-    const hero = el("div", "ck-hero");
-    const left = el("div", "ck-state");
-    if (!blkErr(state)) {
-      if (state.phase_zh) left.appendChild(el("div", "ck-phase", state.phase_zh));
-      left.appendChild(el("div", "ck-sentence",
-        state.sentence || "驾驶舱 (cockpit)"));
-    } else {
-      left.appendChild(el("div", "ck-sentence", "状态不可用 (state unavailable)"));
-      left.appendChild(el("div", "ck-err", blkErr(state)));
-    }
-    if (na && na.human_label) left.appendChild(el("div", "ck-human", "下一步 (next): " + na.human_label));
-    hero.appendChild(left);
-    hero.appendChild(renderHeroCTA(na));
-    root.appendChild(hero);
-
-    /* --- 待办箱: 新 take 未阅 (#50a) — the same snapshot the shots bar's
-     * 未阅 chip reads; cockpit refetches AFTER the state render, so
-     * lastShots is populated by the time this runs. --------------------- */
     let unreadTakes = 0;
     try {
       const snap = loadReviewSnapshot();
@@ -1753,95 +2134,92 @@ _JS = r"""
       });
     } catch (err) { unreadTakes = 0; }
 
-    /* --- STATE STRIP: shot counts by state, exceptions coloured ---------- */
-    if (!blkErr(state) && state.shots_total > 0) {
-      const strip = el("div", "ck-strip");
-      const counts = state.shots_by_state || {};
-      Object.keys(counts).forEach((k) => {
-        /* 待办箱 (#50): a count is a QUEUE, not a statistic — clicking it
-         * filters the shots grid to exactly those shots and jumps there. */
-        const chip = el("button", "ck-scount" + (CK_EXC[k] ? " exc" : ""));
-        chip.type = "button";
-        chip.title = "在分镜里筛选:" + (CK_STATE_ZH[k] || k);
-        chip.appendChild(el("b", null, String(counts[k])));
-        chip.appendChild(document.createTextNode(" " + (CK_STATE_ZH[k] || k)));
-        chip.addEventListener("click", () => {
-          stateFilter = k;
-          saveUI({ filter: stateFilter });
-          renderShots(lastShots);
-          const sh = $("shots");
-          if (sh) sh.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-        strip.appendChild(chip);
-      });
-      if (unreadTakes > 0) {
-        const uc = el("button", "ck-scount exc");
-        uc.type = "button";
-        uc.title = "上次标记已阅之后新增的 take(卡片带「新」章)— 点击跳到分镜";
-        uc.appendChild(el("b", null, String(unreadTakes)));
-        uc.appendChild(document.createTextNode(" 新 take 未阅"));
-        uc.addEventListener("click", () => {
-          const sh = $("shots");
-          if (sh) sh.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-        strip.appendChild(uc);
-      }
-      const fin = state.final;
-      if (fin) {
-        const f = el("span", "ck-final",
-          "成片 (final)" + (fin.version ? " " + fin.version : ""));
-        if (fin.freshness) {
-          f.appendChild(el("span", "badge " + (CK_FRESH_BADGE[fin.freshness] || "st-missing"),
-            fin.freshness_zh || fin.freshness));
-        }
-        strip.appendChild(f);
-      }
-      root.appendChild(strip);
-    }
+    const riskBlock = c.risks;
+    const riskItems = (riskBlock && !blkErr(riskBlock) && Array.isArray(riskBlock.items))
+      ? riskBlock.items.slice() : [];
+    const failedJobs = (lastJobs || []).filter((j) =>
+      j.state === "failed" || j.state === "interrupted").length;
 
-    /* --- RISK BANNER: by exception only (calm when empty) ---------------- */
-    /* the engine risks (qc/stale/broken/lock/crashed-render) come from
-     * /api/cockpit; failed GUI jobs live only in the runner (lastJobs), so they
-     * are appended client-side — the fourth risk class the contract names. */
-    const risks = c.risks;
-    const riskItems = (risks && !blkErr(risks) && Array.isArray(risks.items))
-      ? risks.items.slice() : [];
-    const failedJobs = (lastJobs || []).filter((j) => j.state === "failed").length;
-    if (failedJobs) {
-      riskItems.push({kind: "job", level: "error",
-        text: failedJobs + " 个任务失败 (failed jobs) — 见下方任务区"});
+    const card = el("section", "ck-focus-card ck-hero");
+    const copy = el("div", "ck-focus-copy");
+    copy.appendChild(el("div", "ck-focus-eyebrow",
+      (focus.phase || state.phase_zh || "项目") + " · 现在最值得做"));
+    copy.appendChild(el("div", "ck-focus-label",
+      focus.label || focus.text || "查看项目状态"));
+    if (focus.detail || focus.human_label) {
+      copy.appendChild(el("p", "ck-focus-detail", focus.detail || focus.human_label));
     }
-    if (blkErr(risks)) {
-      root.appendChild(el("p", "ck-err", "风险读取失败 (risks unavailable): " + blkErr(risks)));
+    card.appendChild(copy);
+    const actions = renderHeroCTA(focus);
+    try {
+      const lastRaw = localStorage.getItem("manju-last-" + PROJECT);
+      const last = lastRaw ? JSON.parse(lastRaw) : null;
+      if (PROJECT && last && last.page && last.page !== "/") {
+        let label = "继续上次工作：" + (last.title || last.page);
+        if (last.page === "/review") {
+          const pos = localStorage.getItem("manju-rv-pos-" + PROJECT);
+          if (pos) label += " · " + pos;
+        }
+        const cont = el("div", "ck-continue");
+        const a = document.createElement("a");
+        a.className = "ck-continue-btn";
+        a.href = last.page;
+        a.textContent = label;
+        cont.appendChild(a);
+        actions.appendChild(cont);
+      }
+    } catch (err) { /* storage off — no quiet continuation link */ }
+    card.appendChild(actions);
+    root.appendChild(card);
+
+    if (blkErr(riskBlock)) {
+      root.appendChild(el("p", "ck-err", "风险状态暂不可用：" + blkErr(riskBlock)));
     }
-    if (riskItems.length) {
+    const visibleRisks = riskItems.filter((row) => row && row.level !== "info");
+    if (visibleRisks.length) {
       const banner = el("div", "ck-risks");
-      riskItems.forEach((r) => {
+      visibleRisks.slice(0, 4).forEach((r) => {
         const row = el("div", "ck-risk lvl-" + (r.level || "warn"));
         row.appendChild(el("span", "ck-risk-dot", "●"));
-        row.appendChild(el("span", "ck-risk-text", r.text || r.kind || "risk"));
+        row.appendChild(el("span", "ck-risk-text", r.text || r.kind || "需要处理"));
         banner.appendChild(row);
       });
       root.appendChild(banner);
     }
 
-    /* --- ONBOARDING lead (fresh project) or the supporting grid ---------- */
-    root.appendChild(renderCockGrid(c, fresh));
+    root.appendChild(renderJourneyRail(c.journeys || {}));
+    const priority = renderPriorityGrid(c, focus, riskItems, unreadTakes, failedJobs, state);
+    if (priority.childElementCount) root.appendChild(priority);
+
+    renderCockpitDetails(c, fresh, state, unreadTakes);
   }
 
   function renderHeroCTA(na) {
-    const cta = el("div", "ck-cta");
-    if (blkErr(na) || !na.verb || na.verb === "done" || na.verb === "none") {
-      if (na && na.verb === "done") {
-        const a = el("a", "btn ghost ck-primary", "查看成片 · 导出 (exports)");
-        a.href = "/exports";
-        cta.appendChild(a);
-      } else {
-        cta.appendChild(el("span", "muted", na && na.text ? na.text : "无待办 (nothing to do)"));
-      }
+    const cta = el("div", "ck-focus-actions");
+    if (blkErr(na)) {
+      cta.appendChild(el("span", "muted", "当前建议暂不可用"));
       return cta;
     }
-    const label = na.text || "开始 (start)";
+    if (na && na.href) {
+      const a = document.createElement("a");
+      a.className = "btn primary ck-primary";
+      a.href = na.href;
+      a.textContent = na.label || na.text || "继续";
+      if (String(na.href).startsWith("#")) {
+        a.addEventListener("click", (event) => {
+          event.preventDefault();
+          openWorkbenchDetails(String(na.href).slice(1) || "cockpit-details-host");
+        });
+      }
+      cta.appendChild(a);
+      return cta;
+    }
+    if (!na || !na.verb || na.verb === "done" || na.verb === "none") {
+      cta.appendChild(el("span", "muted", na && (na.label || na.text)
+        ? (na.label || na.text) : "当前没有必须处理的事项"));
+      return cta;
+    }
+    const label = na.label || na.text || "继续";
     const btn = el("button", "btn primary ck-primary", label);
     btn.type = "button";
     const mutating = na.verb === "build" || na.verb === "redo"
@@ -1863,9 +2241,8 @@ _JS = r"""
     try {
       if (na.verb === "story") { openOnboarding(); return; }
       if (na.verb === "build") { heroBuild(na.action || {}); return; }
-      if (na.shot) { focusShot(na.shot); return; }   /* redo/select/repair: link to the shot */
-      const bp = $("buildpanel");                      /* package/other: link to the build panel */
-      if (bp) bp.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (na.shot) { openWorkbenchDetails("shots"); focusShot(na.shot); return; }
+      openWorkbenchDetails("buildpanel");
     } catch (err) { toast(errMsg(err), "err"); }
   }
 
@@ -5373,7 +5750,7 @@ _JS = r"""
     });
     root.appendChild(head);
     root.appendChild(gitBody);
-    if (gitOpen && !gitLoaded) fetchGitPanel();  /* restored-open lazy load */
+    if (homeWorkbenchOpen() && gitOpen && !gitLoaded) fetchGitPanel();
   }
 
   async function fetchGitPanel() {
@@ -5684,7 +6061,7 @@ _JS = r"""
     });
     root.appendChild(head);
     root.appendChild(propBody);
-    if (propOpen && !propLoaded) fetchProposals();  /* restored-open lazy load */
+    if (homeWorkbenchOpen() && propOpen && !propLoaded) fetchProposals();
   }
 
   function maybeProposals(s) {
@@ -6276,7 +6653,7 @@ _JS = r"""
     });
     root.appendChild(head);
     root.appendChild(tasksBody);
-    if (tasksOpen) fetchTasks();  /* restored-open lazy load */
+    if (homeWorkbenchOpen() && tasksOpen) fetchTasks();
   }
 
   async function fetchTasks() {
@@ -6426,6 +6803,7 @@ _JS = r"""
     });
   })();
 
+  initHomeWorkbench();
   initBuildPanel();
   initShotsBar();
   initDropzone();
@@ -6464,12 +6842,11 @@ _JS = r"""
     }
   }
   function ensureQuitBtn() {
-    /* renderHeader does clear($("header")) on every header re-render — an
-     * append-once button was destroyed by the FIRST refresh and never came
-     * back. Re-ensure after every header render instead (window.__mjQuit
-     * is set once /api/app/status confirms app mode). */
+    /* The app command belongs in the permanent application bar.  The legacy
+     * #header now lives inside a collapsed detail surface on home, so using it
+     * as the host would make the safe exit action disappear until disclosure. */
     if (!window.__mjQuit) return;
-    const host = $("header") || document.body;
+    const host = document.querySelector(".pnav-tools") || $("header") || document.body;
     if (!host || document.getElementById("mj-quit-btn")) return;
     const btn = el("button", "btn ghost mini", "退出");
     btn.type = "button";
@@ -6537,23 +6914,34 @@ def render_page(project_name: str, token: str) -> str:
         '<div id="cockpit" class="cockpit">\n'
         '  <p class="loading">加载中 (loading)…</p>\n'
         "</div>\n"
-        '<div id="header" class="panel"></div>\n'
-        "<main>\n"
+        '<main class="home-main">\n'
         '  <div id="onboarding" class="panel hidden"></div>\n'
         '  <div id="failures" class="panel hidden"></div>\n'
-        '  <div id="dropzone" class="dropzone"></div>\n'
-        '  <div id="buildpanel" class="panel"></div>\n'
-        '  <div id="jobs" class="panel hidden"></div>\n'
-        '  <div id="timeline" class="panel hidden"></div>\n'
-        '  <div id="shotsbar" class="shotsbar"></div>\n'
-        '  <div id="shots"></div>\n'
-        '  <div class="cols">\n'
-        '    <div id="qc" class="panel hidden"></div>\n'
-        '    <div id="events" class="panel"></div>\n'
-        "  </div>\n"
-        '  <div id="proposals" class="panel"></div>\n'
-        '  <div id="tasks" class="panel"></div>\n'
-        '  <div id="git" class="panel"></div>\n'
+        '  <details id="workbench-details" class="home-workbench">\n'
+        '    <summary class="home-workbench-summary">\n'
+        '      <span><b>项目详情与高级操作</b>'
+        '<span class="mj-en"> Project details</span></span>\n'
+        '      <span id="home-details-status" class="muted">'
+        '镜头、构建、任务、事件与版本</span>\n'
+        "    </summary>\n"
+        '    <div class="home-workbench-body">\n'
+        '      <div id="cockpit-details-host"></div>\n'
+        '      <div id="header" class="panel"></div>\n'
+        '      <div id="dropzone" class="dropzone"></div>\n'
+        '      <div id="buildpanel" class="panel"></div>\n'
+        '      <div id="jobs" class="panel hidden"></div>\n'
+        '      <div id="timeline" class="panel hidden"></div>\n'
+        '      <div id="shotsbar" class="shotsbar"></div>\n'
+        '      <div id="shots"></div>\n'
+        '      <div class="cols">\n'
+        '        <div id="qc" class="panel hidden"></div>\n'
+        '        <div id="events" class="panel"></div>\n'
+        "      </div>\n"
+        '      <div id="proposals" class="panel"></div>\n'
+        '      <div id="tasks" class="panel"></div>\n'
+        '      <div id="git" class="panel"></div>\n'
+        "    </div>\n"
+        "  </details>\n"
         "</main>\n"
         '<div id="toast"></div>\n'
         '<div id="batchbar" class="batchbar hidden"></div>\n'

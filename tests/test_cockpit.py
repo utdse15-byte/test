@@ -83,7 +83,8 @@ def _stale_take(project, make_take, shot_id):
 
 
 ALL_BLOCKS = {"identity", "state", "next_action", "suggestions", "risks",
-              "deliverables", "spend", "queue", "activity", "approvals", "onboarding"}
+              "deliverables", "spend", "queue", "activity", "approvals", "onboarding",
+              "journeys", "focus"}
 
 
 # --------------------------------------------------------------- fresh project
