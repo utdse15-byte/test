@@ -1,6 +1,6 @@
 # Manju One 产品打磨交接
 
-更新时间：2026-08-13
+更新时间：2026-08-14
 仓库：`G:\XXN\test`
 工作分支：`codex/product-polish-r1`
 
@@ -311,3 +311,57 @@ focused tests 共 176 passed；另有真实 renderer + Playwright `page.set_cont
 live localhost E2E 和同 SHA 双平台发布门均未冒充完成。
 
 后续优先级：收口首页 Cockpit，让三条已完成旅程汇聚成一个可信的“现在最值得做”，不再扩流程或新增 AI 能力。
+
+## 14. Wave 9：首页 Cockpit
+
+功能提交：`015b365 R1: focus the home cockpit`。
+
+已完成：
+
+- 首页以一个只读、确定性的“现在最值得做”作为唯一最高优先级动作；
+- 创作、镜头、成片三条已有旅程在首页汇合，不保存第四套流程状态；
+- 首屏只保留待我处理、正在运行和最近成果；完整工程工作台进入惰性渐进披露；
+- 高级工作台关闭时不构造镜头卡，不请求时间线、提案和隐藏成本估算；
+- 修复 App 模式安全退出过去依附旧 header、折叠后消失的生命周期缺陷；
+- 12 / 100 / 300 镜本地 Cockpit 投影形成性能基线。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE9_HOME_COCKPIT.md`
+- `REPORTS/product-polish-r1/WAVE9_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/screenshots/wave9/`
+- `REPORTS/product-polish-r1/wave9-tests/`
+
+后续优先级因此转向全局任务、通知、取消和安全退出，而不是增加新页面或新 AI 能力。
+
+## 15. Wave 10：全局任务中心、诚实取消与安全退出
+
+功能提交：`4988541 R1: unify the task lifecycle`。
+
+已完成：
+
+- 所有绑定项目的 GUI 页面共用一个永久 Task Center 和安全退出入口；
+- 任务中心只读投影现有 `JobRunner` / `jobkinds`，不建立队列、数据库、scheduler 或重试协议；
+- `waiting_user` 被视为需要人工处理，不冒充成功；正费用显示结构化估算，非费用确认回到对应操作页面；
+- 任务阶段使用人话，同时在技术详情保留 raw phase；完成任务不再重复显示“已完成 / 已完成”；
+- shared `requestJson` 接受 202 后即时通知 Task Center 刷新，重叠读取去重；
+- 跨页面 active→terminal 只提醒一次，系统通知权限只在用户明确设置时请求；
+- 远端取消结果不明时保留在需要处理区，显示 provider job identity，不提供立即重试；
+- 付费取消使用 focus-safe 警示对话框，安全默认是继续等待；
+- 退出对话框统一解释当前阶段、是否可取消、远端计费不确定性和尚未执行的队列；
+- 大量队列/历史通过渐进披露完整可达，重要任务不被截断；
+- 390px 应用栏和任务抽屉无横向溢出。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE10_TASK_CENTER.md`
+- `REPORTS/product-polish-r1/WAVE10_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/screenshots/wave10/`
+- `REPORTS/product-polish-r1/wave10-tests/`
+
+记录的非重叠 focused tests 为 167 passed；compileall、五份实际生成 JavaScript 的
+`node --check`、`git diff --check` 通过。当前环境未安装 ruff；完整 pytest、Windows hard gate、
+live localhost E2E 和同 SHA 双平台发布门仍未冒充完成。
+
+后续优先级：统一中文产品文案、状态/错误/下一步语言、无障碍与视觉回归基线；不再增加新流程，
+不做真实付费测试，不改变项目真相、append-only 媒体和人工决定边界。

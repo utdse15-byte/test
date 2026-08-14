@@ -1,0 +1,81 @@
+{
+  "schema": "manju.product-polish-wave10-test-summary/v1",
+  "wave": 10,
+  "date": "2026-08-14",
+  "baseline": "9fb911a62aff164f3c2c9f84149bb1c3a88c2192",
+  "feature_commit": "4988541a2e901797a8ae50c6745bc5d6a2ada509",
+  "logged_non_overlapping": [
+    {
+      "scope": "task-center/app-chrome/daily-loop/jobkinds",
+      "passed": 73,
+      "log": "wave10-tests/task-center-focused.txt"
+    },
+    {
+      "scope": "gui-project-actions",
+      "passed": 14,
+      "log": "wave10-tests/gui-project-actions.txt"
+    },
+    {
+      "scope": "cancel-billing",
+      "passed": 8,
+      "log": "wave10-tests/cancel-billing.txt"
+    },
+    {
+      "scope": "gui-wave-personal",
+      "passed": 14,
+      "log": "wave10-tests/gui-wave-personal.txt"
+    },
+    {
+      "scope": "ledger-quit-selected",
+      "passed": 8,
+      "deselected": 11,
+      "log": "wave10-tests/ledger-quit-selected.txt"
+    },
+    {
+      "scope": "home-cockpit",
+      "passed": 12,
+      "log": "wave10-tests/home-cockpit.txt"
+    },
+    {
+      "scope": "gui-pages",
+      "passed": 25,
+      "log": "wave10-tests/gui-pages.txt"
+    },
+    {
+      "scope": "webclient-protocol",
+      "passed": 13,
+      "log": "wave10-tests/webclient-protocol.txt"
+    }
+  ],
+  "logged_passed_total": 167,
+  "static": {
+    "compileall": "pass",
+    "node_check": [
+      "common",
+      "app",
+      "project-action",
+      "task-center",
+      "webclient"
+    ],
+    "git_diff_check": "pass",
+    "ruff": "not installed; not fetched"
+  },
+  "browser": {
+    "method": "real renderer/CSS/JS via Playwright page.set_content and local deterministic stubs",
+    "facts": "screenshots/wave10/task-center-facts.json",
+    "log": "wave10-tests/browser-task-center.log"
+  },
+  "timeouts_not_counted": [
+    "combined lifecycle regression command",
+    "full ledger GUI safety repeat",
+    "ask-before suite in this sandbox",
+    "a repeated gui-wave-complete run after one prior 9/9 completion"
+  ],
+  "zero_cost": {
+    "provider_calls": 0,
+    "external_model_api_calls": 0,
+    "credential_reads": 0,
+    "paid_calls": 0,
+    "free_tier_calls": 0
+  }
+}

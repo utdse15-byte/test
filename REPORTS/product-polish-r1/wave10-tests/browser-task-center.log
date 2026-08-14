@@ -1,0 +1,143 @@
+{
+  "schema": "manju.product-polish-task-center-evidence/v1",
+  "wave": 10,
+  "method": "real Manju server shell/CSS + actual task-center/project-action JavaScript via Playwright page.set_content; local deterministic API stubs; no network/provider/credentials",
+  "screens": {
+    "task-center-desktop": {
+      "viewport": {
+        "w": 1440,
+        "h": 900
+      },
+      "document": {
+        "w": 1430,
+        "h": 900
+      },
+      "horizontalOverflow": -10,
+      "badge": "4",
+      "buttonTitle": "2 项需要处理 · 2 项进行中",
+      "groups": [
+        "需要你处理2",
+        "正在进行1",
+        "接下来1",
+        "最近结束1"
+      ],
+      "cards": [
+        "重做 · S004等待确认等待你确认费用付费步骤尚未执行 · 20 秒预估费用 2.4 CNY；尚未执行付费步骤。查看费用计划 →技术详情任务job-waiting类型redo开始2026-08-14T15:11:27+00:00结束2026-08-14T15:11:47+00:00",
+        "构建待核对取消结果待核对需要核对远端状态 · 7 分远端取消尚未确认，任务可能仍在运行并计费。 远程任务：remote-42。核对 Provider 状态 →技术详情任务job-uncertain类型build开始2026-08-14T15:07:27+00:00结束2026-08-14T15:14:27+00:00",
+        "构建运行中生成 S003第 3 / 12 个 · 1 分 27 秒请求取消技术详情任务job-running类型build原始阶段gen:S003 (3/12)开始2026-08-14T15:14:01+00:00",
+        "导出排队中等待前面的任务35 秒移出队列技术详情任务job-queued类型export",
+        "质检 · zh-CN已完成检查质量已完成 · 2 分查看质检 →技术详情任务job-recent类型qc原始阶段qc开始2026-08-14T15:03:27+00:00结束2026-08-14T15:05:27+00:00"
+      ],
+      "scope": "可以切换页面，任务会继续；关闭 Manju 请使用右上角“退出”。",
+      "notificationPermissionRequests": 0,
+      "calls": [
+        {
+          "method": "GET",
+          "path": "/api/task-center",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/task-center",
+          "body": null
+        }
+      ],
+      "drawer": {
+        "hidden": false,
+        "width": 464,
+        "role": "dialog",
+        "modal": "true"
+      }
+    },
+    "task-center-appbar-narrow": {
+      "horizontalOverflow": -10,
+      "appbar": {
+        "width": 380,
+        "height": 46,
+        "scrollWidth": 380
+      },
+      "taskLabel": "none",
+      "badge": "4"
+    },
+    "task-center-narrow": {
+      "viewport": {
+        "w": 390,
+        "h": 844
+      },
+      "document": {
+        "w": 380,
+        "h": 844
+      },
+      "horizontalOverflow": -10,
+      "badge": "4",
+      "buttonTitle": "2 项需要处理 · 2 项进行中",
+      "groups": [
+        "需要你处理2",
+        "正在进行1",
+        "接下来1",
+        "最近结束1"
+      ],
+      "cards": [
+        "重做 · S004等待确认等待你确认费用付费步骤尚未执行 · 20 秒预估费用 2.4 CNY；尚未执行付费步骤。查看费用计划 →技术详情任务job-waiting类型redo开始2026-08-14T15:11:27+00:00结束2026-08-14T15:11:47+00:00",
+        "构建待核对取消结果待核对需要核对远端状态 · 7 分远端取消尚未确认，任务可能仍在运行并计费。 远程任务：remote-42。核对 Provider 状态 →技术详情任务job-uncertain类型build开始2026-08-14T15:07:27+00:00结束2026-08-14T15:14:27+00:00",
+        "构建运行中生成 S003第 3 / 12 个 · 1 分 28 秒请求取消技术详情任务job-running类型build原始阶段gen:S003 (3/12)开始2026-08-14T15:14:01+00:00",
+        "导出排队中等待前面的任务36 秒移出队列技术详情任务job-queued类型export",
+        "质检 · zh-CN已完成检查质量已完成 · 2 分查看质检 →技术详情任务job-recent类型qc原始阶段qc开始2026-08-14T15:03:27+00:00结束2026-08-14T15:05:27+00:00"
+      ],
+      "scope": "可以切换页面，任务会继续；关闭 Manju 请使用右上角“退出”。",
+      "notificationPermissionRequests": 0,
+      "calls": [
+        {
+          "method": "GET",
+          "path": "/api/task-center",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/task-center",
+          "body": null
+        }
+      ],
+      "drawer": {
+        "hidden": false,
+        "width": 369,
+        "role": "dialog",
+        "modal": "true"
+      }
+    }
+  },
+  "interactions": {
+    "paid_cancel": {
+      "calls_before_confirm": 0,
+      "calls_after_confirm": 1,
+      "custom_alertdialog": true,
+      "default_focus": "继续等待"
+    },
+    "cross_page_completion": {
+      "badge": "1",
+      "unseen": "1",
+      "notified": {
+        "job-cross:done": true
+      },
+      "permissionRequests": 0
+    },
+    "accepted_job_refresh": {
+      "task_reads_before": 1,
+      "task_reads_after": 2,
+      "badge": "1",
+      "used_shared_webclient": true
+    },
+    "queued_disclosure": {
+      "total": 11,
+      "visible_before": 8,
+      "visible_after": 11,
+      "summary": "显示其余 3 项"
+    },
+    "safe_exit": {
+      "default_focus": "继续使用",
+      "paid_cancel_tone": "danger",
+      "mentions_remote_billing_uncertainty": true,
+      "mentions_queued_jobs_never_start": true
+    }
+  }
+}

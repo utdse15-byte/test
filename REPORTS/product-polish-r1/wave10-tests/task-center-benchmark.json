@@ -1,0 +1,28 @@
+{
+  "schema": "manju.product-polish-task-center-benchmark/v1",
+  "iterations_per_case": 800,
+  "cases": [
+    {
+      "jobs": 0,
+      "median_ms": 0.0043,
+      "p95_ms": 0.0049,
+      "p99_ms": 0.0102,
+      "max_ms": 0.2147
+    },
+    {
+      "jobs": 10,
+      "median_ms": 0.0955,
+      "p95_ms": 0.168,
+      "p99_ms": 0.3189,
+      "max_ms": 0.4791
+    },
+    {
+      "jobs": 50,
+      "median_ms": 0.4052,
+      "p95_ms": 0.7043,
+      "p99_ms": 1.0865,
+      "max_ms": 2.4982
+    }
+  ],
+  "note": "Local synthetic projection benchmark; p95/p99 are useful, max may include sandbox scheduling pauses."
+}
