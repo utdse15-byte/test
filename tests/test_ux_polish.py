@@ -1686,21 +1686,22 @@ def test_ai_handoff_copies_structured_context(tmp_project, add_shot, make_take):
     assert 'shots/" + f.subject + ".yaml"' in ajs
 
 
-def test_nav_groups_by_frequency_and_keeps_every_link(tmp_project):
+def test_nav_groups_by_stage_and_discloses_only_the_active_stage(tmp_project):
     from manju.gui.pages import _NAV, _NAV_GROUPS, nav_html
 
     # every page lives in exactly one group — _NAV stays the one label owner
     grouped = [h for _, hs in _NAV_GROUPS for h in hs]
     assert sorted(grouped) == sorted(h for h, _ in _NAV)
     pro = nav_html("/review", mode="pro")
-    for href, _ in _NAV:  # presentation nests; the DOM keeps every link
-        assert f'href="{href}"' in pro
-    assert pro.count('class="pnav-group"') == 5  # 工作台 stays a plain pill
+    assert pro.count('<a class="pnav-stage') == 6
+    # The active 审片 stage exposes its pages without a hover-only dropdown.
+    assert 'href="/review"' in pro and 'href="/compare"' in pro
+    assert 'href="/director"' not in pro and 'href="/providers"' not in pro
     assert pro.count('aria-current="page"') == 1
     beginner = nav_html("/review", mode="beginner")
     assert 'href="/providers"' not in beginner
-    # 工具箱 collapses to its one visible page in 新手 mode
-    assert ">素材库</a>" in beginner and "工具箱" not in beginner
+    # The stable 工具 stage remains visible but points to its one beginner page.
+    assert 'href="/library">工具</a>' in beginner
 
 
 # ------------------------------------------------- #50a follow-through items

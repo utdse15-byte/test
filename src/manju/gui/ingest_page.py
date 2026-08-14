@@ -40,8 +40,10 @@ def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
-def _shell(title: str, token: str, body: str) -> str:
-    from .pages import nav_html
+def _shell(title: str, token: str, body: str, project: Any) -> str:
+    from .pages import GLOSSARY_HEAD, chrome
+
+    nav, bcls = chrome(PAGE_PATH, project)
 
     return (
         "<!doctype html>\n"
@@ -53,12 +55,12 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/ingest.css">\n'
-        '<script src="/webclient.js" defer></script>\n'
-        '<script src="/common.js" defer></script>\n'
-        '<script src="/ingest.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/common.js" defer></script>\n'
+        + '<script src="/ingest.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{PAGE_PATH}">\n'
-        + nav_html(PAGE_PATH)
+        f'<body data-page="{PAGE_PATH}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -70,7 +72,7 @@ def _shell(title: str, token: str, body: str) -> str:
 
 def render(project: Any, token: str) -> str:
     head = (
-        '<div class="page-h"><h1>批量入库 Batch ingest</h1>'
+        '<div class="page-h"><h1>批量入库<span class="mj-en" aria-hidden="true"> (Batch ingest)</span></h1>'
         '<span class="muted">把外部产出的一批素材(镜头 take、配音、参考图)按文件名约定'
         "一次性归档 · 先预演,人工确认后再落地(§3 素材只增不改)</span></div>"
     )
@@ -104,7 +106,7 @@ def render(project: Any, token: str) -> str:
         "</div>"
         + _review_section_html()
     )
-    return _shell("批量入库", token, body)
+    return _shell("批量入库", token, body, project)
 
 
 def _review_section_html() -> str:

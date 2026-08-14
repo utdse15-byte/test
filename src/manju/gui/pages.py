@@ -98,7 +98,16 @@ _NAV_GROUPS = (
     ("镜头", ("/storyboard", "/lab", "/ingest")),
     ("审片", ("/review", "/compare")),
     ("成片", ("/edit", "/subtitles", "/mixer", "/packaging", "/exports")),
-    ("工具箱", ("/library", "/providers", "/routing", "/doctor")),
+    ("工具", ("/library", "/providers", "/routing", "/doctor")),
+)
+
+# The finishing surfaces already render a richer in-page journey with the same
+# five destinations.  Repeating those links in the global sub-navigation would
+# add visual noise and two competing current-page indicators, so the chrome
+# only marks the 成片 stage and lets :mod:`manju.gui.finishing_journey` own the
+# page-level sequence.
+_INLINE_STAGE_NAV = frozenset(
+    {"/edit", "/subtitles", "/mixer", "/packaging", "/exports"}
 )
 
 # Head stanza every workbench surface shares so the glossary tooltip look + the
@@ -151,7 +160,30 @@ def series_banner_html(project: Any) -> str:
     )
 
 
-def chrome(active: str, project: Any = None) -> tuple[str, str]:
+def _project_display_name(project: Any) -> str:
+    """Best-effort display name for shared chrome only.
+
+    This is deliberately presentation-only: failure to read project metadata
+    falls back to the directory name and never blocks the page or becomes a
+    build input.
+    """
+    if project is None:
+        return ""
+    try:
+        return str(project.load_config().name or project.root.name)
+    except Exception:
+        try:
+            return str(project.root.name)
+        except Exception:
+            return ""
+
+
+def chrome(
+    active: str,
+    project: Any = None,
+    *,
+    project_name: str | None = None,
+) -> tuple[str, str]:
     """Resolve the per-user view mode + glossary toggle (server-side) and return
     ``(nav_html, body_class)`` for a page shell. Central so the SPA and every
     server-rendered page share one mode-aware nav and one body class.
@@ -164,16 +196,26 @@ def chrome(active: str, project: Any = None) -> tuple[str, str]:
 
     mode = resolve_mode()
     show = is_show_pro_terms()
-    nav = nav_html(active, mode=mode, show_terms=show,
-                   hint_dismissed=is_mode_hint_dismissed())
+    label = project_name if project_name is not None else _project_display_name(project)
+    nav = nav_html(
+        active,
+        mode=mode,
+        show_terms=show,
+        hint_dismissed=is_mode_hint_dismissed(),
+        project_name=label,
+    )
     if project is not None:
         nav += series_banner_html(project)
     return nav, body_class(mode, show)
 
 
 def _mode_controls(mode: str, show_terms: bool) -> str:
-    """The 新手/专业 switch + 显示专业术语 toggle, pinned to the right of the nav.
-    Buttons carry ``data-mode`` for /glossary.js (CSP-safe — no inline handler)."""
+    """Progressively-disclosed 新手/专业 and terminology controls.
+
+    The controls and their existing ``data-mode`` / checkbox hooks remain the
+    same; only their presentation moves behind a native ``<details>`` menu so
+    the production stages keep visual priority.
+    """
 
     def btn(m: str, label: str) -> str:
         on = mode == m
@@ -182,7 +224,15 @@ def _mode_controls(mode: str, show_terms: bool) -> str:
                 f"{_e(label)}</button>")
 
     checked = " checked" if show_terms else ""
+    summary = "新手视图" if mode == "beginner" else "专业视图"
+    if show_terms:
+        summary += " · 术语"
     return (
+        '<details class="mj-view-menu">'
+        f'<summary aria-label="界面视图设置">{_e(summary)}'
+        '<span class="mj-view-caret" aria-hidden="true">▾</span></summary>'
+        '<div class="mj-view-popover">'
+        '<div class="mj-view-title">界面视图</div>'
         '<span class="mj-nav-ctl">'
         '<span class="mj-modesw" role="group" aria-label="视图模式 (view mode)">'
         + btn("beginner", "新手") + btn("pro", "专业")
@@ -190,11 +240,11 @@ def _mode_controls(mode: str, show_terms: bool) -> str:
         '<label class="mj-terms-toggle" '
         'title="在每个中文词旁显示英文原词 (show the engineering term beside it)">'
         f'<input type="checkbox" id="mj-terms-toggle"{checked}> 显示专业术语</label>'
-        "</span>"
+        "</span></div></details>"
     )
 
 
-def _workspace_switcher() -> str:
+def _workspace_switcher(project_name: str = "") -> str:
     """The compact project-switcher trigger (round X agent XE, user pain #6):
     a recents-backed dropdown, always present in the shared nav so it works on
     the SPA AND every server-rendered page alike. Population + the open/rebind
@@ -203,64 +253,147 @@ def _workspace_switcher() -> str:
     (:mod:`manju.gui.glossary`'s ``render_glossary_js``) so this stays a pure,
     CSP-safe static shell — no inline handlers, nothing baked in server-side
     besides the two empty containers JS fills."""
+    label = project_name.strip() or "项目"
+    title = f"切换项目，当前：{label}" if project_name.strip() else "切换/打开项目"
     return (
         '<span class="mj-ws-wrap">'
         '<button type="button" id="mj-ws-btn" class="mj-ws-btn" '
-        'aria-haspopup="true" aria-expanded="false" title="切换/打开项目 (switch project)">'
-        "项目 ▾</button>"
+        f'aria-haspopup="true" aria-expanded="false" title="{_e(title)}">'
+        f'<span class="mj-ws-label">{_e(label)}</span>'
+        '<span class="mj-ws-caret" aria-hidden="true">▾</span></button>'
         '<div id="mj-ws-menu" class="mj-ws-menu hidden" role="menu" '
         'aria-label="切换项目 (switch project)"></div>'
         "</span>"
     )
 
 
-def _mode_hint() -> str:
-    """The fresh-user 新手 one-liner (dismissable via /glossary.js)."""
+def _execution_status_html() -> str:
+    """Secret-free execution policy indicator for every workbench surface."""
+    try:
+        from ..providers.zero_cost import execution_policy_snapshot
+
+        snap = execution_policy_snapshot()
+    except Exception:
+        snap = {"status": "invalid", "mode": "unknown"}
+
+    status = str(snap.get("status") or "invalid")
+    mode = str(snap.get("mode") or "unknown")
+    if status == "strict":
+        label = "本地安全"
+        title = "不会连接外部 Provider，也不会读取云端密钥"
+    elif status == "standard":
+        label = "标准执行"
+        title = "外部 Provider 仍受预算、确认和请求身份保护"
+    else:
+        label = "模式错误"
+        title = f"MANJU_EXECUTION_MODE={mode}；Provider 执行会被拒绝"
     return (
-        '<div id="mj-mode-hint" class="mj-mode-hint">'
-        "<span>当前是<b>新手模式</b>:只留常用面板,进阶功能(服务商/路由/体检/对比、"
-        "转场调色等)已收起。随时点右上角<b>专业</b>切回全部功能 — 不会丢任何内容。</span>"
-        '<button type="button" id="mj-mode-hint-x" aria-label="知道了 (dismiss)">'
-        "知道了 ✕</button></div>"
+        f'<span class="mj-execution-state {status}" '
+        f'data-execution-status="{_e(status)}" title="{_e(title)}">'
+        '<span class="mj-execution-dot" aria-hidden="true"></span>'
+        f'<span class="mj-execution-label">{_e(label)}</span>'
+        f'<span class="mj-execution-mode mj-tech">{_e(mode)}</span>'
+        "</span>"
     )
 
 
-def nav_html(active: str, mode: str = "pro", show_terms: bool = False,
-             hint_dismissed: bool = True) -> str:
-    """The shared top nav (also injected into the SPA skeleton for discovery).
+def _mode_hint() -> str:
+    """Compact, dismissable home-only guidance for a fresh beginner."""
+    return (
+        '<div id="mj-mode-hint" class="mj-mode-hint" role="status">'
+        '<span class="mj-mode-hint-copy"><b>新手视图已开启</b>'
+        '<span>高级工具已收起，项目内容不会改变。</span></span>'
+        '<span class="mj-mode-hint-actions">'
+        '<button type="button" class="mj-mode-btn mj-mode-hint-pro" '
+        'data-mode="pro">查看全部功能</button>'
+        '<button type="button" id="mj-mode-hint-x" aria-label="知道了 (dismiss)">'
+        "知道了</button></span></div>"
+    )
 
-    In 新手 mode the pro-only page links (:data:`PRO_ONLY_PAGES`) are omitted and
-    a dismissable hint bar follows the nav; the pages themselves stay reachable by
-    URL. The mode switch + 显示专业术语 toggle sit at the right on every surface."""
+
+def nav_html(
+    active: str,
+    mode: str = "pro",
+    show_terms: bool = False,
+    hint_dismissed: bool = True,
+    project_name: str = "",
+) -> str:
+    """Shared application chrome with stable stages and progressive detail.
+
+    The six production stages are always visible.  Only the active stage's
+    page-level links are shown, avoiding hover-only discovery and reducing the
+    old 17-link pill wall.  Beginner mode still omits advanced destinations;
+    directly-opened advanced pages explain their current location without
+    re-advertising the hidden link.
+    """
     beginner = mode == "beginner"
     label_of = dict(_NAV)
 
-    def page_link(href: str) -> str:
-        cls = "active" if href == active else ""
-        cur = ' aria-current="page"' if href == active else ""
-        return f'<a class="{cls}"{cur} href="{href}">{_e(label_of[href])}</a>'
+    active_group: tuple[str, tuple[str, ...]] | None = None
+    for group in _NAV_GROUPS:
+        if active in group[1]:
+            active_group = group
+            break
 
-    out = ['<nav class="pnav">']
+    out = [
+        '<nav class="pnav" aria-label="Manju 应用导航">',
+        '<div class="pnav-appbar">',
+        '<a class="pnav-brand" href="/" aria-label="Manju 工作台">'
+        '<span class="pnav-brand-mark" aria-hidden="true">M</span>'
+        '<span class="pnav-brand-name">Manju</span></a>',
+        '<div class="pnav-tools">',
+        _execution_status_html(),
+        _mode_controls(mode, show_terms),
+        _workspace_switcher(project_name),
+        "</div></div>",
+        '<div class="pnav-stagebar" aria-label="制作阶段">',
+    ]
+
     for gname, hrefs in _NAV_GROUPS:
         visible = [h for h in hrefs if not (beginner and h in PRO_ONLY_PAGES)]
         if not visible:
             continue
-        if len(visible) == 1:
-            # a one-page group renders as that page's own pill (工作台;
-            # 工具箱 collapses to 素材库 in 新手 mode)
-            out.append(page_link(visible[0]))
-            continue
-        gactive = " active" if active in visible else ""
-        menu = "".join(page_link(h) for h in visible)
+        is_active = active in hrefs
+        cls = "pnav-stage active" if is_active else "pnav-stage"
+        # A single-page stage is the current page; multi-page stages are the
+        # current production step while a page link (or in-page journey) owns
+        # aria-current=page.
+        current = ""
+        if is_active:
+            current = ' aria-current="page"' if len(hrefs) == 1 else ' aria-current="step"'
         out.append(
-            f'<span class="pnav-group">'
-            f'<a class="pnav-glabel{gactive}" href="{visible[0]}">{_e(gname)}'
-            f'<span class="pnav-caret"> ▾</span></a>'
-            f'<span class="pnav-menu">{menu}</span></span>')
-    out.append(_mode_controls(mode, show_terms))
-    out.append(_workspace_switcher())
+            f'<a class="{cls}"{current} href="{visible[0]}">{_e(gname)}</a>'
+        )
+    out.append("</div>")
+
+    if active_group is not None and active not in _INLINE_STAGE_NAV:
+        gname, hrefs = active_group
+        visible = [h for h in hrefs if not (beginner and h in PRO_ONLY_PAGES)]
+        hidden_current = active not in visible
+        # A lone visible destination needs no second row unless it must also
+        # explain that the current deep-linked page is a hidden pro surface.
+        if len(visible) > 1 or hidden_current:
+            out.append(
+                f'<div class="pnav-subbar" aria-label="{_e(gname)}阶段页面">'
+                f'<span class="pnav-subtitle">{_e(gname)}</span>'
+            )
+            for href in visible:
+                cls = "active" if href == active else ""
+                cur = ' aria-current="page"' if href == active else ""
+                out.append(
+                    f'<a class="{cls}"{cur} href="{href}">{_e(label_of[href])}</a>'
+                )
+            if hidden_current:
+                out.append(
+                    '<span class="pnav-hidden-current" aria-current="page">'
+                    f'{_e(label_of.get(active, active))}<small>专业功能</small></span>'
+                )
+            out.append("</div>")
+
     out.append("</nav>")
-    if beginner and not hint_dismissed:
+    # The old banner followed users across every page until dismissal.  One
+    # compact home hint is enough; the view menu remains visible everywhere.
+    if beginner and not hint_dismissed and active == "/":
         out.append(_mode_hint())
     return "".join(out)
 
@@ -1574,31 +1707,99 @@ _PAGES_CSS = """
    /app.css; reuses its :root palette and never overrides its rules. */
 
 .pnav {
-  display: flex; flex-wrap: wrap; gap: .4rem; padding: .55rem 1.2rem;
-  background: var(--panel); border-bottom: 1px solid var(--line);
+  --pnav-app-h: 44px;
+  --pnav-stage-h: 42px;
+  background: color-mix(in srgb, var(--panel) 97%, #000);
+  border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 60;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .22);
 }
-.pnav a {
-  color: var(--fg); text-decoration: none; font-size: .84rem;
-  padding: .22rem .7rem; border-radius: 999px; border: 1px solid var(--line);
-  background: var(--panel2);
+.pnav a { color: var(--fg); text-decoration: none; }
+.pnav-appbar {
+  min-height: var(--pnav-app-h); display: flex; align-items: center;
+  gap: .75rem; padding: .35rem 1rem .25rem;
 }
-.pnav a.active { background: var(--accent); color: #0b1220; font-weight: 700; border-color: var(--accent); }
-.pnav a:hover { filter: brightness(1.15); }
-/* ---- #50: grouped nav — a hover/focus dropdown per use-frequency group.
-   Every page link stays in the DOM (mode pins + discoverability); only the
-   presentation nests. Same menu language as .ws-menu. */
-.pnav-group { position: relative; display: inline-block; }
-.pnav-caret { font-size: .7em; opacity: .75; }
-.pnav-menu {
-  position: absolute; top: 100%; left: 0; z-index: 70; display: none;
-  flex-direction: column; gap: 2px; min-width: 8.5em; padding: .3rem;
-  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+.pnav-brand {
+  display: inline-flex; align-items: center; gap: .5rem; flex: 0 0 auto;
+  color: var(--fg); font-size: .88rem; font-weight: 750; letter-spacing: .01em;
 }
-.pnav-group:hover .pnav-menu, .pnav-group:focus-within .pnav-menu { display: flex; }
-.pnav-menu a { border: 0; background: transparent; border-radius: 6px; white-space: nowrap; }
-.pnav-menu a.active { background: var(--accent); }
+.pnav-brand:hover { color: #fff; }
+.pnav-brand-mark {
+  display: inline-grid; place-items: center; width: 1.65rem; height: 1.65rem;
+  border-radius: 8px; background: var(--accent); color: #0b1220;
+  font-size: .78rem; font-weight: 900; box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
+}
+.pnav-tools {
+  min-width: 0; margin-left: auto; display: flex; align-items: center;
+  justify-content: flex-end; gap: .4rem;
+}
+.mj-execution-state {
+  display: inline-flex; align-items: center; gap: .38rem; min-height: 30px;
+  padding: .15rem .58rem; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel2); color: var(--muted); font-size: .75rem;
+  white-space: nowrap;
+}
+.mj-execution-dot { width: .5rem; height: .5rem; border-radius: 999px; background: var(--muted); }
+.mj-execution-state.strict { color: var(--ok); border-color: #2f5a43; background: #14261d; }
+.mj-execution-state.strict .mj-execution-dot { background: var(--ok); }
+.mj-execution-state.standard { color: var(--warn); border-color: #5e4c20; background: #2b2414; }
+.mj-execution-state.standard .mj-execution-dot { background: var(--warn); }
+.mj-execution-state.invalid { color: var(--err); border-color: #5a2b2e; background: #2a1618; }
+.mj-execution-state.invalid .mj-execution-dot { background: var(--err); }
+.mj-execution-mode { display: none; }
+.pnav-stagebar {
+  min-height: var(--pnav-stage-h); display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .22rem;
+  padding: .18rem 1rem .42rem;
+}
+.pnav-stage {
+  display: flex; align-items: center; justify-content: center; min-width: 0;
+  padding: .38rem .5rem; border: 1px solid transparent; border-radius: 8px;
+  color: var(--muted); font-size: .82rem; font-weight: 650;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+.pnav-stage:hover { color: var(--fg); background: var(--panel2); }
+.pnav-stage.active {
+  color: var(--fg); border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+  background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent);
+}
+.pnav-subbar {
+  min-height: 36px; display: flex; align-items: center; gap: .3rem;
+  padding: .28rem 1rem; overflow-x: auto; scrollbar-width: thin;
+  background: var(--panel2); border-top: 1px solid var(--line);
+}
+.pnav-subtitle {
+  flex: 0 0 auto; color: var(--muted); font-size: .7rem; font-weight: 750;
+  letter-spacing: .08em; margin-right: .15rem;
+}
+.pnav-subbar a, .pnav-hidden-current {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: .3rem;
+  padding: .22rem .58rem; border-radius: 6px; color: var(--muted);
+  font-size: .78rem; white-space: nowrap;
+}
+.pnav-subbar a:hover { color: var(--fg); background: rgba(255,255,255,.04); }
+.pnav-subbar a.active {
+  color: var(--fg); background: rgba(116,169,255,.13); font-weight: 700;
+}
+.pnav-hidden-current { color: var(--warn); border: 1px solid #5e4c20; }
+.pnav-hidden-current small {
+  padding: .04rem .3rem; border-radius: 999px; background: #4a3a12;
+  color: var(--warn); font-size: .62rem; font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .pnav-appbar { min-height: 42px; gap: .4rem; padding: .3rem .65rem .2rem; }
+  .pnav-brand-name { display: none; }
+  .pnav-tools { gap: .28rem; }
+  .mj-execution-state { min-height: 28px; padding: .12rem .46rem; font-size: .7rem; }
+  .pnav-stagebar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .2rem; padding: .22rem .65rem .42rem;
+  }
+  .pnav-stage { min-height: 32px; padding: .3rem .35rem; }
+  .pnav-subbar { min-height: 34px; padding: .25rem .65rem; }
+  .pnav-subtitle { display: none; }
+}
 
 /* round X (agent XD): 剧集 series-membership banner, injected by chrome()
    right after the nav on every page that passes it a project. */
@@ -1694,7 +1895,7 @@ _PAGES_CSS = """
    z-index sits just under .pnav (60) so the nav still wins the overlap. */
 .rv-progress {
   display: flex; align-items: center; gap: 1rem;
-  position: sticky; top: 50px; z-index: 55;
+  position: sticky; top: 124px; z-index: 55;
   margin-top: 0; backdrop-filter: blur(6px);
 }
 .rv-bar { flex: 1; max-width: 480px; }
@@ -1707,7 +1908,7 @@ _PAGES_CSS = """
      through one loses its own title — and then nothing on screen says WHICH
      shot you are judging. Sticky inside its card, under the nav + progress
      bar, so the answer travels with the content. */
-  position: sticky; top: 96px; z-index: 40;
+  position: sticky; top: 170px; z-index: 40;
   background: var(--panel); padding: .3rem 0 .35rem;
 }
 .rv-idx { font-size: .8rem; margin-left: .4rem; }
@@ -1744,7 +1945,7 @@ _PAGES_CSS = """
 }
 .rv-actions { align-items: center; }
 .rv-actions {
-  position: sticky; top: 96px; z-index: 39;
+  position: sticky; top: 170px; z-index: 39;
   margin: .2rem 0 .8rem; padding: .45rem .55rem;
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--line); border-radius: 8px;
@@ -1769,6 +1970,10 @@ _PAGES_CSS = """
 body.rv-queue-on .rv-shot:not(.rv-qcurrent) { display: none; }
 
 @media (max-width: 820px) { .rv-body { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .rv-progress { top: 154px; }
+  .rv-head, .rv-actions { top: 200px; }
+}
 
 /* ------------------------------------------- consistency (round X, XB) -- */
 .cs-unit { margin: .8rem 0; }

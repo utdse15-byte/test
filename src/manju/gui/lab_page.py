@@ -322,8 +322,10 @@ def generate_plan(project: Any, shot_id: str,
 # ================================================================= rendering
 
 
-def _shell(title: str, token: str, body: str) -> str:
-    from .pages import nav_html
+def _shell(title: str, token: str, body: str, project: Any) -> str:
+    from .pages import GLOSSARY_HEAD, chrome
+
+    nav, bcls = chrome(PAGE_PATH, project)
 
     return (
         "<!doctype html>\n"
@@ -335,12 +337,12 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/lab.css">\n'
-        '<script src="/webclient.js" defer></script>\n'
-        '<script src="/common.js" defer></script>\n'
-        '<script src="/lab.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/common.js" defer></script>\n'
+        + '<script src="/lab.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{PAGE_PATH}">\n'
-        + nav_html(PAGE_PATH)
+        f'<body data-page="{PAGE_PATH}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -709,18 +711,26 @@ def render(project: Any, token: str, query: dict[str, list[str]]) -> str:
     want = (query.get("shot") or [None])[0]
     shot_id = want if (want and want in shot_ids) else (shot_ids[0] if shot_ids else None)
 
-    head = ('<div class="page-h"><h1>镜头实验室 Shot lab</h1>'
+    head = ('<div class="page-h"><h1>镜头实验室<span class="mj-en" aria-hidden="true"> (Shot lab)</span></h1>'
             '<span class="muted">单镜头实验台 · 参考 / 提示词 / 候选一屏调</span></div>')
     if shot_id is None:
-        return _shell("镜头实验室", token,
-                      head + '<p class="panel muted">项目里还没有镜头。先在工作台创建镜头。</p>')
+        return _shell(
+            "镜头实验室",
+            token,
+            head + '<p class="panel muted">项目里还没有镜头。先在工作台创建镜头。</p>',
+            project,
+        )
 
     try:
         data = lab_data(project, shot_id)
     except Exception as exc:  # a broken shot must not break the whole page
-        return _shell("镜头实验室", token,
-                      head + _shot_picker(shot_ids, shot_id)
-                      + f'<p class="err panel">{_e(" ".join(str(exc).split()))}</p>')
+        return _shell(
+            "镜头实验室",
+            token,
+            head + _shot_picker(shot_ids, shot_id)
+            + f'<p class="err panel">{_e(" ".join(str(exc).split()))}</p>',
+            project,
+        )
 
     body = (
         head
@@ -731,7 +741,7 @@ def render(project: Any, token: str, query: dict[str, list[str]]) -> str:
         + _panel_candidates(data)
         + '</div>'
     )
-    return _shell("镜头实验室 " + shot_id, token, body)
+    return _shell("镜头实验室 " + shot_id, token, body, project)
 
 
 # ============================================================ assets (css/js)

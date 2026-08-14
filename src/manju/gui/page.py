@@ -6510,7 +6510,7 @@ def render_page(project_name: str, token: str) -> str:
 
     name = html.escape(project_name)
     tok = html.escape(token)
-    nav, bcls = chrome("/")
+    nav, bcls = chrome("/", project_name=project_name)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n'
@@ -6528,7 +6528,7 @@ def render_page(project_name: str, token: str) -> str:
         # capability in docs/WORKBENCH.md is reachable with one obvious click.
         # round U: nav + body class are mode-aware (chrome()); 新手 omits the
         # pro-only page links (still reachable by URL) and shows a hint bar.
-        f'<body class="{bcls}">\n'
+        f'<body data-page="/" class="{bcls}">\n'
         + nav + "\n"
         # round V (goal item 4): the project cockpit — one glance → one action →
         # activity → risk-by-exception. Filled from /api/cockpit (fingerprint-

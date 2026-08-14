@@ -145,36 +145,63 @@ body.mj-show-terms .mj-en { display: inline; }
 .mj-help:hover .mj-tip, .mj-help:focus .mj-tip,
 .mj-help:focus-within .mj-tip { display: block; }
 
-/* ---- nav-level controls: mode switch + 显示专业术语 toggle ------------- */
-.mj-nav-ctl {
-  display: inline-flex; align-items: center; gap: .7rem;
-  margin-left: auto; flex-wrap: wrap;
+/* ---- nav-level controls: progressively disclosed view menu ------------ */
+.mj-view-menu { position: relative; flex: 0 0 auto; }
+.mj-view-menu > summary {
+  list-style: none; display: inline-flex; align-items: center; gap: .35rem;
+  min-height: 30px; padding: .15rem .58rem; border: 1px solid var(--line);
+  border-radius: 7px; background: var(--panel2); color: var(--fg);
+  font-size: .75rem; cursor: pointer; user-select: none; white-space: nowrap;
 }
+.mj-view-menu > summary::-webkit-details-marker { display: none; }
+.mj-view-menu > summary:hover { border-color: #4b5566; }
+.mj-view-menu > summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.mj-view-menu[open] > summary { border-color: var(--accent); background: var(--accent-bg); }
+.mj-view-caret { color: var(--muted); font-size: .68rem; transition: transform .12s ease; }
+.mj-view-menu[open] .mj-view-caret { transform: rotate(180deg); }
+.mj-view-popover {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 100;
+  min-width: 220px; padding: .7rem; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.52);
+}
+.mj-view-title {
+  margin-bottom: .5rem; color: var(--muted); font-size: .7rem;
+  font-weight: 750; letter-spacing: .08em;
+}
+.mj-nav-ctl { display: flex; flex-direction: column; gap: .65rem; }
 .mj-modesw {
-  display: inline-flex; border: 1px solid var(--line); border-radius: 999px;
-  overflow: hidden;
+  display: grid; grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
 }
 .mj-mode-btn {
   background: var(--panel2); color: var(--muted); border: 0;
-  padding: .18rem .75rem; font: inherit; font-size: .8rem; cursor: pointer;
+  min-height: 34px; padding: .28rem .75rem; font: inherit;
+  font-size: .8rem; cursor: pointer;
 }
 .mj-mode-btn.on { background: var(--accent); color: #0b1220; font-weight: 700; }
 .mj-mode-btn:hover:not(.on) { color: var(--fg); }
 .mj-mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mj-terms-toggle {
   display: inline-flex; align-items: center; gap: .35rem; color: var(--muted);
-  font-size: .8rem; cursor: pointer; user-select: none; white-space: nowrap;
+  min-height: 30px; font-size: .8rem; cursor: pointer;
+  user-select: none; white-space: nowrap;
 }
 .mj-terms-toggle input { accent-color: var(--accent); }
 
 /* ---- project switcher (round X agent XE) ------------------------------ */
 .mj-ws-wrap { position: relative; display: inline-flex; }
 .mj-ws-btn {
-  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
-  border-radius: 6px; padding: .18rem .7rem; font: inherit; font-size: .8rem;
-  cursor: pointer;
+  display: inline-flex; align-items: center; gap: .35rem; min-width: 0;
+  max-width: 180px; min-height: 30px; background: var(--panel2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 7px; padding: .15rem .58rem;
+  font: inherit; font-size: .75rem; cursor: pointer;
 }
 .mj-ws-btn:hover { border-color: var(--accent); }
+.mj-ws-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mj-ws-caret { flex: 0 0 auto; color: var(--muted); font-size: .68rem; }
 .mj-ws-menu {
   position: absolute; top: calc(100% + 4px); right: 0; z-index: 95;
   min-width: 260px; max-width: 360px; max-height: 60vh; overflow-y: auto;
@@ -205,16 +232,29 @@ body.mj-show-terms .mj-en { display: inline; }
 
 /* ---- fresh-user hint bar (dismissable) -------------------------------- */
 .mj-mode-hint {
-  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
-  padding: .4rem 1.2rem; background: var(--accent-bg); color: #cfe3ff;
-  border-bottom: 1px solid var(--line); font-size: .82rem;
+  display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  padding: .42rem 1rem; background: color-mix(in srgb, var(--accent-bg) 72%, var(--panel));
+  color: #cfe3ff; border-bottom: 1px solid var(--line); font-size: .78rem;
 }
-.mj-mode-hint button {
-  margin-left: auto; background: transparent; border: 1px solid var(--line);
-  color: inherit; border-radius: 6px; cursor: pointer; padding: .05rem .6rem;
-  font: inherit; font-size: .8rem;
+.mj-mode-hint-copy { display: inline-flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
+.mj-mode-hint-actions { margin-left: auto; display: inline-flex; align-items: center; gap: .35rem; }
+.mj-mode-hint .mj-mode-hint-pro,
+.mj-mode-hint #mj-mode-hint-x {
+  min-height: 28px; background: transparent; border: 1px solid var(--line);
+  color: inherit; border-radius: 6px; cursor: pointer; padding: .12rem .55rem;
+  font: inherit; font-size: .75rem;
 }
-.mj-mode-hint button:hover { filter: brightness(1.25); }
+.mj-mode-hint .mj-mode-hint-pro { background: rgba(116,169,255,.12); border-color: #49699a; }
+.mj-mode-hint button:hover { filter: brightness(1.18); }
+
+@media (max-width: 760px) {
+  .mj-view-menu > summary, .mj-ws-btn { min-height: 28px; padding: .12rem .45rem; }
+  .mj-ws-btn { max-width: 96px; }
+  .mj-view-popover { right: -3.5rem; max-width: min(260px, calc(100vw - 1.25rem)); }
+  .mj-mode-hint { gap: .45rem; padding: .38rem .65rem; }
+  .mj-mode-hint-copy { gap: .3rem; }
+  .mj-mode-hint-actions { width: 100%; justify-content: flex-end; }
+}
 
 /* ---- pro-only panels: hidden in 新手 mode (CSS ONLY — never deleted) --- */
 /* the panel stays in the DOM and one click on 专业 reveals it; project data

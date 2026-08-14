@@ -235,22 +235,32 @@ def test_modes_constant():
 
 
 _PRO_LINKS = ('href="/providers"', 'href="/routing"', 'href="/doctor"', 'href="/compare"')
-_KEPT_LINKS = ('href="/review"', 'href="/edit"', 'href="/mixer"', 'href="/packaging"')
+_KEPT_STAGE_LINKS = ('href="/review"', 'href="/edit"', 'href="/library"')
 
 
 def test_nav_differs_between_modes(gui):
-    """新手 omits the pro-only page links + body is mj-mode-beginner + a hint bar;
-    专业 restores every link. The switch controls appear in both."""
+    """新手 omits advanced destinations while keeping the six-stage model.
+
+    Professional links are progressively disclosed in the active stage rather
+    than kept in a 17-link global pill wall.
+    """
     # fresh user -> beginner
     _, _, beginner = _html(gui, "/")
     assert "mj-mode-beginner" in beginner
     for link in _PRO_LINKS:
         assert link not in beginner
-    for link in _KEPT_LINKS:
+    for link in _KEPT_STAGE_LINKS:
         assert link in beginner
+    for label in ("工作台", "创作", "镜头", "审片", "成片", "工具"):
+        assert f">{label}</a>" in beginner
     assert 'id="mj-mode-hint"' in beginner              # fresh-user hint bar
     assert 'data-mode="beginner"' in beginner and 'data-mode="pro"' in beginner
     assert "显示专业术语" in beginner                     # §10 toggle present
+
+    # The beginner tools stage only exposes 素材库.
+    _, _, beginner_tools = _html(gui, "/library")
+    for link in _PRO_LINKS:
+        assert link not in beginner_tools
 
     # flip to 专业 via the token-gated POST
     status, _, data = _post(gui, "/api/mode", {"mode": "pro"})
@@ -258,9 +268,14 @@ def test_nav_differs_between_modes(gui):
 
     _, _, pro = _html(gui, "/")
     assert "mj-mode-pro" in pro
-    for link in _PRO_LINKS + _KEPT_LINKS:
-        assert link in pro                              # everything back
     assert 'id="mj-mode-hint"' not in pro               # no hint in pro
+
+    # Entering the active stage now reveals its professional destinations.
+    _, _, pro_tools = _html(gui, "/library")
+    for link in ('href="/providers"', 'href="/routing"', 'href="/doctor"'):
+        assert link in pro_tools
+    _, _, pro_review = _html(gui, "/review")
+    assert 'href="/compare"' in pro_review
 
 
 def test_hidden_pages_still_reachable_by_url(gui):

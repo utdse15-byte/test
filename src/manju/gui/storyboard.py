@@ -105,8 +105,10 @@ def lock_conflict(locked: dict[str, Any], field: str) -> str | None:
 # ---------------------------------------------------------------- HTML shell
 
 
-def _shell(title: str, token: str, body: str) -> str:
-    from .pages import nav_html
+def _shell(title: str, token: str, body: str, project: Any) -> str:
+    from .pages import GLOSSARY_HEAD, chrome
+
+    nav, bcls = chrome(PAGE_PATH, project)
 
     return (
         "<!doctype html>\n"
@@ -118,12 +120,12 @@ def _shell(title: str, token: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/storyboard.css">\n'
-        '<script src="/webclient.js" defer></script>\n'
-        '<script src="/common.js" defer></script>\n'
-        '<script src="/storyboard.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/common.js" defer></script>\n'
+        + '<script src="/storyboard.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{PAGE_PATH}">\n'
-        + nav_html(PAGE_PATH)
+        f'<body data-page="{PAGE_PATH}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -352,18 +354,20 @@ def _lock_controls(shot_id: str, shot: Any) -> str:
 
 
 def render(project: Any, token: str) -> str:
-    head = ('<div class="page-h"><h1>分镜工作台 Storyboard</h1>'
+    head = ('<div class="page-h"><h1>分镜工作台<span class="mj-en" aria-hidden="true"> (Storyboard)</span></h1>'
             '<span class="muted">每个镜头一行 · 状态(版本新鲜度)与审批(Frame.io 三态)'
             '正交 · 行内可改动作/台词/必须出现/避免 · 锁定即封印(解锁仅命令行)</span></div>')
     try:
         shot_ids = project.shot_ids()
     except Exception as exc:
-        return _shell("分镜工作台", token, head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell(
+            "分镜工作台", token, head + f'<p class="err panel">{_e(exc)}</p>', project
+        )
 
     if not shot_ids:
         empty = ('<div class="panel sb-empty"><p>还没有镜头。用 '
                  '<code>manju new --shots N</code> 或在工作台里新建。</p></div>')
-        return _shell("分镜工作台", token, head + empty)
+        return _shell("分镜工作台", token, head + empty, project)
 
     # one asset-matrix + one staleness pass for the whole table (never per-cell).
     try:
@@ -439,7 +443,7 @@ def render(project: Any, token: str) -> str:
         '</div>')
 
     body = head + batchbar + table + legend
-    return _shell("分镜工作台", token, body)
+    return _shell("分镜工作台", token, body, project)
 
 
 class _EmptyLookup:

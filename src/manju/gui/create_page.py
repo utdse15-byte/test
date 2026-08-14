@@ -139,10 +139,10 @@ def _read(project: Any, relpath: str) -> str | None:
 # ------------------------------------------------------------------ shell
 
 
-def _shell(title: str, token: str, active: str, body: str) -> str:
+def _shell(title: str, token: str, active: str, body: str, project: Any) -> str:
     from .pages import GLOSSARY_HEAD, chrome
 
-    nav, bcls = chrome(active)
+    nav, bcls = chrome(active, project)
     return (
         "<!doctype html>\n"
         '<html lang="zh">\n<head>\n'
@@ -394,15 +394,20 @@ def _eligibility_panel(status: dict[str, Any]) -> str:
 
 
 def render_create(project: Any, token: str) -> str:
-    head = ('<div class="page-h"><h1>创作 Create</h1>'
+    head = ('<div class="page-h"><h1>创作<span class="mj-en" aria-hidden="true"> (Create)</span></h1>'
             '<span class="muted">把故事意图推进到合同、Proof 和可审片 candidate · '
             'AI 起草、你定夺 · 每步一个真相文件(引擎从不代写)</span></div>')
 
     try:
         status = create_payload(project)
     except Exception as exc:
-        return _shell("创作", token, "/create",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell(
+            "创作",
+            token,
+            "/create",
+            head + f'<p class="err panel">{_e(exc)}</p>',
+            project,
+        )
 
     files = stage_files()
     current = status.get("current")
@@ -454,7 +459,7 @@ def render_create(project: Any, token: str) -> str:
     body = (head + intro + _eligibility_panel(status) + rail
             + '<div id="cw-workbench">' + "".join(editors) + special + '</div>'
             + modal)
-    return _shell("创作", token, "/create", body)
+    return _shell("创作", token, "/create", body, project)
 
 
 # ============================================================ assets (css/js)

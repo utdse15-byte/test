@@ -50,8 +50,10 @@ def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
-def _shell(title: str, token: str, active: str, body: str) -> str:
-    from .pages import nav_html
+def _shell(title: str, token: str, active: str, body: str, project: Any) -> str:
+    from .pages import GLOSSARY_HEAD, chrome
+
+    nav, bcls = chrome(active, project)
 
     return (
         "<!doctype html>\n"
@@ -63,12 +65,12 @@ def _shell(title: str, token: str, active: str, body: str) -> str:
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/pages.css">\n'
         '<link rel="stylesheet" href="/director.css">\n'
-        '<script src="/webclient.js" defer></script>\n'
-        '<script src="/common.js" defer></script>\n'
-        '<script src="/director.js" defer></script>\n'
+        + GLOSSARY_HEAD
+        + '<script src="/common.js" defer></script>\n'
+        + '<script src="/director.js" defer></script>\n'
         "</head>\n"
-        f'<body data-page="{_e(active)}">\n'
-        + nav_html(active)
+        f'<body data-page="{_e(active)}" class="{bcls}">\n'
+        + nav
         + "\n<main>\n"
         + body
         + "\n</main>\n"
@@ -255,15 +257,20 @@ def _proposal_card(pr: dict[str, Any]) -> str:
 
 
 def render_director(project: Any, token: str) -> str:
-    head = ('<div class="page-h"><h1>导演助手 Director</h1>'
+    head = ('<div class="page-h"><h1>导演助手<span class="mj-en" aria-hidden="true"> (Director)</span></h1>'
             '<span class="muted">提案 → 影响/花费(试跑) → 确认 → 执行 → 差异 → 下一步。'
             '确认与执行是两次独立点击(§8.3 先确认再花费)。</span></div>')
 
     try:
         payload = proposals_payload(project)
     except Exception as exc:
-        return _shell("导演助手", token, "/director",
-                      head + f'<p class="err panel">{_e(exc)}</p>')
+        return _shell(
+            "导演助手",
+            token,
+            "/director",
+            head + f'<p class="err panel">{_e(exc)}</p>',
+            project,
+        )
 
     suggestions = payload["suggestions"]
     sugg_body = "".join(_suggestion_card(s) for s in suggestions) or \
@@ -296,7 +303,7 @@ def render_director(project: Any, token: str) -> str:
     )
 
     body = head + sugg_panel + composer + proposals_panel
-    return _shell("导演助手", token, "/director", body)
+    return _shell("导演助手", token, "/director", body, project)
 
 
 # ============================================================ assets (css/js)
