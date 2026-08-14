@@ -1,4 +1,4 @@
-python -m compileall: PASS
+python -m compileall -q src tests: PASS
 rendered common.js node --check: PASS
 rendered pages_t.js node --check: PASS
 rendered edit.js node --check: PASS
