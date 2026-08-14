@@ -134,3 +134,25 @@ git switch codex/product-polish-r1
 根目录的 `IDE_HANDOFF.md` 与 `HANDOFF_BUDGET_SEMANTICS.md` 是此前阶段的输入材料，
 为保留上下文而原样收进交付。它们记录的分支、HEAD、未提交状态和待办只对当时
 有效；继续工作时以本文件、当前 Git 历史和实际测试结果为准。
+
+## 8. Wave 3：成片与外部精剪信任闭环
+
+功能提交：`f5566e8 R1: make finishing round trips explicit and recoverable`
+
+已完成：
+
+- OTIO、FCPXML、JianYing skeleton 的 carrier 与回程 baseline 分开报告；baseline 写失败不再静默。
+- 无 baseline 的 roundtrip plan 标记 `appliable=false` / `rows_reliable=false`；核心 apply 自己拒绝。
+- FCPXML baseline 查找不再误借同名 OTIO baseline。
+- 导出中心新增“继续精剪”，显示“可安全回收 / 仅可单向使用”，支持 GUI 生成 FCPXML。
+- 文档中的 `undefined` 残渣已清理。
+- 175 个相关测试逐文件报告通过；compile/import/exports.js syntax/diff checks 通过。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE3_FINISHING_TRUST.md`
+- `REPORTS/product-polish-r1/screenshots/wave3/`
+
+环境边界：当前沙箱 Chromium 被管理员策略禁止访问 localhost，所以没有声称 live-server Playwright 已通过；离线真实 HTML/CSS 截图已完成。下一位在 Windows App 模式补一次真实点击与 toast 确认即可。
+
+后续优先级：继续统一“剪辑 → 字幕 → 混音 → 包装 → 导出”的成片旅程，不扩展新 AI 功能。

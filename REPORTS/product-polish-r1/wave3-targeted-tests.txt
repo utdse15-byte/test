@@ -1,0 +1,24 @@
+Product Polish R1 Wave 3 targeted verification — 2026-08-13
+
+PASS tests/test_product_polish_finishing.py       6
+PASS tests/test_roundtrip_baseline_absent.py      4
+PASS tests/test_roundtrip_needs_baseline.py       8
+PASS tests/test_roundtrip_fcpxml.py              12
+PASS tests/test_export_center.py                 34
+PASS tests/test_gui_pages.py                     25
+PASS tests/test_fp_fcpxml.py                     33
+PASS tests/test_fp_fcpxml_import.py              35
+PASS tests/test_export_containment.py            10
+PASS tests/test_exports_table_alignment.py        5
+PASS tests/test_windows_export_conform.py          3
+TOTAL                                             175 passed
+
+PASS python -m compileall -q src tests/test_product_polish_finishing.py
+PASS touched module imports
+PASS rendered exports.js | node --check
+PASS git diff --check
+
+NOT RUN: ruff (not installed; package installation failed because sandbox DNS could not reach the package index)
+NOT RUN: live localhost Playwright navigation (Chromium policy returned ERR_BLOCKED_BY_ADMINISTRATOR)
+STATIC VISUAL: Playwright page.set_content screenshots at 1280x720 and 390x844
+NETWORK/PAID: none

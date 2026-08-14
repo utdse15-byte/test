@@ -35,3 +35,23 @@ Browser checks:
 Known repository baseline remains unchanged outside this wave: the full Windows
 suite previously reported `6175 passed, 63 skipped, 10 failed`; the 10 failures
 were environment-specific missing `grep`/`sh`, unrelated to this change.
+
+## Wave 2 — 人工选片门与 Review Theater
+
+- `build` / `redo` / batch ingest 不再自动写 `selected_take`；
+- proxy/final/export/qc 在缺少人工选择时返回 `selection_required`；
+- Review 主视频按当前卡片懒加载，判断动作前置并 sticky；
+- 详情见根目录 `PRODUCT_POLISH_HANDOFF_2026-08-13.md`。
+
+## Wave 3 — 成片与外部精剪信任闭环
+
+功能提交：`f5566e8`。
+
+- OTIO/FCPXML/JianYing baseline 写入失败不再静默；carrier 保留，但同一次 CLI/GUI 操作明确标记为 one-way。
+- 无 baseline 的 roundtrip plan 为 `appliable=false` / `rows_reliable=false`；核心 apply fail closed，不再误报 `no_changes`。
+- carrier-kind baseline 查找隔离，FCPXML 不会借用同名 OTIO sidecar。
+- 导出中心增加“继续精剪”，直接区分 `可安全回收` 与 `仅可单向使用`，并支持 GUI 生成 FCPXML。
+- 175 个相关测试逐文件通过；compile/import/JS syntax/diff checks 通过。
+- Chromium localhost 被本沙箱管理员策略阻断；已用真实 HTML/CSS 做 1280×720 与 390×844 离线 Playwright 截图，live-server journey 留给用户机器确认。
+
+完整记录：`WAVE3_FINISHING_TRUST.md`。

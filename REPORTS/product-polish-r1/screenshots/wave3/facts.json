@@ -1,0 +1,27 @@
+{
+  "method": "Playwright page.set_content (live localhost navigation blocked by sandbox Chromium policy)",
+  "viewport": [
+    [
+      1280,
+      720
+    ],
+    [
+      390,
+      844
+    ]
+  ],
+  "otio": {
+    "state": "ready",
+    "ready": true,
+    "carrier": "/tmp/manju-wave3-shot.manju/exports/otio/manju-wave3-shot.otio",
+    "baseline": "/tmp/manju-wave3-shot.manju/exports/otio/.baseline/manju-wave3-shot.json",
+    "reason": "导出文件与回程基线均可用，可以安全分析外部修改"
+  },
+  "fcpxml": {
+    "state": "baseline_missing",
+    "ready": false,
+    "carrier": "/tmp/manju-wave3-shot.manju/exports/fcpxml/manju-wave3-shot.fcpxml",
+    "baseline": null,
+    "reason": "文件可继续精剪，但缺少导出时的回程基线，不能安全回收修改"
+  }
+}

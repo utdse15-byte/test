@@ -49,3 +49,12 @@ Screenshots:
 - `screenshots/before/home-mobile.png`
 - `screenshots/after-home-desktop.png`
 - `screenshots/after-home-strict-zero-cost.png`
+
+## Wave 3 — 交换文件成功不等于可安全回收
+
+1. Carrier 与 baseline 是两个独立事实。baseline 是可删除派生证据，但缺失时不能对外宣称 round-trip ready。
+2. Exporter 保留可用 carrier，不因 baseline 写入失败撤销单向交接；失败必须进入同一次 CLI/GUI 结果或 Python warning。
+3. `plan_roundtrip` 在没有 T0 时可以只读分析，但其行不具备 apply 权威。核心 `apply_roundtrip` 自己拒绝，不把安全寄托在某个客户端。
+4. Baseline 查找按 carrier kind 隔离；同 stem 不是同证据。
+5. 导出中心按用户目标组织，OTIO/FCPXML 的 safe-recovery 状态优先于格式列表。
+6. 本波不建立新真相、不改变人工选择、不做真实付费或网络测试。
