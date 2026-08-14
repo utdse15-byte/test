@@ -72,6 +72,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ..core.models import LOOK_PRESETS, TRANSITION_TYPES
+from .a11y import HTML_LANG, NOSCRIPT_HTML, SKIP_LINK_HTML, main_open
 
 __all__ = [
     "EDIT_PATHS",
@@ -795,7 +796,7 @@ def _shell(title: str, token: str, body: str, project: Any = None) -> str:
     nav, bcls = chrome("/edit", project)
     return (
         "<!doctype html>\n"
-        '<html lang="zh">\n<head>\n'
+        f'<html lang="{HTML_LANG}">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f'<meta name="manju-token" content="{_e(token)}">\n'
@@ -807,8 +808,8 @@ def _shell(title: str, token: str, body: str, project: Any = None) -> str:
         + '<script src="/common.js" defer></script>\n<script src="/edit.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="/edit" class="{bcls}">\n'
-        + nav
-        + "\n<main>\n"
+        + SKIP_LINK_HTML + nav
+        + "\n" + main_open() + "\n"
         + body
         + "\n</main>\n"
         '<div id="toast"></div>\n'
@@ -819,7 +820,7 @@ def _shell(title: str, token: str, body: str, project: Any = None) -> str:
         + _seam_modal()
         + _keymap_modal()
         + _footer_hints()
-        + "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
+        + NOSCRIPT_HTML + "\n"
         "</body>\n</html>\n"
     )
 

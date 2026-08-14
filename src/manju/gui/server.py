@@ -47,6 +47,7 @@ from ..core.container import Project, ProjectError
 from ..core.events import append_event, tail_events
 from ..core.idents import SAFE_SEGMENT_PATTERN, is_safe_segment
 from ..runtime.buildlock import BuildLocked, build_lock
+from .a11y import HTML_LANG, SKIP_LINK_HTML, main_open
 from .jobs import JobRunner, RunnerClosed, RunnerState
 from .project_action import (
     gui_launch_command,
@@ -1032,10 +1033,20 @@ class _Handler(BaseHTTPRequestHandler):
                 # UX audit F21: a browser navigation (stale bookmark, typo)
                 # dead-ended on bare JSON with no way back. API fetches never
                 # send Accept: text/html, so their envelope is untouched.
-                body = ('<!doctype html><html lang="zh"><meta charset="utf-8">'
-                        "<title>404</title><body style=\"font-family:system-ui;"
-                        'padding:2rem\"><p>页面不存在 (not found)。</p>'
-                        '<p><a href="/">返回工作台</a></p></body></html>')
+                body = (
+                    f'<!doctype html><html lang="{HTML_LANG}"><head>'
+                    '<meta charset="utf-8">'
+                    '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                    '<title>页面不存在 · Manju</title>'
+                    '<link rel="stylesheet" href="/app.css"></head><body>'
+                    + SKIP_LINK_HTML
+                    + main_open("mj-error-page")
+                    + '<section class="panel"><p class="badge st-missing">404</p>'
+                    '<h1>这里没有这个页面</h1>'
+                    '<p>链接可能已经过期，或者地址输入有误。项目文件没有被修改。</p>'
+                    '<p><a class="btn" href="/">返回工作台</a></p></section></main>'
+                    '</body></html>'
+                )
                 data = body.encode("utf-8")
                 self.send_response(404)
                 self.send_header("Content-Type", "text/html; charset=utf-8")

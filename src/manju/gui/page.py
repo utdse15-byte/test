@@ -64,6 +64,8 @@ from __future__ import annotations
 
 import html
 
+from .a11y import HTML_LANG, NOSCRIPT_HTML, SKIP_LINK_HTML, main_open
+
 __all__ = ["render_page", "render_css", "render_js"]
 
 # --------------------------------------------------------------------- CSS --
@@ -112,6 +114,28 @@ body {
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
 main { padding: 0 1.2rem 1.2rem; max-width: 1600px; margin: 0 auto; }
+#main-content { scroll-margin-top: 8rem; }
+#main-content:focus { outline: none; }
+.mj-skip-link {
+  position: fixed; top: .5rem; left: .5rem; z-index: 10000;
+  transform: translateY(calc(-100% - 1rem)); padding: .5rem .75rem;
+  border: 2px solid var(--accent); border-radius: 8px; background: var(--panel2);
+  color: var(--fg); font-weight: 750; text-decoration: none;
+  box-shadow: var(--shadow-2); transition: transform .12s ease-out;
+}
+.mj-skip-link:focus { transform: translateY(0); }
+.mj-noscript {
+  max-width: 48rem; margin: 1rem auto; padding: .8rem 1rem;
+  border: 1px solid #826323; border-radius: 10px; background: #302714;
+  color: var(--fg); display: flex; flex-direction: column; gap: .2rem;
+}
+.mj-noscript span { color: var(--muted); }
+.mj-error-page {
+  min-height: calc(100vh - 2rem); display: grid; place-items: center;
+  max-width: 48rem; padding-top: 1rem;
+}
+.mj-error-page > .panel { width: 100%; box-sizing: border-box; }
+.mj-error-page h1 { margin-top: .55rem; }
 /* One heading rhythm instead of browser defaults at every size. */
 h1, h2, h3, h4 { line-height: 1.3; letter-spacing: -.01em; }
 h2 { font-size: 1.12rem; margin: 0 0 .5rem; }
@@ -422,8 +446,9 @@ a:focus-visible, button:focus-visible, summary:focus-visible,
   opacity: 1; filter: none; outline: 2px solid var(--accent); outline-offset: 3px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .jb-queued, .jb-running, .jb-canceling, .shot.kb-focus {
-    animation: none !important;
+  .jb-queued, .jb-running, .jb-canceling, .shot.kb-focus,
+  .loading, .toast, .toast-item, .mj-toast-repeat, .mj-skip-link {
+    animation: none !important; transition: none !important;
   }
 }
 .shot-head { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; }
@@ -598,19 +623,30 @@ p.lvl-ok { color: var(--ok); }
 
 /* --------------------------------------------------------------- toasts -- */
 #toast {
-  position: fixed; right: 1rem; bottom: 1rem; z-index: 50;
-  display: flex; flex-direction: column; gap: .5rem; max-width: min(380px, 90vw);
+  position: fixed; right: 1rem; bottom: 1rem; z-index: 200;
+  display: flex; flex-direction: column; gap: .5rem;
+  max-width: min(420px, calc(100vw - 1.25rem));
 }
 .toast {
-  background: var(--panel2); border: 1px solid var(--line);
-  border-left: 4px solid var(--accent); border-radius: 8px; padding: .55rem .8rem;
-  font-size: .86rem; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); cursor: pointer;
-  word-break: break-word;
+  display: grid; grid-template-columns: minmax(0, 1fr) 2rem; align-items: start;
+  gap: .55rem; background: var(--panel2); border: 1px solid var(--line);
+  border-left: 4px solid var(--accent); border-radius: 9px;
+  padding: .58rem .55rem .58rem .8rem; font-size: .86rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .5); overflow-wrap: anywhere;
   animation: mj-rise .18s ease-out;
 }
-.toast-ok { border-left-color: var(--ok); }
-.toast-warn { border-left-color: var(--warn); }
-.toast-err { border-left-color: var(--err); }
+.toast-ok { border-color: #2c5a3f; border-left-color: var(--ok); }
+.toast-warn { border-color: #826323; border-left-color: var(--warn); }
+.toast-err { border-color: #8a4247; border-left-color: var(--err); }
+.mj-toast-copy { min-width: 0; padding-top: .12rem; }
+.mj-toast-close {
+  display: inline-grid; place-items: center; width: 2rem; height: 2rem; padding: 0;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 1.05rem; cursor: pointer;
+}
+.mj-toast-close:hover { color: var(--fg); background: rgba(255,255,255,.06); }
+.mj-toast-repeat { animation: mj-toast-repeat .22s ease-out; }
+@keyframes mj-toast-repeat { 50% { transform: translateY(-2px); filter: brightness(1.18); } }
 /* shared entrance for both toast systems (.toast here, .toast-item in
  * pages.css) and any future overlay chrome. */
 @keyframes mj-rise {
@@ -624,6 +660,15 @@ p.lvl-ok { color: var(--ok); }
   .cols { grid-template-columns: 1fr; }
   main { padding: 0 .7rem .9rem; }
   #header { padding: .9rem .9rem; }
+}
+@media (max-width: 520px) {
+  #toast { left: .55rem; right: .55rem; bottom: .55rem; max-width: none; }
+  main { padding-left: .55rem; padding-right: .55rem; }
+}
+@media (max-width: 360px) {
+  .panel { padding: .8rem; }
+  .btnrow { align-items: stretch; }
+  .btnrow > .btn, .btnrow > button { min-height: 36px; }
 }
 /* ---- R10: take verdicts/notes, filter chips, spendy trigger ---- */
 .tacts { display: flex; gap: .3rem; margin-top: .35rem; flex-wrap: wrap; align-items: center; }
@@ -1285,21 +1330,38 @@ _JS = r"""
     if (document.getElementById("mj-proj-switched")) return;
     const ov = document.createElement("div");
     ov.id = "mj-proj-switched";
+    ov.setAttribute("role", "alertdialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-labelledby", "mj-proj-switched-title");
+    ov.setAttribute("aria-describedby", "mj-proj-switched-copy");
     ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,18,24,.92);" +
       "color:#fff;display:flex;flex-direction:column;align-items:center;" +
       "justify-content:center;gap:1rem;text-align:center;padding:2rem";
+    const title = document.createElement("h2");
+    title.id = "mj-proj-switched-title";
+    title.textContent = "这个页面已经停止读写";
+    title.style.cssText = "font-size:1.25rem;margin:0";
     const msg = document.createElement("div");
+    msg.id = "mj-proj-switched-copy";
     msg.style.cssText = "font-size:1.05rem;max-width:34em";
     msg.textContent = name
-      ? ("服务器已切换到项目「" + name + "」— 本页属于另一个项目,已停止读写。")
-      : "服务器已切换/关闭项目 — 本页属于另一个项目,已停止读写。";
+      ? ("服务器已经切换到项目「" + name + "」。这个页面仍属于先前项目，为避免误写已停止操作。")
+      : "服务器已经切换或关闭项目。这个页面仍属于先前项目，为避免误写已停止操作。";
+    const protect = document.createElement("p");
+    protect.textContent = "项目文件没有被这个旧页面修改。刷新后即可跟随当前项目。";
+    protect.style.cssText = "margin:0;color:#c7cbd3;max-width:34em";
     const btn = document.createElement("button");
-    btn.textContent = "刷新,跟随当前项目 (reload)";
+    btn.type = "button";
+    btn.textContent = "刷新并跟随当前项目";
     btn.style.cssText = "font-size:1rem;padding:.5em 1.2em;cursor:pointer";
     btn.addEventListener("click", () => location.reload());
-    ov.appendChild(msg);
-    ov.appendChild(btn);
+    ov.append(title, msg, protect, btn);
+    ov.addEventListener("keydown", (event) => {
+      if (event.key === "Tab") { event.preventDefault(); btn.focus(); }
+      if (event.key === "Escape") event.preventDefault();
+    });
     document.body.appendChild(ov);
+    btn.focus();
   };
 
   /* ------------------------------------------------------------- DOM --- */
@@ -1347,21 +1409,64 @@ _JS = r"""
   };
 
   /* ---------------------------------------------------------- toasts --- */
+  const recentToasts = new Map();
   const toast = (msg, kind) => {
     const box = $("toast");
-    if (!box.hasAttribute("aria-live")) {
-      /* announce state changes to assistive tech without stealing focus */
-      box.setAttribute("role", "status");
-      box.setAttribute("aria-live", "polite");
+    const message = String(msg == null ? "" : msg);
+    const tone = kind === "err" ? "err" : (kind === "warn" ? "warn" : "ok");
+    const key = tone + "\u0000" + message;
+    const now = Date.now();
+    const previous = recentToasts.get(key);
+    if (previous && previous.node.isConnected && now - previous.at < 1500) {
+      previous.at = now;
+      previous.node.classList.remove("mj-toast-repeat");
+      void previous.node.offsetWidth;
+      previous.node.classList.add("mj-toast-repeat");
+      return previous.node;
     }
-    const cls = kind === "err" ? "toast-err" : (kind === "warn" ? "toast-warn" : "toast-ok");
-    const t = el("div", "toast " + cls, msg);
-    t.addEventListener("click", () => t.remove());
+
+    const t = el("div", "toast toast-" + tone);
+    t.setAttribute("role", tone === "err" ? "alert" : "status");
+    t.setAttribute("aria-live", tone === "err" ? "assertive" : "polite");
+    t.setAttribute("aria-atomic", "true");
+    const copy = el("span", "mj-toast-copy", message);
+    const close = el("button", "mj-toast-close", "×");
+    close.type = "button";
+    close.setAttribute("aria-label", "关闭这条提示");
+    t.append(copy, close);
+
+    let timer = 0;
+    let remaining = tone === "err" ? 0 : (tone === "warn" ? 8000 : 4500);
+    let started = 0;
+    const remove = () => {
+      if (timer) clearTimeout(timer);
+      t.remove();
+      if (recentToasts.get(key)?.node === t) recentToasts.delete(key);
+    };
+    const pause = () => {
+      if (!timer) return;
+      clearTimeout(timer); timer = 0;
+      remaining = Math.max(500, remaining - (Date.now() - started));
+    };
+    const schedule = () => {
+      if (!remaining || timer || !t.isConnected) return;
+      started = Date.now(); timer = setTimeout(remove, remaining);
+    };
+    close.addEventListener("click", (event) => { event.stopPropagation(); remove(); });
+    t.addEventListener("click", (event) => {
+      if (event.target === t || event.target === copy) remove();
+    });
+    t.addEventListener("mouseenter", pause);
+    t.addEventListener("mouseleave", schedule);
+    t.addEventListener("focusin", pause);
+    t.addEventListener("focusout", schedule);
     box.appendChild(t);
-    /* F20 discipline (server pages had it since #42; the SPA missed it):
-     * an error is often a long engine sentence — it stays until clicked. */
-    if (kind === "err") { t.textContent = msg + "  ✕"; }
-    else { setTimeout(() => t.remove(), 4000); }
+    recentToasts.set(key, { node: t, at: now });
+    schedule();
+
+    const transient = Array.from(box.querySelectorAll(".toast-ok,.toast-warn"));
+    while (transient.length > 4) transient.shift()?.remove();
+    return t;
   };
 
   /* ------------------------------------------------------------- API --- */
@@ -2425,7 +2530,7 @@ _JS = r"""
       return b;
     }
     if (!evalData) {
-      b.appendChild(el("p", "loading", "加载中 (loading)…"));
+      b.appendChild(el("p", "loading", "正在加载…"));
       return b;
     }
     const ev = evalData;
@@ -2656,7 +2761,7 @@ _JS = r"""
           const link = el("a", "final-link", f.name);
           link.href = f.url;
           rowEl.appendChild(link);
-          if (i === 0) rowEl.appendChild(el("span", "chip", "当前 (current)"));
+          if (i === 0) rowEl.appendChild(el("span", "chip", "当前"));
           if (f.has_key === false) {
             rowEl.appendChild(el("span", "chip warn", "⚠ 无内容键 (no key)"));
           }
@@ -2682,7 +2787,7 @@ _JS = r"""
     const chipBtn = el("button", "chip ws",
       "项目 (project): " + (ws.active || "?") + " ▾");
     chipBtn.type = "button";
-    chipBtn.title = "切换工作区项目 (switch workspace project) · 共 " + (ws.count || 0);
+    chipBtn.title = "切换工作区项目 · 共 " + (ws.count || 0);
     const menu = el("div", "ws-menu hidden");
     chipBtn.addEventListener("click", async (ev) => {
       ev.stopPropagation();   /* the document listener would close it again */
@@ -2692,7 +2797,7 @@ _JS = r"""
         return;
       }
       clear(menu);
-      menu.appendChild(el("div", "muted ws-item", "加载中 (loading)…"));
+      menu.appendChild(el("div", "muted ws-item", "正在加载…"));
       menu.classList.remove("hidden");
       try {
         const data = await api("GET", "/api/projects");
@@ -2906,9 +3011,9 @@ _JS = r"""
     const errBox = el("div", "ed-errors");
     dlg.appendChild(errBox);
     const row = el("div", "btnrow ed-btnrow");
-    const create = el("button", "btn", "创建 (Create)");
+    const create = el("button", "btn", "创建");
     create.type = "button";
-    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    const cancel = el("button", "btn ghost", "取消");
     cancel.type = "button";
     cancel.addEventListener("click", () => closeEditor());
     create.addEventListener("click", async () => {
@@ -3046,8 +3151,8 @@ _JS = r"""
     if (!readonly) {
       const api = SPEND_KINDS[kind] || "/api/build";
       const okLabel = kind && kind !== "build"
-        ? "确认花费并继续 (Confirm & continue)"
-        : "确认花费并构建 (Confirm & build)";
+        ? "确认花费并继续"
+        : "确认花费并构建";
       const ok = el("button", "btn confirm", okLabel);
       ok.type = "button";
       ok.addEventListener("click", async () => {
@@ -3409,7 +3514,7 @@ _JS = r"""
     clear(out);
     out.appendChild(el("h3", null, "检查 (check)"));
     out.appendChild(el("p", data.ok ? "lvl-ok" : "lvl-error",
-      data.ok ? "✓ 通过 (ok)" : "✗ 未通过 (failed)"));
+      data.ok ? "✓ 通过" : "✗ 未通过"));
     (data.errors || []).forEach((m) => out.appendChild(el("p", "lvl-error", "错误: " + m)));
     (data.warnings || []).forEach((m) => out.appendChild(el("p", "lvl-warning", "警告: " + m)));
   }
@@ -3491,7 +3596,7 @@ _JS = r"""
     out.appendChild(el("h3", null, "体检 (doctor)"));
     const chips = el("div", "chips");
     chips.appendChild(el("span", "badge " + (data.ok ? "st-fresh" : "st-broken"),
-      data.ok ? "✓ 通过 (ok)" : "✗ 有问题 (problems)"));
+      data.ok ? "✓ 通过" : "✗ 有问题"));
     out.appendChild(chips);
     const list = el("div");
     (Array.isArray(data.checks) ? data.checks : []).forEach((c) => {
@@ -4970,7 +5075,7 @@ _JS = r"""
     }
     det.appendChild(box);
     const row = el("div", "btnrow");
-    const reload = el("button", "btn ghost", "以真相为底重填 (reload truth)");
+    const reload = el("button", "btn ghost", "以项目真相重填");
     reload.type = "button";
     reload.title = "用磁盘上的当前内容替换编辑区 (replace the textarea with the on-disk text)";
     reload.addEventListener("click", () => {
@@ -4984,7 +5089,7 @@ _JS = r"""
         clear(errBox);        /* buffer now equals truth: the stale diff goes */
         ta.focus();
       } catch (err) {
-        toast("重填失败 (reload failed): " + errMsg(err), "err");
+        toast("重填失败：" + errMsg(err), "err");
       }
     });
     row.appendChild(reload);
@@ -5350,7 +5455,7 @@ _JS = r"""
     const row = el("div", "btnrow ed-btnrow");
     const save = el("button", "btn", "保存 (Save)");
     save.type = "button";
-    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    const cancel = el("button", "btn ghost", "取消");
     cancel.type = "button";
     cancel.addEventListener("click", () => closeEditor());
     save.addEventListener("click", async () => {
@@ -5438,9 +5543,9 @@ _JS = r"""
     input.placeholder = nextFreeShotId();
     input.maxLength = 64;
     input.pattern = "[A-Za-z0-9_-]{1,64}";
-    const go = el("button", "btn", "创建 (Create)");
+    const go = el("button", "btn", "创建");
     go.type = "button";
-    const cancel = el("button", "btn ghost", "取消 (Cancel)");
+    const cancel = el("button", "btn ghost", "取消");
     cancel.type = "button";
     const newBtn = el("button", "btn ghost", "新建镜头 (New shot)");
     newBtn.type = "button";
@@ -5547,7 +5652,7 @@ _JS = r"""
     if (upActive) {
       zone.classList.add("busy");
       zoneLabel.textContent =
-        "上传中 (uploading) " + Math.min(upDone + 1, upTotal) + "/" + upTotal + "…";
+        "正在上传 " + Math.min(upDone + 1, upTotal) + "/" + upTotal + "…";
     } else {
       zone.classList.remove("busy");
       zoneLabel.textContent = zoneIdleText();
@@ -5889,7 +5994,7 @@ _JS = r"""
       return;
     }
     if (!gitLoaded) {
-      gitBody.appendChild(el("p", "muted", "加载中 (loading)…"));
+      gitBody.appendChild(el("p", "muted", "正在加载…"));
       return;
     }
     const g = gitStatus;
@@ -6119,7 +6224,7 @@ _JS = r"""
       return;
     }
     if (!propLoaded) {
-      propBody.appendChild(el("p", "muted", "加载中 (loading)…"));
+      propBody.appendChild(el("p", "muted", "正在加载…"));
       return;
     }
     if (!propItems.length) {
@@ -6376,7 +6481,7 @@ _JS = r"""
       });
       row.appendChild(ok);
     }
-    const no = el("button", "btn ghost", failed ? "关闭 (Close)" : "取消 (Cancel)");
+    const no = el("button", "btn ghost", failed ? "关闭 (Close)" : "取消");
     no.type = "button";
     no.addEventListener("click", () => closePlanModal());
     row.appendChild(no);
@@ -6904,7 +7009,7 @@ def render_page(project_name: str, token: str) -> str:
     nav, bcls = chrome("/", project_name=project_name)
     return (
         "<!doctype html>\n"
-        '<html lang="zh">\n'
+        f'<html lang="{HTML_LANG}">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
@@ -6920,15 +7025,15 @@ def render_page(project_name: str, token: str) -> str:
         # round U: nav + body class are mode-aware (chrome()); 新手 omits the
         # pro-only page links (still reachable by URL) and shows a hint bar.
         f'<body data-page="/" class="{bcls}">\n'
-        + nav + "\n"
+        + SKIP_LINK_HTML + nav + "\n"
         # round V (goal item 4): the project cockpit — one glance → one action →
         # activity → risk-by-exception. Filled from /api/cockpit (fingerprint-
         # gated, riding the existing poll); the state details bar (#header) that
         # /api/state fills sits directly beneath it.
-        '<div id="cockpit" class="cockpit">\n'
-        '  <p class="loading">加载中 (loading)…</p>\n'
+        + '<div id="cockpit" class="cockpit">\n'
+        '  <p class="loading">正在加载…</p>\n'
         "</div>\n"
-        '<main class="home-main">\n'
+        + main_open("home-main") + "\n"
         '  <div id="onboarding" class="panel hidden"></div>\n'
         '  <div id="failures" class="panel hidden"></div>\n'
         '  <details id="workbench-details" class="home-workbench">\n'
@@ -6962,8 +7067,8 @@ def render_page(project_name: str, token: str) -> str:
         '<div id="kbdhint" class="hidden"></div>\n'
         '<dialog id="editor" class="editor"></dialog>\n'
         '<dialog id="planmodal" class="editor planmodal"></dialog>\n'
-        "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
-        "</body>\n"
+        + NOSCRIPT_HTML + "\n"
+        + "</body>\n"
         "</html>\n"
     )
 

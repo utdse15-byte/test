@@ -12,8 +12,8 @@ This module owns three things:
   * :data:`GLOSSARY` — ``engineering term -> (中文用户词, 一句话说明)``, the §10
     table verbatim (the naming SSOT; the CLI wording is deliberately NOT touched);
   * :func:`term` / :func:`tooltip_html` — render a plain word, or the word with
-    its CSS-only ``?`` tooltip (hover AND keyboard-focus, CSP-safe, all text
-    ``html.escape``-d);
+    an accessible ``?`` help button (hover, focus, click and Escape; CSP-safe;
+    all text ``html.escape``-d);
   * the shared chrome assets (:func:`render_glossary_css` / :func:`render_glossary_js`)
     that also drive the 新手/专业 mode switch and the §10 "显示专业术语" toggle —
     both served same-origin so a strict ``script-src 'self'; style-src 'self'``
@@ -76,16 +76,15 @@ def term(key: str) -> str:
 
 
 def tooltip_html(key: str, *, label: str | None = None) -> str:
-    """The 中文用户词 with its accessible ``?`` tooltip, as one inline HTML span.
+    """Render a Chinese-first term with an accessible ``?`` help button.
 
-    ``label`` overrides the shown Chinese word (default: :func:`term`). ALL text
-    is ``html.escape``-d — the tooltip and label render verbatim even if a caller
-    passes a word containing ``<>&``. The ``?`` badge is keyboard-focusable
-    (``tabindex="0"``, ``role="button"``) and carries the explanation in its
-    ``aria-label``; the popup shows on ``:hover`` and ``:focus`` via CSS alone,
-    so this is CSP-safe (no inline handler, no inline style).
+    ``label`` overrides the shown Chinese word (default: :func:`term`). All text
+    is escaped, so labels and explanations render verbatim even when they contain
+    markup characters. The native button is keyboard-focusable without a manual
+    ``tabindex``; its explanation is present in the ``aria-label`` and in a
+    visible tooltip that opens on hover/focus/click and closes with Escape.
     """
-    cn, tip = GLOSSARY[key]
+    _, tip = GLOSSARY[key]
     shown = term(key) if label is None else label
     shown_e = html.escape(shown)
     en_e = html.escape(key)
@@ -94,8 +93,9 @@ def tooltip_html(key: str, *, label: str | None = None) -> str:
         '<span class="mj-term">'
         f'<span class="mj-cn">{shown_e}</span>'
         f'<span class="mj-en" aria-hidden="true"> ({en_e})</span>'
-        f'<span class="mj-help" tabindex="0" role="button" '
-        f'aria-label="{shown_e}：{tip_e}">?'
+        '<span class="mj-help-wrap">'
+        f'<button type="button" class="mj-help" aria-expanded="false" '
+        f'aria-label="术语说明：{shown_e}。{tip_e}">?</button>'
         f'<span class="mj-tip" role="tooltip">{tip_e}</span>'
         "</span></span>"
     )
@@ -119,31 +119,37 @@ def render_glossary_js() -> str:
 _GLOSSARY_CSS = """
 /* manju gui — plain-language glossary + 新手/专业 mode chrome (round U). */
 
-/* ---- term + ? tooltip (CSS-only hover/focus; CSP-safe) ---------------- */
+/* ---- term + ? help button (hover/focus/click/Escape; CSP-safe) -------- */
 .mj-term { display: inline; white-space: nowrap; }
 .mj-cn { white-space: normal; }
 /* the English original is hidden until 显示专业术语 is on (a body class) */
 .mj-en { display: none; color: var(--muted); font-weight: 400; font-style: normal; }
 body.mj-show-terms .mj-en { display: inline; }
+.mj-help-wrap {
+  display: inline-flex; align-items: center; position: relative; vertical-align: middle;
+}
 .mj-help {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.15em; height: 1.15em; margin-left: .2em; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--panel2); color: var(--muted);
-  font-size: .7em; font-weight: 700; line-height: 1; cursor: help;
-  position: relative; vertical-align: middle; user-select: none;
+  display: inline-grid; place-items: center; min-width: 24px; width: 1.5rem;
+  min-height: 24px; height: 1.5rem; margin-left: .22em; padding: 0;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--panel2);
+  color: var(--muted); font: inherit; font-size: .72em; font-weight: 750;
+  line-height: 1; cursor: help; user-select: none;
 }
-.mj-help:hover, .mj-help:focus { color: var(--fg); border-color: var(--accent); outline: none; }
-.mj-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mj-help:hover, .mj-help:focus, .mj-help[aria-expanded="true"] {
+  color: var(--fg); border-color: var(--accent); background: var(--accent-bg); outline: none;
+}
+.mj-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .mj-tip {
-  display: none; position: absolute; bottom: calc(100% + 6px); left: 50%;
-  transform: translateX(-50%); z-index: 90; width: max-content; max-width: 260px;
-  white-space: normal; background: var(--panel2); color: var(--fg);
-  border: 1px solid var(--line); border-radius: 8px; padding: .45rem .65rem;
-  font-size: .8rem; font-weight: 400; line-height: 1.55;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .55); text-align: left; pointer-events: none;
+  display: none; position: absolute; bottom: calc(100% + 7px); left: 50%;
+  transform: translateX(-50%); z-index: 90; width: max-content;
+  max-width: min(300px, calc(100vw - 1.5rem)); white-space: normal;
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 8px; padding: .5rem .68rem; font-size: .8rem; font-weight: 400;
+  line-height: 1.55; box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+  text-align: left; pointer-events: none;
 }
-.mj-help:hover .mj-tip, .mj-help:focus .mj-tip,
-.mj-help:focus-within .mj-tip { display: block; }
+.mj-help-wrap:hover .mj-tip, .mj-help-wrap:focus-within .mj-tip,
+.mj-help-wrap.is-open .mj-tip { display: block; }
 
 /* ---- nav-level controls: progressively disclosed view menu ------------ */
 .mj-view-menu { position: relative; flex: 0 0 auto; }
@@ -304,9 +310,28 @@ _GLOSSARY_JS = r"""
     });
   }
 
+  function closeHelp(except) {
+    document.querySelectorAll(".mj-help-wrap.is-open").forEach(function (wrap) {
+      if (wrap === except) return;
+      wrap.classList.remove("is-open");
+      var button = wrap.querySelector(".mj-help");
+      if (button) button.setAttribute("aria-expanded", "false");
+    });
+  }
+
   document.addEventListener("click", function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
+    var help = t.closest(".mj-help");
+    if (help) {
+      var wrap = help.closest(".mj-help-wrap");
+      var opening = !wrap.classList.contains("is-open");
+      closeHelp(opening ? wrap : null);
+      wrap.classList.toggle("is-open", opening);
+      help.setAttribute("aria-expanded", opening ? "true" : "false");
+      return;
+    }
+    closeHelp(null);
     var mb = t.closest(".mj-mode-btn");
     if (mb && !mb.classList.contains("on")) {
       /* server-side render decides visibility, so flip then reload */
@@ -320,6 +345,14 @@ _GLOSSARY_JS = r"""
       if (hint && hint.parentNode) hint.parentNode.removeChild(hint);
       post("/api/mode", { dismiss_hint: true });
     }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var active = document.querySelector(".mj-help-wrap.is-open .mj-help");
+    if (!active) return;
+    closeHelp(null);
+    active.focus();
   });
 
   var toggle = document.getElementById("mj-terms-toggle");
@@ -352,7 +385,7 @@ _GLOSSARY_JS = r"""
     btn.appendChild(path);
     if (row.current) {
       btn.disabled = true;
-      btn.title = "当前项目 (current project)";
+      btn.title = "当前项目";
     } else {
       btn.addEventListener("click", function () { wsOpen(row.path); });
     }
@@ -388,7 +421,7 @@ _GLOSSARY_JS = r"""
     if (!recents.length) {
       var empty = document.createElement("div");
       empty.className = "mj-ws-group-title";
-      empty.textContent = "还没有最近项目 (no recent projects)";
+      empty.textContent = "还没有最近项目";
       wsMenu.appendChild(empty);
     } else {
       var seen = {};
@@ -398,7 +431,7 @@ _GLOSSARY_JS = r"""
           seen[series.root] = true;
           var title = document.createElement("div");
           title.className = "mj-ws-group-title";
-          title.textContent = "剧集 (series): " + series.name;
+          title.textContent = "剧集：" + series.name;
           wsMenu.appendChild(title);
         }
         wsMenu.appendChild(wsItem(row));
@@ -410,7 +443,7 @@ _GLOSSARY_JS = r"""
     var manage = document.createElement("a");
     manage.className = "mj-ws-manage";
     manage.href = "/?workspace=1";
-    manage.textContent = "管理工作区 / 新建项目 (manage workspace) →";
+    manage.textContent = "管理工作区或新建项目 →";
     wsMenu.appendChild(manage);
   }
 
@@ -424,7 +457,7 @@ _GLOSSARY_JS = r"""
       wsClear(wsMenu);
       var loading = document.createElement("div");
       loading.className = "mj-ws-group-title";
-      loading.textContent = "加载中 (loading)…";
+      loading.textContent = "正在加载…";
       wsMenu.appendChild(loading);
       wsMenu.classList.remove("hidden");
       wsBtn.setAttribute("aria-expanded", "true");
@@ -436,7 +469,7 @@ _GLOSSARY_JS = r"""
           wsClear(wsMenu);
           var err = document.createElement("div");
           err.className = "mj-ws-group-title";
-          err.textContent = "最近项目不可用 (recents unavailable)";
+          err.textContent = "最近项目暂时不可用";
           wsMenu.appendChild(err);
         });
     });

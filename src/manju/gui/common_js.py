@@ -55,21 +55,41 @@ function projectSwitchedOverlay(name) {
   if (document.getElementById("mj-proj-switched")) return;
   var ov = document.createElement("div");
   ov.id = "mj-proj-switched";
+  ov.setAttribute("role", "alertdialog");
+  ov.setAttribute("aria-modal", "true");
+  ov.setAttribute("aria-labelledby", "mj-proj-switched-title");
+  ov.setAttribute("aria-describedby", "mj-proj-switched-copy");
   ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,18,24,.92);" +
     "color:#fff;display:flex;flex-direction:column;align-items:center;" +
     "justify-content:center;gap:1rem;text-align:center;padding:2rem";
+  var title = document.createElement("h2");
+  title.id = "mj-proj-switched-title";
+  title.textContent = "这个页面已经停止读写";
+  title.style.cssText = "font-size:1.25rem;margin:0";
   var msg = document.createElement("div");
+  msg.id = "mj-proj-switched-copy";
   msg.style.cssText = "font-size:1.05rem;max-width:34em";
   msg.textContent = name
-    ? ("服务器已切换到项目「" + name + "」— 本页属于另一个项目,已停止读写。")
-    : "服务器已切换/关闭项目 — 本页属于另一个项目,已停止读写。";
+    ? ("服务器已经切换到项目「" + name + "」。这个页面仍属于先前项目，为避免误写已停止操作。")
+    : "服务器已经切换或关闭项目。这个页面仍属于先前项目，为避免误写已停止操作。";
+  var protect = document.createElement("p");
+  protect.textContent = "项目文件没有被这个旧页面修改。刷新后即可跟随当前项目。";
+  protect.style.cssText = "margin:0;color:#c7cbd3;max-width:34em";
   var btn = document.createElement("button");
-  btn.textContent = "刷新,跟随当前项目 (reload)";
+  btn.type = "button";
+  btn.textContent = "刷新并跟随当前项目";
   btn.style.cssText = "font-size:1rem;padding:.5em 1.2em;cursor:pointer";
   btn.addEventListener("click", function () { location.reload(); });
+  ov.appendChild(title);
   ov.appendChild(msg);
+  ov.appendChild(protect);
   ov.appendChild(btn);
+  ov.addEventListener("keydown", function (event) {
+    if (event.key === "Tab") { event.preventDefault(); btn.focus(); }
+    if (event.key === "Escape") event.preventDefault();
+  });
   document.body.appendChild(ov);
+  btn.focus();
 }
 
 function post(url, body) {
@@ -352,7 +372,7 @@ var MJ_TASKBAR_NEXT = {
           rb.disabled = true;
           post("/api/jobs/retry", { job_id: j.id }).then(function (r) {
             if (r.status >= 400) {
-              toast("重试失败: " + ((r.data || {}).error || r.status), false);
+              toast("重试失败：" + ((r.data || {}).error || r.status), false);
               rb.disabled = false;
             } else { c.until = 0; mjTaskbarTick(); }
           });
@@ -376,7 +396,7 @@ var MJ_TASKBAR_NEXT = {
           cb.disabled = true;
           post("/api/jobs/cancel", { job_id: j.id }).then(function (r) {
             if (r.status >= 400) {
-              toast("取消失败: " + ((r.data || {}).error || r.status), false);
+              toast("取消失败：" + ((r.data || {}).error || r.status), false);
               cb.disabled = false;
             } else mjTaskbarTick();
           });
@@ -429,28 +449,88 @@ var MJ_TASKBAR_NEXT = {
   mjTaskbarTick();
 })();
 
+var MJ_TOAST_RECENT = {};
 function toast(msg, ok) {
-  var t = document.getElementById("toast");
-  if (!t) return;
-  if (!t.hasAttribute("aria-live")) {
-    /* announce state changes to assistive tech without stealing focus */
-    t.setAttribute("role", "status");
-    t.setAttribute("aria-live", "polite");
+  var host = document.getElementById("toast");
+  if (!host) return null;
+  var message = String(msg == null ? "" : msg);
+  var tone = (ok === false || ok === "err") ? "bad" : (ok === "warn" ? "warn" : "good");
+  var key = tone + "\u0000" + message;
+  var now = Date.now();
+  var previous = MJ_TOAST_RECENT[key];
+  if (previous && previous.node && previous.node.isConnected && now - previous.at < 1500) {
+    previous.at = now;
+    previous.node.classList.remove("mj-toast-repeat");
+    void previous.node.offsetWidth;
+    previous.node.classList.add("mj-toast-repeat");
+    return previous.node;
   }
-  var el = document.createElement("div");
-  el.className = "toast-item " + (ok === false ? "bad" : "good");
-  el.textContent = msg;
-  /* UX audit F20: errors are often long engine sentences — 3.6 s was not
-   * enough to read one, and nothing durable remained. Errors now stay until
-   * clicked (dismiss affordance); successes keep the quick auto-dismiss. */
-  if (ok === false) {
-    el.textContent = msg + "  ✕";
-    el.style.cursor = "pointer";
-    el.addEventListener("click", function () { el.remove(); });
-  } else {
-    setTimeout(function () { el.remove(); }, 3600);
+
+  var item = document.createElement("div");
+  item.className = "toast-item " + tone;
+  item.setAttribute("role", tone === "bad" ? "alert" : "status");
+  item.setAttribute("aria-live", tone === "bad" ? "assertive" : "polite");
+  item.setAttribute("aria-atomic", "true");
+
+  var copy = document.createElement("span");
+  copy.className = "mj-toast-copy";
+  copy.textContent = message;
+  item.appendChild(copy);
+
+  var close = document.createElement("button");
+  close.type = "button";
+  close.className = "mj-toast-close";
+  close.setAttribute("aria-label", "关闭这条提示");
+  close.textContent = "×";
+  item.appendChild(close);
+
+  var timer = 0;
+  var remaining = tone === "bad" ? 0 : (tone === "warn" ? 8000 : 4500);
+  var started = 0;
+  function remove() {
+    if (timer) clearTimeout(timer);
+    item.remove();
+    if (MJ_TOAST_RECENT[key] && MJ_TOAST_RECENT[key].node === item) {
+      delete MJ_TOAST_RECENT[key];
+    }
   }
-  t.appendChild(el);
+  function pause() {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = 0;
+    remaining = Math.max(500, remaining - (Date.now() - started));
+  }
+  function schedule() {
+    if (!remaining || timer || !item.isConnected) return;
+    started = Date.now();
+    timer = setTimeout(remove, remaining);
+  }
+  close.addEventListener("click", function (event) {
+    event.stopPropagation();
+    remove();
+  });
+  /* Preserve the historical click-to-dismiss convenience while providing an
+   * explicit, keyboard-readable close control. */
+  item.addEventListener("click", function (event) {
+    if (event.target === item || event.target === copy) remove();
+  });
+  item.addEventListener("mouseenter", pause);
+  item.addEventListener("mouseleave", schedule);
+  item.addEventListener("focusin", pause);
+  item.addEventListener("focusout", schedule);
+
+  host.appendChild(item);
+  MJ_TOAST_RECENT[key] = { node: item, at: now };
+  schedule();
+
+  /* Success chatter should never cover the workbench. Persistent errors are
+   * never evicted; the oldest transient message is removed first. */
+  var transient = Array.from(host.querySelectorAll(".toast-item.good,.toast-item.warn"));
+  while (transient.length > 4) {
+    var oldest = transient.shift();
+    if (oldest) oldest.remove();
+  }
+  return item;
 }
 """
 

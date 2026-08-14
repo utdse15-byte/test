@@ -36,6 +36,8 @@ import html
 from typing import Any
 from urllib.parse import quote
 
+from .a11y import HTML_LANG, NOSCRIPT_HTML, SKIP_LINK_HTML, main_open
+
 __all__ = [
     "PAGE_PATHS_CREATE",
     "render",
@@ -145,7 +147,7 @@ def _shell(title: str, token: str, active: str, body: str, project: Any) -> str:
     nav, bcls = chrome(active, project)
     return (
         "<!doctype html>\n"
-        '<html lang="zh">\n<head>\n'
+        f'<html lang="{HTML_LANG}">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f'<meta name="manju-token" content="{_e(token)}">\n'
@@ -162,13 +164,13 @@ def _shell(title: str, token: str, active: str, body: str, project: Any) -> str:
         + '<script src="/create.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="{_e(active)}" class="{bcls}">\n'
-        + nav
-        + "\n<main>\n"
+        + SKIP_LINK_HTML + nav
+        + "\n" + main_open() + "\n"
         + body
         + "\n</main>\n"
         '<div id="toast"></div>\n'
-        "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
-        "</body>\n</html>\n"
+        + NOSCRIPT_HTML + "\n"
+        + "</body>\n</html>\n"
     )
 
 

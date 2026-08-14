@@ -154,7 +154,8 @@ def test_tooltip_html_is_accessible_and_escaped():
     assert "生成来源" in html                                   # the 中文用户词
     assert "(provider)" in html                                 # greyed English original
     assert GLOSSARY["provider"][1] in html                      # the explanation
-    assert 'role="tooltip"' in html and 'tabindex="0"' in html  # keyboard-focusable
+    assert 'role="tooltip"' in html
+    assert '<button type="button" class="mj-help"' in html  # native keyboard control
     assert 'class="mj-en"' in html                              # greyed-term span
 
     # a caller-supplied label with HTML metacharacters is escaped, never raw

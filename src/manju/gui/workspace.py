@@ -39,6 +39,7 @@ from typing import Any
 from ..core.container import PROJECT_FILE, Project, ProjectError
 from ..core.recents import load_recents
 from ..core.series import Series, SeriesError
+from .a11y import HTML_LANG, NOSCRIPT_HTML, SKIP_LINK_HTML, main_open
 
 __all__ = [
     "recents_payload",
@@ -139,8 +140,8 @@ def _group_by_series(items: list[dict[str, Any]]) -> list[tuple[dict[str, str] |
 
 def _status_chips(status: dict[str, Any]) -> str:
     if not status.get("exists"):
-        return '<span class="ws-chip ws-chip-warn">路径不存在 (missing)</span>'
-    parts = ['<span class="ws-chip">存在 (ok)</span>']
+        return '<span class="ws-chip ws-chip-warn">路径失效</span>'
+    parts = ['<span class="ws-chip">可打开</span>']
     shots = status.get("shots")
     if shots is not None:
         parts.append(f'<span class="ws-chip">{shots} 镜头</span>')
@@ -160,7 +161,7 @@ def _row_html(item: dict[str, Any]) -> str:
         f'<button type="button" class="ws-row{cur}" data-path="{_e(item["path"])}"{disabled}>'
         f'<span class="ws-row-main">'
         f'<span class="ws-row-name">{_e(item["name"])}'
-        + (" · 当前 (current)" if item["current"] else "") + "</span>"
+        + (" · 当前项目" if item["current"] else "") + "</span>"
         f'<span class="ws-row-path">{_e(item["path"])}</span>'
         "</span>"
         f'<span class="ws-row-chips">{_status_chips(item["status"])}</span>'
@@ -170,15 +171,15 @@ def _row_html(item: dict[str, Any]) -> str:
 
 def _recents_section(payload: dict[str, Any]) -> str:
     items = payload["recents"]
-    out = ['<section class="ws-section"><h2>最近项目 (recent projects)</h2>']
+    out = ['<section class="ws-section"><h2>最近项目</h2>']
     if payload["dropped"]:
         out.append(
             '<p class="ws-note">'
-            + _e(f"已从列表移除 {len(payload['dropped'])} 个不存在的路径 (missing, removed)")
+            + _e(f"已从列表移除 {len(payload['dropped'])} 个已经失效的路径")
             + "</p>"
         )
     if not items:
-        out.append('<p class="muted">还没有最近项目 (no recent projects yet)。</p>')
+        out.append('<p class="muted">还没有最近项目。创建或打开一次后，会出现在这里。</p>')
         out.append("</section>")
         return "".join(out)
     for series, members in _group_by_series(items):
@@ -187,7 +188,7 @@ def _recents_section(payload: dict[str, Any]) -> str:
                 out.append(_row_html(it))
         else:
             out.append(
-                f'<fieldset class="ws-series"><legend>剧集 (series): {_e(series["name"])}'
+                f'<fieldset class="ws-series"><legend>剧集：{_e(series["name"])}'
                 "</legend>"
             )
             for it in members:
@@ -208,8 +209,7 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
 
     back = ""
     intro = (
-        "<p>当前不在任何项目目录下 (not inside a project)。"
-        "从下面选择最近项目、按路径打开,或新建一个。</p>"
+        "<p>选择最近项目，或从磁盘打开、创建一个项目。</p>"
     )
     if bound is not None:
         try:
@@ -217,59 +217,64 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
         except Exception:
             bound_name = bound.root.name
         intro = (
-            f"<p>当前项目 (current project):<b>{_e(bound_name)}</b> "
-            f'<span class="ws-row-path">{_e(bound.root)}</span>'
-            "。在下面打开或新建另一个项目会切换到它 (opening one switches this "
-            "server to it)。</p>"
+            '<section class="ws-current" aria-label="当前项目">'
+            '<span class="ws-current-label">当前项目</span>'
+            f'<strong>{_e(bound_name)}</strong>'
+            f'<span class="ws-current-path">{_e(bound.root)}</span>'
+            '<span class="ws-current-note">打开或新建另一个项目后，工作台会安全切换过去。</span>'
+            '</section>'
         )
-        back = '<p><a href="/">← 返回当前项目 (back to current project)</a></p>'
+        back = '<p class="ws-back"><a href="/">← 返回当前项目</a></p>'
 
-    preset_options = ['<option value="">无 / generic (none)</option>']
+    preset_options = ['<option value="">不使用预设</option>']
     for p in presets:
         preset_options.append(
             f'<option value="{_e(p["name"])}">{_e(p["title"])} ({_e(p["aspect"])})</option>'
         )
 
     body = (
-        '<div class="ws-wrap">'
-        "<h1>Manju 工作区 (workspace)</h1>"
+        main_open("workspace-page")
+        + '<header class="ws-brand"><span class="ws-brand-mark" aria-hidden="true">M</span>'
+        '<span><strong>Manju</strong><small>本地电影工作台 · 项目工作区</small></span></header>'
+        '<h1>打开或新建项目</h1>'
+        '<p class="ws-lede">选择项目后，Manju 会恢复上次的页面和工作位置。</p>'
         + intro + back
         + _recents_section(payload)
-        + '<section class="ws-section"><h2>按路径打开 (open by path)</h2>'
+        + '<div class="ws-action-grid"><section class="ws-section"><h2>打开现有项目</h2>'
         '<form id="ws-open-form" class="ws-form">'
-        '<label class="ctl">项目路径 (path)'
+        '<label class="ctl">项目文件夹'
         '<input type="text" id="ws-open-path" name="path" '
-        'placeholder="/path/to/my_film.manju" required></label>'
-        '<button type="submit" class="btn">打开 (Open)</button>'
+        'placeholder="例如 D:\\Films\\my_film.manju" required></label>'
+        '<button type="submit" class="btn">打开项目</button>'
         "</form></section>"
-        '<section class="ws-section"><h2>新建项目 (new project)</h2>'
+        '<section class="ws-section"><h2>新建项目</h2>'
         '<form id="ws-new-form" class="ws-form">'
-        '<label class="ctl">名称 (name)'
+        '<label class="ctl">项目名称'
         '<input type="text" id="ws-new-name" name="name" maxlength="80" '
-        'placeholder="my_film" required></label>'
-        '<label class="ctl">画幅 (orientation)'
+        'placeholder="例如 雨夜末班车" required></label>'
+        '<label class="ctl">画幅'
         '<select id="ws-new-orient" name="orient">'
-        '<option value="vertical">竖屏 9:16 (vertical)</option>'
-        '<option value="horizontal">横屏 16:9 (horizontal)</option>'
+        '<option value="vertical">竖屏 9:16</option>'
+        '<option value="horizontal">横屏 16:9</option>'
         "</select></label>"
-        '<label class="ctl">预设 (preset)'
+        '<label class="ctl">预设'
         f'<select id="ws-new-preset" name="preset">{"".join(preset_options)}</select></label>'
-        '<label class="ctl">所在目录 (parent dir, optional)'
+        '<label class="ctl">保存位置（可选）'
         '<input type="text" id="ws-new-path" name="path" '
-        'placeholder="留空则用当前工作目录 (default: cwd)"></label>'
-        '<button type="submit" class="btn">创建 (Create)</button>'
-        "</form></section>"
-        '<div id="ws-err" class="ws-err" role="alert"></div>'
-        "</div>"
+        'placeholder="留空则使用当前目录"></label>'
+        '<button type="submit" class="btn">创建项目</button>'
+        "</form></section></div>"
+        '<section id="ws-feedback" class="ws-feedback" role="alert" aria-live="assertive" tabindex="-1" hidden><div class="ws-feedback-mark" aria-hidden="true">!</div><div><h2 id="ws-feedback-title">操作没有完成</h2><p id="ws-feedback-copy"></p><p class="ws-feedback-protect">项目没有被修改，刚才填写的内容仍然保留。</p><details id="ws-feedback-tech" hidden><summary>技术详情</summary><pre id="ws-feedback-detail"></pre></details></div></section>'
+        "</main>"
     )
 
     return (
         "<!doctype html>\n"
-        '<html lang="zh">\n<head>\n'
+        f'<html lang="{HTML_LANG}">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f'<meta name="manju-token" content="{_e(token)}">\n'
-        "<title>Manju 工作区 · workspace</title>\n"
+        "<title>打开或新建项目 · Manju</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/workspace.css">\n'
         '<link rel="stylesheet" href="/project-action.css">\n'
@@ -278,9 +283,9 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
         '<script src="/workspace.js" defer></script>\n'
         "</head>\n"
         '<body data-page="/workspace">\n'
-        + body
-        + "\n<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
-        "</body>\n</html>\n"
+        + SKIP_LINK_HTML + body
+        + "\n" + NOSCRIPT_HTML + "\n"
+        + "</body>\n</html>\n"
     )
 
 
@@ -294,10 +299,36 @@ def render_workspace_js() -> str:
 
 _WORKSPACE_CSS = """
 /* manju gui — workspace picker (round X agent XE) */
-.ws-wrap { max-width: 860px; margin: 0 auto; padding: 1.2rem 1.4rem 3rem; }
-.ws-wrap h1 { font-size: 1.3rem; margin: .2rem 0 .8rem; }
+.workspace-page { max-width: 960px; margin: 0 auto; padding: 1.2rem 1.4rem 3rem; }
+.ws-brand { display: flex; align-items: center; gap: .65rem; margin: .1rem 0 1.5rem; }
+.ws-brand-mark {
+  display: inline-grid; place-items: center; width: 2.35rem; height: 2.35rem;
+  border-radius: 10px; background: var(--accent); color: #0b1220;
+  font-weight: 900; box-shadow: inset 0 0 0 1px rgba(255,255,255,.24);
+}
+.ws-brand span:last-child { display: flex; flex-direction: column; line-height: 1.2; }
+.ws-brand strong { font-size: 1.05rem; }
+.ws-brand small { color: var(--muted); margin-top: .18rem; }
+.workspace-page h1 { font-size: 1.55rem; margin: .2rem 0 .25rem; }
+.ws-lede { color: var(--muted); margin: 0 0 1.2rem; max-width: 44rem; }
+.ws-current {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .2rem .65rem;
+  align-items: baseline; margin: .9rem 0 .4rem; padding: .72rem .85rem;
+  max-width: 46rem; border: 1px solid var(--line); border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+}
+.ws-current-label { color: var(--muted); font-size: .75rem; grid-column: 1 / -1; }
+.ws-current strong { min-width: 0; }
+.ws-current-path {
+  min-width: 0; color: var(--muted); font-size: .75rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ws-current-note { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; }
+.ws-back { margin: .5rem 0 1rem; }
 .ws-section { margin: 1.4rem 0; padding: 1rem; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 10px; }
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-1); }
+.ws-action-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 1rem; }
+.ws-action-grid .ws-section { margin-top: 0; }
 .ws-section h2 { font-size: 1rem; margin: 0 0 .7rem; color: var(--muted); }
 .ws-note { color: var(--muted); font-size: .85rem; margin: 0 0 .6rem; }
 .ws-series { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 .6rem;
@@ -318,11 +349,42 @@ _WORKSPACE_CSS = """
   padding: .1rem .5rem; font-size: .72rem; color: var(--muted); white-space: nowrap; }
 .ws-chip-warn { color: #ffb4b4; border-color: #6a2f2f; }
 .ws-form { display: flex; flex-direction: column; gap: .6rem; max-width: 420px; }
-.ws-form .ctl { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem;
-  color: var(--muted); }
-.ws-form input, .ws-form select { background: var(--panel2); color: var(--fg);
-  border: 1px solid var(--line); border-radius: 6px; padding: .35rem .5rem; font: inherit; }
-.ws-err { color: #ffb4b4; font-size: .85rem; min-height: 1.2em; margin-top: .6rem; }
+.ws-form .ctl { display: flex; flex-direction: column; align-items: stretch;
+  gap: .25rem; font-size: .85rem; color: var(--muted); }
+.ws-form input, .ws-form select { width: 100%; box-sizing: border-box;
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .5rem .6rem; font: inherit; }
+.ws-feedback {
+  display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .75rem;
+  margin: 1.1rem 0 0; padding: .85rem 1rem; border: 1px solid #8a4247;
+  border-radius: 10px; background: #30191c; color: var(--fg);
+}
+.ws-feedback-mark {
+  display: grid; place-items: center; width: 1.75rem; height: 1.75rem;
+  border-radius: 999px; background: #57272c; color: #ffd7da; font-weight: 850;
+}
+.ws-feedback h2 { margin: 0 0 .25rem; border: 0; padding: 0; color: #ffd7da; }
+.ws-feedback p { margin: .2rem 0; }
+.ws-feedback-protect { color: #c8cbd2; font-size: .82rem; }
+.ws-feedback details { margin-top: .45rem; }
+.ws-feedback summary { color: #ffc2c6; cursor: pointer; font-size: .78rem; }
+.ws-feedback pre {
+  margin: .45rem 0 0; padding: .55rem .65rem; max-height: 12rem; overflow: auto;
+  border-radius: 7px; background: #15171c; color: #d7d9de; white-space: pre-wrap;
+  overflow-wrap: anywhere; font-size: .75rem;
+}
+@media (max-width: 620px) {
+  .workspace-page { padding: .85rem .65rem 2rem; }
+  .ws-section { margin: .85rem 0; padding: .8rem; }
+  .ws-action-grid { grid-template-columns: 1fr; gap: 0; }
+  .ws-row { align-items: flex-start; flex-direction: column; }
+  .ws-row-chips { justify-content: flex-start; }
+  .ws-row-path { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .ws-current { grid-template-columns: 1fr; }
+  .ws-current-label, .ws-current-note { grid-column: auto; }
+  .ws-current-path { white-space: normal; overflow-wrap: anywhere; }
+  .ws-form { max-width: none; }
+}
 """
 
 _WORKSPACE_JS = r"""
@@ -332,9 +394,38 @@ _WORKSPACE_JS = r"""
 (function () {
   var meta = document.querySelector('meta[name="manju-token"]');
   var TOKEN = meta ? (meta.getAttribute("content") || "") : "";
-  var errBox = document.getElementById("ws-err");
+  var feedback = document.getElementById("ws-feedback");
+  var feedbackTitle = document.getElementById("ws-feedback-title");
+  var feedbackCopy = document.getElementById("ws-feedback-copy");
+  var feedbackTech = document.getElementById("ws-feedback-tech");
+  var feedbackDetail = document.getElementById("ws-feedback-detail");
 
-  function showErr(msg) { if (errBox) errBox.textContent = msg || ""; }
+  function clearFeedback() {
+    if (!feedback) return;
+    feedback.hidden = true;
+    if (feedbackCopy) feedbackCopy.textContent = "";
+    if (feedbackDetail) feedbackDetail.textContent = "";
+    if (feedbackTech) feedbackTech.hidden = true;
+  }
+
+  function errorText(err) {
+    if (err && err.data && err.data.error) return String(err.data.error);
+    if (err && err.message) return String(err.message);
+    return err ? String(err) : "未知错误";
+  }
+
+  function showError(title, err, next) {
+    if (!feedback) return;
+    feedback.hidden = false;
+    if (feedbackTitle) feedbackTitle.textContent = title || "操作没有完成";
+    if (feedbackCopy) feedbackCopy.textContent = next || "请检查项目路径后重试。";
+    var detail = errorText(err);
+    if (feedbackDetail) feedbackDetail.textContent = detail;
+    if (feedbackTech) feedbackTech.hidden = !detail;
+    feedback.scrollIntoView({ block: "nearest" });
+    try { feedback.focus({ preventScroll: true }); }
+    catch (focusError) { feedback.focus(); }
+  }
 
   function apiOpts() {
     return (typeof manjuApiOptions === "function")
@@ -376,7 +467,7 @@ _WORKSPACE_JS = r"""
   }
 
   function openPath(path) {
-    showErr("");
+    clearFeedback();
     post("/api/workspace/open", { path: path })
       .then(onAction)
       .catch(function (err) {
@@ -384,7 +475,8 @@ _WORKSPACE_JS = r"""
           onAction(err.data);
           return;
         }
-        showErr("打开失败 (open failed): " + ((err && err.message) || String(err)));
+        showError("无法打开这个项目", err,
+          "请确认这是一个可访问的 .manju 项目文件夹，然后重试。");
       });
   }
 
@@ -406,9 +498,14 @@ _WORKSPACE_JS = r"""
   if (newForm) {
     newForm.addEventListener("submit", function (ev) {
       ev.preventDefault();
-      showErr("");
+      clearFeedback();
       var name = (document.getElementById("ws-new-name") || {}).value || "";
-      if (!name.trim()) { showErr("请输入名称 (name required)"); return; }
+      if (!name.trim()) {
+        showError("还缺少项目名称", null, "填写一个名称后即可创建项目。");
+        var nameInput = document.getElementById("ws-new-name");
+        if (nameInput) nameInput.focus();
+        return;
+      }
       var body = {
         name: name.trim(),
         vertical: (document.getElementById("ws-new-orient") || {}).value !== "horizontal"
@@ -424,7 +521,8 @@ _WORKSPACE_JS = r"""
             onAction(err.data);
             return;
           }
-          showErr("创建失败 (create failed): " + ((err && err.message) || String(err)));
+          showError("项目没有创建", err,
+            "请检查名称和保存位置；现有项目与刚才填写的内容都没有被修改。");
         });
     });
   }

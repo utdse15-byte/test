@@ -408,11 +408,13 @@ def test_error_toasts_are_sticky_and_success_toasts_still_autodismiss():
     quick dismiss. Source-level pin on the one shared toast()."""
     from manju.gui.common_js import COMMON_JS
 
-    assert "ok === false" in COMMON_JS
-    # the error branch must NOT ride the same unconditional 3600ms removal
     body = COMMON_JS.split("function toast(")[1]
-    assert "click" in body  # click-to-dismiss exists
-    assert "3600" in body   # the success path keeps the quick dismiss
+    # Errors have no auto-dismiss timer; success/warning feedback remains
+    # transient and every toast has an explicit keyboard-readable close button.
+    assert 'tone === "bad" ? 0' in body
+    assert "4500" in body and "8000" in body
+    assert 'aria-label", "关闭这条提示"' in body
+    assert "click" in body
 
 
 def test_board_banner_is_viewport_fixed():
@@ -1567,12 +1569,18 @@ def test_spa_error_toast_sticky_and_toasts_announced():
     from manju.gui.page import render_js
 
     js = render_js()
-    seg = js.split("const toast = ")[1].split("};")[0]
-    # F20 parity: an error stays until clicked; success keeps auto-dismiss
-    assert 'if (kind === "err")' in seg and "setTimeout" in seg
-    # both toast systems announce politely to assistive tech
-    assert 'setAttribute("aria-live", "polite")' in js
-    assert 'setAttribute("aria-live", "polite")' in render_common_js()
+    seg = js.split("const toast = ")[1].split("/* ---------------------------------------------------- request")[0]
+    # Errors remain until dismissed; success/warnings retain bounded timers.
+    assert 'tone === "err" ? 0' in seg
+    assert "4500" in seg and "8000" in seg and "setTimeout" in seg
+    assert 'setAttribute("aria-label", "关闭这条提示")' in seg
+    # Each message owns the appropriate live-region role instead of forcing
+    # assertive errors through a shared polite rack.
+    assert 'tone === "err" ? "alert" : "status"' in seg
+    assert 'tone === "err" ? "assertive" : "polite"' in seg
+    common = render_common_js()
+    assert 'tone === "bad" ? "alert" : "status"' in common
+    assert 'tone === "bad" ? "assertive" : "polite"' in common
 
 
 def test_workbench_speaks_the_state_vocabulary():

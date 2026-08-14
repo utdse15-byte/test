@@ -34,6 +34,7 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+from .a11y import HTML_LANG, NOSCRIPT_HTML, SKIP_LINK_HTML, main_open
 from .glossary import tooltip_html
 
 __all__ = [
@@ -236,11 +237,11 @@ def _mode_controls(mode: str, show_terms: bool) -> str:
         '<div class="mj-view-popover">'
         '<div class="mj-view-title">界面视图</div>'
         '<span class="mj-nav-ctl">'
-        '<span class="mj-modesw" role="group" aria-label="视图模式 (view mode)">'
+        '<span class="mj-modesw" role="group" aria-label="界面视图">'
         + btn("beginner", "新手") + btn("pro", "专业")
         + "</span>"
         '<label class="mj-terms-toggle" '
-        'title="在每个中文词旁显示英文原词 (show the engineering term beside it)">'
+        'title="在中文标签旁显示对应的专业术语">'
         f'<input type="checkbox" id="mj-terms-toggle"{checked}> 显示专业术语</label>'
         "</span></div></details>"
     )
@@ -264,7 +265,7 @@ def _workspace_switcher(project_name: str = "") -> str:
         f'<span class="mj-ws-label">{_e(label)}</span>'
         '<span class="mj-ws-caret" aria-hidden="true">▾</span></button>'
         '<div id="mj-ws-menu" class="mj-ws-menu hidden" role="menu" '
-        'aria-label="切换项目 (switch project)"></div>'
+        'aria-label="切换项目"></div>'
         "</span>"
     )
 
@@ -308,7 +309,7 @@ def _mode_hint() -> str:
         '<span class="mj-mode-hint-actions">'
         '<button type="button" class="mj-mode-btn mj-mode-hint-pro" '
         'data-mode="pro">查看全部功能</button>'
-        '<button type="button" id="mj-mode-hint-x" aria-label="知道了 (dismiss)">'
+        '<button type="button" id="mj-mode-hint-x" aria-label="关闭新手提示">'
         "知道了</button></span></div>"
     )
 
@@ -411,7 +412,7 @@ def _shell(title: str, token: str, active: str, body: str, project: Any = None) 
     nav, bcls = chrome(active, project)
     return (
         "<!doctype html>\n"
-        '<html lang="zh">\n<head>\n'
+        f'<html lang="{HTML_LANG}">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f'<meta name="manju-token" content="{_e(token)}">\n'
@@ -422,13 +423,13 @@ def _shell(title: str, token: str, active: str, body: str, project: Any = None) 
         + '<script src="/common.js" defer></script>\n<script src="/pages.js" defer></script>\n'
         "</head>\n"
         f'<body data-page="{_e(active)}" class="{bcls}">\n'
-        + nav
-        + "\n<main>\n"
+        + SKIP_LINK_HTML + nav
+        + "\n" + main_open() + "\n"
         + body
         + "\n</main>\n"
         '<div id="toast"></div>\n'
-        "<noscript><p>manju gui 需要 JavaScript (requires JavaScript)。</p></noscript>\n"
-        "</body>\n</html>\n"
+        + NOSCRIPT_HTML + "\n"
+        + "</body>\n</html>\n"
     )
 
 
@@ -476,7 +477,7 @@ def _player(url: str | None, ext: str, poster: str | None = None,
             cls: str = "", *, lazy: bool = False) -> str:
     """A <video> or <img> element for a media url, degrading to a muted note."""
     if not url:
-        return '<p class="muted">无媒体 (no media)</p>'
+        return '<p class="muted">没有可播放的媒体</p>'
     if ext in ("png", "jpg", "jpeg", "webp", "gif"):
         return f'<img class="{cls}" src="{_e(url)}" alt="">'
     p = f' poster="{_e(poster)}"' if poster else ""
@@ -1162,7 +1163,7 @@ def _consistency_card(unit: dict, cov: dict) -> str:
     # and /pages.js initReviewConsistencyBoards). Never composed on the /review
     # GET, so the request thread spawns no ffprobe/ffmpeg.
     img_html = ('<div class="cs-board-slot" data-cs-board="1">'
-                '<span class="muted">看板加载中… (loading board)</span></div>')
+                '<span class="muted">正在加载看板…</span></div>')
     members = ", ".join(m["shot"] for m in (unit.get("members") or []))
     state = cov.get("state", "never")
     state_label = _CS_STATE_LABEL.get(state, state)
@@ -1183,9 +1184,9 @@ def _consistency_card(unit: dict, cov: dict) -> str:
         f'  <div class="cs-form btnrow">'
         f'    <select class="cs-criterion">{crit_opts}</select>'
         f'    <select class="cs-level">'
-        f'      <option value="fyi">fyi</option>'
-        f'      <option value="issue">issue</option>'
-        f'      <option value="blocker">blocker</option>'
+        f'      <option value="fyi">提示</option>'
+        f'      <option value="issue">问题</option>'
+        f'      <option value="blocker">阻塞</option>'
         f'    </select>'
         f'    <input class="cs-message" placeholder="中文结论(必填)">'
         f'    <button type="button" class="btn ghost mini" data-act="cs-submit">提交裁决</button>'
@@ -1316,7 +1317,7 @@ def render_compare(project: Any, token: str, a: str | None, b: str | None) -> st
 
     if diff.get("degraded"):
         note = (
-            '<div class="cmp-degraded panel"><span class="badge st-stale">degraded</span> '
+            '<div class="cmp-degraded panel"><span class="badge st-stale">降级模式</span> '
             + _e(diff.get("note") or "per-shot detail unavailable (pre-S final)")
             + "</div>"
         )
@@ -1635,7 +1636,7 @@ def _refs_section_html(project: Any, orphans_only: bool) -> str:
 
     if not rows:
         table_html = ('<p class="muted">没有孤儿参考文件 (no orphan refs)。</p>' if orphans_only
-                      else '<p class="muted">media/refs 目录为空 (no ref files)。</p>')
+                      else '<p class="muted">参考素材目录为空。</p>')
     else:
         trs = []
         for r in rows:
@@ -1667,15 +1668,15 @@ def _refs_section_html(project: Any, orphans_only: bool) -> str:
     if missing:
         items = "".join(
             f'<li>{_e(m["bible_file"])}:{_e(m["asset_id"])} · {_e(m["field"])} → '
-            f'{_e(m["value"])} (文件不存在, missing)</li>'
+            f'{_e(m["value"])} （文件不存在）</li>'
             for m in missing
         )
         missing_html = (
-            '<div class="refs-missing"><h3>缺失指向 (missing pointers)</h3>'
+            '<div class="refs-missing"><h3>失效的素材指向</h3>'
             f'<ul>{items}</ul></div>'
         )
     else:
-        missing_html = '<p class="muted">没有失效的 bible 指向 (no missing bible pointers)。</p>'
+        missing_html = '<p class="muted">没有失效的角色、场景或道具指向。</p>'
 
     owner_options = _refs_owner_options_html(project)
     assign_form = (
@@ -1772,8 +1773,8 @@ def render_providers(project: Any, token: str) -> str:
             check_html = f'<ul class="pv-check bad">{findings}</ul>'
         toggle_label = "禁用" if enabled else "启用"
         toggle_cls = "ghost" if enabled else ""
-        status_badge = ('<span class="badge st-fresh">enabled</span>' if enabled
-                        else '<span class="badge st-missing">disabled</span>')
+        status_badge = ('<span class="badge st-fresh">已启用</span>' if enabled
+                        else '<span class="badge st-missing">未启用</span>')
         cards.append(
             f'<div class="pv-card panel" data-id="{_e(r["id"])}">'
             f'<div class="pv-head"><h2>{_e(r["id"])} {status_badge}</h2>'
@@ -1858,7 +1859,7 @@ def render_routing(project: Any, token: str) -> str:
     cards = []
     for s in info["strategies"]:
         act = s["name"] == active
-        badge = '<span class="badge st-fresh">active</span>' if act else ""
+        badge = '<span class="badge st-fresh">当前生效</span>' if act else ""
         tag = "内置" if s["builtin"] else "自定义"
         pr = f' · priority={_e(s["priority"])}' if s.get("priority") else ""
         cards.append(
@@ -2046,9 +2047,23 @@ _PAGES_CSS = """
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: .2rem; padding: .22rem .65rem .42rem;
   }
-  .pnav-stage { min-height: 32px; padding: .3rem .35rem; }
-  .pnav-subbar { min-height: 34px; padding: .25rem .65rem; }
+  .pnav-stage { min-height: 36px; padding: .3rem .35rem; }
+  .pnav-subbar { min-height: 36px; padding: .25rem .65rem; }
   .pnav-subtitle { display: none; }
+}
+@media (max-width: 360px) {
+  .pnav-appbar { align-items: flex-start; flex-wrap: wrap; }
+  .pnav-brand-name { display: inline; }
+  .pnav-tools {
+    width: 100%; margin-left: 0; flex-wrap: wrap; justify-content: flex-start;
+  }
+  .mj-ws-wrap { flex: 1 1 8rem; }
+  .mj-ws-btn { width: 100%; max-width: none; }
+  .pnav-stagebar { padding-left: .45rem; padding-right: .45rem; }
+  .pnav-subbar { white-space: normal; flex-wrap: wrap; overflow-x: visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pnav-stage, .toast-item, .mj-toast-repeat { animation: none !important; transition: none !important; }
 }
 
 /* round X (agent XD): 剧集 series-membership banner, injected by chrome()
@@ -2209,17 +2224,32 @@ a.mj-shot-step:hover { color: var(--fg); border-color: #4b5566; filter: none; }
 .err { color: var(--err); }
 .mini { padding: .1rem .5rem !important; font-size: .74rem !important; }
 
-#toast { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: .4rem; z-index: 200; }
+#toast {
+  position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column;
+  gap: .45rem; z-index: 200; max-width: min(420px, calc(100vw - 1.25rem));
+}
 .toast-item {
-  background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
-  padding: .45rem .8rem; border-radius: 8px; font-size: .84rem; max-width: 340px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.5);
-  /* same entrance + accent-edge language as the SPA's .toast (app.css) — the
-   * two toast systems stay separate code, one visual voice. */
-  border-left-width: 4px; animation: mj-rise .18s ease-out;
+  display: grid; grid-template-columns: minmax(0, 1fr) 2rem; align-items: start;
+  gap: .55rem; background: var(--panel2); border: 1px solid var(--line);
+  border-left-width: 4px; color: var(--fg); padding: .58rem .55rem .58rem .8rem;
+  border-radius: 9px; font-size: .84rem; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  animation: mj-rise .18s ease-out; overflow-wrap: anywhere;
 }
 .toast-item.good { border-color: #2c5a3f; border-left-color: var(--ok); }
-.toast-item.bad { border-color: #5a2c2f; border-left-color: var(--err); color: var(--err); }
+.toast-item.warn { border-color: #826323; border-left-color: var(--warn); }
+.toast-item.bad { border-color: #8a4247; border-left-color: var(--err); }
+.mj-toast-copy { min-width: 0; padding-top: .12rem; }
+.mj-toast-close {
+  display: inline-grid; place-items: center; width: 2rem; height: 2rem; padding: 0;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 1.05rem; cursor: pointer;
+}
+.mj-toast-close:hover { color: var(--fg); background: rgba(255,255,255,.06); }
+.mj-toast-repeat { animation: mj-toast-repeat .22s ease-out; }
+@keyframes mj-toast-repeat { 50% { transform: translateY(-2px); filter: brightness(1.18); } }
+@media (max-width: 520px) {
+  #toast { left: .55rem; right: .55rem; bottom: .55rem; max-width: none; }
+}
 
 /* ---------------------------------------------------------- review -- */
 body[data-page="/review"] {
@@ -2620,10 +2650,10 @@ _PAGES_JS = r"""
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
         function () { toast("上下文已复制，可粘贴到 IDE 助手", true); },
-        function () { toast("复制失败,请手动选择", false); }
+        function () { toast("复制失败，请手动选择", false); }
       );
     } else {
-      toast("复制失败,请手动选择", false);
+      toast("复制失败，请手动选择", false);
     }
   }
 
@@ -2712,7 +2742,7 @@ _PAGES_JS = r"""
         .then(function (res) {
           btn.disabled = false;
           if (res.status === 200) {
-            toast("裁决已提交:" + unit, true);
+            toast("裁决已提交：" + unit, true);
             msgEl.value = "";
             var chip = card.querySelector(".cs-state");
             if (chip) {
