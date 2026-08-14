@@ -1,8 +1,11 @@
 # Product Polish R1 · Wave 11 — Chinese-first Language, Durable Feedback and Accessible Reflow
 
-Date: 2026-08-14  
-Branch: `codex/product-polish-r1`  
-Baseline: `7b5b8f2d727653342a4832921fbbb3b9d5fc3cae`  
+Date: 2026-08-14
+
+Branch: `codex/product-polish-r1`
+
+Baseline: `7b5b8f2d727653342a4832921fbbb3b9d5fc3cae`
+
 Feature commit: `77eefcbf4b198a98fafa97f22224e12115de55fe`
 
 ## Decision
