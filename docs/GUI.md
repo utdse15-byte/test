@@ -391,6 +391,10 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
 - **导航按使用频率分六组**(工作台·创作·镜头·审片·成片·工具箱),纯呈现层
   CSS 下拉:全部 17 条链接始终在 DOM 里(模式 pin 依赖这一点),_NAV 是
   唯一标签 owner。
+- **成片阶段是一条连续旅程**:`/edit`、`/subtitles`、`/mixer`、
+  `/packaging`、`/exports` 共用只读流程条;首屏后只读取一次
+  `/api/finishing/status`,状态继续由 exportstatus/readiness 拥有。
+  “可进入锁片评审”不是 Picture Lock,GUI 不保存第二份进度。
 - **`/create` 不把 build 当锁片**:创作轨使用故事与结尾、SceneContract /
   ShotContract、Animatic / Proof 和 candidate 术语；同页只读显示
   `proxy-only` / `candidate` / `final-eligible` 与 Picture Lock eligibility，

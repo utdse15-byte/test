@@ -1,0 +1,58 @@
+{
+  "desktop": {
+    "innerWidth": 1440,
+    "scrollWidth": 1430,
+    "bodyWidth": 1430,
+    "journey": {
+      "x": 19.1875,
+      "y": 145.265625,
+      "width": 1391.625,
+      "height": 129.265625,
+      "top": 145.265625,
+      "right": 1410.8125,
+      "bottom": 274.53125,
+      "left": 19.1875
+    }
+  },
+  "narrow": {
+    "innerWidth": 390,
+    "scrollWidth": 380,
+    "bodyWidth": 380,
+    "journey": {
+      "x": 11.1875,
+      "y": 292.671875,
+      "width": 357.625,
+      "height": 274.015625,
+      "top": 292.671875,
+      "right": 368.8125,
+      "bottom": 566.6875,
+      "left": 11.1875
+    }
+  },
+  "status": {
+    "ok": true,
+    "final": {
+      "state": "missing",
+      "class": "st-missing",
+      "label": "尚无成片",
+      "basis": "从未渲染成片(renders/final 无 final_v*)",
+      "path": null
+    },
+    "picture_lock": {
+      "eligible": false,
+      "class": "st-missing",
+      "label": "镜头尚未完成",
+      "counts": {
+        "proxy-only": 0,
+        "candidate": 0,
+        "final-eligible": 0,
+        "none": 2
+      },
+      "reasons": [
+        "S001: none",
+        "S002: none"
+      ],
+      "summary": "有 2 个镜头还没有当前视频版本。"
+    }
+  }
+}

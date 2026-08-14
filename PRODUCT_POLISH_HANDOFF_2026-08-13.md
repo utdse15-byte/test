@@ -156,3 +156,35 @@ git switch codex/product-polish-r1
 环境边界：当前沙箱 Chromium 被管理员策略禁止访问 localhost，所以没有声称 live-server Playwright 已通过；离线真实 HTML/CSS 截图已完成。下一位在 Windows App 模式补一次真实点击与 toast 确认即可。
 
 后续优先级：继续统一“剪辑 → 字幕 → 混音 → 包装 → 导出”的成片旅程，不扩展新 AI 功能。
+
+## 9. Wave 4：连续成片旅程
+
+功能提交：`2bc0df1 R1: connect the finishing journey`；
+`2097fa0 R1: finish Chinese-first edit labels`。
+
+功能范围：剪辑、字幕、混音、包装、导出五个既有页面的产品统一。
+
+已完成：
+
+- 新增共享成片流程条，五页始终可见当前阶段、上一步与下一步；
+- 成片 freshness 和派生 Picture Lock eligibility 由现有 owner 懒读取一次；
+- 文案使用“可进入锁片评审”，没有把资格冒充成已经锁片；
+- `/edit` 首屏继续零 finishing 计算、零重新编译、零子进程；
+- 导出页回到共享项目 / 新手专业模式 chrome；
+- 剪辑、字幕、混音、包装改为中文优先，英文由现有专业术语开关控制；
+- 窄窗口以 3+2 网格完整显示五个阶段，页面本身不横向溢出；
+- status endpoint 已证明不写项目。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE4_FINISHING_JOURNEY.md`
+- `REPORTS/product-polish-r1/screenshots/wave4/`
+- `REPORTS/product-polish-r1/wave4-tests/`
+
+逐组相关测试共 172 passed：10 + 6 + 19 + 19 + 5 + 34 + 17 + 1 + 38 + 23。
+四项明确未运行的 GUI FFmpeg 像素测试和未在时限内完成的其余 edit-v3 慢测试
+均不冒充通过。
+
+后续优先级：先打磨窄窗口下的全局应用导航与新手提示密度，再把外部精剪返回状态
+接入成片阶段；继续保持只读、append-only、人工采用，不扩展新 AI 功能。阶段收口时
+再运行同 SHA Windows / Ubuntu / pinned FFmpeg hard gate。

@@ -10,6 +10,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `THREE_PROJECTS_BASELINE_2026-08-11.md` | G0-001 strict zero-cost baseline, cross-platform fixture repair, FFmpeg 6.1.1/8.1.2 corpus evidence |
 | `BUDGET_SEMANTICS_2026-08-13.md` | Per-build `budget.limit` semantics made explicit across GUI, board, CLI and docs |
 | `product-polish-r1/WAVE3_FINISHING_TRUST.md` | Product Polish R1 wave 3: explicit OTIO/FCPXML carrier-vs-baseline readiness, fail-closed roundtrip apply, export-center finishing surface |
+| `product-polish-r1/WAVE4_FINISHING_JOURNEY.md` | Product Polish R1 wave 4: shared 剪辑→字幕→混音→包装→导出 journey, lazy current-final / lock-eligibility projection, Chinese-first finishing chrome |
 | `VIDEO_AUTHORING_GENERALIZATION_2026-08-08.md` | generic offline profiles, canonical plan/reference graph, immutable v2 handoff and full verifier |
 | `UNIFIED_FILM_REHEARSAL_2026-08-07.md` | NARRATIVE-CLOSED-LOOP #17; v5.0 AV0-AV8 zero-network rehearsal |
 | `PRODUCTION_READINESS_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #10 |
