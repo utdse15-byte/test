@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import warnings as _warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,19 @@ if TYPE_CHECKING:  # annotation only — no Fraction is constructed here
 #: That is a different state from "there is no baseline" and the two may never
 #: be merged: no-baseline is a legal mode, an unusable baseline is a refusal.
 BASELINE_CORRUPT = "roundtrip_baseline_corrupt"
+#: Stable machine token for a carrier that has no export-time comparison
+#: sidecar. A missing baseline is not corruption, but it still makes an apply
+#: unsafe: the external file no longer has a trustworthy T0 to diff against.
+BASELINE_MISSING = "roundtrip_baseline_missing"
+
+
+class RoundtripBaselineWarning(RuntimeWarning):
+    """An interchange file landed, but its optional round-trip sidecar did not.
+
+    The export itself remains useful as a one-way handoff. The warning exists
+    so direct Python callers do not silently mistake that success for a safely
+    recoverable round trip.
+    """
 
 
 class RoundtripBaselineError(ProjectError):
@@ -45,6 +59,51 @@ class RoundtripBaselineError(ProjectError):
     def __init__(self, message: str, *, reason: str = BASELINE_CORRUPT) -> None:
         super().__init__(message)
         self.reason = reason
+
+
+def write_baseline_best_effort(
+    project: Project,
+    kind: str,
+    name: str,
+    document: dict,
+    *,
+    compiled_from: str = "",
+    warning_sink: list[str] | None = None,
+    carrier_label: str | None = None,
+) -> Path | None:
+    """Write an export-time baseline without discarding the carrier on error.
+
+    ``write_baseline`` stays the strict primitive. Exporters use this wrapper
+    because a missing sidecar must not destroy an otherwise useful OTIO/
+    FCPXML/JianYing file. The degraded state is never silent:
+
+    * CLI/GUI callers pass ``warning_sink`` and surface the message to the
+      human in the same operation result;
+    * direct library callers receive :class:`RoundtripBaselineWarning`.
+
+    The returned ``None`` means "one-way export only". It must never be treated
+    as round-trip ready.
+    """
+    try:
+        return write_baseline(
+            project,
+            kind,
+            name,
+            document,
+            compiled_from=compiled_from,
+        )
+    except Exception as exc:
+        label = carrier_label or kind.upper()
+        detail = " ".join(str(exc).split())[:240] or exc.__class__.__name__
+        message = (
+            f"{label} 已导出，但回程基线创建失败；文件仍可单向打开，"
+            f"不能安全回收外部修改。原因: {detail}"
+        )
+        if warning_sink is not None:
+            warning_sink.append(message)
+        else:
+            _warnings.warn(message, RoundtripBaselineWarning, stacklevel=2)
+        return None
 
 
 def _load_json(path: Path) -> Any:
@@ -100,7 +159,12 @@ def detect_kind(data: Any, path: Path) -> str:
     )
 
 
-def find_baseline(project: Project, edited: Path) -> Path | None:
+def find_baseline(
+    project: Project,
+    edited: Path,
+    *,
+    kind: str | None = None,
+) -> Path | None:
     """Locate exports/<kind>/.baseline/<name>.json near the edited file.
 
     Two real layouts (see the exporters):
@@ -125,15 +189,84 @@ def find_baseline(project: Project, edited: Path) -> Path | None:
             cand = parent / ".baseline" / name
             if cand.exists():
                 return cand
-    # Project-wide search under exports/
+    # Project-wide search under exports/. Once the carrier kind is known, stay
+    # inside its own directory. OTIO and FCPXML normally share the project stem;
+    # a broad search could otherwise pair ``film.fcpxml`` with
+    # ``exports/otio/.baseline/film.json`` and falsely declare the round trip
+    # safe after the real FCPXML sidecar was lost.
     exports = project.root / "exports"
     if exports.exists():
-        for p in sorted(exports.rglob(".baseline"), key=lambda q: q.as_posix()):
+        roots = [exports / kind / ".baseline"] if kind else sorted(
+            exports.rglob(".baseline"), key=lambda q: q.as_posix())
+        for p in roots:
+            if not p.is_dir():
+                continue
             for name in names:
                 cand = p / name
                 if cand.exists():
                     return cand
     return None
+
+
+def inspect_roundtrip_baseline(
+    project: Project,
+    edited: Path | str,
+    *,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    """Read-only readiness for an exported interchange carrier.
+
+    This is the one product-facing owner for the distinction between:
+
+    * the carrier itself being absent;
+    * a carrier that can still be opened but has no comparison sidecar;
+    * a present-but-corrupt sidecar (fail closed);
+    * a carrier that is safe to plan/apply as a Manju round trip.
+
+    The result is derived and deletable. It never writes a report and never
+    becomes a build input.
+    """
+    edited_path = Path(edited)
+    if not edited_path.exists():
+        return {
+            "state": "carrier_missing",
+            "ready": False,
+            "carrier": str(edited_path),
+            "baseline": None,
+            "reason": "尚未导出文件",
+        }
+    if kind is None:
+        suffix_kind = edited_path.suffix.lower().lstrip(".")
+        if suffix_kind in ("fcpxml", "otio"):
+            kind = suffix_kind
+        elif edited_path.name == "draft_content.json":
+            kind = "jianying"
+    baseline_path = find_baseline(project, edited_path, kind=kind)
+    if baseline_path is None:
+        return {
+            "state": "baseline_missing",
+            "ready": False,
+            "carrier": str(edited_path),
+            "baseline": None,
+            "reason": "文件可继续精剪，但缺少导出时的回程基线，不能安全回收修改",
+        }
+    try:
+        _read_baseline(baseline_path)
+    except RoundtripBaselineError as exc:
+        return {
+            "state": "baseline_corrupt",
+            "ready": False,
+            "carrier": str(edited_path),
+            "baseline": str(baseline_path),
+            "reason": " ".join(str(exc).split())[:400],
+        }
+    return {
+        "state": "ready",
+        "ready": True,
+        "carrier": str(edited_path),
+        "baseline": str(baseline_path),
+        "reason": "导出文件与回程基线均可用，可以安全分析外部修改",
+    }
 
 
 def _captions_file_hash(project: Project) -> str | None:
@@ -604,7 +737,7 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
         except Exception as exc:
             raise ProjectError(f"无法解析 JSON: {exc}") from exc
     kind = detect_kind(data, edited_path)
-    baseline_path = find_baseline(project, edited_path)
+    baseline_path = find_baseline(project, edited_path, kind=kind)
     baseline_doc = None
     compiled_from = ""
     baseline_cap_hash = None
@@ -902,24 +1035,47 @@ def plan_roundtrip(project: Project, edited_path: Path | str) -> dict[str, Any]:
                     shot, meta, bmeta, truth_moved=truth_moved,
                 ))
 
-    # Filter no_changes if we only have empty
+    baseline_ready = baseline_path is not None
+
+    # "Nothing changed" is only a real verdict when an export-time baseline
+    # existed. Without T0, an empty diff means "we cannot know" — not that the
+    # editor made no changes. Keep the read-only carrier inspection available,
+    # but make the plan's authority explicit for every caller (CLI, GUI, IDE).
     if not rows:
-        rows.append({
-            "class": "no_changes",
-            "state": "ok",
-            "evidence": {},
-            "target": None,
-            "action": None,
-        })
+        if baseline_ready:
+            rows.append({
+                "class": "no_changes",
+                "state": "ok",
+                "evidence": {},
+                "target": None,
+                "action": None,
+            })
+        else:
+            rows.append({
+                "class": "baseline_missing",
+                "state": "unverified",
+                "evidence": {
+                    "reason": (
+                        "缺少导出时的基线，无法证明没有变化；"
+                        "请把文件放回原导出目录或重新导出后再编辑"
+                    )
+                },
+                "target": None,
+                "action": None,
+            })
 
     return {
         "kind": kind,
         "edited": str(edited_path),
         "baseline": str(baseline_path) if baseline_path else None,
+        "baseline_state": "ready" if baseline_ready else "missing",
+        "appliable": baseline_ready,
+        "rows_reliable": baseline_ready,
         "truth_moved": truth_moved,
         "rows": rows,
         "carrier_note": (
-            "round-trip 仅支持 skeleton/OTIO;原生剪映/CapCut 草稿请编辑 skeleton 副本"
+            "round-trip 支持 JianYing skeleton、OTIO 与 FCPXML；"
+            "原生剪映/CapCut 草稿请编辑 skeleton 副本"
         ),
     }
 
@@ -937,6 +1093,12 @@ def apply_roundtrip(
     ``should_cancel`` (C52): checked before each selected row so GUI cancel
     stops mid-batch without undoing already-applied rows.
     """
+    if plan.get("appliable") is False:
+        raise RoundtripBaselineError(
+            f"{BASELINE_MISSING}: 缺少导出时的回程基线，拒绝应用外部修改；"
+            "文件仍可查看，但必须放回原导出目录或重新导出后再编辑",
+            reason=BASELINE_MISSING,
+        )
     from ..runtime.buildlock import build_lock
 
     all_rows = plan.get("rows") or []
@@ -997,7 +1159,14 @@ def apply_roundtrip(
                     srt_path = project.captions_dir / "captions.srt"
                     project.captions_dir.mkdir(parents=True, exist_ok=True)
                     edited_p = Path(plan.get("edited") or "")
-                    bl = find_baseline(project, edited_p) if edited_p.name else None
+                    bl = (
+                        find_baseline(
+                            project,
+                            edited_p,
+                            kind=str(plan.get("kind") or "") or None,
+                        )
+                        if edited_p.name else None
+                    )
                     base_cues = _full_caption_baseline(
                         project, plan, baseline_path=bl,
                     )

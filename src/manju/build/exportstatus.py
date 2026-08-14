@@ -953,6 +953,69 @@ def deliverables(project: Project) -> list[DeliverableRow]:
     return rows
 
 
+def finishing_interchange_data(project: Project) -> dict[str, Any]:
+    """Read-only readiness of the two neutral finishing carriers.
+
+    A carrier file and its export-time round-trip baseline are deliberately
+    separate facts. This projection lets CLI/GUI say all three useful truths:
+
+    * not exported yet;
+    * exported and openable, but one-way only because the baseline is missing;
+    * exported with a readable baseline and therefore safe to analyse/apply.
+
+    It is derived on every read and never becomes a build input.
+    """
+    from .roundtrip import inspect_roundtrip_baseline
+
+    config = _safe(lambda: project.load_config())
+    name = config.name if config is not None else project.root.name
+    specs = (
+        ("otio", "OTIO", project.exports_dir / "otio" / f"{name}.otio",
+         "通用交换时间线，适合继续剪辑或归档"),
+        ("fcpxml", "FCPXML", project.exports_dir / "fcpxml" / f"{name}.fcpxml",
+         "适合 Final Cut Pro / DaVinci Resolve 的精确时间线交换"),
+    )
+    carriers: list[dict[str, Any]] = []
+    for kind, label, path, purpose in specs:
+        if path.exists() and _size(path) == 0:
+            state = "carrier_problematic"
+            ready = False
+            reason = "导出文件为 0 字节，不能继续精剪"
+            baseline = None
+        else:
+            status = inspect_roundtrip_baseline(project, path, kind=kind)
+            state = str(status["state"])
+            ready = bool(status["ready"])
+            reason = str(status["reason"])
+            baseline = status.get("baseline")
+        try:
+            rel = project.relpath(path) if path.exists() else None
+        except Exception:
+            rel = None
+        baseline_rel = None
+        if baseline:
+            try:
+                baseline_rel = project.relpath(Path(str(baseline)))
+            except Exception:
+                baseline_rel = None
+        carriers.append({
+            "kind": kind,
+            "label": label,
+            "purpose": purpose,
+            "state": state,
+            "roundtrip_ready": ready,
+            "path": rel,
+            "baseline": baseline_rel,
+            "reason": reason,
+            "generate_command": f"manju export --{kind}",
+        })
+    return {
+        "carriers": carriers,
+        "ready": sum(1 for c in carriers if c["roundtrip_ready"]),
+        "total": len(carriers),
+    }
+
+
 def deliverables_data(project: Project) -> dict[str, Any]:
     """JSON-ready payload for the CLI ``--json`` and the GUI ``/api/exports``:
     the same rows both surfaces render, so they can never disagree.
@@ -966,7 +1029,11 @@ def deliverables_data(project: Project) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for r in rows:
         counts[r.freshness.value] = counts.get(r.freshness.value, 0) + 1
-    data: dict[str, Any] = {"deliverables": [r.to_dict() for r in rows], "counts": counts}
+    data: dict[str, Any] = {
+        "deliverables": [r.to_dict() for r in rows],
+        "counts": counts,
+        "finishing": finishing_interchange_data(project),
+    }
     from . import baseline as _baseline
 
     data["release_assessment"] = _baseline.release_assessment(project, rows=rows)

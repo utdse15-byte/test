@@ -4455,7 +4455,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     # exporters/packaging draft kinds → whether generation is a build (never) or
     # a free/local export (always here). final/proxy are deliberately absent.
-    _EXPORT_GEN_KINDS = ("srt", "ass", "otio", "jianying", "capcut", "cover", "teaser")
+    _EXPORT_GEN_KINDS = (
+        "srt", "ass", "otio", "fcpxml", "jianying", "capcut", "cover", "teaser"
+    )
 
     def _exports_get(self, path: str, url: Any) -> bool:
         """GET dispatch for the 导出中心 page + its static/read assets. Returns
@@ -4533,6 +4535,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         - srt/ass  → exporters.srt_ass.export_captions (writes both)
         - otio     → exporters.otio.export_otio
+        - fcpxml   → exporters.fcpxml.export_fcpxml
         - jianying → exporters.jianying.export_jianying (+ native attempt)
         - capcut   → exporters.native_draft.export_capcut_native (pycapcut)
         - cover/teaser → media.packaging.make_package (local ffmpeg cut)
@@ -4561,7 +4564,7 @@ class _Handler(BaseHTTPRequestHandler):
             # cross-process build lock keeps a GUI export from landing mid-build.
             # C33: cancel_scope so cover/teaser ffmpeg cuts honor job cancel.
             with _optional_build_lock(project.root, actor), cancel_scope(job.should_cancel):
-                if kind in ("srt", "ass", "otio", "jianying", "capcut"):
+                if kind in ("srt", "ass", "otio", "fcpxml", "jianying", "capcut"):
                     timeline = project.load_timeline()
                     if timeline is None:
                         raise RuntimeError("no timeline.json — run `manju build` first")
@@ -4575,9 +4578,54 @@ class _Handler(BaseHTTPRequestHandler):
                 elif kind == "otio":
                     from ..exporters.otio import export_otio
 
-                    out = export_otio(project, timeline)
-                    result = {"otio": project.relpath(out)}
-                    append_event(project.root, actor, "export", {**result, "via": "gui"})
+                    warnings: list[str] = []
+                    out = export_otio(project, timeline, baseline_warnings=warnings)
+                    from ..build.roundtrip import inspect_roundtrip_baseline
+
+                    readiness = inspect_roundtrip_baseline(project, out, kind="otio")
+                    result = {
+                        "otio": project.relpath(out),
+                        "roundtrip_ready": readiness["ready"],
+                        "warnings": warnings,
+                    }
+                    append_event(
+                        project.root,
+                        actor,
+                        "export",
+                        {
+                            "otio": result["otio"],
+                            "roundtrip_ready": readiness["ready"],
+                            "warning_count": len(warnings),
+                            "via": "gui",
+                        },
+                    )
+                elif kind == "fcpxml":
+                    from ..exporters.fcpxml import export_fcpxml
+                    from ..build.roundtrip import inspect_roundtrip_baseline
+
+                    warnings = []
+                    out = export_fcpxml(
+                        project,
+                        timeline,
+                        baseline_warnings=warnings,
+                    )
+                    readiness = inspect_roundtrip_baseline(project, out, kind="fcpxml")
+                    result = {
+                        "fcpxml": project.relpath(out),
+                        "roundtrip_ready": readiness["ready"],
+                        "warnings": warnings,
+                    }
+                    append_event(
+                        project.root,
+                        actor,
+                        "export",
+                        {
+                            "fcpxml": result["fcpxml"],
+                            "roundtrip_ready": readiness["ready"],
+                            "warning_count": len(warnings),
+                            "via": "gui",
+                        },
+                    )
                 elif kind == "jianying":
                     from ..exporters.jianying import export_jianying
                     from ..exporters.native_draft import (
@@ -4585,8 +4633,15 @@ class _Handler(BaseHTTPRequestHandler):
                         export_jianying_native,
                     )
 
-                    out = export_jianying(project, timeline)  # skeleton + lint
+                    warnings = []
+                    out = export_jianying(
+                        project,
+                        timeline,
+                        baseline_warnings=warnings,
+                    )  # skeleton + lint
                     result = {"jianying": project.relpath(out)}
+                    if warnings:
+                        result["warnings"] = warnings
                     try:
                         nat = export_jianying_native(project, timeline)
                         result["jianying_native"] = project.relpath(nat)

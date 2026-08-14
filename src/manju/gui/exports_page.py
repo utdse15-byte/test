@@ -44,6 +44,14 @@ _BADGE_CLASS = {
 # workbench build (plan modal → confirm), never a silent generate here.
 _BUILD_ONLY = {"final", "proxy"}
 
+_FINISHING_BADGE = {
+    "ready": ("st-fresh", "可安全回收"),
+    "carrier_missing": ("st-missing", "尚未导出"),
+    "baseline_missing": ("st-needs", "仅可单向使用"),
+    "baseline_corrupt": ("st-broken", "基线有问题"),
+    "carrier_problematic": ("st-broken", "文件有问题"),
+}
+
 
 def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
@@ -126,11 +134,97 @@ def _card(row: dict[str, Any], *, readonly: bool = False) -> str:
     )
 
 
+def _finishing_card(row: dict[str, Any], *, readonly: bool = False) -> str:
+    cls, label = _FINISHING_BADGE.get(
+        str(row.get("state") or ""), ("st-needs", "需要确认"))
+    path = (
+        f'<div class="xc-path muted">文件：{_e(row["path"])}</div>'
+        if row.get("path") else ""
+    )
+    baseline = (
+        f'<div class="xc-path muted">回程基线：{_e(row["baseline"])}</div>'
+        if row.get("baseline") else ""
+    )
+    dis = ' disabled title="只读工作台"' if readonly else ""
+    action = (
+        f'<button class="btn mini" data-act="gen" '
+        f'data-kind="{_e(row["kind"])}"{dis}>'
+        f'{"重新导出" if row.get("path") else "导出"} {_e(row["label"])}</button>'
+    )
+    return (
+        f'<article class="xc-finish-card" data-kind="{_e(row["kind"])}">'
+        '<div class="xc-head">'
+        f'<h3>{_e(row["label"])}</h3>'
+        f'<span class="badge {cls}">{label}</span>'
+        '</div>'
+        f'<p class="xc-purpose">{_e(row.get("purpose"))}</p>'
+        f'<p class="xc-basis">{_e(row.get("reason"))}</p>'
+        f'{path}{baseline}'
+        f'<div class="xc-actions">{action}</div>'
+        '</article>'
+    )
+
+
+def _finishing_panel(data: dict[str, Any], *, readonly: bool = False) -> str:
+    carriers = list((data.get("finishing") or {}).get("carriers") or [])
+    if not carriers:
+        return ""
+    cards = "".join(_finishing_card(row, readonly=readonly) for row in carriers)
+    return (
+        '<section class="xc-finishing panel">'
+        '<div class="xc-section-head">'
+        '<div><h2>继续精剪</h2>'
+        '<p class="muted">导出文件与回程基线分开验证。只有显示“可安全回收”，'
+        '外部编辑后的变化才可以可靠带回 Manju。</p></div>'
+        '</div>'
+        f'<div class="xc-finishing-grid">{cards}</div>'
+        '</section>'
+    )
+
+
+def _grouped_cards(rows: list[dict[str, Any]], *, readonly: bool = False) -> str:
+    groups = (
+        ("直接观看", "成片和本地预览", {"final", "proxy"}),
+        ("字幕", "外挂字幕与烧录样式", {"srt", "ass", "vtt", "ttml"}),
+        ("平台草稿", "需要在外部桌面应用中人工打开确认", {"jianying", "capcut"}),
+        ("包装与声音", "封面、预告和交付母版", {
+            "cover", "teaser", "DIALOGUE_STEM", "MUSIC_STEM", "SFX_STEM",
+            "FULL_MIX", "M_AND_E_MASTER",
+        }),
+    )
+    used: set[str] = set()
+    sections: list[str] = []
+    for title, subtitle, kinds in groups:
+        selected = [row for row in rows if row.get("kind") in kinds]
+        if not selected:
+            continue
+        used.update(str(row.get("kind")) for row in selected)
+        cards = "".join(_card(row, readonly=readonly) for row in selected)
+        sections.append(
+            '<section class="xc-section">'
+            f'<div class="xc-section-head"><div><h2>{_e(title)}</h2>'
+            f'<p class="muted">{_e(subtitle)}</p></div></div>'
+            f'<div class="xc-grid">{cards}</div>'
+            '</section>'
+        )
+    rest = [row for row in rows if str(row.get("kind")) not in used]
+    if rest:
+        sections.append(
+            '<section class="xc-section">'
+            '<div class="xc-section-head"><div><h2>其他交付物</h2>'
+            '<p class="muted">按项目需要出现的附加产物</p></div></div>'
+            f'<div class="xc-grid">'
+            + "".join(_card(row, readonly=readonly) for row in rest)
+            + '</div></section>'
+        )
+    return "".join(sections)
+
+
 def render(project: Any, token: str, *, readonly: bool = False) -> str:
     from ..build.exportstatus import deliverables_data
 
-    head = ('<div class="page-h"><h1>导出中心 Export center</h1>'
-            '<span class="muted">每个成片产物的新鲜度一览 · 桌面草稿需人工确认(§14)</span></div>')
+    head = ('<div class="page-h"><h1>导出中心</h1>'
+            '<span class="muted">按目标整理成片、精剪交换、字幕和包装产物</span></div>')
     try:
         data = deliverables_data(project)
     except Exception as exc:  # never break the page on a status error
@@ -158,18 +252,20 @@ def render(project: Any, token: str, *, readonly: bool = False) -> str:
             f'data-kinds="{_e(",".join(stale_kinds))}">'
             f'全部生成 / 更新待更新 ({len(stale_kinds)})</button>')
     if readonly:
-        summary_chips += '<span class="chip readonly">只读 readonly — 操作请回到项目机器</span>'
+        summary_chips += '<span class="chip readonly">只读模式 · 操作请回到项目机器</span>'
     summary = f'<div class="xc-summary panel">{summary_chips}</div>'
 
-    cards = "".join(_card(r, readonly=readonly) for r in rows)
+    finishing = _finishing_panel(data, readonly=readonly)
+    cards = _grouped_cards(rows, readonly=readonly)
     legend = (
-        '<div class="xc-legend muted panel">'
-        '词汇(§3):<b>上新</b> 与当前规格一致 · <b>待更新</b> 上游已改需重做 · '
-        '<b>缺失</b> 从未产出 · <b>有问题</b> 文件损坏/缺内容键 · '
-        '<b>待人工确认</b> 桌面草稿 Manju 无法自证能打开 · <b>已人工确认</b> 人工确认且 hash 未变'
-        '</div>'
+        '<details class="xc-legend muted panel">'
+        '<summary>状态说明</summary>'
+        '<p>词汇(§3)：<b>上新</b> 与当前规格一致 · <b>待更新</b> 上游已改需重做 · '
+        '<b>缺失</b> 从未产出 · <b>有问题</b> 文件损坏或缺少证据 · '
+        '<b>待人工确认</b> Manju 无法自行证明 · <b>已人工确认</b> 人工确认且字节未变。</p>'
+        '</details>'
     )
-    body = head + summary + f'<div class="xc-grid">{cards}</div>' + legend
+    body = head + summary + finishing + cards + legend
     return _shell("导出中心", token, body)
 
 
@@ -188,6 +284,15 @@ _EXPORTS_CSS = """
 /* 导出中心 export center (round-U). Loaded AFTER /app.css + /pages.css; reuses
    their palette (--panel/--line/--muted…) and badge chips (.badge.st-*). */
 .xc-summary { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .8rem 0; }
+.xc-finishing { margin: 1rem 0 1.4rem; padding: 1rem; }
+.xc-finishing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+.xc-finish-card { border: 1px solid var(--line); border-radius: 10px; padding: .9rem; background: var(--panel2); }
+.xc-finish-card h3 { margin: 0; font-size: 1rem; }
+.xc-purpose { margin: .35rem 0; font-size: .82rem; color: var(--muted); }
+.xc-section { margin: 1.3rem 0; }
+.xc-section-head { display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin: 0 0 .65rem; }
+.xc-section-head h2 { margin: 0; font-size: 1.05rem; }
+.xc-section-head p { margin: .18rem 0 0; font-size: .8rem; }
 .xc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
 .xc-card { margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .xc-head { display: flex; justify-content: space-between; align-items: baseline; gap: .8rem; }
@@ -204,7 +309,14 @@ _EXPORTS_CSS = """
   border-radius: 6px; padding: .2rem .45rem; font: inherit; font-size: .8rem; width: 150px;
 }
 .xc-legend { font-size: .8rem; line-height: 1.7; margin-top: 1rem; }
+.xc-legend summary { cursor: pointer; color: var(--fg); }
+.xc-legend p { margin: .65rem 0 0; }
 .xc-card.busy { opacity: .6; }
+@media (max-width: 760px) {
+  .xc-finishing-grid { grid-template-columns: 1fr; }
+  .xc-grid { grid-template-columns: 1fr; }
+  .xc-section-head { align-items: start; }
+}
 """
 
 
@@ -212,7 +324,13 @@ _EXPORTS_JS = r"""
 "use strict";
 (function () {
 
-  function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
+  function reloadSoon(delay) { setTimeout(function () { location.reload(); }, delay || 500); }
+
+  function resultWarnings(job) {
+    var result = job && job.result;
+    var rows = result && Array.isArray(result.warnings) ? result.warnings : [];
+    return rows.map(function (x) { return String(x || "").trim(); }).filter(Boolean);
+  }
 
   // Poll /api/jobs until the given job finishes (generate runs on the job
   // runner). Adaptive cadence: 100ms while a quick local job usually lands
@@ -260,28 +378,41 @@ _EXPORTS_JS = r"""
     if (act === "verify") return doVerify(kind, btn);
   });
 
-  // one kind through submit+poll; resolves true only on a confirmed done.
+  // one kind through submit+poll; resolves {ok,warnings} only on a confirmed
+  // terminal result. An interchange carrier may land while its round-trip
+  // baseline fails; that is a useful one-way export, but never a silent green.
   function generateOne(kind) {
     setBusy(kind, true);
     return post("/api/exports/generate", { kind: kind }).then(function (res) {
       if ((res.status === 202 || res.status === 200) && res.data && res.data.job) {
         return pollJob(res.data.job.id).then(function (job) {
           setBusy(kind, false);
-          if (job && job.state === "done") return true;
+          if (job && job.state === "done") {
+            var warnings = resultWarnings(job);
+            warnings.forEach(function (message) { toast(message, false); });
+            return { ok: true, warnings: warnings };
+          }
           toast(jobFailText(kind, job), false);
-          return false;
+          return { ok: false, warnings: [] };
         });
       }
       setBusy(kind, false);
       toast(res.data.error || (kind + " 生成失败"), false);
-      return false;
-    }).catch(function () { setBusy(kind, false); toast("网络错误", false); return false; });
+      return { ok: false, warnings: [] };
+    }).catch(function () {
+      setBusy(kind, false);
+      toast("网络错误", false);
+      return { ok: false, warnings: [] };
+    });
   }
 
   function doGenerate(kind, btn) {
     btn.disabled = true;
-    generateOne(kind).then(function (ok) {
-      if (ok) { toast(kind + " 已生成 / 更新", true); reloadSoon(); }
+    generateOne(kind).then(function (outcome) {
+      if (outcome.ok) {
+        toast(kind + " 已生成 / 更新", true);
+        reloadSoon(outcome.warnings.length ? 1700 : 500);
+      }
       else { btn.disabled = false; }
     });
   }
@@ -300,7 +431,9 @@ _EXPORTS_JS = r"""
     kinds.forEach(function (kind, i) {
       chain = chain.then(function () {
         btn.textContent = "生成中 " + (i + 1) + "/" + kinds.length + " — " + kind;
-        return generateOne(kind).then(function (ok) { if (ok) okCount++; });
+        return generateOne(kind).then(function (outcome) {
+          if (outcome.ok) okCount++;
+        });
       });
     });
     chain.then(function () {

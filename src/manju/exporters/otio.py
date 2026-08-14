@@ -271,7 +271,12 @@ def _track(name: str, kind: str, children: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def export_otio(project: "Project", timeline: Timeline) -> Path:
+def export_otio(
+    project: "Project",
+    timeline: Timeline,
+    *,
+    baseline_warnings: list[str] | None = None,
+) -> Path:
     """Write ``exports/otio/<project name>.otio`` (OTIO 0.15-flavoured JSON)."""
     config = project.load_config()
     fps = float(timeline.fps or config.fps or 24)
@@ -320,13 +325,17 @@ def export_otio(project: "Project", timeline: Timeline) -> Path:
 
     out = project.exports_dir / "otio" / f"{config.name}.otio"
     write_json(out, doc)
-    # WP6: baseline for round-trip (derived, never fails export)
-    try:
-        from ..build.roundtrip import write_baseline
-        write_baseline(
-            project, "otio", out.stem, doc,
-            compiled_from=str(timeline.meta.compiled_from or ""),
-        )
-    except Exception:
-        pass
+    # WP6: the carrier remains useful when the derived baseline cannot land,
+    # but that degraded one-way state must be visible to the caller.
+    from ..build.roundtrip import write_baseline_best_effort
+
+    write_baseline_best_effort(
+        project,
+        "otio",
+        out.stem,
+        doc,
+        compiled_from=str(timeline.meta.compiled_from or ""),
+        warning_sink=baseline_warnings,
+        carrier_label="OTIO",
+    )
     return out

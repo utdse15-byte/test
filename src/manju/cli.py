@@ -3663,7 +3663,8 @@ def export(
             from .exporters.otio import export_otio
 
             _target = "otio"
-            outputs["otio"] = export_otio(project, timeline)
+            outputs["otio"] = export_otio(
+                project, timeline, baseline_warnings=notes)
         if edl:
             from .exporters.edl import export_edl
 
@@ -3673,7 +3674,8 @@ def export(
             from .exporters.fcpxml import export_fcpxml
 
             _target = "fcpxml"
-            outputs["fcpxml"] = export_fcpxml(project, timeline)
+            outputs["fcpxml"] = export_fcpxml(
+                project, timeline, baseline_warnings=notes)
         if xmeml:
             from .exporters.xmeml import export_xmeml
 
@@ -3688,7 +3690,8 @@ def export(
             )
 
             _target = "jianying"
-            outputs["jianying"] = export_jianying(project, timeline)  # skeleton + lint
+            outputs["jianying"] = export_jianying(
+                project, timeline, baseline_warnings=notes)  # skeleton + lint
             try:
                 outputs["jianying_native"] = export_jianying_native(project, timeline)
             except ExporterUnavailable as exc:
@@ -4601,7 +4604,7 @@ def roundtrip(
         # being flattened into the generic envelope with every other refusal.
         _fail(str(exc), code=getattr(exc, "reason", "error"))
         return
-    if apply and not plan.get("baseline"):
+    if apply and plan.get("appliable") is False:
         # Measured, not inferred. The SAME edited OTIO (one clip trimmed
         # 72→36 frames) planned two completely different ways:
         #   beside its baseline -> 1 row,  set_inout            (the real trim)

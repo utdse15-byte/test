@@ -590,3 +590,60 @@ def test_verify_draft_over_http_roundtrip(gui):
 def test_verify_missing_draft_over_http(gui):
     status, _, data = _post(gui, "/api/exports/verify", {"kind": "capcut"})
     assert status == 400 and "draft" in data["error"]
+
+
+def test_page_prioritizes_finishing_and_groups_outputs(gui):
+    status, _, body = _req(gui, "/exports", raw=True)
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "继续精剪" in text
+    assert "只有显示“可安全回收”" in text
+    assert "直接观看" in text
+    assert "平台草稿" in text
+    assert "状态说明" in text
+    assert "Export center" not in text
+
+
+def test_generate_fcpxml_over_http_is_roundtrip_ready(gui):
+    timeline = _manual_timeline(gui.project)
+    source = gui.project.resolve(timeline.tracks.video[0].source)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"fakevideo")
+
+    status, _, data = _post(gui, "/api/exports/generate", {"kind": "fcpxml"})
+    assert status == 202
+    job = _wait_job(gui, data["job"]["id"])
+    assert job["state"] == "done", job.get("error")
+    assert job["result"]["roundtrip_ready"] is True
+    assert job["result"]["warnings"] == []
+
+    api = _req(gui, "/api/exports")[2]
+    carriers = {row["kind"]: row for row in api["finishing"]["carriers"]}
+    assert carriers["fcpxml"]["state"] == "ready"
+
+
+def test_generate_fcpxml_surfaces_degraded_one_way_export(gui, monkeypatch):
+    import manju.build.roundtrip as roundtrip
+
+    timeline = _manual_timeline(gui.project)
+    source = gui.project.resolve(timeline.tracks.video[0].source)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"fakevideo")
+
+    def refuse(*_args, **_kwargs):
+        raise OSError("simulated read-only baseline directory")
+
+    monkeypatch.setattr(roundtrip, "write_baseline", refuse)
+    status, _, data = _post(gui, "/api/exports/generate", {"kind": "fcpxml"})
+    assert status == 202
+    job = _wait_job(gui, data["job"]["id"])
+    assert job["state"] == "done", job.get("error")
+    assert job["result"]["roundtrip_ready"] is False
+    assert job["result"]["warnings"]
+    assert "不能安全回收" in job["result"]["warnings"][0]
+
+    api = _req(gui, "/api/exports")[2]
+    carrier = next(
+        row for row in api["finishing"]["carriers"] if row["kind"] == "fcpxml"
+    )
+    assert carrier["state"] == "baseline_missing"

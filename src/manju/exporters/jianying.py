@@ -412,7 +412,12 @@ def _render_report(draft_path: Path, problems: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def export_jianying(project: "Project", timeline: Timeline) -> Path:
+def export_jianying(
+    project: "Project",
+    timeline: Timeline,
+    *,
+    baseline_warnings: list[str] | None = None,
+) -> Path:
     """Write ``exports/jianying/<project name>/draft_content.json`` and, next to
     it, ``export_report.md`` (the :func:`lint_draft` results). Returns the draft
     path; problems are surfaced via the report file, not the return value.
@@ -431,13 +436,17 @@ def export_jianying(project: "Project", timeline: Timeline) -> Path:
               "编辑本 skeleton (`draft_content.json`) 后可用 "
               "`manju roundtrip <path>` 回写;原生草稿不可回环。\n")
     atomic_write_text(draft_dir / "export_report.md", report)
-    # WP6: baseline next to export for diff isolation
-    try:
-        from ..build.roundtrip import write_baseline
-        write_baseline(
-            project, "jianying", config.name, draft,
-            compiled_from=timeline.meta.compiled_from or "",
-        )
-    except Exception:
-        pass  # baseline is derived; never fail export
+    # WP6: baseline next to export for diff isolation. A sidecar failure keeps
+    # the skeleton usable as a one-way handoff, but is never silent.
+    from ..build.roundtrip import write_baseline_best_effort
+
+    write_baseline_best_effort(
+        project,
+        "jianying",
+        config.name,
+        draft,
+        compiled_from=timeline.meta.compiled_from or "",
+        warning_sink=baseline_warnings,
+        carrier_label="剪映 skeleton",
+    )
     return draft_path

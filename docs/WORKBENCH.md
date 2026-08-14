@@ -53,7 +53,7 @@ over the same core the CLI calls — no capability exists only in the GUI.
 | Asset library | ✱ `lib …` (S-D) | ✱ library page: browse/preview/use-into-project (S8b) |
 | Version compare | ✱ `compare` (S-D) | ✱ finals diff page: side-by-side + per-shot change map (S8b) |
 | History / snapshot / rollback file | `history`, `snapshot`, `rollback` | git panel (R) + ✱ snapshot/rollback buttons (S8a) |
-| Exports / package | `export`, `package` | export action (Q) + ✱ packaging editor lite (S8a) |
+| Exports / package | `export`, `package` | 导出中心按观看/精剪/字幕/平台草稿/包装分组；OTIO/FCPXML 单独显示载体与回程基线，只有“可安全回收”才允许可靠 round-trip；packaging editor lite (S8a) |
 | Spend / tasks | `spend`, `tasks` | spend view (R) + ✱ tasks view (S8a) |
 | Doctor | `doctor` | /api/doctor (R) + ✱ doctor page w/ fix hints (S8b) |
 | Dependency-graph diagnostics | `explain --graph` (DR03B) | 依赖图 (Graph) button → summary chips, issues, per-node root cause (`/api/explain?graph=1`); read-only, opt-in like the flag |
@@ -75,5 +75,3 @@ over the same core the CLI calls — no capability exists only in the GUI.
    with bare exception text (item 10).
 6. Human assets and human decisions are never overwritten silently — batch
    ops skip locked/manual shots and say so.
-
-undefined

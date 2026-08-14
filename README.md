@@ -524,9 +524,3 @@ never breaks the registry; the fallback chain always terminates at the
 network-independent `caption_card`. There is deliberately **no plugin
 marketplace or remote discovery** — plugins are local manifests or explicit
 `register_provider()` calls, nothing else.
-
-undefined
-undefined
-undefined
-undefined
-undefined

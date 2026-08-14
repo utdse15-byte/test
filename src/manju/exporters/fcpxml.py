@@ -715,7 +715,11 @@ def _probe_loop_lengths(project: "Project", timeline: "Timeline") -> dict[str, i
 
 
 def export_fcpxml(
-    project: "Project", timeline: "Timeline", dest: Path | None = None
+    project: "Project",
+    timeline: "Timeline",
+    dest: Path | None = None,
+    *,
+    baseline_warnings: list[str] | None = None,
 ) -> Path:
     """Write ``exports/fcpxml/<project name>.fcpxml`` atomically (or ``dest`` when
     given) and return the path — the OTIO/EDL calling convention, one format.
@@ -749,22 +753,26 @@ def export_fcpxml(
     path = (Path(dest) if dest is not None
             else project.exports_dir / "fcpxml" / f"{config.name}.fcpxml")
     atomic_write_text(path, text)
-    # WP6: baseline for round-trip (derived, never fails export).
+    # WP6: baseline for round-trip. The FCPXML remains useful as a one-way
+    # handoff when the derived sidecar cannot land, but that degraded state is
+    # surfaced to the caller instead of being swallowed.
     #
     # Without this an FCPXML edit had nothing to diff against, so a Resolve
     # round-trip could not be planned at all. The baseline stores the same
     # PROJECTION the round-trip reader builds — not the XML text — because a
     # baseline payload is JSON, and because both sides must be read by one
     # parser or "the clip moved" could mean two different things.
-    try:
-        from ..build.roundtrip import fcpxml_projection, write_baseline
+    from ..build.roundtrip import fcpxml_projection, write_baseline_best_effort
 
-        from .fcpxml_import import parse_fcpxml
+    from .fcpxml_import import parse_fcpxml
 
-        write_baseline(
-            project, "fcpxml", path.stem, fcpxml_projection(parse_fcpxml(text)),
-            compiled_from=str(timeline.meta.compiled_from or ""),
-        )
-    except Exception:
-        pass
+    write_baseline_best_effort(
+        project,
+        "fcpxml",
+        path.stem,
+        fcpxml_projection(parse_fcpxml(text)),
+        compiled_from=str(timeline.meta.compiled_from or ""),
+        warning_sink=baseline_warnings,
+        carrier_label="FCPXML",
+    )
     return path

@@ -60,5 +60,3 @@ anticipated — but only under this discipline:
 - **Re-run the UNION batch.** When a loop touches a pinned surface, re-run the
   union of the previous loop's verification batch, never a trimmed per-loop
   subset (the quoted batch rule).
-
-undefined
