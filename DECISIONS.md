@@ -4348,3 +4348,11 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    and would leave ledger/sidecar fallback behavior inconsistent. A future
    cumulative ceiling requires a separate durable truth field and a new design;
    this maintenance fix changes only presentation and documentation.
+
+## PRODUCT-POLISH-R1-AUTHORING-JOURNEY (2026-08-14)
+
+1. **Direct writing and Director Proposal are two entrances to the same truth, not two authoring systems.** The product may explain both paths in one read-only journey, but canonical story/Bible/shot files remain the only adopted truth and `truth_patch_set` remains the sole atomic proposal action for external authoring changes.
+2. **The proposal step is optional, except that an outstanding authoring patch deserves attention before editing the same basis.** An unrelated production proposal must not block unfinished writing. A stale authoring proposal never becomes current by presentation and cannot be confirmed or executed.
+3. **Proposal review must show the proposed bytes, not only the action name.** The Director page may derive bounded before/after and unified-diff previews from the current project and persisted proposal. Long text is bounded in the browser, HTML is escaped, and the raw proposal remains the audit record.
+4. **Confirmation and execution remain separate human decisions.** Repeated clicks are de-duplicated at the page surface; confirmation does not call execution, paid work remains disabled in strict zero-cost mode, and no GUI recommendation can adopt truth by itself.
+5. **The storyboard owns the normal shot-planning surface.** Authoring appears there only as an exceptional hand-off when pending/stale proposal facts or incomplete source materials could make the current storyboard misleading. The projection is disposable, read-only, and never a build input.

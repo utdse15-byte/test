@@ -1,0 +1,18 @@
+{
+  "viewport": {
+    "w": 1440,
+    "h": 900
+  },
+  "document": {
+    "w": 1430,
+    "h": 900
+  },
+  "main": {
+    "x": 0,
+    "y": 145.5625,
+    "w": 1430,
+    "h": 621.25
+  },
+  "journey": null,
+  "horizontalOverflow": -10
+}

@@ -1,0 +1,1 @@
+ruff NOT RUN: executable/module is not installed in this offline environment.

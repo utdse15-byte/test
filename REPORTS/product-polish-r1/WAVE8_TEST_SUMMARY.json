@@ -1,0 +1,38 @@
+{
+  "schema": "manju.product-polish-test-summary/v1",
+  "wave": 8,
+  "focused_pytest": {
+    "passed": 176,
+    "groups": {
+      "authoring_journey": 18,
+      "create_page": 17,
+      "director": 27,
+      "storyboard": 26,
+      "app_modes_home": 37,
+      "gui_pages": 25,
+      "shell_project_actions": 20,
+      "ux_subset": 6
+    }
+  },
+  "browser_interaction": "PASS",
+  "compileall": "PASS",
+  "node_check": [
+    "rendered-create.js",
+    "rendered-director.js"
+  ],
+  "git_diff_check": "PASS",
+  "ruff": "NOT_INSTALLED",
+  "broader_fast_suite": {
+    "collection": "BLOCKED_MISSING_HYPOTHESIS",
+    "files": [
+      "tests/test_crash_safety_campaign.py",
+      "tests/test_fp_timebase.py",
+      "tests/test_properties.py"
+    ],
+    "retry_without_those_files": "DID_NOT_COMPLETE_WITHIN_20_MINUTES",
+    "observed_progress": "26 tests printed; no failure summary produced"
+  },
+  "network_provider_calls": 0,
+  "credential_reads": 0,
+  "paid_calls": 0
+}

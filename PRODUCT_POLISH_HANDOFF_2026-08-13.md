@@ -278,3 +278,36 @@ live localhost E2E 和真实 Provider 仍未冒充完成。
 
 后续优先级：收敛“创作 → 导演提案 → 分镜”的前半程，继续复用现有 truth_patch_set、
 来源引用和人工确认，不新增 authoring plan / event truth。
+
+## 13. Wave 8：创作、提案与分镜旅程
+
+功能提交：`2307612 R1: connect the authoring journey`。
+
+功能范围：`/create`、`/director`、`/storyboard` 的前半程产品收敛；不改变
+canonical text、Director Proposal 或 ShotContract owner。
+
+已完成：
+
+- 新增只读 `authoring_journey`，统一表达“直接写项目真相 / 可选外部提案 / 建立分镜”；
+- 待处理 `truth_patch_set` 会优先提醒，非创作提案不阻断尚未完成的写作；
+- 创建页以四份故事材料为主表面，完整七阶段 funnel 和生产资格渐进披露；
+- 未保存草稿具有切换、模板、离页和重复提交保护；
+- Director 创作提案直接展示 before / after、字符级修改和有界统一 diff；
+- 确认与执行仍是两个动作，过期提案不能确认或执行，本地安全模式不运行付费提案；
+- 分镜页只在创作 truth 有异常时显示交接提示，健康路径没有重复 journey；
+- 窄窗口无页面横向溢出，创建页在新增旅程后仍比上一版更短。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE8_AUTHORING_JOURNEY.md`
+- `REPORTS/product-polish-r1/WAVE8_LAYOUT_FACTS.json`
+- `REPORTS/product-polish-r1/WAVE8_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/screenshots/wave8-before/`
+- `REPORTS/product-polish-r1/screenshots/wave8/`
+- `REPORTS/product-polish-r1/wave8-tests/`
+
+focused tests 共 176 passed；另有真实 renderer + Playwright `page.set_content` 的前端状态机证据。
+当前环境缺少 `hypothesis` 和 `ruff`，更广 fast suite 未形成完成摘要；完整 pytest、Windows hard gate、
+live localhost E2E 和同 SHA 双平台发布门均未冒充完成。
+
+后续优先级：收口首页 Cockpit，让三条已完成旅程汇聚成一个可信的“现在最值得做”，不再扩流程或新增 AI 能力。

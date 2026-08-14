@@ -1,0 +1,79 @@
+{
+  "schema": "manju.product-polish-layout-facts/v1",
+  "wave": 8,
+  "note": "Negative overflow means document is narrower than the nominal viewport because the Chromium scrollbar consumes width.",
+  "pages": {
+    "authoring-create-desktop": {
+      "viewport": {
+        "w": 1440,
+        "h": 900
+      },
+      "before_document": {
+        "w": 1430,
+        "h": 1212
+      },
+      "after_document": {
+        "w": 1430,
+        "h": 1117
+      },
+      "height_delta": -95,
+      "before_horizontal_overflow": -10,
+      "after_horizontal_overflow": -10,
+      "after_journey_height": 242.890625
+    },
+    "authoring-create-narrow": {
+      "viewport": {
+        "w": 390,
+        "h": 844
+      },
+      "before_document": {
+        "w": 380,
+        "h": 1588
+      },
+      "after_document": {
+        "w": 380,
+        "h": 1540
+      },
+      "height_delta": -48,
+      "before_horizontal_overflow": -10,
+      "after_horizontal_overflow": -10,
+      "after_journey_height": 267.3125
+    },
+    "authoring-director-desktop": {
+      "viewport": {
+        "w": 1440,
+        "h": 900
+      },
+      "before_document": {
+        "w": 1430,
+        "h": 900
+      },
+      "after_document": {
+        "w": 1430,
+        "h": 1296
+      },
+      "height_delta": 396,
+      "before_horizontal_overflow": -10,
+      "after_horizontal_overflow": -10,
+      "after_journey_height": 242.890625
+    },
+    "authoring-director-narrow": {
+      "viewport": {
+        "w": 390,
+        "h": 844
+      },
+      "before_document": {
+        "w": 400,
+        "h": 1165
+      },
+      "after_document": {
+        "w": 380,
+        "h": 1924
+      },
+      "height_delta": 759,
+      "before_horizontal_overflow": 10,
+      "after_horizontal_overflow": -10,
+      "after_journey_height": 285.296875
+    }
+  }
+}

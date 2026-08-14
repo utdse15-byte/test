@@ -1,0 +1,48 @@
+{
+  "schema": "manju.product-polish-browser-evidence/v1",
+  "wave": 8,
+  "create": {
+    "initial_stage": "synopsis",
+    "dirty_label": "未保存",
+    "beforeunload_prevented": true,
+    "scaffold_network_calls": [],
+    "scaffold_warning": {
+      "message": "编辑器里有未保存内容；先保存当前草稿，再决定是否需要模板。",
+      "ok": false
+    },
+    "stage_after_refused_switch": "synopsis",
+    "draft_after_refused_switch": "这是一份尚未保存的场景概览。",
+    "stage_after_accepted_switch": "brief",
+    "draft_preserved_after_switch": "这是一份尚未保存的场景概览。",
+    "save_calls": [
+      {
+        "url": "/api/create/save",
+        "payload": {
+          "stage": "synopsis",
+          "text": "这是一份尚未保存的场景概览。"
+        }
+      }
+    ],
+    "saved_label": "已保存"
+  },
+  "director": {
+    "proposal_id": "prop_0001",
+    "calls": [
+      {
+        "url": "/api/director/confirm",
+        "payload": {
+          "id": "prop_0001"
+        }
+      }
+    ],
+    "toasts": [
+      {
+        "message": "已确认提案；还需要单独执行",
+        "ok": true
+      }
+    ],
+    "confirm_button_disabled": true,
+    "confirm_button_text": "确认中…",
+    "run_button_count": 0
+  }
+}

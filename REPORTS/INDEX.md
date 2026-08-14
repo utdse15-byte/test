@@ -14,6 +14,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `product-polish-r1/WAVE5_APPLICATION_CHROME.md` | Product Polish R1 wave 5: shared application bar, six stable production stages, active-stage subnavigation, persistent execution/project identity, responsive 3×2 narrow chrome |
 | `product-polish-r1/WAVE6_REVIEW_THEATER.md` | Product Polish R1 wave 6: focused one-candidate Review Theater, priority rail, truthful current-selection review progress, distinct verdict/selection/approval/lock semantics, responsive evidence disclosure |
 | `product-polish-r1/WAVE7_SHOT_PRODUCTION_JOURNEY.md` | Product Polish R1 wave 7: branching storyboard → lab or batch ingest → human review journey, current-shot deep links, progressive lab disclosure, honest ingest review states |
+| `product-polish-r1/WAVE8_AUTHORING_JOURNEY.md` | Product Polish R1 wave 8: direct canonical writing / optional Director Proposal / storyboard journey, truthful before-after review, dirty-draft protection, exceptional storyboard hand-off |
 | `VIDEO_AUTHORING_GENERALIZATION_2026-08-08.md` | generic offline profiles, canonical plan/reference graph, immutable v2 handoff and full verifier |
 | `UNIFIED_FILM_REHEARSAL_2026-08-07.md` | NARRATIVE-CLOSED-LOOP #17; v5.0 AV0-AV8 zero-network rehearsal |
 | `PRODUCTION_READINESS_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #10 |
