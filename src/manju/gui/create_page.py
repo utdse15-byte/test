@@ -207,6 +207,65 @@ def _stage_card(s: dict[str, Any], files: dict[str, str]) -> str:
     )
 
 
+def _material_card(s: dict[str, Any], files: dict[str, str], *, active: bool) -> str:
+    """One of the four canonical story materials in the focused writer rail.
+
+    The full seven-stage funnel remains available under progressive disclosure;
+    this compact list is the daily writing surface and therefore only contains
+    the files the page can edit directly.
+    """
+    sid = s["id"]
+    state = s["state"]
+    reachable = sid in files and state in ("done", "current")
+    from .authoring_journey import story_material_status
+
+    label, detail = story_material_status(s)
+    attrs = (
+        f' data-act="edit" data-stage="{_e(sid)}"'
+        if reachable else ' aria-disabled="true"'
+    )
+    tag = "button" if reachable else "div"
+    current = ' aria-current="true"' if active else ""
+    return (
+        f'<{tag} class="cw-material cw-material-{_e(state)}" '
+        f'data-source-stage="{_e(sid)}"{attrs}{current}>'
+        f'<span class="cw-material-mark">{_MARK.get(state, "·")}</span>'
+        '<span class="cw-material-copy">'
+        f'<strong>{_e(s["cn"])}</strong>'
+        f'<span class="cw-material-state">{_e(label)}</span>'
+        f'<small>{_e(detail)}</small>'
+        f'</span></{tag}>'
+    )
+
+
+def _materials_panel(status: dict[str, Any], files: dict[str, str], current: str | None) -> str:
+    rows = [s for s in status["stages"] if s["id"] in files]
+    done = sum(1 for row in rows if row.get("satisfied"))
+    active = current if current in files else None
+    cards = "".join(_material_card(row, files, active=row["id"] == active) for row in rows)
+    return (
+        '<aside class="cw-materials panel">'
+        '<div class="cw-materials-head"><div><h2>故事材料</h2>'
+        '<p>这些文件就是项目真相；保存后系统重新判断进度。</p></div>'
+        f'<span>{done}/{len(rows)}</span></div>'
+        f'<div class="cw-material-list">{cards}</div>'
+        '</aside>'
+    )
+
+
+def _full_funnel(status: dict[str, Any], files: dict[str, str]) -> str:
+    return (
+        '<details class="cw-full-progress panel">'
+        '<summary>查看完整创作进度</summary>'
+        '<p class="muted">故事材料之后还会进入分镜、生成计划和候选构建。这里保留完整证据，'
+        '但不会抢占当前写作空间。'
+        '<span class="mj-en" aria-hidden="true"> Contracts: SceneContract, ShotContract.</span></p>'
+        '<div class="cw-rail">'
+        + "".join(_stage_card(s, files) for s in status["stages"])
+        + '</div></details>'
+    )
+
+
 # ------------------------------------------------------- workbench: text (B/C)
 
 
@@ -218,7 +277,10 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
     Carries the AI-proposes-human-decides hint (part C)."""
     from ..build.funnel import SCAFFOLDS
 
+    from .authoring_journey import story_material_status
+
     sid, cn = s["id"], s["cn"]
+    _label, product_detail = story_material_status(s)
     relpath = files[sid]
     text = _read(project, relpath)
     if text == _UNREADABLE:
@@ -238,17 +300,19 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
     exists = text is not None
     scaffoldable = sid in SCAFFOLDS
 
-    # part C: 让 AI 起草 (a copyable command chip) beside 自己写 (the textarea).
+    # The external IDE remains optional.  Keep the exact command available, but
+    # do not let a technical shell snippet compete with the writer by default.
     cmd = f'manju auto "起草{cn}"'
     ai = (
+        '<details class="cw-ai-help">'
+        '<summary>让 IDE 助手起草<span class="mj-en" aria-hidden="true">（让 AI 起草）</span></summary>'
         '<div class="cw-ai">'
-        '<span class="cw-ai-lead">让 AI 起草</span>'
+        '<span class="cw-ai-lead">复制给外部 IDE 助手</span>'
         f'<code class="cw-cmd">{_e(cmd)}</code>'
         f'<button type="button" class="cw-copy" data-act="copy" '
         f'data-copy="{_e(cmd)}">复制</button>'
-        '<span class="cw-ai-or muted">— 或在下面<b>自己写</b>。'
-        '本页从不替你调用 AI(§0)。</span>'
-        '</div>'
+        '<span class="cw-ai-or muted">Manju 不会在内部调用 AI；草案仍需你检查并保存。</span>'
+        '</div></details>'
     )
 
     scaffold_btn = ""
@@ -266,17 +330,21 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
     return (
         f'<section class="cw-editor{"" if active else " hidden"}" '
         f'data-stage="{_e(sid)}">'
-        f'<div class="cw-eh"><h2>{_e(cn)} '
-        f'<span class="muted">· {_e(relpath)}</span></h2>{scaffold_btn}</div>'
-        f'{ai}{empty}'
+        f'<div class="cw-eh"><div><h2>{_e(cn)}</h2>'
+        f'<p class="cw-evidence">{_e(product_detail)}</p></div>{scaffold_btn}</div>'
+        f'{empty}'
         f'<textarea class="cw-text" data-stage="{_e(sid)}" spellcheck="false" '
         f'aria-label="{_e(cn)} 正文">{_e(text or "")}</textarea>'
         '<div class="cw-saverow">'
         f'<button type="button" class="btn" data-act="save" data-stage="{_e(sid)}">'
-        '保存 save</button>'
-        f'<span class="muted cw-savehint">写入 {_e(relpath)} 并记一条事件;'
-        '内容够充实后本阶段自动完成(引擎从不代写,§2)。</span>'
-        '</div></section>'
+        '保存并检查进度</button>'
+        '<span class="cw-save-state" aria-live="polite">已保存</span>'
+        '<span class="muted cw-savehint">Ctrl+S 保存；离开未保存内容前会提醒。</span>'
+        '</div>'
+        f'{ai}'
+        '<details class="cw-editor-meta"><summary>文件与技术说明</summary>'
+        f'<p><code>{_e(relpath)}</code> · {_e(s["evidence"])}。保存会写入项目真相并记录事件。</p></details>'
+        '</section>'
     )
 
 
@@ -295,8 +363,8 @@ def _plan_workbench(project: Any, entry: dict[str, Any]) -> str:
         inner = f'<p class="err">{_e(exc)}</p>'
     else:
         if not props:
-            inner = ('<p class="muted">还没有生成计划提案。到导演助手 propose 起草,'
-                     'confirm 过审(approve-before-spend)后即可生成。</p>')
+            inner = ('<p class="muted">还没有生成计划提案。你可以直接回工作台试算，'
+                     '也可以让外部 IDE 助手先提交提案，再由你审阅。</p>')
         else:
             rows = []
             for p in props:
@@ -312,13 +380,12 @@ def _plan_workbench(project: Any, entry: dict[str, Any]) -> str:
                 )
             inner = '<ul class="cw-props">' + "".join(rows) + "</ul>"
     return (
-        '<section class="cw-special panel"><h2>Animatic / Proof Plan '
-        '<span class="muted">· approve-before-spend 闸门</span></h2>'
+        '<section class="cw-special panel"><h2>审阅生成计划<span class="mj-en" aria-hidden="true"> (Animatic / Proof Plan)</span></h2>'
         f'<p class="muted">{_e(entry["evidence"])}</p>'
         + inner
-        + '<p class="cw-planhint muted">审批(确认 / 执行)在导演助手一处进行 —— '
-        '这里只读,不重复按钮。</p>'
-        '<a class="btn" href="/director">去导演助手审批 →</a></section>'
+        + '<p class="cw-planhint muted">这里保持只读。确认和执行只在导演助手中分别进行，'
+        '不会因为打开本页而生成或产生费用。</p>'
+        '<a class="btn" href="/director">审阅提案 →</a></section>'
     )
 
 
@@ -328,11 +395,12 @@ def _special_workbench(project: Any, current: str, status: dict[str, Any]) -> st
     if current == "storyboard":
         n = len(project.shot_ids())
         return (
-            '<section class="cw-special panel"><h2>分镜 Storyboard</h2>'
+            '<section class="cw-special panel"><h2>建立分镜合同</h2>'
             f'<p class="muted">{_e(entry["evidence"])}</p>'
-            f'<p>当前 <b>{n}</b> 个镜头 —— 到分镜工作台补齐镜头并 '
-            '<code>manju check</code> 过校验。</p>'
-            '<a class="btn" href="/storyboard">去分镜工作台 →</a></section>'
+            f'<p>故事材料已经就绪。当前 <b>{n}</b> 个镜头，下一步把剧本拆成可执行的'
+            ' SceneContract / ShotContract，并通过项目校验。</p>'
+            '<div class="cw-btnrow"><a class="btn" href="/storyboard">去分镜工作台 →</a>'
+            '<a class="btn ghost" href="/director">审阅外部提案</a></div></section>'
         )
     if current == "plan":
         return _plan_workbench(project, entry)
@@ -344,10 +412,10 @@ def _special_workbench(project: Any, current: str, status: dict[str, Any]) -> st
         link += (f'<a class="btn ghost" href="/media/{quote(rel, safe="/")}">'
                  '看最新构建产物 →</a>')
     return (
-        '<section class="cw-special panel"><h2>候选构建 Candidate build</h2>'
+        '<section class="cw-special panel"><h2>生成可审片候选</h2>'
         f'<p class="muted">{_e(entry["evidence"])}</p>'
-        '<p>合同与 Proof 计划已就绪 —— 回工作台运行 build 生成可审片 candidate。'
-        'build ok 不会自动变成 final-eligible 或 Picture Lock。</p>'
+        '<p>合同与生成计划已就绪。回工作台先试算，再生成候选。'
+        '生成成功只得到候选，不会自动选用或锁片。</p>'
         f'<div class="cw-btnrow">{link}</div></section>'
     )
 
@@ -375,7 +443,7 @@ def _eligibility_panel(status: dict[str, Any]) -> str:
     stage = production.get("stage", "UNAVAILABLE")
     lock = "eligible" if eligibility.get("picture_lock_eligible") else "not eligible"
     return (
-        '<section class="cw-eligibility panel">'
+        '<section class="cw-eligibility">'
         '<div class="cw-eligibility-head"><h2>生产资格 / media eligibility</h2>'
         f'<span class="muted">stage {_e(stage)} · Picture Lock {_e(lock)}</span></div>'
         '<div class="cw-eligibility-grid">'
@@ -390,13 +458,23 @@ def _eligibility_panel(status: dict[str, Any]) -> str:
     )
 
 
+def _technical_panel(status: dict[str, Any], files: dict[str, str]) -> str:
+    return (
+        '<details class="cw-technical panel">'
+        '<summary>生产资格与技术状态</summary>'
+        '<p class="muted">这些信息用于审计生成和锁片资格，不影响你继续写作。</p>'
+        + _eligibility_panel(status)
+        + _full_funnel(status, files)
+        + '</details>'
+    )
+
+
 # ------------------------------------------------------------------ render
 
 
 def render_create(project: Any, token: str) -> str:
     head = ('<div class="page-h"><h1>创作<span class="mj-en" aria-hidden="true"> (Create)</span></h1>'
-            '<span class="muted">把故事意图推进到合同、Proof 和可审片 candidate · '
-            'AI 起草、你定夺 · 每步一个真相文件(引擎从不代写)</span></div>')
+            '<span class="muted">先写清故事与结尾，再把它变成可执行分镜。可以自己写，也可以让外部 IDE 助手起草；最终都由你保存和确认。</span></div>')
 
     try:
         status = create_payload(project)
@@ -417,16 +495,10 @@ def render_create(project: Any, token: str) -> str:
     intro = ""
     if status.get("done") == 0 and current == "brief":
         intro = (
-            '<div class="cw-intro panel"><h2>从这里开始 · 故事与结尾</h2>'
-            '<p>创作台把故事意图推进到合同、Animatic、Proof 和候选构建:'
-            '<b>故事与结尾 → SceneContract/ShotContract → Animatic → Proof → 候选构建</b>。'
-            '每一步你写一个真相文件,AI 可起草、你来定夺。'
-            '先在下面写下你的<b>故事与结尾</b>:人物处境、不可逆变化和离开状态。</p></div>'
+            '<div class="cw-intro panel"><h2>先写清故事最终改变了什么</h2>'
+            '<p>从人物现在的处境、无法回头的变化和最后离开的状态开始。这里保存的是项目真相；'
+            '任何外部助手写出的内容都要由你检查并保存后才会生效。</p></div>'
         )
-
-    rail = ('<div class="cw-railwrap panel"><div class="cw-rail">'
-            + "".join(_stage_card(s, files) for s in status["stages"])
-            + '</div></div>')
 
     # the workbench: an editor per reachable (done/current) text stage — the
     # current one shown, the rest hidden but swappable via each card's ✎编辑 —
@@ -456,9 +528,19 @@ def render_create(project: Any, token: str) -> str:
         '</div></div>'
     )
 
-    body = (head + intro + _eligibility_panel(status) + rail
-            + '<div id="cw-workbench">' + "".join(editors) + special + '</div>'
-            + modal)
+    from .authoring_journey import render_authoring_journey
+
+    body = (
+        head
+        + render_authoring_journey(project, "/create")
+        + intro
+        + '<div class="cw-layout">'
+        + _materials_panel(status, files, current)
+        + '<div id="cw-workbench">' + "".join(editors) + special + '</div>'
+        + '</div>'
+        + _technical_panel(status, files)
+        + modal
+    )
     return _shell("创作", token, "/create", body, project)
 
 
@@ -466,7 +548,9 @@ def render_create(project: Any, token: str) -> str:
 
 
 def render_create_css() -> str:
-    return _CREATE_CSS
+    from .authoring_journey import AUTHORING_JOURNEY_CSS
+
+    return AUTHORING_JOURNEY_CSS + _CREATE_CSS
 
 
 def render_create_js() -> str:
@@ -479,29 +563,58 @@ _CREATE_CSS = """
 
 .cw-intro { border-left: 3px solid var(--accent); }
 .cw-intro h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
-.cw-eligibility { margin-top: 1rem; border-left: 3px solid var(--warn, var(--accent)); }
+.cw-layout { display:grid; grid-template-columns:minmax(220px, 270px) minmax(0, 1fr); gap:14px; align-items:start; }
+.cw-materials { position:sticky; top:132px; padding:12px; }
+.cw-materials-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.cw-materials-head h2 { margin:0; font-size:1rem; }
+.cw-materials-head p { margin:.2rem 0 0; color:var(--muted); font-size:.72rem; line-height:1.4; }
+.cw-materials-head > span { flex:0 0 auto; color:var(--accent); font:700 .78rem var(--mono); }
+.cw-material-list { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+.cw-material { width:100%; box-sizing:border-box; display:flex; gap:9px; text-align:left; padding:9px; color:var(--fg); background:var(--panel2); border:1px solid var(--line); border-radius:9px; font:inherit; }
+button.cw-material { cursor:pointer; }
+button.cw-material:hover { border-color:var(--accent); }
+.cw-material[aria-current="true"] { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:var(--panel); }
+.cw-material[aria-disabled="true"] { opacity:.56; }
+.cw-material-mark { color:var(--muted); font-weight:700; }
+.cw-material-done .cw-material-mark { color:var(--ok); }
+.cw-material-current .cw-material-mark { color:var(--accent); }
+.cw-material-copy { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 8px; align-items:baseline; flex:1; }
+.cw-material-copy strong { font-size:.82rem; }
+.cw-material-state { color:var(--muted); font-size:.7rem; }
+.cw-material-copy small { grid-column:1 / -1; color:var(--muted); font-size:.68rem; line-height:1.35; }
+.cw-technical { margin-top:14px; }
+.cw-technical > summary, .cw-full-progress > summary, .cw-ai-help > summary, .cw-editor-meta > summary { cursor:pointer; font-weight:700; }
+.cw-technical > p { margin:.4rem 0 .7rem; }
+.cw-eligibility { margin-top:.6rem; border-left:3px solid var(--warn, var(--accent)); padding-left:12px; }
 .cw-eligibility-head { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; flex-wrap: wrap; }
 .cw-eligibility h2 { margin: 0; font-size: 1rem; }
 .cw-eligibility-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .6rem 0 .45rem; }
 .cw-eligibility-item { display: flex; justify-content: space-between; gap: .5rem; padding: .45rem .6rem; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: .78rem; }
 .cw-eligibility-item span { color: var(--accent); font-weight: 700; }
 .cw-eligibility p { margin: 0; font-size: .78rem; line-height: 1.4; }
-@media (max-width: 680px) { .cw-eligibility-grid { grid-template-columns: 1fr; } }
+@media (max-width: 820px) {
+  .cw-layout { grid-template-columns:1fr; }
+  .cw-materials { position:static; }
+  .cw-material-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 520px) {
+  .cw-material-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .cw-material { padding:8px; }
+  .cw-material-copy { grid-template-columns:1fr; gap:2px; }
+  .cw-material-copy small { display:none; }
+  .cw-material-state { font-size:.66rem; }
+  .cw-eligibility-grid { grid-template-columns:1fr; }
+}
 
 /* -------------------------------------------------------------- rail (A) */
-.cw-railwrap { overflow-x: auto; }
-.cw-rail { display: flex; gap: 0; align-items: stretch; min-width: min-content; }
+.cw-full-progress { margin-top:12px; padding:10px; }
+.cw-full-progress > p { margin:.45rem 0 .75rem; }
+.cw-rail { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; overflow-x:auto; padding-bottom:4px; }
 .cw-stage {
-  flex: 1 1 0; min-width: 150px; position: relative;
+  min-width: 130px; position: relative;
   padding: .6rem .8rem .7rem; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--panel2); margin-right: 1.1rem; display: flex;
+  background: var(--panel2); display: flex;
   flex-direction: column; gap: .3rem;
-}
-.cw-stage:last-child { margin-right: 0; }
-/* the connector arrow between cards */
-.cw-stage:not(:last-child)::after {
-  content: "›"; position: absolute; right: -.85rem; top: 50%;
-  transform: translateY(-50%); color: var(--muted); font-size: 1.1rem;
 }
 .cw-mark { font-size: 1rem; line-height: 1; }
 .cw-cn { font-weight: 700; font-size: .95rem; display: flex; align-items: baseline; gap: .35rem; }
@@ -527,10 +640,13 @@ _CREATE_CSS = """
 .cw-todo .cw-mark { color: var(--muted); }
 
 /* --------------------------------------------------------- workbench (B/C) */
-#cw-workbench { margin-top: 1rem; }
+#cw-workbench { min-width:0; }
 .cw-editor { display: block; }
-.cw-eh { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.cw-eh { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
 .cw-eh h2 { font-size: 1.1rem; margin: 0; }
+.cw-evidence { margin:.25rem 0 .55rem; color:var(--muted); font-size:.78rem; line-height:1.4; }
+.cw-ai-help { margin-top:.7rem; border-top:1px solid var(--line); padding-top:.65rem; }
+.cw-ai-help > summary { font-size:.8rem; }
 .cw-ai {
   display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .5rem 0;
   padding: .45rem .6rem; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
@@ -549,6 +665,10 @@ _CREATE_CSS = """
 }
 .cw-saverow { display: flex; align-items: center; gap: .7rem; margin-top: .5rem; flex-wrap: wrap; }
 .cw-savehint { font-size: .78rem; }
+.cw-save-state { color:var(--ok); font-size:.76rem; font-weight:700; }
+.cw-save-state.is-dirty { color:#e0af68; }
+.cw-editor-meta { margin-top:.55rem; color:var(--muted); font-size:.76rem; }
+.cw-editor-meta p { margin:.4rem 0 0; line-height:1.45; }
 
 .cw-special { margin-top: 1rem; }
 .cw-special h2 { font-size: 1.1rem; margin: 0 0 .4rem; }
@@ -594,6 +714,10 @@ _CREATE_JS = r"""
 
   // -------- one editor visible at a time; ✎编辑 swaps stages in ---------
   function showStage(stage) {
+    var current = document.querySelector(".cw-editor:not(.hidden) .cw-text");
+    if (current && isDirty(current) && current.getAttribute("data-stage") !== stage) {
+      if (!confirm("当前内容尚未保存，仍要切换吗？")) return;
+    }
     var editors = document.querySelectorAll(".cw-editor");
     var found = false;
     for (var i = 0; i < editors.length; i++) {
@@ -607,12 +731,30 @@ _CREATE_JS = r"""
     }
     var special = document.querySelector(".cw-special");
     if (special) special.hidden = found;
+    var materials = document.querySelectorAll("[data-source-stage]");
+    for (var j = 0; j < materials.length; j++) {
+      var active = materials[j].getAttribute("data-source-stage") === stage;
+      if (active) materials[j].setAttribute("aria-current", "true");
+      else materials[j].removeAttribute("aria-current");
+    }
     if (found) {
       var ta = document.querySelector('.cw-editor[data-stage="' + cssq(stage) + '"] .cw-text');
       if (ta) ta.focus();
     }
   }
   function cssq(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+  function isDirty(ta) { return !!ta && ta.value !== ta.defaultValue; }
+  function updateDirty(ta) {
+    if (!ta) return;
+    var section = ta.closest(".cw-editor");
+    var state = section && section.querySelector(".cw-save-state");
+    var dirty = isDirty(ta);
+    if (state) {
+      state.textContent = dirty ? "未保存" : "已保存";
+      state.classList.toggle("is-dirty", dirty);
+    }
+  }
 
   // ------------------------------------------ skill modal (escaped body) ---
   function openSkill(id) {
@@ -637,7 +779,7 @@ _CREATE_JS = r"""
         bodyEl.textContent = (res.data && res.data.error) || "技能读取失败";
       }
     }).catch(function () {
-      bodyEl.textContent = "网络错误,无法加载技能";
+      bodyEl.textContent = "无法连接本地服务，技能内容没有加载。";
     });
   }
   function closeModal() {
@@ -649,19 +791,44 @@ _CREATE_JS = r"""
   function doSave(stage) {
     var ta = document.querySelector('.cw-editor[data-stage="' + cssq(stage) + '"] .cw-text');
     if (!ta) return;
+    var btn = document.querySelector('[data-act="save"][data-stage="' + cssq(stage) + '"]');
+    if (btn && btn.disabled) return;
+    if (btn) { btn.disabled = true; btn.textContent = "保存中…"; }
     post("/api/create/save", { stage: stage, text: ta.value }).then(function (res) {
       if (res.status === 200) {
-        toast("已保存 " + stage + (res.data && res.data.created ? "(已创建)" : ""), true);
+        ta.defaultValue = ta.value;
+        updateDirty(ta);
+        toast("已保存并重新检查进度", true);
         reloadSoon();
       } else {
+        if (btn) { btn.disabled = false; btn.textContent = "保存并检查进度"; }
         toast((res.data && res.data.error) || "保存失败", false);
       }
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = "保存并检查进度"; }
+      toast("无法连接本地服务；内容仍保留在编辑器中。", false);
     });
   }
   function doScaffold(stage) {
+    var ta = document.querySelector('.cw-editor[data-stage="' + cssq(stage) + '"] .cw-text');
+    if (ta && isDirty(ta) && ta.value.trim()) {
+      toast("编辑器里有未保存内容；先保存当前草稿，再决定是否需要模板。", false);
+      ta.focus();
+      return;
+    }
+    var btn = document.querySelector('[data-act="scaffold"][data-stage="' + cssq(stage) + '"]');
+    if (btn && btn.disabled) return;
+    var original = btn ? btn.textContent : "生成模板";
+    if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
     post("/api/create/scaffold", { stage: stage }).then(function (res) {
       if (res.status === 200) { toast("已生成模板 " + stage + " — 编辑它填内容", true); reloadSoon(); }
-      else toast((res.data && res.data.error) || "生成模板失败", false);
+      else {
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        toast((res.data && res.data.error) || "生成模板失败", false);
+      }
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+      toast("无法连接本地服务；项目没有被修改。", false);
     });
   }
   function doCopy(text) {
@@ -690,8 +857,30 @@ _CREATE_JS = r"""
       return closeModal();
     }
   });
+  document.addEventListener("input", function (ev) {
+    if (ev.target && ev.target.classList && ev.target.classList.contains("cw-text")) {
+      updateDirty(ev.target);
+    }
+  });
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape") closeModal();
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
+      var ta = document.querySelector(".cw-editor:not(.hidden) .cw-text");
+      if (ta) {
+        ev.preventDefault();
+        doSave(ta.getAttribute("data-stage"));
+      }
+    }
+  });
+  window.addEventListener("beforeunload", function (ev) {
+    var textareas = document.querySelectorAll(".cw-text");
+    for (var i = 0; i < textareas.length; i++) {
+      if (isDirty(textareas[i])) {
+        ev.preventDefault();
+        ev.returnValue = "";
+        return "";
+      }
+    }
   });
 })();
 """

@@ -359,16 +359,18 @@ def _lock_controls(shot_id: str, shot: Any) -> str:
 
 
 def render(project: Any, token: str) -> str:
+    from .authoring_journey import render_authoring_attention
     from .shot_journey import shot_journey_html
 
     head = ('<div class="page-h"><h1>分镜工作台<span class="mj-en" aria-hidden="true"> (Storyboard)</span></h1>'
             '<span class="muted">先把镜头意图和约束说清楚，再通过实验室或批量入库获得候选。</span></div>')
+    authoring_attention = render_authoring_attention(project)
     journey = shot_journey_html(PAGE_PATH, project)
     try:
         shot_ids = project.shot_ids()
     except Exception as exc:
         return _shell(
-            "分镜工作台", token, head + journey + f'<p class="err panel">{_e(exc)}</p>', project
+            "分镜工作台", token, head + authoring_attention + journey + f'<p class="err panel">{_e(exc)}</p>', project
         )
 
     if not shot_ids:
@@ -376,7 +378,7 @@ def render(project: Any, token: str) -> str:
                  '<p class="muted">先在创作页建立故事和镜头计划，再回到这里逐镜检查。</p>'
                  '<a class="btn" href="/create">去创作</a>'
                  '<span class="mj-en" aria-hidden="true"> CLI: manju new --shots N</span></div>')
-        return _shell("分镜工作台", token, head + journey + empty, project)
+        return _shell("分镜工作台", token, head + authoring_attention + journey + empty, project)
 
     # one asset-matrix + one staleness pass for the whole table (never per-cell).
     try:
@@ -454,7 +456,7 @@ def render(project: Any, token: str) -> str:
         '<span class="mj-en" aria-hidden="true"> Technical terms: take freshness, review state, registered mentions and locks.</span>'
         '</div></details>')
 
-    body = head + journey + batchbar + table + legend
+    body = head + authoring_attention + journey + batchbar + table + legend
     return _shell("分镜工作台", token, body, project)
 
 
@@ -519,7 +521,9 @@ def _provider(project: Any, shot: Any, routing_on: bool) -> str:
 
 
 def render_storyboard_css() -> str:
-    return _CSS
+    from .authoring_journey import AUTHORING_JOURNEY_CSS
+
+    return AUTHORING_JOURNEY_CSS + _CSS
 
 
 def render_storyboard_js() -> str:
