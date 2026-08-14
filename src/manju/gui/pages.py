@@ -2057,6 +2057,90 @@ _PAGES_CSS = """
 .page-h { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin: 1.1rem 0 .5rem; }
 .page-h h1 { font-size: 1.25rem; }
 
+/* Product Polish R1 Wave 7: the shot-production path is intentionally
+   BRANCHING, not a false four-step rail.  The lab and batch-ingest are two
+   alternative ways to obtain append-only candidates; both converge on the
+   existing human review owner.  This chrome is read-only. */
+.mj-shot-journey {
+  margin: .7rem 0 1rem; padding: .72rem .82rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--shadow-1);
+}
+.mj-shot-head, .mj-shot-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .75rem; flex-wrap: wrap;
+}
+.mj-shot-current {
+  display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; min-width: 0;
+}
+.mj-shot-eyebrow {
+  color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .08em;
+}
+.mj-shot-context {
+  display: inline-flex; align-items: baseline; gap: .35rem; min-width: 0;
+  padding-left: .5rem; border-left: 1px solid var(--line); font-size: .78rem;
+}
+.mj-shot-context span {
+  color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: min(30rem, 45vw);
+}
+.mj-shot-stats { display: flex; gap: .35rem; flex-wrap: wrap; }
+.mj-shot-stats span {
+  display: inline-flex; align-items: baseline; gap: .2rem;
+  padding: .2rem .45rem; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel2); color: var(--muted); font-size: .72rem;
+}
+.mj-shot-stats b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.mj-shot-track {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .35rem; margin: .62rem 0 .52rem;
+}
+.mj-shot-step {
+  display: flex; align-items: center; justify-content: center; gap: .42rem;
+  min-width: 0; min-height: 2.55rem; padding: .38rem .52rem;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel2);
+  color: var(--muted); text-decoration: none; font-size: .8rem; font-weight: 650;
+}
+a.mj-shot-step:hover { color: var(--fg); border-color: #4b5566; filter: none; }
+.mj-shot-step.active {
+  color: var(--fg); border-color: var(--accent); background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px rgba(116,169,255,.18);
+}
+.mj-shot-num {
+  display: inline-grid; place-items: center; flex: 0 0 auto; width: 1.32rem; height: 1.32rem;
+  border-radius: 999px; background: rgba(255,255,255,.06);
+  font-size: .68rem; font-variant-numeric: tabular-nums;
+}
+.mj-shot-step.active .mj-shot-num { background: var(--accent); color: #0b1220; }
+.mj-shot-step-title { display: inline-flex; align-items: center; gap: .4rem; }
+.mj-shot-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mj-shot-candidate { flex-wrap: wrap; row-gap: .18rem; }
+.mj-shot-branches {
+  display: inline-flex; align-items: center; gap: .28rem; color: var(--muted);
+  font-size: .72rem; font-weight: 500;
+}
+.mj-shot-branches a { color: var(--muted); text-decoration: none; padding: .08rem .25rem; border-radius: 4px; }
+.mj-shot-branches a:hover, .mj-shot-branches a.active { color: var(--fg); background: rgba(255,255,255,.07); }
+.mj-shot-foot p { margin: 0; font-size: .76rem; min-width: min(34rem, 100%); }
+.mj-shot-warning { color: var(--warn); margin-left: .35rem; }
+.mj-shot-next { margin-left: auto; text-decoration: none; }
+@media (max-width: 760px) {
+  .mj-shot-journey { padding: .65rem; }
+  .mj-shot-head { align-items: flex-start; }
+  .mj-shot-current { align-items: flex-start; flex-direction: column; gap: .18rem; }
+  .mj-shot-context { padding-left: 0; border-left: 0; width: 100%; }
+  .mj-shot-context span { max-width: calc(100vw - 3.2rem); }
+  .mj-shot-stats { width: 100%; }
+  .mj-shot-stats span { flex: 1 1 calc(50% - .2rem); justify-content: center; }
+  .mj-shot-track { gap: .25rem; }
+  .mj-shot-step { min-height: 3.15rem; padding: .32rem .28rem; flex-direction: column; gap: .18rem; }
+  .mj-shot-candidate { justify-content: center; }
+  .mj-shot-step-title { gap: .25rem; }
+  .mj-shot-branches { gap: .12rem; font-size: .67rem; }
+  .mj-shot-foot { align-items: flex-start; }
+  .mj-shot-next { width: 100%; margin-left: 0; text-align: center; }
+}
+
 /* Product Polish R1 Wave 4: one shared finishing journey across 剪辑 → 字幕
    → 混音 → 包装 → 导出.  It is presentation-only; the two status chips are
    filled lazily from existing export/readiness owners after first paint. */
@@ -2665,19 +2749,32 @@ _PAGES_JS = r"""
      * days later — restored by SHOT ID (indices shift as shots come and go),
      * keyed by the stable project identity. Best-effort only. */
     var posKey = "manju-rv-pos-" + ((typeof PROJECT === "string" && PROJECT) ? PROJECT : "unbound");
-    var restoredPos = false;  /* bug-hunt #51: fresh opens keep the queue head */
-    try {
-      var savedShot = window.localStorage.getItem(posKey);
-      if (savedShot) {
-        for (var si = 0; si < shots.length; si++) {
-          if (shots[si].getAttribute("data-shot") === savedShot) {
-            active = si;
-            restoredPos = true;
-            break;
-          }
+    var restoredPos = false;  /* query/current position pins the queue head */
+    var requestedShot = "";
+    try { requestedShot = new URLSearchParams(location.search).get("shot") || ""; }
+    catch (err) { requestedShot = ""; }
+    if (requestedShot) {
+      for (var qi = 0; qi < shots.length; qi++) {
+        if (shots[qi].getAttribute("data-shot") === requestedShot) {
+          active = qi;
+          restoredPos = true;
+          break;
         }
       }
-    } catch (err) { /* storage disabled — start at the top as before */ }
+    } else {
+      try {
+        var savedShot = window.localStorage.getItem(posKey);
+        if (savedShot) {
+          for (var si = 0; si < shots.length; si++) {
+            if (shots[si].getAttribute("data-shot") === savedShot) {
+              active = si;
+              restoredPos = true;
+              break;
+            }
+          }
+        }
+      } catch (err) { /* storage disabled — start at the top as before */ }
+    }
 
     // ---- QUEUE mode (round X agent XF, pain #7/#8: batch review by state) --
     var qFilter = "all";

@@ -94,6 +94,13 @@ def _gl(term: str, label: str) -> str:
     return f'<span class="gl" title="{_e(_GLOSS.get(term, ""))}">{_e(label)}</span>'
 
 
+def _provider_label_html(value: Any) -> str:
+    raw = str(value or "—")
+    if raw == "auto(fallback chain)":
+        return '自动（兜底链）<span class="mj-en" aria-hidden="true"> auto(fallback chain)</span>'
+    return _e(raw)
+
+
 # ================================================================= data layer
 
 
@@ -403,14 +410,14 @@ def _budget_html(budget: dict[str, Any]) -> str:
         f'<span class="lab-impact">— {_e(o["reason"])}</span></li>'
         for o in budget.get("omitted", []))
     selblock = f'<ul class="lab-list">{sel}</ul>' if sel else ""
-    omblock = (f'<div class="lab-omhead">被省略 (omitted):</div>'
+    omblock = (f'<div class="lab-omhead">未投递<span class="mj-en" aria-hidden="true"> (omitted)</span>:</div>'
                f'<ul class="lab-list">{om}</ul>') if om else ""
     return f'<div class="lab-budget">{head}{selblock}{omblock}</div>'
 
 
 def _cleanliness_html(findings: list[dict[str, Any]]) -> str:
     if not findings:
-        return '<div class="muted">洁净度检查：无发现 (clean)</div>'
+        return '<div class="muted">参考质量检查：未发现问题<span class="mj-en" aria-hidden="true"> (clean)</span></div>'
     rows = []
     for f in findings:
         cls = _REF_LEVEL_CLASS.get(f["level"], "st-missing")
@@ -439,7 +446,7 @@ def _refs_editor_html(param_refs: list[str]) -> str:
     empty = '' if param_refs else '<li class="muted lab-empty">（未挑选专属参考）</li>'
     return (
         '<div class="lab-refeditor">'
-        f'<div class="lab-subh">挑选 / 排序专属参考 (generation.params.refs)</div>'
+        f'<div class="lab-subh">本镜头专属参考<span class="mj-en" aria-hidden="true"> (generation.params.refs)</span></div>'
         f'<ul class="lab-list lab-editlist" id="lab-refedit">{items}{empty}</ul>'
         '<div class="lab-refadd">'
         '<input class="lab-in" id="lab-refadd-in" type="text" '
@@ -482,7 +489,7 @@ def _library_suggestions_html(rows: list[dict[str, Any]]) -> str:
     cards = "".join(_library_suggestion_card_html(r) for r in rows)
     return (
         '<div class="lab-suggest">'
-        '<div class="lab-subh">素材库建议 Library suggestions '
+        '<div class="lab-subh">素材库建议<span class="mj-en" aria-hidden="true"> (Library suggestions)</span> '
         '<span class="muted">(标签匹配本镜头角色/场景)</span></div>'
         f'<div class="lab-suggest-row">{cards}</div>'
         '</div>'
@@ -490,18 +497,37 @@ def _library_suggestions_html(rows: list[dict[str, Any]]) -> str:
 
 
 def _panel_refs(data: dict[str, Any]) -> str:
-    ref_rows = "".join(_ref_row_html(r) for r in data["ref_rows"]) \
-        or '<li class="muted">（无解析到的参考）</li>'
+    rows = data["ref_rows"]
+    ref_rows = "".join(_ref_row_html(r) for r in rows) \
+        or '<li class="muted">（没有解析到参考）</li>'
+    missing = sum(1 for row in rows if not row.get("exists") and not row.get("is_url"))
+    findings = data.get("cleanliness") or []
+    omitted = (data.get("budget") or {}).get("omitted") or []
+    diagnostics_open = " open" if missing or findings or omitted else ""
+    summary_bits = [f'{len(rows)} 项参考']
+    if missing:
+        summary_bits.append(f'{missing} 项缺失')
+    if findings:
+        summary_bits.append(f'{len(findings)} 项需检查')
+    if omitted:
+        summary_bits.append(f'{len(omitted)} 项未投递')
+    summary = " · ".join(summary_bits)
     return (
         '<section class="lab-panel" id="lab-a" data-shot="' + _e(data["shot"]) + '">'
-        '<h2>参考 References</h2>'
-        f'<div class="lab-subh">解析结果 (tier lineage)</div>'
-        f'<ul class="lab-list">{ref_rows}</ul>'
-        + _budget_html(data["budget"])
-        + f'<div class="lab-subh">洁净度 Cleanliness</div>'
-        + _cleanliness_html(data["cleanliness"])
+        '<h2>参考<span class="mj-en" aria-hidden="true"> (References)</span></h2>'
+        f'<div class="lab-panel-summary"><strong>{_e(summary)}</strong>'
+        '<span class="muted">自动解析的设定参考不会被覆盖；专属参考只影响当前镜头。</span></div>'
         + _refs_editor_html(data["param_refs"])
         + _library_suggestions_html(data.get("library_suggestions") or [])
+        + f'<details class="lab-detail-group"{diagnostics_open}>'
+        '<summary>参考来源与质量检查<span class="mj-en" aria-hidden="true"> (lineage &amp; diagnostics)</span></summary>'
+        '<div class="lab-detail-body">'
+        '<div class="lab-subh">解析到的参考<span class="mj-en" aria-hidden="true"> (tier lineage)</span></div>'
+        f'<ul class="lab-list">{ref_rows}</ul>'
+        + _budget_html(data["budget"])
+        + '<div class="lab-subh">参考质量检查<span class="mj-en" aria-hidden="true"> (Cleanliness)</span></div>'
+        + _cleanliness_html(findings)
+        + '</div></details>'
         + '</section>'
     )
 
@@ -509,8 +535,16 @@ def _panel_refs(data: dict[str, Any]) -> str:
 # ---------------------------------------------------------- panel B: prompts
 
 
-def _prompt_block(label: str, term: str | None, text: str) -> str:
+def _prompt_block(
+    label: str,
+    term: str | None,
+    text: str,
+    *,
+    technical: str | None = None,
+) -> str:
     lab = _gl(term, label) if term else _e(label)
+    if technical:
+        lab += f'<span class="mj-en" aria-hidden="true"> ({_e(technical)})</span>'
     body = _e(text) if text else '<span class="muted">（空）</span>'
     return (f'<div class="lab-prompt">'
             f'<div class="lab-plabel">{lab}</div>'
@@ -526,9 +560,9 @@ def _provider_trace_html(prov: dict[str, Any]) -> str:
            if prov.get("routing_error") else "")
     return (
         '<div class="lab-trace panel2">'
-        f'<div>{_gl("provider", "生成来源")}: <b>{_e(prov.get("label") or prov.get("chosen") or "—")}</b> '
+        f'<div>{_gl("provider", "生成来源")}: <b>{_provider_label_html(prov.get("label") or prov.get("chosen") or "—")}</b> '
         f'<span class="chip">{_e(why_label)}</span></div>'
-        f'<div class="muted lab-order">顺序: {order}</div>'
+        f'<div class="muted lab-order">备用顺序: {order}</div>'
         f'{err}</div>'
     )
 
@@ -586,7 +620,7 @@ def _scaffold_html(bundle: dict[str, Any]) -> str:
     copy_text = "\n".join(f"{i + 1}. {b}" for i, b in enumerate(beats))
     return (
         '<div class="lab-scaffold panel2">'
-        f'<div class="lab-subh">按关键帧拆分 (storyboard scaffold)</div>'
+        f'<div class="lab-subh">按关键帧拆分<span class="mj-en" aria-hidden="true"> (storyboard scaffold)</span></div>'
         '<div class="lab-scaffold-ctl">'
         f'<label class="muted">拆成</label>'
         '<input class="lab-in lab-n" id="lab-scaffold-n" type="number" '
@@ -605,34 +639,54 @@ def _scaffold_html(bundle: dict[str, Any]) -> str:
 def _panel_prompts(data: dict[str, Any]) -> str:
     b = data["bundle"]
     cost = b.get("cost") or {}
+    duration_ms = int(cost.get("duration_ms") or 0)
+    duration_label = f"{duration_ms / 1000:g} 秒" if duration_ms else "时长待定"
     cost_line = (
-        f'{_gl("dry_run", "试跑")} 预估: '
+        f'{_gl("dry_run", "试算")}：'
         f'<b>{_e(cost.get("estimated_cost"))} {_e(cost.get("currency") or "")}</b> '
-        f'<span class="muted">({_e(cost.get("duration_ms"))}ms)</span>')
+        f'<span class="muted">· {duration_label}</span>')
     override = ""
     try:
         override = str((b.get("shot_spec") or {}).get("generation", {})
                        .get("prompt_override") or "")
     except Exception:
         override = ""
+    editor_open = " open" if override.strip() else ""
     editor = (
-        '<div class="lab-override">'
-        f'<div class="lab-subh">改写视频提示词 (generation.prompt_override)</div>'
+        f'<details class="lab-detail-group"{editor_open}>'
+        '<summary>镜头结构与高级改写</summary>'
+        '<div class="lab-detail-body">'
+        + _scaffold_html(b)
+        + '<div class="lab-override">'
+        '<div class="lab-subh">改写视频提示词<span class="mj-en" aria-hidden="true"> (generation.prompt_override)</span></div>'
         f'<textarea class="lab-ta" id="lab-override">{_e(override)}</textarea>'
         '<button class="btn mini" data-lab="override-save">保存改写</button>'
-        '</div>')
+        '</div></div></details>')
+    checks = b.get("checks") or []
+    checks_html = (
+        '<div class="lab-attention">'
+        '<div class="lab-subh">动作可生成性</div>'
+        + _checks_html(checks)
+        + '</div>'
+        if checks else '<div class="lab-inline-ok">动作检查未发现明显问题。</div>'
+    )
     return (
         '<section class="lab-panel" id="lab-b">'
-        '<h2>提示词 Prompts</h2>'
-        + _prompt_block("图像提示词 image", None, b.get("image_prompt") or "")
-        + _prompt_block("视频提示词 video", None, b.get("video_prompt") or "")
-        + _prompt_block("导演备注 director", None, b.get("director_prompt") or "")
-        + _prompt_block("反向提示词 negative", None, b.get("negative_prompt") or "")
+        '<h2>提示词<span class="mj-en" aria-hidden="true"> (Prompts)</span></h2>'
+        + _prompt_block("当前视频提示词", None, b.get("video_prompt") or "", technical="video")
+        + '<div class="lab-prompt-summary panel2">'
+        + f'<span>{_gl("provider", "生成来源")}: <b>{_provider_label_html((b.get("provider") or {}).get("label") or (b.get("provider") or {}).get("chosen") or "—")}</b></span>'
+        + f'<span>{cost_line}</span>'
+        + '</div>'
+        + checks_html
+        + '<details class="lab-detail-group">'
+        '<summary>其它提示词与路由详情</summary>'
+        '<div class="lab-detail-body">'
+        + _prompt_block("图像提示词", None, b.get("image_prompt") or "", technical="image")
+        + _prompt_block("导演备注", None, b.get("director_prompt") or "", technical="director")
+        + _prompt_block("反向提示词", None, b.get("negative_prompt") or "", technical="negative")
         + _provider_trace_html(b.get("provider") or {})
-        + f'<div class="lab-cost panel2">{cost_line}</div>'
-        + f'<div class="lab-subh">单动作检查 Single-action checks</div>'
-        + _checks_html(b.get("checks") or [])
-        + _scaffold_html(b)
+        + '</div></details>'
         + editor
         + '</section>'
     )
@@ -652,6 +706,10 @@ def _candidate_card(c: dict[str, Any]) -> str:
             + (f' · {_e(str(c["created"])[:19])}' if c.get("created") else '') + '</div>')
     dur = c.get("duration_ms")
     mid = int(dur) // 2 if dur else 0
+    pick_button = (
+        '<button class="btn mini" type="button" disabled>当前选择</button>'
+        if c.get("selected") else '<button class="btn mini" data-lab="pick">选用</button>'
+    )
     return (
         f'<div class="lab-cand{sel}" data-take="{_e(c["name"])}" '
         f'data-media="{_e(c.get("media") or "")}">'
@@ -659,8 +717,8 @@ def _candidate_card(c: dict[str, Any]) -> str:
         f'<div class="lab-chead"><b>{_gl("take", c["name"])}</b> {selbadge}</div>'
         f'{meta}'
         '<div class="lab-cbtns">'
-        '<button class="btn mini" data-lab="pick">选用</button>'
-        '<span class="lab-saveref">'
+        + pick_button
+        + '<span class="lab-saveref">'
         f'<input class="lab-in lab-atms" type="number" min="0" value="{mid}" '
         'title="截帧毫秒 at_ms">'
         '<select class="lab-in lab-dest">'
@@ -677,30 +735,35 @@ def _candidate_card(c: dict[str, Any]) -> str:
 def _generate_html(data: dict[str, Any]) -> str:
     return (
         '<div class="lab-gen panel2">'
-        f'<div class="lab-subh">生成候选 Generate ({_gl("take", "版本")})</div>'
+        f'<div class="lab-subh">生成候选<span class="mj-en" aria-hidden="true"> (Generate {_gl("take", "version")})</span></div>'
         '<div class="lab-genrow">'
         f'<label class="muted">{_gl("provider", "生成来源")}</label>'
         '<input class="lab-in" id="lab-gen-provider" type="text" '
         'placeholder="留空=智能派单默认">'
         '</div>'
         '<div class="lab-genrow lab-quality" id="lab-quality">'
-        '<button class="lab-qbtn active" data-q="draft">草稿 Draft</button>'
-        '<button class="lab-qbtn" data-q="final">成片 Final</button>'
+        '<button class="lab-qbtn active" data-q="draft">草稿<span class="mj-en" aria-hidden="true"> Draft</span></button>'
+        '<button class="lab-qbtn" data-q="final">成片<span class="mj-en" aria-hidden="true"> Final</span></button>'
         '</div>'
         f'<div class="lab-gendelta muted" id="lab-gendelta">选择质量档查看 {_gl("dry_run", "试跑")} 花费</div>'
-        '<button class="btn" data-lab="generate">试跑并生成…</button>'
+        '<button class="btn" data-lab="generate">先试算，再确认生成…</button>'
         '</div>'
     )
 
 
 def _panel_candidates(data: dict[str, Any]) -> str:
+    shot_id = str(data.get("shot") or "")
     cards = "".join(_candidate_card(c) for c in data["candidates"]) \
-        or '<div class="muted">（暂无候选版本，先生成一条）</div>'
+        or '<div class="muted lab-empty-candidates">还没有候选。可以在本页生成，或导入已有视频。</div>'
     return (
         '<section class="lab-panel" id="lab-c">'
-        '<h2>候选 Candidates</h2>'
+        '<h2>候选<span class="mj-en" aria-hidden="true"> (Candidates)</span></h2>'
         + _generate_html(data)
         + f'<div class="lab-cands">{cards}</div>'
+        + '<div class="lab-candidate-next">'
+        + f'<a class="btn ghost mini" href="/ingest?shot={quote(shot_id)}&amp;role=take">导入本地候选</a>'
+        + f'<a class="btn mini" href="/review?shot={quote(shot_id)}">去审片</a>'
+        + '</div>'
         + '</section>'
     )
 
@@ -711,13 +774,18 @@ def render(project: Any, token: str, query: dict[str, list[str]]) -> str:
     want = (query.get("shot") or [None])[0]
     shot_id = want if (want and want in shot_ids) else (shot_ids[0] if shot_ids else None)
 
+    from .shot_journey import shot_journey_html
+
     head = ('<div class="page-h"><h1>镜头实验室<span class="mj-en" aria-hidden="true"> (Shot lab)</span></h1>'
-            '<span class="muted">单镜头实验台 · 参考 / 提示词 / 候选一屏调</span></div>')
+            '<span class="muted">一次只处理一个镜头：整理参考，检查提示词，再获得可审片的候选。</span></div>')
+    journey = shot_journey_html(PAGE_PATH, project, shot_id=shot_id)
     if shot_id is None:
         return _shell(
             "镜头实验室",
             token,
-            head + '<p class="panel muted">项目里还没有镜头。先在工作台创建镜头。</p>',
+            head + journey + ('<div class="panel"><p><b>项目里还没有镜头。</b></p>'
+                              '<p class="muted">先建立镜头计划，再回来准备参考、提示词和候选。</p>'
+                              '<a class="btn" href="/create">去创作</a></div>'),
             project,
         )
 
@@ -727,13 +795,14 @@ def render(project: Any, token: str, query: dict[str, list[str]]) -> str:
         return _shell(
             "镜头实验室",
             token,
-            head + _shot_picker(shot_ids, shot_id)
+            head + journey + _shot_picker(shot_ids, shot_id)
             + f'<p class="err panel">{_e(" ".join(str(exc).split()))}</p>',
             project,
         )
 
     body = (
         head
+        + journey
         + _shot_picker(shot_ids, shot_id)
         + f'<div class="lab-grid" data-shot="{_e(shot_id)}">'
         + _panel_refs(data)
@@ -766,12 +835,37 @@ _LAB_CSS = """
 }
 .lab-pick.active { background: var(--accent); color: #0b1220; border-color: var(--accent); }
 .lab-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; align-items: start; }
-@media (max-width: 1100px) { .lab-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) {
+  .lab-grid { grid-template-columns: 1fr; }
+  .lab-prompt-summary { align-items: flex-start; }
+}
 .lab-panel {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: .8rem .9rem; min-width: 0;
 }
 .lab-panel h2 { font-size: 1rem; margin: 0 0 .6rem; border-bottom: 1px solid var(--line); padding-bottom: .35rem; }
+.lab-panel-summary {
+  display: flex; flex-direction: column; gap: .18rem; margin: -.05rem 0 .65rem;
+  font-size: .8rem; line-height: 1.45;
+}
+.lab-detail-group {
+  margin-top: .65rem; border-top: 1px solid var(--line); padding-top: .55rem;
+}
+.lab-detail-group > summary {
+  cursor: pointer; color: var(--fg); font-size: .82rem; font-weight: 650;
+  list-style-position: outside;
+}
+.lab-detail-group[open] > summary { margin-bottom: .45rem; }
+.lab-detail-body { display: flow-root; }
+.lab-prompt-summary {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: .45rem .8rem; flex-wrap: wrap; font-size: .8rem;
+}
+.lab-inline-ok {
+  margin: .55rem 0; padding: .45rem .55rem; border: 1px solid rgba(111,220,160,.22);
+  border-radius: 7px; color: var(--muted); background: rgba(111,220,160,.04); font-size: .8rem;
+}
+.lab-attention { margin-top: .55rem; }
 .panel2 { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .6rem; margin: .5rem 0; }
 .lab-subh { font-size: .82rem; color: var(--muted); margin: .7rem 0 .3rem; font-weight: 600; }
 .lab-subh2 { font-size: .78rem; color: var(--muted); margin: .3rem 0 .2rem; }
@@ -836,7 +930,13 @@ _LAB_CSS = """
 .lab-chead { margin: .3rem 0 .15rem; display: flex; gap: .4rem; align-items: baseline; }
 .lab-cmeta { font-size: .76rem; }
 .lab-cbtns { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; margin-top: .35rem; }
+.lab-cbtns button[disabled] { opacity: .72; cursor: default; }
 .lab-saveref { display: inline-flex; gap: .3rem; align-items: center; flex-wrap: wrap; }
+.lab-candidate-next {
+  display: flex; gap: .4rem; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; margin-top: .7rem; padding-top: .6rem; border-top: 1px solid var(--line);
+}
+.lab-empty-candidates { padding: .45rem 0; }
 .gl { border-bottom: 1px dotted var(--muted); cursor: help; }
 .lab-empty, .lab-uphint { font-size: .78rem; }
 

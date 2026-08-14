@@ -70,40 +70,72 @@ def _shell(title: str, token: str, body: str, project: Any) -> str:
     )
 
 
-def render(project: Any, token: str) -> str:
+def render(
+    project: Any,
+    token: str,
+    query: dict[str, list[str]] | None = None,
+) -> str:
+    from .shot_journey import shot_journey_html
+
+    query = query or {}
+    requested_role = (query.get("role") or ["auto"])[0]
+    role = requested_role if requested_role in {"auto", "take", "voice", "ref"} else "auto"
+    requested_shot = (query.get("shot") or [""])[0]
+    try:
+        shot = requested_shot if requested_shot in set(project.shot_ids()) else ""
+    except Exception:
+        shot = ""
+
     head = (
         '<div class="page-h"><h1>批量入库<span class="mj-en" aria-hidden="true"> (Batch ingest)</span></h1>'
-        '<span class="muted">把外部产出的一批素材(镜头 take、配音、参考图)按文件名约定'
-        "一次性归档 · 先预演,人工确认后再落地(§3 素材只增不改)</span></div>"
+        '<span class="muted">把外部生成、拍摄或配音素材安全加入项目；先预演匹配，确认后只追加、不覆盖。</span></div>'
+    )
+    journey = shot_journey_html(PAGE_PATH, project, shot_id=shot or None)
+    role_options = "".join(
+        f'<option value="{_e(value)}"' + (' selected' if value == role else '') + f'>{_e(label)}</option>'
+        for value, label in (
+            ("auto", "自动识别"),
+            ("take", "视频候选"),
+            ("voice", "配音"),
+            ("ref", "参考图"),
+        )
+    )
+    preset_note = (
+        f'<p class="ing-preset muted">已预设为 <b>{_e(shot)}</b> 的'
+        f'{"视频候选" if role == "take" else "素材"}；入库前仍会显示完整匹配计划。</p>'
+        if shot else ""
     )
     body = (
         head
+        + journey
         + '<div class="ing-panel panel">'
-        '<div class="ing-controls">'
-        '<label class="btn ing-file-label">选择文件(可多选)'
+        '<div class="ing-primary-row">'
+        '<label class="btn ing-file-label">选择文件<span class="mj-en" aria-hidden="true"> (Multiple)</span>'
         '<input type="file" id="ing-files" multiple hidden></label>'
-        '<label class="ing-field">角色 '
-        '<select id="ing-role">'
-        '<option value="auto">自动识别</option>'
-        '<option value="take">take(视频)</option>'
-        '<option value="voice">配音(音频)</option>'
-        '<option value="ref">参考图</option>'
-        "</select></label>"
-        '<label class="ing-field">强制镜头 '
-        '<input type="text" id="ing-shot" placeholder="如 S001,留空则按文件名识别"></label>'
-        '<button type="button" class="btn" id="ing-plan-btn" disabled>重新生成计划</button>'
+        '<button type="button" class="btn" id="ing-plan-btn" disabled>生成入库计划</button>'
         '<button type="button" class="btn ghost" id="ing-reset-btn">开始新一批</button>'
-        "</div>"
-        '<div id="ing-filelist" class="ing-filelist muted"></div>'
-        "</div>"
+        '</div>'
+        '<details class="ing-match-settings"' + (' open' if shot or role != "auto" else '') + '>'
+        '<summary>匹配设置</summary>'
+        '<div class="ing-controls">'
+        '<label class="ing-field">素材类型 <select id="ing-role">'
+        + role_options
+        + '</select></label>'
+        '<label class="ing-field">目标镜头 '
+        f'<input type="text" id="ing-shot" value="{_e(shot)}" placeholder="如 S001；留空则按文件名识别"></label>'
+        '</div></details>'
+        + preset_note
+        + '<div id="ing-filelist" class="ing-filelist muted"></div>'
+        '</div>'
         '<div id="ing-table-wrap"></div>'
-        '<div class="ing-legend muted panel">'
-        "词汇:<b>take</b> 同一镜头的一个候选版本(生成/导入都追加,不覆盖已有 take) · "
-        "<b>配音 take</b> 人工配音,像手动拖入的音频一样永不自动失效(§4.3) · "
-        "<b>参考图</b> 复制进 media/refs 供后续生成引用 · "
-        "<b>普通导入</b> 未匹配到镜头/角色约定,同 `manju import` 落进 media/imports · "
-        "<b>跳过(重复)</b> 内容已存在于项目里,素材只增不改(§3)"
-        "</div>"
+        '<details class="ing-legend panel">'
+        '<summary>文件命名和入库规则</summary>'
+        '<div class="muted">'
+        '<b>视频候选</b> 会追加为镜头的新版本，不覆盖旧版本；'
+        '<b>配音</b> 会追加为人工音频；<b>参考图</b> 会复制进参考素材；'
+        '<b>普通导入</b> 用于未匹配到镜头或设定的文件；重复内容会安全跳过。'
+        '<span class="mj-en" aria-hidden="true"> Take, voice, reference and plain-import classifications remain available in the technical plan.</span>'
+        '</div></details>'
         + _review_section_html()
     )
     return _shell("批量入库", token, body, project)
@@ -120,13 +152,14 @@ def _review_section_html() -> str:
     the fetch" stance the plan/apply table above already takes."""
     return (
         '<div class="ing-review panel" id="ing-review">'
-        '<div class="ing-rv-head"><h2>批次评审 Batch review</h2>'
-        '<label class="ing-field">批次 <select id="ing-rv-batch"></select></label>'
+        '<div class="ing-rv-head"><div><h2>批次评审<span class="mj-en" aria-hidden="true"> (Batch review)</span></h2>'
+        '<p class="muted">检查刚刚加入的素材；确认匹配不会自动选择镜头候选。</p></div>'
+        '<label class="ing-field">批次 <select id="ing-rv-batch" disabled></select></label>'
         '<button type="button" class="btn ghost" id="ing-rv-refresh">刷新批次列表</button>'
-        '<button type="button" class="btn" id="ing-rv-confirm-all">全部确认已匹配</button>'
+        '<button type="button" class="btn" id="ing-rv-confirm-all" disabled>全部确认已匹配</button>'
         "</div>"
         '<div id="ing-rv-filters" class="ing-rv-filters"></div>'
-        '<div id="ing-rv-table-wrap"></div>'
+        '<div id="ing-rv-table-wrap"><div class="ing-review-empty muted">正在读取已有批次…</div></div>'
         "</div>"
     )
 
@@ -145,8 +178,13 @@ def render_ingest_js() -> str:
 _INGEST_CSS = """
 /* 批量入库 batch ingest (round X). Loaded AFTER /app.css + /pages.css; reuses
    their palette (--panel/--panel2/--line/--fg/--mono/--ok/--err…). */
-.ing-panel { display: flex; flex-direction: column; gap: .5rem; }
-.ing-controls { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
+.ing-panel { display: flex; flex-direction: column; gap: .65rem; }
+.ing-primary-row, .ing-controls { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
+.ing-primary-row { padding-bottom: .1rem; }
+.ing-match-settings { border-top: 1px solid var(--line); padding-top: .5rem; }
+.ing-match-settings > summary { cursor: pointer; color: var(--fg); font-size: .82rem; font-weight: 650; }
+.ing-match-settings[open] > summary { margin-bottom: .5rem; }
+.ing-preset { margin: 0; font-size: .78rem; }
 .ing-file-label { cursor: pointer; }
 .ing-field { display: inline-flex; gap: .35rem; align-items: center; font-size: .84rem; }
 .ing-field input[type="text"], .ing-field select {
@@ -168,11 +206,25 @@ _INGEST_CSS = """
 .ing-status.ing-ok { color: var(--ok); }
 .ing-status.ing-bad { color: var(--err); }
 .ing-legend { font-size: .8rem; line-height: 1.7; margin-top: 1rem; }
+.ing-legend > summary { cursor: pointer; color: var(--fg); font-weight: 650; }
+.ing-legend > div { margin-top: .45rem; }
+.ing-after-actions { display: flex; justify-content: flex-end; gap: .45rem; flex-wrap: wrap; margin-top: .65rem; }
+
+@media (max-width: 760px) {
+  .ing-primary-row > .btn, .ing-file-label { flex: 1 1 auto; text-align: center; }
+  .ing-controls { align-items: stretch; }
+  .ing-field { width: 100%; justify-content: space-between; }
+  .ing-field input[type="text"], .ing-field select { flex: 1 1 auto; min-width: 0; }
+  .ing-after-actions > .btn { flex: 1 1 auto; text-align: center; }
+}
 
 /* 批次评审 batch review (round AA6) — .badge/.st-*/.filter-chip/.btn.mini all
    reused as-is from /app.css + /pages.css (loaded before this sheet), never
    redefined here; only this section's own layout is new. */
 .ing-review { margin-top: 1.2rem; display: flex; flex-direction: column; gap: .6rem; }
+.ing-review-empty { padding: .65rem 0; }
+.ing-rv-head > div:first-child { min-width: min(28rem, 100%); }
+.ing-rv-head > div:first-child p { margin: .15rem 0 0; font-size: .78rem; }
 .ing-rv-head { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
 .ing-rv-head h2 { margin: 0; font-size: 1rem; }
 .ing-rv-head select {
@@ -397,28 +449,46 @@ _INGEST_JS = r"""
         // round AA6: apply's job result now carries batch_id — surface a
         // direct way into the review view instead of making the reviewer
         // hunt for the batch they just landed in the selector below.
-        if (job.state === "done" && result.batch_id) showReviewLink(result.batch_id);
+        if (job.state === "done" && result.batch_id) {
+          var landedTakes = (result.results || []).filter(function (item) {
+            return item && item.ok && item.row && item.row.action === "take";
+          });
+          var firstShot = landedTakes.length && landedTakes[0].row
+            ? landedTakes[0].row.shot_id : "";
+          showReviewLink(result.batch_id, landedTakes.length > 0, firstShot || "");
+        }
       });
     });
   }
 
-  function showReviewLink(batchIdToView) {
+  function showReviewLink(batchIdToView, hasTakes, firstShot) {
     var wrap = document.getElementById("ing-table-wrap");
     if (!wrap) return;
-    var existing = document.getElementById("ing-view-batch-link");
+    var existing = document.getElementById("ing-after-actions");
     if (existing) existing.remove();
+    var actions = document.createElement("div");
+    actions.id = "ing-after-actions";
+    actions.className = "ing-after-actions";
     var a = document.createElement("a");
     a.id = "ing-view-batch-link";
     a.href = "#ing-review";
     a.className = "btn ghost";
-    a.textContent = "查看本批次评审";
+    a.textContent = "检查本批次";
     a.addEventListener("click", function (e) {
       e.preventDefault();
       loadBatches(batchIdToView);
       var section = document.getElementById("ing-review");
       if (section) section.scrollIntoView({ behavior: "smooth" });
     });
-    wrap.appendChild(a);
+    actions.appendChild(a);
+    if (hasTakes) {
+      var review = document.createElement("a");
+      review.className = "btn";
+      review.href = "/review" + (firstShot ? ("?shot=" + encodeURIComponent(firstShot)) : "");
+      review.textContent = "去审片";
+      actions.appendChild(review);
+    }
+    wrap.appendChild(actions);
   }
 
   function resetBatch() {
@@ -492,6 +562,7 @@ _INGEST_JS = r"""
   };
 
   var rvItems = [];
+  var rvBatchSelected = false;
   var rvMatchFilter = "all";
   var rvReviewFilter = "all";
 
@@ -509,7 +580,10 @@ _INGEST_JS = r"""
     if (!sel) return Promise.resolve();
     return (typeof requestJson==="function"?requestJson("GET","/api/ingest/batches",undefined,typeof manjuApiOptions==="function"?manjuApiOptions():{}):fetch("/api/ingest/batches").then(function(r){return r.json();})).then(function (d) {
       var batches = d.batches || [];
+      var confirmAll = document.getElementById("ing-rv-confirm-all");
       sel.innerHTML = "";
+      sel.disabled = batches.length === 0;
+      if (confirmAll) confirmAll.disabled = batches.length === 0;
       batches.forEach(function (b) {
         var opt = document.createElement("option");
         opt.value = b.batch;
@@ -522,9 +596,22 @@ _INGEST_JS = r"""
         sel.value = want;
         return loadBatchDetail(want);
       }
+      rvBatchSelected = false;
       rvItems = [];
       renderReviewFilters();
       renderReviewTable();
+    }).catch(function () {
+      var confirmAll = document.getElementById("ing-rv-confirm-all");
+      sel.disabled = true;
+      if (confirmAll) confirmAll.disabled = true;
+      rvBatchSelected = false;
+      rvItems = [];
+      renderReviewFilters();
+      var wrap = document.getElementById("ing-rv-table-wrap");
+      if (wrap) {
+        wrap.textContent = "暂时无法读取入库批次。请检查本地服务后重试。";
+        wrap.classList.add("muted");
+      }
     });
   }
 
@@ -553,6 +640,7 @@ _INGEST_JS = r"""
         toast((res.data && res.data.error) || "加载批次失败", false);
         return;
       }
+      rvBatchSelected = true;
       rvItems = res.data.items || [];
       renderReviewFilters();
       renderReviewTable();
@@ -587,6 +675,7 @@ _INGEST_JS = r"""
     var wrap = document.getElementById("ing-rv-filters");
     if (!wrap) return;
     wrap.innerHTML = "";
+    if (!rvItems.length) return;
     wrap.appendChild(rvFilterGroup("匹配状态", REVIEW_MATCH_STATES, rvMatchFilter, MATCH_LABEL,
       function (v) { rvMatchFilter = v; renderReviewFilters(); renderReviewTable(); }));
     wrap.appendChild(rvFilterGroup("评审状态", REVIEW_STATES, rvReviewFilter, REVIEW_LABEL,
@@ -614,7 +703,9 @@ _INGEST_JS = r"""
     if (!items.length) {
       var empty = document.createElement("div");
       empty.className = "muted";
-      empty.textContent = rvItems.length ? "没有符合筛选条件的条目" : "该批次没有条目,或还没有选择批次";
+      empty.textContent = rvItems.length ? "没有符合筛选条件的条目"
+        : (rvBatchSelected ? "这个批次没有可评审条目。"
+          : "还没有可评审的入库批次。完成一次入库后会显示在这里。");
       wrap.appendChild(empty);
       return;
     }
@@ -622,7 +713,7 @@ _INGEST_JS = r"""
     table.className = "ing-rv-table";
     var thead = document.createElement("thead");
     var htr = document.createElement("tr");
-    ["预览", "文件", "动作", "目标", "匹配", "自动选用", "评审", "备注", "操作"].forEach(function (h) {
+    ["预览", "文件", "动作", "目标", "匹配", "历史选择", "评审", "备注", "操作"].forEach(function (h) {
       var th = document.createElement("th");
       th.textContent = h;
       htr.appendChild(th);
@@ -677,7 +768,8 @@ _INGEST_JS = r"""
       if (it.staged) {
         var stagedBadge = document.createElement("span");
         stagedBadge.className = "badge st-manual";
-        stagedBadge.textContent = "已自动选用";
+        stagedBadge.textContent = "历史自动选择";
+        stagedBadge.title = "仅用于兼容旧批次记录；当前入库不会自动选择候选";
         tdStaged.appendChild(stagedBadge);
       }
       tr.appendChild(tdStaged);
@@ -764,8 +856,8 @@ _INGEST_JS = r"""
     }
     if (act === "discard") {
       var msg = "确定丢弃「" + (item.name || "") + "」的评审结果?\n\n"
-        + "若该条目此前自动选用了一个 take(空镜头自动选用),只有在镜头此后没有被重新"
-        + "选择的情况下才会一并撤销该次自动选用;已落地的素材本身不会被删除(素材只增不改)。";
+        + "历史批次可能曾自动选择过候选；只有在镜头此后没有被重新选择的情况下，"
+        + "系统才会一并撤销那次历史选择。已落地的素材本身不会被删除。";
       if (!window.confirm(msg)) return;
       var discardNote = window.prompt("备注(可留空):", item.note || "");
       if (discardNote === null) return;

@@ -224,7 +224,7 @@ var MJ_TASKBAR_NEXT = {
   repair: ["/review", "去审片"],
   export: ["/exports", "打开导出中心"],
   ingest_plan: ["/ingest", "查看导入计划"],
-  ingest: ["/storyboard", "查看分镜"],
+  ingest: ["/ingest#ing-review", "检查本批次"],
   handle_rebuild: ["/edit", "回剪辑"],
   roundtrip: ["/edit", "回剪辑"],
   edit_preview: ["/edit", "回剪辑"],

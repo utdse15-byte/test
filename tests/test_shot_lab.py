@@ -216,14 +216,14 @@ def test_page_renders_three_panels(gui, tmp_project, add_shot, make_take):
     assert status == 200
 
     # three panels present
-    assert "参考 References" in html
-    assert "提示词 Prompts" in html
-    assert "候选 Candidates" in html
+    assert "<h2>参考" in html and "(References)" in html
+    assert "<h2>提示词" in html and "(Prompts)" in html
+    assert "<h2>候选" in html and "(Candidates)" in html
     # (A) refs lineage: the tier + the ref path
     assert "media/imports/linxia.png" in html
     assert "bible" in html
     # (A) budget view: an omission with its 中文 impact line
-    assert "被省略" in html
+    assert "未投递" in html
     assert "场景一致性将只依赖提示词描述" in html
     # (A) cleanliness: the honest needs-vision row for the scene ref
     assert "需要视觉模型" in html

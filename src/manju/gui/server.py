@@ -6591,7 +6591,9 @@ class _Handler(BaseHTTPRequestHandler):
                             "application/javascript; charset=utf-8")
             return True
         if path == ingest_page.PAGE_PATH:
-            html_doc = ingest_page.render(self.server.project, self.server.token)
+            html_doc = ingest_page.render(
+                self.server.project, self.server.token, parse_qs(url.query)
+            )
             self._send_text(html_doc, "text/html; charset=utf-8", extra=self._PAGES_CSP)
             return True
         if path == "/api/ingest/batches":

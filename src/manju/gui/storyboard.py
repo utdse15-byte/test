@@ -309,8 +309,13 @@ def _detail_row(project: Any, shot_id: str, shot: Any, note: str) -> str:
     return (
         f'<tr class="sb-detail hidden" data-detail="{_e(shot_id)}"><td colspan="13">'
         f'<div class="sb-drawer">'
-        f'<div class="sb-drawer-head"><h3>{_e(shot_id)} 详情 (detail)</h3>'
-        f'<button class="btn ghost mini sb-close" type="button">收起 (close)</button></div>'
+        f'<div class="sb-drawer-head"><h3>{_e(shot_id)} 详情<span class="mj-en" aria-hidden="true"> (Detail)</span></h3>'
+        f'<button class="btn ghost mini sb-close" type="button">收起<span class="mj-en" aria-hidden="true"> (Close)</span></button></div>'
+        f'<div class="sb-drawer-actions">'
+        f'<a class="btn mini" href="/lab?shot={quote(shot_id)}">在实验室准备候选</a>'
+        f'<a class="btn ghost mini" href="/ingest?shot={quote(shot_id)}&amp;role=take">导入本地候选</a>'
+        f'<a class="btn ghost mini" href="/review?shot={quote(shot_id)}">去审片</a>'
+        f'</div>'
         f'{why}{lock_ctl}'
         f'{takes_html}'
         f'<h4>完整规格 (full spec)</h4>'
@@ -354,20 +359,24 @@ def _lock_controls(shot_id: str, shot: Any) -> str:
 
 
 def render(project: Any, token: str) -> str:
+    from .shot_journey import shot_journey_html
+
     head = ('<div class="page-h"><h1>分镜工作台<span class="mj-en" aria-hidden="true"> (Storyboard)</span></h1>'
-            '<span class="muted">每个镜头一行 · 状态(版本新鲜度)与审批(Frame.io 三态)'
-            '正交 · 行内可改动作/台词/必须出现/避免 · 锁定即封印(解锁仅命令行)</span></div>')
+            '<span class="muted">先把镜头意图和约束说清楚，再通过实验室或批量入库获得候选。</span></div>')
+    journey = shot_journey_html(PAGE_PATH, project)
     try:
         shot_ids = project.shot_ids()
     except Exception as exc:
         return _shell(
-            "分镜工作台", token, head + f'<p class="err panel">{_e(exc)}</p>', project
+            "分镜工作台", token, head + journey + f'<p class="err panel">{_e(exc)}</p>', project
         )
 
     if not shot_ids:
-        empty = ('<div class="panel sb-empty"><p>还没有镜头。用 '
-                 '<code>manju new --shots N</code> 或在工作台里新建。</p></div>')
-        return _shell("分镜工作台", token, head + empty, project)
+        empty = ('<div class="panel sb-empty"><p><b>还没有镜头。</b></p>'
+                 '<p class="muted">先在创作页建立故事和镜头计划，再回到这里逐镜检查。</p>'
+                 '<a class="btn" href="/create">去创作</a>'
+                 '<span class="mj-en" aria-hidden="true"> CLI: manju new --shots N</span></div>')
+        return _shell("分镜工作台", token, head + journey + empty, project)
 
     # one asset-matrix + one staleness pass for the whole table (never per-cell).
     try:
@@ -410,17 +419,18 @@ def render(project: Any, token: str) -> str:
     header = (
         '<thead><tr>'
         '<th class="sb-sel"><input type="checkbox" id="sb-all" title="全选"></th>'
-        '<th>Shot#</th><th>场景</th><th>角色</th><th>动作/描述</th><th>台词</th>'
+        '<th>镜头<span class="mj-en" aria-hidden="true"> (Shot#)</span></th><th>场景</th><th>角色</th><th>动作/描述</th><th>台词</th>'
         '<th>镜头</th><th>必须出现</th><th>避免</th><th>来源</th>'
         '<th>状态</th><th>锁</th><th>审批</th>'
         '</tr></thead>')
-    table = (f'<div class="sb-scroll"><table class="sb-table">{header}'
+    table = ('<p class="sb-scroll-hint muted">左右滑动可查看完整镜头信息；点镜头号进入实验室。</p>'
+             f'<div class="sb-scroll"><table class="sb-table">{header}'
              f'<tbody>{"".join(rows)}</tbody></table></div>')
 
     batchbar = (
         '<div id="sb-batchbar" class="panel sb-batchbar hidden">'
         '<span class="sb-count"><b id="sb-n">0</b> 已选</span>'
-        '<button class="btn mini" type="button" id="sb-approve-all">批量通过 (approve)</button>'
+        '<button class="btn mini" type="button" id="sb-approve-all">批量通过<span class="mj-en" aria-hidden="true"> (Approve)</span></button>'
         '<button class="btn ghost mini" type="button" id="sb-redo-all" '
         'title="选中镜头一次性重做(付费部分在任务面板等待确认)">批量重做</button>'
         '<button class="btn ghost mini" type="button" id="sb-voice-all" '
@@ -435,14 +445,16 @@ def render(project: Any, token: str) -> str:
         '</div>')
 
     legend = (
-        '<div class="sb-legend muted panel">'
-        '词汇(§10):<b>状态</b> 版本新鲜度 — 无版本/待更新/最新/手动置入/待挑选/缺媒体 · '
-        '<b>审批</b> Frame.io 三态 — 待审/进行中/已通过(点击流转) · '
-        '<b>角色</b> 实心=已登记(别名可解析)，空心 @=未登记提及(manju mentions --apply) · '
-        '<b>锁</b> 🔒 已封印，解锁仅命令行 manju unlock'
-        '</div>')
+        '<details class="sb-legend panel">'
+        '<summary>状态、审批与锁定说明</summary>'
+        '<div class="muted">'
+        '<b>状态</b> 表示当前版本是否最新；<b>审批</b> 是镜头层面的待审、进行中、已通过；'
+        '<b>角色</b> 实心表示已登记，空心 @ 表示仍需登记；'
+        '<b>锁</b> 表示字段已封印，解锁只在命令行完成。'
+        '<span class="mj-en" aria-hidden="true"> Technical terms: take freshness, review state, registered mentions and locks.</span>'
+        '</div></details>')
 
-    body = head + batchbar + table + legend
+    body = head + journey + batchbar + table + legend
     return _shell("分镜工作台", token, body, project)
 
 
@@ -473,7 +485,8 @@ def _shot_row(project: Any, sid: str, shot: Any, matrix: dict[str, Any], lookup:
         f'<td class="sb-sel"><input type="checkbox" class="sb-check" '
         f'data-shot="{_e(sid)}"></td>'
         f'<td class="sb-id"><button class="sb-toggle" type="button" '
-        f'title="展开详情">▸</button> {_e(sid)}</td>'
+        f'title="展开详情">▸</button> '
+        f'<a class="sb-shot-link" href="/lab?shot={quote(sid)}" title="在镜头实验室打开">{_e(sid)}</a></td>'
         f'<td class="sb-scene" title="{_e(scene)}">{_e(scene_label)}</td>'
         f'<td class="sb-chars">{_char_chips(shot, matrix, lookup)}</td>'
         + _editable(sid, "action.main", shot.action.main or "")
@@ -495,10 +508,11 @@ def _provider(project: Any, shot: Any, routing_on: bool) -> str:
     try:
         from .plan import _provider_label
 
-        return _provider_label(project, shot, routing_on,
-                               getattr(shot.generation, "provider", None) or None)
+        label = _provider_label(project, shot, routing_on,
+                                getattr(shot.generation, "provider", None) or None)
+        return "自动（兜底链）" if label == "auto(fallback chain)" else label
     except Exception:
-        return getattr(shot.generation, "provider", None) or "auto(兜底链)"
+        return getattr(shot.generation, "provider", None) or "自动（兜底链）"
 
 
 # ============================================================ assets (css/js)
@@ -515,8 +529,10 @@ def render_storyboard_js() -> str:
 _CSS = """
 /* 分镜工作台 storyboard (round-U). Loaded AFTER /app.css + /pages.css; reuses
    their palette (--panel/--line/--muted…) and chips (.chip/.badge.st-*). */
+.sb-scroll-hint { display: none; margin: .45rem 0 -.35rem; font-size: .76rem; }
 .sb-scroll { overflow-x: auto; margin: .8rem 0; border: 1px solid var(--line); border-radius: 8px; }
 .sb-table { border-collapse: collapse; width: 100%; min-width: 1100px; font-size: .82rem; }
+@media (max-width: 760px) { .sb-scroll-hint { display: block; } }
 .sb-table th, .sb-table td {
   border-bottom: 1px solid var(--line); padding: .4rem .5rem; text-align: left;
   vertical-align: top;
@@ -529,6 +545,8 @@ _CSS = """
 .sb-row.broken .err { color: var(--err); }
 .sb-sel { width: 1.6rem; text-align: center !important; }
 .sb-id { white-space: nowrap; font-family: var(--mono); }
+.sb-shot-link { color: var(--fg); text-decoration: none; font-weight: 650; }
+.sb-shot-link:hover { color: var(--accent); text-decoration: underline; }
 .sb-toggle {
   background: none; border: none; color: var(--muted); cursor: pointer;
   font: inherit; padding: 0 .2rem;
@@ -562,7 +580,8 @@ _CSS = """
   border-radius: 6px; padding: .2rem .4rem; font: inherit; font-size: .8rem;
 }
 .sb-drawer { padding: .4rem .2rem .6rem; }
-.sb-drawer-head { display: flex; justify-content: space-between; align-items: center; }
+.sb-drawer-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.sb-drawer-actions { display: flex; gap: .4rem; flex-wrap: wrap; margin: .45rem 0 .55rem; }
 .sb-drawer h3 { font-size: .95rem; margin: 0; }
 .sb-drawer h4 { font-size: .82rem; margin: .6rem 0 .3rem; color: var(--muted); }
 .sb-spec {
@@ -585,6 +604,8 @@ _CSS = """
 }
 .sb-take-video-wrap[data-pending="0"] .sb-take-prev-pending { display: none; }
 .sb-legend { font-size: .8rem; line-height: 1.8; margin-top: 1rem; }
+.sb-legend > summary { cursor: pointer; color: var(--fg); font-weight: 650; }
+.sb-legend > div { margin-top: .45rem; }
 .sb-empty { margin-top: 1rem; }
 .btn.mini, .chip.mini { font-size: .74rem; }
 """
