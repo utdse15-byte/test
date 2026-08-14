@@ -1,0 +1,46 @@
+{
+  "initial": {
+    "queueMode": true,
+    "current": "S006",
+    "activeRail": "S006",
+    "queueToggle": "浏览全部镜头",
+    "progress": "当前候选已评价 2 / 5",
+    "progressWidth": 102.25,
+    "trackWidth": 255.625
+  },
+  "current": "S004",
+  "s002Verdict": "pending",
+  "s002Take": "take_01",
+  "helpOpen": true,
+  "posts": [
+    {
+      "url": "/api/take-note",
+      "body": {
+        "shot": "S002",
+        "take": "take_01",
+        "text": "好",
+        "expected_rev": "sha256:e0961fc9cac7ad4781d8cbcb6d4e835fdbbabb11e14f0a1b842e40253736efc3"
+      }
+    },
+    {
+      "url": "/api/take-note",
+      "body": {
+        "shot": "S002",
+        "take": "take_01",
+        "text": "",
+        "expected_rev": "offline-rev"
+      }
+    }
+  ],
+  "lastToast": {
+    "msg": "已撤回 S002 的评价",
+    "ok": true
+  },
+  "horizontalOverflow": false,
+  "queuePressed": "true",
+  "activeRail": "S004",
+  "afterNext": "S003",
+  "beforeTake": "take_01",
+  "verdictAfterGood": "good",
+  "verdictAfterUndo": "pending"
+}

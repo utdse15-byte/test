@@ -1,0 +1,128 @@
+{
+  "review-theater-after-desktop": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scrollWidth": 1430,
+    "scrollHeight": 1409,
+    "bodyWidth": 1430,
+    "railVisible": true,
+    "primaryVisible": true,
+    "currentShot": "S004",
+    "activeRail": "S004",
+    "queueItems": 7,
+    "horizontalOverflow": false,
+    "primaryRect": {
+      "x": 49.96875,
+      "y": 454,
+      "width": 109.421875,
+      "height": 33.4375,
+      "bottom": 487.4375
+    },
+    "progressWidth": 102.25,
+    "progressTrackWidth": 255.625,
+    "progressText": "当前候选已评价 2 / 5"
+  },
+  "review-theater-after-1280x720": {
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "scrollWidth": 1270,
+    "scrollHeight": 1680,
+    "bodyWidth": 1270,
+    "railVisible": true,
+    "primaryVisible": true,
+    "currentShot": "S004",
+    "activeRail": "S004",
+    "queueItems": 7,
+    "horizontalOverflow": false,
+    "primaryRect": {
+      "x": 49.96875,
+      "y": 454,
+      "width": 109.421875,
+      "height": 33.4375,
+      "bottom": 487.4375
+    },
+    "progressWidth": 102.25,
+    "progressTrackWidth": 255.625,
+    "progressText": "当前候选已评价 2 / 5"
+  },
+  "review-theater-after-narrow": {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "scrollWidth": 380,
+    "scrollHeight": 2647,
+    "bodyWidth": 380,
+    "railVisible": true,
+    "primaryVisible": false,
+    "currentShot": "S004",
+    "activeRail": "S004",
+    "queueItems": 7,
+    "horizontalOverflow": false,
+    "primaryRect": {
+      "x": 41.96875,
+      "y": 1196.75,
+      "width": 142.84375,
+      "height": 33.4375,
+      "bottom": 1230.1875
+    },
+    "progressWidth": 133.296875,
+    "progressTrackWidth": 333.25,
+    "progressText": "当前候选已评价 2 / 5"
+  },
+  "review-theater-after-200pct": {
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "scrollWidth": 1270,
+    "scrollHeight": 3081,
+    "bodyWidth": 1270,
+    "railVisible": true,
+    "primaryVisible": false,
+    "currentShot": "S004",
+    "activeRail": "S004",
+    "queueItems": 7,
+    "horizontalOverflow": false,
+    "primaryRect": {
+      "x": 97.984375,
+      "y": 969.75,
+      "width": 218.859375,
+      "height": 65.875,
+      "bottom": 1035.625
+    },
+    "progressWidth": 93.28125,
+    "progressTrackWidth": 233.21875,
+    "progressText": "当前候选已评价 2 / 5"
+  },
+  "review-theater-after-narrow-active": {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "scrollWidth": 380,
+    "scrollHeight": 2647,
+    "bodyWidth": 380,
+    "railVisible": true,
+    "primaryVisible": true,
+    "currentShot": "S004",
+    "activeRail": "S004",
+    "queueItems": 7,
+    "horizontalOverflow": false,
+    "primaryRect": {
+      "x": 41.96875,
+      "y": 474.75,
+      "width": 142.84375,
+      "height": 33.4375,
+      "bottom": 508.1875
+    },
+    "progressWidth": 133.296875,
+    "progressTrackWidth": 333.25,
+    "progressText": "当前候选已评价 2 / 5",
+    "scrollY": 722
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "schema": "manju.product-polish.wave6-test-summary/v1",
+  "wave": "Wave 6 — Review Theater",
+  "generated_on": "2026-08-14",
+  "focused_pytest": {
+    "total_passed": 262,
+    "groups": [
+      {
+        "name": "review_theater_and_ux",
+        "passed": 109,
+        "duration_s": 18.67,
+        "log": "review-theater-and-ux.log"
+      },
+      {
+        "name": "gui_pages_and_review_queue",
+        "passed": 35,
+        "duration_s": 30.96,
+        "log": "gui-pages-and-review-queue.log"
+      },
+      {
+        "name": "chrome_modes_home",
+        "passed": 37,
+        "duration_s": 9.64,
+        "log": "chrome-modes-home.log"
+      },
+      {
+        "name": "review_core_regression",
+        "passed": 69,
+        "duration_s": 16.79,
+        "log": "review-core-regression.log"
+      },
+      {
+        "name": "review_lazy_performance",
+        "passed": 10,
+        "duration_s": 4.74,
+        "log": "review-lazy-performance.log"
+      },
+      {
+        "name": "qc_consistency_review",
+        "passed": 2,
+        "duration_s": 2.25,
+        "log": "qc-consistency-review.log"
+      }
+    ]
+  },
+  "static_checks": {
+    "compileall": "passed",
+    "rendered_pages_js_node_check": "passed",
+    "rendered_app_js_node_check": "passed",
+    "git_diff_check": "passed",
+    "ruff": "not_run_not_installed",
+    "offline_rendered_review_js_interaction": "passed_with_mocked_post"
+  },
+  "zero_cost": {
+    "real_provider_calls": 0,
+    "external_model_api_calls": 0,
+    "credential_reads": 0,
+    "paid_calls": 0,
+    "free_credit_calls": 0
+  },
+  "not_claimed": [
+    "full pytest suite",
+    "Windows hard gate",
+    "same-SHA Ubuntu and Windows release gate",
+    "live localhost Playwright journey",
+    "real Windows app-mode review journey",
+    "real provider or AI video quality"
+  ]
+}

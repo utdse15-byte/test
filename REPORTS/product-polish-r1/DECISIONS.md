@@ -58,3 +58,14 @@ Screenshots:
 4. Baseline 查找按 carrier kind 隔离；同 stem 不是同证据。
 5. 导出中心按用户目标组织，OTIO/FCPXML 的 safe-recovery 状态优先于格式列表。
 6. 本波不建立新真相、不改变人工选择、不做真实付费或网络测试。
+
+
+## Wave 6 — Review Theater is a projection, not a new review system
+
+1. `status.take_notes[selected_take]` remains the current candidate verdict owner; the page may parse its `好 / 弃 · rationale` prefix for presentation but must not create a parallel review store.
+2. Candidate verdict, `selected_take`, shot approval and Picture Lock are four independent facts. No button or keyboard shortcut may collapse them into one action.
+3. Queue priority is a session projection derived from current shot/take/QC/annotation facts. Its order and browser position are deletable UI state and never build input.
+4. Review progress counts only the current selected candidate. Historical notes on an old take are evidence, not proof that the new selected take was reviewed.
+5. QC frames, routing, repair and external-IDE context are evidence/secondary actions and belong behind progressive disclosure. The current candidate and human decision remain primary.
+6. Narrow layout may reorder the queue before the card and make it horizontal, but must preserve all six production stages, current-shot visibility and zero whole-page horizontal overflow.
+7. The existing one-main-video/lazy-alt/expand-to-compose consistency-board performance contract remains authoritative; the polish wave does not buy visual density with extra media work.

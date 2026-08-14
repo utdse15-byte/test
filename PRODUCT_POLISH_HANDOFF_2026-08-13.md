@@ -219,3 +219,32 @@ git switch codex/product-polish-r1
 
 后续优先级：以真实审片高频旅程为核心，继续收敛 Review Theater 的桌面双栏、窄窗口队列、
 主操作和技术详情层级；不新增模型、自动选择、自动锁片或真实付费测试。
+
+
+## 11. Wave 6：Review Theater
+
+功能提交：`17ba7a7 R1: focus the review theater`；范围是 `/review` 的高频审片旅程，不改变选择、审批和锁片 owner。
+
+已完成：
+
+- 单条审片收敛为“当前候选 + 优先队列”的 Review Theater；桌面为稳定双栏，窄窗口队列横排；
+- 队列按待选、待更新、当前 blocker/QC error、当前候选未评价、已评价待审批、无候选、已通过排序；
+- 进度只统计已有当前选择的候选，未选择镜头单列；旧候选备注不会冒充新选择已评价；
+- 页面明确分开当前评价、`selected_take`、镜头审批和 Picture Lock；评价和 KEEP 都不会自动选择或锁片；
+- 一个主要判断区置于播放器之前；QC 抽帧、路由、修复和 IDE 交接进入渐进展开区；
+- “稍后处理”按优先队列前进；清除评价随当前事实显隐；IDE 交接分别报告当前评价与镜头审批；
+- 390px 和 200% text 的静态真实 renderer 证据均无页面横向溢出；当前 rail item 会自动进入视野；
+- 保留单主视频 `src`、其它候选 lazy 和一致性 board 展开后才生成的性能边界。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE6_REVIEW_THEATER.md`
+- `REPORTS/product-polish-r1/screenshots/wave6/`
+- `REPORTS/product-polish-r1/wave6-tests/`
+
+focused tests 共 262 passed；compileall、两份实际生成 JavaScript 的 `node --check`、
+`git diff --check` 通过。当前环境未安装 ruff；没有运行完整 pytest、Windows hard gate、
+同一 SHA 双平台门或 live localhost Playwright journey。
+
+后续优先级：统一“分镜 → 镜头实验室 → 批量入库 → 审片”的镜头制作旅程；继续不扩模型、
+不自动选择、不自动 Picture Lock、不做真实付费测试。
