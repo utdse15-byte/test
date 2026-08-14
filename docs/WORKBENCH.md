@@ -37,6 +37,7 @@ over the same core the CLI calls — no capability exists only in the GUI.
 | --- | --- | --- |
 | Project status / next step | `status` | header + 项目 panel (Q) / state poll (R) |
 | Shots: view, states, why-stale | `status`, `explain` | shot cards + why-stale chips (R) |
+| Shot production journey | `status`, `import`, `select` | 分镜规划 → 镜头实验室或批量入库 → 人工审片；shot deep-link 保持上下文，候选不自动选用、评价不自动锁片 |
 | Shot fields editing | edit YAML | keystroke-validated editor (R17) |
 | Shot order | edit index.yaml | ✱ reorder controls (S8a) |
 | Takes: preview/compare/select/rollback | `select`, `rollback shot` | cards + A/B compare (Q/R) |

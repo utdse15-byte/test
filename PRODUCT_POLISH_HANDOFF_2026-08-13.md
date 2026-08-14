@@ -248,3 +248,33 @@ focused tests 共 262 passed；compileall、两份实际生成 JavaScript 的 `n
 
 后续优先级：统一“分镜 → 镜头实验室 → 批量入库 → 审片”的镜头制作旅程；继续不扩模型、
 不自动选择、不自动 Picture Lock、不做真实付费测试。
+
+## 12. Wave 7：镜头生产旅程
+
+功能提交：`703a386 R1: connect the shot production journey`。
+
+已完成：
+
+- `/storyboard`、`/lab`、`/ingest` 共用分支式镜头制作路径：规划镜头 → 实验室或批量入库获得候选 → 人工审片；
+- 流程只读派生当前 shot/take/review facts，不保存第二份进度，不自动选择、审批或锁片；
+- `?shot=` 在实验室、入库和 Review Theater 之间保持当前镜头，显式深链优先于上次浏览位置；
+- 镜头实验室将参考诊断、其它提示词、路由、脚手架和高级改写渐进展开，桌面高度下降 30.5%；
+- 批量入库诚实区分无批次、空批次和读取失败；确认匹配明确不等于选择候选；
+- 入库完成可检查本批次，确实加入视频 take 时可直接进入对应镜头审片；
+- 历史 staged selection 改为“历史选择 / 历史自动选择”，不再暗示当前入库会自动选片。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE7_SHOT_PRODUCTION_JOURNEY.md`
+- `REPORTS/product-polish-r1/WAVE7_LAYOUT_FACTS.json`
+- `REPORTS/product-polish-r1/WAVE7_BROWSER_FACTS.json`
+- `REPORTS/product-polish-r1/screenshots/wave7-before/`
+- `REPORTS/product-polish-r1/screenshots/wave7/`
+- `REPORTS/product-polish-r1/wave7-tests/`
+
+focused tests 共 252 passed，80 deselected；compileall、五份实际生成 JavaScript 的
+`node --check`、`git diff --check` 通过。当前环境未安装 ruff；完整 pytest、Windows hard gate、
+live localhost E2E 和真实 Provider 仍未冒充完成。
+
+后续优先级：收敛“创作 → 导演提案 → 分镜”的前半程，继续复用现有 truth_patch_set、
+来源引用和人工确认，不新增 authoring plan / event truth。

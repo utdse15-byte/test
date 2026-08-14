@@ -1,0 +1,1 @@
+NOT RUN: ruff is not installed in the current environment.

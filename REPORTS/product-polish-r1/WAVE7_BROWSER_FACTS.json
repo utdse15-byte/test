@@ -1,0 +1,29 @@
+{
+  "none": {
+    "selectDisabled": true,
+    "confirmDisabled": true,
+    "selectedBatch": "",
+    "tableText": "还没有可评审的入库批次。完成一次入库后会显示在这里。",
+    "filterChildren": 0,
+    "scrollWidth": 380,
+    "innerWidth": 390
+  },
+  "one": {
+    "selectDisabled": false,
+    "confirmDisabled": false,
+    "selectedBatch": "batch-001",
+    "tableText": "这个批次没有可评审条目。",
+    "filterChildren": 0,
+    "scrollWidth": 380,
+    "innerWidth": 390
+  },
+  "error": {
+    "selectDisabled": true,
+    "confirmDisabled": true,
+    "selectedBatch": "",
+    "tableText": "暂时无法读取入库批次。请检查本地服务后重试。",
+    "filterChildren": 0,
+    "scrollWidth": 380,
+    "innerWidth": 390
+  }
+}

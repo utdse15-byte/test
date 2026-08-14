@@ -1,0 +1,78 @@
+{
+  "schema": "manju.product-polish.wave7-tests/v1",
+  "feature_commit": "703a3861e36585f605748075aa3e6829baa8c0cd",
+  "pytest": {
+    "passed": 252,
+    "deselected": 80,
+    "groups": [
+      {
+        "name": "shot-journey",
+        "passed": 14,
+        "deselected": 0,
+        "log": "shot-journey.log"
+      },
+      {
+        "name": "storyboard",
+        "passed": 26,
+        "deselected": 0,
+        "log": "storyboard.log"
+      },
+      {
+        "name": "ingest",
+        "passed": 71,
+        "deselected": 0,
+        "log": "ingest.log"
+      },
+      {
+        "name": "ingest-batches",
+        "passed": 39,
+        "deselected": 0,
+        "log": "ingest-batches.log"
+      },
+      {
+        "name": "shot-lab",
+        "passed": 25,
+        "deselected": 1,
+        "log": "shot-lab.log"
+      },
+      {
+        "name": "review-theater",
+        "passed": 17,
+        "deselected": 0,
+        "log": "review-theater.log"
+      },
+      {
+        "name": "review-queue",
+        "passed": 10,
+        "deselected": 0,
+        "log": "review-queue.log"
+      },
+      {
+        "name": "app-chrome-modes-home",
+        "passed": 37,
+        "deselected": 0,
+        "log": "app-chrome-modes-home.log"
+      },
+      {
+        "name": "ux-navigation",
+        "passed": 13,
+        "deselected": 79,
+        "log": "ux-navigation.log"
+      }
+    ]
+  },
+  "static": {
+    "compileall": "passed",
+    "node_check": [
+      "common.js",
+      "pages.js",
+      "storyboard.js",
+      "lab.js",
+      "ingest.js"
+    ],
+    "git_diff_check": "passed",
+    "ruff": "not_run_not_installed"
+  },
+  "paid_network_calls": 0,
+  "credential_reads": 0
+}

@@ -394,6 +394,10 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
   第一行长期显示项目、执行模式和视图设置，第二行始终显示六个阶段；只有当前阶段
   展开页级子导航，避免 hover-only 下拉和 17 个同权入口。`_NAV` / `_NAV_GROUPS`
   仍是标签与分组 owner；成片页级顺序继续由其页面内流程条拥有，不重复显示。
+- **镜头制作是分支式旅程,不是假四步流程**:`/storyboard` 负责规划；`/lab` 和
+  `/ingest` 是两条替代的候选来源,共同汇入 `/review`。共享流程条只从当前 shot / take /
+  review 事实派生,不保存第二份进度；`?shot=` 深链优先于浏览器上次位置。镜头实验室把
+  参考诊断、其它提示词、路由和高级改写渐进展开；入库确认匹配永不自动选用候选。
 - **成片阶段是一条连续旅程**:`/edit`、`/subtitles`、`/mixer`、
   `/packaging`、`/exports` 共用只读流程条;首屏后只读取一次
   `/api/finishing/status`,状态继续由 exportstatus/readiness 拥有。

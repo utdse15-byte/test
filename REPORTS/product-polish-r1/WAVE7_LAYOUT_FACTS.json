@@ -1,0 +1,109 @@
+{
+  "schema": "manju.product-polish.wave7-layout/v1",
+  "baseline_commit": "ca2c48b0e27d65e6876188a98aa2751e596423a7",
+  "feature_commit": "703a3861e36585f605748075aa3e6829baa8c0cd",
+  "viewports": {
+    "storyboard-desktop": {
+      "before": {
+        "width": 1440,
+        "height": 900,
+        "scrollWidth": 1430,
+        "scrollHeight": 900
+      },
+      "after": {
+        "width": 1440,
+        "height": 900,
+        "scrollWidth": 1430,
+        "scrollHeight": 900
+      },
+      "scroll_height_delta_px": 0,
+      "scroll_height_delta_percent": 0.0,
+      "page_horizontal_overflow_px": 0
+    },
+    "storyboard-narrow": {
+      "before": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 380,
+        "scrollHeight": 844
+      },
+      "after": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 380,
+        "scrollHeight": 1108
+      },
+      "scroll_height_delta_px": 264,
+      "scroll_height_delta_percent": 31.3,
+      "page_horizontal_overflow_px": 0
+    },
+    "lab-desktop": {
+      "before": {
+        "width": 1440,
+        "height": 900,
+        "scrollWidth": 1430,
+        "scrollHeight": 1414
+      },
+      "after": {
+        "width": 1440,
+        "height": 900,
+        "scrollWidth": 1430,
+        "scrollHeight": 983
+      },
+      "scroll_height_delta_px": -431,
+      "scroll_height_delta_percent": -30.5,
+      "page_horizontal_overflow_px": 0
+    },
+    "lab-narrow": {
+      "before": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 380,
+        "scrollHeight": 2521
+      },
+      "after": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 380,
+        "scrollHeight": 2152
+      },
+      "scroll_height_delta_px": -369,
+      "scroll_height_delta_percent": -14.6,
+      "page_horizontal_overflow_px": 0
+    },
+    "ingest-desktop": {
+      "before": {
+        "width": 1440,
+        "height": 900,
+        "scrollWidth": 1430,
+        "scrollHeight": 900
+      },
+      "after": {
+        "width": 1440,
+        "height": 900,
+        "scrollWidth": 1430,
+        "scrollHeight": 900
+      },
+      "scroll_height_delta_px": 0,
+      "scroll_height_delta_percent": 0.0,
+      "page_horizontal_overflow_px": 0
+    },
+    "ingest-narrow": {
+      "before": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 380,
+        "scrollHeight": 931
+      },
+      "after": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 380,
+        "scrollHeight": 1197
+      },
+      "scroll_height_delta_px": 266,
+      "scroll_height_delta_percent": 28.6,
+      "page_horizontal_overflow_px": 0
+    }
+  }
+}
