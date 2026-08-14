@@ -6133,11 +6133,11 @@ _JS = r"""
       const job = (f.detail && (f.detail.job_id || f.detail.node_id)) || null;
       if (job) bodyBox.appendChild(el("div", "fail-meta", "关联任务 (job): " + job));
       if (f.ts) bodyBox.appendChild(el("div", "fail-meta", f.ts + " · " + (f.actor || "engine")));
-      /* 复制诊断上下文 (#50): a clean task block for Claude — error, log,
+      /* 复制诊断上下文 (#50): a clean task block for an external IDE — error, log,
        * files, recommended step — instead of pasting the whole project. */
       const cp = el("button", "btn ghost mini", "复制诊断上下文");
       cp.type = "button";
-      cp.title = "复制该失败的结构化上下文(步骤/原因/日志/文件),交给 Claude 或 agent";
+      cp.title = "复制该失败的结构化上下文（步骤、原因、日志、文件），交给外部 IDE 助手";
       cp.addEventListener("click", async () => {
         const lines = ["失败步骤: " + (f.step || "?")];
         if (f.subject) lines.push("对象: " + f.subject);
@@ -6147,10 +6147,10 @@ _JS = r"""
         if (f.log_path) lines.push("日志: " + f.log_path);
         if (job) lines.push("任务: " + job);
         if (f.subject && shotIds[f.subject]) lines.push("镜头文件: shots/" + f.subject + ".yaml");
-        lines.push("目标: (写下要 Claude 做的事)");
+        lines.push("目标:（写下希望 IDE 助手完成的事）");
         try {
           await navigator.clipboard.writeText(lines.join("\n"));
-          toast("诊断上下文已复制 — 粘给 Claude 即可", "ok");
+          toast("诊断上下文已复制，可粘贴到 IDE 助手", "ok");
         } catch (e) { toast("复制失败,请手动选择", "err"); }
       });
       bodyBox.appendChild(cp);
@@ -6223,7 +6223,7 @@ _JS = r"""
       showPlanModal("batch-redo", { shots: shots }, {
         title: "批量重做前计划 (plan before batch redo)",
         onConfirm: () => post(redo, "/api/redo-batch", { shots: shots, assume_yes: true },
-          "批量重做已入队 (batch redo queued)"),
+          "批量重做已加入任务队列"),
       });
     });
     bar.appendChild(redo);

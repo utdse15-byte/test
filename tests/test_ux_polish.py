@@ -307,14 +307,15 @@ def test_sb_approve_returns_per_shot_revs(gui, tmp_project, add_shot, make_take)
 
 
 def test_review_page_rev_refresh_and_honest_key_hint(gui, tmp_project, add_shot, make_take):
-    """F19: the header hint must describe what g/x actually DO (the per-take
-    好/弃 verdict), not the separate 审批通过 state machine; F14: the page JS
-    must update data-rev from successful responses."""
+    """F19: the header hint must describe what G/X actually do (the per-take
+    推荐/不推荐 evaluation), not the separate 镜头审批 state machine; F14: the
+    page JS must update data-rev from successful responses."""
     add_shot(tmp_project, "S001")
     make_take(tmp_project, "S001", "h")
     html = urllib.request.urlopen(
         f"http://127.0.0.1:{gui.port}/review", timeout=15).read().decode("utf-8")
-    assert "g 好" in html and "x 弃" in html
+    assert "<kbd>G</kbd> 推荐" in html
+    assert "<kbd>X</kbd> 不推荐" in html
     assert "g 通过" not in html
     js = urllib.request.urlopen(
         f"http://127.0.0.1:{gui.port}/pages.js", timeout=15).read().decode("utf-8")
@@ -592,7 +593,8 @@ def test_review_page_shows_board_annotations_with_stale_honesty(
     info.media_path.write_bytes(b"totally-different-bytes")
     html = urllib.request.urlopen(
         f"http://127.0.0.1:{gui.port}/review", timeout=15).read().decode("utf-8")
-    assert "STALE" in html
+    assert "已过期" in html
+    assert "绑定的媒体哈希不再匹配" in html
 
 
 def test_annotation_list_container_renders_even_when_empty(
@@ -875,7 +877,8 @@ def test_review_and_board_cards_show_the_next_action(gui, tmp_project, add_shot,
 
     html = urllib.request.urlopen(
         f"http://127.0.0.1:{gui.port}/review", timeout=15).read().decode("utf-8")
-    assert "下一步" in html and "manju select S001" in html
+    assert "需要处理" in html and "请选择一个候选" in html
+    assert "manju select S001" in html
 
     served = render_board(tmp_project, serve=True)
     assert "下一步" in served and "manju select S001" in served
@@ -1330,7 +1333,7 @@ def test_review_keyboard_gains_approve_but_never_spend(tmp_project, add_shot, ma
     add_shot(tmp_project, "S001")
     make_take(tmp_project, "S001", "h")
     html = render_review(tmp_project, "tok")
-    assert "a 通过" in html                       # the legend teaches it
+    assert "<kbd>A</kbd> 确认镜头通过" in html  # the legend teaches it
     js = render_pages_js()
     assert 'e.key === "a"' in js and 'qapprove' in js
     # no keydown branch fires the redo (spend) action
@@ -1648,7 +1651,7 @@ def test_review_legend_teaches_undo(tmp_project, add_shot, make_take):
 
     add_shot(tmp_project, "S001")
     make_take(tmp_project, "S001", "h")
-    assert "u 撤回" in render_review(tmp_project, "tok")
+    assert "<kbd>U</kbd> 撤回评价" in render_review(tmp_project, "tok")
 
 
 def test_home_opens_with_continue_and_clickable_counts():
@@ -1675,7 +1678,7 @@ def test_ai_handoff_copies_structured_context(tmp_project, add_shot, make_take):
     add_shot(tmp_project, "S001")
     make_take(tmp_project, "S001", "h")
     html = render_review(tmp_project, "tok")
-    assert 'data-act="ai-ctx"' in html and "复制给 Claude" in html
+    assert 'data-act="ai-ctx"' in html and "复制给 IDE 助手" in html
     js = render_pages_js()
     seg = js.split('act === "ai-ctx"')[1].split('act === "route"')[0]
     assert '"- shots/" + shot + ".yaml"' in seg

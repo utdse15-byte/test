@@ -132,7 +132,7 @@ def test_render_review_spawns_zero_subprocesses(monkeypatch, tmp_project, add_sh
     html = pages.render_review(tmp_project, "tok-xyz")
 
     assert spawns == []                                # ZERO spawns on the request thread
-    assert "审片 Review" in html                        # the page still rendered
+    assert '审片 <span class="mj-en">Review</span>' in html  # the page still rendered
     assert "跨镜一致性 Consistency" in html              # section header present
 
 

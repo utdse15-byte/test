@@ -216,13 +216,13 @@ def test_review_page_renders_with_content(gui, tmp_project, add_shot, make_take)
 
     status, _, body = _html(gui, "/review")
     assert status == 200
-    assert "审片 Review" in body
+    assert '审片 <span class="mj-en">Review</span>' in body
     assert "S001" in body
     assert "太暗,重打光" in body and "重打光" in body   # QC finding + suggestion
     assert "/media/reports/frames/S001.jpg" in body       # QC mid-frame
-    assert f"换用 {alt.name}" in body                     # prior take as alternate
-    assert "好" in body and "弃" in body                  # verdict controls
-    assert "已审 0 / 1" in body                            # progress meter, none noted yet
+    assert f"选用 {alt.name}" in body                     # prior take as alternate
+    assert "推荐并下一条" in body and "不推荐，查看其它候选" in body
+    assert "已评价 0 / 1" in body                          # current selected take has no note
     assert "data-page=\"/review\"" in body
 
 
@@ -243,7 +243,7 @@ def test_review_verdict_writes_take_notes_and_event(gui, tmp_project, add_shot, 
 
     # the page now reflects the review as done
     _, _, body = _html(gui, "/review")
-    assert "已审 1 / 1" in body
+    assert "已评价 1 / 1" in body
 
 
 @pytest.mark.skipif(not _HAS_FFMPEG, reason="repair op needs ffmpeg/ffprobe")

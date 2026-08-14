@@ -519,13 +519,69 @@ _RV_BUILDSTATE_BADGE = {
     "missing": "st-missing", "fresh": "st-fresh", "stale": "st-stale",
     "manual": "st-manual", "needs_selection": "st-needs", "broken": "st-broken",
 }
+_RV_REVIEWSTATE_ZH = {
+    "needs_review": "待审",
+    "approved": "已通过",
+    "rejected": "已否决",
+}
+_RV_REVIEWSTATE_BADGE = {
+    "needs_review": "st-needs",
+    "approved": "st-fresh",
+    "rejected": "st-broken",
+}
+_RV_QC_LEVEL_ZH = {
+    "error": "错误",
+    "warn": "警告",
+    "warning": "警告",
+    "info": "信息",
+}
+_RV_ANNOTATION_ZH = {
+    "note": "备注",
+    "issue": "问题",
+    "blocker": "阻塞",
+}
+_RV_NEXT_ZH = {
+    "broken": "当前媒体不可用，需要修复或换选",
+    "missing": "还没有可审候选",
+    "select": "请选择一个候选",
+    "blocker": "有阻塞批注需要处理",
+    "qc": "质检发现错误，需要复核",
+    "newtake": "有新候选等待决定",
+    "voice": "配音需要处理",
+    "stale": "当前候选已过期，需要重做或确认保留",
+    "review": "等待人工审片",
+}
+
+
+def _review_note_state(note: str | None) -> tuple[str, str, str, str]:
+    """Return ``(kind, label, badge, rationale)`` for one take note.
+
+    The persisted owner remains ``status.take_notes``.  The review page only
+    separates the leading human verdict from its rationale for presentation;
+    it never creates another review store.
+    """
+
+    raw = str(note or "").strip()
+    if raw == "好":
+        return "good", "推荐", "st-fresh", ""
+    if raw.startswith("好 ·"):
+        return "good", "推荐", "st-fresh", raw[3:].strip()
+    if raw == "弃":
+        return "reject", "不推荐", "st-broken", ""
+    if raw.startswith("弃 ·"):
+        return "reject", "不推荐", "st-broken", raw[3:].strip()
+    if raw:
+        return "note", "有备注", "st-manual", raw
+    return "pending", "未评价", "st-needs", ""
 
 
 def render_review(project: Any, token: str) -> str:
     shots = project.shot_ids()
     qc_by_shot, qc_err = _qc_by_shot(project)
     reviewed = 0
+    reviewable = 0
     cards: list[str] = []
+    rail_items: list[tuple[int, int, str]] = []
 
     # one staleness pass for the whole page (round X agent XF QUEUE filter
     # chips: 待选/待审/已通过/待更新 combine build/stale states + review_state).
@@ -559,7 +615,10 @@ def render_review(project: Any, token: str) -> str:
             shot = None
         selected = shot.status.selected_take if shot else None
         take_notes = dict(shot.status.take_notes) if shot else {}
-        if take_notes:
+        current_note_raw = str(take_notes.get(selected) or "").strip() if selected else ""
+        if selected:
+            reviewable += 1
+        if current_note_raw:
             reviewed += 1
         try:
             takes = project.takes(sid)
@@ -582,7 +641,7 @@ def render_review(project: Any, token: str) -> str:
             # first paint.
             player = _player(url, ext, frame_url, cls="rv-video", lazy=True)
         else:
-            player = '<p class="muted">尚未选用 take (no take selected)</p>'
+            player = '<p class="muted">尚未选择候选。</p>'
 
         # QC findings for this shot
         findings = qc_by_shot.get(sid, [])
@@ -593,13 +652,15 @@ def render_review(project: Any, token: str) -> str:
                 msg = _e(f.get("message"))
                 sug = f.get("suggestion")
                 sug_html = f'<div class="rv-qc-sug muted">↳ {_e(sug)}</div>' if sug else ""
+                level_label = _RV_QC_LEVEL_ZH.get(lvl, lvl)
                 rows.append(
                     f'<li class="rv-qc-item lvl-{_e(lvl)}"><span class="badge st-{_qc_badge(lvl)}">'
-                    f"{_e(lvl)}</span> {msg}{sug_html}</li>"
+                    f'<span title="{_e(lvl)}">{_e(level_label)}</span></span> '
+                    f'{msg}{sug_html}</li>'
                 )
             qc_html = '<ul class="rv-qc">' + "".join(rows) + "</ul>"
         else:
-            qc_html = '<p class="muted rv-qc">QC 无此镜发现 (no findings)</p>'
+            qc_html = '<p class="muted rv-qc">当前选择未发现质检问题。</p>'
 
         # UX audit F17: the board's media-bound annotations were INVISIBLE on
         # this richer review page — a blocker pinned to an exact frame
@@ -608,6 +669,7 @@ def render_review(project: Any, token: str) -> str:
         # rule (Annotation.matches_media — the stored media_sha256 vs the
         # take file's CURRENT hash), and a frame chip that seeks the player.
         ann_html = ""
+        has_live_blocker = False
         shot_status = getattr(shot, "status", None) if shot else None
         anns = [a for a in (getattr(shot_status, "annotations", None) or [])
                 if selected and a.take == selected]
@@ -625,7 +687,9 @@ def render_review(project: Any, token: str) -> str:
             ann_rows = []
             for ann in anns:
                 sev = ann.severity if ann.severity in ("note", "issue", "blocker") else "note"
-                chips = [f'<span class="badge rv-ann-{sev}">{_e(sev)}</span>']
+                sev_label = _RV_ANNOTATION_ZH.get(sev, sev)
+                chips = [f'<span class="badge rv-ann-{sev}" title="{_e(sev)}">'
+                         f'{_e(sev_label)}</span>']
                 if ann.frame is not None and ann.frame_rate:
                     m = re.fullmatch(r"(\d+)(?:/(\d+))?", str(ann.frame_rate))
                     if m:
@@ -633,23 +697,28 @@ def render_review(project: Any, token: str) -> str:
                         sec = ann.frame * den / num if num else 0.0
                         chips.append(
                             f'<span class="rv-ann-seek" data-seek="{sec:.3f}" '
-                            f'title="点击定位 click to seek">f{ann.frame} ≈ {sec:.3f}s</span>')
-                if not ann.matches_media(current):
+                            f'title="点击跳到对应画面">第 {ann.frame} 帧 · {sec:.3f}s</span>')
+                matches_current = ann.matches_media(current)
+                if sev == "blocker" and matches_current:
+                    has_live_blocker = True
+                if not matches_current:
                     chips.append('<span class="badge rv-ann-stale" title="绑定的媒体'
-                                 '哈希不再匹配 — 该 take 的媒体已被替换/重做,批注指向'
-                                 '旧画面">⚠ 陈旧 STALE</span>')
+                                 '哈希不再匹配 — 该候选媒体已被替换或重做，批注指向'
+                                 '旧画面">⚠ 已过期</span>')
                 subject = (f"[{_e(ann.subject)}] " if ann.subject else "")
                 ann_rows.append(
                     '<li class="rv-ann-item">'
                     f'{"".join(chips)} {subject}{_e(ann.text)}'
                     f'<div class="muted rv-ann-meta">{_e(ann.actor)} · {_e(ann.created_at)}</div>'
                     "</li>")
-            ann_html = ('<div class="rv-anns"><span class="muted">看板批注 '
-                        f'(review annotations)</span><ul>{"".join(ann_rows)}</ul></div>')
+            ann_html = ('<div class="rv-anns"><span class="muted">看板批注</span>'
+                        f'<ul>{"".join(ann_rows)}</ul></div>')
 
         frame_html = (
-            f'<div class="rv-frame"><span class="muted">QC 抽帧</span>'
-            f'<img src="{_e(frame_url)}" alt=""></div>'
+            '<details class="rv-frame">'
+            '<summary>查看质检抽帧</summary>'
+            f'<img src="{_e(frame_url)}" alt="{_e(sid)} 的质检抽帧">'
+            '</details>'
             if frame_url else ""
         )
 
@@ -675,10 +744,14 @@ def render_review(project: Any, token: str) -> str:
                     f'<div class="rv-alt" data-take="{_e(t.name)}">'
                     f'<div class="rv-alt-media">{thumb_img}{play_btn}{video_el}</div>'
                     f'<button class="btn ghost mini" data-act="select" '
-                    f'data-take="{_e(t.name)}">换用 {_e(t.name)}</button>{note_html}</div>'
+                    f'data-take="{_e(t.name)}">选用 {_e(t.name)}</button>{note_html}</div>'
                 )
-            alt_html = ('<div class="rv-alts"><span class="muted">其它 take</span>'
-                        '<div class="rv-alts-row">' + "".join(items) + "</div></div>")
+            alt_html = (
+                '<section class="rv-inspector-block rv-alts">'
+                '<div class="rv-inspector-title"><b>其它候选</b>'
+                '<span class="muted">更换当前选择，不等于锁片</span></div>'
+                '<div class="rv-alts-row">' + "".join(items) + "</div></section>"
+            )
 
         repair_btns = "".join(
             f'<button class="btn ghost mini" data-act="repair" '
@@ -687,7 +760,10 @@ def render_review(project: Any, token: str) -> str:
             for _op, label, attrs in _REPAIR_OPS
         )
 
-        note_val = _e(take_notes.get(selected)) if selected else ""
+        verdict_kind, verdict_label, verdict_badge, note_rationale = _review_note_state(
+            current_note_raw
+        )
+        note_val = _e(note_rationale)
         state_badge = (f'<span class="badge st-{_state_badge(shot.status)}">'
                        f'{_e(_state_word(shot))}</span>' if shot else "")
         build_badge = (f'<span class="badge {_RV_BUILDSTATE_BADGE.get(build_state, "st-missing")}" '
@@ -695,59 +771,179 @@ def render_review(project: Any, token: str) -> str:
                        f'</span>')
         action = _e(shot.action.main) if shot else ""
         dialogue = _e(shot.dialogue.text) if shot else ""
-        reviewed_attr = "1" if take_notes else "0"
+        reviewed_attr = "1" if current_note_raw else "0"
+        has_qc_error = any(str(f.get("level")) == "error" for f in findings)
+        review_label = _RV_REVIEWSTATE_ZH.get(review_state, review_state)
+        review_badge = _RV_REVIEWSTATE_BADGE.get(review_state, "st-missing")
+        selected_label = selected or "尚未选择"
+
+        if not selected and build_state == "needs_selection":
+            rail_label, rail_cls = "待选", "needs-selection"
+        elif not selected:
+            rail_label, rail_cls = "无候选", "missing"
+        elif build_state == "stale":
+            rail_label, rail_cls = "待更新", "stale"
+        elif has_live_blocker:
+            rail_label, rail_cls = "有阻塞", "blocker"
+        elif has_qc_error:
+            rail_label, rail_cls = "需复核", "qc-error"
+        elif review_state == "approved":
+            rail_label, rail_cls = "已通过", "approved"
+        elif reviewed_attr == "1":
+            rail_label, rail_cls = "已评价", "reviewed"
+        else:
+            rail_label, rail_cls = "待审", "needs-review"
+        if build_state == "needs_selection":
+            rail_priority = 0
+        elif build_state == "stale":
+            rail_priority = 1
+        elif has_live_blocker:
+            rail_priority = 2
+        elif has_qc_error:
+            rail_priority = 2
+        elif selected and reviewed_attr != "1":
+            rail_priority = 3
+        elif selected and review_state != "approved":
+            rail_priority = 4
+        elif not selected:
+            rail_priority = 5
+        else:
+            rail_priority = 6
+        rail_html = (
+            '<button type="button" class="rv-rail-item'
+            + (' reviewed' if reviewed_attr == "1" else '')
+            + f'" aria-label="{_e(sid)}，{action or "未填写镜头动作"}，{_e(rail_label)}" '
+            f'data-rv-target="{_e(sid)}" data-reviewed="{reviewed_attr}" '
+            f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}" '
+            f'data-take="{_e(selected or "")}" data-qc="{"1" if has_qc_error else "0"}" '
+            f'data-blocker="{"1" if has_live_blocker else "0"}" '
+            f'data-verdict="{_e(verdict_kind)}">'
+            f'<span class="rv-rail-index">{idx + 1:02d}</span>'
+            f'<span class="rv-rail-copy"><strong>{_e(sid)}</strong>'
+            f'<small>{action or "未填写镜头动作"}</small></span>'
+            f'<span class="rv-rail-status {rail_cls}">{_e(rail_label)}</span>'
+            '</button>'
+        )
+        rail_items.append((rail_priority, idx, rail_html))
 
         # the ONE per-shot answer, only when there IS something to do
         next_html = ""
+        next_detail_html = ""
         if shot_next_action is not None:
             try:
                 act = shot_next_action(project, sid, state=build_state,
                                        selected_take=selected,
                                        qc_error_shots=_qc_errs)
                 if act["key"] != "ok":
-                    next_html = (f'<div class="rv-next">下一步:'
-                                 f'{_e(act["action"])}</div>')
+                    next_label = _RV_NEXT_ZH.get(act["key"], "这个镜头需要处理")
+                    next_html = (
+                        f'<div class="rv-next" title="{_e(act["action"])}">'
+                        f'<b>需要处理</b><span>{_e(next_label)}</span></div>'
+                    )
+                    next_detail_html = (
+                        '<div class="rv-next-detail"><b>系统建议</b>'
+                        f'<code>{_e(act["action"])}</code></div>'
+                    )
             except Exception:
                 next_html = ""
 
         rev = shot_text_hash(project, sid) if shot else ""
+        decision_disabled = ' disabled aria-disabled="true"' if not selected else ""
+        primary_label = "先选择候选" if not selected else "推荐并下一条"
+        approval_disabled = (
+            ' disabled aria-disabled="true"'
+            if not selected or review_state == "approved"
+            else ""
+        )
+        approval_label = "镜头已通过" if review_state == "approved" else "确认镜头通过"
+        clear_verdict_html = (
+            '<button class="btn ghost rv-clear-verdict" data-act="clear-verdict"'
+            + (' hidden' if not current_note_raw else '')
+            + '>清除当前评价</button>'
+            if selected else ""
+        )
 
         cards.append(
             f'<section class="rv-shot panel{" reviewed" if reviewed_attr == "1" else ""}" '
             f'id="rv-{_e(sid)}" data-shot="{_e(sid)}" '
             f'data-take="{_e(selected or "")}" data-reviewed="{reviewed_attr}" '
             f'data-buildstate="{_e(build_state)}" data-review="{_e(review_state)}" '
-            f'data-qc="{"1" if any(str(f.get("level")) == "error" for f in findings) else "0"}" '
+            f'data-qc="{"1" if has_qc_error else "0"}" '
+            f'data-blocker="{"1" if has_live_blocker else "0"}" '
+            f'data-verdict="{_e(verdict_kind)}" data-note-raw="{_e(current_note_raw)}" '
             f'data-rev="{_e(rev)}">\n'
             f'  <div class="rv-head"><h2><a class="rv-lablink" '
             f'href="/lab?shot={_e(sid)}" title="打开镜头实验室 (lab)">{_e(sid)}</a> '
             f'{state_badge}{build_badge}'
             f'<span class="rv-idx muted">#{idx + 1}</span></h2>'
             f'<div class="rv-meta muted">{action}{" · 台词:" + dialogue if dialogue else ""}</div>'
-            f"{next_html}</div>\n"
-            f'  <div class="rv-actions btnrow">\n'
-            f'    <button class="btn" data-act="good" title="快捷键 g">好</button>\n'
-            f'    <button class="btn ghost" data-act="reject" title="快捷键 x">弃</button>\n'
-            f'    <button class="btn ghost" data-act="qapprove" title="标记已通过">通过 ✓</button>\n'
-            f'    <button class="btn ghost" data-act="redo">重做</button>\n'
-            f'    <span class="rv-repair">修:{repair_btns}</span>\n'
-            f'    <button class="btn ghost" data-act="route">路由?</button>\n'
-            f'    <button class="btn ghost" data-act="skip" title="快捷键 j">跳过</button>\n'
-            + (f'    <a class="btn ghost" href="/?compare={_e(sid)}" '
-               f'title="工作台 A/B 浮层:两个 take 同步播放对比">A/B 对比</a>\n'
+            f"{next_html}"
+            f'</div>\n'
+            f'  <div class="rv-decision-state" aria-label="当前审片决定状态">'
+            f'    <div class="rv-decision-cell selection" data-role="selection">'
+            f'      <span>当前选择</span><strong title="{_e(selected_label)}">{_e(selected_label)}</strong>'
+            f'    </div>'
+            f'    <div class="rv-decision-cell evaluation verdict-{_e(verdict_kind)}" data-role="evaluation">'
+            f'      <span>本次评价</span>'
+            f'      <strong class="rv-verdict-state {verdict_badge}">{_e(verdict_label)}</strong>'
+            f'    </div>'
+            f'    <div class="rv-decision-cell approval review-{_e(review_state)}" data-role="approval">'
+            f'      <span>镜头审批</span>'
+            f'      <strong class="rv-review-state {review_badge}">{_e(review_label)}</strong>'
+            f'    </div>'
+            f'  </div>\n'
+            f'  <div class="rv-actions rv-decision-bar">\n'
+            f'    <div class="rv-decision-main">'
+            f'      <button class="btn rv-primary-action" data-act="good" '
+            f'title="快捷键 G；只记录推荐评价，不会自动选择、审批或锁片"{decision_disabled}>'
+            f'{_e(primary_label)}</button>'
+            f'      <button class="btn ghost rv-reject-action" data-act="reject" '
+            f'title="快捷键 X；只记录不推荐评价，不会取消当前选择"{decision_disabled}>'
+            f'不推荐，查看其它候选</button>'
+            f'      <button class="btn ghost" data-act="skip" title="快捷键 j">稍后处理</button>'
+            f'    </div>\n'
+            f'    <div class="rv-decision-secondary">'
+            f'      <button class="btn ghost" data-act="qapprove" '
+            f'title="确认镜头层面的人工审批，不会锁片"{approval_disabled}>'
+            f'{_e(approval_label)}</button>'
+            + (f'      <a class="btn ghost" href="/?compare={_e(sid)}" '
+               f'title="工作台 A/B 浮层：两个候选同步播放对比">对比候选</a>'
                if sel and alts else "")
-            + f"  </div>\n"
+            + f'    </div>\n'
+            f"  </div>\n"
             f'  <div class="rv-body">\n'
-            f'    <div class="rv-player">{player}</div>\n'
-            f'    <div class="rv-side">{qc_html}{ann_html}{frame_html}{alt_html}</div>\n'
+            f'    <div class="rv-player-column">'
+            f'      <div class="rv-player">{player}</div>'
+            f'      <p class="rv-player-note muted">推荐评价只记录判断，不会自动更换当前选择、审批镜头或锁片。</p>'
+            f'    </div>\n'
+            f'    <div class="rv-side">'
+            f'      <section class="rv-inspector-block">'
+            f'        <div class="rv-inspector-title"><b>质检与批注</b>'
+            f'        <span class="muted">证据只针对当前选择</span></div>'
+            f'        {qc_html}{ann_html}{frame_html}'
+            f'      </section>'
+            f'      {alt_html}'
+            f'    </div>\n'
             f"  </div>\n"
             f'  <div class="rv-noterow">'
-            f'<input class="rv-note-input" placeholder="备注 / 判词 (note)" value="{note_val}">'
-            f'<button class="btn ghost mini" data-act="note">保存备注</button>'
-            f'<button class="btn ghost mini" data-act="ai-ctx" '
-            f'title="复制该镜头的结构化上下文(id/状态/备注/文件),交给 Claude 或 agent">'
-            f'复制给 Claude</button></div>\n'
-            f'  <div class="rv-explain muted" hidden></div>\n'
+            f'<label for="rv-note-{_e(sid)}">审片备注</label>'
+            f'<input id="rv-note-{_e(sid)}" class="rv-note-input" '
+            f'placeholder="记录判断依据或后续处理" value="{note_val}">'
+            f'<button class="btn ghost mini" data-act="note"{decision_disabled}>'
+            f'保存备注</button></div>\n'
+            f'  <details class="rv-more">'
+            f'    <summary>更多操作</summary>'
+            f'    <div class="rv-more-actions">'
+            f'      <button class="btn ghost" data-act="redo">重新生成</button>'
+            f'      <span class="rv-repair">本地修复：{repair_btns}</span>'
+            f'      <button class="btn ghost" data-act="route">查看路由</button>'
+            f'      {clear_verdict_html}'
+            f'      <button class="btn ghost" data-act="ai-ctx" '
+            f'title="复制该镜头的结构化上下文，交给外部 IDE 或 agent">复制给 IDE 助手</button>'
+            f'    </div>'
+            f'    {next_detail_html}'
+            f'    <div class="rv-explain muted" hidden></div>'
+            f'  </details>\n'
             f"</section>"
         )
 
@@ -755,23 +951,43 @@ def render_review(project: Any, token: str) -> str:
     err_line = f'<p class="err">{_e(qc_err)}</p>' if qc_err else ""
     if not shots:
         cards_html = '<p class="muted panel">项目还没有镜头 (no shots to review)。</p>'
+        rail_html = ""
     else:
         cards_html = "\n".join(cards)
-    pct = (reviewed * 100 // total) if total else 0
+    pct = (reviewed * 100 // reviewable) if reviewable else 0
+    waiting_selection = total - reviewable
+    if shots:
+        rail_html = _queue_bar_html(
+            reviewed,
+            reviewable,
+            waiting_selection,
+            pct,
+            "".join(item for _priority, _idx, item in sorted(rail_items)),
+        )
 
     body = (
-        '<div class="page-h"><h1>审片 Review</h1>'
-        '<span class="muted">逐条审阅每个' + tooltip_html("shot") + '选用的'
-        + tooltip_html("take") + ',看 ' + tooltip_html("QC")
-        + ' · 键盘 j/k 上下 · g 好 · x 弃 · a 通过 · u 撤回 · 空格 播放/暂停</span></div>\n'
+        '<div class="page-h rv-page-head"><div><h1>审片 <span class="mj-en">Review</span></h1>'
+        '<p class="muted">逐条判断当前' + tooltip_html("take", label="候选")
+        + '；系统不会自动改变当前选择、镜头审批或锁片。</p>'
+        '</div>'
+        '<details class="rv-shortcuts" id="rv-shortcuts">'
+        '<summary>快捷键 <kbd>?</kbd></summary>'
+        '<div class="rv-shortcut-grid">'
+        '<span><kbd>J</kbd> 下一条</span><span><kbd>K</kbd> 上一条</span>'
+        '<span><kbd>G</kbd> 推荐</span><span><kbd>X</kbd> 不推荐</span>'
+        '<span><kbd>A</kbd> 确认镜头通过</span>'
+        '<span><kbd>U</kbd> 撤回评价</span>'
+        '<span><kbd>Space</kbd> 播放 / 暂停</span></div></details>'
+        '</div>\n'
         + err_line
-        + '<div class="rv-progress panel">'
-        f'<span id="rv-progress">已审 {reviewed} / {total}</span>'
-        '<span class="bar rv-bar"><span class="bar-fill" id="rv-progress-fill" '
-        f'data-pct="{pct}"></span></span>'
-        "</div>\n"
-        + _queue_bar_html()
-        + cards_html
+        + '<div class="rv-decision-guide panel">'
+        '<div><b>推荐 / 不推荐</b><span>只记录本次评价，不会换用候选。</span></div>'
+        '<div><b>当前选择</b><span>只有显式选用其它候选，当前版本才会改变。</span></div>'
+        '<div><b>镜头审批</b><span>确认镜头可以继续，但不会自动锁片。</span></div>'
+        '<a class="rv-lock-guide" href="/edit">锁片在成片阶段完成 →</a>'
+        '</div>'
+        + '<div class="rv-theater"><div class="rv-stage">'
+        + cards_html + '</div>' + rail_html + '</div>'
         + _consistency_section(project)
     )
     return _shell("审片", token, "/review", body, project)
@@ -792,24 +1008,49 @@ _RV_QUEUE_FILTERS = (
 )
 
 
-def _queue_bar_html() -> str:
+def _queue_bar_html(
+    reviewed: int,
+    reviewable: int,
+    waiting_selection: int,
+    pct: int,
+    rail_items: str,
+) -> str:
+    """Render the persistent, read-only priority queue projection."""
+
     chips = "".join(
         f'<button type="button" class="filter-chip rv-qfilter{" active" if key == "all" else ""}" '
-        f'data-filter="{_e(key)}">{_e(label)}</button>'
+        f'data-filter="{_e(key)}" aria-pressed="{"true" if key == "all" else "false"}">'
+        f'{_e(label)}</button>'
         for key, label in _RV_QUEUE_FILTERS
     )
+    waiting_html = (
+        f'<span class="rv-progress-context muted">另有 {waiting_selection} 个镜头尚未选择候选</span>'
+        if waiting_selection
+        else ""
+    )
     return (
-        '<div class="rv-queue-bar panel">'
-        f'<div class="rv-qfilters"><span class="muted">筛选:</span>{chips}</div>'
+        '<aside class="rv-rail panel" aria-label="审片队列">'
+        '<div class="rv-rail-details">'
+        '<div class="rv-rail-heading"><span>审片队列</span>'
+        f'<b id="rv-progress" aria-live="polite">当前候选已评价 {reviewed} / {reviewable}</b></div>'
+        '<div class="rv-rail-body">'
+        f'<span class="bar rv-bar" role="progressbar" aria-label="当前候选审片进度" '
+        f'aria-valuemin="0" aria-valuemax="{reviewable}" aria-valuenow="{reviewed}">'
+        f'<span class="bar-fill" id="rv-progress-fill" data-pct="{pct}" style="width:{pct}%"></span></span>'
+        + waiting_html
+        + f'<div class="rv-qfilters" aria-label="队列筛选">{chips}</div>'
         '<div class="rv-queue-ctl">'
-        '<button type="button" class="btn ghost mini" id="rv-queue-toggle">进入队列模式</button>'
+        '<button type="button" class="btn ghost mini" id="rv-queue-toggle" aria-pressed="false">只看当前镜头</button>'
         '<span id="rv-queue-pos" class="rv-queue-pos muted"></span>'
-        '<button type="button" class="btn ghost mini" id="rv-q-prev" title="上一条 (k)">‹ 上一条</button>'
-'<button type="button" class="btn ghost mini" id="rv-q-next" title="下一条 (j)">下一条 ›</button>'
+        '<button type="button" class="btn ghost mini" id="rv-q-prev" title="上一条 (K)">‹</button>'
+        '<button type="button" class="btn ghost mini" id="rv-q-next" title="下一条 (J)">›</button>'
+        '</div>'
+        f'<div class="rv-rail-list">{rail_items}</div>'
+        '<details class="rv-rail-advanced"><summary>批量操作</summary>'
         '<button type="button" class="btn ghost mini" id="rv-redo-stale" '
-        'title="把所有 待更新(stale)镜头一次性重做(走同一个批量端点与花钱闸门)">'
-        '批量重做待更新</button>'
-        '</div></div>'
+        'title="把所有待更新镜头一次性重做；仍需明确确认可能产生的费用">'
+        '批量重做待更新</button></details>'
+        '</div></div></aside>'
     )
 
 
@@ -880,7 +1121,7 @@ def _consistency_section(project: Any) -> str:
 
     if not units:
         body = ('<p class="muted panel">暂无可判读的一致性组合(需要至少两个共享角色/'
-                '场景、且已选 take 的镜头)。</p>')
+                '场景、且已选候选的镜头)。</p>')
     else:
         body = legend_html + "\n".join(
             _consistency_card(u, coverage.get(u["unit"], {})) for u in units)
@@ -1888,38 +2129,186 @@ _PAGES_CSS = """
 .toast-item.bad { border-color: #5a2c2f; border-left-color: var(--err); color: var(--err); }
 
 /* ---------------------------------------------------------- review -- */
-/* Sticky under the nav: /review restores its scroll position to the shot you
-   were on, which put 已审 N/M and the progress bar above the fold the moment
-   the page opened. Reviewing is a scrolling loop, so "how many left" has to
-   stay on screen — it is the only thing telling you where you are in it.
-   z-index sits just under .pnav (60) so the nav still wins the overlap. */
-.rv-progress {
-  display: flex; align-items: center; gap: 1rem;
-  position: sticky; top: 124px; z-index: 55;
-  margin-top: 0; backdrop-filter: blur(6px);
+body[data-page="/review"] {
+  --rv-nav-h: 88px;
 }
-.rv-bar { flex: 1; max-width: 480px; }
-.rv-shot.active { outline: 2px solid var(--accent); }
-.rv-shot.reviewed .rv-head h2::after { content: " ✓"; color: var(--ok); }
+.rv-page-head { align-items: flex-start; }
+.rv-page-head h1 { margin-bottom: .15rem; }
+.rv-page-head p { margin: .2rem 0 0; max-width: 48rem; }
+.rv-shortcuts { margin-left: auto; position: relative; }
+.rv-shortcuts > summary, .rv-rail-advanced > summary,
+.rv-more > summary, .rv-frame > summary {
+  cursor: pointer; color: var(--muted); font-size: .78rem; font-weight: 650;
+}
+.rv-shortcuts > summary {
+  list-style: none; padding: .35rem .55rem; border: 1px solid var(--line); border-radius: 7px;
+}
+.rv-shortcuts > summary::-webkit-details-marker { display: none; }
+.rv-shortcut-grid {
+  position: absolute; right: 0; top: calc(100% + .4rem); z-index: 70;
+  min-width: 270px; display: grid; grid-template-columns: 1fr 1fr; gap: .45rem .75rem;
+  padding: .75rem; background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 12px 28px rgba(0,0,0,.42);
+  color: var(--muted); font-size: .78rem;
+}
+.rv-decision-guide {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: .7rem; align-items: stretch; margin-top: 0; padding: .75rem;
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+}
+.rv-decision-guide > div { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.rv-decision-guide b { font-size: .84rem; }
+.rv-decision-guide span { color: var(--muted); font-size: .77rem; line-height: 1.35; }
+.rv-lock-guide { align-self: center; white-space: nowrap; font-size: .82rem; }
+kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 1.45rem;
+  padding: .08rem .34rem; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 5px; background: var(--panel2); color: var(--fg);
+  font: 650 .7rem var(--mono);
+}
+.rv-theater {
+  display: grid; grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 1rem; align-items: start; margin-top: 1rem;
+}
+.rv-stage { min-width: 0; grid-column: 1; grid-row: 1; }
+.rv-rail {
+  grid-column: 2; grid-row: 1; display: flex; flex-direction: column; position: sticky;
+  top: calc(var(--rv-nav-h) + .75rem);
+  height: calc(100vh - var(--rv-nav-h) - 1.5rem);
+  max-height: calc(100vh - var(--rv-nav-h) - 1.5rem);
+  overflow: hidden; margin: 0; padding: .7rem;
+}
+.rv-rail-details {
+  display: flex; flex: 1; min-height: 0; height: 100%;
+  flex-direction: column; overflow: hidden;
+}
+.rv-rail-heading {
+  display: flex; justify-content: space-between; align-items: center; gap: .5rem;
+  color: var(--fg); font-size: .9rem; font-weight: 650;
+}
+.rv-rail-heading b { font-size: .72rem; color: var(--muted); font-weight: 550; }
+.rv-rail-body {
+  display: flex; flex: 1; min-height: 0; flex-direction: column;
+  gap: .6rem; margin-top: .65rem; overflow: hidden;
+}
+.rv-rail .rv-bar { display: block; width: 100%; margin: 0; }
+.rv-progress-context { font-size: .7rem; line-height: 1.35; }
+.rv-qfilters { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.rv-queue-ctl {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: .35rem; align-items: center;
+}
+.rv-queue-pos { font-size: .76rem; min-width: 2.6rem; text-align: center; }
+#rv-queue-toggle.on { background: var(--accent); color: #0b1220; font-weight: 700; }
+.rv-rail-advanced { border-top: 1px solid var(--line); padding-top: .45rem; }
+.rv-rail-advanced > summary { margin-bottom: .4rem; }
+.rv-rail-list {
+  display: grid; flex: 1 1 auto; min-height: 9rem; gap: .35rem;
+  overflow: auto; padding-right: .12rem; scrollbar-gutter: stable;
+}
+.rv-rail-item {
+  width: 100%; display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center; gap: .5rem; padding: .5rem .55rem;
+  border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--fg); text-align: left; cursor: pointer;
+  font: inherit;
+}
+.rv-rail-item:hover { background: var(--panel2); border-color: var(--line); }
+.rv-rail-item.active {
+  background: var(--accent-bg); border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.rv-rail-item.rv-filtered-out { display: none; }
+.rv-rail-index { color: var(--muted); font: 650 .72rem var(--mono); }
+.rv-rail-copy { min-width: 0; display: grid; gap: .1rem; }
+.rv-rail-copy strong { font-size: .82rem; }
+.rv-rail-copy small {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: .7rem;
+}
+.rv-rail-status {
+  padding: .12rem .38rem; border-radius: 999px; white-space: nowrap;
+  color: var(--muted); background: var(--panel2); font-size: .68rem;
+}
+.rv-rail-status.approved, .rv-rail-status.reviewed { color: var(--ok); background: #17402a; }
+.rv-rail-status.stale { color: var(--warn); background: #4a3a12; }
+.rv-rail-status.blocker { color: #ffd0d2; background: #5a1f25; }
+.rv-rail-status.qc-error { color: var(--err); background: #4d1f22; }
+.rv-rail-status.needs-selection, .rv-rail-status.needs-review { color: #ffb27a; background: #4a2f12; }
+.rv-rail-status.missing { color: var(--muted); background: var(--panel2); }
+.rv-shot {
+  scroll-margin-top: calc(var(--rv-nav-h) + .75rem);
+  overflow: clip;
+}
+.rv-shot.active {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.22);
+}
 .rv-head {
-  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
-  align-items: baseline;
-  /* Each card is a tall block (player + QC frame + verdict form), so scrolling
-     through one loses its own title — and then nothing on screen says WHICH
-     shot you are judging. Sticky inside its card, under the nav + progress
-     bar, so the answer travels with the content. */
-  position: sticky; top: 170px; z-index: 40;
-  background: var(--panel); padding: .3rem 0 .35rem;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem 1rem;
+  align-items: start; position: static; background: transparent; padding: 0;
 }
+.rv-head h2 { margin: 0; }
+.rv-meta { grid-column: 1 / 2; line-height: 1.5; }
 .rv-idx { font-size: .8rem; margin-left: .4rem; }
-.rv-body { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1rem; margin: .7rem 0; }
-.rv-video { width: 100%; max-height: 420px; border-radius: 8px; background: #000; }
-.rv-side { display: flex; flex-direction: column; gap: .7rem; }
+.rv-next {
+  display: inline-flex; align-items: center; gap: .4rem; width: fit-content;
+  margin-top: .35rem; padding: .28rem .5rem; border: 1px solid #5d4617;
+  border-radius: 7px; background: #2b2516; color: #f2d486; font-size: .78rem;
+}
+.rv-next b { color: var(--warn); font-size: .68rem; letter-spacing: .02em; }
+.rv-next-detail {
+  display: grid; gap: .35rem; margin-top: .65rem; padding: .6rem .7rem;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel2);
+  color: var(--muted); font-size: .78rem;
+}
+.rv-next-detail code { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
+.rv-decision-state {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem;
+  margin-top: .65rem;
+}
+.rv-decision-cell {
+  min-width: 0; display: grid; gap: .18rem; padding: .5rem .6rem;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel2);
+}
+.rv-decision-cell > span { color: var(--muted); font-size: .7rem; }
+.rv-decision-cell > strong {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg); font-size: .82rem; font-weight: 680;
+}
+.rv-verdict-state.st-fresh, .rv-review-state.st-fresh { color: var(--ok); }
+.rv-verdict-state.st-broken, .rv-review-state.st-broken { color: var(--err); }
+.rv-verdict-state.st-needs, .rv-review-state.st-needs { color: var(--warn); }
+.rv-verdict-state.st-manual, .rv-review-state.st-manual { color: var(--accent); }
+.rv-body {
+  display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .75fr);
+  gap: 1rem; margin: .8rem 0;
+}
+.rv-player-column { min-width: 0; }
+.rv-player {
+  min-height: 260px; display: grid; place-items: center; overflow: hidden;
+  border: 1px solid #08090b; border-radius: 12px; background: #050607;
+}
+.rv-video {
+  display: block; width: 100%; max-height: min(62vh, 680px);
+  object-fit: contain; border-radius: 0; background: #000;
+}
+.rv-player-note { margin: .5rem 0 0; font-size: .78rem; }
+.rv-side { display: flex; flex-direction: column; gap: .7rem; min-width: 0; }
+.rv-inspector-block {
+  padding: .75rem; border: 1px solid var(--line); border-radius: 10px;
+  background: color-mix(in srgb, var(--panel2) 70%, transparent);
+}
+.rv-inspector-title {
+  display: flex; align-items: baseline; justify-content: space-between; gap: .6rem;
+  margin-bottom: .55rem;
+}
+.rv-inspector-title .muted { font-size: .72rem; }
 .rv-qc { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem; }
 .rv-qc-item { font-size: .84rem; }
 .rv-qc-sug { font-size: .8rem; margin-left: 1.2rem; }
-.rv-next { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
 /* UX audit F17: the board's annotations, mirrored read-only */
+.rv-anns { margin-top: .7rem; }
 .rv-anns ul { margin: .2rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem; }
 .rv-ann-item { font-size: .84rem; }
 .rv-ann-meta { font-size: .76rem; }
@@ -1928,7 +2317,11 @@ _PAGES_CSS = """
 .rv-ann-blocker { background: #4d1f22; color: #ff8a90; }
 .rv-ann-stale { background: #4d1f22; color: #ff8a90; }
 .rv-ann-seek { color: var(--accent); cursor: pointer; text-decoration: underline dotted; font-size: .8rem; }
-.rv-frame img { width: 100%; border-radius: 6px; border: 1px solid var(--line); display: block; margin-top: .2rem; }
+.rv-frame { margin-top: .65rem; }
+.rv-frame img {
+  width: 100%; border-radius: 8px; border: 1px solid var(--line);
+  display: block; margin-top: .45rem;
+}
 .rv-alts-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .3rem; }
 .rv-alt { display: flex; flex-direction: column; gap: .2rem; width: 120px; }
 .rv-alt-media { position: relative; width: 120px; height: 68px; }
@@ -1940,39 +2333,87 @@ _PAGES_CSS = """
   background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.5);
   cursor: pointer; font-size: .8rem; line-height: 1;
 }
-.rv-alt-media.playing img, .rv-alt-media.playing .rv-alt-noimg, .rv-alt-media.playing .rv-alt-play {
-  display: none;
-}
-.rv-actions { align-items: center; }
+.rv-alt-media.playing img, .rv-alt-media.playing .rv-alt-noimg, .rv-alt-media.playing .rv-alt-play { display: none; }
 .rv-actions {
-  position: sticky; top: 170px; z-index: 39;
-  margin: .2rem 0 .8rem; padding: .45rem .55rem;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  border: 1px solid var(--line); border-radius: 8px;
-  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: space-between; gap: .65rem;
+  margin: .75rem 0 .8rem; padding: .55rem .65rem;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(8px);
 }
-.rv-actions .btn:first-child { background: var(--ok); color: #07130b; border-color: var(--ok); }
+body.rv-queue-on .rv-actions {
+  position: sticky; top: calc(var(--rv-nav-h) + .5rem);
+  z-index: 39;
+}
+.rv-decision-main, .rv-decision-secondary {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .45rem;
+}
+.rv-primary-action { background: var(--ok); color: #07130b; border-color: var(--ok); }
+.rv-reject-action { border-color: #5a2c2f !important; }
+.rv-reject-action:hover:not(:disabled) { color: var(--err); border-color: var(--err) !important; }
 .rv-repair { display: inline-flex; align-items: center; gap: .35rem; flex-wrap: wrap; color: var(--muted); font-size: .8rem; }
-.rv-noterow { display: flex; gap: .5rem; margin-top: .6rem; }
+.rv-noterow {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: .5rem; margin-top: .65rem;
+}
+.rv-noterow label { color: var(--muted); font-size: .78rem; }
 .rv-note-input, .lib-tag-input, .lib-note-input {
   flex: 1; background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
-  border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .84rem;
+  border-radius: 6px; padding: .42rem .55rem; font: inherit; font-size: .84rem;
 }
+.rv-more { margin-top: .6rem; padding-top: .55rem; border-top: 1px solid var(--line); }
+.rv-more-actions { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; margin-top: .55rem; }
 .rv-explain { margin-top: .5rem; font-size: .84rem; font-family: var(--mono); }
-
-/* ------------------------------------------------------- queue mode (round X) */
-.rv-queue-bar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; justify-content: space-between; }
-.rv-qfilters { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
-.rv-queue-ctl { display: flex; gap: .4rem; align-items: center; }
-.rv-queue-pos { font-size: .82rem; min-width: 3.5rem; text-align: center; }
-#rv-queue-toggle.on { background: var(--accent); color: #0b1220; font-weight: 700; }
 .rv-shot.rv-filtered-out { display: none; }
 body.rv-queue-on .rv-shot:not(.rv-qcurrent) { display: none; }
 
-@media (max-width: 820px) { .rv-body { grid-template-columns: 1fr; } }
+@media (max-width: 1280px) {
+  .rv-body { grid-template-columns: 1fr; }
+}
+@media (max-width: 980px) {
+  .rv-decision-guide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rv-lock-guide { align-self: start; white-space: normal; }
+  .rv-theater { grid-template-columns: 1fr; }
+  .rv-stage { grid-column: 1; grid-row: 2; }
+  .rv-rail {
+    grid-column: 1; grid-row: 1; position: static; min-width: 0;
+    width: 100%; max-width: 100%; height: auto; max-height: none;
+    overflow: hidden; margin-bottom: 0;
+  }
+  .rv-rail-details { display: block; height: auto; overflow: visible; }
+  .rv-rail-body { display: flex; overflow: visible; }
+  .rv-rail-list {
+    display: grid; min-width: 0; width: 100%; max-width: 100%;
+    min-height: 0; height: auto; max-height: none;
+    grid-auto-flow: column; grid-auto-columns: minmax(190px, 44vw);
+    overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain;
+    padding: 0 0 .25rem; scroll-snap-type: x proximity;
+  }
+  .rv-rail-item { scroll-snap-align: start; }
+}
 @media (max-width: 760px) {
-  .rv-progress { top: 154px; }
-  .rv-head, .rv-actions { top: 200px; }
+  .rv-page-head { gap: .5rem; }
+  .rv-shortcuts { margin-left: 0; }
+  .rv-shortcut-grid {
+    left: 0; right: auto; width: min(310px, calc(100vw - 2rem)); min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rv-head { grid-template-columns: 1fr; }
+  .rv-meta, .rv-next { grid-column: 1 / -1; grid-row: auto; }
+  .rv-decision-guide { grid-template-columns: 1fr; }
+  body.rv-queue-on .rv-actions { position: static; }
+  .rv-progress-context { display: block; }
+  .rv-queue-ctl { grid-template-columns: 1fr auto auto; }
+  #rv-queue-toggle { grid-column: 1 / -1; justify-self: stretch; }
+  .rv-queue-pos { justify-self: start; text-align: left; }
+  .rv-actions { align-items: stretch; }
+  .rv-decision-main, .rv-decision-secondary { width: 100%; }
+  .rv-decision-main .btn { flex: 1 1 auto; }
+  .rv-noterow { grid-template-columns: 1fr auto; }
+  .rv-noterow label { grid-column: 1 / -1; }
+  .rv-rail-list { grid-auto-columns: minmax(170px, 76vw); }
+}
+@media (max-width: 480px) {
+  .rv-decision-state { grid-template-columns: 1fr; }
 }
 
 /* ------------------------------------------- consistency (round X, XB) -- */
@@ -2081,11 +2522,11 @@ _PAGES_JS = r"""
 
   function reloadSoon() { setTimeout(function () { location.reload(); }, 450); }
 
-  /* 交给 Claude (#50): clipboard with the house fallback (create/series). */
+  /* External-IDE handoff: clipboard with the house fallback (create/series). */
   function copyForAI(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
-        function () { toast("上下文已复制 — 粘给 Claude 即可", true); },
+        function () { toast("上下文已复制，可粘贴到 IDE 助手", true); },
         function () { toast("复制失败,请手动选择", false); }
       );
     } else {
@@ -2194,6 +2635,12 @@ _PAGES_JS = r"""
 
   // ------------------------------------------------------------- review
   function initReview() {
+    function syncReviewOffsets() {
+      var nav = document.querySelector(".pnav");
+      document.body.style.setProperty("--rv-nav-h", ((nav && nav.offsetHeight) || 88) + "px");
+    }
+    syncReviewOffsets();
+    window.addEventListener("resize", syncReviewOffsets);
     var fill = document.getElementById("rv-progress-fill");
     if (fill && fill.dataset.pct) fill.style.width = fill.dataset.pct + "%";
     var shots = Array.prototype.slice.call(document.querySelectorAll(".rv-shot"));
@@ -2268,27 +2715,141 @@ _PAGES_JS = r"""
      * mid-session; the next reload re-ranks. */
     function qPriority(s) {
       var bs = s.getAttribute("data-buildstate") || "";
-      if (s.getAttribute("data-reviewed") === "1") return 6;
+      if (bs === "needs_selection") return 0;
+      if (bs === "stale") return 1;
+      if (s.getAttribute("data-blocker") === "1") return 2;
+      if (s.getAttribute("data-qc") === "1") return 2;   /* QC error findings */
+      if (s.getAttribute("data-take") && s.getAttribute("data-reviewed") !== "1") return 3;
       /* nothing to JUDGE yet — a take-less shot cannot take a verdict, so it
        * trails everything reviewable regardless of its build state. */
       if (!s.getAttribute("data-take")) return 5;
-      if (bs === "needs_selection") return 0;
-      if (bs === "stale") return 1;
-      if (s.getAttribute("data-qc") === "1") return 2;   /* QC error findings */
-      if ((s.getAttribute("data-review") || "needs_review") === "needs_review") return 3;
-      return 4;
+      if ((s.getAttribute("data-review") || "needs_review") === "approved") return 6;
+      return 4;  /* already evaluated, but not yet shot-approved */
     }
     var qOrder = shots.slice().sort(function (a, b) {
       var d = qPriority(a) - qPriority(b);
       return d !== 0 ? d : shots.indexOf(a) - shots.indexOf(b);
     });
+    var railItems = Array.prototype.slice.call(document.querySelectorAll(".rv-rail-item"));
     var lastVerdict = null;  /* {shot, take, card, prevText, prevReviewed} — U 撤回 */
 
+    function railItemFor(card) {
+      var sid = card && card.getAttribute("data-shot");
+      if (!sid) return null;
+      for (var ri = 0; ri < railItems.length; ri++) {
+        if (railItems[ri].getAttribute("data-rv-target") === sid) return railItems[ri];
+      }
+      return null;
+    }
+    var railList = document.querySelector(".rv-rail-list");
+    if (railList) {
+      qOrder.forEach(function (card) {
+        var item = railItemFor(card);
+        if (item) railList.appendChild(item);
+      });
+    }
+    function railState(card) {
+      var bs = card.getAttribute("data-buildstate") || "missing";
+      if (!card.getAttribute("data-take")) {
+        return bs === "needs_selection"
+          ? { label: "待选", cls: "needs-selection" }
+          : { label: "无候选", cls: "missing" };
+      }
+      if (bs === "stale") return { label: "待更新", cls: "stale" };
+      if (card.getAttribute("data-blocker") === "1") {
+        return { label: "有阻塞", cls: "blocker" };
+      }
+      if (card.getAttribute("data-qc") === "1") return { label: "需复核", cls: "qc-error" };
+      if ((card.getAttribute("data-review") || "needs_review") === "approved") {
+        return { label: "已通过", cls: "approved" };
+      }
+      if (card.getAttribute("data-reviewed") === "1") return { label: "已评价", cls: "reviewed" };
+      return { label: "待审", cls: "needs-review" };
+    }
+    function syncRailItem(card) {
+      var item = railItemFor(card);
+      if (!item) return;
+      var state = railState(card);
+      item.classList.toggle("active", card === shots[active]);
+      item.classList.toggle("reviewed", card.getAttribute("data-reviewed") === "1");
+      item.classList.toggle("rv-filtered-out", !matchesFilter(card));
+      if (card === shots[active]) item.setAttribute("aria-current", "true");
+      else item.removeAttribute("aria-current");
+      item.setAttribute("data-reviewed", card.getAttribute("data-reviewed") || "0");
+      item.setAttribute("data-buildstate", card.getAttribute("data-buildstate") || "missing");
+      item.setAttribute("data-review", card.getAttribute("data-review") || "needs_review");
+      item.setAttribute("data-take", card.getAttribute("data-take") || "");
+      item.setAttribute("data-qc", card.getAttribute("data-qc") || "0");
+      item.setAttribute("data-blocker", card.getAttribute("data-blocker") || "0");
+      item.setAttribute("data-verdict", card.getAttribute("data-verdict") || "pending");
+      var status = item.querySelector(".rv-rail-status");
+      if (status) {
+        status.className = "rv-rail-status " + state.cls;
+        status.textContent = state.label;
+      }
+    }
+    function syncRail() { shots.forEach(syncRailItem); }
+    function scrollRailToActive() {
+      var item = railItemFor(shots[active]);
+      if (item && queueMode) {
+        item.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      }
+    }
+
+    function verdictState(raw) {
+      var text = (raw || "").trim();
+      if (text === "好" || text.indexOf("好 ·") === 0) {
+        return { kind: "good", label: "推荐", cls: "st-fresh" };
+      }
+      if (text === "弃" || text.indexOf("弃 ·") === 0) {
+        return { kind: "reject", label: "不推荐", cls: "st-broken" };
+      }
+      if (text) return { kind: "note", label: "有备注", cls: "st-manual" };
+      return { kind: "pending", label: "未评价", cls: "st-needs" };
+    }
+    function noteRationale(raw) {
+      var text = (raw || "").trim();
+      var match = text.match(/^(好|弃)(?:\s*·\s*)?([\s\S]*)$/);
+      return match ? (match[2] || "").trim() : text;
+    }
+    function noteTextFor(card, rationale) {
+      var kind = card.getAttribute("data-verdict") || "pending";
+      var text = (rationale || "").trim();
+      if (kind === "good") return "好" + (text ? " · " + text : "");
+      if (kind === "reject") return "弃" + (text ? " · " + text : "");
+      return text;
+    }
+    function syncVerdictFact(card, raw) {
+      var state = verdictState(raw);
+      card.setAttribute("data-note-raw", (raw || "").trim());
+      card.setAttribute("data-verdict", state.kind);
+      var badge = card.querySelector(".rv-verdict-state");
+      if (badge) {
+        badge.className = "rv-verdict-state " + state.cls;
+        badge.textContent = state.label;
+      }
+      var clearButton = card.querySelector(".rv-clear-verdict");
+      if (clearButton) clearButton.hidden = !(raw || "").trim();
+      return state;
+    }
+    function syncReviewed(card, raw) {
+      var isReviewed = (raw || "").trim() ? "1" : "0";
+      card.setAttribute("data-reviewed", isReviewed);
+      card.classList.toggle("reviewed", isReviewed === "1");
+      return isReviewed;
+    }
+
     function updateProgress() {
-      var done = document.querySelectorAll('.rv-shot[data-reviewed="1"]').length;
+      var reviewable = shots.filter(function (s) { return !!s.getAttribute("data-take"); }).length;
+      var done = document.querySelectorAll('.rv-shot[data-take]:not([data-take=""])[data-reviewed="1"]').length;
       var meter = document.getElementById("rv-progress");
-      if (meter) meter.textContent = "已审 " + done + " / " + shots.length;
-      if (fill) fill.style.width = (shots.length ? (done * 100 / shots.length) : 0) + "%";
+      if (meter) meter.textContent = "当前候选已评价 " + done + " / " + reviewable;
+      var progress = document.querySelector(".rv-bar[role=progressbar]");
+      if (progress) {
+        progress.setAttribute("aria-valuemax", String(reviewable));
+        progress.setAttribute("aria-valuenow", String(done));
+      }
+      if (fill) fill.style.width = (reviewable ? (done * 100 / reviewable) : 0) + "%";
     }
     function setActive(i) {
       if (i < 0) i = 0;
@@ -2297,6 +2858,8 @@ _PAGES_JS = r"""
       active = i;
       shots[active].classList.add("active");
       activateMedia(shots[active]);
+      syncRail();
+      scrollRailToActive();
       shots[active].scrollIntoView({ behavior: "smooth", block: "start" });
       try {
         window.localStorage.setItem(posKey, shots[active].getAttribute("data-shot") || "");
@@ -2308,6 +2871,9 @@ _PAGES_JS = r"""
       if (qFilter === "all") return true;
       if (qFilter === "needs_selection" || qFilter === "stale") {
         return (s.getAttribute("data-buildstate") || "missing") === qFilter;
+      }
+      if (qFilter === "needs_review") {
+        return !!s.getAttribute("data-take") && s.getAttribute("data-reviewed") !== "1";
       }
       return (s.getAttribute("data-review") || "needs_review") === qFilter;
     }
@@ -2321,10 +2887,12 @@ _PAGES_JS = r"""
       var tg = document.getElementById("rv-queue-toggle");
       if (tg) {
         tg.classList.toggle("on", queueMode);
-        tg.textContent = queueMode ? "退出队列模式" : "进入队列模式";
+        tg.setAttribute("aria-pressed", queueMode ? "true" : "false");
+        tg.textContent = queueMode ? "浏览全部镜头" : "只看当前镜头";
       }
       qIndex = 0;
       updateQueueUI();
+      syncReviewOffsets();
     }
     function updateQueueUI() {
       var list = filteredShots();
@@ -2333,8 +2901,8 @@ _PAGES_JS = r"""
         s.classList.remove("rv-qcurrent");
         s.classList.toggle("rv-filtered-out", !matchesFilter(s));
       });
-      if (!queueMode) { if (pos) pos.textContent = ""; return; }
-      if (!list.length) { if (pos) pos.textContent = "0 / 0"; return; }
+      if (!queueMode) { if (pos) pos.textContent = ""; syncRail(); return; }
+      if (!list.length) { if (pos) pos.textContent = "0 / 0"; syncRail(); return; }
       if (qIndex >= list.length) qIndex = list.length - 1;
       if (qIndex < 0) qIndex = 0;
       var cur = list[qIndex];
@@ -2342,39 +2910,45 @@ _PAGES_JS = r"""
       if (pos) pos.textContent = (qIndex + 1) + " / " + list.length;
       var i = shots.indexOf(cur);
       if (i >= 0) setActive(i);
+      syncRail();
     }
 
     function verdict(kind) {
       var s = shots[active];
       var shot = s.getAttribute("data-shot");
       var take = s.getAttribute("data-take");
-      if (!take) { toast("先选用一个 take", false); return; }
+      if (!take) { toast("先选择一个候选", false); return; }
       var noteEl = s.querySelector(".rv-note-input");
-      var extra = noteEl && noteEl.value.trim() ? " · " + noteEl.value.trim() : "";
+      var rationale = noteEl ? noteEl.value.trim() : "";
       var label = kind === "good" ? "好" : "弃";
+      var nextRaw = label + (rationale ? " · " + rationale : "");
       /* round AA item 5 (#1): data-rev is the CAS token this card's note was
        * rendered at — echoed back as expected_rev so a save against a card
        * left open past someone else's edit is refused (409), not clobbered. */
-      var noteBody = { shot: shot, take: take, text: label + extra };
+      var noteBody = { shot: shot, take: take, text: nextRaw };
       var rev = s.getAttribute("data-rev");
       if (rev) noteBody.expected_rev = rev;
       /* U 撤回 (#50): remember what this verdict overwrote — the input's
        * defaultValue is the server-rendered saved note, untouched by typing. */
       var prevState = {
         shot: shot, take: take, card: s,
-        prevText: noteEl ? (noteEl.defaultValue || "") : "",
+        prevText: s.getAttribute("data-note-raw") || "",
         prevReviewed: s.getAttribute("data-reviewed") || "0",
+        prevVerdict: s.getAttribute("data-verdict") || "pending",
       };
       post("/api/take-note", noteBody).then(function (res) {
         if (res.status === 200) {
           /* UX audit F14: refresh the CAS token from the response, or the
            * owner's NEXT action on this card is refused by their own save. */
           if (res.data && res.data.rev) s.setAttribute("data-rev", res.data.rev);
-          s.setAttribute("data-reviewed", "1");
-          s.classList.add("reviewed");
+          syncVerdictFact(s, nextRaw);
+          syncReviewed(s, nextRaw);
+          if (noteEl) noteEl.defaultValue = rationale;
           lastVerdict = prevState;
           updateProgress();
-          toast(shot + " " + label, kind === "good");
+          syncRailItem(s);
+          toast(shot + (kind === "good" ? " 已标记为推荐" : " 已标记为不推荐"),
+                kind === "good");
           if (kind === "reject") {
             var alts = s.querySelector(".rv-alts");
             if (alts) alts.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2400,6 +2974,26 @@ _PAGES_JS = r"""
         if (vid) { vid.currentTime = parseFloat(seek.getAttribute("data-seek") || "0"); }
         return;
       }
+      var railItem = e.target.closest(".rv-rail-item");
+      if (railItem) {
+        var targetShot = railItem.getAttribute("data-rv-target");
+        var targetCard = null;
+        for (var ri = 0; ri < shots.length; ri++) {
+          if (shots[ri].getAttribute("data-shot") === targetShot) {
+            targetCard = shots[ri];
+            break;
+          }
+        }
+        if (!targetCard) return;
+        if (!queueMode) setQueueMode(true);
+        var queue = filteredShots();
+        var targetIndex = queue.indexOf(targetCard);
+        if (targetIndex >= 0) {
+          qIndex = targetIndex;
+          updateQueueUI();
+        }
+        return;
+      }
       var btn = e.target.closest("[data-act]");
       if (!btn) return;
       var s = btn.closest(".rv-shot");
@@ -2412,12 +3006,16 @@ _PAGES_JS = r"""
       var shot = s.getAttribute("data-shot");
       if (act === "good") verdict("good");
       else if (act === "reject") verdict("reject");
-      else if (act === "skip") setActive(active + 1);
+      else if (act === "skip") {
+        if (queueMode) { qIndex++; updateQueueUI(); }
+        else setActive(active + 1);
+      }
       else if (act === "note") {
         var take = s.getAttribute("data-take");
-        if (!take) { toast("先选用一个 take", false); return; }
+        if (!take) { toast("先选择一个候选", false); return; }
         var val = s.querySelector(".rv-note-input").value.trim();
-        var noteBody2 = { shot: shot, take: take, text: val };
+        var nextNoteRaw = noteTextFor(s, val);
+        var noteBody2 = { shot: shot, take: take, text: nextNoteRaw };
         var rev2 = s.getAttribute("data-rev");
         if (rev2) noteBody2.expected_rev = rev2;
         post("/api/take-note", noteBody2).then(function (res) {
@@ -2427,12 +3025,11 @@ _PAGES_JS = r"""
              * exactly this, so a saved note is never silently discarded. */
             var nEl2 = s.querySelector(".rv-note-input");
             if (nEl2) nEl2.defaultValue = val;
-            toast("备注已存", true);
-            if (val) {
-              s.setAttribute("data-reviewed", "1");
-              s.classList.add("reviewed");  /* the ✓ keys on the class */
-              updateProgress();
-            }
+            syncVerdictFact(s, nextNoteRaw);
+            syncReviewed(s, nextNoteRaw);
+            toast("备注已保存", true);
+            updateProgress();
+            updateQueueUI();
           } else { toast((res.data && res.data.error) || "失败", false); }
         });
       }
@@ -2440,6 +3037,31 @@ _PAGES_JS = r"""
         post("/api/select", { shot: shot, take: btn.getAttribute("data-take") }).then(function (res) {
           if (res.status === 200) { toast("已换用 " + btn.getAttribute("data-take"), true); reloadSoon(); }
           else toast((res.data && res.data.error) || "失败", false);
+        });
+      }
+      else if (act === "clear-verdict") {
+        var clearTake = s.getAttribute("data-take");
+        if (!clearTake) { toast("先选择一个候选", false); return; }
+        var beforeRaw = s.getAttribute("data-note-raw") || "";
+        var clearBody = { shot: shot, take: clearTake, text: "" };
+        var clearRev = s.getAttribute("data-rev");
+        if (clearRev) clearBody.expected_rev = clearRev;
+        post("/api/take-note", clearBody).then(function (res) {
+          if (res.status === 200) {
+            if (res.data && res.data.rev) s.setAttribute("data-rev", res.data.rev);
+            lastVerdict = {
+              shot: shot, take: clearTake, card: s, prevText: beforeRaw,
+              prevReviewed: s.getAttribute("data-reviewed") || "0",
+              prevVerdict: s.getAttribute("data-verdict") || "pending",
+            };
+            syncVerdictFact(s, "");
+            syncReviewed(s, "");
+            var clearInput = s.querySelector(".rv-note-input");
+            if (clearInput) { clearInput.value = ""; clearInput.defaultValue = ""; }
+            updateProgress();
+            updateQueueUI();
+            toast("已清除 " + shot + " 的当前评价", true);
+          } else toast((res.data && res.data.error) || "清除失败", false);
         });
       }
       else if (act === "qapprove") {
@@ -2451,6 +3073,18 @@ _PAGES_JS = r"""
               s.setAttribute("data-rev", res.data.revs[shot]);
             }
             s.setAttribute("data-review", "approved");
+            var approval = s.querySelector(".rv-review-state");
+            if (approval) {
+              approval.className = "rv-review-state st-fresh";
+              approval.textContent = "已通过";
+            }
+            var approveButton = s.querySelector('[data-act="qapprove"]');
+            if (approveButton) {
+              approveButton.disabled = true;
+              approveButton.setAttribute("aria-disabled", "true");
+              approveButton.textContent = "镜头已通过";
+            }
+            syncRailItem(s);
             toast(shot + " 已通过", true);
             updateQueueUI();
             /* #50c: only advance when the approved card STILL matches the
@@ -2468,7 +3102,7 @@ _PAGES_JS = r"""
         // assume_yes so the job does not fail as WaitingUser with a green toast.
         if (!window.confirm("重做镜头 " + shot + "？将产生新的生成花费(确认即批准花费)。")) return;
         post("/api/redo", { shot: shot, assume_yes: true }).then(function (res) {
-          if (res.status === 202 || (res.data && res.data.job)) toast("重做已排队 (queued)", true);
+          if (res.status === 202 || (res.data && res.data.job)) toast("重做已加入任务队列", true);
           else toast((res.data && res.data.error) || "失败", false);
         });
       }
@@ -2483,16 +3117,18 @@ _PAGES_JS = r"""
         });
       }
       else if (act === "ai-ctx") {
-        /* 交给 Claude (#50): a clean, structured task context — the AI lives
+        /* External IDE handoff: a clean, structured task context — the AI lives
          * OUTSIDE the GUI (§0); this hands it exactly what the card knows.
          * NB: read data-take HERE — the hoisted `var take` from the note
          * branch is undefined on this path and always copied "(未选用)". */
         var ctxTake = s.getAttribute("data-take");
+        var copiedVerdict = verdictState(s.getAttribute("data-note-raw") || "");
         var cl = [
           "镜头: " + shot,
-          "当前选用: " + (ctxTake || "(未选用)"),
+          "当前选择: " + (ctxTake || "（尚未选择）"),
+          "当前评价: " + copiedVerdict.label,
+          "镜头审批: " + (s.getAttribute("data-review") || "needs_review"),
           "构建状态: " + (s.getAttribute("data-buildstate") || "?"),
-          "审片状态: " + (s.getAttribute("data-review") || "needs_review"),
         ];
         var nvEl = s.querySelector(".rv-note-input");
         if (nvEl && nvEl.value.trim()) cl.push("备注: " + nvEl.value.trim());
@@ -2504,7 +3140,7 @@ _PAGES_JS = r"""
           cl.push("- " + decodeURI(vsrc.slice("/media/".length)).split("?")[0]);
         }
         if (s.querySelector(".rv-anns")) cl.push("- reports/annotations.jsonl(含本镜批注)");
-        cl.push("目标: (写下要 Claude 做的事)");
+        cl.push("目标:（写下希望 IDE 助手完成的事）");
         copyForAI(cl.join("\n"));
       }
       else if (act === "route") {
@@ -2515,7 +3151,7 @@ _PAGES_JS = r"""
             box.textContent = "";
             if (d.error) { box.textContent = d.error; return; }
             box.textContent = "策略 " + d.strategy + " → " + (d.chosen || "(none)")
-              + "  顺序: " + ((d.order || []).join(" › ") || "—");
+              + "  顺序: " + ((d.order || []).join(" › ") || "无");
           });
       }
     });
@@ -2538,7 +3174,9 @@ _PAGES_JS = r"""
       var chip = e.target.closest(".rv-qfilter");
       if (chip) {
         document.querySelectorAll(".rv-qfilter").forEach(function (c) {
-          c.classList.toggle("active", c === chip);
+          var activeChip = c === chip;
+          c.classList.toggle("active", activeChip);
+          c.setAttribute("aria-pressed", activeChip ? "true" : "false");
         });
         qFilter = chip.getAttribute("data-filter");
         qIndex = 0;
@@ -2561,14 +3199,14 @@ _PAGES_JS = r"""
         var stale = Array.prototype.map.call(
           document.querySelectorAll('.rv-shot[data-buildstate="stale"]'),
           function (s) { return s.getAttribute("data-shot"); });
-        if (!stale.length) { toast("没有待更新(stale)的镜头", false); return; }
+        if (!stale.length) { toast("没有待更新的镜头", false); return; }
         if (!window.confirm("批量重做 " + stale.length + " 个待更新镜头?"
                             + "可能产生生成花费;确认即批准花费。")) return;
         e.target.disabled = true;
         post("/api/redo-batch", { shots: stale, assume_yes: true }).then(function (res) {
           e.target.disabled = false;
           if ((res.status === 202 || res.status === 200) && res.data && res.data.job) {
-            toast("批量重做已入队 (job " + res.data.job.id + ") — 进度见工作台任务面板", true);
+            toast("批量重做已加入任务队列（任务 " + res.data.job.id + "），进度见工作台", true);
           } else toast((res.data && res.data.error) || "失败", false);
         });
         return;
@@ -2578,6 +3216,15 @@ _PAGES_JS = r"""
     document.addEventListener("keydown", function (e) {
       var tag = e.target && e.target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "?") {
+        var help = document.getElementById("rv-shortcuts");
+        if (help) {
+          help.open = !help.open;
+          syncReviewOffsets();
+        }
+        e.preventDefault();
+        return;
+      }
       if (queueMode && (e.key === "j" || e.key === "k")) {
         qIndex += (e.key === "j") ? 1 : -1;
         updateQueueUI();
@@ -2610,9 +3257,12 @@ _PAGES_JS = r"""
         post("/api/take-note", ubody).then(function (res) {
           if (res.status === 200) {
             if (res.data && res.data.rev) lv.card.setAttribute("data-rev", res.data.rev);
-            if (lv.prevReviewed !== "1") {
-              lv.card.setAttribute("data-reviewed", lv.prevReviewed);
-              lv.card.classList.remove("reviewed");
+            syncVerdictFact(lv.card, lv.prevText);
+            syncReviewed(lv.card, lv.prevText);
+            var restoredNote = lv.card.querySelector(".rv-note-input");
+            if (restoredNote) {
+              restoredNote.value = noteRationale(lv.prevText);
+              restoredNote.defaultValue = noteRationale(lv.prevText);
             }
             updateProgress();
             updateQueueUI();

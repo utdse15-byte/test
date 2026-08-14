@@ -138,7 +138,7 @@ def test_alt_take_preview_is_lazy_not_eager(gui, tmp_project, add_shot, make_tak
     assert 'class="rv-alt-play"' in html
     assert 'class="rv-alt-video hidden"' in html
     assert "data-src=" in html
-    assert f'换用 {alt.name}' in html
+    assert f'选用 {alt.name}' in html
     # lazy only — no eagerly-wired src= on the alt preview element itself
     assert 'rv-alt-video hidden" muted controls preload="none" data-src=' in html
 

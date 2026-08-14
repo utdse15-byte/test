@@ -379,9 +379,11 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
 - **hidden 即隐藏**:app.css 以 `!important` 钉死 `.hidden`/`[hidden]` —
   永远不要再写 `.foo.hidden{display:none}` 补丁,也不要让作者 `display:`
   规则去对抗 `hidden` 属性(docs/PINS.md 有对应 pin)。
-- **审片是最强页面**:有未审内容时默认进入队列模式(显式开关才持久化);
-  队列按 待挑选→待更新→QC 错误→未审→其余→无 take→已审 排序,载入时快照;
-  `g` 判定后自动下一条,`u` 撤回上一次好/弃;播放倍速/音量/静音按项目记忆。
+- **审片是最强页面**:有未评价的当前候选时默认进入队列模式(显式开关才持久化);
+  队列按 待挑选→待更新→当前媒体阻塞/QC 错误→当前候选待评价→已评价待审批→无 take→已通过
+  排序,载入时快照。进度只统计已有当前选择的镜头；历史候选的旧备注不会把新选择误算成已评价。
+  页面明确分开当前选择、当前评价、镜头审批与 Picture Lock；`g` 只写“推荐”评价并在队列中
+  前进，`x` 只写“不推荐”评价且不取消选择，`u` 撤回最近一次评价；播放倍速/音量/静音按项目记忆。
 - **首页先"继续"再看数据**:common.js 在每个 server 页写
   `manju-last-<identity>`;cockpit 渲染 继续上次工作 chip 与可点击的状态
   计数(点击=筛选分镜网格);新 take 未阅数来自同一本地快照。
@@ -400,7 +402,7 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
   ShotContract、Animatic / Proof 和 candidate 术语；同页只读显示
   `proxy-only` / `candidate` / `final-eligible` 与 Picture Lock eligibility，
   数据来自 `build/readiness.py` 的派生视图，不保存第二份状态。
-- **AI 在 GUI 外**(§0):/review 卡片 复制给 Claude、失败卡 复制诊断上下文
+- **AI 在 GUI 外**(§0):/review 卡片“复制给 IDE 助手”、失败卡复制诊断上下文
   只递结构化文本;不要在 GUI 里内建聊天/模型管理。
 - **`manju gui --app`**:Edge/Chrome `--app=` 无边框窗口,找不到浏览器时
   具名回退默认浏览器;关窗不停服务(分离进程无法诚实通知)。
