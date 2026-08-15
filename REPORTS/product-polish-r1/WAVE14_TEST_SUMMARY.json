@@ -1,13 +1,15 @@
 {
   "schema": "manju.product-polish-wave14-tests/v1",
-  "generated_at": "2026-08-15T04:54:18.053786+00:00",
+  "generated_at": "2026-08-15T04:54:41.127547+00:00",
   "wave": 14,
-  "head": "ddf72928be2da82cb1c780b65c559345f5c8380d",
-  "tree": "ce85e181354507603f58efe474e2443b483cbe8e",
+  "functional_head": "ddf72928be2da82cb1c780b65c559345f5c8380d",
+  "functional_tree": "ce85e181354507603f58efe474e2443b483cbe8e",
+  "evidence_base_head": "ff7119b4cdf98f8df5bde8d2d39467532c80fbbb",
   "zero_cost": true,
   "real_provider_calls": 0,
   "credential_reads": 0,
   "paid_calls": 0,
+  "free_tier_calls": 0,
   "pytest": {
     "recorded_non_overlapping": {
       "passed": 314,
@@ -69,29 +71,36 @@
       "pages.js"
     ],
     "git_diff_check": true,
+    "source_windows_app_self_test": true,
     "ruff": "unavailable_in_sandbox",
     "log": "wave14-tests/static-final.log",
-    "source_self_test": true,
-    "source_self_test_log": "wave14-tests/source-self-test.log"
+    "self_test_log": "wave14-tests/source-self-test.log"
   },
   "package": {
+    "build_mode": "PIP_NO_INDEX=1 pip wheel --no-deps --no-build-isolation",
     "wheel": "manju-0.2.0-py3-none-any.whl",
-    "wheel_sha256": "59313dc351afee1026ceb2218fc6a668dae95092ee06484cbb7e12b4f68bb2b4",
+    "wheel_sha256_this_build": "da045e69a72a57714799069738e6eabc8a0a16e9c48d8599dc90ffe8052301fb",
+    "wheel_hash_stability": "not_claimed; wheel archive metadata can vary between builds",
     "installed_target_self_test": true,
     "icon_size": 18786,
     "icon_header": "00000100",
-    "log": "wave14-tests/package-install-final.log",
-    "build_command": "python -m pip wheel --no-deps --no-build-isolation"
+    "icon_sha256": "f6b65a28ff4be49fc5e01b40aa180e71457bf4c53a10b84a76e300c5485e9396",
+    "svg_size": 759,
+    "svg_sha256": "c65d87775e190f29578919010a5780c315477a0ef4b32cf16584315f9cce47d4",
+    "log": "wave14-tests/package-install-final.log"
   },
   "visual_acceptance": {
     "mode": "offline-real-renderer",
     "live_http_e2e": false,
+    "git_sha": "26f0a9a999d8bfbd4428d408fb861dcc8628b18e",
     "page_viewport_combinations": 18,
     "passed": 18,
     "horizontal_overflow": 0,
     "duplicate_ids": 0,
+    "visible_undefined": 0,
     "page_errors": 0,
-    "result": "wave14-tests/visual-gate/visual-acceptance.json"
+    "result": "wave14-tests/visual-gate/visual-acceptance.json",
+    "log": "wave14-tests/visual-gate/visual-acceptance.log"
   },
   "platform_limits": {
     "powershell_available": false,
@@ -99,6 +108,14 @@
     "real_wscript_shortcut_tested": false,
     "windows_hard_gate_run": false,
     "same_sha_ubuntu_windows_green": false,
-    "full_pytest_run": false
+    "full_pytest_run": false,
+    "live_localhost_playwright_e2e": false
+  },
+  "documentation_check": {
+    "pytest_passed": 5,
+    "json_parse": true,
+    "git_diff_check": true,
+    "counted_in_pytest_total": false,
+    "log": "wave14-tests/evidence-doc-check.log"
   }
 }

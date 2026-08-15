@@ -59,7 +59,8 @@ install-manju.ps1 -NoShortcut
 最终 wheel 重新构建并安装到隔离目录后验证：
 
 ```text
-wheel SHA-256: 59313dc351afee1026ceb2218fc6a668dae95092ee06484cbb7e12b4f68bb2b4
+wheel SHA-256（本次构建）: da045e69a72a57714799069738e6eabc8a0a16e9c48d8599dc90ffe8052301fb
+说明：wheel 是 ZIP 容器；不同构建时间的 archive metadata 可能改变整体哈希，这里不把 wheel 哈希声明为跨构建稳定身份。
 .ico size:      18,786 bytes
 .ico header:    00000100
 installed self-test: PASS
@@ -284,6 +285,14 @@ installed windows_app --self-test       PASS
 
 当前环境没有 `ruff`，没有联网安装，也没有把它描述成已通过。
 
+对应证据：
+
+```text
+REPORTS/product-polish-r1/wave14-tests/static-final.log
+REPORTS/product-polish-r1/wave14-tests/source-self-test.log
+REPORTS/product-polish-r1/wave14-tests/package-install-final.log
+```
+
 ### 离线真实 renderer 视觉门
 
 复跑已有六个核心表面：
@@ -304,6 +313,13 @@ browser pageerror 0
 ```
 
 这是 `page.set_content` 离线真实 renderer 门，不是 live localhost HTTP E2E。
+
+视觉证据：
+
+```text
+REPORTS/product-polish-r1/wave14-tests/visual-gate/visual-acceptance.json
+REPORTS/product-polish-r1/wave14-tests/visual-gate/visual-acceptance.log
+```
 
 ## 13. 零成本和架构边界
 

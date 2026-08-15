@@ -1,0 +1,9 @@
+# Wave 14 evidence document check
+2026-08-15T04:54:55Z
+$ PYTHONPATH=src python -m pytest -q tests/test_fp_docs.py
+.....                                                                    [100%]
+5 passed in 0.25s
+$ python -m json.tool REPORTS/product-polish-r1/WAVE14_TEST_SUMMARY.json
+PASS JSON parse
+$ git diff --check
+PASS git diff --check
