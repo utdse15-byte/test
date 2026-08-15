@@ -127,14 +127,6 @@ def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> l
         for path in sorted(root.glob("tests/test_product_polish*.py"))
         if path.name not in isolated_product_tests
     )
-    trust_tests = (
-        "tests/test_zero_cost_provider_policy.py",
-        "tests/test_roundtrip_baseline_absent.py",
-        "tests/test_roundtrip_needs_baseline.py",
-        "tests/test_roundtrip_fcpxml.py",
-        "tests/test_gui_project_actions.py",
-        "tests/test_windows_install.py",
-    )
     stages = [
         Stage(
             "compile",
@@ -167,10 +159,45 @@ def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> l
             (py, "-m", "pytest", "-q", "tests/test_product_polish_help_center.py"),
             300,
         ),
+        # Trust-boundary suites are deliberately isolated.  Some of these
+        # files exercise server, subprocess, archive or Windows-script owners;
+        # a combined pytest process can finish its assertions yet remain alive
+        # while a child drains.  Per-file stages preserve an exact, bounded
+        # result and make the failing owner obvious.
         Stage(
-            "trust-boundary-tests",
-            (py, "-m", "pytest", "-q", *trust_tests),
-            900,
+            "zero-cost-tests",
+            (py, "-m", "pytest", "-q", "tests/test_zero_cost_provider_policy.py"),
+            300,
+            profiles=("standard", "full"),
+        ),
+        Stage(
+            "roundtrip-baseline-absent-tests",
+            (py, "-m", "pytest", "-q", "tests/test_roundtrip_baseline_absent.py"),
+            300,
+            profiles=("standard", "full"),
+        ),
+        Stage(
+            "roundtrip-needs-baseline-tests",
+            (py, "-m", "pytest", "-q", "tests/test_roundtrip_needs_baseline.py"),
+            300,
+            profiles=("standard", "full"),
+        ),
+        Stage(
+            "roundtrip-fcpxml-tests",
+            (py, "-m", "pytest", "-q", "tests/test_roundtrip_fcpxml.py"),
+            300,
+            profiles=("standard", "full"),
+        ),
+        Stage(
+            "gui-project-action-tests",
+            (py, "-m", "pytest", "-q", "tests/test_gui_project_actions.py"),
+            300,
+            profiles=("standard", "full"),
+        ),
+        Stage(
+            "windows-install-tests",
+            (py, "-m", "pytest", "-q", "tests/test_windows_install.py"),
+            300,
             profiles=("standard", "full"),
         ),
         Stage(
