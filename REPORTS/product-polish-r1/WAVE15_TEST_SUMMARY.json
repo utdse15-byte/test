@@ -1,0 +1,82 @@
+{
+  "schema": "manju.product-polish-wave15-summary/v1",
+  "date": "2026-08-14",
+  "claim": "local-zero-cost-release-readiness-only",
+  "feature_head": "3ad9a3f2c64ae8a7654f4323ae090e1427bc12d6",
+  "feature_tree": "6315ee74270898bba6bfefa5b5d49a430601c514",
+  "release_candidate_passed": true,
+  "pytest_passed": 236,
+  "pytest_stages": [
+    {
+      "stage": "product-polish-core-tests",
+      "passed": 146,
+      "skipped": 0
+    },
+    {
+      "stage": "quick-open-tests",
+      "passed": 9,
+      "skipped": 0
+    },
+    {
+      "stage": "help-center-tests",
+      "passed": 4,
+      "skipped": 0
+    },
+    {
+      "stage": "contract-registry-tests",
+      "passed": 17,
+      "skipped": 0
+    },
+    {
+      "stage": "zero-cost-tests",
+      "passed": 14,
+      "skipped": 0
+    },
+    {
+      "stage": "roundtrip-baseline-absent-tests",
+      "passed": 4,
+      "skipped": 0
+    },
+    {
+      "stage": "roundtrip-needs-baseline-tests",
+      "passed": 8,
+      "skipped": 0
+    },
+    {
+      "stage": "roundtrip-fcpxml-tests",
+      "passed": 12,
+      "skipped": 0
+    },
+    {
+      "stage": "gui-project-action-tests",
+      "passed": 14,
+      "skipped": 0
+    },
+    {
+      "stage": "windows-install-tests",
+      "passed": 8,
+      "skipped": 0
+    }
+  ],
+  "required_failures": [],
+  "ruff": "unavailable",
+  "zero_cost": true,
+  "real_provider_calls": 0,
+  "credential_reads": 0,
+  "visual_combinations": 18,
+  "visual_passed": true,
+  "help_cases": 3,
+  "help_passed": true,
+  "quick_open_passed": true,
+  "wheel_build": "passed",
+  "wheel_install_smoke": "passed",
+  "windows_app_self_test": "passed",
+  "hard_gates_not_claimed": [
+    "full repository pytest suite",
+    "live localhost browser E2E",
+    "real Windows 11 App-mode Dogfood",
+    "Windows hard release gate",
+    "same-SHA Ubuntu and Windows green",
+    "real Provider, billing or AI-video quality"
+  ]
+}

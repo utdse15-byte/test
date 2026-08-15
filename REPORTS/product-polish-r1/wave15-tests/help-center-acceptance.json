@@ -1,0 +1,83 @@
+{
+  "schema": "manju.product-help-center-acceptance/v1",
+  "generated_at": "2026-08-15T06:16:52+00:00",
+  "git_sha": "3ad9a3f2c64ae8a7654f4323ae090e1427bc12d6",
+  "zero_cost": true,
+  "live_http_e2e": false,
+  "cases": {
+    "bound-desktop": {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "documentWidth": 1430,
+      "horizontalOverflow": 0,
+      "dialogOpen": true,
+      "title": "帮助与支持",
+      "focused": "mj-help-center-close",
+      "helpButtons": 1,
+      "aboutCalls": 1,
+      "paletteCalls": 0,
+      "calls": [
+        [
+          "GET",
+          "/api/app/about"
+        ]
+      ],
+      "text": "帮助与支持\n\n查看当前版本、安全模式、快捷键和本地诊断入口。\n\n×\nManju One\n版本 0.2.0\n本地安全\n不会连接外部 Provider，也不会读取云端密钥。\n数据与决定权\n本地工作台\n界面通过本机 loopback 服务运行；Manju 本身不上传产品使用遥测。\n项目真相可见\n项目文本仍是唯一真相，媒体保持只追加；帮助面板不会修改项目。\n诊断由你决定\n环境检查与脱敏支持包都需要你显式运行，不会在后台自动收集或发送。\n常用快捷键\nCtrl/Cmd+K快速前往页面、镜头或项目\nF1打开帮助与支持\n?在审片和剪辑页打开当前页面快捷键\n帮助与诊断\n快速前往\n任务中心\n环境检查\n项目工作区\n复制产品信息\n复制支持包命令\n\n技术详情",
+      "pageErrors": [],
+      "screenshot": "help-center-bound-desktop.png",
+      "failures": []
+    },
+    "bound-narrow": {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentWidth": 380,
+      "horizontalOverflow": 0,
+      "dialogOpen": true,
+      "title": "帮助与支持",
+      "focused": "mj-help-center-close",
+      "helpButtons": 1,
+      "aboutCalls": 1,
+      "paletteCalls": 0,
+      "calls": [
+        [
+          "GET",
+          "/api/app/about"
+        ]
+      ],
+      "text": "帮助与支持\n\n查看当前版本、安全模式、快捷键和本地诊断入口。\n\n×\nManju One\n版本 0.2.0\n本地安全\n不会连接外部 Provider，也不会读取云端密钥。\n数据与决定权\n本地工作台\n界面通过本机 loopback 服务运行；Manju 本身不上传产品使用遥测。\n项目真相可见\n项目文本仍是唯一真相，媒体保持只追加；帮助面板不会修改项目。\n诊断由你决定\n环境检查与脱敏支持包都需要你显式运行，不会在后台自动收集或发送。\n常用快捷键\nCtrl/Cmd+K快速前往页面、镜头或项目\nF1打开帮助与支持\n?在审片和剪辑页打开当前页面快捷键\n帮助与诊断\n快速前往\n任务中心\n环境检查\n项目工作区\n复制产品信息\n复制支持包命令\n\n技术详情",
+      "pageErrors": [],
+      "screenshot": "help-center-bound-narrow.png",
+      "failures": []
+    },
+    "workspace": {
+      "viewport": {
+        "width": 960,
+        "height": 760
+      },
+      "documentWidth": 950,
+      "horizontalOverflow": 0,
+      "dialogOpen": true,
+      "title": "帮助与支持",
+      "focused": "mj-help-center-close",
+      "helpButtons": 1,
+      "aboutCalls": 1,
+      "paletteCalls": 0,
+      "calls": [
+        [
+          "GET",
+          "/api/app/about"
+        ]
+      ],
+      "text": "帮助与支持\n\n查看当前版本、安全模式、快捷键和本地诊断入口。\n\n×\nManju One\n版本 0.2.0\n本地安全\n不会连接外部 Provider，也不会读取云端密钥。\n数据与决定权\n本地工作台\n界面通过本机 loopback 服务运行；Manju 本身不上传产品使用遥测。\n项目真相可见\n项目文本仍是唯一真相，媒体保持只追加；帮助面板不会修改项目。\n诊断由你决定\n环境检查与脱敏支持包都需要你显式运行，不会在后台自动收集或发送。\n常用快捷键\nCtrl/Cmd+K快速前往页面、镜头或项目\nF1打开帮助与支持\n?在审片和剪辑页打开当前页面快捷键\n帮助与诊断\n快速前往\n任务中心\n环境检查\n项目工作区\n复制产品信息\n复制支持包命令\n\n技术详情",
+      "pageErrors": [],
+      "screenshot": "help-center-workspace.png",
+      "failures": []
+    }
+  },
+  "errors": [],
+  "passed": true
+}

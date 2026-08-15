@@ -26,7 +26,7 @@
 - [History, snapshots and rollback (P2)](#history-snapshots-and-rollback-p2)
 - [Toolbelt (§2.5)](#toolbelt-25)
 
-> 命令全表在 [docs/CLI.md](docs/CLI.md);GUI 见 [docs/GUI.md](docs/GUI.md) 与 [docs/WORKBENCH.md](docs/WORKBENCH.md);仓库当前状态见 `STATE.md`。
+> 命令全表在 [docs/CLI.md](docs/CLI.md);GUI 见 [docs/GUI.md](docs/GUI.md) 与 [docs/WORKBENCH.md](docs/WORKBENCH.md);仓库当前状态见 `STATE.md`，当前交接入口见 [FINAL_HANDOFF.md](FINAL_HANDOFF.md)。
 
 ## 中文速览(店主日常)
 

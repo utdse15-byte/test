@@ -4,7 +4,10 @@ Small, active-only. Closed work lives in REPORTS/ and DECISIONS.md — do not
 accumulate history here. (No test inspects this file's text; it is a human
 note, not a contract.)
 
-Default branch: `claude/fable-opus-task-division-wv97i6`
+Remote default branch last confirmed: `claude/fable-opus-task-division-wv97i6`
+Active Product Polish branch: `codex/product-polish-r1` (local delivery chain;
+read the actual checkout or delivery `PACKAGE_MANIFEST.txt` for its current
+HEAD — this file deliberately does not self-reference a moving SHA).
 Last full-green Windows SHA: `f076aee` — windows-ci run 31289952433 (2026-08-09)
 Last full-green Ubuntu SHA: `f076aee` — ci run 31289927126 (same commit, same day)
 
@@ -23,19 +26,30 @@ maintainer stamps the measured result by hand.
 - macOS / exploratory: scheduled + manual only (xplat.yml, informational).
 
 ## Open risks
-- Multi-locale QC coverage (QC must check every declared locale, not `sorted()[0]`).
 - Remote cancellation billing uncertainty (a local cancel does not prove the
   provider stopped before billing).
 - Windows ffmpeg cancellation integration (real child-process kill on Windows).
+- Real Windows 11 validation of the click-first App lifecycle (pythonw console
+  suppression, WScript shortcut ownership, double-click session reuse,
+  update/rollback and zero-delete uninstall refusal).
+- Same-SHA Ubuntu full suite + Windows hard release gate for the Product Polish
+  release candidate; `REPORTS/LAST_GREEN.yaml` therefore remains on the last
+  actually measured dual-platform commit.
+- Full repository pytest in a dependency-complete environment.  The bounded
+  local RC gate is intentionally not a substitute for the full suite.
+- Real Provider / paid request / real-media Proof Shot has not been run.
 
 ## Current structural work
 
-- Product Polish R1 is in local release-candidate hardening. Waves 3–14 now
+- Product Polish R1 is in local release-candidate hardening. Waves 3–15 now
   connect finishing, application chrome, review, shot production, authoring,
   home cockpit, task lifecycle, language/accessibility, performance/visual
   acceptance, a navigation-only Ctrl/Cmd+K quick-open, and the versioned
-  Windows click-first application lifecycle. The Start-menu path now reuses the
-  existing GUI through `pythonw`, self-tests before activation, publishes only
+  Windows click-first application lifecycle. The final local wave also adds one
+  global, read-only F1 Help & Support surface, explicit local-data/privacy
+  guidance, conservative browser permission headers, and a bounded zero-cost
+  release-candidate orchestrator with per-stage evidence. The Start-menu path
+  reuses the existing GUI through `pythonw`, self-tests before activation, publishes only
   disposable loopback session evidence, prevents duplicate servers across
   open/closing/stuck/unreachable states, and manages an owned branded shortcut
   across install/update/rollback/uninstall. Linux-local session/package/script

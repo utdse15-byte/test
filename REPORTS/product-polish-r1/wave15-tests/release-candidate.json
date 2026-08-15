@@ -1,0 +1,388 @@
+{
+  "schema": "manju.product-release-candidate/v1",
+  "generated_at": "2026-08-15T06:15:12+00:00",
+  "profile": "standard",
+  "dry_run": false,
+  "zero_cost": true,
+  "claim": "local-release-candidate-only",
+  "git": {
+    "branch": null,
+    "head": "3ad9a3f2c64ae8a7654f4323ae090e1427bc12d6",
+    "tree": "6315ee74270898bba6bfefa5b5d49a430601c514",
+    "dirty": false
+  },
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "chromium": "/usr/bin/chromium",
+    "playwright": true,
+    "ruff": false,
+    "powershell": false
+  },
+  "credential_environment_removed": true,
+  "stages": [
+    {
+      "name": "compile",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "compileall",
+        "-q",
+        "src",
+        "tests",
+        "scripts/dev"
+      ],
+      "timeout_s": 180,
+      "availability": "available",
+      "stdout": "logs/compile.stdout.log",
+      "stderr": "logs/compile.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 1.873
+    },
+    {
+      "name": "ruff",
+      "required": false,
+      "command": [
+        "ruff",
+        "check",
+        "src",
+        "tests",
+        "scripts/dev"
+      ],
+      "timeout_s": 180,
+      "availability": "unavailable",
+      "status": "unavailable",
+      "exit_code": null
+    },
+    {
+      "name": "product-polish-core-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_product_polish_accessibility.py",
+        "tests/test_product_polish_app_chrome.py",
+        "tests/test_product_polish_authoring_journey.py",
+        "tests/test_product_polish_finishing.py",
+        "tests/test_product_polish_finishing_journey.py",
+        "tests/test_product_polish_home_cockpit.py",
+        "tests/test_product_polish_home_focus.py",
+        "tests/test_product_polish_performance_gate.py",
+        "tests/test_product_polish_review_theater.py",
+        "tests/test_product_polish_shot_journey.py",
+        "tests/test_product_polish_task_center.py",
+        "tests/test_product_polish_windows_app.py"
+      ],
+      "timeout_s": 900,
+      "availability": "available",
+      "stdout": "logs/product-polish-core-tests.stdout.log",
+      "stderr": "logs/product-polish-core-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 20.882
+    },
+    {
+      "name": "quick-open-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_product_polish_command_palette.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/quick-open-tests.stdout.log",
+      "stderr": "logs/quick-open-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 6.641
+    },
+    {
+      "name": "help-center-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_product_polish_help_center.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/help-center-tests.stdout.log",
+      "stderr": "logs/help-center-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 3.88
+    },
+    {
+      "name": "contract-registry-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_fp_contracts.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/contract-registry-tests.stdout.log",
+      "stderr": "logs/contract-registry-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.173
+    },
+    {
+      "name": "zero-cost-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_zero_cost_provider_policy.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/zero-cost-tests.stdout.log",
+      "stderr": "logs/zero-cost-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.123
+    },
+    {
+      "name": "roundtrip-baseline-absent-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_roundtrip_baseline_absent.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/roundtrip-baseline-absent-tests.stdout.log",
+      "stderr": "logs/roundtrip-baseline-absent-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.122
+    },
+    {
+      "name": "roundtrip-needs-baseline-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_roundtrip_needs_baseline.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/roundtrip-needs-baseline-tests.stdout.log",
+      "stderr": "logs/roundtrip-needs-baseline-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.676
+    },
+    {
+      "name": "roundtrip-fcpxml-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_roundtrip_fcpxml.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/roundtrip-fcpxml-tests.stdout.log",
+      "stderr": "logs/roundtrip-fcpxml-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 3.732
+    },
+    {
+      "name": "gui-project-action-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_gui_project_actions.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/gui-project-action-tests.stdout.log",
+      "stderr": "logs/gui-project-action-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 11.906
+    },
+    {
+      "name": "windows-install-tests",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_windows_install.py"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/windows-install-tests.stdout.log",
+      "stderr": "logs/windows-install-tests.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 1.974
+    },
+    {
+      "name": "performance-gate",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "scripts/dev/product_polish_benchmark.py",
+        "--enforce-cockpit",
+        "12=150,100=600,300=1400",
+        "--output",
+        "/mnt/data/manju_final_work/wave15-rc/performance.json"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/performance-gate.stdout.log",
+      "stderr": "logs/performance-gate.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 29.007
+    },
+    {
+      "name": "visual-acceptance",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "scripts/dev/product_visual_acceptance.py",
+        "--output",
+        "/mnt/data/manju_final_work/wave15-rc/visual",
+        "--chromium",
+        "/usr/bin/chromium"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/visual-acceptance.stdout.log",
+      "stderr": "logs/visual-acceptance.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 7.414
+    },
+    {
+      "name": "quick-open-acceptance",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "scripts/dev/product_command_palette_acceptance.py",
+        "--output",
+        "/mnt/data/manju_final_work/wave15-rc/quick-open",
+        "--chromium",
+        "/usr/bin/chromium"
+      ],
+      "timeout_s": 180,
+      "availability": "available",
+      "stdout": "logs/quick-open-acceptance.stdout.log",
+      "stderr": "logs/quick-open-acceptance.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.729
+    },
+    {
+      "name": "help-center-acceptance",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "scripts/dev/product_help_center_acceptance.py",
+        "--output",
+        "/mnt/data/manju_final_work/wave15-rc/help-center",
+        "--chromium",
+        "/usr/bin/chromium"
+      ],
+      "timeout_s": 180,
+      "availability": "available",
+      "stdout": "logs/help-center-acceptance.stdout.log",
+      "stderr": "logs/help-center-acceptance.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.275
+    },
+    {
+      "name": "windows-app-self-test",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "manju.gui.windows_app",
+        "--self-test"
+      ],
+      "timeout_s": 120,
+      "availability": "available",
+      "stdout": "logs/windows-app-self-test.stdout.log",
+      "stderr": "logs/windows-app-self-test.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 0.669
+    },
+    {
+      "name": "wheel-build",
+      "required": true,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "pip",
+        "wheel",
+        ".",
+        "--no-deps",
+        "--no-build-isolation",
+        "--wheel-dir",
+        "/mnt/data/manju_final_work/wave15-rc/wheel"
+      ],
+      "timeout_s": 300,
+      "availability": "available",
+      "stdout": "logs/wheel-build.stdout.log",
+      "stderr": "logs/wheel-build.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.878
+    },
+    {
+      "name": "wheel-install-smoke",
+      "required": true,
+      "availability": "available",
+      "wheel": "wheel/manju-0.2.0-py3-none-any.whl",
+      "stdout": "logs/wheel-install-smoke.stdout.log",
+      "stderr": "logs/wheel-install-smoke.stderr.log",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_s": 2.902
+    }
+  ],
+  "hard_gates_not_claimed": [
+    "full repository pytest suite",
+    "live localhost browser E2E",
+    "real Windows 11 App-mode Dogfood",
+    "Windows hard release gate",
+    "same-SHA Ubuntu and Windows green",
+    "real Provider, billing or AI-video quality"
+  ],
+  "passed": true,
+  "required_failures": []
+}

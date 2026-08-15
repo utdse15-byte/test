@@ -4463,3 +4463,37 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    update/rollback target changes, running-app uninstall refusal and App-mode
    keyboard/mouse use remain Windows hard-gate/Dogfood facts. This wave performs
    no Provider, credential, external API, free-tier or paid operation.
+
+## PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC (2026-08-14)
+
+1. **Help is one global, read-only product surface, not a diagnostic agent.**
+   `F1` and the shared application-bar trigger may show a bounded product
+   snapshot, current execution policy, shortcuts, local-data guarantees and
+   explicit support commands. They never run doctor, create or transmit a
+   support bundle, inspect Provider manifests or credentials, read media, or
+   mutate project truth. `manju.help-center/v1` is an experimental presentation
+   contract and is never a build, cache, Provider or Picture Lock input.
+2. **Local-first privacy is visible and enforced at the browser boundary.**
+   Manju ships no telemetry, remote UI asset, font or analytics dependency. The
+   HTML surface applies conservative browser permission and cross-domain
+   policies; deeper diagnostics remain explicit user actions. The help payload
+   omits absolute project paths, host/user identity, environment variables,
+   credentials and media contents.
+3. **The local RC is bounded evidence, not a release certification.** The
+   zero-cost orchestrator removes credential-like environment variables,
+   forces strict-zero-cost mode, disables package-index access, isolates
+   browser/server and trust suites into bounded stages, saves per-stage logs,
+   and verifies the locally built wheel in an isolated target. It never updates
+   `LAST_GREEN` and cannot replace the full repository suite, live localhost
+   E2E, real Windows App Dogfood, or same-SHA Ubuntu/Windows gates.
+4. **Contract governance remains part of the product gate.** Every schema
+   literal shipped under `src/manju` must remain registered in
+   `CONTRACTS.yaml`; the RC therefore runs the contract-registry tests as a
+   required stage. Development-only evidence schemas under `scripts/dev` remain
+   non-runtime reports and never become project inputs.
+5. **Product expansion stops at the release boundary.** After this wave, new
+   journeys, model integrations and structural rewrites are deferred until the
+   real Windows lifecycle, full dependency-complete tests and same-SHA
+   cross-platform release evidence are complete. Future paid work remains an
+   explicit, separately approved Proof Shot rather than a consequence of this
+   local polish release.

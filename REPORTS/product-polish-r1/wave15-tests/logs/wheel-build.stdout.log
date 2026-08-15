@@ -1,0 +1,9 @@
+Processing /mnt/data/manju_final_work/rc-repo
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: manju
+  Building wheel for manju (pyproject.toml): started
+  Building wheel for manju (pyproject.toml): finished with status 'done'
+  Created wheel for manju: filename=manju-0.2.0-py3-none-any.whl size=2055378 sha256=c53aec1665f1a510cd2281ebaafb97de528c411dfd1281ae7f41d53a434c280d
+  Stored in directory: /tmp/pip-ephem-wheel-cache-6h9q_r_s/wheels/08/87/8b/2eb2030fc4f0aa522ec425510902ab1fc9d4e860a8392ace6d
+Successfully built manju

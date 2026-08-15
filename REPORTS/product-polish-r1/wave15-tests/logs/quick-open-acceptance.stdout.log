@@ -1,0 +1,64 @@
+{
+  "schema": "manju.command-palette-acceptance/v1",
+  "generated_at": "2026-08-15T06:16:49+00:00",
+  "git_sha": "3ad9a3f2c64ae8a7654f4323ae090e1427bc12d6",
+  "zero_cost": true,
+  "mode": "offline-real-renderer",
+  "live_http_e2e": false,
+  "cases": {
+    "desktop": {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "documentWidth": 1430,
+      "overflow": 0,
+      "dialogOpen": true,
+      "focus": "mj-command-input",
+      "triggerExpanded": "true",
+      "inputRole": "combobox",
+      "inputExpanded": "true",
+      "options": 1,
+      "selected": "打开镜头 S003",
+      "status": "1 项"
+    },
+    "narrow": {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentWidth": 380,
+      "overflow": 0,
+      "dialogOpen": true,
+      "focus": "mj-command-input",
+      "triggerExpanded": "true",
+      "inputRole": "combobox",
+      "inputExpanded": "true",
+      "options": 1,
+      "selected": "审片 S003",
+      "status": "1 项"
+    },
+    "workspace": {
+      "viewport": {
+        "width": 960,
+        "height": 760
+      },
+      "documentWidth": 950,
+      "overflow": 0,
+      "dialogOpen": true,
+      "focus": "mj-command-input",
+      "triggerExpanded": "true",
+      "inputRole": "combobox",
+      "inputExpanded": "true",
+      "options": 4,
+      "selected": "打开现有项目",
+      "status": "4 项"
+    },
+    "failure": {
+      "status": "12 项 · 项目索引暂时无法更新，页面仍可打开",
+      "reads": 2
+    }
+  },
+  "errors": [],
+  "passed": true
+}

@@ -1,3 +1,5 @@
+> **历史阶段参考。** 当前交接请先读 [`FINAL_HANDOFF.md`](FINAL_HANDOFF.md)。下文中的分支、SHA、测试数和待办只描述当时状态。
+
 # Manju One 产品打磨交接
 
 更新时间：2026-08-14
