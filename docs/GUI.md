@@ -340,6 +340,35 @@ take、锁定字段)、**QC 面板**(最近一次 `reports/qc.json` 的错误与
 一目了然,`git revert` 随时可回滚——GUI 没有任何绕过文本真相的私有状态。解锁
 不在网页上:它仍然只属于交互式终端(§5)。
 
+## 产品打磨验收工具 / Product-polish acceptance
+
+开发者可以在**不联网、不读取 Provider 凭据、不运行 FFmpeg、不产生费用**的前提下，
+重复检查大项目性能和核心页面结构：
+
+```bash
+# 12 / 100 / 300 镜本地性能观察；默认只报告，不以机器速度决定成败
+python scripts/dev/product_polish_benchmark.py \
+  --output REPORTS/product-polish-performance.json
+
+# 发布候选可显式给 Cockpit 中位数预算；预算必须由当前发布机器基线决定
+python scripts/dev/product_polish_benchmark.py \
+  --enforce-cockpit 12=150,100=600,300=1400 \
+  --output REPORTS/product-polish-performance.json
+
+# 真实服务端 renderer + 仓库实际 CSS 的离线视觉/结构验收
+python scripts/dev/product_visual_acceptance.py \
+  --output REPORTS/product-visual-acceptance
+```
+
+视觉工具覆盖工作区、创作、分镜、审片、剪辑和导出中心的桌面、390px 窄窗口与
+320px（约等于 1280px 桌面在 400% 放大后的可用宽度），并检查 `zh-CN`、skip link、
+`main#main-content`、重复 ID、可见 `undefined`、页面级横向溢出和浏览器 page error。
+
+它使用 Playwright `page.set_content`，因此是**离线真实 renderer 验收**，不是 live HTTP
+E2E。完整本地服务旅程仍使用 `scripts/dev/browser_verify.py`；企业或沙箱 Chromium 策略
+若阻止 localhost，必须诚实记录 `ERR_BLOCKED_BY_ADMINISTRATOR`，不能把离线验收冒充
+live-server 通过。Playwright 只属于 `.[dev]`，不会进入普通 Manju 运行时依赖。
+
 ## Design notes
 
 - **stdlib `http.server`, not Flask/FastAPI.** Zero new dependencies keeps the

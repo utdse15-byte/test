@@ -1,0 +1,447 @@
+{
+  "schema": "manju.product-visual-acceptance/v1",
+  "generated_at": "2026-08-15T02:16:19+00:00",
+  "zero_cost": true,
+  "mode": "offline-real-renderer",
+  "live_http_e2e": false,
+  "config": {
+    "pages": [
+      "workspace",
+      "create",
+      "storyboard",
+      "review",
+      "edit",
+      "exports"
+    ],
+    "viewports": [
+      "desktop",
+      "narrow",
+      "zoom400-equivalent"
+    ],
+    "screenshots": true
+  },
+  "pages": {
+    "workspace": {
+      "desktop": {
+        "name": "workspace",
+        "title": "打开或新建项目 · Manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "document": {
+          "width": 1430,
+          "height": 1006
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "打开或新建项目",
+        "elementCount": 60,
+        "pageErrors": [],
+        "screenshot": "workspace-desktop.png"
+      },
+      "narrow": {
+        "name": "workspace",
+        "title": "打开或新建项目 · Manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 380,
+          "height": 1213
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "打开或新建项目",
+        "elementCount": 60,
+        "pageErrors": [],
+        "screenshot": "workspace-narrow.png"
+      },
+      "zoom400-equivalent": {
+        "name": "workspace",
+        "title": "打开或新建项目 · Manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 320,
+          "height": 800
+        },
+        "document": {
+          "width": 310,
+          "height": 1233
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "打开或新建项目",
+        "elementCount": 60,
+        "pageErrors": []
+      }
+    },
+    "create": {
+      "desktop": {
+        "name": "create",
+        "title": "创作 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "document": {
+          "width": 1430,
+          "height": 1252
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "创作 (Create)",
+        "elementCount": 227,
+        "pageErrors": [],
+        "screenshot": "create-desktop.png"
+      },
+      "narrow": {
+        "name": "create",
+        "title": "创作 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 380,
+          "height": 1769
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "创作 (Create)",
+        "elementCount": 227,
+        "pageErrors": [],
+        "screenshot": "create-narrow.png"
+      },
+      "zoom400-equivalent": {
+        "name": "create",
+        "title": "创作 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 320,
+          "height": 800
+        },
+        "document": {
+          "width": 310,
+          "height": 1822
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "创作 (Create)",
+        "elementCount": 227,
+        "pageErrors": []
+      }
+    },
+    "storyboard": {
+      "desktop": {
+        "name": "storyboard",
+        "title": "分镜工作台 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "document": {
+          "width": 1430,
+          "height": 1128
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "分镜工作台 (Storyboard)",
+        "elementCount": 1048,
+        "pageErrors": [],
+        "screenshot": "storyboard-desktop.png"
+      },
+      "narrow": {
+        "name": "storyboard",
+        "title": "分镜工作台 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 380,
+          "height": 1560
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "分镜工作台 (Storyboard)",
+        "elementCount": 1048,
+        "pageErrors": [],
+        "screenshot": "storyboard-narrow.png"
+      },
+      "zoom400-equivalent": {
+        "name": "storyboard",
+        "title": "分镜工作台 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 320,
+          "height": 800
+        },
+        "document": {
+          "width": 310,
+          "height": 1641
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "分镜工作台 (Storyboard)",
+        "elementCount": 1048,
+        "pageErrors": []
+      }
+    },
+    "review": {
+      "desktop": {
+        "name": "review",
+        "title": "审片 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "document": {
+          "width": 1430,
+          "height": 8295
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "审片 Review",
+        "elementCount": 1435,
+        "pageErrors": [],
+        "screenshot": "review-desktop.png"
+      },
+      "narrow": {
+        "name": "review",
+        "title": "审片 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 380,
+          "height": 15888
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "审片 Review",
+        "elementCount": 1435,
+        "pageErrors": [],
+        "screenshot": "review-narrow.png"
+      },
+      "zoom400-equivalent": {
+        "name": "review",
+        "title": "审片 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 320,
+          "height": 800
+        },
+        "document": {
+          "width": 310,
+          "height": 16430
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "审片 Review",
+        "elementCount": 1435,
+        "pageErrors": []
+      }
+    },
+    "edit": {
+      "desktop": {
+        "name": "edit",
+        "title": "剪辑 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "document": {
+          "width": 1430,
+          "height": 991
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "剪辑 (Edit)",
+        "elementCount": 1029,
+        "pageErrors": [],
+        "screenshot": "edit-desktop.png"
+      },
+      "narrow": {
+        "name": "edit",
+        "title": "剪辑 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 380,
+          "height": 1356
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "剪辑 (Edit)",
+        "elementCount": 1029,
+        "pageErrors": [],
+        "screenshot": "edit-narrow.png"
+      },
+      "zoom400-equivalent": {
+        "name": "edit",
+        "title": "剪辑 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 320,
+          "height": 800
+        },
+        "document": {
+          "width": 310,
+          "height": 1483
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "剪辑 (Edit)",
+        "elementCount": 1029,
+        "pageErrors": []
+      }
+    },
+    "exports": {
+      "desktop": {
+        "name": "exports",
+        "title": "导出中心 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "document": {
+          "width": 1430,
+          "height": 1965
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "导出中心",
+        "elementCount": 211,
+        "pageErrors": [],
+        "screenshot": "exports-desktop.png"
+      },
+      "narrow": {
+        "name": "exports",
+        "title": "导出中心 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 380,
+          "height": 2896
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "导出中心",
+        "elementCount": 211,
+        "pageErrors": [],
+        "screenshot": "exports-narrow.png"
+      },
+      "zoom400-equivalent": {
+        "name": "exports",
+        "title": "导出中心 · manju",
+        "lang": "zh-CN",
+        "viewport": {
+          "width": 320,
+          "height": 800
+        },
+        "document": {
+          "width": 310,
+          "height": 3122
+        },
+        "horizontalOverflow": 0,
+        "skipLinks": 1,
+        "mainLandmarks": 1,
+        "mainFocusable": true,
+        "duplicateIds": [],
+        "literalUndefined": false,
+        "h1": "导出中心",
+        "elementCount": 211,
+        "pageErrors": []
+      }
+    }
+  },
+  "errors": [],
+  "passed": true
+}

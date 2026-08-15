@@ -402,3 +402,62 @@ live localhost E2E 和同 SHA 双平台发布门仍未冒充完成。
 
 后续优先级：停止增加新旅程，转向可量化的性能、浏览器旅程与视觉回归收口，再进行真实
 Windows App 模式 200% 文本和同 SHA 发布门。继续保持零真实 Provider、零凭据、零费用。
+
+## 17. Wave 12：性能与视觉验收门
+
+功能提交：`38a7615 R1: make product performance measurable and lazy`；
+视觉证据稳定化：`00436af R1: stabilize visual acceptance fixtures`。
+
+已完成：
+
+- 导出状态改为按需编译时间线：缺少交付物时直接给出诚实的 `missing`，不会为了说明
+  “尚未生成”扫描所有镜头、探测媒体并重算 final/proxy 内容键；真正存在 final/proxy
+  时仍只编译一次并共享同一组内容键；
+- 首页 Cockpit 在一次请求中只读取一次创作漏斗，并供建议、唯一主动作和创作旅程复用；
+  picture staleness 同样只评估一次，继续由原有 owner 决定语义；
+- 新增零成本 `scripts/dev/product_polish_benchmark.py`，用本地 12/100/300 镜 fixture 测量
+  build-state、Cockpit、Review HTML 和 Storyboard HTML；默认只报告，发布候选可显式设置
+  Cockpit 中位数预算；
+- 新增 `scripts/dev/product_visual_acceptance.py`，用真实服务端 renderer 和实际 CSS 检查
+  工作区、创作、分镜、审片、剪辑、导出在桌面、390px 和 400% 等效宽度下的文档与
+  reflow 契约；
+- Playwright 只加入 `.[dev]`，不会进入普通 Manju 运行时；
+- `docs/GUI.md` 记录两种工具和“离线真实 renderer 验收不等于 live HTTP E2E”的边界。
+
+性能观察：
+
+```text
+12 镜 Cockpit 冷读：   692.262 ms → 48.521 ms   (-93.0%)
+100 镜 Cockpit 冷读： 5561.350 ms → 284.854 ms  (-94.9%)
+300 镜 Cockpit 冷读：15939.263 ms → 814.209 ms  (-94.9%)
+```
+
+新 HEAD 的五样本预热门：
+
+```text
+12 镜 median/p95：   40.402 / 42.448 ms
+100 镜 median/p95： 290.869 / 301.931 ms
+300 镜 median/p95： 826.736 / 848.276 ms
+```
+
+这些是当前沙箱的本地观察和 opt-in 门，不是跨机器承诺。视觉验收的 18 个页面/视口组合
+全部无横向溢出、重复 ID、可见 `undefined` 或 browser page error。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE12_PERFORMANCE_VISUAL_GATE.md`
+- `REPORTS/product-polish-r1/wave12-tests/WAVE12_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/wave12-tests/performance-before.json`
+- `REPORTS/product-polish-r1/wave12-tests/performance-after-cold.json`
+- `REPORTS/product-polish-r1/wave12-tests/performance-after.json`
+- `REPORTS/product-polish-r1/wave12-tests/visual-acceptance.json`
+- `REPORTS/product-polish-r1/screenshots/wave12/`
+
+记录的非重叠 focused tests 为 255 passed、31 deselected；compileall 和 `git diff --check`
+通过。当前环境没有 ruff。live localhost verifier 被 Chromium 管理策略以
+`ERR_BLOCKED_BY_ADMINISTRATOR` 阻止，证据已保留，未冒充通过；完整 pytest、Windows
+App 模式、Windows hard gate 和同一 SHA 双平台门仍未完成。
+
+后续优先级：停止增加产品旅程，用现有性能与视觉门完成真实 Windows App 模式人工验收，
+再在同一 SHA 上跑 Ubuntu / Windows 发布门；若随后整理大模块，只做机械拆分，不与视觉
+重设计混在同一提交。

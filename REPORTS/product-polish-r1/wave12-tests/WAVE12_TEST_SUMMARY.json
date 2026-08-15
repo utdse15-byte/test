@@ -1,0 +1,151 @@
+{
+  "schema": "manju.product-polish-wave12-test-summary/v1",
+  "date": "2026-08-14",
+  "baseline_sha": "cb75092a0a95078c4e3e7aa941f662f72e1e4ee7",
+  "zero_cost": {
+    "real_provider_calls": 0,
+    "external_model_or_api_calls": 0,
+    "credential_reads": 0,
+    "paid_calls": 0,
+    "free_tier_calls": 0
+  },
+  "focused_tests": {
+    "passed": 255,
+    "deselected": 31,
+    "groups": [
+      {
+        "name": "performance and dev gates",
+        "passed": 7
+      },
+      {
+        "name": "export status and finishing",
+        "passed": 91,
+        "deselected": 31
+      },
+      {
+        "name": "cockpit",
+        "passed": 13
+      },
+      {
+        "name": "home cockpit",
+        "passed": 12
+      },
+      {
+        "name": "authoring journey",
+        "passed": 18
+      },
+      {
+        "name": "funnel",
+        "passed": 18
+      },
+      {
+        "name": "director",
+        "passed": 27
+      },
+      {
+        "name": "director surfaces",
+        "passed": 8
+      },
+      {
+        "name": "shared GUI pages",
+        "passed": 25
+      },
+      {
+        "name": "GUI modes",
+        "passed": 22
+      },
+      {
+        "name": "application chrome",
+        "passed": 8
+      },
+      {
+        "name": "accessibility contract",
+        "passed": 6
+      }
+    ]
+  },
+  "static": {
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "ruff": "not installed; not claimed"
+  },
+  "performance": {
+    "comparison": [
+      {
+        "shots": 12,
+        "before_cold_ms": 692.262,
+        "after_cold_ms": 48.521,
+        "reduction_percent": 93.0,
+        "speedup_x": 14.3,
+        "after_warm_median_ms": 40.402,
+        "after_warm_p95_ms": 42.448
+      },
+      {
+        "shots": 100,
+        "before_cold_ms": 5561.35,
+        "after_cold_ms": 284.854,
+        "reduction_percent": 94.9,
+        "speedup_x": 19.5,
+        "after_warm_median_ms": 290.869,
+        "after_warm_p95_ms": 301.931
+      },
+      {
+        "shots": 300,
+        "before_cold_ms": 15939.263,
+        "after_cold_ms": 814.209,
+        "reduction_percent": 94.9,
+        "speedup_x": 19.6,
+        "after_warm_median_ms": 826.736,
+        "after_warm_p95_ms": 848.276
+      }
+    ],
+    "warm_gate": {
+      "enabled": true,
+      "cockpit_median_budgets_ms": {
+        "12": 150.0,
+        "100": 600.0,
+        "300": 1400.0
+      },
+      "failures": [],
+      "passed": true
+    },
+    "before_path": "REPORTS/product-polish-r1/wave12-tests/performance-before.json",
+    "after_cold_path": "REPORTS/product-polish-r1/wave12-tests/performance-after-cold.json",
+    "after_path": "REPORTS/product-polish-r1/wave12-tests/performance-after.json"
+  },
+  "visual_acceptance": {
+    "passed": true,
+    "pages": [
+      "workspace",
+      "create",
+      "storyboard",
+      "review",
+      "edit",
+      "exports"
+    ],
+    "viewports": [
+      "desktop",
+      "narrow",
+      "zoom400-equivalent"
+    ],
+    "errors": [],
+    "path": "REPORTS/product-polish-r1/wave12-tests/visual-acceptance.json"
+  },
+  "live_http_browser": {
+    "passed": false,
+    "reason": "Chromium policy blocked loopback navigation with ERR_BLOCKED_BY_ADMINISTRATOR",
+    "evidence": "REPORTS/product-polish-r1/wave12-tests/live-http-browser-blocked.log"
+  },
+  "not_claimed": [
+    "full pytest suite",
+    "live localhost Playwright E2E",
+    "Windows App-mode manual journey",
+    "Windows hard gate",
+    "same-SHA Ubuntu/Windows green",
+    "real Provider or billing behavior"
+  ],
+  "feature_shas": [
+    "38a76159ec18a8398dad1b0066247151b1af0908",
+    "00436af7862401510eb6de780ef4ce6a56027e31"
+  ]
+}

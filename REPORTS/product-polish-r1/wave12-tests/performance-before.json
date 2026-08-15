@@ -1,0 +1,162 @@
+{
+  "schema": "manju.product-polish-performance/v1",
+  "generated_at": "2026-08-15T02:05:40+00:00",
+  "git_sha": "cb75092a0a95078c4e3e7aa941f662f72e1e4ee7",
+  "zero_cost": true,
+  "environment": {
+    "python": "3.13.5",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "processor": "",
+    "cpu_count": 5
+  },
+  "config": {
+    "sizes": [
+      12,
+      100,
+      300
+    ],
+    "takes_per_shot": 1,
+    "warmups": 0,
+    "samples": 1
+  },
+  "enforcement": {
+    "enabled": false,
+    "cockpit_median_budgets_ms": {},
+    "failures": [],
+    "passed": true
+  },
+  "results": {
+    "12": {
+      "build_state": {
+        "median_ms": 93.337,
+        "p95_ms": 93.337,
+        "min_ms": 93.337,
+        "max_ms": 93.337,
+        "samples_ms": [
+          93.337
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 692.262,
+        "p95_ms": 692.262,
+        "min_ms": 692.262,
+        "max_ms": 692.262,
+        "samples_ms": [
+          692.262
+        ],
+        "result_size": 13
+      },
+      "review_html": {
+        "median_ms": 45.542,
+        "p95_ms": 45.542,
+        "min_ms": 45.542,
+        "max_ms": 45.542,
+        "samples_ms": [
+          45.542
+        ],
+        "result_size": 69727
+      },
+      "storyboard_html": {
+        "median_ms": 26.536,
+        "p95_ms": 26.536,
+        "min_ms": 26.536,
+        "max_ms": 26.536,
+        "samples_ms": [
+          26.536
+        ],
+        "result_size": 60674
+      }
+    },
+    "100": {
+      "build_state": {
+        "median_ms": 435.431,
+        "p95_ms": 435.431,
+        "min_ms": 435.431,
+        "max_ms": 435.431,
+        "samples_ms": [
+          435.431
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 5561.35,
+        "p95_ms": 5561.35,
+        "min_ms": 5561.35,
+        "max_ms": 5561.35,
+        "samples_ms": [
+          5561.35
+        ],
+        "result_size": 13
+      },
+      "review_html": {
+        "median_ms": 365.264,
+        "p95_ms": 365.264,
+        "min_ms": 365.264,
+        "max_ms": 365.264,
+        "samples_ms": [
+          365.264
+        ],
+        "result_size": 521681
+      },
+      "storyboard_html": {
+        "median_ms": 188.67,
+        "p95_ms": 188.67,
+        "min_ms": 188.67,
+        "max_ms": 188.67,
+        "samples_ms": [
+          188.67
+        ],
+        "result_size": 456007
+      }
+    },
+    "300": {
+      "build_state": {
+        "median_ms": 1222.944,
+        "p95_ms": 1222.944,
+        "min_ms": 1222.944,
+        "max_ms": 1222.944,
+        "samples_ms": [
+          1222.944
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 15939.263,
+        "p95_ms": 15939.263,
+        "min_ms": 15939.263,
+        "max_ms": 15939.263,
+        "samples_ms": [
+          15939.263
+        ],
+        "result_size": 13
+      },
+      "review_html": {
+        "median_ms": 1056.868,
+        "p95_ms": 1056.868,
+        "min_ms": 1056.868,
+        "max_ms": 1056.868,
+        "samples_ms": [
+          1056.868
+        ],
+        "result_size": 1549628
+      },
+      "storyboard_html": {
+        "median_ms": 480.51,
+        "p95_ms": 480.51,
+        "min_ms": 480.51,
+        "max_ms": 480.51,
+        "samples_ms": [
+          480.51
+        ],
+        "result_size": 1354589
+      }
+    }
+  },
+  "notes": [
+    "One cold sample per size was used because the Wave 11 300-shot cockpit takes about 16 seconds per read.",
+    "This is an observed before-baseline, not a universal release threshold."
+  ]
+}

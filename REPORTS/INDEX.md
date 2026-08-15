@@ -18,6 +18,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `product-polish-r1/WAVE9_HOME_COCKPIT.md` | Product Polish R1 wave 9: one-priority home cockpit, authoring/shot/finishing projection, human-attention/running/recent-result cards, lazy progressive disclosure of the full engineering workbench |
 | `product-polish-r1/WAVE10_TASK_CENTER.md` | Product Polish R1 wave 10: one global read-only Task Center, immediate accepted-job visibility, cross-page completion reminders, honest cost/cancel uncertainty and coordinated safe exit |
 | `product-polish-r1/WAVE11_LANGUAGE_ACCESSIBILITY.md` | Product Polish R1 wave 11: shared zh-CN document contract, skip-to-main keyboard access, durable first-run errors, semantic toasts, native glossary help and 200%–400% reflow evidence |
+| `product-polish-r1/WAVE12_PERFORMANCE_VISUAL_GATE.md` | Product Polish R1 wave 12: lazy export freshness, one-pass Cockpit projections, 12/100/300-shot zero-cost benchmark, six-surface desktop/narrow/400%-equivalent visual acceptance gate |
 | `VIDEO_AUTHORING_GENERALIZATION_2026-08-08.md` | generic offline profiles, canonical plan/reference graph, immutable v2 handoff and full verifier |
 | `UNIFIED_FILM_REHEARSAL_2026-08-07.md` | NARRATIVE-CLOSED-LOOP #17; v5.0 AV0-AV8 zero-network rehearsal |
 | `PRODUCTION_READINESS_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #10 |

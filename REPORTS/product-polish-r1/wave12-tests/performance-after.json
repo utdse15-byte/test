@@ -1,0 +1,210 @@
+{
+  "schema": "manju.product-polish-performance/v1",
+  "generated_at": "2026-08-15T02:11:19+00:00",
+  "git_sha": "38a76159ec18a8398dad1b0066247151b1af0908",
+  "zero_cost": true,
+  "environment": {
+    "python": "3.13.5",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "processor": "",
+    "cpu_count": 5
+  },
+  "config": {
+    "sizes": [
+      12,
+      100,
+      300
+    ],
+    "takes_per_shot": 1,
+    "warmups": 1,
+    "samples": 5
+  },
+  "results": {
+    "12": {
+      "build_state": {
+        "median_ms": 26.149,
+        "p95_ms": 28.553,
+        "min_ms": 25.497,
+        "max_ms": 28.553,
+        "samples_ms": [
+          28.553,
+          26.149,
+          25.497,
+          26.282,
+          25.789
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 40.402,
+        "p95_ms": 42.448,
+        "min_ms": 39.778,
+        "max_ms": 42.448,
+        "samples_ms": [
+          42.448,
+          39.778,
+          40.402,
+          40.928,
+          40.337
+        ],
+        "result_size": 13
+      },
+      "review_html": {
+        "median_ms": 26.61,
+        "p95_ms": 30.389,
+        "min_ms": 26.119,
+        "max_ms": 30.389,
+        "samples_ms": [
+          27.032,
+          26.476,
+          26.119,
+          26.61,
+          30.389
+        ],
+        "result_size": 69727
+      },
+      "storyboard_html": {
+        "median_ms": 22.16,
+        "p95_ms": 25.521,
+        "min_ms": 21.558,
+        "max_ms": 25.521,
+        "samples_ms": [
+          25.521,
+          22.16,
+          21.587,
+          21.558,
+          24.898
+        ],
+        "result_size": 60674
+      }
+    },
+    "100": {
+      "build_state": {
+        "median_ms": 203.336,
+        "p95_ms": 205.341,
+        "min_ms": 197.348,
+        "max_ms": 205.341,
+        "samples_ms": [
+          205.306,
+          203.336,
+          202.226,
+          197.348,
+          205.341
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 290.869,
+        "p95_ms": 301.931,
+        "min_ms": 274.364,
+        "max_ms": 301.931,
+        "samples_ms": [
+          277.707,
+          290.869,
+          301.931,
+          274.364,
+          297.285
+        ],
+        "result_size": 13
+      },
+      "review_html": {
+        "median_ms": 208.34,
+        "p95_ms": 221.007,
+        "min_ms": 204.573,
+        "max_ms": 221.007,
+        "samples_ms": [
+          208.34,
+          204.647,
+          204.573,
+          213.128,
+          221.007
+        ],
+        "result_size": 521681
+      },
+      "storyboard_html": {
+        "median_ms": 154.495,
+        "p95_ms": 164.731,
+        "min_ms": 149.819,
+        "max_ms": 164.731,
+        "samples_ms": [
+          154.495,
+          149.819,
+          162.337,
+          153.981,
+          164.731
+        ],
+        "result_size": 456007
+      }
+    },
+    "300": {
+      "build_state": {
+        "median_ms": 603.752,
+        "p95_ms": 606.677,
+        "min_ms": 597.391,
+        "max_ms": 606.677,
+        "samples_ms": [
+          598.895,
+          606.677,
+          597.391,
+          603.752,
+          606.674
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 826.736,
+        "p95_ms": 848.276,
+        "min_ms": 795.011,
+        "max_ms": 848.276,
+        "samples_ms": [
+          827.868,
+          795.011,
+          795.716,
+          826.736,
+          848.276
+        ],
+        "result_size": 13
+      },
+      "review_html": {
+        "median_ms": 609.586,
+        "p95_ms": 612.217,
+        "min_ms": 599.663,
+        "max_ms": 612.217,
+        "samples_ms": [
+          612.217,
+          612.073,
+          599.663,
+          606.987,
+          609.586
+        ],
+        "result_size": 1549628
+      },
+      "storyboard_html": {
+        "median_ms": 447.482,
+        "p95_ms": 467.376,
+        "min_ms": 442.713,
+        "max_ms": 467.376,
+        "samples_ms": [
+          445.917,
+          442.713,
+          447.482,
+          467.376,
+          450.24
+        ],
+        "result_size": 1354589
+      }
+    }
+  },
+  "enforcement": {
+    "enabled": true,
+    "cockpit_median_budgets_ms": {
+      "12": 150.0,
+      "100": 600.0,
+      "300": 1400.0
+    },
+    "failures": [],
+    "passed": true
+  }
+}
