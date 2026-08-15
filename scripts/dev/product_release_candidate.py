@@ -363,8 +363,8 @@ def _wheel_install_smoke(root: Path, output: Path, env: dict[str, str]) -> dict[
     ]
     smoke = [
         sys.executable, "-c",
-        "import manju; from manju.gui.brand import app_icon_ico_bytes; "
-        "assert app_icon_ico_bytes()[:4] == b'\\x00\\x00\\x01\\x00'; "
+        "import manju; from manju.gui.brand import app_icon_path; "
+        "assert app_icon_path().read_bytes()[:4] == b'\\x00\\x00\\x01\\x00'; "
         "from manju.gui.windows_app import self_test; raise SystemExit(self_test())",
     ]
     started = time.perf_counter()
