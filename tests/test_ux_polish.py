@@ -891,15 +891,21 @@ def test_review_and_board_cards_show_the_next_action(gui, tmp_project, add_shot,
 
 
 def test_installer_offers_the_click_first_entry():
-    """Intuitiveness wave: a click-first owner needs a Start-Menu entry —
-    opt-in (-CreateShortcut), a per-user .lnk FILE (no registry, §4.2),
-    targeting the launcher's gui mode (workspace picker outside a project)."""
+    """The personal install is click-first without a console flash.
+
+    -NoShortcut remains the explicit CLI-only escape hatch; the per-user .lnk
+    is still a file rather than registry state and points at pythonw + the one
+    recoverable app launcher module.
+    """
     src = Path("scripts/windows/install-manju.ps1").read_text(encoding="utf-8")
-    assert "$CreateShortcut" in src
-    assert "Start Menu" in src
-    assert '"gui"' in src  # the shortcut opens the workbench, not a bare shell
-    block = src.split("if ($CreateShortcut)")[1].split("# ---")[0]
-    assert "reg" not in block.lower().replace("programs", "")  # no registry path
+    helper = Path("scripts/windows/manju-shortcut.ps1").read_text(encoding="utf-8")
+    assert "$CreateShortcut" in src and "$NoShortcut" in src
+    assert "$WantShortcut = -not $NoShortcut" in src
+    assert "Start-menu shortcut" in src
+    assert "pythonw.exe" in helper
+    assert "manju.gui.windows_app" in helper
+    assert "Set-ManjuShortcut" in src
+    assert "New-ItemProperty" not in helper and "Set-ItemProperty" not in helper
 
 
 # ---------------------------------------------- GPT-analysis wave (2026-07-14)

@@ -54,6 +54,7 @@ where = ["src"]
 # installed wheel (src-layout: the glob is relative to the package dir).
 [tool.setuptools.package-data]
 "manju.presets" = ["data/*.yaml"]
+"manju.gui" = ["assets/*.ico", "assets/*.svg"]
 
 # Incremental static checking (task 13): the lint gate is the OBVIOUS-ERROR
 # subset only (syntax / undefined names / bug-prone patterns) — deliberately

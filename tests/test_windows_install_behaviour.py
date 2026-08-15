@@ -42,8 +42,13 @@ pytestmark = pytest.mark.skipif(
 def _run(script: str, local_appdata: Path, *args: str,
          expect_ok: bool = True) -> subprocess.CompletedProcess:
     """Run one of the scripts with LOCALAPPDATA pointed at a temp tree."""
-    env = {"LOCALAPPDATA": str(local_appdata), "HOME": str(local_appdata.parent),
-           "PATH": "/usr/bin:/bin:/usr/local/bin"}
+    env = {
+        "LOCALAPPDATA": str(local_appdata),
+        "APPDATA": str(local_appdata.parent / "RoamingAppData"),
+        "USERPROFILE": str(local_appdata.parent),
+        "HOME": str(local_appdata.parent),
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+    }
     # Windows PowerShell cannot initialize its managed host without the OS
     # root. Preserve only that machine fact; provider credentials and the rest
     # of the parent environment remain excluded from this isolation test.

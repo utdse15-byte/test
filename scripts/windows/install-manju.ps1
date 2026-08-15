@@ -16,16 +16,24 @@
 #   .\install-manju.ps1                       # install from the repo this script lives in
 #   .\install-manju.ps1 -Source C:\src\manju  # install from a checkout or a wheel
 #   .\install-manju.ps1 -AddToPath            # ALSO prepend %LOCALAPPDATA%\Manju\bin to the USER PATH
+#   .\install-manju.ps1 -NoShortcut           # CLI-only install; do not create the Start-menu entry
 
 [CmdletBinding()]
 param(
     [string]$Source = "",
     [switch]$AddToPath,
-    [switch]$CreateShortcut
+    [switch]$CreateShortcut,  # retained for older automation; shortcut is now the default
+    [switch]$NoShortcut
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "manju-shortcut.ps1")
+
+if ($CreateShortcut -and $NoShortcut) {
+    throw "-CreateShortcut and -NoShortcut cannot be used together."
+}
+$WantShortcut = -not $NoShortcut
 
 function Write-Step([string]$msg) { Write-Host "==> $msg" }
 
@@ -113,11 +121,20 @@ try {
     # first real windows-latest run proved the gap — `manju --version` failed
     # and the switch still happened). PowerShell does not throw on native
     # exit codes, so each probe checks $LASTEXITCODE explicitly.
-    Write-Step "Self-test: manju --version + doctor"
+    Write-Step "Self-test: CLI + desktop launcher + doctor"
     $manjuExe = Join-Path $stagingDir "venv\Scripts\manju.exe"
+    $pythonwExe = Join-Path $stagingDir "venv\Scripts\pythonw.exe"
     if (-not (Test-Path $manjuExe)) { throw "manju entry point missing after install" }
+    if (-not (Test-Path $pythonwExe)) { throw "windowless pythonw launcher missing after install" }
     & $manjuExe --version 2>&1 | Tee-Object -FilePath $log -Append
     if ($LASTEXITCODE -ne 0) { throw "self-test failed: manju --version exited $LASTEXITCODE" }
+    # This probe imports the installed CLI and verifies the packaged icon and
+    # exact app-mode/free-port contract.  It never binds a socket, opens a
+    # browser, reads credentials or contacts a Provider.
+    & $venvPy -m manju.gui.windows_app --self-test 2>&1 | Tee-Object -FilePath $log -Append
+    if ($LASTEXITCODE -ne 0) {
+        throw "self-test failed: windowless desktop entry is incomplete (exit $LASTEXITCODE)"
+    }
     # doctor exit code 1 is env-dependent (ffmpeg may be absent — a doctor
     # FINDING for the user, not an install failure); anything else (crash,
     # import error) aborts before the switch.
@@ -125,6 +142,7 @@ try {
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) {
         throw "self-test failed: manju doctor crashed (exit $LASTEXITCODE)"
     }
+
 
     # ---------------------------------------------------------- atomic switch
     Write-Step "Activating $versionId"
@@ -160,23 +178,28 @@ endlocal
 "@
 Set-Content -Path (Join-Path $BinDir "manju.cmd") -Value $launcher -Encoding ASCII
 
-# ------------------------------------------------------- shortcut (opt-in ONLY)
-# Intuitiveness wave: the click-first daily entry. A per-user Start-Menu .lnk
-# is a FILE under %APPDATA% (no registry, §4.2 honoured) pointing at the
-# launcher's gui mode — outside any project `manju gui` opens the workspace
-# picker (recent projects), so a double-click always lands somewhere sane.
-if ($CreateShortcut) {
-    $smDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-    New-Item -ItemType Directory -Force -Path $smDir | Out-Null
-    $lnkPath = Join-Path $smDir "Manju 工作台.lnk"
-    $shell = New-Object -ComObject WScript.Shell
-    $lnk = $shell.CreateShortcut($lnkPath)
-    $lnk.TargetPath = Join-Path $BinDir "manju.cmd"
-    $lnk.Arguments = "gui"
-    $lnk.WorkingDirectory = $env:USERPROFILE
-    $lnk.Description = "Manju 本地工作台(打开浏览器工作区选择器)"
-    $lnk.Save()
-    Write-Step "Start-menu shortcut: $lnkPath  (双击 = manju gui 工作区选择器)"
+# ------------------------------------------------------- click-first shortcut
+# A normal personal-app install should be launchable after one double-click, so
+# the per-user Start-menu entry is now the default.  -NoShortcut preserves a
+# deliberate CLI-only install.  The shortcut targets the ACTIVE version's
+# pythonw.exe (no console flash) and the recoverable Windows launcher module;
+# update/rollback refresh it after switching versions.  A same-name shortcut
+# not owned by %LOCALAPPDATA%\Manju is never overwritten.
+if ($WantShortcut) {
+    try {
+        if (Set-ManjuShortcut -AppRoot $AppRoot -VersionDir $targetDir) {
+            Write-Step "Start-menu shortcut: $(Get-ManjuShortcutPath)"
+            Write-Step "Double-click opens the windowless Manju workspace (app mode, free port)."
+        }
+    }
+    catch {
+        # The installed version is already active and self-tested.  A shortcut
+        # failure is recoverable and must not roll back a healthy application.
+        Write-Warning "Manju is installed, but the Start-menu shortcut was not created: $($_.Exception.Message)"
+        Write-Warning "Run this installer again, or start: $BinDir\manju.cmd gui --app --port 0"
+    }
+} else {
+    Write-Step "Start-menu shortcut skipped (-NoShortcut)."
 }
 
 # ---------------------------------------------------------------- PATH (opt-in ONLY)

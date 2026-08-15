@@ -169,14 +169,21 @@ Windows 11 x64 是第一平台;全程 per-user、无需管理员。
 2. **拉仓库** —— `git clone` 本仓库到任意目录。
 3. **装 Manju** —— `powershell -ExecutionPolicy Bypass -File scripts\windows\install-manju.ps1 -AddToPath`。
    per-user、免管理员、**先自检后原子切换**,失败绝不影响现有版本;装进
-   `%LOCALAPPDATA%\Manju`,`-AddToPath` 只改**用户** PATH。更新用
-   `update-manju.ps1`,回滚上一版用 `update-manju.ps1 -Rollback`,卸载用
-   `uninstall-manju.ps1`(只删 App,绝不碰任何 `*.manju` 项目与 `~/.manju` 配置)。
+   `%LOCALAPPDATA%\Manju`,`-AddToPath` 只改**用户** PATH。安装默认创建
+   **“Manju 工作台”**开始菜单入口：使用 `pythonw` 无控制台启动、App 模式、自动空闲端口；
+   不要快捷方式时加 `-NoShortcut`。更新用 `update-manju.ps1`（保留当前快捷方式偏好），
+   回滚上一版用 `update-manju.ps1 -Rollback`（同时刷新入口），卸载用
+   `uninstall-manju.ps1`（运行中会安全拒绝；只删 App 和自己拥有的入口，绝不碰任何
+   `*.manju` 项目、`~/.manju` 配置或同名的他人快捷方式）。
 4. **装 ffmpeg** —— `choco install ffmpeg --version=6.1.1`,必须与验证套件**完全同版**:
    ffmpeg.org 的 8.x 会偏移 ffprobe 的色彩标签,已被硬门禁实测。
 5. **体检环境** —— `manju doctor --windows` 验证 ffmpeg/字体/磁盘/项目 + Windows 环境行
    (长路径策略、NTFS、网络盘、OneDrive、配置可写性、Edge/Chrome、安装模式)。
-6. **偏好点击操作** —— `manju gui`,浏览器工作台(与 CLI 同一引擎核)。
+6. **偏好点击操作** —— 从开始菜单打开 **Manju 工作台**。重复双击会核对并重开现有
+   loopback 会话；正在退出、卡住或暂时无响应的旧进程都会 fail closed，不会复制服务器或
+   任务。隐藏启动失败会写入 `%LOCALAPPDATA%\Manju\Logs` 并给出原生错误提示。终端仍可
+   使用 `manju gui --app --port 0`。详见
+   [`docs/WINDOWS_APP.md`](docs/WINDOWS_APP.md)。
 
 ## 系统体检样片:两条命令,零花费(`manju new --demo`)
 

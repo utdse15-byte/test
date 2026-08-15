@@ -6048,11 +6048,13 @@ def _app_browser_candidates() -> list[str]:
     return out
 
 
-def _open_gui_window(url: str, app_window: bool) -> None:
-    """The direction program's 桌面薄壳 (#50a): ``--app`` opens a chromeless
-    app-mode window — visually a desktop program, reusing every byte of the
-    served GUI. Falls back to the default browser HONESTLY (named notice)
-    when no Chromium-family binary is found; never fails the server."""
+def _open_gui_window(url: str, app_window: bool) -> bool:
+    """Open the local GUI and report whether a browser accepted the request.
+
+    The windowless Start-menu launcher uses the boolean to decide whether an
+    existing local server was actually reopened.  Console callers keep the
+    same honest fallback notice; browser failure never tears down the server.
+    """
     import webbrowser
 
     if app_window:
@@ -6063,12 +6065,40 @@ def _open_gui_window(url: str, app_window: bool) -> None:
                 subprocess.Popen([exe, f"--app={url}"],
                                  stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL)
-                return
+                return True
             except OSError:
                 continue
         typer.secho("未找到 Edge/Chrome/Chromium —— 退回默认浏览器打开 "
                     "(--app fallback)", fg=typer.colors.YELLOW)
-    webbrowser.open(url)
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
+
+
+def _open_gui_window_with_launcher_notice(
+    url: str,
+    app_window: bool,
+    *,
+    app_session_path: Path | None,
+) -> bool:
+    """Open the GUI and surface a ``pythonw``-only handoff failure.
+
+    Console callers already see the normal Chromium/default-browser fallback
+    notice.  The Start-menu launcher has no console, so a failed shell handoff
+    needs one native message while the already-bound local server remains the
+    sole authoritative process.
+    """
+
+    opened = _open_gui_window(url, app_window)
+    if not opened and app_session_path is not None:
+        try:
+            from .gui.windows_app import notify_window_open_failure
+
+            notify_window_open_failure(url)
+        except Exception:
+            pass
+    return opened
 
 
 @app.command(rich_help_panel=PANEL_COLLAB)
@@ -6138,18 +6168,53 @@ def gui(
                                app_mode=app_window)
     except OSError as exc:
         _fail(f"cannot bind {host}:{port} — {exc} (try --port 0 for a free port)")
+    # The Windows Start-menu launcher publishes this disposable runtime fact
+    # only after the socket is bound.  A later double-click can then reopen the
+    # same local server instead of creating a duplicate workspace process.
+    app_session_token: str | None = None
+    app_session_path = None
+    try:
+        from .gui.windows_app import (
+            register_app_session,
+            session_path_from_env,
+        )
+
+        app_session_path = session_path_from_env()
+        if app_session_path is not None:
+            app_session_token = register_app_session(
+                server.url, path=app_session_path)
+    except Exception as exc:
+        # A missing runtime session file must not make the deterministic GUI
+        # unavailable.  The windowless launcher captures this warning in its
+        # UTF-8 log and the user can still use the current window normally.
+        typer.secho(
+            f"⚠ 无法登记桌面会话；重复启动可能打开新窗口：{exc}",
+            fg=typer.colors.YELLOW,
+        )
+
     typer.secho(f"manju gui → {server.url}  (Ctrl-C to stop)", fg=typer.colors.GREEN)
     if open_browser:
         import threading
 
         threading.Timer(
-            0.4, lambda: _open_gui_window(server.url, app_window)).start()
+            0.4,
+            _open_gui_window_with_launcher_notice,
+            args=(server.url, app_window),
+            kwargs={"app_session_path": app_session_path},
+        ).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         typer.echo("\nbye")
     finally:
         server.close()
+        if app_session_token and app_session_path is not None:
+            try:
+                from .gui.windows_app import clear_app_session
+
+                clear_app_session(app_session_token, path=app_session_path)
+            except Exception:
+                pass
 
 
 # -------------------------------------------------------------- pack/unpack

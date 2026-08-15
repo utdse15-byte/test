@@ -1,12 +1,12 @@
-# uninstall-manju.ps1 — remove the Manju APP, never the user's work
-# (MANJU_WINDOWS_ONLY_LEAN_V3 W2 §4.6: 卸载不删除项目和用户配置).
+# uninstall-manju.ps1 — remove the Manju application, never the user's work.
 #
-# Removes:   %LOCALAPPDATA%\Manju\App, %LOCALAPPDATA%\Manju\bin,
-#            %LOCALAPPDATA%\Manju\Cache, %LOCALAPPDATA%\Manju\Logs (with -Logs)
-# NEVER touches: any *.manju project directory, ~/.manju (providers, routing,
-#            recents, skills, library, GUI state), or anything outside
-#            %LOCALAPPDATA%\Manju. No admin, no registry, no PATH edits beyond
-#            removing the entry install-manju.ps1 -AddToPath added (opt-in).
+# Removes:   %LOCALAPPDATA%\Manju\App, bin, Cache, the owned Start-menu
+#            shortcut, and Logs only with -Logs.
+# NEVER touches: any *.manju project, ~/.manju (providers/routing/recents/
+#            skills/library/GUI state), or a same-name shortcut not owned by
+#            this per-user install.  A running process from the versioned
+#            install is never killed; uninstall refuses so project writes can
+#            finish or be cancelled by the existing in-app safe-exit flow.
 
 [CmdletBinding()]
 param(
@@ -16,22 +16,39 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "manju-shortcut.ps1")
 
 $AppRoot = Join-Path $env:LOCALAPPDATA "Manju"
 $BinDir  = Join-Path $AppRoot "bin"
 
+if (Test-ManjuInstalledProcessRunning -AppRoot $AppRoot) {
+    throw "An installed Manju process is still running. Use the in-app ‘退出’ action (or stop the CLI command), then run uninstall again. No files were removed."
+}
+
+try {
+    if (Remove-ManjuShortcut -AppRoot $AppRoot) {
+        Write-Host "==> Removed the owned Manju Start-menu shortcut"
+    }
+}
+catch {
+    # This runs before any application directory is removed.  Leaving an owned
+    # shortcut that points into a deleted version is worse than asking the user
+    # to retry cleanup, so fail without touching the installed application.
+    throw "Could not safely remove the Manju Start-menu shortcut. No application files were removed. $($_.Exception.Message)"
+}
+
 foreach ($sub in @("App", "bin", "Cache")) {
     $p = Join-Path $AppRoot $sub
-    if (Test-Path $p) {
+    if (Test-Path -LiteralPath $p) {
         Write-Host "==> Removing $p"
-        Remove-Item -Recurse -Force $p
+        Remove-Item -LiteralPath $p -Recurse -Force
     }
 }
 if ($Logs) {
     $p = Join-Path $AppRoot "Logs"
-    if (Test-Path $p) {
+    if (Test-Path -LiteralPath $p) {
         Write-Host "==> Removing $p"
-        Remove-Item -Recurse -Force $p
+        Remove-Item -LiteralPath $p -Recurse -Force
     }
 }
 
@@ -45,3 +62,6 @@ if ($RemoveUserPathEntry) {
 }
 
 Write-Host "==> Done. Projects (*.manju) and ~/.manju config were NOT touched."
+if ($Logs) { Write-Host "==> Logs were removed." }
+else { Write-Host "==> Logs were kept for troubleshooting." }
+exit 0

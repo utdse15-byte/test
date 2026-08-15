@@ -163,6 +163,8 @@ _INLINE_STAGE_NAV = frozenset(
 # Head stanza every workbench surface shares so the glossary tooltip look + the
 # mode/terms chrome behave identically on the SPA and all server-rendered pages.
 GLOSSARY_HEAD = (
+    '<meta name="theme-color" content="#11151c">\n'
+    '<link rel="icon" href="/favicon.ico" type="image/svg+xml">\n'
     '<link rel="stylesheet" href="/glossary.css">\n'
     '<link rel="stylesheet" href="/project-action.css">\n'
     '<link rel="stylesheet" href="/task-center.css">\n'

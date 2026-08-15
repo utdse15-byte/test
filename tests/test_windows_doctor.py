@@ -133,6 +133,31 @@ def test_doctor_reports_installed_versions_and_rollback(monkeypatch, tmp_path):
     assert "0.1.0-20260701T000000" in row["detail"], "rollback target must be visible"
 
 
+def test_doctor_reports_click_first_install_without_claiming_lnk_verification(monkeypatch, tmp_path):
+    _stub_probes(monkeypatch)
+    local = tmp_path / "LocalAppData"
+    roaming = tmp_path / "RoamingAppData"
+    version = "0.2.0-20260814T000000"
+    app = local / "Manju" / "App"
+    pythonw = app / version / "venv" / "Scripts" / "pythonw.exe"
+    pythonw.parent.mkdir(parents=True)
+    pythonw.write_bytes(b"")
+    (app / "current.txt").write_text(version, encoding="ascii")
+    shortcut = roaming / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Manju 工作台.lnk"
+    shortcut.parent.mkdir(parents=True)
+    shortcut.write_bytes(b"not-a-real-lnk; detection-only")
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(roaming))
+
+    checks = _by_name(doctor.run_doctor())
+    row = checks["windows_app"]
+    assert row["ok"] is True
+    assert "shortcut_detected=True" in row["detail"]
+    assert "shortcut_verified=windows-only" in row["detail"]
+    assert "检测到开始菜单入口" in row["line"]
+    assert "已就绪" not in row["line"], "file existence alone must not claim COM ownership"
+
+
 # --------------------------------------------------------------------------
 # §4.5 output hygiene — no usernames / private paths / keys / signed URLs
 # --------------------------------------------------------------------------

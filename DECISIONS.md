@@ -4416,3 +4416,50 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    Provider, credential, external API, free tier, paid request, media probe or
    FFmpeg process participates. Live localhost and Windows App-mode release
    evidence remain separate gates.
+
+## PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE (2026-08-14)
+
+1. **The Windows Start-menu entry is a thin owner over the existing GUI, not a
+   second desktop product.** It targets the active version's `pythonw.exe -m
+   manju.gui.windows_app`, which invokes the same `manju gui --app --port 0`
+   command, local server, project session, task runner and coordinated shutdown.
+   No Electron/WebView runtime, duplicate scheduler, database, project truth or
+   Provider path is introduced.
+2. **Click-first is the normal personal-install default, with an explicit CLI-only
+   escape hatch.** A direct per-user install creates `Manju 工作台`; `-NoShortcut`
+   opts out and `-CreateShortcut` remains compatible with older automation. A
+   same-name `.lnk` outside `%LOCALAPPDATA%\Manju` ownership is never overwritten
+   or removed. This supersedes the earlier opt-in shortcut preference now that
+   App mode, shared chrome, safe exit and browser/visual gates exist.
+3. **A recorded live process is never treated as permission to start another
+   writer.** The launcher accepts only exact loopback URLs and requires the
+   Manju app-status protocol marker plus matching PID. `open` reopens; `closing`
+   waits; `stuck` reopens for inspection; an unreachable but still-live process
+   fails closed. Browser-launch failure reports the existing URL and does not
+   duplicate the server. Stale evidence is removed only after the process is no
+   longer live.
+4. **The installed desktop entry is proven before activation and updated
+   recoverably.** Staging verifies the CLI, packaged icon, `pythonw.exe` and a
+   zero-network `windows_app --self-test` before the atomic current-pointer
+   switch. Shortcut construction stages a temporary `.lnk` and replaces the
+   owned final entry only after successful save. A shell-integration failure
+   after a successful update/rollback is warned and repairable; it cannot turn a
+   healthy version pointer into an application failure.
+5. **Windowless failure must remain visible.** Each launch writes a bounded UTF-8
+   log under the per-user app root, with a temporary-directory fallback and a
+   native Windows error when no log can be created. The launcher itself does not
+   read Provider credentials, bind external hosts or spend money. Session, lock
+   and log files are disposable runtime evidence, never project/build/provider
+   inputs.
+6. **Uninstall protects live work and user ownership.** It checks for the
+   versioned Manju process before deleting anything, never kills it, removes
+   only a verified owned shortcut, preserves logs unless explicitly requested,
+   and never touches `*.manju` projects or `~/.manju`. Python doctor output may
+   report only that a `.lnk` file was detected; authoritative target/argument/
+   icon ownership remains a real-Windows PowerShell gate.
+7. **Certification stays platform-honest.** Linux can prove session, lock, log,
+   package-data and fail-closed behavior and can statically pin the PowerShell
+   boundary. Actual `pythonw` console suppression, COM shortcut semantics,
+   update/rollback target changes, running-app uninstall refusal and App-mode
+   keyboard/mouse use remain Windows hard-gate/Dogfood facts. This wave performs
+   no Provider, credential, external API, free-tier or paid operation.

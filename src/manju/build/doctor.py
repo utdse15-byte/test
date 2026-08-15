@@ -496,6 +496,52 @@ def _add_windows_rows(add, project: Project | None) -> None:
     except ImportError:
         pass
 
+    # Click-first Windows application lifecycle (Product Polish R1 Wave 14).
+    # This is a credential-free filesystem snapshot: no Provider, browser or
+    # network probe is performed merely to paint a doctor row.
+    try:
+        from ..gui.windows_app import windows_install_snapshot
+
+        app = windows_install_snapshot()
+        if app.get("current") and app.get("pythonw_exists"):
+            # Python cannot authoritatively inspect a Windows .lnk target on
+            # every platform.  Report file detection honestly; the PowerShell
+            # install/update smoke owns target/argument/icon verification.
+            shortcut = (
+                "检测到开始菜单入口（目标由 Windows 安装器验证）"
+                if app.get("shortcut_detected")
+                else "未检测到开始菜单入口；运行 update-manju.ps1 -CreateShortcut"
+            )
+            icon = "" if app.get("icon_exists") else "；应用图标缺失，建议重新安装"
+            session = "；已记录本地工作台会话" if app.get("session_exists") else ""
+            add(
+                "windows_app", True,
+                f"active={app['current']}; shortcut_detected="
+                f"{bool(app.get('shortcut_detected'))}; shortcut_verified=windows-only; "
+                f"icon_exists={bool(app.get('icon_exists'))}; "
+                f"session_exists={bool(app.get('session_exists'))}; logs={app['logs']}",
+                f"{'✓' if app.get('shortcut_detected') and app.get('icon_exists') else '•'} "
+                f"Manju App: {shortcut}{icon}{session}",
+            )
+        elif app.get("current"):
+            add(
+                "windows_app", True,
+                f"active={app['current']} but pythonw is missing: {app.get('pythonw')}",
+                "⚠ Manju App: 当前版本缺少 windowless launcher；建议重新安装",
+            )
+        else:
+            add(
+                "windows_app", True,
+                "per-user versioned install not detected",
+                "• Manju App: 当前是源码/普通 pip 运行，未检测到版本化开始菜单安装",
+            )
+    except Exception as exc:
+        add(
+            "windows_app", True,
+            f"app lifecycle probe unavailable: {exc}",
+            "• Manju App: 无法读取安装状态（不影响 CLI）",
+        )
+
     # install mode + current/rollback version (W2 installer layout, §4.1/§4.3)
     import manju as _manju
 

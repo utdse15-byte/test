@@ -404,6 +404,9 @@ class GuiServer(ThreadingHTTPServer):
         except Exception:
             connected = 0
         status = {
+            "product": "manju",
+            "protocol": "manju-gui-app-status.1",
+            "pid": os.getpid(),
             "app_mode": self.app_mode,
             "closing": self.closing.is_set(),
             "quit_mode": self._quit.mode,
@@ -714,12 +717,11 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     self._page()
             elif path == "/favicon.ico":
-                # a real (tiny) icon: kills the one console 404 every load
-                svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
-                       '<rect width="16" height="16" rx="3" fill="#181b21"/>'
-                       '<rect x="3" y="4" width="10" height="8" rx="1" fill="#6ea8fe"/>'
-                       '<circle cx="6" cy="8" r="1.4" fill="#0f1115"/></svg>')
-                self._send_text(svg, "image/svg+xml")
+                # One shipped mark for the browser tab and Windows shortcut.
+                # It remains local package data: no CDN, no external request.
+                from .brand import app_icon_svg
+
+                self._send_text(app_icon_svg(), "image/svg+xml")
             elif path == "/app.css":
                 from .page import render_css
 

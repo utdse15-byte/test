@@ -277,6 +277,8 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
         f'<html lang="{HTML_LANG}">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        '<meta name="theme-color" content="#11151c">\n'
+        '<link rel="icon" href="/favicon.ico" type="image/svg+xml">\n'
         f'<meta name="manju-token" content="{_e(token)}">\n'
         "<title>打开或新建项目 · Manju</title>\n"
         '<link rel="stylesheet" href="/app.css">\n'

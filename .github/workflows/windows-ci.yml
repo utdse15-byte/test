@@ -116,16 +116,105 @@ jobs:
           $v = & $launcher --version
           if ($LASTEXITCODE -ne 0) { throw "launcher failed" }
           if ($v -notmatch "^manju ") { throw "unexpected --version output: $v" }
+          $app = Join-Path $env:LOCALAPPDATA "Manju\App"
+          $current = (Get-Content (Join-Path $app "current.txt") -Raw -Encoding ASCII).Trim()
+          $python = Join-Path $app "$current\venv\Scripts\python.exe"
+          & $python -m manju.gui.windows_app --self-test
+          if ($LASTEXITCODE -ne 0) { throw "windowless desktop self-test failed" }
+
+      - name: Start-menu entry is branded, windowless and owned
+        run: |
+          $shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Manju 工作台.lnk"
+          if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { throw "Start-menu shortcut missing" }
+          $shell = New-Object -ComObject WScript.Shell
+          $link = $shell.CreateShortcut($shortcut)
+          if ([System.IO.Path]::GetFileName($link.TargetPath) -ne "pythonw.exe") {
+            throw "shortcut is not windowless: $($link.TargetPath)"
+          }
+          if ($link.Arguments.Trim() -ne "-m manju.gui.windows_app") {
+            throw "unexpected shortcut arguments: $($link.Arguments)"
+          }
+          $appRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "Manju")).TrimEnd("\") + "\"
+          $target = [System.IO.Path]::GetFullPath($link.TargetPath)
+          if (-not $target.StartsWith($appRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "shortcut escaped the per-user install root: $target"
+          }
+          $icon = ($link.IconLocation -split ",", 2)[0]
+          if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) { throw "shortcut icon missing: $icon" }
+
+      - name: Uninstall refuses a live desktop session before deleting files
+        run: |
+          $app = Join-Path $env:LOCALAPPDATA "Manju\App"
+          $current = (Get-Content (Join-Path $app "current.txt") -Raw -Encoding ASCII).Trim()
+          $python = Join-Path $app "$current\venv\Scripts\python.exe"
+          $proc = Start-Process -FilePath $python -ArgumentList @("-c", '"import time; time.sleep(60)"') -WindowStyle Hidden -PassThru
+          try {
+            $session = @{
+              format = "manju-windows-app-session.1"
+              pid = $proc.Id
+              url = "http://127.0.0.1:65534/"
+              token = "windows-ci-running-process"
+            } | ConvertTo-Json
+            Set-Content -LiteralPath (Join-Path $app "workspace-session.json") -Value $session -Encoding UTF8
+            $refused = $false
+            try {
+              .\scripts\windows\uninstall-manju.ps1
+            }
+            catch {
+              $refused = $true
+              if ($_.Exception.Message -notmatch "still running") { throw }
+            }
+            if (-not $refused) { throw "uninstall accepted a running installed process" }
+            if (-not (Test-Path -LiteralPath (Join-Path $app "current.txt"))) {
+              throw "uninstall removed application files before refusing"
+            }
+          }
+          finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $app "workspace-session.json") -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Update keeps the previous version for rollback
         run: |
+          $shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Manju 工作台.lnk"
+          $shell = New-Object -ComObject WScript.Shell
+          $beforeTarget = $shell.CreateShortcut($shortcut).TargetPath
           .\scripts\windows\update-manju.ps1
           $prev = Join-Path $env:LOCALAPPDATA "Manju\App\previous.txt"
           if (-not (Test-Path $prev)) { throw "previous.txt missing after update" }
+          $updatedTarget = $shell.CreateShortcut($shortcut).TargetPath
+          if ($updatedTarget -eq $beforeTarget) { throw "shortcut target did not follow the updated version" }
           .\scripts\windows\update-manju.ps1 -Rollback
           $launcher = Join-Path $env:LOCALAPPDATA "Manju\bin\manju.cmd"
           & $launcher --version
           if ($LASTEXITCODE -ne 0) { throw "launcher broken after rollback" }
+          $rolledBackTarget = $shell.CreateShortcut($shortcut).TargetPath
+          if ($rolledBackTarget -ne $beforeTarget) { throw "shortcut target did not follow rollback" }
+
+      - name: Uninstall refuses an installed Python process without a session
+        run: |
+          $app = Join-Path $env:LOCALAPPDATA "Manju\App"
+          $current = (Get-Content (Join-Path $app "current.txt") -Raw -Encoding ASCII).Trim()
+          $python = Join-Path $app "$current\venv\Scripts\python.exe"
+          $hold = Join-Path $env:RUNNER_TEMP "hold-manju-install.py"
+          Set-Content -LiteralPath $hold -Value "import time; time.sleep(30)" -Encoding ASCII
+          $proc = Start-Process -FilePath $python -ArgumentList $hold -PassThru
+          try {
+            Start-Sleep -Milliseconds 500
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\uninstall-manju.ps1
+            $uninstallExit = $LASTEXITCODE
+            if ($uninstallExit -eq 0) { throw "uninstall accepted a running installed process" }
+            if (-not (Test-Path -LiteralPath $app -PathType Container)) {
+              throw "uninstall removed application files before refusing"
+            }
+          }
+          finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $hold -Force -ErrorAction SilentlyContinue
+          }
+          # The non-zero child exit is the expected proof, not this step's
+          # result. GitHub's pwsh wrapper propagates LASTEXITCODE at the end.
+          $global:LASTEXITCODE = 0
 
       - name: Uninstall never touches projects
         run: |
@@ -134,4 +223,6 @@ jobs:
           Set-Content -Path (Join-Path $proj "project.yaml") -Value "name: 雨夜便利店" -Encoding UTF8
           .\scripts\windows\uninstall-manju.ps1
           if (Test-Path (Join-Path $env:LOCALAPPDATA "Manju\App")) { throw "App dir survived uninstall" }
+          $shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Manju 工作台.lnk"
+          if (Test-Path -LiteralPath $shortcut) { throw "owned Start-menu shortcut survived uninstall" }
           if (-not (Test-Path (Join-Path $proj "project.yaml"))) { throw "uninstall touched a project!" }

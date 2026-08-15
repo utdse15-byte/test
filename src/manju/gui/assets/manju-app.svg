@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Manju">
+  <rect width="256" height="256" rx="52" fill="#11151c"/>
+  <rect x="38" y="46" width="180" height="164" rx="28" fill="#6ea8fe"/>
+  <rect x="61" y="66" width="134" height="124" rx="18" fill="#171c25"/>
+  <g fill="#11151c">
+    <rect x="45" y="69" width="10" height="22" rx="4"/>
+    <rect x="45" y="105" width="10" height="22" rx="4"/>
+    <rect x="45" y="141" width="10" height="22" rx="4"/>
+    <rect x="201" y="69" width="10" height="22" rx="4"/>
+    <rect x="201" y="105" width="10" height="22" rx="4"/>
+    <rect x="201" y="141" width="10" height="22" rx="4"/>
+  </g>
+  <path d="M82 163V91h18l28 34 28-34h18v72h-19v-43l-27 31-27-31v43z" fill="#eef4ff"/>
+</svg>

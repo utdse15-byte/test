@@ -18,7 +18,8 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts" / "windows"
 INSTALL = SCRIPTS / "install-manju.ps1"
 UPDATE = SCRIPTS / "update-manju.ps1"
 UNINSTALL = SCRIPTS / "uninstall-manju.ps1"
-ALL = (INSTALL, UPDATE, UNINSTALL)
+SHORTCUT = SCRIPTS / "manju-shortcut.ps1"
+ALL = (INSTALL, UPDATE, UNINSTALL, SHORTCUT)
 
 
 def _text(p: Path) -> str:
@@ -83,6 +84,8 @@ def test_install_layout_matches_plan():
         "--version",
         "doctor",
         "manju.cmd",
+        "pythonw.exe",
+        "manju.gui.windows_app",
     ):
         assert needle in install, f"install-manju.ps1 missing {needle!r}"
     # the pointer switch must be a rename, not an in-place write
@@ -94,6 +97,10 @@ def test_update_keeps_previous_version_for_rollback():
     assert "previous.txt" in update
     assert "-Rollback" in update
     assert "install-manju.ps1" in update, "update delegates to the installer (one flow)"
+    assert "Sync-Shortcut" in update
+    assert "HadOwnedShortcut" in update
+    assert "ShortcutOwnership" in update
+    assert "-CreateShortcut" in update and "-NoShortcut" in update
 
 
 def test_uninstall_never_touches_projects_or_user_config():
@@ -106,3 +113,42 @@ def test_uninstall_never_touches_projects_or_user_config():
         line = m.group(0)
         assert "$p" in line or "$AppRoot" in line, f"unscoped Remove-Item: {line}"
     assert 'Join-Path $env:LOCALAPPDATA "Manju"' in uninstall
+
+
+def test_click_first_shortcut_is_windowless_branded_and_safely_owned():
+    install = _text(INSTALL)
+    helper = _text(SHORTCUT)
+    uninstall = _text(UNINSTALL)
+
+    # Direct personal installs create a click-first entry unless explicitly
+    # asked not to; the old -CreateShortcut spelling remains compatible.
+    assert "$WantShortcut = -not $NoShortcut" in install
+    assert "-CreateShortcut and -NoShortcut cannot be used together" in install
+    assert "Set-ManjuShortcut" in install
+
+    # No console .cmd target: pythonw hosts a recoverable launcher module and
+    # the shipped icon is used instead of Python's generic mark.
+    assert "pythonw.exe" in helper
+    assert '"-m manju.gui.windows_app"' in helper
+    assert "installed_icon_path" in helper
+    assert "IconLocation" in helper
+
+    # A same-name shortcut is only overwritten/removed when its target and
+    # arguments identify this per-user Manju install.
+    assert "Get-ManjuShortcutOwnership" in helper
+    assert 'return "unknown"' in helper
+    assert "Test-ManjuShortcutOwned" in helper
+    assert "left untouched" in helper
+    assert 'status.product -eq "manju"' in helper
+    assert 'status.protocol -eq "manju-gui-app-status.1"' in helper
+    assert 'if (-not $processPath) { return $true }' in helper
+    assert "valid live session must never be deleted" in helper
+    assert "Remove-ManjuShortcut" in uninstall
+    assert "Test-ManjuInstalledProcessRunning" in uninstall
+    assert "No files were removed" in uninstall
+    assert "No application files were removed" in uninstall
+
+
+def test_gui_assets_are_declared_as_wheel_package_data():
+    pyproject = (SCRIPTS.parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"manju.gui" = ["assets/*.ico", "assets/*.svg"]' in pyproject

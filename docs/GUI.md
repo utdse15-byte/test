@@ -320,6 +320,7 @@ Honest limits:
 ```bash
 manju gui                    # 默认 http://127.0.0.1:8321/,自动打开浏览器
 manju gui --port 0           # 端口被占时让系统挑一个空闲端口
+manju gui --app --port 0     # Edge/Chrome 独立应用窗口；Windows 开始菜单使用此体验
 manju gui --no-open          # 只起服务,不开浏览器
 manju gui --host 0.0.0.0     # 会打印警告:除 CSRF token 外无任何鉴权,仅限可信网络
 ```
@@ -440,8 +441,14 @@ REPORTS/GUI_DIRECTION_2026-07-14.md). What a future session should know:
   数据来自 `build/readiness.py` 的派生视图，不保存第二份状态。
 - **AI 在 GUI 外**(§0):/review 卡片“复制给 IDE 助手”、失败卡复制诊断上下文
   只递结构化文本;不要在 GUI 里内建聊天/模型管理。
-- **`manju gui --app`**:Edge/Chrome `--app=` 无边框窗口,找不到浏览器时
-  具名回退默认浏览器;关窗不停服务(分离进程无法诚实通知)。
+- **`manju gui --app`**:Edge/Chrome `--app=` 独立窗口,找不到浏览器时具名回退默认浏览器。
+  Windows 开始菜单入口通过 `pythonw -m manju.gui.windows_app` 无控制台启动；启动后发布一个
+  可删除的 loopback 会话记录，重复双击会核对 Manju 协议标记、PID 和
+  `open/closing/stuck` 生命周期。旧进程仍在但暂时无响应时 fail closed；浏览器打不开时给出
+  手工地址，均不会重复创建工作区服务。
+  直接点浏览器窗口的 X 仍不等于安全退出；再次双击可重开，真正结束请使用应用栏“退出”，
+  让任务协调器先处理正在写项目的工作。安装器在原子切换前运行零网络桌面入口自检；启动异常
+  写入 `%LOCALAPPDATA%\Manju\Logs`。完整生命周期见 `docs/WINDOWS_APP.md`。
 
 ## 快速前往（Ctrl/Cmd+K）
 
