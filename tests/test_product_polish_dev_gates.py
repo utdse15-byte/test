@@ -81,3 +81,20 @@ def test_visual_acceptance_smoke_uses_real_renderer_without_http(tmp_path):
     assert facts["horizontalOverflow"] == 0
     assert facts["lang"] == "zh-CN"
     assert "screenshot" not in facts
+
+
+def test_visual_fixture_path_normalisation_is_exact_and_local():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("product_visual_acceptance", VISUAL)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    project_root = Path("/tmp/manju-visual-acceptance-random/fixture/产品打磨样片.manju")
+    source = f"<p>{project_root}</p><p>/tmp/other-project.manju</p>"
+    normalised = module._normalise_fixture_paths(source, project_root)
+
+    assert str(project_root) not in normalised
+    assert r"D:\Films\产品打磨样片.manju" in normalised
+    assert "/tmp/other-project.manju" in normalised

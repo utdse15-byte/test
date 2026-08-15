@@ -17,6 +17,7 @@ errors.  Nothing it writes is a project or build input.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -73,6 +74,22 @@ def _clean_html(html_doc: str, css: str, project_token: str | None = None) -> st
             1,
         )
     return html_doc.replace("</head>", f"<style>{css}</style></head>")
+
+
+def _normalise_fixture_paths(html_doc: str, project_root: Path) -> str:
+    """Keep screenshot evidence stable across temporary directories.
+
+    The actual workspace picker intentionally shows absolute local paths.  The
+    acceptance fixture, however, lives under a random ``tempfile`` directory;
+    leaving that suffix in screenshots would create meaningless visual diffs
+    on every run.  Replace only this disposable project's exact path with a
+    representative Windows-first path.  Runtime renderers are untouched.
+    """
+    stable = r"D:\Films\产品打磨样片.manju"
+    raw = str(project_root)
+    return html_doc.replace(raw, stable).replace(
+        html.escape(raw), html.escape(stable)
+    )
 
 
 class _EmptyRunner:
@@ -197,6 +214,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     out = Path(args.output).resolve()
     out.mkdir(parents=True, exist_ok=True)
     os.environ["MANJU_GUI_STATE"] = str(work / "gui-state.json")
+    os.environ["MANJU_RECENTS"] = str(work / "recents.json")
 
     from manju.gui.state import project_identity
     from manju.gui.userstate import set_mode, set_show_pro_terms
@@ -235,6 +253,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             for page_name, raw_html in docs.items():
                 result["pages"][page_name] = {}
                 html_doc = _clean_html(raw_html, css[page_name], token)
+                html_doc = _normalise_fixture_paths(html_doc, project.root)
                 for viewport_name, viewport in viewports.items():
                     context = browser.new_context(viewport=viewport, device_scale_factor=1)
                     page = context.new_page()
