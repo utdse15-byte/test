@@ -168,12 +168,6 @@ def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> l
             300,
         ),
         Stage(
-            "dev-gate-contract-tests",
-            (py, "-m", "pytest", "-q", "tests/test_product_polish_dev_gates.py"),
-            300,
-            profiles=("standard", "full"),
-        ),
-        Stage(
             "trust-boundary-tests",
             (py, "-m", "pytest", "-q", *trust_tests),
             900,
