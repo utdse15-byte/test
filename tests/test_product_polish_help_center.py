@@ -195,31 +195,42 @@ def test_help_center_real_client_opens_with_f1_and_quick_open_without_mutations(
             args=["--no-sandbox", "--disable-gpu"],
         )
         context = browser.new_context(viewport={"width": 390, "height": 844})
-        page_obj = context.new_page()
-        page_obj.set_content(document, wait_until="domcontentloaded")
+        try:
+            page_obj = context.new_page()
+            page_obj.set_content(document, wait_until="domcontentloaded")
 
-        page_obj.keyboard.press("F1")
-        dialog = page_obj.locator("#mj-help-center")
-        assert dialog.get_attribute("open") is not None
-        assert page_obj.locator("#mj-help-center-title").inner_text() == "帮助与支持"
-        assert "本地安全" in dialog.inner_text()
-        assert page_obj.evaluate("document.activeElement.classList.contains('mj-help-center-close')")
-        assert page_obj.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page_obj.keyboard.press("F1")
+            dialog = page_obj.locator("#mj-help-center")
+            assert dialog.get_attribute("open") is not None
+            assert page_obj.locator("#mj-help-center-title").inner_text() == "帮助与支持"
+            assert "本地安全" in dialog.inner_text()
+            assert page_obj.evaluate("document.activeElement.classList.contains('mj-help-center-close')")
+            assert page_obj.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
-        page_obj.keyboard.press("Escape")
-        assert dialog.get_attribute("open") is None
-        assert page_obj.evaluate("document.activeElement.id") == "mj-help-center-btn"
+            page_obj.keyboard.press("Escape")
+            page_obj.wait_for_function(
+                "!document.querySelector('#mj-help-center')?.open && "
+                "document.activeElement?.id === 'mj-help-center-btn'"
+            )
+            assert dialog.get_attribute("open") is None
+            assert page_obj.evaluate("document.activeElement.id") == "mj-help-center-btn"
 
-        page_obj.keyboard.press("Control+k")
-        page_obj.locator("#mj-command-input").fill("帮助")
-        page_obj.keyboard.press("Enter")
-        assert dialog.get_attribute("open") is not None
-        assert "产品遥测：无" not in dialog.inner_text()  # copy summary, not visible chrome
-        calls = page_obj.evaluate("window.__MJ_CALLS")
-        assert calls.count(["GET", "/api/app/about"]) == 1
-        assert calls.count(["GET", "/api/command-palette"]) == 1
-        assert all(method == "GET" for method, _url in calls)
-        assert not any(any(token in url for token in ("build", "generate", "select", "lock", "provider")) for _method, url in calls)
-
-        context.close()
-        browser.close()
+            page_obj.keyboard.press("Control+k")
+            page_obj.locator("#mj-command-input").fill("帮助")
+            page_obj.keyboard.press("Enter")
+            page_obj.wait_for_function(
+                "document.querySelector('#mj-help-center')?.open === true"
+            )
+            assert dialog.get_attribute("open") is not None
+            assert "产品遥测：无" not in dialog.inner_text()  # copy summary, not visible chrome
+            calls = page_obj.evaluate("window.__MJ_CALLS")
+            assert calls.count(["GET", "/api/app/about"]) == 1
+            assert calls.count(["GET", "/api/command-palette"]) == 1
+            assert all(method == "GET" for method, _url in calls)
+            assert not any(
+                any(token in url for token in ("build", "generate", "select", "lock", "provider"))
+                for _method, url in calls
+            )
+        finally:
+            context.close()
+            browser.close()
