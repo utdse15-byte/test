@@ -1,0 +1,248 @@
+{
+  "schema": "manju.product-polish-performance/v1",
+  "generated_at": "2026-08-15T03:26:52+00:00",
+  "git_sha": "976de0f8a807841012afc483eba04b2835735f50",
+  "zero_cost": true,
+  "environment": {
+    "python": "3.13.5",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "processor": "",
+    "cpu_count": 5
+  },
+  "config": {
+    "sizes": [
+      12,
+      100,
+      300
+    ],
+    "takes_per_shot": 1,
+    "warmups": 1,
+    "samples": 5
+  },
+  "results": {
+    "12": {
+      "build_state": {
+        "median_ms": 27.038,
+        "p95_ms": 27.201,
+        "min_ms": 26.415,
+        "max_ms": 27.201,
+        "samples_ms": [
+          27.124,
+          26.415,
+          26.78,
+          27.038,
+          27.201
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 41.723,
+        "p95_ms": 46.272,
+        "min_ms": 41.014,
+        "max_ms": 46.272,
+        "samples_ms": [
+          41.014,
+          46.272,
+          41.723,
+          43.301,
+          41.305
+        ],
+        "result_size": 13
+      },
+      "command_palette": {
+        "median_ms": 0.594,
+        "p95_ms": 0.846,
+        "min_ms": 0.544,
+        "max_ms": 0.846,
+        "samples_ms": [
+          0.846,
+          0.616,
+          0.594,
+          0.586,
+          0.544
+        ],
+        "result_size": 6
+      },
+      "review_html": {
+        "median_ms": 27.454,
+        "p95_ms": 49.926,
+        "min_ms": 26.914,
+        "max_ms": 49.926,
+        "samples_ms": [
+          49.926,
+          26.914,
+          27.454,
+          27.086,
+          29.112
+        ],
+        "result_size": 70205
+      },
+      "storyboard_html": {
+        "median_ms": 23.446,
+        "p95_ms": 26.723,
+        "min_ms": 22.239,
+        "max_ms": 26.723,
+        "samples_ms": [
+          26.723,
+          23.446,
+          22.613,
+          23.929,
+          22.239
+        ],
+        "result_size": 61152
+      }
+    },
+    "100": {
+      "build_state": {
+        "median_ms": 218.842,
+        "p95_ms": 230.441,
+        "min_ms": 212.978,
+        "max_ms": 230.441,
+        "samples_ms": [
+          212.978,
+          215.561,
+          218.842,
+          222.854,
+          230.441
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 285.062,
+        "p95_ms": 317.381,
+        "min_ms": 281.184,
+        "max_ms": 317.381,
+        "samples_ms": [
+          285.062,
+          281.184,
+          285.933,
+          317.381,
+          282.294
+        ],
+        "result_size": 13
+      },
+      "command_palette": {
+        "median_ms": 4.162,
+        "p95_ms": 8.254,
+        "min_ms": 3.839,
+        "max_ms": 8.254,
+        "samples_ms": [
+          4.162,
+          3.918,
+          3.839,
+          5.088,
+          8.254
+        ],
+        "result_size": 6
+      },
+      "review_html": {
+        "median_ms": 204.823,
+        "p95_ms": 219.924,
+        "min_ms": 203.576,
+        "max_ms": 219.924,
+        "samples_ms": [
+          204.527,
+          219.924,
+          204.823,
+          203.576,
+          211.327
+        ],
+        "result_size": 522159
+      },
+      "storyboard_html": {
+        "median_ms": 150.048,
+        "p95_ms": 152.542,
+        "min_ms": 148.416,
+        "max_ms": 152.542,
+        "samples_ms": [
+          149.254,
+          152.089,
+          150.048,
+          148.416,
+          152.542
+        ],
+        "result_size": 456485
+      }
+    },
+    "300": {
+      "build_state": {
+        "median_ms": 645.114,
+        "p95_ms": 658.838,
+        "min_ms": 623.826,
+        "max_ms": 658.838,
+        "samples_ms": [
+          658.838,
+          645.114,
+          623.826,
+          637.892,
+          648.412
+        ],
+        "result_size": 19
+      },
+      "cockpit": {
+        "median_ms": 825.404,
+        "p95_ms": 825.624,
+        "min_ms": 796.152,
+        "max_ms": 825.624,
+        "samples_ms": [
+          825.561,
+          825.404,
+          796.152,
+          822.328,
+          825.624
+        ],
+        "result_size": 13
+      },
+      "command_palette": {
+        "median_ms": 11.512,
+        "p95_ms": 12.091,
+        "min_ms": 11.21,
+        "max_ms": 12.091,
+        "samples_ms": [
+          12.091,
+          11.573,
+          11.239,
+          11.512,
+          11.21
+        ],
+        "result_size": 6
+      },
+      "review_html": {
+        "median_ms": 623.401,
+        "p95_ms": 637.145,
+        "min_ms": 611.714,
+        "max_ms": 637.145,
+        "samples_ms": [
+          616.728,
+          637.145,
+          628.269,
+          623.401,
+          611.714
+        ],
+        "result_size": 1550106
+      },
+      "storyboard_html": {
+        "median_ms": 457.056,
+        "p95_ms": 496.208,
+        "min_ms": 446.29,
+        "max_ms": 496.208,
+        "samples_ms": [
+          457.529,
+          446.29,
+          456.347,
+          457.056,
+          496.208
+        ],
+        "result_size": 1355067
+      }
+    }
+  },
+  "enforcement": {
+    "enabled": false,
+    "cockpit_median_budgets_ms": {},
+    "failures": [],
+    "passed": true
+  }
+}

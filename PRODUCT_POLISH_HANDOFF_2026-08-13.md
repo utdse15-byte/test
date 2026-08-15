@@ -461,3 +461,31 @@ App 模式、Windows hard gate 和同一 SHA 双平台门仍未完成。
 后续优先级：停止增加产品旅程，用现有性能与视觉门完成真实 Windows App 模式人工验收，
 再在同一 SHA 上跑 Ubuntu / Windows 发布门；若随后整理大模块，只做机械拆分，不与视觉
 重设计混在同一提交。
+
+## 18. Wave 13：全局“快速前往”
+
+功能提交：`976de0f8a807841012afc483eba04b2835735f50` (`R1: add navigation-only quick open`)；边界回归提交：`b40cf4cd52a4f09f25888b055d51cd9b6bed5df7`。
+
+已完成：
+
+- 应用栏和项目工作区共用一个 `Ctrl+K` 快速前往入口；
+- 页面目录直接派生自现有六阶段导航，新手模式继续隐藏专业页面；
+- 镜头可按编号、场景、动作、对白和角色搜索，并保持 Lab / Review / Ingest 深链语义；
+- 最近项目继续使用既有工作区安全切换动作，任务入口继续复用 Task Center；
+- 面板只负责发现与导航，不构建、生成、重做、选片、审批、执行提案或锁片；
+- 项目索引按需读取，15 秒内复用；失败时清除镜头/最近项目旧结果、保留静态页面导航并在下次打开重试；
+- native dialog + combobox 提供 Ctrl/Cmd+K、上下键、Enter、Escape、焦点恢复、`aria-expanded` 和窄窗口无溢出；
+- 开发性能工具增加快速前往指标；新增可重复的离线真实 renderer 浏览器验收工具。
+
+当前沙箱观察：12/100/300 镜快速前往索引中位数约 0.6/4.2/11.5 ms。
+这些是本机零成本观察，不是 Windows 发布承诺。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE13_QUICK_OPEN.md`
+- `REPORTS/product-polish-r1/WAVE13_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/wave13-tests/`
+- `REPORTS/product-polish-r1/screenshots/wave13/`
+
+本波不改变项目 truth、任务 owner、Provider、费用、selected_take、镜头审批或 Picture Lock。
+下一步应进入真实 Windows App 模式个人 Dogfood和同 SHA 发布门，而不是继续扩展命令面板为执行器。

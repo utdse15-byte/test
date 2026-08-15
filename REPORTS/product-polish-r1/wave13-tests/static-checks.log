@@ -1,0 +1,7 @@
+$ python -m compileall -q src tests scripts/dev
+PASS
+$ render_command_palette_js | node --check
+PASS
+$ git diff --check
+PASS
+ruff: UNAVAILABLE in this sandbox

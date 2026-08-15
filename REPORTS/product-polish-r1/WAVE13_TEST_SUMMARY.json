@@ -1,0 +1,137 @@
+{
+  "schema": "manju.product-polish-wave13-test-summary/v1",
+  "generated_at": "2026-08-15T03:34:54+00:00",
+  "feature_sha": "976de0f8a807841012afc483eba04b2835735f50",
+  "zero_cost": true,
+  "pytest": {
+    "groups": [
+      {
+        "name": "快速前往核心与浏览器状态机",
+        "path": "focused-tests/command_palette.log",
+        "passed": 9,
+        "deselected": 0
+      },
+      {
+        "name": "性能行为门",
+        "path": "focused-tests/performance_gate.log",
+        "passed": 5,
+        "deselected": 0
+      },
+      {
+        "name": "可重复开发验收工具",
+        "path": "focused-tests/dev_gates.log",
+        "passed": 4,
+        "deselected": 0
+      },
+      {
+        "name": "共享无障碍契约",
+        "path": "focused-tests/accessibility.log",
+        "passed": 6,
+        "deselected": 0
+      },
+      {
+        "name": "共享应用外壳",
+        "path": "focused-tests/app_chrome.log",
+        "passed": 8,
+        "deselected": 0
+      },
+      {
+        "name": "共享页面脚本",
+        "path": "focused-tests/gui_page_shell_scripts.log",
+        "passed": 6,
+        "deselected": 0
+      },
+      {
+        "name": "项目切换与安全动作",
+        "path": "focused-tests/gui_project_actions.log",
+        "passed": 14,
+        "deselected": 0
+      },
+      {
+        "name": "新手/专业模式",
+        "path": "related-tests/gui_modes.log",
+        "passed": 22,
+        "deselected": 0
+      },
+      {
+        "name": "共享 GUI 页面",
+        "path": "related-tests/gui_pages.log",
+        "passed": 25,
+        "deselected": 0
+      },
+      {
+        "name": "全局任务中心",
+        "path": "related-tests/task_center.log",
+        "passed": 16,
+        "deselected": 0
+      },
+      {
+        "name": "项目工作区",
+        "path": "related-tests/workspace.log",
+        "passed": 27,
+        "deselected": 0
+      }
+    ],
+    "passed_total": 142,
+    "failed_total": 0
+  },
+  "browser_acceptance": {
+    "schema": "manju.command-palette-acceptance/v1",
+    "git_sha": "976de0f8a807841012afc483eba04b2835735f50",
+    "passed": true,
+    "cases": [
+      "desktop",
+      "narrow",
+      "workspace",
+      "failure"
+    ],
+    "live_http_e2e": false,
+    "errors": []
+  },
+  "visual_gate": {
+    "schema": "manju.product-visual-acceptance/v1",
+    "git_sha": "976de0f8a807841012afc483eba04b2835735f50",
+    "passed": true,
+    "page_viewport_combinations": 18,
+    "errors": []
+  },
+  "performance_ms": {
+    "12": {
+      "median": 0.594,
+      "p95": 0.846,
+      "max": 0.846
+    },
+    "100": {
+      "median": 4.162,
+      "p95": 8.254,
+      "max": 8.254
+    },
+    "300": {
+      "median": 11.512,
+      "p95": 12.091,
+      "max": 12.091
+    }
+  },
+  "static_checks": {
+    "compileall": "passed",
+    "rendered_js_node_check": "passed",
+    "git_diff_check": "passed",
+    "ruff": "unavailable"
+  },
+  "network_and_cost": {
+    "real_provider_calls": 0,
+    "external_model_api_calls": 0,
+    "credential_reads": 0,
+    "paid_calls": 0,
+    "free_tier_calls": 0
+  },
+  "not_claimed": [
+    "full repository pytest",
+    "live localhost Playwright end-to-end journey",
+    "real Windows App-mode keyboard/mouse dogfood",
+    "Windows hard gate",
+    "same-SHA Ubuntu/Windows release evidence",
+    "real Provider, billing, cancellation or AI video quality"
+  ],
+  "validation_sha": "b40cf4cd52a4f09f25888b055d51cd9b6bed5df7"
+}
