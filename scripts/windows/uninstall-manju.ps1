@@ -1,4 +1,4 @@
-# uninstall-manju.ps1 — remove the Manju application, never the user's work.
+﻿# uninstall-manju.ps1 — remove the Manju application, never the user's work.
 #
 # Removes:   %LOCALAPPDATA%\Manju\App, bin, Cache, the owned Start-menu
 #            shortcut, and Logs only with -Logs.

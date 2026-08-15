@@ -241,6 +241,33 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `THREE-PROJECTS-ZERO-COST-BOUNDARY #5` | 2026-08-11 | Third-party absence is a supported state; check/build/QC/export keep working without all three | providers/registry.py |
 | `BUDGET-SEMANTICS #1` | 2026-08-13 | `budget.limit` is a per-build ceiling; presentation surfaces keep cumulative history separate | build/graph.py, gui/, board/, cli.py |
 | `BUDGET-SEMANTICS #2` | 2026-08-13 | Disposable ledger/sidecars never become a cross-build payment gate; a durable field would require a new design | .manju/state.sqlite, build/spend.py, README.md |
+| `PRODUCT-POLISH-R1-AUTHORING-JOURNEY #1` | 2026-08-14 | Direct writing and Director Proposal are two entrances to the same canonical truth | gui/authoring_journey.py, gui/create_page.py, build/director.py |
+| `PRODUCT-POLISH-R1-AUTHORING-JOURNEY #2` | 2026-08-14 | Proposal review is optional except when an outstanding authoring patch needs attention | gui/authoring_journey.py, gui/director_page.py |
+| `PRODUCT-POLISH-R1-AUTHORING-JOURNEY #3` | 2026-08-14 | Proposal review shows bounded escaped before/after bytes and diffs | gui/director_page.py, build/director.py |
+| `PRODUCT-POLISH-R1-AUTHORING-JOURNEY #4` | 2026-08-14 | Confirmation and execution remain separate human decisions | gui/director_page.py, build/director.py |
+| `PRODUCT-POLISH-R1-AUTHORING-JOURNEY #5` | 2026-08-14 | Storyboard owns normal shot planning; authoring hand-off is exceptional and read-only | gui/storyboard.py, gui/authoring_journey.py |
+| `PRODUCT-POLISH-R1-HOME-COCKPIT #1` | 2026-08-14 | Home presents one priority over existing read-only journey owners | gui/cockpit.py, gui/authoring_journey.py, gui/finishing_journey.py |
+| `PRODUCT-POLISH-R1-HOME-COCKPIT #2` | 2026-08-14 | Home priority is deterministic and preserves existing human and spend gates | gui/cockpit.py, gui/page.py |
+| `PRODUCT-POLISH-R1-HOME-COCKPIT #3` | 2026-08-14 | Engineering detail is progressively disclosed and lazily rendered | gui/cockpit.py, gui/page.py |
+| `PRODUCT-POLISH-R1-HOME-COCKPIT #4` | 2026-08-14 | App-mode exit stays in the permanent application bar | gui/app_chrome.py, gui/windows_app.py |
+| `PRODUCT-POLISH-R1-HOME-COCKPIT #5` | 2026-08-14 | Home projections do not weaken zero-cost or creative-decision boundaries | gui/cockpit.py, providers/zero_cost.py |
+| `PRODUCT-POLISH-R1-QUICK-OPEN #1` | 2026-08-14 | Quick Open is a bounded navigation surface, not an executable command framework | gui/command_palette.py |
+| `PRODUCT-POLISH-R1-QUICK-OPEN #2` | 2026-08-14 | Quick Open discovers destinations and never performs production decisions | gui/command_palette.py |
+| `PRODUCT-POLISH-R1-QUICK-OPEN #3` | 2026-08-14 | Search facts stay bounded, disposable and owned by current sources | gui/command_palette.py, gui/server.py |
+| `PRODUCT-POLISH-R1-QUICK-OPEN #4` | 2026-08-14 | Index failure degrades to static safe navigation and retries explicitly | gui/command_palette.py |
+| `PRODUCT-POLISH-R1-QUICK-OPEN #5` | 2026-08-14 | Quick Open evidence is offline, zero-cost and performance-bounded | scripts/dev/product_command_palette_acceptance.py, scripts/dev/product_polish_benchmark.py |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #1` | 2026-08-14 | Start-menu App mode remains a thin owner over the existing GUI | gui/windows_app.py, scripts/windows/ |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #2` | 2026-08-14 | Personal installs are click-first while foreign shortcuts remain untouched | scripts/windows/install-manju.ps1, scripts/windows/manju-shortcut.ps1 |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #3` | 2026-08-14 | Recorded live sessions are validated before reuse and never duplicated blindly | gui/windows_app.py |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #4` | 2026-08-14 | Installed desktop entry is verified before recoverable activation | scripts/windows/install-manju.ps1, scripts/windows/update-manju.ps1 |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #5` | 2026-08-14 | Windowless launch failures remain visible in bounded local logs | gui/windows_app.py |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #6` | 2026-08-14 | Uninstall protects live work, projects, configuration and foreign shortcuts | scripts/windows/uninstall-manju.ps1, scripts/windows/manju-shortcut.ps1 |
+| `PRODUCT-POLISH-R1-WINDOWS-APP-LIFECYCLE #7` | 2026-08-14 | Windows-only lifecycle facts require real Windows evidence | tests/test_windows_install_behaviour.py, .github/workflows/windows-ci.yml |
+| `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #1` | 2026-08-14 | F1 help is a bounded read-only surface, not a diagnostic agent | gui/help_center.py, gui/server.py |
+| `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #2` | 2026-08-14 | Local-first privacy is visible and enforced at the browser boundary | gui/app_chrome.py, docs/LOCAL_DATA_AND_PRIVACY.md |
+| `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #3` | 2026-08-14 | Local RC is bounded evidence and never release certification | scripts/dev/product_release_candidate.py |
+| `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #4` | 2026-08-14 | Contract registry consistency remains a required product gate | CONTRACTS.yaml, tests/test_fp_contracts.py |
+| `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #5` | 2026-08-14 | Product expansion stops until real release evidence is complete | FINAL_HANDOFF.md, REPORTS/LAST_GREEN.yaml |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 

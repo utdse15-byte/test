@@ -1,4 +1,4 @@
-# update-manju.ps1 — update to a new version, keep the old one for rollback.
+﻿# update-manju.ps1 — update to a new version, keep the old one for rollback.
 #
 # An update is the same staged/self-tested/atomic install as install-manju.ps1.
 # This wrapper remembers the prior pointer and preserves the owner's Start-menu

@@ -128,7 +128,7 @@ def test_keymap_overlay_and_footer_hints_render(gui, tmp_project, add_shot):
     _, _, body = _html(gui, "/edit")
     # the ? overlay dialog (CSP-safe: role/aria, no inline handler)
     assert 'id="ed-keymap-modal"' in body
-    assert "键盘快捷键 Keyboard map" in body
+    assert "键盘快捷键" in body and "Keyboard map" in body
     assert 'role="dialog"' in body and 'aria-modal="true"' in body
     # the map advertises the six keys in 中文
     assert "播放 / 暂停" in body and "逐帧移动播放头" in body

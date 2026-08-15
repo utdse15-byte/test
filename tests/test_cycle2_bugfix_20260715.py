@@ -66,7 +66,7 @@ def test_synthesize_locale_voices_accepts_should_cancel() -> None:
 def test_create_skill_has_catch() -> None:
     src = Path(create_mod.__file__).read_text(encoding="utf-8")
     assert ".catch(function" in src
-    assert "网络错误" in src
+    assert "无法连接本地服务，技能内容没有加载" in src
 
 
 def test_series_timeout_clears_sticky_status() -> None:

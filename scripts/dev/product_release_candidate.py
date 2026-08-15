@@ -115,6 +115,34 @@ def _module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def _default_chromium() -> str:
+    """Return an installed Chromium-family browser without downloading one."""
+
+    configured = os.environ.get("MANJU_DEV_CHROMIUM")
+    if configured:
+        return configured
+    for name in ("chromium", "chromium-browser", "google-chrome", "chrome", "msedge"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        roots = (
+            ("ProgramFiles", "Google", "Chrome", "Application", "chrome.exe"),
+            ("ProgramFiles(x86)", "Google", "Chrome", "Application", "chrome.exe"),
+            ("LOCALAPPDATA", "Google", "Chrome", "Application", "chrome.exe"),
+            ("ProgramFiles", "Microsoft", "Edge", "Application", "msedge.exe"),
+            ("ProgramFiles(x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
+            ("LOCALAPPDATA", "Microsoft", "Edge", "Application", "msedge.exe"),
+        )
+        for env_name, *suffix in roots:
+            base = os.environ.get(env_name)
+            if base:
+                candidate = Path(base).joinpath(*suffix)
+                if candidate.is_file():
+                    return str(candidate)
+    return ""
+
+
 def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> list[Stage]:
     py = sys.executable
     isolated_product_tests = {
@@ -300,12 +328,12 @@ def _run_stage(
         "timeout_s": stage.timeout_s,
         "availability": stage.availability or "available",
     }
-    if stage.availability == "unavailable":
-        row["status"] = "failed" if stage.required else "unavailable"
+    if dry_run:
+        row["status"] = "unavailable" if stage.availability == "unavailable" else "planned"
         row["exit_code"] = None
         return row
-    if dry_run:
-        row["status"] = "planned"
+    if stage.availability == "unavailable":
+        row["status"] = "failed" if stage.required else "unavailable"
         row["exit_code"] = None
         return row
 
@@ -448,9 +476,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if args.fail_fast and row["status"] in {"failed", "timeout"} and row["required"]:
             break
 
+    accepted = {"passed", "planned"}
+    if args.dry_run:
+        accepted.add("unavailable")
     required_failures = [
         row for row in result["stages"]
-        if row.get("required") and row.get("status") not in {"passed", "planned"}
+        if row.get("required") and row.get("status") not in accepted
     ]
     result["passed"] = not required_failures
     result["required_failures"] = [row["name"] for row in required_failures]
@@ -485,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", choices=("quick", "standard", "full"), default="standard")
-    parser.add_argument("--chromium", default=os.environ.get("MANJU_DEV_CHROMIUM", "/usr/bin/chromium"))
+    parser.add_argument("--chromium", default=_default_chromium())
     parser.add_argument("--require-ruff", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

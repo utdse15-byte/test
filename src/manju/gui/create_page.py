@@ -345,7 +345,8 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
         '</div>'
         f'{ai}'
         '<details class="cw-editor-meta"><summary>文件与技术说明</summary>'
-        f'<p><code>{_e(relpath)}</code> · {_e(s["evidence"])}。保存会写入项目真相并记录事件。</p></details>'
+        f'<p><code>{_e(relpath)}</code> · {_e(s.get("evidence") or product_detail)}。'
+        '保存会写入项目真相并记录事件。</p></details>'
         '</section>'
     )
 

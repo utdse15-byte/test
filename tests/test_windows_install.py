@@ -27,6 +27,18 @@ def _text(p: Path) -> str:
     return p.read_text(encoding="utf-8")
 
 
+def test_non_ascii_scripts_keep_windows_powershell_utf8_bom():
+    """Windows PowerShell 5.1 otherwise decodes UTF-8 source as ANSI/DBCS.
+
+    A multibyte Chinese sequence can consume a quote byte and turn valid source
+    into a parser error, so every shipped non-ASCII script needs the BOM.
+    """
+    for path in ALL:
+        raw = path.read_bytes()
+        assert any(byte >= 0x80 for byte in raw), path.name
+        assert raw.startswith(b"\xef\xbb\xbf"), path.name
+
+
 def test_scripts_exist_with_strict_mode_and_stop():
     """§4.2 统一要求: Set-StrictMode -Version Latest + ErrorActionPreference Stop."""
     for p in ALL:

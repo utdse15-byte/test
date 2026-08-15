@@ -1,4 +1,4 @@
-# install-manju.ps1 — per-user Manju install (MANJU_WINDOWS_ONLY_LEAN_V3 W2 §4.2-4.3).
+﻿# install-manju.ps1 — per-user Manju install (MANJU_WINDOWS_ONLY_LEAN_V3 W2 §4.2-4.3).
 #
 # Layout (§4.1):
 #   %LOCALAPPDATA%\Manju\App\<version>\venv   the versioned install (its own venv)

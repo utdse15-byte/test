@@ -10,4 +10,5 @@ def test_spend_kinds_map() -> None:
     assert "SPEND_KINDS" in src
     assert 'redo: "/api/redo"' in src
     assert 'voice: "/api/voice"' in src
-    assert "Confirm & continue" in src
+    assert "确认花费并继续" in src
+    assert "确认花费并构建" in src

@@ -1,4 +1,4 @@
-# Shared, local-only Start-menu shortcut helpers for Manju's per-user installer.
+﻿# Shared, local-only Start-menu shortcut helpers for Manju's per-user installer.
 # Dot-sourced by install/update/uninstall; never downloads or evaluates remote text.
 
 Set-StrictMode -Version Latest

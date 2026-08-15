@@ -267,6 +267,8 @@ def test_frontend_source_scan_fetch_allowlist():
         "ingest_page.py", "lab_page.py", "create_page.py",
         "exports_page.py", "series_page.py", "pages_t.py",
         "pages.py", "edit.py", "storyboard.py", "director_page.py",
+        "command_palette.py",  # requestJson-first; standalone renderer fallback
+        "help_center.py",      # requestJson-first; standalone renderer fallback
     }
     offenders = []
     for p in gui.glob("*.py"):

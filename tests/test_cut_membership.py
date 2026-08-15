@@ -204,7 +204,8 @@ def test_the_edit_strip_offers_drop_and_a_way_back(tmp_project, add_shot):
     set_cut_order(tmp_project, ["S001", "S003"])
     html = render_edit(tmp_project, "tok", {})
     assert "ed-restore" in html, "被移出的镜头没有「放回」入口 —— 那就是单向门"
-    assert "不在本刀里" in html
+    assert "不在当前剪辑中" in html
+    assert "Out of cut" in html
 
 
 def test_the_strip_renders_the_cut_not_every_file_on_disk(tmp_project, add_shot):
