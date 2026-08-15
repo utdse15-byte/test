@@ -514,6 +514,17 @@ schemas:
     read_older: true
     write_older: false
     notes: Read-only dependency-graph diagnostics (never a scheduling source).
+  - id: manju.help-center/v1
+    kind: schema
+    owner: manju.gui.help_center
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: >-
+      Bounded, secret-free, read-only local product and support snapshot. It
+      omits absolute project paths, credentials, Provider manifests and media,
+      and is never a project, build, cache or diagnostic-collection input.
   - id: manju.delivery-manifest/v1
     kind: schema
     owner: manju.build.delivery

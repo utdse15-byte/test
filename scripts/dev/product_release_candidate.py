@@ -159,6 +159,11 @@ def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> l
             (py, "-m", "pytest", "-q", "tests/test_product_polish_help_center.py"),
             300,
         ),
+        Stage(
+            "contract-registry-tests",
+            (py, "-m", "pytest", "-q", "tests/test_fp_contracts.py"),
+            300,
+        ),
         # Trust-boundary suites are deliberately isolated.  Some of these
         # files exercise server, subprocess, archive or Windows-script owners;
         # a combined pytest process can finish its assertions yet remain alive
