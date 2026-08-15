@@ -143,3 +143,24 @@ def test_cockpit_reuses_one_picture_staleness_pass(
     assert calls == 1
     assert payload["state"]["shots_total"] == 1
     assert payload["suggestions"]["items"] is not None
+
+
+def test_development_benchmark_measures_command_palette_without_a_runtime_cache(tmp_path):
+    from argparse import Namespace
+    from scripts.dev.product_polish_benchmark import run
+
+    payload = run(Namespace(
+        sizes=[12],
+        takes_per_shot=1,
+        warmups=0,
+        samples=1,
+        work_dir=tmp_path / "benchmark",
+        keep_work_dir=True,
+        enforce_cockpit={},
+        output=None,
+    ))
+
+    row = payload["results"]["12"]["command_palette"]
+    assert row["result_size"] == 6
+    assert row["samples_ms"]
+    assert payload["zero_cost"] is True

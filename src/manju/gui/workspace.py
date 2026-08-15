@@ -204,6 +204,8 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
     ``bound`` is the CURRENTLY bound project when this is reached via the
     in-chrome switcher's "管理工作区" link (``/?workspace=1``) rather than the
     outside-a-project fallback — the page then also offers a way back."""
+    from .command_palette import render_command_button
+
     payload = recents_payload(bound.root if bound is not None else None)
     presets = presets or []
 
@@ -235,7 +237,9 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
     body = (
         main_open("workspace-page")
         + '<header class="ws-brand"><span class="ws-brand-mark" aria-hidden="true">M</span>'
-        '<span><strong>Manju</strong><small>本地电影工作台 · 项目工作区</small></span></header>'
+        '<span><strong>Manju</strong><small>本地电影工作台 · 项目工作区</small></span>'
+        + render_command_button(title="搜索项目或页面（Ctrl+K）")
+        + '</header>'
         '<h1>打开或新建项目</h1>'
         '<p class="ws-lede">选择项目后，Manju 会恢复上次的页面和工作位置。</p>'
         + intro + back
@@ -278,8 +282,10 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
         '<link rel="stylesheet" href="/app.css">\n'
         '<link rel="stylesheet" href="/workspace.css">\n'
         '<link rel="stylesheet" href="/project-action.css">\n'
+        '<link rel="stylesheet" href="/command-palette.css">\n'
         '<script src="/webclient.js" defer></script>\n'
         '<script src="/project-action.js" defer></script>\n'
+        '<script src="/command-palette.js" defer></script>\n'
         '<script src="/workspace.js" defer></script>\n'
         "</head>\n"
         '<body data-page="/workspace">\n'

@@ -42,7 +42,8 @@ def test_product_benchmark_smoke_is_zero_cost_and_enforceable(tmp_path):
     assert payload["config"]["sizes"] == [1]
     assert payload["enforcement"]["passed"] is True
     assert set(payload["results"]["1"]) == {
-        "build_state", "cockpit", "review_html", "storyboard_html"
+        "build_state", "cockpit", "command_palette",
+        "review_html", "storyboard_html"
     }
 
 
@@ -98,3 +99,39 @@ def test_visual_fixture_path_normalisation_is_exact_and_local():
     assert str(project_root) not in normalised
     assert r"D:\Films\产品打磨样片.manju" in normalised
     assert "/tmp/other-project.manju" in normalised
+
+
+COMMAND_PALETTE = ROOT / "scripts" / "dev" / "product_command_palette_acceptance.py"
+
+
+@pytest.mark.skipif(not Path("/usr/bin/chromium").exists(), reason="Chromium unavailable")
+def test_command_palette_acceptance_smoke_is_zero_cost_and_bounded(tmp_path):
+    output = tmp_path / "palette"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(COMMAND_PALETTE),
+            "--output", str(output),
+            "--chromium", "/usr/bin/chromium",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    payload = json.loads(
+        (output / "command-palette-acceptance.json").read_text(encoding="utf-8")
+    )
+    assert payload["schema"] == "manju.command-palette-acceptance/v1"
+    assert payload["zero_cost"] is True
+    assert payload["live_http_e2e"] is False
+    assert payload["mode"] == "offline-real-renderer"
+    assert payload["passed"] is True
+    facts = payload["cases"]["narrow"]
+    assert facts["overflow"] == 0
+    assert facts["dialogOpen"] is True
+    assert facts["focus"] == "mj-command-input"
+    assert facts["selected"] == "审片 S003"

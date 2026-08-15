@@ -211,7 +211,7 @@ build ok
 接着可以拿这个样片练手,每一步都不花钱:
 
 - `manju status` —— 看当前阶段和每个镜头的待办(一句话一个动作)
-- `manju gui` —— 浏览器工作台,成片页能直接看片
+- `manju gui` —— 浏览器工作台,成片页能直接看片；工作台内按 `Ctrl/Cmd+K` 可按页面、镜头动作或最近项目快速前往（只导航，不直接执行危险操作）
 - 改 `shots/S003.yaml` 里的 `action.main`,再 `manju build` —— 观察它**只重做那一镜**
 - `manju qc brief` —— 看质检怎么出题
 - `manju exports` —— 九种交付物的状态一览

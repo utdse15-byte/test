@@ -51,6 +51,7 @@ __all__ = [
     "set_disabled_in_text",
     "set_strategy_in_text",
     "STRATEGY_NAME_RE",
+    "navigation_items",
 ]
 
 # The six routes this module owns. server.py delegates GET here for these.
@@ -102,6 +103,54 @@ _NAV_GROUPS = (
     ("工具", ("/library", "/providers", "/routing", "/doctor")),
 )
 
+# Product Polish R1 Wave 13: search aliases for the global command palette.
+# This stays next to the route/label owner so the palette never invents a
+# second navigation catalog.  The aliases are presentation/search hints only.
+_NAV_KEYWORDS = {
+    "/": ("首页", "home", "cockpit", "继续工作", "下一步"),
+    "/create": ("故事", "写作", "剧本", "story", "script", "authoring"),
+    "/director": ("提案", "修改", "diff", "proposal", "director"),
+    "/storyboard": ("镜头计划", "shot", "storyboard", "分镜表"),
+    "/lab": ("候选", "提示词", "参考", "shot lab", "实验"),
+    "/ingest": ("导入", "素材", "take", "batch", "ingest"),
+    "/review": ("候选", "评价", "选片", "review", "theater"),
+    "/compare": ("对比", "ab", "compare", "差异"),
+    "/edit": ("时间线", "剪辑", "timeline", "edit"),
+    "/subtitles": ("字幕", "caption", "subtitle", "srt", "ass"),
+    "/mixer": ("声音", "混音", "audio", "mix", "music"),
+    "/packaging": ("片头", "片尾", "封面", "包装", "title", "cover"),
+    "/exports": ("交付", "导出", "final", "export", "fcpxml", "otio"),
+    "/library": ("素材库", "资产", "asset", "library"),
+    "/providers": ("服务商", "模型", "provider", "api"),
+    "/routing": ("路由", "选择服务商", "route", "strategy"),
+    "/doctor": ("环境", "诊断", "doctor", "ffmpeg", "依赖"),
+}
+
+
+def navigation_items(mode: str = "pro") -> list[dict[str, object]]:
+    """Return the one shared, read-only navigation catalog for discovery.
+
+    The global command palette consumes this projection instead of maintaining
+    a second list of pages.  Beginner mode hides the same professional-only
+    destinations as the visible stage navigation; direct URLs remain valid.
+    """
+    beginner = mode == "beginner"
+    group_of = {href: group for group, hrefs in _NAV_GROUPS for href in hrefs}
+    out: list[dict[str, object]] = []
+    for href, label in _NAV:
+        if beginner and href in PRO_ONLY_PAGES:
+            continue
+        out.append({
+            "id": f"page:{href}",
+            "kind": "page",
+            "label": label,
+            "group": group_of.get(href, "页面"),
+            "href": href,
+            "keywords": list(dict.fromkeys((label, group_of.get(href, ""), *_NAV_KEYWORDS.get(href, ())))),
+            "pro_only": href in PRO_ONLY_PAGES,
+        })
+    return out
+
 # The finishing surfaces already render a richer in-page journey with the same
 # five destinations.  Repeating those links in the global sub-navigation would
 # add visual noise and two competing current-page indicators, so the chrome
@@ -117,9 +166,11 @@ GLOSSARY_HEAD = (
     '<link rel="stylesheet" href="/glossary.css">\n'
     '<link rel="stylesheet" href="/project-action.css">\n'
     '<link rel="stylesheet" href="/task-center.css">\n'
+    '<link rel="stylesheet" href="/command-palette.css">\n'
     '<script src="/webclient.js" defer></script>\n'
     '<script src="/project-action.js" defer></script>\n'
     '<script src="/task-center.js" defer></script>\n'
+    '<script src="/command-palette.js" defer></script>\n'
     '<script src="/glossary.js" defer></script>\n'
 )
 
@@ -329,6 +380,8 @@ def nav_html(
     directly-opened advanced pages explain their current location without
     re-advertising the hidden link.
     """
+    from .command_palette import render_command_button
+
     beginner = mode == "beginner"
     label_of = dict(_NAV)
 
@@ -346,6 +399,7 @@ def nav_html(
         '<span class="pnav-brand-name">Manju</span></a>',
         '<div class="pnav-tools">',
         _execution_status_html(),
+        render_command_button(),
         '<button type="button" id="mj-task-center-btn" class="mj-task-button" '
         'aria-haspopup="dialog" aria-controls="mj-task-center" '
         'aria-expanded="false" title="打开任务中心">'

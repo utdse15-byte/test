@@ -4379,3 +4379,40 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
 5. **Zero-cost and decision boundaries remain intact.** This wave uses no real
    provider, credential, API or paid/free-tier generation. Recommendation,
    selection, shot approval, build and Picture Lock remain distinct decisions.
+
+## PRODUCT-POLISH-R1-QUICK-OPEN (2026-08-14)
+
+1. **The earlier command-palette deferral is superseded only in a bounded,
+   navigation-only form.** Decisions #45, #49a and UX-WAVE-2 rejected or
+   deferred a palette while navigation was unsettled, client assets were still
+   embedded, and no browser/performance gate protected the surface. Product
+   Polish Waves 5, 11 and 12 supplied those missing prerequisites: one shared
+   six-stage chrome, static client assets, responsive/a11y acceptance, and
+   12/100/300-shot measurements. This decision does not revive the rejected
+   six-domain rewrite or an executable command framework.
+2. **Quick-open discovers; it never performs production decisions.** `Ctrl+K`
+   may open an existing page, focus a workspace field, open the existing Task
+   Center, locate a shot in Lab/Review/Ingest, or use the already-guarded
+   workspace-open action. It cannot build, generate, redo, select a take,
+   review/approve a shot, confirm/run a Director Proposal, spend money or
+   Picture Lock. Dangerous operations remain on their existing pages with their
+   existing human and cost gates.
+3. **Search facts come from current owners and remain disposable.** Page rows
+   derive from `_NAV`/`_NAV_GROUPS`; shot rows read bounded id/scene/action/
+   dialogue/character text from canonical shot YAML; project rows come from the
+   recents shelf. The index is fetched lazily, retained only in page memory, and
+   is never project truth, a build/provider/cache input, or a new database.
+   Malformed shots remain discoverable by id; media, timeline, Provider and
+   credential owners are not touched.
+4. **Failure degrades toward safe navigation, not stale confidence.** A failed
+   index refresh clears shot/recent rows, keeps only the static mode-aware page
+   catalog, tells the user the project index could not be updated, and retries
+   on the next explicit open. Beginner mode continues to hide professional
+   destinations. The trigger and combobox expose their expanded state, restore
+   focus, support keyboard-only use, reduced motion and 320/390px reflow.
+5. **Evidence remains zero-cost and bounded.** The reusable acceptance tool uses
+   real renderers, actual shipped JavaScript and offline Playwright documents;
+   the performance tool measures the palette at 12/100/300 shots. No live
+   Provider, credential, external API, free tier, paid request, media probe or
+   FFmpeg process participates. Live localhost and Windows App-mode release
+   evidence remain separate gates.

@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -41,6 +42,16 @@ _VIEWPORTS = {
 
 def _root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _git_sha(root: Path) -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True,
+            stderr=subprocess.DEVNULL, timeout=5,
+        ).strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def _selection(raw: str, *, allowed: tuple[str, ...], noun: str) -> list[str]:
@@ -141,12 +152,13 @@ def _make_project(work: Path):
 
 
 def _css_bundles() -> dict[str, str]:
-    from manju.gui import glossary, page, pages, project_action
+    from manju.gui import command_palette, glossary, page, pages, project_action
     from manju.gui import create_page, edit, exports_page, storyboard, workspace
 
     base = "\n".join([
         page.render_css(), pages.render_pages_css(),
         glossary.render_glossary_css(), project_action.render_project_action_css(),
+        command_palette.render_command_palette_css(),
     ])
     return {
         "workspace": base + "\n" + workspace.render_workspace_css(),
@@ -191,6 +203,8 @@ def _facts(page, *, name: str) -> dict[str, Any]:
             skipLinks: document.querySelectorAll('.mj-skip-link').length,
             mainLandmarks: document.querySelectorAll('main#main-content').length,
             mainFocusable: !!main && main.getAttribute('tabindex') === '-1',
+            commandButtons: document.querySelectorAll('#mj-command-btn').length,
+            commandKeyshortcuts: document.querySelector('#mj-command-btn')?.getAttribute('aria-keyshortcuts') || '',
             duplicateIds,
             literalUndefined: /(^|\\s)undefined($|\\s)/i.test(bodyText),
             h1: document.querySelector('h1')?.textContent?.trim() || '',
@@ -230,6 +244,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     result: dict[str, Any] = {
         "schema": "manju.product-visual-acceptance/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "git_sha": _git_sha(root),
         "zero_cost": True,
         "mode": "offline-real-renderer",
         "live_http_e2e": False,
@@ -271,6 +286,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         failures.append(f"expected one skip link, got {facts['skipLinks']}")
                     if facts["mainLandmarks"] != 1 or not facts["mainFocusable"]:
                         failures.append("main#main-content landmark contract failed")
+                    if facts["commandButtons"] != 1:
+                        failures.append(f"expected one command button, got {facts['commandButtons']}")
+                    if facts["commandKeyshortcuts"] != "Control+K Meta+K":
+                        failures.append("command palette keyboard shortcut is missing")
                     if facts["duplicateIds"]:
                         failures.append("duplicate IDs: " + ", ".join(facts["duplicateIds"][:8]))
                     if facts["literalUndefined"]:

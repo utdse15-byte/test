@@ -119,6 +119,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     from tests.fixtures.make_gui_scale_project import build as build_scale_project
     from manju.core.container import Project
     from manju.gui.cockpit import cockpit_data
+    from manju.gui.command_palette import palette_payload
     from manju.gui.pages import render_review
     from manju.gui.state import build_state
     from manju.gui.storyboard import render as render_storyboard
@@ -131,6 +132,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     work_dir.mkdir(parents=True, exist_ok=True)
     os.environ["MANJU_GUI_STATE"] = str(work_dir / "gui-state.json")
+    os.environ["MANJU_RECENTS"] = str(work_dir / "recents.json")
 
     payload: dict[str, Any] = {
         "schema": "manju.product-polish-performance/v1",
@@ -170,6 +172,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 ),
                 "cockpit": _measure(
                     lambda: cockpit_data(project),
+                    warmups=args.warmups, samples=args.samples,
+                ),
+                "command_palette": _measure(
+                    lambda: palette_payload(
+                        project, project_token=token, mode="beginner"
+                    ),
                     warmups=args.warmups, samples=args.samples,
                 ),
                 "review_html": _measure(

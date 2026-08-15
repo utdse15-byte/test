@@ -36,6 +36,7 @@ over the same core the CLI calls — no capability exists only in the GUI.
 | Capability | CLI | GUI affordance (round; ✱ = round S) |
 | --- | --- | --- |
 | Project status / next step | `status` | 首页 Cockpit：唯一“现在最值得做” + 创作/镜头/成片三条只读旅程 + 待处理/运行中/最近成果；完整镜头、构建、时间线、任务、事件和版本按需展开 |
+| Global quick-open | — | `Ctrl/Cmd+K` 搜索页面、镜头动作/场景/对白和最近项目；只导航或聚焦现有安全入口，不直接构建、生成、选片、审批或锁片 |
 | Shots: view, states, why-stale | `status`, `explain` | shot cards + why-stale chips (R) |
 | Shot production journey | `status`, `import`, `select` | 分镜规划 → 镜头实验室或批量入库 → 人工审片；shot deep-link 保持上下文，候选不自动选用、评价不自动锁片 |
 | Shot fields editing | edit YAML | keystroke-validated editor (R17) |

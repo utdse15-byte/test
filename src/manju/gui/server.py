@@ -759,6 +759,15 @@ class _Handler(BaseHTTPRequestHandler):
                 from .task_center import render_task_center_css
 
                 self._send_text(render_task_center_css(), "text/css; charset=utf-8")
+            elif path == "/command-palette.js":
+                from .command_palette import render_command_palette_js
+
+                self._send_text(render_command_palette_js(),
+                                "application/javascript; charset=utf-8")
+            elif path == "/command-palette.css":
+                from .command_palette import render_command_palette_css
+
+                self._send_text(render_command_palette_css(), "text/css; charset=utf-8")
             elif path == "/workspace.css":
                 from . import workspace as _ws
 
@@ -775,6 +784,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._ui_state_get()
             elif path == "/api/workspace/recents":
                 self._workspace_recents()
+            elif path == "/api/command-palette":
+                self._command_palette()
             elif path == "/api/project-id":
                 # GPT-analysis wave: the stale-tab poller's tiny read — WHICH
                 # project is bound right now (identity token + display name).
@@ -2639,6 +2650,21 @@ class _Handler(BaseHTTPRequestHandler):
 
         current = self.server.project.root if self.server.project is not None else None
         self._send_json(_ws.recents_payload(current))
+
+    def _command_palette(self) -> None:
+        """Cheap read-only discovery index, available even while unbound.
+
+        The palette only needs route metadata, bounded canonical shot summaries
+        and the recents shelf.  It never scans media, compiles a timeline or
+        resolves Provider credentials.
+        """
+        from .command_palette import palette_payload
+        from .userstate import resolve_mode
+
+        session = self.server.session
+        token = session.project_id if session is not None else ""
+        self._send_json(palette_payload(
+            self.server.project, project_token=token, mode=resolve_mode()))
 
     def _workspace_post(self, path: str, body: dict[str, Any]) -> bool:
         """POST dispatch for workspace-picker actions. Unbound: first bind.
