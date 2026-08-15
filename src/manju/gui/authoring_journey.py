@@ -62,7 +62,9 @@ def story_material_status(row: dict[str, Any]) -> tuple[str, str]:
     return "正在写", "继续补充内容，保存后会重新检查。"
 
 
-def authoring_journey_payload(project: Any) -> dict[str, Any]:
+def authoring_journey_payload(
+    project: Any, *, funnel_status_data: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Derive the current authoring path from existing owners only.
 
     ``proposal`` is explicitly optional.  Pending authoring patches receive
@@ -73,7 +75,7 @@ def authoring_journey_payload(project: Any) -> dict[str, Any]:
     """
     from ..build.funnel import PRE_STORYBOARD, funnel_status
 
-    funnel = funnel_status(project)
+    funnel = funnel_status_data if funnel_status_data is not None else funnel_status(project)
     by_id = {row["id"]: row for row in funnel.get("stages", [])}
     writing_rows = [by_id[sid] for sid in PRE_STORYBOARD if sid in by_id]
     writing_done = sum(1 for row in writing_rows if row.get("satisfied"))

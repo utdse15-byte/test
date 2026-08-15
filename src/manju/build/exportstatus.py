@@ -125,8 +125,16 @@ class DeliverableRow:
 
 @dataclass
 class _Ctx:
-    """Everything the rows need, gathered ONCE and best-effort — a broken
-    project must degrade to honest verdicts, never a traceback."""
+    """Everything the rows need, gathered once and best-effort.
+
+    Timeline compilation is intentionally lazy.  Most projects do not yet have
+    every export artifact, and a missing row can be classified from the file
+    tree alone.  Compiling the entire timeline before discovering that every
+    deliverable is absent made the home cockpit scale with all media probes even
+    though the result was nine simple ``missing`` rows.  The first row that
+    genuinely needs current timeline semantics triggers one compile; all later
+    rows reuse the same result and content keys.
+    """
 
     project: Project
     name: str
@@ -134,11 +142,79 @@ class _Ctx:
     rules: Any
     packaging: Any
     newest_final: Path | None
-    timeline: Any                     # the effective (recompiled) timeline, or None
-    timeline_note: str                # why timeline/keys are unavailable, if so
-    final_key: str | None             # current recomputed final content key
-    proxy_key: str | None             # current recomputed proxy content key
-    _final_hash: str | None = field(default=None)
+    _timeline: Any = field(default=None, init=False, repr=False)
+    _timeline_loaded: bool = field(default=False, init=False, repr=False)
+    _timeline_note: str = field(default="", init=False, repr=False)
+    _final_key: str | None = field(default=None, init=False, repr=False)
+    _proxy_key: str | None = field(default=None, init=False, repr=False)
+    _keys_loaded: bool = field(default=False, init=False, repr=False)
+    _final_hash: str | None = field(default=None, init=False, repr=False)
+
+    def _load_timeline(self) -> None:
+        if self._timeline_loaded:
+            return
+        self._timeline_loaded = True
+        try:
+            # The effective timeline is what a build would render: the
+            # recompiled one (auto mode) or the human timeline.json (manual
+            # mode) — exactly the stance `manju explain` and packaging use.
+            if self.rules is not None and getattr(self.rules, "mode", None) == "manual":
+                self._timeline = self.project.load_timeline()
+                if self._timeline is None:
+                    self._timeline_note = "manual 模式但无 timeline.json"
+            else:
+                from ..media.probe import probe_duration_ms
+                from ..timeline.compiler import compile_timeline, gather_compile_input
+
+                self._timeline = compile_timeline(
+                    gather_compile_input(self.project, probe_duration_ms)
+                )
+        except Exception as exc:  # empty / uncompilable projects degrade honestly
+            self._timeline = _safe(lambda: self.project.load_timeline())
+            self._timeline_note = "时间线暂不可编译:" + " ".join(str(exc).split())[:120]
+
+    def _load_keys(self) -> None:
+        if self._keys_loaded:
+            return
+        self._keys_loaded = True
+        self._load_timeline()
+        if self._timeline is None:
+            return
+        try:
+            from ..media.render import final_content_key
+
+            ass = self.project.captions_dir / "captions.ass"
+            ass_arg = ass if ass.exists() else None
+            self._final_key = final_content_key(
+                self.project, self._timeline, ass_file=ass_arg, target="final"
+            )
+            self._proxy_key = final_content_key(
+                self.project, self._timeline, ass_file=ass_arg, target="proxy"
+            )
+        except Exception as exc:
+            self._timeline_note = self._timeline_note or (
+                "内容键重算失败:" + " ".join(str(exc).split())[:120]
+            )
+
+    @property
+    def timeline(self) -> Any:
+        self._load_timeline()
+        return self._timeline
+
+    @property
+    def timeline_note(self) -> str:
+        self._load_timeline()
+        return self._timeline_note
+
+    @property
+    def final_key(self) -> str | None:
+        self._load_keys()
+        return self._final_key
+
+    @property
+    def proxy_key(self) -> str | None:
+        self._load_keys()
+        return self._proxy_key
 
     def final_hash(self) -> str | None:
         """Content hash of the newest final (cached — cover/teaser both need it)."""
@@ -153,46 +229,20 @@ class _Ctx:
 
 
 def _gather(project: Project) -> _Ctx:
+    """Gather only cheap project facts; expensive timeline work is row-driven."""
     config = _safe(lambda: project.load_config())
     name = config.name if config is not None else project.root.name
     rules = _safe(lambda: project.load_rules())
     packaging = _safe(lambda: project.load_packaging())
     newest_final = _safe(lambda: project.newest_final_path())
-
-    timeline = None
-    timeline_note = ""
-    final_key = proxy_key = None
-    try:
-        # The effective timeline is what a build would render: the recompiled
-        # one (auto mode) or the human timeline.json (manual mode) — exactly the
-        # stance `manju explain` and media.packaging._stale_final_status take.
-        if rules is not None and getattr(rules, "mode", None) == "manual":
-            timeline = project.load_timeline()
-            if timeline is None:
-                timeline_note = "manual 模式但无 timeline.json"
-        else:
-            from ..media.probe import probe_duration_ms
-            from ..timeline.compiler import compile_timeline, gather_compile_input
-
-            timeline = compile_timeline(gather_compile_input(project, probe_duration_ms))
-    except Exception as exc:  # empty project / uncompilable specs → degrade
-        timeline = _safe(lambda: project.load_timeline())
-        timeline_note = "时间线暂不可编译:" + " ".join(str(exc).split())[:120]
-
-    if timeline is not None:
-        try:
-            from ..media.render import final_content_key
-
-            ass = project.captions_dir / "captions.ass"
-            ass_arg = ass if ass.exists() else None
-            final_key = final_content_key(project, timeline, ass_file=ass_arg, target="final")
-            proxy_key = final_content_key(project, timeline, ass_file=ass_arg, target="proxy")
-        except Exception as exc:
-            timeline_note = timeline_note or ("内容键重算失败:" + " ".join(str(exc).split())[:120])
-
-    return _Ctx(project=project, name=name, config=config, rules=rules,
-                packaging=packaging, newest_final=newest_final, timeline=timeline,
-                timeline_note=timeline_note, final_key=final_key, proxy_key=proxy_key)
+    return _Ctx(
+        project=project,
+        name=name,
+        config=config,
+        rules=rules,
+        packaging=packaging,
+        newest_final=newest_final,
+    )
 
 
 def _safe(fn):

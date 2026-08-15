@@ -23,6 +23,10 @@ dev = [
     "pytest-xdist>=3.8",
     "httpx>=0.27",
     "click>=8.1",
+    # Local-only browser acceptance tools.  Runtime remains stdlib/vanilla JS;
+    # release developers may point Playwright at the system Edge/Chromium so
+    # no browser binary is downloaded by an ordinary Manju install.
+    "playwright>=1.57,<2",
 ]
 # §2.5 P0 toolbelt — versions pinned (§14: 小众开源工具存续风险,版本全部锁定).
 # Every tool sits behind an adapter wall: absence degrades, never breaks.

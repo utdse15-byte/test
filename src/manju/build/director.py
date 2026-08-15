@@ -1402,7 +1402,11 @@ _DISPATCH = {
 _REPAIR_HINT_RE = re.compile(r"repair --op (\w+) --shot (\S+)")
 
 
-def suggest_next(project: Project) -> list[Suggestion]:
+def suggest_next(
+    project: Project, *,
+    funnel_status_data: dict[str, Any] | None = None,
+    statuses: Any = None,
+) -> list[Suggestion]:
     """SUGGEST NEXT (step 6) — deterministic heuristics over the EXISTING signals
     only (no LLM, §0). Each suggestion carries a ready-made action payload an
     agent/user can pass straight back into :func:`propose`, closing the loop:
@@ -1428,7 +1432,15 @@ def suggest_next(project: Project) -> list[Suggestion]:
     try:
         from .funnel import PRE_STORYBOARD, funnel_current
 
-        cur = funnel_current(project)
+        if funnel_status_data is None:
+            cur = funnel_current(project)
+        else:
+            current_id = funnel_status_data.get("current")
+            cur = next(
+                (row for row in funnel_status_data.get("stages", [])
+                 if row.get("id") == current_id),
+                None,
+            )
         if cur and cur["id"] in PRE_STORYBOARD:
             out.append(Suggestion(
                 kind="funnel",
@@ -1438,7 +1450,7 @@ def suggest_next(project: Project) -> list[Suggestion]:
         pass
 
     try:
-        statuses = evaluate_all(project)
+        statuses = evaluate_all(project) if statuses is None else statuses
     except Exception:
         statuses = []
     by_state: dict[str, list[str]] = {}

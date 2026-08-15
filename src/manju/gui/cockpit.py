@@ -42,6 +42,7 @@ from urllib.parse import quote
 from ..build.director import suggest_next
 from ..build.exportstatus import deliverables
 from ..build.spend import spend_report
+from ..build.stale import evaluate_all
 from ..build.status import project_status
 from ..core.container import Project
 from ..core.events import tail_events
@@ -253,14 +254,14 @@ def _state(project: Project, status: Any, deliv: Any) -> dict[str, Any]:
     }
 
 
-def _next_action(project: Project, status: Any, sugg: Any) -> dict[str, Any]:
+def _next_action(
+    project: Project, status: Any, sugg: Any, funnel: Any = None
+) -> dict[str, Any]:
     """The ONE primary next step (block 3). ``director.suggest_next``'s first
     ACTIONABLE item, mapped to a GUI verb the hero button wires to; the human
     label rides from ``project_status.next_step``."""
     total = status.get("shots_total") if status else len(_safe(project.shot_ids) or [])
     human = status.get("next_step") if status else None
-    funnel = _funnel_status(project)
-
     if not total:  # a brand-new project → point at the storyboard / onboarding
         return {"verb": "story", "text": "先写分镜 · 建镜头 (write the storyboard)",
                 "action": None, "shot": None, "kind": "story",
@@ -432,7 +433,9 @@ def _onboarding(project: Project) -> dict[str, Any]:
     return ob
 
 
-def _journeys(project: Project, state: Any) -> dict[str, Any]:
+def _journeys(
+    project: Project, state: Any, *, funnel: Any = None
+) -> dict[str, Any]:
     """Summarise the three product journeys already owned elsewhere.
 
     This is deliberately a presentation projection, not a new workflow state
@@ -444,7 +447,9 @@ def _journeys(project: Project, state: Any) -> dict[str, Any]:
 
     authoring_error = ""
     try:
-        authoring_raw = authoring_journey_payload(project)
+        authoring_raw = authoring_journey_payload(
+            project, funnel_status_data=funnel
+        )
     except Exception as exc:
         authoring_error = " ".join(str(exc).split())[:180] or exc.__class__.__name__
         authoring_raw = {
@@ -772,15 +777,27 @@ def cockpit_data(project: Project) -> dict[str, Any]:
     the blocks; every block is independently :func:`_guard`-ed so one poisoned
     source degrades a single block to ``{"error": …}``.
     """
-    status = _safe(lambda: project_status(project))
+    # The creation funnel runs `manju check` and is the most expensive shared
+    # authoring read on large projects.  The cockpit needs it in three places
+    # (engine suggestions, the hero action, and the authoring journey), so take
+    # it once and thread the same current facts through all three consumers.
+    funnel = _safe(lambda: _funnel_status(project))
+    statuses = _safe(lambda: evaluate_all(project))
+    status = _safe(lambda: project_status(project, statuses=statuses))
     deliv = _safe(lambda: deliverables(project))
     spend = _safe(lambda: spend_report(project))
-    sugg = _safe(lambda: suggest_next(project))
+    sugg = _safe(
+        lambda: suggest_next(
+            project, funnel_status_data=funnel, statuses=statuses
+        )
+    )
 
     data: dict[str, Any] = {}
     data["identity"] = _guard(lambda: _identity(project, status))
     data["state"] = _guard(lambda: _state(project, status, deliv))
-    data["next_action"] = _guard(lambda: _next_action(project, status, sugg))
+    data["next_action"] = _guard(
+        lambda: _next_action(project, status, sugg, funnel)
+    )
     data["suggestions"] = _guard(lambda: _suggestions(sugg, data["next_action"]))
     data["risks"] = _guard(lambda: _risks(project, status, spend))
     data["deliverables"] = _guard(lambda: _deliverables(deliv))
@@ -789,7 +806,9 @@ def cockpit_data(project: Project) -> dict[str, Any]:
     data["activity"] = _guard(lambda: _activity(project))
     data["approvals"] = _guard(lambda: _approvals(project))
     data["onboarding"] = _guard(lambda: _onboarding(project))
-    data["journeys"] = _guard(lambda: _journeys(project, data["state"]))
+    data["journeys"] = _guard(
+        lambda: _journeys(project, data["state"], funnel=funnel)
+    )
     data["focus"] = _guard(
         lambda: _focus(data["journeys"], data["next_action"], data["risks"])
     )
