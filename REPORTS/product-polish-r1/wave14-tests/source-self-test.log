@@ -1,0 +1,4 @@
+# Wave 14 source self-test
+2026-08-15T04:51:36Z
+$ PYTHONPATH=src python -m manju.gui.windows_app --self-test
+exit_code=0

@@ -1,6 +1,6 @@
 {
   "schema": "manju.product-polish-wave14-tests/v1",
-  "generated_at": "2026-08-15T04:46:07.668131+00:00",
+  "generated_at": "2026-08-15T04:54:18.053786+00:00",
   "wave": 14,
   "head": "ddf72928be2da82cb1c780b65c559345f5c8380d",
   "tree": "ce85e181354507603f58efe474e2443b483cbe8e",
@@ -70,15 +70,18 @@
     ],
     "git_diff_check": true,
     "ruff": "unavailable_in_sandbox",
-    "log": "wave14-tests/static-final.log"
+    "log": "wave14-tests/static-final.log",
+    "source_self_test": true,
+    "source_self_test_log": "wave14-tests/source-self-test.log"
   },
   "package": {
     "wheel": "manju-0.2.0-py3-none-any.whl",
-    "wheel_sha256": "805c9775a5587391bf9aafd88d14ba55a5cda873e444024458285d31f1ae5630",
+    "wheel_sha256": "59313dc351afee1026ceb2218fc6a668dae95092ee06484cbb7e12b4f68bb2b4",
     "installed_target_self_test": true,
     "icon_size": 18786,
     "icon_header": "00000100",
-    "log": "wave14-tests/package-install-final.log"
+    "log": "wave14-tests/package-install-final.log",
+    "build_command": "python -m pip wheel --no-deps --no-build-isolation"
   },
   "visual_acceptance": {
     "mode": "offline-real-renderer",

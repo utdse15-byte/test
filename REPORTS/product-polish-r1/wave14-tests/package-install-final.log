@@ -1,0 +1,28 @@
+# Wave 14 wheel build/install final
+2026-08-15T04:52:42Z
+$ PIP_NO_INDEX=1 python -m pip wheel --no-deps --no-build-isolation . --wheel-dir /tmp/manju-wave14-dist
+WARNING: The directory '/home/oai/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Processing /mnt/data/manju_wave14_work/repo
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: manju
+  Building wheel for manju (pyproject.toml): started
+  Building wheel for manju (pyproject.toml): finished with status 'done'
+  Created wheel for manju: filename=manju-0.2.0-py3-none-any.whl size=2046372 sha256=da045e69a72a57714799069738e6eabc8a0a16e9c48d8599dc90ffe8052301fb
+  Stored in directory: /tmp/pip-ephem-wheel-cache-ccbje51l/wheels/d0/e6/23/6dfd50a3405b38d1a89d3bc9b5435001c6118833314705019c
+Successfully built manju
+wheel=/tmp/manju-wave14-dist/manju-0.2.0-py3-none-any.whl
+da045e69a72a57714799069738e6eabc8a0a16e9c48d8599dc90ffe8052301fb  /tmp/manju-wave14-dist/manju-0.2.0-py3-none-any.whl
+$ PIP_NO_INDEX=1 python -m pip install --no-deps --no-compile --target /tmp/manju-wave14-target <wheel>
+WARNING: The directory '/home/oai/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Processing /tmp/manju-wave14-dist/manju-0.2.0-py3-none-any.whl
+Installing collected packages: manju
+Successfully installed manju-0.2.0
+$ PYTHONPATH=/tmp/manju-wave14-target python -m manju.gui.windows_app --self-test
+ico_size= 18786
+ico_header= 00000100
+ico_sha256= f6b65a28ff4be49fc5e01b40aa180e71457bf4c53a10b84a76e300c5485e9396
+svg_size= 759
+svg_sha256= c65d87775e190f29578919010a5780c315477a0ef4b32cf16584315f9cce47d4
+PASS installed package assets
+PASS wheel isolated target install and self-test

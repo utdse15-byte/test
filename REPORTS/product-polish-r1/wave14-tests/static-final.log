@@ -1,0 +1,13 @@
+# Wave 14 static final
+2026-08-15T04:51:33Z
+$ python -m compileall -q src tests scripts/dev
+PASS compileall
+$ parse .github/workflows/windows-ci.yml
+PASS windows-ci YAML parse; jobs= ['install-smoke', 'test']
+$ rendered common.js / pages.js | node --check
+/tmp/manju-wave14-js/common.js
+/tmp/manju-wave14-js/pages.js
+PASS node checks
+$ git diff --check
+PASS git diff --check
+SKIP ruff: unavailable in sandbox

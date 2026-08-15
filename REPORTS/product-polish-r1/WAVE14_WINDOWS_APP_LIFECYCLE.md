@@ -59,7 +59,7 @@ install-manju.ps1 -NoShortcut
 最终 wheel 重新构建并安装到隔离目录后验证：
 
 ```text
-wheel SHA-256: 805c9775a5587391bf9aafd88d14ba55a5cda873e444024458285d31f1ae5630
+wheel SHA-256: 59313dc351afee1026ceb2218fc6a668dae95092ee06484cbb7e12b4f68bb2b4
 .ico size:      18,786 bytes
 .ico header:    00000100
 installed self-test: PASS
@@ -278,6 +278,7 @@ rendered common.js / pages.js node check PASS
 git diff --check                        PASS
 source windows_app --self-test          PASS
 wheel build + isolated target install   PASS
+visual acceptance evidence bundled      PASS
 installed windows_app --self-test       PASS
 ```
 
