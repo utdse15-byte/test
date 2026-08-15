@@ -489,3 +489,39 @@ App 模式、Windows hard gate 和同一 SHA 双平台门仍未完成。
 
 本波不改变项目 truth、任务 owner、Provider、费用、selected_take、镜头审批或 Picture Lock。
 下一步应进入真实 Windows App 模式个人 Dogfood和同 SHA 发布门，而不是继续扩展命令面板为执行器。
+
+## 19. Wave 14：Windows 点击即用应用生命周期
+
+功能提交：`ddf7292 R1: complete the Windows application lifecycle`。
+
+已完成：
+
+- 复用现有 `manju gui --app --port 0`，新增无控制台 `pythonw -m manju.gui.windows_app`
+  Start-menu owner；没有 Electron、第二套 GUI、任务系统或项目状态；
+- 安装默认创建“Manju 工作台”，`-NoShortcut` 保留 CLI-only，旧 `-CreateShortcut` 继续兼容；
+- 精确 loopback session + protocol/PID/executable identity + 每用户 launch lock 处理连续双击、
+  open/closing/stuck/unreachable 和 PID reuse，不会因浏览器失败启动第二个 server；
+- 生命周期 probe 禁用 proxy 和 redirect，session/log/lock 仍是可删除运行态；
+- 每次 windowless 启动写有界 UTF-8 日志，LocalAppData 不可写时退到 temp；错误通过原生、前景
+  Windows message 显示，并给出 loopback URL 或 doctor/log 恢复路径；
+- SVG/ICO 作为 package data 同时服务浏览器 favicon 和 Start-menu，安装前 self-test 校验 CLI、
+  pythonw、ICO header/大小和 SVG；
+- shortcut 临时生成、target/arguments/icon/ownership 复核后才替换；update/rollback 跟随版本，
+  shell 刷新失败只告警，不篡改已成功的版本指针；
+- uninstall 在删除任何文件前拒绝 live desktop session 或版本化安装进程，只删除 owned shortcut，
+  永不删除项目或 `~/.manju`；
+- Windows CI 增加 installed self-test、COM shortcut 验证、update/rollback target、两类运行中卸载拒绝
+  和卸载保项目门；Python doctor 对 `.lnk` 只报告 detected，不冒充 Windows COM verified。
+
+证据：
+
+- `REPORTS/product-polish-r1/WAVE14_WINDOWS_APP_LIFECYCLE.md`
+- `REPORTS/product-polish-r1/WAVE14_TEST_SUMMARY.json`
+- `REPORTS/product-polish-r1/wave14-tests/`
+- `REPORTS/product-polish-r1/screenshots/wave14/`
+
+记录的互不重复 focused tests 为 274 passed、9 skipped、0 failed；本地 wheel 无网络构建/安装、
+installed self-test、package assets、compileall、git diff 和六页面 × 三视口视觉门通过。当前环境没有
+PowerShell 和 ruff；真实 `pythonw`、WScript COM、Windows App 键鼠 Dogfood、Windows hard gate、
+同一 SHA Ubuntu/Windows 双绿仍未冒充完成。下一步应在真实 Windows 11 做安装生命周期 Dogfood
+和同 SHA 发布收口，而不是继续增加产品页面或命令。

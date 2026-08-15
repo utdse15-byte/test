@@ -37,6 +37,7 @@ over the same core the CLI calls — no capability exists only in the GUI.
 | --- | --- | --- |
 | Project status / next step | `status` | 首页 Cockpit：唯一“现在最值得做” + 创作/镜头/成片三条只读旅程 + 待处理/运行中/最近成果；完整镜头、构建、时间线、任务、事件和版本按需展开 |
 | Global quick-open | — | `Ctrl/Cmd+K` 搜索页面、镜头动作/场景/对白和最近项目；只导航或聚焦现有安全入口，不直接构建、生成、选片、审批或锁片 |
+| Windows click-first app lifecycle | `manju gui --app --port 0`; `install/update/uninstall-manju.ps1` | 开始菜单“Manju 工作台”通过 `pythonw` 无控制台进入同一 GUI；重复启动打开同一 loopback 会话，隐藏失败写 UTF-8 日志；更新/回滚刷新已拥有的入口，卸载遇到仍运行进程先零删除拒绝 |
 | Shots: view, states, why-stale | `status`, `explain` | shot cards + why-stale chips (R) |
 | Shot production journey | `status`, `import`, `select` | 分镜规划 → 镜头实验室或批量入库 → 人工审片；shot deep-link 保持上下文，候选不自动选用、评价不自动锁片 |
 | Shot fields editing | edit YAML | keystroke-validated editor (R17) |

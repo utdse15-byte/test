@@ -20,6 +20,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 | `product-polish-r1/WAVE11_LANGUAGE_ACCESSIBILITY.md` | Product Polish R1 wave 11: shared zh-CN document contract, skip-to-main keyboard access, durable first-run errors, semantic toasts, native glossary help and 200%–400% reflow evidence |
 | `product-polish-r1/WAVE12_PERFORMANCE_VISUAL_GATE.md` | Product Polish R1 wave 12: lazy export freshness, one-pass Cockpit projections, 12/100/300-shot zero-cost benchmark, six-surface desktop/narrow/400%-equivalent visual acceptance gate |
 | `product-polish-r1/WAVE13_QUICK_OPEN.md` | Product Polish R1 wave 13: one Ctrl/Cmd+K navigation-only quick-open, action/scene/dialogue shot search, safe recent-project/task/workspace actions, honest lazy-index fallback, 12/100/300-shot and offline-browser acceptance |
+| `product-polish-r1/WAVE14_WINDOWS_APP_LIFECYCLE.md` | Product Polish R1 wave 14: branded windowless Start-menu launch, exact loopback session reuse, portable launcher lock delegation, visible startup logs/errors, owned shortcut update/rollback and fail-closed uninstall lifecycle |
 | `VIDEO_AUTHORING_GENERALIZATION_2026-08-08.md` | generic offline profiles, canonical plan/reference graph, immutable v2 handoff and full verifier |
 | `UNIFIED_FILM_REHEARSAL_2026-08-07.md` | NARRATIVE-CLOSED-LOOP #17; v5.0 AV0-AV8 zero-network rehearsal |
 | `PRODUCTION_READINESS_2026-08-05.md` | NARRATIVE-CLOSED-LOOP #10 |

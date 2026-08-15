@@ -1,0 +1,151 @@
+{
+  "schema": "manju.product-polish-wave14-tests/v1",
+  "generated_at": "2026-08-15T04:46:07.668131+00:00",
+  "wave": 14,
+  "head": "ddf72928be2da82cb1c780b65c559345f5c8380d",
+  "tree": "ce85e181354507603f58efe474e2443b483cbe8e",
+  "zero_cost": true,
+  "real_provider_calls": 0,
+  "credential_reads": 0,
+  "paid_calls": 0,
+  "pytest": {
+    "recorded_non_overlapping": {
+      "passed": 274,
+      "skipped": 9,
+      "failed": 0
+    },
+    "groups": [
+      {
+        "name": "windows_lifecycle",
+        "files": [
+          "tests/test_product_polish_windows_app.py",
+          "tests/test_windows_install.py",
+          "tests/test_windows_install_behaviour.py",
+          "tests/test_windows_doctor.py",
+          "tests/test_windows_invariants_guard.py"
+        ],
+        "passed": 68,
+        "skipped": 9,
+        "log": "wave14-tests/windows-lifecycle-final.log"
+      },
+      {
+        "name": "ux_polish",
+        "files": [
+          "tests/test_ux_polish.py"
+        ],
+        "passed": 92,
+        "skipped": 0,
+        "log": "wave14-tests/ux-polish-final.log"
+      },
+      {
+        "name": "docs",
+        "files": [
+          "tests/test_fp_docs.py"
+        ],
+        "passed": 5,
+        "skipped": 0,
+        "log": "wave14-tests/fp-docs-final.log"
+      },
+      {
+        "name": "gui_project_actions",
+        "files": [
+          "tests/test_gui_project_actions.py"
+        ],
+        "passed": 14,
+        "skipped": 0,
+        "log": "wave14-tests/gui-files/test_gui_project_actions.log"
+      },
+      {
+        "name": "gui_pages",
+        "files": [
+          "tests/test_gui_pages.py"
+        ],
+        "passed": 25,
+        "skipped": 0,
+        "log": "wave14-tests/gui-files/test_gui_pages.log"
+      },
+      {
+        "name": "workspace",
+        "files": [
+          "tests/test_workspace.py"
+        ],
+        "passed": 27,
+        "skipped": 0,
+        "log": "wave14-tests/gui-files/test_workspace.log"
+      },
+      {
+        "name": "gui_modes",
+        "files": [
+          "tests/test_gui_modes.py"
+        ],
+        "passed": 22,
+        "skipped": 0,
+        "log": "wave14-tests/gui-files/test_gui_modes.log"
+      },
+      {
+        "name": "accessibility",
+        "files": [
+          "tests/test_product_polish_accessibility.py"
+        ],
+        "passed": 6,
+        "skipped": 0,
+        "log": "wave14-tests/gui-files/test_product_polish_accessibility.log"
+      },
+      {
+        "name": "error_protocol",
+        "files": [
+          "tests/test_error_protocol_contract.py"
+        ],
+        "passed": 11,
+        "skipped": 0,
+        "log": "wave14-tests/gui-files/test_error_protocol_contract.log"
+      },
+      {
+        "name": "dev_gates",
+        "files": [
+          "tests/test_product_polish_dev_gates.py"
+        ],
+        "passed": 4,
+        "skipped": 0,
+        "log": "wave14-tests/dev-gates-final.log"
+      }
+    ]
+  },
+  "static": {
+    "compileall": true,
+    "windows_ci_yaml_parse": true,
+    "rendered_javascript_node_check": [
+      "common.js",
+      "pages.js"
+    ],
+    "git_diff_check": true,
+    "ruff": "unavailable_in_sandbox",
+    "log": "wave14-tests/static-final.log"
+  },
+  "package": {
+    "wheel": "manju-0.2.0-py3-none-any.whl",
+    "wheel_sha256": "805c9775a5587391bf9aafd88d14ba55a5cda873e444024458285d31f1ae5630",
+    "installed_target_self_test": true,
+    "icon_size": 18786,
+    "icon_header": "00000100",
+    "log": "wave14-tests/package-install-final.log"
+  },
+  "visual_acceptance": {
+    "mode": "offline-real-renderer",
+    "live_http_e2e": false,
+    "page_viewport_combinations": 18,
+    "passed": 18,
+    "horizontal_overflow": 0,
+    "duplicate_ids": 0,
+    "page_errors": 0,
+    "result": "wave14-tests/visual-gate/visual-acceptance.json"
+  },
+  "platform_limits": {
+    "powershell_available": false,
+    "real_windows_pythonw_tested": false,
+    "real_wscript_shortcut_tested": false,
+    "windows_hard_gate_run": false,
+    "same_sha_ubuntu_windows_green": false,
+    "full_pytest_run": false
+  }
+}

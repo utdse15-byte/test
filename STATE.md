@@ -30,14 +30,19 @@ maintainer stamps the measured result by hand.
 
 ## Current structural work
 
-- Product Polish R1 is in local release-candidate hardening. Waves 3–13 now
+- Product Polish R1 is in local release-candidate hardening. Waves 3–14 now
   connect finishing, application chrome, review, shot production, authoring,
   home cockpit, task lifecycle, language/accessibility, performance/visual
-  acceptance, and a navigation-only Ctrl/Cmd+K quick-open. The quick-open reads
-  current page/shot/recent-project facts lazily, stores no truth and cannot
-  build, generate, select, approve or Picture Lock. Real Windows App-mode
-  Dogfood and same-SHA Ubuntu/Windows release evidence remain open; the official
-  LAST_GREEN marker therefore stays on the previously measured commit.
+  acceptance, a navigation-only Ctrl/Cmd+K quick-open, and the versioned
+  Windows click-first application lifecycle. The Start-menu path now reuses the
+  existing GUI through `pythonw`, self-tests before activation, publishes only
+  disposable loopback session evidence, prevents duplicate servers across
+  open/closing/stuck/unreachable states, and manages an owned branded shortcut
+  across install/update/rollback/uninstall. Linux-local session/package/script
+  evidence is complete, but actual `pythonw` console suppression, COM shortcut
+  behavior, real Windows App-mode Dogfood and same-SHA Ubuntu/Windows release
+  evidence remain open; the official LAST_GREEN marker therefore stays on the
+  previously measured commit.
 v5.0 AV0–AV8 are implemented as an additive, opt-in offline chain. Ownership
 is recorded in `docs/SOURCE_LEDGER.yaml`; the rehearsal evidence is
 `REPORTS/UNIFIED_FILM_REHEARSAL_2026-08-07.md`. No real Provider, paid request
