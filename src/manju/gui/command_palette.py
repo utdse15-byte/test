@@ -380,6 +380,14 @@ _BASE_JS = r'''"use strict";
         keywords: ["任务", "进度", "后台", "job", "task"], action: "tasks", default_rank: 92
       });
     }
+    if (document.getElementById("mj-help-center-btn") || window.ManjuHelpCenter) {
+      rows.push({
+        id: "action:help", kind: "action", label: "帮助与支持",
+        detail: "查看版本、本地数据说明、快捷键、日志和诊断入口",
+        keywords: ["帮助", "支持", "关于", "版本", "日志", "快捷键", "诊断", "help", "about", "support"],
+        action: "help", default_rank: 90
+      });
+    }
     if (workspacePage) {
       rows.push({
         id: "action:open-project", kind: "action", label: "打开现有项目",
@@ -671,6 +679,16 @@ _BASE_JS = r'''"use strict";
       closePalette(false);
       if (window.ManjuTaskCenter && typeof window.ManjuTaskCenter.open === "function") window.ManjuTaskCenter.open();
       else { var btn = document.getElementById("mj-task-center-btn"); if (btn) btn.click(); }
+      return;
+    }
+    if (command.action === "help") {
+      closePalette(false);
+      if (window.ManjuHelpCenter && typeof window.ManjuHelpCenter.open === "function") {
+        window.ManjuHelpCenter.open(document.getElementById("mj-command-btn") || document.activeElement);
+      } else {
+        var help = document.getElementById("mj-help-center-btn");
+        if (help) help.click();
+      }
       return;
     }
     if (command.action === "focus-open") { focusTarget("ws-open-path"); return; }

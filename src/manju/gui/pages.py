@@ -169,10 +169,12 @@ GLOSSARY_HEAD = (
     '<link rel="stylesheet" href="/project-action.css">\n'
     '<link rel="stylesheet" href="/task-center.css">\n'
     '<link rel="stylesheet" href="/command-palette.css">\n'
+    '<link rel="stylesheet" href="/help-center.css">\n'
     '<script src="/webclient.js" defer></script>\n'
     '<script src="/project-action.js" defer></script>\n'
     '<script src="/task-center.js" defer></script>\n'
     '<script src="/command-palette.js" defer></script>\n'
+    '<script src="/help-center.js" defer></script>\n'
     '<script src="/glossary.js" defer></script>\n'
 )
 
@@ -383,6 +385,7 @@ def nav_html(
     re-advertising the hidden link.
     """
     from .command_palette import render_command_button
+    from .help_center import render_help_button
 
     beginner = mode == "beginner"
     label_of = dict(_NAV)
@@ -407,6 +410,7 @@ def nav_html(
         'aria-expanded="false" title="打开任务中心">'
         '<span class="mj-task-label">任务</span>'
         '<span id="mj-task-center-count" class="mj-task-count" hidden></span></button>',
+        render_help_button(),
         _mode_controls(mode, show_terms),
         _workspace_switcher(project_name),
         '<button type="button" id="mj-quit-btn" class="mj-quit-button" '

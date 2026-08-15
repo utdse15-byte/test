@@ -95,6 +95,24 @@ TOKEN_403_MESSAGE = ("missing or invalid X-Manju-Token — "
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
+# Product Polish R1 final wave: conservative browser permissions for every
+# HTML surface, including the unbound workspace and branded error pages.  The
+# GUI needs none of these ambient capabilities; Provider/network access, when
+# explicitly enabled, happens in the deterministic Python engine rather than
+# through browser APIs.  Keep these central so newly added pages cannot forget
+# the privacy baseline.
+_HTML_PRIVACY_HEADERS = {
+    "Permissions-Policy": (
+        "accelerometer=(), autoplay=(self), bluetooth=(), camera=(), "
+        "display-capture=(), encrypted-media=(), fullscreen=(self), "
+        "geolocation=(), gyroscope=(), magnetometer=(), microphone=(), "
+        "payment=(), picture-in-picture=(self), publickey-credentials-get=(), "
+        "screen-wake-lock=(), serial=(), usb=()"
+    ),
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Permitted-Cross-Domain-Policies": "none",
+}
+
 
 def _optional_build_lock(root: Path, actor: str):
     """Hold the project build lock. Never degrades to a no-op.
@@ -602,6 +620,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if content_type.startswith("text/html"):
+            for key, value in _HTML_PRIVACY_HEADERS.items():
+                self.send_header(key, value)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -770,6 +791,15 @@ class _Handler(BaseHTTPRequestHandler):
                 from .command_palette import render_command_palette_css
 
                 self._send_text(render_command_palette_css(), "text/css; charset=utf-8")
+            elif path == "/help-center.js":
+                from .help_center import render_help_center_js
+
+                self._send_text(render_help_center_js(),
+                                "application/javascript; charset=utf-8")
+            elif path == "/help-center.css":
+                from .help_center import render_help_center_css
+
+                self._send_text(render_help_center_css(), "text/css; charset=utf-8")
             elif path == "/workspace.css":
                 from . import workspace as _ws
 
@@ -782,6 +812,18 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/app/status":
                 # Readable while closing — front-end quit dialog polls this.
                 self._send_json(self.server.app_status())
+            elif path == "/api/app/about":
+                # Deliberately above the project/session gate: Help & Support
+                # must work on first launch and after the active project has
+                # been closed.  The payload is bounded and secret-free; deeper
+                # diagnostics remain the user's explicit support-bundle action.
+                from .help_center import about_payload
+
+                self._send_json(about_payload(
+                    self.server.project,
+                    readonly=self.server.readonly,
+                    app_mode=self.server.app_mode,
+                ))
             elif path == "/api/ui-state":
                 self._ui_state_get()
             elif path == "/api/workspace/recents":

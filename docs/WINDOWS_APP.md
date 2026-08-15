@@ -97,6 +97,11 @@ manju doctor
 
 启动器本身不会读取 Provider 凭据，也不会调用 Provider。
 
+在应用窗口内按 `F1` 可以查看当前版本、本地安全模式、常用快捷键和日志目录，并复制
+`manju doctor --windows` / `manju support-bundle` 命令。帮助面板不会自动运行诊断、读取
+密钥或发送日志；是否生成、检查和分享支持包始终由用户决定。完整边界见
+`LOCAL_DATA_AND_PRIVACY.md`。
+
 ## 快捷方式的更新与所有权
 
 快捷方式先在同目录的临时 `.lnk` 中完整生成并复核，再替换正式入口。COM、磁盘或图标错误发生

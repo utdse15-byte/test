@@ -205,6 +205,7 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
     in-chrome switcher's "管理工作区" link (``/?workspace=1``) rather than the
     outside-a-project fallback — the page then also offers a way back."""
     from .command_palette import render_command_button
+    from .help_center import render_help_button
 
     payload = recents_payload(bound.root if bound is not None else None)
     presets = presets or []
@@ -237,9 +238,11 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
     body = (
         main_open("workspace-page")
         + '<header class="ws-brand"><span class="ws-brand-mark" aria-hidden="true">M</span>'
-        '<span><strong>Manju</strong><small>本地电影工作台 · 项目工作区</small></span>'
+        '<span class="ws-brand-copy"><strong>Manju</strong><small>本地电影工作台 · 项目工作区</small></span>'
+        '<span class="ws-brand-actions">'
         + render_command_button(title="搜索项目或页面（Ctrl+K）")
-        + '</header>'
+        + render_help_button(compact=True)
+        + '</span></header>'
         '<h1>打开或新建项目</h1>'
         '<p class="ws-lede">选择项目后，Manju 会恢复上次的页面和工作位置。</p>'
         + intro + back
@@ -285,9 +288,11 @@ def render_picker_page(token: str, *, bound: "Project | None" = None, presets: l
         '<link rel="stylesheet" href="/workspace.css">\n'
         '<link rel="stylesheet" href="/project-action.css">\n'
         '<link rel="stylesheet" href="/command-palette.css">\n'
+        '<link rel="stylesheet" href="/help-center.css">\n'
         '<script src="/webclient.js" defer></script>\n'
         '<script src="/project-action.js" defer></script>\n'
         '<script src="/command-palette.js" defer></script>\n'
+        '<script src="/help-center.js" defer></script>\n'
         '<script src="/workspace.js" defer></script>\n'
         "</head>\n"
         '<body data-page="/workspace">\n'
@@ -314,9 +319,10 @@ _WORKSPACE_CSS = """
   border-radius: 10px; background: var(--accent); color: #0b1220;
   font-weight: 900; box-shadow: inset 0 0 0 1px rgba(255,255,255,.24);
 }
-.ws-brand span:last-child { display: flex; flex-direction: column; line-height: 1.2; }
-.ws-brand strong { font-size: 1.05rem; }
-.ws-brand small { color: var(--muted); margin-top: .18rem; }
+.ws-brand-copy { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.ws-brand-copy strong { font-size: 1.05rem; }
+.ws-brand-copy small { color: var(--muted); margin-top: .18rem; }
+.ws-brand-actions { margin-left: auto; display: inline-flex; align-items: center; gap: .4rem; }
 .workspace-page h1 { font-size: 1.55rem; margin: .2rem 0 .25rem; }
 .ws-lede { color: var(--muted); margin: 0 0 1.2rem; max-width: 44rem; }
 .ws-current {
@@ -383,6 +389,8 @@ _WORKSPACE_CSS = """
 }
 @media (max-width: 620px) {
   .workspace-page { padding: .85rem .65rem 2rem; }
+  .ws-brand { flex-wrap: wrap; }
+  .ws-brand-actions { margin-left: auto; }
   .ws-section { margin: .85rem 0; padding: .8rem; }
   .ws-action-grid { grid-template-columns: 1fr; gap: 0; }
   .ws-row { align-items: flex-start; flex-direction: column; }

@@ -141,3 +141,91 @@ def test_command_palette_acceptance_smoke_is_zero_cost_and_bounded(tmp_path):
     assert facts["dialogOpen"] is True
     assert facts["focus"] == "mj-command-input"
     assert facts["selected"] == "审片 S003"
+
+HELP_CENTER = ROOT / "scripts" / "dev" / "product_help_center_acceptance.py"
+RELEASE_CANDIDATE = ROOT / "scripts" / "dev" / "product_release_candidate.py"
+
+
+@pytest.mark.skipif(not Path("/usr/bin/chromium").exists(), reason="Chromium unavailable")
+def test_help_center_acceptance_smoke_is_zero_cost_and_bounded(tmp_path):
+    output = tmp_path / "help"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(HELP_CENTER),
+            "--output", str(output),
+            "--chromium", "/usr/bin/chromium",
+        ],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    payload = json.loads(
+        (output / "help-center-acceptance.json").read_text(encoding="utf-8")
+    )
+    assert payload["schema"] == "manju.product-help-center-acceptance/v1"
+    assert payload["zero_cost"] is True
+    assert payload["live_http_e2e"] is False
+    assert payload["passed"] is True
+    assert payload["errors"] == []
+    assert payload["cases"]["bound-narrow"]["horizontalOverflow"] == 0
+    assert payload["cases"]["workspace"]["aboutCalls"] == 1
+
+
+def test_release_candidate_dry_run_is_bounded_and_removes_secret_environment(
+    monkeypatch, tmp_path
+):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("product_release_candidate", RELEASE_CANDIDATE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    env = module._sanitized_env({
+        "PATH": "/bin",
+        "OPENAI_API_KEY": "secret",
+        "DASHSCOPE_API_KEY": "secret",
+        "MY_PASSWORD": "secret",
+    }, work=tmp_path / "work")
+    assert env["PATH"] == "/bin"
+    assert env["MANJU_EXECUTION_MODE"] == "strict_zero_cost"
+    assert env["PIP_NO_INDEX"] == "1"
+    assert "OPENAI_API_KEY" not in env
+    assert "DASHSCOPE_API_KEY" not in env
+    assert "MY_PASSWORD" not in env
+
+    output = tmp_path / "rc"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_CANDIDATE),
+            "--output", str(output),
+            "--profile", "standard",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    payload = json.loads(
+        (output / "release-candidate.json").read_text(encoding="utf-8")
+    )
+    assert payload["schema"] == "manju.product-release-candidate/v1"
+    assert payload["zero_cost"] is True
+    assert payload["claim"] == "local-release-candidate-only"
+    assert payload["passed"] is True
+    assert payload["credential_environment_removed"] is True
+    assert all(row["status"] in {"planned", "unavailable"} for row in payload["stages"])
+    assert "Windows hard release gate" in payload["hard_gates_not_claimed"]

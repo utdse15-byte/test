@@ -152,13 +152,14 @@ def _make_project(work: Path):
 
 
 def _css_bundles() -> dict[str, str]:
-    from manju.gui import command_palette, glossary, page, pages, project_action
+    from manju.gui import command_palette, glossary, help_center, page, pages, project_action
     from manju.gui import create_page, edit, exports_page, storyboard, workspace
 
     base = "\n".join([
         page.render_css(), pages.render_pages_css(),
         glossary.render_glossary_css(), project_action.render_project_action_css(),
         command_palette.render_command_palette_css(),
+        help_center.render_help_center_css(),
     ])
     return {
         "workspace": base + "\n" + workspace.render_workspace_css(),
@@ -205,6 +206,8 @@ def _facts(page, *, name: str) -> dict[str, Any]:
             mainFocusable: !!main && main.getAttribute('tabindex') === '-1',
             commandButtons: document.querySelectorAll('#mj-command-btn').length,
             commandKeyshortcuts: document.querySelector('#mj-command-btn')?.getAttribute('aria-keyshortcuts') || '',
+            helpButtons: document.querySelectorAll('#mj-help-center-btn').length,
+            helpKeyshortcuts: document.querySelector('#mj-help-center-btn')?.getAttribute('aria-keyshortcuts') || '',
             duplicateIds,
             literalUndefined: /(^|\\s)undefined($|\\s)/i.test(bodyText),
             h1: document.querySelector('h1')?.textContent?.trim() || '',
@@ -290,6 +293,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         failures.append(f"expected one command button, got {facts['commandButtons']}")
                     if facts["commandKeyshortcuts"] != "Control+K Meta+K":
                         failures.append("command palette keyboard shortcut is missing")
+                    if facts["helpButtons"] != 1:
+                        failures.append(f"expected one help button, got {facts['helpButtons']}")
+                    if facts["helpKeyshortcuts"] != "F1":
+                        failures.append("help center keyboard shortcut is missing")
                     if facts["duplicateIds"]:
                         failures.append("duplicate IDs: " + ", ".join(facts["duplicateIds"][:8]))
                     if facts["literalUndefined"]:

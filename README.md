@@ -184,6 +184,9 @@ Windows 11 x64 是第一平台;全程 per-user、无需管理员。
    任务。隐藏启动失败会写入 `%LOCALAPPDATA%\Manju\Logs` 并给出原生错误提示。终端仍可
    使用 `manju gui --app --port 0`。详见
    [`docs/WINDOWS_APP.md`](docs/WINDOWS_APP.md)。
+7. **需要帮助** —— 在任何页面按 `F1` 查看当前版本、执行模式、本地数据边界、快捷键、
+   Windows 日志和显式诊断入口；帮助面板不会读取 Key、媒体或项目绝对路径。隐私边界见
+   [`docs/LOCAL_DATA_AND_PRIVACY.md`](docs/LOCAL_DATA_AND_PRIVACY.md)。
 
 ## 系统体检样片:两条命令,零花费(`manju new --demo`)
 
@@ -218,12 +221,23 @@ build ok
 接着可以拿这个样片练手,每一步都不花钱:
 
 - `manju status` —— 看当前阶段和每个镜头的待办(一句话一个动作)
-- `manju gui` —— 浏览器工作台,成片页能直接看片；工作台内按 `Ctrl/Cmd+K` 可按页面、镜头动作或最近项目快速前往（只导航，不直接执行危险操作）
+- `manju gui` —— 浏览器工作台,成片页能直接看片；`Ctrl/Cmd+K` 按页面、镜头动作或最近项目快速前往（只导航），`F1` 查看版本、安全模式、快捷键和本地诊断入口
 - 改 `shots/S003.yaml` 里的 `action.main`,再 `manju build` —— 观察它**只重做那一镜**
 - `manju qc brief` —— 看质检怎么出题
 - `manju exports` —— 九种交付物的状态一览
 
 练完了删掉整个目录即可,不留痕迹。要开始真正的项目,往下看 Quickstart。
+
+维护者做本地 Product Polish 发布候选检查时，可运行：
+
+```bash
+python scripts/dev/product_release_candidate.py \
+  --output REPORTS/product-polish-r1/local-rc
+```
+
+它严格零成本、逐阶段保存日志，并复用 focused tests、性能、视觉、快速前往、帮助中心、
+Windows App self-test 和离线 wheel smoke；它**不替代**同一 SHA 的 Ubuntu / Windows
+完整发布门。当前活动交接见 [`FINAL_HANDOFF.md`](FINAL_HANDOFF.md)。
 
 ## Quickstart
 
