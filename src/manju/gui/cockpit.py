@@ -770,6 +770,14 @@ def _focus(journeys: Any, next_action: Any, risks: Any) -> dict[str, Any]:
 
 
 def cockpit_data(project: Project) -> dict[str, Any]:
+    """Build one internally consistent cockpit snapshot from current truth."""
+    from ..core.yamlio import yaml_read_snapshot
+
+    with yaml_read_snapshot():
+        return _cockpit_data(project)
+
+
+def _cockpit_data(project: Project) -> dict[str, Any]:
     """The whole cockpit payload — one glance → one action → activity → risk.
 
     Pure and read-only: never spends, never mutates, never 500s. The four

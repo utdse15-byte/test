@@ -44,6 +44,7 @@ class Stage:
     required: bool = True
     profiles: tuple[str, ...] = ("quick", "standard", "full")
     availability: str | None = None
+    availability_reason: str | None = None
 
 
 _SENSITIVE_PARTS = (
@@ -115,6 +116,31 @@ def _module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def _python_modules_available(python: str, names: tuple[str, ...]) -> tuple[bool, str | None]:
+    """Probe an existing interpreter without installing or importing project code."""
+    code = (
+        "import importlib.util, json; names=" + repr(names) + "; "
+        "print(json.dumps([name for name in names if importlib.util.find_spec(name) is None]))"
+    )
+    try:
+        completed = subprocess.run(
+            [python, "-c", code], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"build interpreter unavailable: {exc}"
+    if completed.returncode != 0:
+        detail = " ".join((completed.stderr or completed.stdout).split())[:240]
+        return False, f"build interpreter probe failed: {detail or completed.returncode}"
+    try:
+        missing = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        return False, "build interpreter returned an invalid module probe"
+    if missing:
+        return False, "missing build modules: " + ", ".join(str(name) for name in missing)
+    return True, None
+
+
 def _default_chromium() -> str:
     """Return an installed Chromium-family browser without downloading one."""
 
@@ -143,8 +169,13 @@ def _default_chromium() -> str:
     return ""
 
 
-def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> list[Stage]:
+def _stages(
+    root: Path, output: Path, chromium: str, *, require_ruff: bool, build_python: str
+) -> list[Stage]:
     py = sys.executable
+    wheel_available, wheel_reason = _python_modules_available(
+        build_python, ("pip", "setuptools.build_meta", "wheel")
+    )
     isolated_product_tests = {
         "test_product_polish_command_palette.py",
         "test_product_polish_dev_gates.py",
@@ -284,11 +315,13 @@ def _stages(root: Path, output: Path, chromium: str, *, require_ruff: bool) -> l
         Stage(
             "wheel-build",
             (
-                py, "-m", "pip", "wheel", ".", "--no-deps", "--no-build-isolation",
+                build_python, "-m", "pip", "wheel", ".", "--no-deps", "--no-build-isolation",
                 "--wheel-dir", str(output / "wheel"),
             ),
             300,
             profiles=("standard", "full"),
+            availability="available" if wheel_available else "unavailable",
+            availability_reason=wheel_reason,
         ),
     ]
     return stages
@@ -328,6 +361,8 @@ def _run_stage(
         "timeout_s": stage.timeout_s,
         "availability": stage.availability or "available",
     }
+    if stage.availability_reason:
+        row["availability_reason"] = stage.availability_reason
     if dry_run:
         row["status"] = "unavailable" if stage.availability == "unavailable" else "planned"
         row["exit_code"] = None
@@ -431,7 +466,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     work.mkdir(parents=True, exist_ok=True)
     env = _sanitized_env(work=work)
     stages = [stage for stage in _stages(
-        root, output, args.chromium, require_ruff=args.require_ruff
+        root, output, args.chromium, require_ruff=args.require_ruff,
+        build_python=args.build_python,
     ) if args.profile in stage.profiles]
 
     result: dict[str, Any] = {
@@ -455,6 +491,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "playwright": _module_available("playwright"),
             "ruff": _tool_available("ruff"),
             "powershell": _tool_available("pwsh") or _tool_available("powershell"),
+            "build_python": args.build_python,
         },
         "credential_environment_removed": True,
         "stages": [],
@@ -517,6 +554,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", choices=("quick", "standard", "full"), default="standard")
     parser.add_argument("--chromium", default=_default_chromium())
+    parser.add_argument(
+        "--build-python", default=sys.executable,
+        help="existing offline Python with pip, setuptools.build_meta and wheel",
+    )
     parser.add_argument("--require-ruff", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

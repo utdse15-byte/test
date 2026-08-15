@@ -37,7 +37,7 @@ from .models import (
     VoiceTakeSidecar,
 )
 from .timebase import Rate
-from .yamlio import dump_yaml, read_json, read_yaml, write_json, write_yaml
+from .yamlio import dump_yaml, read_json, read_yaml, snapshot_memo, write_json, write_yaml
 
 PROJECT_FILE = "project.yaml"
 
@@ -588,7 +588,10 @@ contract:
     # ---------------------------------------------------------------- config
 
     def load_config(self) -> ProjectConfig:
-        return ProjectConfig.model_validate(read_yaml(self.root / PROJECT_FILE) or {})
+        return snapshot_memo(
+            (id(self), "config"),
+            lambda: ProjectConfig.model_validate(read_yaml(self.root / PROJECT_FILE) or {}),
+        )
 
     def save_config(self, config: ProjectConfig) -> None:
         self.verify_manju_identity()  # CLI-P0-001 write-before verification
@@ -620,7 +623,10 @@ contract:
 
     def load_index(self) -> ShotIndex:
         path = self.shots_dir / "index.yaml"
-        return ShotIndex.model_validate(read_yaml(path) or {}) if path.exists() else ShotIndex()
+        return snapshot_memo(
+            (id(self), "shot-index"),
+            lambda: ShotIndex.model_validate(read_yaml(path) or {}) if path.exists() else ShotIndex(),
+        )
 
     def save_index(self, index: ShotIndex) -> None:
         self.verify_manju_identity()  # CLI-P0-001 write-before verification
@@ -635,13 +641,20 @@ contract:
         authority; ``manju check`` still WARNS about an unindexed shot (it is
         not silently ignored — see core/check.py), but build/timeline must not
         treat a draft shot as part of the film without an explicit opt-in."""
+        cached = snapshot_memo(
+            (id(self), "shot-ids", indexed_only),
+            lambda: self._shot_ids(indexed_only=indexed_only),
+        )
+        return list(cached)
+
+    def _shot_ids(self, *, indexed_only: bool = False) -> tuple[str, ...]:
         ordered = list(self.load_index().order)
         if indexed_only:
-            return ordered
+            return tuple(ordered)
         on_disk = sorted(
             p.stem for p in self.shots_dir.glob("*.yaml") if p.name != "index.yaml"
         )
-        return ordered + [s for s in on_disk if s not in ordered]
+        return tuple(ordered + [s for s in on_disk if s not in ordered])
 
     def _safe_shot_id(self, shot_id: str) -> str:
         """The ONE choke point every shot-id-to-path caller passes through
@@ -667,9 +680,12 @@ contract:
         return data
 
     def load_shot(self, shot_id: str) -> ShotSpec:
-        data = self.load_shot_raw(shot_id)
-        data.setdefault("id", shot_id)
-        return ShotSpec.model_validate(data)
+        def _load() -> ShotSpec:
+            data = dict(self.load_shot_raw(shot_id))
+            data.setdefault("id", shot_id)
+            return ShotSpec.model_validate(data)
+
+        return snapshot_memo((id(self), "shot", shot_id), _load)
 
     def save_shot(self, shot: ShotSpec) -> None:
         self.verify_manju_identity()  # CLI-P0-001 write-before verification
@@ -808,6 +824,13 @@ contract:
         staleness marks the SELECTED take BROKEN when its media is gone, spend
         accounting still owes money already spent on a take whose media was
         later reclaimed, ...) — this is purely an additive, opt-in filter."""
+        cached = snapshot_memo(
+            (id(self), "takes", shot_id, skip_ghosts),
+            lambda: tuple(self._takes(shot_id, skip_ghosts=skip_ghosts)),
+        )
+        return list(cached)
+
+    def _takes(self, shot_id: str, *, skip_ghosts: bool = False) -> list[TakeInfo]:
         tdir = self.takes_dir(shot_id)
         if not tdir.exists():
             return []

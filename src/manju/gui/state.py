@@ -387,6 +387,15 @@ def _failures(project: "Project") -> list[dict[str, Any]]:
 
 def build_state(project: "Project", runner: "JobRunner",
                 *, include_timing: bool = False) -> dict[str, Any]:
+    """Build one internally consistent GUI state snapshot from current truth."""
+    from ..core.yamlio import yaml_read_snapshot
+
+    with yaml_read_snapshot():
+        return _build_state(project, runner, include_timing=include_timing)
+
+
+def _build_state(project: "Project", runner: "JobRunner",
+                 *, include_timing: bool = False) -> dict[str, Any]:
     # G2: run the stale + voice evaluation ONCE and thread the results through
     # BOTH project_status(...) and _shot_cards(...) — before, each recomputed
     # them independently (evaluate_all + evaluate_all_voices ran twice per

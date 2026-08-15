@@ -229,3 +229,22 @@ def test_release_candidate_dry_run_is_bounded_and_removes_secret_environment(
     assert payload["credential_environment_removed"] is True
     assert all(row["status"] in {"planned", "unavailable"} for row in payload["stages"])
     assert "Windows hard release gate" in payload["hard_gates_not_claimed"]
+
+
+def test_release_candidate_reports_missing_offline_wheel_backend(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("product_release_candidate", RELEASE_CANDIDATE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    stages = module._stages(
+        ROOT, tmp_path, "", require_ruff=False,
+        build_python=str(tmp_path / "missing-python"),
+    )
+    wheel = next(stage for stage in stages if stage.name == "wheel-build")
+
+    assert wheel.availability == "unavailable"
+    assert "interpreter unavailable" in wheel.availability_reason

@@ -6,12 +6,14 @@ always pathlib — Windows and Chinese paths are first-class citizens (§14).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Hashable, Iterator, TypeVar
 
 import yaml
 
@@ -121,20 +123,60 @@ def atomic_write_text(path: Path, text: str) -> None:
 _PARSE_CACHE: dict[str, tuple[bytes, Any]] = {}
 _PARSE_CACHE_MAX = 4096  # bounded for long-lived GUI processes
 
+# A composed read model such as the GUI cockpit may ask several independent
+# owners for the same truth file. Keep one byte snapshot only for that request;
+# the next request always returns to the byte-honest read path below.
+_READ_SNAPSHOT: "contextvars.ContextVar[dict[Hashable, Any] | None]" = contextvars.ContextVar(
+    "manju_yaml_read_snapshot", default=None
+)
+_T = TypeVar("_T")
+
+
+@contextmanager
+def yaml_read_snapshot() -> Iterator[None]:
+    """Reuse successful YAML reads within one explicitly read-only operation."""
+    active = _READ_SNAPSHOT.get()
+    if active is not None:
+        yield
+        return
+    token = _READ_SNAPSHOT.set({})
+    try:
+        yield
+    finally:
+        _READ_SNAPSHOT.reset(token)
+
+
+def snapshot_memo(key: Hashable, load: Callable[[], _T]) -> _T:
+    """Memoize a derived read value only while :func:`yaml_read_snapshot` is active."""
+    snapshot = _READ_SNAPSHOT.get()
+    memo_key = ("derived", key)
+    if snapshot is None:
+        return load()
+    if memo_key not in snapshot:
+        snapshot[memo_key] = load()
+    return snapshot[memo_key]
+
 
 def read_yaml(path: Path) -> Any:
     import copy
 
     key = os.fspath(path)
+    snapshot = _READ_SNAPSHOT.get()
+    snapshot_key = ("yaml", key)
+    if snapshot is not None and snapshot_key in snapshot:
+        return copy.deepcopy(snapshot[snapshot_key])
     with open(path, "rb") as f:
         raw = f.read()
     hit = _PARSE_CACHE.get(key)
     if hit is not None and hit[0] == raw:
-        return copy.deepcopy(hit[1])
-    data = yaml.safe_load(raw.decode("utf-8"))
-    if len(_PARSE_CACHE) >= _PARSE_CACHE_MAX:
-        _PARSE_CACHE.clear()
-    _PARSE_CACHE[key] = (raw, data)
+        data = hit[1]
+    else:
+        data = yaml.safe_load(raw.decode("utf-8"))
+        if len(_PARSE_CACHE) >= _PARSE_CACHE_MAX:
+            _PARSE_CACHE.clear()
+        _PARSE_CACHE[key] = (raw, data)
+    if snapshot is not None:
+        snapshot[snapshot_key] = data
     return copy.deepcopy(data)
 
 

@@ -31,6 +31,7 @@ media/ffmpeg's cancel_scope; left until the remaining ~10s hurts for real.
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -86,6 +87,49 @@ def test_read_yaml_still_raises_on_missing_file(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         read_yaml(tmp_path / "ghost.yaml")
+
+
+def test_yaml_read_snapshot_reuses_bytes_only_inside_scope(tmp_path, monkeypatch):
+    import builtins
+
+    from manju.core.yamlio import read_yaml, yaml_read_snapshot
+
+    path = tmp_path / "truth.yaml"
+    path.write_text("value: old\n", encoding="utf-8")
+    real_open = builtins.open
+    reads = 0
+
+    def counted_open(candidate, *args, **kwargs):
+        nonlocal reads
+        if Path(candidate) == path:
+            reads += 1
+        return real_open(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", counted_open)
+    with yaml_read_snapshot():
+        assert read_yaml(path) == {"value": "old"}
+        path.write_text("value: new\n", encoding="utf-8")
+        assert read_yaml(path) == {"value": "old"}
+    assert reads == 1
+    assert read_yaml(path) == {"value": "new"}
+    assert reads == 2
+
+
+def test_yaml_read_snapshot_memoizes_derived_values_only_inside_scope():
+    from manju.core.yamlio import snapshot_memo, yaml_read_snapshot
+
+    calls = 0
+
+    def load():
+        nonlocal calls
+        calls += 1
+        return object()
+
+    with yaml_read_snapshot():
+        first = snapshot_memo("model", load)
+        assert snapshot_memo("model", load) is first
+    assert snapshot_memo("model", load) is not first
+    assert calls == 2
 
 
 # ------------------------------------------- QC frame identity cache
