@@ -285,6 +285,16 @@ def test_palette_real_browser_searches_shot_content_and_never_executes_dangerous
         assert page.evaluate("window.__navigated.pop()") == "/review?shot=S003"
 
         page.keyboard.press("Control+k")
+        page.locator("#mj-command-input").fill("导入 推开卷帘门")
+        page.keyboard.press("Enter")
+        assert page.evaluate("window.__navigated.pop()") == "/ingest?shot=S003&role=take"
+
+        page.keyboard.press("Control+k")
+        page.locator("#mj-command-input").fill("任务中心")
+        page.keyboard.press("Enter")
+        assert page.evaluate("window.__taskOpened") is True
+
+        page.keyboard.press("Control+k")
         page.locator("#mj-command-input").fill("另一部片")
         page.keyboard.press("Enter")
         page.wait_for_timeout(20)
@@ -380,6 +390,45 @@ def test_palette_failed_index_is_honest_and_static_navigation_still_works(
         page.locator("#mj-command-input").fill("创作")
         assert "创作" in page.locator("#mj-command-results").inner_text()
         page.keyboard.press("Escape")
+        browser.close()
+
+
+@pytest.mark.skipif(not Path("/usr/bin/chromium").exists(), reason="Chromium unavailable")
+def test_unbound_workspace_palette_never_offers_project_bound_pages(tmp_project):
+    from playwright.sync_api import sync_playwright
+    from manju.gui import page as app_page
+    from manju.gui.workspace import render_workspace_css
+
+    html_doc = render_picker_page("", bound=None, presets=[])
+    css = f"{app_page.render_css()}\n{render_workspace_css()}\n{render_command_palette_css()}"
+    html_doc = html_doc.replace('</head>', f'<style>{css}</style></head>')
+    payload = palette_payload(None, project_token="", mode="beginner")
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            executable_path="/usr/bin/chromium", headless=True,
+            args=["--no-sandbox", "--disable-gpu"],
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page.set_content(html_doc, wait_until="domcontentloaded")
+        page.evaluate(
+            """(payload) => {
+              window.manjuApiOptions = opts => opts || {};
+              window.requestJson = () => Promise.resolve(payload);
+            }""",
+            payload,
+        )
+        page.add_script_tag(content=render_command_palette_js())
+        page.keyboard.press("Control+k")
+        page.locator("#mj-command-input").fill("审片")
+        assert "审片" not in page.locator("#mj-command-results").inner_text()
+        page.locator("#mj-command-input").fill("打开现有项目")
+        page.keyboard.press("Enter")
+        page.wait_for_function("document.activeElement.id === 'ws-open-path'")
+        assert page.evaluate("document.activeElement.id") == "ws-open-path"
+        assert page.evaluate(
+            "Math.max(0, document.documentElement.scrollWidth - innerWidth)"
+        ) == 0
         browser.close()
 
 
