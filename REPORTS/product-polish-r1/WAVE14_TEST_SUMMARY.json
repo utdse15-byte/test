@@ -10,106 +10,56 @@
   "paid_calls": 0,
   "pytest": {
     "recorded_non_overlapping": {
-      "passed": 274,
+      "passed": 314,
       "skipped": 9,
       "failed": 0
     },
     "groups": [
       {
-        "name": "windows_lifecycle",
+        "name": "focused_product_surface",
         "files": [
           "tests/test_product_polish_windows_app.py",
           "tests/test_windows_install.py",
           "tests/test_windows_install_behaviour.py",
           "tests/test_windows_doctor.py",
-          "tests/test_windows_invariants_guard.py"
+          "tests/test_ux_polish.py",
+          "tests/test_gui_pages.py",
+          "tests/test_gui_modes.py",
+          "tests/test_workspace.py",
+          "tests/test_product_polish_app_chrome.py",
+          "tests/test_gui_project_actions.py",
+          "tests/test_fp_docs.py",
+          "tests/test_product_polish_task_center.py",
+          "tests/test_gui_merge_blockers.py",
+          "tests/test_product_polish_dev_gates.py",
+          "tests/test_product_polish_performance_gate.py"
         ],
-        "passed": 68,
+        "passed": 284,
         "skipped": 9,
-        "log": "wave14-tests/windows-lifecycle-final.log"
+        "failed": 0,
+        "log": "wave14-tests/focused-tests.log",
+        "exit_code": 0
       },
       {
-        "name": "ux_polish",
+        "name": "supplemental_invariants",
         "files": [
-          "tests/test_ux_polish.py"
-        ],
-        "passed": 92,
-        "skipped": 0,
-        "log": "wave14-tests/ux-polish-final.log"
-      },
-      {
-        "name": "docs",
-        "files": [
-          "tests/test_fp_docs.py"
-        ],
-        "passed": 5,
-        "skipped": 0,
-        "log": "wave14-tests/fp-docs-final.log"
-      },
-      {
-        "name": "gui_project_actions",
-        "files": [
-          "tests/test_gui_project_actions.py"
-        ],
-        "passed": 14,
-        "skipped": 0,
-        "log": "wave14-tests/gui-files/test_gui_project_actions.log"
-      },
-      {
-        "name": "gui_pages",
-        "files": [
-          "tests/test_gui_pages.py"
-        ],
-        "passed": 25,
-        "skipped": 0,
-        "log": "wave14-tests/gui-files/test_gui_pages.log"
-      },
-      {
-        "name": "workspace",
-        "files": [
-          "tests/test_workspace.py"
-        ],
-        "passed": 27,
-        "skipped": 0,
-        "log": "wave14-tests/gui-files/test_workspace.log"
-      },
-      {
-        "name": "gui_modes",
-        "files": [
-          "tests/test_gui_modes.py"
-        ],
-        "passed": 22,
-        "skipped": 0,
-        "log": "wave14-tests/gui-files/test_gui_modes.log"
-      },
-      {
-        "name": "accessibility",
-        "files": [
-          "tests/test_product_polish_accessibility.py"
-        ],
-        "passed": 6,
-        "skipped": 0,
-        "log": "wave14-tests/gui-files/test_product_polish_accessibility.log"
-      },
-      {
-        "name": "error_protocol",
-        "files": [
+          "tests/test_windows_invariants_guard.py",
+          "tests/test_product_polish_accessibility.py",
           "tests/test_error_protocol_contract.py"
         ],
-        "passed": 11,
+        "passed": 30,
         "skipped": 0,
-        "log": "wave14-tests/gui-files/test_error_protocol_contract.log"
-      },
-      {
-        "name": "dev_gates",
-        "files": [
-          "tests/test_product_polish_dev_gates.py"
-        ],
-        "passed": 4,
-        "skipped": 0,
-        "log": "wave14-tests/dev-gates-final.log"
+        "failed": 0,
+        "log": "wave14-tests/supplemental-invariants.log",
+        "exit_code": 0
       }
-    ]
+    ],
+    "additional_overlapping_check": {
+      "passed": 145,
+      "failed": 0,
+      "log": "wave14-tests/final-doc-code-smoke.log",
+      "counted_in_total": false
+    }
   },
   "static": {
     "compileall": true,

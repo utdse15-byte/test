@@ -520,7 +520,7 @@ App 模式、Windows hard gate 和同一 SHA 双平台门仍未完成。
 - `REPORTS/product-polish-r1/wave14-tests/`
 - `REPORTS/product-polish-r1/screenshots/wave14/`
 
-记录的互不重复 focused tests 为 274 passed、9 skipped、0 failed；本地 wheel 无网络构建/安装、
+记录的互不重复 focused tests 为 314 passed、9 skipped、0 failed；本地 wheel 无网络构建/安装、
 installed self-test、package assets、compileall、git diff 和六页面 × 三视口视觉门通过。当前环境没有
 PowerShell 和 ruff；真实 `pythonw`、WScript COM、Windows App 键鼠 Dogfood、Windows hard gate、
 同一 SHA Ubuntu/Windows 双绿仍未冒充完成。下一步应在真实 Windows 11 做安装生命周期 Dogfood
