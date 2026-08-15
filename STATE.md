@@ -35,9 +35,24 @@ maintainer stamps the measured result by hand.
 - Same-SHA Ubuntu full suite + Windows hard release gate for the Product Polish
   release candidate; `REPORTS/LAST_GREEN.yaml` therefore remains on the last
   actually measured dual-platform commit.
-- Full repository pytest in a dependency-complete environment.  The bounded
-  local RC gate is intentionally not a substitute for the full suite.
 - Real Provider / paid request / real-media Proof Shot has not been run.
+
+## Local package takeover evidence (2026-08-15)
+
+- The user-supplied final ZIP, every packaged hash, the Git bundle and the
+  project/tree correspondence were verified before adoption. Its HEAD was a
+  linear successor of the prior formal checkout, not an unrelated replacement.
+- Full Windows-local repository suite: 6357 passed / 71 skipped. Git for
+  Windows supplied `sh` and `grep`, so the previously environment-blocked ten
+  tests ran rather than being waived.
+- The unchanged 12/100/300-shot cockpit budgets pass on both Python 3.14 and
+  the supported-floor Python 3.11. Request-local read snapshots expire at the
+  end of each pure GUI aggregation; they are never project/build truth or a
+  cross-request cache.
+- A wheel can be built with an already-installed offline build interpreter.
+  The RC reports a missing backend as unavailable and never downloads one.
+- Exact final HEAD/tree, local RC evidence and artifact hashes live in the
+  delivery manifest rather than this moving tracked note.
 
 ## Current structural work
 

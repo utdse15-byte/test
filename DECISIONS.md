@@ -268,6 +268,11 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #3` | 2026-08-14 | Local RC is bounded evidence and never release certification | scripts/dev/product_release_candidate.py |
 | `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #4` | 2026-08-14 | Contract registry consistency remains a required product gate | CONTRACTS.yaml, tests/test_fp_contracts.py |
 | `PRODUCT-POLISH-R1-LOCAL-SUPPORT-AND-RC #5` | 2026-08-14 | Product expansion stops until real release evidence is complete | FINAL_HANDOFF.md, REPORTS/LAST_GREEN.yaml |
+| `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #1` | 2026-08-15 | A supplied full ZIP is verified before linear adoption, never blindly overlaid | repository.bundle, PACKAGE_MANIFEST.txt, SHA256SUMS.txt |
+| `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #2` | 2026-08-15 | Large GUI aggregations may share only one request-local read snapshot | core/yamlio.py, core/container.py, gui/cockpit.py, gui/state.py |
+| `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #3` | 2026-08-15 | Supported runtimes keep the existing 12/100/300-shot performance budgets | scripts/dev/product_polish_benchmark.py |
+| `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #4` | 2026-08-15 | RC wheel construction may select an existing offline build interpreter explicitly | scripts/dev/product_release_candidate.py |
+| `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #5` | 2026-08-15 | One-archive handoff includes source, history, evidence, hashes and recovery proof | FINAL_HANDOFF.md, repository.bundle, SHA256SUMS.txt |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
@@ -4524,3 +4529,31 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    cross-platform release evidence are complete. Future paid work remains an
    explicit, separately approved Proof Shot rather than a consequence of this
    local polish release.
+
+## PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER (2026-08-15)
+
+1. **A supplied full ZIP is evidence to verify, not a directory to overwrite
+   with.** Adoption requires safe paths, complete hashes, project/tree identity,
+   a valid Git bundle and ancestry from the formal checkout. Only a linear
+   successor may fast-forward the formal branch without a separate merge
+   decision.
+2. **Large GUI read models use one request-local snapshot, never a persistent
+   cache.** Cockpit and consolidated state may reuse YAML bytes, parsed shot
+   models and take listings during one pure read aggregation. The scope is
+   context-local and discarded on return; the next request re-reads disk, and
+   no snapshot becomes truth, build input, provider input or cross-request
+   state.
+3. **Performance budgets remain product requirements.** Windows Python 3.14
+   and the supported-floor Python 3.11 must both satisfy the existing
+   12/100/300-shot cockpit medians. A slow supported runtime is fixed through
+   duplicate-work removal; the RC threshold is not raised to manufacture a
+   pass.
+4. **Wheel construction may use a different existing offline interpreter from
+   the test interpreter.** The RC accepts an explicit `--build-python`, probes
+   `pip`, `setuptools.build_meta` and `wheel`, and records the choice. Missing
+   tooling is a named unavailable required stage, never an implicit package
+   download or a deep pip traceback.
+5. **One archive is a complete handoff only when it carries recovery and
+   proof.** The clean project tree, full Git bundle, final-HEAD RC/wheel,
+   human handoff, manifest, per-file SHA-256 and clean-room extraction/bundle
+   verification travel together. User media/projects remain separate data.
