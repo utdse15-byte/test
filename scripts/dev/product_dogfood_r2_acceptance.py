@@ -193,13 +193,19 @@ def browser_checks(project, service, executable, out):
                 for route in ('/', '/create', '/storyboard', '/lab?shot=S001', '/review?shot=S001',
                               '/edit', '/subtitles', '/mixer', '/packaging', '/exports', '/director', '/ingest'):
                     page, errors = service.mount(browser, route, width=width)
+                    if route == '/':
+                        # Home is genuinely asynchronous. Wait for its real
+                        # service-backed hero, not an arbitrary screenshot
+                        # delay that can capture a passing loading skeleton.
+                        page.wait_for_selector('#cockpit .ck-hero', timeout=30000)
                     overflow = page.evaluate("document.documentElement.scrollWidth > innerWidth + 1")
                     assert not errors, (route, errors)
                     assert not overflow, (route, width, "horizontal overflow")
                     name = route.strip('/').replace('?', '_').replace('=', '_') or 'home'
                     page.screenshot(path=str(out / f'{width}-{name}.png'), full_page=True)
                     facts['surfaces'].append({"route": route, "width": width, "status": 200,
-                                              "horizontal_overflow": overflow, "page_errors": errors})
+                                              "horizontal_overflow": overflow, "page_errors": errors,
+                                              "home_ready": True if route == "/" else None})
                     service.dispose_page(page)
                     (out / 'surface-results.json').write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding='utf-8')
             page, errors = service.mount(browser, '/mixer')

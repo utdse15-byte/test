@@ -46,4 +46,21 @@ human film approval. No Windows runtime available. Direct browser localhost
 navigation is blocked by this sandbox; browser/real-service composition is not
 live HTTP E2E. Available FFmpeg is 7.1.5 rather than pinned 6.1.1. Hypothesis,
 pytest-xdist and Ruff are unavailable. Three Hypothesis-dependent modules cannot
-be collected. `LAST_GREEN` and old project delivery records remain unchanged.
+be collected. `LAST_GREEN` remains unchanged. Previous active state and handoff were archived in full before updating their current entry points.
+
+## Final runtime acceptance
+
+Runtime commit `62ccbb96894ee7a9c22c1329b2d4f0cbd5524515` completed the available
+full scope: 6366 passed / 15 failed / 22 skipped (6403 cases). All 6373 original
+case identities were retained; 30 new cases passed. Final failures were all
+observed in the original baseline; the sole resolved baseline failure was the
+obsolete transport test seam, not a newly fixed production transport.
+Related focused scope: 174 passed (overlapping).
+
+Final browser/real-service acceptance is `EVIDENCE/composed-delivery/`;
+`edit-export-delivery/` retains the six-second synthetic edit/render/export
+rehearsal; `historical-handoffs/` verifies four bundles made by actual historical
+R1/R2 source. Final wheel source/independent-target comparison matched 240 files.
+The final active notes and verification report describe remaining local
+cancellation, browser screenshot, legacy selection and release-gate risks.
+No production or test source was changed after this full-scope runtime freeze.
