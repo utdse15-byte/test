@@ -273,6 +273,9 @@ CLAUDE.md 曾用裸 `#33` 给 ffmpeg 钉作证,顺着找到的却是无关的顶
 | `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #3` | 2026-08-15 | Supported runtimes keep the existing 12/100/300-shot performance budgets | scripts/dev/product_polish_benchmark.py |
 | `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #4` | 2026-08-15 | RC wheel construction may select an existing offline build interpreter explicitly | scripts/dev/product_release_candidate.py |
 | `PRODUCT-POLISH-R1-FINAL-PACKAGE-TAKEOVER #5` | 2026-08-15 | One-archive handoff includes source, history, evidence, hashes and recovery proof | FINAL_HANDOFF.md, repository.bundle, SHA256SUMS.txt |
+| `RESEARCH-DOGFOOD-R2 #1` | First-use finishing and locked revision-bound story drafts | `gui/pages_t.py`, `gui/create_page.py`, `gui/server.py` |
+| `RESEARCH-DOGFOOD-R2 #2` | Frozen exact-filename external handoff asset map | `exporters/handoff_guide.py`, `exporters/provider_handoff.py` |
+| `RESEARCH-DOGFOOD-R2 #3` | Container and composed-browser evidence are not release certification | `REPORTS/research-dogfood-r2/`, `scripts/dev/product_dogfood_r2_acceptance.py` |
 
 ## 1. JianYing dual path = self-developed skeleton ∥ pyJianYingDraft
 
