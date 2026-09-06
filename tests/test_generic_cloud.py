@@ -439,10 +439,22 @@ def test_default_transport_caps_response_size(monkeypatch):
         def __exit__(self, *a):
             return False
 
-        def read(self, n=-1):
-            return io.BytesIO(b"x" * 1000).read(n if n and n > 0 else 1000)
+        def __init__(self):
+            self.stream = io.BytesIO(b"x" * 1000)
 
-    monkeypatch.setattr(gc_mod.urllib.request, "urlopen", lambda *a, **k: _FakeResp())
+        def read(self, n=-1):
+            return self.stream.read(n)
+
+    def fake_open(opener, request, timeout=None):
+        # The production transport deliberately uses its own credential-safe
+        # opener, not urlopen. Intercept the actual dispatch seam and retain
+        # the redirect-policy construction instead of allowing a DNS request.
+        assert request.full_url == "https://example.com/huge"
+        assert any(isinstance(handler, gc_mod.CredentialSafeRedirectHandler)
+                   for handler in opener.handlers)
+        return _FakeResp()
+
+    monkeypatch.setattr(gc_mod.urllib.request.OpenerDirector, "open", fake_open)
     with pytest.raises(ProviderFailure) as exc:
         gc_mod.default_transport("GET", "https://example.com/huge", {}, None)
     assert "cap" in str(exc.value).lower() or "10-byte" in str(exc.value)

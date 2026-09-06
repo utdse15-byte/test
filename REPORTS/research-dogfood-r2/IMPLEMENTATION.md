@@ -19,7 +19,14 @@ Date: 2026-09-06. Base: `ee1e524a8640a121101603d3da9a2acb78a49c50`.
   filenames, keyframe order, logical reference roles, and explicit not-packaged
   resources. Its bytes participate in semantic identity. No URL is downloaded,
   no profile limit or provider capability is silently changed. Historical
-  `2026-08-08.r1` and `.r2` bundles remain verifiable.
+  `2026-08-08.r1` and `.r2` bundles remain verifiable. Safe upload names now
+  preserve media suffixes for Unicode-only and long stems; historical renderer
+  naming remains unchanged. The pure guide is explicitly classified outside
+  timeline/NLE conform coverage.
+- The legacy download-cap test now intercepts the actual credential-safe
+  opener dispatch instead of the obsolete `urlopen` seam. The cap assertion
+  and production redirect policy are retained; the test no longer attempts a
+  real DNS request to its placeholder URL.
 
 ## Evidence recorded before broad regression
 

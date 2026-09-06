@@ -69,3 +69,41 @@ def test_pre_asset_map_bundles_remain_verifiable(tmp_project, add_shot, monkeypa
         directory, _ = handoff.write_handoff_bundle(tmp_project, "S001", target="portable_video", output="old")
     assert "ASSET_MAP.md" not in {p.name for p in directory.iterdir()}
     assert handoff.verify_handoff_bundle(directory).handoff["renderer_revision"] == revision
+
+
+@pytest.mark.parametrize('filename', [
+    '首帧.png', '人物.JPG', 'ééé.webp', 'a' * 110 + '.png', '角色 ' + 'b' * 100 + '.jpeg',
+])
+def test_upload_asset_keeps_media_extension_for_unicode_and_long_names(
+    tmp_project, add_shot, filename,
+):
+    """A safe stem must not erase the extension used by upload file pickers."""
+    import mimetypes
+    from pathlib import Path
+
+    source = tmp_project.imports_dir / filename
+    source.write_bytes(b'fixture bytes; this test concerns packaging, not media decoding')
+    add_shot(tmp_project, 'S001', duration=6,
+             keyframes=[{'position': 'start', 'image': 'media/imports/' + filename}])
+    directory, _ = handoff.write_handoff_bundle(
+        tmp_project, 'S001', target='portable_video', output='extension-check')
+    [asset] = list((directory / 'assets').iterdir())
+    assert asset.suffix == Path(filename).suffix
+    assert (mimetypes.guess_type(str(asset))[0] or '').startswith('image/')
+    assert asset.name.isascii()
+    assert asset.read_bytes() == source.read_bytes()
+    assert handoff.verify_handoff_bundle(directory).handoff['shot'] == 'S001'
+
+
+@pytest.mark.parametrize('revision', ['2026-08-08.r1', '2026-08-08.r2'])
+def test_historical_unicode_asset_names_still_verify(tmp_project, add_shot, monkeypatch, revision):
+    (tmp_project.imports_dir / '首帧.png').write_bytes(b'historical fixture')
+    add_shot(tmp_project, 'S001', duration=6,
+             keyframes=[{'position': 'start', 'image': 'media/imports/首帧.png'}])
+    with monkeypatch.context() as old:
+        old.setattr(handoff, 'RENDERER_REVISION', revision)
+        directory, _ = handoff.write_handoff_bundle(
+            tmp_project, 'S001', target='portable_video', output='historical-extension')
+    [asset] = list((directory / 'assets').iterdir())
+    assert asset.suffix == ''  # historical broken naming is not rewritten in place
+    assert handoff.verify_handoff_bundle(directory).handoff['renderer_revision'] == revision

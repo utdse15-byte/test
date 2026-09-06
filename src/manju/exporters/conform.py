@@ -906,6 +906,11 @@ TARGET_CLASSIFIERS: dict[str, dict[str, _Rule]] = _RULES
 #: classifier or a row here fails tests/test_fp_conform.py (no silent
 #: degradation, doc §6.2).
 UNSUPPORTED_TARGETS: dict[str, str] = {
+    "handoff_guide": (
+        "pure human-readable view of a frozen prompt/reference handoff, not an "
+        "NLE or timeline exporter; controls remain advisory and ASSET_MAP.md "
+        "is integrity-bound by provider_handoff"
+    ),
     "provider_handoff": (
         "offline prompt/reference handoff bundle, not an NLE or timeline export; "
         "its loss/eligibility honesty is carried by handoff.json"

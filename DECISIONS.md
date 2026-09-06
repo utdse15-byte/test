@@ -4574,7 +4574,9 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    resources are not pretended to be packaged. The map is included in semantic
    identity under renderer `2026-09-06.r1`, while both historical renderer
    revisions remain verifiable. No new runtime model dependency or provider
-   capability claim is introduced.
+   capability claim is introduced. Safe upload names preserve their media
+   suffix even for non-ASCII-only or long stems; historical renderer naming
+   remains unchanged. The guide is explicitly outside NLE conform coverage.
 3. **Available-container evidence is not release certification.** Baseline and
    changed-tree regressions retain environment failures, missing dependencies
    and browser transport limits in their records. Synthetic local media and

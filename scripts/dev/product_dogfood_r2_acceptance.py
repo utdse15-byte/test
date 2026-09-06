@@ -288,6 +288,7 @@ def media_cli_checks(project, source, out):
     bundle = Path(result['bundle'])
     assert cli('handoff', 'verify', bundle, '--json')['ok'] is True
     assert (bundle / 'ASSET_MAP.md').exists()
+    assert all(path.suffix == '.png' for path in (bundle / 'assets').iterdir())
     returned = source.with_name('S003_return.mp4')
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(source), '-vf', 'hue=h=90',
                     '-c:v', 'libx264', '-threads', '1', '-an', str(returned)],

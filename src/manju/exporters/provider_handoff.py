@@ -145,8 +145,20 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _safe_basename(name: str) -> str:
-    cleaned = _SAFE_NAME.sub("_", Path(name).name).strip("._")
+def _safe_basename(name: str, *, preserve_suffix: bool = True) -> str:
+    """Bound an ASCII upload name without stripping its media extension.
+
+    Sanitizing the whole name made ``首帧.png`` become ``png`` and truncating
+    a long stem erased its suffix. Separate the two, reserving the suffix's
+    space before bounding the stem. Historical renderer creation keeps its
+    original spelling; already-frozen bundles are never renamed.
+    """
+    basename = Path(name).name
+    suffix = Path(basename).suffix
+    if preserve_suffix and re.fullmatch(r"\.[A-Za-z0-9]{1,16}", suffix):
+        stem = _SAFE_NAME.sub("_", basename[:-len(suffix)]).strip("._") or "asset"
+        return stem[:80 - len(suffix)] + suffix
+    cleaned = _SAFE_NAME.sub("_", basename).strip("._")
     return cleaned[:80] or "asset"
 
 
@@ -640,10 +652,9 @@ def _asset_members(
             return existing
         data = _read_asset(project, path, kind, expected_sha)
         digest = _sha256(data)
-        name = (
-            f"assets/{prefix}_{len(by_source) + 1:02d}_{digest[:12]}_"
-            f"{_safe_basename(path.name)}"
-        )
+        basename = _safe_basename(
+            path.name, preserve_suffix=RENDERER_REVISION == _RENDERER_REVISION_R3)
+        name = f"assets/{prefix}_{len(by_source) + 1:02d}_{digest[:12]}_{basename}"
         if name.casefold() in {value.casefold() for value in members}:
             _fail("handoff_case_collision", f"case-insensitive asset path collision: {name}")
         members[name] = data
