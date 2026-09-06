@@ -354,6 +354,7 @@ def render_mixer(project: Any, token: str) -> str:
         + _term("偏移", "offset_ms") + '</th><th>'
         + _term("音量", "gain_db") + '</th><th></th></tr></thead>'
         f'<tbody id="sfx-body">{sfx_rows}</tbody></table>'
+        f'<template id="sfx-row-template">{_sfx_row({}, opts)}</template>'
         '<button class="btn ghost" id="sfx-add">＋ 添加音效</button></div>'
     )
 
@@ -518,6 +519,7 @@ def render_packaging(project: Any, token: str) -> str:
         + '</th><th>' + _term("时长", "duration_ms") + '</th><th>'
         + _term("模板", "template") + '</th><th></th></tr></thead>'
         f'<tbody id="ic-body">{ic_rows}</tbody></table>'
+        f'<template id="ic-row-template">{_infocard_row({})}</template>'
         '<button class="btn ghost" id="ic-add">＋ 添加信息卡</button> '
         '<button class="btn" data-act="save" data-section="info">保存信息卡</button></div>'
     )
@@ -936,14 +938,10 @@ _PAGES_T_JS = r"""
     document.addEventListener("click", function (ev) {
       if (ev.target.id === "sfx-add") {
         var body = document.getElementById("sfx-body");
-        var proto = body.querySelector(".sfx-row");
-        var row;
-        if (proto) { row = proto.cloneNode(true); row.querySelectorAll("input").forEach(function (i) {
-          if (i.classList.contains("sfx-offset")) i.value = "0";
-          else if (i.classList.contains("sfx-gain")) i.value = "-6";
-          else i.value = "";
-        }); var s = row.querySelector("select"); if (s) s.selectedIndex = 0; }
-        else { toast("先在 rules 里加一个音效,或直接保存后再加", false); return; }
+        // A pristine inert template works for zero, one or many existing rows.
+        // Never inherit a user's edited values or an audition audio.src.
+        var template = document.getElementById("sfx-row-template");
+        var row = template.content.firstElementChild.cloneNode(true);
         body.appendChild(row);
       } else if (ev.target.getAttribute && ev.target.getAttribute("data-act") === "sfx-del") {
         var r = ev.target.closest(".sfx-row"); if (r) r.remove();
@@ -1022,19 +1020,8 @@ _PAGES_T_JS = r"""
     }
     function addInfoCard() {
       var body = document.getElementById("ic-body");
-      var proto = body.querySelector(".ic-row");
-      if (!proto) { toast("已存在一条即可复制;先保存空表也可", false); }
-      var row;
-      if (proto) {
-        row = proto.cloneNode(true);
-        row.querySelectorAll("input").forEach(function (i) {
-          if (i.classList.contains("ic-duration")) i.value = "1500";
-          else if (i.classList.contains("ic-offset")) i.value = "0";
-          else i.value = "";
-        });
-      } else {
-        return; // no prototype to clone; a fresh project seeds none
-      }
+      var template = document.getElementById("ic-row-template");
+      var row = template.content.firstElementChild.cloneNode(true);
       body.appendChild(row);
     }
 

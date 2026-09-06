@@ -7,6 +7,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 
 | Report | Record |
 |---|---|
+| `research-dogfood-r2/IMPLEMENTATION.md` | R2: first-row finishing fixes, story revision / in-flight draft protection, immutable exact-filename external asset maps |
 | `THREE_PROJECTS_BASELINE_2026-08-11.md` | G0-001 strict zero-cost baseline, cross-platform fixture repair, FFmpeg 6.1.1/8.1.2 corpus evidence |
 | `BUDGET_SEMANTICS_2026-08-13.md` | Per-build `budget.limit` semantics made explicit across GUI, board, CLI and docs |
 | `product-polish-r1/WAVE3_FINISHING_TRUST.md` | Product Polish R1 wave 3: explicit OTIO/FCPXML carrier-vs-baseline readiness, fail-closed roundtrip apply, export-center finishing surface |

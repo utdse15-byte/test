@@ -3075,11 +3075,16 @@ class _Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------- check-gated writing
 
     def _gated_save(self, path: Path, text: str, *, label: str,
-                    expected_text_hash: str | None = None) -> tuple[bool, dict[str, Any], int]:
+                    expected_text_hash: str | None = None,
+                    check_project: bool = True) -> tuple[bool, dict[str, Any], int]:
         """Shared editor core: write the text VERBATIM (atomic), run the full
         `manju check`, revert when the save introduced any new error. Returns
         (ok, payload, http_status); the caller appends its own event.
         Callers must hold quick_mutex.
+
+        Story drafts use check_project=False: incomplete prose must remain
+        saveable. They share the same lock, CAS and atomic writer; only the
+        project-schema check/rollback is omitted for that explicit caller.
 
         Round Z (agent ZA): every truth-file editor funnels through here
         (bible/rules/packaging/shot/duration/transition/look/caption-style),
@@ -3119,11 +3124,12 @@ class _Handler(BaseHTTPRequestHandler):
                                  "(乐观锁校验失败)——请刷新后重试",
                         "current": before if before is not None else "",
                     }, 409
-                baseline = set(run_check(project).errors)
+                baseline = set(run_check(project).errors) if check_project else set()
                 path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(path, text if text.endswith("\n") else text + "\n")
-                report = run_check(project)
-                new_errors = [e for e in report.errors if e not in baseline]
+                report = run_check(project) if check_project else None
+                new_errors = ([e for e in report.errors if e not in baseline]
+                              if report is not None else [])
                 if new_errors:
                     if before is None:
                         path.unlink(missing_ok=True)
@@ -3141,7 +3147,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # refetch — the take-note precedent (F14), where returning no
                 # rev made the SECOND action a misleading 乐观锁 409.
                 return True, {"ok": True, "created": before is None,
-                              "warnings": report.warnings,
+                              "warnings": report.warnings if report is not None else [],
                               "rev": _text_rev(
                                   path.read_text(encoding="utf-8")
                                   if path.exists() else None)}, 200
@@ -6620,12 +6626,12 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
     def _act_create_save(self, body: dict[str, Any]) -> None:
-        """Write a pre-storyboard story file VERBATIM (atomic) + record an event
-        — the same path-checked, allow-listed write captions_edit/bible editors
-        use. The stage id keys a FIXED story-relpath map (from the funnel), so a
-        path-escape attempt is simply an unknown stage; ``project.resolve`` is a
-        second containment guard."""
-        from ..core.yamlio import atomic_write_text
+        """Save prose through the shared lock/CAS/atomic editor owner.
+
+        The GUI always supplies its loaded revision. As with other whole-file
+        editors, older API clients may omit it (legacy last-write-wins).
+        Incomplete story drafts remain saveable: no project-schema gate here.
+        """
         from .create_page import stage_files
 
         stage = str(body.get("stage") or "")
@@ -6638,21 +6644,31 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(
                 f"unknown stage {stage!r} — 只能编辑 {'/'.join(stage_files())}", 400)
             return
+        expected_rev, err = self._expected_rev_of(body)
+        if err:
+            self._send_error_json(err, 400)
+            return
         project = self.server.project
         try:
-            path = project.resolve(relpath)  # defense in depth: refuse escapes
+            path = project.resolve(relpath)
         except ProjectError:
             self._send_error_json("path not served", 403)
             return
         with self.server.quick_mutex:
-            created = not path.exists()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(path, text if text.endswith("\n") else text + "\n")
-            append_event(project.root, self.server.actor, "funnel_edit",
-                         {"stage": stage, "path": relpath, "created": created,
-                          "via": "gui"})
-        self._send_json({"ok": True, "stage": stage, "path": relpath,
-                         "created": created})
+            try:
+                ok, payload, status = self._gated_save(
+                    path, text, label=relpath, expected_text_hash=expected_rev,
+                    check_project=False)
+            except (OSError, UnicodeError) as exc:
+                self._send_error_json(
+                    f"无法安全保存 {relpath}：{' '.join(str(exc).split())}", 409)
+                return
+            if ok:
+                payload.update({"stage": stage, "path": relpath})
+                append_event(project.root, self.server.actor, "funnel_edit",
+                             {"stage": stage, "path": relpath,
+                              "created": payload["created"], "via": "gui"})
+        self._send_json(payload, status)
 
     def _act_create_scaffold(self, body: dict[str, Any]) -> None:
         """Scaffold a stage template — the SAME :func:`funnel.scaffold_stage`

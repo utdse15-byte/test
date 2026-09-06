@@ -280,6 +280,7 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
     from ..build.funnel import SCAFFOLDS
 
     from .authoring_journey import story_material_status
+    from .server import _text_rev
 
     sid, cn = s["id"], s["cn"]
     _label, product_detail = story_material_status(s)
@@ -336,6 +337,7 @@ def _editor(project: Any, s: dict[str, Any], files: dict[str, str], *,
         f'<p class="cw-evidence">{_e(product_detail)}</p></div>{scaffold_btn}</div>'
         f'{empty}'
         f'<textarea class="cw-text" data-stage="{_e(sid)}" spellcheck="false" '
+        f'data-rev="{_e(_text_rev(text))}" '
         f'aria-label="{_e(cn)} 正文">{_e(text or "")}</textarea>'
         '<div class="cw-saverow">'
         f'<button type="button" class="btn" data-act="save" data-stage="{_e(sid)}">'
@@ -713,7 +715,18 @@ _CREATE_JS = r"""
   if (document.body.getAttribute("data-page") !== "/create") return;
 
 
-  function reloadSoon() { setTimeout(function () { location.reload(); }, 500); }
+  function hasUnsavedWork() {
+    return Array.prototype.some.call(document.querySelectorAll(".cw-text"), function (ta) {
+      return isDirty(ta) || ta.getAttribute("data-saving") === "true";
+    });
+  }
+  function reloadSoon() {
+    setTimeout(function () {
+      // Check at execution time too: typing can resume during this delay,
+      // or another (hidden) story stage may have an unsaved buffer.
+      if (!hasUnsavedWork()) location.reload();
+    }, 500);
+  }
 
   // -------- one editor visible at a time; ✎编辑 swaps stages in ---------
   function showStage(stage) {
@@ -797,18 +810,31 @@ _CREATE_JS = r"""
     var btn = document.querySelector('[data-act="save"][data-stage="' + cssq(stage) + '"]');
     if (btn && btn.disabled) return;
     if (btn) { btn.disabled = true; btn.textContent = "保存中…"; }
-    post("/api/create/save", { stage: stage, text: ta.value }).then(function (res) {
+    var submitted = ta.value;
+    ta.setAttribute("data-saving", "true");
+    function finishSave() {
+      ta.removeAttribute("data-saving");
+      if (btn) { btn.disabled = false; btn.textContent = "保存并检查进度"; }
+    }
+    post("/api/create/save", {
+      stage: stage, text: submitted, expected_rev: ta.getAttribute("data-rev")
+    }).then(function (res) {
+      finishSave();
       if (res.status === 200) {
-        ta.defaultValue = ta.value;
+        // Only the submitted snapshot was saved, NOT whatever the user typed
+        // while the request was in flight. Keep newer input dirty and visible.
+        ta.defaultValue = submitted;
+        if (res.data && typeof res.data.rev === "string") ta.setAttribute("data-rev", res.data.rev);
         updateDirty(ta);
-        toast("已保存并重新检查进度", true);
+        toast(hasUnsavedWork() ? "已保存提交版本；后续草稿仍未保存。" : "已保存并重新检查进度", true);
         reloadSoon();
       } else {
-        if (btn) { btn.disabled = false; btn.textContent = "保存并检查进度"; }
-        toast((res.data && res.data.error) || "保存失败", false);
+        var conflict = res.status === 409 && res.data && typeof res.data.current === "string";
+        toast(conflict ? "文件已在其他入口修改，当前草稿未被覆盖。请先复制草稿，再刷新合并。"
+          : (res.data && res.data.error) || "保存失败", false);
       }
     }).catch(function () {
-      if (btn) { btn.disabled = false; btn.textContent = "保存并检查进度"; }
+      finishSave();
       toast("无法连接本地服务；内容仍保留在编辑器中。", false);
     });
   }

@@ -16,6 +16,7 @@ from typing import Any, Mapping, Sequence
 
 import yaml
 
+from .handoff_guide import render_asset_map
 from ..build.readiness import ReadinessError
 from ..core.container import ProjectError
 from ..core.hashing import hash_value, short_hash
@@ -34,7 +35,8 @@ MANIFEST_SCHEMA = "manju.provider-handoff-manifest/v2"
 BUNDLE_FORMAT_REVISION = 2
 _RENDERER_REVISION_R1 = "2026-08-08.r1"
 _RENDERER_REVISION_R2 = "2026-08-08.r2"
-RENDERER_REVISION = _RENDERER_REVISION_R2
+_RENDERER_REVISION_R3 = "2026-09-06.r1"
+RENDERER_REVISION = _RENDERER_REVISION_R3
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 _SAFE_PROFILE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -290,7 +292,7 @@ def semantic_document_v2(
 ) -> dict[str, Any]:
     """Reconstruct the versioned semantic identity from actual bundle content."""
     renderer_revision = handoff.get("renderer_revision")
-    if renderer_revision not in {_RENDERER_REVISION_R1, _RENDERER_REVISION_R2}:
+    if renderer_revision not in {_RENDERER_REVISION_R1, _RENDERER_REVISION_R2, _RENDERER_REVISION_R3}:
         _fail(
             "handoff_renderer_revision_unknown",
             f"unknown renderer revision: {renderer_revision!r}",
@@ -318,8 +320,17 @@ def semantic_document_v2(
         "warnings": _thaw(handoff.get("warnings")),
         "eligibility": _thaw(handoff.get("eligibility")),
     }
-    if renderer_revision == _RENDERER_REVISION_R2:
+    if renderer_revision != _RENDERER_REVISION_R1:
         document["canonical"] = _thaw(canonical)
+    if renderer_revision == _RENDERER_REVISION_R3:
+        # The upload map directs a human's actions. Bind its actual bytes too,
+        # so resealing a misleading guide cannot retain the old handoff identity.
+        guides = [row for row in manifest_members if row.get("path") == "ASSET_MAP.md"]
+        if len(guides) != 1:
+            _fail("handoff_manifest_invalid", "current renderer requires ASSET_MAP.md")
+        document["asset_map"] = {
+            key: guides[0].get(key) for key in ("path", "sha256", "bytes")
+        }
     return document
 
 
@@ -509,7 +520,7 @@ def verify_handoff_bundle(path: Path | str) -> VerifiedHandoff:
         if not isinstance(canonical_row, dict):
             _fail("handoff_manifest_invalid", "handoff canonical block must be an object")
         renderer_revision = handoff.get("renderer_revision")
-        if renderer_revision not in {_RENDERER_REVISION_R1, _RENDERER_REVISION_R2}:
+        if renderer_revision not in {_RENDERER_REVISION_R1, _RENDERER_REVISION_R2, _RENDERER_REVISION_R3}:
             _fail(
                 "handoff_renderer_revision_unknown",
                 f"unknown renderer revision: {renderer_revision!r}",
@@ -776,6 +787,10 @@ def build_handoff(project: Any, shot_id: str, *, target: str = "minimax_h3") -> 
         {"path": name, "sha256": f"sha256:{_sha256(data)}", "bytes": len(data)}
         for name, data in sorted(asset_sources.items())
     ]
+    if RENDERER_REVISION == _RENDERER_REVISION_R3:
+        guide = _text_bytes(render_asset_map(handoff, refs_doc))
+        asset_rows.append({"path": "ASSET_MAP.md", "sha256": f"sha256:{_sha256(guide)}",
+                           "bytes": len(guide)})
     semantic_digest = hash_value(semantic_document_v2(
         handoff=handoff,
         refs=refs_doc,
@@ -808,6 +823,11 @@ def _bundle_files(built: Mapping[str, Any]) -> dict[str, bytes]:
         "refs.json": _json_bytes(built["refs"]),
         "README.md": _text_bytes(profile.render_readme(handoff)),
     }
+    if handoff.get("renderer_revision") == _RENDERER_REVISION_R3:
+        files["ASSET_MAP.md"] = _text_bytes(render_asset_map(handoff, built["refs"]))
+        files["README.md"] += _text_bytes(
+            "\n\n上传前先看 `ASSET_MAP.md`：核对首尾帧、参考角色与包内实际文件名。\n"
+        )
     for name, text in profile.render_bundle_files(plan, projection, handoff).items():
         _safe_member_path(name)
         files[name] = _text_bytes(text)

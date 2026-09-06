@@ -534,7 +534,7 @@ def test_writer_uses_current_profile_and_renderer_revisions(tmp_project, add_sho
         tmp_project, "S001", target="portable_video", output="current-revisions"
     )
     assert handoff["renderer_revision"] == handoff_module.RENDERER_REVISION
-    assert handoff["renderer_revision"].endswith(".r2")
+    assert handoff["renderer_revision"] == "2026-09-06.r1"
     assert handoff["profile"] == (
         video_authoring_profile_registry()["portable_video"].to_dict()
     )

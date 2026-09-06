@@ -4557,3 +4557,24 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    proof.** The clean project tree, full Git bundle, final-HEAD RC/wheel,
    human handoff, manifest, per-file SHA-256 and clean-room extraction/bundle
    verification travel together. User media/projects remain separate data.
+
+## RESEARCH-DOGFOOD-R2 (2026-09-06)
+
+1. **Protect first-use and canonical drafts before expanding models.** Empty
+   finishing forms create rows from inert renderer-owned templates. Story prose
+   joins the existing locked atomic/CAS writer without imposing project-schema
+   validity on unfinished writing; browser saves bind to the displayed revision
+   and submitted snapshot. Conflicts do not overwrite either side.
+2. **External tool switching needs exact, immutable upload instructions.** New
+   handoffs include an asset map derived solely from their frozen reference
+   graph. Actual filenames and logical roles remain separate; unavailable remote
+   resources are not pretended to be packaged. The map is included in semantic
+   identity under renderer `2026-09-06.r1`, while both historical renderer
+   revisions remain verifiable. No new runtime model dependency or provider
+   capability claim is introduced.
+3. **Available-container evidence is not release certification.** Baseline and
+   changed-tree regressions retain environment failures, missing dependencies
+   and browser transport limits in their records. Synthetic local media and
+   composed browser/HTTP checks never stand in for real generated material,
+   human approval, Windows App Dogfood or same-SHA cross-platform gates.
+   `LAST_GREEN` is not advanced.
